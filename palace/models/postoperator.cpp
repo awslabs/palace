@@ -13,6 +13,7 @@
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/floquetportoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "models/waveportoperator.hpp"
@@ -1202,9 +1203,42 @@ void PostOperator<solver_t>::MeasureWavePorts() const
 }
 
 template <ProblemType solver_t>
+void PostOperator<solver_t>::MeasureFloquetPorts() const
+{
+  measurement_cache.floquet_port_s.clear();
+
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    if (fem_op->GetFloquetPortOp().Empty())
+    {
+      return;
+    }
+    for (const auto &[idx, data] : fem_op->GetFloquetPortOp())
+    {
+      auto S_all = data.GetAllSParameters(*E);
+
+      // Subtract incident field for the driving port's incident mode.
+      if (data.excitation == measurement_cache.ex_idx)
+      {
+        for (auto &[key, S] : S_all)
+        {
+          auto [m, n, is_te] = key;
+          if (data.IsIncidentMode(m, n, is_te))
+          {
+            S -= 1.0;
+          }
+        }
+      }
+
+      measurement_cache.floquet_port_s[idx] = std::move(S_all);
+    }
+  }
+}
+
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureSParameter() const
 {
-  // Depends on LumpedPorts, WavePorts.
+  // Depends on LumpedPorts, WavePorts, FloquetPorts.
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
     using fmt::format;
@@ -1213,8 +1247,11 @@ void PostOperator<solver_t>::MeasureSParameter() const
     // Don't measure S-Matrix unless there is only one excitation per port. Also, we current
     // don't support mixing wave and lumped ports, because we need to fix consistent
     // conventions / de-embedding.
+    bool has_lumped = fem_op->GetLumpedPortOp().Size() > 0;
+    bool has_wave = fem_op->GetWavePortOp().Size() > 0;
+    bool has_floquet = !fem_op->GetFloquetPortOp().Empty();
     if (!fem_op->GetPortExcitations().IsMultipleSimple() ||
-        !((fem_op->GetLumpedPortOp().Size() > 0) xor (fem_op->GetWavePortOp().Size() > 0)))
+        !(has_lumped xor has_wave xor has_floquet))
     {
       return;
     }
@@ -1264,6 +1301,20 @@ void PostOperator<solver_t>::MeasureSParameter() const
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
                  format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
                  Measurement::Magnitude(vi.S), Measurement::Phase(vi.S));
+    }
+
+    // Floquet port S-parameters (already post-processed in MeasureFloquetPorts).
+    for (const auto &[port_idx, S_map] : measurement_cache.floquet_port_s)
+    {
+      for (const auto &[key, S] : S_map)
+      {
+        auto [m, n, is_te] = key;
+        Mpi::Print(
+            " {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
+            format("S[{}_{}_{}_{}][{}]", port_idx, m, n, is_te ? "TE" : "TM",
+                   drive_port_idx),
+            S.real(), S.imag(), Measurement::Magnitude(S), Measurement::Phase(S));
+      }
     }
   }
 }

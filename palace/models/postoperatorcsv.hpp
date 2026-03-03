@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <optional>
+#include <tuple>
 #include "drivers/boundarymodesolver.hpp"
 #include "fem/errorindicator.hpp"
 #include "models/curlcurloperator.hpp"
@@ -167,6 +168,9 @@ struct Measurement
   std::map<int, PortPostData> lumped_port_vi;
   std::map<int, PortPostData> wave_port_vi;
 
+  // Floquet port S-parameters: port_idx -> {(m, n, is_te) -> S}.
+  std::map<int, std::map<std::tuple<int, int, bool>, std::complex<double>>> floquet_port_s;
+
   // Probe data is ordered as [Fx1, Fy1, Fz1, Fx2, Fy2, Fz2, ...].
   // TODO: Replace with proper matrix: mdspan (C++23) / Eigen.
   std::vector<std::complex<double>> probe_E_field;
@@ -293,6 +297,14 @@ protected:
       -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
   template <ProblemType U = solver_t>
   auto PrintPortS() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+
+  // Driven: Floquet port S-parameters.
+  std::optional<TableWithCSVFile> floquet_port_S;
+  template <ProblemType U = solver_t>
+  auto InitializeFloquetPortS(const SpaceOperator &fem_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+  template <ProblemType U = solver_t>
+  auto PrintFloquetPortS() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
 
   // Driven: wave port impedance.
   std::optional<TableWithCSVFile> port_Z;

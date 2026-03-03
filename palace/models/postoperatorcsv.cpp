@@ -88,6 +88,9 @@ Measurement Measurement::Dimensionalize(const Units &units,
   measurement_cache.wave_port_vi =
       dimensionalize_port_post_data(nondim_measurement_cache.wave_port_vi);
 
+  // Floquet port S-parameters are dimensionless — copy directly.
+  measurement_cache.floquet_port_s = nondim_measurement_cache.floquet_port_s;
+
   measurement_cache.probe_E_field = units.Dimensionalize<Units::ValueType::FIELD_E>(
       nondim_measurement_cache.probe_E_field);
   measurement_cache.probe_B_field = units.Dimensionalize<Units::ValueType::FIELD_B>(
@@ -200,6 +203,9 @@ Measurement Measurement::Nondimensionalize(const Units &units,
       dimensionalize_port_post_data(dim_measurement_cache.lumped_port_vi);
   measurement_cache.wave_port_vi =
       dimensionalize_port_post_data(dim_measurement_cache.wave_port_vi);
+
+  // Floquet port S-parameters are dimensionless.
+  measurement_cache.floquet_port_s = dim_measurement_cache.floquet_port_s;
 
   measurement_cache.probe_E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
       dim_measurement_cache.probe_E_field);
@@ -1119,6 +1125,73 @@ auto PostOperatorCSV<solver_t>::PrintPortS()
 
 template <ProblemType solver_t>
 template <ProblemType U>
+auto PostOperatorCSV<solver_t>::InitializeFloquetPortS(const SpaceOperator &fem_op)
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  if (fem_op.GetFloquetPortOp().Empty())
+  {
+    return;
+  }
+
+  using fmt::format;
+  floquet_port_S = TableWithCSVFile(post_dir / "port-floquet-S.csv", reload_table);
+
+  Table t;
+  t.reserve(nr_expected_measurement_rows, 100);
+  t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
+
+  // Temporarily initialize all ports to get the enumerated modes. The modes are determined
+  // at initialization time (frequency-independent enumeration).
+  for (const auto ex_idx : ex_idx_v_all)
+  {
+    for (const auto &[port_idx, port] : fem_op.GetFloquetPortOp())
+    {
+      // Add columns for each enumerated mode on this port.
+      for (const auto &mode : port.GetModes())
+      {
+        auto pol = mode.is_te ? "TE" : "TM";
+        t.insert(format("abs_{}_{}_{}_{}_{}", port_idx, mode.m, mode.n, pol, ex_idx),
+                 format("|S[{}_{}_{}_{}][{}]| (dB)", port_idx, mode.m, mode.n, pol,
+                        ex_idx),
+                 ex_idx);
+        t.insert(format("arg_{}_{}_{}_{}_{}", port_idx, mode.m, mode.n, pol, ex_idx),
+                 format("arg(S[{}_{}_{}_{}][{}]) (deg.)", port_idx, mode.m, mode.n, pol,
+                        ex_idx),
+                 ex_idx);
+      }
+    }
+  }
+  MoveTableValidateReload(*floquet_port_S, std::move(t));
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::PrintFloquetPortS()
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  if (!floquet_port_S)
+  {
+    return;
+  }
+  using fmt::format;
+  CheckAppendIndex(floquet_port_S->table["idx"], row_idx_v, row_i);
+  for (const auto &[port_idx, S_map] : measurement_cache.floquet_port_s)
+  {
+    for (const auto &[key, S] : S_map)
+    {
+      auto [m, n, is_te] = key;
+      auto pol = is_te ? "TE" : "TM";
+      auto abs_key = format("abs_{}_{}_{}_{}_{}", port_idx, m, n, pol, m_ex_idx);
+      auto arg_key = format("arg_{}_{}_{}_{}_{}", port_idx, m, n, pol, m_ex_idx);
+      floquet_port_S->table[abs_key] << Measurement::Magnitude(S);
+      floquet_port_S->table[arg_key] << Measurement::Phase(S);
+    }
+  }
+  floquet_port_S->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperatorCSV<solver_t>::InitializePortZ(const SpaceOperator &fem_op)
     -> std::enable_if_t<U == ProblemType::DRIVEN, void>
 {
@@ -1483,6 +1556,7 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
     InitializePortS(*post_op.fem_op);
+    InitializeFloquetPortS(*post_op.fem_op);
     InitializePortZ(*post_op.fem_op);
   }
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
@@ -1545,6 +1619,7 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
     PrintPortS();
+    PrintFloquetPortS();
     PrintPortZ();
   }
   if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)

@@ -206,32 +206,6 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         floquet_corr->AddMult(E, B, 1.0 / omega);
       }
 
-      // Floquet port S-parameter extraction.
-      if (!space_op.GetFloquetPortOp().Empty())
-      {
-        for (const auto &[port_idx, port] : space_op.GetFloquetPortOp())
-        {
-          auto S_all = port.GetAllSParameters(E);
-          for (auto &[key, S] : S_all)
-          {
-            auto [m, n, is_te] = key;
-            // Subtract incident field for the driving port's incident mode.
-            if (port.excitation == excitation_idx)
-            {
-              bool is_inc_mode = port.IsIncidentMode(m, n, is_te);
-              if (is_inc_mode)
-              {
-                S -= 1.0;
-              }
-            }
-            Mpi::Print(" Floquet S[port {:d}]({:d},{:d},{}) = ({:.6e}, {:.6e}), "
-                       "|S|^2 = {:.6e}\n",
-                       port_idx, m, n, is_te ? "TE" : "TM",
-                       S.real(), S.imag(), std::norm(S));
-          }
-        }
-      }
-
       auto total_domain_energy =
           post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
 

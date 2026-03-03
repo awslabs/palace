@@ -11,6 +11,7 @@
 #include <tuple>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/gridfunction.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 
@@ -106,6 +107,9 @@ public:
   [[nodiscard]] constexpr bool HasExcitation() const { return excitation != 0; }
   const auto &GetAttrList() const { return attr_list; }
 
+  // Access the enumerated modes (for CSV column setup).
+  const auto &GetModes() const { return modes; }
+
   // Check if mode (m, n, is_te) matches the incident mode for this port.
   [[nodiscard]] bool IsIncidentMode(int m, int n, bool is_te) const
   {
@@ -124,7 +128,7 @@ public:
 
   // S-parameter for all propagating orders at the current frequency.
   std::map<std::tuple<int, int, bool>, std::complex<double>>
-  GetAllSParameters(const ComplexVector &E) const;
+  GetAllSParameters(const GridFunction &E) const;
 
   // Get the number of propagating orders at current frequency.
   int NumPropagatingOrders() const;

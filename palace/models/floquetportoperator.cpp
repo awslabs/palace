@@ -108,18 +108,16 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
   // Compute port normal and area using geodata utilities.
   {
     auto &mesh = *nd_fespace.GetParMesh();
-    mfem::Array<int> bdr_marker(mesh.bdr_attributes.Max());
-    bdr_marker = 0;
-    for (int i = 0; i < attr_list.Size(); i++)
-    {
-      bdr_marker[attr_list[i] - 1] = 1;
-    }
+    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    Mpi::GlobalMax(1, &bdr_attr_max, comm);
+    mfem::Array<int> bdr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list, true);
     port_normal = mesh::GetSurfaceNormal(mesh, bdr_marker);
     port_area = mesh::GetSurfaceArea(mesh, bdr_marker);
   }
 
-  // Material properties at the port: find the volume element adjacent to the first
-  // boundary element on the port face and look up its mu_r, eps_r.
+  // Material properties at the port: find the volume element adjacent to any boundary
+  // element on the port face and look up its mu_r, eps_r. In parallel, not all ranks may
+  // have port boundary elements — use MPI reduction to broadcast the found attribute.
   {
     auto &mesh = *nd_fespace.GetParMesh();
     int port_vol_attr = -1;
@@ -150,21 +148,29 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
         break;
       }
     }
-    // MPI broadcast: take the first valid attribute found across all ranks.
-    int global_attr = -1;
-    MPI_Allreduce(&port_vol_attr, &global_attr, 1, MPI_INT, MPI_MAX, comm);
-    MFEM_VERIFY(global_attr > 0,
-                "Could not find volume element adjacent to Floquet port!");
+    // Look up material properties on the rank that found the boundary element, then
+    // broadcast. The CEED attribute map is rank-local (only includes attributes of elements
+    // owned by this rank), so mat_op.GetLightSpeedMin(attr) would fail on ranks that don't
+    // own elements with that volume attribute.
+    double c_local = -1.0;
+    double muinv_local = -1.0;
+    if (port_vol_attr > 0)
+    {
+      c_local = mat_op.GetLightSpeedMin(port_vol_attr);
+      muinv_local = mat_op.GetInvPermeabilityZZ(port_vol_attr);
+    }
 
-    // Look up material properties (relative, nondimensional).
-    double c_local = mat_op.GetLightSpeedMin(global_attr);
+    // Broadcast from the rank that found a valid attribute.
+    int found_rank = (port_vol_attr > 0) ? Mpi::Rank(comm) : Mpi::Size(comm);
+    Mpi::GlobalMin(1, &found_rank, comm);
+    MFEM_VERIFY(found_rank < Mpi::Size(comm),
+                "Could not find volume element adjacent to Floquet port!");
+    MPI_Bcast(&c_local, 1, MPI_DOUBLE, found_rank, comm);
+    MPI_Bcast(&muinv_local, 1, MPI_DOUBLE, found_rank, comm);
+
     MFEM_VERIFY(c_local > 0.0, "Invalid material speed of light at Floquet port!");
     mu_eps_port = 1.0 / (c_local * c_local);
-
-    // Get inverse permeability (scalar, for isotropic materials) at the port.
-    // Uses the zz component which is the scalar entry for isotropic media.
-    double muinv = mat_op.GetInvPermeabilityZZ(global_attr);
-    mu_r_port = 1.0 / muinv;
+    mu_r_port = 1.0 / muinv_local;
 
     Mpi::Print("   Port material: mu_r = {:.4e}, mu_r*eps_r = {:.4e}, "
                "c = {:.4e}\n",
@@ -389,14 +395,17 @@ void FloquetPortData::AssembleFourierProjections(
   //   Re: int_Gamma N_j . [e_p * cos(B_mn . r)] dS
   //   Im: int_Gamma N_j . [e_p * (-sin(B_mn . r))] dS
 
-  // Create boundary attribute marker.
+  // Create boundary attribute marker. Scan all local boundary elements for the actual max
+  // attribute (may include internally-added interface boundary elements).
   auto &mesh = *nd_fespace.GetParMesh();
-  mfem::Array<int> bdr_marker(mesh.bdr_attributes.Max());
-  bdr_marker = 0;
-  for (int i = 0; i < attr_list.Size(); i++)
+  int bdr_attr_max = 0;
+  for (int be = 0; be < mesh.GetNBE(); be++)
   {
-    bdr_marker[attr_list[i] - 1] = 1;
+    bdr_attr_max = std::max(bdr_attr_max, mesh.GetBdrAttribute(be));
   }
+  Mpi::GlobalMax(1, &bdr_attr_max, nd_fespace.GetComm());
+  mfem::Array<int> bdr_marker =
+      mesh::AttrToMarker(bdr_attr_max, attr_list, true);
 
   int tdof_size = nd_fespace.GetTrueVSize();
 
@@ -447,12 +456,16 @@ void FloquetPortData::AssembleFourierProjections(
     mfem::LinearForm lf_r(&nd_fespace);
     lf_r.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coeff_r),
                                bdr_marker);
+    lf_r.UseFastAssembly(false);
+    lf_r.UseDevice(false);
     lf_r.Assemble();
 
     // Assemble imaginary part.
     mfem::LinearForm lf_i(&nd_fespace);
     lf_i.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coeff_i),
                                bdr_marker);
+    lf_i.UseFastAssembly(false);
+    lf_i.UseDevice(false);
     lf_i.Assemble();
 
     // Project to true DOFs: v = P^T * lf.
@@ -543,7 +556,7 @@ std::unique_ptr<LowRankComplexOperator> FloquetPortData::GetBoundaryOperator() c
 }
 
 std::map<std::tuple<int, int, bool>, std::complex<double>>
-FloquetPortData::GetAllSParameters(const ComplexVector &E) const
+FloquetPortData::GetAllSParameters(const GridFunction &E) const
 {
   std::map<std::tuple<int, int, bool>, std::complex<double>> result;
 
@@ -564,10 +577,24 @@ FloquetPortData::GetAllSParameters(const ComplexVector &E) const
     }
 
     // Bilinear v^T E = (v_r·E_r - v_i·E_i) + i(v_r·E_i + v_i·E_r).
-    double sr = linalg::Dot(comm, mode.v.Real(), E.Real()) -
-                linalg::Dot(comm, mode.v.Imag(), E.Imag());
-    double si = linalg::Dot(comm, mode.v.Real(), E.Imag()) +
-                linalg::Dot(comm, mode.v.Imag(), E.Real());
+    // The projection vectors v are in true DOF space; the GridFunction E is in L-vector
+    // space. Restrict E to true DOFs using the prolongation transpose: e_t = P^T e.
+    const auto *P = E.Real().ParFESpace()->GetProlongationMatrix();
+    Vector E_r_tdof(mode.v.Size()), E_i_tdof(mode.v.Size());
+    P->MultTranspose(E.Real(), E_r_tdof);
+    if (E.HasImag())
+    {
+      P->MultTranspose(E.Imag(), E_i_tdof);
+    }
+    else
+    {
+      E_i_tdof = 0.0;
+    }
+
+    double sr = linalg::Dot(comm, mode.v.Real(), E_r_tdof) -
+                linalg::Dot(comm, mode.v.Imag(), E_i_tdof);
+    double si = linalg::Dot(comm, mode.v.Real(), E_i_tdof) +
+                linalg::Dot(comm, mode.v.Imag(), E_r_tdof);
 
     auto key = std::make_tuple(mode.m, mode.n, mode.is_te);
     result[key] = std::complex<double>(sr, si) / port_area;
@@ -637,7 +664,7 @@ FloquetPortOperator::FloquetPortOperator(const IoData &iodata,
 
   for (const auto &[idx, data] : floquet_port_data)
   {
-    ports.try_emplace(idx, data, iodata, mat_op, nd_fespace);
+    ports.try_emplace(idx, data, iodata, mat_op_ref, nd_fespace);
   }
 }
 
