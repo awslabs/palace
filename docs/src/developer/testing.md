@@ -308,6 +308,51 @@ Open `coverage_html/index.html` in your web browser to explore the interactive
 coverage report, which shows line-by-line coverage statistics and identifies
 untested code paths.
 
+## AddressSanitizer and UndefinedBehaviorSanitizer
+
+*Palace* can be built with [AddressSanitizer
+(ASan)](https://clang.llvm.org/docs/AddressSanitizer.html) and
+[UndefinedBehaviorSanitizer
+(UBSan)](https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html) to detect
+memory errors and undefined behavior at runtime. Both sanitizers are enabled
+together with a single CMake option:
+
+```bash
+mkdir build && cd build
+cmake -DPALACE_BUILD_WITH_SANITIZERS=ON ..
+make -j palace-tests
+```
+
+This adds `-fsanitize=address,undefined -fno-omit-frame-pointer` to the compile
+and link flags for both the `palace` library and the unit test executable.
+
+Run the unit tests as usual:
+
+```bash
+bin/palace-unit-tests --skip-benchmarks
+mpirun -np 2 bin/palace-unit-tests --skip-benchmarks
+```
+
+The following environment variables are useful when running under sanitizers:
+
+  - `ASAN_OPTIONS=detect_leaks=0`: Disables leak detection, which can produce
+    false positives from MPI runtimes and third-party libraries.
+  - `LSAN_OPTIONS=suppressions=test/unit/lsan_suppressions.txt`: Suppresses
+    known third-party leaks from MPI, hwloc, libevent, and libCEED instead of
+    disabling leak detection entirely.
+  - `UBSAN_OPTIONS=print_stacktrace=1`: Prints a full stack trace when undefined
+    behavior is detected.
+
+!!! note "Performance overhead"
+
+    AddressSanitizer introduces singificant slowdowns. Use it only for debugging purposes.
+
+!!! warning "GCC on macOS (Apple Silicon)"
+
+    GCC does not support AddressSanitizer on macOS with Apple Silicon.
+    Use Apple Clang or Homebrew LLVM/Clang instead when building
+    with sanitizers on macOS.
+
 ## Regression tests
 
 In addition to unit tests, *Palace* comes with a series of regression tests.
@@ -315,6 +360,39 @@ Regression tests based on the provided example applications in the
 [`examples/`](https://github.com/awslabs/palace/blob/main/examples/) directory
 and verify that the code reproduces results in reference files stored in
 [`test/examples/`](https://github.com/awslabs/palace/blob/main/test/examples/ref).
+
+## Tests in CI
+
+*Palace* runs three tiers of CI checks on every pull request:
+
+ 1. Static analysis (`style.yml`): Code formatting (clang-format, Julia
+    formatter), JSON schema validation, and test tag checks.
+ 2. Unit + regression tests (`build-and-test-linux.yml`,
+    `build-and-test-macos.yml`, `spack.yml`, `singularity.yml`): Builds *Palace*
+    using CMake, Spack, and Singularity with a matrix of compilers (GCC, Clang,
+    Intel), MPI implementations (Open MPI, MPICH, Intel MPI), math libraries
+    (OpenBLAS, ARMPL, MKL), and link/integer options across x86, ARM, macOS, and
+    GPU runners. Each configuration runs the full unit test suite (serial +
+    parallel) and all default regression tests.
+ 3. Long tests (`long-tests.yml`): Expensive test cases (e.g.,
+    `transmon/transmon_amr`) that are too slow to run on every push.
+
+Long tests are a required check for merging non-trivial pull requests and are
+not run by default. To run the Long tests, add the `trigger-long-tests` GitHub
+label. The typical workflow is:
+
+ 1. Develop and iterate using the default (short) tests that run automatically.
+ 2. When the PR is ready to merge, add the **`trigger-long-tests`** label.
+ 3. The long tests run and the `long-tests` status is updated.
+ 4. If you push new commits while the label is present, the long tests re-run
+    automatically.
+
+Two special cases bypass the long test requirement:
+
+  - Trivial changes: If a PR only touches documentation, README files, or
+    other non-code files, the long test status is automatically set to success.
+  - `no-long-tests` label: Adding this label bypasses the long test requirement
+    entirely.
 
 ### Building and running example tests
 

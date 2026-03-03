@@ -1,0 +1,72 @@
+# This workflow runs long tests on a PR when the 'trigger-long-tests' label is
+# added. Long tests are a required check for merging non-trivial PRs.
+#
+# The typical workflow is:
+# 1. Developer iterates using the short (default) tests
+# 2. When ready to merge, add the 'trigger-long-tests' label
+# 3. Long tests run and the long-tests status is updated
+#
+# If the PR is updated while the label is present, the tests re-run
+# automatically.
+name: Long Tests
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  packages: read
+  statuses: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITHUB_USER: ${{ github.actor }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  long-tests:
+    runs-on: [self-hosted, x64]
+    # Run if:
+    # - the 'trigger-long-tests' label was just added, OR
+    # - the PR was updated and already has the 'trigger-long-tests' label
+    # Do not run from forks.
+    if: |
+      github.repository == 'awslabs/palace' &&
+      (
+        (github.event.action == 'labeled' && github.event.label.name == 'trigger-long-tests') ||
+        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'trigger-long-tests'))
+      )
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
+          test-cases: long
+
+      - name: Set success status
+        if: success()
+        run: |
+          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+            --method POST \
+            --field state=success \
+            --field context=long-tests \
+            --field description="Long tests passed"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set failure status
+        if: failure() || cancelled()
+        run: |
+          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+            --method POST \
+            --field state=failure \
+            --field context=long-tests \
+            --field description="Long tests failed"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
