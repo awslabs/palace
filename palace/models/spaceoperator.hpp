@@ -13,6 +13,7 @@
 #include "linalg/vector.hpp"
 #include "models/currentdipoleoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
+#include "models/floquetportoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/portexcitations.hpp"
@@ -63,6 +64,7 @@ private:
   SurfaceImpedanceOperator surf_z_op;
   LumpedPortOperator lumped_port_op;
   WavePortOperator wave_port_op;
+  FloquetPortOperator floquet_port_op;
   SurfaceCurrentOperator surf_j_op;
 
   PortExcitations port_excitation_helper;
@@ -134,10 +136,19 @@ public:
   // Access to underlying BC operator objects for postprocessing.
   auto &GetLumpedPortOp() { return lumped_port_op; }
   auto &GetWavePortOp() { return wave_port_op; }
+  auto &GetFloquetPortOp() { return floquet_port_op; }
   auto &GetSurfaceCurrentOp() { return surf_j_op; }
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
+  const auto &GetFloquetPortOp() const { return floquet_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
+
+  // Get the low-rank Floquet port boundary operator F(omega).
+  // Returns nullptr if no Floquet ports are configured.
+  std::unique_ptr<ComplexOperator> GetFloquetPortOperator(double omega)
+  {
+    return floquet_port_op.GetExtraSystemOperator(omega);
+  }
 
   const auto &GetPortExcitations() const { return port_excitation_helper; }
 

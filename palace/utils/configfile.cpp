@@ -645,6 +645,20 @@ WavePortData::WavePortData(const json &port)
   integration_order = port.value("IntegrationOrder", integration_order);
 }
 
+FloquetPortData::FloquetPortData(const json &port)
+{
+  int index = port.at("Index");                                // Required
+  attributes = port.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  excitation = ParsePortExcitation(port, index);
+  active = port.value("Active", active);
+  inc_order_m = port.value("IncidentOrderM", inc_order_m);
+  inc_order_n = port.value("IncidentOrderN", inc_order_n);
+  inc_polarization = port.value("IncidentPolarization", inc_polarization);
+  max_order = port.value("MaxOrder", max_order);
+  num_evanescent = port.value("NumEvanescent", num_evanescent);
+}
+
 SurfaceCurrentData::SurfaceCurrentData(const json &source)
 {
   if (source.find("Attributes") != source.end())
@@ -966,6 +980,8 @@ BoundaryData::BoundaryData(const json &boundaries)
   terminal = ParseOptionalMap<TerminalData>(boundaries, "Terminal", "\"Terminal\"");
   periodic = ParseOptional<PeriodicBoundaryData>(boundaries, "Periodic");
   waveport = ParseOptionalMap<WavePortData>(boundaries, "WavePort", "\"WavePort\"");
+  floquetport =
+      ParseOptionalMap<FloquetPortData>(boundaries, "FloquetPort", "\"FloquetPort\"");
   current = ParseOptionalMap<SurfaceCurrentData>(boundaries, "SurfaceCurrent",
                                                  "\"SurfaceCurrent\"");
   postpro = ParseOptional<BoundaryPostData>(boundaries, "Postprocessing");
@@ -976,6 +992,7 @@ BoundaryData::BoundaryData(const json &boundaries)
     std::map<int, std::vector<int>> excitation_map;
     const std::string lumpedport_str = "\"LumpedPort\"";
     const std::string waveport_str = "WavePort";
+    const std::string floquetport_str = "FloquetPort";
     const std::string current_str = "SurfaceCurrent";
 
     for (const auto &data : lumpedport)
@@ -988,6 +1005,13 @@ BoundaryData::BoundaryData(const json &boundaries)
     for (const auto &data : waveport)
     {
       auto result = index_map.insert({data.first, waveport_str});
+      MFEM_VERIFY(result.second, "Duplicate \"Index\": " << data.first << " in "
+                                                         << index_map[data.first] << "!");
+      excitation_map[data.second.excitation].emplace_back(data.first);
+    }
+    for (const auto &data : floquetport)
+    {
+      auto result = index_map.insert({data.first, floquetport_str});
       MFEM_VERIFY(result.second, "Duplicate \"Index\": " << data.first << " in "
                                                          << index_map[data.first] << "!");
       excitation_map[data.second.excitation].emplace_back(data.first);
@@ -1029,6 +1053,13 @@ BoundaryData::BoundaryData(const json &boundaries)
           wp.excitation = port_idx;
         }
       }
+      for (auto &[port_idx, fp] : floquetport)
+      {
+        if (fp.excitation == 1)
+        {
+          fp.excitation = port_idx;
+        }
+      }
     }
   }
 
@@ -1054,6 +1085,10 @@ BoundaryData::BoundaryData(const json &boundaries)
     }
   }
   for (const auto &[idx, data] : waveport)
+  {
+    attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
+  }
+  for (const auto &[idx, data] : floquetport)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }

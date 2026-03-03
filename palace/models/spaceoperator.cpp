@@ -52,8 +52,10 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     farfield_op(iodata, mat_op, *mesh.back()), surf_sigma_op(iodata, mat_op, *mesh.back()),
     surf_z_op(iodata, mat_op, *mesh.back()), lumped_port_op(iodata, mat_op, *mesh.back()),
     wave_port_op(iodata, mat_op, GetNDSpace(), GetH1Space()),
+    floquet_port_op(iodata, mat_op, GetNDSpace().Get()),
     surf_j_op(iodata, *mesh.back()),
-    port_excitation_helper(lumped_port_op, wave_port_op, surf_j_op, current_dipole_op)
+    port_excitation_helper(lumped_port_op, wave_port_op, floquet_port_op, surf_j_op,
+                           current_dipole_op)
 {
   // In 2D, curl maps H(curl) → L2 (scalar), so we need an L2 FE space for B = curl E.
   // Must use INTEGRAL map type so the discrete interpolator recognizes this as the curl
@@ -901,6 +903,9 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
 
   // Contribution for numeric wave ports.
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+
+  // Contribution for Floquet ports (full-rank Robin BC for absorption).
+  floquet_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
 }
 
 void SpaceOperator::AddRealPeriodicCoefficients(double coeff,
@@ -1093,13 +1098,17 @@ bool SpaceOperator::AddExcitationVector2Internal(int excitation_idx, double omeg
   // the specified frequency.
   MFEM_VERIFY(RHS2.Size() == GetNDSpace().GetTrueVSize(),
               "Invalid T-vector size for AddExcitationVector2Internal!");
+  // Floquet port excitation: directly adds to RHS (not via boundary linear form).
+  bool nnz_floquet =
+      floquet_port_op.AddExcitationVector(excitation_idx, omega, RHS2);
+
   SumVectorCoefficient fbr(GetMesh().SpaceDimension()), fbi(GetMesh().SpaceDimension());
   wave_port_op.AddExcitationBdrCoefficients(excitation_idx, omega, fbr, fbi);
   int empty = (fbr.empty() && fbi.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
   {
-    return false;
+    return nnz_floquet;
   }
   {
     mfem::LinearForm rhs2(&GetNDSpace().Get());

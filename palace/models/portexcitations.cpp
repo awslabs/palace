@@ -4,6 +4,7 @@
 #include "portexcitations.hpp"
 
 #include "currentdipoleoperator.hpp"
+#include "floquetportoperator.hpp"
 #include "lumpedportoperator.hpp"
 #include "surfacecurrentoperator.hpp"
 #include "waveportoperator.hpp"
@@ -36,6 +37,11 @@ namespace palace
       to(" Wave port{} {:2d}\n", (ex.wave_port.size() > 1) ? "s" : "",
          fmt::join(ex.wave_port, " "));
     }
+    if (!ex.floquet_port.empty())
+    {
+      to(" Floquet port{} {:2d}\n", (ex.floquet_port.size() > 1) ? "s" : "",
+         fmt::join(ex.floquet_port, " "));
+    }
     if (!ex.current_port.empty())
     {
       to(" Surface current port{} {:2d}\n", (ex.current_port.size() > 1) ? "s" : "",
@@ -55,6 +61,7 @@ void to_json(nlohmann::json &j, const PortExcitations::SingleExcitationSpec &p)
 {
   j = nlohmann::json{{"LumpedPort", p.lumped_port},
                      {"WavePort", p.wave_port},
+                     {"FloquetPort", p.floquet_port},
                      {"SurfaceCurrent", p.current_port},
                      {"CurrentDipole", p.current_dipole}};
 }
@@ -63,6 +70,7 @@ void from_json(const nlohmann::json &j, PortExcitations::SingleExcitationSpec &p
 {
   j.at("LumpedPort").get_to(p.lumped_port);
   j.at("WavePort").get_to(p.wave_port);
+  j.at("FloquetPort").get_to(p.floquet_port);
   j.at("SurfaceCurrent").get_to(p.current_port);
   j.at("CurrentDipole").get_to(p.current_dipole);
 }
@@ -79,6 +87,7 @@ void from_json(const nlohmann::json &j, PortExcitations &p)
 
 PortExcitations::PortExcitations(const LumpedPortOperator &lumped_port_op,
                                  const WavePortOperator &wave_port_op,
+                                 const FloquetPortOperator &floquet_port_op,
                                  const SurfaceCurrentOperator &surf_j_op,
                                  const CurrentDipoleOperator &dipole_op)
 {
@@ -99,6 +108,15 @@ PortExcitations::PortExcitations(const LumpedPortOperator &lumped_port_op,
     }
     excitations.try_emplace(port.excitation, SingleExcitationSpec{});
     excitations.at(port.excitation).wave_port.push_back(idx);
+  }
+  for (const auto &[idx, port] : floquet_port_op)
+  {
+    if (!port.HasExcitation())
+    {
+      continue;
+    }
+    excitations.try_emplace(port.excitation, SingleExcitationSpec{});
+    excitations.at(port.excitation).floquet_port.push_back(idx);
   }
 
   // Surface currents are always excited. Add them to all single existing excitations.

@@ -527,6 +527,36 @@ public:
   WavePortData(const json &port);
 };
 
+struct FloquetPortData
+{
+public:
+  // Input excitation for driven solver:
+  // - 1-based index if excited; 0 if not excited.
+  int excitation = 0;
+
+  // Flag for boundary damping term in driven simulations.
+  bool active = true;
+
+  // List of boundary attributes for this Floquet port.
+  std::vector<int> attributes = {};
+
+  // Incident mode diffraction order (m, n). Default (0,0) = specular.
+  int inc_order_m = 0;
+  int inc_order_n = 0;
+
+  // Incident mode polarization: "TE" or "TM".
+  std::string inc_polarization = "TE";
+
+  // Maximum diffraction order index to include. -1 = auto from geometry + frequency.
+  int max_order = -1;
+
+  // Number of evanescent orders to include beyond propagating cutoff.
+  int num_evanescent = 2;
+
+  FloquetPortData() = default;
+  FloquetPortData(const json &port);
+};
+
 struct SurfaceCurrentData
 {
 public:
@@ -682,6 +712,7 @@ public:
   std::map<int, LumpedPortData> lumpedport = {};
   std::map<int, TerminalData> terminal = {};
   std::map<int, WavePortData> waveport = {};
+  std::map<int, FloquetPortData> floquetport = {};
   std::map<int, SurfaceCurrentData> current = {};
   PeriodicBoundaryData periodic = {};
   BoundaryPostData postpro = {};

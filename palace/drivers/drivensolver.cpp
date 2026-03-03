@@ -16,6 +16,7 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/floquetportoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
@@ -160,7 +161,17 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
                                         K.get(), C.get(), M.get(), A2.get());
       auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
           1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
-      ksp.SetOperators(*A, *P);
+
+      // Add low-rank Floquet port boundary operator F(omega) to the system matrix.
+      auto F = space_op.GetFloquetPortOperator(omega);
+      std::unique_ptr<ComplexOperator> A_total;
+      if (F)
+      {
+        A_total =
+            std::make_unique<SumComplexOperator>(std::move(A), std::move(F));
+      }
+
+      ksp.SetOperators(F ? *A_total : *A, *P);
 
       Mpi::Print(
           "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",
@@ -193,6 +204,32 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         // Calculate B field correction for Floquet BCs.
         // B = -1/(iω) ∇ x E + 1/ω kp x E
         floquet_corr->AddMult(E, B, 1.0 / omega);
+      }
+
+      // Floquet port S-parameter extraction.
+      if (!space_op.GetFloquetPortOp().Empty())
+      {
+        for (const auto &[port_idx, port] : space_op.GetFloquetPortOp())
+        {
+          auto S_all = port.GetAllSParameters(E);
+          for (auto &[key, S] : S_all)
+          {
+            auto [m, n, is_te] = key;
+            // Subtract incident field for the driving port's incident mode.
+            if (port.excitation == excitation_idx)
+            {
+              bool is_inc_mode = port.IsIncidentMode(m, n, is_te);
+              if (is_inc_mode)
+              {
+                S -= 1.0;
+              }
+            }
+            Mpi::Print(" Floquet S[port {:d}]({:d},{:d},{}) = ({:.6e}, {:.6e}), "
+                       "|S|^2 = {:.6e}\n",
+                       port_idx, m, n, is_te ? "TE" : "TM",
+                       S.real(), S.imag(), std::norm(S));
+          }
+        }
       }
 
       auto total_domain_energy =
