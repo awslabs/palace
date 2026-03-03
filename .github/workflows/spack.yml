@@ -77,7 +77,19 @@ jobs:
           toolchain: gcc
           variant: "+openmp+int64~shared"
           run-regression-tests: 'false'
- 
+
+  build-x64-gcc-cxx20:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
+          variant: " cxxstd=20"
+          run-regression-tests: 'false'
+
   build-test-x64-llvm:
     needs: filter
     if: needs.filter.outputs.test == 'true'

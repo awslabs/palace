@@ -15,9 +15,14 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
   message(FATAL_ERROR "In-source builds are prohibited")
 endif()
 
-# C++17 required for std::filesystem, among others
+# C++17 required for std::filesystem, among others. Override via -DCMAKE_CXX_STANDARD=<VALUE>
+if(NOT DEFINED CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 17)
+endif()
+if(CMAKE_CXX_STANDARD LESS 17)
+  message(FATAL_ERROR "Palace requires C++17 or later (got ${CMAKE_CXX_STANDARD})")
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Initialize the project

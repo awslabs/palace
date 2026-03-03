@@ -361,70 +361,75 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::Par
   {
     return;
   }
-
-  fmt::memory_buffer buf{};  // Output buffer & buffer append lambda for cleaner code
-  auto to = [](auto &buf, auto fmt, auto &&...args)
-  { fmt::format_to(std::back_inserter(buf), fmt, std::forward<decltype(args)>(args)...); };
+  fmt::memory_buffer buffer{};
+  auto out = fmt::appender{buffer};
   using VT = Units::ValueType;
 
   // Print out BC info for all port attributes, for both active and inactive ports.
-  to(buf, "\nConfiguring Robin impedance BC for lumped ports at attributes:\n");
+  fmt::format_to(out, "\nConfiguring Robin impedance BC for lumped ports at attributes:\n");
   for (const auto &[idx, data] : ports)
   {
     for (const auto &elem : data.elems)
     {
       for (auto attr : elem->GetAttrList())
       {
-        to(buf, " {:d}:", attr);
+        fmt::format_to(out, " {:d}:", attr);
         if (std::abs(data.R) > 0.0)
         {
           double Rs = data.R * data.GetToSquare(*elem);
-          to(buf, " Rs = {:.3e} Ω/sq,", iodata.units.Dimensionalize<VT::IMPEDANCE>(Rs));
+          fmt::format_to(out, " Rs = {:.3e} Ω/sq,",
+                         iodata.units.Dimensionalize<VT::IMPEDANCE>(Rs));
         }
         if (std::abs(data.L) > 0.0)
         {
           double Ls = data.L * data.GetToSquare(*elem);
-          to(buf, " Ls = {:.3e} H/sq,", iodata.units.Dimensionalize<VT::INDUCTANCE>(Ls));
+          fmt::format_to(out, " Ls = {:.3e} H/sq,",
+                         iodata.units.Dimensionalize<VT::INDUCTANCE>(Ls));
         }
         if (std::abs(data.C) > 0.0)
         {
           double Cs = data.C / data.GetToSquare(*elem);
-          to(buf, " Cs = {:.3e} F/sq,", iodata.units.Dimensionalize<VT::CAPACITANCE>(Cs));
+          fmt::format_to(out, " Cs = {:.3e} F/sq,",
+                         iodata.units.Dimensionalize<VT::CAPACITANCE>(Cs));
         }
-        to(buf, " n = ({:+.1f})\n", fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
+        fmt::format_to(out, " n = ({:+.1f})\n",
+                       fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
       }
     }
   }
 
   // Print out port info for all active ports.
-  fmt::memory_buffer buf_a{};
+  fmt::memory_buffer buffer_active{};
   for (const auto &[idx, data] : ports)
   {
     if (!data.active)
     {
       continue;
     }
-    to(buf_a, " Index = {:d}: ", idx);
+    std::vector<std::string> active_port_str;
     if (std::abs(data.R) > 0.0)
     {
-      to(buf_a, "R = {:.3e} Ω,", iodata.units.Dimensionalize<VT::IMPEDANCE>(data.R));
+      active_port_str.emplace_back(
+          fmt::format("R = {:.3e} Ω", iodata.units.Dimensionalize<VT::IMPEDANCE>(data.R)));
     }
     if (std::abs(data.L) > 0.0)
     {
-      to(buf_a, "L = {:.3e} H,", iodata.units.Dimensionalize<VT::INDUCTANCE>(data.L));
+      active_port_str.emplace_back(
+          fmt::format("L = {:.3e} H", iodata.units.Dimensionalize<VT::INDUCTANCE>(data.L)));
     }
     if (std::abs(data.C) > 0.0)
     {
-      to(buf_a, "C = {:.3e} F,", iodata.units.Dimensionalize<VT::CAPACITANCE>(data.C));
+      active_port_str.emplace_back(fmt::format(
+          "C = {:.3e} F", iodata.units.Dimensionalize<VT::CAPACITANCE>(data.C)));
     }
-    buf_a.resize(buf_a.size() - 1);  // Remove last ","
-    to(buf_a, "\n");
+    fmt::format_to(fmt::appender{buffer_active}, " Index = {:d}: {}\n", idx,
+                   fmt::join(active_port_str, ", "));
   }
-  if (buf_a.size() > 0)
+  if (buffer_active.size() > 0)
   {
-    to(buf, "\nConfiguring lumped port circuit properties:\n");
-    buf.append(buf_a);
-    buf_a.clear();
+    fmt::format_to(out, "\nConfiguring lumped port circuit properties:\n");
+    buffer.append(buffer_active);
+    buffer_active.clear();
   }
 
   // Print some information for excited lumped ports.
@@ -439,17 +444,18 @@ void LumpedPortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::Par
     {
       for (auto attr : elem->GetAttrList())
       {
-        to(buf_a, " {:d}: Index = {:d}\n", attr, idx);
+        fmt::format_to(fmt::appender{buffer_active}, " {:d}: Index = {:d}\n", attr, idx);
       }
     }
   }
-  if (buf_a.size() > 0)
+  if (buffer_active.size() > 0)
   {
-    to(buf, "\nConfiguring lumped port excitation source term at attributes:\n");
-    buf.append(buf_a);
+    fmt::format_to(out,
+                   "\nConfiguring lumped port excitation source term at attributes:\n");
+    buffer.append(buffer_active);
   }
 
-  Mpi::Print("{}", fmt::to_string(buf));
+  Mpi::Print("{}", fmt::to_string(buffer));
 }
 
 const LumpedPortData &LumpedPortOperator::GetPort(int idx) const

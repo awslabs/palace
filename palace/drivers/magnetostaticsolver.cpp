@@ -151,7 +151,6 @@ void MagnetostaticSolver::PostprocessTerminals(
   {
     return;
   }
-  using fmt::format;
 
   // Write inductance matrix data.
   auto PrintMatrix = [&surf_j_op, this](const std::string &file, const std::string &name,
@@ -163,11 +162,12 @@ void MagnetostaticSolver::PostprocessTerminals(
     int j = 0;
     for (const auto &[idx2, data2] : surf_j_op)
     {
-      output.table.insert(format("i2{}", idx2), format("{}[i][{}] {}", name, idx2, unit));
+      output.table.insert(fmt::format("i2{}", idx2),
+                          fmt::format("{}[i][{}] {}", name, idx2, unit));
       // Use the fact that iterator over i and j is the same span.
       output.table["i"] << idx2;
 
-      auto &col = output.table[format("i2{}", idx2)];
+      auto &col = output.table[fmt::format("i2{}", idx2)];
       for (std::size_t i = 0; i < surf_j_op.Size(); i++)
       {
         col << mat(i, j) * scale;
