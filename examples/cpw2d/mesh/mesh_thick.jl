@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # CPW 2D cross-section mesh generator with finite metal thickness.
 # Generates a Gmsh mesh for a coplanar waveguide cross-section with:
 # - Finite-thickness metal trace (PEC hole in the domain)
