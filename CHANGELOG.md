@@ -60,7 +60,7 @@ The format of this changelog is based on
   - Added `BoundaryMode` solver for mode analysis on 2D meshes, supporting both standalone 2D meshes
     and 2D boundary submesh extracted from a 3D mesh [PR 657](https://github.com/awslabs/palace/pull/657).
   - Added support for 2D meshes in all simulation types [PR 657](https://github.com/awslabs/palace/pull/657).
-  - Changed waveporte formulation to enable support for impedance boundary conditions [PR 657](https://github.com/awslabs/palace/pull/657).
+  - Changed waveport formulation to enable support for impedance boundary conditions [PR 657](https://github.com/awslabs/palace/pull/657).
   - Enabled voltage and impedance postprocessing for waveport and BoundaryMode by specifying a line
     from ground to conductor, either through mesh coordinates or boundary attribute
     in `config["Boundaries"]["Postprocessing"]["Impedance"]` [PR 657](https://github.com/awslabs/palace/pull/657).
