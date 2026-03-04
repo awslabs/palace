@@ -53,11 +53,10 @@ jobs:
         with:
           toolchain: gcc
           run-regression-tests: 'false'
-      - name: Install Docker
+      - name: Install Podman
         shell: bash
         run: |
-          sudo apt-get install -y docker.io
-          sudo systemctl start docker
+          sudo apt-get install -y podman
       - name: Generate Dockerfile
         shell: bash
         run: |
@@ -71,14 +70,15 @@ jobs:
       - name: Build Docker image
         shell: bash
         run: |
-          sudo docker build \
+          sudo podman build --format docker \
             --build-arg GITHUB_USER=$GITHUB_USER \
             --build-arg GITHUB_TOKEN=$GITHUB_TOKEN \
             -t palace-x86_64_v4 .
       - name: Save Docker image as tar
         shell: bash
         run: |
-          sudo docker save palace-x86_64_v4:latest -o palace-x86_64_v4.tar
+          sudo podman save palace-x86_64_v4:latest -o palace-x86_64_v4.tar
+          sudo chmod a+r palace-x86_64_v4.tar
       - name: Upload container
         uses: actions/upload-artifact@v4
         with:
