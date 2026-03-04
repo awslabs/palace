@@ -425,8 +425,8 @@ void LumpedPortOperator::PrintBoundaryInfo(const Units &units, const mfem::ParMe
     }
     if (std::abs(data.C) > 0.0)
     {
-      active_port_str.emplace_back(fmt::format(
-          "C = {:.3e} F", units.Dimensionalize<VT::CAPACITANCE>(data.C)));
+      active_port_str.emplace_back(
+          fmt::format("C = {:.3e} F", units.Dimensionalize<VT::CAPACITANCE>(data.C)));
     }
     fmt::format_to(fmt::appender{buffer_active}, " Index = {:d}: {}\n", idx,
                    fmt::join(active_port_str, ", "));

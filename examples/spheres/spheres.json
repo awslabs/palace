@@ -29,8 +29,8 @@
       "Probe":
       [
         {
-          "Index": 1,  // On surface of smaller sphere
-          "Center": [-1.5, 0.0, 0.0]
+          "Index": 1,  // Just above surface of smaller sphere
+          "Center": [-1.49, 0.0, 0.0]
         }
       ],
       "Energy":
