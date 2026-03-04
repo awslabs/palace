@@ -1182,11 +1182,10 @@ void WavePortOperator::PrintBoundaryInfo(const Units &units, const mfem::ParMesh
     }
     for (auto attr : data.GetAttrList())
     {
-      fmt::format_to(out,
-                     " {:d}: Index = {:d}, mode = {:d}, d = {:.3e} m,  n = ({:+.1f})\n",
-                     attr, idx, data.mode_idx,
-                     units.Dimensionalize<Units::ValueType::LENGTH>(data.d_offset),
-                     fmt::join(data.port_normal, ","));
+      fmt::format_to(
+          out, " {:d}: Index = {:d}, mode = {:d}, d = {:.3e} m,  n = ({:+.1f})\n", attr,
+          idx, data.mode_idx, units.Dimensionalize<Units::ValueType::LENGTH>(data.d_offset),
+          fmt::join(data.port_normal, ","));
     }
   }
   if (buffer.size() > 0)
