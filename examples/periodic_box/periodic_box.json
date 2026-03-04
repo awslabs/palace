@@ -1,0 +1,85 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/periodic_box"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/periodic_box.msh",
+    "L0": 1.0e-2
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      },
+      {
+        "Attributes": [2],
+        "Permeability": 1.0,
+        "Permittivity": 4.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "Periodic":
+    {
+      "FloquetWaveVector": [0.0, 0.0, 0.0],
+      "BoundaryPairs":
+      [
+        {
+          "DonorAttributes": [1],
+          "ReceiverAttributes": [2],
+          "Translation": [4.0, 0.0, 0.0]
+        },
+        {
+          "DonorAttributes": [3],
+          "ReceiverAttributes": [4],
+          "Translation": [0.0, 1.0, 0.0]
+        }
+      ]
+    },
+    "FloquetPort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [5],
+        "Excitation": true,
+        "IncidentOrderM": 0,
+        "IncidentOrderN": 0,
+        "IncidentPolarization": "TE",
+        "MaxOrder": 1,
+        "NumEvanescent": 0
+      },
+      {
+        "Index": 2,
+        "Attributes": [6],
+        "MaxOrder": 1,
+        "NumEvanescent": 0
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Driven":
+    {
+      "MinFreq": 10.0,
+      "MaxFreq": 10.0,
+      "FreqStep": 1.0
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-6,
+      "MaxIts": 200
+    }
+  }
+}

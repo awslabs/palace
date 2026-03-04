@@ -560,15 +560,35 @@ FloquetPortData::GetAllSParameters(const GridFunction &E) const
 {
   std::map<std::tuple<int, int, bool>, std::complex<double>> result;
 
-  // Fourier amplitude extraction: c_mn = v_mn^T E / |Γ|, where v^T E is the bilinear
-  // (not Hermitian) product. This gives the mode amplitude coefficient of the total field.
+  // Power-normalized S-parameter extraction.
   //
-  // For unit-amplitude E_inc = ê exp(iB·r): v^T E_inc = |Γ|, so c = 1. ✓
-  // For the driving port: S = c - 1 (subtract incident field contribution).
+  // Step 1: Field amplitude c_mn = v_mn^T E / |Γ| (Fourier coefficient of total field).
+  // Step 2: Power normalization: S_mn = √(γ_mn / γ_inc) × c_mn.
   //
-  // Power S-parameters: |S_ij|² = (γ_i/(ωμ_i)) / (γ_j/(ωμ_j)) × |c_field|², where γ_i
-  // and γ_j account for different wave impedances at different ports. For same material:
-  // |S|² = |c|² directly.
+  // This ensures Σ |S_mn|² = 1 for energy conservation (lossless). The factor √(γ_mn/γ_inc)
+  // accounts for different power-per-amplitude for different diffraction orders (higher-angle
+  // orders carry less power per unit amplitude due to oblique propagation).
+  //
+  // For the incident (0,0) mode: γ_inc = γ_00 = ω √(μ_r ε_r), so √(γ/γ_inc) = 1.
+  // For the driving port: S = √(γ/γ_inc) × c - δ_{incident mode} (subtract 1).
+
+  // Compute γ_inc = γ for the (0,0) mode at this port.
+  double gamma_inc = std::sqrt(omega0 * omega0 * mu_eps_port);
+
+  // Restrict E to true DOFs once (shared across all modes).
+  const auto *P = E.Real().ParFESpace()->GetProlongationMatrix();
+  int tdof_size = modes.empty() ? 0 : static_cast<int>(modes[0].v.Size());
+  Vector E_r_tdof(tdof_size), E_i_tdof(tdof_size);
+  P->MultTranspose(E.Real(), E_r_tdof);
+  if (E.HasImag())
+  {
+    P->MultTranspose(E.Imag(), E_i_tdof);
+  }
+  else
+  {
+    E_i_tdof = 0.0;
+  }
+
   for (const auto &mode : modes)
   {
     if (mode.gamma_sq <= 0.0)
@@ -576,28 +596,20 @@ FloquetPortData::GetAllSParameters(const GridFunction &E) const
       continue;  // Only propagating orders carry S-parameters.
     }
 
-    // Bilinear v^T E = (v_r·E_r - v_i·E_i) + i(v_r·E_i + v_i·E_r).
-    // The projection vectors v are in true DOF space; the GridFunction E is in L-vector
-    // space. Restrict E to true DOFs using the prolongation transpose: e_t = P^T e.
-    const auto *P = E.Real().ParFESpace()->GetProlongationMatrix();
-    Vector E_r_tdof(mode.v.Size()), E_i_tdof(mode.v.Size());
-    P->MultTranspose(E.Real(), E_r_tdof);
-    if (E.HasImag())
-    {
-      P->MultTranspose(E.Imag(), E_i_tdof);
-    }
-    else
-    {
-      E_i_tdof = 0.0;
-    }
+    double gamma_mn = std::sqrt(mode.gamma_sq);
 
+    // Bilinear v^T E = (v_r·E_r - v_i·E_i) + i(v_r·E_i + v_i·E_r).
     double sr = linalg::Dot(comm, mode.v.Real(), E_r_tdof) -
                 linalg::Dot(comm, mode.v.Imag(), E_i_tdof);
     double si = linalg::Dot(comm, mode.v.Real(), E_i_tdof) +
                 linalg::Dot(comm, mode.v.Imag(), E_r_tdof);
 
+    // Field amplitude: c = v^T E / |Γ|.
+    // Power normalization: S = √(γ_mn / γ_inc) × c.
+    double power_factor = std::sqrt(gamma_mn / gamma_inc);
+
     auto key = std::make_tuple(mode.m, mode.n, mode.is_te);
-    result[key] = std::complex<double>(sr, si) / port_area;
+    result[key] = power_factor * std::complex<double>(sr, si) / port_area;
   }
 
   return result;
