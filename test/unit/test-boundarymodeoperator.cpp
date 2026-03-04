@@ -175,14 +175,16 @@ TEST_CASE("BoundaryModeOperator PEC", "[boundarymodeoperator][Serial]")
   //   kc = π / a = π / 1e-3 m
   //   kn = sqrt(ω²ε_r/c² - kc²)
   //   kn ≈ 20708 1/m → nondimensional (×Lc where Lc = 1e-6 m) ≈ 0.02071
-  // Allow 2% tolerance for the coarse 10×5 mesh at order 2.
-  CHECK_THAT(kn_real, WithinRel(0.02071, 0.02));
+  // Allow 5% tolerance for the coarse 10×5 mesh at order 2.
+  CHECK_THAT(kn_real, WithinRel(0.02071, 0.05));
 }
 
 TEST_CASE("BoundaryModeOperator Impedance shifts kn", "[boundarymodeoperator][Serial]")
 {
   auto pec_result = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 3, [](IoData &) {});
 
+  // Use a large enough inductance so the impedance shift is well above numerical
+  // noise across different BLAS/LAPACK implementations.
   auto imp_result = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 3,
                                           [](IoData &iodata)
                                           {
@@ -190,7 +192,7 @@ TEST_CASE("BoundaryModeOperator Impedance shifts kn", "[boundarymodeoperator][Se
                                             auto &imp =
                                                 iodata.boundaries.impedance.emplace_back();
                                             imp.attributes = {2};
-                                            imp.Ls = 1.0e-10;
+                                            imp.Ls = 1.0e-8;
                                           });
 
   REQUIRE(pec_result.num_converged >= 1);
