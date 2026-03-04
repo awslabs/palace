@@ -424,18 +424,23 @@ void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
     }
   }
 
-  // Matrix representation of cross product with wave vector
+  // Matrix representation of cross product with wave vector (3D only).
   // [k x] = | 0  -k3  k2|
   //         | k3  0  -k1|
   //         |-k2  k1  0 |
-  wave_vector_cross.SetSize(3);
+  // For 2D, the cross product is not defined; set to sdim x sdim zeros so that
+  // subsequent Mult operations have matching dimensions.
+  wave_vector_cross.SetSize(sdim);
   wave_vector_cross = 0.0;
-  wave_vector_cross(0, 1) = -wave_vector[2];
-  wave_vector_cross(0, 2) = wave_vector[1];
-  wave_vector_cross(1, 0) = wave_vector[2];
-  wave_vector_cross(1, 2) = -wave_vector[0];
-  wave_vector_cross(2, 0) = -wave_vector[1];
-  wave_vector_cross(2, 1) = wave_vector[0];
+  if (sdim == 3)
+  {
+    wave_vector_cross(0, 1) = -wave_vector[2];
+    wave_vector_cross(0, 2) = wave_vector[1];
+    wave_vector_cross(1, 0) = wave_vector[2];
+    wave_vector_cross(1, 2) = -wave_vector[0];
+    wave_vector_cross(2, 0) = -wave_vector[1];
+    wave_vector_cross(2, 1) = wave_vector[0];
+  }
 }
 
 mfem::Array<int> MaterialOperator::GetBdrAttributeToMaterial() const
