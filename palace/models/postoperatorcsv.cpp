@@ -917,7 +917,6 @@ auto PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
     return;
   }
   // Currently only works for lumped ports.
-  const auto &lumped_port_op = fem_op.GetLumpedPortOp();
   port_V = TableWithCSVFile(post_dir / "port-V.csv", reload_table);
   port_I = TableWithCSVFile(post_dir / "port-I.csv", reload_table);
 
@@ -986,7 +985,7 @@ auto PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
     {
       for (const auto &[idx, data] : fem_op.GetWavePortOp())
       {
-        if (data.has_voltage_coords)
+        if (data.HasVoltageCoords())
         {
           tV.insert(fmt::format("re_w{}_{}", idx, ex_idx),
                     fmt::format("Re{{V_wp[{}]{}}} (V)", idx, ex_label), ex_idx);
