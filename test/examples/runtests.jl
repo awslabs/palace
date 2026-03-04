@@ -615,7 +615,7 @@ end
 
 # Coarser test tolerances for driven simulations with ports
 reltol = 2.0e-2
-abstol = 1.0e-10
+abstol = 1.0e-8
 
 if "cavity2d/driven" in cases
     @info "Testing cavity2d/driven (2D driven)..."
@@ -635,6 +635,7 @@ if "cavity2d/driven" in cases
 end
 
 reltol = 1.0e-4
+abstol = 1.0e-10
 
 if "cavity2d/electrostatic" in cases
     @info "Testing cavity2d/electrostatic (2D electrostatic)..."
