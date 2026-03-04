@@ -3,6 +3,9 @@
 
 #include "boundarymodeoperator.hpp"
 
+#include <algorithm>
+#include <numeric>
+
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
@@ -199,22 +202,35 @@ BoundaryModeOperator::Solve(double omega, double sigma, bool has_solver,
 
   int num_conv = eigen->Solve();
 
+  // Build a permutation sorted by descending Re{kn} so that mode ordering is consistent
+  // across eigensolver backends (ARPACK vs SLEPc sort eigenvalues differently). Descending
+  // order puts the mode closest to the shift target first.
+  mode_perm.resize(num_conv);
+  std::iota(mode_perm.begin(), mode_perm.end(), 0);
+  std::sort(mode_perm.begin(), mode_perm.end(),
+            [this, sigma](int a, int b)
+            {
+              auto kn_a = std::sqrt(-sigma - 1.0 / eigen->GetEigenvalue(a));
+              auto kn_b = std::sqrt(-sigma - 1.0 / eigen->GetEigenvalue(b));
+              return kn_a.real() > kn_b.real();
+            });
+
   return {num_conv, sigma};
 }
 
 std::complex<double> BoundaryModeOperator::GetEigenvalue(int i) const
 {
-  return eigen->GetEigenvalue(i);
+  return eigen->GetEigenvalue(mode_perm[i]);
 }
 
 double BoundaryModeOperator::GetError(int i, EigenvalueSolver::ErrorType type) const
 {
-  return eigen->GetError(i, type);
+  return eigen->GetError(mode_perm[i], type);
 }
 
 void BoundaryModeOperator::GetEigenvector(int i, ComplexVector &x) const
 {
-  eigen->GetEigenvector(i, x);
+  eigen->GetEigenvector(mode_perm[i], x);
 }
 
 // Stiffness matrix (shifted): Att = (mu_cc^{-1} curl_t x u, curl_t x v)
