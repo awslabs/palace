@@ -227,6 +227,10 @@ private:
   std::unique_ptr<EigenvalueSolver> eigen;
   std::unique_ptr<ComplexKspSolver> ksp;
 
+  // Permutation that maps external mode index to eigensolver index, sorted by ascending
+  // Re{kn}. This ensures consistent mode ordering regardless of eigensolver backend.
+  std::vector<int> mode_perm;
+
   // Assemble frequency-dependent Att and Ann, then build block A (MPI collective on FE
   // space comm).
   void AssembleFrequencyDependent(double omega, double sigma);
