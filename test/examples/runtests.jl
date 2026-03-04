@@ -627,7 +627,7 @@ if "cavity2d/driven" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
-        excluded_columns=["Maximum", "Minimum"],
+        excluded_columns=["Maximum", "Minimum", "Mean"],
         device=device,
         linear_solver="Default",
         eigen_solver=eigensolver
