@@ -3,8 +3,8 @@
 
 #include "blockprecond.hpp"
 
-#include <algorithm>
 #include <mfem.hpp>
+#include <mfem/general/forall.hpp>
 
 namespace palace
 {
@@ -12,11 +12,15 @@ namespace palace
 namespace
 {
 
-void CopySubVector(const Vector &src, Vector &dst, int src_offset, int dst_offset, int size)
+void CopySubVector(const Vector &src, Vector &dst, int src_offset, int dst_offset,
+                    int size)
 {
-  const auto *sd = src.Read();
-  auto *dd = dst.Write();
-  std::copy_n(sd + src_offset, size, dd + dst_offset);
+  const bool use_dev = dst.UseDevice();
+  const auto *sd = src.Read(use_dev);
+  auto *dd = dst.Write(use_dev);
+  mfem::forall_switch(use_dev, size,
+                      [=] MFEM_HOST_DEVICE(int i)
+                      { dd[dst_offset + i] = sd[src_offset + i]; });
 }
 
 }  // namespace
