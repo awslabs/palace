@@ -57,11 +57,11 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
     {
       mfem::Vector n0(normals.GetColumn(0), 2);
       mfem::Vector n1(normals.GetColumn(1), 2);
-      Mpi::Warning("User specified direction does not align with either bounding box "
+      Mpi::Warning("User specified direction {} does not align with either bounding box "
                    "axis up to {:.3e} degrees!\n"
                    "Axis 1: ({}) ({:.3e} degrees)\n"
                    "Axis 2: ({}) ({:.3e} degrees)!\n",
-                   angle_warning_deg, fmt::join(n0, ", "), deviations_deg(0),
+                   input_dir, angle_warning_deg, fmt::join(n0, ", "), deviations_deg(0),
                    fmt::join(n1, ", "), deviations_deg(1));
     }
   }

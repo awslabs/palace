@@ -339,7 +339,6 @@ double ComputeLineIntegral(const mfem::Vector &p1, const mfem::Vector &p2,
 
   // Interpolate the vector field at the quadrature points.
   const int vdim = field.VectorDim();
-  const bool by_vdim = (field.FESpace()->GetOrdering() == mfem::Ordering::byVDIM);
   mfem::Vector vals(npts * vdim);
   InterpolateFunction(xyz, field, vals, mfem::Ordering::byNODES);
 
@@ -353,8 +352,8 @@ double ComputeLineIntegral(const mfem::Vector &p1, const mfem::Vector &p2,
     double dot = 0.0;
     for (int d = 0; d < ndot; d++)
     {
-      // Access with correct stride depending on the output ordering.
-      double val = by_vdim ? vals(i * vdim + d) : vals(d * npts + i);
+      // vals is always in byNODES ordering from InterpolateFunction.
+      double val = vals(d * npts + i);
       dot += val * dl(d);
     }
     result += ir.IntPoint(i).weight * dot;

@@ -348,6 +348,7 @@ void Mesh::Update()
 {
   // Attribute mappings, etc. are always constructed for the parent mesh (use boundary
   // attribute maps for the domain attributes of a boundary submesh, for example).
+  ceed_from_self = false;
   auto &parent_mesh = GetParentMesh(*mesh);
   parent_mesh.ExchangeFaceNbrData();
   loc_attr.clear();

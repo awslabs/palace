@@ -159,7 +159,7 @@
           "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
           "Verbose": { "type": "integer", "minimum": 0.0 },
           "VoltagePath": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 } },
-          "IntegrationOrder": { "type": "integer", "minimum": 1 }
+          "NSamples": { "type": "integer", "minimum": 1 }
         }
       }
     },
@@ -344,7 +344,7 @@
               "CurrentAttributes": { "$ref": "#/$defs/Attributes" },
               "VoltagePath": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 } },
               "CurrentPath": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 } },
-              "IntegrationOrder": { "type": "integer", "minimum": 1 }
+              "NSamples": { "type": "integer", "minimum": 1 }
             }
           }
         },
@@ -361,7 +361,7 @@
               "Index": { "type": "integer" },
               "VoltageAttributes": { "$ref": "#/$defs/Attributes" },
               "VoltagePath": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 } },
-              "IntegrationOrder": { "type": "integer", "minimum": 1 }
+              "NSamples": { "type": "integer", "minimum": 1 }
             }
           }
         },

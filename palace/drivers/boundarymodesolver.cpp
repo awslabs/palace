@@ -180,17 +180,13 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // 1, each hierarchy has a single level (no multigrid — falls back to sparse direct).
   // Wrap the solve mesh in a single-element vector for
   // ConstructFiniteElementSpaceHierarchy. For the submesh case, temporarily move ownership;
-  // for the non-submesh case, use a non-owning raw pointer wrapper (released after
-  // hierarchy construction).
+  // for the non-submesh case, use the caller's mesh vector directly.
   std::vector<std::unique_ptr<Mesh>> solve_mesh_vec;
   if (use_submesh)
   {
     solve_mesh_vec.push_back(std::move(submesh_holder));
   }
-  else
-  {
-    solve_mesh_vec.emplace_back(solve_mesh);  // Non-owning
-  }
+  const auto &fespace_mesh = use_submesh ? solve_mesh_vec : mesh;
 
   const auto &mg = iodata.solver.linear;
   auto nd_fecs = fem::ConstructFECollections<mfem::ND_FECollection>(
@@ -202,9 +198,9 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   std::vector<mfem::Array<int>> nd_dbc_tdof_lists, h1_dbc_tdof_lists;
   auto nd_fespaces = fem::ConstructFiniteElementSpaceHierarchy(
-      mg.mg_max_levels, solve_mesh_vec, nd_fecs, &dbc_bcs, &nd_dbc_tdof_lists);
+      mg.mg_max_levels, fespace_mesh, nd_fecs, &dbc_bcs, &nd_dbc_tdof_lists);
   auto h1_fespaces = fem::ConstructFiniteElementSpaceHierarchy(
-      mg.mg_max_levels, solve_mesh_vec, h1_fecs, &dbc_bcs, &h1_dbc_tdof_lists);
+      mg.mg_max_levels, fespace_mesh, h1_fecs, &dbc_bcs, &h1_dbc_tdof_lists);
 
   // H1 auxiliary space hierarchy for Hiptmair distributive relaxation in the ND block.
   auto h1_aux_fecs = fem::ConstructFECollections<mfem::H1_FECollection>(
@@ -212,16 +208,12 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       false);
   std::vector<mfem::Array<int>> h1_aux_dbc_tdof_lists;
   auto h1_aux_fespaces = fem::ConstructFiniteElementSpaceHierarchy(
-      mg.mg_max_levels, solve_mesh_vec, h1_aux_fecs, &dbc_bcs, &h1_aux_dbc_tdof_lists);
+      mg.mg_max_levels, fespace_mesh, h1_aux_fecs, &dbc_bcs, &h1_aux_dbc_tdof_lists);
 
-  // Restore mesh ownership.
+  // Restore submesh ownership.
   if (use_submesh)
   {
     submesh_holder = std::move(solve_mesh_vec[0]);
-  }
-  else
-  {
-    solve_mesh_vec[0].release();  // Release the non-owning wrapper.
   }
 
   // Get finest-level spaces (used by the rest of the code).
@@ -399,16 +391,15 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     double error_bkwd = mode_solver.GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
     double error_abs = mode_solver.GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
 
-    // Extract et (ND) and en_tilde (H1) from eigenvector.
-    ComplexVector et(nd_size), en(h1_size);
-    {
-      ComplexVector e0(nd_size + h1_size);
-      mode_solver.GetEigenvector(i, e0);
-      std::copy_n(e0.Real().begin(), nd_size, et.Real().begin());
-      std::copy_n(e0.Imag().begin(), nd_size, et.Imag().begin());
-      std::copy_n(e0.Real().begin() + nd_size, h1_size, en.Real().begin());
-      std::copy_n(e0.Imag().begin() + nd_size, h1_size, en.Imag().begin());
-    }
+    // Extract et (ND) and en_tilde (H1) as views into the block eigenvector.
+    ComplexVector e0(nd_size + h1_size);
+    e0.UseDevice(true);
+    mode_solver.GetEigenvector(i, e0);
+    ComplexVector et, en;
+    et.Real().MakeRef(e0.Real(), 0, nd_size);
+    et.Imag().MakeRef(e0.Imag(), 0, nd_size);
+    en.Real().MakeRef(e0.Real(), nd_size, h1_size);
+    en.Imag().MakeRef(e0.Imag(), nd_size, h1_size);
 
     // Power-normalize eigenvector.
     {
@@ -416,6 +407,8 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       if (Btt)
       {
         Vector Btt_etr(nd_size), Btt_eti(nd_size);
+        Btt_etr.UseDevice(true);
+        Btt_eti.UseDevice(true);
         Btt->Mult(et.Real(), Btt_etr);
         Btt->Mult(et.Imag(), Btt_eti);
         double p_rr = mfem::InnerProduct(nd_fespace.GetComm(), et.Real(), Btt_etr);
@@ -456,8 +449,11 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     if (i < num_modes && is_propagating)
     {
       ComplexVector bz(l2_size);
+      bz.UseDevice(true);
       {
         Vector curl_etr(l2_size), curl_eti(l2_size);
+        curl_etr.UseDevice(true);
+        curl_eti.UseDevice(true);
         CurlOp.Mult(et.Real(), curl_etr);
         CurlOp.Mult(et.Imag(), curl_eti);
         bz.Real() = curl_eti;

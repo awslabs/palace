@@ -51,8 +51,8 @@
     {
       "MinFreq": 0.1,  // GHz
       "MaxFreq": 0.4,  // GHz
-        "FreqStep": 0.05,  // GHz
-        "SaveStep": 1
+      "FreqStep": 0.05,  // GHz
+      "SaveStep": 1
     },
     "Linear":
     {

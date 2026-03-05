@@ -19,16 +19,16 @@ function generate_cpw2d_mesh(;
     # Geometry parameters (all in μm)
     w_trace::Float64     = 15.0,          # Trace width
     w_total_cpw::Float64 = 22.0,      # Total width of trace + 2 gaps (constant)
-    w_ground::Float64    = 500.0,        # Ground plane width on each side
-    t_metal::Float64     = 0.1,           # Metal thickness (must be > 0; use mesh_thin.jl for t=0)
-    h_substrate::Float64 = 525.0,     # Substrate thickness
-    h_vacuum::Float64    = 500.0,        # Vacuum region height above substrate
+    w_ground::Float64    = 500.0,  # Ground plane width on each side
+    t_metal::Float64     = 0.1,    # Metal thickness (must be > 0; use mesh_thin.jl for t=0)
+    h_substrate::Float64 = 525.0,  # Substrate thickness
+    h_vacuum::Float64    = 500.0,  # Vacuum region height above substrate
 
     # Mesh parameters
-    lc_gap::Float64=0.3,            # Mesh size in the gap region
-    lc_trace::Float64=1.0,          # Mesh size on the trace edges
-    lc_far::Float64=50.0,           # Mesh size far from the trace
-    mesh_order::Int=2,              # Mesh element order (1 or 2)
+    lc_gap::Float64   = 0.3,   # Mesh size in the gap region
+    lc_trace::Float64 = 1.0,   # Mesh size on the trace edges
+    lc_far::Float64   = 50.0,  # Mesh size far from the trace
+    mesh_order::Int   = 2,     # Mesh element order (1 or 2)
 
     # Output
     filename::String="cpw2d_thick.msh",
