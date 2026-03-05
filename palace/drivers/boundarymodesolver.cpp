@@ -109,10 +109,13 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         parent_mesh, attr_list, internal_bdr_attrs, surface_normal, submesh_centroid,
         submesh_e1, submesh_e2);
 
-    // Repartition across all MPI ranks and construct a distributed ParMesh.
-    int nprocs = Mpi::Size(comm);
-    std::unique_ptr<int[]> partitioning(serial_mesh->GeneratePartitioning(nprocs));
-    auto mesh_2d = std::make_unique<mfem::ParMesh>(comm, *serial_mesh, partitioning.get());
+    // Repartition across all MPI ranks using the MeshPartitioner-based distribution
+    // pipeline, which correctly handles shared entity topology and edge orientations.
+    if (!Mpi::Root(comm))
+    {
+      serial_mesh.reset();
+    }
+    auto mesh_2d = mesh::DistributeSerialMesh(comm, serial_mesh);
 
     submesh_holder = std::make_unique<Mesh>(std::move(mesh_2d));
     solve_mesh = submesh_holder.get();
