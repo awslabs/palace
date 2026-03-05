@@ -2115,6 +2115,19 @@ double GetVolume(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
   return volume;
 }
 
+std::unique_ptr<mfem::ParMesh> DistributeSerialMesh(MPI_Comm comm,
+                                                    std::unique_ptr<mfem::Mesh> &smesh)
+{
+  // Generate METIS partitioning on root and distribute using the MeshPartitioner pipeline,
+  // which correctly handles shared entity topology and edge orientations.
+  std::unique_ptr<int[]> partitioning;
+  if (Mpi::Root(comm))
+  {
+    partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), "", false);
+  }
+  return DistributeMesh(comm, smesh, partitioning.get());
+}
+
 double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh)
 {
   BlockTimer bt0(Timer::REBALANCE);

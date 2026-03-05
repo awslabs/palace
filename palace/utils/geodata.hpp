@@ -303,6 +303,13 @@ inline double GetVolume(const mfem::ParMesh &mesh, int attr)
   return GetVolume(mesh, marker);
 }
 
+// Distribute a serial mesh from the root processor across all MPI ranks using METIS
+// partitioning and the MeshPartitioner-based distribution pipeline. The serial mesh need
+// only be valid on the root rank (non-root ranks may pass an empty unique_ptr). The serial
+// mesh is consumed (released) during distribution.
+std::unique_ptr<mfem::ParMesh> DistributeSerialMesh(MPI_Comm comm,
+                                                    std::unique_ptr<mfem::Mesh> &smesh);
+
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
 // the intermediate stages to disk. Returns the imbalance ratio before rebalancing.
 double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh);
