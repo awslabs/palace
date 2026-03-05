@@ -1712,6 +1712,7 @@ void RemapSubMeshBdrAttributes(mfem::ParSubMesh &submesh,
               "RemapSubMeshBdrAttributes requires a boundary ParSubMesh!");
 
   const auto &parent = *submesh.GetParent();
+  MPI_Comm comm = submesh.GetComm();
 
   // Build a set of surface attributes for quick lookup.
   std::unordered_set<int> surface_attr_set;
@@ -1720,48 +1721,90 @@ void RemapSubMeshBdrAttributes(mfem::ParSubMesh &submesh,
     surface_attr_set.insert(surface_attrs[i]);
   }
 
-  // Build a map from parent edge index to parent boundary face attribute. For edges shared
-  // by multiple parent boundary faces, prefer the face that is NOT part of the mode
-  // analysis surface (since the submesh boundary lies at the intersection of the surface
-  // with adjacent boundaries, and we want the adjacent boundary's attribute).
-  std::unordered_map<int, int> edge_to_bdr_attr;
-  mfem::Array<int> edges, orientations;
-  for (int be = 0; be < parent.GetNBE(); be++)
+  // Get parent global vertex indices for rank-independent edge identification. An edge at
+  // the intersection of two parent boundary faces may be owned by different ranks — using
+  // local edge indices would miss the non-surface face if it's on another rank.
+  mfem::Array<HYPRE_BigInt> pvert_gi;
+  parent.GetGlobalVertexIndices(pvert_gi);
+
+  // Each rank: collect (gv0, gv1, attr, is_surface) for edges of local parent boundary
+  // elements, using sorted global vertex pairs as rank-independent edge identifiers.
+  std::vector<int> local_edge_attrs;
   {
-    int attr = parent.GetBdrAttribute(be);
-    parent.GetBdrElementEdges(be, edges, orientations);
-    bool is_surface = (surface_attr_set.count(attr) > 0);
-    for (int j = 0; j < edges.Size(); j++)
+    mfem::Array<int> edges, orientations, ev;
+    for (int be = 0; be < parent.GetNBE(); be++)
     {
-      auto it = edge_to_bdr_attr.find(edges[j]);
-      if (it == edge_to_bdr_attr.end())
+      int attr = parent.GetBdrAttribute(be);
+      bool is_surface = (surface_attr_set.count(attr) > 0);
+      parent.GetBdrElementEdges(be, edges, orientations);
+      for (int j = 0; j < edges.Size(); j++)
       {
-        edge_to_bdr_attr[edges[j]] = attr;
-      }
-      else if (!is_surface)
-      {
-        // Prefer the non-surface attribute (adjacent boundary's attribute).
-        it->second = attr;
+        parent.GetEdgeVertices(edges[j], ev);
+        int gv0 = static_cast<int>(pvert_gi[ev[0]]);
+        int gv1 = static_cast<int>(pvert_gi[ev[1]]);
+        local_edge_attrs.insert(local_edge_attrs.end(),
+                                {std::min(gv0, gv1), std::max(gv0, gv1), attr,
+                                 is_surface ? 1 : 0});
       }
     }
   }
 
-  // For each submesh boundary element (a 1D edge on the 2D submesh), trace back to the
-  // parent edge and assign the corresponding boundary attribute.
+  // Allgather edge attribute data so every rank has the complete picture.
+  int local_count = static_cast<int>(local_edge_attrs.size());
+  std::vector<int> recv_counts(Mpi::Size(comm));
+  MPI_Allgather(&local_count, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, comm);
+
+  std::vector<int> displs(Mpi::Size(comm));
+  int total = 0;
+  for (int i = 0; i < Mpi::Size(comm); i++)
+  {
+    displs[i] = total;
+    total += recv_counts[i];
+  }
+  std::vector<int> all_edge_attrs(total);
+  MPI_Allgatherv(local_edge_attrs.data(), local_count, MPI_INT, all_edge_attrs.data(),
+                 recv_counts.data(), displs.data(), MPI_INT, comm);
+
+  // Build resolved global vertex pair → attribute map. For edges shared by multiple parent
+  // boundary faces, prefer the face that is NOT part of the mode analysis surface.
+  std::map<std::pair<int, int>, int> gvpair_to_attr;
+  for (int i = 0; i < total / 4; i++)
+  {
+    int gv0 = all_edge_attrs[4 * i];
+    int gv1 = all_edge_attrs[4 * i + 1];
+    int attr = all_edge_attrs[4 * i + 2];
+    bool is_surface = (all_edge_attrs[4 * i + 3] != 0);
+    auto key = std::make_pair(gv0, gv1);
+    auto it = gvpair_to_attr.find(key);
+    if (it == gvpair_to_attr.end())
+    {
+      gvpair_to_attr[key] = attr;
+    }
+    else if (!is_surface)
+    {
+      it->second = attr;
+    }
+  }
+
+  // For each submesh boundary element, trace to parent edge, convert to global vertex pair,
+  // and apply the resolved attribute.
   const mfem::Array<int> &parent_edge_map = submesh.GetParentEdgeIDMap();
+  mfem::Array<int> ev;
   for (int sbe = 0; sbe < submesh.GetNBE(); sbe++)
   {
     int submesh_edge = submesh.GetBdrElementFaceIndex(sbe);
     MFEM_ASSERT(submesh_edge >= 0 && submesh_edge < parent_edge_map.Size(),
                 "Submesh boundary element edge index out of range!");
     int parent_edge = parent_edge_map[submesh_edge];
-    auto it = edge_to_bdr_attr.find(parent_edge);
-    if (it != edge_to_bdr_attr.end())
+    parent.GetEdgeVertices(parent_edge, ev);
+    int gv0 = static_cast<int>(pvert_gi[ev[0]]);
+    int gv1 = static_cast<int>(pvert_gi[ev[1]]);
+    auto key = std::make_pair(std::min(gv0, gv1), std::max(gv0, gv1));
+    auto it = gvpair_to_attr.find(key);
+    if (it != gvpair_to_attr.end())
     {
       submesh.SetBdrAttribute(sbe, it->second);
     }
-    // If not found, the edge has no parent boundary face (unlikely for a boundary submesh
-    // but possible for internal edges). Leave the default attribute.
   }
 
   // Note: We intentionally do NOT modify submesh.bdr_attributes here. Modifying
