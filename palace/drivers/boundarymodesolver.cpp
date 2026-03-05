@@ -399,16 +399,15 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     double error_bkwd = mode_solver.GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
     double error_abs = mode_solver.GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
 
-    // Extract et (ND) and en_tilde (H1) from eigenvector.
-    ComplexVector et(nd_size), en(h1_size);
-    {
-      ComplexVector e0(nd_size + h1_size);
-      mode_solver.GetEigenvector(i, e0);
-      std::copy_n(e0.Real().begin(), nd_size, et.Real().begin());
-      std::copy_n(e0.Imag().begin(), nd_size, et.Imag().begin());
-      std::copy_n(e0.Real().begin() + nd_size, h1_size, en.Real().begin());
-      std::copy_n(e0.Imag().begin() + nd_size, h1_size, en.Imag().begin());
-    }
+    // Extract et (ND) and en_tilde (H1) as views into the block eigenvector.
+    ComplexVector e0(nd_size + h1_size);
+    e0.UseDevice(true);
+    mode_solver.GetEigenvector(i, e0);
+    ComplexVector et, en;
+    et.Real().MakeRef(e0.Real(), 0, nd_size);
+    et.Imag().MakeRef(e0.Imag(), 0, nd_size);
+    en.Real().MakeRef(e0.Real(), nd_size, h1_size);
+    en.Imag().MakeRef(e0.Imag(), nd_size, h1_size);
 
     // Power-normalize eigenvector.
     {
@@ -416,6 +415,8 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       if (Btt)
       {
         Vector Btt_etr(nd_size), Btt_eti(nd_size);
+        Btt_etr.UseDevice(true);
+        Btt_eti.UseDevice(true);
         Btt->Mult(et.Real(), Btt_etr);
         Btt->Mult(et.Imag(), Btt_eti);
         double p_rr = mfem::InnerProduct(nd_fespace.GetComm(), et.Real(), Btt_etr);
@@ -456,8 +457,11 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     if (i < num_modes && is_propagating)
     {
       ComplexVector bz(l2_size);
+      bz.UseDevice(true);
       {
         Vector curl_etr(l2_size), curl_eti(l2_size);
+        curl_etr.UseDevice(true);
+        curl_eti.UseDevice(true);
         CurlOp.Mult(et.Real(), curl_etr);
         CurlOp.Mult(et.Imag(), curl_eti);
         bz.Real() = curl_eti;
