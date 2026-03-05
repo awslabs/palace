@@ -2162,11 +2162,19 @@ std::unique_ptr<mfem::ParMesh> DistributeSerialMesh(MPI_Comm comm,
                                                     std::unique_ptr<mfem::Mesh> &smesh)
 {
   // Generate METIS partitioning on root and distribute using the MeshPartitioner pipeline,
-  // which correctly handles shared entity topology and edge orientations.
+  // which correctly handles shared entity topology and edge orientations. Clamp the number
+  // of partitions to the number of mesh elements — ranks beyond that get empty partitions.
   std::unique_ptr<int[]> partitioning;
   if (Mpi::Root(comm))
   {
-    partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), "", false);
+    int nparts = std::min(Mpi::Size(comm), smesh->GetNE());
+    if (nparts < Mpi::Size(comm))
+    {
+      Mpi::Print(" Distributing mesh with {:d} elements across {:d} active ranks "
+                 "({:d} ranks will be empty)\n",
+                 smesh->GetNE(), nparts, Mpi::Size(comm) - nparts);
+    }
+    partitioning = GetMeshPartitioning(*smesh, nparts, "", false);
   }
   return DistributeMesh(comm, smesh, partitioning.get());
 }
