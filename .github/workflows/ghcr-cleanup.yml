@@ -1,4 +1,4 @@
-name: Spack
+name: Clean up GHCR images
 
 on:
   workflow_dispatch:
@@ -20,11 +20,11 @@ jobs:
           - palace-v1.1.0
     steps:
       - name: Delete old container versions
-        uses: snok/container-retention-policy@v3.0.1
+        uses: snok/container-retention-policy@v3
         with:
           account: awslabs
           token: ${{ secrets.GITHUB_TOKEN }}
           image-names: ${{ matrix.package }}
-          cut-off: 1w
+          cut-off: 2 weeks ago UTC
           keep-n-most-recent: 3
           tag-selection: both
