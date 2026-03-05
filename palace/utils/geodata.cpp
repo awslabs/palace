@@ -1736,9 +1736,9 @@ void RemapSubMeshBdrAttributes(mfem::ParSubMesh &submesh,
         parent.GetEdgeVertices(edges[j], ev);
         int gv0 = static_cast<int>(pvert_gi[ev[0]]);
         int gv1 = static_cast<int>(pvert_gi[ev[1]]);
-        local_edge_attrs.insert(local_edge_attrs.end(),
-                                {std::min(gv0, gv1), std::max(gv0, gv1), attr,
-                                 is_surface ? 1 : 0});
+        local_edge_attrs.insert(
+            local_edge_attrs.end(),
+            {std::min(gv0, gv1), std::max(gv0, gv1), attr, is_surface ? 1 : 0});
       }
     }
   }
