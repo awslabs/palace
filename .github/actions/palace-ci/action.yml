@@ -299,20 +299,43 @@ runs:
         start_timer
         eval $(spack -e . load --sh palace)
 
-        if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
-          export GPU_FLAGS="--device cuda"
+        # Use nproc, but halve to account for hyperthreading.
+        LOGICAL_CORES=$(nproc)
+        THREADS_PER_CORE=$(lscpu | grep "Thread(s) per core" | awk '{print $4}')
+        if [ "$THREADS_PER_CORE" = "2" ]; then
+            export NUM_PROC_TEST=$((LOGICAL_CORES / 2))
         else
-          export GPU_FLAGS=""
+            export NUM_PROC_TEST=$LOGICAL_CORES
         fi
 
         if [[ "${{ inputs.variant }}" == *"+openmp"* ]]; then
+          NUM_PROC_TEST=$(( NUM_PROC_TEST / 2 ))
           export OMP_NUM_THREADS=2
         else
           export OMP_NUM_THREADS=1
         fi
 
-        palace-unit-tests --skip-benchmarks ${GPU_FLAGS}
-        mpirun -np 2 $(which palace-unit-tests) --skip-benchmarks ${GPU_FLAGS}
+        cd $(spack -e . location -b palace)
+
+        # Skip serial/mpi libCEED tests on CUDA builds due to umpire host memory
+        # allocation bug.
+        #
+        # TODO: Remove this when MFEM/Palace switches to using standard host
+        # allocation.
+        if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
+          CTEST_EXCLUDE="--exclude-regex (serial|mpi)-.*libCEED"
+        else
+          CTEST_EXCLUDE=""
+        fi
+
+        # Disable OpenMPI 5.x default CPU binding so MPI processes don't starve
+        # OpenMP threads during parallel test execution. OpenMPI 5.x uses PRRTE,
+        # so we set both the PRTE and legacy OMPI MCA variables for robustness.
+        export PRTE_MCA_hwloc_default_binding_policy=none
+        export OMPI_MCA_hwloc_base_binding_policy=none
+
+        ctest -j $NUM_PROC_TEST --output-on-failure $CTEST_EXCLUDE
+
         end_timer "Run Unit Tests"
 
     # We upload the spack environment as an artifact so that next runners can

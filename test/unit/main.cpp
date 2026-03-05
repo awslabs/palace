@@ -83,6 +83,7 @@ int main(int argc, char *argv[])
 #endif
 
   // The Palace test suite defines three key tags:
+
   // - [Serial], for tests that are meaningful when run on a single process
   // - [Parallel], for tests that are meaningful when run on multiple processes
   // - [GPU], for tests that are meaningful when run on GPUs
@@ -129,10 +130,20 @@ int main(int argc, char *argv[])
 
   // Run the tests.
   ceed::Initialize(ceed_backend.c_str(), PALACE_LIBCEED_JIT_SOURCE_DIR);
-  std::ostringstream resource(std::stringstream::out);
-  device.Print(resource);
-  resource << "libCEED backend: " << ceed::Print();
-  Mpi::Print("{}\n", resource.str());
+
+  // Only print device info if not listing tests (for JSON output
+  // compatibility), needed for test discovery.
+  if (!cfg.listTests)
+  {
+    std::ostringstream resource(std::stringstream::out);
+#ifdef PALACE_WITH_COVERAGE
+    resource << "Built with code coverage for " << PALACE_WITH_COVERAGE << "\n";
+#endif
+    device.Print(resource);
+    resource << "libCEED backend: " << ceed::Print();
+    Mpi::Print("{}\n", resource.str());
+  }
+
   result = session.run();
   ceed::Finalize();
 

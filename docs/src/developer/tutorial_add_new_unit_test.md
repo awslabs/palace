@@ -146,20 +146,20 @@ simplicity let us ignore GPU compatibility):
 ```cpp
 TEST_CASE("MyTest Vector Sum - Different Lengths", "[myvector][Parallel]")
 {
- Vector v;
-
- if (Mpi::Root(Mpi::World())){
-     v.SetSize(2);
-     v(0) = 10;
-     v(1) = 20;
- } else {
-     v.SetSize(1);
-     v(0) = 3;
- }
-
- double sum = linalg::Sum(Mpi::World(), v);
- double expected = 3 * (Mpi::Size(Mpi::World()) - 1) + 30;
- REQUIRE_THAT(value, Catch::Matchers::WithinRel(expected))
+  Vector v;
+  
+  if (Mpi::Root(Mpi::World())){
+    v.SetSize(2);
+    v(0) = 10;
+    v(1) = 20;
+  } else {
+    v.SetSize(1);
+    v(0) = 3;
+  }
+  
+  double sum = linalg::Sum(Mpi::World(), v);
+  double expected = 3 * (Mpi::Size(Mpi::World()) - 1) + 30;
+  REQUIRE_THAT(value, Catch::Matchers::WithinRel(expected))
 }
 ```
 

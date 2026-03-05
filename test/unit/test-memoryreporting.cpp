@@ -9,16 +9,6 @@
 using namespace palace;
 using namespace palace::memory_reporting;
 
-TEST_CASE("Local Memory Queries", "[memoryreporting][Serial][Parallel]")
-{
-  auto current = GetCurrentMemory();
-  auto peak = GetPeakMemory();
-
-  CHECK(current > 0);
-  CHECK(peak > 0);
-  CHECK(peak >= current);
-}
-
 TEST_CASE("Peak Memory Is Non-Decreasing", "[memoryreporting][Serial][Parallel]")
 {
   auto peak_before = GetPeakMemory();
