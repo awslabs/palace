@@ -67,7 +67,6 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
                                  mfem::ParFiniteElementSpace &nd_fespace)
   : excitation(data.excitation), active(data.active), mat_op(mat_op_ref),
     a1(3), a2(3), b1(3), b2(3), k_F(3), port_normal(3),
-    inc_m(data.inc_order_m), inc_n(data.inc_order_n),
     inc_te(data.inc_polarization == "TE"),
     comm(nd_fespace.GetComm())
 {
@@ -617,11 +616,11 @@ FloquetPortData::GetAllSParameters(const GridFunction &E) const
 
 bool FloquetPortData::AddExcitationVector(double omega, ComplexVector &RHS) const
 {
-  // Find the incident mode matching (inc_m, inc_n, inc_te).
+  // Find the incident mode (0, 0) with matching polarization.
   const FloquetMode *inc_mode = nullptr;
   for (const auto &mode : modes)
   {
-    if (mode.m == inc_m && mode.n == inc_n && mode.is_te == inc_te)
+    if (mode.m == 0 && mode.n == 0 && mode.is_te == inc_te)
     {
       inc_mode = &mode;
       break;

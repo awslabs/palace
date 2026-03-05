@@ -111,9 +111,10 @@ public:
   const auto &GetModes() const { return modes; }
 
   // Check if mode (m, n, is_te) matches the incident mode for this port.
+  // The incident mode is always (0, 0); oblique incidence is encoded in k_F.
   [[nodiscard]] bool IsIncidentMode(int m, int n, bool is_te) const
   {
-    return m == inc_m && n == inc_n && is_te == inc_te;
+    return m == 0 && n == 0 && is_te == inc_te;
   }
 
   FloquetPortData(const config::FloquetPortData &data, const IoData &iodata,
@@ -167,8 +168,7 @@ private:
   // Frequency cache.
   double omega0 = 0.0;
 
-  // Incident mode specification.
-  int inc_m, inc_n;
+  // Incident mode polarization.
   bool inc_te;
 
   // MPI communicator.

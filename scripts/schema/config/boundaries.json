@@ -185,11 +185,8 @@
             ]
           },
           "Active": { "type": "boolean" },
-          "IncidentOrderM": { "type": "integer" },
-          "IncidentOrderN": { "type": "integer" },
           "IncidentPolarization": { "type": "string", "enum": ["TE", "TM"] },
-          "MaxOrder": { "type": "integer" },
-          "NumEvanescent": { "type": "integer", "minimum": 0 }
+          "MaxOrder": { "type": "integer" }
         }
       }
     },

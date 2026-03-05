@@ -652,11 +652,8 @@ FloquetPortData::FloquetPortData(const json &port)
   std::sort(attributes.begin(), attributes.end());
   excitation = ParsePortExcitation(port, index);
   active = port.value("Active", active);
-  inc_order_m = port.value("IncidentOrderM", inc_order_m);
-  inc_order_n = port.value("IncidentOrderN", inc_order_n);
   inc_polarization = port.value("IncidentPolarization", inc_polarization);
   max_order = port.value("MaxOrder", max_order);
-  num_evanescent = port.value("NumEvanescent", num_evanescent);
 }
 
 SurfaceCurrentData::SurfaceCurrentData(const json &source)
