@@ -1,4 +1,4 @@
-name: Documentation Preview Cleanup
+name: gh-pages Cleanup
 
 permissions:
   contents: write
@@ -6,9 +6,12 @@ permissions:
 on:
   pull_request:
     types: [closed]
+  schedule:
+    - cron: '0 3 * * 0'  # Weekly, Sunday 3 AM UTC
 
 jobs:
-  cleanup-preview-docs:
+  cleanup-pr-previews:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -26,4 +29,59 @@ jobs:
             git commit -m "delete preview"
             git branch gh-pages-new $(echo "delete history" | git commit-tree HEAD^{tree})
             git push --force origin gh-pages-new:gh-pages
+          fi
+
+  # Coverage reports from non-PR builds (e.g., pushes to main, workflow_dispatch)
+  # are stored under coverage/<sha>. We check whether the SHA still exists in
+  # the repo and, if so, whether it is older than 30 days.
+  cleanup-old-coverage:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: gh-pages
+
+      - name: Fetch main branch for SHA lookups
+        run: git fetch origin main --depth=1000
+
+      - name: Remove old coverage reports
+        run: |
+          if [[ ! -d coverage ]]; then
+            echo "No coverage directory found"
+            exit 0
+          fi
+
+          DELETED=0
+          CUTOFF=$(date -d '30 days ago' +%s 2>/dev/null || date -v-30d +%s)
+
+          for dir in coverage/*/; do
+            [[ -d "$dir" ]] || continue
+            SHA=$(basename "$dir")
+
+            # If the SHA no longer exists in the repo, remove it
+            if ! git cat-file -e "$SHA" 2>/dev/null; then
+              echo "Removing $dir (SHA $SHA no longer exists)"
+              git rm -rf "$dir"
+              DELETED=$((DELETED + 1))
+              continue
+            fi
+
+            # SHA exists — check its commit date
+            COMMIT_DATE=$(git log -1 --format=%ct "$SHA" 2>/dev/null || echo "0")
+            if [[ "$COMMIT_DATE" -lt "$CUTOFF" ]]; then
+              echo "Removing $dir (commit date older than 30 days)"
+              git rm -rf "$dir"
+              DELETED=$((DELETED + 1))
+            fi
+          done
+
+          if [[ "$DELETED" -gt 0 ]]; then
+            git config user.name "Documenter.jl"
+            git config user.email "documenter@juliadocs.github.io"
+            git commit -m "clean up $DELETED old coverage report(s)"
+            git branch gh-pages-new $(echo "delete history" | git commit-tree HEAD^{tree})
+            git push --force origin gh-pages-new:gh-pages
+          else
+            echo "No old coverage reports to clean up"
           fi

@@ -9,3 +9,10 @@ test/examples/ref/**/*.json
 .gitlab-ci-local
 Manifest.toml
 .vscode/
+
+# Coverage files
+*.profraw
+*.gcno
+*.gcda
+coverage*.info
+*/coverage_html/*
