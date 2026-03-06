@@ -31,6 +31,9 @@ jobs:
             git push --force origin gh-pages-new:gh-pages
           fi
 
+  # Coverage reports from non-PR builds (e.g., pushes to main, workflow_dispatch)
+  # are stored under coverage/<sha>. We check whether the SHA still exists in
+  # the repo and, if so, whether it is older than 30 days.
   cleanup-old-coverage:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
@@ -39,7 +42,10 @@ jobs:
         with:
           ref: gh-pages
 
-      - name: Remove coverage reports older than 30 days
+      - name: Fetch main branch for SHA lookups
+        run: git fetch origin main --depth=1000
+
+      - name: Remove old coverage reports
         run: |
           if [[ ! -d coverage ]]; then
             echo "No coverage directory found"
@@ -51,9 +57,20 @@ jobs:
 
           for dir in coverage/*/; do
             [[ -d "$dir" ]] || continue
-            # Use the git commit date of when the directory was added
-            COMMIT_DATE=$(git log -1 --format=%ct -- "$dir" 2>/dev/null || echo "0")
+            SHA=$(basename "$dir")
+
+            # If the SHA no longer exists in the repo, remove it
+            if ! git cat-file -e "$SHA" 2>/dev/null; then
+              echo "Removing $dir (SHA $SHA no longer exists)"
+              git rm -rf "$dir"
+              DELETED=$((DELETED + 1))
+              continue
+            fi
+
+            # SHA exists — check its commit date
+            COMMIT_DATE=$(git log -1 --format=%ct "$SHA" 2>/dev/null || echo "0")
             if [[ "$COMMIT_DATE" -lt "$CUTOFF" ]]; then
+              echo "Removing $dir (commit date older than 30 days)"
               git rm -rf "$dir"
               DELETED=$((DELETED + 1))
             fi
