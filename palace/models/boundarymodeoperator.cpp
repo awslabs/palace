@@ -530,10 +530,34 @@ BoundaryModeOperator::ComplexHypreParMatrix BoundaryModeOperator::BuildSystemMat
   std::unique_ptr<mfem::HypreParMatrix> Ai;
   if (Atti || Atni || Anni)
   {
-    blocks(0, 0) = Atti;
+    // HypreParMatrixFromBlocks requires at least one non-null block per row and column
+    // to determine sizes. Since (1,0) is always null (shifted Btn is real-only), add
+    // zero diagonal placeholders when an entire block row or column would be null.
+    std::unique_ptr<mfem::HypreParMatrix> Dtt_zero, Dnn_zero;
+    if (!Atti && !Atni)
+    {
+      Vector d(nd_size);
+      d.UseDevice(false);
+      d = 0.0;
+      mfem::SparseMatrix diag(d);
+      Dtt_zero = std::make_unique<mfem::HypreParMatrix>(
+          nd_fespace.Get().GetComm(), nd_fespace.Get().GlobalTrueVSize(),
+          nd_fespace.Get().GetTrueDofOffsets(), &diag);
+    }
+    if (!Anni)
+    {
+      Vector d(h1_size);
+      d.UseDevice(false);
+      d = 0.0;
+      mfem::SparseMatrix diag(d);
+      Dnn_zero = std::make_unique<mfem::HypreParMatrix>(
+          h1_fespace.Get().GetComm(), h1_fespace.Get().GlobalTrueVSize(),
+          h1_fespace.Get().GetTrueDofOffsets(), &diag);
+    }
+    blocks(0, 0) = Atti ? Atti : Dtt_zero.get();
     blocks(0, 1) = Atni;
     blocks(1, 0) = nullptr;  // Shifted Btn is real-only
-    blocks(1, 1) = Anni;
+    blocks(1, 1) = Anni ? Anni : Dnn_zero.get();
     Ai.reset(mfem::HypreParMatrixFromBlocks(blocks));
   }
 
@@ -564,6 +588,9 @@ BoundaryModeOperator::ComplexHypreParMatrix BoundaryModeOperator::BuildSystemMat
   std::unique_ptr<mfem::HypreParMatrix> Bi;
   if (Btti || Btni)
   {
+    // NOTE: Currently unreachable (Btt, Btn are real for real permeability). If complex
+    // permeability is added, zero placeholder blocks would be needed here too (same as
+    // the imaginary A block above) to prevent HypreParMatrixFromBlocks sizing errors.
     blocks(0, 0) = Btti;
     blocks(0, 1) = nullptr;
     blocks(1, 0) = Btni;
