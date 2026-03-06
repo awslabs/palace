@@ -430,11 +430,28 @@ void IoData::CheckConfiguration()
       solver.linear.initial_guess = 0;
     }
   }
+  if (solver.linear.mg_max_levels < 0)
+  {
+    if (problem.type == ProblemType::BOUNDARYMODE)
+    {
+      // Default off for 2D boundary mode analysis (user can enable with MGMaxLevels > 1).
+      solver.linear.mg_max_levels = 1;
+    }
+    else
+    {
+      solver.linear.mg_max_levels = 100;
+    }
+  }
   if (solver.linear.pc_mat_shifted < 0)
   {
     if (problem.type == ProblemType::DRIVEN && solver.linear.type == LinearSolver::AMS)
     {
-      // Default true only driven simulations using AMS (false for most cases).
+      // Default true for driven simulations using AMS.
+      solver.linear.pc_mat_shifted = 1;
+    }
+    else if (problem.type == ProblemType::BOUNDARYMODE && solver.linear.mg_max_levels > 1)
+    {
+      // Default true for 2D boundary mode with multigrid (shift-and-invert near-zero mass).
       solver.linear.pc_mat_shifted = 1;
     }
     else
@@ -610,10 +627,17 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
     k *= units.GetMeshLengthRelativeScale();
   }
 
-  // Wave port offset distance.
+  // Wave port offset distance and voltage path coordinates.
   for (auto &[idx, data] : boundaries.waveport)
   {
     data.d_offset /= units.GetMeshLengthRelativeScale();
+    for (auto &pt : data.voltage_path)
+    {
+      for (auto &v : pt)
+      {
+        v /= units.GetMeshLengthRelativeScale();
+      }
+    }
   }
 
   // Center coordinates for surface flux.
@@ -621,6 +645,37 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   {
     std::transform(data.center.begin(), data.center.end(), data.center.begin(),
                    DivideLengthScale);
+  }
+
+  // Mode impedance voltage and current path coordinates.
+  for (auto &[idx, data] : boundaries.postpro.impedance)
+  {
+    for (auto &pt : data.voltage_path)
+    {
+      for (auto &v : pt)
+      {
+        v /= units.GetMeshLengthRelativeScale();
+      }
+    }
+    for (auto &pt : data.current_path)
+    {
+      for (auto &v : pt)
+      {
+        v /= units.GetMeshLengthRelativeScale();
+      }
+    }
+  }
+
+  // Mode voltage path coordinates.
+  for (auto &[idx, data] : boundaries.postpro.voltage)
+  {
+    for (auto &pt : data.voltage_path)
+    {
+      for (auto &v : pt)
+      {
+        v /= units.GetMeshLengthRelativeScale();
+      }
+    }
   }
 
   // Dielectric interface thickness.

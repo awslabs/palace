@@ -34,11 +34,17 @@ public:
   std::unique_ptr<Operator> M_elec, M_mag;
   std::map<int, std::pair<std::unique_ptr<Operator>, std::unique_ptr<Operator>>> M_i;
 
+  DomainPostOperator() = default;
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                      const FiniteElementSpace &nd_fespace,
                      const FiniteElementSpace &rt_fespace);
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                      const FiniteElementSpace &fespace);
+
+  // Mode analysis: ND space for electric field energy only (no B-field).
+  // Uses VectorFEMassIntegrator with ε (not CurlCurlIntegrator).
+  DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
+                     const FiniteElementSpace &nd_fespace, bool electric_energy_only);
 
   // Get volume integrals computing the electric or magnetic field energy in the entire
   // domain.

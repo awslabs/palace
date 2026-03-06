@@ -71,7 +71,15 @@ SPDX-License-Identifier: Apache-2.0
         "Dielectric":
         [
             ...
-        ]
+        ],
+        "Impedance":
+        [
+            ...
+        ],
+        "Voltage":
+        [
+            ...
+        ],
         "FarField":
         {
             ...
@@ -108,9 +116,9 @@ ports can only be specified on boundaries which are on the true boundary of the
 computational domain. Additionally, wave port boundaries are only available for
 frequency domain driven and eigenmode simulation types.
 
-`"WavePortPEC"` :  Top-level object for configuring additional PEC boundary conditions for boundary
-mode analysis performed on the wave port boundaries. Thus, this object is only relevant
-when wave port boundaries are specified under
+`"WavePortPEC"` :  Top-level object for forcing specific boundary attributes to act as PEC in the
+wave port boundary mode analysis, overriding any other boundary condition assigned to those
+attributes. Only relevant when wave port boundaries are specified under
 [`config["Boundaries"]["WavePort"]`](#boundaries%5B%22WavePort%22%5D).
 
 `"SurfaceCurrent"` :  Array of objects for configuring surface current boundary conditions.
@@ -138,6 +146,11 @@ with meshes that are identical after translation and/or rotation.
 `"SurfaceFlux"` :  Array of objects for postprocessing surface flux.
 
 `"Dielectric"` :  Array of objects for postprocessing surface interface dielectric loss.
+
+`"Impedance"` :  Array of objects for postprocessing mode impedance via
+voltage and current line integrals.
+
+`"Voltage"` :  Array of objects for postprocessing mode voltage via line integrals.
 
 `"FarField"` :  Top-level object for extracting electric fields in the far-field region.
 
@@ -362,7 +375,10 @@ corresponding coordinate system.
         "MaxIts": <int>,
         "KSPTol": <float>,
         "EigenTol": <float>,
-        "Verbose": <int>
+        "MaxSize": <int>,
+        "Verbose": <int>,
+        "VoltagePath": [[<float array>], ...],
+        "IntegrationOrder": <int>
     },
     ...
 ]
@@ -399,8 +415,19 @@ solver.
 
 `"EigenTol" [1e-6]` :  Specifies the tolerance to be used in the eigenvalue solver.
 
+`"MaxSize" [0]` :  Maximum subspace dimension for the eigenvalue solver. For values less
+than 1, the solver uses a default subspace dimension.
+
 `"Verbose" [0]` :  Specifies the verbosity level to be used in the linear and eigensolver
 for the wave port problem.
+
+`"VoltagePath" [None]` :  Array of coordinate points defining an open path for computing a
+voltage line integral on the port face. Each element is a floating point array of length
+equal to the spatial dimension. When specified, enables voltage and characteristic impedance
+postprocessing for the wave port. Specified in mesh length units.
+
+`"IntegrationOrder" [100]` :  Quadrature order for the coordinate-based voltage line
+integral. Higher values give more integration points and better accuracy.
 
 ## `boundaries["WavePortPEC"]`
 
@@ -413,10 +440,11 @@ for the wave port problem.
 
 with
 
-`"Attributes" [None]` :  Integer array of mesh boundary attributes to consider as PEC when solving the
-2D eigenproblem for the wave port boundary mode analysis, along with those specified under
-[`config["Boundaries"]["PEC"]["Attributes"]`](#boundaries%5B%22PEC%22%5D) and
-[`config["Boundaries"]["Conductivity"]["Attributes"]`](#boundaries%5B%22Conductivity%22%5D).
+`"Attributes" [None]` :  Integer array of mesh boundary attributes to force as PEC when solving the
+2D eigenproblem for the wave port boundary mode analysis, in addition to those specified under
+[`config["Boundaries"]["PEC"]["Attributes"]`](#boundaries%5B%22PEC%22%5D). This overrides any
+impedance, absorbing, or conductivity boundary condition that may be assigned to the same
+attributes for the purpose of the 2D wave port boundary mode problem.
 
 ## `boundaries["SurfaceCurrent"]`
 
@@ -663,6 +691,85 @@ units.
 be the interface layer permittivity for the specific `"Type"` of interface specified.
 
 `"LossTan" [0.0]` :  Loss tangent for this lossy dielectric interface.
+
+## `boundaries["Postprocessing"]["Impedance"]`
+
+```json
+"Postprocessing":
+{
+    "Impedance":
+    [
+        {
+            "Index": <int>,
+            "VoltageAttributes": [<int array>],
+            "CurrentAttributes": [<int array>],
+            "VoltagePath": [[<float array>], ...],
+            "CurrentPath": [[<float array>], ...],
+            "IntegrationOrder": <int>
+        },
+        ...
+    ]
+}
+```
+
+with
+
+`"Index" [None]` :  Index of this impedance postprocessing boundary, used in postprocessing
+output files.
+
+`"VoltageAttributes" [None]` :  Integer array of mesh boundary attributes for the voltage
+integration path across the gap between ground and trace. Either `"VoltageAttributes"` or
+`"VoltagePath"` must be specified.
+
+`"CurrentAttributes" [None]` :  Integer array of mesh boundary attributes for the current
+integration loop around the trace.
+
+`"VoltagePath" [None]` :  Array of coordinate points defining an open path for computing the
+voltage line integral ``V = \int \mathbf{E} \cdot d\mathbf{l}``. Each element is a floating
+point array of length equal to the spatial dimension. At least two points are required.
+Specified in mesh length units.
+
+`"CurrentPath" [None]` :  Array of coordinate points defining a closed loop for computing
+the current line integral ``I = \oint \mathbf{H}_t \cdot d\mathbf{l}``. Each element is a
+floating point array of length equal to the spatial dimension. The last point connects back
+to the first. Specified in mesh length units.
+
+`"IntegrationOrder" [100]` :  Quadrature order for the coordinate-based line integrals.
+Higher values give more integration points and better accuracy.
+
+## `boundaries["Postprocessing"]["Voltage"]`
+
+```json
+"Postprocessing":
+{
+    "Voltage":
+    [
+        {
+            "Index": <int>,
+            "VoltageAttributes": [<int array>],
+            "VoltagePath": [[<float array>], ...],
+            "IntegrationOrder": <int>
+        },
+        ...
+    ]
+}
+```
+
+with
+
+`"Index" [None]` :  Index of this voltage postprocessing boundary, used in postprocessing
+output files.
+
+`"VoltageAttributes" [None]` :  Integer array of mesh boundary attributes for the voltage
+integration path. Either `"VoltageAttributes"` or `"VoltagePath"` must be specified.
+
+`"VoltagePath" [None]` :  Array of coordinate points defining an open path for computing the
+voltage line integral ``V = \int \mathbf{E} \cdot d\mathbf{l}``. Each element is a floating
+point array of length equal to the spatial dimension. At least two points are required.
+Specified in mesh length units.
+
+`"IntegrationOrder" [100]` :  Quadrature order for the coordinate-based line integral.
+Higher values give more integration points and better accuracy.
 
 ## `boundaries["Postprocessing"]["FarField"]`
 

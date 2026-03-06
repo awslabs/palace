@@ -47,8 +47,12 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::vector<double> I_inc(n_step);
 
   // Initialize structures for storing and reducing the results of error estimation.
-  CurlFluxErrorEstimator estimator(
-      curlcurl_op.GetMaterialOp(), curlcurl_op.GetRTSpace(), curlcurl_op.GetNDSpaces(),
+  // In 2D, the curl is scalar: use the L2 curl space and H1 spaces for the estimator.
+  CurlFluxErrorEstimator<Vector> estimator(
+      curlcurl_op.GetMaterialOp(),
+      curlcurl_op.GetCurlSpace(),  // RT (3D) or L2 curl (2D)
+      (curlcurl_op.GetMesh().Dimension() < 3) ? curlcurl_op.GetH1Spaces()
+                                              : curlcurl_op.GetNDSpaces(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
       iodata.solver.linear.estimator_mg);
   ErrorIndicator indicator;

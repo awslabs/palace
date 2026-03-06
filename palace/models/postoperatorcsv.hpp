@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <optional>
+#include "drivers/boundarymodesolver.hpp"
 #include "fem/errorindicator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
@@ -44,6 +45,11 @@ template <>
 struct fem_op_map_type<ProblemType::MAGNETOSTATIC>
 {
   using type = CurlCurlOperator;
+};
+template <>
+struct fem_op_map_type<ProblemType::BOUNDARYMODE>
+{
+  using type = BoundaryModeFemOp;
 };
 
 template <ProblemType solver_t>
@@ -110,6 +116,25 @@ struct Measurement
     // Inductive lumped port (only eigenmode).
     double inductive_energy_participation = 0.0;
   };
+
+  // Mode analysis data.
+  struct ModeData
+  {
+    std::complex<double> kn_dim = {0.0, 0.0};  // Dimensional propagation constant (1/m)
+    std::complex<double> n_eff = {0.0, 0.0};   // Effective refractive index
+    double Z0 = 0.0;                           // Characteristic impedance (Ohm) [P-V]
+    double L_per_m = 0.0;                      // Inductance per unit length (H/m) [P-V]
+    double C_per_m = 0.0;                      // Capacitance per unit length (F/m) [P-V]
+    bool has_impedance = false;                // Whether Z0/L/C (P-V) were computed
+    double Z_VI = 0.0;                         // V/I impedance (Ohm)
+    double L_VI_per_m = 0.0;                   // Inductance per unit length (H/m) [V-I]
+    double C_VI_per_m = 0.0;                   // Capacitance per unit length (F/m) [V-I]
+    bool has_vi_impedance = false;             // Whether Z_VI/L_VI/C_VI were computed
+    std::complex<double> V = {0.0, 0.0};  // Complex voltage from voltage postprocessing
+    bool has_voltage = false;             // Whether V was computed
+  };
+
+  ModeData mode_data;
 
   // "Pseudo-measurements": input required during measurement or data which is stored here
   // in order to pass it along to the printers.
@@ -269,6 +294,14 @@ protected:
   template <ProblemType U = solver_t>
   auto PrintPortS() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
 
+  // Driven: wave port impedance.
+  std::optional<TableWithCSVFile> port_Z;
+  template <ProblemType U = solver_t>
+  auto InitializePortZ(const SpaceOperator &fem_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+  template <ProblemType U = solver_t>
+  auto PrintPortZ() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+
   // Driven + Eigenmode.
   std::optional<TableWithCSVFile> farfield_E;
   template <ProblemType U = solver_t>
@@ -284,6 +317,26 @@ protected:
   auto InitializeEig() -> std::enable_if_t<U == ProblemType::EIGENMODE, void>;
   template <ProblemType U = solver_t>
   auto PrintEig() -> std::enable_if_t<U == ProblemType::EIGENMODE, void>;
+
+  // Mode Analysis.
+  std::optional<TableWithCSVFile> mode_kn;
+  template <ProblemType U = solver_t>
+  auto InitializeModeKn() -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
+  template <ProblemType U = solver_t>
+  auto PrintModeKn() -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
+
+  std::optional<TableWithCSVFile> mode_Z;
+  template <ProblemType U = solver_t>
+  auto InitializeModeZ(bool has_current)
+      -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
+  template <ProblemType U = solver_t>
+  auto PrintModeZ() -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
+
+  std::optional<TableWithCSVFile> mode_V;
+  template <ProblemType U = solver_t>
+  auto InitializeModeV() -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
+  template <ProblemType U = solver_t>
+  auto PrintModeV() -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
 
   std::vector<int> ports_with_L;
   std::vector<int> ports_with_R;

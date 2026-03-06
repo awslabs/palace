@@ -130,6 +130,13 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       Mpi::Warning("AMR is not currently supported for transient simulations!\n");
       return false;
     }
+    if (refinement.max_it > 0 && iodata.problem.type == ProblemType::BOUNDARYMODE &&
+        !iodata.solver.boundary_mode.attributes.empty())
+    {
+      Mpi::Warning("AMR is not currently supported for boundary mode analysis on 3D mesh "
+                   "cross-sections (BoundaryMode with Attributes)!\n");
+      return false;
+    }
     return (refinement.max_it > 0);
   }();
   if (use_amr && mesh.size() > 1)
@@ -157,7 +164,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
   // Main AMR loop.
   int it = 0;
-  while (!ExhaustedResources(it, ntdof) && err >= refinement.tol)
+  while (use_amr && !ExhaustedResources(it, ntdof) && err >= refinement.tol)
   {
     // Print timing summary.
     Mpi::Print(comm, "\nCumulative timing statistics:\n");
