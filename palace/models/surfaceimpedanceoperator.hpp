@@ -4,8 +4,10 @@
 #ifndef PALACE_MODELS_SURFACE_IMPEDANCE_OPERATOR_HPP
 #define PALACE_MODELS_SURFACE_IMPEDANCE_OPERATOR_HPP
 
+#include <unordered_set>
 #include <vector>
 #include <mfem.hpp>
+#include "utils/configfile.hpp"
 
 namespace palace
 {
@@ -13,6 +15,7 @@ namespace palace
 class IoData;
 class MaterialOperator;
 class MaterialPropertyCoefficient;
+class Units;
 
 //
 // A class handling impedance boundaries.
@@ -33,10 +36,16 @@ private:
   };
   std::vector<ImpedanceData> boundaries;
 
-  void SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
-  void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
+  void SetUpBoundaryProperties(const std::vector<config::ImpedanceData> &impedance,
+                               const std::unordered_set<int> &cracked_attributes,
+                               const mfem::ParMesh &mesh);
+  void PrintBoundaryInfo(const Units &units, const mfem::ParMesh &mesh);
 
 public:
+  SurfaceImpedanceOperator(const std::vector<config::ImpedanceData> &impedance,
+                           const std::unordered_set<int> &cracked_attributes,
+                           const Units &units, const MaterialOperator &mat_op,
+                           const mfem::ParMesh &mesh);
   SurfaceImpedanceOperator(const IoData &iodata, const MaterialOperator &mat_op,
                            const mfem::ParMesh &mesh);
 

@@ -24,14 +24,18 @@ class IoData;
 class MaterialOperator;
 class MaterialPropertyCoefficient;
 class SumVectorCoefficient;
+class Units;
 
 namespace config
 {
 
-struct WavePortData;
+struct BoundaryData;
 struct SolverData;
+struct WavePortData;
 
 }  // namespace config
+
+enum class ProblemType : char;
 
 //
 // Helper class for wave port boundaries in a model.
@@ -140,15 +144,21 @@ private:
   bool suppress_output;
   double fc, kc;
 
-  void SetUpBoundaryProperties(const IoData &iodata, const MaterialOperator &mat_op,
+  void SetUpBoundaryProperties(const config::BoundaryData &boundaries,
+                               const config::SolverData &solver, ProblemType problem_type,
+                               const MaterialOperator &mat_op,
                                mfem::ParFiniteElementSpace &nd_fespace,
                                mfem::ParFiniteElementSpace &h1_fespace);
-  void PrintBoundaryInfo(const IoData &iodata, const mfem::ParMesh &mesh);
+  void PrintBoundaryInfo(const Units &units, const mfem::ParMesh &mesh);
 
   // Compute boundary modes for all wave port boundaries at the specified frequency.
   void Initialize(double omega);
 
 public:
+  WavePortOperator(const config::BoundaryData &boundaries, const config::SolverData &solver,
+                   ProblemType problem_type, const Units &units,
+                   const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
+                   mfem::ParFiniteElementSpace &h1_fespace);
   WavePortOperator(const IoData &iodata, const MaterialOperator &mat_op,
                    mfem::ParFiniteElementSpace &nd_fespace,
                    mfem::ParFiniteElementSpace &h1_fespace);

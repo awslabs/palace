@@ -18,6 +18,13 @@ class FiniteElementSpace;
 class IoData;
 class MaterialOperator;
 
+namespace config
+{
+
+struct DomainPostData;
+
+}  // namespace config
+
 //
 // Class to handle domain energy postprocessing. We use a leading factor of 1/2 instead of
 // 1/4 even though the eigenmodes are peak phasors and not RMS normalized because the same
@@ -34,6 +41,11 @@ public:
   std::unique_ptr<Operator> M_elec, M_mag;
   std::map<int, std::pair<std::unique_ptr<Operator>, std::unique_ptr<Operator>>> M_i;
 
+  DomainPostOperator(const config::DomainPostData &postpro, const MaterialOperator &mat_op,
+                     const FiniteElementSpace &nd_fespace,
+                     const FiniteElementSpace &rt_fespace);
+  DomainPostOperator(const config::DomainPostData &postpro, const MaterialOperator &mat_op,
+                     const FiniteElementSpace &fespace);
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                      const FiniteElementSpace &nd_fespace,
                      const FiniteElementSpace &rt_fespace);

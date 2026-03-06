@@ -13,6 +13,15 @@ class IoData;
 class MaterialOperator;
 class MaterialPropertyCoefficient;
 
+namespace config
+{
+
+struct FarfieldBoundaryData;
+
+}  // namespace config
+
+enum class ProblemType : char;
+
 //
 // A class handling farfield, or absorbing, boundaries.
 //
@@ -28,9 +37,14 @@ private:
   // First- or second-order absorbing boundary condition.
   int order;
 
-  mfem::Array<int> SetUpBoundaryProperties(const IoData &iodata, const mfem::ParMesh &mesh);
+  mfem::Array<int> SetUpBoundaryProperties(const config::FarfieldBoundaryData &farfield,
+                                           ProblemType problem_type,
+                                           const mfem::ParMesh &mesh);
 
 public:
+  FarfieldBoundaryOperator(const config::FarfieldBoundaryData &farfield,
+                           ProblemType problem_type, const MaterialOperator &mat_op,
+                           const mfem::ParMesh &mesh);
   FarfieldBoundaryOperator(const IoData &iodata, const MaterialOperator &mat_op,
                            const mfem::ParMesh &mesh);
 

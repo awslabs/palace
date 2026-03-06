@@ -15,7 +15,8 @@
 namespace palace
 {
 
-DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
+DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
+                                       const MaterialOperator &mat_op,
                                        const FiniteElementSpace &nd_fespace,
                                        const FiniteElementSpace &rt_fespace)
 {
@@ -52,7 +53,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
 
   // Use the provided domain postprocessing indices for postprocessing the electric and
   // magnetic field energy in specific regions of the domain.
-  for (const auto &[idx, data] : iodata.domains.postpro.energy)
+  for (const auto &[idx, data] : postpro.energy)
   {
     std::unique_ptr<Operator> M_elec_i, M_mag_i;
     {
@@ -76,6 +77,14 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
 }
 
 DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
+                                       const FiniteElementSpace &nd_fespace,
+                                       const FiniteElementSpace &rt_fespace)
+  : DomainPostOperator(iodata.domains.postpro, mat_op, nd_fespace, rt_fespace)
+{
+}
+
+DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
+                                       const MaterialOperator &mat_op,
                                        const FiniteElementSpace &fespace)
 {
   const auto map_type = fespace.GetFEColl().GetMapType(fespace.Dimension());
@@ -92,7 +101,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
       D.UseDevice(true);
     }
 
-    for (const auto &[idx, data] : iodata.domains.postpro.energy)
+    for (const auto &[idx, data] : postpro.energy)
     {
       std::unique_ptr<Operator> M_elec_i;
       {
@@ -119,7 +128,7 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
       H.UseDevice(true);
     }
 
-    for (const auto &[idx, data] : iodata.domains.postpro.energy)
+    for (const auto &[idx, data] : postpro.energy)
     {
       std::unique_ptr<Operator> M_mag_i;
       {
@@ -137,6 +146,12 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
   {
     MFEM_ABORT("Unexpected finite element space type for domain energy postprocessing!");
   }
+}
+
+DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
+                                       const FiniteElementSpace &fespace)
+  : DomainPostOperator(iodata.domains.postpro, mat_op, fespace)
+{
 }
 
 double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E) const

@@ -5,11 +5,14 @@
 
 #include <algorithm>
 #include <iterator>
+#include <sstream>
 #include <string_view>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+
+#include "units.hpp"
 
 // This is similar to NLOHMANN_JSON_SERIALIZE_ENUM, but results in an error if an enum
 // value corresponding to the string cannot be found. Also adds an overload for stream
@@ -413,10 +416,10 @@ DomainPostData::DomainPostData(const json &postpro)
 
 CurrentDipoleData::CurrentDipoleData(const json &source)
 {
-  auto dir = source.find("Direction");
-  if (dir->is_array())
+  const auto &dir = source.at("Direction");  // Required
+  if (dir.is_array())
   {
-    direction = dir->get<std::array<double, 3>>();
+    direction = dir.get<std::array<double, 3>>();
     double norm = direction[0] * direction[0] + direction[1] * direction[1] +
                   direction[2] * direction[2];
     for (auto &x : direction)
@@ -426,9 +429,7 @@ CurrentDipoleData::CurrentDipoleData(const json &source)
   }
   else
   {
-    auto direction_and_coord = ParseStringAsDirection(dir->get<std::string>());
-    MFEM_VERIFY(direction_and_coord.second == CoordinateSystem::CARTESIAN,
-                "\"R\" is not a valid \"Direction\" for \"CurrentDipole\"!");
+    auto direction_and_coord = ParseStringAsDirection(dir.get<std::string>());
     direction = direction_and_coord.first;
   }
   center = source.at("Center").get<std::array<double, 3>>();  // Required
@@ -437,7 +438,7 @@ CurrentDipoleData::CurrentDipoleData(const json &source)
 
 DomainData::DomainData(const json &domains)
 {
-  for (const auto &d : *domains.find("Materials"))
+  for (const auto &d : domains.at("Materials"))
   {
     materials.emplace_back(d);
   }
@@ -517,14 +518,19 @@ int ParsePortExcitation(const json &port, int index)
   {
     return int(it->get<bool>());  // 0 false; 1 true
   }
-  else if (it->is_number_unsigned())
+  else if (it->is_number_integer())
   {
-    return it->get<int>();
+    int val = it->get<int>();
+    MFEM_VERIFY(
+        val >= 0,
+        fmt::format("\"Excitation\" on port index {:d} must be non-negative; got {:d}",
+                    index, val));
+    return val;
   }
   else
   {
     MFEM_ABORT(fmt::format("\"Excitation\" on port index {:d} could not be parsed "
-                           "as a bool or unsigned (non-negative) integer; got {}",
+                           "as a bool or non-negative integer; got {}",
                            index, it->dump(2)));
   }
 }
@@ -543,19 +549,12 @@ LumpedPortData::LumpedPortData(const json &port)
   active = port.value("Active", active);
   if (port.find("Attributes") != port.end())
   {
-    MFEM_VERIFY(port.find("Elements") == port.end(),
-                "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
-                "\"LumpedPort\" in the configuration file!");
     auto &elem = elements.emplace_back();
     ParseElementData(port, true, elem);
   }
   else
   {
-    auto elems = port.find("Elements");
-    MFEM_VERIFY(elems != port.end(),
-                "Missing top-level \"Attributes\" list or \"Elements\" for "
-                "\"LumpedPort\" in the configuration file!");
-    for (const auto &e : *elems)
+    for (const auto &e : port.at("Elements"))
     {
       auto &elem = elements.emplace_back();
       ParseElementData(e, true, elem);
@@ -574,23 +573,12 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
   auto floquet = periodic.find("FloquetWaveVector");
   if (floquet != periodic.end())
   {
-    MFEM_VERIFY(floquet->is_array(),
-                "\"FloquetWaveVector\" should specify an array in the configuration file!");
     wave_vector = floquet->get<std::array<double, 3>>();
   }
 
-  auto pairs = periodic.find("BoundaryPairs");
-  MFEM_VERIFY(pairs->is_array(),
-              "\"BoundaryPairs\" should specify an array in the configuration file!");
-  for (auto it = pairs->begin(); it != pairs->end(); ++it)
+  const auto &pairs = periodic.at("BoundaryPairs");
+  for (auto it = pairs.begin(); it != pairs.end(); ++it)
   {
-    MFEM_VERIFY(it->find("DonorAttributes") != it->end(),
-                "Missing \"DonorAttributes\" list for \"Periodic\" boundary in the "
-                "configuration file!");
-    MFEM_VERIFY(it->find("ReceiverAttributes") != it->end(),
-                "Missing \"ReceiverAttributes\" list for \"Periodic\" boundary in the "
-                "configuration file!");
-
     PeriodicData &data = boundary_pairs.emplace_back();
     data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
     data.receiver_attributes =
@@ -598,8 +586,6 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
     auto translation = it->find("Translation");
     if (translation != it->end())
     {
-      MFEM_VERIFY(translation->is_array(),
-                  "\"Translation\" should specify an array in the configuration file!");
       std::array<double, 3> translation_array = translation->get<std::array<double, 3>>();
       for (int i = 0; i < 3; i++)
       {
@@ -611,9 +597,6 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
     auto transformation = it->find("AffineTransformation");
     if (transformation != it->end())
     {
-      MFEM_VERIFY(
-          transformation->is_array(),
-          "\"AffineTransformation\" should specify an array in the configuration file!");
       data.affine_transform = transformation->get<std::array<double, 16>>();
     }
   }
@@ -639,20 +622,12 @@ SurfaceCurrentData::SurfaceCurrentData(const json &source)
 {
   if (source.find("Attributes") != source.end())
   {
-    MFEM_VERIFY(source.find("Elements") == source.end(),
-                "Cannot specify both top-level \"Attributes\" list and \"Elements\" for "
-                "\"SurfaceCurrent\" boundary in the configuration file!");
     auto &elem = elements.emplace_back();
     ParseElementData(source, true, elem);
   }
   else
   {
-    auto elems = source.find("Elements");
-    MFEM_VERIFY(
-        elems != source.end(),
-        "Missing top-level \"Attributes\" list or \"Elements\" for \"SurfaceCurrent\" "
-        "boundary in the configuration file!");
-    for (const auto &e : *elems)
+    for (const auto &e : source.at("Elements"))
     {
       auto &elem = elements.emplace_back();
       ParseElementData(e, true, elem);
@@ -776,9 +751,6 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
   auto thetaphis_json = farfield.find("ThetaPhis");
   if (thetaphis_json != farfield.end())
   {
-    MFEM_VERIFY(thetaphis_json->is_array(),
-                "\"ThetaPhis\" should specify an array in the configuration file!");
-
     // JSON does not support the notion of pair, so we read the theta and phis as vectors
     // of vectors, and then cast them to vectors of pairs.
     //
@@ -859,9 +831,6 @@ BoundaryData::BoundaryData(const json &boundaries)
   // PEC can be specified as "PEC" or "Ground".
   auto pec_it = boundaries.find("PEC");
   auto ground_it = boundaries.find("Ground");
-  MFEM_VERIFY(
-      pec_it == boundaries.end() || ground_it == boundaries.end(),
-      "Configuration file should not specify both \"PEC\" and \"Ground\" boundaries!");
   if (pec_it != boundaries.end())
   {
     pec = PecBoundaryData(*pec_it);
@@ -874,9 +843,6 @@ BoundaryData::BoundaryData(const json &boundaries)
   // PMC can be specified as "PMC" or "ZeroCharge".
   auto pmc_it = boundaries.find("PMC");
   auto zeroq_it = boundaries.find("ZeroCharge");
-  MFEM_VERIFY(pmc_it == boundaries.end() || zeroq_it == boundaries.end(),
-              "Configuration file should not specify both \"PMC\" and \"ZeroCharge\" "
-              "boundaries!");
   if (pmc_it != boundaries.end())
   {
     pmc = PmcBoundaryData(*pmc_it);
@@ -898,63 +864,44 @@ BoundaryData::BoundaryData(const json &boundaries)
                                                  "\"SurfaceCurrent\"");
   postpro = ParseOptional<BoundaryPostData>(boundaries, "Postprocessing");
 
-  // Ensure unique indexing of lumpedport, waveport, current.
+  // Normalize excitation indices: upgrade excitation=1 to excitation=port_idx when
+  // calculating S-parameters (each port has a single excitation) and indices are valid.
   {
-    std::map<int, std::string> index_map;
     std::map<int, std::vector<int>> excitation_map;
-    const std::string lumpedport_str = "\"LumpedPort\"";
-    const std::string waveport_str = "WavePort";
-    const std::string current_str = "SurfaceCurrent";
-
-    for (const auto &data : lumpedport)
+    for (const auto &[idx, data] : lumpedport)
     {
-      auto result = index_map.insert({data.first, lumpedport_str});
-      MFEM_VERIFY(result.second, "Duplicate \"Index\": " << data.first << " in "
-                                                         << index_map[data.first] << "!");
-      excitation_map[data.second.excitation].emplace_back(data.first);
+      excitation_map[data.excitation].emplace_back(idx);
     }
-    for (const auto &data : waveport)
+    for (const auto &[idx, data] : waveport)
     {
-      auto result = index_map.insert({data.first, waveport_str});
-      MFEM_VERIFY(result.second, "Duplicate \"Index\": " << data.first << " in "
-                                                         << index_map[data.first] << "!");
-      excitation_map[data.second.excitation].emplace_back(data.first);
+      excitation_map[data.excitation].emplace_back(idx);
     }
-    for (const auto &data : current)
-    {
-      auto result = index_map.insert({data.first, current_str});
-      MFEM_VERIFY(result.second, "Duplicate \"Index\": " << data.first << " in "
-                                                         << index_map[data.first] << "!");
-    }
-    // Typical usecase: If each excitation is simple, S-parameters will be calculated.
-    //    If there were multiple excitations specified, check their indices match the
-    //    port indices. If there was only one, assign it.
     excitation_map.erase(0);  // zeroth index is unexcited.
     bool calc_s_params = std::all_of(excitation_map.begin(), excitation_map.end(),
                                      [](const auto &x) { return x.second.size() == 1; });
     if (calc_s_params && !excitation_map.empty())
     {
-      // If there's one excitation, needs to be 1 (set with bool) or the port index.
+      // Only normalize if excitation indices are valid (match port indices or are 1).
       const auto &ext1 = *excitation_map.begin();
-      MFEM_VERIFY(
-          (excitation_map.size() == 1 &&
-           (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
-              std::all_of(excitation_map.begin(), excitation_map.end(),
-                          [](const auto &x) { return x.first == x.second[0]; }),
-          "\"Excitation\" must match \"Index\" for single ports to avoid ambiguity!");
-
-      for (auto &[port_idx, lp] : lumpedport)
+      bool valid = (excitation_map.size() == 1 &&
+                    (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
+                   std::all_of(excitation_map.begin(), excitation_map.end(),
+                               [](const auto &x) { return x.first == x.second[0]; });
+      if (valid)
       {
-        if (lp.excitation == 1)
+        for (auto &[port_idx, lp] : lumpedport)
         {
-          lp.excitation = port_idx;
+          if (lp.excitation == 1)
+          {
+            lp.excitation = port_idx;
+          }
         }
-      }
-      for (auto &[port_idx, wp] : waveport)
-      {
-        if (wp.excitation == 1)
+        for (auto &[port_idx, wp] : waveport)
         {
-          wp.excitation = port_idx;
+          if (wp.excitation == 1)
+          {
+            wp.excitation = port_idx;
+          }
         }
       }
     }
@@ -1016,8 +963,6 @@ std::vector<double> ConstructLinearRange(double start, double end, int n_sample)
 }
 std::vector<double> ConstructLogRange(double start, double end, int n_sample)
 {
-  MFEM_VERIFY(start > 0 && end > 0,
-              "\"Type\": \"Log\" only valid for non-zero start and end!");
   std::vector<double> f(n_sample);
   double log_start = std::log10(start);
   double log_end = std::log10(end);
@@ -1381,6 +1326,213 @@ std::pair<std::array<double, 3>, CoordinateSystem> ParseStringAsDirection(std::s
     default:
       return {std::array{0.0, 0.0, 0.0}, CoordinateSystem::CARTESIAN};
   }
+}
+
+std::optional<std::string> Validate(const BoundaryData &boundaries)
+{
+  std::ostringstream errors;
+
+  // Check for duplicate indices across LumpedPort, WavePort, SurfaceCurrent, Terminal.
+  std::map<int, std::string> index_map;
+  for (const auto &[idx, data] : boundaries.lumpedport)
+  {
+    auto [it, inserted] = index_map.try_emplace(idx, "LumpedPort");
+    if (!inserted)
+    {
+      errors << "Duplicate \"Index\": " << idx << " in " << it->second
+             << " and LumpedPort\n";
+    }
+  }
+  for (const auto &[idx, data] : boundaries.waveport)
+  {
+    auto [it, inserted] = index_map.try_emplace(idx, "WavePort");
+    if (!inserted)
+    {
+      errors << "Duplicate \"Index\": " << idx << " in " << it->second << " and WavePort\n";
+    }
+  }
+  for (const auto &[idx, data] : boundaries.current)
+  {
+    auto [it, inserted] = index_map.try_emplace(idx, "SurfaceCurrent");
+    if (!inserted)
+    {
+      errors << "Duplicate \"Index\": " << idx << " in " << it->second
+             << " and SurfaceCurrent\n";
+    }
+  }
+  for (const auto &[idx, data] : boundaries.terminal)
+  {
+    auto [it, inserted] = index_map.try_emplace(idx, "Terminal");
+    if (!inserted)
+    {
+      errors << "Duplicate \"Index\": " << idx << " in " << it->second << " and Terminal\n";
+    }
+  }
+
+  // Check excitation indices match port indices for S-parameter calculation.
+  std::map<int, std::vector<int>> excitation_map;
+  for (const auto &[idx, data] : boundaries.lumpedport)
+  {
+    excitation_map[data.excitation].emplace_back(idx);
+  }
+  for (const auto &[idx, data] : boundaries.waveport)
+  {
+    excitation_map[data.excitation].emplace_back(idx);
+  }
+  excitation_map.erase(0);
+  bool calc_s_params = std::all_of(excitation_map.begin(), excitation_map.end(),
+                                   [](const auto &x) { return x.second.size() == 1; });
+  if (calc_s_params && !excitation_map.empty())
+  {
+    const auto &ext1 = *excitation_map.begin();
+    bool valid =
+        (excitation_map.size() == 1 && (ext1.first == 1 || ext1.second[0] == ext1.first)) ||
+        std::all_of(excitation_map.begin(), excitation_map.end(),
+                    [](const auto &x) { return x.first == x.second[0]; });
+    if (!valid)
+    {
+      errors << "\"Excitation\" must match \"Index\" for single ports to avoid ambiguity\n";
+    }
+  }
+
+  auto result = errors.str();
+  if (result.empty())
+  {
+    return std::nullopt;
+  }
+  return result;
+}
+
+}  // namespace palace::config
+
+namespace palace::config
+{
+
+namespace
+{
+
+template <std::size_t N>
+constexpr SymmetricMatrixData<N> &operator/=(SymmetricMatrixData<N> &data, double s)
+{
+  for (auto &x : data.s)
+  {
+    x /= s;
+  }
+  return data;
+}
+
+// Helper to create a lambda that divides by the mesh length scale
+inline auto LengthScaler(const Units &units)
+{
+  return [Lc0 = units.GetMeshLengthRelativeScale()](double val) { return val / Lc0; };
+}
+
+}  // namespace
+
+void Nondimensionalize(const Units &units, RefinementData &data)
+{
+  auto scale = LengthScaler(units);
+  for (auto &box : data.GetBoxes())
+  {
+    std::transform(box.bbmin.begin(), box.bbmin.end(), box.bbmin.begin(), scale);
+    std::transform(box.bbmax.begin(), box.bbmax.end(), box.bbmax.begin(), scale);
+  }
+  for (auto &sphere : data.GetSpheres())
+  {
+    sphere.r /= units.GetMeshLengthRelativeScale();
+    std::transform(sphere.center.begin(), sphere.center.end(), sphere.center.begin(),
+                   scale);
+  }
+}
+
+void Nondimensionalize(const Units &units, MaterialData &data)
+{
+  data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
+  data.lambda_L /= units.GetMeshLengthRelativeScale();
+}
+
+void Nondimensionalize(const Units &units, ProbeData &data)
+{
+  std::transform(data.center.begin(), data.center.end(), data.center.begin(),
+                 LengthScaler(units));
+}
+
+void Nondimensionalize(const Units &units, CurrentDipoleData &data)
+{
+  std::transform(data.center.begin(), data.center.end(), data.center.begin(),
+                 LengthScaler(units));
+}
+
+void Nondimensionalize(const Units &units, ConductivityData &data)
+{
+  data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
+  data.h /= units.GetMeshLengthRelativeScale();
+}
+
+void Nondimensionalize(const Units &units, ImpedanceData &data)
+{
+  data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+  data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+  data.Cs /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+}
+
+void Nondimensionalize(const Units &units, LumpedPortData &data)
+{
+  data.R /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+  data.L /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+  data.C /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+  data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+  data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+  data.Cs /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+}
+
+void Nondimensionalize(const Units &units, PeriodicBoundaryData &data)
+{
+  for (auto &k : data.wave_vector)
+  {
+    k *= units.GetMeshLengthRelativeScale();
+  }
+}
+
+void Nondimensionalize(const Units &units, WavePortData &data)
+{
+  data.d_offset /= units.GetMeshLengthRelativeScale();
+}
+
+void Nondimensionalize(const Units &units, SurfaceFluxData &data)
+{
+  std::transform(data.center.begin(), data.center.end(), data.center.begin(),
+                 LengthScaler(units));
+}
+
+void Nondimensionalize(const Units &units, InterfaceDielectricData &data)
+{
+  data.t /= units.GetMeshLengthRelativeScale();
+}
+
+void Nondimensionalize(const Units &units, EigenSolverData &data)
+{
+  data.target =
+      2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.target);
+  data.target_upper =
+      2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.target_upper);
+}
+
+void Nondimensionalize(const Units &units, DrivenSolverData &data)
+{
+  for (auto &f : data.sample_f)
+  {
+    f = 2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
+  }
+}
+
+void Nondimensionalize(const Units &units, TransientSolverData &data)
+{
+  data.pulse_f =
+      2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.pulse_f);
+  data.pulse_tau = units.Nondimensionalize<Units::ValueType::TIME>(data.pulse_tau);
+  data.max_t = units.Nondimensionalize<Units::ValueType::TIME>(data.max_t);
+  data.delta_t = units.Nondimensionalize<Units::ValueType::TIME>(data.delta_t);
 }
 
 }  // namespace palace::config
