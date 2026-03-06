@@ -135,8 +135,12 @@ public:
   int NumPropagatingOrders() const;
 
   // Add excitation vector contribution directly to the RHS.
-  // For the incident mode: RHS += -2i*omega/mu * v_inc.
+  // The incident field is normalized to inject 1 W (nondimensional) through the port,
+  // consistent with lumped and wave port conventions.
   bool AddExcitationVector(double omega, ComplexVector &RHS) const;
+
+  // Returns 1 W: the port mode is normalized such that ∫ (E_inc × H_inc⋆) · n̂ dS = 1.
+  double GetExcitationPower() const { return HasExcitation() ? 1.0 : 0.0; }
 
 private:
   const MaterialOperator &mat_op;

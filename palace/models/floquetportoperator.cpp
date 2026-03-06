@@ -531,12 +531,34 @@ std::unique_ptr<LowRankComplexOperator> FloquetPortData::GetBoundaryOperator() c
     if (mode.gamma_sq > 0.0)
     {
       double gamma = std::sqrt(mode.gamma_sq);
-      g_full = 1i * gamma / (mu_r_port * port_area);
+      if (mode.is_te)
+      {
+        // TE DtN eigenvalue: gamma (from G_nm tensor, Eq 25 of Floquet_BC.pdf)
+        g_full = 1i * gamma / (mu_r_port * port_area);
+      }
+      else
+      {
+        // TM DtN eigenvalue: omega^2 * mu_r * eps_r / gamma = k^2 / gamma
+        // (the G_nm tensor has different eigenvalues for TE and TM polarizations)
+        g_full = 1i * omega0 * omega0 * mu_eps_port / (gamma * mu_r_port * port_area);
+      }
     }
     else if (mode.gamma_sq < 0.0)
     {
       double gamma_abs = std::sqrt(-mode.gamma_sq);
-      g_full = -gamma_abs / (mu_r_port * port_area);
+      if (mode.is_te)
+      {
+        // TE evanescent: -|gamma| / (mu * |Gamma|)
+        g_full = -gamma_abs / (mu_r_port * port_area);
+      }
+      else
+      {
+        // TM evanescent: g = j * omega^2 * eps_r / (gamma * |Gamma|) with gamma = j|gamma|
+        //              = j * omega^2 * mu_r * eps_r / (j|gamma| * mu_r * |Gamma|)
+        //              = +omega^2 * eps_r / (|gamma| * |Gamma|)  (positive real, inductive)
+        g_full = omega0 * omega0 * mu_eps_port /
+                 (gamma_abs * mu_r_port * port_area);
+      }
     }
     else
     {
@@ -574,6 +596,12 @@ FloquetPortData::GetAllSParameters(const GridFunction &E) const
   // Compute γ_inc = γ for the (0,0) mode at this port.
   double gamma_inc = std::sqrt(omega0 * omega0 * mu_eps_port);
 
+  // The excitation is normalized to inject 1 W. The incident Fourier amplitude is
+  // c_inc = 1/√P_unit where P_unit = γ_inc |Γ| / (2ω μ_r). The S-parameter extraction
+  // must divide by c_inc so that S-parameters are ratios of power-normalized amplitudes.
+  double p_unit = gamma_inc * port_area / (2.0 * omega0 * mu_r_port);
+  double c_inc = 1.0 / std::sqrt(p_unit);
+
   // Restrict E to true DOFs once (shared across all modes).
   const auto *P = E.Real().ParFESpace()->GetProlongationMatrix();
   int tdof_size = modes.empty() ? 0 : static_cast<int>(modes[0].v.Size());
@@ -603,12 +631,13 @@ FloquetPortData::GetAllSParameters(const GridFunction &E) const
     double si = linalg::Dot(comm, mode.v.Real(), E_i_tdof) +
                 linalg::Dot(comm, mode.v.Imag(), E_r_tdof);
 
-    // Field amplitude: c = v^T E / |Γ|.
+    // Field amplitude: c = v^T E / (c_inc × |Γ|), where c_inc accounts for the
+    // unit-power normalization applied to the excitation.
     // Power normalization: S = √(γ_mn / γ_inc) × c.
     double power_factor = std::sqrt(gamma_mn / gamma_inc);
 
     auto key = std::make_tuple(mode.m, mode.n, mode.is_te);
-    result[key] = power_factor * std::complex<double>(sr, si) / port_area;
+    result[key] = power_factor * std::complex<double>(sr, si) / (c_inc * port_area);
   }
 
   return result;
@@ -640,16 +669,17 @@ bool FloquetPortData::AddExcitationVector(double omega, ComplexVector &RHS) cons
               "Incident Floquet mode is evanescent at this frequency!");
   double gamma_inc = std::sqrt(inc_mode->gamma_sq);
 
-  // f = c * conj(v) where c = 2i gamma / mu_r (complex scalar).
-  // c * conj(v) = (c_r + i c_i)(v_r - i v_i)
-  //   Real: c_r v_r + c_i v_i
-  //   Imag: c_i v_r - c_r v_i
-  // Here c = 2i gamma/mu_r → c_r = 0, c_i = 2 gamma/mu_r.
-  double c_i = 2.0 * gamma_inc / mu_r_port;
+  // Unit-power normalization: scale the incident field so the injected power is 1 W
+  // (nondimensional), consistent with lumped and wave port conventions.
+  // Power with unit Fourier amplitude: P = γ/(2ωμ_r) × |Γ|.
+  // Scale factor: c_inc = 1/√P = √(2ωμ_r / (γ|Γ|)).
+  double p_unit = gamma_inc * port_area / (2.0 * omega * mu_r_port);
+  double c_inc = 1.0 / std::sqrt(p_unit);
 
-  // Real part: 0*v_r + c_i*v_i = c_i * v_i
+  // f = c_inc × 2i gamma / mu_r × conj(v)
+  double c_i = c_inc * 2.0 * gamma_inc / mu_r_port;
+
   RHS.Real().Add(c_i, inc_mode->v.Imag());
-  // Imag part: c_i*v_r - 0*v_i = c_i * v_r
   RHS.Imag().Add(c_i, inc_mode->v.Real());
   return true;
 }
