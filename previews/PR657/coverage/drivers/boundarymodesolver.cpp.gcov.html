@@ -1,0 +1,565 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - drivers/boundarymodesolver.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">drivers</a> - boundarymodesolver.cpp<span style="font-size: 80%;"> (source / <a href="boundarymodesolver.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
+            <td class="headerCovTableEntry">197</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-03-06 23:17:15</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
+            <td class="headerCovTableEntry">1</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &quot;boundarymodesolver.hpp&quot;</span>
+<span id="L5"><span class="lineNum">       5</span>              : </span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;algorithm&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;complex&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;vector&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : </span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &quot;fem/errorindicator.hpp&quot;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &quot;fem/fespace.hpp&quot;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &quot;fem/mesh.hpp&quot;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &quot;fem/multigrid.hpp&quot;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &quot;linalg/errorestimator.hpp&quot;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &quot;linalg/vector.hpp&quot;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &quot;models/boundarymodeoperator.hpp&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : #include &quot;models/farfieldboundaryoperator.hpp&quot;</span>
+<span id="L18"><span class="lineNum">      18</span>              : #include &quot;models/materialoperator.hpp&quot;</span>
+<span id="L19"><span class="lineNum">      19</span>              : #include &quot;models/postoperator.hpp&quot;</span>
+<span id="L20"><span class="lineNum">      20</span>              : #include &quot;models/surfaceconductivityoperator.hpp&quot;</span>
+<span id="L21"><span class="lineNum">      21</span>              : #include &quot;models/surfaceimpedanceoperator.hpp&quot;</span>
+<span id="L22"><span class="lineNum">      22</span>              : #include &quot;utils/communication.hpp&quot;</span>
+<span id="L23"><span class="lineNum">      23</span>              : #include &quot;utils/geodata.hpp&quot;</span>
+<span id="L24"><span class="lineNum">      24</span>              : #include &quot;utils/iodata.hpp&quot;</span>
+<span id="L25"><span class="lineNum">      25</span>              : #include &quot;utils/timer.hpp&quot;</span>
+<span id="L26"><span class="lineNum">      26</span>              : </span>
+<span id="L27"><span class="lineNum">      27</span>              : namespace palace</span>
+<span id="L28"><span class="lineNum">      28</span>              : {</span>
+<span id="L29"><span class="lineNum">      29</span>              : </span>
+<span id="L30"><span class="lineNum">      30</span>              : std::pair&lt;ErrorIndicator, long long int&gt;</span>
+<span id="L31"><span class="lineNum">      31</span> <span class="tlaUNC tlaBgUNC">           0 : BoundaryModeSolver::Solve(const std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; &amp;mesh) const</span></span>
+<span id="L32"><span class="lineNum">      32</span>              : {</span>
+<span id="L33"><span class="lineNum">      33</span> <span class="tlaUNC">           0 :   const auto &amp;bm_data = iodata.solver.boundary_mode;</span></span>
+<span id="L34"><span class="lineNum">      34</span>              :   const bool use_submesh = !bm_data.attributes.empty();</span>
+<span id="L35"><span class="lineNum">      35</span>              : </span>
+<span id="L36"><span class="lineNum">      36</span> <span class="tlaUNC">           0 :   if (use_submesh)</span></span>
+<span id="L37"><span class="lineNum">      37</span>              :   {</span>
+<span id="L38"><span class="lineNum">      38</span> <span class="tlaUNC">           0 :     MFEM_VERIFY(mesh.back()-&gt;Dimension() == 3,</span></span>
+<span id="L39"><span class="lineNum">      39</span>              :                 &quot;BoundaryMode with \&quot;Attributes\&quot; requires a 3D mesh!&quot;);</span>
+<span id="L40"><span class="lineNum">      40</span>              :   }</span>
+<span id="L41"><span class="lineNum">      41</span>              :   else</span>
+<span id="L42"><span class="lineNum">      42</span>              :   {</span>
+<span id="L43"><span class="lineNum">      43</span> <span class="tlaUNC">           0 :     MFEM_VERIFY(mesh.back()-&gt;Dimension() == 2,</span></span>
+<span id="L44"><span class="lineNum">      44</span>              :                 &quot;BoundaryMode solver requires a 2D mesh (waveguide cross-section), &quot;</span>
+<span id="L45"><span class="lineNum">      45</span>              :                 &quot;or a 3D mesh with \&quot;Attributes\&quot; specifying the cross-section boundary!&quot;);</span>
+<span id="L46"><span class="lineNum">      46</span>              :   }</span>
+<span id="L47"><span class="lineNum">      47</span>              : </span>
+<span id="L48"><span class="lineNum">      48</span> <span class="tlaUNC">           0 :   const double freq_GHz = bm_data.freq;</span></span>
+<span id="L49"><span class="lineNum">      49</span> <span class="tlaUNC">           0 :   const int num_modes = bm_data.n;</span></span>
+<span id="L50"><span class="lineNum">      50</span> <span class="tlaUNC">           0 :   const double tol = bm_data.tol;</span></span>
+<span id="L51"><span class="lineNum">      51</span>              :   const double omega =</span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaUNC">           0 :       2.0 * M_PI * iodata.units.Nondimensionalize&lt;Units::ValueType::FREQUENCY&gt;(freq_GHz);</span></span>
+<span id="L53"><span class="lineNum">      53</span>              : </span>
+<span id="L54"><span class="lineNum">      54</span> <span class="tlaUNC">           0 :   Mpi::Print(&quot;\nConfiguring 2D waveguide mode analysis at f = {:.3e} GHz &quot;</span></span>
+<span id="L55"><span class="lineNum">      55</span>              :              &quot;(omega = {:.6e})\n&quot;,</span>
+<span id="L56"><span class="lineNum">      56</span>              :              freq_GHz, omega);</span>
+<span id="L57"><span class="lineNum">      57</span>              : </span>
+<span id="L58"><span class="lineNum">      58</span> <span class="tlaUNC">           0 :   BlockTimer bt0(Timer::CONSTRUCT);</span></span>
+<span id="L59"><span class="lineNum">      59</span>              : </span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaUNC">           0 :   std::unique_ptr&lt;Mesh&gt; submesh_holder;</span></span>
+<span id="L61"><span class="lineNum">      61</span> <span class="tlaUNC">           0 :   std::unique_ptr&lt;MaterialOperator&gt; owned_mat_op;</span></span>
+<span id="L62"><span class="lineNum">      62</span>              :   mfem::Vector submesh_centroid, submesh_e1, submesh_e2;</span>
+<span id="L63"><span class="lineNum">      63</span>              :   Mesh *solve_mesh;</span>
+<span id="L64"><span class="lineNum">      64</span>              : </span>
+<span id="L65"><span class="lineNum">      65</span> <span class="tlaUNC">           0 :   if (use_submesh)</span></span>
+<span id="L66"><span class="lineNum">      66</span>              :   {</span>
+<span id="L67"><span class="lineNum">      67</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot; Extracting 2D submesh from 3D boundary attributes...\n&quot;);</span></span>
+<span id="L68"><span class="lineNum">      68</span>              :     const auto &amp;parent_mesh = mesh.back()-&gt;Get();</span>
+<span id="L69"><span class="lineNum">      69</span>              :     MPI_Comm comm = parent_mesh.GetComm();</span>
+<span id="L70"><span class="lineNum">      70</span>              :     mfem::Array&lt;int&gt; attr_list;</span>
+<span id="L71"><span class="lineNum">      71</span> <span class="tlaUNC">           0 :     attr_list.Append(bm_data.attributes.data(), bm_data.attributes.size());</span></span>
+<span id="L72"><span class="lineNum">      72</span>              : </span>
+<span id="L73"><span class="lineNum">      73</span>              :     // Collect all boundary attributes that need internal boundary elements on the</span>
+<span id="L74"><span class="lineNum">      74</span>              :     // cross-section. This includes PEC, AuxPEC, impedance, conductivity, and absorbing</span>
+<span id="L75"><span class="lineNum">      75</span>              :     // BCs — any 3D boundary face whose edges should become boundary elements in the 2D</span>
+<span id="L76"><span class="lineNum">      76</span>              :     // mesh.</span>
+<span id="L77"><span class="lineNum">      77</span>              :     std::vector&lt;int&gt; internal_bdr_attrs;</span>
+<span id="L78"><span class="lineNum">      78</span> <span class="tlaUNC">           0 :     for (auto a : iodata.boundaries.pec.attributes)</span></span>
+<span id="L79"><span class="lineNum">      79</span>              :     {</span>
+<span id="L80"><span class="lineNum">      80</span>              :       internal_bdr_attrs.push_back(a);</span>
+<span id="L81"><span class="lineNum">      81</span>              :     }</span>
+<span id="L82"><span class="lineNum">      82</span> <span class="tlaUNC">           0 :     for (auto a : iodata.boundaries.auxpec.attributes)</span></span>
+<span id="L83"><span class="lineNum">      83</span>              :     {</span>
+<span id="L84"><span class="lineNum">      84</span>              :       internal_bdr_attrs.push_back(a);</span>
+<span id="L85"><span class="lineNum">      85</span>              :     }</span>
+<span id="L86"><span class="lineNum">      86</span> <span class="tlaUNC">           0 :     for (const auto &amp;d : iodata.boundaries.impedance)</span></span>
+<span id="L87"><span class="lineNum">      87</span>              :     {</span>
+<span id="L88"><span class="lineNum">      88</span> <span class="tlaUNC">           0 :       for (auto a : d.attributes)</span></span>
+<span id="L89"><span class="lineNum">      89</span>              :       {</span>
+<span id="L90"><span class="lineNum">      90</span>              :         internal_bdr_attrs.push_back(a);</span>
+<span id="L91"><span class="lineNum">      91</span>              :       }</span>
+<span id="L92"><span class="lineNum">      92</span>              :     }</span>
+<span id="L93"><span class="lineNum">      93</span> <span class="tlaUNC">           0 :     for (const auto &amp;d : iodata.boundaries.conductivity)</span></span>
+<span id="L94"><span class="lineNum">      94</span>              :     {</span>
+<span id="L95"><span class="lineNum">      95</span> <span class="tlaUNC">           0 :       for (auto a : d.attributes)</span></span>
+<span id="L96"><span class="lineNum">      96</span>              :       {</span>
+<span id="L97"><span class="lineNum">      97</span>              :         internal_bdr_attrs.push_back(a);</span>
+<span id="L98"><span class="lineNum">      98</span>              :       }</span>
+<span id="L99"><span class="lineNum">      99</span>              :     }</span>
+<span id="L100"><span class="lineNum">     100</span> <span class="tlaUNC">           0 :     for (auto a : iodata.boundaries.farfield.attributes)</span></span>
+<span id="L101"><span class="lineNum">     101</span>              :     {</span>
+<span id="L102"><span class="lineNum">     102</span>              :       internal_bdr_attrs.push_back(a);</span>
+<span id="L103"><span class="lineNum">     103</span>              :     }</span>
+<span id="L104"><span class="lineNum">     104</span>              : </span>
+<span id="L105"><span class="lineNum">     105</span>              :     // Extract a standalone 2D serial mesh from the 3D boundary, with proper domain</span>
+<span id="L106"><span class="lineNum">     106</span>              :     // attributes, boundary attributes, internal boundary edges, and 2D projection.</span>
+<span id="L107"><span class="lineNum">     107</span>              :     mfem::Vector surface_normal;</span>
+<span id="L108"><span class="lineNum">     108</span>              :     auto serial_mesh = mesh::ExtractStandalone2DSubmesh(</span>
+<span id="L109"><span class="lineNum">     109</span>              :         parent_mesh, attr_list, internal_bdr_attrs, surface_normal, submesh_centroid,</span>
+<span id="L110"><span class="lineNum">     110</span> <span class="tlaUNC">           0 :         submesh_e1, submesh_e2);</span></span>
+<span id="L111"><span class="lineNum">     111</span>              : </span>
+<span id="L112"><span class="lineNum">     112</span>              :     // Repartition across all MPI ranks using the MeshPartitioner-based distribution</span>
+<span id="L113"><span class="lineNum">     113</span>              :     // pipeline, which correctly handles shared entity topology and edge orientations.</span>
+<span id="L114"><span class="lineNum">     114</span> <span class="tlaUNC">           0 :     if (!Mpi::Root(comm))</span></span>
+<span id="L115"><span class="lineNum">     115</span>              :     {</span>
+<span id="L116"><span class="lineNum">     116</span>              :       serial_mesh.reset();</span>
+<span id="L117"><span class="lineNum">     117</span>              :     }</span>
+<span id="L118"><span class="lineNum">     118</span> <span class="tlaUNC">           0 :     auto mesh_2d = mesh::DistributeSerialMesh(comm, serial_mesh);</span></span>
+<span id="L119"><span class="lineNum">     119</span>              : </span>
+<span id="L120"><span class="lineNum">     120</span> <span class="tlaUNC">           0 :     submesh_holder = std::make_unique&lt;Mesh&gt;(std::move(mesh_2d));</span></span>
+<span id="L121"><span class="lineNum">     121</span> <span class="tlaUNC">           0 :     solve_mesh = submesh_holder.get();</span></span>
+<span id="L122"><span class="lineNum">     122</span>              : </span>
+<span id="L123"><span class="lineNum">     123</span>              :     // Construct MaterialOperator from the standalone 2D mesh.</span>
+<span id="L124"><span class="lineNum">     124</span> <span class="tlaUNC">           0 :     owned_mat_op = std::make_unique&lt;MaterialOperator&gt;(iodata, *solve_mesh);</span></span>
+<span id="L125"><span class="lineNum">     125</span>              : </span>
+<span id="L126"><span class="lineNum">     126</span>              :     // Rotate material tensors from global frame to the local tangent frame.</span>
+<span id="L127"><span class="lineNum">     127</span> <span class="tlaUNC">           0 :     owned_mat_op-&gt;RotateMaterialTensors(iodata, submesh_e1, submesh_e2, surface_normal);</span></span>
+<span id="L128"><span class="lineNum">     128</span>              :   }</span>
+<span id="L129"><span class="lineNum">     129</span>              :   else</span>
+<span id="L130"><span class="lineNum">     130</span>              :   {</span>
+<span id="L131"><span class="lineNum">     131</span> <span class="tlaUNC">           0 :     solve_mesh = mesh.back().get();</span></span>
+<span id="L132"><span class="lineNum">     132</span> <span class="tlaUNC">           0 :     owned_mat_op = std::make_unique&lt;MaterialOperator&gt;(iodata, *mesh.back());</span></span>
+<span id="L133"><span class="lineNum">     133</span>              :   }</span>
+<span id="L134"><span class="lineNum">     134</span>              :   MaterialOperator &amp;mat_op = *owned_mat_op;</span>
+<span id="L135"><span class="lineNum">     135</span>              : </span>
+<span id="L136"><span class="lineNum">     136</span>              :   // Collect Dirichlet boundary attributes (PEC + AuxPEC, plus other wave port boundaries</span>
+<span id="L137"><span class="lineNum">     137</span>              :   // on the cross-section when using submesh extraction).</span>
+<span id="L138"><span class="lineNum">     138</span>              :   mfem::Array&lt;int&gt; dbc_bcs;</span>
+<span id="L139"><span class="lineNum">     139</span>              :   {</span>
+<span id="L140"><span class="lineNum">     140</span> <span class="tlaUNC">           0 :     const auto &amp;pmesh = solve_mesh-&gt;Get();</span></span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaUNC">           0 :     int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;</span></span>
+<span id="L142"><span class="lineNum">     142</span> <span class="tlaUNC">           0 :     for (auto attr : iodata.boundaries.pec.attributes)</span></span>
+<span id="L143"><span class="lineNum">     143</span>              :     {</span>
+<span id="L144"><span class="lineNum">     144</span> <span class="tlaUNC">           0 :       if (attr &gt; 0 &amp;&amp; attr &lt;= bdr_attr_max)</span></span>
+<span id="L145"><span class="lineNum">     145</span>              :       {</span>
+<span id="L146"><span class="lineNum">     146</span> <span class="tlaUNC">           0 :         dbc_bcs.Append(attr);</span></span>
+<span id="L147"><span class="lineNum">     147</span>              :       }</span>
+<span id="L148"><span class="lineNum">     148</span>              :     }</span>
+<span id="L149"><span class="lineNum">     149</span> <span class="tlaUNC">           0 :     for (auto attr : iodata.boundaries.auxpec.attributes)</span></span>
+<span id="L150"><span class="lineNum">     150</span>              :     {</span>
+<span id="L151"><span class="lineNum">     151</span> <span class="tlaUNC">           0 :       if (attr &gt; 0 &amp;&amp; attr &lt;= bdr_attr_max)</span></span>
+<span id="L152"><span class="lineNum">     152</span>              :       {</span>
+<span id="L153"><span class="lineNum">     153</span> <span class="tlaUNC">           0 :         dbc_bcs.Append(attr);</span></span>
+<span id="L154"><span class="lineNum">     154</span>              :       }</span>
+<span id="L155"><span class="lineNum">     155</span>              :     }</span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaUNC">           0 :     if (use_submesh)</span></span>
+<span id="L157"><span class="lineNum">     157</span>              :     {</span>
+<span id="L158"><span class="lineNum">     158</span> <span class="tlaUNC">           0 :       for (const auto &amp;[idx, data] : iodata.boundaries.waveport)</span></span>
+<span id="L159"><span class="lineNum">     159</span>              :       {</span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaUNC">           0 :         for (auto attr : data.attributes)</span></span>
+<span id="L161"><span class="lineNum">     161</span>              :         {</span>
+<span id="L162"><span class="lineNum">     162</span> <span class="tlaUNC">           0 :           if (std::find(bm_data.attributes.begin(), bm_data.attributes.end(), attr) !=</span></span>
+<span id="L163"><span class="lineNum">     163</span>              :               bm_data.attributes.end())</span>
+<span id="L164"><span class="lineNum">     164</span>              :           {</span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaUNC">           0 :             continue;</span></span>
+<span id="L166"><span class="lineNum">     166</span>              :           }</span>
+<span id="L167"><span class="lineNum">     167</span> <span class="tlaUNC">           0 :           if (attr &gt; 0 &amp;&amp; attr &lt;= bdr_attr_max)</span></span>
+<span id="L168"><span class="lineNum">     168</span>              :           {</span>
+<span id="L169"><span class="lineNum">     169</span> <span class="tlaUNC">           0 :             dbc_bcs.Append(attr);</span></span>
+<span id="L170"><span class="lineNum">     170</span>              :           }</span>
+<span id="L171"><span class="lineNum">     171</span>              :         }</span>
+<span id="L172"><span class="lineNum">     172</span>              :       }</span>
+<span id="L173"><span class="lineNum">     173</span>              :     }</span>
+<span id="L174"><span class="lineNum">     174</span>              :     dbc_bcs.Sort();</span>
+<span id="L175"><span class="lineNum">     175</span> <span class="tlaUNC">           0 :     dbc_bcs.Unique();</span></span>
+<span id="L176"><span class="lineNum">     176</span>              :   }</span>
+<span id="L177"><span class="lineNum">     177</span>              : </span>
+<span id="L178"><span class="lineNum">     178</span>              :   // Construct FE space hierarchies for p-multigrid. For solver order p, this builds spaces</span>
+<span id="L179"><span class="lineNum">     179</span>              :   // at p, p-1, ..., 1 (linear coarsening) or logarithmic coarsening. When mg_max_levels &lt;=</span>
+<span id="L180"><span class="lineNum">     180</span>              :   // 1, each hierarchy has a single level (no multigrid — falls back to sparse direct).</span>
+<span id="L181"><span class="lineNum">     181</span>              :   // Wrap the solve mesh in a single-element vector for</span>
+<span id="L182"><span class="lineNum">     182</span>              :   // ConstructFiniteElementSpaceHierarchy. For the submesh case, temporarily move ownership;</span>
+<span id="L183"><span class="lineNum">     183</span>              :   // for the non-submesh case, use a non-owning raw pointer wrapper (released after</span>
+<span id="L184"><span class="lineNum">     184</span>              :   // hierarchy construction).</span>
+<span id="L185"><span class="lineNum">     185</span>              :   std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; solve_mesh_vec;</span>
+<span id="L186"><span class="lineNum">     186</span> <span class="tlaUNC">           0 :   if (use_submesh)</span></span>
+<span id="L187"><span class="lineNum">     187</span>              :   {</span>
+<span id="L188"><span class="lineNum">     188</span>              :     solve_mesh_vec.push_back(std::move(submesh_holder));</span>
+<span id="L189"><span class="lineNum">     189</span>              :   }</span>
+<span id="L190"><span class="lineNum">     190</span>              :   else</span>
+<span id="L191"><span class="lineNum">     191</span>              :   {</span>
+<span id="L192"><span class="lineNum">     192</span> <span class="tlaUNC">           0 :     solve_mesh_vec.emplace_back(solve_mesh);  // Non-owning</span></span>
+<span id="L193"><span class="lineNum">     193</span>              :   }</span>
+<span id="L194"><span class="lineNum">     194</span>              : </span>
+<span id="L195"><span class="lineNum">     195</span> <span class="tlaUNC">           0 :   const auto &amp;mg = iodata.solver.linear;</span></span>
+<span id="L196"><span class="lineNum">     196</span>              :   auto nd_fecs = fem::ConstructFECollections&lt;mfem::ND_FECollection&gt;(</span>
+<span id="L197"><span class="lineNum">     197</span> <span class="tlaUNC">           0 :       iodata.solver.order, solve_mesh-&gt;Dimension(), mg.mg_max_levels, mg.mg_coarsening,</span></span>
+<span id="L198"><span class="lineNum">     198</span> <span class="tlaUNC">           0 :       false);</span></span>
+<span id="L199"><span class="lineNum">     199</span>              :   auto h1_fecs = fem::ConstructFECollections&lt;mfem::H1_FECollection&gt;(</span>
+<span id="L200"><span class="lineNum">     200</span> <span class="tlaUNC">           0 :       iodata.solver.order, solve_mesh-&gt;Dimension(), mg.mg_max_levels, mg.mg_coarsening,</span></span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaUNC">           0 :       false);</span></span>
+<span id="L202"><span class="lineNum">     202</span>              : </span>
+<span id="L203"><span class="lineNum">     203</span>              :   std::vector&lt;mfem::Array&lt;int&gt;&gt; nd_dbc_tdof_lists, h1_dbc_tdof_lists;</span>
+<span id="L204"><span class="lineNum">     204</span>              :   auto nd_fespaces = fem::ConstructFiniteElementSpaceHierarchy(</span>
+<span id="L205"><span class="lineNum">     205</span> <span class="tlaUNC">           0 :       mg.mg_max_levels, solve_mesh_vec, nd_fecs, &amp;dbc_bcs, &amp;nd_dbc_tdof_lists);</span></span>
+<span id="L206"><span class="lineNum">     206</span>              :   auto h1_fespaces = fem::ConstructFiniteElementSpaceHierarchy(</span>
+<span id="L207"><span class="lineNum">     207</span> <span class="tlaUNC">           0 :       mg.mg_max_levels, solve_mesh_vec, h1_fecs, &amp;dbc_bcs, &amp;h1_dbc_tdof_lists);</span></span>
+<span id="L208"><span class="lineNum">     208</span>              : </span>
+<span id="L209"><span class="lineNum">     209</span>              :   // H1 auxiliary space hierarchy for Hiptmair distributive relaxation in the ND block.</span>
+<span id="L210"><span class="lineNum">     210</span>              :   auto h1_aux_fecs = fem::ConstructFECollections&lt;mfem::H1_FECollection&gt;(</span>
+<span id="L211"><span class="lineNum">     211</span> <span class="tlaUNC">           0 :       iodata.solver.order, solve_mesh-&gt;Dimension(), mg.mg_max_levels, mg.mg_coarsening,</span></span>
+<span id="L212"><span class="lineNum">     212</span> <span class="tlaUNC">           0 :       false);</span></span>
+<span id="L213"><span class="lineNum">     213</span>              :   std::vector&lt;mfem::Array&lt;int&gt;&gt; h1_aux_dbc_tdof_lists;</span>
+<span id="L214"><span class="lineNum">     214</span>              :   auto h1_aux_fespaces = fem::ConstructFiniteElementSpaceHierarchy(</span>
+<span id="L215"><span class="lineNum">     215</span> <span class="tlaUNC">           0 :       mg.mg_max_levels, solve_mesh_vec, h1_aux_fecs, &amp;dbc_bcs, &amp;h1_aux_dbc_tdof_lists);</span></span>
+<span id="L216"><span class="lineNum">     216</span>              : </span>
+<span id="L217"><span class="lineNum">     217</span>              :   // Restore mesh ownership.</span>
+<span id="L218"><span class="lineNum">     218</span> <span class="tlaUNC">           0 :   if (use_submesh)</span></span>
+<span id="L219"><span class="lineNum">     219</span>              :   {</span>
+<span id="L220"><span class="lineNum">     220</span>              :     submesh_holder = std::move(solve_mesh_vec[0]);</span>
+<span id="L221"><span class="lineNum">     221</span>              :   }</span>
+<span id="L222"><span class="lineNum">     222</span>              :   else</span>
+<span id="L223"><span class="lineNum">     223</span>              :   {</span>
+<span id="L224"><span class="lineNum">     224</span>              :     solve_mesh_vec[0].release();  // Release the non-owning wrapper.</span>
+<span id="L225"><span class="lineNum">     225</span>              :   }</span>
+<span id="L226"><span class="lineNum">     226</span>              : </span>
+<span id="L227"><span class="lineNum">     227</span>              :   // Get finest-level spaces (used by the rest of the code).</span>
+<span id="L228"><span class="lineNum">     228</span>              :   auto &amp;nd_fespace = nd_fespaces.GetFinestFESpace();</span>
+<span id="L229"><span class="lineNum">     229</span>              :   auto &amp;h1_fespace = h1_fespaces.GetFinestFESpace();</span>
+<span id="L230"><span class="lineNum">     230</span>              : </span>
+<span id="L231"><span class="lineNum">     231</span>              :   // Get finest-level DBC tdof lists.</span>
+<span id="L232"><span class="lineNum">     232</span>              :   const auto &amp;nd_dbc_tdof_list = nd_dbc_tdof_lists.back();</span>
+<span id="L233"><span class="lineNum">     233</span>              :   const auto &amp;h1_dbc_tdof_list = h1_dbc_tdof_lists.back();</span>
+<span id="L234"><span class="lineNum">     234</span>              : </span>
+<span id="L235"><span class="lineNum">     235</span>              :   const int nd_size = nd_fespace.GetTrueVSize();</span>
+<span id="L236"><span class="lineNum">     236</span>              :   const int h1_size = h1_fespace.GetTrueVSize();</span>
+<span id="L237"><span class="lineNum">     237</span> <span class="tlaUNC">           0 :   Mpi::Print(&quot; ND space: {:d} DOFs, H1 space: {:d} DOFs, total: {:d}\n&quot;,</span></span>
+<span id="L238"><span class="lineNum">     238</span> <span class="tlaUNC">           0 :              nd_fespace.GlobalTrueVSize(), h1_fespace.GlobalTrueVSize(),</span></span>
+<span id="L239"><span class="lineNum">     239</span> <span class="tlaUNC">           0 :              nd_fespace.GlobalTrueVSize() + h1_fespace.GlobalTrueVSize());</span></span>
+<span id="L240"><span class="lineNum">     240</span>              : </span>
+<span id="L241"><span class="lineNum">     241</span>              :   // Material operator and PostOperator.</span>
+<span id="L242"><span class="lineNum">     242</span>              :   BoundaryModeFemOp mode_op(mat_op, nd_fespace, h1_fespace, *solve_mesh,</span>
+<span id="L243"><span class="lineNum">     243</span> <span class="tlaUNC">           0 :                             iodata.solver.order);</span></span>
+<span id="L244"><span class="lineNum">     244</span> <span class="tlaUNC">           0 :   PostOperator&lt;ProblemType::BOUNDARYMODE&gt; post_op(iodata, mode_op);</span></span>
+<span id="L245"><span class="lineNum">     245</span>              : </span>
+<span id="L246"><span class="lineNum">     246</span>              :   // Project impedance/voltage path coordinates from 3D to the 2D local frame.</span>
+<span id="L247"><span class="lineNum">     247</span> <span class="tlaUNC">           0 :   if (use_submesh)</span></span>
+<span id="L248"><span class="lineNum">     248</span>              :   {</span>
+<span id="L249"><span class="lineNum">     249</span> <span class="tlaUNC">           0 :     post_op.ProjectImpedancePaths(submesh_centroid, submesh_e1, submesh_e2);</span></span>
+<span id="L250"><span class="lineNum">     250</span> <span class="tlaUNC">           0 :     post_op.ProjectVoltagePaths(submesh_centroid, submesh_e1, submesh_e2);</span></span>
+<span id="L251"><span class="lineNum">     251</span>              :   }</span>
+<span id="L252"><span class="lineNum">     252</span>              : </span>
+<span id="L253"><span class="lineNum">     253</span>              :   // Error estimator setup. These are single-level hierarchies (no p-multigrid) wrapping the</span>
+<span id="L254"><span class="lineNum">     254</span>              :   // finest-level FE spaces for the error estimation flux recovery.</span>
+<span id="L255"><span class="lineNum">     255</span> <span class="tlaUNC">           0 :   auto rt_fec = std::make_unique&lt;mfem::RT_FECollection&gt;(iodata.solver.order - 1,</span></span>
+<span id="L256"><span class="lineNum">     256</span> <span class="tlaUNC">           0 :                                                         solve_mesh-&gt;Dimension());</span></span>
+<span id="L257"><span class="lineNum">     257</span>              :   FiniteElementSpaceHierarchy nd_fespaces_est(</span>
+<span id="L258"><span class="lineNum">     258</span> <span class="tlaUNC">           0 :       std::make_unique&lt;FiniteElementSpace&gt;(*solve_mesh, nd_fecs.back().get()));</span></span>
+<span id="L259"><span class="lineNum">     259</span>              :   FiniteElementSpaceHierarchy rt_fespaces_est(</span>
+<span id="L260"><span class="lineNum">     260</span> <span class="tlaUNC">           0 :       std::make_unique&lt;FiniteElementSpace&gt;(*solve_mesh, rt_fec.get()));</span></span>
+<span id="L261"><span class="lineNum">     261</span>              :   FiniteElementSpaceHierarchy h1_fespaces_est(</span>
+<span id="L262"><span class="lineNum">     262</span> <span class="tlaUNC">           0 :       std::make_unique&lt;FiniteElementSpace&gt;(*solve_mesh, h1_fecs.back().get()));</span></span>
+<span id="L263"><span class="lineNum">     263</span>              :   TimeDependentFluxErrorEstimator&lt;ComplexVector&gt; estimator(</span>
+<span id="L264"><span class="lineNum">     264</span> <span class="tlaUNC">           0 :       mat_op, nd_fespaces_est, rt_fespaces_est, iodata.solver.linear.estimator_tol,</span></span>
+<span id="L265"><span class="lineNum">     265</span> <span class="tlaUNC">           0 :       iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg,</span></span>
+<span id="L266"><span class="lineNum">     266</span> <span class="tlaUNC">           0 :       &amp;mode_op.GetCurlSpace(), &amp;h1_fespaces_est);</span></span>
+<span id="L267"><span class="lineNum">     267</span>              :   ErrorIndicator indicator;</span>
+<span id="L268"><span class="lineNum">     268</span>              : </span>
+<span id="L269"><span class="lineNum">     269</span>              :   // Determine kn_target from user-specified n_eff target or material properties.</span>
+<span id="L270"><span class="lineNum">     270</span>              :   double kn_target;</span>
+<span id="L271"><span class="lineNum">     271</span> <span class="tlaUNC">           0 :   if (bm_data.target &gt; 0.0)</span></span>
+<span id="L272"><span class="lineNum">     272</span>              :   {</span>
+<span id="L273"><span class="lineNum">     273</span> <span class="tlaUNC">           0 :     kn_target = bm_data.target * omega;</span></span>
+<span id="L274"><span class="lineNum">     274</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot; Target n_eff = {:.6e}, kn_target = {:.6e}\n&quot;, bm_data.target, kn_target);</span></span>
+<span id="L275"><span class="lineNum">     275</span>              :   }</span>
+<span id="L276"><span class="lineNum">     276</span>              :   else</span>
+<span id="L277"><span class="lineNum">     277</span>              :   {</span>
+<span id="L278"><span class="lineNum">     278</span> <span class="tlaUNC">           0 :     double c_min = mat_op.GetLightSpeedMax().Min();</span></span>
+<span id="L279"><span class="lineNum">     279</span>              :     Mpi::GlobalMin(1, &amp;c_min, nd_fespace.GetComm());</span>
+<span id="L280"><span class="lineNum">     280</span> <span class="tlaUNC">           0 :     MFEM_VERIFY(c_min &gt; 0.0 &amp;&amp; c_min &lt; mfem::infinity(),</span></span>
+<span id="L281"><span class="lineNum">     281</span>              :                 &quot;Invalid material speed of light!&quot;);</span>
+<span id="L282"><span class="lineNum">     282</span> <span class="tlaUNC">           0 :     kn_target = omega / c_min * std::sqrt(1.1);</span></span>
+<span id="L283"><span class="lineNum">     283</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot; Auto kn_target = {:.6e} (from c_min = {:.6e})\n&quot;, kn_target, c_min);</span></span>
+<span id="L284"><span class="lineNum">     284</span>              :   }</span>
+<span id="L285"><span class="lineNum">     285</span>              : </span>
+<span id="L286"><span class="lineNum">     286</span>              :   // Construct boundary operators for impedance, absorbing, and conductivity BCs.</span>
+<span id="L287"><span class="lineNum">     287</span> <span class="tlaUNC">           0 :   SurfaceImpedanceOperator surf_z_op(iodata, mat_op, *solve_mesh);</span></span>
+<span id="L288"><span class="lineNum">     288</span> <span class="tlaUNC">           0 :   FarfieldBoundaryOperator farfield_op(iodata, mat_op, *solve_mesh);</span></span>
+<span id="L289"><span class="lineNum">     289</span> <span class="tlaUNC">           0 :   SurfaceConductivityOperator surf_sigma_op(iodata, mat_op, *solve_mesh);</span></span>
+<span id="L290"><span class="lineNum">     290</span>              : </span>
+<span id="L291"><span class="lineNum">     291</span>              :   // Configure solver.</span>
+<span id="L292"><span class="lineNum">     292</span> <span class="tlaUNC">           0 :   BoundaryModeOperatorConfig config;</span></span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaUNC">           0 :   config.attr_to_material = &amp;mat_op.GetAttributeToMaterial();</span></span>
+<span id="L294"><span class="lineNum">     294</span> <span class="tlaUNC">           0 :   config.inv_permeability = &amp;mat_op.GetInvPermeability();</span></span>
+<span id="L295"><span class="lineNum">     295</span> <span class="tlaUNC">           0 :   config.curlcurl_inv_permeability = &amp;mat_op.GetCurlCurlInvPermeability();</span></span>
+<span id="L296"><span class="lineNum">     296</span> <span class="tlaUNC">           0 :   config.permittivity_real = &amp;mat_op.GetPermittivityReal();</span></span>
+<span id="L297"><span class="lineNum">     297</span> <span class="tlaUNC">           0 :   config.permittivity_scalar = &amp;mat_op.GetPermittivityScalar();</span></span>
+<span id="L298"><span class="lineNum">     298</span>              :   config.normal = nullptr;  // 2D domain mesh (projected for submesh case)</span>
+<span id="L299"><span class="lineNum">     299</span> <span class="tlaUNC">           0 :   config.permittivity_imag =</span></span>
+<span id="L300"><span class="lineNum">     300</span> <span class="tlaUNC">           0 :       mat_op.HasLossTangent() ? &amp;mat_op.GetPermittivityImag() : nullptr;</span></span>
+<span id="L301"><span class="lineNum">     301</span> <span class="tlaUNC">           0 :   config.permittivity_imag_scalar =</span></span>
+<span id="L302"><span class="lineNum">     302</span> <span class="tlaUNC">           0 :       mat_op.HasLossTangent() ? &amp;mat_op.GetPermittivityImagScalar() : nullptr;</span></span>
+<span id="L303"><span class="lineNum">     303</span> <span class="tlaUNC">           0 :   config.has_loss_tangent = mat_op.HasLossTangent();</span></span>
+<span id="L304"><span class="lineNum">     304</span> <span class="tlaUNC">           0 :   config.conductivity = mat_op.HasConductivity() ? &amp;mat_op.GetConductivity() : nullptr;</span></span>
+<span id="L305"><span class="lineNum">     305</span> <span class="tlaUNC">           0 :   config.has_conductivity = mat_op.HasConductivity();</span></span>
+<span id="L306"><span class="lineNum">     306</span> <span class="tlaUNC">           0 :   config.inv_london_depth = mat_op.HasLondonDepth() ? &amp;mat_op.GetInvLondonDepth() : nullptr;</span></span>
+<span id="L307"><span class="lineNum">     307</span> <span class="tlaUNC">           0 :   config.inv_london_depth_scalar =</span></span>
+<span id="L308"><span class="lineNum">     308</span> <span class="tlaUNC">           0 :       mat_op.HasLondonDepth() ? &amp;mat_op.GetInvLondonDepthScalar() : nullptr;</span></span>
+<span id="L309"><span class="lineNum">     309</span> <span class="tlaUNC">           0 :   config.has_london_depth = mat_op.HasLondonDepth();</span></span>
+<span id="L310"><span class="lineNum">     310</span> <span class="tlaUNC">           0 :   config.mat_op = &amp;mat_op;</span></span>
+<span id="L311"><span class="lineNum">     311</span> <span class="tlaUNC">           0 :   config.surf_z_op = &amp;surf_z_op;</span></span>
+<span id="L312"><span class="lineNum">     312</span> <span class="tlaUNC">           0 :   config.farfield_op = &amp;farfield_op;</span></span>
+<span id="L313"><span class="lineNum">     313</span> <span class="tlaUNC">           0 :   config.surf_sigma_op = &amp;surf_sigma_op;</span></span>
+<span id="L314"><span class="lineNum">     314</span> <span class="tlaUNC">           0 :   config.num_modes = num_modes;</span></span>
+<span id="L315"><span class="lineNum">     315</span> <span class="tlaUNC">           0 :   config.num_vec = bm_data.max_size;</span></span>
+<span id="L316"><span class="lineNum">     316</span> <span class="tlaUNC">           0 :   config.eig_tol = tol;</span></span>
+<span id="L317"><span class="lineNum">     317</span> <span class="tlaUNC">           0 :   config.which_eig = (bm_data.target &gt; 0.0) ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE</span></span>
+<span id="L318"><span class="lineNum">     318</span>              :                                             : EigenvalueSolver::WhichType::LARGEST_REAL;</span>
+<span id="L319"><span class="lineNum">     319</span> <span class="tlaUNC">           0 :   config.linear = &amp;iodata.solver.linear;</span></span>
+<span id="L320"><span class="lineNum">     320</span> <span class="tlaUNC">           0 :   config.eigen_backend = bm_data.type;</span></span>
+<span id="L321"><span class="lineNum">     321</span> <span class="tlaUNC">           0 :   config.verbose = iodata.problem.verbose;</span></span>
+<span id="L322"><span class="lineNum">     322</span>              : </span>
+<span id="L323"><span class="lineNum">     323</span>              :   // Build combined dbc_tdof_list for the block system (PEC only on both ND and H1).</span>
+<span id="L324"><span class="lineNum">     324</span>              :   mfem::Array&lt;int&gt; dbc_tdof_list;</span>
+<span id="L325"><span class="lineNum">     325</span>              :   dbc_tdof_list.Append(nd_dbc_tdof_list);</span>
+<span id="L326"><span class="lineNum">     326</span> <span class="tlaUNC">           0 :   for (int i = 0; i &lt; h1_dbc_tdof_list.Size(); i++)</span></span>
+<span id="L327"><span class="lineNum">     327</span>              :   {</span>
+<span id="L328"><span class="lineNum">     328</span> <span class="tlaUNC">           0 :     dbc_tdof_list.Append(nd_size + h1_dbc_tdof_list[i]);</span></span>
+<span id="L329"><span class="lineNum">     329</span>              :   }</span>
+<span id="L330"><span class="lineNum">     330</span>              : </span>
+<span id="L331"><span class="lineNum">     331</span>              :   // Construct the boundary mode solver. When the FE space hierarchy has multiple levels,</span>
+<span id="L332"><span class="lineNum">     332</span>              :   // configure p-multigrid preconditioning with block-diagonal GMG (ND + H1).</span>
+<span id="L333"><span class="lineNum">     333</span>              :   std::unique_ptr&lt;BoundaryModeMultigridConfig&gt; mg_config_ptr;</span>
+<span id="L334"><span class="lineNum">     334</span> <span class="tlaUNC">           0 :   if (nd_fespaces.GetNumLevels() &gt; 1)</span></span>
+<span id="L335"><span class="lineNum">     335</span>              :   {</span>
+<span id="L336"><span class="lineNum">     336</span> <span class="tlaUNC">           0 :     mg_config_ptr = std::make_unique&lt;BoundaryModeMultigridConfig&gt;();</span></span>
+<span id="L337"><span class="lineNum">     337</span> <span class="tlaUNC">           0 :     mg_config_ptr-&gt;nd_fespaces = &amp;nd_fespaces;</span></span>
+<span id="L338"><span class="lineNum">     338</span> <span class="tlaUNC">           0 :     mg_config_ptr-&gt;h1_fespaces = &amp;h1_fespaces;</span></span>
+<span id="L339"><span class="lineNum">     339</span> <span class="tlaUNC">           0 :     mg_config_ptr-&gt;h1_aux_fespaces = &amp;h1_aux_fespaces;</span></span>
+<span id="L340"><span class="lineNum">     340</span> <span class="tlaUNC">           0 :     mg_config_ptr-&gt;nd_dbc_tdof_lists = &amp;nd_dbc_tdof_lists;</span></span>
+<span id="L341"><span class="lineNum">     341</span> <span class="tlaUNC">           0 :     mg_config_ptr-&gt;h1_dbc_tdof_lists = &amp;h1_dbc_tdof_lists;</span></span>
+<span id="L342"><span class="lineNum">     342</span> <span class="tlaUNC">           0 :     mg_config_ptr-&gt;h1_aux_dbc_tdof_lists = &amp;h1_aux_dbc_tdof_lists;</span></span>
+<span id="L343"><span class="lineNum">     343</span> <span class="tlaUNC">           0 :     for (std::size_t l = 0; l &lt; nd_fespaces.GetNumLevels(); l++)</span></span>
+<span id="L344"><span class="lineNum">     344</span>              :     {</span>
+<span id="L345"><span class="lineNum">     345</span> <span class="tlaUNC">           0 :       int nd_dbc = nd_dbc_tdof_lists[l].Size();</span></span>
+<span id="L346"><span class="lineNum">     346</span> <span class="tlaUNC">           0 :       int h1_dbc = h1_dbc_tdof_lists[l].Size();</span></span>
+<span id="L347"><span class="lineNum">     347</span> <span class="tlaUNC">           0 :       Mpi::Print(&quot; MG level {:d}: ND DOFs={:d} (DBC={:d}), H1 DOFs={:d} (DBC={:d})\n&quot;,</span></span>
+<span id="L348"><span class="lineNum">     348</span> <span class="tlaUNC">           0 :                  static_cast&lt;int&gt;(l), nd_fespaces.GetFESpaceAtLevel(l).GlobalTrueVSize(),</span></span>
+<span id="L349"><span class="lineNum">     349</span> <span class="tlaUNC">           0 :                  nd_dbc, h1_fespaces.GetFESpaceAtLevel(l).GlobalTrueVSize(), h1_dbc);</span></span>
+<span id="L350"><span class="lineNum">     350</span>              :     }</span>
+<span id="L351"><span class="lineNum">     351</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot; Using p-multigrid preconditioning with {:d} levels\n&quot;,</span></span>
+<span id="L352"><span class="lineNum">     352</span> <span class="tlaUNC">           0 :                static_cast&lt;int&gt;(nd_fespaces.GetNumLevels()));</span></span>
+<span id="L353"><span class="lineNum">     353</span>              :   }</span>
+<span id="L354"><span class="lineNum">     354</span>              :   BoundaryModeOperator mode_solver(config, nd_fespace, h1_fespace, dbc_tdof_list,</span>
+<span id="L355"><span class="lineNum">     355</span> <span class="tlaUNC">           0 :                                    solve_mesh-&gt;GetComm(), mg_config_ptr.get());</span></span>
+<span id="L356"><span class="lineNum">     356</span>              : </span>
+<span id="L357"><span class="lineNum">     357</span>              :   // Store Btt for impedance postprocessing.</span>
+<span id="L358"><span class="lineNum">     358</span> <span class="tlaUNC">           0 :   mode_op.SetBttMatrix(std::make_unique&lt;mfem::HypreParMatrix&gt;(*mode_solver.GetBtt()));</span></span>
+<span id="L359"><span class="lineNum">     359</span>              : </span>
+<span id="L360"><span class="lineNum">     360</span>              :   // Solve the GEP. The eigenvalue is lambda = -kn^2 (shift-and-invert with</span>
+<span id="L361"><span class="lineNum">     361</span>              :   // sigma = -kn_target^2).</span>
+<span id="L362"><span class="lineNum">     362</span> <span class="tlaUNC">           0 :   BlockTimer bt1(Timer::EPS);</span></span>
+<span id="L363"><span class="lineNum">     363</span> <span class="tlaUNC">           0 :   Mpi::Print(&quot;\nSolving GEP for {:d} propagation mode(s)...\n&quot;, num_modes);</span></span>
+<span id="L364"><span class="lineNum">     364</span>              : </span>
+<span id="L365"><span class="lineNum">     365</span> <span class="tlaUNC">           0 :   double sigma = -kn_target * kn_target;</span></span>
+<span id="L366"><span class="lineNum">     366</span> <span class="tlaUNC">           0 :   auto result = mode_solver.Solve(omega, sigma);</span></span>
+<span id="L367"><span class="lineNum">     367</span> <span class="tlaUNC">           0 :   int num_conv = result.num_converged;</span></span>
+<span id="L368"><span class="lineNum">     368</span> <span class="tlaUNC">           0 :   Mpi::Print(&quot; Found {:d} converged eigenvalue{} (sigma = {:.6e})\n&quot;, num_conv,</span></span>
+<span id="L369"><span class="lineNum">     369</span> <span class="tlaUNC">           0 :              (num_conv != 1) ? &quot;s&quot; : &quot;&quot;, sigma);</span></span>
+<span id="L370"><span class="lineNum">     370</span>              : </span>
+<span id="L371"><span class="lineNum">     371</span>              :   // Print ALL converged eigenvalues. The shift-and-invert eigenvalue lambda is related</span>
+<span id="L372"><span class="lineNum">     372</span>              :   // to the original eigenvalue -kn^2 by: kn^2 = -sigma - 1/lambda.</span>
+<span id="L373"><span class="lineNum">     373</span> <span class="tlaUNC">           0 :   for (int i = 0; i &lt; num_conv; i++)</span></span>
+<span id="L374"><span class="lineNum">     374</span>              :   {</span>
+<span id="L375"><span class="lineNum">     375</span> <span class="tlaUNC">           0 :     std::complex&lt;double&gt; lambda = mode_solver.GetEigenvalue(i);</span></span>
+<span id="L376"><span class="lineNum">     376</span> <span class="tlaUNC">           0 :     std::complex&lt;double&gt; kn = std::sqrt(-sigma - 1.0 / lambda);</span></span>
+<span id="L377"><span class="lineNum">     377</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot; eig {:d}: kn = {:.6e}{:+.6e}i, n_eff = {:.6e}{:+.6e}i\n&quot;, i, kn.real(),</span></span>
+<span id="L378"><span class="lineNum">     378</span> <span class="tlaUNC">           0 :                kn.imag(), kn.real() / omega, kn.imag() / omega);</span></span>
+<span id="L379"><span class="lineNum">     379</span>              :   }</span>
+<span id="L380"><span class="lineNum">     380</span>              : </span>
+<span id="L381"><span class="lineNum">     381</span>              :   // Postprocessing.</span>
+<span id="L382"><span class="lineNum">     382</span> <span class="tlaUNC">           0 :   BlockTimer bt2(Timer::POSTPRO);</span></span>
+<span id="L383"><span class="lineNum">     383</span> <span class="tlaUNC">           0 :   if (const auto *ksp = mode_solver.GetLinearSolver())</span></span>
+<span id="L384"><span class="lineNum">     384</span>              :   {</span>
+<span id="L385"><span class="lineNum">     385</span> <span class="tlaUNC">           0 :     SaveMetadata(*ksp);</span></span>
+<span id="L386"><span class="lineNum">     386</span>              :   }</span>
+<span id="L387"><span class="lineNum">     387</span> <span class="tlaUNC">           0 :   Mpi::Print(&quot;\nComputing solution error estimates and performing postprocessing\n\n&quot;);</span></span>
+<span id="L388"><span class="lineNum">     388</span>              : </span>
+<span id="L389"><span class="lineNum">     389</span>              :   auto &amp;l2_curl_fespace = mode_op.GetCurlSpace();</span>
+<span id="L390"><span class="lineNum">     390</span> <span class="tlaUNC">           0 :   const auto &amp;CurlOp = l2_curl_fespace.GetDiscreteInterpolator(nd_fespace);</span></span>
+<span id="L391"><span class="lineNum">     391</span>              :   const int l2_size = l2_curl_fespace.GetTrueVSize();</span>
+<span id="L392"><span class="lineNum">     392</span>              : </span>
+<span id="L393"><span class="lineNum">     393</span>              :   const int n_print = std::min(num_conv, num_modes);</span>
+<span id="L394"><span class="lineNum">     394</span> <span class="tlaUNC">           0 :   for (int i = 0; i &lt; n_print; i++)</span></span>
+<span id="L395"><span class="lineNum">     395</span>              :   {</span>
+<span id="L396"><span class="lineNum">     396</span>              :     // Recover kn from eigenvalue (shift-and-invert recovery).</span>
+<span id="L397"><span class="lineNum">     397</span> <span class="tlaUNC">           0 :     std::complex&lt;double&gt; lambda = mode_solver.GetEigenvalue(i);</span></span>
+<span id="L398"><span class="lineNum">     398</span> <span class="tlaUNC">           0 :     std::complex&lt;double&gt; kn = std::sqrt(-sigma - 1.0 / lambda);</span></span>
+<span id="L399"><span class="lineNum">     399</span> <span class="tlaUNC">           0 :     double error_bkwd = mode_solver.GetError(i, EigenvalueSolver::ErrorType::BACKWARD);</span></span>
+<span id="L400"><span class="lineNum">     400</span> <span class="tlaUNC">           0 :     double error_abs = mode_solver.GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);</span></span>
+<span id="L401"><span class="lineNum">     401</span>              : </span>
+<span id="L402"><span class="lineNum">     402</span>              :     // Extract et (ND) and en_tilde (H1) as views into the block eigenvector.</span>
+<span id="L403"><span class="lineNum">     403</span> <span class="tlaUNC">           0 :     ComplexVector e0(nd_size + h1_size);</span></span>
+<span id="L404"><span class="lineNum">     404</span> <span class="tlaUNC">           0 :     e0.UseDevice(true);</span></span>
+<span id="L405"><span class="lineNum">     405</span> <span class="tlaUNC">           0 :     mode_solver.GetEigenvector(i, e0);</span></span>
+<span id="L406"><span class="lineNum">     406</span> <span class="tlaUNC">           0 :     ComplexVector et, en;</span></span>
+<span id="L407"><span class="lineNum">     407</span>              :     et.Real().MakeRef(e0.Real(), 0, nd_size);</span>
+<span id="L408"><span class="lineNum">     408</span>              :     et.Imag().MakeRef(e0.Imag(), 0, nd_size);</span>
+<span id="L409"><span class="lineNum">     409</span>              :     en.Real().MakeRef(e0.Real(), nd_size, h1_size);</span>
+<span id="L410"><span class="lineNum">     410</span>              :     en.Imag().MakeRef(e0.Imag(), nd_size, h1_size);</span>
+<span id="L411"><span class="lineNum">     411</span>              : </span>
+<span id="L412"><span class="lineNum">     412</span>              :     // Power-normalize eigenvector.</span>
+<span id="L413"><span class="lineNum">     413</span>              :     {</span>
+<span id="L414"><span class="lineNum">     414</span>              :       const auto *Btt = mode_op.GetBtt();</span>
+<span id="L415"><span class="lineNum">     415</span> <span class="tlaUNC">           0 :       if (Btt)</span></span>
+<span id="L416"><span class="lineNum">     416</span>              :       {</span>
+<span id="L417"><span class="lineNum">     417</span>              :         Vector Btt_etr(nd_size), Btt_eti(nd_size);</span>
+<span id="L418"><span class="lineNum">     418</span>              :         Btt_etr.UseDevice(true);</span>
+<span id="L419"><span class="lineNum">     419</span>              :         Btt_eti.UseDevice(true);</span>
+<span id="L420"><span class="lineNum">     420</span> <span class="tlaUNC">           0 :         Btt-&gt;Mult(et.Real(), Btt_etr);</span></span>
+<span id="L421"><span class="lineNum">     421</span> <span class="tlaUNC">           0 :         Btt-&gt;Mult(et.Imag(), Btt_eti);</span></span>
+<span id="L422"><span class="lineNum">     422</span> <span class="tlaUNC">           0 :         double p_rr = mfem::InnerProduct(nd_fespace.GetComm(), et.Real(), Btt_etr);</span></span>
+<span id="L423"><span class="lineNum">     423</span> <span class="tlaUNC">           0 :         double p_ii = mfem::InnerProduct(nd_fespace.GetComm(), et.Imag(), Btt_eti);</span></span>
+<span id="L424"><span class="lineNum">     424</span> <span class="tlaUNC">           0 :         double p_ri = mfem::InnerProduct(nd_fespace.GetComm(), et.Real(), Btt_eti);</span></span>
+<span id="L425"><span class="lineNum">     425</span> <span class="tlaUNC">           0 :         double p_ir = mfem::InnerProduct(nd_fespace.GetComm(), et.Imag(), Btt_etr);</span></span>
+<span id="L426"><span class="lineNum">     426</span> <span class="tlaUNC">           0 :         std::complex&lt;double&gt; etH_Btt_et(p_rr + p_ii, p_ri - p_ir);</span></span>
+<span id="L427"><span class="lineNum">     427</span>              :         std::complex&lt;double&gt; P = 0.5 * std::conj(kn) / omega * etH_Btt_et;</span>
+<span id="L428"><span class="lineNum">     428</span>              :         double P_abs = std::abs(P);</span>
+<span id="L429"><span class="lineNum">     429</span> <span class="tlaUNC">           0 :         if (P_abs &gt; 0.0)</span></span>
+<span id="L430"><span class="lineNum">     430</span>              :         {</span>
+<span id="L431"><span class="lineNum">     431</span> <span class="tlaUNC">           0 :           double scale = 1.0 / std::sqrt(P_abs);</span></span>
+<span id="L432"><span class="lineNum">     432</span> <span class="tlaUNC">           0 :           et.Real() *= scale;</span></span>
+<span id="L433"><span class="lineNum">     433</span> <span class="tlaUNC">           0 :           et.Imag() *= scale;</span></span>
+<span id="L434"><span class="lineNum">     434</span> <span class="tlaUNC">           0 :           en.Real() *= scale;</span></span>
+<span id="L435"><span class="lineNum">     435</span> <span class="tlaUNC">           0 :           en.Imag() *= scale;</span></span>
+<span id="L436"><span class="lineNum">     436</span>              :         }</span>
+<span id="L437"><span class="lineNum">     437</span>              :         else</span>
+<span id="L438"><span class="lineNum">     438</span>              :         {</span>
+<span id="L439"><span class="lineNum">     439</span>              :           double norm2 = p_rr + p_ii;</span>
+<span id="L440"><span class="lineNum">     440</span> <span class="tlaUNC">           0 :           if (norm2 &gt; 0.0)</span></span>
+<span id="L441"><span class="lineNum">     441</span>              :           {</span>
+<span id="L442"><span class="lineNum">     442</span> <span class="tlaUNC">           0 :             double scale = 1.0 / std::sqrt(norm2);</span></span>
+<span id="L443"><span class="lineNum">     443</span> <span class="tlaUNC">           0 :             et.Real() *= scale;</span></span>
+<span id="L444"><span class="lineNum">     444</span> <span class="tlaUNC">           0 :             et.Imag() *= scale;</span></span>
+<span id="L445"><span class="lineNum">     445</span> <span class="tlaUNC">           0 :             en.Real() *= scale;</span></span>
+<span id="L446"><span class="lineNum">     446</span> <span class="tlaUNC">           0 :             en.Imag() *= scale;</span></span>
+<span id="L447"><span class="lineNum">     447</span>              :           }</span>
+<span id="L448"><span class="lineNum">     448</span>              :         }</span>
+<span id="L449"><span class="lineNum">     449</span>              :       }</span>
+<span id="L450"><span class="lineNum">     450</span>              :     }</span>
+<span id="L451"><span class="lineNum">     451</span>              : </span>
+<span id="L452"><span class="lineNum">     452</span>              :     auto total_domain_energy =</span>
+<span id="L453"><span class="lineNum">     453</span> <span class="tlaUNC">           0 :         post_op.MeasureAndPrintAll(i, et, en, kn, omega, error_abs, error_bkwd, n_print);</span></span>
+<span id="L454"><span class="lineNum">     454</span>              : </span>
+<span id="L455"><span class="lineNum">     455</span>              :     const bool is_propagating =</span>
+<span id="L456"><span class="lineNum">     456</span> <span class="tlaUNC">           0 :         std::abs(kn.imag()) &lt; 0.1 * std::abs(kn.real()) &amp;&amp; std::abs(kn.real()) &gt; 0.0;</span></span>
+<span id="L457"><span class="lineNum">     457</span> <span class="tlaUNC">           0 :     if (i &lt; num_modes &amp;&amp; is_propagating)</span></span>
+<span id="L458"><span class="lineNum">     458</span>              :     {</span>
+<span id="L459"><span class="lineNum">     459</span> <span class="tlaUNC">           0 :       ComplexVector bz(l2_size);</span></span>
+<span id="L460"><span class="lineNum">     460</span> <span class="tlaUNC">           0 :       bz.UseDevice(true);</span></span>
+<span id="L461"><span class="lineNum">     461</span>              :       {</span>
+<span id="L462"><span class="lineNum">     462</span>              :         Vector curl_etr(l2_size), curl_eti(l2_size);</span>
+<span id="L463"><span class="lineNum">     463</span>              :         curl_etr.UseDevice(true);</span>
+<span id="L464"><span class="lineNum">     464</span>              :         curl_eti.UseDevice(true);</span>
+<span id="L465"><span class="lineNum">     465</span> <span class="tlaUNC">           0 :         CurlOp.Mult(et.Real(), curl_etr);</span></span>
+<span id="L466"><span class="lineNum">     466</span> <span class="tlaUNC">           0 :         CurlOp.Mult(et.Imag(), curl_eti);</span></span>
+<span id="L467"><span class="lineNum">     467</span> <span class="tlaUNC">           0 :         bz.Real() = curl_eti;</span></span>
+<span id="L468"><span class="lineNum">     468</span> <span class="tlaUNC">           0 :         bz.Real() *= 1.0 / omega;</span></span>
+<span id="L469"><span class="lineNum">     469</span> <span class="tlaUNC">           0 :         bz.Imag() = curl_etr;</span></span>
+<span id="L470"><span class="lineNum">     470</span> <span class="tlaUNC">           0 :         bz.Imag() *= -1.0 / omega;</span></span>
+<span id="L471"><span class="lineNum">     471</span>              :       }</span>
+<span id="L472"><span class="lineNum">     472</span> <span class="tlaUNC">           0 :       estimator.AddErrorIndicator(et, bz, total_domain_energy, indicator);</span></span>
+<span id="L473"><span class="lineNum">     473</span>              :     }</span>
+<span id="L474"><span class="lineNum">     474</span>              :   }</span>
+<span id="L475"><span class="lineNum">     475</span> <span class="tlaUNC">           0 :   Mpi::Print(&quot;\n&quot;);</span></span>
+<span id="L476"><span class="lineNum">     476</span>              : </span>
+<span id="L477"><span class="lineNum">     477</span> <span class="tlaUNC">           0 :   post_op.MeasureFinalize(indicator);</span></span>
+<span id="L478"><span class="lineNum">     478</span> <span class="tlaUNC">           0 :   return {indicator, nd_fespace.GlobalTrueVSize() + h1_fespace.GlobalTrueVSize()};</span></span>
+<span id="L479"><span class="lineNum">     479</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L480"><span class="lineNum">     480</span>              : </span>
+<span id="L481"><span class="lineNum">     481</span>              : }  // namespace palace</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
