@@ -1231,6 +1231,11 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   preconditioner_lag = eigenmode.value("PreconditionerLag", preconditioner_lag);
   preconditioner_lag_tol = eigenmode.value("PreconditionerLagTol", preconditioner_lag_tol);
   max_restart = eigenmode.value("MaxRestart", max_restart);
+  circuit_synthesis = eigenmode.value("CircuitSynthesis", circuit_synthesis);
+  circuit_synthesis_gs_orthog_type =
+      eigenmode.value("CircuitSynthesisGSOrthogonalization", circuit_synthesis_gs_orthog_type);
+  circuit_synthesis_domain_orthog =
+      eigenmode.value("CircuitSynthesisDomainOrthogonalization", circuit_synthesis_domain_orthog);
 
   target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
   MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "

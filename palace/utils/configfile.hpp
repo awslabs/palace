@@ -740,6 +740,16 @@ public:
   // nonlinear eigenvalue solver.
   int max_restart = 2;
 
+  // Construct PROM circuit matrices from eigenmodes as a postprocessing step.
+  bool circuit_synthesis = false;
+
+  // Gram-Schmidt orthogonalization used in PROM basis construction for circuit synthesis.
+  Orthogonalization circuit_synthesis_gs_orthog_type = Orthogonalization::CGS2;
+
+  // Domain orthogonalization type for circuit synthesis weight matrix.
+  DomainOrthogonalizationWeight circuit_synthesis_domain_orthog =
+      DomainOrthogonalizationWeight::ENERGY;
+
   EigenSolverData() = default;
   EigenSolverData(const json &eigenmode);
 };

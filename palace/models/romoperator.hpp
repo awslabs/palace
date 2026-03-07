@@ -209,8 +209,22 @@ protected:
   CalculateNormalizedPROMMatrices(const Units &units) const;
 
 public:
+  // Tag type to select the eigenmode circuit synthesis constructor.
+  struct EigenmodeSynthesisTag
+  {
+  };
+
   RomOperator(const IoData &iodata, SpaceOperator &space_op,
               std::size_t max_size_per_excitation);
+
+  // Constructor for eigenmode circuit synthesis postprocessing. Takes ownership of the
+  // system matrices K, C, M (C may be nullptr for lossless problems) from the caller,
+  // avoiding redundant reassembly. Does not construct a KSP solver or MRI objects.
+  // max_size should be 2 * num_conv + n_ports to accommodate complex eigenvectors.
+  RomOperator(const IoData &iodata, SpaceOperator &space_op,
+              std::unique_ptr<ComplexOperator> K_, std::unique_ptr<ComplexOperator> C_,
+              std::unique_ptr<ComplexOperator> M_, std::size_t max_size,
+              EigenmodeSynthesisTag);
 
   // Return the HDM linear solver.
   const ComplexKspSolver &GetLinearSolver() const { return *ksp; }

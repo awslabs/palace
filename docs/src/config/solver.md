@@ -161,6 +161,23 @@ number of eigenmodes of the problem. The available options are:
   - `"PreconditionerLagTol" [1e-4]`
   - `"MaxRestart" [2]`
 
+`"CircuitSynthesis" [false]` : Construct PROM circuit matrices as a postprocessing step
+after the eigenmode solve. The converged eigenmodes are used as the reduced-order basis,
+optionally augmented with lumped port excitation fields if lumped ports are present.
+Prints the same circuit-like matrices as the driven solver's `AdaptiveCircuitSynthesis`
+option (inverse inductance ``L^{-1}``, inverse resistance ``R^{-1}``, capacitance ``C``,
+and basis orthogonalization matrix ``R``), normalized to the conventional voltage for the
+external ports.
+
+`"CircuitSynthesisGSOrthogonalization" ["CGS2"]` : Gram-Schmidt orthogonalization type
+used when building the PROM basis. Options are the same as
+`"AdaptiveGSOrthogonalization"` in the driven solver.
+
+`"CircuitSynthesisDomainOrthogonalization" ["Energy"]` : Weight matrix type for the
+domain (non-port) orthogonalization when building the synthesized circuit matrices.
+Options are the same as `"AdaptiveCircuitSynthesisDomainOrthogonalization"` in the
+driven solver.
+
 ## `solver["Driven"]`
 
 ```json

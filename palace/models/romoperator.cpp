@@ -478,6 +478,35 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   }
 }
 
+RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
+                         std::unique_ptr<ComplexOperator> K_,
+                         std::unique_ptr<ComplexOperator> C_,
+                         std::unique_ptr<ComplexOperator> M_, std::size_t max_size,
+                         EigenmodeSynthesisTag)
+  : space_op(space_op),
+    orthog_type(iodata.solver.eigenmode.circuit_synthesis_gs_orthog_type),
+    K(std::move(K_)), C(std::move(C_)), M(std::move(M_))
+{
+  // System matrices are transferred from the caller (eigensolver) to avoid reassembly. C
+  // may be nullptr for lossless problems.
+  MFEM_VERIFY(K && M, "Invalid empty HDM matrices when constructing PROM!");
+
+  // Initialize working vector storage.
+  r.SetSize(K->Height());
+  r.UseDevice(true);
+
+  // No KSP solver: eigenvectors are provided externally by the eigenvalue solver.
+  // No MRI: no adaptive parameter sampling is performed.
+
+  // Build inner-product weight matrix for circuit synthesis.
+  weight_op_W = HybridBulkBoundaryOperator{
+      space_op, iodata.solver.eigenmode.circuit_synthesis_domain_orthog};
+
+  MFEM_VERIFY(max_size > 0, "Reduced order basis must have > 0 size!");
+  V.reserve(max_size);
+  v_node_label.reserve(max_size);
+}
+
 void RomOperator::SetExcitationIndex(int excitation_idx)
 {
   // Return if cached. Ctor constructs with excitation_idx_cache = 0 which is not a valid

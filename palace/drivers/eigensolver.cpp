@@ -19,6 +19,7 @@
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -448,6 +449,37 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                                          << num_conv << " modes when "
                                                          << iodata.solver.eigenmode.n
                                                          << " were requested!");
+
+  // Optionally construct PROM circuit matrices from the converged eigenmodes.
+  if (iodata.solver.eigenmode.circuit_synthesis)
+  {
+    Mpi::Print("\nConstructing PROM circuit matrices from {:d} eigenmode{}\n", num_conv,
+               (num_conv > 1) ? "s" : "");
+
+    // Over-reserve for complex eigenvectors: at most 2 real vectors per eigenmode plus one
+    // per lumped port.
+    const std::size_t max_prom_size =
+        2 * num_conv + space_op.GetLumpedPortOp().Size();
+
+    // Transfer ownership of K, C, M: they are not used again after this point.
+    RomOperator prom_op(iodata, space_op, std::move(K), std::move(C), std::move(M),
+                        max_prom_size, RomOperator::EigenmodeSynthesisTag{});
+
+    if (space_op.GetLumpedPortOp().Size() > 0)
+    {
+      prom_op.AddLumpedPortModesForSynthesis();
+    }
+
+    for (int i = 0; i < num_conv; i++)
+    {
+      eigen->GetEigenvector(i, E);
+      linalg::NormalizePhase(space_op.GetComm(), E);
+      prom_op.UpdatePROM(E, fmt::format("eigenmode_{:d}", i));
+    }
+
+    prom_op.PrintPROMMatrices(iodata.units, iodata.problem.output);
+  }
+
   return {indicator, space_op.GlobalTrueVSize()};
 }
 
