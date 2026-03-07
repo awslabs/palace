@@ -37,7 +37,10 @@
         "TargetUpper": { "type": "number" },
         "PreconditionerLag": { "type" : "integer", "minimum": 0 },
         "PreconditionerLagTol": { "type": "number", "minimum": 0.0 },
-        "MaxRestart": { "type" : "integer", "minimum": 0 }
+        "MaxRestart": { "type" : "integer", "minimum": 0 },
+        "CircuitSynthesis": { "type": "boolean" },
+        "CircuitSynthesisGSOrthogonalization": { "type": "string", "enum": ["MGS", "CGS", "CGS2"] },
+        "CircuitSynthesisDomainOrthogonalization": { "type": "string", "enum": ["Energy", "FEBasisIdentity", "SpaceOverlap"] }
       }
     },
     "Driven":
