@@ -40,10 +40,10 @@ void LowRankComplexOperator::AddMult(const ComplexVector &x, ComplexVector &y,
   {
     // Bilinear dot product: dot = v^T x = Σ v_j x_j (complex multiplication, no conj)
     // = (v_r · x_r - v_i · x_i) + i(v_r · x_i + v_i · x_r)
-    double dot_r = linalg::Dot(comm, t.v->Real(), x.Real()) -
-                   linalg::Dot(comm, t.v->Imag(), x.Imag());
-    double dot_i = linalg::Dot(comm, t.v->Real(), x.Imag()) +
-                   linalg::Dot(comm, t.v->Imag(), x.Real());
+    double dot_r =
+        linalg::Dot(comm, t.v->Real(), x.Real()) - linalg::Dot(comm, t.v->Imag(), x.Imag());
+    double dot_i =
+        linalg::Dot(comm, t.v->Real(), x.Imag()) + linalg::Dot(comm, t.v->Imag(), x.Real());
 
     // Compute s = a * g * dot (complex scalar)
     std::complex<double> s = a * t.g * std::complex<double>(dot_r, dot_i);
@@ -62,12 +62,11 @@ void LowRankComplexOperator::AddMult(const ComplexVector &x, ComplexVector &y,
 // FloquetPortData
 // =============================================================================
 
-FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
-                                 const IoData &iodata, const MaterialOperator &mat_op_ref,
+FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoData &iodata,
+                                 const MaterialOperator &mat_op_ref,
                                  mfem::ParFiniteElementSpace &nd_fespace)
-  : excitation(data.excitation), active(data.active), mat_op(mat_op_ref),
-    a1(3), a2(3), b1(3), b2(3), k_F(3), port_normal(3),
-    inc_te(data.inc_polarization == "TE"),
+  : excitation(data.excitation), active(data.active), mat_op(mat_op_ref), a1(3), a2(3),
+    b1(3), b2(3), k_F(3), port_normal(3), inc_te(data.inc_polarization == "TE"),
     comm(nd_fespace.GetComm())
 {
   // Store boundary attributes.
@@ -95,14 +94,38 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
     a2(i) = periodic.boundary_pairs[1].affine_transform[i * 4 + 3] / mesh_scale;
   }
 
-  // Bloch wave vector (already nondimensionalized in IoData::NondimensionalizeInputs).
+  // Bloch wave vector: use the BZ-wrapped value from MaterialOperator so the port is
+  // consistent with the bulk ∇_F bilinear form.
+  const auto &kF_wrapped = mat_op.GetWaveVector();
   for (int i = 0; i < 3; i++)
   {
-    k_F(i) = periodic.wave_vector[i];
+    k_F(i) = (i < kF_wrapped.Size()) ? kF_wrapped(i) : 0.0;
   }
 
   // Compute reciprocal lattice.
   ComputeReciprocalLattice();
+
+  // Compute the BZ wrapping offset: G = kF_unwrapped - kF_wrapped = bz_m*b1 + bz_n*b2.
+  // When k_F is wrapped, the Fourier projection kernel must be shifted by -G so that
+  // physical mode labels remain unchanged. Mode (m,n) uses B = (m-bz_m)*b1 + (n-bz_n)*b2
+  // for the Fourier kernel, while the physical k_t = m*b1 + n*b2 - k_F_unwrapped is the
+  // same as (m-bz_m)*b1 + (n-bz_n)*b2 - k_F_wrapped.
+  {
+    mfem::Vector dkF(3);
+    for (int i = 0; i < 3; i++)
+    {
+      dkF(i) = periodic.wave_vector[i] - k_F(i);
+    }
+    double db1 = dkF * b1 / (b1 * b1);
+    double db2 = dkF * b2 / (b2 * b2);
+    bz_m = static_cast<int>(std::round(db1));
+    bz_n = static_cast<int>(std::round(db2));
+    if (bz_m != 0 || bz_n != 0)
+    {
+      Mpi::Print(" Floquet port: BZ wrapping active (shift = {:d}*b1 + {:d}*b2)\n", bz_m,
+                 bz_n);
+    }
+  }
 
   // Compute port normal and area using geodata utilities.
   {
@@ -195,8 +218,8 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
 
   Mpi::Print(" Floquet port: {:d} modes ({:d} orders x 2 polarizations), "
              "port area = {:.4e}, normal = ({:.3f}, {:.3f}, {:.3f})\n",
-             static_cast<int>(modes.size()), static_cast<int>(modes.size()) / 2,
-             port_area, port_normal(0), port_normal(1), port_normal(2));
+             static_cast<int>(modes.size()), static_cast<int>(modes.size()) / 2, port_area,
+             port_normal(0), port_normal(1), port_normal(2));
 }
 
 void FloquetPortData::ComputeReciprocalLattice()
@@ -253,21 +276,31 @@ void FloquetPortData::EnumerateOrders()
 {
   modes.clear();
 
-  for (int m = -max_order_m; m <= max_order_m; m++)
+  // Enumerate physical mode indices. The range is the union of ±MaxOrder around the
+  // specular (0,0) and the BZ-shifted range. This ensures the user always sees their
+  // requested diffraction orders, while also including modes near the BZ boundary that
+  // are critical for the DtN correction when BZ wrapping is active.
+  int m_lo = std::min(-max_order_m, -max_order_m + bz_m);
+  int m_hi = std::max(max_order_m, max_order_m + bz_m);
+  int n_lo = std::min(-max_order_n, -max_order_n + bz_n);
+  int n_hi = std::max(max_order_n, max_order_n + bz_n);
+  for (int m = m_lo; m <= m_hi; m++)
   {
-    for (int n = -max_order_n; n <= max_order_n; n++)
+    for (int n = n_lo; n <= n_hi; n++)
     {
-      // B_mn = m*b1 + n*b2
+      // B_mn for the Fourier projection kernel: shifted by BZ offset so that
+      // exp(-j B_mn · r) extracts the correct coefficient from E_p (which was solved
+      // with the wrapped k_F). Physical mode labels (m, n) are preserved.
       mfem::Vector B_mn(3);
       for (int i = 0; i < 3; i++)
       {
-        B_mn(i) = m * b1(i) + n * b2(i);
+        B_mn(i) = (m - bz_m) * b1(i) + (n - bz_n) * b2(i);
       }
 
       // Propagation direction k_hat for this order.
-      // k_t = B_mn (transverse wavevector in the plane, relative to periodic part)
-      // The full transverse wavevector including Bloch is B_mn (since we work with
-      // the periodic field E_p, the kernel uses B_mn not B_mn - k_F; see floquet_port.md
+      // k_t = B_mn - k_F (transverse wavevector relative to the periodic field)
+      // With BZ shift: k_t = (m-bz_m)*b1 + (n-bz_n)*b2 - k_F_wrapped
+      //              = m*b1 + n*b2 - k_F_unwrapped (same physical k_t)
       // Eq. 38).
       // But gamma uses: gamma^2 = omega^2*mu*eps - |B_mn - k_F|^2 (Eq. in Section 3).
       // We'll compute gamma in Initialize(omega).
@@ -352,12 +385,20 @@ void FloquetPortData::EnumerateOrders()
         e_tm *= 1.0 / e_tm_norm;
       }
 
+      // User-requested modes (±MaxOrder around specular) are for S-parameter output.
+      // BZ-shifted modes (±MaxOrder around BZ origin) are for the DtN correction.
+      bool in_user_range = (std::abs(m) <= max_order_m && std::abs(n) <= max_order_n);
+      bool in_dtn_range =
+          (std::abs(m - bz_m) <= max_order_m && std::abs(n - bz_n) <= max_order_n);
+
       // Add TE mode.
       {
         FloquetMode mode;
         mode.m = m;
         mode.n = n;
         mode.is_te = true;
+        mode.for_output = in_user_range;
+        mode.for_dtn = in_dtn_range;
         mode.B_mn = B_mn;
         mode.e_pol = e_te;
         mode.gamma_sq = 0.0;
@@ -370,6 +411,8 @@ void FloquetPortData::EnumerateOrders()
         mode.m = m;
         mode.n = n;
         mode.is_te = false;
+        mode.for_output = in_user_range;
+        mode.for_dtn = in_dtn_range;
         mode.B_mn = B_mn;
         mode.e_pol = e_tm;
         mode.gamma_sq = 0.0;
@@ -379,8 +422,7 @@ void FloquetPortData::EnumerateOrders()
   }
 }
 
-void FloquetPortData::AssembleFourierProjections(
-    mfem::ParFiniteElementSpace &nd_fespace)
+void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd_fespace)
 {
   // For each mode, assemble: v_j = int_Gamma (n x [n x N_j]) . e_p exp(-i B_mn . r) dS
   // The tangential projection n x (n x N_j) extracts the component of N_j tangential to
@@ -403,8 +445,7 @@ void FloquetPortData::AssembleFourierProjections(
     bdr_attr_max = std::max(bdr_attr_max, mesh.GetBdrAttribute(be));
   }
   Mpi::GlobalMax(1, &bdr_attr_max, nd_fespace.GetComm());
-  mfem::Array<int> bdr_marker =
-      mesh::AttrToMarker(bdr_attr_max, attr_list, true);
+  mfem::Array<int> bdr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list, true);
 
   int tdof_size = nd_fespace.GetTrueVSize();
 
@@ -453,16 +494,14 @@ void FloquetPortData::AssembleFourierProjections(
 
     // Assemble real part.
     mfem::LinearForm lf_r(&nd_fespace);
-    lf_r.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coeff_r),
-                               bdr_marker);
+    lf_r.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coeff_r), bdr_marker);
     lf_r.UseFastAssembly(false);
     lf_r.UseDevice(false);
     lf_r.Assemble();
 
     // Assemble imaginary part.
     mfem::LinearForm lf_i(&nd_fespace);
-    lf_i.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coeff_i),
-                               bdr_marker);
+    lf_i.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coeff_i), bdr_marker);
     lf_i.UseFastAssembly(false);
     lf_i.UseDevice(false);
     lf_i.Assemble();
@@ -521,12 +560,26 @@ std::unique_ptr<LowRankComplexOperator> FloquetPortData::GetBoundaryOperator() c
   //   g_correction = i(γ_mn - γ₀)/(μ|Γ|)  for propagating
   //   g_correction = (-|γ_mn| - iγ₀)/(μ|Γ|) for evanescent
 
-  // γ₀₀ for the (0,0) mode: must include |k_F|² for oblique incidence.
-    double kF_sq = k_F * k_F;
-    double gamma0 = std::sqrt(omega0 * omega0 * mu_eps_port - kF_sq);
+  // γ₀ for the Robin reference: use the physical specular (0,0) mode's propagation
+  // constant. This ensures the Robin BC exactly absorbs the specular mode, with the
+  // low-rank correction handling only the diffraction orders.
+  double gamma0 = 0.0;
+  for (const auto &mode : modes)
+  {
+    if (mode.m == 0 && mode.n == 0 && mode.is_te)
+    {
+      gamma0 = std::sqrt(std::max(mode.gamma_sq, 0.0));
+      break;
+    }
+  }
 
   for (const auto &mode : modes)
   {
+    if (!mode.for_dtn)
+    {
+      continue;  // Only BZ-centered modes enter the DtN correction.
+    }
+
     std::complex<double> g_full, g_uniform;
     g_uniform = 1i * gamma0 / (mu_r_port * port_area);
 
@@ -558,8 +611,7 @@ std::unique_ptr<LowRankComplexOperator> FloquetPortData::GetBoundaryOperator() c
         // TM evanescent: g = j * omega^2 * eps_r / (gamma * |Gamma|) with gamma = j|gamma|
         //              = j * omega^2 * mu_r * eps_r / (j|gamma| * mu_r * |Gamma|)
         //              = +omega^2 * eps_r / (|gamma| * |Gamma|)  (positive real, inductive)
-        g_full = omega0 * omega0 * mu_eps_port /
-                 (gamma_abs * mu_r_port * port_area);
+        g_full = omega0 * omega0 * mu_eps_port / (gamma_abs * mu_r_port * port_area);
       }
     }
     else
@@ -589,15 +641,24 @@ FloquetPortData::GetAllSParameters(const GridFunction &E) const
   // Step 2: Power normalization: S_mn = √(γ_mn / γ_inc) × c_mn.
   //
   // This ensures Σ |S_mn|² = 1 for energy conservation (lossless). The factor √(γ_mn/γ_inc)
-  // accounts for different power-per-amplitude for different diffraction orders (higher-angle
-  // orders carry less power per unit amplitude due to oblique propagation).
+  // accounts for different power-per-amplitude for different diffraction orders
+  // (higher-angle orders carry less power per unit amplitude due to oblique propagation).
   //
   // For the incident (0,0) mode: γ_inc = γ_00 = ω √(μ_r ε_r), so √(γ/γ_inc) = 1.
   // For the driving port: S = √(γ/γ_inc) × c - δ_{incident mode} (subtract 1).
 
-  // Compute γ_inc = γ for the (0,0) mode at this port.
-  double kF_sq = k_F * k_F;
-  double gamma_inc = std::sqrt(omega0 * omega0 * mu_eps_port - kF_sq);
+  // Compute γ_inc from the incident (0,0) mode at this port.
+  double gamma_inc = 0.0;
+  for (const auto &mode : modes)
+  {
+    if (mode.m == 0 && mode.n == 0 && mode.is_te == inc_te)
+    {
+      MFEM_VERIFY(mode.gamma_sq > 0.0, "Incident Floquet mode is evanescent!");
+      gamma_inc = std::sqrt(mode.gamma_sq);
+      break;
+    }
+  }
+  MFEM_VERIFY(gamma_inc > 0.0, "Incident Floquet mode not found in mode list!");
 
   // The excitation is normalized to inject 1 W. The incident Fourier amplitude is
   // c_inc = 1/√P_unit where P_unit = γ_inc |Γ| / (2ω μ_r). The S-parameter extraction
@@ -621,9 +682,9 @@ FloquetPortData::GetAllSParameters(const GridFunction &E) const
 
   for (const auto &mode : modes)
   {
-    if (mode.gamma_sq <= 0.0)
+    if (!mode.for_output || mode.gamma_sq <= 0.0)
     {
-      continue;  // Only propagating orders carry S-parameters.
+      continue;  // Only user-requested propagating orders carry S-parameters.
     }
 
     double gamma_mn = std::sqrt(mode.gamma_sq);
@@ -639,8 +700,7 @@ FloquetPortData::GetAllSParameters(const GridFunction &E) const
     // Power normalization: S = √(λ_mn / λ_inc) × c, where λ is the DtN eigenvalue.
     // TE: λ = γ (propagation constant). TM: λ = ω²με/γ (from the DtN tensor).
     // The incident mode is always TE, so λ_inc = γ_inc.
-    double lambda_mn =
-        mode.is_te ? gamma_mn : omega0 * omega0 * mu_eps_port / gamma_mn;
+    double lambda_mn = mode.is_te ? gamma_mn : omega0 * omega0 * mu_eps_port / gamma_mn;
     double power_factor = std::sqrt(lambda_mn / gamma_inc);
 
     auto key = std::make_tuple(mode.m, mode.n, mode.is_te);
@@ -706,8 +766,7 @@ FloquetPortOperator::FloquetPortOperator(const IoData &iodata,
     return;
   }
 
-  Mpi::Print("\nConfiguring {:d} Floquet port boundar{}\n",
-             floquet_port_data.size(),
+  Mpi::Print("\nConfiguring {:d} Floquet port boundar{}\n", floquet_port_data.size(),
              (floquet_port_data.size() > 1) ? "ies" : "y");
 
   for (const auto &[idx, data] : floquet_port_data)
@@ -749,16 +808,16 @@ std::unique_ptr<ComplexOperator> FloquetPortOperator::GetExtraSystemOperator(dou
     }
     else
     {
-      combined =
-          std::make_unique<SumComplexOperator>(std::move(combined), std::move(F));
+      combined = std::make_unique<SumComplexOperator>(std::move(combined), std::move(F));
     }
   }
 
   return combined;
 }
 
-void FloquetPortOperator::AddExtraSystemBdrCoefficients(
-    double omega, MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi)
+void FloquetPortOperator::AddExtraSystemBdrCoefficients(double omega,
+                                                        MaterialPropertyCoefficient &fbr,
+                                                        MaterialPropertyCoefficient &fbi)
 {
   // Add a full-rank Robin BC (iγ₀/μ) on the Floquet port boundary faces, matching the
   // wave port pattern. This provides proper absorption for ALL tangential field components,
@@ -771,11 +830,17 @@ void FloquetPortOperator::AddExtraSystemBdrCoefficients(
     {
       continue;
     }
-    // γ₀ for the (0,0) mode at this port.
-    // γ₀₀ for the (0,0) mode including |k_F|² for oblique incidence.
-    double kF_sq = 0.0;
-    for (int i = 0; i < 3; i++) { kF_sq += port.k_F(i) * port.k_F(i); }
-    double gamma0 = std::sqrt(omega * omega * port.mu_eps_port - kF_sq);
+    // γ₀ for the physical specular (0,0) mode at this port. Uses the physical k_t
+    // (which accounts for BZ wrapping), ensuring the Robin exactly matches the specular.
+    double gamma0 = 0.0;
+    for (const auto &mode : port.GetModes())
+    {
+      if (mode.m == 0 && mode.n == 0 && mode.is_te)
+      {
+        gamma0 = std::sqrt(std::max(mode.gamma_sq, 0.0));
+        break;
+      }
+    }
     MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
                                            mat_op.GetInvPermeability());
     muinv_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(port.GetAttrList()));
@@ -785,7 +850,7 @@ void FloquetPortOperator::AddExtraSystemBdrCoefficients(
 }
 
 bool FloquetPortOperator::AddExcitationVector(int excitation_idx, double omega,
-                                               ComplexVector &RHS)
+                                              ComplexVector &RHS)
 {
   Initialize(omega);
   bool nnz = false;

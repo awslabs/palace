@@ -417,7 +417,7 @@ void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
       wave_vector[i] =
           -M_PI / bbmax[i] + fmod(wave_vector[i] + M_PI / bbmax[i], 2 * M_PI / bbmax[i]);
     }
-    else if (wave_vector[i] < M_PI / bbmax[i])
+    else if (wave_vector[i] < -M_PI / bbmax[i])
     {
       wave_vector[i] =
           M_PI / bbmax[i] + fmod(wave_vector[i] - M_PI / bbmax[i], 2 * M_PI / bbmax[i]);

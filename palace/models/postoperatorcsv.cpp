@@ -1146,18 +1146,19 @@ auto PostOperatorCSV<solver_t>::InitializeFloquetPortS(const SpaceOperator &fem_
   {
     for (const auto &[port_idx, port] : fem_op.GetFloquetPortOp())
     {
-      // Add columns for each enumerated mode on this port.
+      // Add columns for each user-requested mode on this port.
       for (const auto &mode : port.GetModes())
       {
+        if (!mode.for_output)
+          continue;
         auto pol = mode.is_te ? "TE" : "TM";
         t.insert(format("abs_{}_{}_{}_{}_{}", port_idx, mode.m, mode.n, pol, ex_idx),
-                 format("|S[{}_{}_{}_{}][{}]| (dB)", port_idx, mode.m, mode.n, pol,
-                        ex_idx),
+                 format("|S[{}_{}_{}_{}][{}]| (dB)", port_idx, mode.m, mode.n, pol, ex_idx),
                  ex_idx);
-        t.insert(format("arg_{}_{}_{}_{}_{}", port_idx, mode.m, mode.n, pol, ex_idx),
-                 format("arg(S[{}_{}_{}_{}][{}]) (deg.)", port_idx, mode.m, mode.n, pol,
-                        ex_idx),
-                 ex_idx);
+        t.insert(
+            format("arg_{}_{}_{}_{}_{}", port_idx, mode.m, mode.n, pol, ex_idx),
+            format("arg(S[{}_{}_{}_{}][{}]) (deg.)", port_idx, mode.m, mode.n, pol, ex_idx),
+            ex_idx);
       }
     }
   }

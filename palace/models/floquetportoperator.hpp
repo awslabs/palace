@@ -25,14 +25,16 @@ class MaterialPropertyCoefficient;
 namespace config
 {
 struct FloquetPortData;
-}
+}  // namespace config
 
 // Represents a single diffraction order (m, n) with a specific polarization (TE/TM).
 struct FloquetMode
 {
-  int m, n;          // Lattice indices
-  bool is_te;        // true = TE (s-pol), false = TM (p-pol)
-  mfem::Vector B_mn;  // Transverse wavevector B_mn = m*b1 + n*b2
+  int m, n;            // Lattice indices (physical convention)
+  bool is_te;          // true = TE (s-pol), false = TM (p-pol)
+  bool for_output;     // true = included in S-parameter CSV output
+  bool for_dtn;        // true = included in DtN boundary correction
+  mfem::Vector B_mn;   // Transverse wavevector B_mn = m*b1 + n*b2
   mfem::Vector e_pol;  // Polarization unit vector (3D, tangential to port)
   ComplexVector v;     // Fourier projection: v_j = int_Gamma (nxnxN_j).e_p exp(-iB.r) dS
   double gamma_sq;     // gamma_mn^2 = omega^2*mu*eps - |B_mn - k_F|^2 (freq-dependent)
@@ -45,8 +47,8 @@ class LowRankComplexOperator : public ComplexOperator
 public:
   struct Term
   {
-    const ComplexVector *v;   // Projection vector (not owned)
-    std::complex<double> g;    // Frequency-dependent scalar weight
+    const ComplexVector *v;  // Projection vector (not owned)
+    std::complex<double> g;  // Frequency-dependent scalar weight
   };
 
 private:
@@ -111,15 +113,14 @@ public:
   const auto &GetModes() const { return modes; }
 
   // Check if mode (m, n, is_te) matches the incident mode for this port.
-  // The incident mode is always (0, 0); oblique incidence is encoded in k_F.
+  // Mode indices are always in the physical convention — (0,0) is the specular mode.
   [[nodiscard]] bool IsIncidentMode(int m, int n, bool is_te) const
   {
     return m == 0 && n == 0 && is_te == inc_te;
   }
 
   FloquetPortData(const config::FloquetPortData &data, const IoData &iodata,
-                  const MaterialOperator &mat_op,
-                  mfem::ParFiniteElementSpace &nd_fespace);
+                  const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace);
 
   // Update propagation constants for given omega. Cached.
   void Initialize(double omega);
@@ -162,7 +163,6 @@ public:
   mfem::Vector k_F;
 
 private:
-
   // Diffraction order limits.
   int max_order_m, max_order_n;
 
@@ -171,6 +171,10 @@ private:
 
   // Frequency cache.
   double omega0 = 0.0;
+
+  // BZ wrapping offset: when MaterialOperator wraps k_F by subtracting G = bz_m*b1+bz_n*b2,
+  // the Fourier projection kernel must be shifted accordingly. Mode labels remain physical.
+  int bz_m = 0, bz_n = 0;
 
   // Incident mode polarization.
   bool inc_te;
