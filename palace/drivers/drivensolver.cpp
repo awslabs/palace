@@ -164,14 +164,15 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
       // Add low-rank Floquet port boundary operator F(omega) to the system matrix.
       auto F = space_op.GetFloquetPortOperator(omega);
+      bool has_floquet_F = (F != nullptr);
       std::unique_ptr<ComplexOperator> A_total;
-      if (F)
+      if (has_floquet_F)
       {
         A_total =
             std::make_unique<SumComplexOperator>(std::move(A), std::move(F));
       }
 
-      ksp.SetOperators(F ? *A_total : *A, *P);
+      ksp.SetOperators(has_floquet_F ? *A_total : *A, *P);
 
       Mpi::Print(
           "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",
