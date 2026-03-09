@@ -387,8 +387,8 @@ void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
   const int sdim = mesh.SpaceDimension();
   const double tol = std::numeric_limits<double>::epsilon();
 
-  // Get Floquet wave vector.
-  mfem::Vector wave_vector(sdim);
+  // Get Floquet wave vector (stored as member for access by FloquetPortData).
+  wave_vector.SetSize(sdim);
   wave_vector = 0.0;
   const auto &data = iodata.boundaries.periodic;
   MFEM_VERIFY(static_cast<int>(data.wave_vector.size()) >= sdim,

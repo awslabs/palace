@@ -521,7 +521,9 @@ std::unique_ptr<LowRankComplexOperator> FloquetPortData::GetBoundaryOperator() c
   //   g_correction = i(γ_mn - γ₀)/(μ|Γ|)  for propagating
   //   g_correction = (-|γ_mn| - iγ₀)/(μ|Γ|) for evanescent
 
-  double gamma0 = std::sqrt(omega0 * omega0 * mu_eps_port);  // (0,0) mode γ₀
+  // γ₀₀ for the (0,0) mode: must include |k_F|² for oblique incidence.
+    double kF_sq = k_F * k_F;
+    double gamma0 = std::sqrt(omega0 * omega0 * mu_eps_port - kF_sq);
 
   for (const auto &mode : modes)
   {
@@ -594,7 +596,8 @@ FloquetPortData::GetAllSParameters(const GridFunction &E) const
   // For the driving port: S = √(γ/γ_inc) × c - δ_{incident mode} (subtract 1).
 
   // Compute γ_inc = γ for the (0,0) mode at this port.
-  double gamma_inc = std::sqrt(omega0 * omega0 * mu_eps_port);
+  double kF_sq = k_F * k_F;
+  double gamma_inc = std::sqrt(omega0 * omega0 * mu_eps_port - kF_sq);
 
   // The excitation is normalized to inject 1 W. The incident Fourier amplitude is
   // c_inc = 1/√P_unit where P_unit = γ_inc |Γ| / (2ω μ_r). The S-parameter extraction
@@ -633,8 +636,12 @@ FloquetPortData::GetAllSParameters(const GridFunction &E) const
 
     // Field amplitude: c = v^T E / (c_inc × |Γ|), where c_inc accounts for the
     // unit-power normalization applied to the excitation.
-    // Power normalization: S = √(γ_mn / γ_inc) × c.
-    double power_factor = std::sqrt(gamma_mn / gamma_inc);
+    // Power normalization: S = √(λ_mn / λ_inc) × c, where λ is the DtN eigenvalue.
+    // TE: λ = γ (propagation constant). TM: λ = ω²με/γ (from the DtN tensor).
+    // The incident mode is always TE, so λ_inc = γ_inc.
+    double lambda_mn =
+        mode.is_te ? gamma_mn : omega0 * omega0 * mu_eps_port / gamma_mn;
+    double power_factor = std::sqrt(lambda_mn / gamma_inc);
 
     auto key = std::make_tuple(mode.m, mode.n, mode.is_te);
     result[key] = power_factor * std::complex<double>(sr, si) / (c_inc * port_area);
@@ -765,7 +772,10 @@ void FloquetPortOperator::AddExtraSystemBdrCoefficients(
       continue;
     }
     // γ₀ for the (0,0) mode at this port.
-    double gamma0 = std::sqrt(omega * omega * port.mu_eps_port);  // B=0, k_F tangential=0
+    // γ₀₀ for the (0,0) mode including |k_F|² for oblique incidence.
+    double kF_sq = 0.0;
+    for (int i = 0; i < 3; i++) { kF_sq += port.k_F(i) * port.k_F(i); }
+    double gamma0 = std::sqrt(omega * omega * port.mu_eps_port - kF_sq);
     MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
                                            mat_op.GetInvPermeability());
     muinv_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(port.GetAttrList()));

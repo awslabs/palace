@@ -149,9 +149,6 @@ private:
   // Lattice and reciprocal lattice vectors.
   mfem::Vector a1, a2, b1, b2;
 
-  // Bloch wave vector (from periodic BC config).
-  mfem::Vector k_F;
-
   // Port geometry.
   mfem::Vector port_normal;
   double port_area;
@@ -160,6 +157,9 @@ public:
   // Material properties at the port (nondimensional, from adjacent volume element).
   double mu_eps_port;  // mu_r * eps_r (for propagation constant)
   double mu_r_port;    // mu_r (for DtN coefficient and excitation)
+
+  // Bloch wave vector (from periodic BC config). Public for Robin BC computation.
+  mfem::Vector k_F;
 
 private:
 

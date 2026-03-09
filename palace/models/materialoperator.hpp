@@ -33,6 +33,7 @@ private:
       mat_sigma, mat_invLondon, mat_invLondon_scalar, mat_kxTmuinv, mat_muinvkx,
       mat_kxTmuinvkx, mat_kx;
   mfem::DenseMatrix wave_vector_cross;
+  mfem::Vector wave_vector;
   mfem::Array<double> mat_c0_min, mat_c0_max;
 
   // Are materials isotropic? True when all the material properties are effectively
@@ -128,6 +129,7 @@ public:
   bool HasConductivity() const { return has_conductivity_attr; }
   bool HasLondonDepth() const { return has_london_attr; }
   bool HasWaveVector() const { return has_wave_attr; }
+  const mfem::Vector &GetWaveVector() const { return wave_vector; }
 
   const auto &GetAttributeToMaterial() const { return attr_mat; }
   mfem::Array<int> GetBdrAttributeToMaterial() const;
