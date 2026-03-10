@@ -1312,7 +1312,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
         auto pol = measurement_cache.floquet_circular_output ? (is_te ? "RHC" : "LHC")
                                                              : (is_te ? "TE" : "TM");
         Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
-                   format("S[{}_{}_{}_{}][{}]", port_idx, m, n, pol, drive_port_idx),
+                   format("S[P{}({},{}){}][{}]", port_idx, m, n, pol, drive_port_idx),
                    S.real(), S.imag(), Measurement::Magnitude(S), Measurement::Phase(S));
       }
     }

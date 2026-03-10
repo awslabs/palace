@@ -1164,12 +1164,14 @@ auto PostOperatorCSV<solver_t>::InitializeFloquetPortS(const SpaceOperator &fem_
           continue;
         auto pol =
             circular_output ? (mode.is_te ? "RHC" : "LHC") : (mode.is_te ? "TE" : "TM");
-        t.insert(format("abs_{}_{}_{}_{}_{}", port_idx, mode.m, mode.n, pol, ex_idx),
-                 format("|S[{}_{}_{}_{}][{}]| (dB)", port_idx, mode.m, mode.n, pol, ex_idx),
+        t.insert(format("abs_P{}_{}_{}_{}_exc{}", port_idx, mode.m, mode.n, pol, ex_idx),
+                 format("|S[P{}({},{}){}][{}]| (dB)", port_idx, mode.m, mode.n, pol,
+                        ex_idx),
                  ex_idx);
         t.insert(
-            format("arg_{}_{}_{}_{}_{}", port_idx, mode.m, mode.n, pol, ex_idx),
-            format("arg(S[{}_{}_{}_{}][{}]) (deg.)", port_idx, mode.m, mode.n, pol, ex_idx),
+            format("arg_P{}_{}_{}_{}_exc{}", port_idx, mode.m, mode.n, pol, ex_idx),
+            format("arg(S[P{}({},{}){}][{}]) (deg.)", port_idx, mode.m, mode.n, pol,
+                   ex_idx),
             ex_idx);
       }
     }
@@ -1195,8 +1197,8 @@ auto PostOperatorCSV<solver_t>::PrintFloquetPortS()
       auto [m, n, is_te] = key;
       auto pol = measurement_cache.floquet_circular_output ? (is_te ? "RHC" : "LHC")
                                                            : (is_te ? "TE" : "TM");
-      auto abs_key = format("abs_{}_{}_{}_{}_{}", port_idx, m, n, pol, m_ex_idx);
-      auto arg_key = format("arg_{}_{}_{}_{}_{}", port_idx, m, n, pol, m_ex_idx);
+      auto abs_key = format("abs_P{}_{}_{}_{}_exc{}", port_idx, m, n, pol, m_ex_idx);
+      auto arg_key = format("arg_P{}_{}_{}_{}_exc{}", port_idx, m, n, pol, m_ex_idx);
       floquet_port_S->table[abs_key] << Measurement::Magnitude(S);
       floquet_port_S->table[arg_key] << Measurement::Phase(S);
     }
