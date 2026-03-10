@@ -87,7 +87,20 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(const IoData &iodata,
         continue;  // Can just ignore if wrong
       }
       bdr.attr_list.Append(attr);
+      // Compute a scaling factor to account for increased area when using mesh cracking.
+      if (iodata.boundaries.cracked_attributes.find(attr) !=
+          iodata.boundaries.cracked_attributes.end())
+      {
+        bdr.scaling = 2.0;
+      }
+      MFEM_VERIFY((iodata.boundaries.cracked_attributes.find(attr) !=
+                   iodata.boundaries.cracked_attributes.end()) ||
+                      (bdr.scaling == 1.0),
+                  "Impedance boundary has both cracked and uncracked attributes!");
     }
+    bdr.Ls *= bdr.scaling;
+    bdr.Rs *= bdr.scaling;
+    bdr.Cs /= bdr.scaling;
   }
 }
 
@@ -99,34 +112,36 @@ void SurfaceImpedanceOperator::PrintBoundaryInfo(const IoData &iodata,
     return;
   }
 
-  fmt::memory_buffer buf{};  // Output buffer & buffer append lambda for cleaner code
-  auto to = [&buf](auto fmt, auto &&...args)
-  { fmt::format_to(std::back_inserter(buf), fmt, std::forward<decltype(args)>(args)...); };
-
+  fmt::memory_buffer buffer{};
+  auto out = fmt::appender{buffer};
   using VT = Units::ValueType;
 
-  to("\nConfiguring Robin impedance BC at attributes:\n");
+  fmt::format_to(out, "\nConfiguring Robin impedance BC at attributes:\n");
   for (const auto &bdr : boundaries)
   {
     for (auto attr : bdr.attr_list)
     {
-      to(" {:d}:", attr);
+      fmt::format_to(out, " {:d}:", attr);
       if (std::abs(bdr.Rs) > 0.0)
       {
-        to(" Rs = {:.3e} Ω/sq,", iodata.units.Dimensionalize<VT::IMPEDANCE>(bdr.Rs));
+        fmt::format_to(out, " Rs = {:.3e} Ω/sq,",
+                       iodata.units.Dimensionalize<VT::IMPEDANCE>(bdr.Rs / bdr.scaling));
       }
       if (std::abs(bdr.Ls) > 0.0)
       {
-        to(" Ls = {:.3e} H/sq,", iodata.units.Dimensionalize<VT::INDUCTANCE>(bdr.Ls));
+        fmt::format_to(out, " Ls = {:.3e} H/sq,",
+                       iodata.units.Dimensionalize<VT::INDUCTANCE>(bdr.Ls / bdr.scaling));
       }
       if (std::abs(bdr.Cs) > 0.0)
       {
-        to(" Cs = {:.3e} F/sq,", iodata.units.Dimensionalize<VT::CAPACITANCE>(bdr.Cs));
+        fmt::format_to(out, " Cs = {:.3e} F/sq,",
+                       iodata.units.Dimensionalize<VT::CAPACITANCE>(bdr.Cs * bdr.scaling));
       }
-      to(" n = ({:+.1f})\n", fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
+      fmt::format_to(out, " n = ({:+.1f})\n",
+                     fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
     }
   }
-  Mpi::Print("{}", fmt::to_string(buf));
+  Mpi::Print("{}", fmt::to_string(buffer));
 }
 
 mfem::Array<int> SurfaceImpedanceOperator::GetAttrList() const

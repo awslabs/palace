@@ -326,13 +326,15 @@ private:
   const mfem::ParSubMesh &submesh;
   const std::unordered_map<int, int> &submesh_parent_elems;
   mfem::IsoparametricTransformation T_loc;
+  const double scaling;
 
 public:
   BdrSubmeshEVectorCoefficient(const GridFunction &Et, const GridFunction &En,
                                const mfem::ParSubMesh &submesh,
-                               const std::unordered_map<int, int> &submesh_parent_elems)
+                               const std::unordered_map<int, int> &submesh_parent_elems,
+                               double scaling = 1.0)
     : mfem::VectorCoefficient(Et.Real().VectorDim()), Et(Et), En(En), submesh(submesh),
-      submesh_parent_elems(submesh_parent_elems)
+      submesh_parent_elems(submesh_parent_elems), scaling(scaling)
   {
   }
 
@@ -390,6 +392,7 @@ public:
       auto Vn = En.Imag().GetValue(*T_submesh, ip);
       V.Add(-Vn, normal);
     }
+    V *= scaling;
   }
 };
 
@@ -598,7 +601,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
   //            given frequency, Math. Comput. (2003).
   // See also: Halla and Monk, On the analysis of waveguide modes in an electromagnetic
   //           transmission line, arXiv:2302.11994 (2023).
-  const double c_min = mat_op.GetLightSpeedMax().Min();
+  double c_min = mat_op.GetLightSpeedMax().Min();
+  Mpi::GlobalMin(1, &c_min, nd_fespace.GetComm());
   MFEM_VERIFY(c_min > 0.0 && c_min < mfem::infinity(),
               "Invalid material speed of light detected in WavePortOperator!");
   mu_eps_max = 1.0 / (c_min * c_min) * 1.1;  // Add a safety factor for maximum
@@ -690,7 +694,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
           {
 #if defined(MFEM_USE_SUPERLU)
             auto slu = std::make_unique<SuperLUSolver>(
-                port_comm, SymbolicFactorization::DEFAULT, false, data.verbose - 1);
+                port_comm, SymbolicFactorization::DEFAULT, false, true, data.verbose - 1);
             // slu->GetSolver().SetColumnPermutation(mfem::superlu::MMD_AT_PLUS_A);
             return slu;
 #endif
@@ -700,7 +704,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
 #if defined(MFEM_USE_STRUMPACK)
             auto strumpack = std::make_unique<StrumpackSolver>(
                 port_comm, SymbolicFactorization::DEFAULT, SparseCompression::NONE, 0.0, 0,
-                0, data.verbose - 1);
+                0, true, data.verbose - 1);
             // strumpack->SetReorderingStrategy(strumpack::ReorderingStrategy::AMD);
             return strumpack;
 #endif
@@ -710,7 +714,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
 #if defined(MFEM_USE_MUMPS)
             auto mumps = std::make_unique<MumpsSolver>(
                 port_comm, mfem::MUMPSSolver::UNSYMMETRIC, SymbolicFactorization::DEFAULT,
-                0.0, data.verbose - 1);
+                0.0, true, data.verbose - 1);
             // mumps->SetReorderingStrategy(mfem::MUMPSSolver::AMD);
             return mumps;
 #endif
@@ -718,6 +722,7 @@ WavePortData::WavePortData(const config::WavePortData &data,
           return {};
         }());
     pc->SetSaveAssembled(false);
+    pc->SetDropSmallEntries(false);
     ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
 
     // Define the eigenvalue solver.
@@ -957,20 +962,22 @@ WavePortData::GetModeExcitationCoefficientImag() const
       omega0);
 }
 
-std::unique_ptr<mfem::VectorCoefficient> WavePortData::GetModeFieldCoefficientReal() const
+std::unique_ptr<mfem::VectorCoefficient>
+WavePortData::GetModeFieldCoefficientReal(double scaling) const
 {
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
   return std::make_unique<
       RestrictedVectorCoefficient<BdrSubmeshEVectorCoefficient<ValueType::REAL>>>(
-      attr_list, *port_E0t, *port_E0n, port_submesh, submesh_parent_elems);
+      attr_list, *port_E0t, *port_E0n, port_submesh, submesh_parent_elems, scaling);
 }
 
-std::unique_ptr<mfem::VectorCoefficient> WavePortData::GetModeFieldCoefficientImag() const
+std::unique_ptr<mfem::VectorCoefficient>
+WavePortData::GetModeFieldCoefficientImag(double scaling) const
 {
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
   return std::make_unique<
       RestrictedVectorCoefficient<BdrSubmeshEVectorCoefficient<ValueType::IMAG>>>(
-      attr_list, *port_E0t, *port_E0n, port_submesh, submesh_parent_elems);
+      attr_list, *port_E0t, *port_E0n, port_submesh, submesh_parent_elems, scaling);
 }
 
 double WavePortData::GetExcitationPower() const
@@ -1148,7 +1155,8 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
                       port_dbc_bcs);
   }
   MFEM_VERIFY(
-      ports.empty() || iodata.problem.type == ProblemType::DRIVEN,
+      ports.empty() || iodata.problem.type == ProblemType::DRIVEN ||
+          iodata.problem.type == ProblemType::EIGENMODE,
       "Wave port boundaries are only available for frequency domain driven simulations!");
 }
 
@@ -1158,9 +1166,8 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMe
   {
     return;
   }
-  fmt::memory_buffer buf{};  // Output buffer & buffer append lambda for cleaner code
-  auto to = [&buf](auto fmt, auto &&...args)
-  { fmt::format_to(std::back_inserter(buf), fmt, std::forward<decltype(args)>(args)...); };
+  fmt::memory_buffer buffer{};
+  auto out = fmt::appender{buffer};
 
   // Print out BC info for all active port attributes.
   for (const auto &[idx, data] : ports)
@@ -1171,17 +1178,18 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMe
     }
     for (auto attr : data.GetAttrList())
     {
-      to(" {:d}: Index = {:d}, mode = {:d}, d = {:.3e} m,  n = ({:+.1f})\n", attr, idx,
-         data.mode_idx,
-         iodata.units.Dimensionalize<Units::ValueType::LENGTH>(data.d_offset),
-         fmt::join(data.port_normal, ","));
+      fmt::format_to(out,
+                     " {:d}: Index = {:d}, mode = {:d}, d = {:.3e} m,  n = ({:+.1f})\n",
+                     attr, idx, data.mode_idx,
+                     iodata.units.Dimensionalize<Units::ValueType::LENGTH>(data.d_offset),
+                     fmt::join(data.port_normal, ","));
     }
   }
-  if (buf.size() > 0)
+  if (buffer.size() > 0)
   {
     Mpi::Print("\nConfiguring Robin impedance BC for wave ports at attributes:\n");
-    Mpi::Print("{}", fmt::to_string(buf));
-    buf.clear();
+    Mpi::Print("{}", fmt::to_string(buffer));
+    buffer.clear();
   }
 
   // Print some information for excited wave ports.
@@ -1193,13 +1201,13 @@ void WavePortOperator::PrintBoundaryInfo(const IoData &iodata, const mfem::ParMe
     }
     for (auto attr : data.GetAttrList())
     {
-      to(" {:d}: Index = {:d}\n", attr, idx);
+      fmt::format_to(out, " {:d}: Index = {:d}\n", attr, idx);
     }
   }
-  if (buf.size() > 0)
+  if (buffer.size() > 0)
   {
     Mpi::Print("\nConfiguring wave port excitation source term at attributes:\n");
-    Mpi::Print("{}", fmt::to_string(buf));
+    Mpi::Print("{}", fmt::to_string(buffer));
   }
 }
 

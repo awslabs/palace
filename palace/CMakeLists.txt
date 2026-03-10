@@ -15,24 +15,37 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
   message(FATAL_ERROR "In-source builds are prohibited")
 endif()
 
-# C++17 required for std::filesystem, among others
+# C++17 required for std::filesystem, among others. Override via -DCMAKE_CXX_STANDARD=<VALUE>
+if(NOT DEFINED CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 17)
+endif()
+if(CMAKE_CXX_STANDARD LESS 17)
+  message(FATAL_ERROR "Palace requires C++17 or later (got ${CMAKE_CXX_STANDARD})")
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Initialize the project
-project(palace LANGUAGES CXX VERSION 0.14.0)
+project(palace LANGUAGES CXX VERSION 0.16.0)
 
 # Define build settings and defaults
 set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP for shared-memory parallelism")
 set(PALACE_WITH_CUDA OFF CACHE BOOL "Use CUDA for NVIDIA GPU support")
 set(PALACE_WITH_HIP OFF CACHE BOOL "Use HIP for AMD or NVIDIA GPU support")
 
+set(PALACE_WITH_SUPERLU ON CACHE BOOL "Build with SuperLU_DIST sparse direct solver")
+set(PALACE_WITH_STRUMPACK OFF CACHE BOOL "Build with STRUMPACK sparse direct solver")
+set(PALACE_WITH_MUMPS OFF CACHE BOOL "Build with MUMPS sparse direct solver")
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
+set(PALACE_WITH_SUNDIALS ON CACHE BOOL "Build with SUNDIALS time integrators")
+set(PALACE_WITH_GSLIB ON CACHE BOOL "Build with GSLIB for high-order field interpolation")
 
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
+
+set(PALACE_BUILD_WITH_COVERAGE OFF CACHE BOOL "Compile Palace with coverage flags (source-based for LLVM; gcov for GCC)")
+set(PALACE_BUILD_WITH_SANITIZERS OFF CACHE BOOL "Compile Palace with sanitizers (AddressSanitizer + UndefinedBehaviorSanitizer)")
 
 # Help find third-party dependencies
 set(MFEM_DIR "" CACHE STRING
@@ -50,9 +63,36 @@ set(SLEPC_DIR "" CACHE STRING
 set(ARPACK_DIR "" CACHE STRING
   "Path to ARPACK build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
 )
+set(HYPRE_DIR "" CACHE STRING
+  "Path to HYPRE build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
+)
+set(MUMPS_DIR "" CACHE STRING
+  "Path to MUMPS build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
+)
+set(STRUMPACK_DIR "" CACHE STRING
+  "Path to STRUMPACK build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
+)
+set(SUPERLU_DIST_DIR "" CACHE STRING
+  "Path to SuperLU_DIST build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
+)
+set(METIS_DIR "" CACHE STRING
+  "Path to METIS build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
+)
+set(PARMETIS_DIR "" CACHE STRING
+  "Path to ParMETIS build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
+)
+set(SUNDIALS_DIR "" CACHE STRING
+  "Path to SUNDIALS build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
+)
+set(GSLIB_DIR "" CACHE STRING
+  "Path to GSLIB build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
+)
+set(SCALAPACK_DIR "" CACHE STRING
+  "Path to ScaLAPACK build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
+)
 
 # Enable Fortran if required
-if(PALACE_WITH_ARPACK)
+if(PALACE_WITH_ARPACK OR PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
   enable_language(Fortran)
 endif()
 
@@ -85,11 +125,48 @@ target_compile_options(
             -Wno-deprecated-declarations
 )
 
+if(PALACE_BUILD_WITH_COVERAGE)
+  add_library(coverage_flags INTERFACE)
+  target_compile_options(
+    coverage_flags
+    INTERFACE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fprofile-instr-generate>
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fcoverage-mapping>
+        $<$<CXX_COMPILER_ID:GNU>:--coverage>
+        $<$<CXX_COMPILER_ID:GNU>:-fprofile-abs-path>
+        $<$<CXX_COMPILER_ID:GNU>:-fprofile-dir=${CMAKE_BINARY_DIR}/coverage.%p>
+  )
+  target_link_options(
+    coverage_flags
+    INTERFACE
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fprofile-instr-generate>
+        $<$<CXX_COMPILER_ID:AppleClang,Clang,IntelLLVM>:-fcoverage-mapping>
+        $<$<CXX_COMPILER_ID:GNU>:--coverage>
+  )
+endif()
+
+if(PALACE_BUILD_WITH_SANITIZERS)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64"
+     AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    message(FATAL_ERROR
+      "PALACE_BUILD_WITH_SANITIZERS is not compatible with GCC on macOS Apple Silicon. "
+      "GCC does not ship libasan on this platform. Use Clang instead "
+      "(e.g. -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++)."
+    )
+  endif()
+  add_library(sanitizer_flags INTERFACE)
+  target_compile_options(sanitizer_flags INTERFACE -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(sanitizer_flags INTERFACE -fsanitize=address,undefined)
+endif()
+
 # Add extra CMake modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 # Find MPI
 find_package(MPI REQUIRED)
+if(PALACE_WITH_ARPACK OR PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
+  find_package(MPI REQUIRED COMPONENTS Fortran)
+endif()
 
 # Find OpenMP
 if(PALACE_WITH_OPENMP)
@@ -99,9 +176,19 @@ endif()
 # Find LAPACK
 find_package(LAPACK REQUIRED)
 
+# Find Umpire and Camp (needed when CUDA/HIP is enabled)
+if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+  find_package(umpire REQUIRED CONFIG)
+  find_package(camp REQUIRED CONFIG)
+endif()
+
 # Find nlohmann/json
 find_package(nlohmann_json REQUIRED CONFIG)
 message(STATUS "Found nlohmann/json: ${nlohmann_json_VERSION} in ${nlohmann_json_DIR}")
+
+# Find nlohmann/json-schema-validator
+find_package(nlohmann_json_schema_validator REQUIRED CONFIG)
+message(STATUS "Found nlohmann_json_schema_validator: ${nlohmann_json_schema_validator_VERSION} in ${nlohmann_json_schema_validator_DIR}")
 
 # Find fmt
 find_package(fmt REQUIRED CONFIG)
@@ -116,25 +203,44 @@ find_package(Eigen3 REQUIRED CONFIG)
 message(STATUS "Found Eigen: ${Eigen3_VERSION} in ${Eigen3_DIR}")
 
 # Find MFEM (recent MFEM targets link to target Threads::Threads, for some reason)
-if(NOT "${MFEM_DIR}" STREQUAL "")
-  set(MFEM_ROOT ${MFEM_DIR})
-endif()
 find_package(Threads REQUIRED)
-find_package(MFEM REQUIRED CONFIG)
-message(STATUS "Found MFEM: ${MFEM_VERSION} in ${MFEM_DIR}")
-if(NOT MFEM_USE_MPI)
-  message(FATAL_ERROR "Build requires MFEM with MPI support")
+
+# MFEM in Spack is currently using autotools, and this find_package will fail
+# (hence the QUIET), but this is not a problem.
+if(NOT "${MFEM_DIR}" STREQUAL "")
+  # MFEM_DIR provided, assume MFEM is available (e.g., from Spack with autotools)
+  set(MFEM_ROOT ${MFEM_DIR})
+  find_library(MFEM_LIBRARY NAMES mfem HINTS ${MFEM_DIR}/lib REQUIRED)
+  message(STATUS "Found MFEM: ${MFEM_LIBRARY}")
+else()
+  # Try to find MFEM via CMake config
+  find_package(MFEM QUIET CONFIG)
+  if(MFEM_FOUND)
+    message(STATUS "Found MFEM: ${MFEM_VERSION} in ${MFEM_DIR}")
+    if(NOT MFEM_USE_MPI)
+      message(FATAL_ERROR "Build requires MFEM with MPI support")
+    endif()
+    set(MFEM_LIBRARY mfem)
+  else()
+    message(FATAL_ERROR "MFEM not found. Set MFEM_DIR or ensure MFEM is on CMAKE_PREFIX_PATH")
+  endif()
 endif()
-# if(MFEM_CXX_FLAGS)
-#   # Pull compiler flags from MFEM for OpenMP and optimizations
-#   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MFEM_CXX_FLAGS}")
-# endif()
+
 
 # Find libCEED
 include(PkgConfigHelpers)
 set(LIBCEED_TEST_DEPS)
 if(PALACE_WITH_OPENMP)
   list(APPEND LIBCEED_TEST_DEPS OpenMP::OpenMP_CXX)
+endif()
+if(PALACE_WITH_CUDA)
+  if(BUILD_SHARED_LIBS)
+    list(APPEND LIBCEED_TEST_DEPS CUDA::cudart CUDA::cublas)
+  else()
+    list(APPEND LIBCEED_TEST_DEPS CUDA::cudart_static CUDA::cublas_static)
+  endif()
+elseif(PALACE_WITH_HIP)
+  list(APPEND LIBCEED_TEST_DEPS hip::host)
 endif()
 find_libceed_pkgconfig("${LIBCEED_TEST_DEPS}" LIBCEED_TARGET)
 if("${LIBCEED_TARGET}" STREQUAL "")
@@ -187,6 +293,7 @@ endif()
 set(LIB_TARGET_NAME libpalace)
 add_library(${LIB_TARGET_NAME} "")
 target_include_directories(${LIB_TARGET_NAME} PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(${LIB_TARGET_NAME} PUBLIC ${CMAKE_BINARY_DIR}/generated)
 
 # Add source files
 add_subdirectory(drivers)
@@ -198,7 +305,9 @@ add_subdirectory(utils)
 # Add executable target
 set(TARGET_NAME palace)
 add_executable(${TARGET_NAME} ${CMAKE_SOURCE_DIR}/main.cpp)
-target_link_libraries(${TARGET_NAME} PRIVATE ${LIB_TARGET_NAME})
+target_link_libraries(${TARGET_NAME}
+  PRIVATE ${LIB_TARGET_NAME}
+          $<$<BOOL:${PALACE_BUILD_WITH_SANITIZERS}>:sanitizer_flags>)
 
 # Add binary extension for build architecture
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm")
@@ -242,9 +351,9 @@ endif()
 
 if(PALACE_WITH_CUDA)
   if (BUILD_SHARED_LIBS)
-    target_link_libraries(${LIB_TARGET_NAME} PUBLIC CUDA::cudart)
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC CUDA::cudart CUDA::cublas)
   else()
-    target_link_libraries(${LIB_TARGET_NAME} PUBLIC CUDA::cudart_static)
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC CUDA::cudart_static CUDA::cublas_static)
   endif()
 endif()
 
@@ -253,6 +362,9 @@ set_property(
   SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
   APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE;PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_INSTALL_PREFIX}/include/palace/\""
 )
+
+# Generate embedded schema header from JSON schema files
+include(${CMAKE_SOURCE_DIR}/../cmake/EmbedSchema.cmake)
 
 # Add Git revision information (forces reconfigure when Git status changes)
 include(GetGitDescription)
@@ -302,15 +414,6 @@ endforeach()
 
 # Check C++ compiler support for constexpr std::sqrt and std::filesystem
 include(CheckCompilerFeatureSupport)
-if(NOT DEFINED CONSTEXPR_SQRT_SUPPORT_CACHE)
-  check_constexpr_sqrt_support(CONSTEXPR_SQRT_SUPPORT)
-  set(CONSTEXPR_SQRT_SUPPORT_CACHE ${CONSTEXPR_SQRT_SUPPORT} CACHE INTERNAL "")
-endif()
-if(CONSTEXPR_SQRT_SUPPORT_CACHE)
-  target_compile_definitions(${LIB_TARGET_NAME}
-    PUBLIC PALACE_WITH_CONSTEXPR_SQRT
-  )
-endif()
 if(NOT DEFINED STD_FS_LIBRARIES_CACHE)
   check_std_fs_support(STD_FS_SUPPORT STD_FS_LIBRARIES)
   if(NOT STD_FS_SUPPORT)
@@ -347,10 +450,231 @@ if(PALACE_WITH_OPENMP)
   )
 endif()
 target_link_libraries(${LIB_TARGET_NAME}
-  PUBLIC mfem ${LIBCEED_TARGET} nlohmann_json::nlohmann_json fmt::fmt scn::scn
+  PUBLIC ${MFEM_LIBRARY} ${LIBCEED_TARGET} nlohmann_json::nlohmann_json
+         nlohmann_json_schema_validator::validator fmt::fmt scn::scn
          Eigen3::Eigen LAPACK::LAPACK MPI::MPI_CXX
 )
-target_link_libraries(${LIB_TARGET_NAME} PRIVATE $<BUILD_INTERFACE:$<$<CONFIG:Debug,RelWithDebInfo>:common_warnings>>)
+
+# Add MFEM include directory for Spack builds
+if(NOT "${MFEM_DIR}" STREQUAL "")
+  target_include_directories(${LIB_TARGET_NAME} PUBLIC ${MFEM_DIR}/include)
+endif()
+if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+  target_link_libraries(${LIB_TARGET_NAME}
+    PUBLIC umpire camp
+  )
+endif()
+
+# Set package roots from *_DIR variables
+if(NOT "${HYPRE_DIR}" STREQUAL "")
+  set(HYPRE_ROOT ${HYPRE_DIR})
+endif()
+if(NOT "${STRUMPACK_DIR}" STREQUAL "")
+  set(strumpack_ROOT ${STRUMPACK_DIR})
+endif()
+if(NOT "${METIS_DIR}" STREQUAL "")
+  set(METIS_ROOT ${METIS_DIR})
+endif()
+if(NOT "${PARMETIS_DIR}" STREQUAL "")
+  set(ParMETIS_ROOT ${PARMETIS_DIR})
+endif()
+if(NOT "${SUPERLU_DIST_DIR}" STREQUAL "")
+  set(superlu_dist_ROOT ${SUPERLU_DIST_DIR})
+endif()
+if(NOT "${MUMPS_DIR}" STREQUAL "")
+  set(MUMPS_ROOT ${MUMPS_DIR})
+endif()
+if(NOT "${SUNDIALS_DIR}" STREQUAL "")
+  set(SUNDIALS_ROOT ${SUNDIALS_DIR})
+endif()
+if(NOT "${GSLIB_DIR}" STREQUAL "")
+  set(GSLIB_ROOT ${GSLIB_DIR})
+endif()
+if(NOT "${SCALAPACK_DIR}" STREQUAL "")
+  set(SCALAPACK_ROOT ${SCALAPACK_DIR})
+endif()
+
+# Find METIS and ParMETIS early (needed for MUMPS/STRUMPACK/SuperLU CMake configs)
+# but link them later for correct static library ordering
+find_package(METIS QUIET)
+if(NOT TARGET METIS::METIS)
+  find_library(METIS_LIBRARY NAMES metis HINTS ${METIS_ROOT}/lib REQUIRED)
+  find_path(METIS_INCLUDE_DIR NAMES metis.h HINTS ${METIS_ROOT}/include REQUIRED)
+  add_library(METIS::METIS UNKNOWN IMPORTED)
+  set_target_properties(METIS::METIS PROPERTIES
+    IMPORTED_LOCATION "${METIS_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${METIS_INCLUDE_DIR}")
+  message(STATUS "Found METIS: ${METIS_LIBRARY}")
+else()
+  message(STATUS "Found METIS: ${METIS_VERSION}")
+endif()
+
+find_package(ParMETIS QUIET)
+if(NOT TARGET ParMETIS::ParMETIS)
+  find_library(PARMETIS_LIBRARY NAMES parmetis HINTS ${ParMETIS_ROOT}/lib REQUIRED)
+  find_path(PARMETIS_INCLUDE_DIR NAMES parmetis.h HINTS ${ParMETIS_ROOT}/include REQUIRED)
+  add_library(ParMETIS::ParMETIS UNKNOWN IMPORTED)
+  set_target_properties(ParMETIS::ParMETIS PROPERTIES
+    IMPORTED_LOCATION "${PARMETIS_LIBRARY}"
+    INTERFACE_INCLUDE_DIRECTORIES "${PARMETIS_INCLUDE_DIR}"
+    INTERFACE_LINK_LIBRARIES "METIS::METIS")
+  message(STATUS "Found ParMETIS: ${PARMETIS_LIBRARY}")
+else()
+  message(STATUS "Found ParMETIS: ${ParMETIS_VERSION}")
+endif()
+
+# Find ScaLAPACK early (needed for MUMPS/STRUMPACK CMake configs)
+if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
+  if(NOT SCALAPACK_ROOT)
+    find_package(scalapack QUIET)
+  endif()
+  if(NOT TARGET SCALAPACK::SCALAPACK AND NOT TARGET scalapack)
+    if(PALACE_WITH_64BIT_INT)
+      set(_scalapack_mkl_name mkl_scalapack_ilp64)
+    else()
+      set(_scalapack_mkl_name mkl_scalapack_lp64)
+    endif()
+    find_library(SCALAPACK_LIBRARY NAMES scalapack ${_scalapack_mkl_name}
+      HINTS ${SCALAPACK_ROOT}/lib ${CMAKE_INSTALL_PREFIX}/lib REQUIRED)
+    add_library(SCALAPACK::SCALAPACK UNKNOWN IMPORTED)
+    set_target_properties(SCALAPACK::SCALAPACK PROPERTIES
+      IMPORTED_LOCATION "${SCALAPACK_LIBRARY}")
+    message(STATUS "Found ScaLAPACK: ${SCALAPACK_LIBRARY}")
+  elseif(TARGET scalapack AND NOT TARGET SCALAPACK::SCALAPACK)
+    add_library(SCALAPACK::SCALAPACK ALIAS scalapack)
+    message(STATUS "Found ScaLAPACK: scalapack target")
+  else()
+    message(STATUS "Found ScaLAPACK: SCALAPACK::SCALAPACK target")
+  endif()
+endif()
+
+# Link ZLIB
+find_package(ZLIB)
+if(ZLIB_FOUND)
+  message(STATUS "Found ZLIB: ${ZLIB_VERSION_STRING}")
+  target_link_libraries(${LIB_TARGET_NAME} PUBLIC ZLIB::ZLIB)
+endif()
+
+# Link HYPRE
+find_package(HYPRE QUIET)
+if(TARGET HYPRE::HYPRE)
+  message(STATUS "Found HYPRE: ${HYPRE_VERSION}")
+  target_link_libraries(${LIB_TARGET_NAME} PUBLIC HYPRE::HYPRE)
+else()
+  find_library(HYPRE_LIBRARY NAMES HYPRE HINTS ${HYPRE_ROOT}/lib REQUIRED)
+  find_path(HYPRE_INCLUDE_DIR NAMES HYPRE.h HINTS ${HYPRE_ROOT}/include REQUIRED)
+  message(STATUS "Found HYPRE: ${HYPRE_LIBRARY}")
+  target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${HYPRE_LIBRARY})
+  target_include_directories(${LIB_TARGET_NAME} PUBLIC ${HYPRE_INCLUDE_DIR})
+endif()
+
+# Link SuperLU_DIST
+if(PALACE_WITH_SUPERLU)
+  find_package(superlu_dist QUIET)
+  if(TARGET superlu_dist::superlu_dist)
+    message(STATUS "Found SuperLU_DIST: ${superlu_dist_VERSION}")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC superlu_dist::superlu_dist)
+  else()
+    find_library(SUPERLU_DIST_LIBRARY NAMES superlu_dist HINTS ${superlu_dist_ROOT}/lib REQUIRED)
+    find_path(SUPERLU_DIST_INCLUDE_DIR NAMES superlu_defs.h HINTS ${superlu_dist_ROOT}/include REQUIRED)
+    message(STATUS "Found SuperLU_DIST: ${SUPERLU_DIST_LIBRARY}")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${SUPERLU_DIST_LIBRARY})
+    target_include_directories(${LIB_TARGET_NAME} PUBLIC ${SUPERLU_DIST_INCLUDE_DIR})
+  endif()
+endif()
+
+# Link STRUMPACK
+if(PALACE_WITH_STRUMPACK)
+  find_package(strumpack QUIET)
+  if(TARGET strumpack::strumpack)
+    message(STATUS "Found STRUMPACK: ${strumpack_VERSION}")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC strumpack::strumpack)
+  else()
+    find_library(STRUMPACK_LIBRARY NAMES strumpack HINTS ${strumpack_ROOT}/lib REQUIRED)
+    find_path(STRUMPACK_INCLUDE_DIR NAMES StrumpackSparseSolverMPIDist.hpp HINTS ${strumpack_ROOT}/include REQUIRED)
+    message(STATUS "Found STRUMPACK: ${STRUMPACK_LIBRARY}")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${STRUMPACK_LIBRARY})
+    target_include_directories(${LIB_TARGET_NAME} PUBLIC ${STRUMPACK_INCLUDE_DIR})
+  endif()
+
+  # STRUMPACK dependencies (ScaLAPACK target created earlier)
+  target_link_libraries(${LIB_TARGET_NAME} PUBLIC SCALAPACK::SCALAPACK ${MPI_Fortran_LIBRARIES})
+
+  find_package(ButterflyPACK QUIET)
+  if(ButterflyPACK_FOUND)
+    message(STATUS "Found ButterflyPACK")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC
+      ButterflyPACK::dbutterflypack ButterflyPACK::zbutterflypack
+      ButterflyPACK::sbutterflypack ButterflyPACK::cbutterflypack)
+  endif()
+
+  foreach(pkg zfp slate lapackpp blaspp ptscotch)
+    find_package(${pkg} QUIET)
+    if(${pkg}_FOUND)
+      message(STATUS "Found ${pkg}")
+      target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${pkg})
+    endif()
+  endforeach()
+endif()
+
+# Link MUMPS
+if(PALACE_WITH_MUMPS)
+  find_package(MUMPS QUIET)
+  if(TARGET MUMPS::MUMPS)
+    message(STATUS "Found MUMPS: ${MUMPS_VERSION}")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC MUMPS::MUMPS)
+  else()
+    find_library(DMUMPS_LIBRARY NAMES dmumps HINTS ${MUMPS_ROOT}/lib REQUIRED)
+    find_library(MUMPS_COMMON_LIBRARY NAMES mumps_common HINTS ${MUMPS_ROOT}/lib REQUIRED)
+    find_library(PORD_LIBRARY NAMES pord HINTS ${MUMPS_ROOT}/lib REQUIRED)
+    find_path(MUMPS_INCLUDE_DIR NAMES dmumps_c.h HINTS ${MUMPS_ROOT}/include REQUIRED)
+    message(STATUS "Found MUMPS: ${DMUMPS_LIBRARY}")
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC
+      ${DMUMPS_LIBRARY} ${MUMPS_COMMON_LIBRARY} ${PORD_LIBRARY}
+      SCALAPACK::SCALAPACK ${MPI_Fortran_LIBRARIES})
+    target_include_directories(${LIB_TARGET_NAME} PUBLIC ${MUMPS_INCLUDE_DIR})
+  endif()
+endif()
+
+# Link METIS and ParMETIS (must come after SuperLU_DIST, STRUMPACK, MUMPS for static linking)
+target_link_libraries(${LIB_TARGET_NAME} PUBLIC ParMETIS::ParMETIS METIS::METIS)
+
+# Link SUNDIALS
+if(PALACE_WITH_SUNDIALS)
+  # SUNDIALS needs MPI_C, but MPI is not a valid target because we only
+  # specify CXX as language for palace.
+  if(NOT TARGET MPI::MPI_C AND TARGET MPI::MPI_CXX)
+    add_library(MPI::MPI_C ALIAS MPI::MPI_CXX)
+  endif()
+  find_package(SUNDIALS REQUIRED)
+  message(STATUS "Found SUNDIALS: ${SUNDIALS_VERSION}")
+  # Check if we are building static or shared libraries
+  if(TARGET SUNDIALS::arkode)
+    set(_sundials_suffix "")
+  else()
+    set(_sundials_suffix "_static")
+  endif()
+  target_link_libraries(${LIB_TARGET_NAME} PUBLIC
+    SUNDIALS::arkode${_sundials_suffix} SUNDIALS::cvodes${_sundials_suffix}
+    SUNDIALS::kinsol${_sundials_suffix} SUNDIALS::nvecparallel${_sundials_suffix}
+    SUNDIALS::nvecmpiplusx${_sundials_suffix})
+  if(PALACE_WITH_CUDA)
+    target_link_libraries(${LIB_TARGET_NAME} PUBLIC SUNDIALS::nveccuda${_sundials_suffix})
+  endif()
+endif()
+
+# Link GSLIB
+if(PALACE_WITH_GSLIB)
+  find_library(GSLIB_LIBRARY NAMES gs gslib HINTS ${GSLIB_ROOT}/lib REQUIRED)
+  message(STATUS "Found GSLIB: ${GSLIB_LIBRARY}")
+  target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${GSLIB_LIBRARY})
+endif()
+
+target_link_libraries(
+  ${LIB_TARGET_NAME}
+  PRIVATE $<BUILD_INTERFACE:$<$<CONFIG:Debug,RelWithDebInfo>:common_warnings>>
+          $<$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>:coverage_flags>
+          $<$<BOOL:${PALACE_BUILD_WITH_SANITIZERS}>:sanitizer_flags>)
 if(PALACE_WITH_GSLIB)
   target_compile_definitions(${LIB_TARGET_NAME}
     PUBLIC PALACE_WITH_GSLIB

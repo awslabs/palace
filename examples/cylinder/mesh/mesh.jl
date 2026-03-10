@@ -1,17 +1,22 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# Generate example meshes with:
+# julia -e 'include("mesh/mesh.jl"); generate_cylindrical_mesh(filename="cylinder_tet.msh", mesh_type=0)'
+# julia -e 'include("mesh/mesh.jl"); generate_cylindrical_mesh(filename="cylinder_prism.msh", mesh_type=1)'
+# julia -e 'include("mesh/mesh.jl"); generate_cylindrical_mesh(filename="cylinder_hex.msh", mesh_type=2)'
+
 using Gmsh: gmsh
 
 """
     generate_cylindrical_mesh(;
         filename::AbstractString,
         refinement::Integer  = 1,
-        order::Integer       = 1,
+        order::Integer       = 2,
         mesh_type::Integer   = 0,
         radius::Real         = 2.74,
         aspect_ratio::Real   = 1.0,
-        symmetry_plane::Real = true,
+        symmetry_plane::Real = false,
         verbose::Integer     = 5,
         gui::Bool            = false
     )
@@ -33,11 +38,11 @@ Generate a mesh for the cylinder example using Gmsh
 function generate_cylindrical_mesh(;
     filename::AbstractString,
     refinement::Integer  = 1,
-    order::Integer       = 1,
+    order::Integer       = 2,
     mesh_type::Integer   = 0,
     radius::Real         = 2.74,
     aspect_ratio::Real   = 1.0,
-    symmetry_plane::Real = true,
+    symmetry_plane::Real = false,
     verbose::Integer     = 5,
     gui::Bool            = false
 )
@@ -61,7 +66,7 @@ function generate_cylindrical_mesh(;
 
     # Mesh parameters
     n_height = 2                       # Two elements in height
-    n_circum = mesh_type == 2 ? 2 : 6  # Four or six elements on circumference
+    n_circum = mesh_type == 2 ? 4 : 6  # Four or six elements on circumference
 
     # Geometry
     if (mesh_type == 2)
@@ -157,7 +162,9 @@ function generate_cylindrical_mesh(;
     top_group = gmsh.model.addPhysicalGroup(2, top, -1, "top")
     bottom_group = gmsh.model.addPhysicalGroup(2, bottom, -1, "bottom")
     exterior_group = gmsh.model.addPhysicalGroup(2, exterior, -1, "exterior")
-    symmetry_group = gmsh.model.addPhysicalGroup(2, symmetry, -1, "symmetry")
+    if symmetry_plane
+        symmetry_group = gmsh.model.addPhysicalGroup(2, symmetry, -1, "symmetry")
+    end
 
     # Generate mesh
     gmsh.option.setNumber("Mesh.MinimumCurveNodes", 2)
@@ -168,7 +175,7 @@ function generate_cylindrical_mesh(;
     gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 1)
 
     gmsh.option.setNumber("Mesh.Algorithm", 6)
-    gmsh.option.setNumber("Mesh.Algorithm3D", 10)
+    gmsh.option.setNumber("Mesh.Algorithm3D", 1)
 
     if (mesh_type == 2)
         base_boundaries = last.(
@@ -195,7 +202,7 @@ function generate_cylindrical_mesh(;
 
     # Save mesh
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
-    gmsh.option.setNumber("Mesh.Binary", 0)
+    gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(joinpath(@__DIR__, filename))
 
     # Print some information

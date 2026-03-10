@@ -1,6 +1,8 @@
 ```@raw html
-<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
-<!--- SPDX-License-Identifier: Apache-2.0 --->
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
 ```
 
 # Installation
@@ -17,19 +19,55 @@ If you are a user, we recommend you install [*Palace* with
 Spack](#Build-using-Spack). If you intend to develop *Palace*, [build from
 source](#Build-from-source) instead.
 
+!!! note "Installation issues/questions?"
+
+    If the steps described in the sections below do not work as expected, consult the
+    [Frequently Asked Questions](faq.md#Installation) page.
+
 ## Build using Spack
 
-*Palace* is a registered package in the built-in Spack package repository. To install the
-solver, follow the
-[instructions for setting up Spack on your system](https://spack.readthedocs.io/en/latest/getting_started.html)
-and run:
+*Palace* is a registered package in the built-in Spack package repository. To
+install the solver, follow the [instructions for setting up Spack on your
+system](https://spack.readthedocs.io/en/latest/getting_started.html). Note that
+Spack requires basic system utilities that may not be installed by default on
+certain systems (such as Ubuntu for Windows Subsystem for Linux). Consult the
+[Spack Prerequisites
+page](https://spack.readthedocs.io/en/latest/installing_prerequisites.html) to
+ensure all required utilities are installed.
+
+Once you have installed Spack, check that the version of *Palace* you want to
+install is available
+
+```bash
+spack versions palace
+```
+
+If you do not see the latest version, your Spack package repository might be
+outdated. Consult the [Frequently Asked Questions](@ref "Spack does not have the
+most recent version of Palace") page.
+
+Once you confirmed that the desired version of *Palace* is available, run:
 
 ```bash
 spack install palace
 ```
 
-More information about the available configuration options and dependencies can
-be found using `spack info palace`.
+This will install the default version of *Palace*. Spack supports installing
+_variants_ of *Palace*. For instance, if you want to install *Palace* with CUDA,
+MUMPS and SLEPc, call
+
+```bash
+spack install palace +mumps +slepc +cuda cuda_arch=90
+```
+
+where `cuda_arch` is determined by the [generation of your
+GPU](https://developer.nvidia.com/cuda-gpus). More information about the
+available configuration options and dependencies can be found using `spack info palace`. See the [official
+tutorial](https://spack-tutorial.readthedocs.io/en/latest/tutorial_basics.html)
+for an introduction.
+
+If you are developing *Palace*, refer to the [Working with
+Spack](developer/spack.md) page.
 
 ## Build using Singularity/Apptainer
 
@@ -55,7 +93,7 @@ Singularity/Apptainer documentation.
 
 A build from source requires the following prerequisites installed on your system:
 
-  - [CMake](https://cmake.org/download) version 3.21 or later
+  - [CMake](https://cmake.org/download) version 3.24 or later
   - C++17 compatible C++ compiler
   - C and Fortran (optional) compilers for dependency builds
   - MPI distribution
@@ -138,6 +176,7 @@ Additional build options are (with default values in brackets):
   - `PALACE_WITH_MAGMA [ON]` :  Build with MAGMA backend for libCEED
   - `PALACE_WITH_GSLIB [ON]` :  Build with GSLIB library for high-order field interpolation
   - `PALACE_WITH_SUNDIALS [ON]` : Build with SUNDIALS ODE solver library
+  - `PALACE_BUILD_WITH_SANITIZERS [OFF]` :  Build with AddressSanitizer and UndefinedBehaviorSanitizer
 
 The build step is invoked by running (for example with 4 `make` threads)
 
@@ -160,7 +199,7 @@ and LAPACK libraries depending on the system architecture according to the follo
 procedure:
 
   - For `x86_64` systems:
-    
+
       + If the `MKLROOT` environment variable is set, looks for an
         [Intel MKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html)
         installation.
@@ -171,7 +210,7 @@ procedure:
         which is permissively licensed and available from most package managers.
 
   - For `aarch64`/`arm64` systems:
-    
+
       + If the `ARMPL_DIR` environment variable is set, looks for an
         [Arm Performance Libraries (PL)](https://www.arm.com/products/development-tools/server-and-hpc/allinea-studio/performance-libraries)
         installation.
@@ -221,7 +260,7 @@ For solving eigenvalue problems, at least one of SLEPc or ARPACK-NG must be spec
 Typically only one of the SuperLU_DIST, STRUMPACK, and MUMPS dependencies is required but
 all can be built so the user can decide at runtime which solver to use.
 
-For unit testing, *Palace* relies on the
-[Catch2 library](https://github.com/catchorg/Catch2), which is automatically downloaded and
-built when building the `unit-tests` target. See the [Developer Notes](developer.md#Testing)
-for more information.
+For unit testing, *Palace* relies on the [Catch2
+library](https://github.com/catchorg/Catch2), which is automatically downloaded
+and built when building the `unit-tests` target. See the [Developer
+Notes](developer/testing.md) for more information.

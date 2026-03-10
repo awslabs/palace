@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -18,8 +19,10 @@
 #include "linalg/hypre.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
+#include "utils/device.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/memoryreporting.hpp"
 #include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
 #include "utils/timer.hpp"
@@ -93,50 +96,6 @@ static const char *GetPalaceCeedJitSourceDir()
   static const char *path = "";
 #endif
   return path;
-}
-
-static int ConfigureOmp()
-{
-#if defined(MFEM_USE_OPENMP)
-  int nt;
-  const char *env = std::getenv("OMP_NUM_THREADS");
-  if (env)
-  {
-    std::sscanf(env, "%d", &nt);
-  }
-  else
-  {
-    nt = 1;
-  }
-  utils::SetNumThreads(nt);
-  return nt;
-#else
-  return 0;
-#endif
-}
-
-static int GetDeviceCount()
-{
-#if defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP)
-  return mfem::Device::GetDeviceCount();
-#else
-  return 0;
-#endif
-}
-
-static int GetDeviceId(MPI_Comm comm, int ngpu)
-{
-  // Assign devices round-robin over MPI ranks if GPU support is enabled.
-#if defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP)
-  MPI_Comm node_comm;
-  MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
-                      &node_comm);
-  int node_size = Mpi::Rank(node_comm);
-  MPI_Comm_free(&node_comm);
-  return node_size % ngpu;
-#else
-  return 0;
-#endif
 }
 
 static std::string ConfigureDevice(Device device)
@@ -301,6 +260,10 @@ int main(int argc, char *argv[])
     if (Mpi::Root(world_comm))
     {
       IoData iodata(argv[argc - 1], false);
+      if (!std::filesystem::exists(iodata.model.mesh))
+      {
+        MFEM_ABORT("Unable to open mesh file \"" << iodata.model.mesh << "\"!");
+      }
     }
     Mpi::Print(world_comm, "Dry-run: No errors detected in configuration file \"{}\"\n\n",
                argv[argc - 1]);
@@ -314,8 +277,9 @@ int main(int argc, char *argv[])
 
   BlockTimer bt1(Timer::INIT);
   // Initialize the MFEM device and configure libCEED backend.
-  int omp_threads = ConfigureOmp(), ngpu = GetDeviceCount();
-  mfem::Device device(ConfigureDevice(iodata.solver.device), GetDeviceId(world_comm, ngpu));
+  int omp_threads = utils::ConfigureOmp(), ngpu = utils::GetDeviceCount();
+  mfem::Device device(ConfigureDevice(iodata.solver.device),
+                      utils::GetDeviceId(world_comm, ngpu));
   ConfigureCeedBackend(iodata.solver.ceed_backend);
 #if defined(PALACE_WITH_GPU_AWARE_MPI)
   device.SetGPUAwareMPI(true);
@@ -365,6 +329,11 @@ int main(int argc, char *argv[])
     mfem_mesh.push_back(mesh::ReadMesh(iodata, world_comm));
     iodata.NondimensionalizeInputs(*mfem_mesh[0]);
     mesh::RefineMesh(iodata, mfem_mesh);
+    Mpi::Print(world_comm, "\n");
+    memory_reporting::PrintMemoryUsage(world_comm,
+                                       memory_reporting::GetCurrentMemoryStats(world_comm));
+    memory_reporting::PrintMemoryUsage(
+        world_comm, memory_reporting::GetCurrentNodeMemoryStats(world_comm));
     for (auto &m : mfem_mesh)
     {
       mesh.push_back(std::make_unique<Mesh>(std::move(m)));
@@ -375,8 +344,15 @@ int main(int argc, char *argv[])
   solver->SolveEstimateMarkRefine(mesh);
 
   // Print timing summary.
+  auto peak_mem = memory_reporting::GetPeakMemoryStats(world_comm);
+  auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(world_comm);
+  Mpi::Print(world_comm, "\n");
+  memory_reporting::PrintMemoryUsage(world_comm, peak_mem);
+  memory_reporting::PrintMemoryUsage(world_comm, peak_node_mem);
   BlockTimer::Print(world_comm);
   solver->SaveMetadata(BlockTimer::GlobalTimer());
+  solver->SaveMetadata(peak_mem);
+  solver->SaveMetadata(peak_node_mem);
   Mpi::Print(world_comm, "\n");
 
   // Finalize libCEED.

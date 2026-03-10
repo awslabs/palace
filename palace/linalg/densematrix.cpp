@@ -204,7 +204,7 @@ mfem::DenseTensor MatrixSqrt(const mfem::DenseTensor &T)
   mfem::DenseMatrix buffS, buffT;
   for (int k = 0; k < T.SizeK(); k++)
   {
-    S(k, buffS) = MatrixSqrt(T(k, buffT));
+    S(k, buffS).Set(1.0, MatrixSqrt(T(k, buffT)));
   }
   return S;
 }
@@ -220,7 +220,7 @@ mfem::DenseTensor MatrixPow(const mfem::DenseTensor &T, double p)
   mfem::DenseMatrix buffS, buffT;
   for (int k = 0; k < T.SizeK(); k++)
   {
-    S(k, buffS) = MatrixPow(T(k, buffT), p);
+    S(k, buffS).Set(1.0, MatrixPow(T(k, buffT), p));
   }
   return S;
 }

@@ -1,6 +1,8 @@
 ```@raw html
-<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
-<!--- SPDX-License-Identifier: Apache-2.0 --->
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
 ```
 
 # `config["Problem"]`
@@ -10,7 +12,11 @@
 {
     "Type": <string>,
     "Verbose": <int>,
-    "Output": <string>
+    "Output": <string>,
+    "OutputFormats":
+    {
+      ...
+    }
 }
 ```
 
@@ -29,3 +35,21 @@ with
 `"Verbose" [1]` :  Controls the level of log file printing.
 
 `"Output" [None]` :  Directory path for saving postprocessing outputs.
+
+`"OutputFormats"` :  Top-level object for configuring the field output formats.
+
+## `problem["OutputFormats"]`
+
+```json
+"OutputFormats":
+{
+    "Paraview": <bool>,
+    "GridFunction": <bool>
+}
+```
+
+with
+
+`"Paraview" [true]` :  Set to true to output fields in Paraview format.
+
+`"GridFunction" [false]` :  Set to true to output fields in MFEM grid function format to visualize with GLVis.

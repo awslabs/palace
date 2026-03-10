@@ -1,5 +1,5 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Configuration File Schema -- \"Problem\"",
   "type": "object",
   "additionalProperties": false,
@@ -12,6 +12,16 @@
       "enum": ["Eigenmode", "Driven", "Transient", "Electrostatic", "Magnetostatic"]
     },
     "Verbose": { "type": "integer", "minimum": 0 },
-    "Output": { "type": "string" }
+    "Output": { "type": "string" },
+    "OutputFormats":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "properties":
+      {
+        "Paraview": { "type": "boolean" },
+        "GridFunction": { "type": "boolean" }
+      }
+    }
   }
 }

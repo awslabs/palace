@@ -32,6 +32,13 @@ enum class EigenSolverBackend : char
   ARPACK
 };
 
+// Nonlinear eigenvalue solver type.
+enum class NonlinearEigenSolver : char
+{
+  HYBRID,
+  SLP
+};
+
 // Surface fluxes.
 enum class SurfaceFlux : char
 {
@@ -151,6 +158,14 @@ enum class Orthogonalization : char
   MGS,
   CGS,
   CGS2
+};
+
+// Domain orthogonalization type for adaptive circuit synthesis.
+enum class DomainOrthogonalizationWeight : char
+{
+  ENERGY,
+  FE_BASIS_IDENTITY,
+  SPACE_OVERLAP
 };
 
 // Device used to configure MFEM.

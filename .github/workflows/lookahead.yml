@@ -1,0 +1,71 @@
+name: Lookahead
+
+# Test Palace with newer versions of the dependencies. This test is meant to
+# provide early signals that something upstream has changed/needs attention.
+#
+# This test is not required to pass to merge PRs and it is not run on main (so
+# that we can have a green tick).
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  packages: write
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITHUB_USER: ${{ github.actor }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  # Filter to allow skipping the test if no relevant changes occurred.
+  filter:
+    runs-on: ubuntu-latest
+    outputs:
+      test: ${{ steps.filter.outputs.test }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            test:
+              - 'palace/**'
+              - 'cmake/**'
+              - 'extern/**'
+              - 'examples/**'
+              - 'test/examples/**'
+              - 'test/unit/**'
+              - 'spack_repo/**'
+              - '.github/actions/**'
+              - '.github/workflows/lookahead.yml'
+
+  build-test-x64-gcc:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
+          run-regression-tests: 'true'
+          use-develop-deps: 'true'
+
+  build-test-gpu-gcc:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    runs-on: [self-hosted, gpu]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: gcc
+          variant: +cuda
+          run-regression-tests: 'true'
+          use-develop-deps: 'true'

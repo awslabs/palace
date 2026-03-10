@@ -1,0 +1,113 @@
+# Manages long test status for PRs based on labels and file changes.
+#
+# 1. Label-based bypass:
+#    - When 'no-long-tests' label is added: sets long-tests status to success
+#    - When 'no-long-tests' label is removed: sets status to pending
+#
+# 2. Automatic bypass for trivial changes:
+#    - When PR only modifies non-code files (docs, README, etc.), automatically
+#      sets long-tests status to success without running expensive tests
+
+name: Long Test Status Manager
+
+on:
+  pull_request:
+    types: [labeled, unlabeled, opened, synchronize, reopened]
+
+permissions:
+  statuses: write
+  pull-requests: read
+  contents: read
+
+jobs:
+  # Filter to detect if PR contains non-trivial changes requiring long tests
+  filter:
+    runs-on: ubuntu-latest
+    if: |
+      github.event.action == 'opened' ||
+      github.event.action == 'synchronize' ||
+      github.event.action == 'reopened'
+    outputs:
+      needs_long: ${{ steps.filter.outputs.test }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            test:
+              - 'palace/**'
+              - 'cmake/**'
+              - 'extern/**'
+              - 'examples/**'
+              - 'test/examples/**'
+              - 'test/unit/**'
+              - 'spack_repo/**'
+              - '.github/actions/**'
+              - '.github/workflows/long-test*.yml'
+
+  # Automatically bypass long tests for trivial changes
+  handle-trivial-changes:
+    needs: filter
+    if: |
+      needs.filter.outputs.needs_long == 'false' &&
+      !contains(github.event.pull_request.labels.*.name, 'trigger-long-tests') &&
+      !contains(github.event.pull_request.labels.*.name, 'no-long-tests')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set bypass status for trivial changes
+        run: |
+          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+            --method POST \
+            --field state=success \
+            --field context=long-tests \
+            --field description="Long tests bypassed (trivial changes)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Require long tests when non-trivial changes are detected
+  handle-non-trivial-changes:
+    needs: filter
+    if: |
+      needs.filter.outputs.needs_long == 'true' &&
+      !contains(github.event.pull_request.labels.*.name, 'no-long-tests')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set pending status for non-trivial changes
+        run: |
+          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+            --method POST \
+            --field state=pending \
+            --field context=long-tests \
+            --field description="Waiting for long tests (add 'trigger-long-tests' label to run)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Handle adding/removing 'no-long-tests' label
+  handle-no-long-tests:
+    if: github.event.label.name == 'no-long-tests'
+    runs-on: ubuntu-latest
+    steps:
+      # When label is added: bypass long test requirement
+      - name: Set bypass status
+        if: github.event.action == 'labeled'
+        run: |
+          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+            --method POST \
+            --field state=success \
+            --field context=long-tests \
+            --field description="Long tests bypassed"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # When label is removed: require long tests again
+      - name: Remove bypass status
+        if: github.event.action == 'unlabeled'
+        run: |
+          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+            --method POST \
+            --field state=pending \
+            --field context=long-tests \
+            --field description="Waiting for long tests (add 'trigger-long-tests' label to run)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

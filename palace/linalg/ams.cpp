@@ -22,8 +22,8 @@ HypreAmsSolver::HypreAmsSolver(FiniteElementSpace &nd_fespace,
     // (MFEM default is 13). 14 is similar to 11/13 but is cheaper in that is uses additive
     // scalar Pi-space corrections.
     cycle_type(vector_interp ? 1 : 14), space_dim(nd_fespace.SpaceDimension()),
-    // When used as the coarse solver of geometric multigrid, always do only a single
-    // V-cycle.
+    // When used as the coarse solver of geometric multigrid, control the number of AMS
+    // V-cycles with AMSMaxIts.
     ams_it(cycle_it), ams_smooth_it(smooth_it),
     // If we know the operator is singular (no mass matrix, for magnetostatic problems),
     // internally the AMS solver will avoid G-space corrections.
@@ -154,12 +154,12 @@ void HypreAmsSolver::InitializeSolver()
   // Set additional AMS options.
   int coarsen_type = 10;                     // 10 = HMIS, 8 = PMIS, 6 = Falgout, 0 = CLJP
   int amg_agg_levels = agg_coarsen ? 1 : 0;  // Number of aggressive coarsening levels
-  double theta = 0.5;      // AMG strength parameter = 0.25 is 2D optimal (0.5-0.8 for 3D)
-  int amg_relax_type = 8;  // 3 = GS, 6 = symm. GS, 8 = l1-symm. GS, 13 = l1-GS,
-                           // 18 = l1-Jacobi, 16 = Chebyshev
-  int interp_type = 6;     // 6 = Extended+i, 0 = Classical, 13 = FF1
-  int Pmax = 4;            // Interpolation width
-  int relax_type = 2;      // 2 = l1-SSOR, 4 = trunc. l1-SSOR, 1 = l1-Jacobi, 16 = Chebyshev
+  double theta = 0.5;       // AMG strength parameter = 0.25 is 2D optimal (0.5-0.8 for 3D)
+  int amg_relax_type = 18;  // 3 = GS, 6 = symm. GS, 8 = l1-symm. GS, 13 = l1-GS,
+                            // 18 = l1-Jacobi, 16 = Chebyshev
+  int interp_type = 6;      // 6 = Extended+i, 0 = Classical, 13 = FF1
+  int Pmax = 4;             // Interpolation width
+  int relax_type = 2;  // 2 = l1-SSOR, 4 = trunc. l1-SSOR, 1 = l1-Jacobi, 16 = Chebyshev
   double weight = 1.0;
   double omega = 1.0;
   if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
@@ -167,7 +167,6 @@ void HypreAmsSolver::InitializeSolver()
     // Modify options for GPU-supported features.
     coarsen_type = 8;
     amg_agg_levels = 0;
-    amg_relax_type = 18;
     relax_type = 1;
   }
 
@@ -177,9 +176,9 @@ void HypreAmsSolver::InitializeSolver()
   HYPRE_AMSSetBetaAMGOptions(ams, coarsen_type, amg_agg_levels, amg_relax_type, theta,
                              interp_type, Pmax);
 
-  // int coarse_relax_type = 8;  // Default, l1-symm. GS
-  // HYPRE_AMSSetAlphaAMGCoarseRelaxType(ams, coarse_relax_type);
-  // HYPRE_AMSSetBetaAMGCoarseRelaxType(ams, coarse_relax_type);
+  int coarse_relax_type = 9;  // Default, l1-symm. GS, 9 = Gaussian elimination
+  HYPRE_AMSSetAlphaAMGCoarseRelaxType(ams, coarse_relax_type);
+  HYPRE_AMSSetBetaAMGCoarseRelaxType(ams, coarse_relax_type);
 
   // Set the discrete gradient matrix.
   HYPRE_AMSSetDiscreteGradient(ams, (HYPRE_ParCSRMatrix)*G);

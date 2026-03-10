@@ -36,6 +36,7 @@ public:
   ComplexVector(const Vector &yr, const Vector &yi);
 
   // Copy constructor from an array of complex values.
+  // on_dev specifies if py is already on the device.
   ComplexVector(const std::complex<double> *py, int size, bool on_dev);
 
   // Create a vector referencing the memory of another vector, at the given base offset and
@@ -75,9 +76,11 @@ public:
   void Set(const Vector &yr, const Vector &yi);
 
   // Set from an array of complex values, without resizing.
+  // on_dev specifies if py is already on the device.
   void Set(const std::complex<double> *py, int size, bool on_dev);
 
   // Copy the vector into an array of complex values.
+  // on_dev specifies if py is already on the device.
   void Get(std::complex<double> *py, int size, bool on_dev) const;
 
   // Set all entries equal to s.
@@ -112,9 +115,15 @@ public:
   // In-place addition (*this) += alpha * x.
   void AXPY(std::complex<double> alpha, const ComplexVector &x);
   void Add(std::complex<double> alpha, const ComplexVector &x) { AXPY(alpha, x); }
+  void Subtract(std::complex<double> alpha, const ComplexVector &x) { AXPY(-alpha, x); }
   ComplexVector &operator+=(const ComplexVector &x)
   {
     AXPY(1.0, x);
+    return *this;
+  }
+  ComplexVector &operator-=(const ComplexVector &x)
+  {
+    AXPY(-1.0, x);
     return *this;
   }
 
@@ -135,6 +144,53 @@ public:
   static void AXPBYPCZ(std::complex<double> alpha, const Vector &xr, const Vector &xi,
                        std::complex<double> beta, const Vector &yr, const Vector &yi,
                        std::complex<double> gamma, Vector &zr, Vector &zi);
+};
+
+// A stack-allocated vector with compile-time fixed size.
+//
+// StaticVector provides a Vector interface backed by stack memory instead of
+// heap allocation. The size N is fixed at compile time, making it suitable for
+// small vectors where performance and avoiding dynamic allocation are
+// important.
+//
+// Template parameters:
+// - N: The fixed size of the vector (number of elements)
+//
+// Notes:
+// - Inherits from mfem::Vector, so can be used anywhere Vector is expected.
+// - Memory is automatically managed (no new/delete needed).
+// - Faster than dynamic Vector for small sizes due to stack allocation.
+//
+// Example usage:
+//
+// StaticVector<3> vec;  // 3D vector on stack
+// vec[0] = 1.0;
+// vec[1] = 2.0;
+// vec[2] = 3.0;
+//
+// vec.Sum();
+//
+// You can also create StaticComplexVectors:
+//
+// StaticVector<3> vec_real, vec_imag;
+// ComplexVector complex_vec(vec_real, vec_imag);
+template <int N>
+class StaticVector : public Vector
+{
+private:
+  double buff[N];
+
+public:
+  StaticVector() : Vector() { SetDataAndSize(buff, N); }
+
+  ~StaticVector()
+  {
+    MFEM_ASSERT(GetData() == buff,
+                "Buffer of StaticVector changed. This indicates a possible bug.");
+    MFEM_ASSERT(Size() == N, "Size of StaticVector changed. This indicates a possible bug.")
+  }
+
+  using Vector::operator=;  // Extend the implicitly defined assignment operators
 };
 
 namespace linalg
@@ -262,6 +318,26 @@ void AXPBYPCZ(ScalarType alpha, const VecType &x, ScalarType beta, const VecType
 // Compute element-wise square root, optionally with scaling (multiplied before the square
 // root).
 void Sqrt(Vector &x, double s = 1.0);
+
+// Compute the 3D Cartesian product between A and B and store the result in C.
+// If add is true, accumulate the result to C instead of overwriting its
+// content.
+template <typename VecTypeA, typename VecTypeB, typename VecTypeC>
+void Cross3(const VecTypeA &A, const VecTypeB &B, VecTypeC &C, bool add = false)
+{
+  if (add)
+  {
+    C[0] += A[1] * B[2] - A[2] * B[1];
+    C[1] += A[2] * B[0] - A[0] * B[2];
+    C[2] += A[0] * B[1] - A[1] * B[0];
+  }
+  else
+  {
+    C[0] = A[1] * B[2] - A[2] * B[1];
+    C[1] = A[2] * B[0] - A[0] * B[2];
+    C[2] = A[0] * B[1] - A[1] * B[0];
+  }
+}
 
 }  // namespace linalg
 

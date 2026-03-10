@@ -114,18 +114,11 @@ protected:
 public:
   ArpackEigenvalueSolver(MPI_Comm comm, int print);
 
-  // Set operators for the generalized eigenvalue problem or for the quadratic polynomial
-  // eigenvalue problem.
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &M,
-                    ScaleType type) override;
-  void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
-                    const ComplexOperator &M, ScaleType type) override;
-
-  // For the linear generalized case, the linear solver should be configured to compute the
-  // action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
-  // case, the linear solver should be configured to compute the action of M⁻¹ (with no
-  // spectral transformation) or P(σ)⁻¹.
-  void SetLinearSolver(const ComplexKspSolver &ksp) override;
+  //  For the linear generalized case, the linear solver should be configured to compute the
+  //  action of M⁻¹ (with no spectral transformation) or (K - σ M)⁻¹. For the quadratic
+  //  case, the linear solver should be configured to compute the action of M⁻¹ (with no
+  //  spectral transformation) or P(σ)⁻¹.
+  void SetLinearSolver(ComplexKspSolver &ksp) override;
 
   // Set the projection operator for enforcing the divergence-free constraint.
   void SetDivFreeProjector(const DivFreeSolver<ComplexVector> &divfree) override;

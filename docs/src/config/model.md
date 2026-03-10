@@ -1,6 +1,8 @@
 ```@raw html
-<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
-<!--- SPDX-License-Identifier: Apache-2.0 --->
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
 ```
 
 # `config["Model"]`
@@ -20,7 +22,11 @@
 
 with
 
-`"Mesh" [None]` :  Input mesh file path, an absolute path is recommended.
+`"Mesh" [None]` :  Input mesh file path, an absolute path is recommended. If the provided
+mesh is nonconformal, it is assumed that it comes from a previous *Palace* solve using AMR,
+and all mesh preprocessing checks and modifications (for example
+[`model["Refinement"]["CrackInternalBoundaryElements"]`](#model%5B%22Refinement%22%5D)), are
+skipped .
 
 `"L0" [1.0e-6]` :  Unit, relative to m, for mesh vertex coordinates. For example, a value
 of `1.0e-6` implies the mesh coordinates are in μm.
@@ -67,7 +73,9 @@ in the model and all computations will take place in the same units as the mesh.
 
 with
 
-`"Tol" [1.0e-2]` : Relative error convergence tolerance for adaptive mesh refinement (AMR).
+`"Tol" [1.0e-2]` : Stop adaptive mesh refinement (AMR) when the norm of the
+estimated error is below this value. The error is reported in
+`error-indicators.csv`.
 
 `"MaxIts" [0]` : Maximum number of iterations of AMR to perform.
 
@@ -75,7 +83,7 @@ with
 mesh exceeds this value no further adaptation will occur. A value less than 1 means that no
 maximum size constraint will be imposed.
 
-`"Nonconformal" [true]` : Chose whether the adaptation should use nonconformal refinement.
+`"Nonconformal" [true]` : Choose whether the adaptation should use nonconformal refinement.
 Nonconformal refinement is required for non-simplex meshes.
 
 `"UpdateFraction" [0.7]` : Dörfler marking fraction used to specify which elements to
@@ -97,15 +105,15 @@ the sphere region will be marked for refinement.
 `"Levels" [0]` : Levels of parallel mesh refinement inside the specified refinement region.
 
 `"BoundingBoxMin" [None]` : Floating point array of length equal to the model spatial
-dimension specfiying the minimum coordinates of the axis-aligned bounding box for this
+dimension specifying the minimum coordinates of the axis-aligned bounding box for this
 refinement region. Specified in mesh length units.
 
 `"BoundingBoxMax" [None]` : Floating point array of length equal to the model spatial
-dimension specfiying the maximum coordinates of the axis-aligned bounding box for this
+dimension specifying the maximum coordinates of the axis-aligned bounding box for this
 refinement region. Specified in mesh length units.
 
 `"Center" [None]` : Floating point array of length equal to the model spatial dimension
-specfiying the center coordinates of the sphere for this sphere refinement region.
+specifying the center coordinates of the sphere for this sphere refinement region.
 Specified in mesh length units.
 
 `"Radius" [None]` : The radius of the sphere for this sphere refinement region, specified in

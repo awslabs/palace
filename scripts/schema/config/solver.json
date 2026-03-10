@@ -1,5 +1,5 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Configuration File Schema -- \"Solver\"",
   "type": "object",
   "additionalProperties": false,
@@ -19,7 +19,7 @@
       "required": ["Target"],
       "properties":
       {
-        "Target": { "type": "number" },
+        "Target": { "type": "number", "exclusiveMinimum": 0.0 },
         "Tol": { "type": "number", "minimum": 0.0 },
         "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
         "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
@@ -27,14 +27,17 @@
         "Save": { "type": "integer" },
         "Type": { "type": "string" },
         "PEPLinear": { "type": "boolean" },
-        "ContourNPoints": { "type": "integer" },
-        "ContourTargetUpper": { "type": "number" },
-        "ContourAspectRatio": { "type": "number" },
-        "ContourMoments": { "type": "integer" },
         "Scaling": { "type": "boolean" },
         "StartVector": { "type": "boolean" },
         "StartVectorConstant": { "type": "boolean" },
-        "MassOrthogonal": { "type": "boolean" }
+        "MassOrthogonal": { "type": "boolean" },
+        "NonlinearType": { "type": "string" },
+        "RefineNonlinear": { "type": "boolean" },
+        "LinearTol": { "type": "number", "minimum": 0.0 },
+        "TargetUpper": { "type": "number" },
+        "PreconditionerLag": { "type" : "integer", "minimum": 0 },
+        "PreconditionerLagTol": { "type": "number", "minimum": 0.0 },
+        "MaxRestart": { "type" : "integer", "minimum": 0 }
       }
     },
     "Driven":
@@ -57,7 +60,7 @@
                   "Type": { "const": "Point" },
                   "Freq": { "type": "array", "items": { "type": "number" } },
                   "SaveStep": { "type": "integer" },
-                  "AddToPROM": { "type": "bool" }
+                  "AddToPROM": { "type": "boolean" }
                 },
                 "required": ["Freq"],
                 "additionalProperties": false
@@ -71,7 +74,7 @@
                   "FreqStep": { "type": "number", "minimum": 0.0 },
                   "NSample": { "type": "integer", "minimum": 0 },
                   "SaveStep": { "type": "integer" },
-                  "AddToPROM": { "type": "bool" }
+                  "AddToPROM": { "type": "boolean" }
                 },
                 "required": ["MinFreq", "MaxFreq"],
                 "additionalProperties": false
@@ -84,7 +87,7 @@
                   "MaxFreq": { "type": "number", "exclusiveMinimum": 0.0 },
                   "NSample": { "type": "integer", "minimum": 1 },
                   "SaveStep": { "type": "integer" },
-                  "AddToPROM": { "type": "bool" }
+                  "AddToPROM": { "type": "boolean" }
                 },
                 "required": ["Type", "MinFreq", "MaxFreq", "NSample"],
                 "additionalProperties": false
@@ -96,7 +99,10 @@
         "Restart": { "type": "integer", "exclusiveMinimum": 0 },
         "AdaptiveTol": { "type": "number", "minimum": 0.0 },
         "AdaptiveMaxSamples": { "type": "number", "exclusiveMinimum": 0 },
-        "AdaptiveConvergenceMemory": { "type": "integer", "exclusiveMinimum": 0 }
+        "AdaptiveConvergenceMemory": { "type": "integer", "exclusiveMinimum": 0 },
+        "AdaptiveGSOrthogonalization": { "type": "string", "enum": ["MGS", "CGS", "CGS2"] },
+        "AdaptiveCircuitSynthesis": { "type": "boolean" },
+        "AdaptiveCircuitSynthesisDomainOrthogonalization": { "type": "string", "enum": ["Energy", "FEBasisIdentity", "SpaceOverlap"] }
       }
     },
     "Transient":
@@ -110,8 +116,8 @@
         "Excitation": { "type": "string" },
         "ExcitationFreq": { "type": "number" },
         "ExcitationWidth": { "type": "number" },
-        "MaxTime": { "type": "number" },
-        "TimeStep": { "type": "number" },
+        "MaxTime": { "type": "number", "exclusiveMinimum": 0.0 },
+        "TimeStep": { "type": "number", "exclusiveMinimum": 0.0 },
         "SaveStep": { "type": "integer" },
         "Order": {"type": "integer", "minimum": 2, "maximum": 5},
         "RelTol": {"type": "number", "exclusiveMinimum": 0.0},
@@ -164,6 +170,8 @@
         "PCMatReal": { "type": "boolean" },
         "PCMatShifted": { "type": "boolean" },
         "ComplexCoarseSolve": {"type": "boolean"},
+        "DropSmallEntries": {"type": "boolean"},
+        "ReorderingReuse": {"type": "boolean"},
         "PCSide": { "type": "string" },
         "ColumnOrdering": { "type": "string" },
         "STRUMPACKCompressionType": { "type": "string" },
@@ -174,12 +182,13 @@
         "AMSVectorInterpolation": { "type": "boolean" },
         "AMSSingularOperator": { "type": "boolean" },
         "AMGAggressiveCoarsening": { "type": "boolean" },
+        "AMSMaxIts": { "type": "integer", "minimum": 0 },
         "DivFreeTol": { "type": "number", "minimum": 0.0 },
         "DivFreeMaxIts": { "type": "integer", "minimum": 0 },
         "EstimatorTol": { "type": "number", "minimum": 0.0 },
         "EstimatorMaxIts": { "type": "integer", "minimum": 0 },
         "EstimatorMG": { "type": "boolean" },
-        "GSOrthogonalization": { "type": "string" }
+        "GSOrthogonalization": { "type": "string", "enum": ["MGS", "CGS", "CGS2"] }
       }
     }
   }

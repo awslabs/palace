@@ -1,0 +1,44 @@
+[
+  {
+    "include": [
+      "**/*.cpp",
+      "**/*.c",
+      "**/*.h",
+      "**/*.hpp"
+    ],
+    "exclude": [
+      ".git/**"
+    ],
+    "license": "./.github/license-check/c.txt"
+  },
+  {
+    "include": [
+      "**/*.jl",
+      "**/*.cmake",
+      "**/CMakeLists.txt"
+    ],
+    "exclude": [
+      ".git/**",
+      "palace/cmake/GetGitDescription.cmake"
+    ],
+    "license": "./.github/license-check/jl.txt"
+  },
+  {
+    "include": [
+      "docs/**/*.md"
+    ],
+    "exclude": [
+    ],
+    "license": "./.github/license-check/md_html.txt"
+  },
+  {
+    "include": [
+      "**/*.md"
+    ],
+    "exclude": [
+      ".git/**",
+      "docs/**/*.md"
+    ],
+    "license": "./.github/license-check/md.txt"
+  }
+]

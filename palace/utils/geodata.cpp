@@ -59,7 +59,7 @@ std::unordered_map<int, int> CheckMesh(const mfem::Mesh &, const config::Boundar
 
 // Adding boundary elements for material interfaces and exterior boundaries, and "crack"
 // desired internal boundary elements to disconnect the elements on either side.
-int AddInterfaceBdrElements(const IoData &, std::unique_ptr<mfem::Mesh> &,
+int AddInterfaceBdrElements(IoData &, std::unique_ptr<mfem::Mesh> &,
                             std::unordered_map<int, int> &, MPI_Comm comm);
 
 // Generate element-based mesh partitioning, using either a provided file or METIS.
@@ -80,7 +80,7 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &);
 namespace mesh
 {
 
-std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
+std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
 {
   // If possible on root, read the serial mesh (converting format if necessary), and do all
   // necessary serial preprocessing. When finished, distribute the mesh to all processes.
@@ -109,7 +109,22 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
     }
     return false;
   }();
-  const bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
+
+  const bool use_mesh_partitioner = [&]()
+  {
+    // Root must load the mesh to discover if nonconformal, as a previously adapted mesh
+    // might be reused for nonadaptive simulations.
+    BlockTimer bt(Timer::IO);
+    bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
+    if (Mpi::Root(comm))
+    {
+      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
+      use_mesh_partitioner &= smesh->Conforming();  // The initial mesh must be conformal
+    }
+    Mpi::Broadcast(1, &use_mesh_partitioner, 0, comm);
+    return use_mesh_partitioner;
+  }();
+
   MPI_Comm node_comm;
   if (!use_mesh_partitioner)
   {
@@ -117,12 +132,11 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
                         &node_comm);
   }
 
-  // Only one process per node reads the serial mesh.
   {
     BlockTimer bt1(Timer::IO);
-    if ((use_mesh_partitioner && Mpi::Root(comm)) ||
-        (!use_mesh_partitioner && Mpi::Root(node_comm)))
+    if (!use_mesh_partitioner && Mpi::Root(node_comm) && !Mpi::Root(comm))
     {
+      // Only one process per node reads the serial mesh, if not using mesh partitioner.
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
       MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
                   "Cannot use mesh partitioner on a nonconforming mesh!");
@@ -145,6 +159,9 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
     MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_pyramids ||
                     refinement.nonconformal,
                 "If there are pyramid elements, AMR must be nonconformal!");
+    MFEM_VERIFY(
+        smesh->Conforming() || !use_amr || refinement.nonconformal,
+        "The provided mesh is nonconformal, only nonconformal AMR can be performed!");
 
     // Clean up unused domain elements from the mesh.
     if (iodata.model.clean_unused_elements)
@@ -189,19 +206,28 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
 
     // Check the final mesh, throwing warnings if there are exterior boundaries with no
     // associated boundary condition.
-    auto face_to_be = CheckMesh(*smesh, iodata.boundaries);
-
-    // Add new boundary elements for material interfaces if not present (with new unique
-    // boundary attributes). Also duplicate internal boundary elements associated with
-    // cracks if desired.
-    if (iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements)
+    if (smesh->Conforming())
     {
-      // Split all internal (non periodic) boundary elements for boundary attributes where
-      // BC are applied (not just postprocessing).
-      while (AddInterfaceBdrElements(iodata, smesh, face_to_be, comm) != 1)
+      auto face_to_be = CheckMesh(*smesh, iodata.boundaries);
+
+      // Add new boundary elements for material interfaces if not present (with new unique
+      // boundary attributes). Also duplicate internal boundary elements associated with
+      // cracks if desired.
+      if ((iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements))
       {
-        // May require multiple calls due to early exit/retry approach.
+        // Split all internal (non periodic) boundary elements for boundary attributes where
+        // BC are applied (not just postprocessing).
+        while (AddInterfaceBdrElements(iodata, smesh, face_to_be, comm) != 1)
+        {
+          // May require multiple calls due to early exit/retry approach.
+        }
       }
+    }
+    else
+    {
+      Mpi::Warning("{} is a nonconformal mesh, assumed from previous AMR iteration.\n"
+                   "Skipping mesh modification preprocessing steps!\n\n",
+                   iodata.model.mesh);
     }
 
     // Finally, finalize the serial mesh. Mark tetrahedral meshes for refinement. There
@@ -212,6 +238,30 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(const IoData &iodata, MPI_Comm comm)
 
     // Generate the mesh partitioning.
     partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partitioning);
+  }
+
+  // Broadcast cracked boundary attributes to other ranks.
+  if ((iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements))
+  {
+    int size = iodata.boundaries.cracked_attributes.size();
+    Mpi::Broadcast(1, &size, 0, comm);
+    std::vector<int> data;
+    if (Mpi::Root(comm))
+    {
+      data.assign(iodata.boundaries.cracked_attributes.begin(),
+                  iodata.boundaries.cracked_attributes.end());
+    }
+    else
+    {
+      data.resize(size);
+    }
+    Mpi::Broadcast(size, data.data(), 0, comm);
+
+    if (!Mpi::Root(comm))
+    {
+      iodata.boundaries.cracked_attributes.clear();
+      iodata.boundaries.cracked_attributes.insert(data.begin(), data.end());
+    }
   }
 
   // Distribute the mesh.
@@ -1759,7 +1809,7 @@ template <typename T>
 class EdgeRefinementMesh : public mfem::Mesh
 {
 private:
-  // Container with keys being pairs of vertex indicies (match row/column indices of v_to_v)
+  // Container with keys being pairs of vertex indices (match row/column indices of v_to_v)
   // of edges which we desire to be refined.
   const T &refinement_edges;
 
@@ -1841,14 +1891,36 @@ struct UnorderedPairHasher
   }
 };
 
-int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_mesh,
+int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_mesh,
                             std::unordered_map<int, int> &face_to_be, MPI_Comm comm)
 {
+  // Exclude some internal boundary conditions for which cracking would give invalid
+  // results: lumpedports in particular.
+  const auto crack_boundary_attributes = [&iodata]()
+  {
+    auto cba = iodata.boundaries.attributes;
+    // Remove lumped port attributes.
+    for (const auto &[idx, data] : iodata.boundaries.lumpedport)
+    {
+      for (const auto &e : data.elements)
+      {
+        auto attr_in_elem = [&](auto x)
+        {
+          return std::find(e.attributes.begin(), e.attributes.end(), x) !=
+                 e.attributes.end();
+        };
+        cba.erase(std::remove_if(cba.begin(), cba.end(), attr_in_elem), cba.end());
+      }
+    }
+    return cba;
+  }();
+
   // Return if nothing to do. Otherwise, count vertices and boundary elements to add.
-  if (iodata.boundaries.attributes.empty() && !iodata.model.add_bdr_elements)
+  if (crack_boundary_attributes.empty() && !iodata.model.add_bdr_elements)
   {
     return 1;  // Success
   }
+
   if (face_to_be.size() != static_cast<std::size_t>(orig_mesh->GetNBE()))
   {
     face_to_be = GetFaceToBdrElementMap(*orig_mesh, iodata.boundaries);
@@ -1864,11 +1936,12 @@ int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &o
   std::unordered_map<int, std::vector<std::pair<int, std::unordered_set<int>>>>
       crack_vert_duplicates;
   std::unique_ptr<mfem::Table> vert_to_elem;
-  if (!iodata.boundaries.attributes.empty() && iodata.model.crack_bdr_elements)
+  if (!crack_boundary_attributes.empty() && iodata.model.crack_bdr_elements)
   {
     auto crack_bdr_marker = mesh::AttrToMarker(
         orig_mesh->bdr_attributes.Size() ? orig_mesh->bdr_attributes.Max() : 0,
-        iodata.boundaries.attributes, true);
+        crack_boundary_attributes, true);
+    std::unordered_set<int> external_attributes;
     for (int be = 0; be < orig_mesh->GetNBE(); be++)
     {
       if (crack_bdr_marker[orig_mesh->GetBdrAttribute(be) - 1])
@@ -1879,13 +1952,29 @@ int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &o
         if (e1 >= 0 && e2 >= 0)
         {
           crack_bdr_elem.insert(be);
+          iodata.boundaries.cracked_attributes.insert(orig_mesh->GetBdrAttribute(be));
+        }
+        else
+        {
+          external_attributes.insert(orig_mesh->GetBdrAttribute(be));
         }
       }
     }
     MFEM_VERIFY(crack_bdr_elem.empty() || !orig_mesh->Nonconforming(),
                 "Duplicating internal boundary elements for interior boundaries is not "
                 "supported for nonconforming meshes!");
-
+    std::vector<int> mixed_attributes;
+    std::set_intersection(iodata.boundaries.cracked_attributes.begin(),
+                          iodata.boundaries.cracked_attributes.end(),
+                          external_attributes.begin(), external_attributes.end(),
+                          std::back_inserter(mixed_attributes));
+    if (!mixed_attributes.empty())
+    {
+      MFEM_WARNING("Found boundary attribute with internal and external boundary elements: "
+                   << fmt::format("{}", fmt::join(mixed_attributes, " "))
+                   << ". Impedance boundary conditions for these attributes will give "
+                      "erroneous results, consider separating into different attributes!");
+    }
     vert_to_elem.reset(orig_mesh->GetVertexToElementTable());  // Owned by caller
     const mfem::Table &elem_to_face = orig_mesh->ElementToFaceTable();
     int new_nv_dups = 0;
@@ -2070,7 +2159,7 @@ int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &o
         for (const auto &[e, count] : elem_to_refine)
         {
           // Tetrahedral bisection (vs. default octasection) will result in fewer added
-          // elements at the cost of a potential minor mesh quality degredation.
+          // elements at the cost of a potential minor mesh quality degradation.
           refinements.Append(mfem::Refinement(e, mfem::Refinement::X));
           // refinements.Append(mfem::Refinement(e, (count > 1) ? mfem::Refinement::XY
           //                                                    : mfem::Refinement::X));
@@ -2208,7 +2297,7 @@ int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &o
 
   // Add duplicated vertices from interior boundary cracking, renumber the vertices of
   // domain and boundary elements to tear the mesh, and add new crack boundary elements.
-  if (!iodata.boundaries.attributes.empty() && !crack_bdr_elem.empty())
+  if (!crack_boundary_attributes.empty() && !crack_bdr_elem.empty())
   {
     // Add duplicate vertices. We assign the vertex number of the duplicated vertex in order
     // to update the element connectivities in the next step.
@@ -2414,7 +2503,7 @@ int AddInterfaceBdrElements(const IoData &iodata, std::unique_ptr<mfem::Mesh> &o
   // perturbation to separate the duplicated boundary elements on either side and prevent
   // them from lying exactly on top of each other. This is mostly just for visualization
   // and can be increased in magnitude for debugging.
-  if (!iodata.boundaries.attributes.empty() && !crack_bdr_elem.empty() &&
+  if (!crack_boundary_attributes.empty() && !crack_bdr_elem.empty() &&
       iodata.model.crack_displ_factor > 0.0)
   {
     // mfem::Mesh::MoveNodes expects byNODES ordering when using vertices.

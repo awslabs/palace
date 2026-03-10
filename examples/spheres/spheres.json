@@ -3,7 +3,12 @@
   {
     "Type": "Electrostatic",
     "Verbose": 2,
-    "Output": "postpro"
+    "Output": "postpro",
+    "OutputFormats":
+    {
+      "Paraview": true,
+      "GridFunction": true
+    }
   },
   "Model":
   {
@@ -61,12 +66,12 @@
         {
           "Index": 1,
           "Attributes": [3],  // Sphere A
-	  "Type": "Electric"
+	        "Type": "Electric"
         },
         {
           "Index": 2,
           "Attributes": [4],  // Sphere B
-	  "Type": "Electric"
+	        "Type": "Electric"
         }
       ]
     }
@@ -88,4 +93,3 @@
     }
   }
 }
-

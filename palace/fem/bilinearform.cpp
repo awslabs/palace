@@ -118,7 +118,7 @@ namespace
 bool UseFullAssembly(const FiniteElementSpace &trial_fespace,
                      const FiniteElementSpace &test_fespace, int pa_order_threshold)
 {
-  // Returns order such that the miniumum for all element types is 1. MFEM's
+  // Returns order such that the minimum for all element types is 1. MFEM's
   // RT_FECollection actually already returns order + 1 for GetOrder() for historical
   // reasons.
   const auto &trial_fec = trial_fespace.GetFEColl();

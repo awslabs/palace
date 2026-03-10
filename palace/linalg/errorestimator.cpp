@@ -200,9 +200,9 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
       CeedInt nsub_ops;
       CeedOperator *sub_ops;
       PalaceCeedCall(
-          ceed, CeedCompositeOperatorGetNumSub(integ_op[utils::GetThreadNum()], &nsub_ops));
+          ceed, CeedOperatorCompositeGetNumSub(integ_op[utils::GetThreadNum()], &nsub_ops));
       PalaceCeedCall(
-          ceed, CeedCompositeOperatorGetSubList(integ_op[utils::GetThreadNum()], &sub_ops));
+          ceed, CeedOperatorCompositeGetSubList(integ_op[utils::GetThreadNum()], &sub_ops));
       MFEM_ASSERT(nsub_ops > 0, "Unexpected empty libCEED composite operator!");
       CeedOperatorField field;
       PalaceCeedCall(ceed, CeedOperatorGetFieldByName(sub_ops[0], "u_1", &field));

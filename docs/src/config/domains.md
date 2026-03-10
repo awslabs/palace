@@ -1,6 +1,8 @@
 ```@raw html
-<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
-<!--- SPDX-License-Identifier: Apache-2.0 --->
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
 ```
 
 # `config["Domains"]`
@@ -9,6 +11,10 @@
 "Domains":
 {
     "Materials":
+    [
+        ...
+    ],
+    "CurrentDipole":
     [
         ...
     ],
@@ -29,6 +35,8 @@
 with
 
 `"Materials"` :  Array of material properties objects.
+
+`"CurrentDipole"` :  Array of objects for configuring current dipole source excitations.
 
 `"Postprocessing"` :  Top-level object for configuring domain postprocessing.
 
@@ -80,6 +88,34 @@ electromagnetic fields in the material domain.
 
 `"MaterialAxes" [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]` : Axes directions for
 specification of anisotropic material properties. Required to be unit length and orthogonal.
+
+## `domains["CurrentDipole"]`
+
+```json
+"CurrentDipole":
+[
+    {
+        "Index": <int>,
+        "Direction": [<float array>],
+        "Moment": <float>,
+        "Center": [<float array>]
+    },
+    ...
+]
+```
+
+with
+
+`"Index" [None]` :  Index of this current dipole source, used in postprocessing output files.
+
+`"Direction" [None]` :  Direction of the Dirac current source specifying the dipole. Axis aligned directions can be specified using
+keywords: `"+X"`, `"-X"`, `"+Y"`, `"-Y"`, `"+Z"`, `"-Z"`. The direction can alternatively be specified as a
+normalized array of three values, for example `[0.0, 1.0, 0.0]`.
+
+`"Moment" [None]` :  Current dipole moment magnitude, specified in A·m.
+
+`"Center" [None]` :  Floating point array of length equal to the model spatial dimension
+specifying the coordinates of the current dipole center position in mesh length units.
 
 ## `domains["Postprocessing"]["Energy"]`
 

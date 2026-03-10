@@ -4,6 +4,7 @@
 #ifndef PALACE_LINALG_RAP_HPP
 #define PALACE_LINALG_RAP_HPP
 
+#include <array>
 #include <memory>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
@@ -35,7 +36,7 @@ private:
   mfem::Array<int> dbc_tdof_list;
 
   // Diagonal policy for constrained true dofs.
-  DiagonalPolicy diag_policy;
+  DiagonalPolicy diag_policy = DiagonalPolicy::DIAG_ZERO;
 
   // Assembled operator as a parallel Hypre matrix. If assembled, the local operator is not
   // deleted.
@@ -73,6 +74,12 @@ public:
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return trial_fespace.GetComm(); }
 
+  // Accessor for trial finite element space.
+  const FiniteElementSpace &TrialFiniteElementSpace() const { return trial_fespace; }
+
+  // Accessor for test finite element space.
+  const FiniteElementSpace &TestFiniteElementSpace() const { return test_fespace; }
+
   // Set essential boundary condition true dofs for square operators.
   void SetEssentialTrueDofs(const mfem::Array<int> &tdof_list, DiagonalPolicy policy);
 
@@ -82,6 +89,10 @@ public:
   {
     return dbc_tdof_list.Size() ? &dbc_tdof_list : nullptr;
   }
+
+  // Get the diagonal policy that was most recently used. If there are no essential dofs,
+  // and thus no valid policy, will error.
+  DiagonalPolicy GetDiagonalPolicy() const;
 
   // Eliminate essential true dofs from the RHS vector b, using the essential boundary
   // condition values in x.
@@ -125,7 +136,7 @@ private:
   mfem::Array<int> dbc_tdof_list;
 
   // Diagonal policy for constrained true dofs.
-  Operator::DiagonalPolicy diag_policy;
+  Operator::DiagonalPolicy diag_policy = Operator::DiagonalPolicy::DIAG_ZERO;
 
   // Real and imaginary parts of the operator as non-owning ParOperator objects.
   std::unique_ptr<ParOperator> RAPr, RAPi;
@@ -171,6 +182,12 @@ public:
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return trial_fespace.GetComm(); }
 
+  // Accessor for trial finite element space.
+  const FiniteElementSpace &TrialFiniteElementSpace() const { return trial_fespace; }
+
+  // Accessor for test finite element space.
+  const FiniteElementSpace &TestFiniteElementSpace() const { return test_fespace; }
+
   // Set essential boundary condition true dofs for square operators.
   void SetEssentialTrueDofs(const mfem::Array<int> &tdof_list,
                             Operator::DiagonalPolicy policy);
@@ -181,6 +198,10 @@ public:
   {
     return dbc_tdof_list.Size() ? &dbc_tdof_list : nullptr;
   }
+
+  // Get the diagonal policy that was most recently used. If there are no essential dofs,
+  // and thus no valid policy, will error.
+  Operator::DiagonalPolicy GetDiagonalPolicy() const;
 
   void AssembleDiagonal(ComplexVector &diag) const override;
 
@@ -199,6 +220,32 @@ public:
   void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
                                  const std::complex<double> a = 1.0) const override;
 };
+
+// Combine a collection of ParOperator into a weighted summation. If set_essential is true,
+// extract the essential dofs from the operator array, and apply to the summed operator.
+// Requires explicit instantiation.
+template <std::size_t N>
+std::unique_ptr<ParOperator>
+BuildParSumOperator(const std::array<double, N> &coeff,
+                    const std::array<const ParOperator *, N> &ops,
+                    bool set_essential = true);
+
+// Combine a collection of ComplexParOperator into a weighted summation. If set_essential is
+// true, extract the essential dofs from the operator array, and apply to the summed
+// operator. Requires explicit instantiation.
+template <std::size_t N>
+std::unique_ptr<ComplexParOperator>
+BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
+                    const std::array<const ComplexParOperator *, N> &ops,
+                    bool set_essential = true);
+
+// Dispatcher to convert initializer list or C arrays into std::array whilst deducing sizes
+// and types.
+template <std::size_t N, typename ScalarType, typename OperType>
+std::unique_ptr<std::conditional_t<std::is_base_of_v<ComplexOperator, OperType>,
+                                   ComplexParOperator, ParOperator>>
+BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperType *(&&ops_in)[N],
+                    bool set_essential = true);
 
 }  // namespace palace
 

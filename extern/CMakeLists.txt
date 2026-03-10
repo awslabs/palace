@@ -27,6 +27,12 @@ if(PALACE_WITH_MAGMA)
   include(ExternalMAGMA)
 endif()
 
+# Add UMPIRE (for HYPRE)
+if(PALACE_WITH_UMPIRE)
+  message(STATUS "==================== Configuring UMPIRE dependency =====================")
+  include(ExternalUmpire)
+endif()
+
 # Add STRUMPACK
 if(PALACE_WITH_STRUMPACK)
   message(STATUS "=================== Configuring STRUMPACK dependency ===================")
@@ -65,6 +71,10 @@ include(ExternalHYPRE)
 message(STATUS "================= Configuring nlohmann/json dependency =================")
 include(ExternalJSON)
 
+# Add JSON Schema Validator
+message(STATUS "========== Configuring nlohmann/json-schema-validator dependency ==========")
+include(ExternalJSONSchemaValidator)
+
 # Add fmt
 message(STATUS "====================== Configuring fmt dependency ======================")
 include(ExternalFmt)
@@ -92,4 +102,8 @@ endif()
 # Add libCEED
 message(STATUS "==================== Configuring libCEED dependency ====================")
 include(ExternalLibCEED)
+
+# Add MFEM
+message(STATUS "====================== Configuring MFEM dependency =====================")
+include(ExternalMFEM)
 

@@ -1,6 +1,6 @@
 Checks: >
     -*,
-    clang-analyzer-*
+    clang-analyzer-*,
     clang-diagnostic-*,
     modernize-*,
     -modernize-use-default-member-init,
@@ -17,7 +17,6 @@ Checks: >
     -cppcoreguidelines-pro-*,
     bugprone-*,
     -bugprone-easily-swappable-parameters,
-    -bugprone-reserved-identifier,
     readability-*,
     -readability-math-missing-parentheses,
     -readability-convert-member-functions-to-static,
@@ -31,8 +30,13 @@ Checks: >
     -readability-redundant-*,
     -readability-string-compare,
     -readability-uppercase-literal-suffix,
+    hicpp-*,
     performance-*,
     mpi-*,
-    openmp-*'
+    openmp-*,
+    misc-include-cleaner
 HeaderFilterRegex: 'palace/drivers|palace/fem|palace/linalg|palace/utils'
 FormatStyle: 'file'
+CheckOptions:
+    misc-include-cleaner.MissingIncludes: false
+    misc-include-cleaner.UnusedIncludes: true

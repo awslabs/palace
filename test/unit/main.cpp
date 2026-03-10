@@ -6,7 +6,11 @@
 #include <mfem.hpp>
 #include <catch2/catch_session.hpp>
 #include "fem/libceed/ceed.hpp"
+#include "linalg/hypre.hpp"
+#include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
+#include "utils/device.hpp"
+#include "utils/omp.hpp"
 
 using namespace palace;
 
@@ -25,7 +29,7 @@ int main(int argc, char *argv[])
   // See https://github.com/catchorg/Catch2/blob/devel/docs/own-main.md.
   Catch::Session session;
 
-  // Extra command line arguments.
+  // Extra command line arguments, mostly used for the test-libceed test suite.
   std::string device_str("cpu");          // MFEM device
   std::string ceed_backend("/cpu/self");  // libCEED backend
 
@@ -56,15 +60,97 @@ int main(int argc, char *argv[])
     return result;
   }
 
+  int num_threads = palace::utils::ConfigureOmp();
+
+  if (num_threads > 0)
+    device_str += ",omp";
+
+  // Initialize the device and assign GPUs to MPI ranks.
+  mfem::Device device(
+      device_str.c_str(),
+      palace::utils::GetDeviceId(Mpi::World(), palace::utils::GetDeviceCount()));
+
+  // Initialize HYPRE with correct memory location based on device.
+  // TODO: Create a palace::Device class that takes care of all of this.
+  hypre::Initialize();
+#if defined(PALACE_WITH_SLEPC)
+  slepc::Initialize();
+  if (PETSC_COMM_WORLD != Mpi::World())
+  {
+    Mpi::Print(Mpi::World(), "Error: Problem during MPI initialization!\n\n");
+    return 1;
+  }
+#endif
+
+  // The Palace test suite defines three key tags:
+
+  // - [Serial], for tests that are meaningful when run on a single process
+  // - [Parallel], for tests that are meaningful when run on multiple processes
+  // - [GPU], for tests that are meaningful when run on GPUs
+  //
+  // The tags are additive, meaning that a test can be tagged with all of them
+  // (this also means that these tags cannot be used to filter out tests, only
+  // to filter in).
+  //
+  // Here, we automatically add the relevant tags depending on the device/number
+  // of MPI processes we detect.
+
+  auto cfg = session.configData();
+  // Check if device is GPU capable, if yes, add the [GPU] tag.
+  if (device.Allows(mfem::Backend::CUDA_MASK | mfem::Backend::HIP_MASK))
+  {
+    cfg.testsOrTags.emplace_back("[GPU]");
+    if (ceed_backend == "/cpu/self")
+    {
+      // TODO: We pick magma because this is what Palace main does. We might
+      // want to double check if this is the best default backend to choose.
+      // Note that magma is a non-deterministic backend.
+      ceed_backend =
+          device.Allows(mfem::Backend::CUDA_MASK) ? "/gpu/cuda/magma" : "/gpu/hip/magma";
+    }
+  }
+  // Check if we are running with more than 1 MPI process, if yes, add the
+  // [Parallel] tag, if not add the [Serial] tag.
+  if (Mpi::Size(Mpi::World()) > 1)
+  {
+    cfg.testsOrTags.emplace_back("[Parallel]");
+  }
+  else
+  {
+    cfg.testsOrTags.emplace_back("[Serial]");
+  }
+  session.useConfigData(cfg);
+
+  // Only print from the root process.
+  // TODO: Print errors from other processes as well.
+  if (Mpi::Rank(Mpi::World()) != 0)
+  {
+    std::cout.rdbuf(NULL);
+  }
+
   // Run the tests.
-  mfem::Device device(device_str.c_str());
   ceed::Initialize(ceed_backend.c_str(), PALACE_LIBCEED_JIT_SOURCE_DIR);
-  std::ostringstream resource(std::stringstream::out);
-  device.Print(resource);
-  resource << "libCEED backend: " << ceed::Print();
-  Mpi::Print("{}\n", resource.str());
+
+  // Only print device info if not listing tests (for JSON output
+  // compatibility), needed for test discovery.
+  if (!cfg.listTests)
+  {
+    std::ostringstream resource(std::stringstream::out);
+#ifdef PALACE_WITH_COVERAGE
+    resource << "Built with code coverage for " << PALACE_WITH_COVERAGE << "\n";
+#endif
+    device.Print(resource);
+    resource << "libCEED backend: " << ceed::Print();
+    Mpi::Print("{}\n", resource.str());
+  }
+
   result = session.run();
   ceed::Finalize();
+
+  // Finalize SLEPc/PETSc.
+#if defined(PALACE_WITH_SLEPC)
+  slepc::Finalize();
+#endif
 
   return result;
 }

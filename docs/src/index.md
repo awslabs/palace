@@ -1,6 +1,8 @@
 ```@raw html
-<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
-<!--- SPDX-License-Identifier: Apache-2.0 --->
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
 ```
 
 # Palace: 3D Finite Element Solver for Computational Electromagnetics
@@ -55,7 +57,7 @@ the frequency or time domain, using the
   - [Configuration File](config/config.md)
   - [Examples](examples/examples.md)
   - [Reference](reference.md)
-  - [Developer Notes](developer.md)
+  - [Developer Notes](developer/notes.md)
 
 ## Coming soon
 

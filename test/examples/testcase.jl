@@ -4,23 +4,38 @@
 using Test
 using CSV
 using DataFrames
+using JSON
 
+# custom_tests is a dictionary that maps filenames to functions of the signature
+# (new_data, ref_data) -> None, where arbitrary tests can be implemented
 function testcase(
     testdir,
     testconfig,
     testpostpro;
-    palace="palace",
+    palace=["palace"],
     np=1,
     rtol=1.0e-6,
     atol=1.0e-18,
     excluded_columns=[],
+    custom_tests=Dict(),
+    paraview_fields=true,
+    gridfunction_fields=false,
     skip_rowcount=false,
-    generate_data=true
+    generate_data=true,
+    device="CPU",
+    linear_solver="Default",
+    eigen_solver="Default"
 )
     if isempty(testdir)
         @info "$testdir/ is empty, skipping tests"
         return
     end
+
+    # Check that palace executable exists
+    if isnothing(Base.Sys.which(first(palace)))
+        error("Executable `$(first(palace))` not found. ")
+    end
+
     palacedir     = dirname(dirname(@__DIR__))
     refdir        = joinpath(@__DIR__, "ref", testdir)
     refpostprodir = joinpath(refdir, testpostpro)
@@ -29,6 +44,37 @@ function testcase(
     logdir        = joinpath(exampledir, "log")
 
     cd(exampledir)
+
+    # Adjust configuration depending on arguments
+    config_to_use = testconfig
+    temp_config = nothing
+
+    config_content = read(testconfig, String)
+    # Strip comments starting with //
+    lines = split(config_content, '\n')
+    filtered_lines = [split(line, "//")[1] for line in lines]
+    clean_content = join(filtered_lines, '\n')
+
+    # Remove trailing commas (handles multi-line cases)
+    clean_content = replace(clean_content, r",(\s*[\r\n]*\s*[}\]])" => s"\1")
+
+    config_json = JSON.parse(clean_content)
+    if !haskey(config_json, "Solver")
+        config_json["Solver"] = Dict()
+        config_json["Solver"]["Linear"] = Dict()
+    end
+    haskey(config_json["Solver"], "Linear") || (config_json["Solver"]["Linear"] = Dict())
+
+    config_json["Solver"]["Device"] = device
+
+    config_json["Solver"]["Linear"]["Type"] = linear_solver
+    haskey(config_json["Solver"], "Eigenmode") &&
+        (config_json["Solver"]["Eigenmode"]["Type"] = eigen_solver)
+
+    temp_config = tempname() * ".json"
+    write(temp_config, JSON.json(config_json, 2))
+    config_to_use = temp_config
+
     if generate_data
         # Cleanup
         rm(postprodir; force=true, recursive=true)
@@ -39,9 +85,10 @@ function testcase(
             # Run the example simulation
             logfile = "log.out"
             errfile = "err.out"
+
             proc = run(
                 pipeline(
-                    ignorestatus(`$palace -np $np $testconfig`);
+                    ignorestatus(`$palace -np $np $config_to_use`);
                     stdout=joinpath(logdir, logfile),
                     stderr=joinpath(logdir, errfile)
                 )
@@ -58,20 +105,83 @@ function testcase(
                 end
             end
             @test proc.exitcode == 0
+
+            # Check for GPU availability when device is GPU.
+            # Palace does not crash and revert to CPU if a GPU is not available,
+            # but this could lead to false positives
+            if device == "GPU" && isfile(joinpath(exampledir, logdir, logfile))
+                log_content = String(read(joinpath(exampledir, logdir, logfile)))
+                if occursin(
+                    "Palace must be built with either CUDA or HIP support for GPU device usage, reverting to CPU!",
+                    log_content
+                )
+                    @error "GPU was requested but Palace was not built with GPU support"
+                    @test false
+                end
+            end
         end
+    end
+
+    # Clean up temporary config file
+    if !isnothing(temp_config)
+        rm(temp_config; force=true)
     end
 
     @testset "Results" begin
         # Test that directories were created
         @test isdir(postprodir)
-        (~, dirs, files) = first(walkdir(postprodir))
-        (~, ~, filesref) = first(walkdir(refpostprodir))
-        metafiles = filter(x -> last(splitext(x)) != ".csv", files)
-        @test length(dirs) == 1 && first(dirs) == "paraview" || (@show dirs; false)
-        @test length(metafiles) == 1 && first(metafiles) == "palace.json" ||
-              (@show metafiles; false)
-        @test length(filter(x -> last(splitext(x)) == ".csv", files)) == length(filesref) ||
-              (@show filesref; false)
+
+        # Collect all files recursively, excluding folders with large data
+        exclude_folders = ["paraview", "gridfunction"]
+        csvfiles = String[]
+        csvfilesref = String[]
+        metafiles = String[]
+        alldirs = Set{String}()
+        for (root, dirs, fs) in walkdir(postprodir)
+            relroot = relpath(root, postprodir)
+            for d in dirs
+                push!(alldirs, relroot == "." ? d : joinpath(relroot, d))
+            end
+            filter!(d -> d ∉ exclude_folders, dirs)
+            for f in fs
+                path = relroot == "." ? f : joinpath(relroot, f)
+                endswith(f, ".csv") ? push!(csvfiles, path) : push!(metafiles, path)
+            end
+        end
+        for (root, dirs, fs) in walkdir(refpostprodir)
+            filter!(d -> d ∉ exclude_folders, dirs)
+            relroot = relpath(root, refpostprodir)
+            for f in fs
+                endswith(f, ".csv") &&
+                    push!(csvfilesref, relroot == "." ? f : joinpath(relroot, f))
+            end
+        end
+
+        # TODO: Determine paraview_fields and gridfunction_fields from config
+        expected_dirs = Set{String}()
+        if gridfunction_fields
+            push!(expected_dirs, "gridfunction")
+        end
+        max_its =
+            get(get(get(config_json, "Model", Dict()), "Refinement", Dict()), "MaxIts", 0)
+        for i = 1:max_its
+            push!(expected_dirs, "iteration$(i)")
+            gridfunction_fields && push!(expected_dirs, "iteration$(i)/gridfunction")
+            paraview_fields && push!(expected_dirs, "iteration$(i)/paraview")
+        end
+        if paraview_fields
+            push!(expected_dirs, "paraview")
+        end
+
+        @test alldirs == expected_dirs || (@show alldirs, expected_dirs; false)
+        @test sort(csvfiles) == sort(csvfilesref) || (@show csvfiles, csvfilesref; false)
+
+        expected_metafiles = ["palace.json"]
+        for i = 1:max_its
+            push!(expected_metafiles, "iteration$(i)/palace.json")
+        end
+        @test sort(metafiles) == sort(expected_metafiles) ||
+              (@show metafiles, expected_metafiles; false)
 
         # Helper to extract the stdout and stderr files and dump their contents.
         # Useful when debugging a failure
@@ -91,7 +201,7 @@ function testcase(
         end
 
         # Test the simulation outputs
-        for file in filesref
+        for file in csvfilesref
             data    = CSV.File(joinpath(postprodir, file); header=1) |> DataFrame
             dataref = CSV.File(joinpath(refpostprodir, file); header=1) |> DataFrame
             if !skip_rowcount
@@ -109,19 +219,30 @@ function testcase(
             rename!(dataref, strip.(names(dataref)))
 
             @test names(data) == names(dataref) || logdump(names(data), names(dataref))
-            test = isapprox.(data, dataref; rtol=rtol, atol=atol)
-            for (row, rowdataref, rowdata) in
-                zip(eachrow(test), eachrow(dataref), eachrow(data))
-                for (rowcol, rowcoldataref, rowcoldata) in
-                    zip(pairs(row), pairs(rowdataref), pairs(rowdata))
-                    if !last(rowcol)
-                        @warn string(
-                            "Regression test error at ",
-                            "row $(rownumber(row)), column $(strip(string(first(rowcol)))): ",
-                            "$(last(rowcoldataref)) ≉ $(last(rowcoldata))"
-                        )
+
+            if file in keys(custom_tests)
+                custom_tests[file](data, dataref)
+            else
+                test = isapprox.(data, dataref; rtol=rtol, atol=atol)
+                for (row, rowdataref, rowdata) in
+                    zip(eachrow(test), eachrow(dataref), eachrow(data))
+                    for (rowcol, rowcoldataref, rowcoldata) in
+                        zip(pairs(row), pairs(rowdataref), pairs(rowdata))
+                        if !last(rowcol)
+                            ref_val = last(rowcoldataref)
+                            new_val = last(rowcoldata)
+                            abs_err = abs(new_val - ref_val)
+                            rel_err = abs_err / max(abs(ref_val), abs(new_val), eps())
+                            @warn string(
+                                "Regression test error in file '$(file)' at ",
+                                "row $(rownumber(row)), column $(strip(string(first(rowcol)))): ",
+                                "$(ref_val) ≉ $(new_val), ",
+                                "abs_err = $(abs_err) (atol=$(atol)), ",
+                                "rel_err = $(rel_err) (rtol=$(rtol))"
+                            )
+                        end
+                        @test last(rowcol)
                     end
-                    @test last(rowcol)
                 end
             end
         end

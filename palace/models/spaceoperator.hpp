@@ -11,6 +11,7 @@
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/currentdipoleoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/materialoperator.hpp"
@@ -54,6 +55,7 @@ private:
   MaterialOperator mat_op;
 
   // Operators for boundary conditions and source excitations.
+  CurrentDipoleOperator current_dipole_op;
   FarfieldBoundaryOperator farfield_op;
   SurfaceConductivityOperator surf_sigma_op;
   SurfaceImpedanceOperator surf_z_op;
@@ -81,12 +83,27 @@ private:
                                      MaterialPropertyCoefficient &dfbi,
                                      MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi);
-  void AddPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &fm,
-                               MaterialPropertyCoefficient &fc);
+  void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
+  void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
 
   // Helper functions for excitation vector assembly.
   bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS);
   bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &RHS);
+
+  // Helper functions to build the preconditioner matrix.
+  void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
+                              std::complex<double> a2, double a3,
+                              std::vector<std::unique_ptr<Operator>> &br_vec,
+                              std::vector<std::unique_ptr<Operator>> &br_aux_vec,
+                              std::vector<std::unique_ptr<Operator>> &bi_vec,
+                              std::vector<std::unique_ptr<Operator>> &bi_aux_vec);
+  void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
+                              std::complex<double> a2, double a3,
+                              std::vector<std::unique_ptr<Operator>> &br_vec,
+                              std::vector<std::unique_ptr<Operator>> &br_aux_vec);
+  void AssemblePreconditioner(double a0, double a1, double a2, double a3,
+                              std::vector<std::unique_ptr<Operator>> &br_vec,
+                              std::vector<std::unique_ptr<Operator>> &br_aux_vec);
 
 public:
   SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
@@ -180,9 +197,9 @@ public:
   // is real-valued (Mr > 0, Mi < 0, |Mr + Mi| is done on the material property coefficient,
   // not the matrix entries themselves):
   //             B = a0 K + a1 C -/+ a2 |Mr + Mi| + A2r(a3) + A2i(a3).
-  template <typename OperType>
-  std::unique_ptr<OperType> GetPreconditionerMatrix(double a0, double a1, double a2,
-                                                    double a3);
+  template <typename OperType, typename ScalarType>
+  std::unique_ptr<OperType> GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
+                                                    ScalarType a2, double a3);
 
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const
@@ -204,6 +221,20 @@ public:
   // or not the excitation is nonzero (and thus is true most of the time).
   bool GetExcitationVector1(int excitation_idx, ComplexVector &RHS1);
   bool GetExcitationVector2(int excitation_idx, double omega, ComplexVector &RHS2);
+
+  // Fill vector corresponding to the tangential electric field E_t on a lumped port, with
+  // overall normalization such that the reference impedance \vert Z_R \vert = 1 in internal
+  // units.
+  void GetLumpedPortExcitationVectorPrimaryEt(int port_idx, ComplexVector &Et_primary,
+                                              bool zero_metal);
+
+  // Fill vector corresponding to the tangential field H_t x n on a lumped port, with
+  // overall normalization such that the reference impedance \vert Z_R \vert = 1 in internal
+  // units. This is locally in the same direction as E_t, but because of lumped ports can
+  // have multiple attributes ports with different surface impedances, they are not just
+  // proportional to each other.
+  void GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx, ComplexVector &Htcn_primary,
+                                                bool zero_metal);
 
   // Construct a constant or randomly initialized vector which satisfies the PEC essential
   // boundary conditions.

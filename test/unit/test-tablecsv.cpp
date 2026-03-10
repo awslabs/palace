@@ -1,9 +1,9 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 #include <iterator>
-#include <fmt/format.h>
 #include <scn/scan.h>
 #include <catch2/catch_test_macros.hpp>
-#include <catch2/benchmark/catch_benchmark_all.hpp>
-#include <catch2/generators/catch_generators_all.hpp>
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/tablecsv.hpp"
@@ -11,7 +11,7 @@
 using namespace palace;
 
 // Small tests for parsing using scn library that checks assumptions implemented in table.
-TEST_CASE("CheckScnCases", "[tablecsv]")
+TEST_CASE("CheckScnCases", "[tablecsv][Serial]")
 {
   {
     auto result = scn::scan<double>("-1.00", "{}");
@@ -35,7 +35,7 @@ TEST_CASE("CheckScnCases", "[tablecsv]")
   }
 }
 
-TEST_CASE("TableCSV", "[tablecsv]")
+TEST_CASE("TableCSV", "[tablecsv][Serial]")
 {
   Table table{};
   table.col_options.float_precision = 9;
@@ -92,11 +92,11 @@ TEST_CASE("TableCSV", "[tablecsv]")
     col_3 << 6.0;
   }
 
-  std::vector<size_t> cols_n_row;
+  std::vector<std::size_t> cols_n_row;
   std::transform(table.cbegin(), table.cend(), std::back_inserter(cols_n_row),
                  [](auto &c) { return c.n_rows(); });
 
-  CHECK(cols_n_row == std::vector<size_t>{0, 1, 2});
+  CHECK(cols_n_row == std::vector<std::size_t>{0, 1, 2});
 
   CHECK(table.n_cols() == 3);
   CHECK(table.n_rows() == 2);
@@ -141,11 +141,9 @@ TEST_CASE("TableCSV", "[tablecsv]")
   col_2.min_left_padding.reset();
   col_2.float_precision.reset();
   CHECK(table.format_table() == table_str1);
-
-  //   REQUIRE_NOTHROW(boundary_ex_bool.SetUp(*config.find("boundaries_1_pass")));
 }
 
-TEST_CASE("TableCSVParsing1_Basic", "[tablecsv]")
+TEST_CASE("TableCSVParsing1_Basic", "[tablecsv][Serial]")
 {
   Table table_expected{};
   {
@@ -175,7 +173,7 @@ TEST_CASE("TableCSVParsing1_Basic", "[tablecsv]")
   CHECK(table_parse[2].header_text == table_expected[2].header_text);
 }
 
-TEST_CASE("TableCSVParsing2_NonDefaultSeparators", "[tablecsv]")
+TEST_CASE("TableCSVParsing2_NonDefaultSeparators", "[tablecsv][Serial]")
 {
   using namespace std::literals;
 
@@ -207,7 +205,7 @@ TEST_CASE("TableCSVParsing2_NonDefaultSeparators", "[tablecsv]")
   CHECK(table_parse[2].header_text == table_expected[2].header_text);
 }
 
-TEST_CASE("TableCSVParsing3_EmptyCells", "[tablecsv]")
+TEST_CASE("TableCSVParsing3_EmptyCells", "[tablecsv][Serial]")
 {
   Table table_expected{};
   {
@@ -237,7 +235,7 @@ TEST_CASE("TableCSVParsing3_EmptyCells", "[tablecsv]")
   CHECK(table_parse[2].header_text == table_expected[2].header_text);
 }
 
-TEST_CASE("TableCSVParsing_TrimSuffix", "[tablecsv]")
+TEST_CASE("TableCSVParsing_TrimSuffix", "[tablecsv][Serial]")
 {
   Table table_expected{};
   {
@@ -267,7 +265,7 @@ TEST_CASE("TableCSVParsing_TrimSuffix", "[tablecsv]")
   CHECK(table_parse[2].header_text == table_expected[2].header_text);
 }
 
-TEST_CASE("TableCSV_LoadFromFile", "[tablecsv]")
+TEST_CASE("TableCSV_LoadFromFile", "[tablecsv][Serial]")
 {
   // Make these tests serial to avoid duplicate file access.
   if (!Mpi::Root(Mpi::World()))
@@ -276,7 +274,7 @@ TEST_CASE("TableCSV_LoadFromFile", "[tablecsv]")
   }
   SECTION("Empty File")
   {
-    auto no_file = fs::path(PALACE_TEST_DIR) /
+    auto no_file = fs::path(PALACE_TEST_DATA_DIR) /
                    "postoperatorcsv_restart/restart1_all/does-not-exists.csv";
     REQUIRE(!fs::exists(no_file));
     TableWithCSVFile table_w(no_file, true);
@@ -286,7 +284,7 @@ TEST_CASE("TableCSV_LoadFromFile", "[tablecsv]")
   SECTION("Normal File")
   {
     auto test_file =
-        fs::path(PALACE_TEST_DIR) / "postoperatorcsv_restart/restart1_all/port-V.csv";
+        fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart1_all/port-V.csv";
     REQUIRE(fs::exists(test_file));
 
     TableWithCSVFile table_w(test_file, true);

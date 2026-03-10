@@ -44,10 +44,10 @@ index 6236a723..532729f5 100644
        // #if defined(STRUMPACK_USE_MAGMA)
        //       magma_init();
 diff --git a/src/dense/HIPWrapper.cpp b/src/dense/HIPWrapper.cpp
-index c68623cf..6fd8f425 100644
+index 92910225..6ec0d82f 100644
 --- a/src/dense/HIPWrapper.cpp
 +++ b/src/dense/HIPWrapper.cpp
-@@ -280,23 +280,23 @@ namespace strumpack {
+@@ -290,23 +290,23 @@ namespace strumpack {
      }
  
      void init() {
@@ -88,12 +88,3 @@ index c68623cf..6fd8f425 100644
      }
  
      void device_memset(void* dptr, int value, std::size_t count) {
-@@ -563,7 +563,7 @@ namespace strumpack {
-       STRUMPACK_FLOPS(4*blas::trsm_flops(m, n, alpha, side));
-       STRUMPACK_BYTES(2*8*blas::trsm_moves(m, n));
-       gpu_check(hipblasZtrsm(handle, side, uplo, trans, diag, m, n,
--                             reinterpret_cast<const hipblasDoubleComplex*>(alpha), 
-+                             reinterpret_cast<const hipblasDoubleComplex*>(alpha),
-                              reinterpret_cast<hipblasDoubleComplex*>(A), lda,
-                              reinterpret_cast<hipblasDoubleComplex*>(B), ldb));
-     }

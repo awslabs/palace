@@ -6,7 +6,8 @@
 #
 
 # CMake 3.21 was released in Jul. 2021 (required for HIP support)
-cmake_minimum_required(VERSION 3.21)
+# Cmake 3.24 was released in Aug. 2022 (required for portable WHOLE_ARCHIVE linking of tests)
+cmake_minimum_required(VERSION 3.24)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -16,7 +17,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
 endif()
 
 # Initialize the project
-project(palace-superbuild LANGUAGES CXX C VERSION 0.14.0)
+project(palace-superbuild LANGUAGES CXX C VERSION 0.16.0)
 
 # Define build settings and defaults
 set(PALACE_WITH_64BIT_INT OFF CACHE BOOL "Use 64 bit integers")
@@ -44,6 +45,9 @@ set(PALACE_WITH_SUNDIALS ON CACHE BOOL "Build with SUNDIALS differential/algebra
 set(ANALYZE_SOURCES_CLANG_TIDY OFF CACHE BOOL "Run static analysis checks using clang-tidy")
 set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cppcheck")
 
+set(PALACE_BUILD_WITH_COVERAGE OFF CACHE BOOL "Compile Palace with coverage flags (source-based for LLVM; gcov for GCC)")
+set(PALACE_BUILD_WITH_SANITIZERS OFF CACHE BOOL "Compile Palace with sanitizers (AddressSanitizer + UndefinedBehaviorSanitizer)")
+
 # Enable Fortran if required
 if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS OR PALACE_WITH_ARPACK)
   enable_language(Fortran)
@@ -56,14 +60,30 @@ endif()
 if(PALACE_WITH_CUDA)
   # Note: The new behavior of CMake policy CMP0104 will initialize CMAKE_CUDA_ARCHITECTURES
   # to an (old) compatible value even when not set by the user.
+  if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "52")
+    find_program(NVIDIA_SMI_CMD nvidia-smi)
+    if(NVIDIA_SMI_CMD)
+      execute_process(COMMAND ${NVIDIA_SMI_CMD} --query-gpu=compute_cap --format=csv,noheader
+        OUTPUT_VARIABLE CUDA_CAPS RESULT_VARIABLE SMI_RESULT ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+      if(SMI_RESULT EQUAL 0 AND CUDA_CAPS)
+        # Remove dots (8.6 -> 86) and convert newlines to semicolons
+        string(REGEX REPLACE "\\." "" CUDA_CAPS "${CUDA_CAPS}")
+        string(REGEX REPLACE "\n" ";" CUDA_CAPS "${CUDA_CAPS}")
+        list(REMOVE_DUPLICATES CUDA_CAPS)
+        string(REPLACE ";" "," CMAKE_CUDA_ARCHITECTURES "${CUDA_CAPS}")
+        message(STATUS "Detected CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+      else()
+        set(CMAKE_CUDA_ARCHITECTURES "70")
+        message(STATUS "nvidia-smi failed, using default CUDA architecture: 70")
+      endif()
+    else()
+      set(CMAKE_CUDA_ARCHITECTURES "70")
+      message(STATUS "nvidia-smi not found, using default CUDA architecture: 70")
+    endif()
+    set(CMAKE_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}" CACHE STRING "CUDA architectures" FORCE)
+  endif()
   enable_language(CUDA)
   find_package(CUDAToolkit REQUIRED)
-  if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-    message(STATUS "Setting CMAKE_CUDA_ARCHITECTURES to '70' as none were specified")
-    set(CMAKE_CUDA_ARCHITECTURES "70" CACHE STRING
-      "Specifies the list of NVIDIA GPU architectures to generate device code for"
-    )
-  endif()
 elseif(PALACE_WITH_HIP)
   enable_language(HIP)
   get_filename_component(HIPCC_DIR ${CMAKE_HIP_COMPILER} DIRECTORY)
@@ -138,6 +158,13 @@ if(PALACE_WITH_MAGMA AND NOT (PALACE_WITH_CUDA OR PALACE_WITH_HIP))
   )
 endif()
 
+# Umpire is only for GPU builds.
+if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+  set(PALACE_WITH_UMPIRE ON)
+else()
+  set(PALACE_WITH_UMPIRE OFF)
+endif()
+
 # MPI is required for most dependency builds
 message(STATUS "====================== Configuring MPI dependency ======================")
 find_package(MPI REQUIRED)
@@ -193,13 +220,18 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
   add_subdirectory("extern")
 endif()
 
-# Add MFEM (always built as part of Palace)
-message(STATUS "====================== Configuring MFEM dependency =====================")
-include(ExternalMFEM)
-
 # Add the main Palace project
 message(STATUS "========================== Configuring Palace ==========================")
 include(ExternalPalace)
+
+# Create CTestTestfile manually (don't use enable_testing() as it gets overwritten)
+file(WRITE "${CMAKE_BINARY_DIR}/CTestTestfile.cmake" "
+# CMake generated Testfile for Palace superbuild
+set(CTEST_PROJECT_NAME \"palace\")
+
+# Include palace unit tests
+subdirs(\"palace-build/test/unit\")
+")
 
 # Finished with superbuild configuration
 message(STATUS "======================= Configure stage complete =======================")

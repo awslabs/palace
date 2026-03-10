@@ -474,7 +474,7 @@ std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &
     }
     else
     {
-      // First, get matrix on master thread in COO format, withs rows/cols always on host
+      // First, get matrix on master thread in COO format, with rows/cols always on host
       // and vals potentially on the device. Process skipping zeros if desired.
       CeedSize nnz;
       CeedInt *rows, *cols;

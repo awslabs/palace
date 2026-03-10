@@ -87,11 +87,25 @@ private:
   // approximation A = Ar + Ai.
   bool complex_matrix = true;
 
+  // Whether to drop small entries (< ε) in the sparse system matrix.
+  bool drop_small_entries = true;
+
+  // Whether to reuse the column reordering of previous factorizations.
+  bool reorder_reuse = true;
+
+  // Number of small entries dropped by the most recent DropSmallEntries() call.
+  int num_dropped_entries = 0;
+
+  // Drop small entries.
+  void DropSmallEntries();
+
 public:
   MfemWrapperSolver(std::unique_ptr<mfem::Solver> &&pc, bool save_assembled = true,
-                    bool complex_matrix = true)
+                    bool complex_matrix = true, bool drop_small_entries = true,
+                    bool reorder_reuse = true)
     : Solver<OperType>(pc->iterative_mode), pc(std::move(pc)),
-      save_assembled(save_assembled), complex_matrix(complex_matrix)
+      save_assembled(save_assembled), complex_matrix(complex_matrix),
+      drop_small_entries(drop_small_entries), reorder_reuse(reorder_reuse)
   {
   }
 
@@ -100,6 +114,9 @@ public:
 
   // Configure whether or not to save the assembled operator.
   void SetSaveAssembled(bool save) { save_assembled = save; }
+
+  // Configure whether or not to drop small entries in the system matrix.
+  void SetDropSmallEntries(bool drop) { drop_small_entries = drop; }
 
   void SetInitialGuess(bool guess) override
   {

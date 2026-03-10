@@ -5,9 +5,9 @@
 
 #include <charconv>
 #include <fstream>
-#include <functional>
 #include <iostream>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <stack>
 #include <string>
@@ -18,6 +18,7 @@
 #include "fem/integrator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
+#include "utils/jsonschema.hpp"
 
 namespace palace
 {
@@ -149,62 +150,52 @@ std::stringstream PreprocessFile(const char *filename)
 
 using json = nlohmann::json;
 
-IoData::IoData(const char *filename, bool print) : units(1.0, 1.0), init(false)
+IoData::IoData(const Units &units) : units(units), init(false)
 {
-  // Open configuration file and preprocess: strip whitespace, comments, and expand integer
-  // ranges.
-  std::stringstream buffer = PreprocessFile(filename);
+  fem::DefaultIntegrationOrder::p_trial = -1;
+}
 
-  // Parse the configuration file. Use a callback function to detect and throw errors for
-  // duplicate keys.
-  json config;
-  std::stack<std::set<json>> parse_stack;
-  json::parser_callback_t check_duplicate_keys =
-      [&](int, json::parse_event_t event, json &parsed)
+IoData::IoData(nlohmann::json &&config_, bool print) : units(1.0, 1.0), init(false)
+{
+  auto config = std::move(config_);
+  // Validate against JSON schema.
   {
-    switch (event)
+    std::string err = ValidateConfig(config);
+    if (!err.empty())
     {
-      case json::parse_event_t::object_start:
-        parse_stack.push(std::set<json>());
-        break;
-      case json::parse_event_t::object_end:
-        parse_stack.pop();
-        break;
-      case json::parse_event_t::key:
-        {
-          const auto result = parse_stack.top().insert(parsed);
-          if (!result.second)
-          {
-            MFEM_ABORT("Error parsing configuration file!\nDuplicate key "
-                       << parsed << " was already seen in this object!");
-            return false;
-          }
-        }
-        break;
-      default:
-        break;
+      Mpi::Warning("{}", err);
+      std::cout << std::flush;  // Flush before abort to avoid clipping the error message
+      Mpi::Barrier();
+      MFEM_ABORT("Configuration file validation failed!");
     }
-    return true;
-  };
-  try
-  {
-    config = json::parse(buffer, check_duplicate_keys);
   }
-  catch (json::parse_error &e)
-  {
-    MFEM_ABORT("Error parsing configuration file!\n  " << e.what());
-  }
+
   if (print)
   {
     Mpi::Print("\n{}\n", config.dump(2));
   }
 
   // Set up configuration option data structures.
-  problem.SetUp(config);
-  model.SetUp(config);
-  domains.SetUp(config);
-  boundaries.SetUp(config);
-  solver.SetUp(config);
+  auto problem_it = config.find("Problem");
+  MFEM_VERIFY(problem_it != config.end(),
+              "\"Problem\" must be specified in the configuration file!");
+  problem = config::ProblemData(*problem_it);
+  auto model_it = config.find("Model");
+  MFEM_VERIFY(model_it != config.end(),
+              "\"Model\" must be specified in the configuration file!");
+  model = config::ModelData(*model_it);
+  auto domains_it = config.find("Domains");
+  MFEM_VERIFY(domains_it != config.end(),
+              "\"Domains\" must be specified in the configuration file!");
+  domains = config::DomainData(*domains_it);
+  auto boundaries_it = config.find("Boundaries");
+  MFEM_VERIFY(boundaries_it != config.end(),
+              "\"Boundaries\" must be specified in the configuration file!");
+  boundaries = config::BoundaryData(*boundaries_it);
+  if (auto solver_it = config.find("Solver"); solver_it != config.end())
+  {
+    solver = config::SolverData(*solver_it);
+  }
 
   // Cleanup and error checking.
   config.erase("Problem");
@@ -219,31 +210,85 @@ IoData::IoData(const char *filename, bool print) : units(1.0, 1.0), init(false)
   CheckConfiguration();
 }
 
+IoData::IoData(const char *filename, bool print)
+  : IoData(
+        [&filename]()
+        {
+          // Open configuration file and preprocess: strip whitespace, comments, and expand
+          // integer ranges.
+          std::stringstream buffer = PreprocessFile(filename);
+
+          // Parse the configuration file. Use a callback function to detect and throw
+          // errors for duplicate keys.
+          json config;
+          std::stack<std::set<json>> parse_stack;
+          json::parser_callback_t check_duplicate_keys =
+              [&](int, json::parse_event_t event, json &parsed)
+          {
+            switch (event)
+            {
+              case json::parse_event_t::object_start:
+                parse_stack.emplace();
+                break;
+              case json::parse_event_t::object_end:
+                parse_stack.pop();
+                break;
+              case json::parse_event_t::key:
+                {
+                  const auto result = parse_stack.top().insert(parsed);
+                  if (!result.second)
+                  {
+                    MFEM_ABORT("Error parsing configuration file!\nDuplicate key "
+                               << parsed << " was already seen in this object!");
+                    return false;
+                  }
+                }
+                break;
+              default:
+                break;
+            }
+            return true;
+          };
+          try
+          {
+            config = json::parse(buffer, check_duplicate_keys);
+          }
+          catch (json::parse_error &e)
+          {
+            MFEM_ABORT("Error parsing configuration file!\n  " << e.what());
+          }
+          return config;
+        }(),
+        print)
+{
+}
+
 void IoData::CheckConfiguration()
 {
   // Check that the provided domain and boundary objects are all supported by the requested
   // problem type.
   if (problem.type == ProblemType::DRIVEN)
   {
-    // No unsupported domain or boundary objects for frequency domain driven simulations.
+    // Driven (frequency) solver itself has no unsupported domain or boundary objects.
+    // Can't synthesize non-LRC circuit (same conditions as eigenmode solver)
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
+                    solver.driven.adaptive_tol > 0.0,
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
+                "adaptive frequency sweep (AdaptiveTol > 0.0)!\n");
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis || !boundaries.lumpedport.empty(),
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
+                "at least one LumpedPort boundary condition!\n");
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
+                    (boundaries.auxpec.empty() && boundaries.waveport.empty() &&
+                     (boundaries.farfield.empty() || boundaries.farfield.order == 1) &&
+                     boundaries.conductivity.empty()),
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) is not "
+                "supported in systems with any of: "
+                "WavePort, Absorbing (order > 1), or Conductivity boundary conditions!\n");
   }
   else if (problem.type == ProblemType::EIGENMODE)
   {
-    if (!boundaries.conductivity.empty())
-    {
-      Mpi::Warning("Eigenmode problem type does not support surface conductivity boundary "
-                   "conditions!\n");
-    }
-    if (!boundaries.auxpec.empty() || !boundaries.waveport.empty())
-    {
-      Mpi::Warning(
-          "Eigenmode problem type does not support wave port boundary conditions!\n");
-    }
-    if (!boundaries.farfield.empty() && boundaries.farfield.order > 1)
-    {
-      Mpi::Warning("Eigenmode problem type does not support absorbing boundary conditions "
-                   "with order > 1!\n");
-    }
+    // No unsupported domain or boundary objects for frequency domain driven simulations.
   }
   else if (problem.type == ProblemType::ELECTROSTATIC)
   {
@@ -425,7 +470,35 @@ void IoData::CheckConfiguration()
                                      problem.type == ProblemType::MAGNETOSTATIC ||
                                      problem.type == ProblemType::TRANSIENT);
   }
-
+  if (solver.linear.ams_max_it < 0)
+  {
+    solver.linear.ams_max_it = solver.order;
+  }
+  if (solver.linear.mg_cycle_it < 0)
+  {
+    if ((problem.type == ProblemType::EIGENMODE || problem.type == ProblemType::DRIVEN) &&
+        solver.linear.type == LinearSolver::AMS)
+    {
+      // For frequency-domain problems with AMS, 2 multigrid cycles usually leads to fewer
+      // iterations and comparable or faster runtimes.
+      solver.linear.mg_cycle_it = 2;
+    }
+    else
+    {
+      solver.linear.mg_cycle_it = 1;
+    }
+  }
+  if (solver.linear.reorder_reuse && solver.linear.drop_small_entries &&
+      solver.linear.complex_coarse_solve && (problem.type == ProblemType::EIGENMODE) &&
+      (!boundaries.waveport.empty() || !boundaries.conductivity.empty() ||
+       (!boundaries.farfield.empty() && boundaries.farfield.order > 1)))
+  {
+    // Do not reuse the sparsity pattern for nonlinear eigenmode simulations with complex
+    // coarse preconditioners when dropping small entries. In those cases, the sparsity
+    // pattern of the first preconditioner (purely real coefficients) will be different from
+    // subsequent preconditioners with complex coefficients.
+    solver.linear.reorder_reuse = false;
+  }
   // Configure settings for quadrature rules and partial assembly.
   BilinearForm::pa_order_threshold = solver.pa_order_threshold;
   fem::DefaultIntegrationOrder::p_trial = solver.order;
@@ -436,7 +509,6 @@ void IoData::CheckConfiguration()
 
 namespace
 {
-
 template <std::size_t N>
 constexpr config::SymmetricMatrixData<N> &operator/=(config::SymmetricMatrixData<N> &data,
                                                      double s)
@@ -501,6 +573,13 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
                    DivideLengthScale);
   }
 
+  // Current dipole location coordinates.
+  for (auto &[idx, data] : domains.current_dipole)
+  {
+    std::transform(data.center.begin(), data.center.end(), data.center.begin(),
+                   DivideLengthScale);
+  }
+
   // Finite conductivity boundaries.
   for (auto &data : boundaries.conductivity)
   {
@@ -550,25 +629,38 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
     data.t /= units.GetMeshLengthRelativeScale();
   }
 
+  // Convert from GHz to non-dimensional angular frequency (adds the 2pi):
+  // 1/ns -> rad/ns -> non-dim units.
+
   // For eigenmode simulations:
-  solver.eigenmode.target /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
+  solver.eigenmode.target =
+      2 * M_PI *
+      units.Nondimensionalize<Units::ValueType::FREQUENCY>(solver.eigenmode.target);
+  solver.eigenmode.target_upper =
+      2 * M_PI *
+      units.Nondimensionalize<Units::ValueType::FREQUENCY>(solver.eigenmode.target_upper);
 
   // For driven simulations:
   for (auto &f : solver.driven.sample_f)
-    f /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
+    f = 2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
 
   // For transient simulations:
-  solver.transient.pulse_f /= units.GetScaleFactor<Units::ValueType::FREQUENCY>();
-  solver.transient.pulse_tau /= units.GetScaleFactor<Units::ValueType::TIME>();
-  solver.transient.max_t /= units.GetScaleFactor<Units::ValueType::TIME>();
-  solver.transient.delta_t /= units.GetScaleFactor<Units::ValueType::TIME>();
+  solver.transient.pulse_f =
+      2 * M_PI *
+      units.Nondimensionalize<Units::ValueType::FREQUENCY>(solver.transient.pulse_f);
+  solver.transient.pulse_tau =
+      units.Nondimensionalize<Units::ValueType::TIME>(solver.transient.pulse_tau);
+  solver.transient.max_t =
+      units.Nondimensionalize<Units::ValueType::TIME>(solver.transient.max_t);
+  solver.transient.delta_t =
+      units.Nondimensionalize<Units::ValueType::TIME>(solver.transient.delta_t);
 
   // Scale mesh vertices for correct nondimensionalization.
   mesh::NondimensionalizeMesh(mesh, units.GetMeshLengthRelativeScale());
 
   // Print some information.
   Mpi::Print(mesh.GetComm(),
-             "\nCharacteristic length and time scales:\n L₀ = {:.3e} m, t₀ = {:.3e} ns\n",
+             "\nCharacteristic length and time scales:\n Lc = {:.3e} m, tc = {:.3e} ns\n",
              units.GetScaleFactor<Units::ValueType::LENGTH>(),
              units.GetScaleFactor<Units::ValueType::TIME>());
 }

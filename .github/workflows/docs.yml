@@ -10,6 +10,7 @@ on:
 permissions:
   packages: write
   contents: write
+  statuses: write  # Used to report documentation build statuses
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -23,30 +24,76 @@ env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
-  build-docs:
+  # Filter to allow skipping the test if no relevant changes occurred.
+  filter:
     runs-on: ubuntu-latest
+    outputs:
+      test: ${{ steps.filter.outputs.test }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            test:
+              - 'palace/**'
+              - 'cmake/**'
+              - 'docs/**'
+              - 'extern/**'
+              - 'examples/**'
+              - 'spack_repo/**'
+              - '.github/workflows/docs.yml'
+
+  build-docs:
+    needs: filter
+    runs-on: palace_ubuntu-latest_16-core
+    steps:
+      - uses: actions/checkout@v6
+        if: needs.filter.outputs.test == 'true'
 
       - name: Setup Spack
+        if: needs.filter.outputs.test == 'true'
         uses: spack/setup-spack@v2
         with:
           ref: develop
           buildcache: true
           color: true
 
+          
+      - name: Patch Spack package.pys for known problems
+        if: needs.filter.outputs.test == 'true'
+        shell: bash
+        run: |
+          PALACE_DIR=$PWD
+          cd $(spack location --repo builtin)
+          for patch in "$PALACE_DIR"/spack_repo/patches/*.diff; do
+            if [ -f "$patch" ]; then
+              if ! git apply --check "$patch" 2>/dev/null; then
+                echo "Cannot apply $patch (PR may have already been merged)"
+                echo "Please remove $patch from the Palace repo if the PR was merged"
+              else
+                echo "Applying patch: $patch"
+                git apply "$patch"
+              fi
+            fi
+          done
+  
+          # Workaround for https://github.com/spack/spack/issues/51505
+          ln -s "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
+  
       - name: Setup Environment
+        if: needs.filter.outputs.test == 'true'
         run: |
           # Spack.yaml with most / all settings configured
           cat << EOF > spack.yaml
           spack:
             specs:
-              - palace
+              - local.palace@develop # we install this without a cache each time
             view: false
             config:
               install_tree:
                 root: /opt/spack
-                padded_length: False
+                padded_length: false
             concretizer:
               reuse: false
               unify: true
@@ -55,6 +102,8 @@ jobs:
             packages:
               petsc:
                 require: ~hdf5
+            repos:
+            - spack_repo/local
             mirrors:
               spack:
                 binary: true
@@ -68,20 +117,67 @@ jobs:
                   secret_variable: GITHUB_TOKEN
           EOF
 
-      - name: Configure Binary Mirror Keys
+      - name: Configure External Packages
+        if: needs.filter.outputs.test == 'true'
+        run: |
+          # These cause build issues if built as externals
+          #   - python : often distributed python isn't feature complete / not all dependencies get detected
+          #   - OpenSSL / OpenSSH : since they are in /usr, spack struggles. It's common to rebuild these
+          #   - ncurses / bzip2 / xz / curl : caused build issues. We pull these from GHCR cache after first build
+          spack -e . external find --all \
+            --exclude openssl \
+            --exclude openssh \
+            --exclude python \
+            --exclude ncurses \
+            --exclude bzip2 \
+            --exclude xz \
+            --exclude curl
+
+      - name: Configure Compilers for Spack
+        if: needs.filter.outputs.test == 'true'
+        run: spack -e . compiler find && spack -e . compiler list
+
+      - name: Configure Binary Mirror Keys for Spack
+        if: needs.filter.outputs.test == 'true'
         run: spack -e . buildcache keys --install --trust
 
       - name: Bootstrap Spack
+        if: needs.filter.outputs.test == 'true'
         run: spack  -e . bootstrap now
 
-      - name: Concretize
-        run: spack -e . concretize -f
+      - name: Concretize Spack
+        if: needs.filter.outputs.test == 'true'
+        env:
+          PALACE_REF: ${{ github.head_ref || github.ref_name }}
+        run: |
+          # Using `spack develop` in order to have an in-source build
+          spack -e . develop --path=$(pwd) local.palace@git."${PALACE_REF}"=develop
+          spack -e . concretize -f
 
-        # Relies on cache-hit
-      - name: Install Palace
-        run: spack -e . install --only-concrete --keep-stage --show-log-on-error
+        # Relies on cache-hit(s)
+      - name: Build Dependencies
+        if: needs.filter.outputs.test == 'true'
+        run: |
+          spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
+
+        # Explicitly not using cache to get latest develop
+      - name: Build Palace
+        if: needs.filter.outputs.test == 'true'
+        run: |
+          spack -e . install --only-concrete --show-log-on-error --only package --keep-stage --no-cache
+        # If you want to use the branch-local source instead (should we always do this?)
+        # spack -e . develop --path=$(pwd) palace@git."${{ github.head_ref || github.ref_name }}"=develop
+
+      - uses: julia-actions/setup-julia@v2
+        if: needs.filter.outputs.test == 'true'
+        with:
+          version: '1'
+
+      - uses: julia-actions/cache@v2
+        if: needs.filter.outputs.test == 'true'
 
       - name: Build and deploy
+        if: needs.filter.outputs.test == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -90,7 +186,17 @@ jobs:
           julia --project=docs --color=yes docs/make.jl
 
       - uses: actions/upload-artifact@v4
+        if: needs.filter.outputs.test == 'true'
         with:
           name: docs
           path: docs/build/
           retention-days: 7
+
+      # Push built binaries, even if the build fails
+      # NOTE: This might fail as external fork PRs can't push to GHCR.
+      - name: Push to GHCR cache
+        if: |
+          needs.filter.outputs.test == 'true' &&
+          !cancelled() &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache || true

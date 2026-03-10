@@ -1,12 +1,14 @@
 ```@raw html
-<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
-<!--- SPDX-License-Identifier: Apache-2.0 --->
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
 ```
 
 # Signal Propagation in a Coaxial Cable
 
 !!! note
-    
+
     The files for this example can be found in the
     [`examples/coaxial/`](https://github.com/awslabs/palace/blob/main/examples/coaxial)
     directory of the *Palace* source code.
@@ -76,7 +78,7 @@ the three simulation cases.
 We can observe that as expected, the matched termination absorbs the incident waveform
 nearly perfectly, while it is reflected with the same polarity for the shorted termination
 and opposite polarity for the open termination (phase shifted by ``\pi``). Furthermore, the
-reflected wave is noticably attenuated due to the material loss of the transmission line
+reflected wave is noticeably attenuated due to the material loss of the transmission line
 dielectric.
 
 Lastly, an animation of the signal propagation for the matched (left) and shorted

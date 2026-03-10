@@ -1,6 +1,8 @@
 ```@raw html
-<!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
-<!--- SPDX-License-Identifier: Apache-2.0 --->
+<!---
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+SPDX-License-Identifier: Apache-2.0
+--->
 ```
 
 ```@setup json
@@ -48,7 +50,7 @@ In this tutorial, we will:
 
  1. [Install *Palace* using Spack](#Installing-Palace)
  2. [Set up a simulation using a provided mesh](#The-config-file)
- 3. [Run the simulation and visualize results with ParaView](#Running-the-simulation-and-inspecting-the-output)
+ 3. [Run the simulation and visualize results](#Running-the-simulation-and-inspecting-the-output)
 
 By the end of this page, you'll understand the basic workflow of electromagnetic
 simulations with *Palace*. You will be able to follow the
@@ -102,13 +104,14 @@ leading to different electromagnetic [problem types](guide/problem.md):
     at probe points, etc.)
  2. PVD files for visualizing fields with [ParaView](https://www.paraview.org)
     or compatible software
+ 3. Grid function files for visualizing fields with [GLVis](https://glvis.org)
 
 The full list of problem types and their outputs is available in the
 [problem configuration guide](config/problem.md).
 
 In this tutorial, we'll use a mesh generated with [Gmsh](https://gmsh.info/),
 create a configuration file for an `Electrostatic` problem, and visualize the
-resulting electric field with ParaView.
+resulting electric field with ParaView and GLVis.
 
 ## Installing Palace
 
@@ -119,7 +122,10 @@ high-performance computing applications.
 Follow the [instructions on the official
 website](https://spack.readthedocs.io/en/latest/getting_started.html) to install
 Spack. This involves cloning a repository and sourcing a `setup-env` shell
-script. Come back here once you are done with that.
+script. Ensure this shell environment comes with the minimal requirements as
+listed in the [official
+documentation](https://spack.readthedocs.io/en/latest/installing_prerequisites.html).
+Come back here once you are done with that.
 
 Let's check that Spack is correctly installed on your system. This can be
 accomplished by running:
@@ -136,7 +142,7 @@ nothing # hide
 ```
 
 !!! note "spack command not found"
-    
+
     If you get a `command not found` error, revisit the [Spack instructions](https://spack.readthedocs.io/en/latest/getting_started.html)
     and ensure you've completed all steps, including sourcing the setup script (the command starting with `.`).
     Consider adding this to your shell initialization file (typically, `.bashrc` or `.zshrc`).
@@ -165,18 +171,18 @@ nothing # hide
 ```
 
 !!! tip "Loading Palace"
-    
+
     You need to load *Palace* with `spack load palace` in each new shell session.
     For convenience, add this command to your shell initialization file if you are a frequent *Palace* user.
 
-## (Optional) Install ParaView
+## (Optional) Install ParaView and GLVis
 
 *Palace* optionally saves electromagnetic field data in the PVD format, which is
-immediately accessible by ParaView or ParaView-compatible software. You can
-download ParaView from the [official
-website](https://www.
-paraview.org/download/) or using your package manager
-(`dnf`, `apt`, `brew`, ...). ParaView is not required for running simulations,
+immediately accessible by ParaView or ParaView-compatible software, and as MFEM grid functions,
+which can be visualized with GLVis. You can download ParaView from the
+[official website](https://www.paraview.org/download/) or using your package manager
+(`dnf`, `apt`, `brew`, ...). GLVis can be downloaded from the
+[official website](https://glvis.org). ParaView and GLVis are not required for running simulations,
 but we will use it in this tutorial to visualize our simulated fields.
 
 ## The mesh
@@ -308,13 +314,13 @@ When configuring `Postprocessing`, you must specify an `Index` that determines
 the suffix for column headers in the output CSV files. For example, with `Index: 1`, the probe output will show headers like `E_x[1]`.
 
 !!! note "What is the difference between `Attributes` and `Index`?"
-    
+
     `Attributes` identify mesh regions and come from the mesh file. In our example,
     attributes 1-4 identify the vacuum region, outer boundary, and two spheres.
-    
+
     `Index` is used only for postprocessing and defines a notation used in the output CSV files. It has no relation to mesh attributes and can
     be any positive integer.
-    
+
     Note how `Attributes` is an array and `Index` an integer: multiple attributes might
     be needed to specify a given region in the mesh that corresponds to a single output.
 
@@ -370,7 +376,7 @@ details on all solver options, see [`config["Solver"]`](config/solver.md).
 print_section(spheres_json, "Solver") # hide
 ```
 
-### Running the simulation and inspecting the output
+## Running the simulation and inspecting the output
 
 If you've followed along, you should now have two files:
 
@@ -381,9 +387,9 @@ If you've followed along, you should now have two files:
 ```
 
 !!! note "Do not have the files?"
-    
+
     If you need to download the files, run:
-    
+
     ```bash
     mkdir -p mesh
     curl -o mesh/spheres.msh https://raw.githubusercontent.com/awslabs/palace/refs/heads/main/examples/spheres/mesh/spheres.msh
@@ -443,10 +449,10 @@ nothing # hide
 ```
 
 In addition to the `palace.json`, which contains metadata about the simulation
-(including timing information and counts), the output consists of CSV and PVD
-files. You can safely ignore all the `Cycle` directories as their content is
-accessed through the corresponding PVD file. For more details on output files
-and formats, see the [output documentation](guide/postprocessing.md).
+(including timing information and counts), the output consists of CSV, PVD, and
+grid function files. You can safely ignore all the `Cycle` directories as their
+content is accessed through the corresponding PVD file. For more details on output
+files and formats, see the [output documentation](guide/postprocessing.md).
 
 #### CSV files
 
@@ -478,7 +484,7 @@ matrix is symmetric.
 
 #### Visualizing with ParaView
 
-In this final step, we'll create a visualization of our simulation results using
+In this step, we'll create a visualization of our simulation results using
 [ParaView](https://www.paraview.org). We'll work with both the volume field data
 (`electrostatic.pvd`) and the boundary surface data
 (`electrostatic_boundaries.pvd`) to reproduce the figures in [the example
@@ -487,7 +493,7 @@ page](examples/spheres.md).
  1. Launch ParaView and navigate to your `postpro/paraview` directory
 
  2. Open the volume data:
-    
+
       + Click File → Open → Navigate to
         `postpro/paraview/electrostatic/electrostatic.pvd`, nothing should be
         rendered so far
@@ -495,15 +501,17 @@ page](examples/spheres.md).
         appear
       + In the Coloring section, select `V`, the sphere should now be colored
         according to the potential values
+
  3. Create a slice to see inside:
-    
+
       + From the menu bar, select Filters → Common → Slice
       + In the Properties panel (left side), set the Origin to (0, 0, 0)
       + Set the Normal to (0, 1, 0) for a vertical slice along the Y-axis
       + Click Apply
       + Use the mouse to rotate and zoom until you can see the outlines of both inner spheres
+
  4. Add the boundary surfaces:
-    
+
       + Click File → Open → Navigate to `postpro/paraview/electrostatic_boundaries/electrostatic_boundaries.pvd`
       + Click Apply in the Properties panel
       + In the Coloring section, select `V`
@@ -529,6 +537,68 @@ setup later). The result should look more or less like the images below:
 ParaView offers many more advanced features for data analysis and visualization.
 For more details, refer to the [official ParaView
 documentation](https://docs.paraview.org/en/latest/).
+
+#### Visualizing with GLVis
+
+In this optional step, we'll create a visualization of our simulation results using
+[GLVis](https://glvis.org).
+
+The potential field `V` with the first terminal activated can be visualized with
+
+```bash
+glvis -m postpro/gridfunction/electrostatic/mesh -g postpro/gridfunction/electrostatic/V_000001.gf -np 1
+```
+
+Note that `-np 1` instructs *GLVis* that the data was generated with a single MPI process. The number
+must match the number of MPI processes used in *Palace*.
+
+To visualize the potential field along the middle $x-z$ plane:
+
+  - Press `c` to display the colorbar.
+  - Press `a` to display the axes.
+  - Press `i` to cut the domain.
+  - Press `y` or `Y` repeatedly to rotate the cutting plane until it is aligned with the $x-z$ plane.
+  - Press `R` to cycle through 2D projections until you are viewing the $x-z$ plane.
+  - Press `S` to take a screenshot.
+
+The result should look more or less like what we have below, where we embed a
+Javascript version of *GLVis* ([GLVis-js](https://github.com/GLVis/glvis-js))
+that can be interacted with in almost the same way as the native *GLVis*. See
+[Documentation](https://github.com/glvis/glvis/blob/v4.4/README.md) for full
+list of keys.
+
+```@raw html
+<div id="glvis-container" style="width: 100%; height: 500px;">
+  <div id="glvis-div" style="width: 100%; height: 100%;"></div>
+</div>
+
+<!-- Note, the snippet below only works with one MPI process because we are
+    manually composing a stream file. -->
+<script type="text/javascript">
+  var div = document.getElementById("glvis-div");
+  require(["../assets/js/glvis/index.js"], function (glvis) {
+    var glv = new glvis.State(div);
+
+    Promise.all([
+      fetch('../postpro/gridfunction/electrostatic/mesh.000000').then(r => r.text()),
+      fetch('../postpro/gridfunction/electrostatic/V_000001.gf.000000').then(r => r.text())
+    ]).then(function(results) {
+      var stream = "solution\n" + results[0] + results[1] + "keys OOOOOOOOOyyyyyyyyyyyyyyyyyyRRRRcai\n";
+      var originalTitle = document.title;
+      glv.display(stream).then(function() {
+        document.title = originalTitle;
+        // Enable keyboard controls on click
+        div.addEventListener('click', function() {
+          this.setAttribute('tabindex', '0');
+          this.focus();
+        }, { once: true });
+      });
+    }).catch(function(e) {
+      console.error('Failed to load GLVis data:', e);
+    });
+  });
+</script>
+```
 
 ## Where to go next
 
