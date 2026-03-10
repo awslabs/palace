@@ -79,7 +79,7 @@ runs:
           MPI_IMPL="openmpi"
           C_CXX_COMPILER="${{ inputs.toolchain }}"
         fi
-        PALACE_SPEC="local.palace@develop+superlu-dist+mumps+sundials+strumpack+slepc+arpack${{ inputs.variant }} ${CUDA_ARGS}"
+        PALACE_SPEC="local.palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack${{ inputs.variant }} ${CUDA_ARGS}"
 
         cat << EOF > spack.yaml
         spack:
