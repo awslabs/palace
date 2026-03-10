@@ -11,9 +11,9 @@
 #include "fem/interpolator.hpp"
 #include "linalg/vector.hpp"
 #include "models/curlcurloperator.hpp"
+#include "models/floquetportoperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
-#include "models/floquetportoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "models/waveportoperator.hpp"
@@ -1213,22 +1213,22 @@ void PostOperator<solver_t>::MeasureFloquetPorts() const
     {
       return;
     }
+    // Determine if the excitation uses circular polarization (for output basis).
+    bool circular_output = false;
+    for (const auto &[idx, port] : fem_op->GetFloquetPortOp())
+    {
+      if (port.excitation == measurement_cache.ex_idx)
+      {
+        circular_output = (std::abs(port.GetIncidentAlpha(true)) > 1e-14 &&
+                           std::abs(port.GetIncidentAlpha(false)) > 1e-14);
+        break;
+      }
+    }
+    measurement_cache.floquet_circular_output = circular_output;
     for (const auto &[idx, data] : fem_op->GetFloquetPortOp())
     {
-      auto S_all = data.GetAllSParameters(*E);
-
-      // Subtract incident field for the driving port's incident mode.
-      if (data.excitation == measurement_cache.ex_idx)
-      {
-        for (auto &[key, S] : S_all)
-        {
-          auto [m, n, is_te] = key;
-          if (data.IsIncidentMode(m, n, is_te))
-          {
-            S -= 1.0;
-          }
-        }
-      }
+      bool is_driving = (data.excitation == measurement_cache.ex_idx);
+      auto S_all = data.GetAllSParameters(*E, is_driving, circular_output);
 
       measurement_cache.floquet_port_s[idx] = std::move(S_all);
     }
@@ -1309,11 +1309,11 @@ void PostOperator<solver_t>::MeasureSParameter() const
       for (const auto &[key, S] : S_map)
       {
         auto [m, n, is_te] = key;
-        Mpi::Print(
-            " {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
-            format("S[{}_{}_{}_{}][{}]", port_idx, m, n, is_te ? "TE" : "TM",
-                   drive_port_idx),
-            S.real(), S.imag(), Measurement::Magnitude(S), Measurement::Phase(S));
+        auto pol = measurement_cache.floquet_circular_output ? (is_te ? "RHC" : "LHC")
+                                                             : (is_te ? "TE" : "TM");
+        Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
+                   format("S[{}_{}_{}_{}][{}]", port_idx, m, n, pol, drive_port_idx),
+                   S.real(), S.imag(), Measurement::Magnitude(S), Measurement::Phase(S));
       }
     }
   }

@@ -66,9 +66,36 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
                                  const MaterialOperator &mat_op_ref,
                                  mfem::ParFiniteElementSpace &nd_fespace)
   : excitation(data.excitation), active(data.active), mat_op(mat_op_ref), a1(3), a2(3),
-    b1(3), b2(3), k_F(3), port_normal(3), inc_te(data.inc_polarization == "TE"),
-    comm(nd_fespace.GetComm())
+    b1(3), b2(3), k_F(3), port_normal(3), comm(nd_fespace.GetComm())
 {
+  // Set incident polarization coefficients: E_inc = α_TE ê_TE + α_TM ê_TM.
+  const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
+  if (data.inc_polarization == "TE")
+  {
+    inc_alpha_te = 1.0;
+    inc_alpha_tm = 0.0;
+  }
+  else if (data.inc_polarization == "TM")
+  {
+    inc_alpha_te = 0.0;
+    inc_alpha_tm = 1.0;
+  }
+  else if (data.inc_polarization == "RHC")
+  {
+    inc_alpha_te = inv_sqrt2;
+    inc_alpha_tm = std::complex<double>(0.0, inv_sqrt2);
+  }
+  else if (data.inc_polarization == "LHC")
+  {
+    inc_alpha_te = inv_sqrt2;
+    inc_alpha_tm = std::complex<double>(0.0, -inv_sqrt2);
+  }
+  else
+  {
+    MFEM_ABORT("Unknown IncidentPolarization: " << data.inc_polarization
+                                                << ". Expected TE, TM, RHC, or LHC.");
+  }
+
   // Store boundary attributes.
   attr_list.SetSize(static_cast<int>(data.attributes.size()));
   for (int i = 0; i < attr_list.Size(); i++)
@@ -673,7 +700,8 @@ std::unique_ptr<LowRankComplexOperator> FloquetPortData::GetBoundaryOperator() c
 }
 
 std::map<std::tuple<int, int, bool>, std::complex<double>>
-FloquetPortData::GetAllSParameters(const GridFunction &E) const
+FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident,
+                                   bool circular_output) const
 {
   std::map<std::tuple<int, int, bool>, std::complex<double>> result;
 
@@ -689,25 +717,25 @@ FloquetPortData::GetAllSParameters(const GridFunction &E) const
   // For the incident (0,0) mode: γ_inc = γ_00 = ω √(μ_r ε_r), so √(γ/γ_inc) = 1.
   // For the driving port: S = √(γ/γ_inc) × c - δ_{incident mode} (subtract 1).
 
-  // Compute the DtN eigenvalue λ_inc for the incident (0,0) mode at this port.
-  // TE: λ = γ. TM: λ = ω²με/γ. Power is proportional to λ, not γ.
-  double gamma_inc = 0.0;
-  double lambda_inc = 0.0;
+  // Compute effective DtN eigenvalue for the incident polarization:
+  //   λ_eff = |α_TE|² λ_TE + |α_TM|² λ_TM
+  double gamma_00 = 0.0;
   for (const auto &mode : modes)
   {
-    if (mode.m == 0 && mode.n == 0 && mode.is_te == inc_te)
+    if (mode.m == 0 && mode.n == 0 && mode.gamma_sq > 0.0)
     {
-      MFEM_VERIFY(mode.gamma_sq > 0.0, "Incident Floquet mode is evanescent!");
-      gamma_inc = std::sqrt(mode.gamma_sq);
-      lambda_inc = inc_te ? gamma_inc : omega0 * omega0 * mu_eps_port / gamma_inc;
+      gamma_00 = std::sqrt(mode.gamma_sq);
       break;
     }
   }
-  MFEM_VERIFY(gamma_inc > 0.0, "Incident Floquet mode not found in mode list!");
+  MFEM_VERIFY(gamma_00 > 0.0, "Incident Floquet mode not found in mode list!");
+  double lambda_te_00 = gamma_00;
+  double lambda_tm_00 = omega0 * omega0 * mu_eps_port / gamma_00;
+  double lambda_eff =
+      std::norm(inc_alpha_te) * lambda_te_00 + std::norm(inc_alpha_tm) * lambda_tm_00;
 
-  // The excitation is normalized to inject 1 W. The incident power with unit Fourier
-  // amplitude is P_unit = λ_inc |Γ| / (2ω μ_r), where λ is the DtN eigenvalue.
-  double p_unit = lambda_inc * port_area / (2.0 * omega0 * mu_r_port);
+  // Unit-power normalization: P = λ_eff/(2ωμ_r) × |Γ|.
+  double p_unit = lambda_eff * port_area / (2.0 * omega0 * mu_r_port);
   double c_inc = 1.0 / std::sqrt(p_unit);
 
   // Restrict E to true DOFs once (shared across all modes).
@@ -741,13 +769,60 @@ FloquetPortData::GetAllSParameters(const GridFunction &E) const
 
     // Field amplitude: c = v^T E / (c_inc × |Γ|), where c_inc accounts for the
     // unit-power normalization applied to the excitation.
-    // Power normalization: S = √(λ_mn / λ_inc) × c, where λ is the DtN eigenvalue.
-    // TE: λ = γ (propagation constant). TM: λ = ω²με/γ (from the DtN tensor).
+    // Power normalization: S = √(λ_mn / λ_eff) × c, where λ is the DtN eigenvalue.
+    // TE: λ = γ. TM: λ = ω²με/γ. λ_eff is the weighted incident eigenvalue.
     double lambda_mn = mode.is_te ? gamma_mn : omega0 * omega0 * mu_eps_port / gamma_mn;
-    double power_factor = std::sqrt(lambda_mn / lambda_inc);
+    double power_factor = std::sqrt(lambda_mn / lambda_eff);
 
     auto key = std::make_tuple(mode.m, mode.n, mode.is_te);
     result[key] = power_factor * std::complex<double>(sr, si) / (c_inc * port_area);
+  }
+
+  // Subtract incident field contribution for the driving port.
+  // S_{0,0,p} -= √(λ_p / λ_eff) × α_p for each incident polarization component.
+  if (subtract_incident)
+  {
+    for (auto &[key, S] : result)
+    {
+      auto [m, n, is_te] = key;
+      if (IsIncidentMode(m, n, is_te))
+      {
+        double lambda_p = is_te ? lambda_te_00 : lambda_tm_00;
+        S -= std::sqrt(lambda_p / lambda_eff) * GetIncidentAlpha(is_te);
+      }
+    }
+  }
+
+  // For circular polarization (RHC/LHC), rotate the output basis from TE/TM to
+  // circular. The unitary rotation preserves |S_RHC|² + |S_LHC|² = |S_TE|² + |S_TM|²,
+  // so energy conservation is automatic. The map key bool is repurposed:
+  // true = RHC (was TE), false = LHC (was TM).
+  if (circular_output)
+  {
+    std::map<std::tuple<int, int, bool>, std::complex<double>> circ_result;
+    const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
+
+    // Collect all unique (m,n) orders.
+    std::set<std::pair<int, int>> orders;
+    for (const auto &[key, S] : result)
+    {
+      auto [m, n, is_te] = key;
+      orders.insert({m, n});
+    }
+
+    for (const auto &[m, n] : orders)
+    {
+      auto it_te = result.find({m, n, true});
+      auto it_tm = result.find({m, n, false});
+      std::complex<double> s_te = (it_te != result.end()) ? it_te->second : 0.0;
+      std::complex<double> s_tm = (it_tm != result.end()) ? it_tm->second : 0.0;
+
+      // Unitary rotation from linear to circular basis. This preserves
+      // |S_RHC|² + |S_LHC|² = |S_TE|² + |S_TM|², guaranteeing energy conservation.
+      circ_result[{m, n, true}] = (s_te + 1i * s_tm) * inv_sqrt2;   // RHC
+      circ_result[{m, n, false}] = (s_te - 1i * s_tm) * inv_sqrt2;  // LHC
+    }
+    return circ_result;
   }
 
   return result;
@@ -755,40 +830,60 @@ FloquetPortData::GetAllSParameters(const GridFunction &E) const
 
 bool FloquetPortData::AddExcitationVector(double omega, ComplexVector &RHS) const
 {
-  // Find the incident mode (0, 0) with matching polarization.
-  const FloquetMode *inc_mode = nullptr;
+  // Collect the (0,0) TE and TM modes for the incident excitation.
+  const FloquetMode *mode_te = nullptr, *mode_tm = nullptr;
   for (const auto &mode : modes)
   {
-    if (mode.m == 0 && mode.n == 0 && mode.is_te == inc_te)
+    if (mode.m == 0 && mode.n == 0)
     {
-      inc_mode = &mode;
-      break;
+      if (mode.is_te)
+      {
+        mode_te = &mode;
+      }
+      else
+      {
+        mode_tm = &mode;
+      }
     }
   }
-  if (!inc_mode)
+  if (!mode_te && !mode_tm)
   {
     return false;
   }
 
-  // From the total-field DtN formulation, the RHS for the incident field is:
-  //   f = 2i λ_inc / mu_r * c_inc * conj(v_inc)
-  // where λ is the DtN eigenvalue (γ for TE, ω²με/γ for TM), v_inc is the Fourier
-  // projection, and conj(v) appears from the bilinear form convention.
-  // The factor 2 comes from the incident + scattered field decomposition.
-  MFEM_VERIFY(inc_mode->gamma_sq > 0.0,
-              "Incident Floquet mode is evanescent at this frequency!");
-  double gamma_inc = std::sqrt(inc_mode->gamma_sq);
-  double lambda_inc = inc_te ? gamma_inc : omega * omega * mu_eps_port / gamma_inc;
+  // Compute effective DtN eigenvalue for the incident polarization:
+  //   λ_eff = |α_TE|² λ_TE + |α_TM|² λ_TM
+  // This determines the power normalization for any polarization (linear or circular).
+  double gamma_00 = mode_te ? std::sqrt(mode_te->gamma_sq) : std::sqrt(mode_tm->gamma_sq);
+  MFEM_VERIFY(gamma_00 > 0.0, "Incident Floquet mode is evanescent at this frequency!");
+  double lambda_te = gamma_00;
+  double lambda_tm = omega * omega * mu_eps_port / gamma_00;
+  double lambda_eff =
+      std::norm(inc_alpha_te) * lambda_te + std::norm(inc_alpha_tm) * lambda_tm;
 
-  // Unit-power normalization: P = λ_inc/(2ωμ_r) × |Γ| for unit Fourier amplitude.
-  double p_unit = lambda_inc * port_area / (2.0 * omega * mu_r_port);
+  // Unit-power normalization: P = λ_eff/(2ωμ_r) × |Γ|.
+  double p_unit = lambda_eff * port_area / (2.0 * omega * mu_r_port);
   double c_inc = 1.0 / std::sqrt(p_unit);
 
-  // f = c_inc × 2i λ_inc / mu_r × conj(v)
-  double c_i = c_inc * 2.0 * lambda_inc / mu_r_port;
-
-  RHS.Real().Add(c_i, inc_mode->v.Imag());
-  RHS.Imag().Add(c_i, inc_mode->v.Real());
+  // f = Σ_p c_inc × 2i × α_p × λ_p / μ_r × conj(v_p)
+  // conj(v) appears because the bilinear form uses v^T (not v^H), and the incident
+  // field ê exp(+iB·r) projects to conj(v).
+  auto add_pol = [&](const FloquetMode *mode, std::complex<double> alpha, double lambda)
+  {
+    if (!mode || std::abs(alpha) < 1e-14)
+    {
+      return;
+    }
+    // s = c_inc × 2i × alpha × lambda / mu_r (complex scalar)
+    std::complex<double> s = c_inc * 2.0 * 1i * alpha * lambda / mu_r_port;
+    // RHS += s × conj(v) = (s_r + i s_i)(v_r - i v_i)
+    RHS.Real().Add(s.real(), mode->v.Real());
+    RHS.Real().Add(s.imag(), mode->v.Imag());
+    RHS.Imag().Add(s.imag(), mode->v.Real());
+    RHS.Imag().Add(-s.real(), mode->v.Imag());
+  };
+  add_pol(mode_te, inc_alpha_te, lambda_te);
+  add_pol(mode_tm, inc_alpha_tm, lambda_tm);
   return true;
 }
 

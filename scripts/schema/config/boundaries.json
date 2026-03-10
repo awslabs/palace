@@ -185,7 +185,7 @@
             ]
           },
           "Active": { "type": "boolean" },
-          "IncidentPolarization": { "type": "string", "enum": ["TE", "TM"] },
+          "IncidentPolarization": { "type": "string", "enum": ["TE", "TM", "RHC", "LHC"] },
           "MaxOrder": { "type": "integer" }
         }
       }

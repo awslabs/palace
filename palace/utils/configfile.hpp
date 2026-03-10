@@ -540,7 +540,8 @@ public:
   // List of boundary attributes for this Floquet port.
   std::vector<int> attributes = {};
 
-  // Incident mode polarization: "TE" or "TM".
+  // Incident mode polarization: "TE", "TM", "RHC" (right-hand circular),
+  // or "LHC" (left-hand circular).
   std::string inc_polarization = "TE";
 
   // Maximum diffraction order index to include. -1 = auto from geometry + frequency.

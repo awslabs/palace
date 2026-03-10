@@ -168,8 +168,9 @@ struct Measurement
   std::map<int, PortPostData> lumped_port_vi;
   std::map<int, PortPostData> wave_port_vi;
 
-  // Floquet port S-parameters: port_idx -> {(m, n, is_te) -> S}.
+  // Floquet port S-parameters: port_idx -> {(m, n, is_te/is_rhc) -> S}.
   std::map<int, std::map<std::tuple<int, int, bool>, std::complex<double>>> floquet_port_s;
+  bool floquet_circular_output = false;
 
   // Probe data is ordered as [Fx1, Fy1, Fz1, Fx2, Fy2, Fz2, ...].
   // TODO: Replace with proper matrix: mdspan (C++23) / Eigen.

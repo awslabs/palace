@@ -112,11 +112,21 @@ public:
   // Access the enumerated modes (for CSV column setup).
   const auto &GetModes() const { return modes; }
 
-  // Check if mode (m, n, is_te) matches the incident mode for this port.
-  // Mode indices are always in the physical convention — (0,0) is the specular mode.
+  // Check if mode (m, n, is_te) is part of the incident excitation at this port.
+  // For linear polarization (TE/TM), only one matches. For circular (RHC/LHC), both do.
   [[nodiscard]] bool IsIncidentMode(int m, int n, bool is_te) const
   {
-    return m == 0 && n == 0 && is_te == inc_te;
+    if (m != 0 || n != 0)
+    {
+      return false;
+    }
+    return is_te ? (std::abs(inc_alpha_te) > 1e-14) : (std::abs(inc_alpha_tm) > 1e-14);
+  }
+
+  // Get the complex polarization coefficient for the incident mode.
+  [[nodiscard]] std::complex<double> GetIncidentAlpha(bool is_te) const
+  {
+    return is_te ? inc_alpha_te : inc_alpha_tm;
   }
 
   FloquetPortData(const config::FloquetPortData &data, const IoData &iodata,
@@ -129,8 +139,11 @@ public:
   std::unique_ptr<LowRankComplexOperator> GetBoundaryOperator() const;
 
   // S-parameter for all propagating orders at the current frequency.
+  // If subtract_incident is true, subtracts the incident field contribution from the
+  // driving port's (0,0) modes (total → scattered field conversion).
   std::map<std::tuple<int, int, bool>, std::complex<double>>
-  GetAllSParameters(const GridFunction &E) const;
+  GetAllSParameters(const GridFunction &E, bool subtract_incident = false,
+                    bool circular_output = false) const;
 
   // Get the number of propagating orders at current frequency.
   int NumPropagatingOrders() const;
@@ -176,8 +189,9 @@ private:
   // the Fourier projection kernel must be shifted accordingly. Mode labels remain physical.
   int bz_m = 0, bz_n = 0;
 
-  // Incident mode polarization.
-  bool inc_te;
+  // Incident polarization coefficients: E_inc = α_TE ê_TE + α_TM ê_TM.
+  // TE: (1,0). TM: (0,1). RHC: (1,j)/√2. LHC: (1,-j)/√2.
+  std::complex<double> inc_alpha_te, inc_alpha_tm;
 
   // MPI communicator.
   MPI_Comm comm;
