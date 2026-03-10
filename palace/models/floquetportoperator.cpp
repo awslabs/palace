@@ -595,9 +595,9 @@ std::unique_ptr<LowRankComplexOperator> FloquetPortData::GetBoundaryOperator() c
   //   g_correction = i(γ_mn - γ₀)/(μ|Γ|)  for propagating
   //   g_correction = (-|γ_mn| - iγ₀)/(μ|Γ|) for evanescent
 
-  // γ₀ for the Robin reference: use the physical specular (0,0) mode's propagation
-  // constant. This ensures the Robin BC exactly absorbs the specular mode, with the
-  // low-rank correction handling only the diffraction orders.
+  // γ₀ for the Robin reference: use the TE (0,0) mode's propagation constant. The
+  // Robin + correction total is invariant under the choice of γ₀ for included modes,
+  // so this choice doesn't affect accuracy — it only affects the Robin/correction split.
   double gamma0 = 0.0;
   for (const auto &mode : modes)
   {
@@ -659,6 +659,13 @@ std::unique_ptr<LowRankComplexOperator> FloquetPortData::GetBoundaryOperator() c
     {
       continue;  // Skip if correction is negligible (e.g., (0,0) mode).
     }
+    // Skip corrections where |g_full| >> |g_uniform|. This occurs for near-cutoff TM modes
+    // where ω²με/γ diverges as γ → 0. The rank-1 projection can't accurately represent
+    // such large corrections, and these modes carry negligible power.
+    if (std::abs(g_full) > 10.0 * std::abs(g_uniform))
+    {
+      continue;
+    }
     op->AddTerm(&mode.v, g_correction);
   }
 
@@ -682,23 +689,25 @@ FloquetPortData::GetAllSParameters(const GridFunction &E) const
   // For the incident (0,0) mode: γ_inc = γ_00 = ω √(μ_r ε_r), so √(γ/γ_inc) = 1.
   // For the driving port: S = √(γ/γ_inc) × c - δ_{incident mode} (subtract 1).
 
-  // Compute γ_inc from the incident (0,0) mode at this port.
+  // Compute the DtN eigenvalue λ_inc for the incident (0,0) mode at this port.
+  // TE: λ = γ. TM: λ = ω²με/γ. Power is proportional to λ, not γ.
   double gamma_inc = 0.0;
+  double lambda_inc = 0.0;
   for (const auto &mode : modes)
   {
     if (mode.m == 0 && mode.n == 0 && mode.is_te == inc_te)
     {
       MFEM_VERIFY(mode.gamma_sq > 0.0, "Incident Floquet mode is evanescent!");
       gamma_inc = std::sqrt(mode.gamma_sq);
+      lambda_inc = inc_te ? gamma_inc : omega0 * omega0 * mu_eps_port / gamma_inc;
       break;
     }
   }
   MFEM_VERIFY(gamma_inc > 0.0, "Incident Floquet mode not found in mode list!");
 
-  // The excitation is normalized to inject 1 W. The incident Fourier amplitude is
-  // c_inc = 1/√P_unit where P_unit = γ_inc |Γ| / (2ω μ_r). The S-parameter extraction
-  // must divide by c_inc so that S-parameters are ratios of power-normalized amplitudes.
-  double p_unit = gamma_inc * port_area / (2.0 * omega0 * mu_r_port);
+  // The excitation is normalized to inject 1 W. The incident power with unit Fourier
+  // amplitude is P_unit = λ_inc |Γ| / (2ω μ_r), where λ is the DtN eigenvalue.
+  double p_unit = lambda_inc * port_area / (2.0 * omega0 * mu_r_port);
   double c_inc = 1.0 / std::sqrt(p_unit);
 
   // Restrict E to true DOFs once (shared across all modes).
@@ -734,9 +743,8 @@ FloquetPortData::GetAllSParameters(const GridFunction &E) const
     // unit-power normalization applied to the excitation.
     // Power normalization: S = √(λ_mn / λ_inc) × c, where λ is the DtN eigenvalue.
     // TE: λ = γ (propagation constant). TM: λ = ω²με/γ (from the DtN tensor).
-    // The incident mode is always TE, so λ_inc = γ_inc.
     double lambda_mn = mode.is_te ? gamma_mn : omega0 * omega0 * mu_eps_port / gamma_mn;
-    double power_factor = std::sqrt(lambda_mn / gamma_inc);
+    double power_factor = std::sqrt(lambda_mn / lambda_inc);
 
     auto key = std::make_tuple(mode.m, mode.n, mode.is_te);
     result[key] = power_factor * std::complex<double>(sr, si) / (c_inc * port_area);
@@ -763,23 +771,21 @@ bool FloquetPortData::AddExcitationVector(double omega, ComplexVector &RHS) cons
   }
 
   // From the total-field DtN formulation, the RHS for the incident field is:
-  //   f = 2 i gamma_inc / mu_r * conj(v_inc)
-  // where v_inc,j = ∫_Γ N_j · ê exp(-iB·r) dS, and conj(v) appears because
-  // ∫ E_inc · N_k dS = ∫ ê exp(+iB·r) · N_k dS = conj(v_k) for real N_k, ê.
+  //   f = 2i λ_inc / mu_r * c_inc * conj(v_inc)
+  // where λ is the DtN eigenvalue (γ for TE, ω²με/γ for TM), v_inc is the Fourier
+  // projection, and conj(v) appears from the bilinear form convention.
   // The factor 2 comes from the incident + scattered field decomposition.
   MFEM_VERIFY(inc_mode->gamma_sq > 0.0,
               "Incident Floquet mode is evanescent at this frequency!");
   double gamma_inc = std::sqrt(inc_mode->gamma_sq);
+  double lambda_inc = inc_te ? gamma_inc : omega * omega * mu_eps_port / gamma_inc;
 
-  // Unit-power normalization: scale the incident field so the injected power is 1 W
-  // (nondimensional), consistent with lumped and wave port conventions.
-  // Power with unit Fourier amplitude: P = γ/(2ωμ_r) × |Γ|.
-  // Scale factor: c_inc = 1/√P = √(2ωμ_r / (γ|Γ|)).
-  double p_unit = gamma_inc * port_area / (2.0 * omega * mu_r_port);
+  // Unit-power normalization: P = λ_inc/(2ωμ_r) × |Γ| for unit Fourier amplitude.
+  double p_unit = lambda_inc * port_area / (2.0 * omega * mu_r_port);
   double c_inc = 1.0 / std::sqrt(p_unit);
 
-  // f = c_inc × 2i gamma / mu_r × conj(v)
-  double c_i = c_inc * 2.0 * gamma_inc / mu_r_port;
+  // f = c_inc × 2i λ_inc / mu_r × conj(v)
+  double c_i = c_inc * 2.0 * lambda_inc / mu_r_port;
 
   RHS.Real().Add(c_i, inc_mode->v.Imag());
   RHS.Imag().Add(c_i, inc_mode->v.Real());
@@ -865,8 +871,8 @@ void FloquetPortOperator::AddExtraSystemBdrCoefficients(double omega,
     {
       continue;
     }
-    // γ₀ for the physical specular (0,0) mode at this port. Uses the physical k_t
-    // (which accounts for BZ wrapping), ensuring the Robin exactly matches the specular.
+    // γ₀ = TE (0,0) mode propagation constant. The Robin + correction total is
+    // invariant under γ₀ for included modes, so this only affects the split.
     double gamma0 = 0.0;
     for (const auto &mode : port.GetModes())
     {
