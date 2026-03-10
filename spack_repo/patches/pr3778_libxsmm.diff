@@ -1,0 +1,13 @@
+diff --git a/repos/spack_repo/builtin/packages/libxsmm/package.py b/repos/spack_repo/builtin/packages/libxsmm/package.py
+index dcd4f38782..f07d7c9731 100644
+--- a/repos/spack_repo/builtin/packages/libxsmm/package.py
++++ b/repos/spack_repo/builtin/packages/libxsmm/package.py
+@@ -120,7 +120,7 @@ class Libxsmm(MakefilePackage):
+             "FC={0}".format(spack_fc),
+             "PREFIX=%s" % prefix,
+         ]
+-        if spec.target.family == "aarch64":
++        if spec.satisfies("@1.17-cp2k") and spec.target.family == "aarch64":
+             make_args += ["PLATFORM=1"]
+         else:
+             make_args += ["SYM=1"]
