@@ -143,6 +143,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("gslib+shared", when="+shared")
         depends_on("gslib~shared", when="~shared")
 
+    # When Palace is built without OpenMP, require non-threaded BLAS to avoid
+    # background thread pools (e.g., OpenBLAS OpenMP threads) that degrade
+    # performance.
+    for blas in ("openblas", "amdblis", "blis"):
+        depends_on(f"{blas} threads=none", when=f"~openmp ^[virtuals=blas] {blas}")
+        depends_on(f"{blas} threads=openmp", when=f"+openmp ^[virtuals=blas] {blas}")
+
     depends_on("metis@5:")
     depends_on("metis+shared", when="+shared")
     depends_on("metis~shared", when="~shared")
