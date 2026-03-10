@@ -76,22 +76,57 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
     attr_list[i] = data.attributes[i];
   }
 
-  // Extract lattice vectors from periodic BC translations.
+  // Extract lattice vectors. If periodic boundary pairs with translations are specified,
+  // use them. Otherwise, infer from the port face bounding box (works for axis-aligned
+  // rectangular cells with built-in mesh periodicity).
   const auto &periodic = iodata.boundaries.periodic;
-  MFEM_VERIFY(!periodic.boundary_pairs.empty(),
-              "FloquetPort requires periodic boundary conditions!");
-  MFEM_VERIFY(periodic.boundary_pairs.size() >= 2,
-              "FloquetPort requires at least 2 periodic boundary pairs "
-              "(periodicity in 2 directions)!");
-
-  // The translation component of each affine transform is the lattice vector (in mesh-file
-  // units). We must nondimensionalize by dividing by the mesh scaling factor Lc/L0, since
-  // the mesh coordinates have been nondimensionalized by that factor.
   double mesh_scale = iodata.units.GetMeshLengthRelativeScale();
-  for (int i = 0; i < 3; i++)
+  if (periodic.boundary_pairs.size() >= 2)
   {
-    a1(i) = periodic.boundary_pairs[0].affine_transform[i * 4 + 3] / mesh_scale;
-    a2(i) = periodic.boundary_pairs[1].affine_transform[i * 4 + 3] / mesh_scale;
+    // The translation component of each affine transform is the lattice vector (in mesh
+    // units). Nondimensionalize by dividing by Lc/L0.
+    for (int i = 0; i < 3; i++)
+    {
+      a1(i) = periodic.boundary_pairs[0].affine_transform[i * 4 + 3] / mesh_scale;
+      a2(i) = periodic.boundary_pairs[1].affine_transform[i * 4 + 3] / mesh_scale;
+    }
+  }
+  // Fall back to port geometry if translations are missing (e.g., auto-detected periodicity
+  // from Gmsh setPeriodic, or no BoundaryPairs at all).
+  if (a1.Norml2() < 1e-12 || a2.Norml2() < 1e-12)
+  {
+    // Infer lattice vectors from the port face bounding box. This works for axis-aligned
+    // rectangular periodic cells where the port face spans the full unit cell.
+    auto &mesh = *nd_fespace.GetParMesh();
+    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    Mpi::GlobalMax(1, &bdr_attr_max, comm);
+    mfem::Array<int> bdr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list, true);
+    mfem::Vector bbmin, bbmax;
+    mesh::GetAxisAlignedBoundingBox(mesh, bdr_marker, true, bbmin, bbmax);
+    mfem::Vector extent(3);
+    for (int i = 0; i < 3; i++)
+    {
+      extent(i) = bbmax(i) - bbmin(i);
+    }
+
+    // The two tangential directions with the largest extents are the lattice directions.
+    // Sort dimensions by extent to identify the two periodic directions.
+    int dirs[3] = {0, 1, 2};
+    std::sort(dirs, dirs + 3, [&](int a, int b) { return extent(a) > extent(b); });
+
+    a1 = 0.0;
+    a2 = 0.0;
+    a1(dirs[0]) = extent(dirs[0]);
+    a2(dirs[1]) = extent(dirs[1]);
+
+    MFEM_VERIFY(a1.Norml2() > 1e-12 && a2.Norml2() > 1e-12,
+                "Could not infer lattice vectors from port face bounding box. "
+                "Please specify BoundaryPairs with Translation vectors.");
+
+    Mpi::Print(" Floquet port: inferred lattice vectors from port geometry:\n"
+               "   a1 = ({:.4e}, {:.4e}, {:.4e})\n"
+               "   a2 = ({:.4e}, {:.4e}, {:.4e})\n",
+               a1(0), a1(1), a1(2), a2(0), a2(1), a2(2));
   }
 
   // Bloch wave vector: use the BZ-wrapped value from MaterialOperator so the port is
