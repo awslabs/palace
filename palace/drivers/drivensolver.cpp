@@ -168,8 +168,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       std::unique_ptr<ComplexOperator> A_total;
       if (has_floquet_F)
       {
-        A_total =
-            std::make_unique<SumComplexOperator>(std::move(A), std::move(F));
+        A_total = std::make_unique<SumComplexOperator>(std::move(A), std::move(F));
       }
 
       ksp.SetOperators(has_floquet_F ? *A_total : *A, *P);

@@ -52,8 +52,7 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     farfield_op(iodata, mat_op, *mesh.back()), surf_sigma_op(iodata, mat_op, *mesh.back()),
     surf_z_op(iodata, mat_op, *mesh.back()), lumped_port_op(iodata, mat_op, *mesh.back()),
     wave_port_op(iodata, mat_op, GetNDSpace(), GetH1Space()),
-    floquet_port_op(iodata, mat_op, GetNDSpace().Get()),
-    surf_j_op(iodata, *mesh.back()),
+    floquet_port_op(iodata, mat_op, GetNDSpace().Get()), surf_j_op(iodata, *mesh.back()),
     port_excitation_helper(lumped_port_op, wave_port_op, floquet_port_op, surf_j_op,
                            current_dipole_op)
 {
@@ -1099,8 +1098,7 @@ bool SpaceOperator::AddExcitationVector2Internal(int excitation_idx, double omeg
   MFEM_VERIFY(RHS2.Size() == GetNDSpace().GetTrueVSize(),
               "Invalid T-vector size for AddExcitationVector2Internal!");
   // Floquet port excitation: directly adds to RHS (not via boundary linear form).
-  bool nnz_floquet =
-      floquet_port_op.AddExcitationVector(excitation_idx, omega, RHS2);
+  bool nnz_floquet = floquet_port_op.AddExcitationVector(excitation_idx, omega, RHS2);
 
   SumVectorCoefficient fbr(GetMesh().SpaceDimension()), fbi(GetMesh().SpaceDimension());
   wave_port_op.AddExcitationBdrCoefficients(excitation_idx, omega, fbr, fbi);

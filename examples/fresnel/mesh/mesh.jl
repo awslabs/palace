@@ -21,22 +21,23 @@ using Gmsh: gmsh
 Generate a structured hex mesh for the Fresnel reflection test case.
 
 The geometry is a box [0,a] x [0,a] x [-L,L] with:
-- Two material regions: vacuum (z < 0, attr 1) and dielectric (z > 0, attr 2)
-- Periodic BCs on x-faces (attr 1,2) and y-faces (attr 3,4)
-- Floquet port at z = -L (attr 5, excitation) and z = L (attr 6, transmission)
+
+  - Two material regions: vacuum (z < 0, attr 1) and dielectric (z > 0, attr 2)
+  - Periodic BCs on x-faces (attr 1,2) and y-faces (attr 3,4)
+  - Floquet port at z = -L (attr 5, excitation) and z = L (attr 6, transmission)
 
 Uses transfinite structured hex mesh to avoid OCC fragmentation issues.
 Units: cm (Palace L0 = 1e-2 for cm -> m conversion).
 """
 function generate_fresnel_mesh(;
-    filename::AbstractString = "fresnel.msh",
-    a::Real = 1.0,
-    L::Real = 5.0,
-    n_xy::Integer = 2,
-    n_z::Integer = 5,
-    order::Integer = 1,
-    verbose::Integer = 5,
-    gui::Bool = false
+    filename::AbstractString="fresnel.msh",
+    a::Real=1.0,
+    L::Real=5.0,
+    n_xy::Integer=2,
+    n_z::Integer=5,
+    order::Integer=1,
+    verbose::Integer=5,
+    gui::Bool=false
 )
     gmsh.initialize()
     gmsh.option.setNumber("General.Verbosity", verbose)
@@ -72,16 +73,16 @@ function generate_fresnel_mesh(;
     p12 = geo.addPoint(0.0, a, L)
 
     # Lines — bottom face (z = -L)
-    l1  = geo.addLine(p1, p2)
-    l2  = geo.addLine(p2, p3)
-    l3  = geo.addLine(p3, p4)
-    l4  = geo.addLine(p4, p1)
+    l1 = geo.addLine(p1, p2)
+    l2 = geo.addLine(p2, p3)
+    l3 = geo.addLine(p3, p4)
+    l4 = geo.addLine(p4, p1)
 
     # Lines — interface (z = 0)
-    l5  = geo.addLine(p5, p6)
-    l6  = geo.addLine(p6, p7)
-    l7  = geo.addLine(p7, p8)
-    l8  = geo.addLine(p8, p5)
+    l5 = geo.addLine(p5, p6)
+    l6 = geo.addLine(p6, p7)
+    l7 = geo.addLine(p7, p8)
+    l8 = geo.addLine(p8, p5)
 
     # Lines — top face (z = L)
     l9  = geo.addLine(p9, p10)
