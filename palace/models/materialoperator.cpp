@@ -409,18 +409,14 @@ void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
   mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
   bbmax -= bbmin;
 
-  // Ensure Floquet wave vector components are in range [-π/L, π/L].
+  // Wrap Floquet wave vector components to the first Brillouin zone [-π/L, π/L].
+  // Uses remainder (not fmod) to correctly handle negative values.
   for (int i = 0; i < sdim; i++)
   {
-    if (wave_vector[i] > M_PI / bbmax[i])
+    double half_bz = M_PI / bbmax[i];
+    if (wave_vector[i] > half_bz || wave_vector[i] < -half_bz)
     {
-      wave_vector[i] =
-          -M_PI / bbmax[i] + fmod(wave_vector[i] + M_PI / bbmax[i], 2 * M_PI / bbmax[i]);
-    }
-    else if (wave_vector[i] < -M_PI / bbmax[i])
-    {
-      wave_vector[i] =
-          M_PI / bbmax[i] + fmod(wave_vector[i] - M_PI / bbmax[i], 2 * M_PI / bbmax[i]);
+      wave_vector[i] = std::remainder(wave_vector[i], 2.0 * half_bz);
     }
   }
 

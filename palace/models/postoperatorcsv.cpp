@@ -1160,19 +1160,18 @@ auto PostOperatorCSV<solver_t>::InitializeFloquetPortS(const SpaceOperator &fem_
       // Add columns for each user-requested mode on this port.
       for (const auto &mode : port.GetModes())
       {
-        if (!mode.for_output)
+        if (!HasFlag(mode.use, FloquetModeUse::Output))
           continue;
         auto pol =
             circular_output ? (mode.is_te ? "RHC" : "LHC") : (mode.is_te ? "TE" : "TM");
-        t.insert(format("abs_P{}_{}_{}_{}_exc{}", port_idx, mode.m, mode.n, pol, ex_idx),
-                 format("|S[P{}({},{}){}][{}]| (dB)", port_idx, mode.m, mode.n, pol,
+        t.insert(
+            format("abs_P{}_{}_{}_{}_exc{}", port_idx, mode.m, mode.n, pol, ex_idx),
+            format("|S[P{}({},{}){}][{}]| (dB)", port_idx, mode.m, mode.n, pol, ex_idx),
+            ex_idx);
+        t.insert(format("arg_P{}_{}_{}_{}_exc{}", port_idx, mode.m, mode.n, pol, ex_idx),
+                 format("arg(S[P{}({},{}){}][{}]) (deg.)", port_idx, mode.m, mode.n, pol,
                         ex_idx),
                  ex_idx);
-        t.insert(
-            format("arg_P{}_{}_{}_{}_exc{}", port_idx, mode.m, mode.n, pol, ex_idx),
-            format("arg(S[P{}({},{}){}][{}]) (deg.)", port_idx, mode.m, mode.n, pol,
-                   ex_idx),
-            ex_idx);
       }
     }
   }

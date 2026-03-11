@@ -4,6 +4,8 @@
 #include "postoperator.hpp"
 
 #include <algorithm>
+#include <complex>
+#include <set>
 #include <string>
 #include "drivers/boundarymodesolver.hpp"
 #include "fem/coefficient.hpp"
@@ -26,6 +28,8 @@
 
 namespace palace
 {
+
+using namespace std::complex_literals;
 
 namespace
 {
@@ -1228,7 +1232,30 @@ void PostOperator<solver_t>::MeasureFloquetPorts() const
     for (const auto &[idx, data] : fem_op->GetFloquetPortOp())
     {
       bool is_driving = (data.excitation == measurement_cache.ex_idx);
-      auto S_all = data.GetAllSParameters(*E, is_driving, circular_output);
+      auto S_all = data.GetAllSParameters(*E, is_driving);
+
+      // For circular excitation, rotate TE/TM output to RHC/LHC basis.
+      // Unitary: |S_RHC|² + |S_LHC|² = |S_TE|² + |S_TM|² (energy conserved).
+      if (circular_output)
+      {
+        const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
+        std::map<std::tuple<int, int, bool>, std::complex<double>> circ;
+        std::set<std::pair<int, int>> orders;
+        for (const auto &[key, S] : S_all)
+        {
+          orders.insert({std::get<0>(key), std::get<1>(key)});
+        }
+        for (const auto &[m, n] : orders)
+        {
+          auto it_te = S_all.find({m, n, true});
+          auto it_tm = S_all.find({m, n, false});
+          auto s_te = (it_te != S_all.end()) ? it_te->second : 0.0;
+          auto s_tm = (it_tm != S_all.end()) ? it_tm->second : 0.0;
+          circ[{m, n, true}] = (s_te + 1i * s_tm) * inv_sqrt2;   // RHC
+          circ[{m, n, false}] = (s_te - 1i * s_tm) * inv_sqrt2;  // LHC
+        }
+        S_all = std::move(circ);
+      }
 
       measurement_cache.floquet_port_s[idx] = std::move(S_all);
     }

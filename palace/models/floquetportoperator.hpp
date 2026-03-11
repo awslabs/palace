@@ -27,13 +27,24 @@ namespace config
 struct FloquetPortData;
 }  // namespace config
 
+// Flags controlling which subsystems use a given Floquet mode.
+enum class FloquetModeUse : std::uint8_t
+{
+  Output = 1,  // S-parameter CSV output (user-requested ±MaxOrder)
+  Dtn = 2,     // DtN boundary correction (BZ-centered range)
+  Both = 3     // Output | Dtn
+};
+inline bool HasFlag(FloquetModeUse u, FloquetModeUse flag)
+{
+  return (static_cast<uint8_t>(u) & static_cast<uint8_t>(flag)) != 0;
+}
+
 // Represents a single diffraction order (m, n) with a specific polarization (TE/TM).
 struct FloquetMode
 {
   int m, n;            // Lattice indices (physical convention)
   bool is_te;          // true = TE (s-pol), false = TM (p-pol)
-  bool for_output;     // true = included in S-parameter CSV output
-  bool for_dtn;        // true = included in DtN boundary correction
+  FloquetModeUse use;  // Which subsystems use this mode
   mfem::Vector B_mn;   // Transverse wavevector B_mn = m*b1 + n*b2
   mfem::Vector e_pol;  // Polarization unit vector (3D, tangential to port)
   ComplexVector v;     // Fourier projection: v_j = int_Gamma (nxnxN_j).e_p exp(-iB.r) dS
@@ -141,9 +152,10 @@ public:
   // S-parameter for all propagating orders at the current frequency.
   // If subtract_incident is true, subtracts the incident field contribution from the
   // driving port's (0,0) modes (total → scattered field conversion).
+  // Returns S-parameters in the TE/TM linear basis (always).
+  // Circular rotation, if needed, is applied by the caller.
   std::map<std::tuple<int, int, bool>, std::complex<double>>
-  GetAllSParameters(const GridFunction &E, bool subtract_incident = false,
-                    bool circular_output = false) const;
+  GetAllSParameters(const GridFunction &E, bool subtract_incident = false) const;
 
   // Get the number of propagating orders at current frequency.
   int NumPropagatingOrders() const;
@@ -156,6 +168,10 @@ public:
   // Returns 1 W: the port mode is normalized such that ∫ (E_inc × H_inc⋆) · n̂ dS = 1.
   double GetExcitationPower() const { return HasExcitation() ? 1.0 : 0.0; }
 
+  // Material properties at the port (nondimensional, from adjacent volume element).
+  double GetMuEpsPort() const { return mu_eps_port; }
+  double GetMuRPort() const { return mu_r_port; }
+
 private:
   const MaterialOperator &mat_op;
   mfem::Array<int> attr_list;
@@ -163,17 +179,16 @@ private:
   // Lattice and reciprocal lattice vectors.
   mfem::Vector a1, a2, b1, b2;
 
+  // Bloch wave vector (BZ-wrapped, from MaterialOperator).
+  mfem::Vector k_F;
+
   // Port geometry.
   mfem::Vector port_normal;
   double port_area;
 
-public:
-  // Material properties at the port (nondimensional, from adjacent volume element).
+  // Material properties at the port.
   double mu_eps_port;  // mu_r * eps_r (for propagation constant)
   double mu_r_port;    // mu_r (for DtN coefficient and excitation)
-
-  // Bloch wave vector (from periodic BC config). Public for Robin BC computation.
-  mfem::Vector k_F;
 
 private:
   // Diffraction order limits.
@@ -195,6 +210,18 @@ private:
 
   // MPI communicator.
   MPI_Comm comm;
+
+  // Compute the effective DtN eigenvalue and unit-power normalization for the incident
+  // polarization. Used by both AddExcitationVector and GetAllSParameters.
+  struct IncidentNormalization
+  {
+    double gamma_00;      // Propagation constant of the (0,0) mode
+    double lambda_te_00;  // TE DtN eigenvalue: γ
+    double lambda_tm_00;  // TM DtN eigenvalue: ω²με/γ
+    double lambda_eff;    // Weighted: |α_TE|²λ_TE + |α_TM|²λ_TM
+    double c_inc;         // Unit-power scale factor: 1/√(λ_eff |Γ| / (2ωμ))
+  };
+  IncidentNormalization ComputeIncidentNormalization(double omega) const;
 
   void ComputeReciprocalLattice();
   void EnumerateOrders();

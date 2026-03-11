@@ -363,9 +363,7 @@ void FloquetPortData::EnumerateOrders()
       // k_t = B_mn - k_F (transverse wavevector relative to the periodic field)
       // With BZ shift: k_t = (m-bz_m)*b1 + (n-bz_n)*b2 - k_F_wrapped
       //              = m*b1 + n*b2 - k_F_unwrapped (same physical k_t)
-      // Eq. 38).
-      // But gamma uses: gamma^2 = omega^2*mu*eps - |B_mn - k_F|^2 (Eq. in Section 3).
-      // We'll compute gamma in Initialize(omega).
+      // gamma^2 = omega^2*mu*eps - |k_t|^2, computed in Initialize(omega).
 
       // Compute TE and TM polarization vectors.
       // The transverse wavevector direction for this order:
@@ -452,31 +450,20 @@ void FloquetPortData::EnumerateOrders()
       bool in_user_range = (std::abs(m) <= max_order_m && std::abs(n) <= max_order_n);
       bool in_dtn_range =
           (std::abs(m - bz_m) <= max_order_m && std::abs(n - bz_n) <= max_order_n);
+      auto use = static_cast<FloquetModeUse>(
+          (in_user_range ? static_cast<uint8_t>(FloquetModeUse::Output) : 0) |
+          (in_dtn_range ? static_cast<uint8_t>(FloquetModeUse::Dtn) : 0));
 
-      // Add TE mode.
+      // Add TE and TM modes for this order.
+      for (bool is_te : {true, false})
       {
         FloquetMode mode;
         mode.m = m;
         mode.n = n;
-        mode.is_te = true;
-        mode.for_output = in_user_range;
-        mode.for_dtn = in_dtn_range;
+        mode.is_te = is_te;
+        mode.use = use;
         mode.B_mn = B_mn;
-        mode.e_pol = e_te;
-        mode.gamma_sq = 0.0;
-        modes.push_back(std::move(mode));
-      }
-
-      // Add TM mode.
-      {
-        FloquetMode mode;
-        mode.m = m;
-        mode.n = n;
-        mode.is_te = false;
-        mode.for_output = in_user_range;
-        mode.for_dtn = in_dtn_range;
-        mode.B_mn = B_mn;
-        mode.e_pol = e_tm;
+        mode.e_pol = is_te ? e_te : e_tm;
         mode.gamma_sq = 0.0;
         modes.push_back(std::move(mode));
       }
@@ -637,7 +624,7 @@ std::unique_ptr<LowRankComplexOperator> FloquetPortData::GetBoundaryOperator() c
 
   for (const auto &mode : modes)
   {
-    if (!mode.for_dtn)
+    if (!HasFlag(mode.use, FloquetModeUse::Dtn))
     {
       continue;  // Only BZ-centered modes enter the DtN correction.
     }
@@ -699,9 +686,32 @@ std::unique_ptr<LowRankComplexOperator> FloquetPortData::GetBoundaryOperator() c
   return op;
 }
 
+FloquetPortData::IncidentNormalization
+FloquetPortData::ComputeIncidentNormalization(double omega) const
+{
+  IncidentNormalization norm{};
+  // TE and TM of the same (0,0) order share the same gamma_sq, so it doesn't matter
+  // which polarization we find first.
+  for (const auto &mode : modes)
+  {
+    if (mode.m == 0 && mode.n == 0 && mode.gamma_sq > 0.0)
+    {
+      norm.gamma_00 = std::sqrt(mode.gamma_sq);
+      break;
+    }
+  }
+  MFEM_VERIFY(norm.gamma_00 > 0.0, "Incident Floquet mode is evanescent or not found!");
+  norm.lambda_te_00 = norm.gamma_00;
+  norm.lambda_tm_00 = omega * omega * mu_eps_port / norm.gamma_00;
+  norm.lambda_eff = std::norm(inc_alpha_te) * norm.lambda_te_00 +
+                    std::norm(inc_alpha_tm) * norm.lambda_tm_00;
+  double p_unit = norm.lambda_eff * port_area / (2.0 * omega * mu_r_port);
+  norm.c_inc = 1.0 / std::sqrt(p_unit);
+  return norm;
+}
+
 std::map<std::tuple<int, int, bool>, std::complex<double>>
-FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident,
-                                   bool circular_output) const
+FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident) const
 {
   std::map<std::tuple<int, int, bool>, std::complex<double>> result;
 
@@ -717,26 +727,11 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
   // For the incident (0,0) mode: γ_inc = γ_00 = ω √(μ_r ε_r), so √(γ/γ_inc) = 1.
   // For the driving port: S = √(γ/γ_inc) × c - δ_{incident mode} (subtract 1).
 
-  // Compute effective DtN eigenvalue for the incident polarization:
-  //   λ_eff = |α_TE|² λ_TE + |α_TM|² λ_TM
-  double gamma_00 = 0.0;
-  for (const auto &mode : modes)
-  {
-    if (mode.m == 0 && mode.n == 0 && mode.gamma_sq > 0.0)
-    {
-      gamma_00 = std::sqrt(mode.gamma_sq);
-      break;
-    }
-  }
-  MFEM_VERIFY(gamma_00 > 0.0, "Incident Floquet mode not found in mode list!");
-  double lambda_te_00 = gamma_00;
-  double lambda_tm_00 = omega0 * omega0 * mu_eps_port / gamma_00;
-  double lambda_eff =
-      std::norm(inc_alpha_te) * lambda_te_00 + std::norm(inc_alpha_tm) * lambda_tm_00;
-
-  // Unit-power normalization: P = λ_eff/(2ωμ_r) × |Γ|.
-  double p_unit = lambda_eff * port_area / (2.0 * omega0 * mu_r_port);
-  double c_inc = 1.0 / std::sqrt(p_unit);
+  auto norm = ComputeIncidentNormalization(omega0);
+  double lambda_te_00 = norm.lambda_te_00;
+  double lambda_tm_00 = norm.lambda_tm_00;
+  double lambda_eff = norm.lambda_eff;
+  double c_inc = norm.c_inc;
 
   // Restrict E to true DOFs once (shared across all modes).
   const auto *P = E.Real().ParFESpace()->GetProlongationMatrix();
@@ -754,7 +749,7 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
 
   for (const auto &mode : modes)
   {
-    if (!mode.for_output || mode.gamma_sq <= 0.0)
+    if (!HasFlag(mode.use, FloquetModeUse::Output) || mode.gamma_sq <= 0.0)
     {
       continue;  // Only user-requested propagating orders carry S-parameters.
     }
@@ -793,38 +788,6 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
     }
   }
 
-  // For circular polarization (RHC/LHC), rotate the output basis from TE/TM to
-  // circular. The unitary rotation preserves |S_RHC|² + |S_LHC|² = |S_TE|² + |S_TM|²,
-  // so energy conservation is automatic. The map key bool is repurposed:
-  // true = RHC (was TE), false = LHC (was TM).
-  if (circular_output)
-  {
-    std::map<std::tuple<int, int, bool>, std::complex<double>> circ_result;
-    const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
-
-    // Collect all unique (m,n) orders.
-    std::set<std::pair<int, int>> orders;
-    for (const auto &[key, S] : result)
-    {
-      auto [m, n, is_te] = key;
-      orders.insert({m, n});
-    }
-
-    for (const auto &[m, n] : orders)
-    {
-      auto it_te = result.find({m, n, true});
-      auto it_tm = result.find({m, n, false});
-      std::complex<double> s_te = (it_te != result.end()) ? it_te->second : 0.0;
-      std::complex<double> s_tm = (it_tm != result.end()) ? it_tm->second : 0.0;
-
-      // Unitary rotation from linear to circular basis. This preserves
-      // |S_RHC|² + |S_LHC|² = |S_TE|² + |S_TM|², guaranteeing energy conservation.
-      circ_result[{m, n, true}] = (s_te + 1i * s_tm) * inv_sqrt2;   // RHC
-      circ_result[{m, n, false}] = (s_te - 1i * s_tm) * inv_sqrt2;  // LHC
-    }
-    return circ_result;
-  }
-
   return result;
 }
 
@@ -851,19 +814,10 @@ bool FloquetPortData::AddExcitationVector(double omega, ComplexVector &RHS) cons
     return false;
   }
 
-  // Compute effective DtN eigenvalue for the incident polarization:
-  //   λ_eff = |α_TE|² λ_TE + |α_TM|² λ_TM
-  // This determines the power normalization for any polarization (linear or circular).
-  double gamma_00 = mode_te ? std::sqrt(mode_te->gamma_sq) : std::sqrt(mode_tm->gamma_sq);
-  MFEM_VERIFY(gamma_00 > 0.0, "Incident Floquet mode is evanescent at this frequency!");
-  double lambda_te = gamma_00;
-  double lambda_tm = omega * omega * mu_eps_port / gamma_00;
-  double lambda_eff =
-      std::norm(inc_alpha_te) * lambda_te + std::norm(inc_alpha_tm) * lambda_tm;
-
-  // Unit-power normalization: P = λ_eff/(2ωμ_r) × |Γ|.
-  double p_unit = lambda_eff * port_area / (2.0 * omega * mu_r_port);
-  double c_inc = 1.0 / std::sqrt(p_unit);
+  auto norm = ComputeIncidentNormalization(omega);
+  double lambda_te = norm.lambda_te_00;
+  double lambda_tm = norm.lambda_tm_00;
+  double c_inc = norm.c_inc;
 
   // f = Σ_p c_inc × 2i × α_p × λ_p / μ_r × conj(v_p)
   // conj(v) appears because the bilinear form uses v^T (not v^H), and the incident
