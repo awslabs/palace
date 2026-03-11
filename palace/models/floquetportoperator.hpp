@@ -146,6 +146,13 @@ public:
   // Update propagation constants for given omega. Cached.
   void Initialize(double omega);
 
+  // Static utility functions (public for testability).
+  static void ComputeReciprocalLattice(const mfem::Vector &a1, const mfem::Vector &a2,
+                                       mfem::Vector &b1, mfem::Vector &b2);
+  static int ComputeBZOffset(const mfem::Vector &kF_unwrapped,
+                             const mfem::Vector &kF_wrapped, const mfem::Vector &b,
+                             double b_sq);
+
   // Get the low-rank boundary operator F(omega) for this port.
   std::unique_ptr<LowRankComplexOperator> GetBoundaryOperator() const;
 
@@ -223,7 +230,6 @@ private:
   };
   IncidentNormalization ComputeIncidentNormalization(double omega) const;
 
-  void ComputeReciprocalLattice();
   void EnumerateOrders();
   void AssembleFourierProjections(mfem::ParFiniteElementSpace &nd_fespace);
 };

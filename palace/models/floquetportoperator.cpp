@@ -173,23 +173,23 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
   }
 
   // Compute reciprocal lattice.
-  ComputeReciprocalLattice();
+  ComputeReciprocalLattice(a1, a2, b1, b2);
+  Mpi::Print(" Floquet port reciprocal lattice:\n"
+             "   b1 = ({:.4e}, {:.4e}, {:.4e})\n"
+             "   b2 = ({:.4e}, {:.4e}, {:.4e})\n",
+             b1(0), b1(1), b1(2), b2(0), b2(1), b2(2));
 
   // Compute the BZ wrapping offset: G = kF_unwrapped - kF_wrapped = bz_m*b1 + bz_n*b2.
   // When k_F is wrapped, the Fourier projection kernel must be shifted by -G so that
-  // physical mode labels remain unchanged. Mode (m,n) uses B = (m-bz_m)*b1 + (n-bz_n)*b2
-  // for the Fourier kernel, while the physical k_t = m*b1 + n*b2 - k_F_unwrapped is the
-  // same as (m-bz_m)*b1 + (n-bz_n)*b2 - k_F_wrapped.
+  // physical mode labels remain unchanged.
   {
-    mfem::Vector dkF(3);
+    mfem::Vector kF_unwrapped(3);
     for (int i = 0; i < 3; i++)
     {
-      dkF(i) = periodic.wave_vector[i] - k_F(i);
+      kF_unwrapped(i) = periodic.wave_vector[i];
     }
-    double db1 = dkF * b1 / (b1 * b1);
-    double db2 = dkF * b2 / (b2 * b2);
-    bz_m = static_cast<int>(std::round(db1));
-    bz_n = static_cast<int>(std::round(db2));
+    bz_m = ComputeBZOffset(kF_unwrapped, k_F, b1, b1 * b1);
+    bz_n = ComputeBZOffset(kF_unwrapped, k_F, b2, b2 * b2);
     if (bz_m != 0 || bz_n != 0)
     {
       Mpi::Print(" Floquet port: BZ wrapping active (shift = {:d}*b1 + {:d}*b2)\n", bz_m,
@@ -292,7 +292,9 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
              port_normal(0), port_normal(1), port_normal(2));
 }
 
-void FloquetPortData::ComputeReciprocalLattice()
+void FloquetPortData::ComputeReciprocalLattice(const mfem::Vector &a1,
+                                               const mfem::Vector &a2, mfem::Vector &b1,
+                                               mfem::Vector &b2)
 {
   // For 2D periodicity in 3D space, the reciprocal lattice vectors satisfy:
   //   a_i . b_j = 2*pi * delta_ij
@@ -307,9 +309,8 @@ void FloquetPortData::ComputeReciprocalLattice()
 
   MFEM_VERIFY(vol > 0.0, "Lattice vectors a1, a2 are degenerate (zero cross product)!");
 
-  // b1 = 2*pi * (a2 x n) / (a1 . (a2 x n))
-  // b2 = 2*pi * (n x a1) / (a2 . (n x a1))
-  // Simplified: b1 = 2*pi * (a2 x n) / |a1 x a2|^2
+  // b1 = 2*pi * (a2 x n) / |a1 x a2|^2
+  // b2 = 2*pi * (n x a1) / |a1 x a2|^2
   mfem::Vector a2xn(3), nxa1(3);
   a2xn(0) = a2(1) * n(2) - a2(2) * n(1);
   a2xn(1) = a2(2) * n(0) - a2(0) * n(2);
@@ -320,6 +321,8 @@ void FloquetPortData::ComputeReciprocalLattice()
   nxa1(2) = n(0) * a1(1) - n(1) * a1(0);
 
   double vol_sq = vol * vol;
+  b1.SetSize(3);
+  b2.SetSize(3);
   for (int i = 0; i < 3; i++)
   {
     b1(i) = 2.0 * M_PI * a2xn(i) / vol_sq;
@@ -327,19 +330,23 @@ void FloquetPortData::ComputeReciprocalLattice()
   }
 
   // Verify: a_i . b_j = 2*pi * delta_ij.
-  double a1b1 = a1 * b1;
-  double a1b2 = a1 * b2;
-  double a2b1 = a2 * b1;
-  double a2b2 = a2 * b2;
-  MFEM_VERIFY(std::abs(a1b1 - 2.0 * M_PI) < 1e-10 && std::abs(a2b2 - 2.0 * M_PI) < 1e-10,
+  MFEM_VERIFY(std::abs(a1 * b1 - 2.0 * M_PI) < 1e-10 &&
+                  std::abs(a2 * b2 - 2.0 * M_PI) < 1e-10,
               "Reciprocal lattice computation failed: diagonal check!");
-  MFEM_VERIFY(std::abs(a1b2) < 1e-10 && std::abs(a2b1) < 1e-10,
+  MFEM_VERIFY(std::abs(a1 * b2) < 1e-10 && std::abs(a2 * b1) < 1e-10,
               "Reciprocal lattice computation failed: off-diagonal check!");
+}
 
-  Mpi::Print(" Floquet port reciprocal lattice:\n"
-             "   b1 = ({:.4e}, {:.4e}, {:.4e})\n"
-             "   b2 = ({:.4e}, {:.4e}, {:.4e})\n",
-             b1(0), b1(1), b1(2), b2(0), b2(1), b2(2));
+int FloquetPortData::ComputeBZOffset(const mfem::Vector &kF_unwrapped,
+                                     const mfem::Vector &kF_wrapped,
+                                     const mfem::Vector &b, double b_sq)
+{
+  mfem::Vector dkF(kF_unwrapped.Size());
+  for (int i = 0; i < kF_unwrapped.Size(); i++)
+  {
+    dkF(i) = kF_unwrapped(i) - kF_wrapped(i);
+  }
+  return static_cast<int>(std::round(dkF * b / b_sq));
 }
 
 void FloquetPortData::EnumerateOrders()
