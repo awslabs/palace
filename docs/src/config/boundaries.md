@@ -42,6 +42,10 @@ SPDX-License-Identifier: Apache-2.0
     {
         ...
     },
+    "FloquetPort":
+    [
+        ...
+    ],
     "SurfaceCurrent":
     [
         ...
@@ -120,6 +124,15 @@ frequency domain driven and eigenmode simulation types.
 wave port boundary mode analysis, overriding any other boundary condition assigned to those
 attributes. Only relevant when wave port boundaries are specified under
 [`config["Boundaries"]["WavePort"]`](#boundaries%5B%22WavePort%22%5D).
+
+`"FloquetPort"` :  Array of objects for configuring Floquet port boundary conditions for
+periodic structures. Floquet ports provide absorbing boundary conditions for diffraction
+gratings and other periodic electromagnetic devices, enabling the computation of
+diffraction efficiencies (S-parameters) for multiple propagating orders. Floquet port
+boundaries are only available for frequency domain driven simulations and **require periodic
+boundary conditions** to be configured under
+[`config["Boundaries"]["Periodic"]`](#boundaries%5B%22Periodic%22%5D) with at least two
+`"BoundaryPairs"` (periodicity in two transverse directions).
 
 `"SurfaceCurrent"` :  Array of objects for configuring surface current boundary conditions.
 This boundary prescribes a unit source surface current excitation on the given boundary in
@@ -445,6 +458,67 @@ with
 [`config["Boundaries"]["PEC"]["Attributes"]`](#boundaries%5B%22PEC%22%5D). This overrides any
 impedance, absorbing, or conductivity boundary condition that may be assigned to the same
 attributes for the purpose of the 2D wave port boundary mode problem.
+
+## `boundaries["FloquetPort"]`
+
+```json
+"FloquetPort":
+[
+    {
+        "Index": <int>,
+        "Attributes": [<int array>],
+        "Excitation": <bool>,
+        "Active": <bool>,
+        "IncidentPolarization": <string>,
+        "MaxOrder": <int>
+    },
+    ...
+]
+```
+
+with
+
+`"Index" [None]` :  Index of this Floquet port, used in postprocessing output files.
+
+`"Attributes" [None]` :  Integer array of mesh boundary attributes for this Floquet port
+boundary. The port face must be planar and lie on the true boundary of the computational
+domain (one-sided, like wave ports). The medium adjacent to the port must be homogeneous
+and isotropic.
+
+!!! note "Periodic boundary conditions required"
+
+    Floquet ports require periodic boundary conditions
+    ([`config["Boundaries"]["Periodic"]`](#boundaries%5B%22Periodic%22%5D)) with at least
+    two `"BoundaryPairs"` defining periodicity in the two transverse directions. The
+    `"FloquetWaveVector"` in the periodic configuration determines the angle of incidence:
+    zero for normal incidence, nonzero for oblique. The wave vector is specified in radians
+    per mesh length unit.
+
+`"Excitation" [false]` :  Turns on or off port excitation for this Floquet port boundary.
+When excited, a plane wave in the specular (0,0) diffraction order is injected with unit
+power.
+
+`"Active" [true]` :  Turns on or off the absorbing boundary condition for this Floquet port
+boundary. When active, the port absorbs all outgoing Floquet modes using a Robin boundary
+condition with low-rank corrections for each diffraction order.
+
+`"IncidentPolarization" ["TE"]` :  Polarization of the incident plane wave. Available
+options are:
+
+  - `"TE"` :  Transverse electric (s-polarization). Electric field perpendicular to the
+    plane of incidence.
+  - `"TM"` :  Transverse magnetic (p-polarization). Electric field in the plane of
+    incidence.
+  - `"RHC"` :  Right-hand circular polarization. Equal superposition of TE and TM with
+    90° phase shift: ``\mathbf{E} = (\hat{e}_\text{TE} + j\hat{e}_\text{TM})/\sqrt{2}``.
+  - `"LHC"` :  Left-hand circular polarization. Equal superposition of TE and TM with
+    -90° phase shift: ``\mathbf{E} = (\hat{e}_\text{TE} - j\hat{e}_\text{TM})/\sqrt{2}``.
+
+`"MaxOrder" [-1]` :  Maximum diffraction order index to include. With `MaxOrder = M`, all
+orders ``(m, n)`` with ``|m| \leq M`` and ``|n| \leq M`` are included, each with both TE
+and TM polarizations. A value of `-1` (default) enables automatic selection. A value of `0`
+includes only the specular (0,0) order. Higher values are needed when the periodic cell
+supports propagating higher-order diffraction.
 
 ## `boundaries["SurfaceCurrent"]`
 

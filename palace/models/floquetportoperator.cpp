@@ -103,10 +103,18 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
     attr_list[i] = data.attributes[i];
   }
 
+  // Floquet ports require periodic boundary conditions in the transverse directions.
+  // The periodic mesh provides DOF identification on opposite faces, and the Floquet
+  // wave vector (if nonzero) provides the Bloch phase shift.
+  const auto &periodic = iodata.boundaries.periodic;
+  MFEM_VERIFY(!periodic.boundary_pairs.empty(),
+              "FloquetPort requires periodic boundary conditions to be configured under "
+              "\"Boundaries\"/\"Periodic\"/\"BoundaryPairs\". At least two periodic "
+              "boundary pairs are needed for 3D periodicity.");
+
   // Extract lattice vectors. If periodic boundary pairs with translations are specified,
   // use them. Otherwise, infer from the port face bounding box (works for axis-aligned
   // rectangular cells with built-in mesh periodicity).
-  const auto &periodic = iodata.boundaries.periodic;
   double mesh_scale = iodata.units.GetMeshLengthRelativeScale();
   if (periodic.boundary_pairs.size() >= 2)
   {
@@ -855,6 +863,9 @@ FloquetPortOperator::FloquetPortOperator(const IoData &iodata,
   {
     return;
   }
+  MFEM_VERIFY(iodata.problem.type == ProblemType::DRIVEN,
+              "Floquet port boundaries are only available for frequency domain driven "
+              "simulations!");
 
   Mpi::Print("\nConfiguring {:d} Floquet port boundar{}\n", floquet_port_data.size(),
              (floquet_port_data.size() > 1) ? "ies" : "y");
