@@ -35,7 +35,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   KspSolver ksp(iodata, curlcurl_op.GetNDSpaces(), &curlcurl_op.GetH1Spaces());
   ksp.SetOperators(*K, *K);
 
-  // Terminal indices are the set of boundaries over which to compute the inductance matrix.
+  // Surface current source indices define the boundaries over which to compute the
+  // inductance matrix.
   PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
   int n_step = static_cast<int>(curlcurl_op.GetSurfaceCurrentOp().Size());
   MFEM_VERIFY(n_step > 0,

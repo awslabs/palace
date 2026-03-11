@@ -53,9 +53,10 @@ The format of this changelog is based on
 
 #### Interface Changes
 
-  - `config["Boundaries"]["Terminal"]` must now be used for electrostatic and magnetostatic
-    simulations to compute capacitance and inductance matrices. Previously, terminals could
-    also be specified under `"LumpedPort"`.
+  - `config["Boundaries"]["Terminal"]` must now be used for electrostatic simulations to
+    compute capacitance matrices, and `config["Boundaries"]["SurfaceCurrent"]` for
+    magnetostatic simulations to compute inductance matrices. Previously, terminals and
+    surface current sources could also be specified under `"LumpedPort"`.
     [PR 624](https://github.com/awslabs/palace/pull/624).
   - `config["Solver"]["Eigenmode"]["Target"]` is now always required for eigenmode
     simulations. Previously, it could be omitted if a `"Driven"` section was also present.
