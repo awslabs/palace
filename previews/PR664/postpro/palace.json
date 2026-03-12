@@ -1,0 +1,83 @@
+{
+  "ElapsedTime": {
+    "Counts": {
+      "Adaptation": 0,
+      "CoarseSolve": 21,
+      "Construction": 1,
+      "DiskIO": 3,
+      "Div.-FreeProjection": 0,
+      "EigenvalueSolve": 0,
+      "Estimation": 2,
+      "FarFields": 0,
+      "Gridfunction": 3,
+      "Initialization": 2,
+      "LinearSolve": 2,
+      "MeshPreprocessing": 1,
+      "OperatorConstruction": 1,
+      "PROMConstruction": 0,
+      "PROMSolve": 0,
+      "Paraview": 3,
+      "Postprocessing": 6,
+      "Preconditioner": 21,
+      "Rebalancing": 0,
+      "Setup": 1,
+      "Solve": 2,
+      "TimeStepping": 0,
+      "Total": 1,
+      "WavePorts": 0
+    },
+    "Durations": {
+      "Adaptation": 0.0,
+      "CoarseSolve": 0.009667068999999999,
+      "Construction": 2.751960734,
+      "DiskIO": 0.378697886,
+      "Div.-FreeProjection": 0.0,
+      "EigenvalueSolve": 0.0,
+      "Estimation": 0.048027788,
+      "FarFields": 0.0,
+      "Gridfunction": 3.294993678,
+      "Initialization": 0.37801003299999997,
+      "LinearSolve": 0.179815684,
+      "MeshPreprocessing": 0.46421843500000004,
+      "OperatorConstruction": 4.810847685,
+      "PROMConstruction": 0.0,
+      "PROMSolve": 0.0,
+      "Paraview": 8.622035047,
+      "Postprocessing": 0.16420656700000005,
+      "Preconditioner": 4.2632838259999986,
+      "Rebalancing": 0.0,
+      "Setup": 2.561257661,
+      "Solve": 2.5437500440000003,
+      "TimeStepping": 0.0,
+      "Total": 30.485584226,
+      "WavePorts": 0.0
+    }
+  },
+  "GitTag": "bb3fcf9",
+  "LinearSolver": {
+    "TotalIts": 17,
+    "TotalSolves": 2
+  },
+  "PeakMemoryMegabytes": {
+    "Average": 682.171875,
+    "Max": 682.171875,
+    "Min": 682.171875,
+    "Total": 682.171875
+  },
+  "PeakNodeMemoryMegabytes": {
+    "Average": 682.171875,
+    "Max": 682.171875,
+    "Min": 682.171875,
+    "Total": 682.171875
+  },
+  "Problem": {
+    "DegreesOfFreedom": 66328,
+    "MPISize": 1,
+    "MeshElements": 14362,
+    "MultigridDegreesOfFreedom": [
+      2536,
+      19857,
+      66328
+    ]
+  }
+}
