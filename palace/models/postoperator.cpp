@@ -5,8 +5,11 @@
 
 #include <algorithm>
 #include <string>
+#include "drivers/boundarymodesolver.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
+#include "fem/interpolator.hpp"
+#include "linalg/vector.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
@@ -14,8 +17,10 @@
 #include "models/surfacecurrentoperator.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -38,10 +43,59 @@ std::string OutputFolderName(const ProblemType solver_t)
       return "magnetostatic";
     case ProblemType::TRANSIENT:
       return "transient";
+    case ProblemType::BOUNDARYMODE:
+      return "boundarymode";
     default:
       return "unknown";
   }
 }
+
+// Coefficient for the in-plane B field of a waveguide mode propagating as e^{-ikn z}:
+//   Bt = -(kn/omega)(z_hat x Et) + (1/(i*omega))(grad_t(Ez) x z_hat)
+// Evaluates the real or imaginary part at any point given grid functions for Et and Ez.
+class ModeInPlaneBCoefficient : public mfem::VectorCoefficient
+{
+  const mfem::ParGridFunction &et_r, &et_i;
+  const mfem::ParGridFunction &ez_r, &ez_i;
+  double kn_r, kn_i, inv_omega;
+  bool compute_real;
+
+public:
+  ModeInPlaneBCoefficient(const mfem::ParGridFunction &et_r,
+                          const mfem::ParGridFunction &et_i,
+                          const mfem::ParGridFunction &ez_r,
+                          const mfem::ParGridFunction &ez_i, double kn_r, double kn_i,
+                          double omega, bool compute_real)
+    : mfem::VectorCoefficient(2), et_r(et_r), et_i(et_i), ez_r(ez_r), ez_i(ez_i),
+      kn_r(kn_r), kn_i(kn_i), inv_omega(1.0 / omega), compute_real(compute_real)
+  {
+  }
+
+  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    mfem::Vector etr(2), eti(2), grad_ezr(2), grad_ezi(2);
+    et_r.GetVectorValue(T, ip, etr);
+    et_i.GetVectorValue(T, ip, eti);
+    ez_r.GetGradient(T, grad_ezr);
+    ez_i.GetGradient(T, grad_ezi);
+
+    // z_hat x (vx, vy) = (-vy, vx); grad(f) x z_hat = (df/dy, -df/dx).
+    V.SetSize(2);
+    if (compute_real)
+    {
+      // Bt_r = -(kn_r/w) z_hat x Et_r + (kn_i/w) z_hat x Et_i + (1/w) grad(Ez_i) x z_hat
+      V(0) = (kn_r * etr(1) - kn_i * eti(1) + grad_ezi(1)) * inv_omega;
+      V(1) = (-kn_r * etr(0) + kn_i * eti(0) - grad_ezi(0)) * inv_omega;
+    }
+    else
+    {
+      // Bt_i = -(kn_r/w) z_hat x Et_i - (kn_i/w) z_hat x Et_r - (1/w) grad(Ez_r) x z_hat
+      V(0) = (kn_r * eti(1) + kn_i * etr(1) - grad_ezr(1)) * inv_omega;
+      V(1) = (-kn_r * eti(0) - kn_i * etr(0) + grad_ezr(0)) * inv_omega;
+    }
+  }
+};
 
 }  // namespace
 
@@ -63,10 +117,16 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
             return DomainPostOperator(iodata, fem_op_.GetMaterialOp(),
                                       fem_op_.GetNDSpace());
           }
+          else if constexpr (solver_t == ProblemType::BOUNDARYMODE)
+          {
+            // Mode analysis: E on ND space, B (Hz) on L2 curl space.
+            return DomainPostOperator(iodata, fem_op_.GetMaterialOp(), fem_op_.GetNDSpace(),
+                                      fem_op_.GetCurlSpace());
+          }
           else
           {
             return DomainPostOperator(iodata, fem_op_.GetMaterialOp(), fem_op_.GetNDSpace(),
-                                      fem_op_.GetRTSpace());
+                                      fem_op_.GetCurlSpace());
           }
         }())),
     surf_post_op(iodata, fem_op->GetMaterialOp(), fem_op->GetH1Space(),
@@ -89,8 +149,15 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   }
   if constexpr (HasBGridFunction<solver_t>())
   {
-    B = std::make_unique<GridFunction>(fem_op->GetRTSpace(),
+    B = std::make_unique<GridFunction>(fem_op_.GetCurlSpace(),
                                        HasComplexGridFunction<solver_t>());
+  }
+
+  // Mode analysis: create grid functions for out-of-plane E (H1) and in-plane B (ND).
+  if constexpr (solver_t == ProblemType::BOUNDARYMODE)
+  {
+    En = std::make_unique<GridFunction>(fem_op->GetH1Space(), true);
+    Bt_inplane = std::make_unique<GridFunction>(fem_op->GetNDSpace(), true);
   }
 
   // Add wave port boundary mode postprocessing, if available.
@@ -128,6 +195,86 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   else if (solver_t == ProblemType::TRANSIENT)
   {
     output_delta_post = iodata.solver.transient.delta_post;
+  }
+  else if (solver_t == ProblemType::BOUNDARYMODE)
+  {
+    output_n_post = iodata.solver.boundary_mode.n_post;
+  }
+
+  // Mode analysis impedance postprocessing setup.
+  if constexpr (solver_t == ProblemType::BOUNDARYMODE)
+  {
+    const auto &impedance_data = iodata.boundaries.postpro.impedance;
+    if (!impedance_data.empty())
+    {
+      has_impedance_postpro = true;
+      const auto &pmesh = fem_op->GetNDSpace().GetParMesh();
+      int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+      const auto &imp = impedance_data.begin()->second;
+      if (!imp.voltage_attributes.empty())
+      {
+        voltage_marker = mesh::AttrToMarker(bdr_attr_max, imp.voltage_attributes);
+      }
+      if (!imp.current_attributes.empty())
+      {
+        current_marker = mesh::AttrToMarker(bdr_attr_max, imp.current_attributes);
+      }
+      voltage_integration_order = imp.integration_order;
+      if (imp.voltage_path.size() >= 2)
+      {
+        has_voltage_coordinates = true;
+        for (const auto &pt : imp.voltage_path)
+        {
+          mfem::Vector p(pt.size());
+          for (int d = 0; d < static_cast<int>(pt.size()); d++)
+          {
+            p(d) = pt[d];  // Already nondimensionalized.
+          }
+          voltage_path.push_back(std::move(p));
+        }
+      }
+      if (!imp.current_path.empty())
+      {
+        has_current_path = true;
+        for (const auto &pt : imp.current_path)
+        {
+          mfem::Vector p(pt.size());
+          for (int d = 0; d < static_cast<int>(pt.size()); d++)
+          {
+            p(d) = pt[d];  // Already nondimensionalized.
+          }
+          current_path.push_back(std::move(p));
+        }
+      }
+    }
+
+    // Mode analysis voltage-only postprocessing setup.
+    const auto &voltage_data = iodata.boundaries.postpro.voltage;
+    if (!voltage_data.empty())
+    {
+      has_voltage_postpro = true;
+      const auto &pmesh = fem_op->GetNDSpace().GetParMesh();
+      int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+      const auto &vol = voltage_data.begin()->second;
+      if (!vol.voltage_attributes.empty())
+      {
+        voltage_postpro_marker = mesh::AttrToMarker(bdr_attr_max, vol.voltage_attributes);
+      }
+      voltage_postpro_integration_order = vol.integration_order;
+      if (vol.voltage_path.size() >= 2)
+      {
+        has_voltage_postpro_coordinates = true;
+        for (const auto &pt : vol.voltage_path)
+        {
+          mfem::Vector p(pt.size());
+          for (int d = 0; d < static_cast<int>(pt.size()); d++)
+          {
+            p(d) = pt[d];
+          }
+          voltage_postpro_path.push_back(std::move(p));
+        }
+      }
+    }
   }
 
   gridfunction_output_dir =
@@ -194,10 +341,8 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
 
     // Electric Boundary Field & Surface Charge.
     E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
-    // Q_s = D ⋅ n = ε_0 E ⋅ n.
     Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
         &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
-
     if constexpr (HasComplexGridFunction<solver_t>())
     {
       E_si = std::make_unique<BdrFieldVectorCoefficient>(E->Imag());
@@ -223,16 +368,23 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         *B, fem_op->GetMaterialOp(), scaling);
 
     // Magnetic Boundary Field & Surface Current.
-    B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
-    // J_s = n x H = n x μ⁻¹ B.
-    J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
-        B->Real(), fem_op->GetMaterialOp(), scaling);
+    // In 2D, B is scalar (L2), so boundary vector coefficients are not applicable.
+    if (B->Real().VectorDim() > 1)
+    {
+      B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
+      // J_s = n x H = n x μ⁻¹ B.
+      J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
+          B->Real(), fem_op->GetMaterialOp(), scaling);
+    }
 
     if constexpr (HasComplexGridFunction<solver_t>())
     {
-      B_si = std::make_unique<BdrFieldVectorCoefficient>(B->Imag());
-      J_si = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
-          B->Imag(), fem_op->GetMaterialOp(), scaling);
+      if (B->Imag().VectorDim() > 1)
+      {
+        B_si = std::make_unique<BdrFieldVectorCoefficient>(B->Imag());
+        J_si = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
+            B->Imag(), fem_op->GetMaterialOp(), scaling);
+      }
     }
   }
 
@@ -322,14 +474,29 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     {
       paraview->RegisterField("B_real", &B->Real());
       paraview->RegisterField("B_imag", &B->Imag());
-      paraview_bdr->RegisterVCoeffField("B_real", B_sr.get());
-      paraview_bdr->RegisterVCoeffField("B_imag", B_si.get());
+      if (B_sr)
+      {
+        paraview_bdr->RegisterVCoeffField("B_real", B_sr.get());
+      }
+      if (B_si)
+      {
+        paraview_bdr->RegisterVCoeffField("B_imag", B_si.get());
+      }
     }
     else
     {
       paraview->RegisterField("B", &B->Real());
-      paraview_bdr->RegisterVCoeffField("B", B_sr.get());
+      if (B_sr)
+      {
+        paraview_bdr->RegisterVCoeffField("B", B_sr.get());
+      }
     }
+  }
+  // In-plane B field for mode analysis (2D vector on ND space).
+  if (Bt_inplane)
+  {
+    paraview->RegisterField("Bt_real", &Bt_inplane->Real());
+    paraview->RegisterField("Bt_imag", &Bt_inplane->Imag());
   }
   if (V)
   {
@@ -498,6 +665,16 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
   DimensionalizeGridFunctions(units, E, B, V, A);
+  // In-plane B projected onto the ND space (not its natural H(div) space), so the
+  // H(curl) Piola transform scaling L applies to the DOFs, not H(div) scaling L^{dim-1}.
+  if (Bt_inplane)
+  {
+    Bt_inplane->Real() *= mesh_Lc0;
+    Bt_inplane->Real().FaceNbrData() *= mesh_Lc0;
+    Bt_inplane->Imag() *= mesh_Lc0;
+    Bt_inplane->Imag().FaceNbrData() *= mesh_Lc0;
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
+  }
   paraview->SetCycle(step);
   paraview->SetTime(time);
   paraview_bdr->SetCycle(step);
@@ -507,6 +684,14 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(units, E, B, V, A);
+  if (Bt_inplane)
+  {
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
+    Bt_inplane->Real() *= (1.0 / mesh_Lc0);
+    Bt_inplane->Real().FaceNbrData() *= (1.0 / mesh_Lc0);
+    Bt_inplane->Imag() *= (1.0 / mesh_Lc0);
+    Bt_inplane->Imag().FaceNbrData() *= (1.0 / mesh_Lc0);
+  }
   Mpi::Barrier(fem_op->GetComm());
 }
 
@@ -609,6 +794,14 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
   DimensionalizeGridFunctions(units, E, B, V, A);
+  if (Bt_inplane)
+  {
+    Bt_inplane->Real() *= mesh_Lc0;
+    Bt_inplane->Real().FaceNbrData() *= mesh_Lc0;
+    Bt_inplane->Imag() *= mesh_Lc0;
+    Bt_inplane->Imag().FaceNbrData() *= mesh_Lc0;
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
+  }
   // Create grid function for vector coefficients.
   mfem::ParFiniteElementSpace &fespace = E ? *E->ParFESpace() : *B->ParFESpace();
   mfem::ParGridFunction gridfunc_vector(&fespace);
@@ -667,6 +860,12 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
     }
   }
 
+  if (Bt_inplane)
+  {
+    write_grid_function(Bt_inplane->Real(), "Bt_real");
+    write_grid_function(Bt_inplane->Imag(), "Bt_imag");
+  }
+
   if constexpr (HasVGridFunction<solver_t>())
   {
     if (V)
@@ -707,6 +906,14 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(units, E, B, V, A);
+  if (Bt_inplane)
+  {
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
+    Bt_inplane->Real() *= (1.0 / mesh_Lc0);
+    Bt_inplane->Real().FaceNbrData() *= (1.0 / mesh_Lc0);
+    Bt_inplane->Imag() *= (1.0 / mesh_Lc0);
+    Bt_inplane->Imag().FaceNbrData() *= (1.0 / mesh_Lc0);
+  }
   Mpi::Barrier(fem_op->GetComm());
 }
 
@@ -842,7 +1049,8 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   {
     Mpi::Print(" Field energy H = {:.3e} J\n", domain_H);
   }
-  else if constexpr (solver_t != ProblemType::EIGENMODE)
+  else if constexpr (solver_t != ProblemType::EIGENMODE &&
+                     solver_t != ProblemType::BOUNDARYMODE)
   {
     Mpi::Print(" Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n", domain_E, domain_H,
                domain_E + domain_H);
@@ -988,8 +1196,7 @@ void PostOperator<solver_t>::MeasureWavePorts() const
       auto &vi = measurement_cache.wave_port_vi[idx];
       vi.P = data.GetPower(*E, *B);
       vi.S = data.GetSParameter(*E);
-      // vi.V = vi.I[0] = vi.I[1] = vi.I[2] = 0.0;  // Not yet implemented
-      //                                            // (Z = V² / P, I = V / Z)
+      vi.V = data.GetVoltage(*E);
     }
   }
 }
@@ -1350,15 +1557,21 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
 {
   BlockTimer bt0(Timer::POSTPRO);
-  auto indicator_stats = indicator.GetSummaryStatistics(fem_op->GetComm());
-  post_op_csv.PrintErrorIndicator(Mpi::Root(fem_op->GetComm()), indicator_stats);
+  // Pass nullptr for the indicator if it is empty (no AMR), so the write functions
+  // skip the indicator grid function but still save the mesh and rank partition.
+  const ErrorIndicator *ind_ptr = (indicator.Local().Size() > 0) ? &indicator : nullptr;
+  if (ind_ptr)
+  {
+    auto indicator_stats = indicator.GetSummaryStatistics(fem_op->GetComm());
+    post_op_csv.PrintErrorIndicator(Mpi::Root(fem_op->GetComm()), indicator_stats);
+  }
   if (ShouldWriteParaviewFields())
   {
-    WriteParaviewFieldsFinal(&indicator);
+    WriteParaviewFieldsFinal(ind_ptr);
   }
   if (ShouldWriteGridFunctionFields())
   {
-    WriteMFEMGridFunctionsFinal(&indicator);
+    WriteMFEMGridFunctionsFinal(ind_ptr);
   }
 }
 
@@ -1378,6 +1591,339 @@ auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e
          measurement_cache.domain_H_field_energy_all;
 }
 
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &et,
+                                                const ComplexVector &en,
+                                                std::complex<double> kn, double omega,
+                                                double error_abs, double error_bkwd,
+                                                int num_conv)
+    -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, double>
+{
+  BlockTimer bt0(Timer::POSTPRO);
+  SetEGridFunction(et);
+
+  // Set the normal (out-of-plane) E component on H1 space.
+  En->Real().SetFromTrueDofs(en.Real());
+  En->Imag().SetFromTrueDofs(en.Imag());
+  En->Real().ExchangeFaceNbrData();
+  En->Imag().ExchangeFaceNbrData();
+
+  // Compute Bz = curl_t(Et) / (iω) as a scalar (Hz) on the L2 curl space.
+  // B_r = curl(Et_i) / ω,  B_i = -curl(Et_r) / ω  (from 1/(iω) = -i/ω).
+  {
+    auto &nd_fs = fem_op->GetNDSpace();
+    auto &l2_fs = fem_op->GetCurlSpace();
+    const auto &Curl = l2_fs.GetDiscreteInterpolator(nd_fs);
+
+    const int nd_sz = nd_fs.GetTrueVSize();
+    const int l2_sz = l2_fs.GetTrueVSize();
+    ComplexVector b(l2_sz);
+
+    // Get Et true DOFs.
+    Vector etr(nd_sz), eti(nd_sz);
+    E->Real().GetTrueDofs(etr);
+    E->Imag().GetTrueDofs(eti);
+
+    // Apply curl: curl(Et_r) and curl(Et_i).
+    Vector curl_etr(l2_sz), curl_eti(l2_sz);
+    Curl.Mult(etr, curl_etr);
+    Curl.Mult(eti, curl_eti);
+
+    // B = curl(Et) / (iω) = curl(Et) × (-i/ω)
+    // B_r = curl(Et_i) / ω,  B_i = -curl(Et_r) / ω
+    b.Real() = curl_eti;
+    b.Real() *= 1.0 / omega;
+    b.Imag() = curl_etr;
+    b.Imag() *= -1.0 / omega;
+
+    SetBGridFunction(b);
+  }
+
+  // Compute full in-plane B: Bt = -(kn/omega)(z_hat x Et) + (1/(i*omega))(grad_t(Ez) x
+  // z_hat) This is the dominant B component for a propagating mode. Project onto ND space.
+  {
+    ModeInPlaneBCoefficient bt_real_coeff(E->Real(), E->Imag(), En->Real(), En->Imag(),
+                                          kn.real(), kn.imag(), omega, true);
+    ModeInPlaneBCoefficient bt_imag_coeff(E->Real(), E->Imag(), En->Real(), En->Imag(),
+                                          kn.real(), kn.imag(), omega, false);
+    Bt_inplane->Real().ProjectCoefficient(bt_real_coeff);
+    Bt_inplane->Imag().ProjectCoefficient(bt_imag_coeff);
+    Bt_inplane->Real().ExchangeFaceNbrData();
+    Bt_inplane->Imag().ExchangeFaceNbrData();
+  }
+
+  measurement_cache = {};
+  measurement_cache.error_abs = error_abs;
+  measurement_cache.error_bkwd = error_bkwd;
+
+  // Dimensionalization constants.
+  const double kc = 1.0 / units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+  std::complex<double> kn_dim = kn * kc;
+  std::complex<double> n_eff = kn / omega;
+  measurement_cache.mode_data.kn_dim = kn_dim;
+  measurement_cache.mode_data.n_eff = n_eff;
+
+  // Compute impedance if configured.
+  if (has_impedance_postpro)
+  {
+    auto &nd_fespace = fem_op->GetNDSpace();
+    const int nd_size = nd_fespace.GetTrueVSize();
+
+    // Voltage: V = integral of Et . dl along the voltage path.
+    std::complex<double> V(0.0, 0.0);
+    if (has_voltage_coordinates)
+    {
+      // Coordinate-based: sum line integrals along each segment of the voltage path.
+      const int quad_order = voltage_integration_order;
+      for (std::size_t k = 0; k + 1 < voltage_path.size(); k++)
+      {
+        V.real(V.real() + fem::ComputeLineIntegral(voltage_path[k], voltage_path[k + 1],
+                                                   E->Real(), quad_order));
+        V.imag(V.imag() + fem::ComputeLineIntegral(voltage_path[k], voltage_path[k + 1],
+                                                   E->Imag(), quad_order));
+      }
+    }
+    else if (voltage_marker.Size() > 0)
+    {
+      // Boundary attribute-based: integrate Et . t (tangential) on marked boundary edges.
+      // For ND elements on 1D boundary edges, VectorFEBoundaryFluxLFIntegrator uses the
+      // scalar tangential basis, giving the tangential line integral.
+      mfem::ConstantCoefficient one(1.0);
+      mfem::ParLinearForm v_lf(&nd_fespace.Get());
+      v_lf.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(one),
+                                 voltage_marker);
+      v_lf.UseFastAssembly(false);
+      v_lf.Assemble();
+
+      Vector v_lf_tdof(nd_size);
+      v_lf.ParallelAssemble(v_lf_tdof);
+      Vector etr_tdof(nd_size), eti_tdof(nd_size);
+      E->Real().GetTrueDofs(etr_tdof);
+      E->Imag().GetTrueDofs(eti_tdof);
+      V.real(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, etr_tdof));
+      V.imag(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, eti_tdof));
+    }
+
+    // Power: P = (1/2) Re{kn*/omega} * (et^H Btt et) (transmitted Poynting power).
+    const auto *Btt = fem_op->GetBtt();
+    if (Btt != nullptr)
+    {
+      std::complex<double> P(0.0, 0.0);
+      {
+        Vector etr_tdof(nd_size), eti_tdof(nd_size);
+        E->Real().GetTrueDofs(etr_tdof);
+        E->Imag().GetTrueDofs(eti_tdof);
+        Vector Btt_etr(nd_size), Btt_eti(nd_size);
+        Btt->Mult(etr_tdof, Btt_etr);
+        Btt->Mult(eti_tdof, Btt_eti);
+        double p_rr = mfem::InnerProduct(nd_fespace.GetComm(), etr_tdof, Btt_etr);
+        double p_ii = mfem::InnerProduct(nd_fespace.GetComm(), eti_tdof, Btt_eti);
+        double p_ri = mfem::InnerProduct(nd_fespace.GetComm(), etr_tdof, Btt_eti);
+        double p_ir = mfem::InnerProduct(nd_fespace.GetComm(), eti_tdof, Btt_etr);
+        std::complex<double> etH_Btt_et(p_rr + p_ii, p_ri - p_ir);
+        P = 0.5 * std::conj(kn) / omega * etH_Btt_et;
+      }
+
+      // Impedance computation using the power-voltage definition:
+      //   Z_PV = |V|^2 / (2P)
+      // where V is the line integral of Et across the voltage boundary and P is the
+      // transmitted Poynting power.
+      if (std::abs(P) > 1e-30)
+      {
+        std::complex<double> Z0_nondim = (V * std::conj(V)) / (2.0 * P);
+        double Z0_ohm = Z0_nondim.real() * electromagnetics::Z0_;
+        double L_per_m = Z0_ohm * n_eff.real() / electromagnetics::c0_;
+        double C_per_m = n_eff.real() / (Z0_ohm * electromagnetics::c0_);
+
+        measurement_cache.mode_data.Z0 = Z0_ohm;
+        measurement_cache.mode_data.L_per_m = L_per_m;
+        measurement_cache.mode_data.C_per_m = C_per_m;
+        measurement_cache.mode_data.has_impedance = true;
+      }
+    }
+
+    // V/I impedance: Z_VI = V / I where I = ∮ H · t dl around the trace.
+    // Two methods: coordinate-based (GSLIB line integrals along a closed polygon)
+    // or boundary-attribute-based (tangential ND DOF integral on marked edges).
+    if (has_current_path)
+    {
+      // Coordinate-based: sum line integrals along each segment of the closed polygon.
+      // I = Σ ∫ Bt · dl from p_k to p_{k+1}, with p_{N} = p_0 (close the loop).
+      std::complex<double> I(0.0, 0.0);
+      const int quad_order = voltage_integration_order;
+      for (std::size_t k = 0; k < current_path.size(); k++)
+      {
+        const auto &pk = current_path[k];
+        const auto &pk1 = current_path[(k + 1) % current_path.size()];
+        I.real(I.real() +
+               fem::ComputeLineIntegral(pk, pk1, Bt_inplane->Real(), quad_order));
+        I.imag(I.imag() +
+               fem::ComputeLineIntegral(pk, pk1, Bt_inplane->Imag(), quad_order));
+      }
+
+      if (std::abs(I) > 1e-30)
+      {
+        double Z_VI_nondim = std::abs(V) / std::abs(I);
+        double Z_VI_ohm = Z_VI_nondim * electromagnetics::Z0_;
+        double L_VI_per_m = Z_VI_ohm * n_eff.real() / electromagnetics::c0_;
+        double C_VI_per_m = n_eff.real() / (Z_VI_ohm * electromagnetics::c0_);
+
+        measurement_cache.mode_data.Z_VI = Z_VI_ohm;
+        measurement_cache.mode_data.L_VI_per_m = L_VI_per_m;
+        measurement_cache.mode_data.C_VI_per_m = C_VI_per_m;
+        measurement_cache.mode_data.has_vi_impedance = true;
+      }
+    }
+    else if (current_marker.Size() > 0)
+    {
+      // Boundary attribute-based: ∫ Bt · t dl on marked boundary edges.
+      std::complex<double> I(0.0, 0.0);
+      {
+        mfem::ConstantCoefficient one(1.0);
+        mfem::ParLinearForm i_lf(&nd_fespace.Get());
+        i_lf.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(one),
+                                   current_marker);
+        i_lf.UseFastAssembly(false);
+        i_lf.Assemble();
+
+        Vector i_lf_tdof(nd_size);
+        i_lf.ParallelAssemble(i_lf_tdof);
+
+        Vector btr_tdof(nd_size), bti_tdof(nd_size);
+        Bt_inplane->Real().GetTrueDofs(btr_tdof);
+        Bt_inplane->Imag().GetTrueDofs(bti_tdof);
+        I.real(mfem::InnerProduct(nd_fespace.GetComm(), i_lf_tdof, btr_tdof));
+        I.imag(mfem::InnerProduct(nd_fespace.GetComm(), i_lf_tdof, bti_tdof));
+      }
+
+      if (std::abs(I) > 1e-30)
+      {
+        double Z_VI_nondim = std::abs(V) / std::abs(I);
+        double Z_VI_ohm = Z_VI_nondim * electromagnetics::Z0_;
+        double L_VI_per_m = Z_VI_ohm * n_eff.real() / electromagnetics::c0_;
+        double C_VI_per_m = n_eff.real() / (Z_VI_ohm * electromagnetics::c0_);
+
+        measurement_cache.mode_data.Z_VI = Z_VI_ohm;
+        measurement_cache.mode_data.L_VI_per_m = L_VI_per_m;
+        measurement_cache.mode_data.C_VI_per_m = C_VI_per_m;
+        measurement_cache.mode_data.has_vi_impedance = true;
+      }
+    }
+  }
+
+  // Compute voltage if voltage postprocessing is configured (separate from impedance).
+  if (has_voltage_postpro)
+  {
+    std::complex<double> V_postpro(0.0, 0.0);
+    if (has_voltage_postpro_coordinates)
+    {
+      const int quad_order = voltage_postpro_integration_order;
+      for (std::size_t k = 0; k + 1 < voltage_postpro_path.size(); k++)
+      {
+        V_postpro.real(V_postpro.real() +
+                       fem::ComputeLineIntegral(voltage_postpro_path[k],
+                                                voltage_postpro_path[k + 1], E->Real(),
+                                                quad_order));
+        V_postpro.imag(V_postpro.imag() +
+                       fem::ComputeLineIntegral(voltage_postpro_path[k],
+                                                voltage_postpro_path[k + 1], E->Imag(),
+                                                quad_order));
+      }
+    }
+    else if (voltage_postpro_marker.Size() > 0)
+    {
+      auto &nd_fespace = fem_op->GetNDSpace();
+      const int nd_size = nd_fespace.GetTrueVSize();
+      mfem::ConstantCoefficient one(1.0);
+      mfem::ParLinearForm v_lf(&nd_fespace.Get());
+      v_lf.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(one),
+                                 voltage_postpro_marker);
+      v_lf.UseFastAssembly(false);
+      v_lf.Assemble();
+
+      Vector v_lf_tdof(nd_size);
+      v_lf.ParallelAssemble(v_lf_tdof);
+      Vector etr_tdof(nd_size), eti_tdof(nd_size);
+      E->Real().GetTrueDofs(etr_tdof);
+      E->Imag().GetTrueDofs(eti_tdof);
+      V_postpro.real(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, etr_tdof));
+      V_postpro.imag(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, eti_tdof));
+    }
+    measurement_cache.mode_data.V = V_postpro;
+    measurement_cache.mode_data.has_voltage = true;
+  }
+
+  // Compute electric field energy via the domain post operator.
+  MeasureAllImpl();
+
+  // Pretty-print mode summary using Table (matches eigenmode solver style).
+  if (Mpi::Root(fem_op->GetComm()))
+  {
+    Table table;
+    int idx_pad = 1 + static_cast<int>(std::log10(std::max(num_conv, 1)));
+    table.col_options = {6, 6};
+    table.insert(Column("m", "m", idx_pad, {}, {}, "") << (step + 1));
+    table.insert(Column("kn_re", "Re{kn} (1/m)") << kn_dim.real());
+    table.insert(Column("kn_im", "Im{kn} (1/m)") << kn_dim.imag());
+    table.insert(Column("neff_re", "Re{n_eff}") << n_eff.real());
+    table.insert(Column("neff_im", "Im{n_eff}") << n_eff.imag());
+    table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);
+    table.insert(Column("err_abs", "Error (Abs.)") << error_abs);
+    table[0].print_as_int = true;
+    Mpi::Print("{}", (step == 0) ? table.format_table() : table.format_row(0));
+  }
+
+  int print_idx = step + 1;
+  post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
+  if (ShouldWriteParaviewFields(step))
+  {
+    WriteParaviewFields(step, print_idx);
+    Mpi::Print(" Wrote mode {:d} to disk (Paraview)\n", print_idx);
+  }
+  if (ShouldWriteGridFunctionFields(step))
+  {
+    WriteMFEMGridFunctions(step, print_idx);
+    Mpi::Print(" Wrote mode {:d} to disk (grid function)\n", print_idx);
+  }
+  return measurement_cache.domain_E_field_energy_all;
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::ProjectImpedancePaths(const mfem::Vector &centroid,
+                                                   const mfem::Vector &e1,
+                                                   const mfem::Vector &e2)
+{
+  for (auto &p : voltage_path)
+  {
+    if (p.Size() == 3)
+    {
+      p = mesh::Project3Dto2D(p, centroid, e1, e2);
+    }
+  }
+  for (auto &p : current_path)
+  {
+    if (p.Size() == 3)
+    {
+      p = mesh::Project3Dto2D(p, centroid, e1, e2);
+    }
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::ProjectVoltagePaths(const mfem::Vector &centroid,
+                                                 const mfem::Vector &e1,
+                                                 const mfem::Vector &e2)
+{
+  for (auto &p : voltage_postpro_path)
+  {
+    if (p.Size() == 3)
+    {
+      p = mesh::Project3Dto2D(p, centroid, e1, e2);
+    }
+  }
+}
+
 // Explicit template instantiation.
 
 template class PostOperator<ProblemType::DRIVEN>;
@@ -1385,6 +1931,7 @@ template class PostOperator<ProblemType::EIGENMODE>;
 template class PostOperator<ProblemType::ELECTROSTATIC>;
 template class PostOperator<ProblemType::MAGNETOSTATIC>;
 template class PostOperator<ProblemType::TRANSIENT>;
+template class PostOperator<ProblemType::BOUNDARYMODE>;
 
 // Function explicit instantiation.
 // TODO(C++20): with requires, we won't need a second template.
@@ -1409,6 +1956,11 @@ PostOperator<ProblemType::MAGNETOSTATIC>::MeasureAndPrintAll<ProblemType::MAGNET
 template auto
 PostOperator<ProblemType::TRANSIENT>::MeasureAndPrintAll<ProblemType::TRANSIENT>(
     int step, const Vector &e, const Vector &b, double t, double J_coef) -> double;
+
+template auto
+PostOperator<ProblemType::BOUNDARYMODE>::MeasureAndPrintAll<ProblemType::BOUNDARYMODE>(
+    int step, const ComplexVector &et, const ComplexVector &en, std::complex<double> kn,
+    double omega, double error_abs, double error_bkwd, int num_conv) -> double;
 
 template auto
 PostOperator<ProblemType::DRIVEN>::MeasureDomainFieldEnergyOnly<ProblemType::DRIVEN>(

@@ -36,9 +36,44 @@ mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
   }
   mfem::DenseMatrix Mout(N, N);
   Mout = 0.0;
-  if (N == 2)
+  if (N == 1)
   {
-    MFEM_ABORT("2x2 MatrixFunction is not implemented yet!");
+    Mout(0, 0) = functor(M(0, 0));
+    return Mout;
+  }
+  else if (N == 2)
+  {
+    const auto &a = M(0, 0), &b = M(1, 1);
+    const auto &d = M(0, 1);
+    const bool d_non_zero = std::abs(d) > tol;
+    if (!d_non_zero || std::abs(a - b) < tol)
+    {
+      // Diagonal or degenerate (nearly equal eigenvalues): apply f directly.
+      if (!d_non_zero)
+      {
+        for (int i = 0; i < 2; i++)
+        {
+          Mout(i, i) = functor(M(i, i));
+        }
+        return Mout;
+      }
+      // Degenerate: lambda1 ≈ lambda2, eigenvectors become parallel.
+      // M ≈ lambda * I + off-diagonal correction; apply functor to mean eigenvalue.
+      const double lambda_avg = (a + b) / 2.0;
+      Mout(0, 0) = functor(lambda_avg);
+      Mout(1, 1) = functor(lambda_avg);
+      return Mout;
+    }
+    // a d
+    // d b
+    const double disc = std::sqrt((a - b) * (a - b) + 4.0 * d * d);
+    const double lambda1 = (a + b - disc) / 2.0;
+    const double lambda2 = (a + b + disc) / 2.0;
+    const mfem::Vector v1{{d, lambda1 - a}};
+    const mfem::Vector v2{{d, lambda2 - a}};
+    AddMult_a_VVt(functor(lambda1) / (v1 * v1), v1, Mout);
+    AddMult_a_VVt(functor(lambda2) / (v2 * v2), v2, Mout);
+    return Mout;
   }
   else if (N == 3)
   {
@@ -71,9 +106,9 @@ mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
       const mfem::Vector v1{{0.0, 0.0, 1.0}};
       const mfem::Vector v2{{-(-a + b + disc) / (2.0 * d), 1.0, 0.0}};
       const mfem::Vector v3{{-(-a + b - disc) / (2.0 * d), 1.0, 0.0}};
-      AddMult_a_VVt(functor(lambda1), v1, Mout);
-      AddMult_a_VVt(functor(lambda2), v2, Mout);
-      AddMult_a_VVt(functor(lambda3), v3, Mout);
+      AddMult_a_VVt(functor(lambda1) / (v1 * v1), v1, Mout);
+      AddMult_a_VVt(functor(lambda2) / (v2 * v2), v2, Mout);
+      AddMult_a_VVt(functor(lambda3) / (v3 * v3), v3, Mout);
       return Mout;
     }
     if (!d_non_zero && e_non_zero && !f_non_zero)
@@ -88,9 +123,9 @@ mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
       const mfem::Vector v1{{1.0, 0.0, 0.0}};
       const mfem::Vector v2{{0.0, -(-b + c + disc) / (2.0 * e), 1.0}};
       const mfem::Vector v3{{0.0, -(-b + c - disc) / (2.0 * e), 1.0}};
-      AddMult_a_VVt(functor(lambda1), v1, Mout);
-      AddMult_a_VVt(functor(lambda2), v2, Mout);
-      AddMult_a_VVt(functor(lambda3), v3, Mout);
+      AddMult_a_VVt(functor(lambda1) / (v1 * v1), v1, Mout);
+      AddMult_a_VVt(functor(lambda2) / (v2 * v2), v2, Mout);
+      AddMult_a_VVt(functor(lambda3) / (v3 * v3), v3, Mout);
       return Mout;
     }
     if (!d_non_zero && !e_non_zero && f_non_zero)
@@ -105,9 +140,9 @@ mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
       const mfem::Vector v1{{0.0, 1.0, 0.0}};
       const mfem::Vector v2{{-(-a + c + disc) / (2.0 * f), 0.0, 1.0}};
       const mfem::Vector v3{{-(-a + c - disc) / (2.0 * f), 0.0, 1.0}};
-      AddMult_a_VVt(functor(lambda1), v1, Mout);
-      AddMult_a_VVt(functor(lambda2), v2, Mout);
-      AddMult_a_VVt(functor(lambda3), v3, Mout);
+      AddMult_a_VVt(functor(lambda1) / (v1 * v1), v1, Mout);
+      AddMult_a_VVt(functor(lambda2) / (v2 * v2), v2, Mout);
+      AddMult_a_VVt(functor(lambda3) / (v3 * v3), v3, Mout);
       return Mout;
     }
     if ((!d_non_zero && e_non_zero && f_non_zero) ||

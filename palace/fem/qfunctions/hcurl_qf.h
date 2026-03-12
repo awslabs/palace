@@ -15,6 +15,8 @@
 #include "21/hcurl_build_21_qf.h"
 #include "22/hcurl_22_qf.h"
 #include "22/hcurl_build_22_qf.h"
+#include "31/hcurl_31_qf.h"
+#include "31/hcurl_build_31_qf.h"
 #include "32/hcurl_32_qf.h"
 #include "32/hcurl_build_32_qf.h"
 #include "33/hcurl_33_qf.h"
