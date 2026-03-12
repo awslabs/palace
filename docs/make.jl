@@ -98,7 +98,9 @@ makedocs(
             "examples/transmon.md",
             "examples/cylinder.md",
             "examples/coaxial.md",
-            "examples/cpw.md"
+            "examples/cpw.md",
+            "examples/transmon_driven.md",
+            "examples/transmon_circuit.md"
         ],
         "faq.md",
         "For Developers" => Any[
@@ -112,9 +114,9 @@ makedocs(
     ]
 )
 
-deploydocs(
-    repo="github.com/awslabs/palace.git",
-    devbranch="main",
-    push_preview=true,
-    forcepush=true
-)
+# deploydocs(
+#     repo="github.com/awslabs/palace.git",
+#     devbranch="main",
+#     push_preview=true,
+#     forcepush=true
+# )
