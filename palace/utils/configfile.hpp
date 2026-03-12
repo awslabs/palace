@@ -444,12 +444,6 @@ public:
   LumpedPortData(const json &port);
 };
 
-enum class LumpedElementTopology
-{
-  PARALLEL,
-  SERIES
-};
-
 struct LumpedElementData
 {
 public:
@@ -463,9 +457,6 @@ public:
   double Rs = 0.0;
   double Ls = 0.0;
   double Cs = 0.0;
-
-  // Topology of the lumped element circuit (parallel or series).
-  LumpedElementTopology topology = LumpedElementTopology::PARALLEL;
 
   // For each lumped element index, each element contains a list of attributes making up
   // a single element of a potentially multielement lumped element boundary.

@@ -34,7 +34,6 @@ public:
   const MaterialOperator &mat_op;
   std::unique_ptr<LumpedGeometry> elem;
   double R, L, C;
-  config::LumpedElementTopology topology;
 
   LumpedElementOperator(const std::map<int, config::LumpedElementData> &lumpedelement,
                       const Units &units, const MaterialOperator &mat_op,

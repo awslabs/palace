@@ -130,6 +130,29 @@
         }
       }
     },
+    "LumpedElement":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["Index", "Attributes", "Direction"],
+        "properties":
+        {
+          "Index": { "type": "integer", "exclusiveMinimum": 0 },
+          "Attributes": { "$ref": "#/$defs/Attributes" },
+          "Direction": { "$ref": "#/$defs/Direction" },
+          "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
+          "R": { "type": "number" },
+          "L": { "type": "number" },
+          "C": { "type": "number" },
+          "Rs": { "type": "number" },
+          "Ls": { "type": "number" },
+          "Cs": { "type": "number" }        }
+      }
+    },
     "WavePort":
     {
       "type": "array",

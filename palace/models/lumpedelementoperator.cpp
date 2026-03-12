@@ -16,7 +16,7 @@ namespace palace
 LumpedElementData::LumpedElementData(const config::LumpedElementData &data,
                                      const MaterialOperator &mat_op,
                                      const mfem::ParMesh &mesh)
-  : mat_op(mat_op), topology(data.topology)
+  : mat_op(mat_op)
 {
   bool has_circ = (std::abs(data.R) + std::abs(data.L) + std::abs(data.C) > 0.0);
   bool has_surf = (std::abs(data.Rs) + std::abs(data.Ls) + std::abs(data.Cs) > 0.0);
@@ -50,20 +50,10 @@ LumpedElementData::LumpedElementData(const config::LumpedElementData &data,
   else
   {
     const double sq = elem->GetGeometryWidth() / elem->GetGeometryLength();
-    if (topology == config::LumpedElementTopology::PARALLEL)
-    {
-      // Parallel: admittances add → Y_tot = Σ(sq/Rs)
-      R = (std::abs(data.Rs) > 0.0) ? data.Rs / sq : 0.0;
-      L = (std::abs(data.Ls) > 0.0) ? data.Ls / sq : 0.0;
-      C = (std::abs(data.Cs) > 0.0) ? data.Cs * sq : 0.0;
-    }
-    else
-    {
-      // Series: impedances add → Z_tot = Σ(Rs*sq)
-      R = (std::abs(data.Rs) > 0.0) ? data.Rs * sq : 0.0;
-      L = (std::abs(data.Ls) > 0.0) ? data.Ls * sq : 0.0;
-      C = (std::abs(data.Cs) > 0.0) ? data.Cs / sq : 0.0;
-    }
+    // Parallel: admittances add → Y_tot = Σ(sq/Rs)
+    R = (std::abs(data.Rs) > 0.0) ? data.Rs / sq : 0.0;
+    L = (std::abs(data.Ls) > 0.0) ? data.Ls / sq : 0.0;
+    C = (std::abs(data.Cs) > 0.0) ? data.Cs * sq : 0.0;
   }
 }
 

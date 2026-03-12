@@ -571,11 +571,6 @@ LumpedElementData::LumpedElementData(const json &element)
   Ls = element.value("Ls", Ls);
   Cs = element.value("Cs", Cs);
 
-  if (element.value("Series", false))
-  {
-    topology = LumpedElementTopology::SERIES;
-  }
-
   MFEM_VERIFY(element.find("Elements") == element.end(),
               "\"LumpedElement\" does not support \"Elements\": use top-level "
               "\"Attributes\" directly!");

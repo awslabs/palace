@@ -34,6 +34,10 @@ SPDX-License-Identifier: Apache-2.0
     [
         ...
     ],
+    "LumpedElement":
+    [
+        ...
+    ],
     "WavePort":
     [
         ...
@@ -102,6 +106,10 @@ domain driven and eigenmode simulation types.
 
 `"LumpedPort"` :  Array of objects for configuring lumped port boundary conditions. Lumped
 ports can be specified on boundaries which are internal to the computational domain.
+
+`"LumpedElement"` :  Array of objects for configuring passive lumped element boundary
+conditions. Lumped elements contribute to the system matrices as passive RLC loads without
+port tracking, S-parameter extraction, or excitation support.
 
 `"WavePort"` :  Array of objects for configuring numeric wave port boundary conditions. Wave
 ports can only be specified on boundaries which are on the true boundary of the
@@ -345,6 +353,66 @@ here. The elements of a multielement port add in parallel.
 ports and should not be combined with the `"CoordinateSystem"` field described above. Each
 element of a multielement lumped port can be described by its own unique direction, and
 corresponding coordinate system.
+
+## `boundaries["LumpedElement"]`
+```json
+"LumpedElement":
+[
+    {
+        "Index": <int>,
+        "Attributes": [<int array>],
+        "Direction": <string> or [<float array>],
+        "CoordinateSystem": <string>,
+        "R": <float>,
+        "L": <float>,
+        "C": <float>,
+        "Rs": <float>,
+        "Ls": <float>,
+        "Cs": <float>
+    },
+    ...
+]
+```
+
+with
+
+`"Index" [None]` :  Index of this lumped element boundary, used for identification purposes
+only. No postprocessing output is generated for lumped element boundaries.
+
+`"Attributes" [None]` :  Integer array of mesh boundary attributes for this lumped element
+boundary.
+
+`"Direction" [None]` :  Direction to define the polarization direction of the lumped element
+on this boundary. The available options are the same as under
+[`config["Boundaries"]["LumpedPort"]["Direction"]`](#boundaries%5B%22LumpedPort%22%5D).
+
+`"CoordinateSystem" ["Cartesian"]` :  Coordinate system used to express the `"Direction"`
+vector. The available options are the same as under
+[`config["Boundaries"]["LumpedPort"]["CoordinateSystem"]`](#boundaries%5B%22LumpedPort%22%5D).
+
+`"R" [0.0]` :  Circuit resistance for this lumped element boundary, ``\Omega``. This option
+should only be used along with the corresponding `"L"` and `"C"` parameters, and not with
+any of the surface parameters `"Rs"`, `"Ls"`, or `"Cs"`.
+
+`"L" [0.0]` :  Circuit inductance for this lumped element boundary, H. This option should
+only be used along with the corresponding `"R"` and `"C"` parameters, and not with any of
+the surface parameters `"Rs"`, `"Ls"`, or `"Cs"`.
+
+`"C" [0.0]` :  Circuit capacitance for this lumped element boundary, F. This option should
+only be used along with the corresponding `"R"` and `"L"` parameters, and not with any of
+the surface parameters `"Rs"`, `"Ls"`, or `"Cs"`.
+
+`"Rs" [0.0]` :  Surface resistance for this lumped element boundary, ``\Omega``/sq. This
+option should only be used along with the corresponding `"Ls"` and `"Cs"` parameters, and
+not with any of the circuit parameters `"R"`, `"L"`, or `"C"`.
+
+`"Ls" [0.0]` :  Surface inductance for this lumped element boundary, H/sq. This option
+should only be used along with the corresponding `"Rs"` and `"Cs"` parameters, and not with
+any of the circuit parameters `"R"`, `"L"`, or `"C"`.
+
+`"Cs" [0.0]` :  Surface capacitance for this lumped element boundary, F/sq. This option
+should only be used along with the corresponding `"Rs"` and `"Ls"` parameters, and not with
+any of the circuit parameters `"R"`, `"L"`, or `"C"`.
 
 ## `boundaries["WavePort"]`
 
