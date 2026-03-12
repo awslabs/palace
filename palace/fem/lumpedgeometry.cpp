@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "lumpedelement.hpp"
+#include "lumpedgeometry.hpp"
 
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
@@ -12,10 +12,10 @@
 namespace palace
 {
 
-UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
+UniformLumpedGeometry::UniformLumpedGeometry(const std::array<double, 3> &input_dir,
                                        const mfem::Array<int> &attr_list,
                                        const mfem::ParMesh &mesh)
-  : LumpedElementData(attr_list)
+  : LumpedGeometry(attr_list)
 {
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
@@ -71,7 +71,7 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
-UniformElementData::GetModeCoefficient(double coeff) const
+UniformLumpedGeometry::GetModeCoefficient(double coeff) const
 {
   mfem::Vector source = direction;
   source *= coeff;
@@ -79,10 +79,10 @@ UniformElementData::GetModeCoefficient(double coeff) const
       attr_list, source);
 }
 
-CoaxialElementData::CoaxialElementData(const std::array<double, 3> &input_dir,
+CoaxialLumpedGeometry::CoaxialLumpedGeometry(const std::array<double, 3> &input_dir,
                                        const mfem::Array<int> &attr_list,
                                        const mfem::ParMesh &mesh)
-  : LumpedElementData(attr_list)
+  : LumpedGeometry(attr_list)
 {
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
@@ -105,7 +105,7 @@ CoaxialElementData::CoaxialElementData(const std::array<double, 3> &input_dir,
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
-CoaxialElementData::GetModeCoefficient(double coeff) const
+CoaxialLumpedGeometry::GetModeCoefficient(double coeff) const
 {
   coeff *= direction;
   mfem::Vector x0(origin);

@@ -562,6 +562,27 @@ LumpedPortData::LumpedPortData(const json &port)
   }
 }
 
+LumpedElementData::LumpedElementData(const json &element)
+{
+  R  = element.value("R",  R);
+  L  = element.value("L",  L);
+  C  = element.value("C",  C);
+  Rs = element.value("Rs", Rs);
+  Ls = element.value("Ls", Ls);
+  Cs = element.value("Cs", Cs);
+
+  if (element.value("Series", false))
+  {
+    topology = LumpedElementTopology::SERIES;
+  }
+
+  MFEM_VERIFY(element.find("Elements") == element.end(),
+              "\"LumpedElement\" does not support \"Elements\": use top-level "
+              "\"Attributes\" directly!");
+  auto &elem = elements.emplace_back();
+  ParseElementData(element, true, elem);
+}
+
 TerminalData::TerminalData(const json &terminal)
 {
   attributes = terminal.at("Attributes").get<std::vector<int>>();  // Required
@@ -857,6 +878,7 @@ BoundaryData::BoundaryData(const json &boundaries)
   conductivity = ParseOptionalVector<ConductivityData>(boundaries, "Conductivity");
   impedance = ParseOptionalVector<ImpedanceData>(boundaries, "Impedance");
   lumpedport = ParseOptionalMap<LumpedPortData>(boundaries, "LumpedPort", "\"LumpedPort\"");
+  lumpedelement = ParseOptionalMap<LumpedElementData>(boundaries, "LumpedElement", "\"LumpedElement\"");
   terminal = ParseOptionalMap<TerminalData>(boundaries, "Terminal", "\"Terminal\"");
   periodic = ParseOptional<PeriodicBoundaryData>(boundaries, "Periodic");
   waveport = ParseOptionalMap<WavePortData>(boundaries, "WavePort", "\"WavePort\"");
@@ -922,6 +944,13 @@ BoundaryData::BoundaryData(const json &boundaries)
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
   for (const auto &[idx, data] : lumpedport)
+  {
+    for (const auto &elem : data.elements)
+    {
+      attributes.insert(attributes.end(), elem.attributes.begin(), elem.attributes.end());
+    }
+  }
+  for (const auto &[idx, data] : lumpedelement)
   {
     for (const auto &elem : data.elements)
     {

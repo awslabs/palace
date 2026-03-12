@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_FEM_LUMPED_ELEMENT_HPP
-#define PALACE_FEM_LUMPED_ELEMENT_HPP
+#ifndef PALACE_FEM_LUMPED_GEOMETRY_HPP
+#define PALACE_FEM_LUMPED_GEOMETRY_HPP
 
 #include <memory>
 #include <mfem.hpp>
@@ -14,15 +14,15 @@ namespace palace
 // Base class handling geometry of lumped elements for uniform and coaxial lumped port and
 // surface current source boundaries.
 //
-class LumpedElementData
+class LumpedGeometry
 {
 protected:
   // List of all boundary attributes making up this lumped element boundary.
   mfem::Array<int> attr_list;
 
 public:
-  LumpedElementData(const mfem::Array<int> &attr_list) : attr_list(attr_list) {}
-  virtual ~LumpedElementData() = default;
+  LumpedGeometry(const mfem::Array<int> &attr_list) : attr_list(attr_list) {}
+  virtual ~LumpedGeometry() = default;
 
   const auto &GetAttrList() const { return attr_list; }
 
@@ -33,7 +33,7 @@ public:
   GetModeCoefficient(double coeff = 1.0) const = 0;
 };
 
-class UniformElementData : public LumpedElementData
+class UniformLumpedGeometry : public LumpedGeometry
 {
 private:
   // Cartesian vector specifying signed direction of incident field.
@@ -43,7 +43,7 @@ private:
   double l, w;
 
 public:
-  UniformElementData(const std::array<double, 3> &input_dir,
+  UniformLumpedGeometry(const std::array<double, 3> &input_dir,
                      const mfem::Array<int> &attr_list, const mfem::ParMesh &mesh);
 
   double GetGeometryLength() const override { return l; }
@@ -53,7 +53,7 @@ public:
   GetModeCoefficient(double coeff = 1.0) const override;
 };
 
-class CoaxialElementData : public LumpedElementData
+class CoaxialLumpedGeometry : public LumpedGeometry
 {
 private:
   // Sign of incident field, +1 for +r̂, -1 for -r̂.
@@ -66,7 +66,7 @@ private:
   double r_outer, r_inner;
 
 public:
-  CoaxialElementData(const std::array<double, 3> &input_dir,
+  CoaxialLumpedGeometry(const std::array<double, 3> &input_dir,
                      const mfem::Array<int> &attr_list, const mfem::ParMesh &mesh);
 
   double GetGeometryLength() const override { return std::log(r_outer / r_inner); }
@@ -78,4 +78,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_FEM_LUMPED_ELEMENT_HPP
+#endif  // PALACE_FEM_LUMPED_GEOMETRY_HPP

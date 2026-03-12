@@ -57,6 +57,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     surf_z_op(boundaries.impedance, boundaries.cracked_attributes, units, mat_op,
               *mesh.back()),
     lumped_port_op(boundaries.lumpedport, units, mat_op, *mesh.back()),
+    lumped_element_op(boundaries.lumpedelement, units, mat_op, *mesh.back()),
     wave_port_op(boundaries, solver, problem_type, units, mat_op, GetNDSpace(),
                  GetH1Space()),
     surf_j_op(boundaries.current, *mesh.back()),
@@ -168,6 +169,10 @@ void SpaceOperator::CheckBoundaryProperties()
       mesh::AttrToMarker(bdr_attr_max, lumped_port_op.GetRsAttrList());
   const auto lumped_port_Ls_marker =
       mesh::AttrToMarker(bdr_attr_max, lumped_port_op.GetLsAttrList());
+  const auto lumped_elem_Rs_marker =
+      mesh::AttrToMarker(bdr_attr_max, lumped_element_op.GetRsAttrList());
+  const auto lumped_elem_Ls_marker =
+      mesh::AttrToMarker(bdr_attr_max, lumped_element_op.GetLsAttrList());
   const auto wave_port_marker =
       mesh::AttrToMarker(bdr_attr_max, wave_port_op.GetAttrList());
   mfem::Array<int> aux_bdr_marker(dbc_marker.Size());
@@ -176,7 +181,8 @@ void SpaceOperator::CheckBoundaryProperties()
     aux_bdr_marker[i] =
         (dbc_marker[i] || farfield_marker[i] || surf_sigma_marker[i] ||
          surf_z_Rs_marker[i] || surf_z_Ls_marker[i] || lumped_port_Rs_marker[i] ||
-         lumped_port_Ls_marker[i] || wave_port_marker[i]);
+         lumped_port_Ls_marker[i] || lumped_elem_Rs_marker[i] ||
+         lumped_elem_Ls_marker[i] || wave_port_marker[i]);
     if (aux_bdr_marker[i])
     {
       aux_bdr_attr.Append(i + 1);
@@ -195,11 +201,14 @@ void SpaceOperator::CheckBoundaryProperties()
   const auto surf_z_marker = mesh::AttrToMarker(bdr_attr_max, surf_z_op.GetAttrList());
   const auto lumped_port_marker =
       mesh::AttrToMarker(bdr_attr_max, lumped_port_op.GetAttrList());
+  const auto lumped_elem_marker =
+      mesh::AttrToMarker(bdr_attr_max, lumped_element_op.GetAttrList());
   const auto surf_j_marker = mesh::AttrToMarker(bdr_attr_max, surf_j_op.GetAttrList());
   for (int i = 0; i < dbc_marker.Size(); i++)
   {
     MFEM_VERIFY(dbc_marker[i] + farfield_marker[i] + surf_sigma_marker[i] +
-                        surf_z_marker[i] + lumped_port_marker[i] + wave_port_marker[i] +
+                        surf_z_marker[i] + lumped_port_marker[i] + 
+                        lumped_elem_marker[i] + wave_port_marker[i] +
                         surf_j_marker[i] <=
                     1,
                 "Boundary attributes should not be specified with multiple BC!");
@@ -840,6 +849,7 @@ void SpaceOperator::AddStiffnessBdrCoefficients(double coeff,
   // Robin BC contributions due to surface impedance and lumped ports (inductance).
   surf_z_op.AddStiffnessBdrCoefficients(coeff, fb);
   lumped_port_op.AddStiffnessBdrCoefficients(coeff, fb);
+  lumped_element_op.AddStiffnessBdrCoefficients(coeff, fb);
 }
 
 void SpaceOperator::AddDampingCoefficients(double coeff, MaterialPropertyCoefficient &f)
@@ -858,6 +868,7 @@ void SpaceOperator::AddDampingBdrCoefficients(double coeff, MaterialPropertyCoef
   farfield_op.AddDampingBdrCoefficients(coeff, fb);
   surf_z_op.AddDampingBdrCoefficients(coeff, fb);
   lumped_port_op.AddDampingBdrCoefficients(coeff, fb);
+  lumped_element_op.AddDampingBdrCoefficients(coeff, fb);
 }
 
 void SpaceOperator::AddRealMassCoefficients(double coeff, MaterialPropertyCoefficient &f)
@@ -871,6 +882,7 @@ void SpaceOperator::AddRealMassBdrCoefficients(double coeff,
   // Robin BC contributions due to surface impedance and lumped ports (capacitance).
   surf_z_op.AddMassBdrCoefficients(coeff, fb);
   lumped_port_op.AddMassBdrCoefficients(coeff, fb);
+  lumped_element_op.AddMassBdrCoefficients(coeff, fb);
 }
 
 void SpaceOperator::AddImagMassCoefficients(double coeff, MaterialPropertyCoefficient &f)

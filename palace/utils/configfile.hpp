@@ -444,6 +444,37 @@ public:
   LumpedPortData(const json &port);
 };
 
+enum class LumpedElementTopology
+{
+  PARALLEL,
+  SERIES
+};
+
+struct LumpedElementData
+{
+public:
+  // Element circuit resistance, inductance, and capacitance [Ω, H, F].
+  double R = 0.0;
+  double L = 0.0;
+  double C = 0.0;
+  
+
+  // Element surface resistance, inductance, and capacitance [Ω/sq, H/sq, F/sq].
+  double Rs = 0.0;
+  double Ls = 0.0;
+  double Cs = 0.0;
+
+  // Topology of the lumped element circuit (parallel or series).
+  LumpedElementTopology topology = LumpedElementTopology::PARALLEL;
+
+  // For each lumped element index, each element contains a list of attributes making up
+  // a single element of a potentially multielement lumped element boundary.
+  std::vector<internal::ElementData> elements = {};
+
+  LumpedElementData() = default;
+  LumpedElementData(const json &element);
+};
+
 struct TerminalData
 {
 public:
@@ -625,6 +656,7 @@ public:
   std::vector<ConductivityData> conductivity = {};
   std::vector<ImpedanceData> impedance = {};
   std::map<int, LumpedPortData> lumpedport = {};
+  std::map<int, LumpedElementData> lumpedelement = {};
   std::map<int, TerminalData> terminal = {};
   std::map<int, WavePortData> waveport = {};
   std::map<int, SurfaceCurrentData> current = {};

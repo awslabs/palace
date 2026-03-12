@@ -14,6 +14,7 @@
 #include "models/currentdipoleoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/lumpedportoperator.hpp"
+#include "models/lumpedelementoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/portexcitations.hpp"
 #include "models/surfaceconductivityoperator.hpp"
@@ -72,6 +73,7 @@ private:
   SurfaceConductivityOperator surf_sigma_op;
   SurfaceImpedanceOperator surf_z_op;
   LumpedPortOperator lumped_port_op;
+  LumpedElementOperator lumped_element_op;
   WavePortOperator wave_port_op;
   SurfaceCurrentOperator surf_j_op;
 
@@ -147,9 +149,11 @@ public:
 
   // Access to underlying BC operator objects for postprocessing.
   auto &GetLumpedPortOp() { return lumped_port_op; }
+  auto &GetLumpedElementOp() { return lumped_element_op; }
   auto &GetWavePortOp() { return wave_port_op; }
   auto &GetSurfaceCurrentOp() { return surf_j_op; }
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
+  const auto &GetLumpedElementOp() const { return lumped_element_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
 
