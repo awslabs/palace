@@ -142,7 +142,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear, int verbos
                                 "and auxiliary spaces for construction!");
       pc = MakeWrapperSolver<OperType, HypreAmsSolver>(
           linear, fespaces.GetFESpaceAtLevel(0), aux_fespaces->GetFESpaceAtLevel(0),
-          coarse_solver ? 1 : linear.mg_cycle_it, linear.mg_smooth_it,
+          coarse_solver ? linear.ams_max_it : linear.mg_cycle_it, linear.mg_smooth_it,
           linear.ams_vector_interp, linear.ams_singular_op, linear.amg_agg_coarsen, print);
       break;
     case LinearSolver::BOOMER_AMG:

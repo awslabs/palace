@@ -68,7 +68,7 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
                               {"R", 50.0}}}},
                            {"WavePort",
                             {{{"Attributes", {6}}, {"Index", 4}, {"Excitation", 1}},
-                             {{"Attributes", {16}}, {"Index", 5}, {"Excitation", 0}},
+                             {{"Attributes", {17}}, {"Index", 5}, {"Excitation", 0}},
                              {{"Attributes", {18}}, {"Index", 6}, {"Active", false}}}},
                            {"PEC", {{"Attributes", {3}}}},
                            {"Absorbing", {{"Attributes", {4}}}}};
