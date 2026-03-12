@@ -35,6 +35,16 @@ class SpaceOperator;
 class SurfaceCurrentOperator;
 class WavePortOperator;
 
+namespace config
+{
+
+struct BoundaryData;
+struct DomainData;
+struct ProblemData;
+struct SolverData;
+
+}  // namespace config
+
 // Statically specify if solver uses real or complex fields.
 
 template <ProblemType solver_t>
@@ -341,6 +351,9 @@ protected:
   }
 
 public:
+  PostOperator(const config::ProblemData &problem, const config::SolverData &solver,
+               const config::DomainData &domains, const config::BoundaryData &boundaries,
+               const Units &units, fem_op_t<solver_t> &fem_op);
   explicit PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op);
 
   // MeasureAndPrintAll is the primary public interface of this class. It is specialized by

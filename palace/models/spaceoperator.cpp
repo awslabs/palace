@@ -26,47 +26,54 @@ namespace palace
 
 using namespace std::complex_literals;
 
-SpaceOperator::SpaceOperator(const IoData &iodata,
+SpaceOperator::SpaceOperator(const config::SolverData &solver,
+                             const config::DomainData &domains,
+                             const config::BoundaryData &boundaries,
+                             ProblemType problem_type, const Units &units,
                              const std::vector<std::unique_ptr<Mesh>> &mesh)
-  : pc_mat_real(iodata.solver.linear.pc_mat_real),
-    pc_mat_shifted(iodata.solver.linear.pc_mat_shifted), print_hdr(true),
-    print_prec_hdr(true), dbc_attr(SetUpBoundaryProperties(iodata, *mesh.back())),
+  : pc_mat_real(solver.linear.pc_mat_real), pc_mat_shifted(solver.linear.pc_mat_shifted),
+    print_hdr(true), print_prec_hdr(true),
+    dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
-        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsening, false)),
+        solver.order, mesh.back()->Dimension(), solver.linear.mg_max_levels,
+        solver.linear.mg_coarsening, false)),
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
-        iodata.solver.order, mesh.back()->Dimension(), iodata.solver.linear.mg_max_levels,
-        iodata.solver.linear.mg_coarsening, false)),
+        solver.order, mesh.back()->Dimension(), solver.linear.mg_max_levels,
+        solver.linear.mg_coarsening, false)),
     rt_fecs(fem::ConstructFECollections<mfem::RT_FECollection>(
-        iodata.solver.order - 1, mesh.back()->Dimension(),
-        iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1,
-        iodata.solver.linear.mg_coarsening, false)),
+        solver.order - 1, mesh.back()->Dimension(),
+        solver.linear.estimator_mg ? solver.linear.mg_max_levels : 1,
+        solver.linear.mg_coarsening, false)),
     nd_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_attr, &nd_dbc_tdof_lists)),
+        solver.linear.mg_max_levels, mesh, nd_fecs, &dbc_attr, &nd_dbc_tdof_lists)),
     h1_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
-        iodata.solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_attr, &h1_dbc_tdof_lists)),
+        solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_attr, &h1_dbc_tdof_lists)),
     rt_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
-        iodata.solver.linear.estimator_mg ? iodata.solver.linear.mg_max_levels : 1, mesh,
-        rt_fecs)),
-    mat_op(iodata, *mesh.back()), current_dipole_op(iodata, *mesh.back()),
-    farfield_op(iodata, mat_op, *mesh.back()), surf_sigma_op(iodata, mat_op, *mesh.back()),
-    surf_z_op(iodata, mat_op, *mesh.back()), lumped_port_op(iodata, mat_op, *mesh.back()),
-    wave_port_op(iodata, mat_op, GetNDSpace(), GetH1Space()),
-    surf_j_op(iodata, *mesh.back()),
+        solver.linear.estimator_mg ? solver.linear.mg_max_levels : 1, mesh, rt_fecs)),
+    mat_op(domains.materials, boundaries.periodic, problem_type, *mesh.back()),
+    current_dipole_op(domains.current_dipole, units, *mesh.back()),
+    farfield_op(boundaries.farfield, problem_type, mat_op, *mesh.back()),
+    surf_sigma_op(boundaries.conductivity, problem_type, units, mat_op, *mesh.back()),
+    surf_z_op(boundaries.impedance, boundaries.cracked_attributes, units, mat_op,
+              *mesh.back()),
+    lumped_port_op(boundaries.lumpedport, units, mat_op, *mesh.back()),
+    wave_port_op(boundaries, solver, problem_type, units, mat_op, GetNDSpace(),
+                 GetH1Space()),
+    surf_j_op(boundaries.current, *mesh.back()),
     port_excitation_helper(lumped_port_op, wave_port_op, surf_j_op, current_dipole_op)
 {
   // Check Excitations.
-  if (iodata.problem.type == ProblemType::DRIVEN)
+  if (problem_type == ProblemType::DRIVEN)
   {
     MFEM_VERIFY(!port_excitation_helper.Empty(),
                 "Driven problems must specify at least one excitation!");
   }
-  else if (iodata.problem.type == ProblemType::EIGENMODE)
+  else if (problem_type == ProblemType::EIGENMODE)
   {
     MFEM_VERIFY(port_excitation_helper.Empty(),
                 "Eigenmode problems must not specify any excitation!");
   }
-  else if (iodata.problem.type == ProblemType::TRANSIENT)
+  else if (problem_type == ProblemType::TRANSIENT)
   {
     MFEM_VERIFY(
         port_excitation_helper.Size() == 1,
@@ -88,13 +95,20 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
   }
 }
 
-mfem::Array<int> SpaceOperator::SetUpBoundaryProperties(const IoData &iodata,
+SpaceOperator::SpaceOperator(const IoData &iodata,
+                             const std::vector<std::unique_ptr<Mesh>> &mesh)
+  : SpaceOperator(iodata.solver, iodata.domains, iodata.boundaries, iodata.problem.type,
+                  iodata.units, mesh)
+{
+}
+
+mfem::Array<int> SpaceOperator::SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                                                         const mfem::ParMesh &mesh)
 {
   // Check that boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> bdr_attr_marker;
-  if (!iodata.boundaries.pec.empty())
+  if (!pec.empty())
   {
     bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
@@ -103,7 +117,7 @@ mfem::Array<int> SpaceOperator::SetUpBoundaryProperties(const IoData &iodata,
       bdr_attr_marker[attr - 1] = 1;
     }
     std::set<int> bdr_warn_list;
-    for (auto attr : iodata.boundaries.pec.attributes)
+    for (auto attr : pec.attributes)
     {
       // MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
       //             "PEC boundary attribute tags must be non-negative and correspond to "
@@ -126,8 +140,8 @@ mfem::Array<int> SpaceOperator::SetUpBoundaryProperties(const IoData &iodata,
 
   // Mark selected boundary attributes from the mesh as essential (Dirichlet).
   mfem::Array<int> dbc_bcs;
-  dbc_bcs.Reserve(static_cast<int>(iodata.boundaries.pec.attributes.size()));
-  for (auto attr : iodata.boundaries.pec.attributes)
+  dbc_bcs.Reserve(static_cast<int>(pec.attributes.size()));
+  for (auto attr : pec.attributes)
   {
     if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
     {
