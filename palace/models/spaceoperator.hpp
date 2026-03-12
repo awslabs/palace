@@ -143,12 +143,15 @@ public:
   const auto &GetFloquetPortOp() const { return floquet_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
 
-  // Get the low-rank Floquet port boundary operator F(omega).
-  // Returns nullptr if no Floquet ports are configured.
-  std::unique_ptr<ComplexOperator> GetFloquetPortOperator(double omega)
-  {
-    return floquet_port_op.GetExtraSystemOperator(omega);
-  }
+  // Get the full system operator including the low-rank Floquet port correction:
+  //   A_total = a0 K + a1 C + a2 M + A2(ω) + F(ω)
+  // where F is the Floquet DtN correction (low-rank, not in the preconditioner).
+  // If no Floquet ports are configured, returns the same result as GetSystemMatrix.
+  std::unique_ptr<ComplexOperator>
+  GetSystemOperator(std::complex<double> a0, std::complex<double> a1,
+                    std::complex<double> a2, double omega, const ComplexOperator *K,
+                    const ComplexOperator *C, const ComplexOperator *M,
+                    const ComplexOperator *A2 = nullptr);
 
   const auto &GetPortExcitations() const { return port_excitation_helper; }
 

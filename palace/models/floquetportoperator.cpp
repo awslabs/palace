@@ -338,8 +338,8 @@ void FloquetPortData::ComputeReciprocalLattice(const mfem::Vector &a1,
 }
 
 int FloquetPortData::ComputeBZOffset(const mfem::Vector &kF_unwrapped,
-                                     const mfem::Vector &kF_wrapped,
-                                     const mfem::Vector &b, double b_sq)
+                                     const mfem::Vector &kF_wrapped, const mfem::Vector &b,
+                                     double b_sq)
 {
   mfem::Vector dkF(kF_unwrapped.Size());
   for (int i = 0; i < kF_unwrapped.Size(); i++)
@@ -613,89 +613,74 @@ int FloquetPortData::NumPropagatingOrders() const
   return count;
 }
 
+std::complex<double>
+FloquetPortData::ComputeDtNCorrectionCoeff(const FloquetMode &mode) const
+{
+  // Compute g_correction = g_full - g_uniform for a single mode.
+  // g_uniform uses the TE (0,0) propagation constant as the Robin reference.
+  double gamma0 = 0.0;
+  for (const auto &m0 : modes)
+  {
+    if (m0.m == 0 && m0.n == 0 && m0.is_te)
+    {
+      gamma0 = std::sqrt(std::max(m0.gamma_sq, 0.0));
+      break;
+    }
+  }
+
+  std::complex<double> g_uniform = 1i * gamma0 / (mu_r_port * port_area);
+  std::complex<double> g_full;
+
+  if (mode.gamma_sq > 0.0)
+  {
+    double gamma = std::sqrt(mode.gamma_sq);
+    g_full = mode.is_te
+                 ? 1i * gamma / (mu_r_port * port_area)
+                 : 1i * omega0 * omega0 * mu_eps_port / (gamma * mu_r_port * port_area);
+  }
+  else if (mode.gamma_sq < 0.0)
+  {
+    double gamma_abs = std::sqrt(-mode.gamma_sq);
+    g_full = mode.is_te
+                 ? -gamma_abs / (mu_r_port * port_area)
+                 : omega0 * omega0 * mu_eps_port / (gamma_abs * mu_r_port * port_area);
+  }
+  else
+  {
+    return 0.0;
+  }
+
+  std::complex<double> g_correction = g_full - g_uniform;
+
+  // Skip negligible corrections.
+  if (std::abs(g_correction) < 1e-14 * std::abs(g_full))
+  {
+    return 0.0;
+  }
+  // Skip near-cutoff TM modes where ω²με/γ diverges as γ → 0.
+  if (std::abs(g_full) > 10.0 * std::abs(g_uniform))
+  {
+    return 0.0;
+  }
+  return g_correction;
+}
+
 std::unique_ptr<LowRankComplexOperator> FloquetPortData::GetBoundaryOperator() const
 {
   int n = modes.empty() ? 0 : static_cast<int>(modes[0].v.Size());
   auto op = std::make_unique<LowRankComplexOperator>(comm, n);
 
-  // The full-rank Robin BC (iγ₀/μ × boundary_mass) is already added to the system matrix
-  // via AddExtraSystemBdrCoefficients. Here we add only the CORRECTION for modes whose
-  // propagation constant γ_mn differs from γ₀:
-  //   g_correction = i(γ_mn - γ₀)/(μ|Γ|)  for propagating
-  //   g_correction = (-|γ_mn| - iγ₀)/(μ|Γ|) for evanescent
-
-  // γ₀ for the Robin reference: use the TE (0,0) mode's propagation constant. The
-  // Robin + correction total is invariant under the choice of γ₀ for included modes,
-  // so this choice doesn't affect accuracy — it only affects the Robin/correction split.
-  double gamma0 = 0.0;
-  for (const auto &mode : modes)
-  {
-    if (mode.m == 0 && mode.n == 0 && mode.is_te)
-    {
-      gamma0 = std::sqrt(std::max(mode.gamma_sq, 0.0));
-      break;
-    }
-  }
-
   for (const auto &mode : modes)
   {
     if (!HasFlag(mode.use, FloquetModeUse::Dtn))
     {
-      continue;  // Only BZ-centered modes enter the DtN correction.
-    }
-
-    std::complex<double> g_full, g_uniform;
-    g_uniform = 1i * gamma0 / (mu_r_port * port_area);
-
-    if (mode.gamma_sq > 0.0)
-    {
-      double gamma = std::sqrt(mode.gamma_sq);
-      if (mode.is_te)
-      {
-        // TE DtN eigenvalue: gamma (from G_nm tensor, Eq 25 of Floquet_BC.pdf)
-        g_full = 1i * gamma / (mu_r_port * port_area);
-      }
-      else
-      {
-        // TM DtN eigenvalue: omega^2 * mu_r * eps_r / gamma = k^2 / gamma
-        // (the G_nm tensor has different eigenvalues for TE and TM polarizations)
-        g_full = 1i * omega0 * omega0 * mu_eps_port / (gamma * mu_r_port * port_area);
-      }
-    }
-    else if (mode.gamma_sq < 0.0)
-    {
-      double gamma_abs = std::sqrt(-mode.gamma_sq);
-      if (mode.is_te)
-      {
-        // TE evanescent: -|gamma| / (mu * |Gamma|)
-        g_full = -gamma_abs / (mu_r_port * port_area);
-      }
-      else
-      {
-        // TM evanescent: g = j * omega^2 * eps_r / (gamma * |Gamma|) with gamma = j|gamma|
-        //              = j * omega^2 * mu_r * eps_r / (j|gamma| * mu_r * |Gamma|)
-        //              = +omega^2 * eps_r / (|gamma| * |Gamma|)  (positive real, inductive)
-        g_full = omega0 * omega0 * mu_eps_port / (gamma_abs * mu_r_port * port_area);
-      }
-    }
-    else
-    {
       continue;
     }
-
-    std::complex<double> g_correction = g_full - g_uniform;
-    if (std::abs(g_correction) < 1e-14 * std::abs(g_full))
+    auto g = ComputeDtNCorrectionCoeff(mode);
+    if (g != 0.0)
     {
-      continue;  // Skip if correction is negligible (e.g., (0,0) mode).
+      op->AddTerm(&mode.v, g);
     }
-    // Skip corrections where |g_full| >> |g_uniform|. This occurs for near-cutoff TM modes
-    // where ω²με/γ diverges as γ → 0. The rank-1 projection can't accurately represent
-    // such large corrections, and these modes carry negligible power.
-    if (std::abs(g_full) > 10.0 * std::abs(g_uniform))
-    {
-      continue;
-    }
-    op->AddTerm(&mode.v, g_correction);
   }
 
   return op;

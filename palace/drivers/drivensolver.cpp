@@ -157,21 +157,12 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       // Assemble frequency dependent matrices and initialize operators in linear
       // solver.
       auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
-      auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
-                                        K.get(), C.get(), M.get(), A2.get());
+      auto A = space_op.GetSystemOperator(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
+                                          omega, K.get(), C.get(), M.get(), A2.get());
       auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
           1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
 
-      // Add low-rank Floquet port boundary operator F(omega) to the system matrix.
-      auto F = space_op.GetFloquetPortOperator(omega);
-      bool has_floquet_F = (F != nullptr);
-      std::unique_ptr<ComplexOperator> A_total;
-      if (has_floquet_F)
-      {
-        A_total = std::make_unique<SumComplexOperator>(std::move(A), std::move(F));
-      }
-
-      ksp.SetOperators(has_floquet_F ? *A_total : *A, *P);
+      ksp.SetOperators(*A, *P);
 
       Mpi::Print(
           "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",

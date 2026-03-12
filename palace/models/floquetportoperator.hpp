@@ -156,6 +156,11 @@ public:
   // Get the low-rank boundary operator F(omega) for this port.
   std::unique_ptr<LowRankComplexOperator> GetBoundaryOperator() const;
 
+  // Compute the DtN correction coefficient g_correction for a single mode at the current
+  // frequency. Returns 0 if the mode should be skipped (negligible or near-cutoff cap).
+  // Used by both GetBoundaryOperator and the ROM projection.
+  std::complex<double> ComputeDtNCorrectionCoeff(const FloquetMode &mode) const;
+
   // S-parameter for all propagating orders at the current frequency.
   // If subtract_incident is true, subtracts the incident field contribution from the
   // driving port's (0,0) modes (total → scattered field conversion).
@@ -178,6 +183,7 @@ public:
   // Material properties at the port (nondimensional, from adjacent volume element).
   double GetMuEpsPort() const { return mu_eps_port; }
   double GetMuRPort() const { return mu_r_port; }
+  double GetPortArea() const { return port_area; }
 
 private:
   const MaterialOperator &mat_op;

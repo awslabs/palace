@@ -16,6 +16,7 @@
 #include "linalg/jacobi.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/rap.hpp"
+#include "models/floquetportoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -512,6 +513,21 @@ SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
                                const OperType *A2)
 {
   return BuildParSumOperator({a0, a1, a2, ScalarType{1}}, {K, C, M, A2});
+}
+
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetSystemOperator(std::complex<double> a0, std::complex<double> a1,
+                                 std::complex<double> a2, double omega,
+                                 const ComplexOperator *K, const ComplexOperator *C,
+                                 const ComplexOperator *M, const ComplexOperator *A2)
+{
+  auto A = GetSystemMatrix(a0, a1, a2, K, C, M, A2);
+  auto F = floquet_port_op.GetExtraSystemOperator(omega);
+  if (F)
+  {
+    return std::make_unique<SumComplexOperator>(std::move(A), std::move(F));
+  }
+  return A;
 }
 
 std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double a2,

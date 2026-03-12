@@ -24,6 +24,7 @@ namespace palace
 
 class IoData;
 class SpaceOperator;
+struct FloquetMode;
 
 // Helper classs to define inner product used in the PROM when doing circuit synthesis. The
 // weight matrix is the simple domain mass matrix of the space with the tdof of the port
@@ -175,6 +176,18 @@ protected:
   // order basis defined below.
   Eigen::MatrixXcd Kr, Mr, Cr;  // Extend during UpdatePROM as modes are added
   Eigen::VectorXcd RHS1r;       // Need to recompute drive vector on excitation change.
+
+  // Reduced Floquet port projection vectors for F(ω) = Σ g_k(ω) conj(v_k) v_k^T.
+  // Each entry stores { v_k^T V, V^H conj(v_k) } for efficient rank-1 PROM updates.
+  // The frequency-dependent scalar g_k(ω) is computed during SolvePROM.
+  struct ReducedFloquetMode
+  {
+    int port_idx;
+    const FloquetMode *mode;  // Not owned — points into FloquetPortData::modes
+    Eigen::VectorXcd vk_V;    // v_k^T V (row vector, size n_basis)
+    Eigen::VectorXcd Vh_cvk;  // V^H conj(v_k) (column vector, size n_basis)
+  };
+  std::vector<ReducedFloquetMode> floquet_reduced;
 
   // Frequency dependant PROM matrix Ar and RHSr are assembled and used only during
   // SolvePROM. Define them here so memory allocation can be reused in "online" evaluation.

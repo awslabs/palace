@@ -16,6 +16,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/orthog.hpp"
 #include "linalg/rap.hpp"
+#include "models/floquetportoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
@@ -72,7 +73,7 @@ inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
                                ComplexVector &r, int n0)
 {
   // Update Ar = Vᴴ A V for the new basis dimension n0 -> n. V is real and thus the result
-  // is complex symmetric if A is symmetric (which we assume is the case). Ar is replicated
+  // is Hermitian if A is Hermitian (e.g. with Bloch-periodic operators). Ar is replicated
   // across all processes as a sequential n x n matrix.
   const auto n = Ar.rows();
   MFEM_VERIFY(n0 < n, "Invalid dimensions in PROM matrix projection!");
@@ -100,11 +101,13 @@ inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
 
   // Fill lower block of Vᴴ A V = [ ____________  |  ]
   //                              [ vjᴴ A V[1:n0] |  ] .
+  // For Hermitian A (e.g. Bloch-periodic FEM), the projection is Hermitian:
+  // (Vᵀ A V)ᴴ = Vᵀ Aᴴ V = Vᵀ A V. Use conjugate transpose, not plain transpose.
   for (int j = 0; j < n0; j++)
   {
     for (int i = n0; i < n; i++)
     {
-      Ar(i, j) = Ar(j, i);
+      Ar(i, j) = std::conj(Ar(j, i));
     }
   }
 }
@@ -515,13 +518,13 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 {
   SetExcitationIndex(excitation_idx);
 
-  // Compute HDM solution at the given frequency. The system matrix, A = K + iω C - ω² M +
-  // A2(ω) is built by summing the underlying operator contributions.
+  // Compute HDM solution at the given frequency. The system operator includes the
+  // low-rank Floquet DtN correction F(ω) if Floquet ports are configured.
   A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   has_A2 = (A2 != nullptr);
-  auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
-                                    std::complex<double>(-omega * omega, 0.0), K.get(),
-                                    C.get(), M.get(), A2.get());
+  auto A = space_op.GetSystemOperator(std::complex<double>(1.0, 0.0), 1i * omega,
+                                      std::complex<double>(-omega * omega, 0.0), omega,
+                                      K.get(), C.get(), M.get(), A2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
                                                              -omega * omega + 0.0i, omega);
   ksp->SetOperators(*A, *P);
@@ -686,6 +689,53 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     RHS1r.conservativeResize(dim_V_new);
     ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V_old);
   }
+
+  // Update reduced Floquet port projection vectors. For F = Σ g_k conj(v_k) v_k^T,
+  // the PROM contribution is Σ g_k (V^H conj(v_k)) (v_k^T V). Since V is real:
+  //   V^H conj(v_k) = conj(V^T v_k) and v_k^T V = (V^T v_k)^T.
+  // So we only need V^T v_k (same structure as ProjectVecInternal).
+  if (dim_V_old == 0)
+  {
+    // First time: enumerate all Floquet modes with for_dtn flag.
+    floquet_reduced.clear();
+    for (const auto &[port_idx, port] : space_op.GetFloquetPortOp())
+    {
+      if (!port.active)
+      {
+        continue;
+      }
+      for (const auto &mode : port.GetModes())
+      {
+        if (!HasFlag(mode.use, FloquetModeUse::Dtn))
+        {
+          continue;
+        }
+        ReducedFloquetMode rm;
+        rm.port_idx = port_idx;
+        rm.mode = &mode;
+        rm.vk_V.resize(dim_V_new);
+        rm.Vh_cvk.resize(dim_V_new);
+        floquet_reduced.push_back(std::move(rm));
+      }
+    }
+  }
+  for (auto &rm : floquet_reduced)
+  {
+    // Compute V^T v_k for new basis vectors [dim_V_old, dim_V_new).
+    rm.vk_V.conservativeResize(dim_V_new);
+    rm.Vh_cvk.conservativeResize(dim_V_new);
+    for (int i = dim_V_old; i < dim_V_new; i++)
+    {
+      // V[i] is real. v_k is complex. V[i]^T v_k = (V[i] · v_k_real) + j(V[i] · v_k_imag).
+      double dr = V[i] * rm.mode->v.Real();
+      double di = V[i] * rm.mode->v.Imag();
+      Mpi::GlobalSum(1, &dr, comm);
+      Mpi::GlobalSum(1, &di, comm);
+      std::complex<double> vt_vi(dr, di);
+      rm.vk_V(i) = vt_vi;               // v_k^T V[i]
+      rm.Vh_cvk(i) = std::conj(vt_vi);  // V[i]^H conj(v_k) = conj(V[i]^T v_k)
+    }
+  }
 }
 
 void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
@@ -728,6 +778,19 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     Ar += (1i * omega) * Cr;
   }
   Ar += (-omega * omega) * Mr;
+
+  // Add low-rank Floquet port DtN correction: Fᵣ = Σ g_k(ω) (V^H conj(v_k))(v_k^T V).
+  // Initialize Floquet ports for this frequency to get gamma_sq values.
+  space_op.GetFloquetPortOp().Initialize(omega);
+  for (const auto &rm : floquet_reduced)
+  {
+    const auto &port = space_op.GetFloquetPortOp().GetPort(rm.port_idx);
+    auto g = port.ComputeDtNCorrectionCoeff(*rm.mode);
+    if (g != 0.0)
+    {
+      Ar.noalias() += g * rm.Vh_cvk * rm.vk_V.transpose();
+    }
+  }
 
   if (has_RHS2)
   {
