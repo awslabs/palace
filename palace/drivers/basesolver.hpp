@@ -57,6 +57,13 @@ public:
   void SaveMetadata(const PortExcitations &excitation_helper) const;
 };
 
+// Archive the current postprocessing output for an AMR iteration. Creates a subfolder
+// "iterationXX" inside output_dir and moves all files and directories into it, leaving
+// relative symlinks behind so that the output directory always has accessible results.
+// The palace.json metadata file is copied (not moved) since it is read and updated by
+// subsequent iterations.
+void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int width);
+
 }  // namespace palace
 
 #endif  // PALACE_DRIVERS_BASE_SOLVER_HPP

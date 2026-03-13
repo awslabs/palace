@@ -290,8 +290,9 @@ println("config[\"Solver\"][\"Order\"] = $(json_amr["Solver"]["Order"])") #hide
 ```
 
 After running the simulation, the `postpro` folder contains an `iterationN`
-subfolder for each AMR cycle. The convergence history shows the error decreasing
-with each refinement:
+subfolder for each AMR cycle. The top level output (outside of the `iterationN`
+folders) always points to the latest iteration completed. The convergence
+history shows the error decreasing with each refinement:
 
 ```@example
 import JSON #hide
