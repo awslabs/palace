@@ -12,6 +12,20 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## In progress
+
+#### New Features
+
+  - Expanded JSON schema validation to cover required fields, mutual exclusion constraints
+    (e.g., `PEC`/`Ground`, `PMC`/`ZeroCharge`), array type validation, and numeric bounds.
+    Many runtime checks are now caught earlier at configuration parsing time with clearer
+    error messages [PR 635](https://github.com/awslabs/palace/pull/635).
+
+#### Bug Fixes
+
+  - Fixed port excitation parsing to correctly handle signed integer values
+    [PR 635](https://github.com/awslabs/palace/pull/635).
+
 ## [0.16.0] - 2026-03-05
 
 #### New Features
@@ -24,10 +38,6 @@ The format of this changelog is based on
   - Added JSON schema validation for configuration files at runtime, with embedded schemas
     and detailed error messages including valid enum options
     [PR 613](https://github.com/awslabs/palace/pull/613).
-  - Expanded JSON schema validation to cover required fields, mutual exclusion constraints
-    (e.g., `PEC`/`Ground`, `PMC`/`ZeroCharge`), array type validation, and numeric bounds.
-    Many runtime checks are now caught earlier at configuration parsing time with clearer
-    error messages [PR 635](https://github.com/awslabs/palace/pull/635).
   - Added support for electric current dipole source excitations. Current dipoles can be
     configured as an array in `config["Domains"]["CurrentDipole"]` with specifications for
     `"Index"`, `"Moment"`, `"Center"`, and `"Direction"`. Consult the
@@ -54,8 +64,6 @@ The format of this changelog is based on
   - Fixed a bug in complex diagonal operator multiplication where the imaginary part used an
     incorrect term in `AddMult` and `AddMultHermitianTranspose`.
     [PR 633](https://github.com/awslabs/palace/pull/633).
-  - Fixed port excitation parsing to correctly handle signed integer values
-    [PR 635](https://github.com/awslabs/palace/pull/635).
 
 #### Interface Changes
 
