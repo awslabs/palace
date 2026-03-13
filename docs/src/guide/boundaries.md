@@ -142,7 +142,11 @@ for implementation details.
     [`config["Boundaries"]["Periodic"]`](../config/boundaries.md#boundaries%5B%22Periodic%22%5D).
     The `"FloquetWaveVector"` in the periodic configuration specifies the tangential
     component of the incident wave vector, which determines the angle of incidence. For
-    normal incidence, set the wave vector to zero.
+    normal incidence, set the wave vector to zero. For frequency sweeps at a fixed angle
+    of incidence, set `"FloquetReferenceFrequency"` to the frequency (in GHz) at which the
+    wave vector is defined. The wave vector then scales linearly with frequency:
+    k_F(f) = FloquetWaveVector × (f / FloquetReferenceFrequency), maintaining a constant
+    incidence angle across the sweep.
 
     The incident field is a plane wave in the specular (0,0) diffraction order with
     user-specified polarization (TE, TM, or circular RHC/LHC). S-parameters are extracted

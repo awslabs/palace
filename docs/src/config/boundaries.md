@@ -637,6 +637,7 @@ boundary.
 "Periodic":
 {
     "FloquetWaveVector": [<float array>],
+    "FloquetReferenceFrequency": <float>,
     "BoundaryPairs":
     [
         {
@@ -669,7 +670,15 @@ to the receiver attribute in mesh units. If neither `"Translation"` or `"AffineT
 specified, the transformation between donor and receiver boundaries is automatically detected.
 
 `"FloquetWaveVector" [None]` :  Optional floating point array defining the phase delay between the
-periodic boundaries in the X/Y/Z directions in radians per mesh unit.
+periodic boundaries in the X/Y/Z directions in radians per mesh unit. When used with
+`"FloquetReferenceFrequency"`, this specifies the wave vector at the reference frequency.
+
+`"FloquetReferenceFrequency" [None]` :  Optional frequency in GHz at which the
+`"FloquetWaveVector"` is defined. When specified, the Bloch wave vector scales linearly with
+frequency during a driven simulation frequency sweep: k_F(f) = FloquetWaveVector × (f /
+FloquetReferenceFrequency). This is the physically correct behavior for oblique plane wave
+incidence at a fixed angle, where k_F = (2πf/c) sin(θ). When not specified (default), the wave
+vector is held constant across all frequencies. Only supported for driven simulations.
 
 ## `boundaries["Postprocessing"]["SurfaceFlux"]`
 

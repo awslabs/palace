@@ -510,6 +510,7 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
     lf_r.UseFastAssembly(false);
     lf_r.UseDevice(false);
     lf_r.Assemble();
+    lf_r.UseDevice(true);
 
     // Assemble imaginary part.
     mfem::LinearForm lf_i(&nd_fespace);
@@ -517,6 +518,7 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
     lf_i.UseFastAssembly(false);
     lf_i.UseDevice(false);
     lf_i.Assemble();
+    lf_i.UseDevice(true);
 
     // Project to true DOFs: v = P^T * lf.
     nd_fespace.GetProlongationMatrix()->MultTranspose(lf_r, mode.v.Real());
