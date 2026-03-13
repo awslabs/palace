@@ -28,34 +28,54 @@ namespace palace
 
 using json = nlohmann::json;
 
-namespace
-{
-
 void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int width)
 {
   BlockTimer bt(Timer::IO);
   Mpi::Barrier(comm);  // Wait for all processes to write postprocessing files
   if (Mpi::Root(comm))
   {
-    // Create a subfolder for the results of this adaptation.
+    // Create a subfolder for the results of this adaptation by moving (renaming) files.
     auto step_output = output_dir / fmt::format("iteration{:0{}d}", step, width);
     if (!fs::exists(step_output))
     {
       fs::create_directories(step_output);
     }
-    constexpr auto options =
-        fs::copy_options::recursive | fs::copy_options::overwrite_existing;
+    auto rel_step = step_output.filename();
     for (const auto &f : fs::directory_iterator(output_dir))
     {
-      if (f.path().filename().string().rfind("iteration") == 0)
+      const auto &fname = f.path().filename().string();
+      if (fname.rfind("iteration") == 0)
       {
         continue;
       }
-      fs::copy(f, step_output / f.path().filename(), options);
+      auto dest = step_output / f.path().filename();
+      if (f.is_symlink())
+      {
+        // Skip symlinks left from a previous iteration's save. They still point
+        // to valid data and will be overwritten by the next solve.
+        continue;
+      }
+      else if (fname == "palace.json")
+      {
+        // Copy metadata file since it is needed by subsequent iterations.
+        fs::copy(f, dest, fs::copy_options::overwrite_existing);
+      }
+      else
+      {
+        // Move to the iteration subfolder and leave a relative symlink behind
+        // so that the output directory always has accessible results. Remove
+        // any existing destination first (e.g. from a previous run).
+        fs::remove_all(dest);
+        fs::rename(f, dest);
+        fs::create_symlink(rel_step / f.path().filename(), f.path());
+      }
     }
   }
   Mpi::Barrier(comm);
 }
+
+namespace
+{
 
 json LoadMetadata(const fs::path &post_dir)
 {
