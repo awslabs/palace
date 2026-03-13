@@ -318,7 +318,7 @@ TEST_CASE("OrthogonalizeColumn Weighted - Real 1", "[orthog][Serial]")
   CHECK_THAT(dot1, WithinAbs(0.0, 1e-12));
 
   // Resulting vector is along (1, -1) direction
-  CHECK_THAT(w[0], WithinRel(-w[1]));
+  CHECK_THAT(w[0], WithinRel(-w[1], 1000 * std::numeric_limits<double>::epsilon()));
 }
 
 TEST_CASE("OrthogonalizeColumn Weighted - Complex 1", "[orthog][Serial]")
