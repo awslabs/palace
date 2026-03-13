@@ -1,0 +1,24 @@
+diff --git a/repos/spack_repo/builtin/packages/strumpack/package.py b/repos/spack_repo/builtin/packages/strumpack/package.py
+index aaf525901d..dbc9f9458e 100644
+--- a/repos/spack_repo/builtin/packages/strumpack/package.py
++++ b/repos/spack_repo/builtin/packages/strumpack/package.py
+@@ -58,7 +58,7 @@ class Strumpack(CMakePackage, CudaPackage, ROCmPackage):
+     variant("shared", default=True, description="Build shared libraries")
+     variant("mpi", default=True, description="Use MPI")
+     variant(
+-        "openmp", default=True, description="Enable thread parallellism via tasking with OpenMP"
++        "openmp", default=True, description="Enable thread parallelism via tasking with OpenMP"
+     )
+     variant("parmetis", default=True, description="Enable use of ParMetis")
+     variant("scotch", default=False, description="Enable use of Scotch")
+@@ -79,7 +79,9 @@ class Strumpack(CMakePackage, CudaPackage, ROCmPackage):
+     depends_on("mpi", when="+mpi")
+     depends_on("blas")
+     depends_on("lapack")
+-    depends_on("openblas threads=openmp", when="^[virtuals=blas] openblas")
++    for blas in ("openblas", "amdblis", "blis"):
++        depends_on(f"{blas} threads=openmp", when=f"+openmp ^[virtuals=blas] {blas}")
++        depends_on(f"{blas} threads=none", when=f"~openmp ^[virtuals=blas] {blas}")
+     depends_on("scalapack", when="+mpi")
+     depends_on("metis")
+     depends_on("parmetis", when="+parmetis")
