@@ -699,6 +699,15 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   for (auto &f : solver.driven.sample_f)
     f = 2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
 
+  // Nondimensionalize Floquet reference frequency (GHz → nondimensional angular frequency).
+  if (boundaries.periodic.floquet_reference_freq > 0.0)
+  {
+    boundaries.periodic.floquet_reference_freq =
+        2 * M_PI *
+        units.Nondimensionalize<Units::ValueType::FREQUENCY>(
+            boundaries.periodic.floquet_reference_freq);
+  }
+
   // For transient simulations:
   solver.transient.pulse_f =
       2 * M_PI *

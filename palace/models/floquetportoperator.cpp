@@ -58,6 +58,14 @@ void LowRankComplexOperator::AddMult(const ComplexVector &x, ComplexVector &y,
   }
 }
 
+namespace
+{
+
+void ComputePolarization(const mfem::Vector &kt, const mfem::Vector &port_normal,
+                         mfem::Vector &e_te, mfem::Vector &e_tm);
+
+}  // namespace
+
 // =============================================================================
 // FloquetPortData
 // =============================================================================
@@ -179,17 +187,21 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
              "   b2 = ({:.4e}, {:.4e}, {:.4e})\n",
              b1(0), b1(1), b1(2), b2(0), b2(1), b2(2));
 
-  // Compute the BZ wrapping offset: G = kF_unwrapped - kF_wrapped = bz_m*b1 + bz_n*b2.
-  // When k_F is wrapped, the Fourier projection kernel must be shifted by -G so that
-  // physical mode labels remain unchanged.
+  // Compute the BZ wrapping offset using the BZ-wrapped k_F (not k₀).
   {
     mfem::Vector kF_unwrapped(3);
     for (int i = 0; i < 3; i++)
     {
       kF_unwrapped(i) = periodic.wave_vector[i];
     }
-    bz_m = ComputeBZOffset(kF_unwrapped, k_F, b1, b1 * b1);
-    bz_n = ComputeBZOffset(kF_unwrapped, k_F, b2, b2 * b2);
+    const auto &kF_bz = mat_op.GetWaveVectorBZ();
+    mfem::Vector kF_wrapped(3);
+    for (int i = 0; i < 3; i++)
+    {
+      kF_wrapped(i) = (i < kF_bz.Size()) ? kF_bz(i) : 0.0;
+    }
+    bz_m = ComputeBZOffset(kF_unwrapped, kF_wrapped, b1, b1 * b1);
+    bz_n = ComputeBZOffset(kF_unwrapped, kF_wrapped, b2, b2 * b2);
     if (bz_m != 0 || bz_n != 0)
     {
       Mpi::Print(" Floquet port: BZ wrapping active (shift = {:d}*b1 + {:d}*b2)\n", bz_m,
@@ -285,6 +297,7 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
   // Enumerate diffraction orders and assemble Fourier projections.
   EnumerateOrders();
   AssembleFourierProjections(nd_fespace);
+  nd_fespace_ptr = &nd_fespace;  // Store for re-assembly in Initialize.
 
   Mpi::Print(" Floquet port: {:d} modes ({:d} orders x 2 polarizations), "
              "port area = {:.4e}, normal = ({:.3f}, {:.3f}, {:.3f})\n",
@@ -380,85 +393,20 @@ void FloquetPortData::EnumerateOrders()
       //              = m*b1 + n*b2 - k_F_unwrapped (same physical k_t)
       // gamma^2 = omega^2*mu*eps - |k_t|^2, computed in Initialize(omega).
 
-      // Compute TE and TM polarization vectors.
-      // The transverse wavevector direction for this order:
+      // Compute TE and TM polarization vectors from the transverse wavevector.
+      // Use the physical k_F at the reference frequency for initial assembly.
+      // Initialize() will update the polarization when k_F changes with frequency.
       mfem::Vector kt(3);
-      for (int i = 0; i < 3; i++)
       {
-        kt(i) = B_mn(i) - k_F(i);
+        const auto &kF_phys = mat_op.HasFloquetFrequencyScaling() ? mat_op.GetWaveVectorBZ()
+                                                                  : mat_op.GetWaveVector();
+        for (int i = 0; i < 3; i++)
+        {
+          kt(i) = B_mn(i) - ((i < kF_phys.Size()) ? kF_phys(i) : 0.0);
+        }
       }
-      double kt_norm = kt.Norml2();
-
       mfem::Vector e_te(3), e_tm(3);
-      if (kt_norm > 1e-12)
-      {
-        // TE: e_TE = k_hat_t x n_hat / |k_hat_t x n_hat|
-        // where k_hat_t is the transverse wavevector direction (normalized kt)
-        mfem::Vector kt_hat(3);
-        kt_hat = kt;
-        kt_hat *= 1.0 / kt_norm;
-
-        e_te(0) = kt_hat(1) * port_normal(2) - kt_hat(2) * port_normal(1);
-        e_te(1) = kt_hat(2) * port_normal(0) - kt_hat(0) * port_normal(2);
-        e_te(2) = kt_hat(0) * port_normal(1) - kt_hat(1) * port_normal(0);
-        double e_te_norm = e_te.Norml2();
-        if (e_te_norm > 1e-12)
-        {
-          e_te *= 1.0 / e_te_norm;
-        }
-
-        // TM: e_TM = e_TE x k_hat (full propagation direction)
-        // At this point we don't know the full k_hat (need gamma), so use the projection:
-        // e_TM is in the plane spanned by kt_hat and n_hat, perpendicular to e_TE.
-        // e_TM = n_hat x e_TE (to keep it tangential to port face for now)
-        e_tm(0) = port_normal(1) * e_te(2) - port_normal(2) * e_te(1);
-        e_tm(1) = port_normal(2) * e_te(0) - port_normal(0) * e_te(2);
-        e_tm(2) = port_normal(0) * e_te(1) - port_normal(1) * e_te(0);
-        double e_tm_norm = e_tm.Norml2();
-        if (e_tm_norm > 1e-12)
-        {
-          e_tm *= 1.0 / e_tm_norm;
-        }
-      }
-      else
-      {
-        // Normal incidence for this order (kt = 0): TE/TM are degenerate.
-        // Choose two orthogonal directions in the port plane.
-        // Use |n̂| (absolute components) to ensure CONSISTENT polarization at all ports
-        // regardless of the outward normal sign (opposite faces have opposite normals).
-        mfem::Vector abs_n(3);
-        for (int d = 0; d < 3; d++)
-        {
-          abs_n(d) = std::abs(port_normal(d));
-        }
-        mfem::Vector ref(3);
-        ref = 0.0;
-        int min_idx = 0;
-        double min_val = abs_n(0);
-        for (int d = 1; d < 3; d++)
-        {
-          if (abs_n(d) < min_val)
-          {
-            min_val = abs_n(d);
-            min_idx = d;
-          }
-        }
-        ref(min_idx) = 1.0;
-
-        // e_te = ref x |n_hat| (consistent direction, tangential to port)
-        e_te(0) = ref(1) * abs_n(2) - ref(2) * abs_n(1);
-        e_te(1) = ref(2) * abs_n(0) - ref(0) * abs_n(2);
-        e_te(2) = ref(0) * abs_n(1) - ref(1) * abs_n(0);
-        double e_te_norm = e_te.Norml2();
-        e_te *= 1.0 / e_te_norm;
-
-        // e_tm = |n_hat| x e_te (consistent with e_te)
-        e_tm(0) = abs_n(1) * e_te(2) - abs_n(2) * e_te(1);
-        e_tm(1) = abs_n(2) * e_te(0) - abs_n(0) * e_te(2);
-        e_tm(2) = abs_n(0) * e_te(1) - abs_n(1) * e_te(0);
-        double e_tm_norm = e_tm.Norml2();
-        e_tm *= 1.0 / e_tm_norm;
-      }
+      ComputePolarization(kt, port_normal, e_te, e_tm);
 
       // User-requested modes (±MaxOrder around specular) are for S-parameter output.
       // BZ-shifted modes (±MaxOrder around BZ origin) are for the DtN correction.
@@ -579,6 +527,78 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
   }
 }
 
+namespace
+{
+
+void ComputePolarization(const mfem::Vector &kt, const mfem::Vector &port_normal,
+                         mfem::Vector &e_te, mfem::Vector &e_tm)
+{
+  double kt_norm = kt.Norml2();
+  e_te.SetSize(3);
+  e_tm.SetSize(3);
+
+  if (kt_norm > 1e-12)
+  {
+    mfem::Vector kt_hat(3);
+    kt_hat = kt;
+    kt_hat *= 1.0 / kt_norm;
+
+    e_te(0) = kt_hat(1) * port_normal(2) - kt_hat(2) * port_normal(1);
+    e_te(1) = kt_hat(2) * port_normal(0) - kt_hat(0) * port_normal(2);
+    e_te(2) = kt_hat(0) * port_normal(1) - kt_hat(1) * port_normal(0);
+    double e_te_norm = e_te.Norml2();
+    if (e_te_norm > 1e-12)
+    {
+      e_te *= 1.0 / e_te_norm;
+    }
+
+    e_tm(0) = port_normal(1) * e_te(2) - port_normal(2) * e_te(1);
+    e_tm(1) = port_normal(2) * e_te(0) - port_normal(0) * e_te(2);
+    e_tm(2) = port_normal(0) * e_te(1) - port_normal(1) * e_te(0);
+    double e_tm_norm = e_tm.Norml2();
+    if (e_tm_norm > 1e-12)
+    {
+      e_tm *= 1.0 / e_tm_norm;
+    }
+  }
+  else
+  {
+    // Normal incidence: degenerate TE/TM. Use consistent reference direction.
+    mfem::Vector abs_n(3);
+    for (int d = 0; d < 3; d++)
+    {
+      abs_n(d) = std::abs(port_normal(d));
+    }
+    mfem::Vector ref(3);
+    ref = 0.0;
+    int min_idx = 0;
+    double min_val = abs_n(0);
+    for (int d = 1; d < 3; d++)
+    {
+      if (abs_n(d) < min_val)
+      {
+        min_val = abs_n(d);
+        min_idx = d;
+      }
+    }
+    ref(min_idx) = 1.0;
+
+    e_te(0) = ref(1) * abs_n(2) - ref(2) * abs_n(1);
+    e_te(1) = ref(2) * abs_n(0) - ref(0) * abs_n(2);
+    e_te(2) = ref(0) * abs_n(1) - ref(1) * abs_n(0);
+    double e_te_norm = e_te.Norml2();
+    e_te *= 1.0 / e_te_norm;
+
+    e_tm(0) = abs_n(1) * e_te(2) - abs_n(2) * e_te(1);
+    e_tm(1) = abs_n(2) * e_te(0) - abs_n(0) * e_te(2);
+    e_tm(2) = abs_n(0) * e_te(1) - abs_n(1) * e_te(0);
+    double e_tm_norm = e_tm.Norml2();
+    e_tm *= 1.0 / e_tm_norm;
+  }
+}
+
+}  // namespace
+
 void FloquetPortData::Initialize(double omega)
 {
   if (omega == omega0 && omega0 != 0.0)
@@ -587,16 +607,74 @@ void FloquetPortData::Initialize(double omega)
   }
   omega0 = omega;
 
+  // Compute k_F at this frequency. When frequency scaling is active, the stored k_F is
+  // k₀ = k_F/ω (frequency-independent), so k_F(ω) = ω × k₀. Without scaling, k_F is the
+  // fixed Bloch vector and kF_scale = 1.
+  double kF_scale = mat_op.HasFloquetFrequencyScaling() ? omega : 1.0;
+
+  // Check BZ wrapping consistency: if k_F(ω) would require a different BZ offset than
+  // what was used at construction, the mode enumeration is wrong. Compute the effective
+  // k_F(ω) and check its BZ offset.
+  if (mat_op.HasFloquetFrequencyScaling())
+  {
+    mfem::Vector kF_eff(3);
+    for (int i = 0; i < 3; i++)
+    {
+      kF_eff(i) = kF_scale * k_F(i);
+    }
+    // Wrap to BZ and compute offset.
+    double b1_sq = b1 * b1, b2_sq = b2 * b2;
+    int new_bz_m = static_cast<int>(std::round((kF_eff * b1) / b1_sq));
+    int new_bz_n = static_cast<int>(std::round((kF_eff * b2) / b2_sq));
+    // The constructor computed bz_m/bz_n from the UNWRAPPED config k_F. Here we check
+    // the effective k_F(ω) — the offset should match after accounting for the reference.
+    // Compare with the BZ offset that was used at construction.
+    MFEM_VERIFY(new_bz_m == bz_m && new_bz_n == bz_n,
+                "Floquet port: k_F("
+                    << omega << ") requires BZ offset (" << new_bz_m << "," << new_bz_n
+                    << ") different from construction (" << bz_m << "," << bz_n
+                    << "). The frequency range may be too wide for the reference "
+                       "frequency. Consider using a reference frequency closer to the "
+                       "center of the sweep range.");
+  }
+
+  bool need_reassemble = false;
   for (auto &mode : modes)
   {
-    // gamma_mn^2 = omega^2 * mu_r * eps_r - |B_mn - k_F|^2
+    // gamma_mn^2 = omega^2 * mu_r * eps_r - |B_mn - k_F(ω)|^2
     mfem::Vector kt(3);
     for (int i = 0; i < 3; i++)
     {
-      kt(i) = mode.B_mn(i) - k_F(i);
+      kt(i) = mode.B_mn(i) - kF_scale * k_F(i);
     }
     double kt_sq = kt * kt;
     mode.gamma_sq = omega * omega * mu_eps_port - kt_sq;
+
+    // When k_F scales with frequency, the transverse wavevector direction changes,
+    // which rotates the TE/TM polarization vectors. Recompute them.
+    if (mat_op.HasFloquetFrequencyScaling())
+    {
+      mfem::Vector e_te(3), e_tm(3);
+      ComputePolarization(kt, port_normal, e_te, e_tm);
+      mfem::Vector &new_pol = mode.is_te ? e_te : e_tm;
+      // Check if polarization changed (avoid unnecessary reassembly).
+      double pol_diff = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        pol_diff += std::abs(mode.e_pol(d) - new_pol(d));
+      }
+      if (pol_diff > 1e-14)
+      {
+        mode.e_pol = new_pol;
+        need_reassemble = true;
+      }
+    }
+  }
+
+  // Re-assemble mode vectors if polarization changed.
+  if (need_reassemble && nd_fespace_ptr)
+  {
+    AssembleFourierProjections(*nd_fespace_ptr);
   }
 }
 

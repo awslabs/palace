@@ -72,15 +72,14 @@ inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
                                const ComplexOperator &A, Eigen::MatrixXcd &Ar,
                                ComplexVector &r, int n0)
 {
-  // Update Ar = Vᴴ A V for the new basis dimension n0 -> n. V is real and thus the result
-  // is Hermitian if A is Hermitian (e.g. with Bloch-periodic operators). Ar is replicated
+  // Update Ar = Vᴴ A V for the new basis dimension n0 -> n. V is real. Ar is replicated
   // across all processes as a sequential n x n matrix.
   const auto n = Ar.rows();
   MFEM_VERIFY(n0 < n, "Invalid dimensions in PROM matrix projection!");
+
+  // Compute the right block: columns [n0, n), all rows [0, n).
   for (int j = n0; j < n; j++)
   {
-    // Fill block of Vᴴ A V = [  | Vᴴ A vj ] . We can optimize the matrix-vector product
-    // since the columns of V are real.
     MFEM_VERIFY(A.Real() || A.Imag(),
                 "Invalid zero ComplexOperator for PROM matrix projection!");
     if (A.Real())
@@ -99,16 +98,24 @@ inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
   }
   Mpi::GlobalSum((n - n0) * n, Ar.data() + n0 * n, comm);
 
-  // Fill lower block of Vᴴ A V = [ ____________  |  ]
-  //                              [ vjᴴ A V[1:n0] |  ] .
-  // For Hermitian A (e.g. Bloch-periodic FEM), the projection is Hermitian:
-  // (Vᵀ A V)ᴴ = Vᵀ Aᴴ V = Vᵀ A V. Use conjugate transpose, not plain transpose.
+  // Compute the lower-left block directly: rows [n0, n), columns [0, n0).
+  // No symmetry assumption — works for Hermitian, anti-symmetric, or general operators.
   for (int j = 0; j < n0; j++)
   {
+    if (A.Real())
+    {
+      A.Real()->Mult(V[j], r.Real());
+    }
+    if (A.Imag())
+    {
+      A.Imag()->Mult(V[j], r.Imag());
+    }
     for (int i = n0; i < n; i++)
     {
-      Ar(i, j) = std::conj(Ar(j, i));
+      Ar(i, j).real(A.Real() ? V[i] * r.Real() : 0.0);
+      Ar(i, j).imag(A.Imag() ? V[i] * r.Imag() : 0.0);
     }
+    Mpi::GlobalSum(n - n0, Ar.data() + j * n + n0, comm);
   }
 }
 
@@ -780,8 +787,31 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   Ar += (-omega * omega) * Mr;
 
   // Add low-rank Floquet port DtN correction: Fᵣ = Σ g_k(ω) (V^H conj(v_k))(v_k^T V).
-  // Initialize Floquet ports for this frequency to get gamma_sq values.
+  // Initialize Floquet ports for this frequency (updates gamma_sq and, when k_F scales
+  // with frequency, recomputes mode vectors with updated polarization).
   space_op.GetFloquetPortOp().Initialize(omega);
+
+  // When k_F scales with frequency, the mode vectors v_k change (polarization rotation).
+  // Reproject onto the PROM basis V for the current frequency.
+  if (space_op.GetMaterialOp().HasFloquetFrequencyScaling())
+  {
+    MPI_Comm comm = space_op.GetComm();
+    auto dim_V = static_cast<int>(V.size());
+    for (auto &rm : floquet_reduced)
+    {
+      for (int i = 0; i < dim_V; i++)
+      {
+        double dr = V[i] * rm.mode->v.Real();
+        double di = V[i] * rm.mode->v.Imag();
+        Mpi::GlobalSum(1, &dr, comm);
+        Mpi::GlobalSum(1, &di, comm);
+        std::complex<double> vt_vi(dr, di);
+        rm.vk_V(i) = vt_vi;
+        rm.Vh_cvk(i) = std::conj(vt_vi);
+      }
+    }
+  }
+
   for (const auto &rm : floquet_reduced)
   {
     const auto &port = space_op.GetFloquetPortOp().GetPort(rm.port_idx);

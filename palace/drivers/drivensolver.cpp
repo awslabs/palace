@@ -177,6 +177,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
       // Solve linear system.
       space_op.GetExcitationVector(excitation_idx, omega, RHS);
+
       Mpi::Print("\n");
       ksp.Mult(RHS, E);
 
@@ -192,9 +193,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       B *= -1.0 / (1i * omega);
       if (space_op.GetMaterialOp().HasWaveVector())
       {
-        // Calculate B field correction for Floquet BCs.
-        // B = -1/(iω) ∇ x E + 1/ω kp x E
-        floquet_corr->AddMult(E, B, 1.0 / omega);
+        // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
+        // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k_F_ref/ω_ref = k₀, so scale = 1.
+        floquet_corr->AddMult(
+            E, B,
+            space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
       }
 
       auto total_domain_energy =
@@ -299,9 +302,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     B *= -1.0 / (1i * omega);
     if (space_op.GetMaterialOp().HasWaveVector())
     {
-      // Calculate B field correction for Floquet BCs.
-      // B = -1/(iω) ∇ x E + 1/ω kp x E
-      floquet_corr->AddMult(E, B, 1.0 / omega);
+      // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
+      // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k₀, so scale = 1.
+      floquet_corr->AddMult(
+          E, B, space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
     }
 
     // Measure domain energies for the error indicator only. Don't exchange face_nbr_data,
@@ -431,9 +435,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       B *= -1.0 / (1i * omega);
       if (space_op.GetMaterialOp().HasWaveVector())
       {
-        // Calculate B field correction for Floquet BCs.
-        // B = -1/(iω) ∇ x E + 1/ω kp x E
-        floquet_corr->AddMult(E, B, 1.0 / omega);
+        // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
+        // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k_F_ref/ω_ref = k₀, so scale = 1.
+        floquet_corr->AddMult(
+            E, B,
+            space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
       }
       post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
     }

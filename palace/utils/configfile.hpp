@@ -476,6 +476,11 @@ public:
   // Floquet/Bloch wavevector specifying the phase delay in the X/Y/Z directions.
   std::array<double, 3> wave_vector = {0.0, 0.0, 0.0};
 
+  // Reference frequency (GHz) at which wave_vector is defined. When nonzero, k_F scales
+  // linearly with frequency: k_F(f) = wave_vector * (f / reference_freq). When zero
+  // (default), k_F is held constant across all frequencies.
+  double floquet_reference_freq = 0.0;
+
   PeriodicBoundaryData() = default;
   PeriodicBoundaryData(const json &periodic);
 };

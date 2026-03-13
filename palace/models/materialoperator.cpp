@@ -404,6 +404,13 @@ void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
               "Quasi-periodic Floquet periodic boundary conditions are only available "
               " in 3D!");
 
+  // Store nondimensional reference angular frequency for frequency-dependent k_F scaling.
+  // Already nondimensionalized in IoData::NondimensionalizeStandard.
+  floquet_omega_ref = data.floquet_reference_freq;
+  MFEM_VERIFY(floquet_omega_ref == 0.0 || iodata.problem.type == ProblemType::DRIVEN,
+              "FloquetReferenceFrequency (frequency-dependent k_F) is only supported for "
+              "driven simulations!");
+
   // Get mesh dimensions in x/y/z coordinates.
   mfem::Vector bbmin, bbmax;
   mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
@@ -420,7 +427,14 @@ void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
     }
   }
 
-  // Matrix representation of cross product with wave vector
+  // Save BZ-wrapped k_F, then convert to k₀ = k_F/ω for frequency-independent tensors.
+  wave_vector_bz = wave_vector;
+  if (floquet_omega_ref > 0.0)
+  {
+    wave_vector *= 1.0 / floquet_omega_ref;
+  }
+
+  // Matrix representation of cross product with wave vector (or k₀ when scaling active).
   // [k x] = | 0  -k3  k2|
   //         | k3  0  -k1|
   //         |-k2  k1  0 |

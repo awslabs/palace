@@ -356,8 +356,11 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
       fb(mat_op.MaxCeedBdrAttribute()), fc(mat_op.MaxCeedAttribute());
   AddStiffnessCoefficients(1.0, df, f);
   AddStiffnessBdrCoefficients(1.0, fb);
-  AddRealPeriodicCoefficients(1.0, f);
-  AddImagPeriodicCoefficients(1.0, fc);
+  if (!mat_op.HasFloquetFrequencyScaling())
+  {
+    AddRealPeriodicCoefficients(1.0, f);
+    AddImagPeriodicCoefficients(1.0, fc);
+  }
   int empty[2] = {(df.empty() && f.empty() && fb.empty()), (fc.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
@@ -398,16 +401,21 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute()),
       fb(mat_op.MaxCeedBdrAttribute());
+  MaterialPropertyCoefficient fp(mat_op.MaxCeedAttribute());
   AddDampingCoefficients(1.0, f);
   AddDampingBdrCoefficients(1.0, fb);
-  int empty = (f.empty() && fb.empty());
+  if (mat_op.HasFloquetFrequencyScaling())
+  {
+    AddImagPeriodicCoefficients(1.0, fp);
+  }
+  int empty = (f.empty() && fb.empty() && fp.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
   {
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto c = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, nullptr, skip_zeros);
+  auto c = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, &fp, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     auto C = std::make_unique<ComplexParOperator>(std::move(c), nullptr, GetNDSpace());
@@ -430,6 +438,10 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
       fbr(mat_op.MaxCeedBdrAttribute()), fbi(mat_op.MaxCeedBdrAttribute());
   AddRealMassCoefficients(1.0, fr);
   AddRealMassBdrCoefficients(1.0, fbr);
+  if (mat_op.HasFloquetFrequencyScaling())
+  {
+    AddRealPeriodicCoefficients(-1.0, fr);
+  }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     AddImagMassCoefficients(1.0, fi);
@@ -684,10 +696,21 @@ void SpaceOperator::AssemblePreconditioner(
   AddImagMassCoefficients(a2.real(), fi);
   AddImagMassCoefficients(-a2.imag(), fr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
-  AddRealPeriodicCoefficients(a0.real(), fr);
-  AddRealPeriodicCoefficients(a0.imag(), fi);
-  AddImagPeriodicCoefficients(a0.real(), fpi);
-  AddImagPeriodicCoefficients(-a0.imag(), fpr);
+  if (mat_op.HasFloquetFrequencyScaling())
+  {
+    // k₀-based tensors: cross terms scale with a1, mass term with a2.
+    AddImagPeriodicCoefficients(a1.imag(), fpi);
+    AddImagPeriodicCoefficients(a1.real(), fpr);
+    AddRealPeriodicCoefficients(-a2.real(), fr);
+    AddRealPeriodicCoefficients(-a2.imag(), fi);
+  }
+  else
+  {
+    AddRealPeriodicCoefficients(a0.real(), fr);
+    AddRealPeriodicCoefficients(a0.imag(), fi);
+    AddImagPeriodicCoefficients(a0.real(), fpi);
+    AddImagPeriodicCoefficients(-a0.imag(), fpr);
+  }
   int empty[2] = {
       (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && fpr.empty()),
       (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty() && fpi.empty())};
@@ -723,7 +746,14 @@ void SpaceOperator::AssemblePreconditioner(
   AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fr);
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
-  AddRealPeriodicCoefficients(a0.real(), fr);
+  if (mat_op.HasFloquetFrequencyScaling())
+  {
+    AddRealPeriodicCoefficients(-(pc_mat_shifted ? std::abs(a2.real()) : a2.real()), fr);
+  }
+  else
+  {
+    AddRealPeriodicCoefficients(a0.real(), fr);
+  }
   int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
@@ -750,7 +780,14 @@ void SpaceOperator::AssemblePreconditioner(
   AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
-  AddRealPeriodicCoefficients(a0, fr);
+  if (mat_op.HasFloquetFrequencyScaling())
+  {
+    AddRealPeriodicCoefficients(-(pc_mat_shifted ? std::abs(a2) : a2), fr);
+  }
+  else
+  {
+    AddRealPeriodicCoefficients(a0, fr);
+  }
   int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)

@@ -210,6 +210,9 @@ private:
   // All Floquet modes with pre-assembled projection vectors.
   std::vector<FloquetMode> modes;
 
+  // FE space for re-assembling mode vectors when polarization changes with frequency.
+  mfem::ParFiniteElementSpace *nd_fespace_ptr = nullptr;
+
   // Frequency cache.
   double omega0 = 0.0;
 

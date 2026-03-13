@@ -580,6 +580,12 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
     wave_vector = floquet->get<std::array<double, 3>>();
   }
 
+  auto fref = periodic.find("FloquetReferenceFrequency");
+  if (fref != periodic.end())
+  {
+    floquet_reference_freq = fref->get<double>();
+  }
+
   auto pairs = periodic.find("BoundaryPairs");
   MFEM_VERIFY(pairs->is_array(),
               "\"BoundaryPairs\" should specify an array in the configuration file!");
