@@ -35,6 +35,7 @@ particularly well for the transmon case.
 
 ## Driven Solver Quick-Start
 
+<!-- 
 To use the adpative
 
 The following configurations allow you to tune the adaptive driven solver.
@@ -57,7 +58,7 @@ The following configurations allow you to tune the adaptive driven solver.
   - **`"AddToPROM"`**: number of consecutive greedy iterations that must
     all individually satisfy the tolerance before convergence is declared (default: 2).
     This guards against premature termination when the error estimate fluctuates near
-    $\varepsilon$. Increasing to 3 or 4 makes the criterion stricter.
+    $\varepsilon$. Increasing to 3 or 4 makes the criterion stricter. -->
 
 ## Revisiting the Two Co-planar Waveguide Example (Part I)
 
@@ -94,7 +95,7 @@ specification](../config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D).
 The linear solver tolerance `"Tol": 1.0e-12` is chosen to be very small. Such a small tolerance is
 near the limit of what *Palace*'s solvers can reach using double precision. The error of the uniform
 solver also depends on the condition number of the system matrix $A(\omega) = \bm{K} + i\omega
-\bm{C} - \omega^2 \bm{M} + \bm{A}_{2}(\omega)$ at each frequency $\omega = f / 2\pi$ that it solves.
+\bm{C} - \omega^2 \bm{M} + \bm{A}_{2}(\omega)$ at each frequency $\omega = 2 \pi f$ that it solves.
 Importantly, if the system has resonances (poles) close to the real axis, the linear solve may
 become very poorly conditioned. This leads to a loss of numerical accuracy.
 
@@ -123,7 +124,7 @@ the same physical model although we have used slightly different solver paramete
 
 The primary downside of the uniform driven solver is its slow performance. Every output sample has
 to be individually calculated, which becomes prohibitive on a fine output grid. This is the problem
-the adaptive solver address.
+the adaptive solver addresses.
 
 To perform a driven simulation with the adaptive driven solver, we set
 [`"AdaptiveTol"`](../config/solver.md#solver%5B%22Driven%22%5D) to `1e-1` in the configuration. We
@@ -133,13 +134,13 @@ structure as the uniform solver — they are evaluated on the same frequency gr
 "internal" frequency grid on which it does HDM solves. This internal grid is automatically chosen by
 the solver and generally contains far fewer points. From this small internal grid, *Palace*
 constructs a reduced order model (ROM) that interpolates the solution at the output grid. We
-emphasize that number of HDM solves done is controlled by the
+emphasize that the number of HDM solves done is controlled by the
 [`"AdaptiveTol"`](../config/solver.md#solver%5B%22Driven%22%5D), not the output frequency grid.
 Adding extra points to the output grid incurs only a small incremental cost compared to performing a
 full HDM solve.
 
-Let us plot the point-wise relative error $\vert E_\mathrm{elecadaptive}(f) -
-E_\mathrm{elec,uniform}(f)\vert / \vert E_\mathrm{elec,uniform}\vert$ between the electric
+Let us plot the point-wise relative error $\vert E_\mathrm{elec,adaptive} -
+E_\mathrm{elec,uniform}\vert / \vert E_\mathrm{elec,uniform}\vert$ between the electric
 energy $E_{\mathrm{elec}}$ of the uniform driven solver above and the adaptive solver with tol
 `1e-1`.
 
@@ -152,8 +153,8 @@ energy $E_{\mathrm{elec}}$ of the uniform driven solver above and the adaptive s
 In the plot, the dotted black line at `1e-12` corresponds to the linear residual tolerance `Tol` of
 both uniform and adaptive solvers. This is the best-case accuracy floor, below which the difference
 is dominated by solver noise rather than systematic adaptive solver tolerance. In fact, the error on
-the actual solution will be higher since it depends on the condition number of the linear system
-$\kappa(A)$.
+the actual solution can be higher since it depends on the condition number of the linear system
+$\kappa(A(\omega))$.
 
 The dashed line at `1e-1` is the adaptive tolerance set by
 [`"AdaptiveTol"`](../config/solver.md#solver%5B%22Driven%22%5D). We will define this quantity below;
@@ -178,20 +179,14 @@ Let us now look at a sweep of adaptive driven solvers with different values of
 </p><br/>
 ```
 
-As the tolerance gets smaller, the relative error to the uniform solver gets smaller. As expected,
-it never gets more accurate than the linear solver tolerance of `1e-12`. We also see that *Palace*
+As the tolerance gets smaller, the relative error compared to the uniform solver gets smaller. As
+expected, the error is generally above the solver tolerance of `1e-12`. We also see that *Palace*
 adds more internal sample frequencies $f_\mathrm{sample}$ (coloured diamonds) as the tolerance
 becomes smaller. For this CPW example, the location of the sample frequencies is spread out
 relatively evenly in the interval $[f_\mathrm{min}, f_\mathrm{max}]$. Finally, we see that the
 solution has systematic minima near the sample points. This will turn out to be true by construction
-of the adaptive solver. Local minima  in accuracy, not associated with sample points, disappear as
+of the adaptive solver. Local minima in accuracy, not associated with sample points, disappear as
 the tolerance decreases and the error landscape changes.
-
-```@raw html
-<br/><p align="center">
-  <img src="../../assets/examples/driven_ua_cpw_domain_energy_adaptive_sweep.svg" width="80%" />
-</p><br/>
-```
 
 To understand the origin of these results, it is important to understand the internals of the
 adaptive solver in more detail.
@@ -221,16 +216,16 @@ linear problem with much smaller dimension $n$ that approximates the high-dimens
 \left[\bm{K}_r + i\omega \bm{C}_r - \omega^2 \bm{M}_r \right] \bm{x}_r = i \omega \bm{b}_r
 ```
 
-This also requires with a method to efficiently recover the high-dimensional field solution $\bm{x}$
-from the reduced $\bm{x}_r$. If we have found such a reduced model, we can quickly solve the small
-linear system at a specific $\omega$ and recover the full solution and all output measurements. We
-refer to the procedure of finding the model as the “offline” or “training” phase, and to using it to
+This also requires a method to efficiently recover the high-dimensional field solution $\bm{x}$ from
+the reduced $\bm{x}_r$. If we have found such a reduced model, we can quickly solve the small linear
+system at a specific $\omega$ and recover the full solution and all output measurements. We refer to
+the procedure of finding the model as the “offline” or “training” phase, and to using it to
 calculate many output samples as the “online” phase.
 
 There is a large literature on constructing dimensional reductions of linear systems and we refer to
 the literature for an introduction [1,2]. *Palace* finds a set of $n$ orthogonal vectors $\bm{V}$
 that capture the full response of the system in the frequency range of interest $[f_\mathrm{min},
-f_\mathrm{max}]$. The projection $\bm{K}_r = \bm{V}^T \bm{K}\bm{V}$, $\bm{x}_r = \bm{V}^T \bm{x}$,
+f_\mathrm{max}]$. The projection $\bm{K}_r = \bm{V}^T \bm{K}\bm{V}$, $\bm{b}_r = \bm{V}^T \bm{b}$,
 etc., and the prolongation $\bm{x} = \bm{V} \bm{x}_r$ are particularly simple.
 
 The set of basis vectors $\bm{V}$ that *Palace* uses are the orthogonalized components of the HDM
@@ -265,14 +260,14 @@ Newton's equations (second order in time) to Hamilton's equations (first order i
 the state dimension from $N$ to $2N$.
 
 We construct a separate barycentric interpolation for each excitation pattern. We initialize the
-rational interpolation with HDM solutions of the frequency boundary points $f_\mathrm{min}$ and
+rational interpolation with HDM solutions at the frequency boundary points $f_\mathrm{min}$ and
 $f_\mathrm{max}$ as well as any frequencies explicitly set by the user using `"AddToPROM": true` in
 the [sample specification](../config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D).
 Afterwards, the Pradovera algorithm suggests new sample locations, based on the maximum expected
 error of the interpolation. The insight of this approach is that this maximum error can be quickly
 calculated from the denominator of the barycentric interpolation itself, without any additional HDM
-solves. *Palace* prints location of the sampling points founding during the adaptive solver
-simulations to the log-file.
+solves. *Palace* prints the location of the sampling points found during the adaptive solver simulations
+to the log-file.
 
 Convergence of the procedure is based on the relative error of the HDM electric field solution
 $\bm{x}_\mathrm{HDM}$ compared to the solution calculated by the ROM:
@@ -286,12 +281,14 @@ $\varepsilon < \varepsilon_\mathrm{tol}$, set by
 frequency samples, set by
 [`"AdaptiveConvergenceMemory"`](../config/solver.md#solver%5B%22Driven%22%5D). Note that the norm
 $\vert\vert \bm{x} \vert\vert$ is the L2 norm in the finite element space. So this is similar to,
-but not quite the same as, the physical norm computed from the overlap in space $\int
-\bm{E}^*(\bm{r}) \cdot \bm{E}(\bm{r}) d^3r$.
+but not the same as, the physical norm computed from the overlap in space $\int \bm{E}^*(\bm{r})
+\cdot \bm{E}(\bm{r}) d^3r$, which corresponds to a mass-weighting in finite-elements
+$\bm{x}^T\bm{M}\bm{x}$. This difference between L2 and mass-weighted overlap can be significant on
+highly anisotropic meshes.
 
-As mentioned above, the relative error is on the electric fields over the global domain. This means
-that the error on a derived measurement need not satisfy that relative error bound. This occurs when
-the measurement is difficult, such as integrating the electric field in a region where the field is
+As mentioned above, the relative error is of the electric fields over the global domain. However,
+the relative error on a derived measurement need not satisfy that error bound. This occurs when the
+measurement is difficult, such as integrating the electric field in a region where the field is
 tiny.
 
 ### Adaptive Solver Problems and User Guidance
@@ -301,11 +298,11 @@ very small number of HDM solves. However, there are two challenges that we encou
 use.
 
 **Early termination** due to accidental convergence. As discussed above, the convergence criterion
-is that the HDM solve at the next suggested sample point $f^*$ is below the threshold $\varepsilon$.
-Although the algorithm picks $f^*$ to be the position where the error indicator is largest, the
-actual error there can sometimes be smaller than the "expected error" given the level of
-interpolation. This means that the next solution looks more converged than it is and the algorithm
-terminates early. This is discussed in the paper by Pradovera [3].
+is that the error from the HDM solve at the next suggested sample point $f^*$ is below the threshold
+$\varepsilon_\mathrm{tol}$. Although the algorithm picks $f^*$ to be the position where the error
+indicator is largest, the error evaluated there can sometimes be smaller than the error expected
+from the interpolation. This means that the solution looks more converged than it is and the
+algorithm terminates early. This is discussed in the paper by Pradovera [3].
 
 To avoid this, we introduce a memory. The algorithm only terminates once a certain number of
 consecutive samples in a row are below tolerance. This number is defined by the
@@ -343,7 +340,7 @@ As discussed above, a user can also force certain frequency points to be added t
 the adaptive sampling starts by using [`"AddToPROM": true`](../config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D). This is primarily a
 debugging tool. Routine usage is not recommended — adding sample by hand negates the major benefit
 of the adaptive solver to “choose the best” samples for a given accuracy. However, this option might
-help investigate convergence issue. If adding points, the user should be careful not to accidentally
+help investigate convergence issues. If adding points, the user should be careful not to accidentally
 set [`"AddToPROM": true`](../config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D) and a dense grid, since this will perform a very large number of HDM
 solves and store them in memory.
 
@@ -366,22 +363,22 @@ multi-excitation case.
 ### Non-Quadratic Boundary Conditions in the Adaptive Solver
 
 In the above discussion, we have neglected the possibility of an $\bm{A}_2(\omega)$ term. This is a
-non-quadratic frequency response, which can arise from `WavePort` / `WavePortPEC`,  `Conductivity`,
-or `Farfield` boundary conditions. If such terms is present, the above algorithms will mostly
-proceed as described above — there will be frequency samples with HDM solves of the full system now
-containing $\bm{A}_2(\omega)$, which will be added to the basis $\bm{V}$. Then when we evaluate the
-output response ("online phase"), use the projected $\bm{K}_r$, $\bm{C}_r$, $\bm{M}_r$,
-$\bm{A}_{2,r}(\omega)$ to solve the reduced problem efficiently. Having a $\bm{A}_2(\omega)$ term
-will be slower, since *Palace* will have to recompute $\bm{A}_{2,r}(\omega)$ for every output
-$\omega$.
+non-quadratic frequency term, which can arise from `WavePort` / `WavePortPEC`,  `Conductivity`, or
+`Farfield` boundary conditions. If such terms are present, the above algorithms will mostly proceed
+as described above — there will be frequency samples with HDM solves of the full system now
+containing $\bm{A}_2(\omega)$, which will be added to the basis $\bm{V}$. During the online phase,
+*Palace* uses the projected $\bm{K}_r$, $\bm{C}_r$, $\bm{M}_r$, $\bm{A}_{2,r}(\omega)$ to solve the
+reduced problem efficiently. Having a $\bm{A}_2(\omega)$ term will be slower, since *Palace* will
+have to recompute $\bm{A}_{2,r}(\omega)$ for every output $\omega$.
 
-The problem with the these non-quadratic boundary conditions in frequency prediction based on the
-rational interpolation. This does not naturally take these contributions into account, since they
-cannot be linearized in the doubled space as described above. This effect should be small if the
-non-$KCM$ contributions of $\bm{A}_2(\omega)$ are small. However, if they are large, it is possible
-that the frequency sampling will chose sub-optimal basis. The tuning describe above in [Adaptive
-Solver Problems and User Guidance](#adaptive-solver-problems-and-user-guidance) could be helpful for
-this case too.
+However, the interplay between these non-quadratic boundary conditions and the frequency prediction
+algorithm is more delicate. The frequency prediction algorithm does not naturally take these
+contributions into account, since they cannot be linearized into a system of size $2N$. The error of
+linearizing $\bm{A}_2(\omega)$ should be small if its non-$KCM$ contributions are small as compared
+to the $KCM$ contribution of the rest of the system. However, if non-$KCM$ contributions of
+$\bm{A}_2(\omega)$ are large, it is possible that the frequency sampling will choose a sub-optimal
+basis. The tuning described above in [Adaptive Solver Problems and User
+Guidance](#adaptive-solver-problems-and-user-guidance) could be helpful for this case too.
 
 ## Revisiting the Two Coplanar Waveguide Example (Part II)
 
@@ -391,19 +388,20 @@ discussed above. We can now interpret several features of the convergence plot b
  1. The origin of the local minima in the relative error near the sampling frequencies. Because the
     adaptive solver performs a full HDM solution at the sample frequency and uses that as a basis
     vector for the ROM, the response at that frequency would be exactly reproduced. This is seen
-    exactly at $f_\mathrm{min}$ and $f_\mathrm{max}$. Output frequency points on near the sample
-    frequency but on a different mesh are still much more accurate the expected.
+    exactly at $f_\mathrm{min}$ and $f_\mathrm{max}$. Output frequency points near the sample
+    frequency are still much more accurate than expected.
  2. The fact that the sampling points used are spaced roughly evenly in frequency. Because the
-    algorithm for finding the next best frequency is based on a a rational interpolation, the next
-    largest error is largest near any unaccounted pole in the response of the system. Because the
-    CPW model does not have poles near the frequency range of interest, the error estimator is not
-    particularly structured in frequency. We will discuss this idea in more detail in the next
-    section on a transmon model.
+    algorithm for finding the next best frequency is based on a rational interpolation, the next
+    error is largest near any unaccounted pole in the response of the system. The CPW model does not
+    have high-Q poles near the real frequency domain of interest $[f_\mathrm{min}, f_\mathrm{max}]$,
+    so the error estimator is not particularly structured in frequency. We will discuss this idea in
+    more detail in the next section on a transmon model.
  3. The difference between the `"AdaptiveTol"` and the relative error of the output quantity. The
-    adaptive tolerance is a relative convergence error for the coefficient of the electric field in
-    the finite element basis. This implies as worst case absolute error of any derived quantity, but
-    is only a heuristic guide for the relative error of that quantity. The relative error could be
-    far better or far worse than `"AdaptiveTol"`.
+    adaptive tolerance is a relative convergence error for the finite element coefficients of the
+    electric field. Any derived quantity will have an absolute error bounded proportionally by this
+    accuracy and the sensitivity to the electric field. `"AdaptiveTol"` is at best a heuristic guide
+    for the relative error of a derived quantity. The true relative error could be far better or far
+    worse than `"AdaptiveTol"`.
 
 Point 3 above is really about the nature of solver convergence and errors generally, rather than
 being specific to the adaptive solver. However, it is helpful to illustrate this point in more striking detail by looking at the convergence of the scattering parameters with different `"AdaptiveTol"`.
@@ -414,16 +412,15 @@ being specific to the adaptive solver. However, it is helpful to illustrate this
 </p><br/>
 ```
 
-In the plot above were are plotting the relative error $\vert S_{\mathrm{adaptive}} -
-S_{\mathrm{uniform}}\vert / \vert S_{\mathrm{uniform}}\vert$ evaluated at each output frequency
-(point-wise error). We see that the relative error can be very bad! However, this should not be
-surprising. The only scattering matrix that has a large value (of order 1) is $S_{21}$ and we see
-that the relative error there is well behaved. The bad relative error in the other plots is because
-the magnitude of $S_{i1}$ is tiny to begin with, which magnifies the relative error. For example,
-the magnitude $\vert S_{11} \vert$ drops down to around $-60~\mathrm{dB} = 10^{-3}$ near
-$15~\mathrm{GHz}$. That is exactly the location where the relative error of $S_{11}$ spikes in the
-error plot above. The relative error in $S_{31}$, $S_{41}$ is always large since their values is
-small.
+The plot above shows the relative error $\vert S_{\mathrm{adaptive}} - S_{\mathrm{uniform}}\vert /
+\vert S_{\mathrm{uniform}}\vert$ evaluated at each output frequency (point-wise error). We see that
+the relative error can be very bad! However, this should not be surprising. The only scattering
+matrix that has a large value (of order 1) is $S_{21}$ and we see that the relative error there is
+well behaved. The bad relative error in the other plots is because the magnitude of $S_{i1}$ is tiny
+to begin with, which magnifies the relative error. For example, the magnitude $\vert S_{11} \vert$
+drops down to around $-60~\mathrm{dB} = 10^{-3}$ near $15~\mathrm{GHz}$. That is exactly the
+location where the relative error of $S_{11}$ spikes in the error plot above. The relative error in
+$S_{31}$, $S_{41}$ is always large since their values are small.
 
 A detailed discussion of error estimates and error propagation from the electric field to derived
 quantities is beyond the scope of this tutorial. From a practical perspective, we encourage users to
@@ -434,9 +431,9 @@ tolerance and to diagnose convergence error.
 A useful and cheap visualization may also be to plot the absolute error normalized by an
 ”appropriate” scale factor. For example, below we plot the $\vert S_{\mathrm{adaptive}} -
 S_{\mathrm{uniform}}\vert /  \vert\vert S_{\mathrm{uniform}}\vert\vert_{\mathrm{RMS}}$. Here
-$\vert\vert S_{\mathrm{uniform}}\vert\vert_{\mathrm{RMS}}$ is the root-mean-square average of $S$
-over the frequency range. While this does not substitute for a proper error analysis, it gives a
-sense of convergence while removing the extreme spikes in the pointwise-relative error.
+$\vert\vert S_{\mathrm{uniform}}\vert\vert_{\mathrm{RMS}}$ is the root-mean-square average of $\vert
+S \vert$ over the frequency range. While this does not substitute for a proper error analysis, it
+gives a sense of convergence while removing the extreme spikes in the pointwise-relative error.
 
 ```@raw html
 <br/><p align="center">
@@ -444,8 +441,8 @@ sense of convergence while removing the extreme spikes in the pointwise-relative
 </p><br/>
 ```
 
-Finally, let us look at the how the error indicator $\varepsilon$ that the adaptive solver
-calculates evolves as new sample points are added, to illustrate the convergence criterion.
+Finally, let us look at how the error indicator $\varepsilon$ calculated by the adaptive solver
+evolves as new sample points are added.
 
 ```@raw html
 <br/><p align="center">
@@ -454,12 +451,12 @@ calculates evolves as new sample points are added, to illustrate the convergence
 ```
 
 The light grey star points $1,2$ correspond to initial samples at $f_\mathrm{min}$ and
-$f_\mathrm{max}$. We actually exclude these points from convergence (i.e. they have error "`inf`"
-not 1.0). They are drawn here as points only for illustration. As the adaptive algorithm continues,
+$f_\mathrm{max}$. We actually exclude these points from convergence (i.e. they have error "`inf`").
+They are drawn here as points at $1.0$ only for illustration. As the adaptive algorithm continues,
 more sample points are found that decrease the error indicator. In our simulation, we used the
 default `"AdaptiveConvergenceMemory"` value of 2. So the simulations converge after two consecutive
 points are below `"AdaptiveTol"`. As we can see from the plot above, the error indicator does not
-have to decrease monotonically. This means that the error indicator car go above the target
+have to decrease monotonically. This means that the error indicator can go above the target
 tolerance before dipping below it again. See the discussion above in [Adaptive Solver Problems and
 User Guidance](#adaptive-solver-problems-and-user-guidance).
 

@@ -54,16 +54,7 @@
   "Solver"    : {
     "Order" : 2,
     "Device": "CPU",
-    "Driven": {
-      "Samples": [
-        {
-          "Type"    : "Linear",
-          "MinFreq" : 2.0, 
-          "MaxFreq" : 32.0,  
-          "FreqStep": 0.1 
-        }
-      ]
-    },
+    "Driven": { "Samples": [ {"Type": "Linear", "MinFreq": 2.0, "MaxFreq": 32.0, "FreqStep": 0.1} ] },
     "Linear": {"Type": "Default", "Tol": 1.0e-12, "MaxIts": 1000, "ComplexCoarseSolve": true}
   }
 }
