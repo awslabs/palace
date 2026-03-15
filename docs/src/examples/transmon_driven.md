@@ -559,5 +559,10 @@ A more difficult example is here.
 
 ## Literature & References
 
+[1] P. Benner, D. C. Sorensen, and V. Mehrmann, Eds., Dimension Reduction of Large-Scale Systems: Proceedings of a Workshop held in Oberwolfach, Germany, October 19–25, 2003. in Lecture Notes in Computational Science and Engineering, no. 45. Berlin, Heidelberg: Springer Berlin Heidelberg, 2005. doi: 10.1007/3-540-27909-1.
 
-Complex conventions of stability
+[2] A. C. Antoulas, Approximation of Large-Scale Dynamical Systems. Society for Industrial and Applied Mathematics, 2005. doi: 10.1137/1.9780898718713.
+
+[3] D. Pradovera, “Toward a certified greedy Loewner framework with minimal sampling,” Adv Comput Math, vol. 49, no. 6, p. 92, Dec. 2023, doi: 10.1007/s10444-023-10091-7.
+
+[4] D. Pradovera, “Interpolatory rational model order reduction of parametric problems lacking uniform inf-sup stability,” SIAM J. Numer. Anal., vol. 58, no. 4, pp. 2265–2293, Jan. 2020, doi: 10.1137/19M1269695.
