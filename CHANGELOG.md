@@ -23,6 +23,11 @@ The format of this changelog is based on
 
 #### Bug Fixes
 
+  - Improved IO performance for simulations with Adaptive Mesh Refinement. Now,
+    files from previous iterations are moved instead of being copied. The latest
+    output is always available at the top level of the output directory (as
+    symlinks to the latest `iterationXX` folder). [PR
+    673](https://github.com/awslabs/palace/pull/673)
   - Fixed port excitation parsing to correctly handle signed integer values
     [PR 635](https://github.com/awslabs/palace/pull/635).
 

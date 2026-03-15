@@ -300,6 +300,8 @@ TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath, bool load_exis
 
 void TableWithCSVFile::WriteFullTableTrunc()
 {
+  // Remove previous file/symlink before writing.
+  fs::remove(csv_file_fullpath_);
   auto file_buffer = fmt::output_file(
       csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
   file_buffer.print("{}", table.format_table());
