@@ -7,25 +7,22 @@ SPDX-License-Identifier: Apache-2.0
 
 # Driven Solver: Uniform vs Adaptive
 
-In this tutorial, we will discuss the [driven solver](../config/solver.md#solver%5B%22Driven%22%5D),
+In this tutorial we discusses the [driven solver](../config/solver.md#solver%5B%22Driven%22%5D),
 which computes the frequency-domain response (steady-state) of a system driven by external
-excitations. We will especially focus on the “adaptive” driven solver, which uses reduced-order
-modelling (ROM) techniques. The ROM approach can dramatically increase the speed of a
-frequency-domain simulation, but requires more careful usage. The uniform and adaptive driven
-solvers are also discussed in the example on [cross-talk between coplanar waveguides](cpw.md) and we
-will assume familiarity with that example. We also assume familiarity with the [transmon
-tutorial](transmon.md).
+excitations. The uniform and adaptive driven solvers are also discussed in the example on
+[cross-talk between coplanar waveguides](cpw.md). We assume familiarity with that example and expand
+on it below. We also apply the the driven solver to the [transmon example](transmon.md), and assume
+familiarity with the eigenmode simulations.
 
-In this tutorial, we will go into more of the algorithmic detail, to help users effectively use the
-driven solvers. Additionally, the adaptive solver is heavily used in *Palace*'s [circuit extraction
-feature](tutorial_circuit_extraction.md). We will consider the [CPW example](cpw.md) in more detail as well as
-apply the driven solvers to the [single transmon model](transmon.md). The adaptive solver works
-particularly well for the transmon case.
+!!! warning "Warning: Algorithmic Details Ahead!"
 
-!!! warning
+    This tutorial is advanced. It goes into more of the algorithmic detail, to help users effectively use the driven solvers. However, some of these algorithmic choices are considered “internal” to
+    *Palace*. They may change at any time if the developers decide that alternative approaches are better.
 
-    This tutorial is advanced. The algorithmic choices described here are considered “internal” to
-    *Palace* and may change at any time if the developers decide that alternative approaches are better.
+    Additionally, this tutorial is a pre-requisite to understand *Palace*'s [circuit extraction
+    feature](tutorial_circuit_extraction.md), since that makes heavy use of the rational interpolation
+    formulation of the adaptive driven solver.
+
     Please proceed with caution.
 
 !!! note
@@ -35,6 +32,53 @@ particularly well for the transmon case.
     TODO: Where to get files and folders.
 
 ## Driven Solver Quick-Start
+
+*Palace* has two modes for frequency-domain driven simulations: uniform and adaptive. The
+uniform solver runs one independent FEM solve per output frequency, which is reliable but slow. The
+adaptive solver runs a small number of FEM solves and constructs a reduced-order model (ROM) that
+interpolates the response at all other output frequencies. This is fast, but requires more careful
+set-up and validation.
+
+The only configuration difference between uniform and adaptive is the value of
+[`"AdaptiveTol"`](../config/solver.md#solver%5B%22Driven%22%5D). This defaults to `0.0`, which calls
+the uniform solver. Any `"AdaptiveTol"` > 0 calls the adaptive solver.
+
+```json
+"Driven": {
+  "Samples": [ {"Type": "Linear", "MinFreq": 3.5, "MaxFreq": 7.0, "FreqStep": 0.1} ],
+  "AdaptiveTol": 1e-3 // Use adaptive solver
+}
+```
+
+The `"Samples"` specification defines the output frequency grid for both solvers. For the adaptive
+solver, this grid can be very fine with only a small additional cost per point. All output files
+(`domain-E.csv`, `port-S.csv`, etc.) have the same format in both cases.
+
+When studying a new model, users should validate the adaptive solver against the uniform solver on a
+coarse output `"Samples"` grid and at key frequencies. This helps build intuition about the response
+and the approximation error of the adaptive solver for the specific quantities of interest. Users
+should tighten tolerances and re-validate as needed before running at fine frequency resolution.
+
+The following are important tuning configurations:
+
+- [`"AdaptiveTol"`](../config/solver.md#solver%5B%22Driven%22%5D): start with `1e-3` on a coarse
+    grid for S-parameter sweeps. Tighten this tolerance as needed during the validation against the
+    uniform solver or in production runs.
+- `"Linear"/"Tol"`: set the linear solver tolerance to be substantially smaller than
+    `"AdaptiveTol"`. The adaptive solver is based on an interpolation and can be unusually sensitive
+    to errors in the linear solver. Increase this tolerance in your validation runs and ensure the
+    output is no different. Should Palace give log warnings like `Minimal rational interpolation encountered rank-deficient matrix` try tightening this tolerance substantially.
+- [`"AdaptiveMaxSamples"`](../config/solver.md#solver%5B%22Driven%22%5D): cap on full linear
+    solves per excitation (default: 20). If the log indicates that you exceed this bound, it means
+    the adaptive solver has not reached the target tolerance and this bound should be increased. If
+    the adaptive solver never converges, it might indicate a numerical problem.
+- [`"AdaptiveConvergenceMemory"`](../config/solver.md#solver%5B%22Driven%22%5D): number of
+    consecutive "safety" samples that have to be below the tolerance threshold before convergence.
+    Defaults to 2, which is small but fast. Increase this number to 3+ if you see early termination
+    without convergence.
+
+The rest of this tutorial will illustrate the driven solvers on two different examples (CPWs and
+transmon), explain the adaptive algorithm in detail, and give more detailed user guidance.
 
 ## Revisiting the Two Co-planar Waveguide Example (Part I)
 
@@ -70,7 +114,7 @@ specification](../config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D).
 
 The linear solver tolerance `"Tol": 1.0e-12` is chosen to be very small. Such a small tolerance is
 near the limit of what *Palace*'s solvers can reach using double precision. The error of the uniform
-solver also depends on the condition number of the system matrix $A(\omega) = \bm{K} + i\omega
+solver also depends on the condition number of the system matrix $\bm{A}(\omega) = \bm{K} + i\omega
 \bm{C} - \omega^2 \bm{M} + \bm{A}_{2}(\omega)$ at each frequency $\omega = 2 \pi f$ that it solves.
 Importantly, if the system has resonances (poles) close to the real axis, the linear solve may
 become very poorly conditioned. This leads to a loss of numerical accuracy.
@@ -129,7 +173,7 @@ In the plot, the dotted black line at `1e-12` corresponds to the linear residual
 both uniform and adaptive solvers. This is the best-case accuracy floor, below which the difference
 is dominated by solver noise rather than systematic adaptive solver tolerance. In fact, the error on
 the actual solution can be higher since it depends on the condition number of the linear system
-$\kappa(A(\omega))$.
+$\kappa[\bm{A}(\omega)]$.
 
 The dashed line at `1e-1` is the adaptive tolerance set by
 [`"AdaptiveTol"`](../config/solver.md#solver%5B%22Driven%22%5D). We will define this quantity below;
@@ -440,6 +484,8 @@ User Guidance](#adaptive-solver-problems-and-user-guidance).
 
 ## Driving the Transmon Model
 
+### Set-Up
+
 Let us now apply the driven and adaptive solver the a model of a transmon qubit, which was already
 discussed in the [eigenmode tutorial](transmon.md) and we assume familiarity with that tutorial. As
 discussed there, the model consists of a transmon qubit and a quarter-wave coplanar waveguide
@@ -451,100 +497,117 @@ There are two eigenmodes of particular interest that we discovered in the previo
   - A “transmon” mode near $4.10~\textrm{GHz}$ with $Q = 1.8 \cdot 10^4$,
   - A “resonator” mode near $5.60~\textrm{GHz}$ with $Q = 7.9 \cdot 10^3$.
 
-Looking at the ParaView visualization of the modes we do however, see that even the transmon mode
+Looking at the ParaView visualization of the modes we do, however, see that even the transmon mode
 has appreciable weight on the readout resonator and into the feedline.
 
 We will now perform uniform and adaptive driven simulations on this model, by exciting the $50~\Ohm$
 resistive ports. We will use the same mesh `examples/transmon/mesh/transmon.msh2` as the eigenmode
-example as well a most of the set-up file in `transmon_coarse.json`.
+example. We use the set-up file in `examples/transmon/transmon_coarse.json` and adapt it to a driven
+solver as follows:
 
-## Uniform Driven Solver
+```json
+{
+  "Problem"   : {
+    "Verbose": 2,
+    "Output" : "postpro/transmon_tutorial_driven_rom/driven_adaptive_1e-3",
+    "Type"   : "Driven"
+  },
+  "Boundaries": {
+    "LumpedPort": [
+      { "Attributes": [6], "Index": 1, "Direction": "+X", "Excitation": 1, "R": 50 },
+      { "Attributes": [7], "Index": 2, "Direction": "-X", "Excitation": 2, "R": 50 },
+      { "Attributes": [4], "Index": 3, "Direction": "+Y", "C": 5.5e-15, "L": 1.486e-8 }
+    ],
+    "PEC"       : { "Attributes": [5] },
+    "Absorbing" : { "Order": 1, "Attributes": [3] }
+  },
+  "Model"     : { "Refinement": {"MaxIts": 0}, "Mesh": "mesh/transmon.msh2", "L0": 1.0e-6 },
+  "Domains"   : {
+    "Postprocessing": { "Energy": [ { "Attributes": [1], "Index": 1 } ] },
+    "Materials"     : [
+      { "Permittivity": 1.0, "Attributes": [2], "Permeability": 1.0 },
+      {
+        "LossTan"     : [ 3.0e-5,          3.0e-5,           8.6e-5          ],
+        "Permittivity": [ 9.3,             9.3,              11.5            ],
+        "Attributes"  : [ 1                                                  ],
+        "Permeability": [ 0.99999975,      0.99999975,       0.99999979      ],
+        "MaterialAxes": [ [0.8, 0.6, 0.0], [-0.6, 0.8, 0.0], [0.0, 0.0, 1.0] ]
+      }
+    ]
+  },
+  "Solver"    : {
+    "Driven": {
+      "Samples"    : [ {"Type": "Linear", "MinFreq": 3.5, "MaxFreq": 6.5, "FreqStep": 0.025} ],
+      "AdaptiveTol": 1e-3
+    },
+    "Order" : 2,
+    "Linear": {"Type": "Default", "Tol": 1.0e-12, "MaxIts": 1000}
+  }
+}
+```
 
-We use exactly the same mesh and basic set up as in the tutorial. But we modify our configuration files as appropriate for a driven solver.
+In this case we will be using the multi-excitation feature of *Palace*. Because we have specified
+both `"Excitation": 1` on port 1 and `"Excitation": 2` on port 2, *Palace* will iterate over these
+excitations separately. This makes no difference to the uniform solver, since it solves every
+excitation and frequency sample separately. However, for the adaptive solver, the projective basis
+$\bm{V}$ is shared between all exaction and the convergence criterion $\varepsilon <
+\varepsilon_\mathrm{tol}$ is on that combined basis. This means that the can be different output
+between the case were we simulate both excitation in one run, and if we were to do each excitation
+in a different adaptive solve. However, these differences are within the ROM convergence error. See
+the discussion above.
 
-Specifically
+The above json file is for the adaptive solver with `"AdaptiveTol": 1e-3`. If we set `"AdaptiveTol": 0.0` or leave this config out, we trigger the uniform solver.
 
-When we run this configuration, *Palace* will iterate over each requested frequency point and solve the full linear equation $$[]$$, see the reference section.
+### Uniform Solver Results
 
-Driven Solver Config file: Uniform solve (what does it do)
+As for the CPW example, let us look at the electric energy and scattering matrix of the transmon.
+Because we are driving both resistive ports, we now obtain the full scattering matrix, now just one
+column. Note that by convention, palace prints out 0.0 as the value of the scattering matrix on the
+port transmon, which we do not display.
 
-  - Single-Excitation & Multi-excitation
+PLOTS
 
-We can look at — for example — the scattering parameters:
+We see that the data is now far more structured, due the presence of the two high-$Q$ eigenmodes. We
+see their effects in spikes and dips in the response measurement at frequencies in the vicinity of
+the $\mathrm{Re} f$ of each eigenmode. The qubit mode is weakly coupled to the feedline, so we
+expect the scattering matrix $|S_{11}|$ to have an extremely sharp feature near $4.10~\textrm{GHz}$.
+The width of that feature is related to the inverse of the port quality factor, printed in
+`port-Q.csv` of the eigenmode simulation. Because we have sampled the output frequency on a linear
+frequency gid, it might be hard a priori to see this feature just from the data presented. The
+readout resonator is more strongly coupled to the feedline and therefore has a broader feature. Away
+from the shadows of the mode resonances, the system has less features and behaves like a simple CPW.
 
-We see resonance dips corresponding to the eigenmodes as well as the background signal.
+### Adaptive Solver Results
 
-These scattering parameters are currently only calculated on purely dissipative ports with the assumption that the reference impedance $Z_R$ and surface impedance values $R$ specified the configuration file.
+Let us now plot the RMS normalized absolute error (as discussed above for the CPW example) between
+the uniform and adaptive solver. For the adaptive solver, we pick tolerances `1e1, 1e-1, 1e-3, 1e-5`. Note that `1e1`is an extremely large tolerances and shown here for illustration purposes only. We would generally suggest users to pick a tolerance of `1e-3` or below for any model.
 
-Of course, we can analyze this data
+The conventions and are same as in the CPW example, although here we the coloured diamonds merge
+sample frequencies on for both excitations 1,2. First, we see that the adaptive solver is extremeley
+efficient and even an huge tolerance like `1e1` gives reasonable results. Second, we see that the
+error is far more structured than in the CPW case. It is worse close the location of the eigenmode
+of the system and better far away. Second, we see that the adaptive solver adds more HDM solves in a
+more structure manner close to the “shadow” of the eigenmodes.
 
-Fitting the uniform solve using Vector Fit and AAA with determinant surrugate, plot.
+This behaviour is simple to interpret — the response of the system in the real interval
+$[f_\mathrm{min}, f_\mathrm{max}]$ is dominated by the singular response of the eigenmodes (poles).
+The rational interpolation of the adaptive solver can reconstruct the existence and approximate
+location of poles from its analytic structure. Then it tries to cancel the effect of the poles with
+a HDM solve as best it can on the real axis. The reason the error close to spike around the poles,
+it that the cancellation might be incomplete and multiple HDM solves might be required on the real
+axis.
 
-Can get response and eigenmodes, but requires more detailed checks and tuning.
-Validate against eigenmodes. We will return to this point in our tutorial on
-synthisizing circuits (LINK).
+Aside: We also remind the reader that the uniform solver is less accurate close to poles, since the
+condition number $\kappa[\bm{A}(\omega)]$ is much worse there. However, this tends to be an issue only
+very close to the poles or at high precision.
 
-## Adaptive Driven Solver and Reduced Order Model
-
-  - The uniform solver is great baseline, but quite slow since it solves indepedantly for every frequenccy.
-  - If we make a finer mesh, this becomes really bad
-  - As we can see from our vector fitting examples, we can extract much of the information from a much smaller sample of data. This leads us to the idea of reduced-order modeling.
-  - The idea is to solve the full system only at a few key frequency points and the recustruct the rest of the response at other frequncies bases on that. This is implemented in the "adaptive" driven solver of *Palace*.
-  - We will first show and example of running with this solver and then return to discuss the
-    algorithmic details.
-
-### A first run of the adaptive tol
-
-### Background reduced order model based on solutions
-
-  - Adaptive Solve based on Reduced order modeling
-      + Give good references at end
-      + How does it work? Mode shapes
-  - Only manages to fit what it can see — think of it as an rational matrix interpolation on the real axis
-
-### More details reduced order modeling solver
-
-  - Tolerances and what they mean
-  - How frequency points are chose
-  - How does it pick frequencies: manual "AddToPROM" and "AdaptiveTol"
-  - AdaptiveConvergenceMemory
-
-### Tuning tolerances and convergence
-
-What is the error tolerance.
-
-## Summary and take-aways
-
-We have now reached a natural break if this tutorial
-
-  - Works really well since there are few poles in or close to the region of interest.
-  - Takeaway: rom_tol >> solver_tol but there are limits.
-  - It is a greedy algorithm — default AdaptiveConvergenceMemory is low at two — if it is a difficult case might need to increase for challenging problem.
-  - When not to use this — (small number of samples compared to number of poles needed). High precision in difficult region.
-
-A more difficult example is here.
-
-* * *
-
-## Obtaining a circuit out of the Adaptive Driven Solver
-
-  - How to interpret the circuits
-  - Is this a normal circuit?
-  - How to post-process these circuits
-
-## CPW Line with and LC Port
-
-!!
-
-  - Convergence: "AdaptiveTol"
-
-  - Getting the circuit parameters
-
-  - Changing circuit parameters — warning
-
-  - CPW Line with port — a more difficult example
-
-      + Why?
+Finally, in both the uniform and adaptive driven solver, we have choose the output grid choice in
+advance. If we have an estimate for the location of the eigen-frequencies and port $Q$-factor, we
+can choose a finer grid around this feature. However, the adaptive reduced order model already
+contains a good estimate of the eigenmodes close to the real axis. We can almost interpret the ROM
+as a type of circuit. However, to make that connection concrete, we have connect the abstract ROM
+matrix to concrete electrical signals. How to do this, and the nuances involved and discussed in the
+[circuit extraction tutorial](tutorial_circuit_extraction.md).
 
 ## Literature & References
 
