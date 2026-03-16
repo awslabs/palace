@@ -1190,6 +1190,8 @@ auto PostOperatorCSV<solver_t>::PrintFloquetPortS()
   }
   using fmt::format;
   CheckAppendIndex(floquet_port_S->table["idx"], row_idx_v, row_i);
+  // Write S-parameters for ALL output modes. For evanescent modes not in S_map,
+  // write NaN (NULL) to keep CSV column alignment.
   for (const auto &[port_idx, S_map] : measurement_cache.floquet_port_s)
   {
     for (const auto &[key, S] : S_map)
@@ -1201,6 +1203,16 @@ auto PostOperatorCSV<solver_t>::PrintFloquetPortS()
       auto arg_key = format("arg_P{}_{}_{}_{}_exc{}", port_idx, m, n, pol, m_ex_idx);
       floquet_port_S->table[abs_key] << Measurement::Magnitude(S);
       floquet_port_S->table[arg_key] << Measurement::Phase(S);
+    }
+  }
+  // Pad any columns that didn't get a value (evanescent modes) with NaN.
+  std::size_t target_rows = floquet_port_S->table["idx"].n_rows();
+  for (std::size_t ci = 0; ci < floquet_port_S->table.n_cols(); ci++)
+  {
+    auto &col = floquet_port_S->table[ci];
+    while (col.n_rows() < target_rows)
+    {
+      col << std::numeric_limits<double>::quiet_NaN();
     }
   }
   floquet_port_S->WriteFullTableTrunc();
