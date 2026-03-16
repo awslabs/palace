@@ -99,8 +99,8 @@ makedocs(
             "examples/cylinder.md",
             "examples/coaxial.md",
             "examples/cpw.md",
-            "examples/transmon_driven.md",
-            "examples/transmon_circuit.md"
+            "examples/tutorial_driven_uniform_v_adaptive.md",
+            "examples/tutorial_circuit_extraction.md"
         ],
         "faq.md",
         "For Developers" => Any[
