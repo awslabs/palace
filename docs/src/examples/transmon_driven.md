@@ -13,7 +13,8 @@ excitations. We will especially focus on the “adaptive” driven solver, which
 modelling (ROM) techniques. The ROM approach can dramatically increase the speed of a
 frequency-domain simulation, but requires more careful usage. The uniform and adaptive driven
 solvers are also discussed in the example on [cross-talk between coplanar waveguides](cpw.md) and we
-will assume familiarity with that example.
+will assume familiarity with that example. We also assume familiarity with the [transmon
+tutorial](transmon.md).
 
 In this tutorial, we will go into more of the algorithmic detail, to help users effectively use the
 driven solvers. Additionally, the adaptive solver is heavily used in *Palace*'s [circuit extraction
@@ -35,30 +36,6 @@ particularly well for the transmon case.
 
 ## Driven Solver Quick-Start
 
-<!-- 
-To use the adpative
-
-The following configurations allow you to tune the adaptive driven solver.
-
-  - **`"AdaptiveTol"`**: target relative error tolerance $\varepsilon$. Setting this to a
-    positive value activates the adaptive sweep; zero (the default) gives the plain uniform
-    solver. This tolerance should be set *larger* than `"Solver.Linear.Tol"`, since the
-    ROM introduces an additional approximation on top of the finite-element discretisation.
-    Values of `1e-2` to `1e-3` are a good starting point.
-
-  - **`"AdaptiveMaxSamples"`**: hard ceiling on HDM solves per excitation (default: 20).
-    If the algorithm reaches this limit before the tolerance is met, it exits using whatever
-    ROM has been built and prints a warning. Increase this limit if the default is hit.
-
-  - **`"AdaptiveConvergenceMemory"`**: number of consecutive greedy iterations that must
-    all individually satisfy the tolerance before convergence is declared (default: 2).
-    This guards against premature termination when the error estimate fluctuates near
-    $\varepsilon$. Increasing to 3 or 4 makes the criterion stricter.
-
-  - **`"AddToPROM"`**: number of consecutive greedy iterations that must
-    all individually satisfy the tolerance before convergence is declared (default: 2).
-    This guards against premature termination when the error estimate fluctuates near
-    $\varepsilon$. Increasing to 3 or 4 makes the criterion stricter. -->
 
 ## Revisiting the Two Co-planar Waveguide Example (Part I)
 
@@ -140,9 +117,8 @@ Adding extra points to the output grid incurs only a small incremental cost comp
 full HDM solve.
 
 Let us plot the point-wise relative error $\vert E_\mathrm{elec,adaptive} -
-E_\mathrm{elec,uniform}\vert / \vert E_\mathrm{elec,uniform}\vert$ between the electric
-energy $E_{\mathrm{elec}}$ of the uniform driven solver above and the adaptive solver with tol
-`1e-1`.
+E_\mathrm{elec,uniform}\vert / \vert E_\mathrm{elec,uniform}\vert$ between the electric energy
+$E_{\mathrm{elec}}$ of the uniform driven solver above and the adaptive solver with tol `1e-1`.
 
 ```@raw html
 <br/><p align="center">
@@ -266,8 +242,8 @@ the [sample specification](../config/solver.md#solver%5B%22Driven%22%5D%5B%22Sam
 Afterwards, the Pradovera algorithm suggests new sample locations, based on the maximum expected
 error of the interpolation. The insight of this approach is that this maximum error can be quickly
 calculated from the denominator of the barycentric interpolation itself, without any additional HDM
-solves. *Palace* prints the location of the sampling points found during the adaptive solver simulations
-to the log-file.
+solves. *Palace* prints the location of the sampling points found during the adaptive solver
+simulations to the log-file.
 
 Convergence of the procedure is based on the relative error of the HDM electric field solution
 $\bm{x}_\mathrm{HDM}$ compared to the solution calculated by the ROM:
@@ -340,9 +316,10 @@ As discussed above, a user can also force certain frequency points to be added t
 the adaptive sampling starts by using [`"AddToPROM": true`](../config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D). This is primarily a
 debugging tool. Routine usage is not recommended — adding sample by hand negates the major benefit
 of the adaptive solver to “choose the best” samples for a given accuracy. However, this option might
-help investigate convergence issues. If adding points, the user should be careful not to accidentally
-set [`"AddToPROM": true`](../config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D) and a dense grid, since this will perform a very large number of HDM
-solves and store them in memory.
+help investigate convergence issues. If adding points, the user should be careful not to
+accidentally set [`"AddToPROM": true`](../config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D) on a dense grid, since this
+will perform a very large number of HDM solves and keep them in computer memory for the duration of
+the computation.
 
 ### Multi-excitations
 
@@ -377,8 +354,8 @@ contributions into account, since they cannot be linearized into a system of siz
 linearizing $\bm{A}_2(\omega)$ should be small if its non-$KCM$ contributions are small as compared
 to the $KCM$ contribution of the rest of the system. However, if non-$KCM$ contributions of
 $\bm{A}_2(\omega)$ are large, it is possible that the frequency sampling will choose a sub-optimal
-basis. The tuning described above in [Adaptive Solver Problems and User
-Guidance](#adaptive-solver-problems-and-user-guidance) could be helpful for this case too.
+basis and lead to convergence problems. The tuning described above in [Adaptive Solver Problems and
+User Guidance](#adaptive-solver-problems-and-user-guidance) could be helpful for this case too.
 
 ## Revisiting the Two Coplanar Waveguide Example (Part II)
 
@@ -404,7 +381,9 @@ discussed above. We can now interpret several features of the convergence plot b
     worse than `"AdaptiveTol"`.
 
 Point 3 above is really about the nature of solver convergence and errors generally, rather than
-being specific to the adaptive solver. However, it is helpful to illustrate this point in more striking detail by looking at the convergence of the scattering parameters with different `"AdaptiveTol"`.
+being specific to the adaptive solver. However, it is helpful to illustrate this point in more
+striking detail by looking at the convergence of the scattering parameters with different
+`"AdaptiveTol"`.
 
 ```@raw html
 <br/><p align="center">
@@ -426,7 +405,7 @@ A detailed discussion of error estimates and error propagation from the electric
 quantities is beyond the scope of this tutorial. From a practical perspective, we encourage users to
 validate some of the adaptive driven simulations against uniform driven simulations in order to get
 a practical sense of the error for different quantities, to help identify an appropriate adaptive
-tolerance and to diagnose convergence error.
+tolerance and to diagnose convergence errors.
 
 A useful and cheap visualization may also be to plot the absolute error normalized by an
 ”appropriate” scale factor. For example, below we plot the $\vert S_{\mathrm{adaptive}} -
@@ -460,6 +439,25 @@ have to decrease monotonically. This means that the error indicator can go above
 tolerance before dipping below it again. See the discussion above in [Adaptive Solver Problems and
 User Guidance](#adaptive-solver-problems-and-user-guidance).
 
+## Driving the Transmon Model
+
+Let us now apply the driven and adaptive solver the a model of a transmon qubit, which was already
+discussed in the [eigenmode tutorial](transmon.md) and we assume familiarity with that tutorial. As
+discussed there, the model consists of a transmon qubit and a quarter-wave coplanar waveguide
+readout resonator coupled to a feedline. There are three lumped ports in this model: ports 1 and 2 are the $50~\Ohm$ resistive feedline terminations and port 3 is a passive LC element ($L =
+14.86\,\textrm{nH}$, $C = 5.5\,\textrm{fF}$) representing the linearised Josephson junction.
+
+There are two eigenmodes of particular interest that we discovered in the previous tutorial:
+
+  - A “transmon” mode near $4.10~\textrm{GHz}$ with $Q = 1.8 \cdot 10^4$,
+  - A “resonator” mode near $5.60~\textrm{GHz}$ with $Q = 7.9 \cdot 10^3$.
+
+Looking at the ParaView visualization of the modes we do however, see that even the transmon mode
+has appreciable weight on the readout resonator and into the feedline.
+
+We will now perform uniform and adaptive driven simulations on this model, by exciting the $50~\Ohm$
+resistive ports. We will use the same mesh `examples/transmon/mesh/transmon.msh2` as the eigenmode
+example as well a most of the set-up file in `transmon_coarse.json`.
 
 ## Uniform Driven Solver
 

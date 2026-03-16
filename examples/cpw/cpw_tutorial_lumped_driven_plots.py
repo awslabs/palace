@@ -13,14 +13,14 @@
 
 # Generates some of the plots in the "Driven Solver: Uniform vs Adaptive" tutorial.
 #
-# Run `cpw_lumped_driven.jl` first to generate the simulation data. This script then parses
-# the data. Output plots are written to the `docs/src/assets` folder.
+# Run `cpw_tutorial_lumped_driven.jl` first to generate the simulation data. This script
+# then parses the data. Output plots are written to the `docs/src/assets` folder.
 #
-# You can run this script stand-alone from the base palace folder using `uv`. This will
+# Run this script stand-alone from the base palace folder using `uv`. This will
 # automatically create a temporary environment and download dependencies
 #
 # ```
-# uv run --script examples/cpw/cpw_lumped_driven_plots.py
+# uv run --script examples/cpw/cpw_tutorial_lumped_driven_plots.py
 # ```
 
 
@@ -46,20 +46,21 @@ mpl.rcParams.update(
     }
 )
 
-## Configuration
+## Configuration: Data created by cpw_tutorial_lumped_driven.jl
 
 
-# Root directory of the CPW example (where this notebook lives)
+# Root directory of the CPW and this script
 CPW_DIR = pathlib.Path("./examples/cpw")
 DOCS_ASSET_DIR = pathlib.Path("./docs/src/assets/examples")
 
-# Uniform sweep output directory (output path is set in cpw_lumped_uniform.json)
-UNIFORM_DIR = CPW_DIR / "postpro/lumped_uniform_convergence"
+# Uniform sweep output directory
+UNIFORM_DIR = CPW_DIR / "postpro/tutorial_driven_rom/driven_uniform_reference"
 
-# Adaptive tolerances and their output directories (as written by cpw_lumped_driven.jl)
+# Adaptive tolerances and their output directories
 ADAPTIVE_TOLS = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5]
 ADAPTIVE_DIRS = {
-    tol: CPW_DIR / f"postpro/driven_adaptive_1e{int(round(np.log10(tol)))}"
+    tol: CPW_DIR
+    / f"postpro/tutorial_driven_rom/driven_adaptive_1e{int(round(np.log10(tol)))}"
     for tol in ADAPTIVE_TOLS
 }
 
@@ -90,6 +91,7 @@ def load_port_s(postpro_dir: pathlib.Path) -> tuple[np.ndarray, dict]:
         m = _RE_S_DB.match(col)
         if m:
             i, j = int(m.group(1)), int(m.group(2))
+            # Convert magnitude and argument into complex number
             db = df[f"|S[{i}][{j}]| (dB)"].values
             ang = df[f"arg(S[{i}][{j}]) (deg.)"].values
             s[(i, j)] = 10 ** (db / 20.0) * np.exp(1j * np.deg2rad(ang))
@@ -119,7 +121,7 @@ def parse_log_pivots(log_path: pathlib.Path) -> list[np.ndarray]:
     sections = _RE_SAMPLED_FREQS.findall(log_content)
     return [
         np.array(
-            [float(f.strip()) for f in match.replace("\n", "").split(",")],
+            [float(f.strip()) for f in match.replace("\n", "").split(",") if f.strip()],
             dtype=np.float64,
         )
         for match in sections
@@ -159,7 +161,7 @@ sampled_errors: dict[float, list[np.ndarray]] = {}
 for tol in ADAPTIVE_TOLS:
     d = ADAPTIVE_DIRS[tol]
     if not (d / "port-S.csv").exists():
-        print(f"WARNING: {d} not found — run cpw_lumped_driven.jl first")
+        print(f"WARNING: {d} not found — run cpw_tutorial_lumped_driven.jl first")
         continue
     freq_adaptive[tol], s_adaptive[tol] = load_port_s(d)
     _, e_adaptive[tol] = load_domain_e(d)
@@ -373,18 +375,6 @@ def plot_smat_adaptive_pointwise(
             ax.axhline(
                 tol, color=tol_palette[k], linewidth=1, linestyle="--", zorder=-5
             )
-            pivots_list = sampled_freqs.get(tol, [])
-            all_pivots = np.concatenate(pivots_list) if pivots_list else np.array([])
-            if all_pivots.size:
-                ax.plot(
-                    all_pivots,
-                    np.ones_like(all_pivots) * 2e-14 * tol**0.25,
-                    color=tol_palette[k],
-                    linewidth=0,
-                    marker="D",
-                    markersize=4,
-                    alpha=0.75,
-                )
         ax.axhline(1e-12, color="black", linewidth=1, linestyle=":", zorder=-5)
         ax.text(
             0.97,
@@ -402,8 +392,8 @@ def plot_smat_adaptive_pointwise(
         ax.set_ylim(1.1e-13, 900)
         ax.set_yscale("log")
     axes[1, 1].legend(
-        loc="best",
-        bbox_to_anchor=(0.5, 0.0, 0.0, 0.5),
+        loc="center",
+        bbox_to_anchor=(0.5, 0.25),
         fontsize=8,
         frameon=False,
         ncol=3,
@@ -453,7 +443,9 @@ def plot_smat_adaptive_rms(
             continue
         ref = s_uniform[(i, j)]
         freq = freq_uniform
-        scale = np.sqrt(np.mean(np.square(np.abs(ref))))  # RMS of |S_ref|, sample-number independent
+        scale = np.sqrt(
+            np.mean(np.square(np.abs(ref)))
+        )  # RMS of |S_ref|, sample-number independent
         for k, tol in enumerate(ADAPTIVE_TOLS):
             if tol not in s_adaptive or (i, j) not in s_adaptive[tol]:
                 continue
@@ -500,8 +492,8 @@ def plot_smat_adaptive_rms(
         ax.set_ylim(1.1e-16, 50)
         ax.set_yscale("log")
     axes[1, 1].legend(
-        loc="best",
-        bbox_to_anchor=(0.5, 0.0, 0.0, 0.5),
+        loc="center",
+        bbox_to_anchor=(0.5, 0.35),
         fontsize=8,
         frameon=False,
         ncol=3,
