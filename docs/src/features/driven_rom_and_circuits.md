@@ -13,8 +13,8 @@ certain type of circuit synthesis, returning $L^{-1}$, $R^{-1}$, $C$-like matric
 
 These features are described in two tutorials:
 
-  - Adaptive Driven Solver for Fast-Frequency Sweeps (TODO: LINK)
-  - Circuit Extraction from Adaptive Driven Frequency Solver (TODO: LINK)
+  - [Adaptive Driven Solver for Fast-Frequency Sweeps](../examples/tutorial_driven_uniform_v_adaptive.md)
+  - [Circuit Extraction from Adaptive Driven Frequency Solver](../examples/tutorial_circuit_extraction.md)
 
 !!! warning
 
