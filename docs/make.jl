@@ -114,9 +114,9 @@ makedocs(
     ]
 )
 
-# deploydocs(
-#     repo="github.com/awslabs/palace.git",
-#     devbranch="main",
-#     push_preview=true,
-#     forcepush=true
-# )
+deploydocs(
+    repo="github.com/awslabs/palace.git",
+    devbranch="main",
+    push_preview=true,
+    forcepush=true
+)
