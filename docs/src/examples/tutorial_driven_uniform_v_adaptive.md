@@ -7,12 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 
 # Driven Solver: Uniform vs Adaptive
 
-In this tutorial we discusses the [driven solver](../config/solver.md#solver%5B%22Driven%22%5D),
-which computes the frequency-domain response (steady-state) of a system driven by external
-excitations. The uniform and adaptive driven solvers are also discussed in the example on
-[cross-talk between coplanar waveguides](cpw.md). We assume familiarity with that example and expand
-on it below. We also apply the the driven solver to the [transmon example](transmon.md), and assume
-familiarity with the eigenmode simulations.
+In this tutorial we discuss the [driven solver](../config/solver.md#solver%5B%22Driven%22%5D), which
+computes the frequency-domain response (steady-state) of a system driven by external excitations.
+The uniform and adaptive driven solvers are also discussed in the example on [cross-talk between
+coplanar waveguides](cpw.md). We assume familiarity with that example and expand on it below. We
+also apply the driven solver to the [transmon example](transmon.md), and assume familiarity with the
+eigenmode simulations.
 
 !!! warning "Warning: Algorithmic Details Ahead!"
 
@@ -27,9 +27,9 @@ familiarity with the eigenmode simulations.
 
 !!! note
 
-    The simulations below were performed version ABC ... on date XYZ.
+    For the CPW example, the data can be generated with the script `examples/cpw/cpw_tutorial_lumped_driven.jl` and the result plots generated with `examples/cpw/cpw_tutorial_lumped_driven_plots.py`.
 
-    TODO: Where to get files and folders.
+    For the transmon example, the data can be generated with the script `examples/transmon/transmon_tutorial_driven.jl` and the result plots generated with `examples/transmon/transmon_tutorial_driven_plots.py`.
 
 ## Driven Solver Quick-Start
 
@@ -67,7 +67,7 @@ The following are important tuning configurations:
   - `"Linear"/"Tol"`: set the linear solver tolerance to be substantially smaller than
     `"AdaptiveTol"`. The adaptive solver is based on an interpolation and can be unusually sensitive
     to errors in the linear solver. Increase this tolerance in your validation runs and ensure the
-    output is no different. Should Palace give log warnings like `Minimal rational interpolation encountered rank-deficient matrix` try tightening this tolerance substantially.
+    output is no different. Should *Palace* log warnings like `Minimal rational interpolation encountered rank-deficient matrix` try tightening this tolerance substantially.
   - [`"AdaptiveMaxSamples"`](../config/solver.md#solver%5B%22Driven%22%5D): cap on full linear
     solves per excitation (default: 20). If the log indicates that you exceed this bound, it means
     the adaptive solver has not reached the target tolerance and this bound should be increased. If
@@ -113,8 +113,8 @@ specification](../config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D).
 
 The linear solver tolerance `"Tol": 1.0e-12` is chosen to be very small. Such a small tolerance is
 near the limit of what *Palace*'s solvers can reach using double precision. The error of the uniform
-solver also depends on the condition number of the system matrix ``\bm{A}(\omega) = \bm{K} + i\omega \bm{C} - \omega^2 \bm{M} + \bm{A}_{2}(\omega)``at each frequency``\omega = 2 \pi f`` that it solves.
-Importantly, if the system has resonances (poles) close to the real axis, the linear solve may
+solver also depends on the condition number of the system matrix ``\bm{A}(\omega) = \bm{K} + i\omega \bm{C} - \omega^2 \bm{M} + \bm{A}_{2}(\omega)`` at each frequency ``\omega = 2 \pi f`` that it
+solves. Importantly, if the system has resonances (poles) near the real axis, the linear solve may
 become very poorly conditioned. This leads to a loss of numerical accuracy.
 
 The total electric energy ``E_{\mathrm{elec}}`` is printed out as one of the columns in
@@ -243,16 +243,17 @@ calculate many output samples as the “online” phase.
 There is a large literature on constructing dimensional reductions of linear systems and we refer to
 the literature for an introduction [1,2]. *Palace* finds a set of ``n`` orthogonal vectors
 ``\bm{V}`` that capture the full response of the system in the frequency range of interest
-``[f_\mathrm{min}, f_\mathrm{max}]``. The projection``\bm{K}_r = \bm{V}^T \bm{K}\bm{V}``,``\bm{b}_r = \bm{V}^T \bm{b}``, etc., and the prolongation ``\bm{x} = \bm{V} \bm{x}_r`` are particularly
-simple.
+``[f_\mathrm{min}, f_\mathrm{max}]``. The projection ``\bm{K}_r = \bm{V}^T \bm{K}\bm{V}``,
+``\bm{b}_r = \bm{V}^T \bm{b}``, etc., and the prolongation ``\bm{x} = \bm{V} \bm{x}_r`` are
+particularly simple.
 
 The set of basis vectors ``\bm{V}`` that *Palace* uses are the orthogonalized components of the HDM
-solutions ``\bm{x}^*`` at the "internal" sampling frequencies ``f_\mathrm{sample} \in [f_\mathrm{min}, f_\mathrm{max}]``. In fact, *Palace*
-uses``\mathrm{Re}\bm{x}^*``,``\mathrm{Im}\bm{x}^*`` as separate vectors so that the basis ``\bm{V}``
-is real. As we add more sampling frequencies, the basis of the reduced order model grows and
-increases the accuracy of the projection, until we satisfy a convergence criterion. This
-construction is essentially a type of rational interpolation on the whole domain. It is also related
-to the mathematics of rational Krylov spaces [2].
+solutions ``\bm{x}^*`` at the "internal" sampling frequencies ``f_\mathrm{sample} \in [f_\mathrm{min}, f_\mathrm{max}]``. In fact, *Palace* uses ``\mathrm{Re}\bm{x}^*``,
+``\mathrm{Im}\bm{x}^*`` as separate vectors so that the basis ``\bm{V}`` is real. As we add more
+sampling frequencies, the basis of the reduced order model grows and increases the accuracy of the
+projection, until we satisfy a convergence criterion. This construction is essentially a type of
+rational interpolation on the whole domain. It is also related to the mathematics of rational Krylov
+spaces [2].
 
 The Gram-Schmidt orthogonalization algorithm used to construct ``\bm{V}`` from the HDM solutions is
 determined by the user option
@@ -375,9 +376,9 @@ and perform frequency prediction/sampling separately for each excitation. The bo
 separately to the interpolation for each excitation.
 
 However, the ROM itself and basis ``\bm{V}`` will be the combination of samples from all excitations
-and that will enter the stopping criterion ``\bm{x}_\mathrm{ROM}(f^*)``. It can sometimes happen
-that later excitations already have a good enough basis from the samples of previous excitations and
-return earlier than if it was simulated by itself.
+and this combined basis enters the stopping criterion ``\bm{x}_\mathrm{ROM}(f^*)``. It can sometimes
+happen that later excitations already have a good enough basis from the samples of previous
+excitations and return earlier than if each were simulated individually.
 
 Note that `"AdaptiveMaxSamples"` refers to the number of samples *per excitation* in the
 multi-excitation case.
@@ -390,7 +391,7 @@ a non-quadratic frequency term, which can arise from `WavePort` / `WavePortPEC`,
 as described above — there will be frequency samples with HDM solves of the full system now
 containing ``\bm{A}_2(\omega)``, which will be added to the basis ``\bm{V}``. During the online
 phase, *Palace* uses the projected ``\bm{K}_r``, ``\bm{C}_r``, ``\bm{M}_r``,
-``\bm{A}_{2,r}(\omega)`` to solve the reduced problem efficiently. Having a ``\bm{A}_2(\omega)``
+``\bm{A}_{2,r}(\omega)`` to solve the reduced problem efficiently. Having an ``\bm{A}_2(\omega)``
 term will be slower, since *Palace* will have to recompute ``\bm{A}_{2,r}(\omega)`` for every output
 ``\omega``.
 
@@ -487,24 +488,24 @@ User Guidance](#adaptive-solver-problems-and-user-guidance).
 
 ### Set-Up
 
-Let us now apply the driven and adaptive solver the a model of a transmon qubit, which was already
-discussed in the [eigenmode tutorial](transmon.md) and we assume familiarity with that tutorial. As
+Let us now apply the driven and adaptive solver to a model of a transmon qubit, which was already
+discussed in the [eigenmode tutorial](transmon.md). We assume familiarity with that tutorial. As
 discussed there, the model consists of a transmon qubit and a quarter-wave coplanar waveguide
 readout resonator coupled to a feedline. There are three lumped ports in this model: ports 1 and 2
-are the ``50~\Ohm`` resistive feedline terminations and port 3 is a passive LC element (``L = 14.86\,\textrm{nH}``,``C = 5.5\,\textrm{fF}``) representing the linearised Josephson junction.
+are the ``50~\Ohm`` resistive feedline terminations and port 3 is a passive LC element (``L = 14.86\,\textrm{nH}``, ``C = 5.5\,\textrm{fF}``) representing the linearised Josephson junction.
 
 There are two eigenmodes of particular interest that we discovered in the previous tutorial:
 
   - A “transmon” mode near ``4.10~\textrm{GHz}`` with ``Q = 1.8 \cdot 10^4``,
   - A “resonator” mode near ``5.60~\textrm{GHz}`` with ``Q = 7.9 \cdot 10^3``.
 
-Looking at the ParaView visualization of the modes we do, however, see that even the transmon mode
-has appreciable weight on the readout resonator and into the feedline.
+The eigenmode visualization shows that even the transmon mode has appreciable weight on the readout
+resonator and in the feedline.
 
 We will now perform uniform and adaptive driven simulations on this model, by exciting the
 ``50~\Ohm`` resistive ports. We will use the same mesh `examples/transmon/mesh/transmon.msh2` as the
-eigenmode example. We use the set-up file in `examples/transmon/transmon_coarse.json` and adapt it
-to a driven solver as follows:
+eigenmode example. We use the eigenmode set-up file in `examples/transmon/transmon_coarse.json` and
+adapt it to a driven solver (`examples/transmon/transmon_tutorial_driven.json`):
 
 ```json
 {
@@ -551,10 +552,9 @@ In this case we will be using the multi-excitation feature of *Palace*. Because 
 both `"Excitation": 1` on port 1 and `"Excitation": 2` on port 2, *Palace* will iterate over these
 excitations separately. This makes no difference to the uniform solver, since it solves every
 excitation and frequency sample separately. However, for the adaptive solver, the projective basis
-``\bm{V}`` is shared between all exaction and the convergence criterion ``\varepsilon < \varepsilon_\mathrm{tol}`` is on that combined basis. This means that the can be different output
-between the case were we simulate both excitation in one run, and if we were to do each excitation
-in a different adaptive solve. However, these differences are within the ROM convergence error. See
-the discussion above.
+``\bm{V}`` is shared between all excitations and the convergence criterion ``\varepsilon < \varepsilon_\mathrm{tol}`` is on that combined basis. This means that the output of each excitation
+can be different when we simulate them together with one ROM or separately with two ROMs. However,
+these differences are within the adaptive tolerance. See the discussion above.
 
 The above json file is for the adaptive solver with `"AdaptiveTol": 1e-3`. If we set `"AdaptiveTol": 0.0` or leave this config out, we trigger the uniform solver.
 
@@ -562,7 +562,7 @@ The above json file is for the adaptive solver with `"AdaptiveTol": 1e-3`. If we
 
 As for the CPW example, let us look at the electric energy of the model. Since there are now two
 excitations, we get a response for both of them. However, since the mirror asymmetry of the model is
-pretty small, the difference between driving port 1 and port 2 is also very small.
+small, the difference between driving port 1 and port 2 is also small.
 
 ```@raw html
 <br/><p align="center">
@@ -570,9 +570,9 @@ pretty small, the difference between driving port 1 and port 2 is also very smal
 </p><br/>
 ```
 
-Nex we look at the scattering matrix. Because we are driving both resistive ports, we now obtain the
-full scattering matrix, now just one column. Note that by convention, palace prints out 0.0 as the
-value of the scattering matrix on the junction port. We do not include this here.
+Since we are driving both resistive ports, we now obtain the full scattering matrix, not just one
+column. Note that by convention, *Palace* prints `0.0` (`-inf` in dB) for the scattering matrix on
+the junction port. We do not include this here.
 
 ```@raw html
 <br/><p align="center">
@@ -580,16 +580,16 @@ value of the scattering matrix on the junction port. We do not include this here
 </p><br/>
 ```
 
-We see that the data is now far more structured, due the presence of the two high-``Q`` eigenmodes.
-We see their effects in spikes and dips in the response measurement at frequencies in the vicinity
-of the ``\mathrm{Re} f`` of each eigenmode (vertical dashed lines). The qubit mode is weakly coupled
-to the feedline, so we expect the scattering matrix ``|S_{11}|`` to have an extremely sharp feature
-near ``4.10~\textrm{GHz}``. The width of that feature is related to the inverse of the port quality
-factor, printed in `port-Q.csv` of the eigenmode simulation. Because we have sampled the output
-frequency on a linear frequency gid, it might be hard a priori to see this feature just from the
-scattering matrix, although we do see a small feature in the electric domain energy. The readout
-resonator is more strongly coupled to the feedline and therefore has a broader feature. Away from
-the shadows of the mode resonances, the system has less features and behaves like a simple CPW.
+We see that the data is now far more structured, due to the presence of the two high-``Q``
+eigenmodes. We see their effects in spikes and dips in the response measurement at frequencies in
+the vicinity of the real component of the eigenfrequencies (vertical dashed lines). The qubit mode
+is weakly coupled to the feedline, so we expect the scattering matrix ``|S_{11}|`` to have an
+extremely sharp feature near ``4.10~\textrm{GHz}``. The width of that feature is related to the
+inverse of the quality factor. Because we have sampled the output frequency on a linear frequency
+grid, it might be difficult, a priori, to see this feature just from the scattering matrix. We do
+see a small feature in the domain electric energy. The readout resonator is more strongly coupled to
+the feedline and therefore has a broader feature. Away from the eigenmode features, the system
+behaves like a simple CPW.
 
 ### Adaptive Solver Results
 
@@ -604,15 +604,14 @@ First let us look at the domain energy:
 </p><br/>
 ```
 
-The conventions and are same as in the plots of the CPW example above. Here, however, the coloured
-diamonds merge sample frequencies on for the rational interpolations off both excitations 1,2 since
-they are combined into a single ROM basis. We see that the adaptive solver converges very quickly.
-The error for tolerance `1e-1` is already quite small for all frequencies except near the poles.
-When we get reach `1e-3` the adaptive solver puts HDM sample points near the pole frequencies and
-the error drops dramatically. Increasing the tolerance to `1e-4` and `1e-5` only slightly decreases
-the error.
+The conventions are the same as in the plots of the CPW example above. Here, however, the coloured
+diamonds mark sample frequencies from the rational interpolations of excitations 1 and 2 together
+since they form a combined ROM basis. We see that the adaptive solver converges very quickly. The
+error for tolerance `1e-1` is already quite small for all frequencies except near the poles. When we
+reach `1e-3` the adaptive solver puts HDM sample points near the pole frequencies and the error
+drops dramatically. Tightening the tolerance to `1e-4` and `1e-5` only slightly decreases the error.
 
-The error drops is even more dramatic for the error in the S-parameters:
+The error drop is even more dramatic for the error in the S-parameters:
 
 ```@raw html
 <br/><p align="center">
@@ -620,30 +619,32 @@ The error drops is even more dramatic for the error in the S-parameters:
 </p><br/>
 ```
 
-In both plots above, the error is more structured than it was in the CPW example. It is worse close
-the location of the eigenmode of the system and better far away. The adaptive solver also adds HDM
-solves in a more structure manner to “shadow” the eigenmodes. This behaviour is simple to interpret
-— the response of the system in the real interval ``[f_\mathrm{min}, f_\mathrm{max}]`` is dominated
-by the singular response of the eigenmodes (poles). The rational interpolation of the adaptive
-solver can reconstruct the existence and approximate location of these poles. Then it tries to
-caputre the effect of the poles with a HDM solve as best it can on the real axis. If you look
-carefully at the error in the domain energy, you will see a small residual error “spike” around the
-poles even at adaptive tolerance `1e-5`. This can happen as the HDM solve on the real axis does not
-fully capture the effect of the true eigenmode. If were were to increase the adaptive tolerance
-further, it would cluster further HDM sample points around the poles to remove this spike.
+In both plots above, the error is more structured than it was in the CPW example. It is worse near
+the eigenmode locations and better far away. The adaptive solver also adds HDM solves in a more
+structured manner to “shadow” the eigenmodes. This behaviour is simple to interpret — the response
+of the system in the real interval ``[f_\mathrm{min}, f_\mathrm{max}]`` is dominated by the singular
+response of the eigenmodes (poles). The rational interpolation of the adaptive solver can
+reconstruct the existence and approximate location of these poles. Then it tries to capture the
+effect of the poles with a HDM solve as best it can on the real axis. If you look carefully at the
+error in the domain energy, you will see a small residual error “spike” around the poles even at
+adaptive tolerance `1e-5`. This can happen as the HDM solve on the real axis does not fully capture
+the effect of the true eigenmode. If we were to tighten the adaptive tolerance further, it would
+cluster additional HDM sample points around the poles to remove this spike.
 
-Aside: We also remind the reader that the uniform solver which we use as a baseline here is also
-less accurate close to poles, since the condition number ``\kappa[\bm{A}(\omega)]`` is worse.
-However, this tends to be an issue only for high-$Q$ poles or at very high precision.
+!!! note
 
-Finally, in both the uniform and adaptive driven solver, we have to choose the output grid choice in
-advance. If we have an estimate for the location of the eigen-frequencies and port ``Q``-factor, we
+    We also remind the reader that the uniform solver which we use as a baseline here is also
+    less accurate close to poles, since the condition number ``\kappa[\bm{A}(\omega)]`` is larger.
+    However, this tends to be an issue only for high-``Q`` poles or at very high precision.
+
+Finally, in both the uniform and adaptive driven solver, we have to choose the output grid in
+advance. If we have an estimate for the location of the eigenfrequencies and port ``Q``-factor, we
 can choose a finer grid around this feature. However, the adaptive reduced order model already
 contains a good estimate of the eigenmodes close to the real axis! We would like to use this in
-postprocessing without rerunning the simulation. In fact, the ROM as matrices $\bm{K}_r$, $\bm{C}_r$
-and $\bm{M}_r$ are close in spirit to a type of circuit. To make that connection precise, we have
-connect the abstract ROM matrix to real electrical signals. How to do this and the nuances involved
-are discussed in the [circuit extraction tutorial](tutorial_circuit_extraction.md).
+postprocessing without rerunning the simulation. In fact, the ROM matrices ``\bm{K}_r``,
+``\bm{C}_r`` and ``\bm{M}_r`` are close in spirit to a circuit. To make that connection precise, we
+need to connect the abstract ROM matrix to real electrical signals. How to do this and the nuances
+involved are discussed in the [circuit extraction tutorial](tutorial_circuit_extraction.md).
 
 ## Literature & References
 
