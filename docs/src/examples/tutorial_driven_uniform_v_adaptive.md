@@ -113,9 +113,10 @@ specification](../config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D).
 
 The linear solver tolerance `"Tol": 1.0e-12` is chosen to be very small. Such a small tolerance is
 near the limit of what *Palace*'s solvers can reach using double precision. The error of the uniform
-solver also depends on the condition number of the system matrix ``\bm{A}(\omega) = \bm{K} + i\omega \bm{C} - \omega^2 \bm{M} + \bm{A}_{2}(\omega)`` at each frequency ``\omega = 2 \pi f`` that it
-solves. Importantly, if the system has resonances (poles) near the real axis, the linear solve may
-become very poorly conditioned. This leads to a loss of numerical accuracy.
+linear solve ``\bm{A}(\omega) \bm{x} = \bm{b}(\omega)`` also depends on the condition number of the
+system matrix ``\bm{A}(\omega)`` at each frequency ``\omega = 2 \pi f``. Importantly, if the system
+has resonances (poles) near the real axis, the linear solve may become very poorly conditioned. This
+leads to a loss of numerical accuracy.
 
 The total electric energy ``E_{\mathrm{elec}}`` is printed out as one of the columns in
 `domain-E.csv`.
@@ -215,7 +216,7 @@ Let us now consider the ROM construction in *Palace*. As discussed in the [theor
 reference](../reference.md), the matrix equation of the driven solver has the form
 
 ```math
-\left[\bm{K} + i\omega \bm{C} - \omega^2 \bm{M} + \bm{A}_{2}(\omega)\right] \bm{x} = i \omega
+\bm{A}(\omega) \bm{x} = \left[\bm{K} + i\omega \bm{C} - \omega^2 \bm{M} + \bm{A}_{2}(\omega)\right] \bm{x} = i \omega
 \bm{b} + \bm{b}_2(\omega).
 ```
 
@@ -226,6 +227,10 @@ The vector ``\bm{x}`` is the solution of the discretized electric field we want 
 is the dimension of the finite element space. For the discussion below we will ignore
 ``\bm{A}_{2}(\omega)`` and ``\bm{b}_2(\omega)``, which arise from boundary conditions that are
 non-quadratic in frequency such as wave ports.
+
+!!! note "Naming Conventions"
+
+    The matrix names ``\bm{K}``, ``\bm{C}``, ``\bm{M}`` for the quadratic system above are standard in mechanics and finite element codes. However, they should not be confused with the electrical circuit matrices. In particular, ``\bm{C}`` above is not the capacitance matrix. The exact relationship is described in the [circuit extraction tutorial](tutorial_circuit_extraction.md). Loosely speaking, ``\bm{K}`` corresponds to the inverse inductance ``\bm{L}^{-1}``, ``\bm{C}`` to the inverse resistance ``\bm{R}^{-1}`` and ``\bm{M}`` to the capacitance matrix ``\bm{C}``.
 
 The idea of the adaptive solver is to transform this problem with a large dimension ``N`` into a
 linear problem with much smaller dimension ``n`` that approximates the high-dimensional model well.
