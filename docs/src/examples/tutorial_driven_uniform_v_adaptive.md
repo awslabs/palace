@@ -80,7 +80,7 @@ The following are important tuning configurations:
 The rest of this tutorial will illustrate the driven solvers on two different examples (CPWs and
 transmon), explain the adaptive algorithm in detail, and give more detailed user guidance.
 
-## Revisiting the Two Co-planar Waveguide Example (Part I)
+## Revisiting the Two Coplanar Waveguide Example (Part I)
 
 We start by re-visiting the driven response of the [two CPW example](cpw.md), using the mesh
 [`mesh/cpw_lumped_0.msh`](https://github.com/awslabs/palace/blob/main/examples/cpw/mesh/cpw_lumped_0.msh)
