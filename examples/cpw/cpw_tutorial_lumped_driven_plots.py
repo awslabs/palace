@@ -146,12 +146,12 @@ def parse_log_errors(log_path: pathlib.Path) -> list[np.ndarray]:
     ]
 
 
-# ── Load uniform reference ─────────────────────────────────────────────────
+# Load uniform reference
 freq_uniform, s_uniform = load_port_s(UNIFORM_DIR)
 _, e_uniform = load_domain_e(UNIFORM_DIR)
 print(f"Uniform: {len(freq_uniform)} frequency points")
 
-# ── Load adaptive results ──────────────────────────────────────────────────
+# Load adaptive results
 freq_adaptive: dict[float, np.ndarray] = {}
 s_adaptive: dict[float, dict] = {}
 e_adaptive: dict[float, dict] = {}
@@ -700,7 +700,7 @@ plot_energy_adaptive_sweep(
 #
 # MRI error indicator at each greedy sample point vs sample number, for each `AdaptiveTol`.
 # The first two samples (at $f_\mathrm{min}$ and $f_\mathrm{max}$) are initialization points with
-# no prior ROM, so their error is $+\infty$ and not plotted.
+# no prior ROM, so their error is $+\infty$.
 
 
 def plot_adaptive_convergence_curve(
@@ -730,7 +730,6 @@ def plot_adaptive_convergence_curve(
         ax.axhline(tol, color=tol_palette[k], linewidth=1, linestyle="--", zorder=-5)
         errs_tightest = errs  # retains value from last processed tolerance
 
-    # Visual guide: show the convergence path of the tightest tolerance
     if errs_tightest is not None and len(errs_tightest) > 2:
         ax.plot(
             [1, 2, 3],

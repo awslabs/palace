@@ -560,56 +560,90 @@ The above json file is for the adaptive solver with `"AdaptiveTol": 1e-3`. If we
 
 ### Uniform Solver Results
 
-As for the CPW example, let us look at the electric energy and scattering matrix of the transmon.
-Because we are driving both resistive ports, we now obtain the full scattering matrix, now just one
-column. Note that by convention, palace prints out 0.0 as the value of the scattering matrix on the
-port transmon, which we do not display.
+As for the CPW example, let us look at the electric energy of the model. Since there are now two
+excitations, we get a response for both of them. However, since the mirror asymmetry of the model is
+pretty small, the difference between driving port 1 and port 2 is also very small.
 
-PLOTS
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/driven_ua_transmon_energy_uniform.svg" width="80%" />
+</p><br/>
+```
+
+Nex we look at the scattering matrix. Because we are driving both resistive ports, we now obtain the
+full scattering matrix, now just one column. Note that by convention, palace prints out 0.0 as the
+value of the scattering matrix on the junction port. We do not include this here.
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/driven_ua_transmon_sparam_uniform.svg" width="80%" />
+</p><br/>
+```
 
 We see that the data is now far more structured, due the presence of the two high-``Q`` eigenmodes.
 We see their effects in spikes and dips in the response measurement at frequencies in the vicinity
-of the ``\mathrm{Re} f`` of each eigenmode. The qubit mode is weakly coupled to the feedline, so we
-expect the scattering matrix ``|S_{11}|`` to have an extremely sharp feature near
-``4.10~\textrm{GHz}``. The width of that feature is related to the inverse of the port quality
+of the ``\mathrm{Re} f`` of each eigenmode (vertical dashed lines). The qubit mode is weakly coupled
+to the feedline, so we expect the scattering matrix ``|S_{11}|`` to have an extremely sharp feature
+near ``4.10~\textrm{GHz}``. The width of that feature is related to the inverse of the port quality
 factor, printed in `port-Q.csv` of the eigenmode simulation. Because we have sampled the output
 frequency on a linear frequency gid, it might be hard a priori to see this feature just from the
-data presented. The readout resonator is more strongly coupled to the feedline and therefore has a
-broader feature. Away from the shadows of the mode resonances, the system has less features and
-behaves like a simple CPW.
+scattering matrix, although we do see a small feature in the electric domain energy. The readout
+resonator is more strongly coupled to the feedline and therefore has a broader feature. Away from
+the shadows of the mode resonances, the system has less features and behaves like a simple CPW.
 
 ### Adaptive Solver Results
 
 Let us now plot the RMS normalized absolute error (as discussed above for the CPW example) between
-the uniform and adaptive solver. For the adaptive solver, we pick tolerances `1e1, 1e-1, 1e-3, 1e-5`. Note that `1e1`is an extremely large tolerances and shown here for illustration purposes
-only. We would generally suggest users to pick a tolerance of `1e-3` or below for any model.
+the uniform and adaptive solver. For the adaptive solver, we pick tolerances `1e-1, 1e-2, 1e-3, 1e-4, 1e-5`.
 
-The conventions and are same as in the CPW example, although here we the coloured diamonds merge
-sample frequencies on for both excitations 1,2. First, we see that the adaptive solver is extremeley
-efficient and even an huge tolerance like `1e1` gives reasonable results. Second, we see that the
-error is far more structured than in the CPW case. It is worse close the location of the eigenmode
-of the system and better far away. Second, we see that the adaptive solver adds more HDM solves in a
-more structure manner close to the “shadow” of the eigenmodes.
+First let us look at the domain energy:
 
-This behaviour is simple to interpret — the response of the system in the real interval
-``[f_\mathrm{min}, f_\mathrm{max}]`` is dominated by the singular response of the eigenmodes
-(poles). The rational interpolation of the adaptive solver can reconstruct the existence and
-approximate location of poles from its analytic structure. Then it tries to cancel the effect of the
-poles with a HDM solve as best it can on the real axis. The reason the error close to spike around
-the poles, it that the cancellation might be incomplete and multiple HDM solves might be required on
-the real axis.
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/driven_ua_transmon_energy_adaptive_sweep.svg" width="80%" />
+</p><br/>
+```
 
-Aside: We also remind the reader that the uniform solver is less accurate close to poles, since the
-condition number ``\kappa[\bm{A}(\omega)]`` is much worse there. However, this tends to be an issue
-only very close to the poles or at high precision.
+The conventions and are same as in the plots of the CPW example above. Here, however, the coloured
+diamonds merge sample frequencies on for the rational interpolations off both excitations 1,2 since
+they are combined into a single ROM basis. We see that the adaptive solver converges very quickly.
+The error for tolerance `1e-1` is already quite small for all frequencies except near the poles.
+When we get reach `1e-3` the adaptive solver puts HDM sample points near the pole frequencies and
+the error drops dramatically. Increasing the tolerance to `1e-4` and `1e-5` only slightly decreases
+the error.
 
-Finally, in both the uniform and adaptive driven solver, we have choose the output grid choice in
+The error drops is even more dramatic for the error in the S-parameters:
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/driven_ua_transmon_sparam_adaptive_rms.svg" width="80%" />
+</p><br/>
+```
+
+In both plots above, the error is more structured than it was in the CPW example. It is worse close
+the location of the eigenmode of the system and better far away. The adaptive solver also adds HDM
+solves in a more structure manner to “shadow” the eigenmodes. This behaviour is simple to interpret
+— the response of the system in the real interval ``[f_\mathrm{min}, f_\mathrm{max}]`` is dominated
+by the singular response of the eigenmodes (poles). The rational interpolation of the adaptive
+solver can reconstruct the existence and approximate location of these poles. Then it tries to
+caputre the effect of the poles with a HDM solve as best it can on the real axis. If you look
+carefully at the error in the domain energy, you will see a small residual error “spike” around the
+poles even at adaptive tolerance `1e-5`. This can happen as the HDM solve on the real axis does not
+fully capture the effect of the true eigenmode. If were were to increase the adaptive tolerance
+further, it would cluster further HDM sample points around the poles to remove this spike.
+
+Aside: We also remind the reader that the uniform solver which we use as a baseline here is also
+less accurate close to poles, since the condition number ``\kappa[\bm{A}(\omega)]`` is worse.
+However, this tends to be an issue only for high-$Q$ poles or at very high precision.
+
+Finally, in both the uniform and adaptive driven solver, we have to choose the output grid choice in
 advance. If we have an estimate for the location of the eigen-frequencies and port ``Q``-factor, we
 can choose a finer grid around this feature. However, the adaptive reduced order model already
-contains a good estimate of the eigenmodes close to the real axis. We can almost interpret the ROM
-as a type of circuit. However, to make that connection concrete, we have connect the abstract ROM
-matrix to concrete electrical signals. How to do this, and the nuances involved and discussed in the
-[circuit extraction tutorial](tutorial_circuit_extraction.md).
+contains a good estimate of the eigenmodes close to the real axis! We would like to use this in
+postprocessing without rerunning the simulation. In fact, the ROM as matrices $\bm{K}_r$, $\bm{C}_r$
+and $\bm{M}_r$ are close in spirit to a type of circuit. To make that connection precise, we have
+connect the abstract ROM matrix to real electrical signals. How to do this and the nuances involved
+are discussed in the [circuit extraction tutorial](tutorial_circuit_extraction.md).
 
 ## Literature & References
 
