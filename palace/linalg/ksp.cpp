@@ -7,6 +7,7 @@
 #include "fem/fespace.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
+#include "linalg/floquetprecond.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/jacobi.hpp"
 #include "linalg/mumps.hpp"
@@ -246,6 +247,14 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
 }
 
 template <typename OperType>
+void BaseKspSolver<OperType>::ReplacePreconditioner(
+    std::unique_ptr<Solver<OperType>> &&new_pc)
+{
+  pc = std::move(new_pc);
+  ksp->SetPreconditioner(*pc);
+}
+
+template <typename OperType>
 void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op)
 {
   BlockTimer bt(Timer::KSP_SETUP, use_timer);
@@ -254,13 +263,34 @@ void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &p
   {
     const auto *mg_op = dynamic_cast<const BaseMultigridOperator<OperType> *>(&pc_op);
     const auto *mg_pc = dynamic_cast<const GeometricMultigridSolver<OperType> *>(pc.get());
-    if (mg_op && !mg_pc)
+    // If pc is a FloquetBoundaryPreconditioner wrapping a GMG solver, pass the full
+    // multigrid hierarchy (the wrapper delegates to the inner GMG solver).
+    if constexpr (std::is_same<OperType, ComplexOperator>::value)
     {
-      pc->SetOperator(mg_op->GetFinestOperator());
+      auto *floquet_pc = dynamic_cast<FloquetBoundaryPreconditioner *>(pc.get());
+      if (floquet_pc)
+      {
+        pc->SetOperator(pc_op);  // Wrapper handles dispatch to inner pc
+      }
+      else if (mg_op && !mg_pc)
+      {
+        pc->SetOperator(mg_op->GetFinestOperator());
+      }
+      else
+      {
+        pc->SetOperator(pc_op);
+      }
     }
     else
     {
-      pc->SetOperator(pc_op);
+      if (mg_op && !mg_pc)
+      {
+        pc->SetOperator(mg_op->GetFinestOperator());
+      }
+      else
+      {
+        pc->SetOperator(pc_op);
+      }
     }
   }
 }

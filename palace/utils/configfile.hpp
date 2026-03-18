@@ -552,6 +552,11 @@ public:
   // Maximum diffraction order index to include. -1 = auto from geometry + frequency.
   int max_order = -1;
 
+  // Use full dense DtN boundary operator (no Robin). Implements the exact formulation
+  // from the reference document. More accurate at Fano resonances but requires the block
+  // preconditioner for convergence.
+  bool full_dtn = false;
+
   FloquetPortData() = default;
   FloquetPortData(const json &port);
 };

@@ -67,6 +67,79 @@ void ComputePolarization(const mfem::Vector &kt, const mfem::Vector &port_normal
 }  // namespace
 
 // =============================================================================
+// DenseBoundaryOperator
+// =============================================================================
+
+DenseBoundaryOperator::DenseBoundaryOperator(MPI_Comm port_comm, int n_full,
+                                             const mfem::Array<int> &bdr_tdof_list_in,
+                                             int n_bdr_global)
+  : ComplexOperator(n_full), port_comm(port_comm), n_full(n_full),
+    n_bdr_global(n_bdr_global), F(Eigen::MatrixXcd::Zero(n_bdr_global, n_bdr_global)),
+    x_bdr_local(0), x_bdr_global(n_bdr_global), y_bdr_global(n_bdr_global)
+{
+  bdr_tdof_list.MakeRef(bdr_tdof_list_in);
+  n_bdr_local = bdr_tdof_list.Size();
+
+  // Set up Allgatherv counts and displacements on port_comm.
+  if (port_comm != MPI_COMM_NULL)
+  {
+    int nproc = Mpi::Size(port_comm);
+    recv_counts.resize(nproc);
+    recv_displs.resize(nproc);
+    MPI_Allgather(&n_bdr_local, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, port_comm);
+    recv_displs[0] = 0;
+    for (int i = 1; i < nproc; i++)
+    {
+      recv_displs[i] = recv_displs[i - 1] + recv_counts[i - 1];
+    }
+  }
+  x_bdr_local.resize(n_bdr_local);
+}
+
+void DenseBoundaryOperator::Mult(const ComplexVector &x, ComplexVector &y) const
+{
+  y = 0.0;
+  AddMult(x, y, 1.0);
+}
+
+void DenseBoundaryOperator::AddMult(const ComplexVector &x, ComplexVector &y,
+                                    const std::complex<double> a) const
+{
+  if (port_comm == MPI_COMM_NULL)
+  {
+    return;  // Non-port rank: nothing to do.
+  }
+
+  // Restrict x to local boundary DOFs.
+  x.Real().HostRead();
+  x.Imag().HostRead();
+  for (int i = 0; i < n_bdr_local; i++)
+  {
+    int dof = bdr_tdof_list[i];
+    x_bdr_local(i) = std::complex<double>(x.Real()[dof], x.Imag()[dof]);
+  }
+
+  // Allgatherv on port_comm to get global boundary DOF vector.
+  MPI_Allgatherv(x_bdr_local.data(), n_bdr_local, MPI_DOUBLE_COMPLEX, x_bdr_global.data(),
+                 recv_counts.data(), recv_displs.data(), MPI_DOUBLE_COMPLEX, port_comm);
+
+  // Dense matvec in boundary DOF space.
+  y_bdr_global.noalias() = F * x_bdr_global;
+
+  // Scatter local portion back to y with scaling a.
+  y.Real().HostReadWrite();
+  y.Imag().HostReadWrite();
+  int offset = recv_displs[Mpi::Rank(port_comm)];
+  for (int i = 0; i < n_bdr_local; i++)
+  {
+    int dof = bdr_tdof_list[i];
+    auto val = a * y_bdr_global(offset + i);
+    y.Real()[dof] += val.real();
+    y.Imag()[dof] += val.imag();
+  }
+}
+
+// =============================================================================
 // FloquetPortData
 // =============================================================================
 
@@ -294,15 +367,139 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
     max_order_n = 3;
   }
 
+  // Parse FullDtN config option.
+  use_full_dtn = data.full_dtn;
+
+  // Compute boundary DOF infrastructure for DenseBoundaryOperator and preconditioner.
+  // Create a sub-communicator for ranks that own port boundary elements (wave port
+  // pattern).
+  {
+    auto &mesh = *nd_fespace.GetParMesh();
+    int bdr_attr_max = 0;
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      bdr_attr_max = std::max(bdr_attr_max, mesh.GetBdrAttribute(be));
+    }
+    Mpi::GlobalMax(1, &bdr_attr_max, nd_fespace.GetComm());
+    auto bdr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list, true);
+    nd_fespace.GetEssentialTrueDofs(bdr_marker, bdr_tdof_list);
+
+    // Compute global boundary DOF count on the global communicator BEFORE splitting
+    // (all ranks must participate in the same collective to avoid deadlock).
+    n_bdr_global = bdr_tdof_list.Size();
+    Mpi::GlobalSum(1, &n_bdr_global, nd_fespace.GetComm());
+
+    // Create sub-communicator for ranks with port boundary DOFs.
+    int color = (bdr_tdof_list.Size() > 0) ? 0 : MPI_UNDEFINED;
+    MPI_Comm_split(nd_fespace.GetComm(), color, Mpi::Rank(nd_fespace.GetComm()),
+                   &port_comm);
+
+    if (port_comm != MPI_COMM_NULL)
+    {
+      int nproc = Mpi::Size(port_comm);
+      recv_counts.resize(nproc);
+      recv_displs.resize(nproc);
+      int n_local = bdr_tdof_list.Size();
+      MPI_Allgather(&n_local, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, port_comm);
+      recv_displs[0] = 0;
+      for (int i = 1; i < nproc; i++)
+      {
+        recv_displs[i] = recv_displs[i - 1] + recv_counts[i - 1];
+      }
+    }
+  }
+
+  // Cap MaxOrder at the mesh Nyquist limit: modes with |B| > π/h can't be resolved
+  // by the FEM basis and their Fourier projections decay exponentially (with accurate
+  // quadrature) or produce aliasing noise (with default quadrature). Including them is
+  // at best wasteful and at worst actively harmful. Per literature (Li et al. 2019):
+  // include modes up to ~period/h, over-integrate boundary terms.
+  {
+    // Compute h_max on port boundary elements. b1, b2 are in reciprocal mesh-units
+    // (computed from a1, a2 which use GetVertex coordinates). h_max is in mesh-units
+    // (also from GetVertex). So |b| × h_max is dimensionless — no unit conversion needed.
+    auto &mesh_tmp = *nd_fespace.GetParMesh();
+    int bdr_attr_max_tmp = 0;
+    for (int be = 0; be < mesh_tmp.GetNBE(); be++)
+    {
+      bdr_attr_max_tmp = std::max(bdr_attr_max_tmp, mesh_tmp.GetBdrAttribute(be));
+    }
+    Mpi::GlobalMax(1, &bdr_attr_max_tmp, nd_fespace.GetComm());
+    auto bdr_marker_tmp = mesh::AttrToMarker(bdr_attr_max_tmp, attr_list, true);
+
+    double h_max_local = 0.0;
+    for (int be = 0; be < mesh_tmp.GetNBE(); be++)
+    {
+      if (bdr_marker_tmp[mesh_tmp.GetBdrAttribute(be) - 1])
+      {
+        mfem::Array<int> verts;
+        mesh_tmp.GetBdrElementVertices(be, verts);
+        for (int i = 0; i < verts.Size(); i++)
+        {
+          for (int j = i + 1; j < verts.Size(); j++)
+          {
+            const double *vi = mesh_tmp.GetVertex(verts[i]);
+            const double *vj = mesh_tmp.GetVertex(verts[j]);
+            double dist_sq = 0.0;
+            for (int d = 0; d < mesh_tmp.SpaceDimension(); d++)
+            {
+              dist_sq += (vi[d] - vj[d]) * (vi[d] - vj[d]);
+            }
+            h_max_local = std::max(h_max_local, std::sqrt(dist_sq));
+          }
+        }
+      }
+    }
+    double h_max = h_max_local;
+    Mpi::GlobalMax(1, &h_max, nd_fespace.GetComm());
+
+    if (h_max > 0.0)
+    {
+      // Convert h_max from mesh-file units to nondimensional using the existing
+      // mesh length scale: nondim = mesh_units / (Lc/L0).
+      double mesh_to_nondim = iodata.units.GetMeshLengthRelativeScale();
+      double h_max_nondim = h_max / mesh_to_nondim;
+
+      // FE Nyquist: p-th order elements can resolve modes with |B|×h < p×π.
+      // b1, b2 are in nondimensional units; h_max_nondim is now consistent.
+      int p = nd_fespace.GetMaxElementOrder();
+      double b1_norm = b1.Norml2();
+      double b2_norm = b2.Norml2();
+      int nyquist_m =
+          std::max(1, static_cast<int>(std::floor(p * M_PI / (b1_norm * h_max_nondim))));
+      int nyquist_n =
+          std::max(1, static_cast<int>(std::floor(p * M_PI / (b2_norm * h_max_nondim))));
+      Mpi::Print(" Floquet port: h_max = {:.4e} ({:.4e} nondim), p = {:d}, "
+                 "Nyquist limit = ({:d}, {:d})\n",
+                 h_max, h_max_nondim, p, nyquist_m, nyquist_n);
+      if (max_order_m > nyquist_m || max_order_n > nyquist_n)
+      {
+        Mpi::Print(" Floquet port: capping MaxOrder from ({:d}, {:d}) to ({:d}, {:d})\n",
+                   max_order_m, max_order_n, std::min(max_order_m, nyquist_m),
+                   std::min(max_order_n, nyquist_n));
+        max_order_m = std::min(max_order_m, nyquist_m);
+        max_order_n = std::min(max_order_n, nyquist_n);
+      }
+    }
+  }
+
+  // When FullDtN is active, auto-compute MaxOrder for full-rank dense DtN,
+  // but still respect the Nyquist cap above.
+  if (use_full_dtn)
+  {
+    Mpi::Print(" Floquet port FullDtN: N_bdr = {:d}, max orders = ({:d}, {:d})\n",
+               n_bdr_global, max_order_m, max_order_n);
+  }
+
   // Enumerate diffraction orders and assemble Fourier projections.
   EnumerateOrders();
   AssembleFourierProjections(nd_fespace);
   nd_fespace_ptr = &nd_fespace;  // Store for re-assembly in Initialize.
 
   Mpi::Print(" Floquet port: {:d} modes ({:d} orders x 2 polarizations), "
-             "port area = {:.4e}, normal = ({:.3f}, {:.3f}, {:.3f})\n",
-             static_cast<int>(modes.size()), static_cast<int>(modes.size()) / 2, port_area,
-             port_normal(0), port_normal(1), port_normal(2));
+             "N_bdr = {:d}, port area = {:.4e}, normal = ({:.3f}, {:.3f}, {:.3f})\n",
+             static_cast<int>(modes.size()), static_cast<int>(modes.size()) / 2,
+             n_bdr_global, port_area, port_normal(0), port_normal(1), port_normal(2));
 }
 
 void FloquetPortData::ComputeReciprocalLattice(const mfem::Vector &a1,
@@ -459,6 +656,39 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
   Mpi::GlobalMax(1, &bdr_attr_max, nd_fespace.GetComm());
   mfem::Array<int> bdr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list, true);
 
+  // Compute maximum boundary element diameter for quadrature order estimation.
+  // The Fourier integrand exp(-i B . r) oscillates with period 2π/|B|. For modes where
+  // |B|×h >> 1, the default quadrature can't resolve the oscillations and produces aliased
+  // v vectors. Over-integration eliminates aliasing — above-Nyquist v vectors correctly
+  // decay to ~0, and the DtN sum converges exponentially (per literature: Li et al. 2019).
+  double h_max_local = 0.0;
+  mfem::Geometry::Type bdr_geom = mfem::Geometry::INVALID;
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    if (bdr_marker[mesh.GetBdrAttribute(be) - 1])
+    {
+      mfem::Array<int> verts;
+      mesh.GetBdrElementVertices(be, verts);
+      for (int i = 0; i < verts.Size(); i++)
+      {
+        for (int j = i + 1; j < verts.Size(); j++)
+        {
+          const double *vi = mesh.GetVertex(verts[i]);
+          const double *vj = mesh.GetVertex(verts[j]);
+          double dist_sq = 0.0;
+          for (int d = 0; d < mesh.SpaceDimension(); d++)
+          {
+            dist_sq += (vi[d] - vj[d]) * (vi[d] - vj[d]);
+          }
+          h_max_local = std::max(h_max_local, std::sqrt(dist_sq));
+        }
+      }
+      bdr_geom = mesh.GetBdrElementGeometry(be);
+    }
+  }
+  double h_max = h_max_local;
+  Mpi::GlobalMax(1, &h_max, nd_fespace.GetComm());
+
   int tdof_size = nd_fespace.GetTrueVSize();
 
   for (auto &mode : modes)
@@ -504,17 +734,38 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
     FloquetModeCoeff coeff_r(mode.e_pol, mode.B_mn, true);
     FloquetModeCoeff coeff_i(mode.e_pol, mode.B_mn, false);
 
+    // Compute extra quadrature order to resolve oscillatory exp(-i B . r).
+    // Need ~2 points per oscillation cycle: extra_order ≈ |B| × h / π.
+    double B_norm = mode.B_mn.Norml2();
+    int extra_order = static_cast<int>(std::ceil(B_norm * h_max / M_PI));
+    const mfem::IntegrationRule *ir = nullptr;
+    if (extra_order > 0 && bdr_geom != mfem::Geometry::INVALID)
+    {
+      int fe_order = nd_fespace.GetMaxElementOrder();
+      ir = &mfem::IntRules.Get(bdr_geom, 2 * fe_order + extra_order);
+    }
+
     // Assemble real part.
+    auto *integ_r = new VectorFEBoundaryLFIntegrator(coeff_r);
+    if (ir)
+    {
+      integ_r->SetIntRule(ir);
+    }
     mfem::LinearForm lf_r(&nd_fespace);
-    lf_r.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coeff_r), bdr_marker);
+    lf_r.AddBoundaryIntegrator(integ_r, bdr_marker);
     lf_r.UseFastAssembly(false);
     lf_r.UseDevice(false);
     lf_r.Assemble();
     lf_r.UseDevice(true);
 
     // Assemble imaginary part.
+    auto *integ_i = new VectorFEBoundaryLFIntegrator(coeff_i);
+    if (ir)
+    {
+      integ_i->SetIntRule(ir);
+    }
     mfem::LinearForm lf_i(&nd_fespace);
-    lf_i.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coeff_i), bdr_marker);
+    lf_i.AddBoundaryIntegrator(integ_i, bdr_marker);
     lf_i.UseFastAssembly(false);
     lf_i.UseDevice(false);
     lf_i.Assemble();
@@ -722,7 +973,7 @@ FloquetPortData::ComputeDtNCorrectionCoeff(const FloquetMode &mode) const
   {
     double gamma_abs = std::sqrt(-mode.gamma_sq);
     g_full = mode.is_te
-                 ? -gamma_abs / (mu_r_port * port_area)
+                 ? gamma_abs / (mu_r_port * port_area)
                  : omega0 * omega0 * mu_eps_port / (gamma_abs * mu_r_port * port_area);
   }
   else
@@ -737,17 +988,48 @@ FloquetPortData::ComputeDtNCorrectionCoeff(const FloquetMode &mode) const
   {
     return 0.0;
   }
-  // Skip near-cutoff TM modes where ω²με/γ diverges as γ → 0.
-  if (std::abs(g_full) > 10.0 * std::abs(g_uniform))
+
+  // For evanescent modes: apply only the REAL part of the correction (reactive impedance).
+  // The imaginary part would cancel the Robin's absorption, which causes energy
+  // non-conservation through the mass-vs-projection mismatch. Keeping the Robin's
+  // absorption for evanescent modes maintains energy conservation while the real part
+  // provides the correct reactive impedance for reflecting evanescent modes.
+  // This gives excellent broadband agreement but may under-resolve sharp Fano resonances
+  // driven by near-cutoff evanescent coupling.
+  if (mode.gamma_sq < 0.0)
   {
-    return 0.0;
+    return std::complex<double>(g_correction.real(), 0.0);
   }
   return g_correction;
 }
 
-std::unique_ptr<LowRankComplexOperator> FloquetPortData::GetBoundaryOperator() const
+std::complex<double> FloquetPortData::ComputeDtNFullCoeff(const FloquetMode &mode) const
+{
+  // Return the full DtN coefficient g_full (NOT the correction g_full - g_uniform).
+  if (mode.gamma_sq > 0.0)
+  {
+    double gamma = std::sqrt(mode.gamma_sq);
+    return mode.is_te
+               ? 1i * gamma / (mu_r_port * port_area)
+               : 1i * omega0 * omega0 * mu_eps_port / (gamma * mu_r_port * port_area);
+  }
+  else if (mode.gamma_sq < 0.0)
+  {
+    double gamma_abs = std::sqrt(-mode.gamma_sq);
+    return mode.is_te ? gamma_abs / (mu_r_port * port_area)
+                      : omega0 * omega0 * mu_eps_port / (gamma_abs * mu_r_port * port_area);
+  }
+  return 0.0;
+}
+
+std::unique_ptr<ComplexOperator> FloquetPortData::GetBoundaryOperator() const
 {
   int n = modes.empty() ? 0 : static_cast<int>(modes[0].v.Size());
+
+  // Use LowRankComplexOperator (full-DOF dot products, no boundary restriction).
+  // The DenseBoundaryOperator was found to produce different results — possibly due
+  // to shared edge DOFs between boundary and interior elements being missed by the
+  // boundary DOF restriction.
   auto op = std::make_unique<LowRankComplexOperator>(comm, n);
 
   for (const auto &mode : modes)
@@ -756,7 +1038,7 @@ std::unique_ptr<LowRankComplexOperator> FloquetPortData::GetBoundaryOperator() c
     {
       continue;
     }
-    auto g = ComputeDtNCorrectionCoeff(mode);
+    auto g = use_full_dtn ? ComputeDtNFullCoeff(mode) : ComputeDtNCorrectionCoeff(mode);
     if (g != 0.0)
     {
       op->AddTerm(&mode.v, g);
@@ -990,12 +1272,12 @@ std::unique_ptr<ComplexOperator> FloquetPortOperator::GetExtraSystemOperator(dou
 
 void FloquetPortOperator::AddExtraSystemBdrCoefficients(double omega,
                                                         MaterialPropertyCoefficient &fbr,
-                                                        MaterialPropertyCoefficient &fbi)
+                                                        MaterialPropertyCoefficient &fbi,
+                                                        bool for_preconditioner)
 {
-  // Add a full-rank Robin BC (iγ₀/μ) on the Floquet port boundary faces, matching the
-  // wave port pattern. This provides proper absorption for ALL tangential field components,
-  // not just the included Floquet modes. The low-rank F operator provides corrections for
-  // modes with γ_mn ≠ γ₀.
+  // Add a full-rank Robin BC (iγ₀/μ) on the Floquet port boundary faces.
+  // For FullDtN ports: skip Robin in the system matrix (the dense DtN operator handles
+  // absorption). Always include Robin in the preconditioner for the inner solve.
   Initialize(omega);
   for (const auto &[idx, port] : ports)
   {
@@ -1003,8 +1285,11 @@ void FloquetPortOperator::AddExtraSystemBdrCoefficients(double omega,
     {
       continue;
     }
-    // γ₀ = TE (0,0) mode propagation constant. The Robin + correction total is
-    // invariant under γ₀ for included modes, so this only affects the split.
+    if (port.UseFullDtN() && !for_preconditioner)
+    {
+      continue;  // FullDtN: no Robin in system, dense operator handles everything.
+    }
+    // γ₀ = TE (0,0) mode propagation constant.
     double gamma0 = 0.0;
     for (const auto &mode : port.GetModes())
     {

@@ -10,6 +10,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include <Eigen/Dense>
 #include <mfem.hpp>
 #include "fem/gridfunction.hpp"
 #include "linalg/operator.hpp"
@@ -77,6 +78,38 @@ public:
 
   void Mult(const ComplexVector &x, ComplexVector &y) const override;
 
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a = 1.0) const override;
+};
+
+// Dense boundary DtN operator: F_bdr is an N_bdr × N_bdr Eigen matrix applied via
+// restrict → Allgatherv (on port_comm) → dense matvec → scatter. Cost: O(N_bdr²) per
+// application, independent of mode count. Replaces LowRankComplexOperator for performance.
+class DenseBoundaryOperator : public ComplexOperator
+{
+private:
+  MPI_Comm port_comm;              // Sub-communicator for port-owning ranks only
+  int n_full;                      // Full system size (number of true DOFs)
+  mfem::Array<int> bdr_tdof_list;  // Local boundary DOF indices into the full vector
+  int n_bdr_local;                 // Number of local boundary DOFs
+  int n_bdr_global;                // Total boundary DOFs across port_comm ranks
+  std::vector<int> recv_counts;    // Per-rank counts for Allgatherv on port_comm
+  std::vector<int> recv_displs;    // Per-rank displacements for Allgatherv
+  Eigen::MatrixXcd F;              // Dense DtN matrix, size n_bdr_global × n_bdr_global
+  mutable Eigen::VectorXcd x_bdr_local, x_bdr_global, y_bdr_global;
+
+public:
+  DenseBoundaryOperator(MPI_Comm port_comm, int n_full,
+                        const mfem::Array<int> &bdr_tdof_list, int n_bdr_global);
+
+  // Get the dense boundary matrix (for reuse in the preconditioner Schur complement).
+  const Eigen::MatrixXcd &GetDenseMatrix() const { return F; }
+  int GetNBdrGlobal() const { return n_bdr_global; }
+
+  // Set the dense matrix directly (e.g., after assembling from mode projections).
+  void SetDenseMatrix(const Eigen::MatrixXcd &F_new) { F = F_new; }
+
+  void Mult(const ComplexVector &x, ComplexVector &y) const override;
   void AddMult(const ComplexVector &x, ComplexVector &y,
                const std::complex<double> a = 1.0) const override;
 };
@@ -153,13 +186,26 @@ public:
                              const mfem::Vector &kF_wrapped, const mfem::Vector &b,
                              double b_sq);
 
-  // Get the low-rank boundary operator F(omega) for this port.
-  std::unique_ptr<LowRankComplexOperator> GetBoundaryOperator() const;
+  // Get the dense boundary DtN operator F(omega) for this port.
+  // Returns a DenseBoundaryOperator with the pre-computed N_bdr × N_bdr matrix.
+  // Uses g_correction (Robin+correction mode) or g_full (FullDtN mode).
+  std::unique_ptr<ComplexOperator> GetBoundaryOperator() const;
 
   // Compute the DtN correction coefficient g_correction for a single mode at the current
   // frequency. Returns 0 if the mode should be skipped (negligible or near-cutoff cap).
   // Used by both GetBoundaryOperator and the ROM projection.
   std::complex<double> ComputeDtNCorrectionCoeff(const FloquetMode &mode) const;
+
+  // Compute the full DtN coefficient g_full (NOT the correction g_full - g_uniform).
+  // Used by FullDtN mode and the preconditioner Schur complement assembly.
+  std::complex<double> ComputeDtNFullCoeff(const FloquetMode &mode) const;
+
+  bool UseFullDtN() const { return use_full_dtn; }
+  const mfem::Array<int> &GetBdrTDofList() const { return bdr_tdof_list; }
+  int GetNBdrGlobal() const { return n_bdr_global; }
+  MPI_Comm GetPortComm() const { return port_comm; }
+  const std::vector<int> &GetRecvCounts() const { return recv_counts; }
+  const std::vector<int> &GetRecvDispls() const { return recv_displs; }
 
   // S-parameter for all propagating orders at the current frequency.
   // If subtract_incident is true, subtracts the incident field contribution from the
@@ -209,6 +255,17 @@ private:
 
   // All Floquet modes with pre-assembled projection vectors.
   std::vector<FloquetMode> modes;
+
+  // Full dense DtN: use dense boundary matrix instead of Robin+correction.
+  bool use_full_dtn = false;
+
+  // Boundary DOF infrastructure (always computed, used by DenseBoundaryOperator and
+  // preconditioner Schur complement).
+  MPI_Comm port_comm = MPI_COMM_NULL;  // Sub-communicator for port-owning ranks
+  mfem::Array<int> bdr_tdof_list;      // Local boundary true DOF indices
+  int n_bdr_global = 0;                // Total boundary DOFs across port_comm
+  std::vector<int> recv_counts;        // Per-rank counts for Allgatherv on port_comm
+  std::vector<int> recv_displs;        // Per-rank displacements
 
   // FE space for re-assembling mode vectors when polarization changes with frequency.
   mfem::ParFiniteElementSpace *nd_fespace_ptr = nullptr;
@@ -273,10 +330,12 @@ public:
   std::unique_ptr<ComplexOperator> GetExtraSystemOperator(double omega);
 
   // Add Robin boundary mass coefficient (iγ₀/μ) for absorption on Floquet port faces.
-  // This provides full-rank absorption (like wave ports) while the low-rank F operator
-  // provides corrections for modes with γ ≠ γ₀.
+  // When for_preconditioner is true, always add Robin (needed for preconditioner
+  // stability). When false (system matrix), skip Robin for FullDtN ports (the dense
+  // operator handles it).
   void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &fbr,
-                                     MaterialPropertyCoefficient &fbi);
+                                     MaterialPropertyCoefficient &fbi,
+                                     bool for_preconditioner = false);
 
   // Add excitation vector contributions for the given excitation index.
   bool AddExcitationVector(int excitation_idx, double omega, ComplexVector &RHS);

@@ -660,6 +660,7 @@ FloquetPortData::FloquetPortData(const json &port)
   active = port.value("Active", active);
   inc_polarization = port.value("IncidentPolarization", inc_polarization);
   max_order = port.value("MaxOrder", max_order);
+  full_dtn = port.value("FullDtN", full_dtn);
 }
 
 SurfaceCurrentData::SurfaceCurrentData(const json &source)
