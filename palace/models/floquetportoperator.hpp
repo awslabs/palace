@@ -14,6 +14,7 @@
 #include <mfem.hpp>
 #include "fem/gridfunction.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
 
 namespace palace
@@ -50,6 +51,11 @@ struct FloquetMode
   mfem::Vector e_pol;  // Polarization unit vector (3D, tangential to port)
   ComplexVector v;     // Fourier projection: v_j = int_Gamma (nxnxN_j).e_p exp(-iB.r) dS
   double gamma_sq;     // gamma_mn^2 = omega^2*mu*eps - |B_mn - k_F|^2 (freq-dependent)
+
+  // Mass-consistent boundary mass matrix: A[j,k] = int_Gamma (N_j.e_pol)(N_k.e_pol) dS.
+  // Assembled once (frequency-independent, real). Only populated when MassConsistent mode
+  // is active. Stored as HypreParMatrix on the true DOF space.
+  std::unique_ptr<mfem::HypreParMatrix> A_mass;
 };
 
 // Low-rank complex operator: F*x = sum_k g_k (v_k^H x) v_k.
@@ -108,6 +114,98 @@ public:
 
   // Set the dense matrix directly (e.g., after assembling from mode projections).
   void SetDenseMatrix(const Eigen::MatrixXcd &F_new) { F = F_new; }
+
+  void Mult(const ComplexVector &x, ComplexVector &y) const override;
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a = 1.0) const override;
+};
+
+// Mass-consistent DtN operator: F*x = sum_k g_k A_k x, where A_k is a pre-assembled
+// real boundary mass matrix weighted by the mode polarization direction.
+// Replaces the rank-1 LowRankComplexOperator to fix the Cauchy-Schwarz overestimate.
+class MassConsistentDtNOperator : public ComplexOperator
+{
+public:
+  struct Term
+  {
+    mfem::HypreParMatrix *A;  // Pre-assembled real boundary mass (not owned)
+    std::complex<double> g;   // Frequency-dependent DtN coefficient
+  };
+
+private:
+  std::vector<Term> terms;
+  mutable Vector tmp;
+
+public:
+  MassConsistentDtNOperator(int n) : ComplexOperator(n), tmp(n) { tmp.UseDevice(true); }
+
+  void AddTerm(mfem::HypreParMatrix *A, std::complex<double> g) { terms.push_back({A, g}); }
+
+  void Mult(const ComplexVector &x, ComplexVector &y) const override;
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a = 1.0) const override;
+};
+
+// Simple solver that applies a scalar times identity: y = scale * x.
+// Used as the s-block preconditioner in the auxiliary system (A_SS = -I → P_SS = -I).
+class ScaledIdentitySolver : public Solver<ComplexOperator>
+{
+private:
+  std::complex<double> scale;
+
+public:
+  ScaledIdentitySolver(int n, std::complex<double> s = -1.0)
+    : Solver<ComplexOperator>(false), scale(s)
+  {
+    this->height = n;
+    this->width = n;
+  }
+  void SetOperator(const ComplexOperator &) override {}
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    y.Real().Set(scale.real(), x.Real());
+    y.Real().Add(-scale.imag(), x.Imag());
+    y.Imag().Set(scale.imag(), x.Real());
+    y.Imag().Add(scale.real(), x.Imag());
+  }
+};
+
+// Auxiliary S-parameter DOF operator for the coupled [E, s] system.
+// Applies:
+//   [A_EE   A_ES] [E]     A_EE E + Σ_i g_full_i × s_i × conj(v_i)
+//   [A_SE   A_SS] [s]  =  v_i^T E − s_i
+//
+// The E block uses the existing system operator (no Robin on Floquet boundaries).
+// The s block couples modes to the boundary field through Fourier projections.
+// The DtN boundary condition is enforced through the coupling, not through Robin.
+//
+// MPI convention: s DOFs are "owned" by rank 0. On other ranks, s entries in the
+// extended vector are zero. This ensures correct norms and dot products in GMRES.
+class FloquetAuxSystemOperator : public ComplexOperator
+{
+private:
+  const ComplexOperator *A_EE;  // Existing system operator for E (not owned)
+  MPI_Comm comm;
+  int n_E;  // Size of E block (distributed DOFs)
+  int n_s;  // Number of auxiliary mode DOFs
+
+  struct AuxMode
+  {
+    const ComplexVector *v;       // Fourier projection vector (not owned)
+    std::complex<double> g_full;  // Full DtN coefficient jλ/(μ|Γ|)
+  };
+  std::vector<AuxMode> aux_modes;
+
+  mutable ComplexVector E_tmp, y_E_tmp;
+
+public:
+  FloquetAuxSystemOperator(MPI_Comm comm, const ComplexOperator *A_EE, int n_E, int n_s);
+
+  void SetAEE(const ComplexOperator *op) { A_EE = op; }
+  void ClearModes() { aux_modes.clear(); }
+  void AddMode(const ComplexVector *v, std::complex<double> g_full);
+  int GetNE() const { return n_E; }
+  int GetNS() const { return n_s; }
 
   void Mult(const ComplexVector &x, ComplexVector &y) const override;
   void AddMult(const ComplexVector &x, ComplexVector &y,
@@ -201,6 +299,8 @@ public:
   std::complex<double> ComputeDtNFullCoeff(const FloquetMode &mode) const;
 
   bool UseFullDtN() const { return use_full_dtn; }
+  bool UseAuxiliary() const { return use_auxiliary; }
+  bool UseMassConsistent() const { return use_mass_consistent; }
   const mfem::Array<int> &GetBdrTDofList() const { return bdr_tdof_list; }
   int GetNBdrGlobal() const { return n_bdr_global; }
   MPI_Comm GetPortComm() const { return port_comm; }
@@ -258,6 +358,14 @@ private:
 
   // Full dense DtN: use dense boundary matrix instead of Robin+correction.
   bool use_full_dtn = false;
+
+  // Auxiliary S-parameter DOF mode: couple scalar S-parameter unknowns to boundary E
+  // through FE weak form. Avoids mass-vs-projection mismatch of rank-1 corrections.
+  bool use_auxiliary = false;
+
+  // Mass-consistent DtN: use per-mode boundary mass matrices A_i[j,k] = ∫(N_j·ê)(N_k·ê)dS
+  // instead of rank-1 outer products conj(v)v^T. Fixes the Cauchy-Schwarz overestimate.
+  bool use_mass_consistent = false;
 
   // Boundary DOF infrastructure (always computed, used by DenseBoundaryOperator and
   // preconditioner Schur complement).
@@ -326,8 +434,17 @@ public:
   void Initialize(double omega);
 
   // Get the combined low-rank boundary operator F(omega) for all Floquet ports.
-  // Returns nullptr if no Floquet ports are configured.
+  // Returns nullptr if no Floquet ports are configured or all ports use Auxiliary mode.
   std::unique_ptr<ComplexOperator> GetExtraSystemOperator(double omega);
+
+  // Returns true if any active port uses Auxiliary mode.
+  bool HasAuxiliaryPorts() const;
+
+  // Total number of auxiliary mode DOFs across all active Auxiliary ports.
+  int GetAuxModeCount(double omega);
+
+  // Populate an existing FloquetAuxSystemOperator with modes for the current frequency.
+  void PopulateAuxModes(double omega, FloquetAuxSystemOperator &aux_op);
 
   // Add Robin boundary mass coefficient (iγ₀/μ) for absorption on Floquet port faces.
   // When for_preconditioner is true, always add Robin (needed for preconditioner

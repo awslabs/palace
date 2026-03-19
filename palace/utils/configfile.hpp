@@ -557,6 +557,12 @@ public:
   // preconditioner for convergence.
   bool full_dtn = false;
 
+  // Port mode: "Correction" (Robin + rank-1 correction, default),
+  // "Auxiliary" (auxiliary S-parameter DOFs coupled through FE weak form), or
+  // "MassConsistent" (per-mode boundary mass matrices instead of rank-1 outer products).
+  // MassConsistent fixes the Cauchy-Schwarz overestimate in rank-1 corrections.
+  std::string port_mode = "Correction";
+
   FloquetPortData() = default;
   FloquetPortData(const json &port);
 };

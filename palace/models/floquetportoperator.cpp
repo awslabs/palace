@@ -58,6 +58,41 @@ void LowRankComplexOperator::AddMult(const ComplexVector &x, ComplexVector &y,
   }
 }
 
+// =============================================================================
+// MassConsistentDtNOperator
+// =============================================================================
+
+void MassConsistentDtNOperator::Mult(const ComplexVector &x, ComplexVector &y) const
+{
+  y = 0.0;
+  AddMult(x, y, 1.0);
+}
+
+void MassConsistentDtNOperator::AddMult(const ComplexVector &x, ComplexVector &y,
+                                        const std::complex<double> a) const
+{
+  // Apply F*x = Σ_i g_i * A_i * x where A_i is a real HypreParMatrix.
+  // Since A_i is real: (a * g) * A * x splits into real/imag components.
+  for (const auto &t : terms)
+  {
+    std::complex<double> s = a * t.g;
+    if (std::abs(s) < 1e-30)
+    {
+      continue;
+    }
+
+    // tmp = A * x_real
+    t.A->Mult(x.Real(), tmp);
+    y.Real().Add(s.real(), tmp);
+    y.Imag().Add(s.imag(), tmp);
+
+    // tmp = A * x_imag
+    t.A->Mult(x.Imag(), tmp);
+    y.Real().Add(-s.imag(), tmp);
+    y.Imag().Add(s.real(), tmp);
+  }
+}
+
 namespace
 {
 
@@ -367,8 +402,10 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
     max_order_n = 3;
   }
 
-  // Parse FullDtN config option.
+  // Parse config options.
   use_full_dtn = data.full_dtn;
+  use_auxiliary = (data.port_mode == "Auxiliary");
+  use_mass_consistent = (data.port_mode == "MassConsistent");
 
   // Compute boundary DOF infrastructure for DenseBoundaryOperator and preconditioner.
   // Create a sub-communicator for ranks that own port boundary elements (wave port
@@ -466,8 +503,10 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
       double b1_norm = b1.Norml2();
       double b2_norm = b2.Norml2();
       int nyquist_m =
+          2 *
           std::max(1, static_cast<int>(std::floor(p * M_PI / (b1_norm * h_max_nondim))));
       int nyquist_n =
+          2 *
           std::max(1, static_cast<int>(std::floor(p * M_PI / (b2_norm * h_max_nondim))));
       Mpi::Print(" Floquet port: h_max = {:.4e} ({:.4e} nondim), p = {:d}, "
                  "Nyquist limit = ({:d}, {:d})\n",
@@ -483,13 +522,16 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
     }
   }
 
-  // When FullDtN is active, auto-compute MaxOrder for full-rank dense DtN,
-  // but still respect the Nyquist cap above.
-  if (use_full_dtn)
-  {
-    Mpi::Print(" Floquet port FullDtN: N_bdr = {:d}, max orders = ({:d}, {:d})\n",
-               n_bdr_global, max_order_m, max_order_n);
-  }
+  // When FullDtN is active, DISABLE the Nyquist cap. The aliased above-Nyquist
+  // modes (with default quadrature) provide additional boundary DOF coverage that
+  // prevents the PMC-like reflection from rank-deficient DtN.
+  // if (use_full_dtn)
+  //{
+  //  max_order_m = std::max(max_order_m, 30);
+  //  max_order_n = std::max(max_order_n, 30);
+  //  Mpi::Print(" Floquet port FullDtN: N_bdr = {:d}, max orders = ({:d}, {:d})\n",
+  //             n_bdr_global, max_order_m, max_order_n);
+  //}
 
   // Enumerate diffraction orders and assemble Fourier projections.
   EnumerateOrders();
@@ -500,6 +542,173 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
              "N_bdr = {:d}, port area = {:.4e}, normal = ({:.3f}, {:.3f}, {:.3f})\n",
              static_cast<int>(modes.size()), static_cast<int>(modes.size()) / 2,
              n_bdr_global, port_area, port_normal(0), port_normal(1), port_normal(2));
+
+  // Parseval diagnostic: measure completeness of the mode basis by testing
+  // Σ conj(v)(v^T v_test)/|Γ| against M_bdr v_test. For a complete mode set,
+  // the Parseval identity gives Σ conj(v)v^T/|Γ| = M_bdr (boundary mass matrix).
+  // The ratio ||Σ ...|| / ||M_bdr v_test|| measures true Parseval completeness.
+  if (!modes.empty())
+  {
+    // Use the (0,0) TE mode's v as test vector.
+    const ComplexVector *v_test = nullptr;
+    for (const auto &m : modes)
+    {
+      if (m.m == 0 && m.n == 0 && m.is_te)
+      {
+        v_test = &m.v;
+        break;
+      }
+    }
+    if (v_test)
+    {
+      int n = v_test->Size();
+
+      // Assemble boundary mass matrix M_bdr for the correct Parseval reference.
+      auto &mesh_diag = *nd_fespace.GetParMesh();
+      int bdr_attr_max_diag = 0;
+      for (int be = 0; be < mesh_diag.GetNBE(); be++)
+      {
+        bdr_attr_max_diag = std::max(bdr_attr_max_diag, mesh_diag.GetBdrAttribute(be));
+      }
+      Mpi::GlobalMax(1, &bdr_attr_max_diag, nd_fespace.GetComm());
+      auto bdr_marker_diag = mesh::AttrToMarker(bdr_attr_max_diag, attr_list, true);
+      mfem::ParBilinearForm m_bdr_form(&nd_fespace);
+      m_bdr_form.AddBoundaryIntegrator(new mfem::VectorFEMassIntegrator(), bdr_marker_diag);
+      m_bdr_form.Assemble();
+      m_bdr_form.Finalize();
+      auto M_bdr_mat = std::unique_ptr<mfem::HypreParMatrix>(m_bdr_form.ParallelAssemble());
+
+      // Compute M_bdr v_test as the Parseval reference.
+      Vector Mv_r(n), Mv_i(n);
+      M_bdr_mat->Mult(v_test->Real(), Mv_r);
+      M_bdr_mat->Mult(v_test->Imag(), Mv_i);
+      double Mv_norm =
+          std::sqrt(linalg::Dot(comm, Mv_r, Mv_r) + linalg::Dot(comm, Mv_i, Mv_i));
+
+      // Compute rank-1 sum applied to v_test: y = Σ conj(v_i) (v_i^T v_test) / |Γ|
+      ComplexVector y_rank1(n);
+      y_rank1 = 0.0;
+      for (const auto &mode : modes)
+      {
+        if (!HasFlag(mode.use, FloquetModeUse::Dtn))
+        {
+          continue;
+        }
+        // Bilinear dot: v^T v_test
+        double dot_r = linalg::Dot(comm, mode.v.Real(), v_test->Real()) -
+                       linalg::Dot(comm, mode.v.Imag(), v_test->Imag());
+        double dot_i = linalg::Dot(comm, mode.v.Real(), v_test->Imag()) +
+                       linalg::Dot(comm, mode.v.Imag(), v_test->Real());
+        std::complex<double> dot(dot_r, dot_i);
+        std::complex<double> s = dot / port_area;
+        // y += s * conj(v) = (s_r+is_i)(v_r-iv_i)
+        y_rank1.Real().Add(s.real(), mode.v.Real());
+        y_rank1.Real().Add(s.imag(), mode.v.Imag());
+        y_rank1.Imag().Add(s.imag(), mode.v.Real());
+        y_rank1.Imag().Add(-s.real(), mode.v.Imag());
+      }
+      // Full complex norm of y (not just real part).
+      double y_norm = std::sqrt(linalg::Dot(comm, y_rank1.Real(), y_rank1.Real()) +
+                                linalg::Dot(comm, y_rank1.Imag(), y_rank1.Imag()));
+      double completeness = (Mv_norm > 0.0) ? y_norm / Mv_norm : 0.0;
+      Mpi::Print(" Parseval diagnostic: ||Σ conj(v)(v^Tv_test)/|Γ|||={:.4e} "
+                 "||M_bdr v_test||={:.4e} completeness={:.4f}\n",
+                 y_norm, Mv_norm, completeness);
+    }
+
+    // Cross-polarization diagnostic: check v_TE · v_TM for (0,0) modes.
+    // On a tet mesh at k=0 (B=0), these may not be orthogonal, causing
+    // energy non-conservation in S-parameter extraction.
+    const ComplexVector *v_te = nullptr, *v_tm = nullptr;
+    for (const auto &m : modes)
+    {
+      if (m.m == 0 && m.n == 0)
+      {
+        if (m.is_te)
+        {
+          v_te = &m.v;
+        }
+        else
+        {
+          v_tm = &m.v;
+        }
+      }
+    }
+    if (v_te && v_tm)
+    {
+      double vte_norm = std::sqrt(linalg::Dot(comm, v_te->Real(), v_te->Real()) +
+                                  linalg::Dot(comm, v_te->Imag(), v_te->Imag()));
+      double vtm_norm = std::sqrt(linalg::Dot(comm, v_tm->Real(), v_tm->Real()) +
+                                  linalg::Dot(comm, v_tm->Imag(), v_tm->Imag()));
+      // Bilinear dot: v_TE^T v_TM
+      double cross_r = linalg::Dot(comm, v_te->Real(), v_tm->Real()) -
+                       linalg::Dot(comm, v_te->Imag(), v_tm->Imag());
+      double cross_i = linalg::Dot(comm, v_te->Real(), v_tm->Imag()) +
+                       linalg::Dot(comm, v_te->Imag(), v_tm->Real());
+      double cross_mag = std::sqrt(cross_r * cross_r + cross_i * cross_i);
+      Mpi::Print(" Cross-pol: ||v_TE||={:.4e} ||v_TM||={:.4e} "
+                 "|v_TE^T v_TM|={:.4e} cos_angle={:.4f}\n",
+                 vte_norm, vtm_norm, cross_mag, cross_mag / (vte_norm * vtm_norm));
+    }
+
+    // Normalization diagnostic: check if v^T e(ê) / |Γ| = 1 for the (0,0) TE mode.
+    // Here e(ê) is the FE DOF vector obtained by projecting ê_TE onto the ND space.
+    // The S-parameter extraction computes c = v^T E / |Γ|. For an exact plane wave
+    // E = ê_TE on the port, c should equal 1. If v^T e(ê)/|Γ| ≠ 1, there's a systematic
+    // normalization error in the S-parameters.
+    if (v_te)
+    {
+      // Find the (0,0) TE mode to get e_pol.
+      const mfem::Vector *e_pol_ptr = nullptr;
+      for (const auto &m : modes)
+      {
+        if (m.m == 0 && m.n == 0 && m.is_te)
+        {
+          e_pol_ptr = &m.e_pol;
+          break;
+        }
+      }
+      if (e_pol_ptr)
+      {
+        // Project ê_TE onto the ND FE space (volume interpolation).
+        mfem::VectorConstantCoefficient e_te_coeff(*e_pol_ptr);
+        mfem::ParGridFunction e_te_gf(&nd_fespace);
+        e_te_gf.ProjectCoefficient(e_te_coeff);
+
+        // Get true DOF vector.
+        int tdof = nd_fespace.GetTrueVSize();
+        Vector e_te_tdof(tdof);
+        nd_fespace.GetProlongationMatrix()->MultTranspose(e_te_gf, e_te_tdof);
+
+        // v^T e(ê) — bilinear product (v is real for B=0).
+        double vTe = linalg::Dot(comm, v_te->Real(), e_te_tdof);
+
+        // Also compute ∫_Γ |ê_TE_h|² dS = e^T M_bdr e (the FE L² norm of ê on boundary).
+        auto &mesh_norm = *nd_fespace.GetParMesh();
+        int bdr_attr_max_norm = 0;
+        for (int be = 0; be < mesh_norm.GetNBE(); be++)
+        {
+          bdr_attr_max_norm = std::max(bdr_attr_max_norm, mesh_norm.GetBdrAttribute(be));
+        }
+        Mpi::GlobalMax(1, &bdr_attr_max_norm, nd_fespace.GetComm());
+        auto bdr_marker_norm = mesh::AttrToMarker(bdr_attr_max_norm, attr_list, true);
+        mfem::ParBilinearForm m_bdr_norm(&nd_fespace);
+        m_bdr_norm.AddBoundaryIntegrator(new mfem::VectorFEMassIntegrator(),
+                                         bdr_marker_norm);
+        m_bdr_norm.Assemble();
+        m_bdr_norm.Finalize();
+        auto M_bdr_norm =
+            std::unique_ptr<mfem::HypreParMatrix>(m_bdr_norm.ParallelAssemble());
+        Vector Me(tdof);
+        M_bdr_norm->Mult(e_te_tdof, Me);
+        double eTMe = linalg::Dot(comm, e_te_tdof, Me);
+
+        Mpi::Print(" Normalization: v^T e(ê)/|Γ| = {:.6f}, "
+                   "e^T M_bdr e / |Γ| = {:.6f} (both should be 1.0)\n",
+                   vTe / port_area, eTMe / port_area);
+      }
+    }
+  }
 }
 
 void FloquetPortData::ComputeReciprocalLattice(const mfem::Vector &a1,
@@ -736,8 +945,10 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
 
     // Compute extra quadrature order to resolve oscillatory exp(-i B . r).
     // Need ~2 points per oscillation cycle: extra_order ≈ |B| × h / π.
+    // For FullDtN: SKIP over-integration. The aliased above-Nyquist v vectors
+    // provide boundary DOF coverage that prevents rank-deficient PMC reflection.
     double B_norm = mode.B_mn.Norml2();
-    int extra_order = static_cast<int>(std::ceil(B_norm * h_max / M_PI));
+    int extra_order = use_full_dtn ? 0 : static_cast<int>(std::ceil(B_norm * h_max / M_PI));
     const mfem::IntegrationRule *ir = nullptr;
     if (extra_order > 0 && bdr_geom != mfem::Geometry::INVALID)
     {
@@ -775,8 +986,45 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
     nd_fespace.GetProlongationMatrix()->MultTranspose(lf_r, mode.v.Real());
     nd_fespace.GetProlongationMatrix()->MultTranspose(lf_i, mode.v.Imag());
 
-    // Raw projection vectors (not normalized). The F matrix, excitation, and S-parameter
-    // extraction all use consistent formulas with these raw vectors.
+    // Mass-consistent mode: assemble A_i[j,k] = ∫_Γ (N_j·ê_i)(N_k·ê_i) dS.
+    // The complex exponentials exp(±jB·r) cancel in the bilinear form, so A_i is real
+    // and frequency-independent. Uses ê ⊗ ê as a MatrixCoefficient in
+    // VectorFEMassIntegrator.
+    if (use_mass_consistent && HasFlag(mode.use, FloquetModeUse::Dtn))
+    {
+      mfem::DenseMatrix ee_mat(3);
+      for (int a = 0; a < 3; a++)
+      {
+        for (int b = 0; b < 3; b++)
+        {
+          ee_mat(a, b) = mode.e_pol(a) * mode.e_pol(b);
+        }
+      }
+      mfem::MatrixConstantCoefficient ee_coeff(ee_mat);
+
+      auto *integ = new mfem::VectorFEMassIntegrator(ee_coeff);
+      if (ir)
+      {
+        integ->SetIntRule(ir);
+      }
+      mfem::ParBilinearForm bf(&nd_fespace);
+      bf.AddBoundaryIntegrator(integ, bdr_marker);
+      bf.Assemble();
+      bf.Finalize();
+      mode.A_mass.reset(bf.ParallelAssemble());
+
+      // Diagnostic: check if A_mass has non-zero entries by applying to v.
+      {
+        Vector Av(tdof_size);
+        Av = 0.0;
+        mode.A_mass->Mult(mode.v.Real(), Av);
+        double Av_norm = std::sqrt(linalg::Dot(nd_fespace.GetComm(), Av, Av));
+        double v_norm =
+            std::sqrt(linalg::Dot(nd_fespace.GetComm(), mode.v.Real(), mode.v.Real()));
+        Mpi::Print("    A_mass({:+d},{:+d},{}) ||Av||={:.4e} ||v||={:.4e}\n", mode.m,
+                   mode.n, mode.is_te ? "TE" : "TM", Av_norm, v_norm);
+      }
+    }
   }
 }
 
@@ -960,23 +1208,8 @@ FloquetPortData::ComputeDtNCorrectionCoeff(const FloquetMode &mode) const
   }
 
   std::complex<double> g_uniform = 1i * gamma0 / (mu_r_port * port_area);
-  std::complex<double> g_full;
-
-  if (mode.gamma_sq > 0.0)
-  {
-    double gamma = std::sqrt(mode.gamma_sq);
-    g_full = mode.is_te
-                 ? 1i * gamma / (mu_r_port * port_area)
-                 : 1i * omega0 * omega0 * mu_eps_port / (gamma * mu_r_port * port_area);
-  }
-  else if (mode.gamma_sq < 0.0)
-  {
-    double gamma_abs = std::sqrt(-mode.gamma_sq);
-    g_full = mode.is_te
-                 ? gamma_abs / (mu_r_port * port_area)
-                 : omega0 * omega0 * mu_eps_port / (gamma_abs * mu_r_port * port_area);
-  }
-  else
+  std::complex<double> g_full = ComputeDtNFullCoeff(mode);
+  if (g_full == 0.0)
   {
     return 0.0;
   }
@@ -990,12 +1223,9 @@ FloquetPortData::ComputeDtNCorrectionCoeff(const FloquetMode &mode) const
   }
 
   // For evanescent modes: apply only the REAL part of the correction (reactive impedance).
-  // The imaginary part would cancel the Robin's absorption, which causes energy
-  // non-conservation through the mass-vs-projection mismatch. Keeping the Robin's
-  // absorption for evanescent modes maintains energy conservation while the real part
-  // provides the correct reactive impedance for reflecting evanescent modes.
-  // This gives excellent broadband agreement but may under-resolve sharp Fano resonances
-  // driven by near-cutoff evanescent coupling.
+  // The imaginary part would cancel Robin's absorption, which degrades broadband accuracy
+  // due to incomplete Parseval (rank-1 correction ≠ full-rank Robin). Real-only preserves
+  // Robin's absorption while providing the correct reactive impedance.
   if (mode.gamma_sq < 0.0)
   {
     return std::complex<double>(g_correction.real(), 0.0);
@@ -1016,8 +1246,9 @@ std::complex<double> FloquetPortData::ComputeDtNFullCoeff(const FloquetMode &mod
   else if (mode.gamma_sq < 0.0)
   {
     double gamma_abs = std::sqrt(-mode.gamma_sq);
-    return mode.is_te ? gamma_abs / (mu_r_port * port_area)
-                      : omega0 * omega0 * mu_eps_port / (gamma_abs * mu_r_port * port_area);
+    return mode.is_te
+               ? gamma_abs / (mu_r_port * port_area)
+               : -omega0 * omega0 * mu_eps_port / (gamma_abs * mu_r_port * port_area);
   }
   return 0.0;
 }
@@ -1026,12 +1257,80 @@ std::unique_ptr<ComplexOperator> FloquetPortData::GetBoundaryOperator() const
 {
   int n = modes.empty() ? 0 : static_cast<int>(modes[0].v.Size());
 
-  // Use LowRankComplexOperator (full-DOF dot products, no boundary restriction).
-  // The DenseBoundaryOperator was found to produce different results — possibly due
-  // to shared edge DOFs between boundary and interior elements being missed by the
-  // boundary DOF restriction.
-  auto op = std::make_unique<LowRankComplexOperator>(comm, n);
+  // DtN coefficient diagnostic: print near-cutoff modes (|gamma_sq| small).
+  static bool dtn_diag_printed = false;
+  if (!dtn_diag_printed)
+  {
+    Mpi::Print(" DtN coefficients at omega={:.4f}:\n", omega0);
+    for (const auto &mode : modes)
+    {
+      if (!HasFlag(mode.use, FloquetModeUse::Dtn))
+      {
+        continue;
+      }
+      auto g_full = ComputeDtNFullCoeff(mode);
+      auto g_corr = ComputeDtNCorrectionCoeff(mode);
+      double v_norm_sq = linalg::Dot(comm, mode.v.Real(), mode.v.Real()) +
+                         linalg::Dot(comm, mode.v.Imag(), mode.v.Imag());
+      // Only print near-cutoff and propagating modes (not deeply evanescent).
+      if (std::abs(mode.gamma_sq) < 2.0 * omega0 * omega0 * mu_eps_port ||
+          mode.gamma_sq > 0.0)
+      {
+        Mpi::Print("  ({:+d},{:+d},{}) gamma_sq={:+.4e} g_full=({:+.4e},{:+.4e}) "
+                   "g_corr=({:+.4e},{:+.4e}) ||v||²={:.4e}\n",
+                   mode.m, mode.n, mode.is_te ? "TE" : "TM", mode.gamma_sq, g_full.real(),
+                   g_full.imag(), g_corr.real(), g_corr.imag(), v_norm_sq);
+      }
+    }
+    dtn_diag_printed = true;
+  }
 
+  if (use_mass_consistent)
+  {
+    // Mass-consistent correction: Robin stays in the system for baseline absorption.
+    // The correction uses per-mode boundary mass matrices A_i instead of rank-1 conj(v)v^T.
+    // Full complex correction (no real-only truncation for evanescent modes) — the
+    // mass-consistent A_i should cancel Robin precisely for each mode's polarization
+    // direction, avoiding the Cauchy-Schwarz overestimate of rank-1 outer products.
+    //
+    // Coefficient: g_mc = (g_full - g_uniform) × |Γ| = j(λ_i - γ₀)/μ
+    // This removes the 1/|Γ| from the rank-1 coefficient to match A_i's area scaling.
+    double gamma0 = 0.0;
+    for (const auto &m0 : modes)
+    {
+      if (m0.m == 0 && m0.n == 0 && m0.is_te)
+      {
+        gamma0 = std::sqrt(std::max(m0.gamma_sq, 0.0));
+        break;
+      }
+    }
+    auto op = std::make_unique<MassConsistentDtNOperator>(n);
+    int n_added = 0;
+    for (const auto &mode : modes)
+    {
+      if (!HasFlag(mode.use, FloquetModeUse::Dtn) || !mode.A_mass)
+      {
+        continue;
+      }
+      // Full complex correction: g_mc = g_full_mc - Robin_share_per_mode.
+      // Robin adds iγ₀/μ × M_bdr to the system. Since Σ_all_modes A_i = N_orders × M_bdr
+      // (because A_TE + A_TM = M_bdr for each order), each mode's share of Robin is
+      // iγ₀/(μ × N_orders). The correction subtracts this per-mode share.
+      int n_orders = static_cast<int>(modes.size()) / 2;  // TE+TM per order
+      auto g_mc =
+          ComputeDtNFullCoeff(mode) * port_area - 1i * gamma0 / (mu_r_port * n_orders);
+      if (std::abs(g_mc) > 1e-14 * std::abs(ComputeDtNFullCoeff(mode) * port_area))
+      {
+        op->AddTerm(mode.A_mass.get(), g_mc);
+        n_added++;
+      }
+    }
+    Mpi::Print(" >> MassConsistent DtN (Robin+full complex): {:d} terms\n", n_added);
+    return op;
+  }
+
+  // Default: LowRankComplexOperator (rank-1 outer products).
+  auto op = std::make_unique<LowRankComplexOperator>(comm, n);
   for (const auto &mode : modes)
   {
     if (!HasFlag(mode.use, FloquetModeUse::Dtn))
@@ -1044,7 +1343,6 @@ std::unique_ptr<ComplexOperator> FloquetPortData::GetBoundaryOperator() const
       op->AddTerm(&mode.v, g);
     }
   }
-
   return op;
 }
 
@@ -1249,10 +1547,11 @@ std::unique_ptr<ComplexOperator> FloquetPortOperator::GetExtraSystemOperator(dou
 
   // Combine boundary operators from all ports.
   // For a single port, return it directly. For multiple, chain with SumComplexOperator.
+  // Auxiliary ports skip the low-rank correction (DtN is handled by the coupled system).
   std::unique_ptr<ComplexOperator> combined;
   for (auto &[idx, port] : ports)
   {
-    if (!port.active)
+    if (!port.active || port.UseAuxiliary())
     {
       continue;
     }
@@ -1331,6 +1630,192 @@ mfem::Array<int> FloquetPortOperator::GetAttrList() const
     attr_list.Append(port.GetAttrList());
   }
   return attr_list;
+}
+
+bool FloquetPortOperator::HasAuxiliaryPorts() const
+{
+  for (const auto &[idx, port] : ports)
+  {
+    if (port.active && port.UseAuxiliary())
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+int FloquetPortOperator::GetAuxModeCount(double omega)
+{
+  Initialize(omega);
+  int count = 0;
+  for (const auto &[idx, port] : ports)
+  {
+    if (!port.active || !port.UseAuxiliary())
+    {
+      continue;
+    }
+    for (const auto &mode : port.GetModes())
+    {
+      if (HasFlag(mode.use, FloquetModeUse::Dtn))
+      {
+        count++;
+      }
+    }
+  }
+  return count;
+}
+
+void FloquetPortOperator::PopulateAuxModes(double omega, FloquetAuxSystemOperator &aux_op)
+{
+  Initialize(omega);
+  aux_op.ClearModes();
+  for (auto &[idx, port] : ports)
+  {
+    if (!port.active || !port.UseAuxiliary())
+    {
+      continue;
+    }
+    for (const auto &mode : port.GetModes())
+    {
+      if (!HasFlag(mode.use, FloquetModeUse::Dtn))
+      {
+        continue;
+      }
+      aux_op.AddMode(&mode.v, port.ComputeDtNCorrectionCoeff(mode));
+    }
+  }
+}
+
+// =============================================================================
+// FloquetAuxSystemOperator
+// =============================================================================
+
+FloquetAuxSystemOperator::FloquetAuxSystemOperator(MPI_Comm comm,
+                                                   const ComplexOperator *A_EE, int n_E,
+                                                   int n_s)
+  : ComplexOperator(n_E + n_s, n_E + n_s), A_EE(A_EE), comm(comm), n_E(n_E), n_s(n_s),
+    E_tmp(n_E), y_E_tmp(n_E)
+{
+  E_tmp.UseDevice(true);
+  y_E_tmp.UseDevice(true);
+}
+
+void FloquetAuxSystemOperator::AddMode(const ComplexVector *v, std::complex<double> g_full)
+{
+  aux_modes.push_back({v, g_full});
+}
+
+void FloquetAuxSystemOperator::Mult(const ComplexVector &x, ComplexVector &y) const
+{
+  y = 0.0;
+  AddMult(x, y, 1.0);
+}
+
+void FloquetAuxSystemOperator::AddMult(const ComplexVector &x, ComplexVector &y,
+                                       const std::complex<double> a) const
+{
+  const int n_modes = static_cast<int>(aux_modes.size());
+  int rank;
+  MPI_Comm_rank(comm, &rank);
+
+  // Extract x_E (first n_E entries) into E_tmp.
+  {
+    const auto *xr = x.Real().Read();
+    const auto *xi = x.Imag().Read();
+    auto *er = E_tmp.Real().Write();
+    auto *ei = E_tmp.Imag().Write();
+    std::copy_n(xr, n_E, er);
+    std::copy_n(xi, n_E, ei);
+  }
+
+  // Read s values from rank 0 and broadcast to all ranks.
+  std::vector<double> s_r(n_modes), s_i(n_modes);
+  if (rank == 0)
+  {
+    const auto *xr = x.Real().Read();
+    const auto *xi = x.Imag().Read();
+    for (int i = 0; i < n_modes; i++)
+    {
+      s_r[i] = xr[n_E + i];
+      s_i[i] = xi[n_E + i];
+    }
+  }
+  MPI_Bcast(s_r.data(), n_modes, MPI_DOUBLE, 0, comm);
+  MPI_Bcast(s_i.data(), n_modes, MPI_DOUBLE, 0, comm);
+
+  // E block: y_E += a * (A_EE * x_E + Σ_i g_full_i * s_i * conj(v_i))
+
+  // Apply A_EE * E_tmp → y_E_tmp, then add to y[0:n_E].
+  A_EE->Mult(E_tmp, y_E_tmp);
+  {
+    const auto *yr = y_E_tmp.Real().Read();
+    const auto *yi = y_E_tmp.Imag().Read();
+    auto *out_r = y.Real().ReadWrite();
+    auto *out_i = y.Imag().ReadWrite();
+    double ar = a.real(), ai = a.imag();
+    for (int j = 0; j < n_E; j++)
+    {
+      out_r[j] += ar * yr[j] - ai * yi[j];
+      out_i[j] += ai * yr[j] + ar * yi[j];
+    }
+  }
+
+  // A_ES coupling: y_E += a * Σ_i g_full_i * s_i * conj(v_i)
+  for (int i = 0; i < n_modes; i++)
+  {
+    // Complex product: coeff = a * g_full * s  (all complex)
+    std::complex<double> s_val(s_r[i], s_i[i]);
+    std::complex<double> coeff = a * aux_modes[i].g_full * s_val;
+
+    // Add coeff * conj(v) to y[0:n_E].
+    // conj(v) = (v_r, -v_i), so coeff * conj(v) = (coeff_r * v_r + coeff_i * v_i,
+    //                                               coeff_i * v_r - coeff_r * v_i)
+    double cr = coeff.real(), ci = coeff.imag();
+    const auto *vr = aux_modes[i].v->Real().Read();
+    const auto *vi = aux_modes[i].v->Imag().Read();
+    auto *out_r = y.Real().ReadWrite();
+    auto *out_i = y.Imag().ReadWrite();
+    for (int j = 0; j < n_E; j++)
+    {
+      out_r[j] += cr * vr[j] + ci * vi[j];
+      out_i[j] += ci * vr[j] - cr * vi[j];
+    }
+  }
+
+  // s block: y_s[i] += a * (v_i^T * x_E - s_i)  (rank 0 only)
+  if (rank == 0)
+  {
+    auto *out_r = y.Real().ReadWrite();
+    auto *out_i = y.Imag().ReadWrite();
+    for (int i = 0; i < n_modes; i++)
+    {
+      // Bilinear dot product: dot = v^T x = Σ v_j x_j (no conjugate)
+      double dot_r = linalg::Dot(comm, aux_modes[i].v->Real(), E_tmp.Real()) -
+                     linalg::Dot(comm, aux_modes[i].v->Imag(), E_tmp.Imag());
+      double dot_i = linalg::Dot(comm, aux_modes[i].v->Real(), E_tmp.Imag()) +
+                     linalg::Dot(comm, aux_modes[i].v->Imag(), E_tmp.Real());
+
+      // val = dot - s
+      double val_r = dot_r - s_r[i];
+      double val_i = dot_i - s_i[i];
+
+      // y_s[i] += a * val
+      out_r[n_E + i] += a.real() * val_r - a.imag() * val_i;
+      out_i[n_E + i] += a.imag() * val_r + a.real() * val_i;
+    }
+  }
+  else
+  {
+    // Non-rank-0 ranks still need to participate in the MPI_Allreduce inside linalg::Dot,
+    // but discard the result (s entries stay zero on these ranks).
+    for (int i = 0; i < n_modes; i++)
+    {
+      linalg::Dot(comm, aux_modes[i].v->Real(), E_tmp.Real());
+      linalg::Dot(comm, aux_modes[i].v->Imag(), E_tmp.Imag());
+      linalg::Dot(comm, aux_modes[i].v->Real(), E_tmp.Imag());
+      linalg::Dot(comm, aux_modes[i].v->Imag(), E_tmp.Real());
+    }
+  }
 }
 
 }  // namespace palace

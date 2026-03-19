@@ -187,7 +187,8 @@
           "Active": { "type": "boolean" },
           "IncidentPolarization": { "type": "string", "enum": ["TE", "TM", "RHC", "LHC"] },
           "MaxOrder": { "type": "integer" },
-          "FullDtN": { "type": "boolean" }
+          "FullDtN": { "type": "boolean" },
+          "PortMode": { "type": "string", "enum": ["Correction", "Auxiliary", "MassConsistent"] }
         }
       }
     },
