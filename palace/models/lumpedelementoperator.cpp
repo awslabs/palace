@@ -8,6 +8,7 @@
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
+#include "utils/iodata.hpp"
 #include "utils/units.hpp"
 
 namespace palace
@@ -119,6 +120,7 @@ void LumpedElementOperator::PrintBoundaryInfo(const Units &units,
   fmt::memory_buffer buffer{};
   auto out = fmt::appender{buffer};
 
+  // Print out BC info for all element attributes.
   fmt::format_to(out, "\nConfiguring Robin impedance BC for lumped elements at attributes:\n");
   for (const auto &[idx, data] : elements)
   {
@@ -148,6 +150,7 @@ void LumpedElementOperator::PrintBoundaryInfo(const Units &units,
     }
   }
 
+  // Print out circuit properties for all elements.
   fmt::format_to(out, "\nConfiguring lumped element circuit properties:\n");
   for (const auto &[idx, data] : elements)
   {

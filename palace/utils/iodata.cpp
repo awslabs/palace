@@ -573,7 +573,7 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
     config::Nondimensionalize(units, data);
   }
 
-  // Impedance boundaries and lumped ports.
+  // Impedance boundaries, lumped ports and lumped elements.
   for (auto &data : boundaries.impedance)
   {
     config::Nondimensionalize(units, data);
@@ -581,6 +581,15 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   for (auto &[idx, data] : boundaries.lumpedport)
   {
     config::Nondimensionalize(units, data);
+  }
+  for (auto &[idx, data] : boundaries.lumpedelement)
+  {
+    data.R /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+    data.L /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+    data.C /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+    data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+    data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+    data.Cs /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
   }
 
   // Floquet periodic boundaries.
