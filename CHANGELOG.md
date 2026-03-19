@@ -30,6 +30,9 @@ The format of this changelog is based on
     673](https://github.com/awslabs/palace/pull/673)
   - Fixed port excitation parsing to correctly handle signed integer values
     [PR 635](https://github.com/awslabs/palace/pull/635).
+  - Embedded JSON schemas are now regenerated at build time instead of configure time,
+    so schema edits no longer require a full CMake reconfigure
+    [PR 679](https://github.com/awslabs/palace/pull/679).
 
 ## [0.16.0] - 2026-03-05
 
