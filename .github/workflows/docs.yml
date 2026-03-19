@@ -198,15 +198,32 @@ jobs:
         if: needs.filter.outputs.should_build == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Override for Documenter.jl when manually deploying a tag's docs
-          GITHUB_EVENT_NAME: ${{ inputs.deploy_tag && 'push' || github.event_name }}
-          GITHUB_REF: ${{ inputs.deploy_tag && format('refs/tags/{0}', inputs.deploy_tag) || github.ref }}
-          GITHUB_REF_TYPE: ${{ inputs.deploy_tag && 'tag' || github.ref_type }}
-          GITHUB_REF_NAME: ${{ inputs.deploy_tag || github.ref_name }}
         run: |
+          # For workflow_dispatch with deploy_tag, override the runner's immutable
+          # GITHUB_* env vars so Documenter.jl sees a tag push.
+          if [[ -n "${{ inputs.deploy_tag }}" ]]; then
+            export GITHUB_EVENT_NAME=push
+            export GITHUB_REF=refs/tags/${{ inputs.deploy_tag }}
+            export GITHUB_REF_TYPE=tag
+            export GITHUB_REF_NAME=${{ inputs.deploy_tag }}
+          fi
           eval $(spack -e . load --sh palace)
           julia --project=docs -e 'using Pkg; Pkg.instantiate()'
           julia --project=docs --color=yes docs/make.jl
+
+      - name: Verify stable docs deployment
+        if: >-
+          needs.filter.outputs.should_build == 'true' &&
+          (startsWith(github.ref, 'refs/tags/') || inputs.deploy_tag != '')
+        run: |
+          TAG="${{ inputs.deploy_tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          git fetch origin gh-pages --depth=1
+          STABLE=$(git show origin/gh-pages:stable)
+          if [[ "$STABLE" != *"$VERSION"* ]]; then
+            echo "::error::stable points to '$STABLE', expected '$VERSION'"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         if: needs.filter.outputs.should_build == 'true'
