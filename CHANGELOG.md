@@ -30,6 +30,9 @@ The format of this changelog is based on
     673](https://github.com/awslabs/palace/pull/673)
   - Fixed port excitation parsing to correctly handle signed integer values
     [PR 635](https://github.com/awslabs/palace/pull/635).
+  - Added warning when STRUMPACK is selected for magnetostatic problems, which
+    will fail due to the singular curl-curl operator
+    [PR 680](https://github.com/awslabs/palace/pull/680).
 
 ## [0.16.0] - 2026-03-05
 

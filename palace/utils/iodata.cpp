@@ -400,6 +400,13 @@ void IoData::CheckConfiguration()
 #endif
     }
   }
+  if ((solver.linear.type == LinearSolver::STRUMPACK ||
+       solver.linear.type == LinearSolver::STRUMPACK_MP) &&
+      problem.type == ProblemType::MAGNETOSTATIC)
+  {
+    Mpi::Warning("STRUMPACK does not support the singular curl-curl operator in "
+                 "magnetostatic problems, use AMS or another iterative solver instead!\n");
+  }
   if (solver.linear.krylov_solver == KrylovSolver::DEFAULT)
   {
     // Problems with SPD operators use CG by default, else GMRES.
