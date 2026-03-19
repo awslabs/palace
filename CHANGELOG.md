@@ -20,6 +20,9 @@ The format of this changelog is based on
     (e.g., `PEC`/`Ground`, `PMC`/`ZeroCharge`), array type validation, and numeric bounds.
     Many runtime checks are now caught earlier at configuration parsing time with clearer
     error messages [PR 635](https://github.com/awslabs/palace/pull/635).
+  - Added `DropSmallEntriesTol` option to the linear solver configuration for tuning
+    the tolerance used when dropping small matrix entries
+    [PR 681](https://github.com/awslabs/palace/pull/681).
 
 #### Bug Fixes
 
