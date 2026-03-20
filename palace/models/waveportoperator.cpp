@@ -1026,7 +1026,7 @@ void WavePortOperator::Initialize(double omega)
   {
     Mpi::Print(
         "\nCalculating boundary modes at wave ports for ω/2π = {:.3e} GHz ({:.3e})\n",
-        omega * fc, omega);
+        omega * fc / (2.0 * M_PI), omega);
   }
   for (auto &[idx, data] : ports)
   {

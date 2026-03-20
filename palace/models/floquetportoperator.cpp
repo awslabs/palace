@@ -469,22 +469,15 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
     {
       if (bdr_marker_tmp[mesh_tmp.GetBdrAttribute(be) - 1])
       {
-        mfem::Array<int> verts;
-        mesh_tmp.GetBdrElementVertices(be, verts);
-        for (int i = 0; i < verts.Size(); i++)
-        {
-          for (int j = i + 1; j < verts.Size(); j++)
-          {
-            const double *vi = mesh_tmp.GetVertex(verts[i]);
-            const double *vj = mesh_tmp.GetVertex(verts[j]);
-            double dist_sq = 0.0;
-            for (int d = 0; d < mesh_tmp.SpaceDimension(); d++)
-            {
-              dist_sq += (vi[d] - vj[d]) * (vi[d] - vj[d]);
-            }
-            h_max_local = std::max(h_max_local, std::sqrt(dist_sq));
-          }
-        }
+        // Use the boundary element Jacobian to compute element size.
+        // J is spaceDim × (Dim-1) = 3×2 for a surface element in 3D.
+        // The max singular value of J gives the element's largest extent (h_max).
+        auto *T = mesh_tmp.GetBdrElementTransformation(be);
+        T->SetIntPoint(
+            &mfem::Geometries.GetCenter(T->GetGeometryType()));
+        const mfem::DenseMatrix &J = T->Jacobian();
+        double h = J.CalcSingularvalue(0);  // largest singular value
+        h_max_local = std::max(h_max_local, h);
       }
     }
     double h_max = h_max_local;
@@ -492,10 +485,10 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
 
     if (h_max > 0.0)
     {
-      // Convert h_max from mesh-file units to nondimensional using the existing
-      // mesh length scale: nondim = mesh_units / (Lc/L0).
-      double mesh_to_nondim = iodata.units.GetMeshLengthRelativeScale();
-      double h_max_nondim = h_max / mesh_to_nondim;
+      // h_max is already in nondimensional (Lc) units since the mesh is
+      // nondimensionalized at load time. b1, b2 are also in Lc⁻¹ units.
+      // No further unit conversion needed.
+      double h_max_nondim = h_max;
 
       // FE Nyquist: p-th order elements can resolve modes with |B|×h < p×π.
       // b1, b2 are in nondimensional units; h_max_nondim is now consistent.
@@ -503,14 +496,12 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
       double b1_norm = b1.Norml2();
       double b2_norm = b2.Norml2();
       int nyquist_m =
-          2 *
           std::max(1, static_cast<int>(std::floor(p * M_PI / (b1_norm * h_max_nondim))));
       int nyquist_n =
-          2 *
           std::max(1, static_cast<int>(std::floor(p * M_PI / (b2_norm * h_max_nondim))));
-      Mpi::Print(" Floquet port: h_max = {:.4e} ({:.4e} nondim), p = {:d}, "
+      Mpi::Print(" Floquet port: h_max = {:.4e} (nondim, Lc units), p = {:d}, "
                  "Nyquist limit = ({:d}, {:d})\n",
-                 h_max, h_max_nondim, p, nyquist_m, nyquist_n);
+                 h_max_nondim, p, nyquist_m, nyquist_n);
       if (max_order_m > nyquist_m || max_order_n > nyquist_n)
       {
         Mpi::Print(" Floquet port: capping MaxOrder from ({:d}, {:d}) to ({:d}, {:d})\n",
@@ -876,22 +867,11 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
   {
     if (bdr_marker[mesh.GetBdrAttribute(be) - 1])
     {
-      mfem::Array<int> verts;
-      mesh.GetBdrElementVertices(be, verts);
-      for (int i = 0; i < verts.Size(); i++)
-      {
-        for (int j = i + 1; j < verts.Size(); j++)
-        {
-          const double *vi = mesh.GetVertex(verts[i]);
-          const double *vj = mesh.GetVertex(verts[j]);
-          double dist_sq = 0.0;
-          for (int d = 0; d < mesh.SpaceDimension(); d++)
-          {
-            dist_sq += (vi[d] - vj[d]) * (vi[d] - vj[d]);
-          }
-          h_max_local = std::max(h_max_local, std::sqrt(dist_sq));
-        }
-      }
+      auto *T = mesh.GetBdrElementTransformation(be);
+      T->SetIntPoint(
+          &mfem::Geometries.GetCenter(T->GetGeometryType()));
+      double h = T->Jacobian().CalcSingularvalue(0);
+      h_max_local = std::max(h_max_local, h);
       bdr_geom = mesh.GetBdrElementGeometry(be);
     }
   }
@@ -945,15 +925,19 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
 
     // Compute extra quadrature order to resolve oscillatory exp(-i B . r).
     // Need ~2 points per oscillation cycle: extra_order ≈ |B| × h / π.
-    // For FullDtN: SKIP over-integration. The aliased above-Nyquist v vectors
-    // provide boundary DOF coverage that prevents rank-deficient PMC reflection.
+    // Over-integration ensures accurate v vectors, which is critical for modes
+    // with large DtN coefficients (near-cutoff evanescent TM: g ∝ ω²με/|γ|).
     double B_norm = mode.B_mn.Norml2();
-    int extra_order = use_full_dtn ? 0 : static_cast<int>(std::ceil(B_norm * h_max / M_PI));
+    int extra_order = 0; //static_cast<int>(std::ceil(B_norm * h_max / M_PI));
     const mfem::IntegrationRule *ir = nullptr;
     if (extra_order > 0 && bdr_geom != mfem::Geometry::INVALID)
     {
       int fe_order = nd_fespace.GetMaxElementOrder();
       ir = &mfem::IntRules.Get(bdr_geom, 2 * fe_order + extra_order);
+      Mpi::Print("    Mode ({:+d},{:+d},{}) |B|={:.2f} extra_order={:d} "
+                 "quad_order={:d}\n",
+                 mode.m, mode.n, mode.is_te ? "TE" : "TM", B_norm, extra_order,
+                 2 * fe_order + extra_order);
     }
 
     // Assemble real part.
@@ -1222,14 +1206,6 @@ FloquetPortData::ComputeDtNCorrectionCoeff(const FloquetMode &mode) const
     return 0.0;
   }
 
-  // For evanescent modes: apply only the REAL part of the correction (reactive impedance).
-  // The imaginary part would cancel Robin's absorption, which degrades broadband accuracy
-  // due to incomplete Parseval (rank-1 correction ≠ full-rank Robin). Real-only preserves
-  // Robin's absorption while providing the correct reactive impedance.
-  if (mode.gamma_sq < 0.0)
-  {
-    return std::complex<double>(g_correction.real(), 0.0);
-  }
   return g_correction;
 }
 
@@ -1257,32 +1233,45 @@ std::unique_ptr<ComplexOperator> FloquetPortData::GetBoundaryOperator() const
 {
   int n = modes.empty() ? 0 : static_cast<int>(modes[0].v.Size());
 
-  // DtN coefficient diagnostic: print near-cutoff modes (|gamma_sq| small).
-  static bool dtn_diag_printed = false;
-  if (!dtn_diag_printed)
+  // DtN coefficient diagnostic: print propagation constants for all modes.
+  // beta = gamma / Lc [rad/m] for propagating, beta = j*gamma_abs / Lc for evanescent.
+  // Lc = characteristic length. To convert nondim gamma to physical beta [rad/m]:
+  // beta = gamma_nondim / Lc. But we don't have Lc here, so print gamma_nondim
+  // (= beta * Lc) and |kt| (= |B - kF|) for COMSOL comparison.
   {
-    Mpi::Print(" DtN coefficients at omega={:.4f}:\n", omega0);
+    Mpi::Print(" Floquet port mode propagation constants at omega={:.6e}:\n", omega0);
     for (const auto &mode : modes)
     {
       if (!HasFlag(mode.use, FloquetModeUse::Dtn))
       {
         continue;
       }
-      auto g_full = ComputeDtNFullCoeff(mode);
-      auto g_corr = ComputeDtNCorrectionCoeff(mode);
-      double v_norm_sq = linalg::Dot(comm, mode.v.Real(), mode.v.Real()) +
-                         linalg::Dot(comm, mode.v.Imag(), mode.v.Imag());
-      // Only print near-cutoff and propagating modes (not deeply evanescent).
-      if (std::abs(mode.gamma_sq) < 2.0 * omega0 * omega0 * mu_eps_port ||
-          mode.gamma_sq > 0.0)
+      // kt = B - kF(omega) for this mode.
+      double kF_scale = mat_op.HasFloquetFrequencyScaling() ? omega0 : 1.0;
+      mfem::Vector kt(3);
+      for (int d = 0; d < 3; d++)
       {
-        Mpi::Print("  ({:+d},{:+d},{}) gamma_sq={:+.4e} g_full=({:+.4e},{:+.4e}) "
-                   "g_corr=({:+.4e},{:+.4e}) ||v||²={:.4e}\n",
-                   mode.m, mode.n, mode.is_te ? "TE" : "TM", mode.gamma_sq, g_full.real(),
-                   g_full.imag(), g_corr.real(), g_corr.imag(), v_norm_sq);
+        kt(d) = mode.B_mn(d) - kF_scale * k_F(d);
       }
+      double kt_norm = kt.Norml2();
+
+      // gamma = sqrt(gamma_sq) for propagating, j*|gamma| for evanescent.
+      // COMSOL's beta [rad/m] = gamma_nondim / Lc.
+      double gamma_re = 0.0, gamma_im = 0.0;
+      if (mode.gamma_sq > 0.0)
+      {
+        gamma_re = std::sqrt(mode.gamma_sq);  // propagating: real beta
+      }
+      else if (mode.gamma_sq < 0.0)
+      {
+        gamma_im = -std::sqrt(-mode.gamma_sq);  // evanescent: negative imag (Im(k)<=0)
+      }
+      auto g_full = ComputeDtNFullCoeff(mode);
+      Mpi::Print("  ({:+d},{:+d},{}) gamma_sq={:+.6e} gamma=({:+.6e},{:+.6e}) "
+                 "|kt|={:.6e} g_full=({:+.6e},{:+.6e})\n",
+                 mode.m, mode.n, mode.is_te ? "TE" : "TM", mode.gamma_sq, gamma_re,
+                 gamma_im, kt_norm, g_full.real(), g_full.imag());
     }
-    dtn_diag_printed = true;
   }
 
   if (use_mass_consistent)
@@ -1584,9 +1573,9 @@ void FloquetPortOperator::AddExtraSystemBdrCoefficients(double omega,
     {
       continue;
     }
-    if (port.UseFullDtN() && !for_preconditioner)
+    if ((port.UseFullDtN() || port.UseAuxiliary()) && !for_preconditioner)
     {
-      continue;  // FullDtN: no Robin in system, dense operator handles everything.
+      continue;  // FullDtN/Auxiliary: no Robin in system, DtN operator handles everything.
     }
     // γ₀ = TE (0,0) mode propagation constant.
     double gamma0 = 0.0;
@@ -1681,7 +1670,7 @@ void FloquetPortOperator::PopulateAuxModes(double omega, FloquetAuxSystemOperato
       {
         continue;
       }
-      aux_op.AddMode(&mode.v, port.ComputeDtNCorrectionCoeff(mode));
+      aux_op.AddMode(&mode.v, port.ComputeDtNFullCoeff(mode));
     }
   }
 }
