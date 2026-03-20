@@ -666,10 +666,10 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
         mfem::ParGridFunction e_te_gf(&nd_fespace);
         e_te_gf.ProjectCoefficient(e_te_coeff);
 
-        // Get true DOF vector.
+        // Get true DOF vector (GetTrueDofs, not P^T which over-counts shared DOFs).
         int tdof = nd_fespace.GetTrueVSize();
         Vector e_te_tdof(tdof);
-        nd_fespace.GetProlongationMatrix()->MultTranspose(e_te_gf, e_te_tdof);
+        e_te_gf.GetTrueDofs(e_te_tdof);
 
         // v^T e(ê) — bilinear product (v is real for B=0).
         double vTe = linalg::Dot(comm, v_te->Real(), e_te_tdof);
@@ -1444,14 +1444,14 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
   double lambda_eff = norm.lambda_eff;
   double c_inc = norm.c_inc;
 
-  // Restrict E to true DOFs once (shared across all modes).
-  const auto *P = E.Real().ParFESpace()->GetProlongationMatrix();
+  // Extract E in the true DOF space. Use GetTrueDofs (extracts owned DOF values)
+  // instead of P^T × E_local (which sums shared DOF copies and over-counts in parallel).
   int tdof_size = modes.empty() ? 0 : static_cast<int>(modes[0].v.Size());
   Vector E_r_tdof(tdof_size), E_i_tdof(tdof_size);
-  P->MultTranspose(E.Real(), E_r_tdof);
+  E.Real().GetTrueDofs(E_r_tdof);
   if (E.HasImag())
   {
-    P->MultTranspose(E.Imag(), E_i_tdof);
+    E.Imag().GetTrueDofs(E_i_tdof);
   }
   else
   {
