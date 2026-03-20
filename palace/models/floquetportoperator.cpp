@@ -1318,6 +1318,68 @@ std::unique_ptr<ComplexOperator> FloquetPortData::GetBoundaryOperator() const
     return op;
   }
 
+  if (use_full_dtn && n_bdr_global > 0)
+  {
+    // Dense boundary DtN: assemble F[k,j] = Σ g × conj(v_k) × v_j as a dense
+    // N_bdr × N_bdr matrix. This is mathematically equivalent to the rank-1
+    // LowRankComplexOperator but operates on boundary DOFs only with explicit
+    // gather/scatter — a completely independent code path for validation.
+    // Use the GLOBAL communicator (not port_comm) to avoid MPI deadlocks when
+    // multiple ports have different port sub-communicators.
+    auto dense_op = std::make_unique<DenseBoundaryOperator>(
+        comm, n, bdr_tdof_list, n_bdr_global);
+
+    // Compute global gather counts on the full communicator.
+    int n_bdr_local = bdr_tdof_list.Size();
+    int nproc = Mpi::Size(comm);
+    std::vector<int> gcounts(nproc), gdispls(nproc);
+    MPI_Allgather(&n_bdr_local, 1, MPI_INT, gcounts.data(), 1, MPI_INT, comm);
+    gdispls[0] = 0;
+    for (int i = 1; i < nproc; i++)
+    {
+      gdispls[i] = gdispls[i - 1] + gcounts[i - 1];
+    }
+
+    // Gather boundary-restricted v vectors for each mode and accumulate outer products.
+    Eigen::MatrixXcd F_mat = Eigen::MatrixXcd::Zero(n_bdr_global, n_bdr_global);
+
+    for (const auto &mode : modes)
+    {
+      if (!HasFlag(mode.use, FloquetModeUse::Dtn))
+      {
+        continue;
+      }
+      auto g = ComputeDtNFullCoeff(mode);
+      if (g == 0.0)
+      {
+        continue;
+      }
+
+      // Extract local boundary entries of v.
+      Eigen::VectorXcd v_local(n_bdr_local);
+      mode.v.Real().HostRead();
+      mode.v.Imag().HostRead();
+      for (int i = 0; i < n_bdr_local; i++)
+      {
+        int dof = bdr_tdof_list[i];
+        v_local(i) = std::complex<double>(mode.v.Real()[dof], mode.v.Imag()[dof]);
+      }
+
+      // Allgatherv on GLOBAL comm (all ranks participate, non-port ranks send 0).
+      Eigen::VectorXcd v_global(n_bdr_global);
+      MPI_Allgatherv(v_local.data(), n_bdr_local, MPI_DOUBLE_COMPLEX, v_global.data(),
+                      gcounts.data(), gdispls.data(), MPI_DOUBLE_COMPLEX, comm);
+
+      // Accumulate: F += g × conj(v) × v^T (rank-1 outer product in boundary space).
+      F_mat.noalias() += g * v_global.conjugate() * v_global.transpose();
+    }
+
+    dense_op->SetDenseMatrix(F_mat);
+    Mpi::Print(" >> Dense boundary DtN: {:d}x{:d} matrix, {:d} modes\n",
+               n_bdr_global, n_bdr_global, static_cast<int>(modes.size()));
+    return dense_op;
+  }
+
   // Default: LowRankComplexOperator (rank-1 outer products).
   auto op = std::make_unique<LowRankComplexOperator>(comm, n);
   for (const auto &mode : modes)
