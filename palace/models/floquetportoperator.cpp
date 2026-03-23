@@ -281,41 +281,45 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
   }
 
   // Bloch wave vector: use the BZ-wrapped value from MaterialOperator so the port is
-  // consistent with the bulk ∇_F bilinear form.
-  const auto &kF_wrapped = mat_op.GetWaveVector();
+  // consistent with the bulk ∇_F bilinear form. The Floquet port must use the same BZ
+  // convention as the volume solve for correct Fourier extraction (v^T E).
+  const auto &kF_mat = mat_op.GetWaveVector();
   for (int i = 0; i < 3; i++)
   {
-    k_F(i) = (i < kF_wrapped.Size()) ? kF_wrapped(i) : 0.0;
+    k_F(i) = (i < kF_mat.Size()) ? kF_mat(i) : 0.0;
   }
 
-  // Compute reciprocal lattice.
+  // Compute reciprocal lattice (MUST be before BZ offset which uses b1, b2).
   ComputeReciprocalLattice(a1, a2, b1, b2);
-  Mpi::Print(" Floquet port reciprocal lattice:\n"
-             "   b1 = ({:.4e}, {:.4e}, {:.4e})\n"
-             "   b2 = ({:.4e}, {:.4e}, {:.4e})\n",
-             b1(0), b1(1), b1(2), b2(0), b2(1), b2(2));
 
-  // Compute the BZ wrapping offset using the BZ-wrapped k_F (not k₀).
+  // Store the unwrapped config kF (Lc units) for frequency-dependent BZ offset.
+  kF_config_Lc.SetSize(3);
+  for (int i = 0; i < 3; i++)
   {
-    mfem::Vector kF_unwrapped(3);
-    for (int i = 0; i < 3; i++)
-    {
-      kF_unwrapped(i) = periodic.wave_vector[i];
-    }
+    kF_config_Lc(i) =
+        (i < static_cast<int>(periodic.wave_vector.size())) ? periodic.wave_vector[i] : 0.0;
+  }
+
+  // Compute the BZ wrapping offset at the reference frequency.
+  {
     const auto &kF_bz = mat_op.GetWaveVectorBZ();
     mfem::Vector kF_wrapped(3);
     for (int i = 0; i < 3; i++)
     {
       kF_wrapped(i) = (i < kF_bz.Size()) ? kF_bz(i) : 0.0;
     }
-    bz_m = ComputeBZOffset(kF_unwrapped, kF_wrapped, b1, b1 * b1);
-    bz_n = ComputeBZOffset(kF_unwrapped, kF_wrapped, b2, b2 * b2);
+    bz_m = ComputeBZOffset(kF_config_Lc, kF_wrapped, b1, b1 * b1);
+    bz_n = ComputeBZOffset(kF_config_Lc, kF_wrapped, b2, b2 * b2);
     if (bz_m != 0 || bz_n != 0)
     {
-      Mpi::Print(" Floquet port: BZ wrapping active (shift = {:d}*b1 + {:d}*b2)\n", bz_m,
-                 bz_n);
+      Mpi::Print(" Floquet port: BZ wrapping at ref freq (shift = {:d}*b1 + {:d}*b2)\n",
+                 bz_m, bz_n);
     }
   }
+  Mpi::Print(" Floquet port reciprocal lattice:\n"
+             "   b1 = ({:.4e}, {:.4e}, {:.4e})\n"
+             "   b2 = ({:.4e}, {:.4e}, {:.4e})\n",
+             b1(0), b1(1), b1(2), b2(0), b2(1), b2(2));
 
   // Compute port normal and area using geodata utilities.
   {
@@ -473,8 +477,7 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
         // J is spaceDim × (Dim-1) = 3×2 for a surface element in 3D.
         // The max singular value of J gives the element's largest extent (h_max).
         auto *T = mesh_tmp.GetBdrElementTransformation(be);
-        T->SetIntPoint(
-            &mfem::Geometries.GetCenter(T->GetGeometryType()));
+        T->SetIntPoint(&mfem::Geometries.GetCenter(T->GetGeometryType()));
         const mfem::DenseMatrix &J = T->Jacobian();
         double h = J.CalcSingularvalue(0);  // largest singular value
         h_max_local = std::max(h_max_local, h);
@@ -868,8 +871,7 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
     if (bdr_marker[mesh.GetBdrAttribute(be) - 1])
     {
       auto *T = mesh.GetBdrElementTransformation(be);
-      T->SetIntPoint(
-          &mfem::Geometries.GetCenter(T->GetGeometryType()));
+      T->SetIntPoint(&mfem::Geometries.GetCenter(T->GetGeometryType()));
       double h = T->Jacobian().CalcSingularvalue(0);
       h_max_local = std::max(h_max_local, h);
       bdr_geom = mesh.GetBdrElementGeometry(be);
@@ -928,7 +930,7 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
     // Over-integration ensures accurate v vectors, which is critical for modes
     // with large DtN coefficients (near-cutoff evanescent TM: g ∝ ω²με/|γ|).
     double B_norm = mode.B_mn.Norml2();
-    int extra_order = 0; //static_cast<int>(std::ceil(B_norm * h_max / M_PI));
+    int extra_order = 0;  // static_cast<int>(std::ceil(B_norm * h_max / M_PI));
     const mfem::IntegrationRule *ir = nullptr;
     if (extra_order > 0 && bdr_geom != mfem::Geometry::INVALID)
     {
@@ -1097,31 +1099,11 @@ void FloquetPortData::Initialize(double omega)
   // fixed Bloch vector and kF_scale = 1.
   double kF_scale = mat_op.HasFloquetFrequencyScaling() ? omega : 1.0;
 
-  // Check BZ wrapping consistency: if k_F(ω) would require a different BZ offset than
-  // what was used at construction, the mode enumeration is wrong. Compute the effective
-  // k_F(ω) and check its BZ offset.
-  if (mat_op.HasFloquetFrequencyScaling())
-  {
-    mfem::Vector kF_eff(3);
-    for (int i = 0; i < 3; i++)
-    {
-      kF_eff(i) = kF_scale * k_F(i);
-    }
-    // Wrap to BZ and compute offset.
-    double b1_sq = b1 * b1, b2_sq = b2 * b2;
-    int new_bz_m = static_cast<int>(std::round((kF_eff * b1) / b1_sq));
-    int new_bz_n = static_cast<int>(std::round((kF_eff * b2) / b2_sq));
-    // The constructor computed bz_m/bz_n from the UNWRAPPED config k_F. Here we check
-    // the effective k_F(ω) — the offset should match after accounting for the reference.
-    // Compare with the BZ offset that was used at construction.
-    MFEM_VERIFY(new_bz_m == bz_m && new_bz_n == bz_n,
-                "Floquet port: k_F("
-                    << omega << ") requires BZ offset (" << new_bz_m << "," << new_bz_n
-                    << ") different from construction (" << bz_m << "," << bz_n
-                    << "). The frequency range may be too wide for the reference "
-                       "frequency. Consider using a reference frequency closer to the "
-                       "center of the sweep range.");
-  }
+  // BZ consistency: when frequency scaling is active, BZ wrapping is disabled in
+  // MaterialOperator (the volume and port both use the unwrapped kF). No zone
+  // transitions are needed. For fixed kF (no frequency scaling), BZ wrapping is
+  // handled at construction and stays fixed.
+  // (No runtime BZ check needed.)
 
   bool need_reassemble = false;
   for (auto &mode : modes)
@@ -1326,8 +1308,8 @@ std::unique_ptr<ComplexOperator> FloquetPortData::GetBoundaryOperator() const
     // gather/scatter — a completely independent code path for validation.
     // Use the GLOBAL communicator (not port_comm) to avoid MPI deadlocks when
     // multiple ports have different port sub-communicators.
-    auto dense_op = std::make_unique<DenseBoundaryOperator>(
-        comm, n, bdr_tdof_list, n_bdr_global);
+    auto dense_op =
+        std::make_unique<DenseBoundaryOperator>(comm, n, bdr_tdof_list, n_bdr_global);
 
     // Compute global gather counts on the full communicator.
     int n_bdr_local = bdr_tdof_list.Size();
@@ -1368,15 +1350,15 @@ std::unique_ptr<ComplexOperator> FloquetPortData::GetBoundaryOperator() const
       // Allgatherv on GLOBAL comm (all ranks participate, non-port ranks send 0).
       Eigen::VectorXcd v_global(n_bdr_global);
       MPI_Allgatherv(v_local.data(), n_bdr_local, MPI_DOUBLE_COMPLEX, v_global.data(),
-                      gcounts.data(), gdispls.data(), MPI_DOUBLE_COMPLEX, comm);
+                     gcounts.data(), gdispls.data(), MPI_DOUBLE_COMPLEX, comm);
 
       // Accumulate: F += g × conj(v) × v^T (rank-1 outer product in boundary space).
       F_mat.noalias() += g * v_global.conjugate() * v_global.transpose();
     }
 
     dense_op->SetDenseMatrix(F_mat);
-    Mpi::Print(" >> Dense boundary DtN: {:d}x{:d} matrix, {:d} modes\n",
-               n_bdr_global, n_bdr_global, static_cast<int>(modes.size()));
+    Mpi::Print(" >> Dense boundary DtN: {:d}x{:d} matrix, {:d} modes\n", n_bdr_global,
+               n_bdr_global, static_cast<int>(modes.size()));
     return dense_op;
   }
 

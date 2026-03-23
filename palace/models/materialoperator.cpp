@@ -416,14 +416,19 @@ void MaterialOperator::SetUpFloquetWaveVector(const IoData &iodata,
   mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
   bbmax -= bbmin;
 
-  // Wrap Floquet wave vector components to the first Brillouin zone [-π/L, π/L].
-  // Uses remainder (not fmod) to correctly handle negative values.
-  for (int i = 0; i < sdim; i++)
+  // BZ wrapping: wrap Floquet wave vector to the first Brillouin zone [-π/L, π/L].
+  // DISABLED when frequency scaling is active: the BZ offset is frequency-independent
+  // but kF scales with ω, creating a mismatch at frequencies away from the reference.
+  // Without wrapping, both volume and Floquet port use the unwrapped kF consistently.
+  if (floquet_omega_ref == 0.0)
   {
-    double half_bz = M_PI / bbmax[i];
-    if (wave_vector[i] > half_bz || wave_vector[i] < -half_bz)
+    for (int i = 0; i < sdim; i++)
     {
-      wave_vector[i] = std::remainder(wave_vector[i], 2.0 * half_bz);
+      double half_bz = M_PI / bbmax[i];
+      if (wave_vector[i] > half_bz || wave_vector[i] < -half_bz)
+      {
+        wave_vector[i] = std::remainder(wave_vector[i], 2.0 * half_bz);
+      }
     }
   }
 

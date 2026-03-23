@@ -58,7 +58,8 @@ struct FloquetMode
   std::unique_ptr<mfem::HypreParMatrix> A_mass;
 };
 
-// Low-rank complex operator: F*x = sum_k g_k (v_k^H x) v_k.
+// Low-rank complex operator: F*x = sum_k g_k conj(v_k) (v_k^T x).
+// Bilinear convention: v^T x (no conjugation in inner product), conj(v) in outer vector.
 // Used for the Floquet port boundary matrix.
 class LowRankComplexOperator : public ComplexOperator
 {
@@ -383,7 +384,12 @@ private:
 
   // BZ wrapping offset: when MaterialOperator wraps k_F by subtracting G = bz_m*b1+bz_n*b2,
   // the Fourier projection kernel must be shifted accordingly. Mode labels remain physical.
+  // The offset is frequency-dependent when FloquetReferenceFrequency is used.
   int bz_m = 0, bz_n = 0;
+
+  // Unwrapped config k_F (in Lc units, before BZ wrapping and frequency scaling).
+  // Stored for computing frequency-dependent BZ offsets.
+  mfem::Vector kF_config_Lc;
 
   // Incident polarization coefficients: E_inc = α_TE ê_TE + α_TM ê_TM.
   // TE: (1,0). TM: (0,1). RHC: (1,j)/√2. LHC: (1,-j)/√2.
