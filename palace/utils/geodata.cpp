@@ -1646,10 +1646,11 @@ std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
     }
     mfem::GridFunction *nodes3d = serial_mesh->GetNodes();
     const int sdim = serial_mesh->SpaceDimension();
+    std::vector<std::array<double, 2>> projected;
     if (nodes3d)
     {
       const int npts = nodes3d->Size() / sdim;
-      std::vector<std::array<double, 2>> projected(npts);
+      projected.resize(npts);
       for (int i = 0; i < npts; i++)
       {
         double coords[3] = {0.0, 0.0, 0.0};
@@ -1666,13 +1667,29 @@ std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
         projected[i][0] = dx * e1(0) + dy * e1(1) + dz * e1(2);
         projected[i][1] = dx * e2(0) + dy * e2(1) + dz * e2(2);
       }
-      serial_mesh->SetCurvature(mesh_order, false, 2, mfem::Ordering::byNODES);
-      mfem::GridFunction *nodes2d = serial_mesh->GetNodes();
-      for (int i = 0; i < npts; i++)
+    }
+    else
+    {
+      // Linear mesh without nodes GridFunction: use vertex coordinates directly.
+      const int nv = serial_mesh->GetNV();
+      projected.resize(nv);
+      for (int i = 0; i < nv; i++)
       {
-        (*nodes2d)(0 * npts + i) = projected[i][0];
-        (*nodes2d)(1 * npts + i) = projected[i][1];
+        const double *v = serial_mesh->GetVertex(i);
+        double dx = v[0] - centroid(0);
+        double dy = v[1] - centroid(1);
+        double dz = v[2] - centroid(2);
+        projected[i][0] = dx * e1(0) + dy * e1(1) + dz * e1(2);
+        projected[i][1] = dx * e2(0) + dy * e2(1) + dz * e2(2);
       }
+    }
+    serial_mesh->SetCurvature(mesh_order, false, 2, mfem::Ordering::byNODES);
+    mfem::GridFunction *nodes2d = serial_mesh->GetNodes();
+    const int npts_2d = static_cast<int>(projected.size());
+    for (int i = 0; i < npts_2d; i++)
+    {
+      (*nodes2d)(0 * npts_2d + i) = projected[i][0];
+      (*nodes2d)(1 * npts_2d + i) = projected[i][1];
     }
   }
 
