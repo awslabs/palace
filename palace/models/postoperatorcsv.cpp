@@ -1619,7 +1619,7 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const config::ProblemData &problem,
   }
   else if (solver_t == ProblemType::BOUNDARYMODE)
   {
-    nr_expected_measurement_rows = iodata.solver.boundary_mode.n;
+    nr_expected_measurement_rows = solver.boundary_mode.n;
   }
   else if (solver_t == ProblemType::ELECTROSTATIC)
   {
