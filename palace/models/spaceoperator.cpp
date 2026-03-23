@@ -76,28 +76,6 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
                                                                          l2_curl_fecs));
   }
 
-  // Check Excitations.
-  if (problem_type == ProblemType::DRIVEN)
-  {
-    MFEM_VERIFY(!port_excitation_helper.Empty(),
-                "Driven problems must specify at least one excitation!");
-  }
-  else if (problem_type == ProblemType::EIGENMODE)
-  {
-    MFEM_VERIFY(port_excitation_helper.Empty(),
-                "Eigenmode problems must not specify any excitation!");
-  }
-  else if (problem_type == ProblemType::TRANSIENT)
-  {
-    MFEM_VERIFY(
-        port_excitation_helper.Size() == 1,
-        "Transient problems currently only support a single excitation per simulation!");
-  }
-  else
-  {
-    MFEM_ABORT("Internal Error: Solver type incompatible with SpaceOperator.");
-  }
-
   // Finalize setup.
   CheckBoundaryProperties();
 
@@ -121,6 +99,29 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
     wave_port_op = WavePortOperator(iodata, mat_op, GetNDSpace(), GetH1Space());
     port_excitation_helper =
         PortExcitations(lumped_port_op, wave_port_op, surf_j_op, current_dipole_op);
+  }
+
+  // Validate excitations after wave port setup is complete.
+  CheckExcitations(iodata.problem.type);
+}
+
+void SpaceOperator::CheckExcitations(ProblemType problem_type) const
+{
+  if (problem_type == ProblemType::DRIVEN)
+  {
+    MFEM_VERIFY(!port_excitation_helper.Empty(),
+                "Driven problems must specify at least one excitation!");
+  }
+  else if (problem_type == ProblemType::EIGENMODE)
+  {
+    MFEM_VERIFY(port_excitation_helper.Empty(),
+                "Eigenmode problems must not specify any excitation!");
+  }
+  else if (problem_type == ProblemType::TRANSIENT)
+  {
+    MFEM_VERIFY(
+        port_excitation_helper.Size() == 1,
+        "Transient problems currently only support a single excitation per simulation!");
   }
 }
 

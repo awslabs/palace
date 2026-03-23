@@ -82,6 +82,7 @@ private:
   mfem::Array<int> SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                                            const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
+  void CheckExcitations(ProblemType problem_type) const;
 
   // Helper functions for building the bilinear forms corresponding to the discretized
   // operators in Maxwell's equations.

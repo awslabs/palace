@@ -124,8 +124,8 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
           else if constexpr (solver_t == ProblemType::BOUNDARYMODE)
           {
             // Mode analysis: E on ND space, B (Hz) on L2 curl space.
-            return DomainPostOperator(iodata, fem_op_.GetMaterialOp(), fem_op_.GetNDSpace(),
-                                      fem_op_.GetCurlSpace());
+            return DomainPostOperator(domains.postpro, fem_op_.GetMaterialOp(),
+                                      fem_op_.GetNDSpace(), fem_op_.GetCurlSpace());
           }
           else
           {
@@ -202,13 +202,13 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
   }
   else if (solver_t == ProblemType::BOUNDARYMODE)
   {
-    output_n_post = iodata.solver.boundary_mode.n_post;
+    output_n_post = solver.boundary_mode.n_post;
   }
 
   // Mode analysis impedance postprocessing setup.
   if constexpr (solver_t == ProblemType::BOUNDARYMODE)
   {
-    const auto &impedance_data = iodata.boundaries.postpro.impedance;
+    const auto &impedance_data = boundaries.postpro.impedance;
     if (!impedance_data.empty())
     {
       has_impedance_postpro = true;
@@ -253,7 +253,7 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
     }
 
     // Mode analysis voltage-only postprocessing setup.
-    const auto &voltage_data = iodata.boundaries.postpro.voltage;
+    const auto &voltage_data = boundaries.postpro.voltage;
     if (!voltage_data.empty())
     {
       has_voltage_postpro = true;
