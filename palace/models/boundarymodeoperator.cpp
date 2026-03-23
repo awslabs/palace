@@ -615,7 +615,7 @@ void BoundaryModeOperator::SetUpLinearSolver(MPI_Comm comm)
   gmres->SetInitialGuess(false);
   gmres->SetRelTol(config.linear->tol);
   gmres->SetMaxIter(config.linear->max_it);
-  gmres->SetRestartDim(config.linear->max_it);
+  gmres->SetRestartDim(config.linear->max_size);
   gmres->EnableTimer();
 
   // Select sparse direct solver type. Multigrid (AMS, BoomerAMG) is not applicable for

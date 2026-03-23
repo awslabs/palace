@@ -313,9 +313,12 @@ void MaterialOperator::SetUpMaterialProperties(
       mfem::DenseMatrix mat_eps_3d = internal::mat::ToDenseMatrix(data.epsilon_r);
       mat_epsilon_scalar(count)(0, 0) = mat_eps_3d(2, 2);
 
-      // Scalar imaginary permittivity: -eps_zz * tandelta_zz for out-of-plane component.
+      // Scalar imaginary permittivity: -(eps * tandelta)_zz for out-of-plane component.
+      // Use full matrix product to handle anisotropic materials correctly.
       mfem::DenseMatrix mat_td_3d = internal::mat::ToDenseMatrix(data.tandelta);
-      mat_epsilon_imag_scalar(count)(0, 0) = -mat_eps_3d(2, 2) * mat_td_3d(2, 2);
+      mfem::DenseMatrix epstd_3d(3, 3);
+      Mult(mat_eps_3d, mat_td_3d, epstd_3d);
+      mat_epsilon_imag_scalar(count)(0, 0) = -epstd_3d(2, 2);
     }
 
     // Material permittivity: Re{ε} = ε, Im{ε} = -ε * tan(δ)

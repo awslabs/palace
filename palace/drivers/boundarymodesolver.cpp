@@ -180,17 +180,13 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // 1, each hierarchy has a single level (no multigrid — falls back to sparse direct).
   // Wrap the solve mesh in a single-element vector for
   // ConstructFiniteElementSpaceHierarchy. For the submesh case, temporarily move ownership;
-  // for the non-submesh case, use a non-owning raw pointer wrapper (released after
-  // hierarchy construction).
+  // for the non-submesh case, use the caller's mesh vector directly.
   std::vector<std::unique_ptr<Mesh>> solve_mesh_vec;
   if (use_submesh)
   {
     solve_mesh_vec.push_back(std::move(submesh_holder));
   }
-  else
-  {
-    solve_mesh_vec.emplace_back(solve_mesh);  // Non-owning
-  }
+  const auto &fespace_mesh = use_submesh ? solve_mesh_vec : mesh;
 
   const auto &mg = iodata.solver.linear;
   auto nd_fecs = fem::ConstructFECollections<mfem::ND_FECollection>(
@@ -202,9 +198,9 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   std::vector<mfem::Array<int>> nd_dbc_tdof_lists, h1_dbc_tdof_lists;
   auto nd_fespaces = fem::ConstructFiniteElementSpaceHierarchy(
-      mg.mg_max_levels, solve_mesh_vec, nd_fecs, &dbc_bcs, &nd_dbc_tdof_lists);
+      mg.mg_max_levels, fespace_mesh, nd_fecs, &dbc_bcs, &nd_dbc_tdof_lists);
   auto h1_fespaces = fem::ConstructFiniteElementSpaceHierarchy(
-      mg.mg_max_levels, solve_mesh_vec, h1_fecs, &dbc_bcs, &h1_dbc_tdof_lists);
+      mg.mg_max_levels, fespace_mesh, h1_fecs, &dbc_bcs, &h1_dbc_tdof_lists);
 
   // H1 auxiliary space hierarchy for Hiptmair distributive relaxation in the ND block.
   auto h1_aux_fecs = fem::ConstructFECollections<mfem::H1_FECollection>(
@@ -212,16 +208,12 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       false);
   std::vector<mfem::Array<int>> h1_aux_dbc_tdof_lists;
   auto h1_aux_fespaces = fem::ConstructFiniteElementSpaceHierarchy(
-      mg.mg_max_levels, solve_mesh_vec, h1_aux_fecs, &dbc_bcs, &h1_aux_dbc_tdof_lists);
+      mg.mg_max_levels, fespace_mesh, h1_aux_fecs, &dbc_bcs, &h1_aux_dbc_tdof_lists);
 
-  // Restore mesh ownership.
+  // Restore submesh ownership.
   if (use_submesh)
   {
     submesh_holder = std::move(solve_mesh_vec[0]);
-  }
-  else
-  {
-    solve_mesh_vec[0].release();  // Release the non-owning wrapper.
   }
 
   // Get finest-level spaces (used by the rest of the code).
