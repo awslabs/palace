@@ -953,33 +953,40 @@ void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
   const auto &data = GetLumpedPortOp().GetPort(port_idx);
 
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
+  mfem::Array<int> attr_list;
   for (const auto &elem : data.elems)
   {
     const double Rs = 1.0 * data.GetToSquare(*elem);
     const double Einc = std::sqrt(
         Rs / (elem->GetGeometryWidth() * elem->GetGeometryLength() * data.elems.size()));
     fb.AddCoefficient(elem->GetModeCoefficient(Einc));
+    attr_list.Append(elem->GetAttrList());
   }
 
   Et_primary.SetSize(GetNDSpace().GetTrueVSize());
   Et_primary.UseDevice(true);
   Et_primary = 0.0;
 
-  // Broken code that should work using ParGridFunction::ProjectBdrCoefficientTangent.
-  // See ProjectBdrCoefficientViaMassSolve comment above.
+  if constexpr (true)
+  {
+    // Use MFEM's ProjectBdrCoefficientTangent directly. Requires the face DOF
+    // orientation patch for Nedelec elements at order >= 2 in parallel.
+    const auto &mesh = GetNDSpace().GetParMesh();
+    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> attr_marker;
+    mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
 
-  //  mfem::Array<int> attr_marker;
-  //
-  // const auto &mesh = GetNDSpace().GetParMesh();
-  // int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  // mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
-  //
-  // GridFunction rhs(GetNDSpace());
-  // rhs = 0.0;
-  // rhs.Real().ProjectBdrCoefficientTangent(fb, attr_marker);
-
-  ProjectBdrCoefficientViaMassSolve(fb, data, mat_op, GetNDSpace(), GetComm(),
-                                    Et_primary.Real());
+    GridFunction rhs(GetNDSpace());
+    rhs = 0.0;
+    rhs.Real().ProjectBdrCoefficientTangent(fb, attr_marker);
+    GetNDSpace().GetRestrictionMatrix()->Mult(rhs.Real(), Et_primary.Real());
+  }
+  else
+  {
+    // Workaround: project via CG solve of boundary mass matrix.
+    ProjectBdrCoefficientViaMassSolve(fb, data, mat_op, GetNDSpace(), GetComm(),
+                                      Et_primary.Real());
+  }
 
   if (zero_metal)
   {
@@ -994,21 +1001,40 @@ void SpaceOperator::GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
   const auto &data = lumped_port_op.GetPort(port_idx);
 
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
+  mfem::Array<int> attr_list;
   for (const auto &elem : data.elems)
   {
     const double Rs = 1.0 * data.GetToSquare(*elem);
     const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
                                         elem->GetGeometryLength() * data.elems.size());
     fb.AddCoefficient(elem->GetModeCoefficient(Hinc));
+    attr_list.Append(elem->GetAttrList());
   }
 
   Htcn_primary.SetSize(GetNDSpace().GetTrueVSize());
   Htcn_primary.UseDevice(true);
   Htcn_primary = 0.0;
 
-  // See ParGridFunction::ProjectBdrCoefficientTangent issue above.
-  ProjectBdrCoefficientViaMassSolve(fb, data, mat_op, GetNDSpace(), GetComm(),
-                                    Htcn_primary.Real());
+  if constexpr (true)
+  {
+    // Use MFEM's ProjectBdrCoefficientTangent directly. Requires the face DOF
+    // orientation patch for Nedelec elements at order >= 2 in parallel.
+    const auto &mesh = GetNDSpace().GetParMesh();
+    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> attr_marker;
+    mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
+
+    GridFunction rhs(GetNDSpace());
+    rhs = 0.0;
+    rhs.Real().ProjectBdrCoefficientTangent(fb, attr_marker);
+    GetNDSpace().GetRestrictionMatrix()->Mult(rhs.Real(), Htcn_primary.Real());
+  }
+  else
+  {
+    // Workaround: project via CG solve of boundary mass matrix.
+    ProjectBdrCoefficientViaMassSolve(fb, data, mat_op, GetNDSpace(), GetComm(),
+                                      Htcn_primary.Real());
+  }
 
   if (zero_metal)
   {
