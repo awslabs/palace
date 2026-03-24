@@ -301,24 +301,26 @@ void MaterialOperator::SetUpMaterialProperties(
     mfem::DenseMatrixInverse(mat_mu, true).GetInverseMatrix(mat_muinv(count));
     if (sdim == 2)
     {
-      // In 2D, curl-curl uses a scalar coefficient (curl is scalar). For TM mode,
-      // the curl-curl operator needs the z-z (out-of-plane) component of the inverse
-      // permeability, which is the (2,2) entry of the full 3x3 inverse.
+      // In 2D, compute out-of-plane scalar components using n^T M_3x3 n projection.
+      // For coordinate-aligned meshes n = [0,0,1], giving the (2,2) entry. Using
+      // ProjectNormal makes this correct for any normal direction and consistent with
+      // the RotateMaterialTensors path used for submesh-derived 2D meshes.
+      const mfem::Vector normal({0.0, 0.0, 1.0});
+      auto ProjectNormal = [&normal](const mfem::DenseMatrix &M3) -> double
+      { return M3.InnerProduct(normal, normal); };
+
       mfem::DenseMatrix mat_mu_3d = internal::mat::ToDenseMatrix(data.mu_r);
       mfem::DenseMatrix mat_muinv_3d(3, 3);
       mfem::DenseMatrixInverse(mat_mu_3d, true).GetInverseMatrix(mat_muinv_3d);
-      mat_muinv_scalar(count)(0, 0) = mat_muinv_3d(2, 2);
+      mat_muinv_scalar(count)(0, 0) = ProjectNormal(mat_muinv_3d);
 
-      // Similarly, store the z-z permittivity for the normal component in mode analysis.
       mfem::DenseMatrix mat_eps_3d = internal::mat::ToDenseMatrix(data.epsilon_r);
-      mat_epsilon_scalar(count)(0, 0) = mat_eps_3d(2, 2);
+      mat_epsilon_scalar(count)(0, 0) = ProjectNormal(mat_eps_3d);
 
-      // Scalar imaginary permittivity: -(eps * tandelta)_zz for out-of-plane component.
-      // Use full matrix product to handle anisotropic materials correctly.
       mfem::DenseMatrix mat_td_3d = internal::mat::ToDenseMatrix(data.tandelta);
       mfem::DenseMatrix epstd_3d(3, 3);
       Mult(mat_eps_3d, mat_td_3d, epstd_3d);
-      mat_epsilon_imag_scalar(count)(0, 0) = -epstd_3d(2, 2);
+      mat_epsilon_imag_scalar(count)(0, 0) = -ProjectNormal(epstd_3d);
     }
 
     // Material permittivity: Re{ε} = ε, Im{ε} = -ε * tan(δ)
@@ -365,7 +367,7 @@ void MaterialOperator::SetUpMaterialProperties(
       mat_invLondon(count) *= invL2;
       if (sdim == 2)
       {
-        // Scalar out-of-plane London depth: λ⁻² * μ⁻¹_zz (from 3x3 inverse).
+        // Scalar out-of-plane London depth: λ⁻² * n^T μ⁻¹ n.
         mat_invLondon_scalar(count)(0, 0) = mat_muinv_scalar(count)(0, 0) * invL2;
       }
       if (mat_invLondon(count).MaxMaxNorm() > 0.0)
