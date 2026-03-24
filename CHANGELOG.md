@@ -30,6 +30,12 @@ The format of this changelog is based on
     673](https://github.com/awslabs/palace/pull/673)
   - Fixed port excitation parsing to correctly handle signed integer values
     [PR 635](https://github.com/awslabs/palace/pull/635).
+  - Replaced boundary mass matrix CG solve workaround for lumped port excitation
+    projection with direct interpolation via MFEM's
+    `ProjectBdrCoefficientTangent`. An MFEM patch fixes the underlying face DOF
+    orientation bug for Nedelec elements at order >= 2 in parallel, removing the
+    need for the expensive mass solve
+    [PR 684](https://github.com/awslabs/palace/pull/684).
 
 ## [0.16.0] - 2026-03-05
 
