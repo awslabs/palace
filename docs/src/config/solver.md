@@ -550,9 +550,8 @@ and h-multigrid coarsening as available to construct the multigrid hierarchy.
 The solver specified by `"Type"` is used on the coarsest level. Relaxation on
 the fine levels is performed with Chebyshev smoothing. For `"BoundaryMode"`
 problems, the default is `1` (multigrid disabled); set to a value greater than
-`1` to enable block-diagonal p-multigrid preconditioning for the coupled Nedelec
-
-  - H1 system.
+`1` to enable block-diagonal p-multigrid preconditioning for the coupled Nedelec–H1
+system.
 
 `"MGCoarsenType" ["Logarithmic"]` :  Coarsening to create p-multigrid levels.
 

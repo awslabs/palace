@@ -625,7 +625,7 @@ WavePortData::WavePortData(const json &port)
       voltage_path.push_back(pt.get<std::vector<double>>());
     }
   }
-  integration_order = port.value("IntegrationOrder", integration_order);
+  n_samples = port.value("NSamples", n_samples);
 }
 
 SurfaceCurrentData::SurfaceCurrentData(const json &source)
@@ -695,7 +695,7 @@ ModeImpedanceData::ModeImpedanceData(const json &imp)
       current_path.push_back(pt.get<std::vector<double>>());
     }
   }
-  integration_order = imp.value("IntegrationOrder", integration_order);
+  n_samples = imp.value("NSamples", n_samples);
   MFEM_VERIFY(!voltage_attributes.empty() || voltage_path.size() >= 2,
               "Impedance boundary requires either \"VoltageAttributes\" or "
               "\"VoltagePath\" in the configuration file!");
@@ -715,7 +715,7 @@ ModeVoltageData::ModeVoltageData(const json &volt)
       voltage_path.push_back(pt.get<std::vector<double>>());
     }
   }
-  integration_order = volt.value("IntegrationOrder", integration_order);
+  n_samples = volt.value("NSamples", n_samples);
   MFEM_VERIFY(!voltage_attributes.empty() || voltage_path.size() >= 2,
               "Voltage boundary requires either \"VoltageAttributes\" or "
               "\"VoltagePath\" in the configuration file!");

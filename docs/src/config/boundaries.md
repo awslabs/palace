@@ -378,7 +378,7 @@ corresponding coordinate system.
         "MaxSize": <int>,
         "Verbose": <int>,
         "VoltagePath": [[<float array>], ...],
-        "IntegrationOrder": <int>
+        "NSamples": <int>
     },
     ...
 ]
@@ -426,8 +426,10 @@ voltage line integral on the port face. Each element is a floating point array o
 equal to the spatial dimension. When specified, enables voltage and characteristic impedance
 postprocessing for the wave port. Specified in mesh length units.
 
-`"IntegrationOrder" [100]` :  Quadrature order for the coordinate-based voltage line
-integral. Higher values give more integration points and better accuracy.
+`"NSamples" [100]` :  Number of uniformly spaced sample points for the
+coordinate-based voltage line integral (GSLIB interpolation). This is not Gauss quadrature
+— it uses uniform sampling with trapezoidal-rule weighting. Higher values give better
+accuracy but this is typically not the bottleneck.
 
 ## `boundaries["WavePortPEC"]`
 
@@ -705,7 +707,7 @@ be the interface layer permittivity for the specific `"Type"` of interface speci
             "CurrentAttributes": [<int array>],
             "VoltagePath": [[<float array>], ...],
             "CurrentPath": [[<float array>], ...],
-            "IntegrationOrder": <int>
+            "NSamples": <int>
         },
         ...
     ]
@@ -722,20 +724,23 @@ integration path across the gap between ground and trace. Either `"VoltageAttrib
 `"VoltagePath"` must be specified.
 
 `"CurrentAttributes" [None]` :  Integer array of mesh boundary attributes for the current
-integration loop around the trace.
+integration loop around the trace. Either `"CurrentAttributes"` or `"CurrentPath"` may be
+specified for the V/I impedance calculation.
 
 `"VoltagePath" [None]` :  Array of coordinate points defining an open path for computing the
 voltage line integral ``V = \int \mathbf{E} \cdot d\mathbf{l}``. Each element is a floating
 point array of length equal to the spatial dimension. At least two points are required.
-Specified in mesh length units.
+Specified in mesh length units. Uses uniformly weighted GSLIB interpolation, which is less
+accurate than the attribute-based method but does not require modifying the mesh to include
+integration boundaries.
 
 `"CurrentPath" [None]` :  Array of coordinate points defining a closed loop for computing
 the current line integral ``I = \oint \mathbf{H}_t \cdot d\mathbf{l}``. Each element is a
 floating point array of length equal to the spatial dimension. The last point connects back
 to the first. Specified in mesh length units.
 
-`"IntegrationOrder" [100]` :  Quadrature order for the coordinate-based line integrals.
-Higher values give more integration points and better accuracy.
+`"NSamples" [100]` :  Number of uniformly spaced sample points for the
+coordinate-based line integrals (GSLIB interpolation).
 
 ## `boundaries["Postprocessing"]["Voltage"]`
 
@@ -748,7 +753,7 @@ Higher values give more integration points and better accuracy.
             "Index": <int>,
             "VoltageAttributes": [<int array>],
             "VoltagePath": [[<float array>], ...],
-            "IntegrationOrder": <int>
+            "NSamples": <int>
         },
         ...
     ]
@@ -768,7 +773,8 @@ voltage line integral ``V = \int \mathbf{E} \cdot d\mathbf{l}``. Each element is
 point array of length equal to the spatial dimension. At least two points are required.
 Specified in mesh length units.
 
-`"IntegrationOrder" [100]` :  Quadrature order for the coordinate-based line integral.
+`"NSamples" [100]` :  Number of uniformly spaced sample points for the
+coordinate-based line integral (GSLIB interpolation).
 Higher values give more integration points and better accuracy.
 
 ## `boundaries["Postprocessing"]["FarField"]`

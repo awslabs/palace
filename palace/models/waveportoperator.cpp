@@ -589,7 +589,7 @@ WavePortData::WavePortData(const config::WavePortData &data, const IoData &iodat
       }
       voltage_path.push_back(std::move(p));
     }
-    voltage_integration_order = data.integration_order;
+    voltage_n_samples = data.n_samples;
   }
 }
 
@@ -805,9 +805,9 @@ std::complex<double> WavePortData::GetVoltage(GridFunction &E) const
   for (std::size_t k = 0; k + 1 < voltage_path.size(); k++)
   {
     V.real(V.real() + fem::ComputeLineIntegral(voltage_path[k], voltage_path[k + 1],
-                                               E.Real(), voltage_integration_order));
+                                               E.Real(), voltage_n_samples));
     V.imag(V.imag() + fem::ComputeLineIntegral(voltage_path[k], voltage_path[k + 1],
-                                               E.Imag(), voltage_integration_order));
+                                               E.Imag(), voltage_n_samples));
   }
   return V;
 }

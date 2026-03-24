@@ -93,7 +93,7 @@ private:
 
   // Voltage path for line integral (optional, for impedance postprocessing).
   std::vector<mfem::Vector> voltage_path;
-  int voltage_integration_order = 100;
+  int voltage_n_samples = 100;
   bool has_voltage_coords = false;
 
 public:

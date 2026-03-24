@@ -239,7 +239,7 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
       {
         cfg.current_marker = mesh::AttrToMarker(bdr_attr_max, imp.current_attributes);
       }
-      cfg.integration_order = imp.integration_order;
+      cfg.n_samples = imp.n_samples;
       if (imp.voltage_path.size() >= 2)
       {
         cfg.has_voltage_coordinates = true;
@@ -260,7 +260,7 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
       {
         cfg.voltage_marker = mesh::AttrToMarker(bdr_attr_max, vol.voltage_attributes);
       }
-      cfg.integration_order = vol.integration_order;
+      cfg.n_samples = vol.n_samples;
       if (vol.voltage_path.size() >= 2)
       {
         cfg.has_coordinates = true;
@@ -1792,7 +1792,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   for (const auto &[idx, cfg] : impedance_postpro)
   {
     auto V = ComputeVoltage(cfg.voltage_path, cfg.has_voltage_coordinates,
-                            cfg.voltage_marker, cfg.integration_order, *E);
+                            cfg.voltage_marker, cfg.n_samples, *E);
     auto &result = measurement_cache.mode_data.impedance[idx];
 
     // Power-voltage impedance: Z_PV = |V|^2 / (2P).
@@ -1807,7 +1807,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
 
     // V/I impedance: Z_VI = |V| / |I|.
     auto I = ComputeCurrent(cfg.current_path, cfg.has_current_path, cfg.current_marker,
-                            cfg.integration_order, *Bt_inplane);
+                            cfg.n_samples, *Bt_inplane);
     if (std::abs(I) > 1e-30)
     {
       double Z_VI_nondim = std::abs(V) / std::abs(I);
@@ -1822,7 +1822,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   for (const auto &[idx, cfg] : voltage_postpro)
   {
     auto V = ComputeVoltage(cfg.voltage_path, cfg.has_coordinates, cfg.voltage_marker,
-                            cfg.integration_order, *E);
+                            cfg.n_samples, *E);
     measurement_cache.mode_data.voltage[idx] = {V};
   }
 
