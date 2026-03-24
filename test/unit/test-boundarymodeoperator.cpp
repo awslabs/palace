@@ -11,11 +11,11 @@
 
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
-#include "models/boundarymodeoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
+#include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -29,7 +29,7 @@ namespace
 {
 
 // Solve for modes of a 2D rectangular waveguide cross-section using
-// BoundaryModeOperator. Returns eigenvalues as complex kn values.
+// ModeEigenSolver. Returns eigenvalues as complex kn values.
 // MakeCartesian2D boundary attributes: bottom=1, right=2, top=3, left=4.
 struct ModeResult
 {
@@ -103,36 +103,10 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   Mpi::GlobalMin(1, &c_min, nd_fespace.GetComm());
   double kn_target = omega / c_min * std::sqrt(1.1);
 
-  BoundaryModeOperatorConfig config;
-  config.attr_to_material = &mat_op.GetAttributeToMaterial();
-  config.inv_permeability = &mat_op.GetInvPermeability();
-  config.curlcurl_inv_permeability = &mat_op.GetCurlCurlInvPermeability();
-  config.permittivity_real = &mat_op.GetPermittivityReal();
-  config.permittivity_scalar = &mat_op.GetPermittivityScalar();
-  config.normal = nullptr;
-  config.permittivity_imag =
-      mat_op.HasLossTangent() ? &mat_op.GetPermittivityImag() : nullptr;
-  config.permittivity_imag_scalar =
-      mat_op.HasLossTangent() ? &mat_op.GetPermittivityImagScalar() : nullptr;
-  config.has_loss_tangent = mat_op.HasLossTangent();
-  config.conductivity = mat_op.HasConductivity() ? &mat_op.GetConductivity() : nullptr;
-  config.has_conductivity = mat_op.HasConductivity();
-  config.inv_london_depth = mat_op.HasLondonDepth() ? &mat_op.GetInvLondonDepth() : nullptr;
-  config.has_london_depth = mat_op.HasLondonDepth();
-  config.mat_op = &mat_op;
-  config.surf_z_op = &surf_z_op;
-  config.farfield_op = &farfield_op;
-  config.surf_sigma_op = &surf_sigma_op;
-  config.num_modes = num_modes;
-  config.num_vec = -1;
-  config.eig_tol = 1.0e-8;
-  config.which_eig = EigenvalueSolver::WhichType::LARGEST_REAL;
-  config.linear = &iodata.solver.linear;
-  config.eigen_backend = iodata.solver.boundary_mode.type;
-  config.verbose = 0;
-
-  BoundaryModeOperator mode_solver(config, nd_fespace, h1_fespace, dbc_tdof_list,
-                                   nd_fespace.GetComm());
+  ModeEigenSolver mode_solver(
+      mat_op, nullptr, &surf_z_op, &farfield_op, &surf_sigma_op, nd_fespace, h1_fespace,
+      dbc_tdof_list, num_modes, -1, 1.0e-8, EigenvalueSolver::WhichType::LARGEST_REAL,
+      iodata.solver.linear, iodata.solver.boundary_mode.type, 0, nd_fespace.GetComm());
 
   double sigma = -kn_target * kn_target;
   auto result = mode_solver.Solve(omega, sigma);
@@ -149,7 +123,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
 
 }  // namespace
 
-TEST_CASE("BoundaryModeOperator PEC", "[boundarymodeoperator][Serial]")
+TEST_CASE("ModeEigenSolver PEC", "[boundarymodeoperator][Serial]")
 {
   // Rectangular waveguide: 1000×500 μm (L0=1e-6), ε=4, f=500 GHz.
   // Analytical kn for TE10 mode:
@@ -179,7 +153,7 @@ TEST_CASE("BoundaryModeOperator PEC", "[boundarymodeoperator][Serial]")
   CHECK_THAT(kn_real, WithinRel(0.02071, 0.05));
 }
 
-TEST_CASE("BoundaryModeOperator Impedance shifts kn", "[boundarymodeoperator][Serial]")
+TEST_CASE("ModeEigenSolver Impedance shifts kn", "[boundarymodeoperator][Serial]")
 {
   auto pec_result = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 3, [](IoData &) {});
 
@@ -201,7 +175,7 @@ TEST_CASE("BoundaryModeOperator Impedance shifts kn", "[boundarymodeoperator][Se
   CHECK(imp_result.kn[0].real() > pec_result.kn[0].real());
 }
 
-TEST_CASE("BoundaryModeOperator Conductivity adds loss", "[boundarymodeoperator][Serial]")
+TEST_CASE("ModeEigenSolver Conductivity adds loss", "[boundarymodeoperator][Serial]")
 {
   auto pec_result = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 3, [](IoData &) {});
 

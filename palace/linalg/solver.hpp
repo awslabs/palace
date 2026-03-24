@@ -120,7 +120,7 @@ public:
 
   // Configure whether or not to use the exact complex-valued system matrix
   // or the real-valued approximation.
-  void SetComplexMatrix(bool complex) { complex_matrix = complex; }
+  void SetComplexMatrix(bool use_complex) { complex_matrix = use_complex; }
 
   void SetInitialGuess(bool guess) override
   {

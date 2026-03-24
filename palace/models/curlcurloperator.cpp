@@ -45,8 +45,8 @@ CurlCurlOperator::CurlCurlOperator(const config::BoundaryData &boundaries,
   if (mesh.back()->Dimension() == 2)
   {
     l2_curl_fec = std::make_unique<mfem::L2_FECollection>(
-        solver.order - 1, mesh.back()->Dimension(),
-        mfem::BasisType::GaussLegendre, mfem::FiniteElement::INTEGRAL);
+        solver.order - 1, mesh.back()->Dimension(), mfem::BasisType::GaussLegendre,
+        mfem::FiniteElement::INTEGRAL);
     l2_curl_fespace = std::make_unique<FiniteElementSpace>(*mesh.back(), l2_curl_fec.get());
   }
 

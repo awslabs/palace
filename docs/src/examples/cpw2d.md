@@ -100,6 +100,16 @@ impedance boundary condition that models the kinetic inductance of a superconduc
 The surface inductance ``L_s`` adds an inductive contribution to the boundary condition,
 which increases the effective index of the guided modes compared to the ideal PEC case.
 
+The figure below shows the ``E_x`` component of the first propagating mode for the thick
+metal configuration, zoomed into the trace and gap region. The field is concentrated in the
+gaps between the center conductor and ground planes, with singularities at the metal corners.
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/cpw2d-1.png" width="70%" />
+</p><br/>
+```
+
 ## Results
 
 The mode analysis solver writes propagation constants and effective indices to `mode-kn.csv`
@@ -118,12 +128,12 @@ For the thick metal with impedance BC:
 
 | Mode | ``\text{Re}(n_\text{eff})`` | ``\text{Im}(n_\text{eff})`` |
 |:----:|:---------------------------:|:---------------------------:|
-| 1    | 2.511                       | ``-1.38 \times 10^{-7}``    |
-| 2    | 2.532                       | ``-1.38 \times 10^{-7}``    |
+| 1    | 2.528                       | ``-1.39 \times 10^{-7}``    |
+| 2    | 2.510                       | ``-1.31 \times 10^{-7}``    |
 
 The impedance BC shifts the effective index upward for both modes. This is expected: the
 surface inductance ``L_s`` increases the effective path length seen by the wave, raising
-``n_\text{eff}``. The shift is larger for mode 2, which has more field energy concentrated
+``n_\text{eff}``. The shift is larger for mode 1, which has more field energy concentrated
 near the conductor surfaces.
 
 ### Characteristic impedance
@@ -133,8 +143,8 @@ voltage line integral across the CPW gap and the mode power:
 
 | Mode | ``Z_\text{PV}`` (thin PEC) | ``Z_\text{PV}`` (thick impedance) |
 |:----:|:--------------------------:|:---------------------------------:|
-| 1    | 38.8 Ohm                   | 12.3 Ohm                          |
-| 2    | 12.2 Ohm                   | 36.7 Ohm                          |
+| 1    | 38.8 Ohm                   | 37.5 Ohm                          |
+| 2    | 12.2 Ohm                   | 11.9 Ohm                          |
 
 The two modes correspond to the even and odd CPW modes, which have different impedance
 values. Note that the mode ordering (by propagation constant) can differ between the thin

@@ -696,6 +696,12 @@ ModeImpedanceData::ModeImpedanceData(const json &imp)
     }
   }
   n_samples = imp.value("NSamples", n_samples);
+  MFEM_VERIFY(voltage_attributes.empty() || voltage_path.empty(),
+              "Impedance boundary should specify either \"VoltageAttributes\" or "
+              "\"VoltagePath\", not both!");
+  MFEM_VERIFY(current_attributes.empty() || current_path.empty(),
+              "Impedance boundary should specify either \"CurrentAttributes\" or "
+              "\"CurrentPath\", not both!");
   MFEM_VERIFY(!voltage_attributes.empty() || voltage_path.size() >= 2,
               "Impedance boundary requires either \"VoltageAttributes\" or "
               "\"VoltagePath\" in the configuration file!");
@@ -716,6 +722,9 @@ ModeVoltageData::ModeVoltageData(const json &volt)
     }
   }
   n_samples = volt.value("NSamples", n_samples);
+  MFEM_VERIFY(voltage_attributes.empty() || voltage_path.empty(),
+              "Voltage boundary should specify either \"VoltageAttributes\" or "
+              "\"VoltagePath\", not both!");
   MFEM_VERIFY(!voltage_attributes.empty() || voltage_path.size() >= 2,
               "Voltage boundary requires either \"VoltageAttributes\" or "
               "\"VoltagePath\" in the configuration file!");

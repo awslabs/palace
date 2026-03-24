@@ -238,6 +238,7 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
       if (!imp.current_attributes.empty())
       {
         cfg.current_marker = mesh::AttrToMarker(bdr_attr_max, imp.current_attributes);
+        cfg.has_current = true;
       }
       cfg.n_samples = imp.n_samples;
       if (imp.voltage_path.size() >= 2)
@@ -248,6 +249,7 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
       if (!imp.current_path.empty())
       {
         cfg.has_current_path = true;
+        cfg.has_current = true;
         cfg.current_path = ParsePath(imp.current_path);
       }
     }
@@ -354,6 +356,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
 
     // Electric Boundary Field & Surface Charge.
     E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
+    // Q_s = D ⋅ n = ε_0 E ⋅ n.
     Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
         &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
     if constexpr (HasComplexGridFunction<solver_t>())
@@ -494,6 +497,18 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     {
       paraview->RegisterField("E", &E->Real());
       paraview_bdr->RegisterVCoeffField("E", E_sr.get());
+    }
+  }
+  if (En)
+  {
+    if (HasComplexGridFunction<solver_t>())
+    {
+      paraview->RegisterField("E_n_real", &En->Real());
+      paraview->RegisterField("E_n_imag", &En->Imag());
+    }
+    else
+    {
+      paraview->RegisterField("E_n", &En->Real());
     }
   }
   if (B)
@@ -693,6 +708,12 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
   DimensionalizeGridFunctions(units, E, B, V, A);
+  if (En)
+  {
+    // H1 scalar field: no Piola transform scaling (unlike ND vector Et which gets
+    // mesh_Lc0).
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(*En);
+  }
   // In-plane B projected onto the ND space (not its natural H(div) space), so the
   // H(curl) Piola transform scaling L applies to the DOFs, not H(div) scaling L^{dim-1}.
   if (Bt_inplane)
@@ -712,6 +733,10 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(units, E, B, V, A);
+  if (En)
+  {
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(*En);
+  }
   if (Bt_inplane)
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
@@ -822,6 +847,10 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0, mesh.Dimension(), E, B, V, A);
   DimensionalizeGridFunctions(units, E, B, V, A);
+  if (En)
+  {
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(*En);
+  }
   if (Bt_inplane)
   {
     Bt_inplane->Real() *= mesh_Lc0;
@@ -870,19 +899,30 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
     }
   }
 
+  if (En)
+  {
+    if constexpr (HasComplexGridFunction<solver_t>())
+    {
+      write_grid_function(En->Real(), "E_n_real");
+      write_grid_function(En->Imag(), "E_n_imag");
+    }
+    else
+    {
+      write_grid_function(En->Real(), "E_n");
+    }
+  }
+
   if constexpr (HasBGridFunction<solver_t>())
   {
     if (B)
     {
       if constexpr (HasComplexGridFunction<solver_t>())
       {
-        // Write real and imaginary parts separately.
         write_grid_function(B->Real(), "B_real");
         write_grid_function(B->Imag(), "B_imag");
       }
       else
       {
-        // Write real part only.
         write_grid_function(B->Real(), "B");
       }
     }
@@ -934,6 +974,10 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
   NondimensionalizeGridFunctions(units, E, B, V, A);
+  if (En)
+  {
+    units.NondimensionalizeInPlace<Units::ValueType::FIELD_E>(*En);
+  }
   if (Bt_inplane)
   {
     units.NondimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
@@ -1380,7 +1424,17 @@ void PostOperator<solver_t>::MeasureProbes() const
   {
     if (interp_op.GetProbes().size() > 0)
     {
-      measurement_cache.probe_B_field = interp_op.ProbeField(*B);
+      if (B->Real().VectorDim() == interp_op.GetVDim())
+      {
+        measurement_cache.probe_B_field = interp_op.ProbeField(*B);
+      }
+      else
+      {
+        Mpi::Warning("Skipping B-field probe: B field dimension ({}) does not match "
+                     "interpolation operator dimension ({}). B-field probing requires a "
+                     "vector B field (not available in 2D boundary mode analysis).\n",
+                     B->Real().VectorDim(), interp_op.GetVDim());
+      }
     }
   }
 #endif
@@ -1685,11 +1739,9 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   measurement_cache.error_abs = error_abs;
   measurement_cache.error_bkwd = error_bkwd;
 
-  // Dimensionalization constants.
-  const double kc = 1.0 / units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
-  std::complex<double> kn_dim = kn * kc;
+  // Store nondimensional mode data (dimensionalized in Measurement::Dimensionalize).
   std::complex<double> n_eff = kn / omega;
-  measurement_cache.mode_data.kn_dim = kn_dim;
+  measurement_cache.mode_data.kn = kn;
   measurement_cache.mode_data.n_eff = n_eff;
 
   // Helper: compute voltage V = ∫ E · dl via coordinate path or boundary attributes.
@@ -1722,16 +1774,16 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
       Vector fr(nd_size), fi(nd_size);
       field.Real().GetTrueDofs(fr);
       field.Imag().GetTrueDofs(fi);
-      V.real(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, fr));
-      V.imag(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, fi));
+      V.real(linalg::Dot(nd_fespace.GetComm(), v_lf_tdof, fr));
+      V.imag(linalg::Dot(nd_fespace.GetComm(), v_lf_tdof, fi));
     }
     return V;
   };
 
   // Helper: compute current I = ∮ H · t dl via coordinate path or boundary attributes.
   auto ComputeCurrent = [this](const std::vector<mfem::Vector> &path, bool has_path,
-                                mfem::Array<int> marker, int quad_order,
-                                const GridFunction &field) -> std::complex<double>
+                               mfem::Array<int> marker, int quad_order,
+                               const GridFunction &field) -> std::complex<double>
   {
     std::complex<double> I(0.0, 0.0);
     if (has_path)
@@ -1740,10 +1792,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
       {
         const auto &pk = path[k];
         const auto &pk1 = path[(k + 1) % path.size()];
-        I.real(I.real() +
-               fem::ComputeLineIntegral(pk, pk1, field.Real(), quad_order));
-        I.imag(I.imag() +
-               fem::ComputeLineIntegral(pk, pk1, field.Imag(), quad_order));
+        I.real(I.real() + fem::ComputeLineIntegral(pk, pk1, field.Real(), quad_order));
+        I.imag(I.imag() + fem::ComputeLineIntegral(pk, pk1, field.Imag(), quad_order));
       }
     }
     else if (marker.Size() > 0)
@@ -1760,8 +1810,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
       Vector fr(nd_size), fi(nd_size);
       field.Real().GetTrueDofs(fr);
       field.Imag().GetTrueDofs(fi);
-      I.real(mfem::InnerProduct(nd_fespace.GetComm(), i_lf_tdof, fr));
-      I.imag(mfem::InnerProduct(nd_fespace.GetComm(), i_lf_tdof, fi));
+      I.real(linalg::Dot(nd_fespace.GetComm(), i_lf_tdof, fr));
+      I.imag(linalg::Dot(nd_fespace.GetComm(), i_lf_tdof, fi));
     }
     return I;
   };
@@ -1770,6 +1820,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   // entries.
   std::complex<double> P(0.0, 0.0);
   const auto *Btt = fem_op->GetBtt();
+  const auto *Atnr = fem_op->GetAtnr();
+  const auto *Atni = fem_op->GetAtni();
   if (Btt != nullptr && !impedance_postpro.empty())
   {
     auto &nd_fespace = fem_op->GetNDSpace();
@@ -1780,12 +1832,44 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     Vector Btt_etr(nd_size), Btt_eti(nd_size);
     Btt->Mult(etr_tdof, Btt_etr);
     Btt->Mult(eti_tdof, Btt_eti);
-    double p_rr = mfem::InnerProduct(nd_fespace.GetComm(), etr_tdof, Btt_etr);
-    double p_ii = mfem::InnerProduct(nd_fespace.GetComm(), eti_tdof, Btt_eti);
-    double p_ri = mfem::InnerProduct(nd_fespace.GetComm(), etr_tdof, Btt_eti);
-    double p_ir = mfem::InnerProduct(nd_fespace.GetComm(), eti_tdof, Btt_etr);
+    double p_rr = linalg::Dot(nd_fespace.GetComm(), etr_tdof, Btt_etr);
+    double p_ii = linalg::Dot(nd_fespace.GetComm(), eti_tdof, Btt_eti);
+    double p_ri = linalg::Dot(nd_fespace.GetComm(), etr_tdof, Btt_eti);
+    double p_ir = linalg::Dot(nd_fespace.GetComm(), eti_tdof, Btt_etr);
     std::complex<double> etH_Btt_et(p_rr + p_ii, p_ri - p_ir);
     P = 0.5 * std::conj(kn) / omega * etH_Btt_et;
+
+    // Cross-term: -Im{et^H Atn En} / (2ω). At this point En is physical (back-transformed).
+    if (Atnr != nullptr && En)
+    {
+      auto &h1_fespace = fem_op->GetH1Space();
+      const int h1_size = h1_fespace.GetTrueVSize();
+      Vector enr_tdof(h1_size), eni_tdof(h1_size);
+      En->Real().GetTrueDofs(enr_tdof);
+      En->Imag().GetTrueDofs(eni_tdof);
+      Vector Atn_enr(nd_size), Atn_eni(nd_size);
+      Atn_enr.UseDevice(true);
+      Atn_eni.UseDevice(true);
+      Atnr->Mult(enr_tdof, Atn_enr);
+      Atnr->Mult(eni_tdof, Atn_eni);
+      if (Atni)
+      {
+        Vector tmp(nd_size);
+        tmp.UseDevice(true);
+        Atni->Mult(eni_tdof, tmp);
+        Atn_enr -= tmp;
+        Atni->Mult(enr_tdof, tmp);
+        Atn_eni += tmp;
+      }
+      double c_rr = linalg::Dot(nd_fespace.GetComm(), etr_tdof, Atn_enr);
+      double c_ii = linalg::Dot(nd_fespace.GetComm(), eti_tdof, Atn_eni);
+      double c_ri = linalg::Dot(nd_fespace.GetComm(), etr_tdof, Atn_eni);
+      double c_ir = linalg::Dot(nd_fespace.GetComm(), eti_tdof, Atn_enr);
+      std::complex<double> etH_Atn_En(c_rr + c_ii, c_ri - c_ir);
+      // For physical En: P_cross = (1/2) Re{-i/ω × conj(et^H Atn En)}
+      //                          = -Im{et^H Atn En} / (2ω)
+      P += std::complex<double>(-etH_Atn_En.imag(), etH_Atn_En.real()) / (2.0 * omega);
+    }
   }
 
   // Compute impedance for each configured entry.
@@ -1799,9 +1883,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     if (std::abs(P) > 1e-30)
     {
       std::complex<double> Z0_nondim = (V * std::conj(V)) / (2.0 * P);
-      result.Z0 = Z0_nondim.real() * electromagnetics::Z0_;
-      result.L_per_m = result.Z0 * n_eff.real() / electromagnetics::c0_;
-      result.C_per_m = n_eff.real() / (result.Z0 * electromagnetics::c0_);
+      result.Z0 = Z0_nondim.real();
       result.has_impedance = true;
     }
 
@@ -1810,10 +1892,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
                             cfg.n_samples, *Bt_inplane);
     if (std::abs(I) > 1e-30)
     {
-      double Z_VI_nondim = std::abs(V) / std::abs(I);
-      result.Z_VI = Z_VI_nondim * electromagnetics::Z0_;
-      result.L_VI_per_m = result.Z_VI * n_eff.real() / electromagnetics::c0_;
-      result.C_VI_per_m = n_eff.real() / (result.Z_VI * electromagnetics::c0_);
+      result.Z_VI = std::abs(V) / std::abs(I);
       result.has_vi_impedance = true;
     }
   }
@@ -1836,8 +1915,9 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     int idx_pad = 1 + static_cast<int>(std::log10(std::max(num_conv, 1)));
     table.col_options = {6, 6};
     table.insert(Column("m", "m", idx_pad, {}, {}, "") << (step + 1));
-    table.insert(Column("kn_re", "Re{kn} (1/m)") << kn_dim.real());
-    table.insert(Column("kn_im", "Im{kn} (1/m)") << kn_dim.imag());
+    const double kc = 1.0 / units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+    table.insert(Column("kn_re", "Re{kn} (1/m)") << kn.real() * kc);
+    table.insert(Column("kn_im", "Im{kn} (1/m)") << kn.imag() * kc);
     table.insert(Column("neff_re", "Re{n_eff}") << n_eff.real());
     table.insert(Column("neff_im", "Im{n_eff}") << n_eff.imag());
     table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);

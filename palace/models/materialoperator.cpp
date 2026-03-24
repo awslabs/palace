@@ -131,44 +131,15 @@ void MaterialOperator::SetUpMaterialProperties(
     const config::PeriodicBoundaryData &periodic, ProblemType problem_type,
     const mfem::ParMesh &mesh)
 {
-  // Check that material attributes have been specified correctly. Use the libCEED attribute
-  // map (which includes ghost elements from shared faces) rather than the local
-  // mesh.attributes array, since some ranks may not own elements of every material.
+  // Check material attributes. Only verify positivity here — the per-material local
+  // presence check happens below via mat_marker (some ranks may not have all attributes
+  // in their partition).
   MFEM_VERIFY(!materials.empty(), "Materials must be non-empty!");
-  const auto &loc_attr_check = this->mesh.GetCeedAttributes();
+  for (const auto &data : materials)
   {
-    // Gather all locally known attributes (includes ghost elements).
-    std::unordered_set<int> known_attrs;
-    for (const auto &[attr, _] : loc_attr_check)
+    for (auto attr : data.attributes)
     {
-      known_attrs.insert(attr);
-    }
-    // Collect globally known attributes across all MPI ranks.
-    int n_local = static_cast<int>(known_attrs.size());
-    std::vector<int> local_attrs(known_attrs.begin(), known_attrs.end());
-    int n_global = 0;
-    MPI_Allreduce(&n_local, &n_global, 1, MPI_INT, MPI_SUM, mesh.GetComm());
-    std::vector<int> all_attrs(n_global);
-    std::vector<int> recv_counts(Mpi::Size(mesh.GetComm()));
-    MPI_Allgather(&n_local, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, mesh.GetComm());
-    std::vector<int> displs(Mpi::Size(mesh.GetComm()), 0);
-    for (int i = 1; i < static_cast<int>(displs.size()); i++)
-    {
-      displs[i] = displs[i - 1] + recv_counts[i - 1];
-    }
-    MPI_Allgatherv(local_attrs.data(), n_local, MPI_INT, all_attrs.data(),
-                   recv_counts.data(), displs.data(), MPI_INT, mesh.GetComm());
-    std::unordered_set<int> global_attrs(all_attrs.begin(), all_attrs.end());
-
-    for (const auto &data : materials)
-    {
-      for (auto attr : data.attributes)
-      {
-        MFEM_VERIFY(attr > 0, "Material attribute tags must be positive!");
-        MFEM_VERIFY(global_attrs.count(attr),
-                    "Unknown material attribute "
-                        << attr << " not found in mesh domain attributes!");
-      }
+      MFEM_VERIFY(attr > 0, "Material attribute tags must be positive!");
     }
   }
 

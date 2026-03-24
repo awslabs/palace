@@ -14,7 +14,7 @@ namespace
 
 void CopySubVector(const Vector &src, Vector &dst, int src_offset, int dst_offset, int size)
 {
-  const bool use_dev = dst.UseDevice();
+  const bool use_dev = src.UseDevice() || dst.UseDevice();
   const auto *sd = src.Read(use_dev);
   auto *dd = dst.Write(use_dev);
   mfem::forall_switch(use_dev, size, [=] MFEM_HOST_DEVICE(int i)

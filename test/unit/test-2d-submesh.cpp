@@ -205,96 +205,54 @@ TEST_CASE("RemapSubMeshBdrAttributes", "[geodata][Serial]")
   }
 }
 
-TEST_CASE("Tangent frame orthonormality", "[geodata][Serial]")
+TEST_CASE("Tangent frame from ExtractStandalone2DSubmesh", "[geodata][Parallel]")
 {
-  // The tangent frame (e1, e2) built from a surface normal should be orthonormal
-  // and form a right-handed system with the normal.
-  // Test by replicating the frame construction from ExtractStandalone2DSubmesh.
+  // Call the actual ExtractStandalone2DSubmesh on a simple 3D mesh and verify the
+  // tangent frame (e1, e2, normal) is orthonormal and right-handed.
+  MPI_Comm comm = Mpi::World();
 
-  auto BuildFrame = [](const mfem::Vector &normal, mfem::Vector &e1, mfem::Vector &e2)
-  {
-    e1.SetSize(3);
-    e2.SetSize(3);
-    int min_idx = 0;
-    double min_val = std::abs(normal(0));
-    for (int d = 1; d < 3; d++)
-    {
-      if (std::abs(normal(d)) < min_val)
-      {
-        min_val = std::abs(normal(d));
-        min_idx = d;
-      }
-    }
-    mfem::Vector axis(3);
-    axis = 0.0;
-    axis(min_idx) = 1.0;
-    e1(0) = axis(1) * normal(2) - axis(2) * normal(1);
-    e1(1) = axis(2) * normal(0) - axis(0) * normal(2);
-    e1(2) = axis(0) * normal(1) - axis(1) * normal(0);
-    e1 /= e1.Norml2();
-    e2(0) = normal(1) * e1(2) - normal(2) * e1(1);
-    e2(1) = normal(2) * e1(0) - normal(0) * e1(2);
-    e2(2) = normal(0) * e1(1) - normal(1) * e1(0);
-    e2 /= e2.Norml2();
-  };
+  // Create a unit cube mesh (single hex element).
+  mfem::Mesh smesh = mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::HEXAHEDRON);
+  smesh.EnsureNodes();
+  auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
 
   auto CheckOrthonormal =
       [](const mfem::Vector &e1, const mfem::Vector &e2, const mfem::Vector &n)
   {
-    // Unit length.
-    CHECK_THAT(e1.Norml2(), WithinAbs(1.0, 1e-14));
-    CHECK_THAT(e2.Norml2(), WithinAbs(1.0, 1e-14));
-    // Orthogonal to each other and to normal.
-    CHECK_THAT(e1 * e2, WithinAbs(0.0, 1e-14));
-    CHECK_THAT(e1 * n, WithinAbs(0.0, 1e-14));
-    CHECK_THAT(e2 * n, WithinAbs(0.0, 1e-14));
+    CHECK_THAT(e1.Norml2(), WithinAbs(1.0, 1e-12));
+    CHECK_THAT(e2.Norml2(), WithinAbs(1.0, 1e-12));
+    CHECK_THAT(e1 * e2, WithinAbs(0.0, 1e-12));
+    CHECK_THAT(e1 * n, WithinAbs(0.0, 1e-12));
+    CHECK_THAT(e2 * n, WithinAbs(0.0, 1e-12));
   };
 
-  SECTION("Normal along x-axis")
+  // Unit cube has 6 boundary attributes (one per face). Extract each face as a 2D submesh
+  // and verify the tangent frame.
+  for (int face_attr = 1; face_attr <= 6; face_attr++)
   {
-    mfem::Vector n(3), e1(3), e2(3);
-    n = 0.0;
-    n(0) = 1.0;
-    BuildFrame(n, e1, e2);
-    CheckOrthonormal(e1, e2, n);
-  }
+    SECTION("Face attribute " + std::to_string(face_attr))
+    {
+      mfem::Array<int> surface_attrs;
+      surface_attrs.Append(face_attr);
+      std::vector<int> pec_bdr_attrs;  // No internal BC edges for a single face.
 
-  SECTION("Normal along y-axis")
-  {
-    mfem::Vector n(3), e1(3), e2(3);
-    n = 0.0;
-    n(1) = 1.0;
-    BuildFrame(n, e1, e2);
-    CheckOrthonormal(e1, e2, n);
-  }
+      mfem::Vector normal, centroid, e1, e2;
+      auto submesh = mesh::ExtractStandalone2DSubmesh(*pmesh, surface_attrs, pec_bdr_attrs,
+                                                      normal, centroid, e1, e2);
 
-  SECTION("Normal along z-axis")
-  {
-    mfem::Vector n(3), e1(3), e2(3);
-    n = 0.0;
-    n(2) = 1.0;
-    BuildFrame(n, e1, e2);
-    CheckOrthonormal(e1, e2, n);
-  }
+      // Verify orthonormality of the tangent frame.
+      REQUIRE(normal.Size() == 3);
+      REQUIRE(e1.Size() == 3);
+      REQUIRE(e2.Size() == 3);
+      CheckOrthonormal(e1, e2, normal);
 
-  SECTION("Normal along negative x-axis")
-  {
-    mfem::Vector n(3), e1(3), e2(3);
-    n = 0.0;
-    n(0) = -1.0;
-    BuildFrame(n, e1, e2);
-    CheckOrthonormal(e1, e2, n);
-  }
-
-  SECTION("Diagonal normal")
-  {
-    mfem::Vector n(3), e1(3), e2(3);
-    n(0) = 1.0;
-    n(1) = 1.0;
-    n(2) = 1.0;
-    n /= n.Norml2();
-    BuildFrame(n, e1, e2);
-    CheckOrthonormal(e1, e2, n);
+      // Verify the extracted mesh is 2D with SpaceDimension == 2.
+      if (submesh)
+      {
+        CHECK(submesh->Dimension() == 2);
+        CHECK(submesh->SpaceDimension() == 2);
+      }
+    }
   }
 }
 

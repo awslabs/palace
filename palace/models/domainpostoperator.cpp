@@ -230,6 +230,8 @@ double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E) const
     Mpi::GlobalSum(1, &dot, E.GetComm());
     return 0.5 * dot;
   }
+  MFEM_ABORT(
+      "Domain postprocessing is not configured for electric field energy calculation!");
   return 0.0;
 }
 

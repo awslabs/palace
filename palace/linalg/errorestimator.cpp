@@ -513,22 +513,12 @@ template <typename VecType>
 TimeDependentFluxErrorEstimator<VecType>::TimeDependentFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
     FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it, int print,
-    bool use_mg, FiniteElementSpace *curl_fespace, FiniteElementSpaceHierarchy *h1_fespaces)
+    bool use_mg)
   : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, max_it, print,
+                   use_mg),
+    curl_estimator(mat_op, rt_fespaces.GetFinestFESpace(), nd_fespaces, tol, max_it, print,
                    use_mg)
 {
-  if (curl_fespace && h1_fespaces)
-  {
-    // 2D: curl is scalar. Use the L2 curl space for B and H1 spaces for smooth H.
-    curl_estimator = std::make_unique<CurlFluxErrorEstimator<VecType>>(
-        mat_op, *curl_fespace, *h1_fespaces, tol, max_it, print, use_mg);
-  }
-  else
-  {
-    // 3D: curl is vector. Use RT for B and ND for smooth H.
-    curl_estimator = std::make_unique<CurlFluxErrorEstimator<VecType>>(
-        mat_op, rt_fespaces.GetFinestFESpace(), nd_fespaces, tol, max_it, print, use_mg);
-  }
 }
 
 template <typename VecType>
@@ -539,18 +529,42 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
       ComputeErrorEstimates(E, grad_estimator.E_gf, grad_estimator.D, grad_estimator.D_gf,
                             grad_estimator.nd_fespace, grad_estimator.rt_fespace,
                             grad_estimator.projector, grad_estimator.integ_op);
-  // In 2D, the curl flux estimator uses L2/H1 spaces (scalar curl) instead of RT/ND.
-  // Both E-field gradient flux and B-field curl flux contribute to the error estimate.
-  if (curl_estimator)
-  {
-    auto curl_estimates = ComputeErrorEstimates(
-        B, curl_estimator->B_gf, curl_estimator->H, curl_estimator->H_gf,
-        curl_estimator->rt_fespace, curl_estimator->nd_fespace, curl_estimator->projector,
-        curl_estimator->integ_op);
-    grad_estimates += curl_estimates;  // Sum of squares
-  }
+  auto curl_estimates =
+      ComputeErrorEstimates(B, curl_estimator.B_gf, curl_estimator.H, curl_estimator.H_gf,
+                            curl_estimator.rt_fespace, curl_estimator.nd_fespace,
+                            curl_estimator.projector, curl_estimator.integ_op);
+  grad_estimates += curl_estimates;
   linalg::Sqrt(grad_estimates,
                (Et > 0.0) ? 0.5 / Et : 1.0);  // Correct factor of 1/2 in energy
+  indicator.AddIndicator(grad_estimates);
+}
+
+template <typename VecType>
+BoundaryModeFluxErrorEstimator<VecType>::BoundaryModeFluxErrorEstimator(
+    const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
+    FiniteElementSpaceHierarchy &rt_fespaces, FiniteElementSpace &curl_fespace,
+    FiniteElementSpaceHierarchy &h1_fespaces, double tol, int max_it, int print,
+    bool use_mg)
+  : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, max_it, print,
+                   use_mg),
+    curl_estimator(mat_op, curl_fespace, h1_fespaces, tol, max_it, print, use_mg)
+{
+}
+
+template <typename VecType>
+void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
+    const VecType &E, const VecType &B, double Et, ErrorIndicator &indicator) const
+{
+  auto grad_estimates =
+      ComputeErrorEstimates(E, grad_estimator.E_gf, grad_estimator.D, grad_estimator.D_gf,
+                            grad_estimator.nd_fespace, grad_estimator.rt_fespace,
+                            grad_estimator.projector, grad_estimator.integ_op);
+  auto curl_estimates =
+      ComputeErrorEstimates(B, curl_estimator.B_gf, curl_estimator.H, curl_estimator.H_gf,
+                            curl_estimator.rt_fespace, curl_estimator.nd_fespace,
+                            curl_estimator.projector, curl_estimator.integ_op);
+  grad_estimates += curl_estimates;
+  linalg::Sqrt(grad_estimates, (Et > 0.0) ? 0.5 / Et : 1.0);
   indicator.AddIndicator(grad_estimates);
 }
 
@@ -562,5 +576,7 @@ template class CurlFluxErrorEstimator<Vector>;
 template class CurlFluxErrorEstimator<ComplexVector>;
 template class TimeDependentFluxErrorEstimator<Vector>;
 template class TimeDependentFluxErrorEstimator<ComplexVector>;
+template class BoundaryModeFluxErrorEstimator<Vector>;
+template class BoundaryModeFluxErrorEstimator<ComplexVector>;
 
 }  // namespace palace
