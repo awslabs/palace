@@ -302,6 +302,7 @@ public:
   bool UseFullDtN() const { return use_full_dtn; }
   bool UseAuxiliary() const { return use_auxiliary; }
   bool UseMassConsistent() const { return use_mass_consistent; }
+  bool UseEigenmode() const { return use_eigenmode; }
   const mfem::Array<int> &GetBdrTDofList() const { return bdr_tdof_list; }
   int GetNBdrGlobal() const { return n_bdr_global; }
   MPI_Comm GetPortComm() const { return port_comm; }
@@ -368,6 +369,11 @@ private:
   // instead of rank-1 outer products conj(v)v^T. Fixes the Cauchy-Schwarz overestimate.
   bool use_mass_consistent = false;
 
+  // Eigenvalue mode: compute port modes by solving a 2D Bloch-periodic eigenvalue problem
+  // on the port face, giving FE-consistent mode vectors instead of analytical Fourier
+  // projections. The eigenvalues give propagation constants directly.
+  bool use_eigenmode = false;
+
   // Boundary DOF infrastructure (always computed, used by DenseBoundaryOperator and
   // preconditioner Schur complement).
   MPI_Comm port_comm = MPI_COMM_NULL;  // Sub-communicator for port-owning ranks
@@ -412,6 +418,11 @@ private:
 
   void EnumerateOrders();
   void AssembleFourierProjections(mfem::ParFiniteElementSpace &nd_fespace);
+
+  // Solve a 2D Bloch-periodic eigenvalue problem on the port face to compute
+  // FE-consistent mode vectors and propagation constants. Replaces the analytical
+  // Fourier projection approach (AssembleFourierProjections) when use_eigenmode is true.
+  void SolvePortEigenproblem(mfem::ParFiniteElementSpace &nd_fespace);
 };
 
 //

@@ -299,6 +299,20 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
                  linalg::Norml2(space_op.GetComm(), E),
                  linalg::Norml2(space_op.GetComm(), RHS));
 
+      // DtN coupling diagnostic: measure ||F × E|| to verify the DtN interacts
+      // with the solution (especially the guided mode's evanescent tail).
+      if (auto F_diag = space_op.GetFloquetPortOp().GetExtraSystemOperator(omega))
+      {
+        ComplexVector FE(E.Size());
+        FE.UseDevice(true);
+        FE = 0.0;
+        F_diag->Mult(E, FE);
+        double FE_norm = linalg::Norml2(space_op.GetComm(), FE);
+        double E_norm = linalg::Norml2(space_op.GetComm(), E);
+        Mpi::Print(" DtN diagnostic: ||F*E|| = {:.6e}, ||F*E||/||E|| = {:.6e}\n",
+                   FE_norm, FE_norm / E_norm);
+      }
+
       // Compute B = -1/(iω) ∇ x E on the true dofs.
       Curl.Mult(E.Real(), B.Real());
       Curl.Mult(E.Imag(), B.Imag());

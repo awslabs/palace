@@ -697,10 +697,9 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V_old);
   }
 
-  // Update reduced Floquet port projection vectors. For F = Σ g_k conj(v_k) v_k^T,
-  // the PROM contribution is Σ g_k (V^H conj(v_k)) (v_k^T V). Since V is real:
-  //   V^H conj(v_k) = conj(V^T v_k) and v_k^T V = (V^T v_k)^T.
-  // So we only need V^T v_k (same structure as ProjectVecInternal).
+  // Update reduced Floquet port projection vectors. For F = Σ g_k v_k v_k^H,
+  // the PROM contribution is Σ g_k (V^T v_k) (v_k^H V) = Σ g_k (V^T v_k) conj(V^T v_k)^T.
+  // Since V is real: V^T v_k is stored as vk_V, conj(V^T v_k) as Vh_cvk.
   if (dim_V_old == 0)
   {
     // First time: enumerate all Floquet modes with for_dtn flag.
@@ -786,7 +785,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   }
   Ar += (-omega * omega) * Mr;
 
-  // Add low-rank Floquet port DtN correction: Fᵣ = Σ g_k(ω) (V^H conj(v_k))(v_k^T V).
+  // Add low-rank Floquet port DtN correction: Fᵣ = Σ g_k(ω) (V^T v_k) conj(V^T v_k)^T.
   // Initialize Floquet ports for this frequency (updates gamma_sq and, when k_F scales
   // with frequency, recomputes mode vectors with updated polarization).
   space_op.GetFloquetPortOp().Initialize(omega);
@@ -818,7 +817,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     auto g = port.ComputeDtNCorrectionCoeff(*rm.mode);
     if (g != 0.0)
     {
-      Ar.noalias() += g * rm.Vh_cvk * rm.vk_V.transpose();
+      Ar.noalias() += g * rm.vk_V * rm.Vh_cvk.transpose();
     }
   }
 

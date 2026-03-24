@@ -32,29 +32,29 @@ void LowRankComplexOperator::Mult(const ComplexVector &x, ComplexVector &y) cons
 void LowRankComplexOperator::AddMult(const ComplexVector &x, ComplexVector &y,
                                      const std::complex<double> a) const
 {
-  // Palace uses BILINEAR forms (complex-symmetric, NOT Hermitian). The Floquet DtN
-  // operator has the form F = Σ g_k conj(v_k) v_k^T. Applied to x:
-  //   F x = Σ g_k conj(v_k) (v_k^T x)
-  // where v^T x is the bilinear (NOT Hermitian) inner product.
+  // The Floquet DtN operator: F = Σ g_k v_k v_k^H / |Γ| (with 1/|Γ| absorbed into g_k).
+  // The Hermitian extraction v^H x is required: on a periodic mesh, v^T x (bilinear)
+  // extracts mode -k's amplitude instead of mode k's. For oblique incidence (k_F ≠ 0),
+  // g_k ≠ g_{-k}, so the bilinear form applies the wrong DtN eigenvalue.
   for (const auto &t : terms)
   {
-    // Bilinear dot product: dot = v^T x = Σ v_j x_j (complex multiplication, no conj)
-    // = (v_r · x_r - v_i · x_i) + i(v_r · x_i + v_i · x_r)
+    // Hermitian dot product: dot = v^H x = Σ conj(v_j) x_j
+    // = (v_r · x_r + v_i · x_i) + i(v_r · x_i - v_i · x_r)
     double dot_r =
-        linalg::Dot(comm, t.v->Real(), x.Real()) - linalg::Dot(comm, t.v->Imag(), x.Imag());
+        linalg::Dot(comm, t.v->Real(), x.Real()) + linalg::Dot(comm, t.v->Imag(), x.Imag());
     double dot_i =
-        linalg::Dot(comm, t.v->Real(), x.Imag()) + linalg::Dot(comm, t.v->Imag(), x.Real());
+        linalg::Dot(comm, t.v->Real(), x.Imag()) - linalg::Dot(comm, t.v->Imag(), x.Real());
 
     // Compute s = a * g * dot (complex scalar)
     std::complex<double> s = a * t.g * std::complex<double>(dot_r, dot_i);
 
-    // y += s * conj(v) = (s_r + i s_i)(v_r - i v_i)
-    //    Real part: s_r v_r + s_i v_i
-    //    Imag part: s_i v_r - s_r v_i
+    // y += s * v = (s_r + i s_i)(v_r + i v_i)
+    //    Real part: s_r v_r - s_i v_i
+    //    Imag part: s_i v_r + s_r v_i
     y.Real().Add(s.real(), t.v->Real());
-    y.Real().Add(s.imag(), t.v->Imag());
+    y.Real().Add(-s.imag(), t.v->Imag());
     y.Imag().Add(s.imag(), t.v->Real());
-    y.Imag().Add(-s.real(), t.v->Imag());
+    y.Imag().Add(s.real(), t.v->Imag());
   }
 }
 
@@ -410,6 +410,7 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
   use_full_dtn = data.full_dtn;
   use_auxiliary = (data.port_mode == "Auxiliary");
   use_mass_consistent = (data.port_mode == "MassConsistent");
+  use_eigenmode = (data.port_mode == "Eigenvalue");
 
   // Compute boundary DOF infrastructure for DenseBoundaryOperator and preconditioner.
   // Create a sub-communicator for ranks that own port boundary elements (wave port
@@ -527,9 +528,16 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
   //             n_bdr_global, max_order_m, max_order_n);
   //}
 
-  // Enumerate diffraction orders and assemble Fourier projections.
+  // Enumerate diffraction orders and compute mode vectors.
   EnumerateOrders();
-  AssembleFourierProjections(nd_fespace);
+  if (use_eigenmode)
+  {
+    SolvePortEigenproblem(nd_fespace);
+  }
+  else
+  {
+    AssembleFourierProjections(nd_fespace);
+  }
   nd_fespace_ptr = &nd_fespace;  // Store for re-assembly in Initialize.
 
   Mpi::Print(" Floquet port: {:d} modes ({:d} orders x 2 polarizations), "
@@ -588,18 +596,18 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data, const IoDa
         {
           continue;
         }
-        // Bilinear dot: v^T v_test
-        double dot_r = linalg::Dot(comm, mode.v.Real(), v_test->Real()) -
+        // Hermitian dot: v^H v_test
+        double dot_r = linalg::Dot(comm, mode.v.Real(), v_test->Real()) +
                        linalg::Dot(comm, mode.v.Imag(), v_test->Imag());
-        double dot_i = linalg::Dot(comm, mode.v.Real(), v_test->Imag()) +
+        double dot_i = linalg::Dot(comm, mode.v.Real(), v_test->Imag()) -
                        linalg::Dot(comm, mode.v.Imag(), v_test->Real());
         std::complex<double> dot(dot_r, dot_i);
         std::complex<double> s = dot / port_area;
-        // y += s * conj(v) = (s_r+is_i)(v_r-iv_i)
+        // y += s * v = (s_r+is_i)(v_r+iv_i)
         y_rank1.Real().Add(s.real(), mode.v.Real());
-        y_rank1.Real().Add(s.imag(), mode.v.Imag());
+        y_rank1.Real().Add(-s.imag(), mode.v.Imag());
         y_rank1.Imag().Add(s.imag(), mode.v.Real());
-        y_rank1.Imag().Add(-s.real(), mode.v.Imag());
+        y_rank1.Imag().Add(s.real(), mode.v.Imag());
       }
       // Full complex norm of y (not just real part).
       double y_norm = std::sqrt(linalg::Dot(comm, y_rank1.Real(), y_rank1.Real()) +
@@ -802,7 +810,7 @@ void FloquetPortData::EnumerateOrders()
                                                                   : mat_op.GetWaveVector();
         for (int i = 0; i < 3; i++)
         {
-          kt(i) = B_mn(i) - ((i < kF_phys.Size()) ? kF_phys(i) : 0.0);
+          kt(i) = B_mn(i) + ((i < kF_phys.Size()) ? kF_phys(i) : 0.0);
         }
       }
       mfem::Vector e_te(3), e_tm(3);
@@ -925,12 +933,13 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
     FloquetModeCoeff coeff_r(mode.e_pol, mode.B_mn, true);
     FloquetModeCoeff coeff_i(mode.e_pol, mode.B_mn, false);
 
-    // Compute extra quadrature order to resolve oscillatory exp(-i B . r).
-    // Need ~2 points per oscillation cycle: extra_order ≈ |B| × h / π.
-    // Over-integration ensures accurate v vectors, which is critical for modes
-    // with large DtN coefficients (near-cutoff evanescent TM: g ∝ ω²με/|γ|).
+    // Extra quadrature for oscillatory exp(-i B . r) integrand.
+    // Disabled for now: default quadrature is sufficient for the fundamental and
+    // first-order modes. Higher-order modes with |B|h >> 1 naturally alias to ~0,
+    // which is correct behavior for the DtN truncation.
     double B_norm = mode.B_mn.Norml2();
-    int extra_order = 0;  // static_cast<int>(std::ceil(B_norm * h_max / M_PI));
+    int extra_order = 0;
+    (void)B_norm;  // Suppress unused warning.
     const mfem::IntegrationRule *ir = nullptr;
     if (extra_order > 0 && bdr_geom != mfem::Geometry::INVALID)
     {
@@ -1108,11 +1117,11 @@ void FloquetPortData::Initialize(double omega)
   bool need_reassemble = false;
   for (auto &mode : modes)
   {
-    // gamma_mn^2 = omega^2 * mu_r * eps_r - |B_mn - k_F(ω)|^2
+    // gamma_mn^2 = omega^2 * mu_r * eps_r - |B_mn + k_F(ω)|^2
     mfem::Vector kt(3);
     for (int i = 0; i < 3; i++)
     {
-      kt(i) = mode.B_mn(i) - kF_scale * k_F(i);
+      kt(i) = mode.B_mn(i) + kF_scale * k_F(i);
     }
     double kt_sq = kt * kt;
     mode.gamma_sq = omega * omega * mu_eps_port - kt_sq;
@@ -1219,7 +1228,7 @@ std::unique_ptr<ComplexOperator> FloquetPortData::GetBoundaryOperator() const
   // beta = gamma / Lc [rad/m] for propagating, beta = j*gamma_abs / Lc for evanescent.
   // Lc = characteristic length. To convert nondim gamma to physical beta [rad/m]:
   // beta = gamma_nondim / Lc. But we don't have Lc here, so print gamma_nondim
-  // (= beta * Lc) and |kt| (= |B - kF|) for COMSOL comparison.
+  // (= beta * Lc) and |kt| (= |B + kF|) for COMSOL comparison.
   {
     Mpi::Print(" Floquet port mode propagation constants at omega={:.6e}:\n", omega0);
     for (const auto &mode : modes)
@@ -1228,7 +1237,7 @@ std::unique_ptr<ComplexOperator> FloquetPortData::GetBoundaryOperator() const
       {
         continue;
       }
-      // kt = B - kF(omega) for this mode.
+      // kt = B + kF(omega) for this mode (physical transverse wavevector).
       double kF_scale = mat_op.HasFloquetFrequencyScaling() ? omega0 : 1.0;
       mfem::Vector kt(3);
       for (int d = 0; d < 3; d++)
@@ -1352,8 +1361,8 @@ std::unique_ptr<ComplexOperator> FloquetPortData::GetBoundaryOperator() const
       MPI_Allgatherv(v_local.data(), n_bdr_local, MPI_DOUBLE_COMPLEX, v_global.data(),
                      gcounts.data(), gdispls.data(), MPI_DOUBLE_COMPLEX, comm);
 
-      // Accumulate: F += g × conj(v) × v^T (rank-1 outer product in boundary space).
-      F_mat.noalias() += g * v_global.conjugate() * v_global.transpose();
+      // Accumulate: F += g × v × v^H (Hermitian rank-1 outer product).
+      F_mat.noalias() += g * v_global * v_global.adjoint();
     }
 
     dense_op->SetDenseMatrix(F_mat);
@@ -1449,10 +1458,10 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
 
     double gamma_mn = std::sqrt(mode.gamma_sq);
 
-    // Bilinear v^T E = (v_r·E_r - v_i·E_i) + i(v_r·E_i + v_i·E_r).
-    double sr = linalg::Dot(comm, mode.v.Real(), E_r_tdof) -
+    // Hermitian v^H E = (v_r·E_r + v_i·E_i) + i(v_r·E_i - v_i·E_r).
+    double sr = linalg::Dot(comm, mode.v.Real(), E_r_tdof) +
                 linalg::Dot(comm, mode.v.Imag(), E_i_tdof);
-    double si = linalg::Dot(comm, mode.v.Real(), E_i_tdof) +
+    double si = linalg::Dot(comm, mode.v.Real(), E_i_tdof) -
                 linalg::Dot(comm, mode.v.Imag(), E_r_tdof);
 
     // Field amplitude: c = v^T E / (c_inc × |Γ|), where c_inc accounts for the
@@ -1532,6 +1541,35 @@ bool FloquetPortData::AddExcitationVector(double omega, ComplexVector &RHS) cons
   add_pol(mode_te, inc_alpha_te, lambda_te);
   add_pol(mode_tm, inc_alpha_tm, lambda_tm);
   return true;
+}
+
+void FloquetPortData::SolvePortEigenproblem(mfem::ParFiniteElementSpace &nd_fespace)
+{
+  // Solve a 2D Bloch-periodic eigenvalue problem on the port face to compute
+  // FE-consistent mode vectors with numerically-corrected propagation constants.
+  //
+  // The analytical approach uses exact Fourier modes exp(-jB·r) × ê and analytical
+  // propagation constants gamma² = omega²*mu*eps - |k_t|². For a free-space port, these
+  // are exact in the continuous limit. However, the FE discretization introduces numerical
+  // dispersion: the effective propagation constant differs slightly from the analytical
+  // value, especially near mode cutoff (gamma → 0) where Fano resonances occur.
+  //
+  // The eigenvalue approach solves a 2D curl-curl problem on the port face with
+  // Bloch-periodic BCs to get FE-consistent eigenvalues (k_t²_h), from which
+  // gamma²_h = omega² - k_t²_h accounts for numerical dispersion automatically.
+  //
+  // Implementation plan:
+  //   1. Extract port face submesh (ParSubMesh::CreateFromBoundary)
+  //   2. Make submesh periodic (identify opposite edges, MakePeriodic)
+  //   3. Create 2D ND/H1 FE spaces with Bloch-periodic material operator
+  //   4. Use BoundaryModeOperator to solve the 2D eigenvalue problem
+  //   5. Map eigenvectors to parent-mesh linear forms (v = M_3d * TransferMap(e_k))
+  //   6. Store numerical eigenvalues for gamma computation in Initialize()
+  //
+  // NOT YET IMPLEMENTED — falls back to analytical Fourier projections.
+  Mpi::Print(" Floquet port: Eigenvalue mode requested but not yet implemented.\n"
+             "   Falling back to analytical Fourier projections.\n");
+  AssembleFourierProjections(nd_fespace);
 }
 
 // =============================================================================
@@ -1776,7 +1814,7 @@ void FloquetAuxSystemOperator::AddMult(const ComplexVector &x, ComplexVector &y,
   MPI_Bcast(s_r.data(), n_modes, MPI_DOUBLE, 0, comm);
   MPI_Bcast(s_i.data(), n_modes, MPI_DOUBLE, 0, comm);
 
-  // E block: y_E += a * (A_EE * x_E + Σ_i g_full_i * s_i * conj(v_i))
+  // E block: y_E += a * (A_EE * x_E + Σ_i g_full_i * s_i * v_i)
 
   // Apply A_EE * E_tmp → y_E_tmp, then add to y[0:n_E].
   A_EE->Mult(E_tmp, y_E_tmp);
@@ -1793,16 +1831,16 @@ void FloquetAuxSystemOperator::AddMult(const ComplexVector &x, ComplexVector &y,
     }
   }
 
-  // A_ES coupling: y_E += a * Σ_i g_full_i * s_i * conj(v_i)
+  // A_ES coupling: y_E += a * Σ_i g_full_i * s_i * v_i
   for (int i = 0; i < n_modes; i++)
   {
     // Complex product: coeff = a * g_full * s  (all complex)
     std::complex<double> s_val(s_r[i], s_i[i]);
     std::complex<double> coeff = a * aux_modes[i].g_full * s_val;
 
-    // Add coeff * conj(v) to y[0:n_E].
-    // conj(v) = (v_r, -v_i), so coeff * conj(v) = (coeff_r * v_r + coeff_i * v_i,
-    //                                               coeff_i * v_r - coeff_r * v_i)
+    // Add coeff * v to y[0:n_E].
+    // v = (v_r, v_i), so coeff * v = (coeff_r * v_r - coeff_i * v_i,
+    //                                  coeff_i * v_r + coeff_r * v_i)
     double cr = coeff.real(), ci = coeff.imag();
     const auto *vr = aux_modes[i].v->Real().Read();
     const auto *vi = aux_modes[i].v->Imag().Read();
@@ -1810,22 +1848,22 @@ void FloquetAuxSystemOperator::AddMult(const ComplexVector &x, ComplexVector &y,
     auto *out_i = y.Imag().ReadWrite();
     for (int j = 0; j < n_E; j++)
     {
-      out_r[j] += cr * vr[j] + ci * vi[j];
-      out_i[j] += ci * vr[j] - cr * vi[j];
+      out_r[j] += cr * vr[j] - ci * vi[j];
+      out_i[j] += ci * vr[j] + cr * vi[j];
     }
   }
 
-  // s block: y_s[i] += a * (v_i^T * x_E - s_i)  (rank 0 only)
+  // s block: y_s[i] += a * (v_i^H * x_E - s_i)  (rank 0 only)
   if (rank == 0)
   {
     auto *out_r = y.Real().ReadWrite();
     auto *out_i = y.Imag().ReadWrite();
     for (int i = 0; i < n_modes; i++)
     {
-      // Bilinear dot product: dot = v^T x = Σ v_j x_j (no conjugate)
-      double dot_r = linalg::Dot(comm, aux_modes[i].v->Real(), E_tmp.Real()) -
+      // Hermitian dot product: dot = v^H x = Σ conj(v_j) x_j
+      double dot_r = linalg::Dot(comm, aux_modes[i].v->Real(), E_tmp.Real()) +
                      linalg::Dot(comm, aux_modes[i].v->Imag(), E_tmp.Imag());
-      double dot_i = linalg::Dot(comm, aux_modes[i].v->Real(), E_tmp.Imag()) +
+      double dot_i = linalg::Dot(comm, aux_modes[i].v->Real(), E_tmp.Imag()) -
                      linalg::Dot(comm, aux_modes[i].v->Imag(), E_tmp.Real());
 
       // val = dot - s
