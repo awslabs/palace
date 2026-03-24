@@ -7,8 +7,8 @@
 #include <map>
 #include <memory>
 #include <optional>
-#include "drivers/boundarymodesolver.hpp"
 #include "fem/errorindicator.hpp"
+#include "models/boundarymodeoperator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/spaceoperator.hpp"
@@ -59,7 +59,7 @@ struct fem_op_map_type<ProblemType::MAGNETOSTATIC>
 template <>
 struct fem_op_map_type<ProblemType::BOUNDARYMODE>
 {
-  using type = BoundaryModeFemOp;
+  using type = BoundaryModeOperator;
 };
 
 template <ProblemType solver_t>
@@ -130,11 +130,11 @@ struct Measurement
   // Mode analysis impedance result for a single configuration entry.
   struct ModeImpedanceResult
   {
-    double Z0 = 0.0;        // Characteristic impedance (Ohm) [P-V]
-    double L_per_m = 0.0;   // Inductance per unit length (H/m) [P-V]
-    double C_per_m = 0.0;   // Capacitance per unit length (F/m) [P-V]
+    double Z0 = 0.0;       // Characteristic impedance (Ohm) [P-V]
+    double L_per_m = 0.0;  // Inductance per unit length (H/m) [P-V]
+    double C_per_m = 0.0;  // Capacitance per unit length (F/m) [P-V]
     bool has_impedance = false;
-    double Z_VI = 0.0;      // V/I impedance (Ohm)
+    double Z_VI = 0.0;  // V/I impedance (Ohm)
     double L_VI_per_m = 0.0;
     double C_VI_per_m = 0.0;
     bool has_vi_impedance = false;

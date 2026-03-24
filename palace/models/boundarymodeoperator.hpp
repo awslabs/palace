@@ -8,293 +8,138 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
-#include "linalg/eps.hpp"
-#include "linalg/ksp.hpp"
-#include "linalg/operator.hpp"
+#include "fem/fespace.hpp"
+#include "fem/mesh.hpp"
+#include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
-#include "utils/configfile.hpp"
-#include "utils/labels.hpp"
+#include "models/materialoperator.hpp"
+#include "models/waveportoperator.hpp"
+#include "utils/iodata.hpp"
 
 namespace palace
 {
 
-template <typename OperType>
-class BlockDiagonalPreconditioner;
 class FarfieldBoundaryOperator;
-class FiniteElementSpace;
-class FiniteElementSpaceHierarchy;
-class MaterialOperator;
 class SurfaceConductivityOperator;
 class SurfaceImpedanceOperator;
 
 //
-// Configuration for the BoundaryModeOperator, parameterizing the differences between the
-// 2D boundary mode analysis (BoundaryModeSolver) and 3D wave port (WavePortOperator)
-// eigenvalue problems.
-//
-struct BoundaryModeOperatorConfig
-{
-  // Material property mappings. For mode analysis, these come from
-  // GetAttributeToMaterial() (volume attrs). For wave ports, from
-  // GetBdrAttributeToMaterial() (boundary attrs).
-  const mfem::Array<int> *attr_to_material = nullptr;
-
-  // Inverse permeability tensor. Used for Atn, Ant, and Btt bilinear forms.
-  const mfem::DenseTensor *inv_permeability = nullptr;
-
-  // Curl-curl inverse permeability. In 2D mode analysis this is the scalar mu_inv
-  // (GetCurlCurlInvPermeability); for 3D wave ports it is the full tensor
-  // (GetInvPermeability), with subsequent normal projection.
-  const mfem::DenseTensor *curlcurl_inv_permeability = nullptr;
-
-  // Real part of permittivity tensor. Used for Att, Ant bilinear forms.
-  const mfem::DenseTensor *permittivity_real = nullptr;
-
-  // Scalar permittivity for the Ann mass matrix. In 2D mode analysis this is
-  // GetPermittivityScalar(); for 3D wave ports it is GetPermittivityReal() with
-  // subsequent normal projection.
-  const mfem::DenseTensor *permittivity_scalar = nullptr;
-
-  // Imaginary part of permittivity (loss tangent contribution). Set to nullptr when
-  // there is no loss tangent.
-  const mfem::DenseTensor *permittivity_imag = nullptr;
-  // Scalar (1x1) imaginary permittivity for H1 mass in 2D. Set to nullptr for 3D.
-  const mfem::DenseTensor *permittivity_imag_scalar = nullptr;
-
-  // Surface normal vector for 3D wave port boundaries. Set to nullptr for 2D domain
-  // meshes (mode analysis), which do not need normal projection.
-  const mfem::Vector *normal = nullptr;
-
-  // Whether the material operator reports a nonzero loss tangent.
-  bool has_loss_tangent = false;
-
-  // Domain conductivity tensor. Used if non-null for damping contribution to Att.
-  const mfem::DenseTensor *conductivity = nullptr;
-  bool has_conductivity = false;
-
-  // London penetration depth (1/lambda_L^2 tensor). Adds a mass term to the stiffness
-  // operator: (1/lambda_L^2)(E, F). Used for superconductor modeling.
-  const mfem::DenseTensor *inv_london_depth = nullptr;
-  // Scalar (1x1) London depth for the H1 Ann mass in 2D. Set to nullptr for 3D (which
-  // uses normal projection of inv_london_depth instead).
-  const mfem::DenseTensor *inv_london_depth_scalar = nullptr;
-  bool has_london_depth = false;
-
-  // Reference to MaterialOperator for ceed attribute access. Required when boundary
-  // operators are specified.
-  const MaterialOperator *mat_op = nullptr;
-
-  // Boundary operators for Robin BC contributions to Att. All optional (nullptr = none).
-  // Non-const because the Add*Coefficients methods are not const.
-  SurfaceImpedanceOperator *surf_z_op = nullptr;
-  FarfieldBoundaryOperator *farfield_op = nullptr;
-  SurfaceConductivityOperator *surf_sigma_op = nullptr;
-
-  // Eigenvalue solver configuration.
-  int num_modes = 1;
-  int num_vec = -1;
-  double eig_tol = 1.0e-6;
-  EigenvalueSolver::WhichType which_eig = EigenvalueSolver::WhichType::LARGEST_REAL;
-
-  // Linear solver configuration.
-  const config::LinearSolverData *linear = nullptr;
-  EigenSolverBackend eigen_backend = EigenSolverBackend::DEFAULT;
-
-  // Verbosity level for solvers.
-  int verbose = 0;
-};
-
-//
-// Configuration for p-multigrid preconditioning of the boundary mode eigenvalue problem.
-// When provided, the BoundaryModeOperator uses a block-diagonal GMG preconditioner
-// (ND p-multigrid + H1 p-multigrid) instead of a sparse direct solver.
-//
-struct BoundaryModeMultigridConfig
-{
-  // ND and H1 FE space hierarchies for the diagonal blocks (not owned).
-  FiniteElementSpaceHierarchy *nd_fespaces = nullptr;
-  FiniteElementSpaceHierarchy *h1_fespaces = nullptr;
-
-  // H1 auxiliary space hierarchy for Hiptmair distributive relaxation in the ND block.
-  FiniteElementSpaceHierarchy *h1_aux_fespaces = nullptr;
-
-  // Per-level essential BC true DOF lists for ND, H1, and H1 auxiliary blocks (not owned).
-  std::vector<mfem::Array<int>> *nd_dbc_tdof_lists = nullptr;
-  std::vector<mfem::Array<int>> *h1_dbc_tdof_lists = nullptr;
-  std::vector<mfem::Array<int>> *h1_aux_dbc_tdof_lists = nullptr;
-};
-
-//
-// Linear eigenvalue solver for 2D boundary mode computation using a direct linearization
-// of the transverse curl-curl (Equation 1) and normal curl-curl (Equation 2) equations
-// with the Vardapetyan-Demkowicz substitution e_n_tilde = i*kn*E_n, e_t = E_t.
-//
-// Assembles and solves the generalized eigenvalue problem:
-//
-//   [Att  Atn] [et]           [Btt  Btn] [et]
-//   [ 0   Ann] [en] = lambda  [ 0    0 ] [en]
-//
-// where:
-//   Att = mu_cc^{-1}(curl_t u, curl_t v) - omega^2(eps u, v) + BC-t
-//   Atn = -(mu^{-1} grad_t u, v)
-//   Ann = -(mu^{-1} grad u, grad v) + omega^2(eps u, v) + BC-n (H1 stiffness + mass +
-//          impedance boundary)
-//   Btt = -(mu^{-1} u, v)
-//   Btn = -(mu^{-1} u, grad v) = Atn^T (transpose coupling from Equation 2)
-//
-// The A matrix is upper block-triangular (Ant = 0). The B matrix has Btn coupling from
-// Equation 2 and Bnn = 0. This is a standard GEP with shift-and-invert.
-//
-// The eigenvector contains [e_t; e_n_tilde] where e_n_tilde = i*kn*E_n. Recovery of
-// E_n = e_n_tilde / (i*kn) is performed in the driver, not here.
+// Top-level operator for 2D boundary mode analysis, analogous to SpaceOperator for 3D
+// driven/eigenmode problems. Owns the mesh, FE spaces, material operator, boundary
+// operators, and the eigenvalue solver. Constructed from IoData and a mesh (2D directly
+// or 3D with boundary attributes for submesh extraction).
 //
 class BoundaryModeOperator
 {
 public:
+  // Result of an eigenvalue solve.
   struct SolveResult
   {
     int num_converged;
     double sigma;
   };
 
-  // The constructor assembles frequency-independent matrices (Atn, Btn = Atn^T, Btt)
-  // and configures linear and eigenvalue solvers. Frequency-dependent matrices (Att, Ann)
-  // are assembled at solve time via AssembleFrequencyDependent(). Matrix assembly uses
-  // the FE space communicator (all processes). If solver_comm != MPI_COMM_NULL, the
-  // linear and eigenvalue solvers are configured on that communicator.
-  BoundaryModeOperator(const BoundaryModeOperatorConfig &config,
-                       const FiniteElementSpace &nd_fespace,
-                       const FiniteElementSpace &h1_fespace,
-                       const mfem::Array<int> &dbc_tdof_list,
-                       MPI_Comm solver_comm = MPI_COMM_NULL,
-                       const BoundaryModeMultigridConfig *mg_config = nullptr);
+  BoundaryModeOperator(const IoData &iodata,
+                       const std::vector<std::unique_ptr<Mesh>> &mesh);
 
-  ~BoundaryModeOperator();
-
-  // Assemble frequency-dependent matrices and solve the eigenvalue problem. The shift
-  // sigma = -kn_target^2 is applied. An optional initial space vector can be provided
-  // for eigenvalue solver warm-starting. When has_solver is true (default), the calling
-  // process participates in the eigenvalue solve; when false (wave port non-port process),
-  // only assembly is performed.
-  SolveResult Solve(double omega, double sigma, bool has_solver = true,
-                    const ComplexVector *initial_space = nullptr);
+  // Solve the eigenvalue problem at the given frequency.
+  SolveResult Solve(double omega, double kn_target);
 
   // Access converged eigenvalues and eigenvectors.
   std::complex<double> GetEigenvalue(int i) const;
   void GetEigenvector(int i, ComplexVector &x) const;
-
-  // Get the eigenpair error for the i-th converged eigenvalue.
   double GetError(int i, EigenvalueSolver::ErrorType type) const;
 
-  // Access the assembled Btt matrix (needed for impedance postprocessing).
-  const mfem::HypreParMatrix *GetBtt() const { return Bttr.get(); }
+  // Access FE spaces.
+  FiniteElementSpace &GetNDSpace() { return nd_fespaces.GetFinestFESpace(); }
+  FiniteElementSpace &GetH1Space() { return h1_fespaces.GetFinestFESpace(); }
+  FiniteElementSpace &GetCurlSpace() { return *l2_curl_fespace; }
+  const FiniteElementSpace &GetNDSpace() const { return nd_fespaces.GetFinestFESpace(); }
+  const FiniteElementSpace &GetH1Space() const { return h1_fespaces.GetFinestFESpace(); }
+  const FiniteElementSpace &GetCurlSpace() const { return *l2_curl_fespace; }
 
-  // Get the true vector sizes for the ND and H1 FE spaces.
-  int GetNDTrueVSize() const { return nd_size; }
-  int GetH1TrueVSize() const { return h1_size; }
+  // Access space hierarchies (for error estimation).
+  const FiniteElementSpaceHierarchy &GetNDSpaceHierarchy() const { return nd_fespaces; }
+  const FiniteElementSpaceHierarchy &GetH1SpaceHierarchy() const { return h1_fespaces; }
 
-  // Access the linear solver (for metadata reporting). Returns nullptr if this process
-  // does not have a solver configured (non-port process in wave port mode).
-  const ComplexKspSolver *GetLinearSolver() const { return ksp.get(); }
+  // Access FE collections.
+  const mfem::FiniteElementCollection *GetNDFEColl() const { return nd_fecs.back().get(); }
+  const mfem::FiniteElementCollection *GetH1FEColl() const { return h1_fecs.back().get(); }
+
+  // Error estimation: add error indicator for a converged mode.
+  void AddErrorIndicator(const ComplexVector &et, const ComplexVector &bz,
+                         double total_domain_energy, ErrorIndicator &indicator);
+
+  // Access material and mesh.
+  const MaterialOperator &GetMaterialOp() const { return *mat_op; }
+  Mesh &GetMesh() { return *solve_mesh; }
+  const Mesh &GetMesh() const { return *solve_mesh; }
+  MPI_Comm GetComm() const { return solve_mesh->GetComm(); }
+
+  // Access the assembled Btt matrix (for impedance postprocessing).
+  const mfem::HypreParMatrix *GetBtt() const;
+
+  // Access solver order.
+  int GetSolverOrder() const { return solver_order; }
+
+  // Get submesh projection data (for coordinate transforms).
+  bool IsFromSubmesh() const { return use_submesh; }
+  const mfem::Vector &GetSubmeshCentroid() const { return submesh_centroid; }
+  const mfem::Vector &GetSubmeshE1() const { return submesh_e1; }
+  const mfem::Vector &GetSubmeshE2() const { return submesh_e2; }
+
+  // Access the linear solver (for metadata reporting).
+  const ComplexKspSolver *GetLinearSolver() const;
+
+  // True vector sizes.
+  int GetNDTrueVSize() const { return nd_fespaces.GetFinestFESpace().GetTrueVSize(); }
+  int GetH1TrueVSize() const { return h1_fespaces.GetFinestFESpace().GetTrueVSize(); }
 
 private:
-  // Configuration (stored for Solve-time assembly).
-  BoundaryModeOperatorConfig config;
+  const IoData &iodata;
+  int solver_order;
+  bool use_submesh;
 
-  // References to FE spaces (not owned).
-  const FiniteElementSpace &nd_fespace;
-  const FiniteElementSpace &h1_fespace;
+  // Mesh (owned for submesh case, non-owning pointer for direct 2D).
+  std::unique_ptr<Mesh> owned_mesh;
+  Mesh *solve_mesh;
 
-  // Essential boundary condition true DOF list for the combined block system.
-  mfem::Array<int> dbc_tdof_list;
+  // Submesh projection geometry.
+  mfem::Vector submesh_centroid, submesh_e1, submesh_e2;
 
-  // Cached FE space sizes.
-  int nd_size, h1_size;
+  // FE collections and space hierarchies.
+  std::vector<std::unique_ptr<mfem::ND_FECollection>> nd_fecs;
+  std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_fecs;
+  std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_aux_fecs;
+  FiniteElementSpaceHierarchy nd_fespaces, h1_fespaces, h1_aux_fespaces;
+  std::vector<mfem::Array<int>> nd_dbc_tdof_lists, h1_dbc_tdof_lists, h1_aux_dbc_tdof_lists;
 
-  // Frequency-independent assembled matrices.
-  // Atn: gradient coupling -(mu^{-1} grad_t u, v).
-  // Btn: transpose of Atn, coupling from Equation 2: -(mu^{-1} u, grad_t v).
-  // Bttr: positive copy of Btt for external use (postprocessing).
-  std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni;
-  std::unique_ptr<mfem::HypreParMatrix> Btnr, Btni;
-  std::unique_ptr<mfem::HypreParMatrix> Bttr;
-  std::unique_ptr<ComplexOperator> opB;
+  // L2 curl space for B-field in 2D.
+  std::unique_ptr<mfem::L2_FECollection> l2_curl_fec;
+  std::unique_ptr<FiniteElementSpace> l2_curl_fespace;
 
-  // Frequency-dependent block A operator (rebuilt each Solve).
-  std::unique_ptr<ComplexOperator> opA;
+  // Material and boundary operators.
+  std::unique_ptr<MaterialOperator> mat_op;
+  std::unique_ptr<SurfaceImpedanceOperator> surf_z_op;
+  std::unique_ptr<FarfieldBoundaryOperator> farfield_op;
+  std::unique_ptr<SurfaceConductivityOperator> surf_sigma_op;
 
-  // Eigenvalue and linear solvers (null on processes without solver_comm).
-  std::unique_ptr<EigenvalueSolver> eigen;
-  std::unique_ptr<ComplexKspSolver> ksp;
+  // DBC attributes.
+  mfem::Array<int> dbc_bcs;
 
-  // Permutation that maps external mode index to eigensolver index, sorted by ascending
-  // Re{kn}. This ensures consistent mode ordering regardless of eigensolver backend.
-  std::vector<int> mode_perm;
+  // Wave port data (owns the eigenvalue solver internally).
+  std::unique_ptr<WavePortData> port_data;
 
-  // Assemble frequency-dependent Att and Ann, then build block A (MPI collective on FE
-  // space comm).
-  void AssembleFrequencyDependent(double omega, double sigma);
+  // Error estimator (owns its FE spaces for flux recovery).
+  std::unique_ptr<mfem::RT_FECollection> rt_fec_est;
+  std::unique_ptr<FiniteElementSpaceHierarchy> nd_fespaces_est, rt_fespaces_est,
+      h1_fespaces_est;
+  std::unique_ptr<BoundaryModeFluxErrorEstimator<ComplexVector>> estimator;
 
-  // Private helper methods for bilinear form assembly.
-  using ComplexHypreParMatrix = std::tuple<std::unique_ptr<mfem::HypreParMatrix>,
-                                           std::unique_ptr<mfem::HypreParMatrix>>;
-
-  // Att: curl-curl + mass + BC-t.
-  ComplexHypreParMatrix AssembleAtt(double omega, double sigma) const;
-
-  // Atn: gradient coupling -(mu^{-1} grad_t u, v).
-  ComplexHypreParMatrix AssembleAtn() const;
-
-  // Ann: H1 stiffness + mass + BC-n.
-  // Ann = -(mu^{-1} grad u, grad v) + omega^2(eps u, v) + BC-n impedance.
-  ComplexHypreParMatrix AssembleAnn(double omega) const;
-
-  // Btt: ND mass -(mu^{-1} u, v).
-  ComplexHypreParMatrix AssembleBtt() const;
-
-  // Build the 2x2 block A matrix. The (1,0) block is -sigma * Btn from the
-  // shift-and-invert transformation (nullptr when sigma = 0).
-  ComplexHypreParMatrix
-  BuildSystemMatrixA(const mfem::HypreParMatrix *Attr, const mfem::HypreParMatrix *Atti,
-                     const mfem::HypreParMatrix *Atnr, const mfem::HypreParMatrix *Atni,
-                     const mfem::HypreParMatrix *Annr, const mfem::HypreParMatrix *Anni,
-                     const mfem::HypreParMatrix *shifted_Btnr = nullptr) const;
-
-  // Build the 2x2 block B matrix: [Btt, 0; Btn, 0].
-  ComplexHypreParMatrix BuildSystemMatrixB(const mfem::HypreParMatrix *Bttr,
-                                           const mfem::HypreParMatrix *Btti,
-                                           const mfem::HypreParMatrix *Btnr,
-                                           const mfem::HypreParMatrix *Btni,
-                                           const mfem::HypreParMatrix *Dnn) const;
-
-  // Optional multigrid configuration (not owned, may be nullptr for sparse direct path).
-  const BoundaryModeMultigridConfig *mg_config;
-
-  // Non-owning pointer to the block preconditioner (for setting operators in Solve).
-  BlockDiagonalPreconditioner<ComplexOperator> *block_pc_ptr = nullptr;
-
-  // Multigrid preconditioner operators (owned, must outlive the GMG solver application).
-  std::unique_ptr<ComplexMultigridOperator> att_mg_op, ann_mg_op;
-
-  // Shifted off-diagonal operator -sigma*Btn for block lower-triangular preconditioning.
-  std::unique_ptr<ComplexOperator> shifted_Btn_op;
-
-  // Assemble preconditioner operators at all multigrid levels for the Att (ND) block.
-  // Returns a ComplexMultigridOperator with primary (ND) and auxiliary (H1) operators.
-  std::unique_ptr<ComplexMultigridOperator> AssembleAttPreconditioner(double omega,
-                                                                      double sigma) const;
-
-  // Assemble preconditioner operators at all multigrid levels for the Ann (H1) block.
-  std::unique_ptr<ComplexMultigridOperator> AssembleAnnPreconditioner(double omega) const;
-
-  // Set up the linear solver (GMRES + sparse direct preconditioner).
-  void SetUpLinearSolver(MPI_Comm comm);
-
-  // Set up the linear solver with p-multigrid block-diagonal preconditioning.
-  void SetUpMultigridLinearSolver(MPI_Comm comm);
-
-  // Set up the eigenvalue solver (SLEPc or ARPACK).
-  void SetUpEigenSolver(MPI_Comm comm);
+  // Setup helpers.
+  void SetUpMesh(const std::vector<std::unique_ptr<Mesh>> &mesh);
+  void SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>> &mesh);
+  void SetUpEigenSolver();
 };
 
 }  // namespace palace

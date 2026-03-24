@@ -1722,16 +1722,16 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
       Vector fr(nd_size), fi(nd_size);
       field.Real().GetTrueDofs(fr);
       field.Imag().GetTrueDofs(fi);
-      V.real(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, fr));
-      V.imag(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, fi));
+      V.real(linalg::Dot(nd_fespace.GetComm(), v_lf_tdof, fr));
+      V.imag(linalg::Dot(nd_fespace.GetComm(), v_lf_tdof, fi));
     }
     return V;
   };
 
   // Helper: compute current I = ∮ H · t dl via coordinate path or boundary attributes.
   auto ComputeCurrent = [this](const std::vector<mfem::Vector> &path, bool has_path,
-                                mfem::Array<int> marker, int quad_order,
-                                const GridFunction &field) -> std::complex<double>
+                               mfem::Array<int> marker, int quad_order,
+                               const GridFunction &field) -> std::complex<double>
   {
     std::complex<double> I(0.0, 0.0);
     if (has_path)
@@ -1740,10 +1740,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
       {
         const auto &pk = path[k];
         const auto &pk1 = path[(k + 1) % path.size()];
-        I.real(I.real() +
-               fem::ComputeLineIntegral(pk, pk1, field.Real(), quad_order));
-        I.imag(I.imag() +
-               fem::ComputeLineIntegral(pk, pk1, field.Imag(), quad_order));
+        I.real(I.real() + fem::ComputeLineIntegral(pk, pk1, field.Real(), quad_order));
+        I.imag(I.imag() + fem::ComputeLineIntegral(pk, pk1, field.Imag(), quad_order));
       }
     }
     else if (marker.Size() > 0)
@@ -1760,8 +1758,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
       Vector fr(nd_size), fi(nd_size);
       field.Real().GetTrueDofs(fr);
       field.Imag().GetTrueDofs(fi);
-      I.real(mfem::InnerProduct(nd_fespace.GetComm(), i_lf_tdof, fr));
-      I.imag(mfem::InnerProduct(nd_fespace.GetComm(), i_lf_tdof, fi));
+      I.real(linalg::Dot(nd_fespace.GetComm(), i_lf_tdof, fr));
+      I.imag(linalg::Dot(nd_fespace.GetComm(), i_lf_tdof, fi));
     }
     return I;
   };
@@ -1780,10 +1778,10 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     Vector Btt_etr(nd_size), Btt_eti(nd_size);
     Btt->Mult(etr_tdof, Btt_etr);
     Btt->Mult(eti_tdof, Btt_eti);
-    double p_rr = mfem::InnerProduct(nd_fespace.GetComm(), etr_tdof, Btt_etr);
-    double p_ii = mfem::InnerProduct(nd_fespace.GetComm(), eti_tdof, Btt_eti);
-    double p_ri = mfem::InnerProduct(nd_fespace.GetComm(), etr_tdof, Btt_eti);
-    double p_ir = mfem::InnerProduct(nd_fespace.GetComm(), eti_tdof, Btt_etr);
+    double p_rr = linalg::Dot(nd_fespace.GetComm(), etr_tdof, Btt_etr);
+    double p_ii = linalg::Dot(nd_fespace.GetComm(), eti_tdof, Btt_eti);
+    double p_ri = linalg::Dot(nd_fespace.GetComm(), etr_tdof, Btt_eti);
+    double p_ir = linalg::Dot(nd_fespace.GetComm(), eti_tdof, Btt_etr);
     std::complex<double> etH_Btt_et(p_rr + p_ii, p_ri - p_ir);
     P = 0.5 * std::conj(kn) / omega * etH_Btt_et;
   }
