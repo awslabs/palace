@@ -613,7 +613,8 @@ if "cavity2d/eigenmode" in cases
     )
 end
 
-# Coarser test tolerances for driven simulations with ports
+# Coarser test tolerances for 2D driven simulations: the coarse meshes and low-order ports
+# make results more sensitive to MPI partitioning and platform differences.
 reltol = 2.0e-2
 abstol = 1.0e-8
 
@@ -688,6 +689,8 @@ if "cavity2d/transient" in cases
     )
 end
 
+# 2D boundary mode: impedance depends on voltage path integration, tolerant for
+# cross-platform reproducibility.
 reltol = 1.0e-2
 
 if "cpw2d/thin" in cases

@@ -9,7 +9,8 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Problem description
 
-This example demonstrates the mode analysis simulation type by computing propagation
+This example demonstrates the [`"BoundaryMode"`](../config/solver.md#solver-boundarymode)
+simulation type by computing propagation
 constants, effective indices, and characteristic impedance for a coplanar waveguide (CPW)
 cross-section. It uses a similar CPW geometry as the
 [3D crosstalk example](cpw.md) but solves the 2D eigenvalue problem directly on the
@@ -27,8 +28,10 @@ The CPW has a center trace on a silicon substrate (``\varepsilon_r = 11.47``,
 
 ## Configuration
 
-Both configurations use `"Problem": {"Type": "BoundaryMode"}` and request 2 modes at
-5 GHz. The key solver settings are:
+Both configurations use
+[`"Problem": {"Type": "BoundaryMode"}`](../config/problem.md#config-problem) and request 2
+modes at 5 GHz. The key
+[solver settings](../config/solver.md#solver-boundarymode) are:
 
 ```json
 "BoundaryMode":
@@ -36,16 +39,17 @@ Both configurations use `"Problem": {"Type": "BoundaryMode"}` and request 2 mode
     "Freq": 5.0,
     "N": 2,
     "Save": 2,
-    "Target": 2.5,
+    "Target": 2.497,
     "Tol": 1.0e-8
 }
 ```
 
-The `"Target"` parameter sets the effective index ``n_\text{eff} = k_n / k_0`` around which
-the eigenvalue solver searches, where ``k_n`` is the propagation constant and
-``k_0 = \omega / c_0`` is the free-space wavenumber. A value near the expected
-``n_\text{eff}`` (between 1 for air and ``\sqrt{\varepsilon_r} \approx 3.39`` for the
-substrate) helps the solver converge to the desired propagating modes.
+The `"Target"` parameter sets the effective index ``n_\text{eff} = k_n / k_0`` near which
+the eigenvalue solver searches via shift-and-invert, where ``k_n`` is the propagation
+constant and ``k_0 = \omega / c_0`` is the free-space wavenumber. The solver finds modes
+with ``n_\text{eff}`` closest to (but not necessarily above) the target. A value near the
+expected ``n_\text{eff}`` (between 1 for air and ``\sqrt{\varepsilon_r} \approx 3.39`` for
+the substrate) helps the solver converge to the desired propagating modes.
 
 ### Thin metal configuration
 
@@ -61,7 +65,7 @@ across the CPW gap:
         {
             "Index": 1,
             "VoltagePath": [[518.5, 0.0], [522.0, 0.0]],
-            "IntegrationOrder": 200
+            "NSamples": 200
         }
     ],
     "Voltage":
@@ -69,7 +73,7 @@ across the CPW gap:
         {
             "Index": 1,
             "VoltagePath": [[518.5, 0.0], [522.0, 0.0]],
-            "IntegrationOrder": 200
+            "NSamples": 200
         }
     ]
 }

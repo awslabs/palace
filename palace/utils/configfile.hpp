@@ -522,7 +522,7 @@ public:
   // Optional coordinate path for voltage line integral on the port face.
   // When non-empty, enables GetVoltage(). List of points [x, y, z].
   std::vector<std::vector<double>> voltage_path = {};
-  int integration_order = 100;
+  int n_samples = 100;
 
   WavePortData() = default;
   WavePortData(const json &port);
@@ -604,7 +604,7 @@ public:
   // Quadrature order for the coordinate-based line integral. Higher values give more
   // integration points and better accuracy near field singularities at conductor edges.
   // Default 100 gives ~50 Gauss-Legendre points, sufficient for typical geometries.
-  int integration_order = 100;
+  int n_samples = 100;
 
   ModeImpedanceData() = default;
   ModeImpedanceData(const json &imp);
@@ -622,7 +622,7 @@ public:
   std::vector<std::vector<double>> voltage_path = {};
 
   // Quadrature order for the coordinate-based line integral.
-  int integration_order = 100;
+  int n_samples = 100;
 
   ModeVoltageData() = default;
   ModeVoltageData(const json &volt);
