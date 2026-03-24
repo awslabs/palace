@@ -28,11 +28,26 @@ namespace palace
 namespace
 {
 
-auto Initialize(MPI_Comm comm, const std::string &input, int ref_levels, bool amr)
+auto Initialize(MPI_Comm comm, const std::string &input, int ref_levels, bool amr,
+                bool embed_in_3d = false)
 {
   // Load the mesh.
   mfem::Mesh smesh(input, 1, 1);
   smesh.EnsureNodes();
+
+  // Optionally embed a 2D mesh in 3D space (SpaceDim=3, Dim=2). This produces boundary
+  // elements with SpaceDim=3, Dim=1 that exercise the 31 libCEED qfunctions.
+  if (embed_in_3d && smesh.Dimension() == 2)
+  {
+    const int mesh_order = smesh.GetNodes()->FESpace()->GetMaxElementOrder();
+    smesh.SetCurvature(mesh_order, false, 3, mfem::Ordering::byNODES);
+    auto *nodes = smesh.GetNodes();
+    const int npts = nodes->Size() / 3;
+    for (int i = 0; i < npts; i++)
+    {
+      (*nodes)(2 * npts + i) = 0.0;  // z = 0
+    }
+  }
 
   // Configure attributes for piecewise coefficients (input mesh is always conformal, so
   // this is OK).
@@ -69,7 +84,17 @@ auto Initialize(MPI_Comm comm, const std::string &input, int ref_levels, bool am
     pmesh->RandomRefinement(0.5);
   }
 
-  return Mesh(std::move(pmesh));
+  auto mesh = Mesh(std::move(pmesh));
+
+  // For 2D-in-3D meshes, rebuild CEED attributes so that boundary element geometry data
+  // is constructed. Without this, BuildCeedGeomFactorData skips boundary elements when
+  // dim != sdim (the condition is: dim == sdim || ceed_from_self).
+  if (embed_in_3d)
+  {
+    mesh.RebuildCeedAttributes();
+  }
+
+  return mesh;
 }
 
 enum class CoeffType
@@ -619,10 +644,10 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
 }
 
 void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_levels,
-                            bool amr, int order)
+                            bool amr, int order, bool embed_in_3d = false)
 {
   // Load the mesh.
-  auto mesh = Initialize(comm, input, ref_levels, amr);
+  auto mesh = Initialize(comm, input, ref_levels, amr, embed_in_3d);
   const int dim = mesh.Dimension();
 
   // Match MFEM's default integration orders.
@@ -631,9 +656,13 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
   fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
   fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
 
-  // Run the tests.
-  auto bdr_integ = GENERATE(false, true);
-  auto coeff_type = GENERATE(CoeffType::Const, CoeffType::Scalar, CoeffType::Matrix);
+  // Run the tests. For 2D-in-3D, skip matrix coefficients (need sdim x sdim dimensions)
+  // and test boundary integrators only (domain integrators use the 32 qfunctions which are
+  // already covered by the standard 2D tests after projection).
+  auto bdr_integ = embed_in_3d ? GENERATE(true) : GENERATE(false, true);
+  auto coeff_type = embed_in_3d
+                        ? GENERATE(CoeffType::Const, CoeffType::Scalar)
+                        : GENERATE(CoeffType::Const, CoeffType::Scalar, CoeffType::Matrix);
   std::string section =
       "Mesh: " + input + "\n" + "Refinement levels: " + std::to_string(ref_levels) + "\n" +
       "AMR: " + std::to_string(amr) + "\n" + "Order: " + std::to_string(order) + "\n" +
@@ -1096,7 +1125,8 @@ void RunCeedIntegratorTests(MPI_Comm comm, const std::string &input, int ref_lev
       mesh.ResetCeedObjects();
       BilinearForm a_test(h1_fespace, h1d_fespace);
       mfem::MixedBilinearForm a_ref(&h1_fespace.Get(), &h1d_fespace.Get());
-      if (!bdr_integ)  // MFEM's GradientIntegrator only supports square Jacobians
+      // MFEM's GradientIntegrator only supports square Jacobians (dim == sdim).
+      if (!bdr_integ && mesh.SpaceDimension() == dim)
       {
         switch (coeff_type)
         {
@@ -1450,13 +1480,16 @@ TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]
       MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh, 0, amr, order);
 }
 
-// TODO: Add tests for the 31 (SpaceDim=3, Dim=1) libCEED qfunctions, which are used for
-// boundary integrators on 2D surface meshes extracted from 3D meshes. A proper test
-// requires creating a 3D mesh → 2D boundary submesh (via ExtractStandalone2DSubmesh) rather
-// than artificially embedding a 2D mesh in 3D. The artificial embedding approach causes
-// CEED geometry factor caching issues where domain and boundary geometry data conflict.
-// Individual integrator tests pass in isolation but fail when run together due to stale
-// cached geometry objects being reused with incompatible dimensions.
+// Test the 31 (SpaceDim=3, Dim=1) libCEED qfunctions for boundary integrators on a 2D
+// mesh embedded in 3D. Uses the standard RunCeedIntegratorTests with embed_in_3d=true.
+// Matrix coefficients are excluded (need sdim x sdim, not dim x dim).
+TEST_CASE("2D-in-3D libCEED Boundary Operators", "[libCEED][Serial][Parallel]")
+{
+  auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh");
+  auto order = GENERATE(1, 2, 3);
+  RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh,
+                         0, false, order, true);
+}
 
 TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark][Serial][Parallel]")
 {
