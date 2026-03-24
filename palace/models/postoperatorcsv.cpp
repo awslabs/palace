@@ -123,13 +123,13 @@ Measurement Measurement::Dimensionalize(const Units &units,
   measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
       nondim_measurement_cache.farfield.E_field);
 
-  // Mode analysis data: most fields (kn, n_eff, Z0, L, C) are already dimensional, but
-  // the voltage V is nondimensional (integral of nondim E over nondim dl).
+  // Mode analysis data: kn, n_eff, Z0, L, C are already dimensional. Voltage V is
+  // nondimensional (integral of nondim E over nondim dl) and needs scaling.
   measurement_cache.mode_data = nondim_measurement_cache.mode_data;
-  if (measurement_cache.mode_data.has_voltage)
+  const double V_scale = units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
+  for (auto &[idx, vr] : measurement_cache.mode_data.voltage)
   {
-    measurement_cache.mode_data.V *=
-        units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
+    vr.V *= V_scale;
   }
 
   return measurement_cache;
@@ -1383,21 +1383,26 @@ auto PostOperatorCSV<solver_t>::PrintModeKn()
 
 template <ProblemType solver_t>
 template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializeModeZ(bool has_current)
+auto PostOperatorCSV<solver_t>::InitializeModeZ(const std::vector<int> &indices,
+                                                bool has_current)
     -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>
 {
   mode_Z = TableWithCSVFile(post_dir / "mode-Z.csv");
-  int ncols = has_current ? 7 : 4;
-  mode_Z->table.reserve(nr_expected_measurement_rows, ncols);
   mode_Z->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
-  mode_Z->table.insert("Z_PV", "Z_PV (Ohm)");
-  mode_Z->table.insert("L_PV", "L_PV (H/m)");
-  mode_Z->table.insert("C_PV", "C_PV (F/m)");
-  if (has_current)
+  for (const auto &idx : indices)
   {
-    mode_Z->table.insert("Z_VI", "Z_VI (Ohm)");
-    mode_Z->table.insert("L_VI", "L_VI (H/m)");
-    mode_Z->table.insert("C_VI", "C_VI (F/m)");
+    auto key = [&](auto &&name) { return fmt::format("{}[{}]", name, idx); };
+    auto hdr = [&](auto &&name, auto &&unit)
+    { return fmt::format("{}[{}] ({})", name, idx, unit); };
+    mode_Z->table.insert(key("Z_PV"), hdr("Z_PV", "Ohm"));
+    mode_Z->table.insert(key("L_PV"), hdr("L_PV", "H/m"));
+    mode_Z->table.insert(key("C_PV"), hdr("C_PV", "F/m"));
+    if (has_current)
+    {
+      mode_Z->table.insert(key("Z_VI"), hdr("Z_VI", "Ohm"));
+      mode_Z->table.insert(key("L_VI"), hdr("L_VI", "H/m"));
+      mode_Z->table.insert(key("C_VI"), hdr("C_VI", "F/m"));
+    }
   }
   mode_Z->WriteFullTableTrunc();
 }
@@ -1407,32 +1412,42 @@ template <ProblemType U>
 auto PostOperatorCSV<solver_t>::PrintModeZ()
     -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>
 {
-  if (!mode_Z || !measurement_cache.mode_data.has_impedance)
+  if (!mode_Z || measurement_cache.mode_data.impedance.empty())
   {
     return;
   }
   mode_Z->table["idx"] << row_idx_v;
-  mode_Z->table["Z_PV"] << measurement_cache.mode_data.Z0;
-  mode_Z->table["L_PV"] << measurement_cache.mode_data.L_per_m;
-  mode_Z->table["C_PV"] << measurement_cache.mode_data.C_per_m;
-  if (measurement_cache.mode_data.has_vi_impedance)
+  for (const auto &[idx, result] : measurement_cache.mode_data.impedance)
   {
-    mode_Z->table["Z_VI"] << measurement_cache.mode_data.Z_VI;
-    mode_Z->table["L_VI"] << measurement_cache.mode_data.L_VI_per_m;
-    mode_Z->table["C_VI"] << measurement_cache.mode_data.C_VI_per_m;
+    auto s = [&](auto &&name) { return fmt::format("{}[{}]", name, idx); };
+    if (result.has_impedance)
+    {
+      mode_Z->table[s("Z_PV")] << result.Z0;
+      mode_Z->table[s("L_PV")] << result.L_per_m;
+      mode_Z->table[s("C_PV")] << result.C_per_m;
+    }
+    if (result.has_vi_impedance)
+    {
+      mode_Z->table[s("Z_VI")] << result.Z_VI;
+      mode_Z->table[s("L_VI")] << result.L_VI_per_m;
+      mode_Z->table[s("C_VI")] << result.C_VI_per_m;
+    }
   }
   mode_Z->WriteFullTableTrunc();
 }
 
 template <ProblemType solver_t>
 template <ProblemType U>
-auto PostOperatorCSV<solver_t>::InitializeModeV()
+auto PostOperatorCSV<solver_t>::InitializeModeV(const std::vector<int> &indices)
     -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>
 {
   mode_V = TableWithCSVFile(post_dir / "mode-V.csv");
-  mode_V->table.reserve(nr_expected_measurement_rows, 2);
   mode_V->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
-  mode_V->table.insert("V_abs", "|V|");
+  for (const auto &idx : indices)
+  {
+    mode_V->table.insert(fmt::format("V_abs[{}]", idx),
+                         fmt::format("|V[{}]|", idx));
+  }
   mode_V->WriteFullTableTrunc();
 }
 
@@ -1441,12 +1456,15 @@ template <ProblemType U>
 auto PostOperatorCSV<solver_t>::PrintModeV()
     -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>
 {
-  if (!mode_V || !measurement_cache.mode_data.has_voltage)
+  if (!mode_V || measurement_cache.mode_data.voltage.empty())
   {
     return;
   }
   mode_V->table["idx"] << row_idx_v;
-  mode_V->table["V_abs"] << std::abs(measurement_cache.mode_data.V);
+  for (const auto &[idx, result] : measurement_cache.mode_data.voltage)
+  {
+    mode_V->table[fmt::format("V_abs[{}]", idx)] << std::abs(result.V);
+  }
   mode_V->WriteFullTableTrunc();
 }
 
@@ -1515,11 +1533,21 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
     InitializeModeKn();
     if (post_op.HasImpedancePostprocessing())
     {
-      InitializeModeZ(post_op.HasCurrentPath());
+      std::vector<int> imp_indices;
+      for (const auto &[idx, _] : post_op.impedance_postpro)
+      {
+        imp_indices.push_back(idx);
+      }
+      InitializeModeZ(imp_indices, post_op.HasCurrentPath());
     }
     if (post_op.HasVoltagePostprocessing())
     {
-      InitializeModeV();
+      std::vector<int> vol_indices;
+      for (const auto &[idx, _] : post_op.voltage_postpro)
+      {
+        vol_indices.push_back(idx);
+      }
+      InitializeModeV(vol_indices);
     }
   }
 }
@@ -1674,13 +1702,13 @@ template auto
 PostOperatorCSV<ProblemType::BOUNDARYMODE>::PrintModeKn<ProblemType::BOUNDARYMODE>()
     -> void;
 template auto
-PostOperatorCSV<ProblemType::BOUNDARYMODE>::InitializeModeZ<ProblemType::BOUNDARYMODE>(bool)
-    -> void;
+PostOperatorCSV<ProblemType::BOUNDARYMODE>::InitializeModeZ<ProblemType::BOUNDARYMODE>(
+    const std::vector<int> &, bool) -> void;
 template auto
 PostOperatorCSV<ProblemType::BOUNDARYMODE>::PrintModeZ<ProblemType::BOUNDARYMODE>() -> void;
 template auto
-PostOperatorCSV<ProblemType::BOUNDARYMODE>::InitializeModeV<ProblemType::BOUNDARYMODE>()
-    -> void;
+PostOperatorCSV<ProblemType::BOUNDARYMODE>::InitializeModeV<ProblemType::BOUNDARYMODE>(
+    const std::vector<int> &) -> void;
 template auto
 PostOperatorCSV<ProblemType::BOUNDARYMODE>::PrintModeV<ProblemType::BOUNDARYMODE>() -> void;
 

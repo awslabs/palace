@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_POST_OPERATOR_CSV_HPP
 #define PALACE_MODELS_POST_OPERATOR_CSV_HPP
 
+#include <map>
 #include <memory>
 #include <optional>
 #include "drivers/boundarymodesolver.hpp"
@@ -126,21 +127,32 @@ struct Measurement
     double inductive_energy_participation = 0.0;
   };
 
+  // Mode analysis impedance result for a single configuration entry.
+  struct ModeImpedanceResult
+  {
+    double Z0 = 0.0;        // Characteristic impedance (Ohm) [P-V]
+    double L_per_m = 0.0;   // Inductance per unit length (H/m) [P-V]
+    double C_per_m = 0.0;   // Capacitance per unit length (F/m) [P-V]
+    bool has_impedance = false;
+    double Z_VI = 0.0;      // V/I impedance (Ohm)
+    double L_VI_per_m = 0.0;
+    double C_VI_per_m = 0.0;
+    bool has_vi_impedance = false;
+  };
+
+  // Mode analysis voltage result for a single configuration entry.
+  struct ModeVoltageResult
+  {
+    std::complex<double> V = {0.0, 0.0};
+  };
+
   // Mode analysis data.
   struct ModeData
   {
     std::complex<double> kn_dim = {0.0, 0.0};  // Dimensional propagation constant (1/m)
     std::complex<double> n_eff = {0.0, 0.0};   // Effective refractive index
-    double Z0 = 0.0;                           // Characteristic impedance (Ohm) [P-V]
-    double L_per_m = 0.0;                      // Inductance per unit length (H/m) [P-V]
-    double C_per_m = 0.0;                      // Capacitance per unit length (F/m) [P-V]
-    bool has_impedance = false;                // Whether Z0/L/C (P-V) were computed
-    double Z_VI = 0.0;                         // V/I impedance (Ohm)
-    double L_VI_per_m = 0.0;                   // Inductance per unit length (H/m) [V-I]
-    double C_VI_per_m = 0.0;                   // Capacitance per unit length (F/m) [V-I]
-    bool has_vi_impedance = false;             // Whether Z_VI/L_VI/C_VI were computed
-    std::complex<double> V = {0.0, 0.0};  // Complex voltage from voltage postprocessing
-    bool has_voltage = false;             // Whether V was computed
+    std::map<int, ModeImpedanceResult> impedance = {};  // Keyed by config index
+    std::map<int, ModeVoltageResult> voltage = {};      // Keyed by config index
   };
 
   ModeData mode_data;
@@ -336,14 +348,15 @@ protected:
 
   std::optional<TableWithCSVFile> mode_Z;
   template <ProblemType U = solver_t>
-  auto InitializeModeZ(bool has_current)
+  auto InitializeModeZ(const std::vector<int> &indices, bool has_current)
       -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
   template <ProblemType U = solver_t>
   auto PrintModeZ() -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
 
   std::optional<TableWithCSVFile> mode_V;
   template <ProblemType U = solver_t>
-  auto InitializeModeV() -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
+  auto InitializeModeV(const std::vector<int> &indices)
+      -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
   template <ProblemType U = solver_t>
   auto PrintModeV() -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>;
 

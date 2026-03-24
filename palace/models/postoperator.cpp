@@ -208,87 +208,63 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
   // Mode analysis impedance postprocessing setup.
   if constexpr (solver_t == ProblemType::BOUNDARYMODE)
   {
-    const auto &impedance_data = boundaries.postpro.impedance;
-    if (!impedance_data.empty())
+    // Helper to convert coordinate path from config to mfem::Vector list.
+    auto ParsePath = [](const std::vector<std::vector<double>> &config_path)
     {
-      if (impedance_data.size() > 1)
+      std::vector<mfem::Vector> path;
+      for (const auto &pt : config_path)
       {
-        Mpi::Warning("BoundaryMode solver only uses the first impedance postprocessing "
-                     "entry (index {}). {} additional entries are ignored.\n",
-                     impedance_data.begin()->first, impedance_data.size() - 1);
+        mfem::Vector p(pt.size());
+        for (int d = 0; d < static_cast<int>(pt.size()); d++)
+        {
+          p(d) = pt[d];  // Already nondimensionalized.
+        }
+        path.push_back(std::move(p));
       }
-      has_impedance_postpro = true;
-      const auto &pmesh = fem_op->GetNDSpace().GetParMesh();
-      int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
-      const auto &imp = impedance_data.begin()->second;
+      return path;
+    };
+
+    const auto &pmesh = fem_op->GetNDSpace().GetParMesh();
+    int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+
+    // Impedance postprocessing setup (all configured entries).
+    for (const auto &[idx, imp] : boundaries.postpro.impedance)
+    {
+      auto &cfg = impedance_postpro[idx];
       if (!imp.voltage_attributes.empty())
       {
-        voltage_marker = mesh::AttrToMarker(bdr_attr_max, imp.voltage_attributes);
+        cfg.voltage_marker = mesh::AttrToMarker(bdr_attr_max, imp.voltage_attributes);
       }
       if (!imp.current_attributes.empty())
       {
-        current_marker = mesh::AttrToMarker(bdr_attr_max, imp.current_attributes);
+        cfg.current_marker = mesh::AttrToMarker(bdr_attr_max, imp.current_attributes);
       }
-      voltage_integration_order = imp.integration_order;
+      cfg.integration_order = imp.integration_order;
       if (imp.voltage_path.size() >= 2)
       {
-        has_voltage_coordinates = true;
-        for (const auto &pt : imp.voltage_path)
-        {
-          mfem::Vector p(pt.size());
-          for (int d = 0; d < static_cast<int>(pt.size()); d++)
-          {
-            p(d) = pt[d];  // Already nondimensionalized.
-          }
-          voltage_path.push_back(std::move(p));
-        }
+        cfg.has_voltage_coordinates = true;
+        cfg.voltage_path = ParsePath(imp.voltage_path);
       }
       if (!imp.current_path.empty())
       {
-        has_current_path = true;
-        for (const auto &pt : imp.current_path)
-        {
-          mfem::Vector p(pt.size());
-          for (int d = 0; d < static_cast<int>(pt.size()); d++)
-          {
-            p(d) = pt[d];  // Already nondimensionalized.
-          }
-          current_path.push_back(std::move(p));
-        }
+        cfg.has_current_path = true;
+        cfg.current_path = ParsePath(imp.current_path);
       }
     }
 
-    // Mode analysis voltage-only postprocessing setup.
-    const auto &voltage_data = boundaries.postpro.voltage;
-    if (!voltage_data.empty())
+    // Voltage-only postprocessing setup (all configured entries).
+    for (const auto &[idx, vol] : boundaries.postpro.voltage)
     {
-      if (voltage_data.size() > 1)
-      {
-        Mpi::Warning("BoundaryMode solver only uses the first voltage postprocessing "
-                     "entry (index {}). {} additional entries are ignored.\n",
-                     voltage_data.begin()->first, voltage_data.size() - 1);
-      }
-      has_voltage_postpro = true;
-      const auto &pmesh = fem_op->GetNDSpace().GetParMesh();
-      int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
-      const auto &vol = voltage_data.begin()->second;
+      auto &cfg = voltage_postpro[idx];
       if (!vol.voltage_attributes.empty())
       {
-        voltage_postpro_marker = mesh::AttrToMarker(bdr_attr_max, vol.voltage_attributes);
+        cfg.voltage_marker = mesh::AttrToMarker(bdr_attr_max, vol.voltage_attributes);
       }
-      voltage_postpro_integration_order = vol.integration_order;
+      cfg.integration_order = vol.integration_order;
       if (vol.voltage_path.size() >= 2)
       {
-        has_voltage_postpro_coordinates = true;
-        for (const auto &pt : vol.voltage_path)
-        {
-          mfem::Vector p(pt.size());
-          for (int d = 0; d < static_cast<int>(pt.size()); d++)
-          {
-            p(d) = pt[d];
-          }
-          voltage_postpro_path.push_back(std::move(p));
-        }
+        cfg.has_coordinates = true;
+        cfg.voltage_path = ParsePath(vol.voltage_path);
       }
     }
   }
@@ -1716,194 +1692,138 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   measurement_cache.mode_data.kn_dim = kn_dim;
   measurement_cache.mode_data.n_eff = n_eff;
 
-  // Compute impedance if configured.
-  if (has_impedance_postpro)
+  // Helper: compute voltage V = ∫ E · dl via coordinate path or boundary attributes.
+  auto ComputeVoltage = [this](const std::vector<mfem::Vector> &path, bool has_coords,
+                               mfem::Array<int> marker, int quad_order,
+                               const GridFunction &field) -> std::complex<double>
   {
-    auto &nd_fespace = fem_op->GetNDSpace();
-    const int nd_size = nd_fespace.GetTrueVSize();
-
-    // Voltage: V = integral of Et . dl along the voltage path.
     std::complex<double> V(0.0, 0.0);
-    if (has_voltage_coordinates)
+    if (has_coords)
     {
-      // Coordinate-based: sum line integrals along each segment of the voltage path.
-      const int quad_order = voltage_integration_order;
-      for (std::size_t k = 0; k + 1 < voltage_path.size(); k++)
+      for (std::size_t k = 0; k + 1 < path.size(); k++)
       {
-        V.real(V.real() + fem::ComputeLineIntegral(voltage_path[k], voltage_path[k + 1],
-                                                   E->Real(), quad_order));
-        V.imag(V.imag() + fem::ComputeLineIntegral(voltage_path[k], voltage_path[k + 1],
-                                                   E->Imag(), quad_order));
+        V.real(V.real() +
+               fem::ComputeLineIntegral(path[k], path[k + 1], field.Real(), quad_order));
+        V.imag(V.imag() +
+               fem::ComputeLineIntegral(path[k], path[k + 1], field.Imag(), quad_order));
       }
     }
-    else if (voltage_marker.Size() > 0)
-    {
-      // Boundary attribute-based: integrate Et . t (tangential) on marked boundary edges.
-      // For ND elements on 1D boundary edges, VectorFEBoundaryFluxLFIntegrator uses the
-      // scalar tangential basis, giving the tangential line integral.
-      mfem::ConstantCoefficient one(1.0);
-      mfem::ParLinearForm v_lf(&nd_fespace.Get());
-      v_lf.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(one),
-                                 voltage_marker);
-      v_lf.UseFastAssembly(false);
-      v_lf.Assemble();
-
-      Vector v_lf_tdof(nd_size);
-      v_lf.ParallelAssemble(v_lf_tdof);
-      Vector etr_tdof(nd_size), eti_tdof(nd_size);
-      E->Real().GetTrueDofs(etr_tdof);
-      E->Imag().GetTrueDofs(eti_tdof);
-      V.real(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, etr_tdof));
-      V.imag(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, eti_tdof));
-    }
-
-    // Power: P = (1/2) Re{kn*/omega} * (et^H Btt et) (transmitted Poynting power).
-    const auto *Btt = fem_op->GetBtt();
-    if (Btt != nullptr)
-    {
-      std::complex<double> P(0.0, 0.0);
-      {
-        Vector etr_tdof(nd_size), eti_tdof(nd_size);
-        E->Real().GetTrueDofs(etr_tdof);
-        E->Imag().GetTrueDofs(eti_tdof);
-        Vector Btt_etr(nd_size), Btt_eti(nd_size);
-        Btt->Mult(etr_tdof, Btt_etr);
-        Btt->Mult(eti_tdof, Btt_eti);
-        double p_rr = mfem::InnerProduct(nd_fespace.GetComm(), etr_tdof, Btt_etr);
-        double p_ii = mfem::InnerProduct(nd_fespace.GetComm(), eti_tdof, Btt_eti);
-        double p_ri = mfem::InnerProduct(nd_fespace.GetComm(), etr_tdof, Btt_eti);
-        double p_ir = mfem::InnerProduct(nd_fespace.GetComm(), eti_tdof, Btt_etr);
-        std::complex<double> etH_Btt_et(p_rr + p_ii, p_ri - p_ir);
-        P = 0.5 * std::conj(kn) / omega * etH_Btt_et;
-      }
-
-      // Impedance computation using the power-voltage definition:
-      //   Z_PV = |V|^2 / (2P)
-      // where V is the line integral of Et across the voltage boundary and P is the
-      // transmitted Poynting power.
-      if (std::abs(P) > 1e-30)
-      {
-        std::complex<double> Z0_nondim = (V * std::conj(V)) / (2.0 * P);
-        double Z0_ohm = Z0_nondim.real() * electromagnetics::Z0_;
-        double L_per_m = Z0_ohm * n_eff.real() / electromagnetics::c0_;
-        double C_per_m = n_eff.real() / (Z0_ohm * electromagnetics::c0_);
-
-        measurement_cache.mode_data.Z0 = Z0_ohm;
-        measurement_cache.mode_data.L_per_m = L_per_m;
-        measurement_cache.mode_data.C_per_m = C_per_m;
-        measurement_cache.mode_data.has_impedance = true;
-      }
-    }
-
-    // V/I impedance: Z_VI = V / I where I = ∮ H · t dl around the trace.
-    // Two methods: coordinate-based (GSLIB line integrals along a closed polygon)
-    // or boundary-attribute-based (tangential ND DOF integral on marked edges).
-    if (has_current_path)
-    {
-      // Coordinate-based: sum line integrals along each segment of the closed polygon.
-      // I = Σ ∫ Bt · dl from p_k to p_{k+1}, with p_{N} = p_0 (close the loop).
-      std::complex<double> I(0.0, 0.0);
-      const int quad_order = voltage_integration_order;
-      for (std::size_t k = 0; k < current_path.size(); k++)
-      {
-        const auto &pk = current_path[k];
-        const auto &pk1 = current_path[(k + 1) % current_path.size()];
-        I.real(I.real() +
-               fem::ComputeLineIntegral(pk, pk1, Bt_inplane->Real(), quad_order));
-        I.imag(I.imag() +
-               fem::ComputeLineIntegral(pk, pk1, Bt_inplane->Imag(), quad_order));
-      }
-
-      if (std::abs(I) > 1e-30)
-      {
-        double Z_VI_nondim = std::abs(V) / std::abs(I);
-        double Z_VI_ohm = Z_VI_nondim * electromagnetics::Z0_;
-        double L_VI_per_m = Z_VI_ohm * n_eff.real() / electromagnetics::c0_;
-        double C_VI_per_m = n_eff.real() / (Z_VI_ohm * electromagnetics::c0_);
-
-        measurement_cache.mode_data.Z_VI = Z_VI_ohm;
-        measurement_cache.mode_data.L_VI_per_m = L_VI_per_m;
-        measurement_cache.mode_data.C_VI_per_m = C_VI_per_m;
-        measurement_cache.mode_data.has_vi_impedance = true;
-      }
-    }
-    else if (current_marker.Size() > 0)
-    {
-      // Boundary attribute-based: ∫ Bt · t dl on marked boundary edges.
-      std::complex<double> I(0.0, 0.0);
-      {
-        mfem::ConstantCoefficient one(1.0);
-        mfem::ParLinearForm i_lf(&nd_fespace.Get());
-        i_lf.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(one),
-                                   current_marker);
-        i_lf.UseFastAssembly(false);
-        i_lf.Assemble();
-
-        Vector i_lf_tdof(nd_size);
-        i_lf.ParallelAssemble(i_lf_tdof);
-
-        Vector btr_tdof(nd_size), bti_tdof(nd_size);
-        Bt_inplane->Real().GetTrueDofs(btr_tdof);
-        Bt_inplane->Imag().GetTrueDofs(bti_tdof);
-        I.real(mfem::InnerProduct(nd_fespace.GetComm(), i_lf_tdof, btr_tdof));
-        I.imag(mfem::InnerProduct(nd_fespace.GetComm(), i_lf_tdof, bti_tdof));
-      }
-
-      if (std::abs(I) > 1e-30)
-      {
-        double Z_VI_nondim = std::abs(V) / std::abs(I);
-        double Z_VI_ohm = Z_VI_nondim * electromagnetics::Z0_;
-        double L_VI_per_m = Z_VI_ohm * n_eff.real() / electromagnetics::c0_;
-        double C_VI_per_m = n_eff.real() / (Z_VI_ohm * electromagnetics::c0_);
-
-        measurement_cache.mode_data.Z_VI = Z_VI_ohm;
-        measurement_cache.mode_data.L_VI_per_m = L_VI_per_m;
-        measurement_cache.mode_data.C_VI_per_m = C_VI_per_m;
-        measurement_cache.mode_data.has_vi_impedance = true;
-      }
-    }
-  }
-
-  // Compute voltage if voltage postprocessing is configured (separate from impedance).
-  if (has_voltage_postpro)
-  {
-    std::complex<double> V_postpro(0.0, 0.0);
-    if (has_voltage_postpro_coordinates)
-    {
-      const int quad_order = voltage_postpro_integration_order;
-      for (std::size_t k = 0; k + 1 < voltage_postpro_path.size(); k++)
-      {
-        V_postpro.real(V_postpro.real() +
-                       fem::ComputeLineIntegral(voltage_postpro_path[k],
-                                                voltage_postpro_path[k + 1], E->Real(),
-                                                quad_order));
-        V_postpro.imag(V_postpro.imag() +
-                       fem::ComputeLineIntegral(voltage_postpro_path[k],
-                                                voltage_postpro_path[k + 1], E->Imag(),
-                                                quad_order));
-      }
-    }
-    else if (voltage_postpro_marker.Size() > 0)
+    else if (marker.Size() > 0)
     {
       auto &nd_fespace = fem_op->GetNDSpace();
       const int nd_size = nd_fespace.GetTrueVSize();
       mfem::ConstantCoefficient one(1.0);
       mfem::ParLinearForm v_lf(&nd_fespace.Get());
-      v_lf.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(one),
-                                 voltage_postpro_marker);
+      v_lf.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(one), marker);
       v_lf.UseFastAssembly(false);
       v_lf.Assemble();
-
       Vector v_lf_tdof(nd_size);
       v_lf.ParallelAssemble(v_lf_tdof);
-      Vector etr_tdof(nd_size), eti_tdof(nd_size);
-      E->Real().GetTrueDofs(etr_tdof);
-      E->Imag().GetTrueDofs(eti_tdof);
-      V_postpro.real(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, etr_tdof));
-      V_postpro.imag(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, eti_tdof));
+      Vector fr(nd_size), fi(nd_size);
+      field.Real().GetTrueDofs(fr);
+      field.Imag().GetTrueDofs(fi);
+      V.real(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, fr));
+      V.imag(mfem::InnerProduct(nd_fespace.GetComm(), v_lf_tdof, fi));
     }
-    measurement_cache.mode_data.V = V_postpro;
-    measurement_cache.mode_data.has_voltage = true;
+    return V;
+  };
+
+  // Helper: compute current I = ∮ H · t dl via coordinate path or boundary attributes.
+  auto ComputeCurrent = [this](const std::vector<mfem::Vector> &path, bool has_path,
+                                mfem::Array<int> marker, int quad_order,
+                                const GridFunction &field) -> std::complex<double>
+  {
+    std::complex<double> I(0.0, 0.0);
+    if (has_path)
+    {
+      for (std::size_t k = 0; k < path.size(); k++)
+      {
+        const auto &pk = path[k];
+        const auto &pk1 = path[(k + 1) % path.size()];
+        I.real(I.real() +
+               fem::ComputeLineIntegral(pk, pk1, field.Real(), quad_order));
+        I.imag(I.imag() +
+               fem::ComputeLineIntegral(pk, pk1, field.Imag(), quad_order));
+      }
+    }
+    else if (marker.Size() > 0)
+    {
+      auto &nd_fespace = fem_op->GetNDSpace();
+      const int nd_size = nd_fespace.GetTrueVSize();
+      mfem::ConstantCoefficient one(1.0);
+      mfem::ParLinearForm i_lf(&nd_fespace.Get());
+      i_lf.AddBoundaryIntegrator(new mfem::VectorFEBoundaryFluxLFIntegrator(one), marker);
+      i_lf.UseFastAssembly(false);
+      i_lf.Assemble();
+      Vector i_lf_tdof(nd_size);
+      i_lf.ParallelAssemble(i_lf_tdof);
+      Vector fr(nd_size), fi(nd_size);
+      field.Real().GetTrueDofs(fr);
+      field.Imag().GetTrueDofs(fi);
+      I.real(mfem::InnerProduct(nd_fespace.GetComm(), i_lf_tdof, fr));
+      I.imag(mfem::InnerProduct(nd_fespace.GetComm(), i_lf_tdof, fi));
+    }
+    return I;
+  };
+
+  // Compute Poynting power P = (1/2) Re{kn*/ω} (et^H Btt et) — shared by all impedance
+  // entries.
+  std::complex<double> P(0.0, 0.0);
+  const auto *Btt = fem_op->GetBtt();
+  if (Btt != nullptr && !impedance_postpro.empty())
+  {
+    auto &nd_fespace = fem_op->GetNDSpace();
+    const int nd_size = nd_fespace.GetTrueVSize();
+    Vector etr_tdof(nd_size), eti_tdof(nd_size);
+    E->Real().GetTrueDofs(etr_tdof);
+    E->Imag().GetTrueDofs(eti_tdof);
+    Vector Btt_etr(nd_size), Btt_eti(nd_size);
+    Btt->Mult(etr_tdof, Btt_etr);
+    Btt->Mult(eti_tdof, Btt_eti);
+    double p_rr = mfem::InnerProduct(nd_fespace.GetComm(), etr_tdof, Btt_etr);
+    double p_ii = mfem::InnerProduct(nd_fespace.GetComm(), eti_tdof, Btt_eti);
+    double p_ri = mfem::InnerProduct(nd_fespace.GetComm(), etr_tdof, Btt_eti);
+    double p_ir = mfem::InnerProduct(nd_fespace.GetComm(), eti_tdof, Btt_etr);
+    std::complex<double> etH_Btt_et(p_rr + p_ii, p_ri - p_ir);
+    P = 0.5 * std::conj(kn) / omega * etH_Btt_et;
+  }
+
+  // Compute impedance for each configured entry.
+  for (const auto &[idx, cfg] : impedance_postpro)
+  {
+    auto V = ComputeVoltage(cfg.voltage_path, cfg.has_voltage_coordinates,
+                            cfg.voltage_marker, cfg.integration_order, *E);
+    auto &result = measurement_cache.mode_data.impedance[idx];
+
+    // Power-voltage impedance: Z_PV = |V|^2 / (2P).
+    if (std::abs(P) > 1e-30)
+    {
+      std::complex<double> Z0_nondim = (V * std::conj(V)) / (2.0 * P);
+      result.Z0 = Z0_nondim.real() * electromagnetics::Z0_;
+      result.L_per_m = result.Z0 * n_eff.real() / electromagnetics::c0_;
+      result.C_per_m = n_eff.real() / (result.Z0 * electromagnetics::c0_);
+      result.has_impedance = true;
+    }
+
+    // V/I impedance: Z_VI = |V| / |I|.
+    auto I = ComputeCurrent(cfg.current_path, cfg.has_current_path, cfg.current_marker,
+                            cfg.integration_order, *Bt_inplane);
+    if (std::abs(I) > 1e-30)
+    {
+      double Z_VI_nondim = std::abs(V) / std::abs(I);
+      result.Z_VI = Z_VI_nondim * electromagnetics::Z0_;
+      result.L_VI_per_m = result.Z_VI * n_eff.real() / electromagnetics::c0_;
+      result.C_VI_per_m = n_eff.real() / (result.Z_VI * electromagnetics::c0_);
+      result.has_vi_impedance = true;
+    }
+  }
+
+  // Compute voltage for each configured voltage-only entry.
+  for (const auto &[idx, cfg] : voltage_postpro)
+  {
+    auto V = ComputeVoltage(cfg.voltage_path, cfg.has_coordinates, cfg.voltage_marker,
+                            cfg.integration_order, *E);
+    measurement_cache.mode_data.voltage[idx] = {V};
   }
 
   // Compute electric field energy via the domain post operator.
@@ -1946,18 +1866,21 @@ void PostOperator<solver_t>::ProjectImpedancePaths(const mfem::Vector &centroid,
                                                    const mfem::Vector &e1,
                                                    const mfem::Vector &e2)
 {
-  for (auto &p : voltage_path)
+  for (auto &[idx, cfg] : impedance_postpro)
   {
-    if (p.Size() == 3)
+    for (auto &p : cfg.voltage_path)
     {
-      p = mesh::Project3Dto2D(p, centroid, e1, e2);
+      if (p.Size() == 3)
+      {
+        p = mesh::Project3Dto2D(p, centroid, e1, e2);
+      }
     }
-  }
-  for (auto &p : current_path)
-  {
-    if (p.Size() == 3)
+    for (auto &p : cfg.current_path)
     {
-      p = mesh::Project3Dto2D(p, centroid, e1, e2);
+      if (p.Size() == 3)
+      {
+        p = mesh::Project3Dto2D(p, centroid, e1, e2);
+      }
     }
   }
 }
@@ -1967,11 +1890,14 @@ void PostOperator<solver_t>::ProjectVoltagePaths(const mfem::Vector &centroid,
                                                  const mfem::Vector &e1,
                                                  const mfem::Vector &e2)
 {
-  for (auto &p : voltage_postpro_path)
+  for (auto &[idx, cfg] : voltage_postpro)
   {
-    if (p.Size() == 3)
+    for (auto &p : cfg.voltage_path)
     {
-      p = mesh::Project3Dto2D(p, centroid, e1, e2);
+      if (p.Size() == 3)
+      {
+        p = mesh::Project3Dto2D(p, centroid, e1, e2);
+      }
     }
   }
 }
