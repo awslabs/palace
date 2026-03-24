@@ -123,8 +123,14 @@ Measurement Measurement::Dimensionalize(const Units &units,
   measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
       nondim_measurement_cache.farfield.E_field);
 
-  // Mode analysis data is already in SI units (computed dimensional).
-  measurement_cache.mode_data = nondim_measurement_cache.mode_data;  // NONE
+  // Mode analysis data: most fields (kn, n_eff, Z0, L, C) are already dimensional, but
+  // the voltage V is nondimensional (integral of nondim E over nondim dl).
+  measurement_cache.mode_data = nondim_measurement_cache.mode_data;
+  if (measurement_cache.mode_data.has_voltage)
+  {
+    measurement_cache.mode_data.V *=
+        units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
+  }
 
   return measurement_cache;
 }
@@ -1053,9 +1059,10 @@ auto PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
   // Wave port voltage (for ports with voltage coordinates configured).
   for (const auto &[idx, data] : measurement_cache.wave_port_vi)
   {
-    if (std::abs(data.V) > 0.0)
+    auto key_re = fmt::format("re_w{}_{}", idx, m_ex_idx);
+    if (port_V->table.has(key_re))
     {
-      port_V->table[fmt::format("re_w{}_{}", idx, m_ex_idx)] << data.V.real();
+      port_V->table[key_re] << data.V.real();
       port_V->table[fmt::format("im_w{}_{}", idx, m_ex_idx)] << data.V.imag();
     }
   }
@@ -1186,7 +1193,8 @@ auto PostOperatorCSV<solver_t>::PrintPortZ()
   for (const auto &[idx, data] : measurement_cache.wave_port_vi)
   {
     // Only write Z for ports that have voltage coordinates (columns in the table).
-    if (std::abs(data.V) == 0.0)
+    auto key = format("re_Z_w{}", idx);
+    if (!port_Z->table.has(key))
     {
       continue;
     }

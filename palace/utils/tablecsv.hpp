@@ -117,6 +117,12 @@ public:
     return insert(Column(std::forward<Args>(args)...));
   }
 
+  // Check if a column with the given name exists.
+  [[nodiscard]] bool has(std::string_view name) const
+  {
+    return name_to_index.count(std::string(name)) > 0;
+  }
+
   // Access columns via vector position or column name.
   inline Column &operator[](std::size_t idx) { return cols.at(idx); }
   Column &operator[](std::string_view name);

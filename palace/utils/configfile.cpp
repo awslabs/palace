@@ -889,6 +889,11 @@ BoundaryPostData::BoundaryPostData(const json &postpro)
     attributes.insert(attributes.end(), data.current_attributes.begin(),
                       data.current_attributes.end());
   }
+  for (const auto &[idx, data] : voltage)
+  {
+    attributes.insert(attributes.end(), data.voltage_attributes.begin(),
+                      data.voltage_attributes.end());
+  }
 
   attributes.insert(attributes.end(), farfield.attributes.begin(),
                     farfield.attributes.end());

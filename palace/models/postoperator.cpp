@@ -211,6 +211,12 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
     const auto &impedance_data = boundaries.postpro.impedance;
     if (!impedance_data.empty())
     {
+      if (impedance_data.size() > 1)
+      {
+        Mpi::Warning("BoundaryMode solver only uses the first impedance postprocessing "
+                     "entry (index {}). {} additional entries are ignored.\n",
+                     impedance_data.begin()->first, impedance_data.size() - 1);
+      }
       has_impedance_postpro = true;
       const auto &pmesh = fem_op->GetNDSpace().GetParMesh();
       int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
@@ -256,6 +262,12 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
     const auto &voltage_data = boundaries.postpro.voltage;
     if (!voltage_data.empty())
     {
+      if (voltage_data.size() > 1)
+      {
+        Mpi::Warning("BoundaryMode solver only uses the first voltage postprocessing "
+                     "entry (index {}). {} additional entries are ignored.\n",
+                     voltage_data.begin()->first, voltage_data.size() - 1);
+      }
       has_voltage_postpro = true;
       const auto &pmesh = fem_op->GetNDSpace().GetParMesh();
       int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;

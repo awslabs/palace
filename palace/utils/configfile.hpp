@@ -613,9 +613,6 @@ public:
 struct ModeVoltageData
 {
 public:
-  // Index of this voltage computation.
-  int index = -1;
-
   // Boundary attributes for the voltage integration path.
   std::vector<int> voltage_attributes = {};
 
