@@ -86,8 +86,7 @@ private:
   void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &dfbr,
                                      MaterialPropertyCoefficient &dfbi,
                                      MaterialPropertyCoefficient &fbr,
-                                     MaterialPropertyCoefficient &fbi,
-                                     bool for_preconditioner = false);
+                                     MaterialPropertyCoefficient &fbi);
   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
 

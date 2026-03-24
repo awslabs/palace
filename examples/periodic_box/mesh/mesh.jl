@@ -1,14 +1,14 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Generate mesh with:
-# julia -e 'include("mesh/mesh.jl"); generate_grating_mesh(filename="mesh/periodic_box.msh")'
+# Generate mesh (from the periodic_box example directory):
+#   julia -e 'include("mesh/mesh.jl"); generate_grating_mesh()'
 
 using Gmsh: gmsh
 
 """
     generate_grating_mesh(;
-        filename::AbstractString = "periodic_box.msh",
+        filename::AbstractString = "mesh/periodic_box.msh",
         a::Real = 4.0,
         b::Real = 1.0,
         L::Real = 4.0,
@@ -16,8 +16,8 @@ using Gmsh: gmsh
         bar_d::Real = 0.5,
         bar_h::Real = 0.5,
         n_x::Integer = 8,
-        n_y::Integer = 8,
-        n_z::Integer = 8,
+        n_y::Integer = 12,
+        n_z::Integer = 14,
         n_bar_z::Integer = 4,
         order::Integer = 1,
         verbose::Integer = 5,
@@ -54,8 +54,8 @@ function generate_grating_mesh(;
     bar_d::Real=0.5,
     bar_h::Real=0.5,
     n_x::Integer=8,
-    n_y::Integer=8,
-    n_z::Integer=8,
+    n_y::Integer=12,
+    n_z::Integer=14,
     n_bar_z::Integer=4,
     order::Integer=1,
     verbose::Integer=5,
@@ -63,6 +63,11 @@ function generate_grating_mesh(;
 )
     gmsh.initialize()
     gmsh.option.setNumber("General.Verbosity", verbose)
+    gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
+    gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
+    gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
+    gmsh.option.setNumber("Mesh.Algorithm", 6)
+    gmsh.option.setNumber("Mesh.Algorithm3D", 1)
 
     if "grating" in gmsh.model.list()
         gmsh.model.setCurrent("grating")

@@ -695,7 +695,7 @@ void SpaceOperator::AssemblePreconditioner(
   AddRealMassBdrCoefficients(a2.imag(), fbi);
   AddImagMassCoefficients(a2.real(), fi);
   AddImagMassCoefficients(-a2.imag(), fr);
-  AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi, true);
+  AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
   if (mat_op.HasFloquetFrequencyScaling())
   {
     // k₀-based tensors: cross terms scale with a1, mass term with a2.
@@ -745,7 +745,7 @@ void SpaceOperator::AssemblePreconditioner(
   AddDampingBdrCoefficients(a1.imag(), fbr);
   AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fr);
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
-  AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr, true);
+  AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
   if (mat_op.HasFloquetFrequencyScaling())
   {
     AddRealPeriodicCoefficients(-(pc_mat_shifted ? std::abs(a2.real()) : a2.real()), fr);
@@ -779,7 +779,7 @@ void SpaceOperator::AssemblePreconditioner(
   AddDampingBdrCoefficients(a1, fbr);
   AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
-  AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr, true);
+  AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
   if (mat_op.HasFloquetFrequencyScaling())
   {
     AddRealPeriodicCoefficients(-(pc_mat_shifted ? std::abs(a2) : a2), fr);
@@ -947,8 +947,7 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
                                                   MaterialPropertyCoefficient &dfbr,
                                                   MaterialPropertyCoefficient &dfbi,
                                                   MaterialPropertyCoefficient &fbr,
-                                                  MaterialPropertyCoefficient &fbi,
-                                                  bool for_preconditioner)
+                                                  MaterialPropertyCoefficient &fbi)
 {
   // Contribution for second-order farfield boundaries and finite conductivity boundaries.
   farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi);
@@ -957,9 +956,8 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
   // Contribution for numeric wave ports.
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
 
-  // Contribution for Floquet ports (Robin BC). For FullDtN ports, the Robin is only
-  // added to the preconditioner (for the inner solve), not the system matrix.
-  floquet_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi, for_preconditioner);
+  // Contribution for Floquet ports (Robin BC).
+  floquet_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
 }
 
 void SpaceOperator::AddRealPeriodicCoefficients(double coeff,

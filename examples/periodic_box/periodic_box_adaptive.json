@@ -3,7 +3,7 @@
   {
     "Type": "Driven",
     "Verbose": 2,
-    "Output": "postpro/periodic_box"
+    "Output": "postpro/adaptive"
   },
   "Model":
   {
@@ -22,7 +22,7 @@
       {
         "Attributes": [2],
         "Permeability": 1.0,
-        "Permittivity": 4.0
+        "Permittivity": 7.0
       }
     ]
   },
@@ -30,18 +30,17 @@
   {
     "Periodic":
     {
-      "FloquetWaveVector": [0.0, 0.0, 0.0],
+      "FloquetWaveVector": [0.0, 1.0479, 0.0],
+      "FloquetReferenceFrequency": 10.0,
       "BoundaryPairs":
       [
         {
           "DonorAttributes": [1],
-          "ReceiverAttributes": [2],
-          "Translation": [4.0, 0.0, 0.0]
+          "ReceiverAttributes": [2]
         },
         {
           "DonorAttributes": [3],
-          "ReceiverAttributes": [4],
-          "Translation": [0.0, 1.0, 0.0]
+          "ReceiverAttributes": [4]
         }
       ]
     },
@@ -66,16 +65,18 @@
     "Order": 2,
     "Driven":
     {
-      "MinFreq": 10.0,
-      "MaxFreq": 10.0,
-      "FreqStep": 1.0
+      "MinFreq": 2.0,
+      "MaxFreq": 12.0,
+      "FreqStep": 0.05,
+      "AdaptiveTol": 1.0e-3
     },
     "Linear":
     {
       "Type": "Default",
       "KSPType": "GMRES",
-      "Tol": 1.0e-6,
-      "MaxIts": 200
+      "Tol": 1.0e-8,
+        "MaxIts": 200,
+        "ComplexCoarseSolve": true
     }
   }
 }

@@ -11,7 +11,6 @@
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
-#include "linalg/blockprecond.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/floquetcorrection.hpp"
 #include "linalg/ksp.hpp"
@@ -99,45 +98,14 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   // The operators are constructed for each frequency step and used to initialize the ksp.
   ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
 
-  // Auxiliary S-parameter DOF mode: couple scalar unknowns to the boundary E field through
-  // the FE weak form, avoiding the mass-vs-projection mismatch of rank-1 corrections.
-  const int n_E = Curl.Width();
-  auto &floquet_op = space_op.GetFloquetPortOp();
-  const bool use_auxiliary = !floquet_op.Empty() && floquet_op.HasAuxiliaryPorts();
-  int n_s = 0;
-  std::unique_ptr<FloquetAuxSystemOperator> aux_op;
-  Solver<ComplexOperator> *inner_pc = nullptr;  // Raw ptr to E-block solver inside block_pc
-
-  if (use_auxiliary)
-  {
-    // Compute n_s at first frequency (mode count is frequency-independent after
-    // EnumerateOrders, only gamma_sq changes).
-    n_s = floquet_op.GetAuxModeCount(omega_sample.front());
-    aux_op =
-        std::make_unique<FloquetAuxSystemOperator>(space_op.GetComm(), nullptr, n_E, n_s);
-    Mpi::Print(
-        "\n Auxiliary S-parameter DOFs: {:d} modes, extended system size {:d}+{:d}\n", n_s,
-        n_E, n_s);
-  }
-
   // Set up RHS vector for the incident field at port boundaries, and the vector for the
   // first frequency step.
-  ComplexVector RHS(n_E), E(n_E), B(Curl.Height());
+  ComplexVector RHS(Curl.Width()), E(Curl.Width()), B(Curl.Height());
   RHS.UseDevice(true);
   E.UseDevice(true);
   B.UseDevice(true);
   E = 0.0;
   B = 0.0;
-
-  // Extended vectors for auxiliary mode (only allocated if needed).
-  ComplexVector RHS_ext, E_ext;
-  if (use_auxiliary)
-  {
-    RHS_ext.SetSize(n_E + n_s);
-    E_ext.SetSize(n_E + n_s);
-    RHS_ext.UseDevice(true);
-    E_ext.UseDevice(true);
-  }
 
   // Initialize structures for storing and reducing the results of error estimation.
   auto *curl_fespace_est =
@@ -192,126 +160,32 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
           1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
 
-      if (use_auxiliary)
-      {
-        // Auxiliary mode: build A_EE (no Robin, no low-rank F — handled by coupling).
-        auto A_EE =
-            space_op.GetSystemOperator(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega,
-                                       K.get(), C.get(), M.get(), A2.get());
-        aux_op->SetAEE(A_EE.get());
-        floquet_op.PopulateAuxModes(omega, *aux_op);
+      auto A = space_op.GetSystemOperator(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
+                                          omega, K.get(), C.get(), M.get(), A2.get());
+      ksp.SetOperators(*A, *P);
 
-        // Initialize the E-block preconditioner (GMG/AMS) with P (which has Robin).
-        ksp.SetOperators(*A_EE, *P);
+      Mpi::Print(
+          "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",
+          omega_i + 1, omega_sample.size(),
+          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI),
+          Timer::Duration(Timer::Now() - t0).count(),
+          (port_excitations.Size() > 1)
+              ? fmt::format(", solve {:d}/{:d}",
+                            1 + omega_i + (excitation_counter - 1) * omega_sample.size(),
+                            omega_sample.size() * port_excitations.Size())
+              : "");
 
-        // First time: steal, wrap in block preconditioner, replace.
-        // Subsequent times: update GMG directly via raw pointer.
-        if (!inner_pc)
-        {
-          auto pc_E = ksp.StealPreconditioner();
-          inner_pc = pc_E.get();
-          auto pc_s = std::make_unique<ScaledIdentitySolver>(n_s, -1.0);
-          auto block_pc = std::make_unique<BlockDiagonalPreconditioner<ComplexOperator>>(
-              n_E, std::move(pc_E), std::move(pc_s));
-          ksp.ReplacePreconditioner(std::move(block_pc));
-        }
-        else
-        {
-          // Update the inner GMG solver directly (SetOperators already did this
-          // via the normal path before we stole it, but now we own it).
-          inner_pc->SetOperator(*P);
-        }
+      // Solve linear system.
+      space_op.GetExcitationVector(excitation_idx, omega, RHS);
 
-        // Set GMRES operator to the extended auxiliary system.
-        // The block preconditioner's SetOperator is a no-op.
-        ksp.SetOperators(*aux_op, *aux_op);
-
-        // The A_EE lifetime must outlive the solve. Store it.
-        // (aux_op holds a raw pointer to A_EE, and A_EE is a local unique_ptr.
-        //  It's alive for the duration of this loop iteration.)
-
-        // Build extended RHS: f_E in [0, n_E), zeros in [n_E, n_E+n_s).
-        space_op.GetExcitationVector(excitation_idx, omega, RHS);
-        RHS_ext = 0.0;
-        {
-          const auto *rr = RHS.Real().Read();
-          const auto *ri = RHS.Imag().Read();
-          auto *er = RHS_ext.Real().Write();
-          auto *ei = RHS_ext.Imag().Write();
-          std::copy_n(rr, n_E, er);
-          std::copy_n(ri, n_E, ei);
-        }
-
-        Mpi::Print(
-            "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",
-            omega_i + 1, omega_sample.size(),
-            iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI),
-            Timer::Duration(Timer::Now() - t0).count(),
-            (port_excitations.Size() > 1)
-                ? fmt::format(", solve {:d}/{:d}",
-                              1 + omega_i + (excitation_counter - 1) * omega_sample.size(),
-                              omega_sample.size() * port_excitations.Size())
-                : "");
-
-        // Solve extended [E, s] system.
-        E_ext = 0.0;
-        Mpi::Print("\n");
-        ksp.Mult(RHS_ext, E_ext);
-
-        // Extract E field from extended solution.
-        {
-          const auto *er = E_ext.Real().Read();
-          const auto *ei = E_ext.Imag().Read();
-          auto *wr = E.Real().Write();
-          auto *wi = E.Imag().Write();
-          std::copy_n(er, n_E, wr);
-          std::copy_n(ei, n_E, wi);
-        }
-      }
-      else
-      {
-        // Standard path: Robin + low-rank correction.
-        auto A = space_op.GetSystemOperator(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
-                                            omega, K.get(), C.get(), M.get(), A2.get());
-        ksp.SetOperators(*A, *P);
-
-        Mpi::Print(
-            "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",
-            omega_i + 1, omega_sample.size(),
-            iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI),
-            Timer::Duration(Timer::Now() - t0).count(),
-            (port_excitations.Size() > 1)
-                ? fmt::format(", solve {:d}/{:d}",
-                              1 + omega_i + (excitation_counter - 1) * omega_sample.size(),
-                              omega_sample.size() * port_excitations.Size())
-                : "");
-
-        // Solve linear system.
-        space_op.GetExcitationVector(excitation_idx, omega, RHS);
-
-        Mpi::Print("\n");
-        ksp.Mult(RHS, E);
-      }
+      Mpi::Print("\n");
+      ksp.Mult(RHS, E);
 
       // Start Post-processing.
       BlockTimer bt0(Timer::POSTPRO);
       Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e})\n",
                  linalg::Norml2(space_op.GetComm(), E),
                  linalg::Norml2(space_op.GetComm(), RHS));
-
-      // DtN coupling diagnostic: measure ||F × E|| to verify the DtN interacts
-      // with the solution (especially the guided mode's evanescent tail).
-      if (auto F_diag = space_op.GetFloquetPortOp().GetExtraSystemOperator(omega))
-      {
-        ComplexVector FE(E.Size());
-        FE.UseDevice(true);
-        FE = 0.0;
-        F_diag->Mult(E, FE);
-        double FE_norm = linalg::Norml2(space_op.GetComm(), FE);
-        double E_norm = linalg::Norml2(space_op.GetComm(), E);
-        Mpi::Print(" DtN diagnostic: ||F*E|| = {:.6e}, ||F*E||/||E|| = {:.6e}\n",
-                   FE_norm, FE_norm / E_norm);
-      }
 
       // Compute B = -1/(iω) ∇ x E on the true dofs.
       Curl.Mult(E.Real(), B.Real());

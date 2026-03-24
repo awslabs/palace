@@ -552,17 +552,6 @@ public:
   // Maximum diffraction order index to include. -1 = auto from geometry + frequency.
   int max_order = -1;
 
-  // Use full dense DtN boundary operator (no Robin). Implements the exact formulation
-  // from the reference document. More accurate at Fano resonances but requires the block
-  // preconditioner for convergence.
-  bool full_dtn = false;
-
-  // Port mode: "Correction" (Robin + rank-1 correction, default),
-  // "Auxiliary" (auxiliary S-parameter DOFs coupled through FE weak form), or
-  // "MassConsistent" (per-mode boundary mass matrices instead of rank-1 outer products).
-  // MassConsistent fixes the Cauchy-Schwarz overestimate in rank-1 corrections.
-  std::string port_mode = "Correction";
-
   FloquetPortData() = default;
   FloquetPortData(const json &port);
 };
