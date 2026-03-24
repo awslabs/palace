@@ -1450,6 +1450,14 @@ TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]
       MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh, 0, amr, order);
 }
 
+// TODO: Add tests for the 31 (SpaceDim=3, Dim=1) libCEED qfunctions, which are used for
+// boundary integrators on 2D surface meshes extracted from 3D meshes. A proper test
+// requires creating a 3D mesh → 2D boundary submesh (via ExtractStandalone2DSubmesh) rather
+// than artificially embedding a 2D mesh in 3D. The artificial embedding approach causes
+// CEED geometry factor caching issues where domain and boundary geometry data conflict.
+// Individual integrator tests pass in isolation but fail when run together due to stale
+// cached geometry objects being reused with incompatible dimensions.
+
 TEST_CASE("3D libCEED Benchmarks", "[libCEED][Benchmark][Serial][Parallel]")
 {
   auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh");

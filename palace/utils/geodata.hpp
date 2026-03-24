@@ -265,9 +265,9 @@ void AddSubMeshInternalBoundaryElements(mfem::ParSubMesh &submesh,
 // each node coordinate with its projection onto the tangent plane. After this call, the
 // mesh has SpaceDimension() == 2 and all downstream 2D infrastructure (FE spaces, GSLIB)
 // works as for a native 2D mesh. Returns the surface normal (3D) for use in material
-// tensor projection (BoundaryModeOperator). The optional centroid and tangent vectors
-// (e1, e2) are output parameters for transforming additional 3D coordinates (e.g.,
-// voltage/current path points) to the same 2D frame.
+// tensor projection (ModeEigenSolver (in waveportoperator)). The optional centroid and
+// tangent vectors (e1, e2) are output parameters for transforming additional 3D coordinates
+// (e.g., voltage/current path points) to the same 2D frame.
 mfem::Vector ProjectSubmeshTo2D(mfem::ParMesh &submesh, mfem::Vector *centroid = nullptr,
                                 mfem::Vector *e1 = nullptr, mfem::Vector *e2 = nullptr);
 

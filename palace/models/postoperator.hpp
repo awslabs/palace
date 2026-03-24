@@ -4,8 +4,8 @@
 #ifndef PALACE_MODELS_POST_OPERATOR_HPP
 #define PALACE_MODELS_POST_OPERATOR_HPP
 
-#include <complex>
 #include <algorithm>
+#include <complex>
 #include <map>
 #include <memory>
 #include <optional>

@@ -1445,8 +1445,7 @@ auto PostOperatorCSV<solver_t>::InitializeModeV(const std::vector<int> &indices)
   mode_V->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
   for (const auto &idx : indices)
   {
-    mode_V->table.insert(fmt::format("V_abs[{}]", idx),
-                         fmt::format("|V[{}]|", idx));
+    mode_V->table.insert(fmt::format("V_abs[{}]", idx), fmt::format("|V[{}]|", idx));
   }
   mode_V->WriteFullTableTrunc();
 }
