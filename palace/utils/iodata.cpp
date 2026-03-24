@@ -373,6 +373,21 @@ void IoData::CheckConfiguration()
                    "with order > 1!\n");
     }
   }
+  else if (problem.type == ProblemType::BOUNDARYMODE)
+  {
+    MFEM_VERIFY(solver.boundary_mode.n >= 1,
+                "BoundaryMode solver requires at least one mode (n >= 1)!");
+    if (!boundaries.lumpedport.empty())
+    {
+      Mpi::Warning("BoundaryMode problem type does not support lumped port boundary "
+                   "conditions!\n");
+    }
+    if (!boundaries.current.empty())
+    {
+      Mpi::Warning(
+          "BoundaryMode problem type does not support surface current excitation!\n");
+    }
+  }
 
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
