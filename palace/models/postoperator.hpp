@@ -5,6 +5,7 @@
 #define PALACE_MODELS_POST_OPERATOR_HPP
 
 #include <complex>
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <optional>
@@ -244,22 +245,28 @@ protected:
 
   mutable Measurement measurement_cache;
 
-  // Mode analysis impedance postprocessing state.
-  mfem::Array<int> voltage_marker;
-  mfem::Array<int> current_marker;
-  std::vector<mfem::Vector> voltage_path;  // Coordinate-based voltage path points
-  std::vector<mfem::Vector> current_path;  // Coordinate-based current contour points
-  int voltage_integration_order = 100;
-  bool has_impedance_postpro = false;
-  bool has_voltage_coordinates = false;
-  bool has_current_path = false;
+  // Per-entry impedance postprocessing configuration (keyed by config index).
+  struct ImpedancePostproConfig
+  {
+    mfem::Array<int> voltage_marker;
+    mfem::Array<int> current_marker;
+    std::vector<mfem::Vector> voltage_path;
+    std::vector<mfem::Vector> current_path;
+    int integration_order = 100;
+    bool has_voltage_coordinates = false;
+    bool has_current_path = false;
+  };
+  std::map<int, ImpedancePostproConfig> impedance_postpro;
 
-  // Mode analysis voltage-only postprocessing state (separate from impedance).
-  mfem::Array<int> voltage_postpro_marker;
-  std::vector<mfem::Vector> voltage_postpro_path;
-  int voltage_postpro_integration_order = 100;
-  bool has_voltage_postpro = false;
-  bool has_voltage_postpro_coordinates = false;
+  // Per-entry voltage-only postprocessing configuration (keyed by config index).
+  struct VoltagePostproConfig
+  {
+    mfem::Array<int> voltage_marker;
+    std::vector<mfem::Vector> voltage_path;
+    int integration_order = 100;
+    bool has_coordinates = false;
+  };
+  std::map<int, VoltagePostproConfig> voltage_postpro;
 
   // Individual measurements to fill the cache/workspace. Measurements functions are not
   // constrained by solver type in the signature since they are private member functions.
@@ -480,9 +487,13 @@ public:
   }
 
   // Whether impedance/voltage postprocessing is configured (mode analysis).
-  bool HasImpedancePostprocessing() const { return has_impedance_postpro; }
-  bool HasCurrentPath() const { return has_current_path; }
-  bool HasVoltagePostprocessing() const { return has_voltage_postpro; }
+  bool HasImpedancePostprocessing() const { return !impedance_postpro.empty(); }
+  bool HasCurrentPath() const
+  {
+    return std::any_of(impedance_postpro.begin(), impedance_postpro.end(),
+                       [](const auto &p) { return p.second.has_current_path; });
+  }
+  bool HasVoltagePostprocessing() const { return !voltage_postpro.empty(); }
 
   // Project 3D impedance/voltage path coordinates to 2D local frame (submesh).
   void ProjectImpedancePaths(const mfem::Vector &centroid, const mfem::Vector &e1,
