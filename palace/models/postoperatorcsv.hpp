@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <tuple>
 #include "fem/errorindicator.hpp"
 #include "models/boundarymodeoperator.hpp"
 #include "models/curlcurloperator.hpp"
@@ -205,6 +206,10 @@ struct Measurement
   std::vector<InterfaceData> interface_eps_i;
   FarFieldData farfield;
 
+  // Floquet port S-parameters: port_idx -> {(m, n, is_te/is_rhc) -> S}.
+  std::map<int, std::map<std::tuple<int, int, bool>, std::complex<double>>> floquet_port_s;
+  bool floquet_circular_output = false;
+
   // Dimensionalize and nondimensionalize a set of measurements
   static Measurement Dimensionalize(const Units &units,
                                     const Measurement &nondim_measurement_cache);
@@ -349,6 +354,14 @@ protected:
       -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
   template <ProblemType U = solver_t>
   auto PrintPortZ() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+
+  // Driven: Floquet port S-parameters.
+  std::optional<TableWithCSVFile> floquet_port_S;
+  template <ProblemType U = solver_t>
+  auto InitializeFloquetPortS(const SpaceOperator &fem_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+  template <ProblemType U = solver_t>
+  auto PrintFloquetPortS() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
 
   // Driven + Eigenmode.
   std::optional<TableWithCSVFile> farfield_E;

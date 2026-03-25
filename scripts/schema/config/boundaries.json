@@ -44,6 +44,12 @@
       "additionalItems": false,
       "items": { "$ref": "#/$defs/WavePort" }
     },
+    "FloquetPort":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "$ref": "#/$defs/FloquetPort" }
+    },
     "WavePortPEC": { "$ref": "#/$defs/WavePortPEC" },
     "SurfaceCurrent":
     {
@@ -286,6 +292,27 @@
         "PolarityAttributes": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 }
       }
     },
+    "FloquetPort":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Index", "Attributes"],
+      "properties":
+      {
+        "Index": { "type": "integer", "exclusiveMinimum": 0 },
+        "Attributes": { "$ref": "#/$defs/Attributes" },
+        "Excitation":
+        {
+          "oneOf":
+          [
+            { "type": "boolean" },
+            { "$ref": "#/$defs/ExcitationIndex" }
+          ]
+        },
+        "IncidentPolarization": { "type": "string", "enum": ["TE", "TM", "RHC", "LHC"] },
+        "MaxOrder": { "type": "integer" }
+      }
+    },
     "SurfaceCurrentAttributes":
     {
       "type": "object",
@@ -349,7 +376,8 @@
       "required": ["BoundaryPairs"],
       "properties":
       {
-        "FloquetWaveVector": { "$ref": "#/$defs/Vector3" },
+        "FloquetWaveVector": { "$ref": "#/$defs/FloquetWaveVector" },
+        "FloquetReferenceFrequency": { "type": "number", "exclusiveMinimum": 0 },
         "BoundaryPairs":
         {
           "type": "array",
@@ -506,6 +534,14 @@
       "minItems": 1
     },
     "Vector3":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "FloquetWaveVector":
     {
       "type": "array",
       "additionalItems": false,

@@ -475,6 +475,12 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
     wave_vector = floquet->get<std::array<double, 3>>();
   }
 
+  auto fref = periodic.find("FloquetReferenceFrequency");
+  if (fref != periodic.end())
+  {
+    floquet_reference_freq = fref->get<double>();
+  }
+
   const auto &pairs = periodic.at("BoundaryPairs");
   for (auto it = pairs.begin(); it != pairs.end(); ++it)
   {
@@ -541,6 +547,17 @@ WavePortData::WavePortData(const json &port)
   {
     max_size = DefaultEigenSubspaceSize(mode_idx);
   }
+}
+
+FloquetPortData::FloquetPortData(const json &port)
+{
+  int index = port.at("Index");                                // Required
+  attributes = port.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  excitation = ParsePortExcitation(port, index);
+  active = port.value("Active", active);
+  inc_polarization = port.value("IncidentPolarization", inc_polarization);
+  max_order = port.value("MaxOrder", max_order);
 }
 
 SurfaceCurrentData::SurfaceCurrentData(const json &source)
@@ -861,6 +878,8 @@ BoundaryData::BoundaryData(const json &boundaries)
   terminal = ParseOptionalMap<TerminalData>(boundaries, "Terminal", "\"Terminal\"");
   periodic = ParseOptional<PeriodicBoundaryData>(boundaries, "Periodic");
   waveport = ParseOptionalMap<WavePortData>(boundaries, "WavePort", "\"WavePort\"");
+  floquetport =
+      ParseOptionalMap<FloquetPortData>(boundaries, "FloquetPort", "\"FloquetPort\"");
   current = ParseOptionalMap<SurfaceCurrentData>(boundaries, "SurfaceCurrent",
                                                  "\"SurfaceCurrent\"");
   postpro = ParseOptional<BoundaryPostData>(boundaries, "Postprocessing");
@@ -874,6 +893,10 @@ BoundaryData::BoundaryData(const json &boundaries)
       excitation_map[data.excitation].emplace_back(idx);
     }
     for (const auto &[idx, data] : waveport)
+    {
+      excitation_map[data.excitation].emplace_back(idx);
+    }
+    for (const auto &[idx, data] : floquetport)
     {
       excitation_map[data.excitation].emplace_back(idx);
     }
@@ -905,6 +928,13 @@ BoundaryData::BoundaryData(const json &boundaries)
           }
         }
       }
+      for (auto &[port_idx, fp] : floquetport)
+      {
+        if (fp.excitation == 1)
+        {
+          fp.excitation = port_idx;
+        }
+      }
     }
   }
 
@@ -930,6 +960,10 @@ BoundaryData::BoundaryData(const json &boundaries)
     }
   }
   for (const auto &[idx, data] : waveport)
+  {
+    attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
+  }
+  for (const auto &[idx, data] : floquetport)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
