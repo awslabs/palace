@@ -170,6 +170,33 @@
         "Attributes": { "$ref": "#/$defs/Attributes" }
       }
     },
+    "FloquetPort":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["Index", "Attributes"],
+        "properties":
+        {
+          "Index": { "type": "integer", "exclusiveMinimum": 0 },
+          "Attributes": { "$ref": "#/$defs/Attributes" },
+          "Excitation": {
+            "oneOf" : [
+              { "type": "boolean" },
+              { "type": "integer", "minimum": 0 }
+            ]
+          },
+          "Active": { "type": "boolean" },
+          "IncidentPolarization": { "type": "string", "enum": ["TE", "TM", "RHC", "LHC"] },
+          "MaxOrder": { "type": "integer" },
+          "FullDtN": { "type": "boolean" },
+          "PortMode": { "type": "string", "enum": ["Correction", "Auxiliary", "MassConsistent"] }
+        }
+      }
+    },
     "SurfaceCurrent":
     {
       "type": "array",
@@ -253,6 +280,7 @@
       "properties":
       {
         "FloquetWaveVector": { "$ref": "#/$defs/FloquetWaveVector" },
+        "FloquetReferenceFrequency": { "type": "number", "exclusiveMinimum": 0 },
         "BoundaryPairs":
         {
           "type": "array",

@@ -327,8 +327,8 @@ void MaterialOperator::SetUpFloquetWaveVector(const config::PeriodicBoundaryData
   const int sdim = mesh.SpaceDimension();
   const double tol = std::numeric_limits<double>::epsilon();
 
-  // Get Floquet wave vector.
-  mfem::Vector wave_vector(sdim);
+  // Get Floquet wave vector (stored as member for access by FloquetPortData).
+  wave_vector.SetSize(sdim);
   wave_vector = 0.0;
   MFEM_VERIFY(static_cast<int>(periodic.wave_vector.size()) == sdim,
               "Floquet wave vector size must equal the spatial dimension.");
@@ -344,27 +344,42 @@ void MaterialOperator::SetUpFloquetWaveVector(const config::PeriodicBoundaryData
               "Quasi-periodic Floquet periodic boundary conditions are only available "
               " in 3D!");
 
+  // Store nondimensional reference angular frequency for frequency-dependent k_F scaling.
+  // Already nondimensionalized in IoData::NondimensionalizeStandard.
+  floquet_omega_ref = periodic.floquet_reference_freq;
+  MFEM_VERIFY(floquet_omega_ref == 0.0 || problem_type == ProblemType::DRIVEN,
+              "FloquetReferenceFrequency (frequency-dependent k_F) is only supported for "
+              "driven simulations!");
+
   // Get mesh dimensions in x/y/z coordinates.
   mfem::Vector bbmin, bbmax;
   mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
   bbmax -= bbmin;
 
-  // Ensure Floquet wave vector components are in range [-π/L, π/L].
-  for (int i = 0; i < sdim; i++)
+  // BZ wrapping: wrap Floquet wave vector to the first Brillouin zone [-π/L, π/L].
+  // DISABLED when frequency scaling is active: the BZ offset is frequency-independent
+  // but kF scales with ω, creating a mismatch at frequencies away from the reference.
+  // Without wrapping, both volume and Floquet port use the unwrapped kF consistently.
+  if (floquet_omega_ref == 0.0)
   {
-    if (wave_vector[i] > M_PI / bbmax[i])
+    for (int i = 0; i < sdim; i++)
     {
-      wave_vector[i] =
-          -M_PI / bbmax[i] + fmod(wave_vector[i] + M_PI / bbmax[i], 2 * M_PI / bbmax[i]);
-    }
-    else if (wave_vector[i] < M_PI / bbmax[i])
-    {
-      wave_vector[i] =
-          M_PI / bbmax[i] + fmod(wave_vector[i] - M_PI / bbmax[i], 2 * M_PI / bbmax[i]);
+      double half_bz = M_PI / bbmax[i];
+      if (wave_vector[i] > half_bz || wave_vector[i] < -half_bz)
+      {
+        wave_vector[i] = std::remainder(wave_vector[i], 2.0 * half_bz);
+      }
     }
   }
 
-  // Matrix representation of cross product with wave vector
+  // Save BZ-wrapped k_F, then convert to k₀ = k_F/ω for frequency-independent tensors.
+  wave_vector_bz = wave_vector;
+  if (floquet_omega_ref > 0.0)
+  {
+    wave_vector *= 1.0 / floquet_omega_ref;
+  }
+
+  // Matrix representation of cross product with wave vector (or k₀ when scaling active).
   // [k x] = | 0  -k3  k2|
   //         | k3  0  -k1|
   //         |-k2  k1  0 |

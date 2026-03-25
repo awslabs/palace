@@ -13,6 +13,7 @@
 #include "linalg/vector.hpp"
 #include "models/currentdipoleoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
+#include "models/floquetportoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/portexcitations.hpp"
@@ -73,6 +74,7 @@ private:
   SurfaceImpedanceOperator surf_z_op;
   LumpedPortOperator lumped_port_op;
   WavePortOperator wave_port_op;
+  FloquetPortOperator floquet_port_op;
   SurfaceCurrentOperator surf_j_op;
 
   PortExcitations port_excitation_helper;
@@ -148,10 +150,22 @@ public:
   // Access to underlying BC operator objects for postprocessing.
   auto &GetLumpedPortOp() { return lumped_port_op; }
   auto &GetWavePortOp() { return wave_port_op; }
+  auto &GetFloquetPortOp() { return floquet_port_op; }
   auto &GetSurfaceCurrentOp() { return surf_j_op; }
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
+  const auto &GetFloquetPortOp() const { return floquet_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
+
+  // Get the full system operator including the low-rank Floquet port correction:
+  //   A_total = a0 K + a1 C + a2 M + A2(ω) + F(ω)
+  // where F is the Floquet DtN correction (low-rank, not in the preconditioner).
+  // If no Floquet ports are configured, returns the same result as GetSystemMatrix.
+  std::unique_ptr<ComplexOperator>
+  GetSystemOperator(std::complex<double> a0, std::complex<double> a1,
+                    std::complex<double> a2, double omega, const ComplexOperator *K,
+                    const ComplexOperator *C, const ComplexOperator *M,
+                    const ComplexOperator *A2 = nullptr);
 
   const auto &GetPortExcitations() const { return port_excitation_helper; }
 

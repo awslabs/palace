@@ -4,6 +4,7 @@
 #include "portexcitations.hpp"
 
 #include "currentdipoleoperator.hpp"
+#include "floquetportoperator.hpp"
 #include "lumpedportoperator.hpp"
 #include "surfacecurrentoperator.hpp"
 #include "waveportoperator.hpp"
@@ -18,34 +19,38 @@ namespace palace
 [[nodiscard]] std::string PortExcitations::FmtLog() const
 {
   fmt::memory_buffer buf{};
-  auto out = fmt::appender{buf};
+  auto to = [&buf](auto f, auto &&...a)  // mini-lambda for cleaner code
+  { fmt::format_to(std::back_inserter(buf), f, std::forward<decltype(a)>(a)...); };
 
   int i = 1;
   for (const auto &[idx, ex] : excitations)
   {
-    fmt::format_to(out, "Excitation{} with index {:d} has contributions from:\n",
-                   (Size() > 1) ? fmt::format(" {:d}/{:d}", i, Size()) : "", idx);
+    to("Excitation{} with index {:d} has contributions from:\n",
+       (Size() > 1) ? fmt::format(" {:d}/{:d}", i, Size()) : "", idx);
     if (!ex.lumped_port.empty())
     {
-      fmt::format_to(out, " Lumped port{} {:2d}\n", (ex.lumped_port.size() > 1) ? "s" : "",
-                     fmt::join(ex.lumped_port, " "));
+      to(" Lumped port{} {:2d}\n", (ex.lumped_port.size() > 1) ? "s" : "",
+         fmt::join(ex.lumped_port, " "));
     }
     if (!ex.wave_port.empty())
     {
-      fmt::format_to(out, " Wave port{} {:2d}\n", (ex.wave_port.size() > 1) ? "s" : "",
-                     fmt::join(ex.wave_port, " "));
+      to(" Wave port{} {:2d}\n", (ex.wave_port.size() > 1) ? "s" : "",
+         fmt::join(ex.wave_port, " "));
+    }
+    if (!ex.floquet_port.empty())
+    {
+      to(" Floquet port{} {:2d}\n", (ex.floquet_port.size() > 1) ? "s" : "",
+         fmt::join(ex.floquet_port, " "));
     }
     if (!ex.current_port.empty())
     {
-      fmt::format_to(out, " Surface current port{} {:2d}\n",
-                     (ex.current_port.size() > 1) ? "s" : "",
-                     fmt::join(ex.current_port, " "));
+      to(" Surface current port{} {:2d}\n", (ex.current_port.size() > 1) ? "s" : "",
+         fmt::join(ex.current_port, " "));
     }
     if (!ex.current_dipole.empty())
     {
-      fmt::format_to(out, " Current dipole{} {:2d}\n",
-                     (ex.current_dipole.size() > 1) ? "s" : "",
-                     fmt::join(ex.current_dipole, " "));
+      to(" Current dipole{} {:2d}\n", (ex.current_dipole.size() > 1) ? "s" : "",
+         fmt::join(ex.current_dipole, " "));
     }
     i++;
   }
@@ -56,6 +61,7 @@ void to_json(nlohmann::json &j, const PortExcitations::SingleExcitationSpec &p)
 {
   j = nlohmann::json{{"LumpedPort", p.lumped_port},
                      {"WavePort", p.wave_port},
+                     {"FloquetPort", p.floquet_port},
                      {"SurfaceCurrent", p.current_port},
                      {"CurrentDipole", p.current_dipole}};
 }
@@ -64,6 +70,7 @@ void from_json(const nlohmann::json &j, PortExcitations::SingleExcitationSpec &p
 {
   j.at("LumpedPort").get_to(p.lumped_port);
   j.at("WavePort").get_to(p.wave_port);
+  j.at("FloquetPort").get_to(p.floquet_port);
   j.at("SurfaceCurrent").get_to(p.current_port);
   j.at("CurrentDipole").get_to(p.current_dipole);
 }
@@ -80,6 +87,7 @@ void from_json(const nlohmann::json &j, PortExcitations &p)
 
 PortExcitations::PortExcitations(const LumpedPortOperator &lumped_port_op,
                                  const WavePortOperator &wave_port_op,
+                                 const FloquetPortOperator &floquet_port_op,
                                  const SurfaceCurrentOperator &surf_j_op,
                                  const CurrentDipoleOperator &dipole_op)
 {
@@ -100,6 +108,15 @@ PortExcitations::PortExcitations(const LumpedPortOperator &lumped_port_op,
     }
     excitations.try_emplace(port.excitation, SingleExcitationSpec{});
     excitations.at(port.excitation).wave_port.push_back(idx);
+  }
+  for (const auto &[idx, port] : floquet_port_op)
+  {
+    if (!port.HasExcitation())
+    {
+      continue;
+    }
+    excitations.try_emplace(port.excitation, SingleExcitationSpec{});
+    excitations.at(port.excitation).floquet_port.push_back(idx);
   }
 
   // Surface currents are always excited. Add them to all single existing excitations.

@@ -11,6 +11,7 @@
 
 namespace palace
 {
+class FloquetPortOperator;
 class LumpedPortOperator;
 class WavePortOperator;
 class SurfaceCurrentOperator;
@@ -24,9 +25,10 @@ enum class PortType : std::uint8_t
 {
   LumpedPort = 0,
   WavePort = 1,
-  CurrentPort = 2,
-  CurrentDipole = 3,
-  Undefined = 4
+  FloquetPort = 2,
+  CurrentPort = 3,
+  CurrentDipole = 4,
+  Undefined = 5
 };
 
 class PortExcitations
@@ -36,6 +38,7 @@ public:
   {
     std::vector<int> lumped_port = {};
     std::vector<int> wave_port = {};
+    std::vector<int> floquet_port = {};
     std::vector<int> current_port = {};
     std::vector<int> current_dipole = {};
 
@@ -45,6 +48,7 @@ public:
       std::vector<int> out;
       out.insert(out.end(), lumped_port.cbegin(), lumped_port.cend());
       out.insert(out.end(), wave_port.cbegin(), wave_port.cend());
+      out.insert(out.end(), floquet_port.cbegin(), floquet_port.cend());
       out.insert(out.end(), current_port.cbegin(), current_port.cend());
       out.insert(out.end(), current_dipole.cbegin(), current_dipole.cend());
       return out;
@@ -55,29 +59,36 @@ public:
     {
       auto n_lumped = lumped_port.size();
       auto n_wave = wave_port.size();
+      auto n_floquet = floquet_port.size();
       auto n_current = current_port.size();
       auto n_dipole = current_dipole.size();
+      auto n_total = n_lumped + n_wave + n_floquet + n_current + n_dipole;
 
-      if (n_lumped == 1 && n_wave == 0 && n_current == 0 && n_dipole == 0)
-      {
-        return std::make_tuple(true, PortType::LumpedPort, lumped_port.at(0));
-      }
-      else if (n_lumped == 0 && n_wave == 1 && n_current == 0 && n_dipole == 0)
-      {
-        return std::make_tuple(true, PortType::WavePort, wave_port.at(0));
-      }
-      else if (n_lumped == 0 && n_wave == 0 && n_current == 1 && n_dipole == 0)
-      {
-        return std::make_tuple(true, PortType::CurrentPort, current_port.at(0));
-      }
-      else if (n_lumped == 0 && n_wave == 0 && n_current == 0 && n_dipole == 1)
-      {
-        return std::make_tuple(true, PortType::CurrentDipole, current_dipole.at(0));
-      }
-      else
+      if (n_total != 1)
       {
         return std::make_tuple(false, PortType::Undefined, 0);
       }
+      if (n_lumped == 1)
+      {
+        return std::make_tuple(true, PortType::LumpedPort, lumped_port.at(0));
+      }
+      else if (n_wave == 1)
+      {
+        return std::make_tuple(true, PortType::WavePort, wave_port.at(0));
+      }
+      else if (n_floquet == 1)
+      {
+        return std::make_tuple(true, PortType::FloquetPort, floquet_port.at(0));
+      }
+      else if (n_current == 1)
+      {
+        return std::make_tuple(true, PortType::CurrentPort, current_port.at(0));
+      }
+      else if (n_dipole == 1)
+      {
+        return std::make_tuple(true, PortType::CurrentDipole, current_dipole.at(0));
+      }
+      return std::make_tuple(false, PortType::Undefined, 0);
     }
   };
 
@@ -90,6 +101,7 @@ public:
 
   PortExcitations(const LumpedPortOperator &lumped_port_op,
                   const WavePortOperator &wave_port_op,
+                  const FloquetPortOperator &floquet_port_op,
                   const SurfaceCurrentOperator &surf_j_op,
                   const CurrentDipoleOperator &dipole_op);
 
