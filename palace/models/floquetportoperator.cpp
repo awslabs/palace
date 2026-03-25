@@ -163,11 +163,6 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
     MFEM_VERIFY(a1.Norml2() > 1e-12 && a2.Norml2() > 1e-12,
                 "Could not infer lattice vectors from port face bounding box. "
                 "Please specify BoundaryPairs with Translation vectors.");
-
-    Mpi::Print(" Floquet port: inferred lattice vectors from port geometry:\n"
-               "   a1 = ({:.4e}, {:.4e}, {:.4e})\n"
-               "   a2 = ({:.4e}, {:.4e}, {:.4e})\n",
-               a1(0), a1(1), a1(2), a2(0), a2(1), a2(2));
   }
 
   // Bloch wave vector: use the BZ-wrapped value from MaterialOperator so the port is
@@ -206,10 +201,6 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
                  bz_m, bz_n);
     }
   }
-  Mpi::Print(" Floquet port reciprocal lattice:\n"
-             "   b1 = ({:.4e}, {:.4e}, {:.4e})\n"
-             "   b2 = ({:.4e}, {:.4e}, {:.4e})\n",
-             b1(0), b1(1), b1(2), b2(0), b2(1), b2(2));
 
   // Compute port normal and area using geodata utilities.
   {
@@ -277,10 +268,6 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
     MFEM_VERIFY(c_local > 0.0, "Invalid material speed of light at Floquet port!");
     mu_eps_port = 1.0 / (c_local * c_local);
     mu_r_port = 1.0 / muinv_local;
-
-    Mpi::Print("   Port material: mu_r = {:.4e}, mu_r*eps_r = {:.4e}, "
-               "c = {:.4e}\n",
-               mu_r_port, mu_eps_port, c_local);
   }
 
   // Determine max diffraction order.
@@ -344,10 +331,8 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
   AssembleFourierProjections(nd_fespace);
   nd_fespace_ptr = &nd_fespace;  // Store for re-assembly in Initialize.
 
-  Mpi::Print(" Floquet port: {:d} modes ({:d} orders x 2 polarizations), "
-             "port area = {:.4e}, normal = ({:.3f}, {:.3f}, {:.3f})\n",
-             static_cast<int>(modes.size()), static_cast<int>(modes.size()) / 2, port_area,
-             port_normal(0), port_normal(1), port_normal(2));
+  Mpi::Print(" Floquet port: {:d} modes ({:d} orders x 2 polarizations)\n",
+             static_cast<int>(modes.size()), static_cast<int>(modes.size()) / 2);
 }
 
 void FloquetPortData::ComputeReciprocalLattice(const mfem::Vector &a1,

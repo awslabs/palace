@@ -62,11 +62,6 @@ public:
 
   void SetOperators(const OperType &op, const OperType &pc_op);
 
-  // Extract the preconditioner (transfers ownership to caller).
-
-  // Replace the preconditioner with a new one (e.g., FloquetBoundaryPreconditioner
-  // wrapping the original). The new preconditioner takes ownership.
-
   void Mult(const VecType &x, VecType &y) const;
 };
 
