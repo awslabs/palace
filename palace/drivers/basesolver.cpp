@@ -145,7 +145,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   const auto &refinement = iodata.model.refinement;
   const bool use_amr = [&]()
   {
-    if (refinement.max_it > 0 && dynamic_cast<const TransientSolver *>(this) != nullptr)
+    if (refinement.max_it > 0 && iodata.problem.type == ProblemType::TRANSIENT)
     {
       Mpi::Warning("AMR is not currently supported for transient simulations!\n");
       return false;

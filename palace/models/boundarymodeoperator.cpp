@@ -105,6 +105,9 @@ void BoundaryModeOperator::SetUpMesh(const std::vector<std::unique_ptr<Mesh>> &m
       internal_bdr_attrs.push_back(a);
     }
 
+    // Extract a standalone 2D serial mesh from the 3D boundary. Note: this uses serial
+    // mesh extraction + redistribution, which does not support nonconforming (NCMesh)
+    // meshes. This is a known limitation of the BoundaryMode submesh path.
     mfem::Vector surface_normal;
     auto serial_mesh = mesh::ExtractStandalone2DSubmesh(
         parent_mesh, attr_list, internal_bdr_attrs, surface_normal, submesh_centroid,

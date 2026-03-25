@@ -1976,7 +1976,10 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
                                   mat_op.GetInvLondonDepth(), 1.0);
   }
 
-  // Boundary coefficients for preconditioner (real part only).
+  // Boundary coefficients for preconditioner (real part only). The farfield ABC
+  // contribution is deliberately omitted — it only enters the imaginary part of the
+  // operator and is small (first-order ABC), so it doesn't significantly affect
+  // preconditioner conditioning.
   int max_bdr_attr = mat_op.MaxCeedBdrAttribute();
   MaterialPropertyCoefficient fbr(max_bdr_attr);
   if (surf_z_op)
