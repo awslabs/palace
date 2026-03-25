@@ -13,10 +13,9 @@ reflection and transmission plots to `path/`.
 
 # Example
 
-```julia
-julia --project=../../examples
-include("dielectric_grating.jl")
-plot_s_parameters()
+```
+julia> include("dielectric_grating.jl")
+julia> plot_s_parameters()
 ```
 """
 function plot_s_parameters(path::String="postpro")
@@ -45,7 +44,7 @@ function plot_s_parameters(path::String="postpro")
 
     for (labels, title, suffix) in [
         (p1_labels, "Reflection (Port 1)", "reflection"),
-        (p2_labels, "Transmission (Port 2)", "transmission"),
+        (p2_labels, "Transmission (Port 2)", "transmission")
     ]
         fig = Figure(size=(600, 400))
         ax = Axis(fig[1, 1])
@@ -67,10 +66,9 @@ function plot_s_parameters(path::String="postpro")
 
             # Skip degenerate symmetric modes (identical S-parameter values).
             is_dup = any(plotted) do prev
-                length(prev) == length(ref_vals) &&
-                    all(zip(prev, ref_vals)) do (a, b)
-                        return (isnan(a) && isnan(b)) || isapprox(a, b; rtol=1e-3)
-                    end
+                length(prev) == length(ref_vals) && all(zip(prev, ref_vals)) do (a, b)
+                    return (isnan(a) && isnan(b)) || isapprox(a, b; rtol=1e-3)
+                end
             end
             is_dup && continue
             push!(plotted, ref_vals)
@@ -124,7 +122,7 @@ Returns `(freq, modes)` where `modes` is a `Dict{String, Vector{Float64}}`.
 """
 function get_modes(df::DataFrame)
     freq = df[!, 1]
-    modes = Dict{String,Vector{Float64}}()
+    modes = Dict{String, Vector{Float64}}()
     for name in names(df)
         m = match(r"\|S\[P(\d+)\((-?\d+);(-?\d+)\)(\w+)\]\[\d+\]\| \(dB\)", name)
         isnothing(m) && continue
