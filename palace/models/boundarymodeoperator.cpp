@@ -77,36 +77,30 @@ void BoundaryModeOperator::SetUpMesh(const std::vector<std::unique_ptr<Mesh>> &m
     attr_list.Append(bm_data.attributes.data(), bm_data.attributes.size());
 
     std::vector<int> internal_bdr_attrs;
-    for (auto a : iodata.boundaries.pec.attributes)
+    const auto &bdr = iodata.boundaries;
+    internal_bdr_attrs.insert(internal_bdr_attrs.end(), bdr.pec.attributes.begin(),
+                              bdr.pec.attributes.end());
+    internal_bdr_attrs.insert(internal_bdr_attrs.end(), bdr.auxpec.attributes.begin(),
+                              bdr.auxpec.attributes.end());
+    for (const auto &d : bdr.impedance)
     {
-      internal_bdr_attrs.push_back(a);
+      internal_bdr_attrs.insert(internal_bdr_attrs.end(), d.attributes.begin(),
+                                d.attributes.end());
     }
-    for (auto a : iodata.boundaries.auxpec.attributes)
+    for (const auto &d : bdr.conductivity)
     {
-      internal_bdr_attrs.push_back(a);
+      internal_bdr_attrs.insert(internal_bdr_attrs.end(), d.attributes.begin(),
+                                d.attributes.end());
     }
-    for (const auto &d : iodata.boundaries.impedance)
-    {
-      for (auto a : d.attributes)
-      {
-        internal_bdr_attrs.push_back(a);
-      }
-    }
-    for (const auto &d : iodata.boundaries.conductivity)
-    {
-      for (auto a : d.attributes)
-      {
-        internal_bdr_attrs.push_back(a);
-      }
-    }
-    for (auto a : iodata.boundaries.farfield.attributes)
-    {
-      internal_bdr_attrs.push_back(a);
-    }
+    internal_bdr_attrs.insert(internal_bdr_attrs.end(), bdr.farfield.attributes.begin(),
+                              bdr.farfield.attributes.end());
 
-    // Extract a standalone 2D serial mesh from the 3D boundary. Note: this uses serial
-    // mesh extraction + redistribution, which does not support nonconforming (NCMesh)
-    // meshes. This is a known limitation of the BoundaryMode submesh path.
+    // Extract a standalone 2D serial mesh from the 3D parallel boundary, then redistribute.
+    // The serial roundtrip (parallel → serial → parallel) is needed because building a
+    // standalone 2D mesh requires global topology: domain attribute remapping from parent
+    // volume elements, internal boundary edges at BC intersections, and consistent 2D
+    // coordinate projection. ParSubMesh::CreateFromBoundary doesn't provide these.
+    // Note: does not support nonconforming (NCMesh) meshes.
     auto serial_mesh = mesh::ExtractStandalone2DSubmesh(
         parent_mesh, attr_list, internal_bdr_attrs, submesh_normal, submesh_centroid,
         submesh_e1, submesh_e2);
