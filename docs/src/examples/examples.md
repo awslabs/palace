@@ -24,3 +24,5 @@ more details.
   - [Eigenmodes of a Cylinder](cylinder.md)
   - [Signal Propagation in a Coaxial Cable](coaxial.md)
   - [Crosstalk Between Coplanar Waveguides](cpw.md)
+  - [2D Coplanar Waveguide Mode Analysis](cpw2d.md)
+  - [Floquet Ports for a Dielectric Grating](dielectric_grating.md)
