@@ -99,7 +99,8 @@ makedocs(
             "examples/cylinder.md",
             "examples/coaxial.md",
             "examples/cpw.md",
-            "examples/cpw2d.md"
+            "examples/cpw2d.md",
+            "examples/dielectric_grating.md"
         ],
         "faq.md",
         "For Developers" => Any[
