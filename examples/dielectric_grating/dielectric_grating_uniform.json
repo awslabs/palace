@@ -3,11 +3,11 @@
   {
     "Type": "Driven",
     "Verbose": 2,
-    "Output": "postpro/adaptive"
+    "Output": "postpro/uniform"
   },
   "Model":
   {
-    "Mesh": "mesh/periodic_box.msh",
+    "Mesh": "mesh/dielectric_grating.msh",
     "L0": 1.0e-2
   },
   "Domains":
@@ -67,16 +67,15 @@
     {
       "MinFreq": 2.0,
       "MaxFreq": 12.0,
-      "FreqStep": 0.05,
-      "AdaptiveTol": 1.0e-3
+      "FreqStep": 2.0
     },
     "Linear":
     {
       "Type": "Default",
       "KSPType": "GMRES",
       "Tol": 1.0e-8,
-        "MaxIts": 200,
-        "ComplexCoarseSolve": true
+      "MaxIts": 200,
+      "ComplexCoarseSolve": true
     }
   }
 }

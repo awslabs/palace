@@ -49,8 +49,8 @@ def main():
 
     if not have_uniform and not have_adaptive:
         print("No Palace data found. Run the simulations first:")
-        print("  palace periodic_box_uniform.json")
-        print("  palace periodic_box_adaptive.json")
+        print("  palace dielectric_grating_uniform.json")
+        print("  palace dielectric_grating_adaptive.json")
         return
 
     freq_u, modes_u = extract_palace_modes(read_palace_csv(uniform_path)) if have_uniform else (None, {})

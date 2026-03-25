@@ -1,14 +1,14 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Generate mesh (from the periodic_box example directory):
+# Generate mesh (from the dielectric_grating example directory):
 #   julia -e 'include("mesh/mesh.jl"); generate_grating_mesh()'
 
 using Gmsh: gmsh
 
 """
     generate_grating_mesh(;
-        filename::AbstractString = "mesh/periodic_box.msh",
+        filename::AbstractString = "mesh/dielectric_grating.msh",
         a::Real = 4.0,
         b::Real = 1.0,
         L::Real = 4.0,
@@ -46,7 +46,7 @@ Attributes:
 Units: cm (Palace L0 = 1e-2 for cm → m conversion).
 """
 function generate_grating_mesh(;
-    filename::AbstractString="periodic_box.msh",
+    filename::AbstractString="dielectric_grating.msh",
     a::Real=4.0,
     b::Real=1.0,
     L::Real=4.0,
