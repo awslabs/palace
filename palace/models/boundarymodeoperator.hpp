@@ -105,7 +105,7 @@ private:
   Mesh *solve_mesh;
 
   // Submesh projection geometry.
-  mfem::Vector submesh_centroid, submesh_e1, submesh_e2;
+  mfem::Vector submesh_centroid, submesh_e1, submesh_e2, submesh_normal;
 
   // FE collections and space hierarchies.
   std::vector<std::unique_ptr<mfem::ND_FECollection>> nd_fecs;
