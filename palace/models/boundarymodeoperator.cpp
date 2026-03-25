@@ -28,8 +28,7 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
   mat_op = std::make_unique<MaterialOperator>(iodata, *solve_mesh);
   if (use_submesh)
   {
-    mfem::Vector surface_normal({0.0, 0.0, 1.0});  // After 2D projection, normal is z.
-    mat_op->RotateMaterialTensors(iodata, submesh_e1, submesh_e2, surface_normal);
+    mat_op->RotateMaterialTensors(iodata, submesh_e1, submesh_e2, submesh_normal);
   }
 
   // Phase 3: FE spaces.
@@ -108,9 +107,8 @@ void BoundaryModeOperator::SetUpMesh(const std::vector<std::unique_ptr<Mesh>> &m
     // Extract a standalone 2D serial mesh from the 3D boundary. Note: this uses serial
     // mesh extraction + redistribution, which does not support nonconforming (NCMesh)
     // meshes. This is a known limitation of the BoundaryMode submesh path.
-    mfem::Vector surface_normal;
     auto serial_mesh = mesh::ExtractStandalone2DSubmesh(
-        parent_mesh, attr_list, internal_bdr_attrs, surface_normal, submesh_centroid,
+        parent_mesh, attr_list, internal_bdr_attrs, submesh_normal, submesh_centroid,
         submesh_e1, submesh_e2);
     if (!Mpi::Root(comm))
     {
