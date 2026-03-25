@@ -1,0 +1,1920 @@
+diff --git a/repos/spack_repo/builtin/packages/metis/package.py b/repos/spack_repo/builtin/packages/metis/package.py
+index 70263a2e9d..acd15ebf1d 100644
+--- a/repos/spack_repo/builtin/packages/metis/package.py
++++ b/repos/spack_repo/builtin/packages/metis/package.py
+@@ -50,13 +50,27 @@ class Metis(CMakePackage, MakefilePackage):
+         variant("gdb", default=False, description="Enable gdb support")
+         variant("int64", default=False, description="Use index type of 64 bit")
+         variant("real64", default=False, description="Use real type of 64 bit")
++        variant(
++            "petsc_patches",
++            default=False,
++            description="Apply patches from the PETSc fork",
++            when="@=5.1.0",
++        )
++        variant(
++            "gkrand",
++            default=False,
++            description="Use portable deterministic random number generator",
++        )
++
++        # Build system patches for the official 5.1.0 tarball
++        patch("gklib_path.patch", when="~petsc_patches")
++        patch("install_gklib_defs_rename.patch", when="~petsc_patches")
++        patch("gklib_nomisleadingindentation_warning.patch", when="~petsc_patches %gcc@6:")
+ 
+-        # Use the correct path to GKLIB when building out of source
+-        patch("gklib_path.patch")
+-        # Install both gklib_defs.h and gklib_rename.h
+-        patch("install_gklib_defs_rename.patch")
+-        # Disable the "misleading indentation" warning when compiling
+-        patch("gklib_nomisleadingindentation_warning.patch", when="%gcc@6:")
++        # PETSc fork patches: all fixes from bitbucket.org/petsc/pkg-metis
++        # v5.1.0-p13. Includes kwayfm bounds check, 64-bit RNG fix, TLS,
++        # and build system improvements (replaces the above patches).
++        patch("petsc_patches.patch", when="+petsc_patches")
+ 
+     with when("build_system=makefile"):
+         variant("debug", default=False, description="Compile in debug mode")
+@@ -66,16 +80,20 @@ class Metis(CMakePackage, MakefilePackage):
+             return
+ 
+         source_path = self.stage.source_path
+-        metis_header = FileFilter(join_path(source_path, "include", "metis.h"))
+ 
+-        metis_header.filter(
+-            r"(\b)(IDXTYPEWIDTH )(\d+)(\b)",
+-            r"\1\2{0}\4".format("64" if "+int64" in self.spec else "32"),
+-        )
+-        metis_header.filter(
+-            r"(\b)(REALTYPEWIDTH )(\d+)(\b)",
+-            r"\1\2{0}\4".format("64" if "+real64" in self.spec else "32"),
+-        )
++        # PETSc fork uses metis.h.in with CMake configure_file for int/real widths.
++        # Only patch metis.h directly for the official tarball.
++        metis_header_path = join_path(source_path, "include", "metis.h")
++        if os.path.exists(metis_header_path) and not self.spec.satisfies("+petsc_patches"):
++            metis_header = FileFilter(metis_header_path)
++            metis_header.filter(
++                r"(\b)(IDXTYPEWIDTH )(\d+)(\b)",
++                r"\1\2{0}\4".format("64" if "+int64" in self.spec else "32"),
++            )
++            metis_header.filter(
++                r"(\b)(REALTYPEWIDTH )(\d+)(\b)",
++                r"\1\2{0}\4".format("64" if "+real64" in self.spec else "32"),
++            )
+ 
+         # Make clang 7.3 happy.
+         # Prevents "ld: section __DATA/__thread_bss extends beyond end of file"
+@@ -225,6 +243,14 @@ class CMakeBuilder(cmake.CMakeBuilder, SetupEnvironment):
+             self.define_from_variant("GDB", "gdb"),
+         ]
+ 
++        # PETSc fork uses CMake options for int/real width
++        if self.spec.satisfies("+petsc_patches"):
++            options.append(self.define_from_variant("METIS_USE_LONGINDEX", "int64"))
++            options.append(self.define_from_variant("METIS_USE_DOUBLEPRECISION", "real64"))
++
++        if self.spec.satisfies("+gkrand"):
++            options.append(self.define("GKRAND", 1))
++
+         if self.spec.satisfies("~shared"):
+             # Remove all RPATH options
+             # (RPATHxxx options somehow trigger cmake to link dynamically)
+diff --git a/repos/spack_repo/builtin/packages/metis/petsc_patches.patch b/repos/spack_repo/builtin/packages/metis/petsc_patches.patch
+new file mode 100644
+index 0000000000..9018a6e94c
+--- /dev/null
++++ b/repos/spack_repo/builtin/packages/metis/petsc_patches.patch
+@@ -0,0 +1,1241 @@
++diff -ruN --ex a/BUILD.txt b/BUILD.txt
++--- a/BUILD.txt	2013-03-30 09:24:45
+++++ b/BUILD.txt	2026-03-25 16:14:25
++@@ -17,10 +17,12 @@
++ would configure metis to be built as a shared library using GCC 4.2.
++ 
++ Common configuration options are:
++-  cc=[compiler]   - The C compiler to use [default is determined by CMake]
++-  shared=1        - Build a shared library instead of a static one 
++-                    [off by default]
++-  prefix=[PATH]   - Set the installation prefix [/usr/local/ by default]
+++  cc=[compiler]     - The C compiler to use [default is determined by CMake]
+++  shared=1          - Build a shared library instead of a static one 
+++                      [off by default]
+++  prefix=[PATH]     - Set the installation prefix [/usr/local/ by default]
+++  longindex=1       - Build with idx_t = int64_t
+++  doubleprecision=1 - Build with real_t = double
++ 
++ Advanced debugging related options:
++   gdb=1       - Build with support for GDB [off by default]
++diff -ruN --ex a/CMakeLists.txt b/CMakeLists.txt
++--- a/CMakeLists.txt	2013-03-30 09:24:45
+++++ b/CMakeLists.txt	2026-03-25 16:14:25
++@@ -1,18 +1,15 @@
++-cmake_minimum_required(VERSION 2.8)
++-project(METIS)
+++cmake_minimum_required(VERSION 3.5)
+++project(METIS C)
++ 
++ set(GKLIB_PATH "GKlib" CACHE PATH "path to GKlib")
++ set(SHARED FALSE CACHE BOOL "build a shared library")
++ 
++-if(MSVC)
++-  set(METIS_INSTALL FALSE)
++-else()
++-  set(METIS_INSTALL TRUE)
++-endif()
+++set(METIS_INSTALL TRUE)
++ 
++ # Configure libmetis library.
++ if(SHARED)
++   set(METIS_LIBRARY_TYPE SHARED)
+++  set(CMAKE_INSTALL_NAME_DIR "${CMAKE_INSTALL_PREFIX}/lib")
++ else()
++   set(METIS_LIBRARY_TYPE STATIC)
++ endif(SHARED)
++@@ -24,4 +21,4 @@
++ # Recursively look for CMakeLists.txt in subdirs.
++ add_subdirectory("include")
++ add_subdirectory("libmetis")
++-add_subdirectory("programs")
+++#add_subdirectory("programs")
++diff -ruN --ex a/GKlib/GKlibSystem.cmake b/GKlib/GKlibSystem.cmake
++--- a/GKlib/GKlibSystem.cmake	2013-03-30 09:24:45
+++++ b/GKlib/GKlibSystem.cmake	2026-03-25 16:14:25
++@@ -1,6 +1,7 @@
++ # Helper modules.
++ include(CheckFunctionExists)
++ include(CheckIncludeFile)
+++include(CheckCSourceRuns)
++ 
++ # Setup options.
++ option(GDB "enable use of GDB" OFF)
++@@ -15,12 +16,13 @@
++ 
++ # Add compiler flags.
++ if(MSVC)
++-  set(GKlib_COPTS "/Ox")
+++  #set(GKlib_COPTS "/Ox")
++   set(GKlib_COPTIONS "-DWIN32 -DMSC -D_CRT_SECURE_NO_DEPRECATE -DUSE_GKREGEX")
++ elseif(MINGW)
++   set(GKlib_COPTS "-DUSE_GKREGEX")
++ else()
++-  set(GKlib_COPTS "-O3")
+++  #set(GKlib_COPTS "-O3")
+++  set(GKlib_COPTS "")
++   set(GKlib_COPTIONS "-DLINUX -D_FILE_OFFSET_BITS=64")
++ endif(MSVC)
++ if(CYGWIN)
++@@ -33,10 +35,7 @@
++       set(GKlib_COPTIONS "${GKlib_COPTIONS} -fPIC")
++   endif(NOT MINGW)
++ # GCC warnings.
++-  set(GKlib_COPTIONS "${GKlib_COPTIONS} -Wall -pedantic -Wno-unused-but-set-variable -Wno-unused-variable -Wno-unknown-pragmas")
++-elseif(${CMAKE_C_COMPILER_ID} MATCHES "Sun")
++-# Sun insists on -xc99.
++-  set(GKlib_COPTIONS "${GKlib_COPTIONS} -xc99")
+++  set(GKlib_COPTIONS "${GKlib_COPTIONS} -Wall -pedantic -Wno-unused-variable -Wno-unknown-pragmas")
++ endif(CMAKE_COMPILER_IS_GNUCC)
++ 
++ # Find OpenMP if it is requested.
++@@ -100,26 +99,20 @@
++   set(GKlib_COPTIONS "${GKlib_COPTIONS} -DHAVE_GETLINE")
++ endif(HAVE_GETLINE)
++ 
++-
+++set(GKlib_TLS "")
++ # Custom check for TLS.
++-if(MSVC)
++-   set(GKlib_COPTIONS "${GKlib_COPTIONS} -D__thread=__declspec(thread)")
++-else()
++-  # This if checks if that value is cached or not.
++-  if("${HAVE_THREADLOCALSTORAGE}" MATCHES "^${HAVE_THREADLOCALSTORAGE}$")
++-    try_compile(HAVE_THREADLOCALSTORAGE
++-      ${CMAKE_BINARY_DIR}
++-      ${GKLIB_PATH}/conf/check_thread_storage.c)
++-    if(HAVE_THREADLOCALSTORAGE)
++-      message(STATUS "checking for thread-local storage - found")
++-    else()
++-      message(STATUS "checking for thread-local storage - not found")
++-    endif()
++-  endif()
++-  if(NOT HAVE_THREADLOCALSTORAGE)
++-    set(GKlib_COPTIONS "${GKlib_COPTIONS} -D__thread=")
++-  endif()
++-endif()
+++foreach(tls_name "__thread")
+++  check_c_source_runs("${tls_name} int x; int main() {x=0; return x;}" HAVE${tls_name})
+++  if(HAVE${tls_name})
+++    set(GKlib_TLS "${tls_name}")
+++    message(STATUS "checking for ${tls_name} thread-local storage - found")
+++    break()
+++  else()
+++    message(STATUS "checking for ${tls_name} thread-local storage - not found")
+++  endif(HAVE${tls_name})
+++endforeach()
+++
+++configure_file(${GKLIB_PATH}/gklib_tls.h.in include/gklib_tls.h)
++ 
++ # Finally set the official C flags.
++ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${GKlib_COPTIONS} ${GKlib_COPTS}")
++diff -ruN --ex a/GKlib/error.c b/GKlib/error.c
++--- a/GKlib/error.c	2013-03-30 09:24:45
+++++ b/GKlib/error.c	2026-03-25 16:14:25
++@@ -9,6 +9,8 @@
++ \version\verbatim $Id: error.c 10711 2011-08-31 22:23:04Z karypis $ \endverbatim
++ */
++ 
+++#define _GNU_SOURCE
+++#include <string.h>
++ 
++ #define _GK_ERROR_C_  /* this is needed to properly declare the gk_jub* variables
++                          as an extern function in GKlib.h */
++@@ -19,17 +21,17 @@
++ /* These are the jmp_buf for the graceful exit in case of severe errors.
++    Multiple buffers are defined to allow for recursive invokation. */
++ #define MAX_JBUFS 128
++-__thread int gk_cur_jbufs=-1;
++-__thread jmp_buf gk_jbufs[MAX_JBUFS];
++-__thread jmp_buf gk_jbuf;
+++metis__thread int gk_cur_jbufs=-1;
+++metis__thread jmp_buf gk_jbufs[MAX_JBUFS];
+++metis__thread jmp_buf gk_jbuf;
++ 
++ typedef void (*gksighandler_t)(int);
++ 
++ /* These are the holders of the old singal handlers for the trapped signals */
++-static __thread gksighandler_t old_SIGMEM_handler;  /* Custom signal */
++-static __thread gksighandler_t old_SIGERR_handler;  /* Custom signal */
++-static __thread gksighandler_t old_SIGMEM_handlers[MAX_JBUFS];  /* Custom signal */
++-static __thread gksighandler_t old_SIGERR_handlers[MAX_JBUFS];  /* Custom signal */
+++static metis__thread gksighandler_t old_SIGMEM_handler;  /* Custom signal */
+++static metis__thread gksighandler_t old_SIGERR_handler;  /* Custom signal */
+++static metis__thread gksighandler_t old_SIGMEM_handlers[MAX_JBUFS];  /* Custom signal */
+++static metis__thread gksighandler_t old_SIGERR_handlers[MAX_JBUFS];  /* Custom signal */
++ 
++ /* The following is used to control if the gk_errexit() will actually abort or not.
++    There is always a single copy of this variable */
++@@ -178,7 +180,7 @@
++   return strerror(errnum);
++ #else 
++ #ifndef SUNOS
++-  static __thread char buf[1024];
+++  static metis__thread char buf[1024];
++ 
++   strerror_r(errnum, buf, 1024);
++ 
++diff -ruN --ex a/GKlib/gk_arch.h b/GKlib/gk_arch.h
++--- a/GKlib/gk_arch.h	2013-03-30 09:24:45
+++++ b/GKlib/gk_arch.h	2026-03-25 16:14:25
++@@ -13,19 +13,7 @@
++ /*************************************************************************
++ * Architecture-specific differences in header files
++ **************************************************************************/
++-#ifdef LINUX
++-#if !defined(__USE_XOPEN)
++-#define __USE_XOPEN
++-#endif
++-#if !defined(_XOPEN_SOURCE)
++-#define _XOPEN_SOURCE 600
++-#endif
++-#if !defined(__USE_XOPEN2K)
++-#define __USE_XOPEN2K
++-#endif
++-#endif
++ 
++-
++ #ifdef HAVE_EXECINFO_H
++ #include <execinfo.h>
++ #endif
++@@ -39,9 +27,11 @@
++ #ifndef SUNOS
++   #include <stdint.h>
++ #endif
+++#if !defined(WIN32) && !defined(__MINGW32__)
+++  #include <sys/resource.h>
+++#endif
++   #include <inttypes.h>
++   #include <sys/types.h>
++-  #include <sys/resource.h>
++   #include <sys/time.h>
++ #endif
++ 
++@@ -56,16 +46,6 @@
++ 
++ #ifdef SUNOS
++ #define PTRDIFF_MAX  INT64_MAX
++-#endif
++-
++-#ifdef __MSC__
++-/* MSC does not have rint() function */
++-#define rint(x) ((int)((x)+0.5))  
++-
++-/* MSC does not have INFINITY defined */
++-#ifndef INFINITY
++-#define INFINITY FLT_MAX
++-#endif
++ #endif
++ 
++ #endif
++diff -ruN --ex a/GKlib/gk_externs.h b/GKlib/gk_externs.h
++--- a/GKlib/gk_externs.h	2013-03-30 09:24:45
+++++ b/GKlib/gk_externs.h	2026-03-25 16:14:25
++@@ -14,11 +14,16 @@
++ /*************************************************************************
++ * Extern variable definition. Hopefully, the __thread makes them thread-safe.
++ **************************************************************************/
+++
+++/* include the definition of metis__thread; it is assumed that
+++   gklib_tls.h will be installed 'globally' i.e. into $PREFIX */
+++#include <gklib_tls.h>
+++
++ #ifndef _GK_ERROR_C_
++ /* declared in error.c */
++-extern __thread int gk_cur_jbufs;
++-extern __thread jmp_buf gk_jbufs[];
++-extern __thread jmp_buf gk_jbuf;
+++extern metis__thread int gk_cur_jbufs;
+++extern metis__thread jmp_buf gk_jbufs[];
+++extern metis__thread jmp_buf gk_jbuf;
++ 
++ #endif
++ 
++diff -ruN --ex a/GKlib/gk_getopt.h b/GKlib/gk_getopt.h
++--- a/GKlib/gk_getopt.h	2013-03-30 09:24:45
+++++ b/GKlib/gk_getopt.h	2026-03-25 16:14:25
++@@ -52,11 +52,11 @@
++ 
++ 
++ /* Function prototypes */
++-extern int gk_getopt(int __argc, char **__argv, char *__shortopts);
++-extern int gk_getopt_long(int __argc, char **__argv, char *__shortopts,
++-              struct gk_option *__longopts, int *__longind);
++-extern int gk_getopt_long_only (int __argc, char **__argv,
++-              char *__shortopts, struct gk_option *__longopts, int *__longind);
+++extern int gk_getopt(int argc, char **argv, char *shortopts);
+++extern int gk_getopt_long(int argc, char **argv, char *shortopts,
+++              struct gk_option *longopts, int *longind);
+++extern int gk_getopt_long_only (int argc, char **argv,
+++              char *shortopts, struct gk_option *longopts, int *longind);
++ 
++ 
++ 
++diff -ruN --ex a/GKlib/gk_macros.h b/GKlib/gk_macros.h
++--- a/GKlib/gk_macros.h	2013-03-30 09:24:45
+++++ b/GKlib/gk_macros.h	2026-03-25 16:14:25
++@@ -20,8 +20,8 @@
++ #define INC_DEC(a, b, val) do {(a) += (val); (b) -= (val);} while(0)
++ #define sign(a, b) ((a >= 0 ? b : -b))
++ 
++-#define ONEOVERRANDMAX (1.0/(RAND_MAX+1.0))
++-#define RandomInRange(u) ((int) (ONEOVERRANDMAX*(u)*rand()))
+++#define ONEOVERRANDMAX (1.0/(INT32_MAX+1.0))
+++#define RandomInRange(u) ((int) (ONEOVERRANDMAX*(u)*gk_randint32()))
++ 
++ #define gk_abs(x) ((x) >= 0 ? (x) : -(x))
++ 
++diff -ruN --ex a/GKlib/gk_mkrandom.h b/GKlib/gk_mkrandom.h
++--- a/GKlib/gk_mkrandom.h	2013-03-30 09:24:45
+++++ b/GKlib/gk_mkrandom.h	2026-03-25 16:14:25
++@@ -47,7 +47,10 @@
++ /**************************************************************************/\
++ RNGT FPRFX ## randInRange(RNGT max) \
++ {\
++-  return (RNGT)((FPRFX ## rand())%max); \
+++  if (max <= INT32_MAX) \
+++    return ((RNGT)gk_randint32())%max; \
+++  else \
+++    return ((RNGT)gk_randint64())%max; \
++ }\
++ \
++ \
++diff -ruN --ex a/GKlib/gklib_tls.h.in b/GKlib/gklib_tls.h.in
++--- a/GKlib/gklib_tls.h.in	1969-12-31 16:00:00
+++++ b/GKlib/gklib_tls.h.in	2026-03-25 16:14:25
++@@ -0,0 +1,3 @@
+++#ifndef metis__thread
+++#define metis__thread @GKlib_TLS@
+++#endif
++diff -ruN --ex a/GKlib/memory.c b/GKlib/memory.c
++--- a/GKlib/memory.c	2013-03-30 09:24:45
+++++ b/GKlib/memory.c	2026-03-25 16:14:25
++@@ -16,7 +16,7 @@
++ #include <GKlib.h>
++ 
++ /* This is for the global mcore that tracks all heap allocations */
++-static __thread gk_mcore_t *gkmcore = NULL;
+++static metis__thread gk_mcore_t *gkmcore = NULL;
++ 
++ 
++ /*************************************************************************/
++diff -ruN --ex a/GKlib/string.c b/GKlib/string.c
++--- a/GKlib/string.c	2013-03-30 09:24:45
+++++ b/GKlib/string.c	2026-03-25 16:14:25
++@@ -482,7 +482,7 @@
++ 
++ 
++ 
++-#if !defined(WIN32) && !defined(__MINGW32__)
+++#if !defined(WIN32) && !defined(__MINGW32__) && defined(_XOPEN_SOURCE)
++ /************************************************************************/
++ /*! \brief Converts a date/time string into its equivalent time_t value
++ 
++diff -ruN --ex a/Install.txt b/Install.txt
++--- a/Install.txt	2013-03-30 09:24:45
+++++ b/Install.txt	2026-03-25 16:14:25
++@@ -1,25 +1,16 @@
++ 
++ These are some preliminary instructions for the 5.0 release of METIS.
++ 
++-1. You need to have a C compiler that supports the C99 standard. 
+++1. You need to have a C compiler that supports the C99 standard.
++    Gcc works just fine, but I have not tested it on many other architectures
++    (any feedback/patches for different architectures are welcomed)
++-   
+++
++ 2. You need to have GNU make and CMake 2.8 (http://www.cmake.org/) installed.
++ 
++-3. Edit the file include/metis.h and specify the width (32 or 64 bits) of the
++-   elementary data type used in METIS. This is controled by the IDXTYPEWIDTH
++-   constant.
+++3. At the top of Metis' directory execute 'make' and follow the instructions.
++ 
++-   For now, on a 32 bit architecture you can only specify a width of 32, 
++-   whereas for a 64 bit architecture you can specify a width of either 
++-   32 or 64 bits.
++-
++-
++-4. At the top of Metis' directory execute 'make' and follow the instructions.
++-   
++       make
++ 
++-5. To build on windows using Visual Studio follow the instructions in the
+++4. To build on windows using Visual Studio follow the instructions in the
++    file BUILD-Windows.txt.
++ 
++diff -ruN --ex a/Makefile b/Makefile
++--- a/Makefile	2013-03-30 09:24:45
+++++ b/Makefile	2026-03-25 16:14:25
++@@ -1,14 +1,17 @@
++ # Configuration options.
++-gdb        = not-set
++-assert     = not-set
++-assert2    = not-set
++-debug      = not-set
++-gprof      = not-set
++-openmp     = not-set
++-prefix     = not-set
++-gklib_path = not-set
++-shared     = not-set
++-cc         = not-set
+++gdb             = not-set
+++assert          = not-set
+++assert2         = not-set
+++debug           = not-set
+++gprof           = not-set
+++openmp          = not-set
+++prefix          = not-set
+++gklib_path      = not-set
+++shared          = not-set
+++cc              = not-set
+++cflags          = not-set
+++longindex       = not-set
+++doubleprecision = not-set
++ 
++ 
++ # Basically proxies everything to the builddir cmake.
++@@ -50,6 +53,15 @@
++ endif
++ ifneq ($(cc), not-set)
++     CONFIG_FLAGS += -DCMAKE_C_COMPILER=$(cc)
+++endif
+++ifneq ($(cflags), not-set)
+++	CONFIG_FLAGS += -DCMAKE_C_FLAGS:STRING="$(cflags)"
+++endif
+++ifneq ($(longindex), not-set)
+++    CONFIG_FLAGS += -DMETIS_USE_LONGINDEX=$(longindex)
+++endif
+++ifneq ($(doubleprecision), not-set)
+++    CONFIG_FLAGS += -DMETIS_USE_DOUBLEPRECISION=$(doubleprecision)
++ endif
++ 
++ VERNUM=5.1.0
++diff -ruN --ex a/graphs/README b/graphs/README
++--- a/graphs/README	2013-03-30 09:24:45
+++++ b/graphs/README	1969-12-31 16:00:00
++@@ -1,19 +0,0 @@
++-
++-This file contains some test graphs and meshes
++-
++-4elt.graph
++-copter2.graph
++-mdual.graph
++-	These are small to medium size graphs corresponding to 2D and 3D 
++-        finite element mesh. They can be used as inputs to gpmetis and ndmetis.
++-
++-test.mgraph
++-	This is a very small graph with two vertex weights (multi-constraint).
++-        Can be used as input to gpmetis.
++-
++-metis.mesh
++-	This is a small 2D mesh (It is a triangulation of 'METIS').
++-        Can be used as input to mpmetis and m2gmetis.
++-
++-
++-
++diff -ruN --ex a/include/CMakeLists.txt b/include/CMakeLists.txt
++--- a/include/CMakeLists.txt	2013-03-30 09:24:45
+++++ b/include/CMakeLists.txt	2026-03-25 16:14:25
++@@ -1,3 +1,7 @@
++ if(METIS_INSTALL)
++-  install(FILES metis.h DESTINATION include)
+++  option (METIS_USE_LONGINDEX "Compile METIS with long ints (64bit integers)" OFF)
+++  option (METIS_USE_DOUBLEPRECISION "Compile METIS with double precision (double)" OFF)
+++  configure_file (metis.h.in metis.h)
+++  install(FILES "${PROJECT_BINARY_DIR}/include/metis.h" DESTINATION include)
+++  install(FILES "${PROJECT_BINARY_DIR}/include/gklib_tls.h" DESTINATION include)
++ endif()
++diff -ruN --ex a/include/metis.h b/include/metis.h
++--- a/include/metis.h	2013-03-30 09:24:45
+++++ b/include/metis.h	1969-12-31 16:00:00
++@@ -1,350 +0,0 @@
++-/*!
++-\file metis.h 
++-\brief This file contains function prototypes and constant definitions for METIS
++- *
++-\author George
++-\date   Started 8/9/02
++-\version\verbatim $Id$\endverbatim
++-*/
++-
++-#ifndef _METIS_H_
++-#define _METIS_H_ 
++-
++-/****************************************************************************
++-* A set of defines that can be modified by the user
++-*****************************************************************************/
++-
++-/*--------------------------------------------------------------------------
++- Specifies the width of the elementary data type that will hold information
++- about vertices and their adjacency lists.
++-
++- Possible values:
++-   32 : Use 32 bit signed integers
++-   64 : Use 64 bit signed integers
++-
++- A width of 64 should be specified if the number of vertices or the total
++- number of edges in the graph exceed the limits of a 32 bit signed integer
++- i.e., 2^31-1.
++- Proper use of 64 bit integers requires that the c99 standard datatypes
++- int32_t and int64_t are supported by the compiler.
++- GCC does provides these definitions in stdint.h, but it may require some
++- modifications on other architectures.
++---------------------------------------------------------------------------*/
++-#define IDXTYPEWIDTH 32
++-
++-
++-/*--------------------------------------------------------------------------
++- Specifies the data type that will hold floating-point style information.
++-
++- Possible values:
++-   32 : single precission floating point (float)
++-   64 : double precission floating point (double)
++---------------------------------------------------------------------------*/
++-#define REALTYPEWIDTH 32
++-
++-
++-
++-/****************************************************************************
++-* In principle, nothing needs to be changed beyond this point, unless the
++-* int32_t and int64_t cannot be found in the normal places.
++-*****************************************************************************/
++-
++-/* Uniform definitions for various compilers */
++-#if defined(_MSC_VER)
++-  #define COMPILER_MSC
++-#endif
++-#if defined(__ICC)
++-  #define COMPILER_ICC
++-#endif
++-#if defined(__GNUC__)
++-  #define COMPILER_GCC
++-#endif
++-
++-/* Include c99 int definitions and need constants. When building the library,
++- * these are already defined by GKlib; hence the test for _GKLIB_H_ */
++-#ifndef _GKLIB_H_
++-#ifdef COMPILER_MSC
++-#include <limits.h>
++-
++-typedef __int32 int32_t;
++-typedef __int64 int64_t;
++-#define PRId32       "I32d"
++-#define PRId64       "I64d"
++-#define SCNd32       "ld"
++-#define SCNd64       "I64d"
++-#define INT32_MIN    ((int32_t)_I32_MIN)
++-#define INT32_MAX    _I32_MAX
++-#define INT64_MIN    ((int64_t)_I64_MIN)
++-#define INT64_MAX    _I64_MAX
++-#else
++-#include <inttypes.h>
++-#endif
++-#endif
++-
++-
++-/*------------------------------------------------------------------------
++-* Setup the basic datatypes
++-*-------------------------------------------------------------------------*/
++-#if IDXTYPEWIDTH == 32
++-  typedef int32_t idx_t;
++-
++-  #define IDX_MAX   INT32_MAX
++-  #define IDX_MIN   INT32_MIN
++-
++-  #define SCIDX  SCNd32
++-  #define PRIDX  PRId32
++-
++-  #define strtoidx      strtol
++-  #define iabs          abs
++-#elif IDXTYPEWIDTH == 64
++-  typedef int64_t idx_t;
++-
++-  #define IDX_MAX   INT64_MAX
++-  #define IDX_MIN   INT64_MIN
++-
++-  #define SCIDX  SCNd64
++-  #define PRIDX  PRId64
++-
++-#ifdef COMPILER_MSC
++-  #define strtoidx      _strtoi64
++-#else
++-  #define strtoidx      strtoll
++-#endif
++-  #define iabs          labs
++-#else
++-  #error "Incorrect user-supplied value fo IDXTYPEWIDTH"
++-#endif
++-
++-
++-#if REALTYPEWIDTH == 32
++-  typedef float real_t;
++-
++-  #define SCREAL         "f"
++-  #define PRREAL         "f"
++-  #define REAL_MAX       FLT_MAX
++-  #define REAL_MIN       FLT_MIN
++-  #define REAL_EPSILON   FLT_EPSILON
++-
++-  #define rabs          fabsf
++-  #define REALEQ(x,y) ((rabs((x)-(y)) <= FLT_EPSILON))
++-
++-#ifdef COMPILER_MSC
++-  #define strtoreal     (float)strtod
++-#else
++-  #define strtoreal     strtof
++-#endif
++-#elif REALTYPEWIDTH == 64
++-  typedef double real_t;
++-
++-  #define SCREAL         "lf"
++-  #define PRREAL         "lf"
++-  #define REAL_MAX       DBL_MAX
++-  #define REAL_MIN       DBL_MIN
++-  #define REAL_EPSILON   DBL_EPSILON
++-
++-  #define rabs          fabs
++-  #define REALEQ(x,y) ((rabs((x)-(y)) <= DBL_EPSILON))
++-
++-  #define strtoreal     strtod
++-#else
++-  #error "Incorrect user-supplied value for REALTYPEWIDTH"
++-#endif
++-
++-
++-/*------------------------------------------------------------------------
++-* Constant definitions 
++-*-------------------------------------------------------------------------*/
++-/* Metis's version number */
++-#define METIS_VER_MAJOR         5
++-#define METIS_VER_MINOR         1
++-#define METIS_VER_SUBMINOR      0
++-
++-/* The maximum length of the options[] array */
++-#define METIS_NOPTIONS          40
++-
++-
++-
++-/*------------------------------------------------------------------------
++-* Function prototypes 
++-*-------------------------------------------------------------------------*/
++-
++-#ifdef _WINDLL
++-#define METIS_API(type) __declspec(dllexport) type __cdecl
++-#elif defined(__cdecl)
++-#define METIS_API(type) type __cdecl
++-#else
++-#define METIS_API(type) type
++-#endif
++-
++-
++-
++-#ifdef __cplusplus
++-extern "C" {
++-#endif
++-
++-METIS_API(int) METIS_PartGraphRecursive(idx_t *nvtxs, idx_t *ncon, idx_t *xadj, 
++-                  idx_t *adjncy, idx_t *vwgt, idx_t *vsize, idx_t *adjwgt, 
++-                  idx_t *nparts, real_t *tpwgts, real_t *ubvec, idx_t *options, 
++-                  idx_t *edgecut, idx_t *part);
++-
++-METIS_API(int) METIS_PartGraphKway(idx_t *nvtxs, idx_t *ncon, idx_t *xadj, 
++-                  idx_t *adjncy, idx_t *vwgt, idx_t *vsize, idx_t *adjwgt, 
++-                  idx_t *nparts, real_t *tpwgts, real_t *ubvec, idx_t *options, 
++-                  idx_t *edgecut, idx_t *part);
++-
++-METIS_API(int) METIS_MeshToDual(idx_t *ne, idx_t *nn, idx_t *eptr, idx_t *eind, 
++-                  idx_t *ncommon, idx_t *numflag, idx_t **r_xadj, idx_t **r_adjncy);
++-
++-METIS_API(int) METIS_MeshToNodal(idx_t *ne, idx_t *nn, idx_t *eptr, idx_t *eind, 
++-                  idx_t *numflag, idx_t **r_xadj, idx_t **r_adjncy);
++-
++-METIS_API(int) METIS_PartMeshNodal(idx_t *ne, idx_t *nn, idx_t *eptr, idx_t *eind,
++-                  idx_t *vwgt, idx_t *vsize, idx_t *nparts, real_t *tpwgts, 
++-                  idx_t *options, idx_t *objval, idx_t *epart, idx_t *npart);
++-
++-METIS_API(int) METIS_PartMeshDual(idx_t *ne, idx_t *nn, idx_t *eptr, idx_t *eind,
++-                  idx_t *vwgt, idx_t *vsize, idx_t *ncommon, idx_t *nparts, 
++-                  real_t *tpwgts, idx_t *options, idx_t *objval, idx_t *epart, 
++-                  idx_t *npart);
++-
++-METIS_API(int) METIS_NodeND(idx_t *nvtxs, idx_t *xadj, idx_t *adjncy, idx_t *vwgt,
++-                  idx_t *options, idx_t *perm, idx_t *iperm);
++-
++-METIS_API(int) METIS_Free(void *ptr);
++-
++-METIS_API(int) METIS_SetDefaultOptions(idx_t *options);
++-
++-
++-/* These functions are used by ParMETIS */
++-
++-METIS_API(int) METIS_NodeNDP(idx_t nvtxs, idx_t *xadj, idx_t *adjncy, idx_t *vwgt,
++-                   idx_t npes, idx_t *options, idx_t *perm, idx_t *iperm, 
++-                   idx_t *sizes);
++-
++-METIS_API(int) METIS_ComputeVertexSeparator(idx_t *nvtxs, idx_t *xadj, idx_t *adjncy, 
++-                   idx_t *vwgt, idx_t *options, idx_t *sepsize, idx_t *part);
++-
++-METIS_API(int) METIS_NodeRefine(idx_t nvtxs, idx_t *xadj, idx_t *vwgt, idx_t *adjncy,
++-                   idx_t *where, idx_t *hmarker, real_t ubfactor);
++-
++-
++-#ifdef __cplusplus
++-}
++-#endif
++-
++-
++-
++-/*------------------------------------------------------------------------
++-* Enum type definitions 
++-*-------------------------------------------------------------------------*/
++-/*! Return codes */
++-typedef enum {
++-  METIS_OK              = 1,    /*!< Returned normally */
++-  METIS_ERROR_INPUT     = -2,   /*!< Returned due to erroneous inputs and/or options */
++-  METIS_ERROR_MEMORY    = -3,   /*!< Returned due to insufficient memory */
++-  METIS_ERROR           = -4    /*!< Some other errors */
++-} rstatus_et; 
++-
++-
++-/*! Operation type codes */
++-typedef enum {
++-  METIS_OP_PMETIS,       
++-  METIS_OP_KMETIS,
++-  METIS_OP_OMETIS
++-} moptype_et;
++-
++-
++-/*! Options codes (i.e., options[]) */
++-typedef enum {
++-  METIS_OPTION_PTYPE,
++-  METIS_OPTION_OBJTYPE,
++-  METIS_OPTION_CTYPE,
++-  METIS_OPTION_IPTYPE,
++-  METIS_OPTION_RTYPE,
++-  METIS_OPTION_DBGLVL,
++-  METIS_OPTION_NITER,
++-  METIS_OPTION_NCUTS,
++-  METIS_OPTION_SEED,
++-  METIS_OPTION_NO2HOP,
++-  METIS_OPTION_MINCONN,
++-  METIS_OPTION_CONTIG,
++-  METIS_OPTION_COMPRESS,
++-  METIS_OPTION_CCORDER,
++-  METIS_OPTION_PFACTOR,
++-  METIS_OPTION_NSEPS,
++-  METIS_OPTION_UFACTOR,
++-  METIS_OPTION_NUMBERING,
++-
++-  /* Used for command-line parameter purposes */
++-  METIS_OPTION_HELP,
++-  METIS_OPTION_TPWGTS,
++-  METIS_OPTION_NCOMMON,
++-  METIS_OPTION_NOOUTPUT,
++-  METIS_OPTION_BALANCE,
++-  METIS_OPTION_GTYPE,
++-  METIS_OPTION_UBVEC
++-} moptions_et;
++-
++-
++-/*! Partitioning Schemes */
++-typedef enum {
++-  METIS_PTYPE_RB, 
++-  METIS_PTYPE_KWAY                
++-} mptype_et;
++-
++-/*! Graph types for meshes */
++-typedef enum {
++-  METIS_GTYPE_DUAL,
++-  METIS_GTYPE_NODAL               
++-} mgtype_et;
++-
++-/*! Coarsening Schemes */
++-typedef enum {
++-  METIS_CTYPE_RM,
++-  METIS_CTYPE_SHEM
++-} mctype_et;
++-
++-/*! Initial partitioning schemes */
++-typedef enum {
++-  METIS_IPTYPE_GROW,
++-  METIS_IPTYPE_RANDOM,
++-  METIS_IPTYPE_EDGE,
++-  METIS_IPTYPE_NODE,
++-  METIS_IPTYPE_METISRB
++-} miptype_et;
++-
++-
++-/*! Refinement schemes */
++-typedef enum {
++-  METIS_RTYPE_FM,
++-  METIS_RTYPE_GREEDY,
++-  METIS_RTYPE_SEP2SIDED,
++-  METIS_RTYPE_SEP1SIDED
++-} mrtype_et;
++-
++-
++-/*! Debug Levels */
++-typedef enum {
++-  METIS_DBG_INFO       = 1,       /*!< Shows various diagnostic messages */
++-  METIS_DBG_TIME       = 2,       /*!< Perform timing analysis */
++-  METIS_DBG_COARSEN    = 4,	  /*!< Show the coarsening progress */
++-  METIS_DBG_REFINE     = 8,	  /*!< Show the refinement progress */
++-  METIS_DBG_IPART      = 16, 	  /*!< Show info on initial partitioning */
++-  METIS_DBG_MOVEINFO   = 32, 	  /*!< Show info on vertex moves during refinement */
++-  METIS_DBG_SEPINFO    = 64, 	  /*!< Show info on vertex moves during sep refinement */
++-  METIS_DBG_CONNINFO   = 128,     /*!< Show info on minimization of subdomain connectivity */
++-  METIS_DBG_CONTIGINFO = 256,     /*!< Show info on elimination of connected components */ 
++-  METIS_DBG_MEMORY     = 2048,    /*!< Show info related to wspace allocation */
++-} mdbglvl_et;
++-
++-
++-/* Types of objectives */
++-typedef enum {
++-  METIS_OBJTYPE_CUT,
++-  METIS_OBJTYPE_VOL,
++-  METIS_OBJTYPE_NODE
++-} mobjtype_et;
++-
++-
++-
++-#endif  /* _METIS_H_ */
++diff -ruN --ex a/include/metis.h.in b/include/metis.h.in
++--- a/include/metis.h.in	1969-12-31 16:00:00
+++++ b/include/metis.h.in	2026-03-25 16:14:25
++@@ -0,0 +1,356 @@
+++/*!
+++\file metis.h 
+++\brief This file contains function prototypes and constant definitions for METIS
+++ *
+++\author George
+++\date   Started 8/9/02
+++\version\verbatim $Id$\endverbatim
+++*/
+++
+++#ifndef _METIS_H_
+++#define _METIS_H_ 
+++
+++/****************************************************************************
+++* A set of defines that can be modified by the user
+++*****************************************************************************/
+++
+++/*--------------------------------------------------------------------------
+++ Specifies the width of the elementary data type that will hold information
+++ about vertices and their adjacency lists.
+++
+++ Possible values:
+++   32 : Use 32 bit signed integers
+++   64 : Use 64 bit signed integers
+++
+++ A width of 64 should be specified if the number of vertices or the total
+++ number of edges in the graph exceed the limits of a 32 bit signed integer
+++ i.e., 2^31-1.
+++ Proper use of 64 bit integers requires that the c99 standard datatypes
+++ int32_t and int64_t are supported by the compiler.
+++ GCC does provides these definitions in stdint.h, but it may require some
+++ modifications on other architectures.
+++--------------------------------------------------------------------------*/
+++
+++#cmakedefine METIS_USE_LONGINDEX
+++
+++#ifdef METIS_USE_LONGINDEX
+++#define IDXTYPEWIDTH 64
+++#else
+++#define IDXTYPEWIDTH 32
+++#endif
+++
+++
+++/*--------------------------------------------------------------------------
+++ Specifies the data type that will hold floating-point style information.
+++
+++ Possible values:
+++   32 : single precission floating point (float)
+++   64 : double precission floating point (double)
+++--------------------------------------------------------------------------*/
+++
+++#cmakedefine METIS_USE_DOUBLEPRECISION
+++
+++#ifdef METIS_USE_DOUBLEPRECISION
+++#define REALTYPEWIDTH 64
+++#else
+++#define REALTYPEWIDTH 32
+++#endif
+++
+++
+++
+++/****************************************************************************
+++* In principle, nothing needs to be changed beyond this point, unless the
+++* int32_t and int64_t cannot be found in the normal places.
+++*****************************************************************************/
+++
+++/* Uniform definitions for various compilers */
+++#if defined(_MSC_VER)
+++  #define COMPILER_MSC
+++#endif
+++#if defined(__ICC)
+++  #define COMPILER_ICC
+++#endif
+++#if defined(__GNUC__)
+++  #define COMPILER_GCC
+++#endif
+++
+++/* Include c99 int definitions and need constants. When building the library,
+++ * these are already defined by GKlib; hence the test for _GKLIB_H_ */
+++#ifndef _GKLIB_H_
+++#ifdef COMPILER_MSC
+++#include <limits.h>
+++
+++typedef __int32 int32_t;
+++typedef __int64 int64_t;
+++#else
+++#include <inttypes.h>
+++#endif
+++#endif
+++
+++
+++/*------------------------------------------------------------------------
+++* Setup the basic datatypes
+++*-------------------------------------------------------------------------*/
+++#if IDXTYPEWIDTH == 32
+++  typedef int32_t idx_t;
+++
+++  #define IDX_MAX   INT32_MAX
+++  #define IDX_MIN   INT32_MIN
+++
+++  #define SCIDX  SCNd32
+++  #define PRIDX  PRId32
+++
+++  #define strtoidx      strtol
+++  #define iabs          abs
+++#elif IDXTYPEWIDTH == 64
+++  typedef int64_t idx_t;
+++
+++  #define IDX_MAX   INT64_MAX
+++  #define IDX_MIN   INT64_MIN
+++
+++  #define SCIDX  SCNd64
+++  #define PRIDX  PRId64
+++
+++#ifdef COMPILER_MSC
+++  #define strtoidx      _strtoi64
+++#else
+++  #define strtoidx      strtoll
+++#endif
+++  #define iabs          labs
+++#else
+++  #error "Incorrect user-supplied value fo IDXTYPEWIDTH"
+++#endif
+++
+++
+++#if REALTYPEWIDTH == 32
+++  typedef float real_t;
+++
+++  #define SCREAL         "f"
+++  #define PRREAL         "f"
+++  #define REAL_MAX       FLT_MAX
+++  #define REAL_MIN       FLT_MIN
+++  #define REAL_EPSILON   FLT_EPSILON
+++
+++  #define rabs          fabsf
+++  #define REALEQ(x,y) ((rabs((x)-(y)) <= FLT_EPSILON))
+++
+++#ifdef COMPILER_MSC
+++  #define strtoreal     (float)strtod
+++#else
+++  #define strtoreal     strtof
+++#endif
+++#elif REALTYPEWIDTH == 64
+++  typedef double real_t;
+++
+++  #define SCREAL         "lf"
+++  #define PRREAL         "lf"
+++  #define REAL_MAX       DBL_MAX
+++  #define REAL_MIN       DBL_MIN
+++  #define REAL_EPSILON   DBL_EPSILON
+++
+++  #define rabs          fabs
+++  #define REALEQ(x,y) ((rabs((x)-(y)) <= DBL_EPSILON))
+++
+++  #define strtoreal     strtod
+++#else
+++  #error "Incorrect user-supplied value for REALTYPEWIDTH"
+++#endif
+++
+++
+++/*------------------------------------------------------------------------
+++* Constant definitions 
+++*-------------------------------------------------------------------------*/
+++/* Metis's version number */
+++#define METIS_VER_MAJOR         5
+++#define METIS_VER_MINOR         1
+++#define METIS_VER_SUBMINOR      0
+++
+++/* The maximum length of the options[] array */
+++#define METIS_NOPTIONS          40
+++
+++
+++
+++/*------------------------------------------------------------------------
+++* Function prototypes 
+++*-------------------------------------------------------------------------*/
+++
+++#ifdef _WINDLL
+++#define METIS_API(type) __declspec(dllexport) type __cdecl
+++#elif defined(__cdecl)
+++#define METIS_API(type) type __cdecl
+++#else
+++#define METIS_API(type) type
+++#endif
+++
+++
+++
+++#ifdef __cplusplus
+++extern "C" {
+++#endif
+++
+++METIS_API(int) METIS_PartGraphRecursive(idx_t *nvtxs, idx_t *ncon, idx_t *xadj, 
+++                  idx_t *adjncy, idx_t *vwgt, idx_t *vsize, idx_t *adjwgt, 
+++                  idx_t *nparts, real_t *tpwgts, real_t *ubvec, idx_t *options, 
+++                  idx_t *edgecut, idx_t *part);
+++
+++METIS_API(int) METIS_PartGraphKway(idx_t *nvtxs, idx_t *ncon, idx_t *xadj, 
+++                  idx_t *adjncy, idx_t *vwgt, idx_t *vsize, idx_t *adjwgt, 
+++                  idx_t *nparts, real_t *tpwgts, real_t *ubvec, idx_t *options, 
+++                  idx_t *edgecut, idx_t *part);
+++
+++METIS_API(int) METIS_MeshToDual(idx_t *ne, idx_t *nn, idx_t *eptr, idx_t *eind, 
+++                  idx_t *ncommon, idx_t *numflag, idx_t **r_xadj, idx_t **r_adjncy);
+++
+++METIS_API(int) METIS_MeshToNodal(idx_t *ne, idx_t *nn, idx_t *eptr, idx_t *eind, 
+++                  idx_t *numflag, idx_t **r_xadj, idx_t **r_adjncy);
+++
+++METIS_API(int) METIS_PartMeshNodal(idx_t *ne, idx_t *nn, idx_t *eptr, idx_t *eind,
+++                  idx_t *vwgt, idx_t *vsize, idx_t *nparts, real_t *tpwgts, 
+++                  idx_t *options, idx_t *objval, idx_t *epart, idx_t *npart);
+++
+++METIS_API(int) METIS_PartMeshDual(idx_t *ne, idx_t *nn, idx_t *eptr, idx_t *eind,
+++                  idx_t *vwgt, idx_t *vsize, idx_t *ncommon, idx_t *nparts, 
+++                  real_t *tpwgts, idx_t *options, idx_t *objval, idx_t *epart, 
+++                  idx_t *npart);
+++
+++METIS_API(int) METIS_NodeND(idx_t *nvtxs, idx_t *xadj, idx_t *adjncy, idx_t *vwgt,
+++                  idx_t *options, idx_t *perm, idx_t *iperm);
+++
+++METIS_API(int) METIS_Free(void *ptr);
+++
+++METIS_API(int) METIS_SetDefaultOptions(idx_t *options);
+++
+++
+++/* These functions are used by ParMETIS */
+++
+++METIS_API(int) METIS_NodeNDP(idx_t nvtxs, idx_t *xadj, idx_t *adjncy, idx_t *vwgt,
+++                   idx_t npes, idx_t *options, idx_t *perm, idx_t *iperm, 
+++                   idx_t *sizes);
+++
+++METIS_API(int) METIS_ComputeVertexSeparator(idx_t *nvtxs, idx_t *xadj, idx_t *adjncy, 
+++                   idx_t *vwgt, idx_t *options, idx_t *sepsize, idx_t *part);
+++
+++METIS_API(int) METIS_NodeRefine(idx_t nvtxs, idx_t *xadj, idx_t *vwgt, idx_t *adjncy,
+++                   idx_t *where, idx_t *hmarker, real_t ubfactor);
+++
+++
+++#ifdef __cplusplus
+++}
+++#endif
+++
+++
+++
+++/*------------------------------------------------------------------------
+++* Enum type definitions 
+++*-------------------------------------------------------------------------*/
+++/*! Return codes */
+++typedef enum {
+++  METIS_OK              = 1,    /*!< Returned normally */
+++  METIS_ERROR_INPUT     = -2,   /*!< Returned due to erroneous inputs and/or options */
+++  METIS_ERROR_MEMORY    = -3,   /*!< Returned due to insufficient memory */
+++  METIS_ERROR           = -4    /*!< Some other errors */
+++} rstatus_et; 
+++
+++
+++/*! Operation type codes */
+++typedef enum {
+++  METIS_OP_PMETIS,       
+++  METIS_OP_KMETIS,
+++  METIS_OP_OMETIS
+++} moptype_et;
+++
+++
+++/*! Options codes (i.e., options[]) */
+++typedef enum {
+++  METIS_OPTION_PTYPE,
+++  METIS_OPTION_OBJTYPE,
+++  METIS_OPTION_CTYPE,
+++  METIS_OPTION_IPTYPE,
+++  METIS_OPTION_RTYPE,
+++  METIS_OPTION_DBGLVL,
+++  METIS_OPTION_NITER,
+++  METIS_OPTION_NCUTS,
+++  METIS_OPTION_SEED,
+++  METIS_OPTION_NO2HOP,
+++  METIS_OPTION_MINCONN,
+++  METIS_OPTION_CONTIG,
+++  METIS_OPTION_COMPRESS,
+++  METIS_OPTION_CCORDER,
+++  METIS_OPTION_PFACTOR,
+++  METIS_OPTION_NSEPS,
+++  METIS_OPTION_UFACTOR,
+++  METIS_OPTION_NUMBERING,
+++
+++  /* Used for command-line parameter purposes */
+++  METIS_OPTION_HELP,
+++  METIS_OPTION_TPWGTS,
+++  METIS_OPTION_NCOMMON,
+++  METIS_OPTION_NOOUTPUT,
+++  METIS_OPTION_BALANCE,
+++  METIS_OPTION_GTYPE,
+++  METIS_OPTION_UBVEC
+++} moptions_et;
+++
+++
+++/*! Partitioning Schemes */
+++typedef enum {
+++  METIS_PTYPE_RB, 
+++  METIS_PTYPE_KWAY                
+++} mptype_et;
+++
+++/*! Graph types for meshes */
+++typedef enum {
+++  METIS_GTYPE_DUAL,
+++  METIS_GTYPE_NODAL               
+++} mgtype_et;
+++
+++/*! Coarsening Schemes */
+++typedef enum {
+++  METIS_CTYPE_RM,
+++  METIS_CTYPE_SHEM
+++} mctype_et;
+++
+++/*! Initial partitioning schemes */
+++typedef enum {
+++  METIS_IPTYPE_GROW,
+++  METIS_IPTYPE_RANDOM,
+++  METIS_IPTYPE_EDGE,
+++  METIS_IPTYPE_NODE,
+++  METIS_IPTYPE_METISRB
+++} miptype_et;
+++
+++
+++/*! Refinement schemes */
+++typedef enum {
+++  METIS_RTYPE_FM,
+++  METIS_RTYPE_GREEDY,
+++  METIS_RTYPE_SEP2SIDED,
+++  METIS_RTYPE_SEP1SIDED
+++} mrtype_et;
+++
+++
+++/*! Debug Levels */
+++typedef enum {
+++  METIS_DBG_INFO       = 1,       /*!< Shows various diagnostic messages */
+++  METIS_DBG_TIME       = 2,       /*!< Perform timing analysis */
+++  METIS_DBG_COARSEN    = 4,	  /*!< Show the coarsening progress */
+++  METIS_DBG_REFINE     = 8,	  /*!< Show the refinement progress */
+++  METIS_DBG_IPART      = 16, 	  /*!< Show info on initial partitioning */
+++  METIS_DBG_MOVEINFO   = 32, 	  /*!< Show info on vertex moves during refinement */
+++  METIS_DBG_SEPINFO    = 64, 	  /*!< Show info on vertex moves during sep refinement */
+++  METIS_DBG_CONNINFO   = 128,     /*!< Show info on minimization of subdomain connectivity */
+++  METIS_DBG_CONTIGINFO = 256,     /*!< Show info on elimination of connected components */ 
+++  METIS_DBG_MEMORY     = 2048,    /*!< Show info related to wspace allocation */
+++} mdbglvl_et;
+++
+++
+++/* Types of objectives */
+++typedef enum {
+++  METIS_OBJTYPE_CUT,
+++  METIS_OBJTYPE_VOL,
+++  METIS_OBJTYPE_NODE
+++} mobjtype_et;
+++
+++
+++
+++#endif  /* _METIS_H_ */
++diff -ruN --ex a/libmetis/CMakeLists.txt b/libmetis/CMakeLists.txt
++--- a/libmetis/CMakeLists.txt	2013-03-30 09:24:45
+++++ b/libmetis/CMakeLists.txt	2026-03-25 16:14:25
++@@ -1,16 +1,17 @@
++ # Add this directory for internal users.
++ include_directories(.)
+++include_directories ("${PROJECT_BINARY_DIR}/include")
++ # Find sources.
++ file(GLOB metis_sources *.c)
++ # Build libmetis.
++ add_library(metis ${METIS_LIBRARY_TYPE} ${GKlib_sources} ${metis_sources})
++-if(UNIX)
++-  target_link_libraries(metis m)
++-endif()
+++target_link_libraries(metis ${MATH_LIB})
++ 
++ if(METIS_INSTALL)
++   install(TARGETS metis
++     LIBRARY DESTINATION lib
++     RUNTIME DESTINATION lib
++     ARCHIVE DESTINATION lib)
+++  install(FILES gklib_defs.h DESTINATION include)
+++  install(FILES gklib_rename.h DESTINATION include)
++ endif()
++diff -ruN --ex a/libmetis/kwayfm.c b/libmetis/kwayfm.c
++--- a/libmetis/kwayfm.c	2013-03-30 09:24:45
+++++ b/libmetis/kwayfm.c	2026-03-25 16:14:25
++@@ -192,7 +192,10 @@
++       vstatus[i] = VPQSTATUS_EXTRACTED;
++ 
++       myrinfo = graph->ckrinfo+i;
++-      mynbrs  = ctrl->cnbrpool + myrinfo->inbr;
+++      if (myrinfo->inbr == -1)
+++        mynbrs  = ctrl->cnbrpool;
+++      else
+++        mynbrs  = ctrl->cnbrpool + myrinfo->inbr;
++ 
++       from = where[i];
++       vwgt = graph->vwgt[i];
++diff -ruN --ex a/libmetis/metislib.h b/libmetis/metislib.h
++--- a/libmetis/metislib.h	2013-03-30 09:24:45
+++++ b/libmetis/metislib.h	2026-03-25 16:14:25
++@@ -31,11 +31,4 @@
++ #include <proto.h>
++ 
++ 
++-#if defined(COMPILER_MSC)
++-#if defined(rint)
++-  #undef rint
++-#endif
++-#define rint(x) ((idx_t)((x)+0.5))  /* MSC does not have rint() function */
++-#endif
++-
++ #endif
++Binary files a/manual/manual.pdf and b/manual/manual.pdf differ
++diff -ruN --ex a/programs/CMakeLists.txt b/programs/CMakeLists.txt
++--- a/programs/CMakeLists.txt	2013-03-30 09:24:45
+++++ b/programs/CMakeLists.txt	2026-03-25 16:14:25
++@@ -1,6 +1,6 @@
++ # These programs use internal metis data structures.
++ include_directories(../libmetis)
++-link_directories(/home/karypis/local/lib)
+++include_directories("${PROJECT_BINARY_DIR}/include")
++ # Build program.
++ add_executable(gpmetis gpmetis.c cmdline_gpmetis.c io.c stat.c)
++ add_executable(ndmetis ndmetis.c cmdline_ndmetis.c io.c smbfactor.c)
++diff -ruN --ex a/programs/metisbin.h b/programs/metisbin.h
++--- a/programs/metisbin.h	2013-03-30 09:24:45
+++++ b/programs/metisbin.h	2026-03-25 16:14:25
++@@ -44,9 +44,5 @@
++ #endif
++ 
++ #if defined(COMPILER_MSC)
++-#if defined(rint)
++-  #undef rint
++-#endif
++-#define rint(x) ((idx_t)((x)+0.5))  /* MSC does not have rint() function */
++ #define __func__ "dummy-function"
++ #endif
+diff --git a/repos/spack_repo/builtin/packages/parmetis/package.py b/repos/spack_repo/builtin/packages/parmetis/package.py
+index eff485b3d7..c3cec7ae1a 100644
+--- a/repos/spack_repo/builtin/packages/parmetis/package.py
++++ b/repos/spack_repo/builtin/packages/parmetis/package.py
+@@ -35,12 +35,21 @@ class Parmetis(CMakePackage):
+     depends_on("metis+int64", when="+int64")
+     depends_on("metis~int64", when="~int64")
+ 
+-    patch("enable_external_metis.patch")
+-    # bug fixes from PETSc developers
+-    # https://bitbucket.org/petsc/pkg-parmetis/commits/1c1a9fd0f408dc4d42c57f5c3ee6ace411eb222b/raw/
+-    patch("pkg-parmetis-1c1a9fd0f408dc4d42c57f5c3ee6ace411eb222b.patch")
+-    # https://bitbucket.org/petsc/pkg-parmetis/commits/82409d68aa1d6cbc70740d0f35024aae17f7d5cb/raw/
+-    patch("pkg-parmetis-82409d68aa1d6cbc70740d0f35024aae17f7d5cb.patch")
++    variant(
++        "petsc_patches",
++        default=False,
++        when="@=4.0.3",
++        description="Apply all PETSc fork patches",
++    )
++
++    # Default patches for the official tarball
++    patch("enable_external_metis.patch", when="~petsc_patches")
++    patch("pkg-parmetis-1c1a9fd0f408dc4d42c57f5c3ee6ace411eb222b.patch", when="~petsc_patches")
++    patch("pkg-parmetis-82409d68aa1d6cbc70740d0f35024aae17f7d5cb.patch", when="~petsc_patches")
++
++    # All PETSc fork patches from bitbucket.org/petsc/pkg-parmetis v4.0.3-p10.
++    # Replaces the above patches (includes them plus additional fixes).
++    patch("petsc_patches.patch", when="+petsc_patches")
+ 
+     def url_for_version(self, version):
+         url = "http://glaros.dtc.umn.edu/gkhome/fetch/sw/parmetis"
+diff --git a/repos/spack_repo/builtin/packages/parmetis/petsc_patches.patch b/repos/spack_repo/builtin/packages/parmetis/petsc_patches.patch
+new file mode 100644
+index 0000000000..6ca4a9a4f3
+--- /dev/null
++++ b/repos/spack_repo/builtin/packages/parmetis/petsc_patches.patch
+@@ -0,0 +1,552 @@
++diff -ruN --ex a/CMakeLists.txt b/CMakeLists.txt
++--- a/CMakeLists.txt	2013-03-30 09:24:50
+++++ b/CMakeLists.txt	2026-03-25 16:14:40
++@@ -1,13 +1,9 @@
++-cmake_minimum_required(VERSION 2.8)
++-project(ParMETIS)
+++cmake_minimum_required(VERSION 3.5)
+++project(ParMETIS C)
++ 
++-set(GKLIB_PATH METIS/GKlib CACHE PATH "path to GKlib")
++-set(METIS_PATH METIS CACHE PATH "path to METIS")
+++set(GKLIB_PATH ${CMAKE_CURRENT_SOURCE_DIR}/metis/GKlib CACHE PATH "path to GKlib")
+++set(METIS_PATH ${CMAKE_CURRENT_SOURCE_DIR}/metis CACHE PATH "path to METIS")
++ 
++-# Symlink ./metis to wherever metis is. This allows files to be
++-# included from metis/libmetis/.
++-execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink ${METIS_PATH} metis)
++-
++ # Search for MPI.
++ # GK commented this out as it seems to be creating problems
++ # include(FindMPI)
++@@ -15,28 +11,38 @@
++ #   message(FATAL_ERROR "mpi is not found")
++ # endif()
++ # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${MPI_COMPILE_FLAGS}")
+++if(MINGW)
+++  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_GKREGEX")
+++endif()
+++if(MSVC)
+++  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DUSE_GKREGEX")
+++endif()
++ 
++ # Prepare libraries.
++ if(SHARED)
++   set(ParMETIS_LIBRARY_TYPE SHARED)
+++  set(CMAKE_INSTALL_NAME_DIR "${CMAKE_INSTALL_PREFIX}/lib")
++ else()
++   set(ParMETIS_LIBRARY_TYPE STATIC)
++ endif()
++ 
++-include(${GKLIB_PATH}/GKlibSystem.cmake)
++-
++ # List of paths that the compiler will search for header files.
++ # i.e., the -I equivalent
++ include_directories(include)
++ include_directories(${MPI_INCLUDE_PATH})
++ include_directories(${GKLIB_PATH})
++ include_directories(${METIS_PATH}/include)
+++include_directories(${CMAKE_INSTALL_PREFIX}/include)
++ 
+++# List of paths that the compiler will search for library files.
+++# i.e., the -L equivalent
+++link_directories(${METIS_PATH}/lib)
+++link_directories(${CMAKE_INSTALL_PREFIX}/lib)
+++
++ # List of directories that cmake will look for CMakeLists.txt
++-add_subdirectory(${METIS_PATH}/libmetis ${CMAKE_BINARY_DIR}/libmetis)
++ add_subdirectory(include)
++ add_subdirectory(libparmetis)
++-add_subdirectory(programs)
+++#add_subdirectory(programs)
++ 
++ # This is for testing during development and is not being distributed
++ #add_subdirectory(test)
++diff -ruN --ex a/Makefile b/Makefile
++--- a/Makefile	2013-03-30 09:24:50
+++++ b/Makefile	2026-03-25 16:14:40
++@@ -8,8 +8,9 @@
++ gklib_path = not-set
++ metis_path = not-set
++ shared     = not-set
++-cc         = mpicc
++-cxx        = mpicxx
+++cc         = not-set
+++cxx        = not-set
+++cflags     = not-set
++ 
++ 
++ # Basically proxies everything to the builddir cmake.
++@@ -24,7 +25,7 @@
++ # Process configuration options.
++ CONFIG_FLAGS = -DCMAKE_VERBOSE_MAKEFILE=1
++ ifeq ($(gklib_path), not-set)
++-    gklib_path = metis/GKlib
+++    gklib_path = headers
++ endif
++ ifeq ($(metis_path), not-set)
++     metis_path = metis
++@@ -56,6 +57,9 @@
++ endif
++ ifneq ($(cxx), not-set)
++     CONFIG_FLAGS += -DCMAKE_CXX_COMPILER=$(cxx)
+++endif
+++ifneq ($(cflags), not-set)
+++    CONFIG_FLAGS += -DCMAKE_C_FLAGS:STRING="$(cflags)"
++ endif
++ 
++ define run-config
++diff -ruN --ex a/include/parmetis.h b/include/parmetis.h
++--- a/include/parmetis.h	2013-03-30 09:24:50
+++++ b/include/parmetis.h	2026-03-25 16:14:40
++@@ -18,8 +18,10 @@
++ #include <metis.h>
++ 
++ #ifndef _MSC_VER
++-#define __cdecl
+++#ifndef __cdecl
+++  #define __cdecl
++ #endif
+++#endif
++ 
++ #if IDXTYPEWIDTH == 32
++   /*#define IDX_T         MPI_INT32_T */
++@@ -112,6 +114,12 @@
++ int __cdecl ParMETIS_SerialNodeND(
++              idx_t *vtxdist, idx_t *xadj, idx_t *adjncy, idx_t *numflag, 
++              idx_t *options, idx_t *order, idx_t *sizes, MPI_Comm *comm);
+++
+++void __cdecl ParMETIS_ComputeVertexSeparator(
+++             idx_t *vtxdist, idx_t *xadj, idx_t *adjncy,
+++             idx_t *p_nseps, idx_t *s_nseps,
+++             real_t *ubfrac, idx_t *idbglvl, idx_t *order, idx_t *sizes,
+++             MPI_Comm *comm);
++ 
++ #ifdef __cplusplus
++ }
++diff -ruN --ex a/libparmetis/ComputeVertexSeparator.c b/libparmetis/ComputeVertexSeparator.c
++--- a/libparmetis/ComputeVertexSeparator.c	1969-12-31 16:00:00
+++++ b/libparmetis/ComputeVertexSeparator.c	2026-03-25 16:14:40
++@@ -0,0 +1,166 @@
+++/*
+++ * Copyright 1997, Regents of the University of Minnesota
+++ * Created by modifying ParMETIS routines by Jack Poulson, 2012-2015
+++ */
+++#include <parmetislib.h>
+++
+++void ElParallelLabelVertices
+++( ctrl_t *ctrl, graph_t *graph, idx_t *order, idx_t *sizes )
+++{ 
+++  idx_t i, j, nvtxs, id; 
+++  idx_t *where, *lpwgts, *gpwgts;
+++  idx_t sizescan[3];
+++
+++  nvtxs  = graph->nvtxs;
+++  where  = graph->where;
+++  lpwgts = graph->lpwgts;
+++  gpwgts = graph->gpwgts;
+++
+++  /* Compute the local sizes of the left side, right side, and separator */
+++  iset(3, 0, lpwgts);
+++  for (i=0; i<nvtxs; i++) 
+++      lpwgts[where[i]]++;
+++
+++  /* Perform a Prefix scan of the separator size to determine the boundaries */
+++  gkMPI_Scan((void *)lpwgts, (void *)sizescan, 3, IDX_T, MPI_SUM, ctrl->comm);
+++  gkMPI_Allreduce
+++  ((void *)lpwgts, (void *)gpwgts, 3, IDX_T, MPI_SUM, ctrl->comm);
+++
+++  /* Fill in the size of the partition */
+++  sizes[0] = gpwgts[0];
+++  sizes[1] = gpwgts[1];
+++  sizes[2] = gpwgts[2];
+++
+++  for( i=2; i>=0; --i )
+++      for( j=i+1; j<3; ++j )
+++          sizescan[i] += gpwgts[j];
+++  for( i=0; i<3; i++ )
+++      sizescan[i] -= lpwgts[i];
+++
+++  for( i=0; i<nvtxs; i++ ) 
+++  {
+++      id = where[i];
+++      PASSERT(ctrl, id <= 2);
+++      sizescan[id]++;
+++      PASSERT(ctrl, order[i] == -1);
+++      order[i] = graph->gnvtxs - sizescan[id];
+++  }
+++}
+++
+++void ElParallelOrder
+++( ctrl_t *ctrl, graph_t *graph, idx_t *order, idx_t *sizes )
+++{
+++  idx_t i, nvtxs;
+++
+++  nvtxs = graph->nvtxs;
+++  iset(nvtxs, -1, order);
+++
+++  /* graph->where = ismalloc(nvtxs, 0, "ElOrder: graph->where"); */
+++  /* If we computed an initial partition with Global_Partition, then we 
+++     should run the following instead of the above ismalloc of graph->where*/
+++  iset(nvtxs, 0, graph->where); 
+++  gk_free((void **)&graph->match, 
+++          (void **)&graph->cmap, 
+++          (void **)&graph->rlens, 
+++          (void **)&graph->slens, 
+++          (void **)&graph->rcand, LTERM);
+++
+++  Order_Partition_Multiple(ctrl, graph);
+++
+++  ElParallelLabelVertices(ctrl, graph, order, sizes);
+++}
+++
+++void ParMETIS_ComputeVertexSeparator
+++( idx_t *vtxdist, idx_t *xadj, idx_t *adjncy, 
+++  idx_t *p_nseps, idx_t *s_nseps, 
+++  real_t *ubfrac, idx_t *idbglvl, idx_t *order, idx_t *sizes, 
+++  MPI_Comm *comm )
+++{
+++  idx_t i, j, npes, npesNonzero, mype, mypeNonzero, dbglvl, status, haveData;
+++  ctrl_t *ctrl;
+++  graph_t *graph;
+++  MPI_Comm nonzeroComm, nullComm;
+++  size_t curmem;
+++
+++  gkMPI_Comm_size(*comm, &npes);
+++  gkMPI_Comm_rank(*comm, &mype);
+++
+++  if( vtxdist[npes] == 0 )
+++  {
+++      sizes[0] = 0;
+++      sizes[1] = 0;
+++      sizes[2] = 0;
+++      return;
+++  }
+++
+++  haveData = ( vtxdist[mype+1]-vtxdist[mype] != 0 );
+++  if( haveData )
+++      gkMPI_Comm_split(*comm, 1, mype, &nonzeroComm);
+++  else
+++      gkMPI_Comm_split(*comm, MPI_UNDEFINED, 0, &nullComm);
+++
+++  if( !haveData )
+++  {
+++      sizes[0] = sizes[1] = sizes[2] = 0;
+++      gkMPI_Allreduce(MPI_IN_PLACE, (void *)sizes, 3, IDX_T, MPI_SUM, *comm);
+++      return;
+++  }
+++
+++  gkMPI_Comm_size(nonzeroComm, &npesNonzero);
+++  gkMPI_Comm_rank(nonzeroComm, &mypeNonzero);
+++
+++  /* Compress the vtxdist data to make it match the new communicator */
+++  j=0;
+++  for( i=1; i<npes+1; ++i )
+++      if( vtxdist[i] != vtxdist[j] )
+++          vtxdist[++j] = vtxdist[i];
+++
+++  status = METIS_OK;
+++  gk_malloc_init();
+++  curmem = gk_GetCurMemoryUsed();
+++
+++  ctrl = SetupCtrl(PARMETIS_OP_KMETIS, NULL, 1, 2, NULL, NULL, nonzeroComm);
+++
+++  dbglvl = (idbglvl == NULL ? 0 : *idbglvl);
+++  ctrl->dbglvl = dbglvl;
+++
+++  graph = SetupGraph(ctrl, 1, vtxdist, xadj, NULL, NULL, adjncy, NULL, 0);
+++  AllocateWSpace(ctrl, 10*graph->nvtxs);
+++
+++  /* Compute an initial partition: for some reason this improves the quality */
+++  ctrl->CoarsenTo = gk_min(vtxdist[npesNonzero]+1, 
+++                           200*gk_max(npesNonzero,ctrl->nparts));
+++  Global_Partition(ctrl, graph); 
+++
+++  /* Compute an ordering */
+++  ctrl->optype    = PARMETIS_OP_OMETIS;
+++  ctrl->partType  = ORDER_PARTITION;
+++  ctrl->mtype     = PARMETIS_MTYPE_GLOBAL;
+++  ctrl->rtype     = PARMETIS_SRTYPE_2PHASE;
+++  ctrl->p_nseps   = (p_nseps  == NULL ? 1 : *p_nseps);
+++  ctrl->s_nseps   = (s_nseps  == NULL ? 1 : *s_nseps);
+++  ctrl->ubfrac    = (ubfrac == NULL ? ORDER_UNBALANCE_FRACTION : *ubfrac);
+++  ctrl->dbglvl    = dbglvl;
+++  ctrl->ipart     = ISEP_NODE;
+++  ctrl->CoarsenTo = gk_min(graph->gnvtxs-1,1500*npesNonzero); 
+++  ElParallelOrder(ctrl, graph, order, sizes);
+++
+++  FreeInitialGraphAndRemap(graph);
+++
+++  /* Pass the data to the early-exiting processes with an allreduce */
+++  if( mypeNonzero != 0 )
+++      sizes[0] = sizes[1] = sizes[2] = 0;
+++  gkMPI_Allreduce(MPI_IN_PLACE, (void*)sizes, 3, IDX_T, MPI_SUM, *comm);
+++
+++  MPI_Comm_free( &nonzeroComm );
+++
+++  goto DONE;
+++
+++DONE:
+++  FreeCtrl(&ctrl);
+++  if (gk_GetCurMemoryUsed() - curmem > 0) {
+++    printf("ParMETIS appears to have a memory leak of %zdbytes. Report this.\n",
+++        (ssize_t)(gk_GetCurMemoryUsed() - curmem));
+++  }
+++  gk_malloc_cleanup(0);
+++}
++diff -ruN --ex a/libparmetis/ctrl.c b/libparmetis/ctrl.c
++--- a/libparmetis/ctrl.c	2013-03-30 09:24:50
+++++ b/libparmetis/ctrl.c	2026-03-25 16:14:40
++@@ -111,7 +111,7 @@
++   InitTimers(ctrl);
++ 
++   /* initialize the random number generator */
++-  srand(ctrl->seed);
+++  gk_randinit((uint64_t)ctrl->seed);
++ 
++   return ctrl;
++ }
++diff -ruN --ex a/libparmetis/match.c b/libparmetis/match.c
++--- a/libparmetis/match.c	2013-03-30 09:24:50
+++++ b/libparmetis/match.c	2026-03-25 16:14:40
++@@ -15,7 +15,7 @@
++ #include <parmetislib.h>
++ 
++ #define LHTSIZE 8192 /* This should be a power of two */
++-#define MASK    8191 /* This should be equal to LHTSIZE-1 */
+++//#define MASK    8191 /* This should be equal to LHTSIZE-1 */
++ 
++ /*************************************************************************/
++ /*! Finds a HEM matching involving both local and remote vertices */
++@@ -486,7 +486,9 @@
++   real_t *nvwgt, *cnvwgt;
++   graph_t *cgraph;
++   ikv_t *scand, *rcand;
++-  idx_t htable[LHTSIZE], htableidx[LHTSIZE];
+++  idx_t *htable, *htableidx;
+++  idx_t MASK=LHTSIZE-1,power = 1;
+++  //  idx_t htable[LHTSIZE], htableidx[LHTSIZE];
++ 
++   WCOREPUSH;
++ 
++@@ -794,8 +796,17 @@
++   cadjncy = iwspacemalloc(ctrl, nkeepsize+nrecvsize);
++   cadjwgt = iwspacemalloc(ctrl, nkeepsize+nrecvsize);
++ 
++-  iset(LHTSIZE, -1, htable);
+++  MASK = 1023;
+++  for (i=0; i<nvtxs+graph->nrecv; i++) {
+++    if (MASK < cmap[i]) MASK = cmap[i];
+++  }
+++  while (power < MASK) power*=2;
+++  MASK = power - 1;
++ 
+++  //  iset(LHTSIZE, -1, htable);
+++  htable = iset(MASK+1, -1, iwspacemalloc(ctrl, MASK+1));
+++  htableidx = iset(MASK+1, -1, iwspacemalloc(ctrl, MASK+1));
+++
++   cxadj[0] = cnvtxs = cnedges = 0;
++   for (i=0; i<nvtxs; i++) {
++     if (match[i] >= KEEP_BIT) {
++@@ -833,6 +844,7 @@
++             cadjwgt[htableidx[l]] += adjwgt[j];
++           }
++           else { /* Now you have to go and do a search. Expensive case */
+++            printf("Need expensive search line 847 MASK %d k %d\n",(int)MASK,(int)k);
++             for (l=0; l<nedges; l++) {
++               if (cadjncy[cnedges+l] == k)
++                 break;
++@@ -873,6 +885,7 @@
++                 cadjwgt[htableidx[l]] += adjwgt[j];
++               }
++               else { /* Now you have to go and do a search. Expensive case */
+++                printf("Need expensive search line 888 MASK %d k %d\n",(int)MASK,(int)k);
++                 for (l=0; l<nedges; l++) {
++                   if (cadjncy[cnedges+l] == k)
++                     break;
++@@ -916,6 +929,7 @@
++                 cadjwgt[htableidx[l]] += rgraph[u+3+ncon+2*j+1];
++               }
++               else { /* Now you have to go and do a search. Expensive case */
+++                printf("Need expensive search line 932 MASK %d k %d\n",(int)MASK,(int)k);
++                 for (l=0; l<nedges; l++) {
++                   if (cadjncy[cnedges+l] == k)
++                     break;
++@@ -962,7 +976,6 @@
++ 
++ }
++ 
++-
++ /*************************************************************************/
++ /*! This function creates the coarser graph after a local matching */
++ /*************************************************************************/
++@@ -978,7 +991,9 @@
++         *chome = NULL, *cwhere = NULL;
++   real_t *cnvwgt;
++   graph_t *cgraph;
++-  idx_t htable[LHTSIZE], htableidx[LHTSIZE];
+++  idx_t *htable, *htableidx;
+++  idx_t MASK=LHTSIZE-1,power = 1;
+++  //idx_t htable[LHTSIZE], htableidx[LHTSIZE];
++ 
++   WCOREPUSH;
++ 
++@@ -1072,8 +1087,17 @@
++   cadjncy = iwspacemalloc(ctrl, graph->nedges);
++   cadjwgt = iwspacemalloc(ctrl, graph->nedges);
++ 
++-  iset(LHTSIZE, -1, htable);
+++  MASK = 1023;
+++  for (i=0; i<nvtxs+graph->nrecv; i++) {
+++    if (MASK < cmap[i]) MASK = cmap[i];
+++  }
+++  while(power < MASK) power*=2;
+++  MASK = power - 1;
++ 
+++  //  iset(LHTSIZE, -1, htable);
+++  htable = iset(MASK+1, -1, iwspacemalloc(ctrl, MASK+1));
+++  htableidx = iset(MASK+1, -1, iwspacemalloc(ctrl, MASK+1));
+++
++   cxadj[0] = cnvtxs = cnedges = 0;
++   for (i=0; i<nvtxs; i++) {
++     v = firstvtx+i; 
++@@ -1107,6 +1131,7 @@
++           cadjwgt[htableidx[l]] += adjwgt[j];
++         }
++         else { /* Now you have to go and do a search. Expensive case */
+++          printf("Need expensive search line 1134 MASK %d k %d\n",(int)MASK,(int)k);
++           for (l=0; l<nedges; l++) {
++             if (cadjncy[cnedges+l] == k)
++               break;
++@@ -1146,6 +1171,7 @@
++             cadjwgt[htableidx[l]] += adjwgt[j];
++           }
++           else { /* Now you have to go and do a search. Expensive case */
+++            printf("Need expensive search line 1174 MASK %d k %d\n",(int)MASK,(int)k);
++             for (l=0; l<nedges; l++) {
++               if (cadjncy[cnedges+l] == k)
++                 break;
++diff -ruN --ex a/libparmetis/ometis.c b/libparmetis/ometis.c
++--- a/libparmetis/ometis.c	2013-03-30 09:24:50
+++++ b/libparmetis/ometis.c	2026-03-25 16:14:40
++@@ -547,6 +547,10 @@
++     if (where[i] < nparts) {
++       perm[cnvtxs] = perm[i];
++       cmap[i] = cfirstvtx + cnvtxs++;
+++    } else {
+++      /* need to set these other locations; other wise valgrind complains in CommInterfaceData
+++       is this a bug in Parmetis, or just harmless transmission of uninitialized and later unused values?*/
+++      cmap[i] = 0;
++     }
++   }
++ 
++diff -ruN --ex a/libparmetis/parmetislib.h b/libparmetis/parmetislib.h
++--- a/libparmetis/parmetislib.h	2013-03-30 09:24:50
+++++ b/libparmetis/parmetislib.h	2026-03-25 16:14:40
++@@ -20,9 +20,9 @@
++ 
++ #include <parmetis.h>
++ 
++-#include "../metis/libmetis/gklib_defs.h"
+++#include <gklib_defs.h>
++ 
++-#include <mpi.h> 
+++#include <mpi.h>
++ 
++ #include <rename.h>
++ #include <defs.h>
++diff -ruN --ex a/libparmetis/xyzpart.c b/libparmetis/xyzpart.c
++--- a/libparmetis/xyzpart.c	2013-03-30 09:24:50
+++++ b/libparmetis/xyzpart.c	2026-03-25 16:14:40
++@@ -104,14 +104,14 @@
++ 
++     for (i=0; i<nbins; i++)
++       emarkers[i] = gmin + (gmax-gmin)*i/nbins;
++-    emarkers[nbins] = gmax*(1.0+2.0*REAL_EPSILON);
+++    emarkers[nbins] = gmax*(1.0+copysign(1.0,gmax)*2.0*REAL_EPSILON);
++ 
++     /* get into a iterative backet boundary refinement */
++     for (l=0; l<5; l++) {
++       /* determine bucket counts */
++       iset(nbins, 0, lcounts);
++       for (j=0, i=0; i<nvtxs;) {
++-        if (cand[i].key < emarkers[j+1]) {
+++        if (cand[i].key <= emarkers[j+1]) {
++           lcounts[j]++;
++           i++;
++         }
++@@ -152,13 +152,13 @@
++         }
++       }
++       nemarkers[0]     = gmin;
++-      nemarkers[nbins] = gmax*(1.0+2.0*REAL_EPSILON);
+++      nemarkers[nbins] = gmax*(1.0+copysign(1.0,gmax)*2.0*REAL_EPSILON);
++       rcopy(nbins+1, nemarkers, emarkers);
++     }
++ 
++     /* assign the coordinate to the appropriate bin */
++     for (j=0, i=0; i<nvtxs;) {
++-      if (cand[i].key < emarkers[j+1]) {
+++      if (cand[i].key <= emarkers[j+1]) {
++         bxyz[cand[i].val*ndims+k] = j;
++         i++;
++       }
++@@ -218,7 +218,7 @@
++ 
++     emarkers[0] = gmin;
++     emarkers[1] = gsum/gnvtxs;
++-    emarkers[2] = gmax*(1.0+2.0*REAL_EPSILON);
+++    emarkers[2] = gmax*(1.0+(gmax < 0 ? -1. : 1.)*2.0*REAL_EPSILON);
++     cnbins = 2;
++ 
++     /* get into a iterative backet boundary refinement */
++@@ -227,7 +227,7 @@
++       iset(cnbins, 0, lcounts);
++       rset(cnbins, 0, lsums);
++       for (j=0, i=0; i<nvtxs;) {
++-        if (cand[i].key < emarkers[j+1]) {
+++        if (cand[i].key <= emarkers[j+1]) {
++           lcounts[j]++;
++           lsums[j] += cand[i].key;
++           i++;
++@@ -272,12 +272,12 @@
++       
++       rsorti(cnbins, nemarkers);
++       rcopy(cnbins, nemarkers, emarkers);
++-      emarkers[cnbins] = gmax*(1.0+2.0*REAL_EPSILON);
+++      emarkers[cnbins] = gmax*(1.0+(gmax < 0 ? -1. : 1.)*2.0*REAL_EPSILON);
++     }
++ 
++     /* assign the coordinate to the appropriate bin */
++     for (j=0, i=0; i<nvtxs;) {
++-      if (cand[i].key < emarkers[j+1]) {
+++      if (cand[i].key <= emarkers[j+1]) {
++         bxyz[cand[i].val*ndims+k] = j;
++         i++;
++       }
++Binary files a/manual/manual.pdf and b/manual/manual.pdf differ
++diff -ruN --ex a/programs/CMakeLists.txt b/programs/CMakeLists.txt
++--- a/programs/CMakeLists.txt	2013-03-30 09:24:50
+++++ b/programs/CMakeLists.txt	2026-03-25 16:14:40
++@@ -7,7 +7,7 @@
++ add_executable(pometis pometis.c io.c)
++ # Link to libparmetis.
++ foreach(prog ptest mtest parmetis_prog pometis)
++-  target_link_libraries(${prog} parmetis)
+++  target_link_libraries(${prog} parmetis metis m)
++ endforeach(prog)
++ 
++ install(TARGETS ptest mtest parmetis_prog pometis
++diff -ruN --ex a/programs/parmetisbin.h b/programs/parmetisbin.h
++--- a/programs/parmetisbin.h	2013-03-30 09:24:50
+++++ b/programs/parmetisbin.h	2026-03-25 16:14:40
++@@ -18,8 +18,8 @@
++ 
++ #include <GKlib.h>
++ #include <parmetis.h>
+++#include <gklib_defs.h>
++ 
++-#include "../metis/libmetis/gklib_defs.h"
++ #include "../libparmetis/rename.h"
++ #include "../libparmetis/defs.h"
++ #include "../libparmetis/struct.h"
