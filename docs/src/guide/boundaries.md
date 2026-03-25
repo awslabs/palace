@@ -131,6 +131,33 @@ for implementation details.
     (they are to be "one-sided" in the sense that mesh elements only exist on one side of
     the boundary).
 
+  - [`config["Boundaries"]["FloquetPort"]`](../config/boundaries.md#boundaries%5B%22FloquetPort%22%5D) :
+    Floquet ports are available for frequency domain driven simulations on periodic
+    structures (gratings, metasurfaces, photonic crystals). They provide an absorbing
+    boundary condition that decomposes the scattered field into Floquet diffraction orders
+    and extracts power-normalized S-parameters for each propagating order.
+
+    Floquet ports require periodic boundary conditions to be configured under
+    [`config["Boundaries"]["Periodic"]`](../config/boundaries.md#boundaries%5B%22Periodic%22%5D).
+    The `"FloquetWaveVector"` in the periodic configuration specifies the tangential
+    component of the incident wave vector, which determines the angle of incidence. For
+    normal incidence, set the wave vector to zero. For frequency sweeps at a fixed angle
+    of incidence, set `"FloquetReferenceFrequency"` to the frequency (in GHz) at which the
+    wave vector is defined. The wave vector then scales linearly with frequency:
+    k_F(f) = FloquetWaveVector × (f / FloquetReferenceFrequency), maintaining a constant
+    incidence angle across the sweep.
+
+    The incident field is a plane wave in the specular (0,0) diffraction order with
+    user-specified polarization (TE, TM, or circular RHC/LHC). S-parameters are extracted
+    for all propagating diffraction orders within `"MaxOrder"` and reported in the
+    `port-floquet-S.csv` output file. Each mode is labeled as
+    `S[P<port>(<m>,<n>)<pol>][<exc>]` where `<port>` is the port index, `(<m>,<n>)` is
+    the diffraction order, `<pol>` is the polarization (TE/TM or RHC/LHC for circular
+    excitation), and `<exc>` is the excitation index.
+
+    The port boundary must be planar and on the true boundary of the computational domain.
+    The medium adjacent to the port must be homogeneous and isotropic.
+
 For each port, the excitation is normalized to have unit incident power over the port boundary
 surface.
 
@@ -160,9 +187,10 @@ port can only be part of one excitation.
 
     Any `"Index"` of [`"LumpedPort"`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D),
     [`"WavePort"`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D),
+    [`"FloquetPort"`](../config/boundaries.md#boundaries%5B%22FloquetPort%22%5D),
     [`"SurfaceCurrent"`](../config/boundaries.md#boundaries%5B%22SurfaceCurrent%22%5D), or
     [`"Terminal"`](../config/boundaries.md#boundaries%5B%22Terminal%22%5D) must be unique, including between
-    different boundary conditions types (e.g. you can not have an lumped port and wave port both with
+    different boundary conditions types (e.g. you can not have a lumped port and wave port both with
     `Index: 5`).
 
 ## Surface current excitation

@@ -82,6 +82,7 @@ arg_configs = [
             "cylinder/waveguide",
             "cylinder/floquet",
             "cylinder/driven_wave",
+            "dielectric_grating/uniform",
             "coaxial/open",
             "coaxial/matched",
             "cpw/lumped_uniform",
@@ -342,6 +343,45 @@ if "cylinder/driven_wave" in cases
     )
 end
 
+# Floquet port S-parameter test: compare only magnitude columns (|S| in dB),
+# skipping NaN entries (evanescent modes) and negligible signals (< -200 dB).
+function test_floquet_sparams(new_data, ref_data)
+    for col_name in names(new_data)
+        # Only compare magnitude columns, skip phase columns.
+        occursin("|S[", col_name) && occursin("(dB)", col_name) || continue
+        for (v_new, v_ref) in zip(new_data[!, col_name], ref_data[!, col_name])
+            if isnan(v_new) && isnan(v_ref)
+                @test true
+            elseif v_ref < -200  # negligible signal, skip
+                @test true
+            else
+                @test v_new ≈ v_ref rtol=reltol atol=abstol
+            end
+        end
+    end
+    return true
+end
+
+if "dielectric_grating/uniform" in cases
+    @info "Testing dielectric_grating/uniform..."
+    @time testcase(
+        "dielectric_grating",
+        "dielectric_grating_uniform.json",
+        "uniform";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum"],
+        custom_tests=Dict("port-floquet-S.csv" => test_floquet_sparams),
+        paraview_fields=false,
+        skip_rowcount=true,
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
+    )
+end
+
 # Coarser test tolerances for driven simulations with ports
 reltol = 2.0e-2
 abstol = 1.0e-10
@@ -580,6 +620,175 @@ if "adapter/slp" in cases
         skip_rowcount=true,
         device=device,
         linear_solver=solver,
+        eigen_solver=eigensolver
+    )
+end
+
+reltol = 1.0e-4
+abstol = 1.0e-16
+
+if "cavity2d/eigenmode" in cases
+    @info "Testing cavity2d/eigenmode (2D eigenmode)..."
+    @time testcase(
+        "cavity2d",
+        "cavity2d.json",
+        "eigenmode";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
+        skip_rowcount=true,
+        device=device,
+        linear_solver="Default",
+        eigen_solver=eigensolver
+    )
+end
+
+# Coarser test tolerances for driven simulations with ports
+reltol = 2.0e-2
+abstol = 1.0e-10
+
+if "cavity2d/driven" in cases
+    @info "Testing cavity2d/driven (2D driven)..."
+    @time testcase(
+        "cavity2d",
+        "cavity2d_driven.json",
+        "driven";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum"],
+        device=device,
+        linear_solver="Default",
+        eigen_solver=eigensolver
+    )
+end
+
+reltol = 1.0e-4
+
+if "cavity2d/electrostatic" in cases
+    @info "Testing cavity2d/electrostatic (2D electrostatic)..."
+    @time testcase(
+        "cavity2d",
+        "cavity2d_electrostatic.json",
+        "electrostatic";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum"],
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
+    )
+end
+
+if "cavity2d/magnetostatic" in cases
+    @info "Testing cavity2d/magnetostatic (2D magnetostatic)..."
+    @time testcase(
+        "cavity2d",
+        "cavity2d_magnetostatic.json",
+        "magnetostatic";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum"],
+        device=device,
+        linear_solver="Default",
+        eigen_solver=eigensolver
+    )
+end
+
+if "cavity2d/transient" in cases
+    @info "Testing cavity2d/transient (2D transient)..."
+    @time testcase(
+        "cavity2d",
+        "cavity2d_transient.json",
+        "transient";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum"],
+        device=device,
+        linear_solver="Default",
+        eigen_solver=eigensolver
+    )
+end
+
+reltol = 1.0e-2
+
+if "cpw2d/thin" in cases
+    @info "Testing cpw2d/thin (2D mode analysis, thin PEC)..."
+    @time testcase(
+        "cpw2d",
+        "cpw2d_thin.json",
+        "thin";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=[
+            "Maximum",
+            "Minimum",
+            "Mean",
+            "Error (Bkwd.)",
+            "Error (Abs.)",
+            "Im{kn} (1/m)",
+            "Im{n_eff}"
+        ],
+        skip_rowcount=true,
+        device=device,
+        linear_solver="Default",
+        eigen_solver=eigensolver
+    )
+end
+
+if "cpw2d/thick_impedance" in cases
+    @info "Testing cpw2d/thick_impedance (2D mode analysis, thick impedance)..."
+    @time testcase(
+        "cpw2d",
+        "cpw2d_thick_impedance.json",
+        "thick_impedance";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=[
+            "Maximum",
+            "Minimum",
+            "Mean",
+            "Error (Bkwd.)",
+            "Error (Abs.)",
+            "Im{kn} (1/m)",
+            "Im{n_eff}"
+        ],
+        skip_rowcount=true,
+        device=device,
+        linear_solver="Default",
+        eigen_solver=eigensolver
+    )
+end
+
+reltol = 1.0e-4
+
+if "cpw/wave_2dmode" in cases
+    @info "Testing cpw/wave_2dmode (2D mode analysis from 3D mesh)..."
+    @time testcase(
+        "cpw",
+        "cpw_wave_2dmode.json",
+        "wave_2dmode";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum", "Mean", "Error (Bkwd.)", "Error (Abs.)"],
+        skip_rowcount=true,
+        device=device,
+        linear_solver="Default",
         eigen_solver=eigensolver
     )
 end
