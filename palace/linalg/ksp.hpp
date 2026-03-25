@@ -62,6 +62,13 @@ public:
 
   void SetOperators(const OperType &op, const OperType &pc_op);
 
+  // Extract the preconditioner (transfers ownership to caller).
+  std::unique_ptr<Solver<OperType>> StealPreconditioner() { return std::move(pc); }
+
+  // Replace the preconditioner with a new one (e.g., FloquetBoundaryPreconditioner
+  // wrapping the original). The new preconditioner takes ownership.
+  void ReplacePreconditioner(std::unique_ptr<Solver<OperType>> &&new_pc);
+
   void Mult(const VecType &x, VecType &y) const;
 };
 

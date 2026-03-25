@@ -16,6 +16,7 @@
 #include "linalg/jacobi.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/rap.hpp"
+#include "models/floquetportoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -59,8 +60,10 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     lumped_port_op(boundaries.lumpedport, units, mat_op, *mesh.back()),
     wave_port_op(boundaries, solver, problem_type, units, mat_op, GetNDSpace(),
                  GetH1Space()),
+    floquet_port_op(boundaries.floquetport, boundaries.periodic, problem_type, units, mat_op, GetNDSpace().Get()),
     surf_j_op(boundaries.current, *mesh.back()),
-    port_excitation_helper(lumped_port_op, wave_port_op, surf_j_op, current_dipole_op)
+    port_excitation_helper(lumped_port_op, wave_port_op, floquet_port_op, surf_j_op,
+                           current_dipole_op)
 {
   // Check Excitations.
   if (problem_type == ProblemType::DRIVEN)
@@ -354,8 +357,11 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
       fb(mat_op.MaxCeedBdrAttribute()), fc(mat_op.MaxCeedAttribute());
   AddStiffnessCoefficients(1.0, df, f);
   AddStiffnessBdrCoefficients(1.0, fb);
-  AddRealPeriodicCoefficients(1.0, f);
-  AddImagPeriodicCoefficients(1.0, fc);
+  if (!mat_op.HasFloquetFrequencyScaling())
+  {
+    AddRealPeriodicCoefficients(1.0, f);
+    AddImagPeriodicCoefficients(1.0, fc);
+  }
   int empty[2] = {(df.empty() && f.empty() && fb.empty()), (fc.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
@@ -396,16 +402,21 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient f(mat_op.MaxCeedAttribute()),
       fb(mat_op.MaxCeedBdrAttribute());
+  MaterialPropertyCoefficient fp(mat_op.MaxCeedAttribute());
   AddDampingCoefficients(1.0, f);
   AddDampingBdrCoefficients(1.0, fb);
-  int empty = (f.empty() && fb.empty());
+  if (mat_op.HasFloquetFrequencyScaling())
+  {
+    AddImagPeriodicCoefficients(1.0, fp);
+  }
+  int empty = (f.empty() && fb.empty() && fp.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
   {
     return {};
   }
   constexpr bool skip_zeros = false;
-  auto c = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, nullptr, skip_zeros);
+  auto c = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, &fp, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     auto C = std::make_unique<ComplexParOperator>(std::move(c), nullptr, GetNDSpace());
@@ -428,6 +439,10 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
       fbr(mat_op.MaxCeedBdrAttribute()), fbi(mat_op.MaxCeedBdrAttribute());
   AddRealMassCoefficients(1.0, fr);
   AddRealMassBdrCoefficients(1.0, fbr);
+  if (mat_op.HasFloquetFrequencyScaling())
+  {
+    AddRealPeriodicCoefficients(-1.0, fr);
+  }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     AddImagMassCoefficients(1.0, fi);
@@ -511,6 +526,21 @@ SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
                                const OperType *A2)
 {
   return BuildParSumOperator({a0, a1, a2, ScalarType{1}}, {K, C, M, A2});
+}
+
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetSystemOperator(std::complex<double> a0, std::complex<double> a1,
+                                 std::complex<double> a2, double omega,
+                                 const ComplexOperator *K, const ComplexOperator *C,
+                                 const ComplexOperator *M, const ComplexOperator *A2)
+{
+  auto A = GetSystemMatrix(a0, a1, a2, K, C, M, A2);
+  auto F = floquet_port_op.GetExtraSystemOperator(omega);
+  if (F)
+  {
+    return std::make_unique<SumComplexOperator>(std::move(A), std::move(F));
+  }
+  return A;
 }
 
 std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double a2,
@@ -667,10 +697,21 @@ void SpaceOperator::AssemblePreconditioner(
   AddImagMassCoefficients(a2.real(), fi);
   AddImagMassCoefficients(-a2.imag(), fr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
-  AddRealPeriodicCoefficients(a0.real(), fr);
-  AddRealPeriodicCoefficients(a0.imag(), fi);
-  AddImagPeriodicCoefficients(a0.real(), fpi);
-  AddImagPeriodicCoefficients(-a0.imag(), fpr);
+  if (mat_op.HasFloquetFrequencyScaling())
+  {
+    // k₀-based tensors: cross terms scale with a1, mass term with a2.
+    AddImagPeriodicCoefficients(a1.imag(), fpi);
+    AddImagPeriodicCoefficients(a1.real(), fpr);
+    AddRealPeriodicCoefficients(-a2.real(), fr);
+    AddRealPeriodicCoefficients(-a2.imag(), fi);
+  }
+  else
+  {
+    AddRealPeriodicCoefficients(a0.real(), fr);
+    AddRealPeriodicCoefficients(a0.imag(), fi);
+    AddImagPeriodicCoefficients(a0.real(), fpi);
+    AddImagPeriodicCoefficients(-a0.imag(), fpr);
+  }
   int empty[2] = {
       (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && fpr.empty()),
       (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty() && fpi.empty())};
@@ -706,7 +747,14 @@ void SpaceOperator::AssemblePreconditioner(
   AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fr);
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
-  AddRealPeriodicCoefficients(a0.real(), fr);
+  if (mat_op.HasFloquetFrequencyScaling())
+  {
+    AddRealPeriodicCoefficients(-(pc_mat_shifted ? std::abs(a2.real()) : a2.real()), fr);
+  }
+  else
+  {
+    AddRealPeriodicCoefficients(a0.real(), fr);
+  }
   int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
@@ -733,7 +781,14 @@ void SpaceOperator::AssemblePreconditioner(
   AddAbsMassCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fr);
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
-  AddRealPeriodicCoefficients(a0, fr);
+  if (mat_op.HasFloquetFrequencyScaling())
+  {
+    AddRealPeriodicCoefficients(-(pc_mat_shifted ? std::abs(a2) : a2), fr);
+  }
+  else
+  {
+    AddRealPeriodicCoefficients(a0, fr);
+  }
   int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
@@ -899,6 +954,9 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
 
   // Contribution for numeric wave ports.
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+
+  // Contribution for Floquet ports (Robin BC).
+  floquet_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
 }
 
 void SpaceOperator::AddRealPeriodicCoefficients(double coeff,
@@ -1091,13 +1149,16 @@ bool SpaceOperator::AddExcitationVector2Internal(int excitation_idx, double omeg
   // the specified frequency.
   MFEM_VERIFY(RHS2.Size() == GetNDSpace().GetTrueVSize(),
               "Invalid T-vector size for AddExcitationVector2Internal!");
+  // Floquet port excitation: directly adds to RHS (not via boundary linear form).
+  bool nnz_floquet = floquet_port_op.AddExcitationVector(excitation_idx, omega, RHS2);
+
   SumVectorCoefficient fbr(GetMesh().SpaceDimension()), fbi(GetMesh().SpaceDimension());
   wave_port_op.AddExcitationBdrCoefficients(excitation_idx, omega, fbr, fbi);
   int empty = (fbr.empty() && fbi.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
   {
-    return false;
+    return nnz_floquet;
   }
   {
     mfem::LinearForm rhs2(&GetNDSpace().Get());
