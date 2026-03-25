@@ -9,44 +9,43 @@ using Gmsh: gmsh
 """
     generate_grating_mesh(;
         filename::AbstractString = "mesh/dielectric_grating.msh",
-        a::Real = 4.0,
-        b::Real = 1.0,
-        L::Real = 4.0,
-        bar_w::Real = 2.0,
-        bar_d::Real = 0.5,
-        bar_h::Real = 0.5,
-        n_x::Integer = 8,
-        n_y::Integer = 12,
-        n_z::Integer = 14,
-        n_bar_z::Integer = 4,
-        order::Integer = 1,
-        verbose::Integer = 5,
-        gui::Bool = false
+        ...
     )
 
-Generate a structured hex mesh for a 3D dielectric grating test case.
+Generate a structured hex mesh for a 3D dielectric grating test case using Gmsh.
 
-The geometry is a unit cell with period a in x, b in y, total height 2L in z.
-A dielectric bar (centered at the origin, width bar_w in x, depth bar_d in y,
-height bar_h in z) creates a 3D grating that diffracts into multiple orders.
+The geometry is a unit cell with period `a` in x, `b` in y, total height `2L` in z.
+A dielectric bar (centered at the origin) creates a 3D grating that diffracts into
+multiple orders.
 
-The domain is split into 27 blocks (3 × 3 × 3) with the bar occupying the center
-block. Each block face is created exactly once and shared between adjacent volumes
-via signed surface loop tags, ensuring correct boundary element export for MPI.
+# Arguments
 
-Attributes:
+  - `filename` - output mesh file path
+  - `a` - unit cell period in x [cm]
+  - `b` - unit cell period in y [cm]
+  - `L` - half-height of the domain in z [cm] (total height = 2L)
+  - `bar_w` - dielectric bar width in x [cm]
+  - `bar_d` - dielectric bar depth in y [cm]
+  - `bar_h` - dielectric bar height in z [cm]
+  - `n_x` - number of elements across the x period
+  - `n_y` - number of elements across the y period
+  - `n_z` - number of elements across the z height (excluding bar)
+  - `n_bar_z` - number of elements through the bar in z
+  - `order` - polynomial order of the mesh elements
+  - `verbose` - Gmsh verbosity level
+  - `gui` - if true, open the Gmsh GUI after meshing
 
-  - Volume 1: vacuum
-  - Volume 2: dielectric bar
+# Attributes
+
+  - Volume 1: vacuum, Volume 2: dielectric bar
   - Boundary 1,2: x periodic pair
   - Boundary 3,4: y periodic pair
-  - Boundary 5: port 1 (z = -L, excitation)
-  - Boundary 6: port 2 (z = +L, transmission)
+  - Boundary 5: port 1 (z = -L), Boundary 6: port 2 (z = +L)
 
 Units: cm (Palace L0 = 1e-2 for cm → m conversion).
 """
 function generate_grating_mesh(;
-    filename::AbstractString="dielectric_grating.msh",
+    filename::AbstractString="mesh/dielectric_grating.msh",
     a::Real=4.0,
     b::Real=1.0,
     L::Real=4.0,
