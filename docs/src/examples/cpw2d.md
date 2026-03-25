@@ -100,6 +100,16 @@ impedance boundary condition that models the kinetic inductance of a superconduc
 The surface inductance ``L_s`` adds an inductive contribution to the boundary condition,
 which increases the effective index of the guided modes compared to the ideal PEC case.
 
+The figure below shows the ``E_x`` component of the first propagating mode for the thick
+metal configuration, zoomed into the trace and gap region. The field is concentrated in the
+gaps between the center conductor and ground planes, with singularities at the metal corners.
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/cpw2d-1.png" width="70%" />
+</p><br/>
+```
+
 ## Results
 
 The mode analysis solver writes propagation constants and effective indices to `mode-kn.csv`
