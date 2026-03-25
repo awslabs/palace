@@ -10,8 +10,8 @@
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
-#include "utils/iodata.hpp"
 #include "utils/geodata.hpp"
+#include "utils/iodata.hpp"
 #include "utils/prettyprint.hpp"
 
 namespace palace
@@ -69,8 +69,7 @@ void ComputePolarization(const mfem::Vector &kt, const mfem::Vector &port_normal
 
 FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
                                  const config::PeriodicBoundaryData &periodic_data,
-                                 const Units &units,
-                                 const MaterialOperator &mat_op_ref,
+                                 const Units &units, const MaterialOperator &mat_op_ref,
                                  mfem::ParFiniteElementSpace &nd_fespace)
   : excitation(data.excitation), active(data.active), mat_op(mat_op_ref), a1(3), a2(3),
     b1(3), b2(3), k_F(3), port_normal(3), comm(nd_fespace.GetComm())

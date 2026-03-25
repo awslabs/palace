@@ -143,8 +143,8 @@ public:
     return is_te ? inc_alpha_te : inc_alpha_tm;
   }
 
-  FloquetPortData(const config::FloquetPortData &data, const config::PeriodicBoundaryData &periodic,
-                  const Units &units,
+  FloquetPortData(const config::FloquetPortData &data,
+                  const config::PeriodicBoundaryData &periodic, const Units &units,
                   const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace);
 
   // Update propagation constants for given omega. Cached.
@@ -268,7 +268,10 @@ private:
   bool suppress_output = false;
 
 public:
-  FloquetPortOperator(const std::map<int, config::FloquetPortData> &floquetport, const config::PeriodicBoundaryData &periodic, ProblemType problem_type, const Units &units, const MaterialOperator &mat_op,
+  FloquetPortOperator(const std::map<int, config::FloquetPortData> &floquetport,
+                      const config::PeriodicBoundaryData &periodic,
+                      ProblemType problem_type, const Units &units,
+                      const MaterialOperator &mat_op,
                       mfem::ParFiniteElementSpace &nd_fespace);
 
   const FloquetPortData &GetPort(int idx) const { return ports.at(idx); }

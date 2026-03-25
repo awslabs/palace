@@ -610,7 +610,8 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   config::Nondimensionalize(units, solver.driven);
   config::Nondimensionalize(units, solver.transient);
 
-  // Nondimensionalize Floquet reference frequency (GHz -> nondimensional angular frequency).
+  // Nondimensionalize Floquet reference frequency (GHz -> nondimensional angular
+  // frequency).
   if (boundaries.periodic.floquet_reference_freq > 0.0)
   {
     boundaries.periodic.floquet_reference_freq =
