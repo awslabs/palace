@@ -532,9 +532,6 @@ public:
   // - 1-based index if excited; 0 if not excited.
   int excitation = 0;
 
-  // Flag for boundary damping term in driven simulations.
-  bool active = true;
-
   // List of boundary attributes for this Floquet port.
   std::vector<int> attributes = {};
 

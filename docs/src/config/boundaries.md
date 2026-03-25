@@ -470,10 +470,6 @@ and isotropic.
 When excited, a plane wave in the specular (0,0) diffraction order is injected with unit
 power.
 
-`"Active" [true]` :  Turns on or off the absorbing boundary condition for this Floquet port
-boundary. When active, the port absorbs all outgoing Floquet modes using a Robin boundary
-condition with low-rank corrections for each diffraction order.
-
 `"IncidentPolarization" ["TE"]` :  Polarization of the incident plane wave. Available
 options are:
 

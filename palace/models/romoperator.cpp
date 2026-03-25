@@ -710,10 +710,6 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     floquet_reduced.clear();
     for (const auto &[port_idx, port] : space_op.GetFloquetPortOp())
     {
-      if (!port.active)
-      {
-        continue;
-      }
       for (const auto &mode : port.GetModes())
       {
         if (!HasFlag(mode.use, FloquetModeUse::Dtn))

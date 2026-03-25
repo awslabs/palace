@@ -71,7 +71,7 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
                                  const config::PeriodicBoundaryData &periodic_data,
                                  const Units &units, const MaterialOperator &mat_op_ref,
                                  mfem::ParFiniteElementSpace &nd_fespace)
-  : excitation(data.excitation), active(data.active), mat_op(mat_op_ref), a1(3), a2(3),
+  : excitation(data.excitation), mat_op(mat_op_ref), a1(3), a2(3),
     b1(3), b2(3), k_F(3), port_normal(3), comm(nd_fespace.GetComm())
 {
   // Set incident polarization coefficients: E_inc = α_TE ê_TE + α_TM ê_TM.
@@ -996,10 +996,6 @@ std::unique_ptr<ComplexOperator> FloquetPortOperator::GetExtraSystemOperator(dou
   std::unique_ptr<ComplexOperator> combined;
   for (auto &[idx, port] : ports)
   {
-    if (!port.active)
-    {
-      continue;
-    }
     auto F = port.GetBoundaryOperator();
     if (!combined)
     {
@@ -1022,10 +1018,6 @@ void FloquetPortOperator::AddExtraSystemBdrCoefficients(double omega,
   Initialize(omega);
   for (const auto &[idx, port] : ports)
   {
-    if (!port.active)
-    {
-      continue;
-    }
     // γ₀ = TE (0,0) mode propagation constant.
     double gamma0 = 0.0;
     for (const auto &mode : port.GetModes())
