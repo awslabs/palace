@@ -1,56 +1,16 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-#=
-# README
-
-This Julia script uses Gmsh to create a 2D mesh for a rectangular domain. The mesh is used
-for 2D eigenmode, driven, and transient Palace examples.
-
-The generated mesh contains three distinct regions:
-1. A 2D surface region (the rectangular domain)
-2. A bottom edge boundary (used as lumped port for driven/transient simulations)
-3. The remaining edges (left, top, right — used as PEC boundaries)
-
-## Prerequisites
-
-This script requires the Gmsh Julia package. If you don't already have it installed, you can
-install it with
-
-```bash
-julia -e 'using Pkg; Pkg.add("Gmsh")'
-```
-
-## How to run
-
-From this directory, run:
-```bash
-julia -e 'include("mesh.jl"); generate_cavity2d_mesh(; filename="cavity2d.msh")'
-```
-=#
+# Generate example mesh with:
+# julia -e 'include("mesh/mesh.jl"); generate_cavity2d_mesh(filename="cavity2d.msh")'
 
 using Gmsh: gmsh
 
 """
-    generate_cavity2d_mesh(;
-        filename::AbstractString,
-        a::Real = 1.0,
-        b::Real = 0.5,
-        n_elem::Integer = 10,
-        verbose::Integer = 5,
-        gui::Bool = false
-    )
+    generate_cavity2d_mesh(; filename, a=1.0, b=0.5, n_elem=10, verbose=5, gui=false)
 
-Generate a 2D rectangular mesh for the cavity2d example using Gmsh.
-
-# Arguments
-
-  - filename - the filename to use for the generated mesh
-  - a - width of the rectangle (x direction)
-  - b - height of the rectangle (y direction)
-  - n_elem - approximate number of elements along the shorter side
-  - verbose - flag to dictate the level of print to REPL (0-5)
-  - gui - whether to launch the Gmsh GUI on mesh generation
+Generate a 2D rectangular mesh for the cavity2d example using Gmsh. The mesh contains a
+surface region, a bottom edge boundary (lumped port), and remaining edges (PEC).
 """
 function generate_cavity2d_mesh(;
     filename::AbstractString,

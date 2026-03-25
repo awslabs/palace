@@ -128,29 +128,27 @@ struct Measurement
   };
 
   // Mode analysis impedance result for a single configuration entry.
+  // Stored nondimensional; dimensionalized in Measurement::Dimensionalize.
   struct ModeImpedanceResult
   {
-    double Z0 = 0.0;       // Characteristic impedance (Ohm) [P-V]
-    double L_per_m = 0.0;  // Inductance per unit length (H/m) [P-V]
-    double C_per_m = 0.0;  // Capacitance per unit length (F/m) [P-V]
+    double Z0 = 0.0;    // Nondimensional characteristic impedance [P-V]
+    double Z_VI = 0.0;  // Nondimensional V/I impedance
     bool has_impedance = false;
-    double Z_VI = 0.0;  // V/I impedance (Ohm)
-    double L_VI_per_m = 0.0;
-    double C_VI_per_m = 0.0;
     bool has_vi_impedance = false;
   };
 
   // Mode analysis voltage result for a single configuration entry.
   struct ModeVoltageResult
   {
-    std::complex<double> V = {0.0, 0.0};
+    std::complex<double> V = {0.0, 0.0};  // Nondimensional voltage
   };
 
-  // Mode analysis data.
+  // Mode analysis data. Stored nondimensional; dimensionalized in
+  // Measurement::Dimensionalize.
   struct ModeData
   {
-    std::complex<double> kn_dim = {0.0, 0.0};  // Dimensional propagation constant (1/m)
-    std::complex<double> n_eff = {0.0, 0.0};   // Effective refractive index
+    std::complex<double> kn = {0.0, 0.0};     // Nondimensional propagation constant
+    std::complex<double> n_eff = {0.0, 0.0};  // Effective refractive index (dimensionless)
     std::map<int, ModeImpedanceResult> impedance = {};  // Keyed by config index
     std::map<int, ModeVoltageResult> voltage = {};      // Keyed by config index
   };

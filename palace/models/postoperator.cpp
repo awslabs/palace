@@ -354,6 +354,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
 
     // Electric Boundary Field & Surface Charge.
     E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
+    // Q_s = D ⋅ n = ε_0 E ⋅ n.
     Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
         &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
     if constexpr (HasComplexGridFunction<solver_t>())
@@ -1685,11 +1686,9 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   measurement_cache.error_abs = error_abs;
   measurement_cache.error_bkwd = error_bkwd;
 
-  // Dimensionalization constants.
-  const double kc = 1.0 / units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
-  std::complex<double> kn_dim = kn * kc;
+  // Store nondimensional mode data (dimensionalized in Measurement::Dimensionalize).
   std::complex<double> n_eff = kn / omega;
-  measurement_cache.mode_data.kn_dim = kn_dim;
+  measurement_cache.mode_data.kn = kn;
   measurement_cache.mode_data.n_eff = n_eff;
 
   // Helper: compute voltage V = ∫ E · dl via coordinate path or boundary attributes.
@@ -1797,9 +1796,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     if (std::abs(P) > 1e-30)
     {
       std::complex<double> Z0_nondim = (V * std::conj(V)) / (2.0 * P);
-      result.Z0 = Z0_nondim.real() * electromagnetics::Z0_;
-      result.L_per_m = result.Z0 * n_eff.real() / electromagnetics::c0_;
-      result.C_per_m = n_eff.real() / (result.Z0 * electromagnetics::c0_);
+      result.Z0 = Z0_nondim.real();
       result.has_impedance = true;
     }
 
@@ -1808,10 +1805,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
                             cfg.n_samples, *Bt_inplane);
     if (std::abs(I) > 1e-30)
     {
-      double Z_VI_nondim = std::abs(V) / std::abs(I);
-      result.Z_VI = Z_VI_nondim * electromagnetics::Z0_;
-      result.L_VI_per_m = result.Z_VI * n_eff.real() / electromagnetics::c0_;
-      result.C_VI_per_m = n_eff.real() / (result.Z_VI * electromagnetics::c0_);
+      result.Z_VI = std::abs(V) / std::abs(I);
       result.has_vi_impedance = true;
     }
   }
@@ -1834,8 +1828,9 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     int idx_pad = 1 + static_cast<int>(std::log10(std::max(num_conv, 1)));
     table.col_options = {6, 6};
     table.insert(Column("m", "m", idx_pad, {}, {}, "") << (step + 1));
-    table.insert(Column("kn_re", "Re{kn} (1/m)") << kn_dim.real());
-    table.insert(Column("kn_im", "Im{kn} (1/m)") << kn_dim.imag());
+    const double kc = 1.0 / units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+    table.insert(Column("kn_re", "Re{kn} (1/m)") << kn.real() * kc);
+    table.insert(Column("kn_im", "Im{kn} (1/m)") << kn.imag() * kc);
     table.insert(Column("neff_re", "Re{n_eff}") << n_eff.real());
     table.insert(Column("neff_im", "Im{n_eff}") << n_eff.imag());
     table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);

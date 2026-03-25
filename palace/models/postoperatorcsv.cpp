@@ -11,6 +11,7 @@
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/waveportoperator.hpp"
+#include "utils/constants.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -123,13 +124,31 @@ Measurement Measurement::Dimensionalize(const Units &units,
   measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
       nondim_measurement_cache.farfield.E_field);
 
-  // Mode analysis data: kn, n_eff, Z0, L, C are already dimensional. Voltage V is
-  // nondimensional (integral of nondim E over nondim dl) and needs scaling.
+  // Mode analysis data: stored nondimensional, dimensionalize here.
   measurement_cache.mode_data = nondim_measurement_cache.mode_data;
-  const double V_scale = units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
-  for (auto &[idx, vr] : measurement_cache.mode_data.voltage)
   {
-    vr.V *= V_scale;
+    const double kc = 1.0 / units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+    measurement_cache.mode_data.kn *= kc;  // nondim → 1/m
+    // n_eff is dimensionless, no conversion needed.
+
+    const double V_scale = units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
+    for (auto &[idx, vr] : measurement_cache.mode_data.voltage)
+    {
+      vr.V *= V_scale;  // nondim → V
+    }
+
+    for (auto &[idx, result] : measurement_cache.mode_data.impedance)
+    {
+      const double n_eff_re = measurement_cache.mode_data.n_eff.real();
+      if (result.has_impedance)
+      {
+        result.Z0 *= electromagnetics::Z0_;  // nondim → Ohm
+      }
+      if (result.has_vi_impedance)
+      {
+        result.Z_VI *= electromagnetics::Z0_;  // nondim → Ohm
+      }
+    }
   }
 
   return measurement_cache;
@@ -1372,8 +1391,8 @@ auto PostOperatorCSV<solver_t>::PrintModeKn()
     return;
   }
   mode_kn->table["idx"] << row_idx_v;
-  mode_kn->table["kn_re"] << measurement_cache.mode_data.kn_dim.real();
-  mode_kn->table["kn_im"] << measurement_cache.mode_data.kn_dim.imag();
+  mode_kn->table["kn_re"] << measurement_cache.mode_data.kn.real();
+  mode_kn->table["kn_im"] << measurement_cache.mode_data.kn.imag();
   mode_kn->table["neff_re"] << measurement_cache.mode_data.n_eff.real();
   mode_kn->table["neff_im"] << measurement_cache.mode_data.n_eff.imag();
   mode_kn->table["err_back"] << measurement_cache.error_bkwd;
@@ -1417,20 +1436,22 @@ auto PostOperatorCSV<solver_t>::PrintModeZ()
     return;
   }
   mode_Z->table["idx"] << row_idx_v;
+  const double n_eff_re = measurement_cache.mode_data.n_eff.real();
   for (const auto &[idx, result] : measurement_cache.mode_data.impedance)
   {
-    auto s = [&](auto &&name) { return fmt::format("{}[{}]", name, idx); };
+    const auto port_idx = idx;
+    auto s = [&](auto &&name) { return fmt::format("{}[{}]", name, port_idx); };
     if (result.has_impedance)
     {
       mode_Z->table[s("Z_PV")] << result.Z0;
-      mode_Z->table[s("L_PV")] << result.L_per_m;
-      mode_Z->table[s("C_PV")] << result.C_per_m;
+      mode_Z->table[s("L_PV")] << result.Z0 * n_eff_re / electromagnetics::c0_;
+      mode_Z->table[s("C_PV")] << n_eff_re / (result.Z0 * electromagnetics::c0_);
     }
     if (result.has_vi_impedance)
     {
       mode_Z->table[s("Z_VI")] << result.Z_VI;
-      mode_Z->table[s("L_VI")] << result.L_VI_per_m;
-      mode_Z->table[s("C_VI")] << result.C_VI_per_m;
+      mode_Z->table[s("L_VI")] << result.Z_VI * n_eff_re / electromagnetics::c0_;
+      mode_Z->table[s("C_VI")] << n_eff_re / (result.Z_VI * electromagnetics::c0_);
     }
   }
   mode_Z->WriteFullTableTrunc();
