@@ -71,8 +71,8 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
                                  const config::PeriodicBoundaryData &periodic_data,
                                  const Units &units, const MaterialOperator &mat_op_ref,
                                  mfem::ParFiniteElementSpace &nd_fespace)
-  : excitation(data.excitation), mat_op(mat_op_ref), a1(3), a2(3),
-    b1(3), b2(3), k_F(3), port_normal(3), comm(nd_fespace.GetComm())
+  : excitation(data.excitation), mat_op(mat_op_ref), a1(3), a2(3), b1(3), b2(3), k_F(3),
+    port_normal(3), comm(nd_fespace.GetComm())
 {
   // Set incident polarization coefficients: E_inc = α_TE ê_TE + α_TM ê_TM.
   const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
