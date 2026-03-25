@@ -54,11 +54,8 @@ void VectorFEBoundaryLFIntegrator::AssembleRHSElementVect(const mfem::FiniteElem
 {
   const int dof = fe.GetDof();
   const int dim = fe.GetDim();
-  // Allow IntRule override for oscillatory Floquet mode integrands that need
-  // higher-order quadrature than the default polynomial-based rule.
-  const mfem::IntegrationRule &ir =
-      IntRule ? *IntRule
-              : mfem::IntRules.Get(fe.GetGeomType(), fem::DefaultIntegrationOrder::Get(T));
+  const int q_order = fem::DefaultIntegrationOrder::Get(T);
+  const mfem::IntegrationRule &ir = mfem::IntRules.Get(fe.GetGeomType(), q_order);
   f_hat.SetSize(dim);
   vshape.SetSize(dof, dim);
   elvect.SetSize(dof);
