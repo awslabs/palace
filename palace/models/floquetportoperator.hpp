@@ -118,7 +118,6 @@ class FloquetPortData
 {
 public:
   int excitation;
-  bool active;
 
   [[nodiscard]] constexpr bool HasExcitation() const { return excitation != 0; }
   const auto &GetAttrList() const { return attr_list; }
