@@ -163,10 +163,12 @@ protected:
   int excitation_idx_cache = 0;
 
   // HDM system matrices and excitation:
-  // - System matrix is: A(ω) = K + iω C - ω² M + A2(ω).
+  // - System matrix is: A(ω) = K + iω C - ω² M + A2(ω) + F(ω).
   // - Excitation / drive: = iω RHS1 + RHS2(ω).
   // - Vector r is internal vector workspace of size RHS
-  // - The non-quadratic in ω operators A2(ω) and RHS2(ω) are built on fly in SolveHDM.
+  // - The non-quadratic in ω operators A2(ω), F(ω), and RHS2(ω) are built on the fly.
+  // - A2 stores the sparse part only (for PROM projection); the full frequency-dependent
+  //   operator (A2 + F) is built locally in SolveHDM via GetExtraSystemOperator.
   // - Need to recompute RHS1 when excitation index changes (cf excitation_idx_cache).
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   ComplexVector RHS1, RHS2, r;
