@@ -25,9 +25,8 @@ function generate_cpw2d_mesh(;
     h_vacuum::Float64    = 500.0,  # Vacuum region height above substrate
 
     # Mesh parameters
-    lc_gap::Float64   = 0.3,   # Mesh size in the gap region
-    lc_trace::Float64 = 1.0,   # Mesh size on the trace edges
-    lc_far::Float64   = 50.0,  # Mesh size far from the trace
+    lc_corner::Float64 = 0.03,  # Mesh size at trace/ground corners (~t_metal/3)
+    lc_far::Float64    = 60.0,  # Mesh size far from the trace
     mesh_order::Int   = 2,     # Mesh element order (1 or 2)
 
     # Output
@@ -301,39 +300,29 @@ function generate_cpw2d_mesh(;
     end
 
     # === Mesh size control ===
-    # Distance field from trace edges
-    trace_edge_curves = Int[]
-    # Trace hole vertical edges (for distance-based mesh refinement)
-    for (dim, tag) in all_curves
-        bb = gmsh.model.getBoundingBox(dim, tag)
-        xmin, ymin, _, xmax, ymax, _ = bb
-        xmid = (xmin + xmax) / 2.0
-        ymid = (ymin + ymax) / 2.0
-        if (abs(xmid - x_trace_left) < tol || abs(xmid - x_trace_right) < tol) &&
-           ymid > y_metal_bot - tol &&
-           ymid < y_metal_top + tol
-            push!(trace_edge_curves, tag)
+    # Two-level refinement: finest at the 8 corner points (field singularities), moderate
+    # along all PEC edges, then gradual transition to coarse far field.
+    corner_points = Int[]
+    for x in [x_trace_left, x_trace_right, x_ground_left_inner, x_ground_right_inner]
+        for y in [y_metal_bot, y_metal_top]
+            push!(corner_points, kernel.addPoint(x, y, 0.0))
         end
     end
+    kernel.synchronize()
 
-    # Use all PEC curves for distance field if no specific trace edges found
-    if isempty(trace_edge_curves)
-        trace_edge_curves = pec_curves
-    end
-
+    # Distance field from corner points with linear gradation.
     gmsh.model.mesh.field.add("Distance", 1)
-    gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(trace_edge_curves))
-    gmsh.model.mesh.field.setNumber(1, "Sampling", 100)
+    gmsh.model.mesh.field.setNumbers(1, "PointsList", Float64.(corner_points))
 
     gmsh.model.mesh.field.add("Threshold", 2)
     gmsh.model.mesh.field.setNumber(2, "InField", 1)
-    gmsh.model.mesh.field.setNumber(2, "SizeMin", lc_gap)
+    gmsh.model.mesh.field.setNumber(2, "SizeMin", lc_corner)
     gmsh.model.mesh.field.setNumber(2, "SizeMax", lc_far)
-    gmsh.model.mesh.field.setNumber(2, "DistMin", w_gap)
-    gmsh.model.mesh.field.setNumber(2, "DistMax", 10.0 * w_gap)
+    gmsh.model.mesh.field.setNumber(2, "DistMin", 0.5 * t_metal)
+    gmsh.model.mesh.field.setNumber(2, "DistMax", 150.0 * w_gap)
 
     gmsh.model.mesh.field.setAsBackgroundMesh(2)
-    gmsh.option.setNumber("Mesh.MeshSizeMin", lc_gap)
+    gmsh.option.setNumber("Mesh.MeshSizeMin", lc_corner)
     gmsh.option.setNumber("Mesh.MeshSizeMax", lc_far)
     gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
     gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
