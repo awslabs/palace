@@ -21,6 +21,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     maintainers("hughcars", "simlap", "cameronrutherford", "sbozzolo", "phdum")
 
     version("develop", branch="main")
+    version("0.16.0", tag="v0.16.0", commit="869ee5ced4850384410a7aeebc7c25f4c01be161")
     version("0.15.0", tag="v0.15.0", commit="b6762777d85a06072fdf4cc96e8a365da73df170")
     version("0.14.0", tag="v0.14.0", commit="a428a3a32dbbd6a2a6013b3b577016c3e9425abc")
     version("0.13.0", tag="v0.13.0", commit="a61c8cbe0cacf496cde3c62e93085fae0d6299ac")
@@ -186,7 +187,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("mfem~sundials", when="~sundials")
         depends_on("mfem+gslib", when="+gslib")
         depends_on("mfem~gslib", when="~gslib")
-        depends_on("mfem+exceptions", type="test")
+        # Palace tests require mfem+exceptions, checked at build time.
+        # TODO: depends_on("mfem+exceptions", type="test") should work but
+        # the concretizer enables +exceptions even for non-test builds:
+        # https://github.com/spack/spack/issues/51775
+        # depends_on("mfem+exceptions", type="test")
 
         depends_on("mfem+libunwind", when="build_type=Debug")
         depends_on("eigen@3.5:", type="build")
@@ -499,6 +504,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     def build(self, spec, prefix):
         with working_dir(self.build_directory):
             if self.run_tests:
+                if spec.satisfies("^mfem~exceptions"):
+                    raise InstallError(
+                        "Palace tests require mfem+exceptions. "
+                        "Reinstall with: spack install palace ^mfem+exceptions"
+                    )
                 make("palace-tests")
             else:
                 make()
