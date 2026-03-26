@@ -493,7 +493,7 @@ Let us now apply the driven and adaptive solver to a model of a transmon qubit, 
 discussed in the [eigenmode tutorial](transmon.md). We assume familiarity with that tutorial. As
 discussed there, the model consists of a transmon qubit and a quarter-wave coplanar waveguide
 readout resonator coupled to a feedline. There are three lumped ports in this model: ports 1 and 2
-are the ``50~\Ohm`` resistive feedline terminations and port 3 is a passive LC element (``L = 14.86\,\textrm{nH}``, ``C = 5.5\,\textrm{fF}``) representing the linearised Josephson junction.
+are the ``50~\Omega`` resistive feedline terminations and port 3 is a passive LC element (``L = 14.86\,\textrm{nH}``, ``C = 5.5\,\textrm{fF}``) representing the linearised Josephson junction.
 
 There are two eigenmodes of particular interest that we discovered in the previous tutorial:
 
