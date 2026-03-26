@@ -425,6 +425,7 @@ under the directory specified by
     "PCMatShifted": <bool>,
     "ComplexCoarseSolve": <bool>,
     "DropSmallEntries": <bool>,
+    "DropSmallEntriesTol": <float>,
     "PCSide": <string>,
     "DivFreeTol": <float>,
     "DivFreeMaxIts": <float>,
@@ -532,6 +533,10 @@ complex-valued system matrix. When set to `false`, the real-valued approximation
 
 `"DropSmallEntries" [false]` : When set to `true`, entries smaller than the double precision
 machine epsilon are dropped from the system matrix used in the sparse direct solver.
+
+`"DropSmallEntriesTol" [ε²]` : Tolerance for dropping small entries when `"DropSmallEntries"`
+is enabled. Default is `ε² ≈ 4.9e-32`. Larger values drop more entries, reducing memory at
+the cost of accuracy.
 
 `"PCSide" ["Default"]` :  Side for preconditioning. Not all options are available for all
 iterative solver choices, and the default choice depends on the iterative solver used.

@@ -90,6 +90,9 @@ private:
   // Whether to drop small entries (< ε) in the sparse system matrix.
   bool drop_small_entries = true;
 
+  // Tolerance for dropping small entries.
+  double drop_small_entries_tol = 0.0;
+
   // Whether to reuse the column reordering of previous factorizations.
   bool reorder_reuse = true;
 
@@ -102,10 +105,11 @@ private:
 public:
   MfemWrapperSolver(std::unique_ptr<mfem::Solver> &&pc, bool save_assembled = true,
                     bool complex_matrix = true, bool drop_small_entries = true,
-                    bool reorder_reuse = true)
+                    double drop_small_entries_tol = 0.0, bool reorder_reuse = true)
     : Solver<OperType>(pc->iterative_mode), pc(std::move(pc)),
       save_assembled(save_assembled), complex_matrix(complex_matrix),
-      drop_small_entries(drop_small_entries), reorder_reuse(reorder_reuse)
+      drop_small_entries(drop_small_entries),
+      drop_small_entries_tol(drop_small_entries_tol), reorder_reuse(reorder_reuse)
   {
   }
 

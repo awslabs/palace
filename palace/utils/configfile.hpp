@@ -874,6 +874,9 @@ public:
   // solver.
   bool drop_small_entries = false;
 
+  // Tolerance for dropping small entries in the system matrix.
+  double drop_small_entries_tol = 0.0;
+
   // Reuse the sparsity pattern (reordering) for repeated factorizations.
   bool reorder_reuse = true;
 
