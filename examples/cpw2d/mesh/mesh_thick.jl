@@ -27,7 +27,7 @@ function generate_cpw2d_mesh(;
     # Mesh parameters
     lc_corner::Float64 = 0.03,  # Mesh size at trace/ground corners (~t_metal/3)
     lc_far::Float64    = 60.0,  # Mesh size far from the trace
-    mesh_order::Int   = 2,     # Mesh element order (1 or 2)
+    mesh_order::Int    = 2,     # Mesh element order (1 or 2)
 
     # Output
     filename::String="cpw2d_thick.msh",
