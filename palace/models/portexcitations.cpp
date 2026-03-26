@@ -103,7 +103,6 @@ PortExcitations::PortExcitations(const LumpedPortOperator &lumped_port_op,
   }
 
   // Surface currents are always excited. Add them to all single existing excitations.
-  // TODO: Add excitation 1 if not present already?
   std::vector<int> current_port_idx;
   for (const auto &[idx, port] : surf_j_op)
   {
@@ -111,6 +110,10 @@ PortExcitations::PortExcitations(const LumpedPortOperator &lumped_port_op,
   }
   if (!current_port_idx.empty())
   {
+    if (excitations.empty())
+    {
+      excitations.try_emplace(1, SingleExcitationSpec{});
+    }
     for (auto &[ex_idx, ex_spec] : excitations)
     {
       ex_spec.current_port = current_port_idx;

@@ -77,6 +77,7 @@ arg_configs = [
             # "transmon/transmon_amr", # not included by default because of its cost
             "antenna/antenna_halfwave_dipole",
             "antenna/antenna_short_dipole",
+            "antenna/antenna_halfwave_dipole_surfacecurrent",
             "cylinder/cavity_pec",
             "cylinder/cavity_impedance",
             "cylinder/waveguide",
@@ -374,6 +375,22 @@ if "antenna/antenna_short_dipole" in cases
         custom_tests=Dict("farfield-rE.csv" => test_farfield),
         device=device,
         linear_solver=solver
+    )
+end
+
+if "antenna/antenna_halfwave_dipole_surfacecurrent" in cases
+    @info "Testing antenna/antenna_halfwave_dipole_surfacecurrent..."
+    @time testcase(
+        "antenna",
+        "antenna_halfwave_dipole_surfacecurrent.json",
+        "antenna_halfwave_dipole_surfacecurrent";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=50abstol,
+        device=device,
+        linear_solver=solver,
+        paraview_fields=false
     )
 end
 
