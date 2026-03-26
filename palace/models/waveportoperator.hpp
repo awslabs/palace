@@ -35,6 +35,8 @@ namespace config
 {
 
 struct BoundaryData;
+struct DomainData;
+struct LinearSolverData;
 struct SolverData;
 struct WavePortData;
 
@@ -327,8 +329,10 @@ private:
   bool is_2d_direct = false;
 
 public:
-  // 3D submesh constructor (existing): extracts submesh from parent mesh.
-  WavePortData(const config::WavePortData &data, const IoData &iodata,
+  // 3D submesh constructor: extracts submesh from parent mesh.
+  WavePortData(const config::WavePortData &data, const config::BoundaryData &boundaries,
+               const config::DomainData &domains, ProblemType problem_type,
+               const config::LinearSolverData &linear, const Units &units,
                const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
                mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr);
 
@@ -399,7 +403,10 @@ private:
   bool suppress_output;
   double fc, kc;
 
-  void SetUpBoundaryProperties(const IoData &iodata, const MaterialOperator &mat_op,
+  void SetUpBoundaryProperties(const config::BoundaryData &boundaries,
+                               const config::DomainData &domains,
+                               const config::SolverData &solver, ProblemType problem_type,
+                               const Units &units, const MaterialOperator &mat_op,
                                mfem::ParFiniteElementSpace &nd_fespace,
                                mfem::ParFiniteElementSpace &h1_fespace);
   void PrintBoundaryInfo(const Units &units, const mfem::ParMesh &mesh);
@@ -408,7 +415,8 @@ private:
   void Initialize(double omega);
 
 public:
-  WavePortOperator(const config::BoundaryData &boundaries, const config::SolverData &solver,
+  WavePortOperator(const config::BoundaryData &boundaries,
+                   const config::DomainData &domains, const config::SolverData &solver,
                    ProblemType problem_type, const Units &units,
                    const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
                    mfem::ParFiniteElementSpace &h1_fespace);

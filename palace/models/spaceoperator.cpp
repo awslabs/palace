@@ -57,7 +57,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     surf_z_op(boundaries.impedance, boundaries.cracked_attributes, units, mat_op,
               *mesh.back()),
     lumped_port_op(boundaries.lumpedport, units, mat_op, *mesh.back()),
-    wave_port_op(boundaries, solver, problem_type, units, mat_op, GetNDSpace(),
+    wave_port_op(boundaries, domains, solver, problem_type, units, mat_op, GetNDSpace(),
                  GetH1Space()),
     surf_j_op(boundaries.current, *mesh.back()),
     port_excitation_helper(lumped_port_op, wave_port_op, surf_j_op, current_dipole_op)
@@ -92,15 +92,6 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
   : SpaceOperator(iodata.solver, iodata.domains, iodata.boundaries, iodata.problem.type,
                   iodata.units, mesh)
 {
-  // The sub-struct constructor creates an empty WavePortOperator. Reconstruct with full
-  // IoData for impedance/conductivity/absorbing BC support on wave port submeshes.
-  if (!iodata.boundaries.waveport.empty())
-  {
-    wave_port_op = WavePortOperator(iodata, mat_op, GetNDSpace(), GetH1Space());
-    port_excitation_helper =
-        PortExcitations(lumped_port_op, wave_port_op, surf_j_op, current_dipole_op);
-  }
-
   // Validate excitations after wave port setup is complete.
   CheckExcitations(iodata.problem.type);
 }

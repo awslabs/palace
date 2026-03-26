@@ -29,12 +29,12 @@
       {
         "Index": 1,
         "Attributes": [2],
-        "Mode": 1,
+        "Mode": 1
       },
       {
         "Index": 2,
         "Attributes": [3],
-        "Mode": 1,
+        "Mode": 1
       }
       ],
       "PEC":
@@ -48,10 +48,10 @@
     "Device": "CPU",
     "Eigenmode":
     {
-      "N": 2,
+      "N": 3,
       "Tol": 1.0e-6,
       "Target": 6.6,
-      "Save": 3,
+      "Save": 3
     },
     "Linear":
     {
