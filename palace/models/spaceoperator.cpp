@@ -526,22 +526,34 @@ SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
                                const OperType *K, const OperType *C, const OperType *M,
                                const OperType *A2)
 {
+  // When A2 is an abstract ComplexOperator (not a sparse ComplexParOperator), it cannot
+  // participate in BuildParSumOperator. Build the sparse KCM sum separately and add A2 via
+  // a non-owning SumComplexOperator.
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
+  {
+    if (A2 && !dynamic_cast<const ComplexParOperator *>(A2))
+    {
+      auto A_KCM = BuildParSumOperator({a0, a1, a2}, {K, C, M});
+      return std::make_unique<SumComplexOperator>(std::move(A_KCM), *A2);
+    }
+  }
   return BuildParSumOperator({a0, a1, a2, ScalarType{1}}, {K, C, M, A2});
 }
 
 std::unique_ptr<ComplexOperator>
-SpaceOperator::GetSystemOperator(std::complex<double> a0, std::complex<double> a1,
-                                 std::complex<double> a2, double omega,
-                                 const ComplexOperator *K, const ComplexOperator *C,
-                                 const ComplexOperator *M, const ComplexOperator *A2)
+SpaceOperator::GetExtraSystemOperator(double omega, Operator::DiagonalPolicy diag_policy)
 {
-  auto A = GetSystemMatrix(a0, a1, a2, K, C, M, A2);
+  auto A2 = GetExtraSystemMatrix<ComplexOperator>(omega, diag_policy);
   auto F = floquet_port_op.GetExtraSystemOperator(omega);
-  if (F)
+  if (A2 && F)
   {
-    return std::make_unique<SumComplexOperator>(std::move(A), std::move(F));
+    return std::make_unique<SumComplexOperator>(std::move(A2), std::move(F));
   }
-  return A;
+  if (A2)
+  {
+    return A2;
+  }
+  return F;
 }
 
 std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double a2,
