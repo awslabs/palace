@@ -449,7 +449,9 @@ equations to be solved for each simulation type. The available options are:
   - `"STRUMPACK"` :  The [STRUMPACK](https://portal.nersc.gov/project/sparse/strumpack)
     sparse direct solver in real double precision is used to factorize the system matrix.
     For frequency domain problems this uses a real approximation to the true complex linear
-    system matrix. This option is only available when *Palace* has been
+    system matrix. This option is not compatible with magnetostatic problems due to the
+    singular curl-curl operator; use `"AMS"` instead. This option is only available when
+    *Palace* has been
     [built with STRUMPACK support](../install.md#Configuration-options).
   - `"MUMPS"` :  The [MUMPS](http://mumps.enseeiht.fr/) sparse direct solver in real double
     precision is used to factorize the system matrix. For frequency domain problems this
