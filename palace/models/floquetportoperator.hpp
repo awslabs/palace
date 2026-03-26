@@ -84,33 +84,6 @@ public:
                const std::complex<double> a = 1.0) const override;
 };
 
-// Sum of two ComplexOperators: (A + B)*x = A*x + B*x.
-class SumComplexOperator : public ComplexOperator
-{
-private:
-  std::unique_ptr<ComplexOperator> op_A, op_B;
-
-public:
-  SumComplexOperator(std::unique_ptr<ComplexOperator> &&A,
-                     std::unique_ptr<ComplexOperator> &&B)
-    : ComplexOperator(A->Height(), A->Width()), op_A(std::move(A)), op_B(std::move(B))
-  {
-  }
-
-  void Mult(const ComplexVector &x, ComplexVector &y) const override
-  {
-    op_A->Mult(x, y);
-    op_B->AddMult(x, y);
-  }
-
-  void AddMult(const ComplexVector &x, ComplexVector &y,
-               const std::complex<double> a = 1.0) const override
-  {
-    op_A->AddMult(x, y, a);
-    op_B->AddMult(x, y, a);
-  }
-};
-
 //
 // Data for a single Floquet port boundary.
 //

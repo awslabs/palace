@@ -157,15 +157,12 @@ public:
   const auto &GetFloquetPortOp() const { return floquet_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
 
-  // Get the full system operator including the low-rank Floquet port correction:
-  //   A_total = a0 K + a1 C + a2 M + A2(ω) + F(ω)
-  // where F is the Floquet DtN correction (low-rank, not in the preconditioner).
-  // If no Floquet ports are configured, returns the same result as GetSystemMatrix.
+  // Get the full frequency-dependent operator A2(ω) + F(ω), where A2 is the assembled
+  // sparse boundary operator and F is the low-rank Floquet DtN correction. The returned
+  // operator can be passed directly to GetSystemMatrix as the A2 argument. If no
+  // frequency-dependent terms exist, returns nullptr.
   std::unique_ptr<ComplexOperator>
-  GetSystemOperator(std::complex<double> a0, std::complex<double> a1,
-                    std::complex<double> a2, double omega, const ComplexOperator *K,
-                    const ComplexOperator *C, const ComplexOperator *M,
-                    const ComplexOperator *A2 = nullptr);
+  GetExtraSystemOperator(double omega, Operator::DiagonalPolicy diag_policy);
 
   const auto &GetPortExcitations() const { return port_excitation_helper; }
 
@@ -206,8 +203,9 @@ public:
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:
   //                     A = a0 K + a1 C + a2 (Mr + i Mi) + A2.
-  // It is assumed that the inputs have been constructed using previous calls to
-  // GetSystemMatrix() and the returned operator does not inherit ownership of any of them.
+  // A2 may be a sparse ComplexParOperator or an abstract ComplexOperator (e.g., a sum of
+  // sparse and low-rank terms from GetExtraSystemOperator). The returned operator does not
+  // inherit ownership of any of the inputs.
   template <typename OperType, typename ScalarType>
   std::unique_ptr<OperType>
   GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2, const OperType *K,

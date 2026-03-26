@@ -112,6 +112,51 @@ public:
                                  const std::complex<double> a = 1.0) const override;
 };
 
+// Sum of two ComplexOperators: (A + B)*x = A*x + B*x. Supports owning, non-owning, and
+// mixed modes. In non-owning mode, the caller must ensure the referenced operators outlive
+// this object.
+class SumComplexOperator : public ComplexOperator
+{
+private:
+  std::unique_ptr<ComplexOperator> owned_A, owned_B;
+  const ComplexOperator *op_A, *op_B;
+
+public:
+  // Both owning.
+  SumComplexOperator(std::unique_ptr<ComplexOperator> &&A,
+                     std::unique_ptr<ComplexOperator> &&B)
+    : ComplexOperator(A->Height(), A->Width()), owned_A(std::move(A)),
+      owned_B(std::move(B)), op_A(owned_A.get()), op_B(owned_B.get())
+  {
+  }
+
+  // Own A, view B.
+  SumComplexOperator(std::unique_ptr<ComplexOperator> &&A, const ComplexOperator &B)
+    : ComplexOperator(A->Height(), A->Width()), owned_A(std::move(A)), op_A(owned_A.get()),
+      op_B(&B)
+  {
+  }
+
+  // Both non-owning.
+  SumComplexOperator(const ComplexOperator &A, const ComplexOperator &B)
+    : ComplexOperator(A.Height(), A.Width()), op_A(&A), op_B(&B)
+  {
+  }
+
+  void Mult(const ComplexVector &x, ComplexVector &y) const override
+  {
+    op_A->Mult(x, y);
+    op_B->AddMult(x, y);
+  }
+
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a = 1.0) const override
+  {
+    op_A->AddMult(x, y, a);
+    op_B->AddMult(x, y, a);
+  }
+};
+
 // Wrap a sequence of operators of the same dimensions and optional coefficients.
 class SumOperator : public Operator
 {
