@@ -355,7 +355,10 @@ public:
 
 }  // namespace
 
-WavePortData::WavePortData(const config::WavePortData &data, const IoData &iodata,
+WavePortData::WavePortData(const config::WavePortData &data,
+                           const config::BoundaryData &boundaries,
+                           const config::DomainData &domains, ProblemType problem_type,
+                           const config::LinearSolverData &linear, const Units &units,
                            const MaterialOperator &mat_op,
                            mfem::ParFiniteElementSpace &nd_fespace,
                            mfem::ParFiniteElementSpace &h1_fespace,
@@ -380,29 +383,29 @@ WavePortData::WavePortData(const config::WavePortData &data, const IoData &iodat
   // internal intersections need boundary elements for the 2D eigenvalue problem BCs.
   {
     std::vector<int> internal_bdr_attrs;
-    for (auto a : iodata.boundaries.pec.attributes)
+    for (auto a : boundaries.pec.attributes)
     {
       internal_bdr_attrs.push_back(a);
     }
-    for (auto a : iodata.boundaries.auxpec.attributes)
+    for (auto a : boundaries.auxpec.attributes)
     {
       internal_bdr_attrs.push_back(a);
     }
-    for (const auto &d : iodata.boundaries.impedance)
+    for (const auto &d : boundaries.impedance)
     {
       for (auto a : d.attributes)
       {
         internal_bdr_attrs.push_back(a);
       }
     }
-    for (const auto &d : iodata.boundaries.conductivity)
+    for (const auto &d : boundaries.conductivity)
     {
       for (auto a : d.attributes)
       {
         internal_bdr_attrs.push_back(a);
       }
     }
-    for (auto a : iodata.boundaries.farfield.attributes)
+    for (auto a : boundaries.farfield.attributes)
     {
       internal_bdr_attrs.push_back(a);
     }
@@ -447,11 +450,14 @@ WavePortData::WavePortData(const config::WavePortData &data, const IoData &iodat
   // the parent 3D mesh for bdr_attributes validation (modifying a ParSubMesh's
   // bdr_attributes corrupts MFEM internal state), but use port_mat_op for CEED boundary
   // attribute lookups which correctly reference the remapped submesh.
-  port_mat_op = std::make_unique<MaterialOperator>(iodata, *port_mesh);
-  port_surf_z_op = std::make_unique<SurfaceImpedanceOperator>(iodata, *port_mat_op, mesh);
-  port_farfield_op = std::make_unique<FarfieldBoundaryOperator>(iodata, *port_mat_op, mesh);
-  port_surf_sigma_op =
-      std::make_unique<SurfaceConductivityOperator>(iodata, *port_mat_op, mesh);
+  port_mat_op = std::make_unique<MaterialOperator>(domains.materials, boundaries.periodic,
+                                                   problem_type, *port_mesh);
+  port_surf_z_op = std::make_unique<SurfaceImpedanceOperator>(
+      boundaries.impedance, boundaries.cracked_attributes, units, *port_mat_op, mesh);
+  port_farfield_op = std::make_unique<FarfieldBoundaryOperator>(
+      boundaries.farfield, problem_type, *port_mat_op, mesh);
+  port_surf_sigma_op = std::make_unique<SurfaceConductivityOperator>(
+      boundaries.conductivity, problem_type, units, *port_mat_op, mesh);
 
   // Construct mapping from parent (boundary) element indices to submesh (domain)
   // elements.
@@ -516,7 +522,7 @@ WavePortData::WavePortData(const config::WavePortData &data, const IoData &iodat
         *port_mat_op, &port_normal, port_surf_z_op.get(), port_farfield_op.get(),
         port_surf_sigma_op.get(), *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list,
         mode_idx, data.max_size, data.eig_tol, EigenvalueSolver::WhichType::LARGEST_REAL,
-        iodata.solver.linear, data.eigen_solver, data.verbose, port_comm);
+        linear, data.eigen_solver, data.verbose, port_comm);
   }
 
   // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"
@@ -844,6 +850,7 @@ std::complex<double> WavePortData::GetCharacteristicImpedance() const
 }
 
 WavePortOperator::WavePortOperator(const config::BoundaryData &boundaries,
+                                   const config::DomainData &domains,
                                    const config::SolverData &solver,
                                    ProblemType problem_type, const Units &units,
                                    const MaterialOperator &mat_op,
@@ -854,33 +861,27 @@ WavePortOperator::WavePortOperator(const config::BoundaryData &boundaries,
 {
   MFEM_VERIFY(nd_fespace.GetParMesh() == h1_fespace.GetParMesh(),
               "Mesh mismatch in WavePortOperator FE spaces!");
-  // Note: this sub-struct constructor does not set up wave port data (they need IoData for
-  // impedance/conductivity/absorbing BC support). Use the IoData constructor when wave
-  // ports are configured. This constructor is used by SpaceOperator when delegating from
-  // the IoData constructor; the IoData path reconstructs wave_port_op afterwards.
+  SetUpBoundaryProperties(boundaries, domains, solver, problem_type, units, mat_op,
+                          nd_fespace, h1_fespace);
   PrintBoundaryInfo(units, *nd_fespace.GetParMesh());
 }
 
 WavePortOperator::WavePortOperator(const IoData &iodata, const MaterialOperator &mat_op,
                                    mfem::ParFiniteElementSpace &nd_fespace,
                                    mfem::ParFiniteElementSpace &h1_fespace)
-  : suppress_output(false),
-    fc(iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0)),
-    kc(1.0 / iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0))
+  : WavePortOperator(iodata.boundaries, iodata.domains, iodata.solver, iodata.problem.type,
+                     iodata.units, mat_op, nd_fespace, h1_fespace)
 {
-  MFEM_VERIFY(nd_fespace.GetParMesh() == h1_fespace.GetParMesh(),
-              "Mesh mismatch in WavePortOperator FE spaces!");
-  SetUpBoundaryProperties(iodata, mat_op, nd_fespace, h1_fespace);
-  PrintBoundaryInfo(iodata.units, *nd_fespace.GetParMesh());
 }
 
-void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
+void WavePortOperator::SetUpBoundaryProperties(const config::BoundaryData &boundaries,
+                                               const config::DomainData &domains,
+                                               const config::SolverData &solver,
+                                               ProblemType problem_type, const Units &units,
                                                const MaterialOperator &mat_op,
                                                mfem::ParFiniteElementSpace &nd_fespace,
                                                mfem::ParFiniteElementSpace &h1_fespace)
 {
-  const auto &boundaries = iodata.boundaries;
-  const auto problem_type = iodata.problem.type;
 
   // Check that wave port boundary attributes have been specified correctly.
   const auto &mesh = *nd_fespace.GetParMesh();
@@ -962,7 +963,8 @@ void WavePortOperator::SetUpBoundaryProperties(const IoData &iodata,
     }
     port_dbc_bcs.Sort();
     port_dbc_bcs.Unique();
-    ports.try_emplace(idx, data, iodata, mat_op, nd_fespace, h1_fespace, port_dbc_bcs);
+    ports.try_emplace(idx, data, boundaries, domains, problem_type, solver.linear, units,
+                      mat_op, nd_fespace, h1_fespace, port_dbc_bcs);
   }
   MFEM_VERIFY(
       ports.empty() || problem_type == ProblemType::DRIVEN ||
@@ -1058,7 +1060,7 @@ void WavePortOperator::Initialize(double omega)
   {
     Mpi::Print(
         "\nCalculating boundary modes at wave ports for ω/2π = {:.3e} GHz ({:.3e})\n",
-        omega * fc, omega);
+        omega * fc / (2.0 * M_PI), omega);
   }
   for (auto &[idx, data] : ports)
   {
@@ -1781,7 +1783,7 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
         else if (pc_type == LinearSolver::MUMPS)
         {
 #if defined(MFEM_USE_MUMPS)
-          return std::make_unique<MumpsSolver>(comm, mfem::MUMPSSolver::UNSYMMETRIC,
+          return std::make_unique<MumpsSolver>(comm, MatrixSymmetry::UNSYMMETRIC,
                                                linear.sym_factorization,
                                                linear.strumpack_lr_tol, true, verbose - 1);
 #endif
@@ -1871,7 +1873,7 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
       case LinearSolver::MUMPS:
 #if defined(MFEM_USE_MUMPS)
         return std::make_unique<MfemWrapperSolver<ComplexOperator>>(
-            std::make_unique<MumpsSolver>(comm, mfem::MUMPSSolver::UNSYMMETRIC,
+            std::make_unique<MumpsSolver>(comm, MatrixSymmetry::UNSYMMETRIC,
                                           linear.sym_factorization, linear.strumpack_lr_tol,
                                           true, print),
             false, linear.complex_coarse_solve, linear.drop_small_entries,
