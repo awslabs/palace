@@ -57,11 +57,11 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
     {
       case CoordinateSystem::CYLINDRICAL:
         elems.push_back(
-            std::make_unique<CoaxialElementData>(elem.direction, attr_list, mesh));
+            std::make_unique<CoaxialLumpedGeometry>(elem.direction, attr_list, mesh));
         break;
       case CoordinateSystem::CARTESIAN:
         elems.push_back(
-            std::make_unique<UniformElementData>(elem.direction, attr_list, mesh));
+            std::make_unique<UniformLumpedGeometry>(elem.direction, attr_list, mesh));
         break;
     }
   }

@@ -1,0 +1,85 @@
+{
+  "Problem":
+  {
+    "Type": "Transient",
+    "Verbose": 2,
+    "Output": "postpro/matched_lumped_element"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/coaxial.msh",
+    "L0": 1.0e-3
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08,
+        "Conductivity": 4.629e-2
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2]
+    },
+    "LumpedPort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [3],
+        "R": 50.0,
+        "Direction": "+R",
+        "Excitation": true
+      }
+    ],
+    "LumpedElement":
+    [
+      {
+        "Index": 1,
+        "Attributes": [4],
+        "R": 50.0,
+        "Direction": "+R"
+      }
+    ],
+    "Postprocessing":
+    {
+      "SurfaceFlux":
+      [
+        {
+          "Index": 1,
+          "Attributes": [4],
+          "Type": "Power",
+          "TwoSided": false
+        }
+      ]
+    }
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Transient":
+    {
+      "Type": "GeneralizedAlpha",
+      "Excitation": "ModulatedGaussian",
+      "ExcitationFreq": 10.0,
+      "ExcitationWidth": 0.05,
+      "MaxTime": 1.0,
+      "TimeStep": 0.005,
+      "SaveStep": 10
+    },
+    "Linear":
+    {
+      "Type": "AMS",
+      "KSPType": "CG",
+      "Tol": 1.0e-8,
+      "MaxIts": 100
+    }
+  }
+}

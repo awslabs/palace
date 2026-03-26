@@ -8,7 +8,7 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
-#include "fem/lumpedelement.hpp"
+#include "fem/lumpedgeometry.hpp"
 
 namespace palace
 {
@@ -32,7 +32,7 @@ public:
   // To accommodate multielement surface current sources, a current source may be made up
   // of elements with different attributes and directions which add to deliver the same
   // total source current.
-  std::vector<std::unique_ptr<LumpedElementData>> elems;
+  std::vector<std::unique_ptr<LumpedGeometry>> elems;
 
 public:
   SurfaceCurrentData(const config::SurfaceCurrentData &data, const mfem::ParMesh &mesh);

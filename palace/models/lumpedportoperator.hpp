@@ -9,7 +9,7 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
-#include "fem/lumpedelement.hpp"
+#include "fem/lumpedgeometry.hpp"
 
 namespace palace
 {
@@ -39,7 +39,7 @@ public:
 
   // To accommodate multielement lumped ports, a port may be made up of elements with
   // different attributes and directions which add in parallel.
-  std::vector<std::unique_ptr<LumpedElementData>> elems;
+  std::vector<std::unique_ptr<LumpedGeometry>> elems;
 
   // Lumped port properties.
   double R, L, C;
@@ -56,7 +56,7 @@ public:
   LumpedPortData(const config::LumpedPortData &data, const MaterialOperator &mat_op,
                  const mfem::ParMesh &mesh);
 
-  double GetToSquare(const LumpedElementData &elem) const
+  double GetToSquare(const LumpedGeometry &elem) const
   {
     return elem.GetGeometryWidth() / elem.GetGeometryLength() * elems.size();
   }
