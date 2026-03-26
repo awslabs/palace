@@ -187,7 +187,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("mfem~sundials", when="~sundials")
         depends_on("mfem+gslib", when="+gslib")
         depends_on("mfem~gslib", when="~gslib")
-        depends_on("mfem+exceptions", type="test")
+        # Palace tests require mfem+exceptions, checked at build time.
+        # TODO: depends_on("mfem+exceptions", type="test") should work but
+        # the concretizer enables +exceptions even for non-test builds:
+        # https://github.com/spack/spack/issues/51775
+        # depends_on("mfem+exceptions", type="test")
 
         depends_on("mfem+libunwind", when="build_type=Debug")
         depends_on("eigen@3.5:", type="build")
@@ -500,6 +504,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     def build(self, spec, prefix):
         with working_dir(self.build_directory):
             if self.run_tests:
+                if spec.satisfies("^mfem~exceptions"):
+                    raise InstallError(
+                        "Palace tests require mfem+exceptions. "
+                        "Reinstall with: spack install palace ^mfem+exceptions"
+                    )
                 make("palace-tests")
             else:
                 make()

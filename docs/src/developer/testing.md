@@ -31,7 +31,8 @@ make -j $(nproc) palace-tests
 The `PALACE_MFEM_USE_EXCEPTIONS` option is necessary to properly capture and
 test assertions. If you want to also measure test coverage, turn
 `PALACE_BUILD_WITH_COVERAGE` on. See [Unit test coverage](#Unit-test-coverage)
-for more details on this.
+for more details on this. For Spack, these are the `mfem+exceptions` and the
+`palace+coverage` variants.
 
 Once the build completes, the `palace-unit-tests` executable will be installed
 in the same `bin/` directory as the main `palace` executable, and you can run

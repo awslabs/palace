@@ -137,8 +137,13 @@ runs:
             hypre:
               require: "@develop"
             mfem:
-              require: "@develop"
+              require: "@develop+exceptions"
         DEVEOF
+        else
+          cat << EXEOF >> spack.yaml
+            mfem:
+              require: "+exceptions"
+        EXEOF
         fi
 
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
