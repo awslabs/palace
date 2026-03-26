@@ -1,0 +1,83 @@
+{
+  "ElapsedTime": {
+    "Counts": {
+      "Adaptation": 0,
+      "CoarseSolve": 21,
+      "Construction": 1,
+      "DiskIO": 3,
+      "Div.-FreeProjection": 0,
+      "EigenvalueSolve": 0,
+      "Estimation": 2,
+      "FarFields": 0,
+      "Gridfunction": 3,
+      "Initialization": 2,
+      "LinearSolve": 2,
+      "MeshPreprocessing": 1,
+      "OperatorConstruction": 1,
+      "PROMConstruction": 0,
+      "PROMSolve": 0,
+      "Paraview": 3,
+      "Postprocessing": 6,
+      "Preconditioner": 21,
+      "Rebalancing": 0,
+      "Setup": 1,
+      "Solve": 2,
+      "TimeStepping": 0,
+      "Total": 1,
+      "WavePorts": 0
+    },
+    "Durations": {
+      "Adaptation": 0.0,
+      "CoarseSolve": 0.00925836,
+      "Construction": 2.41539078,
+      "DiskIO": 0.37071947499999997,
+      "Div.-FreeProjection": 0.0,
+      "EigenvalueSolve": 0.0,
+      "Estimation": 0.047241765,
+      "FarFields": 0.0,
+      "Gridfunction": 3.3060578979999997,
+      "Initialization": 0.372456202,
+      "LinearSolve": 0.15927176,
+      "MeshPreprocessing": 0.445497879,
+      "OperatorConstruction": 4.878482659,
+      "PROMConstruction": 0.0,
+      "PROMSolve": 0.0,
+      "Paraview": 8.587604315,
+      "Postprocessing": 0.157451706,
+      "Preconditioner": 3.7738265580000006,
+      "Rebalancing": 0.0,
+      "Setup": 2.280401144,
+      "Solve": 2.37865925,
+      "TimeStepping": 0.0,
+      "Total": 29.195647219,
+      "WavePorts": 0.0
+    }
+  },
+  "GitTag": "287c612",
+  "LinearSolver": {
+    "TotalIts": 17,
+    "TotalSolves": 2
+  },
+  "PeakMemoryMegabytes": {
+    "Average": 682.1328125,
+    "Max": 682.1328125,
+    "Min": 682.1328125,
+    "Total": 682.1328125
+  },
+  "PeakNodeMemoryMegabytes": {
+    "Average": 682.1328125,
+    "Max": 682.1328125,
+    "Min": 682.1328125,
+    "Total": 682.1328125
+  },
+  "Problem": {
+    "DegreesOfFreedom": 66328,
+    "MPISize": 1,
+    "MeshElements": 14362,
+    "MultigridDegreesOfFreedom": [
+      2536,
+      19857,
+      66328
+    ]
+  }
+}
