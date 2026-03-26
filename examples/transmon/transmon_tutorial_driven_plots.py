@@ -23,7 +23,8 @@
 # ```
 
 
-## Imports
+# %%
+# Imports
 
 import pathlib
 import re
@@ -44,7 +45,17 @@ mpl.rcParams.update(
     }
 )
 
-## Configuration
+mpl.rcParams.update({
+    "figure.dpi": 150,
+    "font.family": "serif",
+    "font.serif": ["Times"],
+    "mathtext.fontset": "cm",
+    "axes.formatter.use_mathtext": True,
+    "savefig.bbox": None,
+})
+
+# %%
+# Configuration
 
 TRANSMON_DIR = pathlib.Path("./examples/transmon")
 DOCS_ASSET_DIR = pathlib.Path("./docs/src/assets/examples")
@@ -64,7 +75,8 @@ ADAPTIVE_DIRS = {
 PORT_PAIRS = [(1, 1), (2, 1), (1, 2), (2, 2)]
 
 
-## Load Data
+# %%
+# Load Data
 
 _RE_S_DB = re.compile(r"\|S\[(\d+)\]\[(\d+)\]\| \(dB\)")
 _RE_E_COL = re.compile(r"E_(\w+)\[(\d+)\] \(J\)")
@@ -121,10 +133,7 @@ def parse_log_pivots(log_path: pathlib.Path) -> list[np.ndarray]:
         log_content = fp.read()
     sections = _RE_SAMPLED_FREQS.findall(log_content)
     return [
-        np.array(
-            [float(f.strip()) for f in match.replace("\n", "").split(",") if f.strip()],
-            dtype=np.float64,
-        )
+        np.array([float(f.strip()) for f in match.replace("\n", "").split(",") if f.strip()], dtype=np.float64)
         for match in sections
     ]
 
@@ -174,7 +183,8 @@ for tol in ADAPTIVE_TOLS:
     )
 
 
-## Common Plotting Options
+# %%
+# Common Plotting Options
 
 tol_palette = plt.cm.plasma(np.linspace(0.1, 0.9, len(ADAPTIVE_TOLS)))
 
@@ -343,15 +353,7 @@ def plot_smat_uniform(
                 markersize=2,
             )
         add_eigenmode_lines(ax)
-        ax.text(
-            0.97,
-            0.93,
-            rf"$S_{{{i}{j}}}$",
-            transform=ax.transAxes,
-            ha="right",
-            va="top",
-            fontsize=12,
-        )
+        ax.text(0.97, 0.93, rf"$S_{{{i}{j}}}$", transform=ax.transAxes, ha="right", va="top", fontsize=12)
         if row == 1:
             ax.set_xlabel("f (GHz)")
         ax.set_xlim(*_FREQ_LIM)
@@ -398,24 +400,8 @@ def plot_smat_adaptive_rms(
                 continue
             assert np.all(freq_adaptive[tol] == freq_uniform)
             err = np.abs(s_adaptive[tol][(i, j)] - ref) / scale
-            ax.plot(
-                freq,
-                err,
-                color=tol_palette[k],
-                linewidth=0.2,
-                label=f"{tol:.0e}",
-                marker="o",
-                markersize=2,
-            )
-            ax.axhline(
-                tol,
-                0,
-                0.80,
-                color=tol_palette[k],
-                linewidth=1,
-                linestyle="--",
-                zorder=-5,
-            )
+            ax.plot(freq, err, color=tol_palette[k], linewidth=0.2, label=f"{tol:.0e}", marker="o", markersize=2)
+            ax.axhline(tol, 0, 0.80, color=tol_palette[k], linewidth=1, linestyle="--", zorder=-5)
             pivots_list = sampled_freqs.get(tol, [])
             all_pivots = np.concatenate(pivots_list) if pivots_list else np.array([])
             if all_pivots.size:
@@ -430,15 +416,7 @@ def plot_smat_adaptive_rms(
                 )
         ax.axhline(1e-12, color="black", linewidth=1, linestyle=":", zorder=-5)
         add_eigenmode_lines(ax)
-        ax.text(
-            0.97,
-            0.97,
-            rf"$S_{{{i}{j}}}$",
-            transform=ax.transAxes,
-            ha="right",
-            va="top",
-            fontsize=12,
-        )
+        ax.text(0.97, 0.97, rf"$S_{{{i}{j}}}$", transform=ax.transAxes, ha="right", va="top", fontsize=12)
         if row == 1:
             ax.set_xlabel("f (GHz)")
         ax.set_xlim(*_FREQ_LIM)
@@ -456,9 +434,7 @@ def plot_smat_adaptive_rms(
         columnspacing=0.3,
     )
     fig.suptitle(
-        "Normalized Absolute Error in S-Parameters\n"
-        "$\\vert S_{{\\mathrm{{adaptive}}}} - S_{{\\mathrm{{uniform}}}}\\vert"
-        " /  \\vert\\vert S_{{\\mathrm{{uniform}}}}\\vert\\vert_{{\\mathrm{{RMS}}}}$"
+        "Normalized Absolute Error in S-Parameters\n$\\vert S_{{\\mathrm{{adaptive}}}} - S_{{\\mathrm{{uniform}}}}\\vert /  \\vert\\vert S_{{\\mathrm{{uniform}}}}\\vert\\vert_{{\\mathrm{{RMS}}}}$"
     )
     adjust_golden_layout_2x2(fig, axes, hspace_in=0.1, vspace_in=0.15)
     plt.savefig(DOCS_ASSET_DIR / "driven_ua_transmon_sparam_adaptive_rms.svg")
@@ -490,25 +466,9 @@ def plot_energy_uniform(
         ax = axes[col]
         key = ("elec", excitation)
         if key in e_uniform:
-            ax.plot(
-                freq_uniform,
-                e_uniform[key] * 1e9,
-                "k-",
-                linewidth=1,
-                label="Uniform",
-                marker="o",
-                markersize=2,
-            )
+            ax.plot(freq_uniform, e_uniform[key] * 1e9, "k-", linewidth=1, label="Uniform", marker="o", markersize=2)
         add_eigenmode_lines(ax)
-        ax.text(
-            0.97,
-            0.97,
-            f"Excitation {excitation}",
-            transform=ax.transAxes,
-            ha="right",
-            va="top",
-            fontsize=9,
-        )
+        ax.text(0.97, 0.97, f"Excitation {excitation}", transform=ax.transAxes, ha="right", va="top", fontsize=9)
         ax.set_xlabel("f (GHz)")
         ax.set_xlim(*_FREQ_LIM)
         ax.set_xticks(_FREQ_TICKS)
@@ -550,24 +510,8 @@ def plot_energy_adaptive_sweep(
                 continue
             assert np.all(freq_adaptive[tol] == freq_uniform)
             err = np.abs(e_adaptive[tol][ref_key] - ref) / scale
-            ax.plot(
-                freq,
-                err,
-                color=tol_palette[k],
-                linewidth=0.2,
-                label=f"{tol:.0e}",
-                marker="o",
-                markersize=2,
-            )
-            ax.axhline(
-                tol,
-                0,
-                0.8,
-                color=tol_palette[k],
-                linewidth=1,
-                linestyle="--",
-                zorder=-5,
-            )
+            ax.plot(freq, err, color=tol_palette[k], linewidth=0.2, label=f"{tol:.0e}", marker="o", markersize=2)
+            ax.axhline(tol, 0, 0.8, color=tol_palette[k], linewidth=1, linestyle="--", zorder=-5)
             pivots_list = sampled_freqs.get(tol, [])
             all_pivots = np.concatenate(pivots_list) if pivots_list else np.array([])
             ax.plot(
@@ -579,25 +523,9 @@ def plot_energy_adaptive_sweep(
                 marker="D",
                 markersize=4,
             )
-        ax.axhline(
-            1e-12,
-            color="black",
-            linewidth=1,
-            alpha=1,
-            marker="",
-            zorder=-5,
-            linestyle=":",
-        )
+        ax.axhline(1e-12, color="black", linewidth=1, alpha=1, marker="", zorder=-5, linestyle=":")
         add_eigenmode_lines(ax)
-        ax.text(
-            0.97,
-            0.97,
-            f"Excitation {excitation}",
-            transform=ax.transAxes,
-            ha="right",
-            va="top",
-            fontsize=9,
-        )
+        ax.text(0.97, 0.97, f"Excitation {excitation}", transform=ax.transAxes, ha="right", va="top", fontsize=9)
         ax.set_xlim(*_FREQ_LIM)
         ax.set_xticks(_FREQ_TICKS)
         ax.set_ylim(5e-15, 10)
@@ -617,9 +545,7 @@ def plot_energy_adaptive_sweep(
         columnspacing=0.3,
     )
     fig.suptitle(
-        "Error in Domain Energy\n"
-        "$\\vert E_\\mathrm{elec,adaptive} - E_\\mathrm{elec,uniform}\\vert"
-        " /  \\vert\\vert E_\\mathrm{elec,uniform}\\vert\\vert_\\mathrm{RMS}$"
+        "Error in Domain Energy\n$\\vert E_\\mathrm{elec,adaptive} - E_\\mathrm{elec,uniform}\\vert /  \\vert\\vert E_\\mathrm{elec,uniform}\\vert\\vert_\\mathrm{RMS}$"
     )
     adjust_golden_layout_1x2(fig, axes, hspace_in=0.1)
     plt.savefig(DOCS_ASSET_DIR / "driven_ua_transmon_energy_adaptive_sweep.svg")
