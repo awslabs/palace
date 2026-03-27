@@ -1558,7 +1558,7 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
       {
         imp_indices.push_back(idx);
       }
-      InitializeModeZ(imp_indices, post_op.HasCurrentPath());
+      InitializeModeZ(imp_indices, post_op.HasCurrent());
     }
     if (post_op.HasVoltagePostprocessing())
     {

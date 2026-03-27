@@ -238,6 +238,7 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
       if (!imp.current_attributes.empty())
       {
         cfg.current_marker = mesh::AttrToMarker(bdr_attr_max, imp.current_attributes);
+        cfg.has_current = true;
       }
       cfg.n_samples = imp.n_samples;
       if (imp.voltage_path.size() >= 2)
@@ -248,6 +249,7 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
       if (!imp.current_path.empty())
       {
         cfg.has_current_path = true;
+        cfg.has_current = true;
         cfg.current_path = ParsePath(imp.current_path);
       }
     }
