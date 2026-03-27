@@ -255,6 +255,7 @@ protected:
     int n_samples = 100;
     bool has_voltage_coordinates = false;
     bool has_current_path = false;
+    bool has_current = false;
   };
   std::map<int, ImpedancePostproConfig> impedance_postpro;
 
@@ -488,10 +489,10 @@ public:
 
   // Whether impedance/voltage postprocessing is configured (mode analysis).
   bool HasImpedancePostprocessing() const { return !impedance_postpro.empty(); }
-  bool HasCurrentPath() const
+  bool HasCurrent() const
   {
     return std::any_of(impedance_postpro.begin(), impedance_postpro.end(),
-                       [](const auto &p) { return p.second.has_current_path; });
+                       [](const auto &p) { return p.second.has_current; });
   }
   bool HasVoltagePostprocessing() const { return !voltage_postpro.empty(); }
 

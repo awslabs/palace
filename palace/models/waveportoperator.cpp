@@ -1303,17 +1303,19 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(double omega, double sigma,
 
   int num_conv = eigen->Solve();
 
-  // Build a permutation sorted by descending Re{kn} so that mode ordering is consistent
-  // across eigensolver backends (ARPACK vs SLEPc sort eigenvalues differently). Descending
-  // order puts the mode closest to the shift target first.
+  // Build a permutation sorted by proximity to the shift target so that mode ordering is
+  // consistent across eigensolver backends (ARPACK vs SLEPc sort eigenvalues differently).
+  // The shift sigma = -kn_target^2, so kn_target = sqrt(-sigma). Sorting by ascending
+  // |Re{kn} - kn_target| puts the mode closest to the target first.
+  const double kn_target = std::sqrt(-sigma);
   mode_perm.resize(num_conv);
   std::iota(mode_perm.begin(), mode_perm.end(), 0);
   std::sort(mode_perm.begin(), mode_perm.end(),
-            [this, sigma](int a, int b)
+            [this, sigma, kn_target](int a, int b)
             {
               auto kn_a = std::sqrt(-sigma - 1.0 / eigen->GetEigenvalue(a));
               auto kn_b = std::sqrt(-sigma - 1.0 / eigen->GetEigenvalue(b));
-              return kn_a.real() > kn_b.real();
+              return std::abs(kn_a.real() - kn_target) < std::abs(kn_b.real() - kn_target);
             });
 
   return {num_conv, sigma};
