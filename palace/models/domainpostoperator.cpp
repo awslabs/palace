@@ -21,10 +21,11 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                        const FiniteElementSpace &rt_fespace)
 {
   // Mass operators are always partially assembled.
-  MFEM_VERIFY(nd_fespace.GetFEColl().GetMapType(nd_fespace.Dimension()) ==
-                      mfem::FiniteElement::H_CURL &&
-                  rt_fespace.GetFEColl().GetMapType(nd_fespace.Dimension()) ==
-                      mfem::FiniteElement::H_DIV,
+  const int dim = nd_fespace.Dimension();
+  const auto curl_map = rt_fespace.GetFEColl().GetMapType(dim);
+  MFEM_VERIFY(nd_fespace.GetFEColl().GetMapType(dim) == mfem::FiniteElement::H_CURL &&
+                  (curl_map == mfem::FiniteElement::H_DIV ||
+                   curl_map == mfem::FiniteElement::INTEGRAL),
               "Unexpected finite element space types for domain energy postprocessing!");
   {
     // Construct ND mass matrix to compute the electric field energy integral as:
@@ -40,13 +41,28 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
     D.UseDevice(true);
   }
   {
-    // Construct RT mass matrix to compute the magnetic field energy integral as:
+    // Construct mass matrix for B-field to compute the magnetic field energy integral as:
     //              E_mag = 1/2 Re{∫_Ω Hᴴ B dV} as (M_muinv * b)ᴴ b.
-    MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
-                                           mat_op.GetInvPermeability());
-    BilinearForm m(rt_fespace);
-    m.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
-    M_mag = m.PartialAssemble();
+    // In 2D, B is scalar (L2 space) so use scalar mass integrator with scalar μ⁻¹.
+    // In 3D, B is a vector (RT space) so use vector FE mass integrator.
+    if (curl_map == mfem::FiniteElement::INTEGRAL)
+    {
+      // Scalar curl (2D): need scalar μ⁻¹ (z-z component).
+      // GetCurlCurlInvPermeability() returns 1x1 for 2D MaterialOperator.
+      MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                             mat_op.GetCurlCurlInvPermeability());
+      BilinearForm m(rt_fespace);
+      m.AddDomainIntegrator<MassIntegrator>(muinv_func);
+      M_mag = m.PartialAssemble();
+    }
+    else
+    {
+      MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                             mat_op.GetInvPermeability());
+      BilinearForm m(rt_fespace);
+      m.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
+      M_mag = m.PartialAssemble();
+    }
     H.SetSize(M_mag->Height());
     H.UseDevice(true);
   }
@@ -65,12 +81,24 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
       M_elec_i = m.PartialAssemble();
     }
     {
-      MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
-                                             mat_op.GetInvPermeability());
-      muinv_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
-      BilinearForm m(rt_fespace);
-      m.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
-      M_mag_i = m.PartialAssemble();
+      if (curl_map == mfem::FiniteElement::INTEGRAL)
+      {
+        MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                               mat_op.GetCurlCurlInvPermeability());
+        muinv_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
+        BilinearForm m(rt_fespace);
+        m.AddDomainIntegrator<MassIntegrator>(muinv_func);
+        M_mag_i = m.PartialAssemble();
+      }
+      else
+      {
+        MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                               mat_op.GetInvPermeability());
+        muinv_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
+        BilinearForm m(rt_fespace);
+        m.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
+        M_mag_i = m.PartialAssemble();
+      }
     }
     M_i.emplace(idx, std::make_pair(std::move(M_elec_i), std::move(M_mag_i)));
   }
@@ -118,9 +146,10 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
   else if (map_type == mfem::FiniteElement::H_CURL)
   {
     // H(curl) space for magnetic vector potential and magnetic field energy.
+    // (This is the magnetostatic case — creates curl-curl mass for B-field energy.)
     {
       MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
-                                             mat_op.GetInvPermeability());
+                                             mat_op.GetCurlCurlInvPermeability());
       BilinearForm m(fespace);
       m.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
       M_mag = m.PartialAssemble();
@@ -133,7 +162,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
       std::unique_ptr<Operator> M_mag_i;
       {
         MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
-                                               mat_op.GetInvPermeability());
+                                               mat_op.GetCurlCurlInvPermeability());
         muinv_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
         BilinearForm m(fespace);
         m.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
@@ -152,6 +181,39 @@ DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOpera
                                        const FiniteElementSpace &fespace)
   : DomainPostOperator(iodata.domains.postpro, mat_op, fespace)
 {
+}
+
+DomainPostOperator::DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
+                                       const FiniteElementSpace &nd_fespace,
+                                       bool electric_energy_only)
+{
+  // Mode analysis: ND space for electric field energy only (VectorFE mass with ε).
+  MFEM_VERIFY(nd_fespace.GetFEColl().GetMapType(nd_fespace.Dimension()) ==
+                  mfem::FiniteElement::H_CURL,
+              "Electric energy only constructor requires H(curl) space!");
+  {
+    MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                             mat_op.GetPermittivityReal());
+    BilinearForm m(nd_fespace);
+    m.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
+    M_elec = m.PartialAssemble();
+    D.SetSize(M_elec->Height());
+    D.UseDevice(true);
+  }
+
+  for (const auto &[idx, data] : iodata.domains.postpro.energy)
+  {
+    std::unique_ptr<Operator> M_elec_i;
+    {
+      MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                               mat_op.GetPermittivityReal());
+      epsilon_func.RestrictCoefficient(mat_op.GetCeedAttributes(data.attributes));
+      BilinearForm m(nd_fespace);
+      m.AddDomainIntegrator<VectorFEMassIntegrator>(epsilon_func);
+      M_elec_i = m.PartialAssemble();
+    }
+    M_i.emplace(idx, std::make_pair(std::move(M_elec_i), nullptr));
+  }
 }
 
 double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E) const
@@ -187,8 +249,6 @@ double DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B) const
     Mpi::GlobalSum(1, &dot, B.GetComm());
     return 0.5 * dot;
   }
-  MFEM_ABORT(
-      "Domain postprocessing is not configured for magnetic field energy calculation!");
   return 0.0;
 }
 

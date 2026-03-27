@@ -365,6 +365,12 @@ void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
                                PalaceQFunctionRelativePath(f_build_geom_factor_21_loc),
                                &build_qf));
       break;
+    case 31:
+      PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
+                               ceed, 1, f_build_geom_factor_31,
+                               PalaceQFunctionRelativePath(f_build_geom_factor_31_loc),
+                               &build_qf));
+      break;
     case 32:
       PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
                                ceed, 1, f_build_geom_factor_32,

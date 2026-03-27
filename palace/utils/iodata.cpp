@@ -373,6 +373,21 @@ void IoData::CheckConfiguration()
                    "with order > 1!\n");
     }
   }
+  else if (problem.type == ProblemType::BOUNDARYMODE)
+  {
+    MFEM_VERIFY(solver.boundary_mode.n >= 1,
+                "BoundaryMode solver requires at least one mode (n >= 1)!");
+    if (!boundaries.lumpedport.empty())
+    {
+      Mpi::Warning("BoundaryMode problem type does not support lumped port boundary "
+                   "conditions!\n");
+    }
+    if (!boundaries.current.empty())
+    {
+      Mpi::Warning(
+          "BoundaryMode problem type does not support surface current excitation!\n");
+    }
+  }
 
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
@@ -434,11 +449,28 @@ void IoData::CheckConfiguration()
       solver.linear.initial_guess = 0;
     }
   }
+  if (solver.linear.mg_max_levels < 0)
+  {
+    if (problem.type == ProblemType::BOUNDARYMODE)
+    {
+      // Default off for 2D boundary mode analysis (user can enable with MGMaxLevels > 1).
+      solver.linear.mg_max_levels = 1;
+    }
+    else
+    {
+      solver.linear.mg_max_levels = 100;
+    }
+  }
   if (solver.linear.pc_mat_shifted < 0)
   {
     if (problem.type == ProblemType::DRIVEN && solver.linear.type == LinearSolver::AMS)
     {
-      // Default true only driven simulations using AMS (false for most cases).
+      // Default true for driven simulations using AMS.
+      solver.linear.pc_mat_shifted = 1;
+    }
+    else if (problem.type == ProblemType::BOUNDARYMODE && solver.linear.mg_max_levels > 1)
+    {
+      // Default true for 2D boundary mode with multigrid (shift-and-invert near-zero mass).
       solver.linear.pc_mat_shifted = 1;
     }
     else
@@ -586,7 +618,7 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   // Floquet periodic boundaries.
   config::Nondimensionalize(units, boundaries.periodic);
 
-  // Wave port offset distance.
+  // Wave port offset distance and voltage path coordinates.
   for (auto &[idx, data] : boundaries.waveport)
   {
     config::Nondimensionalize(units, data);
@@ -596,6 +628,37 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   for (auto &[idx, data] : boundaries.postpro.flux)
   {
     config::Nondimensionalize(units, data);
+  }
+
+  // Mode impedance voltage and current path coordinates.
+  for (auto &[idx, data] : boundaries.postpro.impedance)
+  {
+    for (auto &pt : data.voltage_path)
+    {
+      for (auto &v : pt)
+      {
+        v /= units.GetMeshLengthRelativeScale();
+      }
+    }
+    for (auto &pt : data.current_path)
+    {
+      for (auto &v : pt)
+      {
+        v /= units.GetMeshLengthRelativeScale();
+      }
+    }
+  }
+
+  // Mode voltage path coordinates.
+  for (auto &[idx, data] : boundaries.postpro.voltage)
+  {
+    for (auto &pt : data.voltage_path)
+    {
+      for (auto &v : pt)
+      {
+        v /= units.GetMeshLengthRelativeScale();
+      }
+    }
   }
 
   // Dielectric interface thickness.
