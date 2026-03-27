@@ -242,21 +242,21 @@ refer to the procedure of finding the model as the “offline” or “training�
 calculate many output samples as the “online” phase.
 
 There is a large literature on constructing dimensional reductions of linear systems and we refer to
-the literature for an introduction [1,2]. *Palace* finds a set of ``n`` orthogonal vectors
-``\bm{V}`` that capture the full response of the system in the frequency range of interest
-``[f_\mathrm{min}, f_\mathrm{max}]``. The projection ``\bm{K}_r = \bm{V}^T \bm{K}\bm{V}``,
-``\bm{b}_r = \bm{V}^T \bm{b}``, etc., and the prolongation ``\bm{x} = \bm{V} \bm{x}_r`` are
+the literature for an introduction [1,2]. *Palace* finds a set of ``n`` real orthogonal vectors
+``\bm{Q}`` that capture the full response of the system in the frequency range of interest
+``[f_\mathrm{min}, f_\mathrm{max}]``. The projection ``\bm{K}_r = \bm{Q}^T \bm{K} \bm{Q}``,
+``\bm{b}_r = \bm{Q}^T \bm{b}``, etc., and the prolongation ``\bm{x} = \bm{Q} \bm{x}_r`` are
 particularly simple.
 
-The set of basis vectors ``\bm{V}`` that *Palace* uses are the orthogonalized components of the HDM
+The set of basis vectors ``\bm{Q}`` that *Palace* uses are the orthogonalized components of the HDM
 solutions ``\bm{x}^*`` at the "internal" sampling frequencies ``f_\mathrm{sample} \in [f_\mathrm{min}, f_\mathrm{max}]``. In fact, *Palace* uses ``\mathrm{Re}\bm{x}^*``,
-``\mathrm{Im}\bm{x}^*`` as separate vectors so that the basis ``\bm{V}`` is real. As we add more
+``\mathrm{Im}\bm{x}^*`` as separate vectors so that the basis ``\bm{Q}`` is real. As we add more
 sampling frequencies, the basis of the reduced order model grows and increases the accuracy of the
 projection, until we satisfy a convergence criterion. This construction is essentially a type of
 rational interpolation on the whole domain. It is also related to the mathematics of rational Krylov
 spaces [2].
 
-The Gram-Schmidt orthogonalization algorithm used to construct ``\bm{V}`` from the HDM solutions is
+The Gram-Schmidt orthogonalization algorithm used to construct ``\bm{Q}`` from the HDM solutions is
 determined by the user option
 [`"AdaptiveGSOrthogonalization"`](../config/solver.md#solver%5B%22Driven%22%5D), although a user
 should generally not need to change this. By default, it uses classical Gram-Schmidt with
@@ -376,7 +376,7 @@ and perform frequency prediction/sampling separately for each excitation. The bo
 ``f_{\mathrm{min}}``, ``f_{\mathrm{max}}`` and the [`"AddToPROM": true`](../config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D) user-samples will be added
 separately to the interpolation for each excitation.
 
-However, the ROM itself and basis ``\bm{V}`` will be the combination of samples from all excitations
+However, the ROM itself and basis ``\bm{Q}`` will be the combination of samples from all excitations
 and this combined basis enters the stopping criterion ``\bm{x}_\mathrm{ROM}(f^*)``. It can sometimes
 happen that later excitations already have a good enough basis from the samples of previous
 excitations and return earlier than if each were simulated individually.
@@ -390,7 +390,7 @@ In the above discussion, we have neglected the possibility of an ``\bm{A}_2(\ome
 a non-quadratic frequency term, which can arise from `WavePort` / `WavePortPEC`,  `Conductivity`, or
 `Farfield` boundary conditions. If such terms are present, the above algorithms will mostly proceed
 as described above — there will be frequency samples with HDM solves of the full system now
-containing ``\bm{A}_2(\omega)``, which will be added to the basis ``\bm{V}``. During the online
+containing ``\bm{A}_2(\omega)``, which will be added to the basis ``\bm{Q}``. During the online
 phase, *Palace* uses the projected ``\bm{K}_r``, ``\bm{C}_r``, ``\bm{M}_r``,
 ``\bm{A}_{2,r}(\omega)`` to solve the reduced problem efficiently. Having an ``\bm{A}_2(\omega)``
 term will be slower, since *Palace* will have to recompute ``\bm{A}_{2,r}(\omega)`` for every output
@@ -553,7 +553,7 @@ In this case we will be using the multi-excitation feature of *Palace*. Because 
 both `"Excitation": 1` on port 1 and `"Excitation": 2` on port 2, *Palace* will iterate over these
 excitations separately. This makes no difference to the uniform solver, since it solves every
 excitation and frequency sample separately. However, for the adaptive solver, the projective basis
-``\bm{V}`` is shared between all excitations and the convergence criterion ``\varepsilon < \varepsilon_\mathrm{tol}`` is on that combined basis. This means that the output of each excitation
+``\bm{Q}`` is shared between all excitations and the convergence criterion ``\varepsilon < \varepsilon_\mathrm{tol}`` is on that combined basis. This means that the output of each excitation
 can be different when we simulate them together with one ROM or separately with two ROMs. However,
 these differences are within the adaptive tolerance. See the discussion above.
 
