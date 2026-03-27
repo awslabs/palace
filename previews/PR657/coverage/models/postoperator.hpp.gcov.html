@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-03-26 19:39:24</td>
+            <td class="headerValue">2026-03-27 23:05:39</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">14.6&nbsp;%</td>
@@ -325,267 +325,268 @@
 <span id="L255"><span class="lineNum">     255</span>              :     int n_samples = 100;</span>
 <span id="L256"><span class="lineNum">     256</span>              :     bool has_voltage_coordinates = false;</span>
 <span id="L257"><span class="lineNum">     257</span>              :     bool has_current_path = false;</span>
-<span id="L258"><span class="lineNum">     258</span>              :   };</span>
-<span id="L259"><span class="lineNum">     259</span>              :   std::map&lt;int, ImpedancePostproConfig&gt; impedance_postpro;</span>
-<span id="L260"><span class="lineNum">     260</span>              : </span>
-<span id="L261"><span class="lineNum">     261</span>              :   // Per-entry voltage-only postprocessing configuration (keyed by config index).</span>
-<span id="L262"><span class="lineNum">     262</span> <span class="tlaUNC">           0 :   struct VoltagePostproConfig</span></span>
-<span id="L263"><span class="lineNum">     263</span>              :   {</span>
-<span id="L264"><span class="lineNum">     264</span>              :     mfem::Array&lt;int&gt; voltage_marker;</span>
-<span id="L265"><span class="lineNum">     265</span>              :     std::vector&lt;mfem::Vector&gt; voltage_path;</span>
-<span id="L266"><span class="lineNum">     266</span>              :     int n_samples = 100;</span>
-<span id="L267"><span class="lineNum">     267</span>              :     bool has_coordinates = false;</span>
-<span id="L268"><span class="lineNum">     268</span>              :   };</span>
-<span id="L269"><span class="lineNum">     269</span>              :   std::map&lt;int, VoltagePostproConfig&gt; voltage_postpro;</span>
-<span id="L270"><span class="lineNum">     270</span>              : </span>
-<span id="L271"><span class="lineNum">     271</span>              :   // Individual measurements to fill the cache/workspace. Measurements functions are not</span>
-<span id="L272"><span class="lineNum">     272</span>              :   // constrained by solver type in the signature since they are private member functions.</span>
-<span id="L273"><span class="lineNum">     273</span>              :   // They dispatch on solver type within the function itself using `if constexpr`, and do</span>
-<span id="L274"><span class="lineNum">     274</span>              :   // nothing if the measurement is not solver appropriate.</span>
-<span id="L275"><span class="lineNum">     275</span>              :   void MeasureDomainFieldEnergy() const;</span>
-<span id="L276"><span class="lineNum">     276</span>              :   void MeasureLumpedPorts() const;</span>
-<span id="L277"><span class="lineNum">     277</span>              :   void MeasureWavePorts() const;</span>
-<span id="L278"><span class="lineNum">     278</span>              :   void MeasureLumpedPortsEig() const;  // Depends: DomainFieldEnergy, LumpedPorts</span>
-<span id="L279"><span class="lineNum">     279</span>              :   void MeasureSParameter() const;      // Depends: LumpedPorts, WavePorts</span>
-<span id="L280"><span class="lineNum">     280</span>              :   void MeasureSurfaceFlux() const;</span>
-<span id="L281"><span class="lineNum">     281</span>              :   void MeasureFarField() const;</span>
-<span id="L282"><span class="lineNum">     282</span>              :   void MeasureInterfaceEFieldEnergy() const;  // Depends: LumpedPorts</span>
-<span id="L283"><span class="lineNum">     283</span>              :   void MeasureProbes() const;</span>
-<span id="L284"><span class="lineNum">     284</span>              : </span>
-<span id="L285"><span class="lineNum">     285</span>              :   // Helper function called by all solvers. Has to ensure correct call order to deal with</span>
-<span id="L286"><span class="lineNum">     286</span>              :   // dependent measurements.</span>
-<span id="L287"><span class="lineNum">     287</span> <span class="tlaGNC tlaBgGNC">          15 :   void MeasureAllImpl() const</span></span>
-<span id="L288"><span class="lineNum">     288</span>              :   {</span>
-<span id="L289"><span class="lineNum">     289</span> <span class="tlaGNC">          15 :     MeasureDomainFieldEnergy();</span></span>
-<span id="L290"><span class="lineNum">     290</span> <span class="tlaGNC">           9 :     MeasureLumpedPorts();</span></span>
-<span id="L291"><span class="lineNum">     291</span> <span class="tlaGNC">           3 :     MeasureWavePorts();</span></span>
-<span id="L292"><span class="lineNum">     292</span> <span class="tlaGNC">           3 :     MeasureLumpedPortsEig();</span></span>
-<span id="L293"><span class="lineNum">     293</span> <span class="tlaGNC">           3 :     MeasureSParameter();</span></span>
-<span id="L294"><span class="lineNum">     294</span> <span class="tlaGNC">          15 :     MeasureSurfaceFlux();</span></span>
-<span id="L295"><span class="lineNum">     295</span> <span class="tlaGNC">          12 :     MeasureInterfaceEFieldEnergy();</span></span>
-<span id="L296"><span class="lineNum">     296</span> <span class="tlaGNC">          15 :     MeasureProbes();</span></span>
-<span id="L297"><span class="lineNum">     297</span> <span class="tlaGNC">           6 :     MeasureFarField();</span></span>
-<span id="L298"><span class="lineNum">     298</span> <span class="tlaGNC">          15 :   }</span></span>
-<span id="L299"><span class="lineNum">     299</span>              : </span>
-<span id="L300"><span class="lineNum">     300</span>              :   // Setting grid functions.</span>
-<span id="L301"><span class="lineNum">     301</span>              :   //</span>
-<span id="L302"><span class="lineNum">     302</span>              :   // Populate the grid function solutions for the E- and B-field using the solution vectors</span>
-<span id="L303"><span class="lineNum">     303</span>              :   // on the true dofs. For the real-valued overload, the electric scalar potential can be</span>
-<span id="L304"><span class="lineNum">     304</span>              :   // specified too for electrostatic simulations. The output mesh and fields are</span>
-<span id="L305"><span class="lineNum">     305</span>              :   // non-dimensionalized consistently (B ~ E (L₀ ω₀ E₀⁻¹)).</span>
-<span id="L306"><span class="lineNum">     306</span>              :   //</span>
-<span id="L307"><span class="lineNum">     307</span>              :   // These functions are private helper functions. We want to enforce that a caller passes</span>
-<span id="L308"><span class="lineNum">     308</span>              :   // the appropriate ones as part of the MeasureAndPrintAll interface, rather than do a</span>
-<span id="L309"><span class="lineNum">     309</span>              :   // runtime check to see that they have been set.</span>
-<span id="L310"><span class="lineNum">     310</span>              :   //</span>
-<span id="L311"><span class="lineNum">     311</span>              :   // TODO(C++20): Switch SFINAE to requires.</span>
-<span id="L312"><span class="lineNum">     312</span>              : </span>
-<span id="L313"><span class="lineNum">     313</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L314"><span class="lineNum">     314</span> <span class="tlaGNC">           6 :   auto SetEGridFunction(const ComplexVector &amp;e, bool exchange_face_nbr_data = true)</span></span>
-<span id="L315"><span class="lineNum">     315</span>              :       -&gt; std::enable_if_t&lt;HasEGridFunction&lt;U&gt;() &amp;&amp; HasComplexGridFunction&lt;U&gt;(), void&gt;</span>
-<span id="L316"><span class="lineNum">     316</span>              :   {</span>
-<span id="L317"><span class="lineNum">     317</span> <span class="tlaGNC">           6 :     E-&gt;Real().SetFromTrueDofs(e.Real());  // Parallel distribute</span></span>
-<span id="L318"><span class="lineNum">     318</span> <span class="tlaGNC">           6 :     E-&gt;Imag().SetFromTrueDofs(e.Imag());</span></span>
-<span id="L319"><span class="lineNum">     319</span> <span class="tlaGNC">           6 :     if (exchange_face_nbr_data)</span></span>
-<span id="L320"><span class="lineNum">     320</span>              :     {</span>
-<span id="L321"><span class="lineNum">     321</span> <span class="tlaGNC">           6 :       E-&gt;Real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces</span></span>
-<span id="L322"><span class="lineNum">     322</span> <span class="tlaGNC">           6 :       E-&gt;Imag().ExchangeFaceNbrData();</span></span>
-<span id="L323"><span class="lineNum">     323</span>              :     }</span>
-<span id="L324"><span class="lineNum">     324</span> <span class="tlaGNC">           6 :   }</span></span>
-<span id="L325"><span class="lineNum">     325</span>              : </span>
-<span id="L326"><span class="lineNum">     326</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L327"><span class="lineNum">     327</span>              :   auto SetEGridFunction(const Vector &amp;e, bool exchange_face_nbr_data = true)</span>
-<span id="L328"><span class="lineNum">     328</span>              :       -&gt; std::enable_if_t&lt;HasEGridFunction&lt;U&gt;() &amp;&amp; !HasComplexGridFunction&lt;U&gt;(), void&gt;</span>
-<span id="L329"><span class="lineNum">     329</span>              :   {</span>
-<span id="L330"><span class="lineNum">     330</span> <span class="tlaGNC">           6 :     E-&gt;Real().SetFromTrueDofs(e);</span></span>
-<span id="L331"><span class="lineNum">     331</span>              :     if (exchange_face_nbr_data)</span>
-<span id="L332"><span class="lineNum">     332</span>              :     {</span>
-<span id="L333"><span class="lineNum">     333</span> <span class="tlaGNC">           6 :       E-&gt;Real().ExchangeFaceNbrData();</span></span>
-<span id="L334"><span class="lineNum">     334</span>              :     }</span>
-<span id="L335"><span class="lineNum">     335</span>              :   }</span>
-<span id="L336"><span class="lineNum">     336</span>              : </span>
-<span id="L337"><span class="lineNum">     337</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L338"><span class="lineNum">     338</span> <span class="tlaGNC">           6 :   auto SetBGridFunction(const ComplexVector &amp;b, bool exchange_face_nbr_data = true)</span></span>
-<span id="L339"><span class="lineNum">     339</span>              :       -&gt; std::enable_if_t&lt;HasBGridFunction&lt;U&gt;() &amp;&amp; HasComplexGridFunction&lt;U&gt;(), void&gt;</span>
-<span id="L340"><span class="lineNum">     340</span>              :   {</span>
-<span id="L341"><span class="lineNum">     341</span> <span class="tlaGNC">           6 :     B-&gt;Real().SetFromTrueDofs(b.Real());  // Parallel distribute</span></span>
-<span id="L342"><span class="lineNum">     342</span> <span class="tlaGNC">           6 :     B-&gt;Imag().SetFromTrueDofs(b.Imag());</span></span>
-<span id="L343"><span class="lineNum">     343</span> <span class="tlaGNC">           6 :     if (exchange_face_nbr_data)</span></span>
-<span id="L344"><span class="lineNum">     344</span>              :     {</span>
-<span id="L345"><span class="lineNum">     345</span> <span class="tlaGNC">           6 :       B-&gt;Real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces</span></span>
-<span id="L346"><span class="lineNum">     346</span> <span class="tlaGNC">           6 :       B-&gt;Imag().ExchangeFaceNbrData();</span></span>
-<span id="L347"><span class="lineNum">     347</span>              :     }</span>
-<span id="L348"><span class="lineNum">     348</span> <span class="tlaGNC">           6 :   }</span></span>
-<span id="L349"><span class="lineNum">     349</span>              : </span>
-<span id="L350"><span class="lineNum">     350</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L351"><span class="lineNum">     351</span>              :   auto SetBGridFunction(const Vector &amp;b, bool exchange_face_nbr_data = true)</span>
-<span id="L352"><span class="lineNum">     352</span>              :       -&gt; std::enable_if_t&lt;HasBGridFunction&lt;U&gt;() &amp;&amp; !HasComplexGridFunction&lt;U&gt;(), void&gt;</span>
-<span id="L353"><span class="lineNum">     353</span>              :   {</span>
-<span id="L354"><span class="lineNum">     354</span> <span class="tlaGNC">           6 :     B-&gt;Real().SetFromTrueDofs(b);</span></span>
-<span id="L355"><span class="lineNum">     355</span>              :     if (exchange_face_nbr_data)</span>
-<span id="L356"><span class="lineNum">     356</span>              :     {</span>
-<span id="L357"><span class="lineNum">     357</span> <span class="tlaGNC">           6 :       B-&gt;Real().ExchangeFaceNbrData();</span></span>
-<span id="L358"><span class="lineNum">     358</span>              :     }</span>
-<span id="L359"><span class="lineNum">     359</span>              :   }</span>
-<span id="L360"><span class="lineNum">     360</span>              : </span>
-<span id="L361"><span class="lineNum">     361</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L362"><span class="lineNum">     362</span>              :   auto SetVGridFunction(const Vector &amp;v, bool exchange_face_nbr_data = true)</span>
-<span id="L363"><span class="lineNum">     363</span>              :       -&gt; std::enable_if_t&lt;HasVGridFunction&lt;U&gt;() &amp;&amp; !HasComplexGridFunction&lt;U&gt;(), void&gt;</span>
-<span id="L364"><span class="lineNum">     364</span>              :   {</span>
-<span id="L365"><span class="lineNum">     365</span> <span class="tlaGNC">           3 :     V-&gt;Real().SetFromTrueDofs(v);</span></span>
-<span id="L366"><span class="lineNum">     366</span>              :     if (exchange_face_nbr_data)</span>
-<span id="L367"><span class="lineNum">     367</span>              :     {</span>
-<span id="L368"><span class="lineNum">     368</span> <span class="tlaGNC">           3 :       V-&gt;Real().ExchangeFaceNbrData();</span></span>
-<span id="L369"><span class="lineNum">     369</span>              :     }</span>
-<span id="L370"><span class="lineNum">     370</span>              :   }</span>
-<span id="L371"><span class="lineNum">     371</span>              : </span>
-<span id="L372"><span class="lineNum">     372</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L373"><span class="lineNum">     373</span>              :   auto SetAGridFunction(const Vector &amp;a, bool exchange_face_nbr_data = true)</span>
-<span id="L374"><span class="lineNum">     374</span>              :       -&gt; std::enable_if_t&lt;HasAGridFunction&lt;U&gt;() &amp;&amp; !HasComplexGridFunction&lt;U&gt;(), void&gt;</span>
-<span id="L375"><span class="lineNum">     375</span>              :   {</span>
-<span id="L376"><span class="lineNum">     376</span> <span class="tlaGNC">           3 :     A-&gt;Real().SetFromTrueDofs(a);</span></span>
-<span id="L377"><span class="lineNum">     377</span>              :     if (exchange_face_nbr_data)</span>
-<span id="L378"><span class="lineNum">     378</span>              :     {</span>
-<span id="L379"><span class="lineNum">     379</span> <span class="tlaGNC">           3 :       A-&gt;Real().ExchangeFaceNbrData();</span></span>
-<span id="L380"><span class="lineNum">     380</span>              :     }</span>
-<span id="L381"><span class="lineNum">     381</span>              :   }</span>
-<span id="L382"><span class="lineNum">     382</span>              : </span>
-<span id="L383"><span class="lineNum">     383</span>              : public:</span>
-<span id="L384"><span class="lineNum">     384</span>              :   PostOperator(const config::ProblemData &amp;problem, const config::SolverData &amp;solver,</span>
-<span id="L385"><span class="lineNum">     385</span>              :                const config::DomainData &amp;domains, const config::BoundaryData &amp;boundaries,</span>
-<span id="L386"><span class="lineNum">     386</span>              :                const Units &amp;units, fem_op_t&lt;solver_t&gt; &amp;fem_op);</span>
-<span id="L387"><span class="lineNum">     387</span>              :   explicit PostOperator(const IoData &amp;iodata, fem_op_t&lt;solver_t&gt; &amp;fem_op);</span>
-<span id="L388"><span class="lineNum">     388</span>              : </span>
-<span id="L389"><span class="lineNum">     389</span>              :   // MeasureAndPrintAll is the primary public interface of this class. It is specialized by</span>
-<span id="L390"><span class="lineNum">     390</span>              :   // solver type, since each solver has different fields and extra data required. These</span>
-<span id="L391"><span class="lineNum">     391</span>              :   // functions all:</span>
-<span id="L392"><span class="lineNum">     392</span>              :   // 1) Set the GridFunctions which have to be passed as part of the call.</span>
-<span id="L393"><span class="lineNum">     393</span>              :   // 2) Perform all measurements and populate measurement_cache with temporary results. This</span>
-<span id="L394"><span class="lineNum">     394</span>              :   //    cache structure exists since measurements have dependencies; we may use some</span>
-<span id="L395"><span class="lineNum">     395</span>              :   //    measurement results in later measurements.</span>
-<span id="L396"><span class="lineNum">     396</span>              :   // 3) Pass the measurement cache to the csv printer which will add the appropriate</span>
-<span id="L397"><span class="lineNum">     397</span>              :   //    rows/cols to the csv tables and print to file.</span>
-<span id="L398"><span class="lineNum">     398</span>              :   // 4) Trigger ParaView field computation and save.</span>
-<span id="L399"><span class="lineNum">     399</span>              :   //</span>
-<span id="L400"><span class="lineNum">     400</span>              :   // The functions return the total domain energy which is the only thing needed in the</span>
-<span id="L401"><span class="lineNum">     401</span>              :   // solver to normalize the error indicator. If more measurements were needed by the solver</span>
-<span id="L402"><span class="lineNum">     402</span>              :   // loop, we could imagine passing a small struct (like Measurement above or some sub-set</span>
-<span id="L403"><span class="lineNum">     403</span>              :   // therefore).</span>
-<span id="L404"><span class="lineNum">     404</span>              :   //</span>
-<span id="L405"><span class="lineNum">     405</span>              :   // The measure functions will also do logging of (some) measurements to stdout.</span>
-<span id="L406"><span class="lineNum">     406</span>              :   //</span>
-<span id="L407"><span class="lineNum">     407</span>              :   // TODO(C++20): Upgrade SFINAE to C++20 concepts to simplify static selection since we can</span>
-<span id="L408"><span class="lineNum">     408</span>              :   // just write `MeasureAndPrintAll(...) requires (solver_t == Type::A)` without extra</span>
-<span id="L409"><span class="lineNum">     409</span>              :   // template.</span>
-<span id="L410"><span class="lineNum">     410</span>              : </span>
-<span id="L411"><span class="lineNum">     411</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L412"><span class="lineNum">     412</span>              :   auto MeasureAndPrintAll(int ex_idx, int step, const ComplexVector &amp;e,</span>
-<span id="L413"><span class="lineNum">     413</span>              :                           const ComplexVector &amp;b, std::complex&lt;double&gt; omega)</span>
-<span id="L414"><span class="lineNum">     414</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::DRIVEN, double&gt;;</span>
-<span id="L415"><span class="lineNum">     415</span>              : </span>
-<span id="L416"><span class="lineNum">     416</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L417"><span class="lineNum">     417</span>              :   auto MeasureAndPrintAll(int step, const ComplexVector &amp;e, const ComplexVector &amp;b,</span>
-<span id="L418"><span class="lineNum">     418</span>              :                           std::complex&lt;double&gt; omega, double error_abs, double error_bkwd,</span>
-<span id="L419"><span class="lineNum">     419</span>              :                           int num_conv)</span>
-<span id="L420"><span class="lineNum">     420</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::EIGENMODE, double&gt;;</span>
-<span id="L421"><span class="lineNum">     421</span>              : </span>
-<span id="L422"><span class="lineNum">     422</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L423"><span class="lineNum">     423</span>              :   auto MeasureAndPrintAll(int step, const Vector &amp;v, const Vector &amp;e, int idx)</span>
-<span id="L424"><span class="lineNum">     424</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::ELECTROSTATIC, double&gt;;</span>
-<span id="L425"><span class="lineNum">     425</span>              : </span>
-<span id="L426"><span class="lineNum">     426</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L427"><span class="lineNum">     427</span>              :   auto MeasureAndPrintAll(int step, const Vector &amp;a, const Vector &amp;b, int idx)</span>
-<span id="L428"><span class="lineNum">     428</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::MAGNETOSTATIC, double&gt;;</span>
-<span id="L429"><span class="lineNum">     429</span>              : </span>
-<span id="L430"><span class="lineNum">     430</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L431"><span class="lineNum">     431</span>              :   auto MeasureAndPrintAll(int step, const Vector &amp;e, const Vector &amp;b, double t,</span>
-<span id="L432"><span class="lineNum">     432</span>              :                           double J_coef)</span>
-<span id="L433"><span class="lineNum">     433</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::TRANSIENT, double&gt;;</span>
-<span id="L434"><span class="lineNum">     434</span>              : </span>
-<span id="L435"><span class="lineNum">     435</span>              :   // Mode analysis: complex E-field tangential (ND) and normal (H1) eigenvectors,</span>
-<span id="L436"><span class="lineNum">     436</span>              :   // propagation constant kn, and eigensolver error estimates.</span>
-<span id="L437"><span class="lineNum">     437</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L438"><span class="lineNum">     438</span>              :   auto MeasureAndPrintAll(int step, const ComplexVector &amp;et, const ComplexVector &amp;en,</span>
-<span id="L439"><span class="lineNum">     439</span>              :                           std::complex&lt;double&gt; kn, double omega, double error_abs,</span>
-<span id="L440"><span class="lineNum">     440</span>              :                           double error_bkwd, int num_conv)</span>
-<span id="L441"><span class="lineNum">     441</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::BOUNDARYMODE, double&gt;;</span>
-<span id="L442"><span class="lineNum">     442</span>              : </span>
-<span id="L443"><span class="lineNum">     443</span>              :   // Write error indicator into ParaView file and print summary statistics to csv. Should be</span>
-<span id="L444"><span class="lineNum">     444</span>              :   // called once at the end of the solver loop.</span>
-<span id="L445"><span class="lineNum">     445</span>              :   void MeasureFinalize(const ErrorIndicator &amp;indicator);</span>
-<span id="L446"><span class="lineNum">     446</span>              : </span>
-<span id="L447"><span class="lineNum">     447</span>              :   // Measurement of the domain energy without printing. This is needed during the driven</span>
-<span id="L448"><span class="lineNum">     448</span>              :   // simulation with PROM. There samples are taken and we need the total domain energy for</span>
-<span id="L449"><span class="lineNum">     449</span>              :   // the error indicator, but no other measurement / printing should be done.</span>
-<span id="L450"><span class="lineNum">     450</span>              :   //</span>
-<span id="L451"><span class="lineNum">     451</span>              :   // TODO(C++20): SFINAE to requires.</span>
-<span id="L452"><span class="lineNum">     452</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L453"><span class="lineNum">     453</span>              :   auto MeasureDomainFieldEnergyOnly(const ComplexVector &amp;e, const ComplexVector &amp;b)</span>
-<span id="L454"><span class="lineNum">     454</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::DRIVEN, double&gt;;</span>
-<span id="L455"><span class="lineNum">     455</span>              : </span>
-<span id="L456"><span class="lineNum">     456</span>              :   // Access grid functions for field solutions. Note that these are NOT const functions. The</span>
-<span id="L457"><span class="lineNum">     457</span>              :   // electrostatics / magnetostatics solver do measurements of the capacitance/ inductance</span>
-<span id="L458"><span class="lineNum">     458</span>              :   // matrix globally at the end of all solves. This is done in the solver class, but uses</span>
-<span id="L459"><span class="lineNum">     459</span>              :   // the GridFunctions in this (PostOp) class as already allocated scratch workspace.</span>
-<span id="L460"><span class="lineNum">     460</span>              :   //</span>
-<span id="L461"><span class="lineNum">     461</span>              :   // Future: Consider moving those cap/ind measurements into this class and MeasureFinalize?</span>
-<span id="L462"><span class="lineNum">     462</span>              :   // Would need to store vector of V,A.</span>
-<span id="L463"><span class="lineNum">     463</span>              :   //</span>
-<span id="L464"><span class="lineNum">     464</span>              :   // TODO(C++20): Switch SFINAE to requires.</span>
-<span id="L465"><span class="lineNum">     465</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L466"><span class="lineNum">     466</span>              :   auto GetEGridFunction() -&gt; std::enable_if_t&lt;HasEGridFunction&lt;U&gt;(), decltype(*E) &amp;&gt;</span>
-<span id="L467"><span class="lineNum">     467</span>              :   {</span>
-<span id="L468"><span class="lineNum">     468</span>              :     return *E;</span>
-<span id="L469"><span class="lineNum">     469</span>              :   }</span>
-<span id="L470"><span class="lineNum">     470</span>              : </span>
-<span id="L471"><span class="lineNum">     471</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L472"><span class="lineNum">     472</span>              :   auto GetBGridFunction() -&gt; std::enable_if_t&lt;HasBGridFunction&lt;U&gt;(), decltype(*B) &amp;&gt;</span>
-<span id="L473"><span class="lineNum">     473</span>              :   {</span>
-<span id="L474"><span class="lineNum">     474</span>              :     return *B;</span>
-<span id="L475"><span class="lineNum">     475</span>              :   }</span>
-<span id="L476"><span class="lineNum">     476</span>              : </span>
-<span id="L477"><span class="lineNum">     477</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L478"><span class="lineNum">     478</span>              :   auto GetVGridFunction() -&gt; std::enable_if_t&lt;HasVGridFunction&lt;U&gt;(), decltype(*V) &amp;&gt;</span>
-<span id="L479"><span class="lineNum">     479</span>              :   {</span>
-<span id="L480"><span class="lineNum">     480</span>              :     return *V;</span>
-<span id="L481"><span class="lineNum">     481</span>              :   }</span>
-<span id="L482"><span class="lineNum">     482</span>              : </span>
-<span id="L483"><span class="lineNum">     483</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
-<span id="L484"><span class="lineNum">     484</span>              :   auto GetAGridFunction() -&gt; std::enable_if_t&lt;HasAGridFunction&lt;U&gt;(), decltype(*A) &amp;&gt;</span>
-<span id="L485"><span class="lineNum">     485</span>              :   {</span>
-<span id="L486"><span class="lineNum">     486</span>              :     return *A;</span>
-<span id="L487"><span class="lineNum">     487</span>              :   }</span>
-<span id="L488"><span class="lineNum">     488</span>              : </span>
-<span id="L489"><span class="lineNum">     489</span>              :   // Whether impedance/voltage postprocessing is configured (mode analysis).</span>
-<span id="L490"><span class="lineNum">     490</span> <span class="tlaUNC tlaBgUNC">           0 :   bool HasImpedancePostprocessing() const { return !impedance_postpro.empty(); }</span></span>
-<span id="L491"><span class="lineNum">     491</span> <span class="tlaUNC">           0 :   bool HasCurrentPath() const</span></span>
-<span id="L492"><span class="lineNum">     492</span>              :   {</span>
-<span id="L493"><span class="lineNum">     493</span>              :     return std::any_of(impedance_postpro.begin(), impedance_postpro.end(),</span>
-<span id="L494"><span class="lineNum">     494</span> <span class="tlaUNC">           0 :                        [](const auto &amp;p) { return p.second.has_current_path; });</span></span>
-<span id="L495"><span class="lineNum">     495</span>              :   }</span>
-<span id="L496"><span class="lineNum">     496</span> <span class="tlaUNC">           0 :   bool HasVoltagePostprocessing() const { return !voltage_postpro.empty(); }</span></span>
-<span id="L497"><span class="lineNum">     497</span>              : </span>
-<span id="L498"><span class="lineNum">     498</span>              :   // Project 3D impedance/voltage path coordinates to 2D local frame (submesh).</span>
-<span id="L499"><span class="lineNum">     499</span>              :   void ProjectImpedancePaths(const mfem::Vector &amp;centroid, const mfem::Vector &amp;e1,</span>
-<span id="L500"><span class="lineNum">     500</span>              :                              const mfem::Vector &amp;e2);</span>
-<span id="L501"><span class="lineNum">     501</span>              :   void ProjectVoltagePaths(const mfem::Vector &amp;centroid, const mfem::Vector &amp;e1,</span>
-<span id="L502"><span class="lineNum">     502</span>              :                            const mfem::Vector &amp;e2);</span>
-<span id="L503"><span class="lineNum">     503</span>              : </span>
-<span id="L504"><span class="lineNum">     504</span>              :   // Access to number of padding digits.</span>
-<span id="L505"><span class="lineNum">     505</span> <span class="tlaGNC tlaBgGNC">          15 :   constexpr auto GetPadDigitsDefault() const { return pad_digits_default; }</span></span>
-<span id="L506"><span class="lineNum">     506</span>              : </span>
-<span id="L507"><span class="lineNum">     507</span>              :   // Access to domain postprocessing objects. Use in electrostatic &amp; magnetostatic matrix</span>
-<span id="L508"><span class="lineNum">     508</span>              :   // measurement (see above).</span>
-<span id="L509"><span class="lineNum">     509</span> <span class="tlaUNC tlaBgUNC">           0 :   const auto &amp;GetDomainPostOp() const { return dom_post_op; }</span></span>
-<span id="L510"><span class="lineNum">     510</span>              : </span>
-<span id="L511"><span class="lineNum">     511</span>              :   // Expose MPI communicator from fem_op for electrostatic &amp; magnetostatic matrix processing</span>
-<span id="L512"><span class="lineNum">     512</span>              :   // (see above).</span>
-<span id="L513"><span class="lineNum">     513</span> <span class="tlaUNC">           0 :   auto GetComm() const { return fem_op-&gt;GetComm(); }</span></span>
-<span id="L514"><span class="lineNum">     514</span>              : };</span>
-<span id="L515"><span class="lineNum">     515</span>              : </span>
-<span id="L516"><span class="lineNum">     516</span>              : }  // namespace palace</span>
-<span id="L517"><span class="lineNum">     517</span>              : </span>
-<span id="L518"><span class="lineNum">     518</span>              : #endif  // PALACE_MODELS_POST_OPERATOR_HPP</span>
+<span id="L258"><span class="lineNum">     258</span>              :     bool has_current = false;</span>
+<span id="L259"><span class="lineNum">     259</span>              :   };</span>
+<span id="L260"><span class="lineNum">     260</span>              :   std::map&lt;int, ImpedancePostproConfig&gt; impedance_postpro;</span>
+<span id="L261"><span class="lineNum">     261</span>              : </span>
+<span id="L262"><span class="lineNum">     262</span>              :   // Per-entry voltage-only postprocessing configuration (keyed by config index).</span>
+<span id="L263"><span class="lineNum">     263</span> <span class="tlaUNC">           0 :   struct VoltagePostproConfig</span></span>
+<span id="L264"><span class="lineNum">     264</span>              :   {</span>
+<span id="L265"><span class="lineNum">     265</span>              :     mfem::Array&lt;int&gt; voltage_marker;</span>
+<span id="L266"><span class="lineNum">     266</span>              :     std::vector&lt;mfem::Vector&gt; voltage_path;</span>
+<span id="L267"><span class="lineNum">     267</span>              :     int n_samples = 100;</span>
+<span id="L268"><span class="lineNum">     268</span>              :     bool has_coordinates = false;</span>
+<span id="L269"><span class="lineNum">     269</span>              :   };</span>
+<span id="L270"><span class="lineNum">     270</span>              :   std::map&lt;int, VoltagePostproConfig&gt; voltage_postpro;</span>
+<span id="L271"><span class="lineNum">     271</span>              : </span>
+<span id="L272"><span class="lineNum">     272</span>              :   // Individual measurements to fill the cache/workspace. Measurements functions are not</span>
+<span id="L273"><span class="lineNum">     273</span>              :   // constrained by solver type in the signature since they are private member functions.</span>
+<span id="L274"><span class="lineNum">     274</span>              :   // They dispatch on solver type within the function itself using `if constexpr`, and do</span>
+<span id="L275"><span class="lineNum">     275</span>              :   // nothing if the measurement is not solver appropriate.</span>
+<span id="L276"><span class="lineNum">     276</span>              :   void MeasureDomainFieldEnergy() const;</span>
+<span id="L277"><span class="lineNum">     277</span>              :   void MeasureLumpedPorts() const;</span>
+<span id="L278"><span class="lineNum">     278</span>              :   void MeasureWavePorts() const;</span>
+<span id="L279"><span class="lineNum">     279</span>              :   void MeasureLumpedPortsEig() const;  // Depends: DomainFieldEnergy, LumpedPorts</span>
+<span id="L280"><span class="lineNum">     280</span>              :   void MeasureSParameter() const;      // Depends: LumpedPorts, WavePorts</span>
+<span id="L281"><span class="lineNum">     281</span>              :   void MeasureSurfaceFlux() const;</span>
+<span id="L282"><span class="lineNum">     282</span>              :   void MeasureFarField() const;</span>
+<span id="L283"><span class="lineNum">     283</span>              :   void MeasureInterfaceEFieldEnergy() const;  // Depends: LumpedPorts</span>
+<span id="L284"><span class="lineNum">     284</span>              :   void MeasureProbes() const;</span>
+<span id="L285"><span class="lineNum">     285</span>              : </span>
+<span id="L286"><span class="lineNum">     286</span>              :   // Helper function called by all solvers. Has to ensure correct call order to deal with</span>
+<span id="L287"><span class="lineNum">     287</span>              :   // dependent measurements.</span>
+<span id="L288"><span class="lineNum">     288</span> <span class="tlaGNC tlaBgGNC">          15 :   void MeasureAllImpl() const</span></span>
+<span id="L289"><span class="lineNum">     289</span>              :   {</span>
+<span id="L290"><span class="lineNum">     290</span> <span class="tlaGNC">          15 :     MeasureDomainFieldEnergy();</span></span>
+<span id="L291"><span class="lineNum">     291</span> <span class="tlaGNC">           9 :     MeasureLumpedPorts();</span></span>
+<span id="L292"><span class="lineNum">     292</span> <span class="tlaGNC">           3 :     MeasureWavePorts();</span></span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaGNC">           3 :     MeasureLumpedPortsEig();</span></span>
+<span id="L294"><span class="lineNum">     294</span> <span class="tlaGNC">           3 :     MeasureSParameter();</span></span>
+<span id="L295"><span class="lineNum">     295</span> <span class="tlaGNC">          15 :     MeasureSurfaceFlux();</span></span>
+<span id="L296"><span class="lineNum">     296</span> <span class="tlaGNC">          12 :     MeasureInterfaceEFieldEnergy();</span></span>
+<span id="L297"><span class="lineNum">     297</span> <span class="tlaGNC">          15 :     MeasureProbes();</span></span>
+<span id="L298"><span class="lineNum">     298</span> <span class="tlaGNC">           6 :     MeasureFarField();</span></span>
+<span id="L299"><span class="lineNum">     299</span> <span class="tlaGNC">          15 :   }</span></span>
+<span id="L300"><span class="lineNum">     300</span>              : </span>
+<span id="L301"><span class="lineNum">     301</span>              :   // Setting grid functions.</span>
+<span id="L302"><span class="lineNum">     302</span>              :   //</span>
+<span id="L303"><span class="lineNum">     303</span>              :   // Populate the grid function solutions for the E- and B-field using the solution vectors</span>
+<span id="L304"><span class="lineNum">     304</span>              :   // on the true dofs. For the real-valued overload, the electric scalar potential can be</span>
+<span id="L305"><span class="lineNum">     305</span>              :   // specified too for electrostatic simulations. The output mesh and fields are</span>
+<span id="L306"><span class="lineNum">     306</span>              :   // non-dimensionalized consistently (B ~ E (L₀ ω₀ E₀⁻¹)).</span>
+<span id="L307"><span class="lineNum">     307</span>              :   //</span>
+<span id="L308"><span class="lineNum">     308</span>              :   // These functions are private helper functions. We want to enforce that a caller passes</span>
+<span id="L309"><span class="lineNum">     309</span>              :   // the appropriate ones as part of the MeasureAndPrintAll interface, rather than do a</span>
+<span id="L310"><span class="lineNum">     310</span>              :   // runtime check to see that they have been set.</span>
+<span id="L311"><span class="lineNum">     311</span>              :   //</span>
+<span id="L312"><span class="lineNum">     312</span>              :   // TODO(C++20): Switch SFINAE to requires.</span>
+<span id="L313"><span class="lineNum">     313</span>              : </span>
+<span id="L314"><span class="lineNum">     314</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L315"><span class="lineNum">     315</span> <span class="tlaGNC">           6 :   auto SetEGridFunction(const ComplexVector &amp;e, bool exchange_face_nbr_data = true)</span></span>
+<span id="L316"><span class="lineNum">     316</span>              :       -&gt; std::enable_if_t&lt;HasEGridFunction&lt;U&gt;() &amp;&amp; HasComplexGridFunction&lt;U&gt;(), void&gt;</span>
+<span id="L317"><span class="lineNum">     317</span>              :   {</span>
+<span id="L318"><span class="lineNum">     318</span> <span class="tlaGNC">           6 :     E-&gt;Real().SetFromTrueDofs(e.Real());  // Parallel distribute</span></span>
+<span id="L319"><span class="lineNum">     319</span> <span class="tlaGNC">           6 :     E-&gt;Imag().SetFromTrueDofs(e.Imag());</span></span>
+<span id="L320"><span class="lineNum">     320</span> <span class="tlaGNC">           6 :     if (exchange_face_nbr_data)</span></span>
+<span id="L321"><span class="lineNum">     321</span>              :     {</span>
+<span id="L322"><span class="lineNum">     322</span> <span class="tlaGNC">           6 :       E-&gt;Real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces</span></span>
+<span id="L323"><span class="lineNum">     323</span> <span class="tlaGNC">           6 :       E-&gt;Imag().ExchangeFaceNbrData();</span></span>
+<span id="L324"><span class="lineNum">     324</span>              :     }</span>
+<span id="L325"><span class="lineNum">     325</span> <span class="tlaGNC">           6 :   }</span></span>
+<span id="L326"><span class="lineNum">     326</span>              : </span>
+<span id="L327"><span class="lineNum">     327</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L328"><span class="lineNum">     328</span>              :   auto SetEGridFunction(const Vector &amp;e, bool exchange_face_nbr_data = true)</span>
+<span id="L329"><span class="lineNum">     329</span>              :       -&gt; std::enable_if_t&lt;HasEGridFunction&lt;U&gt;() &amp;&amp; !HasComplexGridFunction&lt;U&gt;(), void&gt;</span>
+<span id="L330"><span class="lineNum">     330</span>              :   {</span>
+<span id="L331"><span class="lineNum">     331</span> <span class="tlaGNC">           6 :     E-&gt;Real().SetFromTrueDofs(e);</span></span>
+<span id="L332"><span class="lineNum">     332</span>              :     if (exchange_face_nbr_data)</span>
+<span id="L333"><span class="lineNum">     333</span>              :     {</span>
+<span id="L334"><span class="lineNum">     334</span> <span class="tlaGNC">           6 :       E-&gt;Real().ExchangeFaceNbrData();</span></span>
+<span id="L335"><span class="lineNum">     335</span>              :     }</span>
+<span id="L336"><span class="lineNum">     336</span>              :   }</span>
+<span id="L337"><span class="lineNum">     337</span>              : </span>
+<span id="L338"><span class="lineNum">     338</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L339"><span class="lineNum">     339</span> <span class="tlaGNC">           6 :   auto SetBGridFunction(const ComplexVector &amp;b, bool exchange_face_nbr_data = true)</span></span>
+<span id="L340"><span class="lineNum">     340</span>              :       -&gt; std::enable_if_t&lt;HasBGridFunction&lt;U&gt;() &amp;&amp; HasComplexGridFunction&lt;U&gt;(), void&gt;</span>
+<span id="L341"><span class="lineNum">     341</span>              :   {</span>
+<span id="L342"><span class="lineNum">     342</span> <span class="tlaGNC">           6 :     B-&gt;Real().SetFromTrueDofs(b.Real());  // Parallel distribute</span></span>
+<span id="L343"><span class="lineNum">     343</span> <span class="tlaGNC">           6 :     B-&gt;Imag().SetFromTrueDofs(b.Imag());</span></span>
+<span id="L344"><span class="lineNum">     344</span> <span class="tlaGNC">           6 :     if (exchange_face_nbr_data)</span></span>
+<span id="L345"><span class="lineNum">     345</span>              :     {</span>
+<span id="L346"><span class="lineNum">     346</span> <span class="tlaGNC">           6 :       B-&gt;Real().ExchangeFaceNbrData();  // Ready for parallel comm on shared faces</span></span>
+<span id="L347"><span class="lineNum">     347</span> <span class="tlaGNC">           6 :       B-&gt;Imag().ExchangeFaceNbrData();</span></span>
+<span id="L348"><span class="lineNum">     348</span>              :     }</span>
+<span id="L349"><span class="lineNum">     349</span> <span class="tlaGNC">           6 :   }</span></span>
+<span id="L350"><span class="lineNum">     350</span>              : </span>
+<span id="L351"><span class="lineNum">     351</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L352"><span class="lineNum">     352</span>              :   auto SetBGridFunction(const Vector &amp;b, bool exchange_face_nbr_data = true)</span>
+<span id="L353"><span class="lineNum">     353</span>              :       -&gt; std::enable_if_t&lt;HasBGridFunction&lt;U&gt;() &amp;&amp; !HasComplexGridFunction&lt;U&gt;(), void&gt;</span>
+<span id="L354"><span class="lineNum">     354</span>              :   {</span>
+<span id="L355"><span class="lineNum">     355</span> <span class="tlaGNC">           6 :     B-&gt;Real().SetFromTrueDofs(b);</span></span>
+<span id="L356"><span class="lineNum">     356</span>              :     if (exchange_face_nbr_data)</span>
+<span id="L357"><span class="lineNum">     357</span>              :     {</span>
+<span id="L358"><span class="lineNum">     358</span> <span class="tlaGNC">           6 :       B-&gt;Real().ExchangeFaceNbrData();</span></span>
+<span id="L359"><span class="lineNum">     359</span>              :     }</span>
+<span id="L360"><span class="lineNum">     360</span>              :   }</span>
+<span id="L361"><span class="lineNum">     361</span>              : </span>
+<span id="L362"><span class="lineNum">     362</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L363"><span class="lineNum">     363</span>              :   auto SetVGridFunction(const Vector &amp;v, bool exchange_face_nbr_data = true)</span>
+<span id="L364"><span class="lineNum">     364</span>              :       -&gt; std::enable_if_t&lt;HasVGridFunction&lt;U&gt;() &amp;&amp; !HasComplexGridFunction&lt;U&gt;(), void&gt;</span>
+<span id="L365"><span class="lineNum">     365</span>              :   {</span>
+<span id="L366"><span class="lineNum">     366</span> <span class="tlaGNC">           3 :     V-&gt;Real().SetFromTrueDofs(v);</span></span>
+<span id="L367"><span class="lineNum">     367</span>              :     if (exchange_face_nbr_data)</span>
+<span id="L368"><span class="lineNum">     368</span>              :     {</span>
+<span id="L369"><span class="lineNum">     369</span> <span class="tlaGNC">           3 :       V-&gt;Real().ExchangeFaceNbrData();</span></span>
+<span id="L370"><span class="lineNum">     370</span>              :     }</span>
+<span id="L371"><span class="lineNum">     371</span>              :   }</span>
+<span id="L372"><span class="lineNum">     372</span>              : </span>
+<span id="L373"><span class="lineNum">     373</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L374"><span class="lineNum">     374</span>              :   auto SetAGridFunction(const Vector &amp;a, bool exchange_face_nbr_data = true)</span>
+<span id="L375"><span class="lineNum">     375</span>              :       -&gt; std::enable_if_t&lt;HasAGridFunction&lt;U&gt;() &amp;&amp; !HasComplexGridFunction&lt;U&gt;(), void&gt;</span>
+<span id="L376"><span class="lineNum">     376</span>              :   {</span>
+<span id="L377"><span class="lineNum">     377</span> <span class="tlaGNC">           3 :     A-&gt;Real().SetFromTrueDofs(a);</span></span>
+<span id="L378"><span class="lineNum">     378</span>              :     if (exchange_face_nbr_data)</span>
+<span id="L379"><span class="lineNum">     379</span>              :     {</span>
+<span id="L380"><span class="lineNum">     380</span> <span class="tlaGNC">           3 :       A-&gt;Real().ExchangeFaceNbrData();</span></span>
+<span id="L381"><span class="lineNum">     381</span>              :     }</span>
+<span id="L382"><span class="lineNum">     382</span>              :   }</span>
+<span id="L383"><span class="lineNum">     383</span>              : </span>
+<span id="L384"><span class="lineNum">     384</span>              : public:</span>
+<span id="L385"><span class="lineNum">     385</span>              :   PostOperator(const config::ProblemData &amp;problem, const config::SolverData &amp;solver,</span>
+<span id="L386"><span class="lineNum">     386</span>              :                const config::DomainData &amp;domains, const config::BoundaryData &amp;boundaries,</span>
+<span id="L387"><span class="lineNum">     387</span>              :                const Units &amp;units, fem_op_t&lt;solver_t&gt; &amp;fem_op);</span>
+<span id="L388"><span class="lineNum">     388</span>              :   explicit PostOperator(const IoData &amp;iodata, fem_op_t&lt;solver_t&gt; &amp;fem_op);</span>
+<span id="L389"><span class="lineNum">     389</span>              : </span>
+<span id="L390"><span class="lineNum">     390</span>              :   // MeasureAndPrintAll is the primary public interface of this class. It is specialized by</span>
+<span id="L391"><span class="lineNum">     391</span>              :   // solver type, since each solver has different fields and extra data required. These</span>
+<span id="L392"><span class="lineNum">     392</span>              :   // functions all:</span>
+<span id="L393"><span class="lineNum">     393</span>              :   // 1) Set the GridFunctions which have to be passed as part of the call.</span>
+<span id="L394"><span class="lineNum">     394</span>              :   // 2) Perform all measurements and populate measurement_cache with temporary results. This</span>
+<span id="L395"><span class="lineNum">     395</span>              :   //    cache structure exists since measurements have dependencies; we may use some</span>
+<span id="L396"><span class="lineNum">     396</span>              :   //    measurement results in later measurements.</span>
+<span id="L397"><span class="lineNum">     397</span>              :   // 3) Pass the measurement cache to the csv printer which will add the appropriate</span>
+<span id="L398"><span class="lineNum">     398</span>              :   //    rows/cols to the csv tables and print to file.</span>
+<span id="L399"><span class="lineNum">     399</span>              :   // 4) Trigger ParaView field computation and save.</span>
+<span id="L400"><span class="lineNum">     400</span>              :   //</span>
+<span id="L401"><span class="lineNum">     401</span>              :   // The functions return the total domain energy which is the only thing needed in the</span>
+<span id="L402"><span class="lineNum">     402</span>              :   // solver to normalize the error indicator. If more measurements were needed by the solver</span>
+<span id="L403"><span class="lineNum">     403</span>              :   // loop, we could imagine passing a small struct (like Measurement above or some sub-set</span>
+<span id="L404"><span class="lineNum">     404</span>              :   // therefore).</span>
+<span id="L405"><span class="lineNum">     405</span>              :   //</span>
+<span id="L406"><span class="lineNum">     406</span>              :   // The measure functions will also do logging of (some) measurements to stdout.</span>
+<span id="L407"><span class="lineNum">     407</span>              :   //</span>
+<span id="L408"><span class="lineNum">     408</span>              :   // TODO(C++20): Upgrade SFINAE to C++20 concepts to simplify static selection since we can</span>
+<span id="L409"><span class="lineNum">     409</span>              :   // just write `MeasureAndPrintAll(...) requires (solver_t == Type::A)` without extra</span>
+<span id="L410"><span class="lineNum">     410</span>              :   // template.</span>
+<span id="L411"><span class="lineNum">     411</span>              : </span>
+<span id="L412"><span class="lineNum">     412</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L413"><span class="lineNum">     413</span>              :   auto MeasureAndPrintAll(int ex_idx, int step, const ComplexVector &amp;e,</span>
+<span id="L414"><span class="lineNum">     414</span>              :                           const ComplexVector &amp;b, std::complex&lt;double&gt; omega)</span>
+<span id="L415"><span class="lineNum">     415</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::DRIVEN, double&gt;;</span>
+<span id="L416"><span class="lineNum">     416</span>              : </span>
+<span id="L417"><span class="lineNum">     417</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L418"><span class="lineNum">     418</span>              :   auto MeasureAndPrintAll(int step, const ComplexVector &amp;e, const ComplexVector &amp;b,</span>
+<span id="L419"><span class="lineNum">     419</span>              :                           std::complex&lt;double&gt; omega, double error_abs, double error_bkwd,</span>
+<span id="L420"><span class="lineNum">     420</span>              :                           int num_conv)</span>
+<span id="L421"><span class="lineNum">     421</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::EIGENMODE, double&gt;;</span>
+<span id="L422"><span class="lineNum">     422</span>              : </span>
+<span id="L423"><span class="lineNum">     423</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L424"><span class="lineNum">     424</span>              :   auto MeasureAndPrintAll(int step, const Vector &amp;v, const Vector &amp;e, int idx)</span>
+<span id="L425"><span class="lineNum">     425</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::ELECTROSTATIC, double&gt;;</span>
+<span id="L426"><span class="lineNum">     426</span>              : </span>
+<span id="L427"><span class="lineNum">     427</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L428"><span class="lineNum">     428</span>              :   auto MeasureAndPrintAll(int step, const Vector &amp;a, const Vector &amp;b, int idx)</span>
+<span id="L429"><span class="lineNum">     429</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::MAGNETOSTATIC, double&gt;;</span>
+<span id="L430"><span class="lineNum">     430</span>              : </span>
+<span id="L431"><span class="lineNum">     431</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L432"><span class="lineNum">     432</span>              :   auto MeasureAndPrintAll(int step, const Vector &amp;e, const Vector &amp;b, double t,</span>
+<span id="L433"><span class="lineNum">     433</span>              :                           double J_coef)</span>
+<span id="L434"><span class="lineNum">     434</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::TRANSIENT, double&gt;;</span>
+<span id="L435"><span class="lineNum">     435</span>              : </span>
+<span id="L436"><span class="lineNum">     436</span>              :   // Mode analysis: complex E-field tangential (ND) and normal (H1) eigenvectors,</span>
+<span id="L437"><span class="lineNum">     437</span>              :   // propagation constant kn, and eigensolver error estimates.</span>
+<span id="L438"><span class="lineNum">     438</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L439"><span class="lineNum">     439</span>              :   auto MeasureAndPrintAll(int step, const ComplexVector &amp;et, const ComplexVector &amp;en,</span>
+<span id="L440"><span class="lineNum">     440</span>              :                           std::complex&lt;double&gt; kn, double omega, double error_abs,</span>
+<span id="L441"><span class="lineNum">     441</span>              :                           double error_bkwd, int num_conv)</span>
+<span id="L442"><span class="lineNum">     442</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::BOUNDARYMODE, double&gt;;</span>
+<span id="L443"><span class="lineNum">     443</span>              : </span>
+<span id="L444"><span class="lineNum">     444</span>              :   // Write error indicator into ParaView file and print summary statistics to csv. Should be</span>
+<span id="L445"><span class="lineNum">     445</span>              :   // called once at the end of the solver loop.</span>
+<span id="L446"><span class="lineNum">     446</span>              :   void MeasureFinalize(const ErrorIndicator &amp;indicator);</span>
+<span id="L447"><span class="lineNum">     447</span>              : </span>
+<span id="L448"><span class="lineNum">     448</span>              :   // Measurement of the domain energy without printing. This is needed during the driven</span>
+<span id="L449"><span class="lineNum">     449</span>              :   // simulation with PROM. There samples are taken and we need the total domain energy for</span>
+<span id="L450"><span class="lineNum">     450</span>              :   // the error indicator, but no other measurement / printing should be done.</span>
+<span id="L451"><span class="lineNum">     451</span>              :   //</span>
+<span id="L452"><span class="lineNum">     452</span>              :   // TODO(C++20): SFINAE to requires.</span>
+<span id="L453"><span class="lineNum">     453</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L454"><span class="lineNum">     454</span>              :   auto MeasureDomainFieldEnergyOnly(const ComplexVector &amp;e, const ComplexVector &amp;b)</span>
+<span id="L455"><span class="lineNum">     455</span>              :       -&gt; std::enable_if_t&lt;U == ProblemType::DRIVEN, double&gt;;</span>
+<span id="L456"><span class="lineNum">     456</span>              : </span>
+<span id="L457"><span class="lineNum">     457</span>              :   // Access grid functions for field solutions. Note that these are NOT const functions. The</span>
+<span id="L458"><span class="lineNum">     458</span>              :   // electrostatics / magnetostatics solver do measurements of the capacitance/ inductance</span>
+<span id="L459"><span class="lineNum">     459</span>              :   // matrix globally at the end of all solves. This is done in the solver class, but uses</span>
+<span id="L460"><span class="lineNum">     460</span>              :   // the GridFunctions in this (PostOp) class as already allocated scratch workspace.</span>
+<span id="L461"><span class="lineNum">     461</span>              :   //</span>
+<span id="L462"><span class="lineNum">     462</span>              :   // Future: Consider moving those cap/ind measurements into this class and MeasureFinalize?</span>
+<span id="L463"><span class="lineNum">     463</span>              :   // Would need to store vector of V,A.</span>
+<span id="L464"><span class="lineNum">     464</span>              :   //</span>
+<span id="L465"><span class="lineNum">     465</span>              :   // TODO(C++20): Switch SFINAE to requires.</span>
+<span id="L466"><span class="lineNum">     466</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L467"><span class="lineNum">     467</span>              :   auto GetEGridFunction() -&gt; std::enable_if_t&lt;HasEGridFunction&lt;U&gt;(), decltype(*E) &amp;&gt;</span>
+<span id="L468"><span class="lineNum">     468</span>              :   {</span>
+<span id="L469"><span class="lineNum">     469</span>              :     return *E;</span>
+<span id="L470"><span class="lineNum">     470</span>              :   }</span>
+<span id="L471"><span class="lineNum">     471</span>              : </span>
+<span id="L472"><span class="lineNum">     472</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L473"><span class="lineNum">     473</span>              :   auto GetBGridFunction() -&gt; std::enable_if_t&lt;HasBGridFunction&lt;U&gt;(), decltype(*B) &amp;&gt;</span>
+<span id="L474"><span class="lineNum">     474</span>              :   {</span>
+<span id="L475"><span class="lineNum">     475</span>              :     return *B;</span>
+<span id="L476"><span class="lineNum">     476</span>              :   }</span>
+<span id="L477"><span class="lineNum">     477</span>              : </span>
+<span id="L478"><span class="lineNum">     478</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L479"><span class="lineNum">     479</span>              :   auto GetVGridFunction() -&gt; std::enable_if_t&lt;HasVGridFunction&lt;U&gt;(), decltype(*V) &amp;&gt;</span>
+<span id="L480"><span class="lineNum">     480</span>              :   {</span>
+<span id="L481"><span class="lineNum">     481</span>              :     return *V;</span>
+<span id="L482"><span class="lineNum">     482</span>              :   }</span>
+<span id="L483"><span class="lineNum">     483</span>              : </span>
+<span id="L484"><span class="lineNum">     484</span>              :   template &lt;ProblemType U = solver_t&gt;</span>
+<span id="L485"><span class="lineNum">     485</span>              :   auto GetAGridFunction() -&gt; std::enable_if_t&lt;HasAGridFunction&lt;U&gt;(), decltype(*A) &amp;&gt;</span>
+<span id="L486"><span class="lineNum">     486</span>              :   {</span>
+<span id="L487"><span class="lineNum">     487</span>              :     return *A;</span>
+<span id="L488"><span class="lineNum">     488</span>              :   }</span>
+<span id="L489"><span class="lineNum">     489</span>              : </span>
+<span id="L490"><span class="lineNum">     490</span>              :   // Whether impedance/voltage postprocessing is configured (mode analysis).</span>
+<span id="L491"><span class="lineNum">     491</span> <span class="tlaUNC tlaBgUNC">           0 :   bool HasImpedancePostprocessing() const { return !impedance_postpro.empty(); }</span></span>
+<span id="L492"><span class="lineNum">     492</span> <span class="tlaUNC">           0 :   bool HasCurrent() const</span></span>
+<span id="L493"><span class="lineNum">     493</span>              :   {</span>
+<span id="L494"><span class="lineNum">     494</span>              :     return std::any_of(impedance_postpro.begin(), impedance_postpro.end(),</span>
+<span id="L495"><span class="lineNum">     495</span> <span class="tlaUNC">           0 :                        [](const auto &amp;p) { return p.second.has_current; });</span></span>
+<span id="L496"><span class="lineNum">     496</span>              :   }</span>
+<span id="L497"><span class="lineNum">     497</span> <span class="tlaUNC">           0 :   bool HasVoltagePostprocessing() const { return !voltage_postpro.empty(); }</span></span>
+<span id="L498"><span class="lineNum">     498</span>              : </span>
+<span id="L499"><span class="lineNum">     499</span>              :   // Project 3D impedance/voltage path coordinates to 2D local frame (submesh).</span>
+<span id="L500"><span class="lineNum">     500</span>              :   void ProjectImpedancePaths(const mfem::Vector &amp;centroid, const mfem::Vector &amp;e1,</span>
+<span id="L501"><span class="lineNum">     501</span>              :                              const mfem::Vector &amp;e2);</span>
+<span id="L502"><span class="lineNum">     502</span>              :   void ProjectVoltagePaths(const mfem::Vector &amp;centroid, const mfem::Vector &amp;e1,</span>
+<span id="L503"><span class="lineNum">     503</span>              :                            const mfem::Vector &amp;e2);</span>
+<span id="L504"><span class="lineNum">     504</span>              : </span>
+<span id="L505"><span class="lineNum">     505</span>              :   // Access to number of padding digits.</span>
+<span id="L506"><span class="lineNum">     506</span> <span class="tlaGNC tlaBgGNC">          15 :   constexpr auto GetPadDigitsDefault() const { return pad_digits_default; }</span></span>
+<span id="L507"><span class="lineNum">     507</span>              : </span>
+<span id="L508"><span class="lineNum">     508</span>              :   // Access to domain postprocessing objects. Use in electrostatic &amp; magnetostatic matrix</span>
+<span id="L509"><span class="lineNum">     509</span>              :   // measurement (see above).</span>
+<span id="L510"><span class="lineNum">     510</span> <span class="tlaUNC tlaBgUNC">           0 :   const auto &amp;GetDomainPostOp() const { return dom_post_op; }</span></span>
+<span id="L511"><span class="lineNum">     511</span>              : </span>
+<span id="L512"><span class="lineNum">     512</span>              :   // Expose MPI communicator from fem_op for electrostatic &amp; magnetostatic matrix processing</span>
+<span id="L513"><span class="lineNum">     513</span>              :   // (see above).</span>
+<span id="L514"><span class="lineNum">     514</span> <span class="tlaUNC">           0 :   auto GetComm() const { return fem_op-&gt;GetComm(); }</span></span>
+<span id="L515"><span class="lineNum">     515</span>              : };</span>
+<span id="L516"><span class="lineNum">     516</span>              : </span>
+<span id="L517"><span class="lineNum">     517</span>              : }  // namespace palace</span>
+<span id="L518"><span class="lineNum">     518</span>              : </span>
+<span id="L519"><span class="lineNum">     519</span>              : #endif  // PALACE_MODELS_POST_OPERATOR_HPP</span>
         </pre>
               </td>
             </tr>
