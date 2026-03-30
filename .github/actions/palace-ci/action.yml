@@ -73,7 +73,7 @@ runs:
           C_CXX_COMPILER="intel-oneapi-compilers"
           FORTRAN_COMPILER="intel-oneapi-compilers"
         else
-          MATH_LIBS="${{ inputs.math-libs || 'openblas' }}"
+          MATH_LIBS="${{ inputs.math-libs || 'openblas@develop' }}"
           MPI_IMPL="openmpi"
           C_CXX_COMPILER="${{ inputs.toolchain }}"
         fi
