@@ -43,10 +43,10 @@ jobs:
               - '.github/workflows/spack.yml'
 
   # Build jobs
-  build-x64-gcc:
+  build-arm64-gcc:
     needs: filter
     if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, x64]
+    runs-on: [self-hosted, arm64]
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/palace-ci
@@ -73,15 +73,15 @@ jobs:
           sudo podman build --format docker \
             --build-arg GITHUB_USER=$GITHUB_USER \
             --build-arg GITHUB_TOKEN=$GITHUB_TOKEN \
-            -t palace-x86_64_v4 .
+            -t palace-arm64 .
       - name: Save Docker image as tar
         shell: bash
         run: |
-          sudo podman save palace-x86_64_v4:latest -o palace-x86_64_v4.tar
-          sudo chmod a+r palace-x86_64_v4.tar
+          sudo podman save palace-arm64:latest -o palace-arm64.tar
+          sudo chmod a+r palace-arm64.tar
       - name: Upload container
         uses: actions/upload-artifact@v4
         with:
-          name: palace-x86_64_v4
-          path: palace-x86_64_v4.tar
+          name: palace-arm64
+          path: palace-arm64.tar
           retention-days: 3
