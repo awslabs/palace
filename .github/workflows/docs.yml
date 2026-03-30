@@ -169,6 +169,7 @@ jobs:
           PALACE_REF: ${{ github.head_ref || github.ref_name }}
         run: |
           # Using `spack develop` in order to have an in-source build
+          PALACE_REF="${PALACE_REF//\//-}"
           spack -e . develop --path=$(pwd) local.palace@git."${PALACE_REF}"=develop
           spack -e . concretize -f
 

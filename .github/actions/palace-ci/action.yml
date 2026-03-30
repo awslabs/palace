@@ -272,6 +272,7 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
+        PALACE_REF="${PALACE_REF//\//-}"
         spack -e . develop --path=$(pwd) local.palace@git."${PALACE_REF}"=develop
         spack -e . concretize -f --test root
         end_timer "Concretize"
