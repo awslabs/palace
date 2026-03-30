@@ -50,6 +50,52 @@ std::string OutputFolderName(const ProblemType solver_t)
   }
 }
 
+// Computes scalar Sn = Re{Ex Hy* - Ey Hx*} = Re{Et · (ẑ × Ht*)} where Ht = μ⁻¹ Bt.
+// This is the z-directed power density on the cross-section (no 1/2 factor, consistent
+// with the 3D PoyntingVectorCoefficient convention).
+class ModeSnCoefficient : public mfem::Coefficient
+{
+  const mfem::ParGridFunction &et_r, &et_i;
+  const mfem::ParGridFunction &bt_r, &bt_i;
+  const MaterialOperator &mat_op;
+
+public:
+  ModeSnCoefficient(const mfem::ParGridFunction &et_r, const mfem::ParGridFunction &et_i,
+                    const mfem::ParGridFunction &bt_r, const mfem::ParGridFunction &bt_i,
+                    const MaterialOperator &mat_op)
+    : et_r(et_r), et_i(et_i), bt_r(bt_r), bt_i(bt_i), mat_op(mat_op)
+  {
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    mfem::Vector etr(2), eti(2), btr(2), bti(2);
+    et_r.GetVectorValue(T, ip, etr);
+    et_i.GetVectorValue(T, ip, eti);
+    bt_r.GetVectorValue(T, ip, btr);
+    bt_i.GetVectorValue(T, ip, bti);
+
+    // Ht = μ⁻¹ Bt (isotropic for now — use scalar μ⁻¹).
+    double muinv = mat_op.GetInvPermeabilityZZ(T.Attribute);
+
+    // z_hat x Ht* = (-Hy*, Hx*) with H = μ⁻¹ B
+    // Sn = Re{Et · (ẑ × Ht*)} = Re{Ex(-Hy*) + Ey(Hx*)}
+    // H_r = μ⁻¹ B_r, H_i = μ⁻¹ B_i
+    // Hy* = μ⁻¹(By_r - i By_i), Hx* = μ⁻¹(Bx_r - i Bx_i)
+    // Re{Ex(-Hy*)} = -(Ex_r (By_r μ⁻¹) + Ex_i (By_i μ⁻¹))... no let me be careful.
+    // Re{(a+ib)(c-id)} = ac + bd
+    // Re{Ex · (-Hy*)} = Re{(Ex_r+iEx_i)(-(Hy_r-iHy_i))} = Re{(-Ex_r Hy_r - Ex_i Hy_i) +
+    // i(...)}
+    //                  = -Ex_r Hy_r - Ex_i Hy_i
+    // Re{Ey · Hx*} = Ey_r Hx_r + Ey_i Hx_i
+    double hx_r = muinv * btr(0), hx_i = muinv * bti(0);
+    double hy_r = muinv * btr(1), hy_i = muinv * bti(1);
+
+    double sz = -etr(0) * hy_r - eti(0) * hy_i + etr(1) * hx_r + eti(1) * hx_i;
+    return sz;
+  }
+};
+
 // Coefficient for the in-plane B field of a waveguide mode propagating as e^{-ikn z}:
 //   Bt = -(kn/omega)(z_hat x Et) + (1/(i*omega))(grad_t(Ez) x z_hat)
 // Evaluates the real or imaginary part at any point given grid functions for Et and Ez.
@@ -406,16 +452,20 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
 
   if constexpr (HasEGridFunction<solver_t>() && HasBGridFunction<solver_t>())
   {
-    // Poynting Vector.
-    // S = Re{E x H⋆} = Re{E x μ⁻¹B⋆}.
-    // E and B will be dimensionalized when the coefficient is evaluated, so the scaling
-    // only needs to account for the remaining μ⁻¹ = H / B. As mentioned above,
-    // ProjectCoefficient(*S.get()) or paraview->Save() should always be called after
-    // E and B have been dimensionalized.
-    const double scaling = units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
-                           units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
-    S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, fem_op->GetMaterialOp(),
-                                                    scaling);
+    if constexpr (solver_t != ProblemType::BOUNDARYMODE)
+    {
+      // 3D Poynting Vector: S = Re{E x H⋆} = Re{E x μ⁻¹B⋆}.
+      // E and B will be dimensionalized when the coefficient is evaluated, so the scaling
+      // only needs to account for the remaining μ⁻¹ = H / B. As mentioned above,
+      // ProjectCoefficient(*S.get()) or paraview->Save() should always be called after
+      // E and B have been dimensionalized.
+      const double scaling = units.Dimensionalize<Units::ValueType::FIELD_H>(1.0) /
+                             units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
+      S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, fem_op->GetMaterialOp(),
+                                                      scaling);
+    }
+    // For boundary mode, Sn = Re{Et · (ẑ × Ht*)} is computed after Bt_inplane is
+    // available (in MeasureAndPrintAll), as it requires the in-plane B field.
   }
 }
 
@@ -503,12 +553,12 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   {
     if (HasComplexGridFunction<solver_t>())
     {
-      paraview->RegisterField("E_n_real", &En->Real());
-      paraview->RegisterField("E_n_imag", &En->Imag());
+      paraview->RegisterField("En_real", &En->Real());
+      paraview->RegisterField("En_imag", &En->Imag());
     }
     else
     {
-      paraview->RegisterField("E_n", &En->Real());
+      paraview->RegisterField("En", &En->Real());
     }
   }
   if (B)
@@ -724,6 +774,12 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
     Bt_inplane->Imag().FaceNbrData() *= mesh_Lc0;
     units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*Bt_inplane);
   }
+  // Register Sn on first write (created lazily after Bt_inplane is available).
+  if (Sn && !sn_registered)
+  {
+    paraview->RegisterCoeffField("Sn", Sn.get());
+    sn_registered = true;
+  }
   paraview->SetCycle(step);
   paraview->SetTime(time);
   paraview_bdr->SetCycle(step);
@@ -903,12 +959,12 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
   {
     if constexpr (HasComplexGridFunction<solver_t>())
     {
-      write_grid_function(En->Real(), "E_n_real");
-      write_grid_function(En->Imag(), "E_n_imag");
+      write_grid_function(En->Real(), "En_real");
+      write_grid_function(En->Imag(), "En_imag");
     }
     else
     {
-      write_grid_function(En->Real(), "E_n");
+      write_grid_function(En->Real(), "En");
     }
   }
 
@@ -969,6 +1025,12 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
     gridfunc_vector = 0.0;
     gridfunc_vector.ProjectCoefficient(*S.get());
     write_grid_function(gridfunc_vector, "S");
+  }
+  if (Sn)
+  {
+    gridfunc_scalar = 0.0;
+    gridfunc_scalar.ProjectCoefficient(*Sn.get());
+    write_grid_function(gridfunc_scalar, "Sn");
   }
 
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
@@ -1410,31 +1472,31 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureProbes() const
 {
   measurement_cache.probe_E_field.clear();
+  measurement_cache.probe_En_field.clear();
+  measurement_cache.probe_Bt_field.clear();
   measurement_cache.probe_B_field.clear();
 
 #if defined(MFEM_USE_GSLIB)
   if constexpr (HasEGridFunction<solver_t>())
   {
-    if (interp_op.GetProbes().size() > 0)
+    if (interp_op.GetProbes().size() > 0 && E)
     {
       measurement_cache.probe_E_field = interp_op.ProbeField(*E);
     }
   }
+  if (En && interp_op.GetProbes().size() > 0)
+  {
+    measurement_cache.probe_En_field = interp_op.ProbeField(*En);
+  }
+  if (Bt_inplane && interp_op.GetProbes().size() > 0)
+  {
+    measurement_cache.probe_Bt_field = interp_op.ProbeField(*Bt_inplane);
+  }
   if constexpr (HasBGridFunction<solver_t>())
   {
-    if (interp_op.GetProbes().size() > 0)
+    if (interp_op.GetProbes().size() > 0 && B)
     {
-      if (B->Real().VectorDim() == interp_op.GetVDim())
-      {
-        measurement_cache.probe_B_field = interp_op.ProbeField(*B);
-      }
-      else
-      {
-        Mpi::Warning("Skipping B-field probe: B field dimension ({}) does not match "
-                     "interpolation operator dimension ({}). B-field probing requires a "
-                     "vector B field (not available in 2D boundary mode analysis).\n",
-                     B->Real().VectorDim(), interp_op.GetVDim());
-      }
+      measurement_cache.probe_B_field = interp_op.ProbeField(*B);
     }
   }
 #endif
@@ -1733,6 +1795,14 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     Bt_inplane->Imag().ProjectCoefficient(bt_imag_coeff);
     Bt_inplane->Real().ExchangeFaceNbrData();
     Bt_inplane->Imag().ExchangeFaceNbrData();
+  }
+
+  // Create Sn coefficient for boundary mode Poynting visualization.
+  // Sn = Re{Ex Hy* - Ey Hx*}: z-directed power density on the cross-section.
+  if (Bt_inplane && !Sn)
+  {
+    Sn = std::make_unique<ModeSnCoefficient>(E->Real(), E->Imag(), Bt_inplane->Real(),
+                                             Bt_inplane->Imag(), fem_op->GetMaterialOp());
   }
 
   measurement_cache = {};

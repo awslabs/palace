@@ -91,6 +91,10 @@ Measurement Measurement::Dimensionalize(const Units &units,
 
   measurement_cache.probe_E_field = units.Dimensionalize<Units::ValueType::FIELD_E>(
       nondim_measurement_cache.probe_E_field);
+  measurement_cache.probe_En_field = units.Dimensionalize<Units::ValueType::FIELD_E>(
+      nondim_measurement_cache.probe_En_field);
+  measurement_cache.probe_Bt_field = units.Dimensionalize<Units::ValueType::FIELD_B>(
+      nondim_measurement_cache.probe_Bt_field);
   measurement_cache.probe_B_field = units.Dimensionalize<Units::ValueType::FIELD_B>(
       nondim_measurement_cache.probe_B_field);
 
@@ -228,6 +232,10 @@ Measurement Measurement::Nondimensionalize(const Units &units,
 
   measurement_cache.probe_E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
       dim_measurement_cache.probe_E_field);
+  measurement_cache.probe_En_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
+      dim_measurement_cache.probe_En_field);
+  measurement_cache.probe_Bt_field = units.Nondimensionalize<Units::ValueType::FIELD_B>(
+      dim_measurement_cache.probe_Bt_field);
   measurement_cache.probe_B_field = units.Nondimensionalize<Units::ValueType::FIELD_B>(
       dim_measurement_cache.probe_B_field);
 
@@ -714,7 +722,8 @@ auto PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_p
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::InitializeProbeE(const InterpolationOperator &interp_op)
+void PostOperatorCSV<solver_t>::InitializeProbeE(const InterpolationOperator &interp_op,
+                                                 int v_dim)
 {
   if (!(interp_op.GetProbes().size() > 0) || !HasEGridFunction<solver_t>())
   {
@@ -724,7 +733,6 @@ void PostOperatorCSV<solver_t>::InitializeProbeE(const InterpolationOperator &in
   probe_E = TableWithCSVFile(post_dir / "probe-E.csv", reload_table);
 
   Table t;  // Define table locally first due to potential reload.
-  auto v_dim = interp_op.GetVDim();
   int scale_col = (HasComplexGridFunction<solver_t>() ? 2 : 1) * v_dim;
   auto nr_expected_measurement_cols =
       1 + ex_idx_v_all.size() * scale_col * interp_op.GetProbes().size();
@@ -758,13 +766,13 @@ void PostOperatorCSV<solver_t>::InitializeProbeE(const InterpolationOperator &in
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::PrintProbeE(const InterpolationOperator &interp_op)
+void PostOperatorCSV<solver_t>::PrintProbeE(const InterpolationOperator &interp_op,
+                                            int v_dim)
 {
   if (!probe_E)
   {
     return;
   }
-  auto v_dim = interp_op.GetVDim();
   auto probe_field = measurement_cache.probe_E_field;
   MFEM_VERIFY(
       probe_field.size() == v_dim * interp_op.GetProbes().size(),
@@ -792,20 +800,156 @@ void PostOperatorCSV<solver_t>::PrintProbeE(const InterpolationOperator &interp_
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::InitializeProbeB(const InterpolationOperator &interp_op)
+void PostOperatorCSV<solver_t>::InitializeProbeEn(const InterpolationOperator &interp_op)
 {
-  if (!(interp_op.GetProbes().size() > 0) || !HasBGridFunction<solver_t>())
+  if (!(interp_op.GetProbes().size() > 0) || solver_t != ProblemType::BOUNDARYMODE)
   {
     return;
   }
-  // In 2D boundary mode, B is scalar (L2) and can't be probed with the ND interpolator.
-  if constexpr (solver_t == ProblemType::BOUNDARYMODE)
+  probe_En = TableWithCSVFile(post_dir / "probe-En.csv", reload_table);
+  Table t;
+  constexpr int v_dim = 1;  // Scalar H1 field
+  int scale_col = (HasComplexGridFunction<solver_t>() ? 2 : 1) * v_dim;
+  auto nr_expected_measurement_cols =
+      1 + ex_idx_v_all.size() * scale_col * interp_op.GetProbes().size();
+  t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
+  t.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
+  for (const auto ex_idx : ex_idx_v_all)
+  {
+    std::string ex_label = HasSingleExIdx() ? "" : fmt::format("[{}]", ex_idx);
+    for (const auto &idx : interp_op.GetProbes())
+    {
+      if constexpr (HasComplexGridFunction<solver_t>())
+      {
+        t.insert(fmt::format("En_{}_{}_re", idx, ex_idx),
+                 fmt::format("Re{{E_n[{}]{}}} (V/m)", idx, ex_label), ex_idx);
+        t.insert(fmt::format("En_{}_{}_im", idx, ex_idx),
+                 fmt::format("Im{{E_n[{}]{}}} (V/m)", idx, ex_label), ex_idx);
+      }
+      else
+      {
+        t.insert(fmt::format("En_{}_{}_re", idx, ex_idx),
+                 fmt::format("E_n[{}]{} (V/m)", idx, ex_label), ex_idx);
+      }
+    }
+  }
+  MoveTableValidateReload(*probe_En, std::move(t));
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::PrintProbeEn(const InterpolationOperator &interp_op)
+{
+  if (!probe_En)
+  {
+    return;
+  }
+  constexpr int v_dim = 1;
+  auto probe_field = measurement_cache.probe_En_field;
+  MFEM_VERIFY(probe_field.size() == v_dim * interp_op.GetProbes().size(),
+              fmt::format("Size mismatch for En probe: expect {} entries, got {}",
+                          interp_op.GetProbes().size(), probe_field.size()));
+
+  CheckAppendIndex(probe_En->table["idx"], row_idx_v, row_i);
+
+  std::size_t i = 0;
+  for (const auto &idx : interp_op.GetProbes())
+  {
+    auto val = probe_field[i];
+    probe_En->table[fmt::format("En_{}_{}_re", idx, m_ex_idx)] << val.real();
+    if (HasComplexGridFunction<solver_t>())
+    {
+      probe_En->table[fmt::format("En_{}_{}_im", idx, m_ex_idx)] << val.imag();
+    }
+    i++;
+  }
+  probe_En->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::InitializeProbeBt(const InterpolationOperator &interp_op,
+                                                  int v_dim)
+{
+  if (!(interp_op.GetProbes().size() > 0) || v_dim <= 0)
+  {
+    return;
+  }
+  probe_Bt = TableWithCSVFile(post_dir / "probe-Bt.csv", reload_table);
+  Table t;
+  int scale_col = (HasComplexGridFunction<solver_t>() ? 2 : 1) * v_dim;
+  auto nr_expected_measurement_cols =
+      1 + ex_idx_v_all.size() * scale_col * interp_op.GetProbes().size();
+  t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
+  t.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
+  for (const auto ex_idx : ex_idx_v_all)
+  {
+    std::string ex_label = HasSingleExIdx() ? "" : fmt::format("[{}]", ex_idx);
+    for (const auto &idx : interp_op.GetProbes())
+    {
+      for (int i_dim = 0; i_dim < v_dim; i_dim++)
+      {
+        if constexpr (HasComplexGridFunction<solver_t>())
+        {
+          t.insert(fmt::format("Bt{}_{}_{}_re", i_dim, idx, ex_idx),
+                   fmt::format("Re{{Bt_{}[{}]{}}} (T)", DimLabel(i_dim), idx, ex_label),
+                   ex_idx);
+          t.insert(fmt::format("Bt{}_{}_{}_im", i_dim, idx, ex_idx),
+                   fmt::format("Im{{Bt_{}[{}]{}}} (T)", DimLabel(i_dim), idx, ex_label),
+                   ex_idx);
+        }
+        else
+        {
+          t.insert(fmt::format("Bt{}_{}_{}_re", i_dim, idx, ex_idx),
+                   fmt::format("Bt_{}[{}]{} (T)", DimLabel(i_dim), idx, ex_label), ex_idx);
+        }
+      }
+    }
+  }
+  MoveTableValidateReload(*probe_Bt, std::move(t));
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::PrintProbeBt(const InterpolationOperator &interp_op,
+                                             int v_dim)
+{
+  if (!probe_Bt)
+  {
+    return;
+  }
+  auto probe_field = measurement_cache.probe_Bt_field;
+  MFEM_VERIFY(probe_field.size() == v_dim * interp_op.GetProbes().size(),
+              fmt::format("Size mismatch for Bt probe: expect {} * {} = {}, got {}", v_dim,
+                          interp_op.GetProbes().size(),
+                          v_dim * interp_op.GetProbes().size(), probe_field.size()));
+
+  CheckAppendIndex(probe_Bt->table["idx"], row_idx_v, row_i);
+
+  std::size_t i = 0;
+  for (const auto &idx : interp_op.GetProbes())
+  {
+    for (int i_dim = 0; i_dim < v_dim; i_dim++)
+    {
+      auto val = probe_field[i * v_dim + i_dim];
+      probe_Bt->table[fmt::format("Bt{}_{}_{}_re", i_dim, idx, m_ex_idx)] << val.real();
+      if (HasComplexGridFunction<solver_t>())
+      {
+        probe_Bt->table[fmt::format("Bt{}_{}_{}_im", i_dim, idx, m_ex_idx)] << val.imag();
+      }
+    }
+    i++;
+  }
+  probe_Bt->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::InitializeProbeB(const InterpolationOperator &interp_op,
+                                                 int v_dim)
+{
+  if (!(interp_op.GetProbes().size() > 0) || !HasBGridFunction<solver_t>() || v_dim <= 0)
   {
     return;
   }
   probe_B = TableWithCSVFile(post_dir / "probe-B.csv", reload_table);
   Table t;  // Define table locally first due to potential reload.
-  auto v_dim = interp_op.GetVDim();
   int scale_col = (HasComplexGridFunction<solver_t>() ? 2 : 1) * v_dim;
   auto nr_expected_measurement_cols =
       1 + ex_idx_v_all.size() * scale_col * interp_op.GetProbes().size();
@@ -840,19 +984,15 @@ void PostOperatorCSV<solver_t>::InitializeProbeB(const InterpolationOperator &in
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::PrintProbeB(const InterpolationOperator &interp_op)
+void PostOperatorCSV<solver_t>::PrintProbeB(const InterpolationOperator &interp_op,
+                                            int v_dim)
 {
   if (!probe_B)
   {
     return;
   }
 
-  auto v_dim = interp_op.GetVDim();
   auto probe_field = measurement_cache.probe_B_field;
-  if (probe_field.empty())
-  {
-    return;  // B-field probing was skipped (e.g. scalar B in 2D boundary mode)
-  }
   MFEM_VERIFY(
       probe_field.size() == v_dim * interp_op.GetProbes().size(),
       fmt::format("Size mismatch: expect vector field to have size {} * {} = {}; got {}",
@@ -1530,8 +1670,15 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   InitializeSurfaceQ(post_op.surf_post_op);
 
 #if defined(MFEM_USE_GSLIB)
-  InitializeProbeE(post_op.interp_op);
-  InitializeProbeB(post_op.interp_op);
+  {
+    int e_vdim = post_op.E ? post_op.E->Real().VectorDim() : 0;
+    int bt_vdim = post_op.Bt_inplane ? post_op.Bt_inplane->Real().VectorDim() : 0;
+    int b_vdim = post_op.B ? post_op.B->Real().VectorDim() : 0;
+    InitializeProbeE(post_op.interp_op, e_vdim);
+    InitializeProbeEn(post_op.interp_op);
+    InitializeProbeBt(post_op.interp_op, bt_vdim);
+    InitializeProbeB(post_op.interp_op, b_vdim);
+  }
 #endif
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
   {
@@ -1601,8 +1748,15 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   PrintSurfaceQ();
 
 #if defined(MFEM_USE_GSLIB)
-  PrintProbeE(post_op.interp_op);
-  PrintProbeB(post_op.interp_op);
+  {
+    int e_vdim = post_op.E ? post_op.E->Real().VectorDim() : 0;
+    int bt_vdim = post_op.Bt_inplane ? post_op.Bt_inplane->Real().VectorDim() : 0;
+    int b_vdim = post_op.B ? post_op.B->Real().VectorDim() : 0;
+    PrintProbeE(post_op.interp_op, e_vdim);
+    PrintProbeEn(post_op.interp_op);
+    PrintProbeBt(post_op.interp_op, bt_vdim);
+    PrintProbeB(post_op.interp_op, b_vdim);
+  }
 #endif
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
   {
