@@ -188,9 +188,12 @@ protected:
 
   // Measurements of field solution for ParaView files (full domain or surfaces).
 
-  // Poynting Coefficient, Electric Boundary Field (re+im), Magnetic Boundary Field (re+im),
-  // Vector Potential Boundary Field, Surface Current (re+im).
+  // Poynting Coefficient (vector for 3D, scalar Sn for boundary mode), Electric Boundary
+  // Field (re+im), Magnetic Boundary Field (re+im), Vector Potential Boundary Field,
+  // Surface Current (re+im).
   std::unique_ptr<mfem::VectorCoefficient> S, E_sr, E_si, B_sr, B_si, A_s, J_sr, J_si;
+  std::unique_ptr<mfem::Coefficient> Sn;
+  bool sn_registered = false;
 
   // Electric Energy Density, Magnetic Energy Density, Scalar Potential Boundary Field,
   // Surface Charge (re+im).

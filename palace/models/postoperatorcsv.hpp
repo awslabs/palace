@@ -187,8 +187,11 @@ struct Measurement
   std::map<int, PortPostData> wave_port_vi;
 
   // Probe data is ordered as [Fx1, Fy1, Fz1, Fx2, Fy2, Fz2, ...].
+  // For scalar fields (En, Bz in 2D), entries are [F1, F2, F3, ...].
   // TODO: Replace with proper matrix: mdspan (C++23) / Eigen.
   std::vector<std::complex<double>> probe_E_field;
+  std::vector<std::complex<double>> probe_En_field;
+  std::vector<std::complex<double>> probe_Bt_field;
   std::vector<std::complex<double>> probe_B_field;
 
   std::vector<FluxData> surface_flux_i;
@@ -272,12 +275,20 @@ protected:
   void PrintSurfaceQ();
 
   std::optional<TableWithCSVFile> probe_E;
-  void InitializeProbeE(const InterpolationOperator &interp_op);
-  void PrintProbeE(const InterpolationOperator &interp_op);
+  void InitializeProbeE(const InterpolationOperator &interp_op, int v_dim);
+  void PrintProbeE(const InterpolationOperator &interp_op, int v_dim);
+
+  std::optional<TableWithCSVFile> probe_En;
+  void InitializeProbeEn(const InterpolationOperator &interp_op);
+  void PrintProbeEn(const InterpolationOperator &interp_op);
+
+  std::optional<TableWithCSVFile> probe_Bt;
+  void InitializeProbeBt(const InterpolationOperator &interp_op, int v_dim);
+  void PrintProbeBt(const InterpolationOperator &interp_op, int v_dim);
 
   std::optional<TableWithCSVFile> probe_B;
-  void InitializeProbeB(const InterpolationOperator &interp_op);
-  void PrintProbeB(const InterpolationOperator &interp_op);
+  void InitializeProbeB(const InterpolationOperator &interp_op, int v_dim);
+  void PrintProbeB(const InterpolationOperator &interp_op, int v_dim);
 
   // TODO(C++20): Upgrade SFINAE to C++20 concepts to simplify static selection since we can
   // just use `void Function(...) requires (solver_t == Type::A);`.
