@@ -144,8 +144,10 @@ public:
   // Get the eigenpair error for the i-th converged eigenvalue.
   double GetError(int i, EigenvalueSolver::ErrorType type) const;
 
-  // Access the assembled Btt matrix (needed for impedance postprocessing).
+  // Access the assembled Btt and Atn matrices (needed for power normalization).
   const mfem::HypreParMatrix *GetBtt() const { return Bttr.get(); }
+  const mfem::HypreParMatrix *GetAtnr() const { return Atnr.get(); }
+  const mfem::HypreParMatrix *GetAtni() const { return Atni.get(); }
 
   // Get the true vector sizes for the ND and H1 FE spaces.
   int GetNDTrueVSize() const { return nd_size; }

@@ -108,7 +108,10 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     en.Real().MakeRef(e0.Real(), nd_size, h1_size);
     en.Imag().MakeRef(e0.Imag(), nd_size, h1_size);
 
-    // Power-normalize eigenvector.
+    // Power-normalize eigenvector using the full Poynting integral:
+    //   P = (1/2) Re{conj(kn)/ω × et^H Btt et} + Re{1/(2ωkn) × et^H Atn ẽn}
+    // The second term accounts for the Et·∇t(En) cross-coupling. At this point en = ẽn
+    // (VD variable, not yet back-transformed to physical En).
     {
       const auto *Btt = mode_op.GetBtt();
       if (Btt)
@@ -124,6 +127,34 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         double p_ir = linalg::Dot(nd_fespace.GetComm(), et.Imag(), Btt_etr);
         std::complex<double> etH_Btt_et(p_rr + p_ii, p_ri - p_ir);
         std::complex<double> P = 0.5 * std::conj(kn) / omega * etH_Btt_et;
+
+        // Cross-term: Re{1/(2ωkn) × et^H Atn ẽn}.
+        const auto *Atnr = mode_op.GetAtnr();
+        if (Atnr)
+        {
+          Vector Atn_enr(nd_size), Atn_eni(nd_size);
+          Atn_enr.UseDevice(true);
+          Atn_eni.UseDevice(true);
+          Atnr->Mult(en.Real(), Atn_enr);
+          Atnr->Mult(en.Imag(), Atn_eni);
+          const auto *Atni = mode_op.GetAtni();
+          if (Atni)
+          {
+            Vector tmp(nd_size);
+            tmp.UseDevice(true);
+            Atni->Mult(en.Imag(), tmp);
+            Atn_enr -= tmp;
+            Atni->Mult(en.Real(), tmp);
+            Atn_eni += tmp;
+          }
+          double c_rr = linalg::Dot(nd_fespace.GetComm(), et.Real(), Atn_enr);
+          double c_ii = linalg::Dot(nd_fespace.GetComm(), et.Imag(), Atn_eni);
+          double c_ri = linalg::Dot(nd_fespace.GetComm(), et.Real(), Atn_eni);
+          double c_ir = linalg::Dot(nd_fespace.GetComm(), et.Imag(), Atn_enr);
+          std::complex<double> etH_Atn_en(c_rr + c_ii, c_ri - c_ir);
+          P += 1.0 / (2.0 * omega * kn) * etH_Atn_en;
+        }
+
         double P_abs = std::abs(P);
         if (P_abs > 0.0)
         {
@@ -146,6 +177,12 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           }
         }
       }
+    }
+
+    // Back-transform en from VD variable ẽn = ikn·En to physical En = ẽn/(ikn).
+    {
+      auto ikn_inv = 1.0 / (std::complex<double>(0.0, 1.0) * kn);
+      ComplexVector::AXPBY(ikn_inv, en.Real(), en.Imag(), 0.0, en.Real(), en.Imag());
     }
 
     auto total_domain_energy =

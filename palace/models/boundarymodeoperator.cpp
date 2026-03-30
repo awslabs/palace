@@ -270,6 +270,16 @@ const mfem::HypreParMatrix *BoundaryModeOperator::GetBtt() const
   return port_data->GetEigenSolver().GetBtt();
 }
 
+const mfem::HypreParMatrix *BoundaryModeOperator::GetAtnr() const
+{
+  return port_data->GetEigenSolver().GetAtnr();
+}
+
+const mfem::HypreParMatrix *BoundaryModeOperator::GetAtni() const
+{
+  return port_data->GetEigenSolver().GetAtni();
+}
+
 const ComplexKspSolver *BoundaryModeOperator::GetLinearSolver() const
 {
   return port_data->GetEigenSolver().GetLinearSolver();

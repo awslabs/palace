@@ -798,6 +798,11 @@ void PostOperatorCSV<solver_t>::InitializeProbeB(const InterpolationOperator &in
   {
     return;
   }
+  // In 2D boundary mode, B is scalar (L2) and can't be probed with the ND interpolator.
+  if constexpr (solver_t == ProblemType::BOUNDARYMODE)
+  {
+    return;
+  }
   probe_B = TableWithCSVFile(post_dir / "probe-B.csv", reload_table);
   Table t;  // Define table locally first due to potential reload.
   auto v_dim = interp_op.GetVDim();
@@ -844,6 +849,10 @@ void PostOperatorCSV<solver_t>::PrintProbeB(const InterpolationOperator &interp_
 
   auto v_dim = interp_op.GetVDim();
   auto probe_field = measurement_cache.probe_B_field;
+  if (probe_field.empty())
+  {
+    return;  // B-field probing was skipped (e.g. scalar B in 2D boundary mode)
+  }
   MFEM_VERIFY(
       probe_field.size() == v_dim * interp_op.GetProbes().size(),
       fmt::format("Size mismatch: expect vector field to have size {} * {} = {}; got {}",

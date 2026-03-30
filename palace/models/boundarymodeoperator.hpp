@@ -76,8 +76,10 @@ public:
   const Mesh &GetMesh() const { return *solve_mesh; }
   MPI_Comm GetComm() const { return solve_mesh->GetComm(); }
 
-  // Access the assembled Btt matrix (for impedance postprocessing).
+  // Access the assembled Btt and Atn matrices (for power normalization).
   const mfem::HypreParMatrix *GetBtt() const;
+  const mfem::HypreParMatrix *GetAtnr() const;
+  const mfem::HypreParMatrix *GetAtni() const;
 
   // Access solver order.
   int GetSolverOrder() const { return solver_order; }
