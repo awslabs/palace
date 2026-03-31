@@ -516,6 +516,7 @@ WavePortData::WavePortData(const json &port)
   d_offset = port.value("Offset", d_offset);
   eigen_solver = port.value("SolverType", eigen_solver);
   excitation = ParsePortExcitation(port, index);
+  active = port.value("Active", active);
   ksp_max_its = port.value("MaxIts", ksp_max_its);
   ksp_tol = port.value("KSPTol", ksp_tol);
   eig_tol = port.value("EigenTol", eig_tol);
