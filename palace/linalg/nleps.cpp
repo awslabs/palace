@@ -413,6 +413,11 @@ int QuasiNewtonSolver::Solve()
 
   const int num_init_guess = eigenvalues.size();
   std::uniform_int_distribution<int> dist_int(0, num_init_guess - 1);
+
+  // Save the user-specified solver tolerances.
+  const double rel_tol = opInv->GetRelTol();
+  const double inexact_tol = std::sqrt(rtol);
+
   int k = 0, restart = 0, guess_idx = 0;
   while (k < nev)
   {
@@ -527,8 +532,6 @@ int QuasiNewtonSolver::Solve()
 
     // Compute w0 = T^-1 c and normalize it. The w0 vector is only used as a
     // projection direction for the eigenvalue correction, so moderate accuracy suffices.
-    const double rel_tol = opInv->GetRelTol();
-    const double inexact_tol = std::sqrt(rtol);
     opInv->SetRelTol(std::max(rel_tol, inexact_tol));
     deflated_solve(c, c2, w0, w2);
     double norm_w0 = std::sqrt(std::abs(linalg::Dot(GetComm(), w0, w0)) + w2.squaredNorm());
