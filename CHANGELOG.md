@@ -18,8 +18,7 @@ The format of this changelog is based on
 
   - Added Floquet port boundary conditions for frequency-domain driven simulations on
     periodic structures, with support for oblique incidence, multi-order diffraction,
-    TE/TM/circular polarization, and adaptive frequency sweeps.
-
+    TE/TM/circular polarization, and adaptive frequency sweeps. [PR 693](https://github.com/awslabs/palace/pull/693).
   - Expanded JSON schema validation to cover required fields, mutual exclusion constraints
     (e.g., `PEC`/`Ground`, `PMC`/`ZeroCharge`), array type validation, and numeric bounds.
     Many runtime checks are now caught earlier at configuration parsing time with clearer
