@@ -488,6 +488,7 @@ int QuasiNewtonSolver::Solve()
                               {opK, opC, opM, opA2.get()}, true);
     opP = (*funcP)(1.0 + 0.0i, eig, eig * eig, eig.imag());
     opInv->SetOperators(*opA, *opP);
+    opInv->SetAbsTol(1.0e-12);
 
     // Linear solve with the extended operator of the deflated problem.
     auto deflated_solve = [&](const ComplexVector &b1, const Eigen::VectorXcd &b2,
@@ -524,7 +525,11 @@ int QuasiNewtonSolver::Solve()
       linalg::AXPY(-1.0, XSx2, x1);
     };
 
-    // Compute w0 = T^-1 c and normalize it.
+    // Compute w0 = T^-1 c and normalize it. The w0 vector is only used as a
+    // projection direction for the eigenvalue correction, so moderate accuracy suffices.
+    const double rel_tol = opInv->GetRelTol();
+    const double inexact_tol = std::sqrt(rtol);
+    opInv->SetRelTol(std::max(rel_tol, inexact_tol));
     deflated_solve(c, c2, w0, w2);
     double norm_w0 = std::sqrt(std::abs(linalg::Dot(GetComm(), w0, w0)) + w2.squaredNorm());
     w0 *= 1.0 / norm_w0;
@@ -657,6 +662,7 @@ int QuasiNewtonSolver::Solve()
         opP = (*funcP)(1.0 + 0.0i, eig, eig * eig, eig.imag());
         opInv->SetOperators(*opA, *opP);
         // Recompute w0 and normalize.
+        opInv->SetRelTol(std::max(rel_tol, inexact_tol));
         deflated_solve(c, c2, w0, w2);
         double norm_w0 =
             std::sqrt(std::abs(linalg::Dot(GetComm(), w0, w0)) + w2.squaredNorm());
@@ -664,7 +670,10 @@ int QuasiNewtonSolver::Solve()
         w2 *= 1.0 / norm_w0;
       }
 
-      // Solve M (v_k+1 - v_k) = z.
+      // Solve for Newton correction. Use inexact Newton: adapt the linear solve
+      // tolerance to the outer residual to avoid over-solving when T(σ) is nearly
+      // singular near eigenvalues.
+      opInv->SetRelTol(std::max(rel_tol, std::min(inexact_tol, res)));
       deflated_solve(z, z2, u, u2);
 
       // Update and normalize eigenvector estimate.

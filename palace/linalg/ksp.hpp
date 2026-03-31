@@ -60,6 +60,12 @@ public:
   int NumTotalMult() const { return ksp_mult; }
   int NumTotalMultIterations() const { return ksp_mult_it; }
 
+  // Forward tolerance access to the underlying iterative solver.
+  double GetRelTol() const { return ksp->GetRelTol(); }
+  double GetAbsTol() const { return ksp->GetAbsTol(); }
+  void SetRelTol(double tol) { ksp->SetRelTol(tol); }
+  void SetAbsTol(double tol) { ksp->SetAbsTol(tol); }
+
   void SetOperators(const OperType &op, const OperType &pc_op);
 
   void Mult(const VecType &x, VecType &y) const;
