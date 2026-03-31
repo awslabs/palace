@@ -18,7 +18,7 @@ The format of this changelog is based on
 
   - Added Floquet port boundary conditions for frequency-domain driven simulations on
     periodic structures, with support for oblique incidence, multi-order diffraction,
-    TE/TM/circular polarization, and adaptive frequency sweeps.
+    TE/TM/circular polarization, and adaptive frequency sweeps. [PR 693](https://github.com/awslabs/palace/pull/693).
   - Added `"IncludeInSynthesis"` boolean flag to lumped port configuration (default `true`).
     When adaptive driven circuit synthesis is enabled
     (`config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]`), this flag controls whether
