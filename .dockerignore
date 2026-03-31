@@ -1,0 +1,35 @@
+# Spack checkout
+spack
+
+# Build artifacts
+build*
+
+# Documentation
+docs
+
+# Test data and results
+test
+examples/**/postpro*
+examples/**/log*
+
+# Singularity definitions
+singularity
+*.sif
+
+# Editor and OS files
+.*.swp
+.DS_Store
+.vscode/
+
+# Git
+.git
+
+# CI
+.github
+
+# Python caches
+__pycache__
+*.pyc
+
+# Broken mfem symlink (recreated inside container by the template)
+spack_repo/local/packages/mfem

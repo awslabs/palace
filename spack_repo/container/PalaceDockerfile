@@ -1,0 +1,19 @@
+{% extends "container/Dockerfile" %}
+{% block build_stage %}
+COPY . /opt/palace
+RUN mkdir -p /opt/spack-environment && \
+    ln -s /opt/palace/spack_repo /opt/spack-environment/spack_repo && \
+    ln -sf $(spack location --repo builtin)/packages/mfem /opt/palace/spack_repo/local/packages/mfem && \
+    cd $(cd $(spack location --repo builtin) && git rev-parse --show-toplevel) && \
+    for patch in /opt/palace/spack_repo/patches/*.diff; do \
+      if [ -f "$patch" ]; then \
+        if git apply --check "$patch" 2>/dev/null; then \
+          echo "Applying patch: $patch"; \
+          git apply "$patch"; \
+        else \
+          echo "Cannot apply $patch (may already be merged)"; \
+        fi; \
+      fi; \
+    done
+{{ super() }}
+{% endblock %}
