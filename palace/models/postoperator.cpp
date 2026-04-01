@@ -9,7 +9,7 @@
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/interpolator.hpp"
-#include "linalg/vector.hpp"
+#include "linalg/operator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
@@ -1803,46 +1803,24 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   {
     auto &nd_fespace = fem_op->GetNDSpace();
     const int nd_size = nd_fespace.GetTrueVSize();
-    Vector etr_tdof(nd_size), eti_tdof(nd_size);
-    E->Real().GetTrueDofs(etr_tdof);
-    E->Imag().GetTrueDofs(eti_tdof);
-    Vector Btt_etr(nd_size), Btt_eti(nd_size);
-    Btt->Mult(etr_tdof, Btt_etr);
-    Btt->Mult(eti_tdof, Btt_eti);
-    double p_rr = linalg::Dot(nd_fespace.GetComm(), etr_tdof, Btt_etr);
-    double p_ii = linalg::Dot(nd_fespace.GetComm(), eti_tdof, Btt_eti);
-    double p_ri = linalg::Dot(nd_fespace.GetComm(), etr_tdof, Btt_eti);
-    double p_ir = linalg::Dot(nd_fespace.GetComm(), eti_tdof, Btt_etr);
-    std::complex<double> etH_Btt_et(p_rr + p_ii, p_ri - p_ir);
-    P = 0.5 * std::conj(kn) / omega * etH_Btt_et;
+    ComplexVector et_tdof(nd_size);
+    et_tdof.UseDevice(true);
+    E->Real().GetTrueDofs(et_tdof.Real());
+    E->Imag().GetTrueDofs(et_tdof.Imag());
+    P = 0.5 * std::conj(kn) / omega *
+        linalg::Dot(nd_fespace.GetComm(), et_tdof, *Btt, et_tdof);
 
     // Cross-term: -Im{et^H Atn En} / (2ω). At this point En is physical (back-transformed).
     if (Atnr != nullptr && En)
     {
       auto &h1_fespace = fem_op->GetH1Space();
       const int h1_size = h1_fespace.GetTrueVSize();
-      Vector enr_tdof(h1_size), eni_tdof(h1_size);
-      En->Real().GetTrueDofs(enr_tdof);
-      En->Imag().GetTrueDofs(eni_tdof);
-      Vector Atn_enr(nd_size), Atn_eni(nd_size);
-      Atn_enr.UseDevice(true);
-      Atn_eni.UseDevice(true);
-      Atnr->Mult(enr_tdof, Atn_enr);
-      Atnr->Mult(eni_tdof, Atn_eni);
-      if (Atni)
-      {
-        Vector tmp(nd_size);
-        tmp.UseDevice(true);
-        Atni->Mult(eni_tdof, tmp);
-        Atn_enr -= tmp;
-        Atni->Mult(enr_tdof, tmp);
-        Atn_eni += tmp;
-      }
-      double c_rr = linalg::Dot(nd_fespace.GetComm(), etr_tdof, Atn_enr);
-      double c_ii = linalg::Dot(nd_fespace.GetComm(), eti_tdof, Atn_eni);
-      double c_ri = linalg::Dot(nd_fespace.GetComm(), etr_tdof, Atn_eni);
-      double c_ir = linalg::Dot(nd_fespace.GetComm(), eti_tdof, Atn_enr);
-      std::complex<double> etH_Atn_En(c_rr + c_ii, c_ri - c_ir);
+      ComplexVector en_tdof(h1_size);
+      en_tdof.UseDevice(true);
+      En->Real().GetTrueDofs(en_tdof.Real());
+      En->Imag().GetTrueDofs(en_tdof.Imag());
+      ComplexWrapperOperator Atn(Atnr, Atni);
+      auto etH_Atn_En = linalg::Dot(nd_fespace.GetComm(), en_tdof, Atn, et_tdof);
       // For physical En: P_cross = (1/2) Re{-i/ω × conj(et^H Atn En)}
       //                          = -Im{et^H Atn En} / (2ω)
       P += std::complex<double>(-etH_Atn_En.imag(), etH_Atn_En.real()) / (2.0 * omega);

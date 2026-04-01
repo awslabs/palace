@@ -273,17 +273,17 @@ BoundingBox BoundingBoxFromPointCloud(MPI_Comm comm,
       box.planar = true;
       Eigen::Vector3d eig_center = 0.5 * (v_000 + v_111);
       Eigen::Vector3d eig_axis = 0.5 * (v_111 - v_000);
-      // Compute perpendicular direction: rotate 90° in the dominant plane
+      // Compute perpendicular direction: rotate 90° in the dominant plane.
       Eigen::Vector3d perp = Eigen::Vector3d::Zero();
       if (std::abs(eig_axis(0)) > rel_tol || std::abs(eig_axis(1)) > rel_tol)
       {
-        // Line has x-y component: perpendicular in the x-y plane
+        // Line has x-y component: perpendicular in the x-y plane.
         perp(0) = -eig_axis(1);
         perp(1) = eig_axis(0);
       }
       else if (std::abs(eig_axis(2)) > rel_tol)
       {
-        // Line is purely in z: perpendicular in x
+        // Line is purely in z: perpendicular in x.
         perp(0) = eig_axis(2);
       }
       // Scale perpendicular to same half-length as primary axis, so the collinear

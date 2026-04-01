@@ -220,17 +220,16 @@ void BoundaryModeOperator::SetUpEigenSolver()
     dbc_tdof_list.Append(nd_size + h1_dbc_tdof_lists.back()[i]);
   }
 
-  // Multigrid config.
-  std::unique_ptr<ModeEigenSolverMultigridConfig> mg_config_ptr;
+  // Multigrid config (stored as member to outlive the eigenvalue solver).
   if (nd_fespaces.GetNumLevels() > 1)
   {
-    mg_config_ptr = std::make_unique<ModeEigenSolverMultigridConfig>();
-    mg_config_ptr->nd_fespaces = &nd_fespaces;
-    mg_config_ptr->h1_fespaces = &h1_fespaces;
-    mg_config_ptr->h1_aux_fespaces = &h1_aux_fespaces;
-    mg_config_ptr->nd_dbc_tdof_lists = &nd_dbc_tdof_lists;
-    mg_config_ptr->h1_dbc_tdof_lists = &h1_dbc_tdof_lists;
-    mg_config_ptr->h1_aux_dbc_tdof_lists = &h1_aux_dbc_tdof_lists;
+    mg_config = std::make_unique<ModeEigenSolverMultigridConfig>();
+    mg_config->nd_fespaces = &nd_fespaces;
+    mg_config->h1_fespaces = &h1_fespaces;
+    mg_config->h1_aux_fespaces = &h1_aux_fespaces;
+    mg_config->nd_dbc_tdof_lists = &nd_dbc_tdof_lists;
+    mg_config->h1_dbc_tdof_lists = &h1_dbc_tdof_lists;
+    mg_config->h1_aux_dbc_tdof_lists = &h1_aux_dbc_tdof_lists;
     Mpi::Print(" Using p-multigrid preconditioning with {:d} levels\n",
                static_cast<int>(nd_fespaces.GetNumLevels()));
   }
@@ -239,7 +238,7 @@ void BoundaryModeOperator::SetUpEigenSolver()
       *mat_op, nullptr, surf_z_op.get(), farfield_op.get(), surf_sigma_op.get(), nd_fespace,
       h1_fespace, dbc_tdof_list, bm_data.n, bm_data.max_size, bm_data.tol, which_eig,
       iodata.solver.linear, bm_data.type, iodata.problem.verbose, solve_mesh->GetComm(),
-      mg_config_ptr.get());
+      mg_config.get());
 }
 
 BoundaryModeOperator::SolveResult BoundaryModeOperator::Solve(double omega,

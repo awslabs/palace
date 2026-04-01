@@ -427,9 +427,7 @@ equal to the spatial dimension. When specified, enables voltage and characterist
 postprocessing for the wave port. Specified in mesh length units.
 
 `"NSamples" [100]` :  Number of uniformly spaced sample points for the
-coordinate-based voltage line integral (GSLIB interpolation). This is not Gauss quadrature
-— it uses uniform sampling with trapezoidal-rule weighting. Higher values give better
-accuracy but this is typically not the bottleneck.
+coordinate-based voltage line integral (using GSLIB interpolation).
 
 ## `boundaries["WavePortPEC"]`
 
@@ -740,7 +738,7 @@ floating point array of length equal to the spatial dimension. The last point co
 to the first. Specified in mesh length units.
 
 `"NSamples" [100]` :  Number of uniformly spaced sample points for the
-coordinate-based line integrals (GSLIB interpolation).
+coordinate-based line integrals (using GSLIB interpolation).
 
 ## `boundaries["Postprocessing"]["Voltage"]`
 
@@ -775,7 +773,6 @@ Specified in mesh length units.
 
 `"NSamples" [100]` :  Number of uniformly spaced sample points for the
 coordinate-based line integral (GSLIB interpolation).
-Higher values give more integration points and better accuracy.
 
 ## `boundaries["Postprocessing"]["FarField"]`
 

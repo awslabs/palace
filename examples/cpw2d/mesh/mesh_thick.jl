@@ -24,29 +24,29 @@ function generate_cpw2d_mesh(;
     h_substrate::Float64 = 525.0,  # Substrate thickness
     h_vacuum::Float64    = 500.0,  # Vacuum region height above substrate
 
-    # Mesh parameters
+    # Mesh parameters.
     lc_corner::Float64 = 0.03,  # Mesh size at trace/ground corners (~t_metal/3)
     lc_far::Float64    = 60.0,  # Mesh size far from the trace
     mesh_order::Int    = 2,     # Mesh element order (1 or 2)
 
-    # Output
+    # Output.
     filename::String="cpw2d_thick.msh",
     verbose::Int=0
 )
-    # Derived dimensions
+    # Derived dimensions.
     @assert t_metal > 0 "Metal thickness must be > 0. Use mesh_thin.jl for zero-thickness PEC."
     w_gap = (w_total_cpw - w_trace) / 2.0
     @assert w_gap > 0 "Gap width must be positive! Increase w_total_cpw or decrease w_trace."
     w_box = 2.0 * (w_gap + w_ground) + w_trace  # Total simulation box width
 
-    # Center the trace at x = w_box/2
+    # Center the trace at x = w_box/2.
     x_center = w_box / 2.0
     x_trace_left = x_center - w_trace / 2.0
     x_trace_right = x_center + w_trace / 2.0
     x_ground_left_inner = x_trace_left - w_gap    # Left ground inner edge
     x_ground_right_inner = x_trace_right + w_gap   # Right ground inner edge
 
-    # Y coordinates: substrate from -h_substrate to 0, metal from 0 to t_metal
+    # Y coordinates: substrate from -h_substrate to 0, metal from 0 to t_metal.
     y_sub_bot = -h_substrate
     y_sub_top = 0.0
     y_metal_bot = 0.0
@@ -59,19 +59,19 @@ function generate_cpw2d_mesh(;
 
     kernel = gmsh.model.occ
 
-    # Substrate rectangle: full width, below y=0
+    # Substrate rectangle: full width, below y=0.
     sub = kernel.addRectangle(0.0, y_sub_bot, 0.0, w_box, h_substrate)
 
-    # Vacuum rectangle: full width, above metal
+    # Vacuum rectangle: full width, above metal.
     vac = kernel.addRectangle(0.0, y_metal_top, 0.0, w_box, h_vacuum)
 
-    # Left gap fill (between left ground and trace, at metal height)
+    # Left gap fill (between left ground and trace, at metal height).
     gap_left = kernel.addRectangle(x_ground_left_inner, y_metal_bot, 0.0, w_gap, t_metal)
 
-    # Right gap fill (between trace and right ground, at metal height)
+    # Right gap fill (between trace and right ground, at metal height).
     gap_right = kernel.addRectangle(x_trace_right, y_metal_bot, 0.0, w_gap, t_metal)
 
-    # Fragment everything to create shared boundaries
+    # Fragment everything to create shared boundaries.
     all_surfs = [(2, sub), (2, vac), (2, gap_left), (2, gap_right)]
     _, frag_map = kernel.fragment(all_surfs, [])
     kernel.synchronize()
@@ -79,7 +79,7 @@ function generate_cpw2d_mesh(;
     # === Classify entities by bounding box ===
     tol = 1e-6
 
-    # Get all 2D surfaces (domains)
+    # Get all 2D surfaces (domains).
     all_surfaces = gmsh.model.getEntities(2)
     substrate_domains = Int[]
     vacuum_domains = Int[]
@@ -99,7 +99,7 @@ function generate_cpw2d_mesh(;
         end
     end
 
-    # Get all 1D curves (boundaries)
+    # Get all 1D curves (boundaries).
     all_curves = gmsh.model.getEntities(1)
 
     pec_curves = Int[]          # PEC boundaries (trace, ground planes)
@@ -118,7 +118,7 @@ function generate_cpw2d_mesh(;
         is_horiz = dy < tol
         is_vert = dx < tol
 
-        # Outer box boundaries
+        # Outer box boundaries.
         if is_vert && (abs(xmin) < tol || abs(xmax - w_box) < tol)
             push!(outer_curves, tag)
             continue
@@ -131,7 +131,7 @@ function generate_cpw2d_mesh(;
         # Finite metal: PEC is the trace hole boundary + ground surfaces.
         begin
 
-            # Trace top/bottom horizontal edges
+            # Trace top/bottom horizontal edges.
             if is_horiz && xmin > x_trace_left - tol && xmax < x_trace_right + tol
                 if abs(ymid - y_metal_top) < tol || abs(ymid - y_metal_bot) < tol
                     push!(pec_curves, tag)
@@ -139,7 +139,7 @@ function generate_cpw2d_mesh(;
                 end
             end
 
-            # Trace left/right vertical edges
+            # Trace left/right vertical edges.
             if is_vert && ymid > y_metal_bot - tol && ymid < y_metal_top + tol
                 if abs(xmid - x_trace_left) < tol || abs(xmid - x_trace_right) < tol
                     push!(pec_curves, tag)
@@ -147,22 +147,22 @@ function generate_cpw2d_mesh(;
                 end
             end
 
-            # Ground plane PEC: top surface of ground at y = t_metal
-            # Left ground: x ∈ [0, x_ground_left_inner]
+            # Ground plane PEC: top surface of ground at y = t_metal.
+            # Left ground: x ∈ [0, x_ground_left_inner].
             if is_horiz && abs(ymid - y_metal_top) < tol
                 if xmin < x_ground_left_inner - w_gap + tol &&
                    xmax < x_ground_left_inner + tol
                     push!(pec_curves, tag)
                     continue
                 end
-                # Right ground: x ∈ [x_ground_right_inner, w_box]
+                # Right ground: x ∈ [x_ground_right_inner, w_box].
                 if xmin > x_ground_right_inner - tol
                     push!(pec_curves, tag)
                     continue
                 end
             end
 
-            # Ground plane PEC at y = 0 (bottom of metal region)
+            # Ground plane PEC at y = 0 (bottom of metal region).
             if is_horiz && abs(ymid - y_metal_bot) < tol
                 if xmax < x_ground_left_inner + tol || xmin > x_ground_right_inner - tol
                     push!(pec_curves, tag)
@@ -179,8 +179,8 @@ function generate_cpw2d_mesh(;
                 end
             end
 
-            # Voltage path: horizontal edges in the gap at y = y_sub_top (substrate surface)
-            # Right gap: x ∈ [x_trace_right, x_ground_right_inner] at y = 0
+            # Voltage path: horizontal edges in the gap at y = y_sub_top (substrate surface).
+            # Right gap: x ∈ [x_trace_right, x_ground_right_inner] at y = 0.
             if is_horiz && abs(ymid - y_sub_top) < tol
                 if xmin > x_trace_right - tol && xmax < x_ground_right_inner + tol
                     push!(voltage_right_curves, tag)
@@ -188,16 +188,16 @@ function generate_cpw2d_mesh(;
                 end
             end
 
-            # Current loop: domain interfaces forming a rectangle around the trace
-            # These are at the gap domain boundaries (not PEC)
-            # Left gap left edge (x = x_ground_left_inner)
+            # Current loop: domain interfaces forming a rectangle around the trace.
+            # These are at the gap domain boundaries (not PEC).
+            # Left gap left edge (x = x_ground_left_inner).
             if is_vert &&
                abs(xmid - x_ground_left_inner) < tol &&
                ymin > y_metal_bot - tol &&
                ymax < y_metal_top + tol
-                # Already classified as PEC above
+                # Already classified as PEC above.
             end
-            # Bottom of gap domains (y = 0)
+            # Bottom of gap domains (y = 0).
             if is_horiz && abs(ymid - y_metal_bot) < tol
                 if xmin > x_ground_left_inner - tol && xmax < x_trace_left + tol
                     push!(current_curves, tag)
@@ -208,7 +208,7 @@ function generate_cpw2d_mesh(;
                     continue
                 end
             end
-            # Top of gap domains (y = t_metal)
+            # Top of gap domains (y = t_metal).
             if is_horiz && abs(ymid - y_metal_top) < tol
                 if xmin > x_ground_left_inner - tol && xmax < x_trace_left + tol
                     push!(current_curves, tag)
@@ -219,7 +219,7 @@ function generate_cpw2d_mesh(;
                     continue
                 end
             end
-            # Left side of gap region
+            # Left side of gap region.
             if is_vert &&
                abs(xmid - x_ground_left_inner) < tol &&
                ymin > y_metal_bot - tol &&
@@ -227,7 +227,7 @@ function generate_cpw2d_mesh(;
                 push!(current_curves, tag)
                 continue
             end
-            # Right side of gap region
+            # Right side of gap region.
             if is_vert &&
                abs(xmid - x_ground_right_inner) < tol &&
                ymin > y_metal_bot - tol &&
@@ -242,7 +242,7 @@ function generate_cpw2d_mesh(;
     domain_idx = 1
     bdr_idx = 1
 
-    # Domains
+    # Domains.
     sub_attr = domain_idx
     gmsh.model.addPhysicalGroup(2, substrate_domains, sub_attr, "substrate")
     domain_idx += 1
@@ -258,7 +258,7 @@ function generate_cpw2d_mesh(;
         domain_idx += 1
     end
 
-    # Boundaries
+    # Boundaries.
     pec_attr = bdr_idx
     if !isempty(pec_curves)
         gmsh.model.addPhysicalGroup(1, pec_curves, pec_attr, "pec")
@@ -328,16 +328,16 @@ function generate_cpw2d_mesh(;
     gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
     gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
 
-    # Generate mesh
+    # Generate mesh.
     gmsh.model.mesh.generate(2)
     gmsh.model.mesh.setOrder(mesh_order)
 
-    # Write mesh
+    # Write mesh.
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
     gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(joinpath(@__DIR__, filename))
 
-    # Print summary
+    # Print summary.
     println("=== CPW 2D Cross-Section Mesh ===")
     println("  Trace width:    $w_trace μm")
     println("  Gap width:      $w_gap μm")
@@ -368,7 +368,7 @@ function generate_cpw2d_mesh(;
     end
     println("  Mesh file:      $filename")
 
-    # Return attribute info for config generation
+    # Return attribute info for config generation.
     attrs = Dict(
         "substrate" => sub_attr,
         "vacuum" => vac_attr,
@@ -387,5 +387,5 @@ function generate_cpw2d_mesh(;
     return attrs
 end
 
-# Run with default parameters
+# Run with default parameters.
 attrs = generate_cpw2d_mesh()

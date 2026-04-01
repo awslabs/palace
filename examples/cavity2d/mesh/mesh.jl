@@ -30,14 +30,14 @@ function generate_cavity2d_mesh(;
     end
     gmsh.model.add("cavity2d")
 
-    # Create a rectangle: origin at (0,0), width a, height b
+    # Create a rectangle: origin at (0,0), width a, height b.
     rect = kernel.addRectangle(0.0, 0.0, 0.0, a, b)
     kernel.synchronize()
 
-    # Get the boundary curves
+    # Get the boundary curves.
     boundary = gmsh.model.getBoundary([(2, rect)], false, false, false)
 
-    # Identify the bottom edge (y ≈ 0) vs the rest
+    # Identify the bottom edge (y ≈ 0) vs the rest.
     bottom_curves = Int[]
     other_curves = Int[]
     eps = 1.0e-6
@@ -45,7 +45,7 @@ function generate_cavity2d_mesh(;
         bb = gmsh.model.getBoundingBox(dim, tag)
         # bb = (xmin, ymin, zmin, xmax, ymax, zmax)
         if abs(bb[2]) < eps && abs(bb[5]) < eps
-            # Both ymin and ymax are ≈ 0 → bottom edge
+            # Both ymin and ymax are ≈ 0 → bottom edge.
             push!(bottom_curves, tag)
         else
             push!(other_curves, tag)
@@ -54,7 +54,7 @@ function generate_cavity2d_mesh(;
     @assert length(bottom_curves) == 1 "Expected exactly one bottom edge, got $(length(bottom_curves))"
     @assert length(other_curves) == 3 "Expected three other edges, got $(length(other_curves))"
 
-    # Create physical groups
+    # Create physical groups.
     domain_group = gmsh.model.addPhysicalGroup(2, [rect], -1, "domain")
     bottom_group = gmsh.model.addPhysicalGroup(1, bottom_curves, -1, "bottom")
     walls_group = gmsh.model.addPhysicalGroup(1, other_curves, -1, "walls")
@@ -68,7 +68,7 @@ function generate_cavity2d_mesh(;
     gmsh.model.mesh.generate(2)
     gmsh.model.mesh.setOrder(2)
 
-    # Write in Gmsh 2.2 binary format as required by Palace
+    # Write in Gmsh 2.2 binary format as required by Palace.
     gmsh.option.setNumber("Mesh.MshFileVersion", 2.2)
     gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(joinpath(@__DIR__, filename))

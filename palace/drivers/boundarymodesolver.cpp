@@ -3,7 +3,7 @@
 
 #include "boundarymodesolver.hpp"
 
-#include "linalg/vector.hpp"
+#include "linalg/operator.hpp"
 #include "models/boundarymodeoperator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
@@ -116,64 +116,29 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       const auto *Btt = mode_op.GetBtt();
       if (Btt)
       {
-        Vector Btt_etr(nd_size), Btt_eti(nd_size);
-        Btt_etr.UseDevice(true);
-        Btt_eti.UseDevice(true);
-        Btt->Mult(et.Real(), Btt_etr);
-        Btt->Mult(et.Imag(), Btt_eti);
-        double p_rr = linalg::Dot(nd_fespace.GetComm(), et.Real(), Btt_etr);
-        double p_ii = linalg::Dot(nd_fespace.GetComm(), et.Imag(), Btt_eti);
-        double p_ri = linalg::Dot(nd_fespace.GetComm(), et.Real(), Btt_eti);
-        double p_ir = linalg::Dot(nd_fespace.GetComm(), et.Imag(), Btt_etr);
-        std::complex<double> etH_Btt_et(p_rr + p_ii, p_ri - p_ir);
+        auto etH_Btt_et = linalg::Dot(nd_fespace.GetComm(), et, *Btt, et);
         std::complex<double> P = 0.5 * std::conj(kn) / omega * etH_Btt_et;
 
         // Cross-term: Re{1/(2ωkn) × et^H Atn ẽn}.
         const auto *Atnr = mode_op.GetAtnr();
         if (Atnr)
         {
-          Vector Atn_enr(nd_size), Atn_eni(nd_size);
-          Atn_enr.UseDevice(true);
-          Atn_eni.UseDevice(true);
-          Atnr->Mult(en.Real(), Atn_enr);
-          Atnr->Mult(en.Imag(), Atn_eni);
-          const auto *Atni = mode_op.GetAtni();
-          if (Atni)
-          {
-            Vector tmp(nd_size);
-            tmp.UseDevice(true);
-            Atni->Mult(en.Imag(), tmp);
-            Atn_enr -= tmp;
-            Atni->Mult(en.Real(), tmp);
-            Atn_eni += tmp;
-          }
-          double c_rr = linalg::Dot(nd_fespace.GetComm(), et.Real(), Atn_enr);
-          double c_ii = linalg::Dot(nd_fespace.GetComm(), et.Imag(), Atn_eni);
-          double c_ri = linalg::Dot(nd_fespace.GetComm(), et.Real(), Atn_eni);
-          double c_ir = linalg::Dot(nd_fespace.GetComm(), et.Imag(), Atn_enr);
-          std::complex<double> etH_Atn_en(c_rr + c_ii, c_ri - c_ir);
-          P += 1.0 / (2.0 * omega * kn) * etH_Atn_en;
+          ComplexWrapperOperator Atn(Atnr, mode_op.GetAtni());
+          P += 1.0 / (2.0 * omega * kn) * linalg::Dot(nd_fespace.GetComm(), en, Atn, et);
         }
 
         double P_abs = std::abs(P);
         if (P_abs > 0.0)
         {
-          double scale = 1.0 / std::sqrt(P_abs);
-          et.Real() *= scale;
-          et.Imag() *= scale;
-          en.Real() *= scale;
-          en.Imag() *= scale;
+          e0 *= 1.0 / std::sqrt(P_abs);
         }
         else
         {
-          double norm2 = p_rr + p_ii;
+          // Fallback to Btt mass norm (etH_Btt_et is real for symmetric Btt).
+          double norm2 = etH_Btt_et.real();
           if (norm2 > 0.0)
           {
-            double scale = 1.0 / std::sqrt(norm2);
-            et.Real() *= scale;
-            et.Imag() *= scale;
-            en.Real() *= scale;
-            en.Imag() *= scale;
+            e0 *= 1.0 / std::sqrt(norm2);
           }
         }
       }
