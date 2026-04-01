@@ -712,6 +712,23 @@ if "cpw2d/thin" in cases
             "Im{kn} (1/m)",
             "Im{n_eff}"
         ],
+        custom_tests=Dict(
+            "mode-V.csv" =>
+                (data, dataref) -> begin
+                    # Compare voltage magnitudes (phase is arbitrary for eigenmodes).
+                    re_cols = filter(n -> startswith(n, "Re{V["), names(data))
+                    for rc in re_cols
+                        idx = match(r"Re\{V\[(\d+)\]\}", rc)[1]
+                        ic = "Im{V[$idx]} (V)"
+                        mag = sqrt.(data[!, rc] .^ 2 .+ data[!, ic] .^ 2)
+                        mag_ref = sqrt.(dataref[!, rc] .^ 2 .+ dataref[!, ic] .^ 2)
+                        for (i, (v, vr)) in enumerate(zip(mag, mag_ref))
+                            @test isapprox(v, vr; rtol=reltol, atol=abstol) ||
+                                  (@warn "|V[$idx]| row $i: $vr ≉ $v"; false)
+                        end
+                    end
+                end
+        ),
         skip_rowcount=true,
         device=device,
         linear_solver="Default",

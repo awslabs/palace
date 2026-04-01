@@ -191,7 +191,7 @@ definition ``Z_\text{VI} = V / I``. Per-unit-length inductance and capacitance a
 from these quantities. The results are written to `mode-Z.csv`. Similarly, when voltage
 postprocessing boundaries are specified under
 [`config["Boundaries"]["Postprocessing"]["Voltage"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Voltage%22%5D),
-the mode voltage magnitudes are written to `mode-V.csv`.
+the complex mode voltages are written to `mode-V.csv`.
 
 Domain energy postprocessing for energy participation ratios is also available, as described
 in [Domain postprocessing](postprocessing.md#Domain-postprocessing).
