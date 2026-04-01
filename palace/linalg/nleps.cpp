@@ -415,7 +415,7 @@ int QuasiNewtonSolver::Solve()
   std::uniform_int_distribution<int> dist_int(0, num_init_guess - 1);
 
   // Save the user-specified solver tolerances.
-  const double rel_tol = opInv->GetRelTol();
+  const double ksp_rel_tol = opInv->GetRelTol();
   const double inexact_tol = std::sqrt(rtol);
 
   int k = 0, restart = 0, guess_idx = 0;
@@ -532,7 +532,7 @@ int QuasiNewtonSolver::Solve()
 
     // Compute w0 = T^-1 c and normalize it. The w0 vector is only used as a
     // projection direction for the eigenvalue correction, so moderate accuracy suffices.
-    opInv->SetRelTol(std::max(rel_tol, inexact_tol));
+    opInv->SetRelTol(std::max(ksp_rel_tol, inexact_tol));
     deflated_solve(c, c2, w0, w2);
     double norm_w0 = std::sqrt(std::abs(linalg::Dot(GetComm(), w0, w0)) + w2.squaredNorm());
     w0 *= 1.0 / norm_w0;
@@ -665,7 +665,7 @@ int QuasiNewtonSolver::Solve()
         opP = (*funcP)(1.0 + 0.0i, eig, eig * eig, eig.imag());
         opInv->SetOperators(*opA, *opP);
         // Recompute w0 and normalize.
-        opInv->SetRelTol(std::max(rel_tol, inexact_tol));
+        opInv->SetRelTol(std::max(ksp_rel_tol, inexact_tol));
         deflated_solve(c, c2, w0, w2);
         double norm_w0 =
             std::sqrt(std::abs(linalg::Dot(GetComm(), w0, w0)) + w2.squaredNorm());
@@ -676,7 +676,7 @@ int QuasiNewtonSolver::Solve()
       // Solve for Newton correction. Use inexact Newton: adapt the linear solve
       // tolerance to the outer residual to avoid over-solving when T(σ) is nearly
       // singular near eigenvalues.
-      opInv->SetRelTol(std::max(rel_tol, std::min(inexact_tol, res)));
+      opInv->SetRelTol(std::max(ksp_rel_tol, std::min(inexact_tol, res)));
       deflated_solve(z, z2, u, u2);
 
       // Update and normalize eigenvector estimate.
