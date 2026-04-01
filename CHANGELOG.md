@@ -30,6 +30,9 @@ The format of this changelog is based on
     673](https://github.com/awslabs/palace/pull/673)
   - Fixed port excitation parsing to correctly handle signed integer values
     [PR 635](https://github.com/awslabs/palace/pull/635).
+  - Fixed linear solver stalling in the nonlinear eigenvalue solver by adding an absolute
+    tolerance and adapting the relative tolerance to the outer residual
+    [PR 694](https://github.com/awslabs/palace/pull/694).
 
 ## [0.16.0] - 2026-03-05
 
