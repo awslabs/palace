@@ -1615,7 +1615,8 @@ auto PostOperatorCSV<solver_t>::InitializeModeV(const std::vector<int> &indices)
   mode_V->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
   for (const auto &idx : indices)
   {
-    mode_V->table.insert(fmt::format("V_abs[{}]", idx), fmt::format("|V[{}]|", idx));
+    mode_V->table.insert(fmt::format("V_re[{}]", idx), fmt::format("Re{{V[{}]}} (V)", idx));
+    mode_V->table.insert(fmt::format("V_im[{}]", idx), fmt::format("Im{{V[{}]}} (V)", idx));
   }
   mode_V->WriteFullTableTrunc();
 }
@@ -1632,7 +1633,8 @@ auto PostOperatorCSV<solver_t>::PrintModeV()
   mode_V->table["idx"] << row_idx_v;
   for (const auto &[idx, result] : measurement_cache.mode_data.voltage)
   {
-    mode_V->table[fmt::format("V_abs[{}]", idx)] << std::abs(result.V);
+    mode_V->table[fmt::format("V_re[{}]", idx)] << result.V.real();
+    mode_V->table[fmt::format("V_im[{}]", idx)] << result.V.imag();
   }
   mode_V->WriteFullTableTrunc();
 }
