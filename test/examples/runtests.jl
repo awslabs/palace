@@ -82,6 +82,7 @@ arg_configs = [
             "cylinder/waveguide",
             "cylinder/floquet",
             "cylinder/driven_wave",
+            "dielectric_grating/uniform",
             "coaxial/open",
             "coaxial/matched",
             "cpw/lumped_uniform",
@@ -342,6 +343,45 @@ if "cylinder/driven_wave" in cases
     )
 end
 
+# Floquet port S-parameter test: compare only magnitude columns (|S| in dB),
+# skipping NaN entries (evanescent modes) and negligible signals (< -200 dB).
+function test_floquet_sparams(new_data, ref_data)
+    for col_name in names(new_data)
+        # Only compare magnitude columns, skip phase columns.
+        occursin("|S[", col_name) && occursin("(dB)", col_name) || continue
+        for (v_new, v_ref) in zip(new_data[!, col_name], ref_data[!, col_name])
+            if isnan(v_new) && isnan(v_ref)
+                @test true
+            elseif v_ref < -200  # negligible signal, skip
+                @test true
+            else
+                @test v_new ≈ v_ref rtol=reltol atol=abstol
+            end
+        end
+    end
+    return true
+end
+
+if "dielectric_grating/uniform" in cases
+    @info "Testing dielectric_grating/uniform..."
+    @time testcase(
+        "dielectric_grating",
+        "dielectric_grating_uniform.json",
+        "uniform";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum"],
+        custom_tests=Dict("port-floquet-S.csv" => test_floquet_sparams),
+        paraview_fields=false,
+        skip_rowcount=true,
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
+    )
+end
+
 # Coarser test tolerances for driven simulations with ports
 reltol = 2.0e-2
 abstol = 1.0e-10
@@ -583,6 +623,9 @@ if "adapter/slp" in cases
         eigen_solver=eigensolver
     )
 end
+
+reltol = 1.0e-4
+abstol = 1.0e-16
 
 total_time = time() - start_time
 @info "Total runtime: $(round(total_time, digits=2)) seconds"

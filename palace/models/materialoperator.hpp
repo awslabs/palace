@@ -31,6 +31,9 @@ private:
   mfem::DenseTensor mat_muinv, mat_epsilon, mat_epsilon_imag, mat_epsilon_abs, mat_invz0,
       mat_c0, mat_sigma, mat_invLondon, mat_kxTmuinv, mat_muinvkx, mat_kxTmuinvkx, mat_kx;
   mfem::DenseMatrix wave_vector_cross;
+  mfem::Vector wave_vector;        // BZ-wrapped k_F (fixed) or k₀ = k_F/ω (freq-scaled).
+  mfem::Vector wave_vector_bz;     // BZ-wrapped k_F (always k_F, never k₀). For BZ offset.
+  double floquet_omega_ref = 0.0;  // Nondimensional; when > 0, k_F scales with frequency.
   mfem::Array<double> mat_c0_min, mat_c0_max;
 
   // Are materials isotropic? True when all the material properties are effectively
@@ -109,6 +112,10 @@ public:
   bool HasConductivity() const { return has_conductivity_attr; }
   bool HasLondonDepth() const { return has_london_attr; }
   bool HasWaveVector() const { return has_wave_attr; }
+  const mfem::Vector &GetWaveVector() const { return wave_vector; }
+  const mfem::Vector &GetWaveVectorBZ() const { return wave_vector_bz; }
+  bool HasFloquetFrequencyScaling() const { return floquet_omega_ref > 0.0; }
+  double GetFloquetOmegaRef() const { return floquet_omega_ref; }
 
   const auto &GetAttributeToMaterial() const { return attr_mat; }
   mfem::Array<int> GetBdrAttributeToMaterial() const;

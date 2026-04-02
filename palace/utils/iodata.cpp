@@ -610,6 +610,16 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   config::Nondimensionalize(units, solver.driven);
   config::Nondimensionalize(units, solver.transient);
 
+  // Nondimensionalize Floquet reference frequency (GHz -> nondimensional angular
+  // frequency).
+  if (boundaries.periodic.floquet_reference_freq > 0.0)
+  {
+    boundaries.periodic.floquet_reference_freq =
+        2 * M_PI *
+        units.Nondimensionalize<Units::ValueType::FREQUENCY>(
+            boundaries.periodic.floquet_reference_freq);
+  }
+
   // Scale mesh vertices for correct nondimensionalization.
   mesh::NondimensionalizeMesh(mesh, units.GetMeshLengthRelativeScale());
 
