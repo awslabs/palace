@@ -128,8 +128,8 @@ For the thick metal with impedance BC:
 
 | Mode | ``\text{Re}(n_\text{eff})`` | ``\text{Im}(n_\text{eff})`` |
 |:----:|:---------------------------:|:---------------------------:|
-| 1    | 2.528                       | ``-1.39 \times 10^{-7}``    |
-| 2    | 2.510                       | ``-1.31 \times 10^{-7}``    |
+| 1    | 2.510                       | ``-1.32 \times 10^{-7}``    |
+| 2    | 2.528                       | ``-1.58 \times 10^{-8}``    |
 
 The impedance BC shifts the effective index upward for both modes. This is expected: the
 surface inductance ``L_s`` increases the effective path length seen by the wave, raising
@@ -143,8 +143,8 @@ voltage line integral across the CPW gap and the mode power:
 
 | Mode | ``Z_\text{PV}`` (thin PEC) | ``Z_\text{PV}`` (thick impedance) |
 |:----:|:--------------------------:|:---------------------------------:|
-| 1    | 38.8 Ohm                   | 37.5 Ohm                          |
-| 2    | 12.2 Ohm                   | 11.9 Ohm                          |
+| 1    | 38.8 Ohm                   | 12.0 Ohm                          |
+| 2    | 12.2 Ohm                   | 39.2 Ohm                          |
 
 The two modes correspond to the even and odd CPW modes, which have different impedance
 values. Note that the mode ordering (by propagation constant) can differ between the thin
