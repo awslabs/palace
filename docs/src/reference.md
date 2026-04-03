@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Reference
 
-*Palace* calculate solutions of Maxwell's equation for five different "Problem Types":
+*Palace* calculates solutions of Maxwell's equation for five different "Problem Types":
 
   - Electrostatics: time-independent voltage sources,
   - Magnetostatics: time-independent current sources,
@@ -309,10 +309,67 @@ source term ``\bm{U}^{inc}`` at excited ports.
 
 For more information on the implementation of numeric wave ports, see [[3]](#References).
 
+For a general waveguide mode, the circuit quantities ``V``, ``I``, and ``Z`` are not uniquely
+determined by the electromagnetic fields and must be fixed by convention [[7,8]](#References). In contrast
+to lumped ports, where the voltage is defined as an area-averaged integral with a specific analytic
+form, wave port ``V`` and ``I`` are obtained from path integrals along user-specified paths on the
+port cross-section.
+
+**Voltage.** The mode voltage is defined as a path integral of the electric field:
+
+```math
+V = \int_\mathcal{C} \bm{E} \cdot d\bm{l}
+```
+
+where ``\mathcal{C}`` is a user-specified path between two conductors on the port cross-section. For
+TEM and TM modes, this integral depends only on the endpoints and not on the path between them; for
+TE and hybrid modes, it is path-dependent [[7]](#References).
+
+**Current.** The mode current is defined as a closed-loop path integral of the in-plane magnetic
+field:
+
+```math
+I = \oint_\mathcal{L} \bm{H}_t \cdot d\bm{l}
+```
+
+where ``\mathcal{L}`` is a user-specified closed contour encircling one conductor. The in-plane
+magnetic field ``\bm{H}_t = \mu_r^{-1}\bm{B}_t`` is obtained from the mode fields via
+
+```math
+\bm{B}_t = -\frac{k_n}{\omega}(\hat{\bm{n}}\times\bm{E}_t)
+    + \frac{1}{i\omega}(\nabla_t E_n \times\hat{\bm{n}})
+```
+
+where ``\hat{\bm{n}}`` is the port normal (propagation direction), ``k_n`` is the propagation
+constant, ``\bm{E}_t`` the transverse electric field, and ``E_n`` the normal (longitudinal) electric
+field component on the port.
+
+**Impedance.** Two impedance quantities are reported. The *power-voltage* characteristic impedance
+is defined as
+
+```math
+Z_{PV} = \frac{|V|^2}{P}
+```
+
+where ``P = \int_\Gamma\text{Re}\{(\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\}\,dS`` is the
+time-averaged power flux through the port cross-section. For TEM modes with a voltage path between the
+two conductors, ``Z_{PV}`` reduces to the conventional TEM characteristic impedance.
+
+As a diagnostic, the *voltage-current* impedance magnitude is also reported:
+
+```math
+Z_{VI} = |V| / |I|
+```
+
+where ``V`` and ``I`` are computed independently from different paths. Note that independently
+specifying both voltage and current does not in general define a valid characteristic impedance [[7]](#References).
+For TEM modes ``Z_{VI} = Z_{PV}``; for other modes they will generally differ.
+
 To Do:
 
-  - Discuss V / I / Z convention choice here.
   - Fix dembedding sign and normal sign convention (outward vs inward normal)
+  - Update with 1/2 factors if we move to average power definition
+  - link to impedance post-processing docs section once available.
 
 ### Scattering Parameters
 
@@ -672,7 +729,6 @@ frequency, *Mathematics of Computation* 72 (2003) 105-129.\
 [4] J. Wenner, R. Barends, R. C. Bialczak, et al., Surface loss of superconducting coplanar
 waveguide resonators, *Applied Physics Letters* 99, 113513 (2011).\
 [5] S. Nicaise, On Zienkiewicz-Zhu error estimators for Maxwell’s equations, *Comptes Rendus Mathematique* 340 (2005) 697-702.\
-[6] J. A, Stratton and L. J. Chu, Diffraction theory of Electromagnetic
-Waves, *Physical Review*, 56, 1, (1939), 99-107.
+[6] J. A, Stratton and L. J. Chu, Diffraction theory of Electromagnetic Waves, *Physical Review*, 56, 1, (1939), 99-107.\
 [7] R. B. Marks and D. F. Williams, A general waveguide circuit theory, *J. Res. Natl. Inst. Stan.* 97, 533 (1992).\
 [8] D. M. Pozar, *Microwave engineering*, Fourth edition. John Wiley & Sons, Hoboken, NJ, 2012.
