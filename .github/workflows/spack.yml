@@ -43,45 +43,14 @@ jobs:
               - '.github/workflows/spack.yml'
 
   # Build jobs
-  build-arm64-gcc:
+  build-containers:
     needs: filter
     if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, arm64]
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+    runs-on: [self-hosted, '${{ matrix.arch }}']
     steps:
       - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
-          toolchain: gcc
-          run-regression-tests: 'false'
-      - name: Install Podman
-        shell: bash
-        run: |
-          sudo apt-get install -y podman
-      - name: Generate Dockerfile
-        shell: bash
-        run: |
-          spack -e . containerize > Dockerfile
-          # Replace /opt/palace with actual workspace path so container matches host
-          sed -i "s|/opt/palace|$PWD|g" Dockerfile
-          # Inject build args for GHCR mirror authentication
-          sed -i '/^FROM bootstrap AS builder/a ARG GITHUB_USER\nARG GITHUB_TOKEN\nENV GITHUB_USER=$GITHUB_USER\nENV GITHUB_TOKEN=$GITHUB_TOKEN' Dockerfile
-          # To match the host Palace identically, we also need to build tests
-          sed -i 's/spack install --fail-fast/spack install --fail-fast --test root/' Dockerfile
-      - name: Build Docker image
-        shell: bash
-        run: |
-          sudo podman build --format docker \
-            --build-arg GITHUB_USER=$GITHUB_USER \
-            --build-arg GITHUB_TOKEN=$GITHUB_TOKEN \
-            -t palace-arm64 .
-      - name: Save Docker image as tar
-        shell: bash
-        run: |
-          sudo podman save palace-arm64:latest -o palace-arm64.tar
-          sudo chmod a+r palace-arm64.tar
-      - name: Upload container
-        uses: actions/upload-artifact@v4
-        with:
-          name: palace-arm64
-          path: palace-arm64.tar
-          retention-days: 3
+      - uses: ./.github/actions/build-container

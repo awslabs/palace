@@ -1,0 +1,76 @@
+{% extends "container/Dockerfile" %}
+{% block build_stage %}
+# Build args for binary cache authentication
+ARG GITHUB_USER=""
+ARG GITHUB_TOKEN=""
+
+# Copy the Palace source tree
+COPY . /opt/palace
+
+# Verify that the Palace source tree was copied correctly
+RUN test -f /opt/palace/CMakeLists.txt || \
+    (echo "ERROR: Palace source tree not found in /opt/palace." && \
+     echo "Run 'docker build' from the palace repository root." && \
+     exit 1)
+
+# Set up spack repo and apply patches to builtin spack packages
+RUN mkdir -p /opt/spack-environment && \
+    ln -s /opt/palace/spack_repo /opt/spack-environment/spack_repo && \
+    ln -sf $(spack location --repo builtin)/packages/mfem /opt/palace/spack_repo/local/packages/mfem && \
+    cd $(cd $(spack location --repo builtin) && git rev-parse --show-toplevel) && \
+    for patch in /opt/palace/spack_repo/patches/*.diff; do \
+      if [ -f "$patch" ]; then \
+        if git apply --check "$patch" 2>/dev/null; then \
+          echo "Applying patch: $patch"; \
+          git apply "$patch"; \
+        else \
+          echo "Cannot apply $patch (may already be merged)"; \
+        fi; \
+      fi; \
+    done
+
+# Export cache credentials so spack can access OCI mirrors
+ENV GITHUB_USER=${GITHUB_USER}
+ENV GITHUB_TOKEN=${GITHUB_TOKEN}
+
+# What we want to install and how we want to install it
+# is specified in a manifest file (spack.yaml)
+RUN mkdir -p {{ paths.environment }} && \
+set -o noclobber \
+{{ manifest }} > {{ paths.environment }}/spack.yaml
+
+# Check if the binary cache is reachable
+RUN cd {{ paths.environment }} && spack env activate . && \
+    if spack buildcache list -L 2>/dev/null; then \
+      echo "Binary cache is reachable"; \
+    else \
+      echo "WARNING: Binary cache is not reachable, all packages will be built from source"; \
+    fi
+
+# Install the software
+RUN cd {{ paths.environment }} && spack env activate . && spack install -j$(nproc) --fail-fast
+
+# Push installed packages to the binary cache
+RUN cd {{ paths.environment }} && spack env activate . && \
+    spack buildcache push --unsigned local-buildcache
+
+# Remove unnecessary deps
+RUN cd {{ paths.environment }} && spack env activate . && spack gc -y
+{% if strip %}
+
+# Strip all the binaries
+RUN find -L {{ paths.view }}/* -type f -exec readlink -f '{}' \; | \
+    xargs file -i | \
+    grep 'charset=binary' | \
+    grep 'x-executable\|x-archive\|x-sharedlib' | \
+    awk -F: '{print $1}' | xargs strip
+{% endif %}
+
+# Modifications to the environment that are necessary to run
+RUN cd {{ paths.environment }} && \
+    spack env activate --sh -d . > activate.sh
+
+# Clear credentials from the image
+ENV GITHUB_USER=""
+ENV GITHUB_TOKEN=""
+{% endblock %}

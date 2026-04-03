@@ -1,0 +1,76 @@
+name: Build Palace Containers
+description: Build a Palace container image from the stored Spack environment
+
+inputs:
+  image-name:
+    description: 'Name for the container image'
+    required: false
+    default: 'palace'
+
+runs:
+  using: composite
+  steps:
+    - name: Setup environment
+      uses: ./.github/actions/setup-runner
+      with:
+        # Spack develop because we want to have access to the most recent
+        # version of spack-packages
+        spack-version: 'develop'
+        julia-version: 'dont-install'
+        llvm-version: 'dont-install'
+        setup-intel: 'false'
+
+    - name: Install Podman
+      shell: bash
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+
+        sudo add-apt-repository -y ppa:apptainer/ppa
+        sudo apt update
+
+        sudo apt install -y podman apptainer
+
+        # Configure podman to resolve short image names from Docker Hub
+        echo 'unqualified-search-registries = ["docker.io"]' | sudo tee /etc/containers/registries.conf.d/docker.conf
+
+        end_timer "Setup podman and apptainer"
+
+    - name: Generate Dockerfile
+      shell: bash
+      run: |
+        cd .github/actions/build-container/spack_env && spack -e . containerize > $GITHUB_WORKSPACE/Dockerfile
+
+    - name: Build OCI image
+      shell: bash
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+
+        sudo podman build --format docker \
+          --build-arg GITHUB_USER=$GITHUB_USER \
+          --build-arg GITHUB_TOKEN=$GITHUB_TOKEN \
+          -t palace1 .
+
+        end_timer "Build OCI container"
+
+    # - name: Save Docker image as tar
+    #   shell: bash
+    #   run: |
+    #     sudo podman save ${{ inputs.image-name }}:latest -o ${{ inputs.image-name }}.tar
+    #     sudo chmod a+r ${{ inputs.image-name }}.tar
+
+    # - name: Upload container
+    #   uses: actions/upload-artifact@v4
+    #   with:
+    #     name: ${{ inputs.image-name }}
+    #     path: ${{ inputs.image-name }}.tar
+    #     retention-days: 3
+
+    # We print timing if we don't run the regression tests, otherwise, it will
+    # be regression test job that prints the file. (This is for the build-xxx
+    # jobs)
+    - name: Timing information
+      shell: bash
+      run: |
+        cat /tmp/timing.log
