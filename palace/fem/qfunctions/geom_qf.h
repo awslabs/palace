@@ -14,6 +14,7 @@
 
 #include "21/geom_21_qf.h"
 #include "22/geom_22_qf.h"
+#include "31/geom_31_qf.h"
 #include "32/geom_32_qf.h"
 #include "33/geom_33_qf.h"
 

@@ -156,7 +156,10 @@
           "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
           "KSPTol": { "type": "number", "exclusiveMinimum": 0.0 },
           "EigenTol": { "type": "number", "exclusiveMinimum": 0.0 },
-          "Verbose": { "type": "integer", "minimum": 0.0 }
+          "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
+          "Verbose": { "type": "integer", "minimum": 0.0 },
+          "VoltagePath": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 } },
+          "NSamples": { "type": "integer", "minimum": 1 }
         }
       }
     },
@@ -323,6 +326,42 @@
               "Thickness": { "type": "number" },
               "Permittivity": { "type": "number" },
               "LossTan": { "type": "number" }
+            }
+          }
+        },
+        "Impedance":
+        {
+          "type": "array",
+          "items":
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["Index"],
+            "properties":
+            {
+              "Index": { "type": "integer" },
+              "VoltageAttributes": { "$ref": "#/$defs/Attributes" },
+              "CurrentAttributes": { "$ref": "#/$defs/Attributes" },
+              "VoltagePath": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 } },
+              "CurrentPath": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 } },
+              "NSamples": { "type": "integer", "minimum": 1 }
+            }
+          }
+        },
+        "Voltage":
+        {
+          "type": "array",
+          "items":
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["Index"],
+            "properties":
+            {
+              "Index": { "type": "integer" },
+              "VoltageAttributes": { "$ref": "#/$defs/Attributes" },
+              "VoltagePath": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 } },
+              "NSamples": { "type": "integer", "minimum": 1 }
             }
           }
         },

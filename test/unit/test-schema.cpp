@@ -183,6 +183,14 @@ TEST_CASE("Schema Validation - Invalid Config", "[schema][Serial]")
                               {"Solver", {{"Linear", {}}}}};
     CHECK(!ValidateConfig(transient_missing).empty());
 
+    // BoundaryMode type requires Solver.BoundaryMode section
+    json boundarymode_missing = {{"Problem", {{"Type", "BoundaryMode"}}},
+                                 {"Model", {{"Mesh", "test.msh"}}},
+                                 {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                                 {"Boundaries", json::object()},
+                                 {"Solver", {{"Linear", {}}}}};
+    CHECK(!ValidateConfig(boundarymode_missing).empty());
+
     // Electrostatic and Magnetostatic don't require matching sections (have defaults)
     json electro_ok = {{"Problem", {{"Type", "Electrostatic"}}},
                        {"Model", {{"Mesh", "test.msh"}}},
@@ -572,10 +580,10 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
                    {"Solver", json::object()}};
 
     std::string err = ValidateConfig(config);
-    CHECK(
-        err ==
-        "At [\"Problem\"][\"Type\"]: instance not found in required enum; valid values: "
-        "\"Eigenmode\", \"Driven\", \"Transient\", \"Electrostatic\", \"Magnetostatic\"\n");
+    CHECK(err ==
+          "At [\"Problem\"][\"Type\"]: instance not found in required enum; valid values: "
+          "\"Eigenmode\", \"Driven\", \"Transient\", \"Electrostatic\", \"Magnetostatic\", "
+          "\"BoundaryMode\"\n");
   }
 
   SECTION("Invalid enum in nested array")

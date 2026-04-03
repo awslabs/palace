@@ -70,7 +70,8 @@ PALACE_JSON_SERIALIZE_ENUM(ProblemType, {{ProblemType::DRIVEN, "Driven"},
                                          {ProblemType::EIGENMODE, "Eigenmode"},
                                          {ProblemType::ELECTROSTATIC, "Electrostatic"},
                                          {ProblemType::MAGNETOSTATIC, "Magnetostatic"},
-                                         {ProblemType::TRANSIENT, "Transient"}})
+                                         {ProblemType::TRANSIENT, "Transient"},
+                                         {ProblemType::BOUNDARYMODE, "BoundaryMode"}})
 
 // Helper for converting string keys to enum for EigenSolverBackend.
 PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "Default"},
@@ -615,7 +616,16 @@ WavePortData::WavePortData(const json &port)
   ksp_max_its = port.value("MaxIts", ksp_max_its);
   ksp_tol = port.value("KSPTol", ksp_tol);
   eig_tol = port.value("EigenTol", eig_tol);
+  max_size = port.value("MaxSize", max_size);
   verbose = port.value("Verbose", verbose);
+  if (auto it = port.find("VoltagePath"); it != port.end())
+  {
+    for (const auto &pt : *it)
+    {
+      voltage_path.push_back(pt.get<std::vector<double>>());
+    }
+  }
+  n_samples = port.value("NSamples", n_samples);
 }
 
 SurfaceCurrentData::SurfaceCurrentData(const json &source)
@@ -657,6 +667,67 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
   t = dielectric.at("Thickness");             // Required
   epsilon_r = dielectric.at("Permittivity");  // Required
   tandelta = dielectric.value("LossTan", tandelta);
+}
+
+ModeImpedanceData::ModeImpedanceData(const json &imp)
+{
+  if (auto it = imp.find("VoltageAttributes"); it != imp.end())
+  {
+    voltage_attributes = it->get<std::vector<int>>();
+    std::sort(voltage_attributes.begin(), voltage_attributes.end());
+  }
+  if (auto it = imp.find("CurrentAttributes"); it != imp.end())
+  {
+    current_attributes = it->get<std::vector<int>>();
+    std::sort(current_attributes.begin(), current_attributes.end());
+  }
+  if (auto it = imp.find("VoltagePath"); it != imp.end())
+  {
+    for (const auto &pt : *it)
+    {
+      voltage_path.push_back(pt.get<std::vector<double>>());
+    }
+  }
+  if (auto it = imp.find("CurrentPath"); it != imp.end())
+  {
+    for (const auto &pt : *it)
+    {
+      current_path.push_back(pt.get<std::vector<double>>());
+    }
+  }
+  n_samples = imp.value("NSamples", n_samples);
+  MFEM_VERIFY(voltage_attributes.empty() || voltage_path.empty(),
+              "Impedance boundary should specify either \"VoltageAttributes\" or "
+              "\"VoltagePath\", not both!");
+  MFEM_VERIFY(current_attributes.empty() || current_path.empty(),
+              "Impedance boundary should specify either \"CurrentAttributes\" or "
+              "\"CurrentPath\", not both!");
+  MFEM_VERIFY(!voltage_attributes.empty() || voltage_path.size() >= 2,
+              "Impedance boundary requires either \"VoltageAttributes\" or "
+              "\"VoltagePath\" in the configuration file!");
+}
+
+ModeVoltageData::ModeVoltageData(const json &volt)
+{
+  if (auto it = volt.find("VoltageAttributes"); it != volt.end())
+  {
+    voltage_attributes = it->get<std::vector<int>>();
+    std::sort(voltage_attributes.begin(), voltage_attributes.end());
+  }
+  if (auto it = volt.find("VoltagePath"); it != volt.end())
+  {
+    for (const auto &pt : *it)
+    {
+      voltage_path.push_back(pt.get<std::vector<double>>());
+    }
+  }
+  n_samples = volt.value("NSamples", n_samples);
+  MFEM_VERIFY(voltage_attributes.empty() || voltage_path.empty(),
+              "Voltage boundary should specify either \"VoltageAttributes\" or "
+              "\"VoltagePath\", not both!");
+  MFEM_VERIFY(!voltage_attributes.empty() || voltage_path.size() >= 2,
+              "Voltage boundary requires either \"VoltageAttributes\" or "
+              "\"VoltagePath\" in the configuration file!");
 }
 
 FarFieldPostData::FarFieldPostData(const json &farfield)
@@ -806,6 +877,9 @@ BoundaryPostData::BoundaryPostData(const json &postpro)
       ParseOptionalMap<SurfaceFluxData>(postpro, "SurfaceFlux", "\"SurfaceFlux\" boundary");
   dielectric = ParseOptionalMap<InterfaceDielectricData>(postpro, "Dielectric",
                                                          "\"Dielectric\" boundary");
+  impedance =
+      ParseOptionalMap<ModeImpedanceData>(postpro, "Impedance", "\"Impedance\" boundary");
+  voltage = ParseOptionalMap<ModeVoltageData>(postpro, "Voltage", "\"Voltage\" boundary");
   farfield = ParseOptional<FarFieldPostData>(postpro, "FarField");
 
   // Store all unique postprocessing boundary attributes.
@@ -816,6 +890,18 @@ BoundaryPostData::BoundaryPostData(const json &postpro)
   for (const auto &[idx, data] : dielectric)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
+  }
+  for (const auto &[idx, data] : impedance)
+  {
+    attributes.insert(attributes.end(), data.voltage_attributes.begin(),
+                      data.voltage_attributes.end());
+    attributes.insert(attributes.end(), data.current_attributes.begin(),
+                      data.current_attributes.end());
+  }
+  for (const auto &[idx, data] : voltage)
+  {
+    attributes.insert(attributes.end(), data.voltage_attributes.begin(),
+                      data.voltage_attributes.end());
   }
 
   attributes.insert(attributes.end(), farfield.attributes.begin(),
@@ -1221,6 +1307,22 @@ TransientSolverData::TransientSolverData(const json &transient)
   }
 }
 
+BoundaryModeSolverData::BoundaryModeSolverData(const json &ma)
+{
+  freq = ma.at("Freq");  // Required
+  n = ma.value("N", n);
+  n_post = ma.value("Save", n_post);
+  target = ma.value("Target", target);
+  tol = ma.value("Tol", tol);
+  max_size = ma.value("MaxSize", max_size);
+  type = ma.value("Type", type);
+  if (auto it = ma.find("Attributes"); it != ma.end())
+  {
+    attributes = it->get<std::vector<int>>();
+    std::sort(attributes.begin(), attributes.end());
+  }
+}
+
 LinearSolverData::LinearSolverData(const json &linear)
 {
   type = linear.value("Type", type);
@@ -1285,6 +1387,7 @@ SolverData::SolverData(const json &solver)
   electrostatic = ParseOptional<ElectrostaticSolverData>(solver, "Electrostatic");
   magnetostatic = ParseOptional<MagnetostaticSolverData>(solver, "Magnetostatic");
   transient = ParseOptional<TransientSolverData>(solver, "Transient");
+  boundary_mode = ParseOptional<BoundaryModeSolverData>(solver, "BoundaryMode");
   linear = ParseOptional<LinearSolverData>(solver, "Linear");
 }
 
@@ -1497,6 +1600,13 @@ void Nondimensionalize(const Units &units, PeriodicBoundaryData &data)
 void Nondimensionalize(const Units &units, WavePortData &data)
 {
   data.d_offset /= units.GetMeshLengthRelativeScale();
+  for (auto &pt : data.voltage_path)
+  {
+    for (auto &v : pt)
+    {
+      v /= units.GetMeshLengthRelativeScale();
+    }
+  }
 }
 
 void Nondimensionalize(const Units &units, SurfaceFluxData &data)

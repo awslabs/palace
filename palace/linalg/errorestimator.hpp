@@ -55,12 +55,17 @@ public:
   void Mult(const VecType &x, VecType &y) const;
 };
 
+// Forward declarations for friend access.
+template <typename VecType>
+class BoundaryModeFluxErrorEstimator;
+
 // Class used for computing gradient flux error estimate, η_K = || ε Eₕ - D ||_K, where D
 // denotes a smooth reconstruction of ε Eₕ = ε ∇Vₕ with continuous normal component.
 template <typename VecType = Vector>
 class GradFluxErrorEstimator
 {
   friend class TimeDependentFluxErrorEstimator<VecType>;
+  friend class BoundaryModeFluxErrorEstimator<VecType>;
 
 private:
   // Finite element spaces used to represent E and the recovered D.
@@ -93,6 +98,7 @@ template <typename VecType = Vector>
 class CurlFluxErrorEstimator
 {
   friend class TimeDependentFluxErrorEstimator<VecType>;
+  friend class BoundaryModeFluxErrorEstimator<VecType>;
 
 private:
   // Finite element space used to represent B and the recovered H.
@@ -118,8 +124,8 @@ public:
   void AddErrorIndicator(const VecType &B, double Et, ErrorIndicator &indicator) const;
 };
 
-// Class used for computing sum of the gradient flux and curl flux error estimates,
-// η²_K = || ε Eₕ - D ||²_K + || μ⁻¹ Bₕ - H ||²_K, where D and H denote a smooth
+// Class used for computing sum of the gradient flux and curl flux error estimates for 3D,
+// η²_K = || ε Eₕ - D ||²_K + || μ⁻¹ Bₕ - H ||²_K, where D and H denote smooth
 // reconstructions of ε Eₕ = ε ∇Vₕ with continuous normal component and μ⁻¹ Bₕ = μ⁻¹ ∇ × Eₕ
 // with continuous tangential component.
 template <typename VecType>
@@ -135,9 +141,28 @@ public:
                                   FiniteElementSpaceHierarchy &rt_fespaces, double tol,
                                   int max_it, int print, bool use_mg);
 
-  // Compute elemental error indicators given the electric field and magnetic flux density
-  // as a vectors of true dofs, and fold into an existing indicator. The indicators are
-  // nondimensionalized using the total field energy.
+  void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
+                         ErrorIndicator &indicator) const;
+};
+
+// 2D boundary mode error estimator. Owns its own single-level FE spaces for flux
+// recovery. Uses L2 curl space (scalar Bz) + H1 hierarchy (smooth H projection)
+// instead of RT/ND.
+template <typename VecType>
+class BoundaryModeFluxErrorEstimator
+{
+private:
+  GradFluxErrorEstimator<VecType> grad_estimator;
+  CurlFluxErrorEstimator<VecType> curl_estimator;
+
+public:
+  BoundaryModeFluxErrorEstimator(const MaterialOperator &mat_op,
+                                 FiniteElementSpaceHierarchy &nd_fespaces,
+                                 FiniteElementSpaceHierarchy &rt_fespaces,
+                                 FiniteElementSpace &curl_fespace,
+                                 FiniteElementSpaceHierarchy &h1_fespaces, double tol,
+                                 int max_it, int print, bool use_mg);
+
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
                          ErrorIndicator &indicator) const;
 };
