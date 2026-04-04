@@ -180,7 +180,10 @@ template <typename OperType>
 void MfemWrapperSolver<OperType>::DropSmallEntries()
 {
   const auto nnz_before = A->NNZ();
-  A->DropSmallEntries(std::pow(std::numeric_limits<double>::epsilon(), 2));
+  const double tol = (drop_small_entries_tol > 0.0)
+                         ? drop_small_entries_tol
+                         : std::pow(std::numeric_limits<double>::epsilon(), 2);
+  A->DropSmallEntries(tol);
   const auto nnz_after = A->NNZ();
 #if defined(MFEM_USE_MUMPS)
   if (auto *mumps = dynamic_cast<MumpsSolver *>(pc.get()))

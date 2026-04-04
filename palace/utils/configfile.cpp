@@ -1247,6 +1247,7 @@ LinearSolverData::LinearSolverData(const json &linear)
   pc_mat_shifted = linear.value("PCMatShifted", pc_mat_shifted);
   complex_coarse_solve = linear.value("ComplexCoarseSolve", complex_coarse_solve);
   drop_small_entries = linear.value("DropSmallEntries", drop_small_entries);
+  drop_small_entries_tol = linear.value("DropSmallEntriesTol", drop_small_entries_tol);
   reorder_reuse = linear.value("ReorderingReuse", reorder_reuse);
   pc_side = linear.value("PCSide", pc_side);
   sym_factorization = linear.value("ColumnOrdering", sym_factorization);
