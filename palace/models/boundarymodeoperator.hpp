@@ -129,6 +129,9 @@ private:
   // DBC attributes.
   mfem::Array<int> dbc_bcs;
 
+  // Multigrid configuration for the eigenvalue solver (must outlive port_data).
+  std::unique_ptr<ModeEigenSolverMultigridConfig> mg_config;
+
   // Wave port data (owns the eigenvalue solver internally).
   std::unique_ptr<WavePortData> port_data;
 

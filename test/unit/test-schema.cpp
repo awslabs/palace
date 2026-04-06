@@ -183,7 +183,7 @@ TEST_CASE("Schema Validation - Invalid Config", "[schema][Serial]")
                               {"Solver", {{"Linear", {}}}}};
     CHECK(!ValidateConfig(transient_missing).empty());
 
-    // BoundaryMode type requires Solver.BoundaryMode section
+    // BoundaryMode type requires Solver.BoundaryMode section.
     json boundarymode_missing = {{"Problem", {{"Type", "BoundaryMode"}}},
                                  {"Model", {{"Mesh", "test.msh"}}},
                                  {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},

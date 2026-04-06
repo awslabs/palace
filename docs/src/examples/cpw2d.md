@@ -5,6 +5,12 @@ SPDX-License-Identifier: Apache-2.0
 --->
 ```
 
+```@setup include_example
+function include_example_file(example_path, filename)
+    print(read(joinpath(@__DIR__, "..", "..", "..", "test", "examples", "ref", example_path, filename), String))
+end
+```
+
 # 2D Coplanar Waveguide Mode Analysis
 
 ## Problem description
@@ -105,6 +111,7 @@ metal configuration, zoomed into the trace and gap region. The field is concentr
 gaps between the center conductor and ground planes, with singularities at the metal corners.
 
 ```@raw html
+<!-- Plot generated with examples/cpw2d/plot_cpw2d_docs.py -->
 <br/><p align="center">
   <img src="../../assets/examples/cpw2d-1.png" width="70%" />
 </p><br/>
@@ -117,19 +124,17 @@ and characteristic impedance to `mode-Z.csv`.
 
 ### Effective index
 
-For the thin metal (PEC) case, the two lowest-order modes have effective indices:
+For the thin metal (PEC) case:
 
-| Mode | ``\text{Re}(n_\text{eff})`` | ``\text{Im}(n_\text{eff})`` |
-|:----:|:---------------------------:|:---------------------------:|
-| 1    | 2.497                       | ``-1.19 \times 10^{-7}``    |
-| 2    | 2.501                       | ``-1.47 \times 10^{-7}``    |
+```@example include_example
+include_example_file("cpw2d/thin", "mode-kn.csv") # hide
+```
 
 For the thick metal with impedance BC:
 
-| Mode | ``\text{Re}(n_\text{eff})`` | ``\text{Im}(n_\text{eff})`` |
-|:----:|:---------------------------:|:---------------------------:|
-| 1    | 2.510                       | ``-1.32 \times 10^{-7}``    |
-| 2    | 2.528                       | ``-1.58 \times 10^{-8}``    |
+```@example include_example
+include_example_file("cpw2d/thick_impedance", "mode-kn.csv") # hide
+```
 
 The impedance BC shifts the effective index upward for both modes. This is expected: the
 surface inductance ``L_s`` increases the effective path length seen by the wave, raising
@@ -138,13 +143,18 @@ near the conductor surfaces.
 
 ### Characteristic impedance
 
-The power-voltage characteristic impedance ``Z_\text{PV} = |V|^2 / P`` is computed from the
-voltage line integral across the CPW gap and the mode power:
+The power-voltage characteristic impedance ``Z_\text{PV} = |V|^2 / (2P)`` is computed from
+the voltage line integral across the CPW gap and the mode power. For the thin metal case:
 
-| Mode | ``Z_\text{PV}`` (thin PEC) | ``Z_\text{PV}`` (thick impedance) |
-|:----:|:--------------------------:|:---------------------------------:|
-| 1    | 38.8 Ohm                   | 12.0 Ohm                          |
-| 2    | 12.2 Ohm                   | 39.2 Ohm                          |
+```@example include_example
+include_example_file("cpw2d/thin", "mode-Z.csv") # hide
+```
+
+For the thick metal with impedance BC:
+
+```@example include_example
+include_example_file("cpw2d/thick_impedance", "mode-Z.csv") # hide
+```
 
 The two modes correspond to the even and odd CPW modes, which have different impedance
 values. Note that the mode ordering (by propagation constant) can differ between the thin

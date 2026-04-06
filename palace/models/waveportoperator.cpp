@@ -121,7 +121,7 @@ void Normalize(const GridFunction &S0t, GridFunction &E0t, GridFunction &E0n,
                mfem::LinearForm &sr, mfem::LinearForm &si)
 {
   // Normalize grid functions to a chosen polarization direction and unit power, |E x H⋆| ⋅
-  // n, integrated over the port surface (+n is the direction of propagation). The n x H
+  // n, integrated over the port surface (+n is the outward mesh normal). The n x H
   // coefficients are updated implicitly as the only store references to the Et, En grid
   // functions. We choose a (rather arbitrary) phase constraint to at least make results for
   // the same port consistent between frequencies/meshes.
@@ -231,7 +231,7 @@ public:
   }
 };
 
-// Computes boundary mode n x H, where +n is the direction of wave propagation: n x H =
+// Computes boundary mode n x H, where +n is the outward mesh normal: n x H =
 // -1/(iωμ) (ikₙ Eₜ + ∇ₜ Eₙ), using the tangential and normal electric field component grid
 // functions evaluated on the (single-sided) boundary element.
 template <ValueType Type>
@@ -684,7 +684,7 @@ void WavePortData::Initialize(double omega)
 
   // Configure the linear forms for computing S-parameters (projection of the field onto the
   // port mode). Normalize the mode for a chosen polarization direction and unit power,
-  // |E x H⋆| ⋅ n, integrated over the port surface (+n is the direction of propagation).
+  // |E x H⋆| ⋅ n, integrated over the port surface (+n is the outward mesh normal).
   {
     const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
     BdrSubmeshHVectorCoefficient<ValueType::REAL> port_nxH0r_func(
@@ -759,10 +759,9 @@ double WavePortData::GetExcitationPower() const
 std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) const
 {
   // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface using
-  // the computed E and H = μ⁻¹ B fields, where +n is the direction of propagation (into the
-  // domain). The BdrSurfaceCurrentVectorCoefficient computes -n x H for an outward normal,
-  // so we multiply by -1. The linear form is reconstructed from scratch each time due to
-  // changing H.
+  // the computed E and H = μ⁻¹ B fields, where +n is the outward mesh normal. The
+  // BdrSurfaceCurrentVectorCoefficient computes -n x H for the outward normal. The linear
+  // form is reconstructed from scratch each time due to changing H.
   MFEM_VERIFY(E.HasImag() && B.HasImag(),
               "Wave ports expect complex-valued E and B fields in port power "
               "calculation!");
