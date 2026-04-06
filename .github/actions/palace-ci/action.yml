@@ -350,7 +350,7 @@ runs:
     # pick up the very same environment and have consistent binaries (pulled
     # from the cache).
     - name: Upload spack environment
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       if: inputs.run-regression-tests != 'true'
       with:
         name: spack-env-${{ runner.arch }}-${{ inputs.toolchain }}-${{ inputs.variant || 'default' }}-${{ inputs.math-libs || 'default' }}

@@ -39,7 +39,7 @@ jobs:
       should_build: ${{ steps.decide.outputs.should_build }}
     steps:
       - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -71,7 +71,7 @@ jobs:
 
       - name: Setup Spack
         if: needs.filter.outputs.should_build == 'true'
-        uses: spack/setup-spack@v2
+        uses: spack/setup-spack@v3
         with:
           ref: develop
           buildcache: true
@@ -192,7 +192,7 @@ jobs:
         with:
           version: '1'
 
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
         if: needs.filter.outputs.should_build == 'true'
 
       - name: Build and deploy
@@ -226,7 +226,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: needs.filter.outputs.should_build == 'true'
         with:
           name: docs

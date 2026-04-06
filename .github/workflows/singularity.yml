@@ -26,7 +26,7 @@ jobs:
       test: ${{ steps.filter.outputs.test }}
     steps:
       - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -71,7 +71,7 @@ jobs:
           julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
           julia --project=test/examples --color=yes test/examples/runtests.jl
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: needs.filter.outputs.test == 'true'
         with:
           name: ${{ env.CONTAINER_NAME }}

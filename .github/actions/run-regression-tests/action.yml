@@ -51,7 +51,7 @@ runs:
     # the previous step.
     - name: Download spack environment
       if: inputs.testing-on-build-runner != 'true'
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: spack-env-${{ runner.arch }}-${{ inputs.toolchain }}-${{ inputs.variant || 'default' }}-${{ inputs.math-libs || 'default' }}
 
