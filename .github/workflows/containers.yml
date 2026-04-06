@@ -1,0 +1,56 @@
+name: Containers
+
+# Build OCI/SIF containers for:
+# - sapphirerapids
+# - neoverse_v1
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  packages: write
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITHUB_USER: ${{ github.actor }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  # Filter to allow skipping the test if no relevant changes occurred.
+  filter:
+    runs-on: ubuntu-latest
+    outputs:
+      test: ${{ steps.filter.outputs.test }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            test:
+              - 'palace/**'
+              - 'cmake/**'
+              - 'extern/**'
+              - 'spack_repo/**'
+              - '.github/actions/**'
+              - '.github/workflows/containers.yml'
+
+  build-containers:
+    needs: filter
+    if: needs.filter.outputs.test == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+    runs-on: [self-hosted, '${{ matrix.arch }}']
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/build-container

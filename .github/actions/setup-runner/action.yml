@@ -5,7 +5,7 @@ name: 'Setup Runners'
 description: 'Common steps to prepare the environment to run Palace tests'
 inputs:
   julia-version:
-    description: 'Version of Julia to use (as understood by juliaup)'
+    description: 'Version of Julia to use (as understood by juliaup), or "dont-install" to skip'
     required: false
     default: 'release'
   spack-version:
@@ -91,6 +91,7 @@ runs:
         echo 'APT::Periodic::Unattended-Upgrade "0";' | sudo tee -a /etc/apt/apt.conf.d/20auto-upgrades
 
     - name: Setup repositories
+      if: inputs.llvm-version != 'dont-install' || inputs.setup-intel == 'true'
       shell: bash
       run: |
         source /tmp/timing_functions.sh
@@ -181,6 +182,7 @@ runs:
         ln -s "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
         
     - name: Install Julia
+      if: inputs.julia-version != 'dont-install'
       id: setup-julia
       shell: bash
       env:
