@@ -67,6 +67,12 @@ public:
   void SetTol(double tol) { SetRelTol(tol); }
   void SetRelTol(double tol) { rel_tol = tol; }
 
+  // Get the relative convergence tolerance.
+  double GetRelTol() const { return rel_tol; }
+
+  // Get the absolute convergence tolerance.
+  double GetAbsTol() const { return abs_tol; }
+
   // Set the absolute convergence tolerance.
   void SetAbsTol(double tol) { abs_tol = tol; }
 
