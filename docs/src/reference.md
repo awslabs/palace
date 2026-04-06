@@ -367,7 +367,12 @@ For TEM modes ``Z_{VI} = Z_{PV}``; for other modes they will generally differ.
 
 To Do:
 
-  - Fix dembedding sign and normal sign convention (outward vs inward normal)
+  - Fix dembedding sign and normal sign convention (outward vs inward normal):
+    In the boundarymode-2d branch, the normal sign convention: ``+\hat{\bm{n}}`` is the outward mesh normal.
+    The mode eigenvalue gives ``\text{Re}\{k_n\}\ge 0``, corresponding to forward propagation in the
+    ``+\hat{\bm{n}}`` direction. De-embedding
+    ``\tilde{S}_{ij} = S_{ij}e^{ik_{n,i}d_i}e^{ik_{n,j}d_j}`` uses positive ``d`` to shift the
+    reference plane toward the device (removing waveguide), consistent with [[8]](#References).
   - Update with 1/2 factors if we move to average power definition
   - link to impedance post-processing docs section once available.
 
