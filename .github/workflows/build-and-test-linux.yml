@@ -22,7 +22,7 @@ jobs:
       test: ${{ steps.filter.outputs.test }}
     steps:
       - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -395,7 +395,7 @@ jobs:
         with:
           version: '1'
 
-      - uses: julia-actions/cache@v2
+      - uses: julia-actions/cache@v3
         if: needs.filter.outputs.test == 'true'
 
       - name: Build Palace
@@ -540,7 +540,7 @@ jobs:
 
       - name: Upload coverage report
         if: needs.filter.outputs.test == 'true' && matrix.with-coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-${{ matrix.arch }}-${{ matrix.compiler }}-${{ matrix.mpi }}
           path: palace-build/coverage_html/
