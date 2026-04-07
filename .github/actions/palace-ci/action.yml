@@ -287,6 +287,15 @@ runs:
         spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies --test root -j $(nproc)
         end_timer "Build Dependencies"
 
+    - name: Print @develop commit hashes
+      if: inputs.use-develop-deps == 'true'
+      shell: bash
+      run: |
+        echo "=== @develop package commit hashes ==="
+        echo "hypre: $(git ls-remote https://github.com/hypre-space/hypre.git HEAD | cut -f1)"
+        echo "mfem: $(git ls-remote https://github.com/mfem/mfem.git HEAD | cut -f1)"
+        echo "=== end @develop hashes ==="
+
     - name: Build Palace
       shell: bash
       run: |
