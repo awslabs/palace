@@ -1,6 +1,7 @@
 {% extends "container/Dockerfile" %}
 {% block build_stage %}
 # Build args for binary cache authentication
+# Use ARG (not ENV) to avoid baking credentials into image layers
 ARG GITHUB_USER=""
 ARG GITHUB_TOKEN=""
 
@@ -28,10 +29,6 @@ RUN mkdir -p /opt/spack-environment && \
         fi; \
       fi; \
     done
-
-# Export cache credentials so spack can access OCI mirrors
-ENV GITHUB_USER=${GITHUB_USER}
-ENV GITHUB_TOKEN=${GITHUB_TOKEN}
 
 # What we want to install and how we want to install it
 # is specified in a manifest file (spack.yaml)
@@ -62,7 +59,7 @@ RUN cd {{ paths.environment }} && spack env activate . && spack gc -y
 # Remove build-only artifacts that aren't needed at runtime
 # Remove static libraries that have corresponding shared library
 RUN find /opt/software -type d \( -name examples -o -name doc -o -name docs \) -exec rm -rf {} + 2>/dev/null; \
-    find /opt/software -name "*.a" | while read a; do \
+    find /opt/software -name "*.a" -print0 | while IFS= read -r -d '' a; do \
       base="${a%.a}"; \
       if ls "${base}".so* >/dev/null 2>&1; then \
         rm -f "$a"; \
@@ -83,7 +80,4 @@ RUN find -L {{ paths.view }}/* -type f -exec readlink -f '{}' \; | \
 RUN cd {{ paths.environment }} && \
     spack env activate --sh -d . > activate.sh
 
-# Clear credentials from the image
-ENV GITHUB_USER=""
-ENV GITHUB_TOKEN=""
 {% endblock %}

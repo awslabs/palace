@@ -45,6 +45,11 @@ runs:
       run: |
         cd .github/actions/build-container/spack_env && spack -e . containerize > $GITHUB_WORKSPACE/Dockerfile
 
+    - name: Check Dockerfile
+      shell: bash
+      run: |
+        podman run --rm -i ghcr.io/hadolint/hadolint hadolint --failure-threshold error - < $GITHUB_WORKSPACE/Dockerfile
+
     - name: Build OCI image
       shell: bash
       run: |
