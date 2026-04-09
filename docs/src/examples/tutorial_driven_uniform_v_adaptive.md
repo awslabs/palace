@@ -19,10 +19,6 @@ eigenmode simulations.
     This tutorial is advanced. It goes into more of the algorithmic detail, to help users effectively use the driven solvers. However, some of these algorithmic choices are considered “internal” to
     *Palace*. They may change at any time if the developers decide that alternative approaches are better.
 
-    Additionally, this tutorial is a pre-requisite to understand *Palace*'s [circuit extraction
-    feature](tutorial_circuit_extraction.md), since that makes heavy use of the rational interpolation
-    formulation of the adaptive driven solver.
-
     Please proceed with caution.
 
 !!! note
@@ -230,7 +226,7 @@ non-quadratic in frequency such as wave ports.
 
 !!! note "Naming Conventions"
 
-    The matrix names ``\bm{K}``, ``\bm{C}``, ``\bm{M}`` for the quadratic system above are standard in mechanics and finite element codes. However, they should not be confused with the electrical circuit matrices. In particular, ``\bm{C}`` above is not the capacitance matrix. The exact relationship is described in the [circuit extraction tutorial](tutorial_circuit_extraction.md). Loosely speaking, ``\bm{K}`` corresponds to the inverse inductance ``\bm{L}^{-1}``, ``\bm{C}`` to the inverse resistance ``\bm{R}^{-1}`` and ``\bm{M}`` to the capacitance matrix ``\bm{C}``.
+    The matrix names ``\bm{K}``, ``\bm{C}``, ``\bm{M}`` for the quadratic system above are standard in mechanics and finite element codes. However, they should not be confused with the electrical circuit matrices. In particular, ``\bm{C}`` above is not the capacitance matrix. Loosely speaking, ``\bm{K}`` corresponds to the inverse inductance ``\bm{L}^{-1}``, ``\bm{C}`` to the inverse resistance ``\bm{R}^{-1}`` and ``\bm{M}`` to the capacitance matrix ``\bm{C}``.
 
 The idea of the adaptive solver is to transform this problem with a large dimension ``N`` into a
 linear problem with much smaller dimension ``n`` that approximates the high-dimensional model well.
@@ -648,8 +644,7 @@ can choose a finer grid around this feature. However, the adaptive reduced order
 contains a good estimate of the eigenmodes close to the real axis! We would like to use this in
 postprocessing without rerunning the simulation. In fact, the ROM matrices ``\bm{K}_r``,
 ``\bm{C}_r`` and ``\bm{M}_r`` are close in spirit to a circuit. To make that connection precise, we
-need to connect the abstract ROM matrix to real electrical signals. How to do this and the nuances
-involved are discussed in the [circuit extraction tutorial](tutorial_circuit_extraction.md).
+need to connect the abstract ROM matrix to real electrical signals.
 
 ## Literature & References
 
