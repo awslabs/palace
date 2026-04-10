@@ -33,6 +33,12 @@ The format of this changelog is based on
   - Fixed linear solver stalling in the nonlinear eigenvalue solver by adding an absolute
     tolerance and adapting the relative tolerance to the outer residual
     [PR 694](https://github.com/awslabs/palace/pull/694).
+  - Replaced boundary mass matrix CG solve workaround for lumped port excitation
+    projection with direct interpolation via MFEM's
+    `ProjectBdrCoefficientTangent`. An MFEM patch fixes the underlying face DOF
+    orientation bug for Nedelec elements at order >= 2 in parallel, removing the
+    need for the expensive mass solve
+    [PR 684](https://github.com/awslabs/palace/pull/684).
 
 ## [0.16.0] - 2026-03-05
 
