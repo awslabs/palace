@@ -34,6 +34,10 @@ SPDX-License-Identifier: Apache-2.0
     {
         ...
     },
+    "BoundaryMode":
+    {
+        ...
+    },
     "Linear":
     {
         ...
@@ -89,6 +93,10 @@ Thus, this object is only relevant for
 `"Magnetostatic"` :  Top-level object for configuring the magnetostatic simulation type.
 Thus, this object is only relevant for
 [`config["Problem"]["Type"]: "Magnetostatic"`](problem.md#config%5B%22Problem%22%5D).
+
+`"BoundaryMode"` :  Top-level object for configuring the mode analysis simulation type.
+Thus, this object is only relevant for
+[`config["Problem"]["Type"]: "BoundaryMode"`](problem.md#config%5B%22Problem%22%5D).
 
 `"Linear"` :  Top-level object for configuring the linear solver employed by all simulation
 types.
@@ -406,6 +414,52 @@ entries in the computed inductance matrix. Files are saved in the `paraview/` (a
 under the directory specified by
 [`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
 
+## `solver["BoundaryMode"]`
+
+```json
+"BoundaryMode":
+{
+    "Freq": <float>,
+    "N": <int>,
+    "Save": <int>,
+    "Target": <float>,
+    "Tol": <float>,
+    "MaxSize": <int>,
+    "Type": <string>,
+    "Attributes": [<int array>]
+}
+```
+
+with
+
+`"Freq" [None]` :  Operating frequency for the mode analysis, GHz.
+
+`"N" [1]` :  Number of modes to compute.
+
+`"Save" [0]` :  Number of computed field modes to save to disk for
+[visualization with ParaView](../guide/postprocessing.md#Visualization). Files are saved in
+the `paraview/` (and/or `gridfunction/`) directory under the directory specified by
+[`config["Problem"]["Output"]`](problem.md#config%5B%22Problem%22%5D).
+
+`"Target" [0.0]` :  Target effective index ``n_\text{eff} = k_n / k_0`` for the eigenvalue
+solver shift-and-invert spectral transformation, where ``k_n`` is the propagation constant
+of the guided mode and ``k_0 = \omega / c_0`` is the free-space wavenumber. When nonzero,
+the solver searches for modes with effective index near this value. When zero (default), the
+shift is computed automatically from the material properties.
+
+`"Tol" [1.0e-6]` :  Relative convergence tolerance for the eigenvalue solver.
+
+`"MaxSize" [0]` :  Maximum subspace dimension for the eigenvalue solver. For values less
+than 1, the solver uses a default subspace dimension.
+
+`"Type" ["Default"]` :  Specifies the eigenvalue solver to be used for the mode analysis.
+See [`config["Solver"]["Eigenmode"]["Type"]`](#solver%5B%22Eigenmode%22%5D).
+
+`"Attributes" [None]` :  Integer array of 3D mesh boundary attributes from which to extract
+a 2D cross-section submesh for the mode analysis. When specified, the input mesh must be 3D
+and a standalone 2D submesh is extracted from these boundary faces. When not specified, the
+input mesh is used directly and must be 2D.
+
 ## `solver["Linear"]`
 
 ```json
@@ -490,11 +544,14 @@ linear systems of equations arising for each simulation type. The available opti
 `"MaxSize" [0]` :  Maximum Krylov space size for the GMRES and FGMRES solvers. A value less
 than 1 defaults to the value specified by `"MaxIts"`.
 
-`"MGMaxLevels" [100]` : When greater than 1, enable the [geometric multigrid
+`"MGMaxLevels" [100]` : When greater than 1, enable [geometric multigrid
 preconditioning](https://en.wikipedia.org/wiki/Multigrid_method), which uses p-
 and h-multigrid coarsening as available to construct the multigrid hierarchy.
 The solver specified by `"Type"` is used on the coarsest level. Relaxation on
-the fine levels is performed with Chebyshev smoothing.
+the fine levels is performed with Chebyshev smoothing. For `"BoundaryMode"`
+problems, the default is `1` (multigrid disabled); set to a value greater than
+`1` to enable block-diagonal p-multigrid preconditioning for the coupled Nedelec–H1
+system.
 
 `"MGCoarsenType" ["Logarithmic"]` :  Coarsening to create p-multigrid levels.
 
@@ -525,7 +582,10 @@ performed for the coarsest multigrid level regardless of the setting of `"PCMatR
 `"PCMatShifted" [false]` :  When set to `true`, constructs the preconditioner for frequency
 domain problems using a positive definite approximation of the system matrix by flipping
 the sign for the mass matrix contribution, which can help performance at high frequencies
-(relative to the lowest nonzero eigenfrequencies of the model).
+(relative to the lowest nonzero eigenfrequencies of the model). Defaults to `true` for
+`"BoundaryMode"` problems when multigrid is enabled (`"MGMaxLevels"` > 1), since the
+shift-and-invert transformation can produce near-zero mass terms that degrade the
+preconditioner quality.
 
 `"ComplexCoarseSolve" [false]` : When set to `true`, the coarse-level solver uses the true
 complex-valued system matrix. When set to `false`, the real-valued approximation is used.

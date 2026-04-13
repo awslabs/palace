@@ -114,17 +114,18 @@ for implementation details.
     boundary. This allows for more accurate scattering parameter calculations when modeling
     waveguides or transmission lines with arbitrary cross sections.
 
-    The 2D wave port eigenproblem only supports PEC and PMC boundary conditions. Boundaries
-    that are specified as `"PEC"` or `"Conductivity"` in the full 3D model and intersect the wave port
-    boundary will be considered as PEC in the 2D boundary mode analysis, as well as any additional
-    boundary attributes given under `"WavePortPEC"`. [`config["Boundaries"]["WavePortPEC"`](../config/boundaries.md#boundaries%5B%22WavePortPEC%22%5D)
-    allows to assign non-PEC attributes from the 3D model (e.g. impedance or absorbing boundary conditions)
-    as a PEC boundary condition for the 2D wave port solve. In addition, boundaries of wave ports other
-    than the wave port currently being considered, in the case wave ports are touching and share one or
-    more edges, are also considered as PEC for the wave port boundary mode analysis. Boundaries of the
-    wave port not labeled with a `"PEC"`, `"Conductivity"`, `"WavePortPEC"`, or `"WavePort"` condition
-    have the natural boundary condition of zero tangential magnetic field (PMC) prescribed for the purpose
-    of port mode calculation.
+    The 2D wave port eigenproblem supports PEC, PMC, impedance, absorbing, and conductivity
+    boundary conditions. Boundaries that are specified as `"PEC"` in the full 3D model and
+    intersect the wave port boundary will be considered as PEC in the 2D boundary mode
+    analysis. Impedance (`"Impedance"`), absorbing (`"Absorbing"`), and conductivity
+    (`"Conductivity"`) boundaries are treated as Robin boundary conditions in the wave port
+    eigenvalue problem, matching the standalone boundary mode solver.
+    [`config["Boundaries"]["WavePortPEC"`](../config/boundaries.md#boundaries%5B%22WavePortPEC%22%5D)
+    allows forcing specific boundary attributes to act as PEC in the wave port solve,
+    overriding any other boundary condition (e.g. impedance or absorbing) that may be
+    assigned to the same attributes. In addition, boundaries of wave ports other than the
+    wave port currently being considered, in the case wave ports are touching and share one
+    or more edges, are also considered as PEC for the wave port boundary mode analysis.
 
     Unlike lumped ports, wave port boundaries cannot be defined internal to the
     computational domain and instead must exist only on the outer boundary of the domain

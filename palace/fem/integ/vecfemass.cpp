@@ -137,6 +137,40 @@ void VectorFEMassIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr
         MFEM_ABORT("Invalid trial/test element map type for VectorFEMassIntegrator!");
       }
       break;
+    case 31:
+      if (trial_map_type == mfem::FiniteElement::H_CURL &&
+          test_map_type == mfem::FiniteElement::H_CURL)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hcurl_31 : f_apply_hcurl_31;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hcurl_31_loc : f_apply_hcurl_31_loc);
+      }
+      else if (trial_map_type == mfem::FiniteElement::H_DIV &&
+               test_map_type == mfem::FiniteElement::H_DIV)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hdiv_31 : f_apply_hdiv_31;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hdiv_31_loc : f_apply_hdiv_31_loc);
+      }
+      else if (trial_map_type == mfem::FiniteElement::H_CURL &&
+               test_map_type == mfem::FiniteElement::H_DIV)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hcurlhdiv_31 : f_apply_hcurlhdiv_31;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hcurlhdiv_31_loc : f_apply_hcurlhdiv_31_loc);
+      }
+      else if (trial_map_type == mfem::FiniteElement::H_DIV &&
+               test_map_type == mfem::FiniteElement::H_CURL)
+      {
+        info.apply_qf = assemble_q_data ? f_build_hdivhcurl_31 : f_apply_hdivhcurl_31;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            assemble_q_data ? f_build_hdivhcurl_31_loc : f_apply_hdivhcurl_31_loc);
+      }
+      else
+      {
+        MFEM_ABORT("Invalid trial/test element map type for VectorFEMassIntegrator!");
+      }
+      break;
     case 32:
       if (trial_map_type == mfem::FiniteElement::H_CURL &&
           test_map_type == mfem::FiniteElement::H_CURL)

@@ -618,6 +618,25 @@ double Norml2(MPI_Comm comm, const ComplexVector &x, const Operator &B, ComplexV
   return std::sqrt(dot.real());
 }
 
+std::complex<double> Dot(MPI_Comm comm, const ComplexVector &x, const Operator &A,
+                         const ComplexVector &y)
+{
+  ComplexVector Ax(A.Height());
+  Ax.UseDevice(true);
+  A.Mult(x.Real(), Ax.Real());
+  A.Mult(x.Imag(), Ax.Imag());
+  return Dot(comm, Ax, y);
+}
+
+std::complex<double> Dot(MPI_Comm comm, const ComplexVector &x, const ComplexOperator &A,
+                         const ComplexVector &y)
+{
+  ComplexVector Ax(A.Height());
+  Ax.UseDevice(true);
+  A.Mult(x, Ax);
+  return Dot(comm, Ax, y);
+}
+
 double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym, double tol, int max_it)
 {
   ComplexWrapperOperator Ar(const_cast<Operator *>(&A), nullptr);  // Non-owning constructor

@@ -61,7 +61,9 @@ private:
   std::vector<std::unique_ptr<mfem::ND_FECollection>> nd_fecs;
   std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_fecs;
   std::vector<std::unique_ptr<mfem::RT_FECollection>> rt_fecs;
+  std::vector<std::unique_ptr<mfem::L2_FECollection>> l2_curl_fecs;
   FiniteElementSpaceHierarchy nd_fespaces, h1_fespaces, rt_fespaces;
+  std::unique_ptr<FiniteElementSpaceHierarchy> l2_curl_fespaces;
 
   // Operator for domain material properties.
   MaterialOperator mat_op;
@@ -80,6 +82,7 @@ private:
   mfem::Array<int> SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                                            const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
+  void CheckExcitations(ProblemType problem_type) const;
 
   // Helper functions for building the bilinear forms corresponding to the discretized
   // operators in Maxwell's equations.
@@ -224,7 +227,29 @@ public:
   }
   const Operator &GetCurlMatrix() const
   {
+    // In 2D, curl maps H(curl) → L2 (scalar), not H(curl) → H(div).
+    if (l2_curl_fespaces)
+    {
+      return l2_curl_fespaces->GetFinestFESpace().GetDiscreteInterpolator(GetNDSpace());
+    }
     return GetRTSpace().GetDiscreteInterpolator(GetNDSpace());
+  }
+  // Return the FE space used for B = curl E (RT for 3D, L2 for 2D).
+  auto &GetCurlSpace()
+  {
+    return l2_curl_fespaces ? l2_curl_fespaces->GetFinestFESpace() : GetRTSpace();
+  }
+  const auto &GetCurlSpace() const
+  {
+    return l2_curl_fespaces ? l2_curl_fespaces->GetFinestFESpace() : GetRTSpace();
+  }
+  FiniteElementSpaceHierarchy &GetCurlSpaces()
+  {
+    return l2_curl_fespaces ? *l2_curl_fespaces : GetRTSpaces();
+  }
+  const FiniteElementSpaceHierarchy &GetCurlSpaces() const
+  {
+    return l2_curl_fespaces ? *l2_curl_fespaces : GetRTSpaces();
   }
 
   // Assemble the right-hand side source term vector for an incident field or current source

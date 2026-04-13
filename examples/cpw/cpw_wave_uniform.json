@@ -72,8 +72,7 @@
         "Offset": 0.0,
         "MaxIts": 30,
         "KSPTol": 1e-8,
-        "EigenTol": 1e-6,
-        "Verbose": 0
+        "EigenTol": 1e-6
       },
       {
         "Index": 2,
@@ -195,4 +194,3 @@
     }
   }
 }
-

@@ -53,31 +53,23 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     surf_z_op(boundaries.impedance, boundaries.cracked_attributes, units, mat_op,
               *mesh.back()),
     lumped_port_op(boundaries.lumpedport, units, mat_op, *mesh.back()),
-    wave_port_op(boundaries, solver, problem_type, units, mat_op, GetNDSpace(),
+    wave_port_op(boundaries, domains, solver, problem_type, units, mat_op, GetNDSpace(),
                  GetH1Space()),
     surf_j_op(boundaries.current, *mesh.back()),
     port_excitation_helper(lumped_port_op, wave_port_op, surf_j_op, current_dipole_op)
 {
-  // Check Excitations.
-  if (problem_type == ProblemType::DRIVEN)
+  // In 2D, curl maps H(curl) → L2 (scalar), so we need an L2 FE space for B = curl E.
+  // Must use INTEGRAL map type so the discrete interpolator recognizes this as the curl
+  // target space.
+  if (mesh.back()->Dimension() == 2)
   {
-    MFEM_VERIFY(!port_excitation_helper.Empty(),
-                "Driven problems must specify at least one excitation!");
-  }
-  else if (problem_type == ProblemType::EIGENMODE)
-  {
-    MFEM_VERIFY(port_excitation_helper.Empty(),
-                "Eigenmode problems must not specify any excitation!");
-  }
-  else if (problem_type == ProblemType::TRANSIENT)
-  {
-    MFEM_VERIFY(
-        port_excitation_helper.Size() == 1,
-        "Transient problems currently only support a single excitation per simulation!");
-  }
-  else
-  {
-    MFEM_ABORT("Internal Error: Solver type incompatible with SpaceOperator.");
+    const int l2_order = solver.order - 1;
+    const int dim = mesh.back()->Dimension();
+    l2_curl_fecs.push_back(std::make_unique<mfem::L2_FECollection>(
+        l2_order, dim, mfem::BasisType::GaussLegendre, mfem::FiniteElement::INTEGRAL));
+    l2_curl_fespaces = std::make_unique<FiniteElementSpaceHierarchy>(
+        fem::ConstructFiniteElementSpaceHierarchy<mfem::L2_FECollection>(1, mesh,
+                                                                         l2_curl_fecs));
   }
 
   // Finalize setup.
@@ -96,6 +88,28 @@ SpaceOperator::SpaceOperator(const IoData &iodata,
   : SpaceOperator(iodata.solver, iodata.domains, iodata.boundaries, iodata.problem.type,
                   iodata.units, mesh)
 {
+  // Validate excitations after wave port setup is complete.
+  CheckExcitations(iodata.problem.type);
+}
+
+void SpaceOperator::CheckExcitations(ProblemType problem_type) const
+{
+  if (problem_type == ProblemType::DRIVEN)
+  {
+    MFEM_VERIFY(!port_excitation_helper.Empty(),
+                "Driven problems must specify at least one excitation!");
+  }
+  else if (problem_type == ProblemType::EIGENMODE)
+  {
+    MFEM_VERIFY(port_excitation_helper.Empty(),
+                "Eigenmode problems must not specify any excitation!");
+  }
+  else if (problem_type == ProblemType::TRANSIENT)
+  {
+    MFEM_VERIFY(
+        port_excitation_helper.Size() == 1,
+        "Transient problems currently only support a single excitation per simulation!");
+  }
 }
 
 mfem::Array<int> SpaceOperator::SetUpBoundaryProperties(const config::PecBoundaryData &pec,
@@ -222,7 +236,7 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
                    : "Full");
 
     const auto &mesh = *nd_fespace.GetParMesh();
-    const auto geom_types = mesh::CheckElements(mesh).GetGeomTypes();
+    const auto geom_types = mesh::CheckElements(mesh).GetGeomTypes(mesh.Dimension());
     Mpi::Print(" Mesh geometries:\n");
     for (auto geom : geom_types)
     {
@@ -733,8 +747,10 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
 void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,
                                              MaterialPropertyCoefficient &f)
 {
-  // Contribution from material permeability.
-  df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(), coeff);
+  // Contribution from material permeability. In 2D, curl is scalar so the curl-curl
+  // coefficient is scalar (1x1).
+  df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetCurlCurlInvPermeability(),
+                    coeff);
 
   // Contribution for London superconductors.
   if (mat_op.HasLondonDepth())
