@@ -52,6 +52,9 @@ spack:
   specs:
     # Compile gcc@15, then use it to compile everything else
   - group: compilers
+    # explicit false means that we do not want to include this in the container,
+    # unless something depends on it
+    explicit: false
     specs:
       # If you change this, you might need to change PalaceDockerfile so that we
       # remove the compiler from the container
