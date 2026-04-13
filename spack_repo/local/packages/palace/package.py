@@ -175,7 +175,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         # +lapack means: use external lapack
         depends_on(
             "mfem+mpi+metis+lapack@4.9:",
-            patches=["patch_par_tet_mesh_fix_dev.diff", "patch_gmsh_parser_performance.diff", "mfem_pr5280.diff"],
+            patches=[
+                "patch_par_tet_mesh_fix_dev.diff",
+                "patch_gmsh_parser_performance.diff",
+                "mfem_pr5280.diff",
+                patch("mfem_pr5246.diff", when="@:4.9"),
+            ],
         )
         depends_on("mfem+shared", when="+shared")
         depends_on("mfem~shared", when="~shared")
