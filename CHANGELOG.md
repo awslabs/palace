@@ -47,6 +47,9 @@ The format of this changelog is based on
   - Embedded JSON schemas are now regenerated at build time instead of configure time,
     so schema edits no longer require a full CMake reconfigure
     [PR 679](https://github.com/awslabs/palace/pull/679).
+  - Backport positive-weight simplex quadrature rules from MFEM
+    ([mfem/mfem#5246](https://github.com/mfem/mfem/pull/5246))
+    [PR 706](https://github.com/awslabs/palace/pull/706).
 
 ## [0.16.0] - 2026-03-05
 
