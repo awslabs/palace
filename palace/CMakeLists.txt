@@ -26,7 +26,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Initialize the project
-project(palace LANGUAGES CXX VERSION 0.16.0)
+project(palace LANGUAGES CXX VERSION 0.16.1)
 
 # Define build settings and defaults
 set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP for shared-memory parallelism")
