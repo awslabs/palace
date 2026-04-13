@@ -149,6 +149,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("metis+int64", when="+int64")
     depends_on("metis~int64", when="~int64")
 
+    # As of version 5.1.0, the PETSc fork of METIS provides a better mesh
+    # partitioning.
+    depends_on("metis+petsc_patches+gkrand")
+    depends_on("parmetis+petsc_patches")
+
     conflicts("^hypre+int64", msg="Palace uses HYPRE's mixedint option for 64 bit integers")
     depends_on("hypre@:2", when="@:0.15.0")
     depends_on("hypre@3:", when="@0.16.0:")

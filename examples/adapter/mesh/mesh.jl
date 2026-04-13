@@ -221,7 +221,7 @@ function generate_adapter_mesh(;
     # Generate mesh
     gmsh.option.setNumber(
         "Mesh.MeshSizeMax",
-        minimum([ellipse_a, ellipse_b, rect_a/2, rect_b/2, adapter_length])
+        0.75 * minimum([ellipse_a, ellipse_b, rect_a/2, rect_b/2, adapter_length])
     )
     gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
     gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
