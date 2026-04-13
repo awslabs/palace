@@ -39,6 +39,8 @@ The format of this changelog is based on
     orientation bug for Nedelec elements at order >= 2 in parallel, removing the
     need for the expensive mass solve
     [PR 684](https://github.com/awslabs/palace/pull/684).
+  - Fixed bug when using a `SurfaceCurrent` in a driven simulation without a pre-existing excitation
+    [PR 661](https://github.com/awslabs/palace/pull/661).
 
 ## [0.16.0] - 2026-03-05
 
