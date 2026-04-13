@@ -41,6 +41,9 @@ The format of this changelog is based on
     [PR 684](https://github.com/awslabs/palace/pull/684).
   - Fixed bug when using a `SurfaceCurrent` in a driven simulation without a pre-existing excitation
     [PR 661](https://github.com/awslabs/palace/pull/661).
+  - Added warning when STRUMPACK is selected for magnetostatic problems, which
+    will fail due to the singular curl-curl operator
+    [PR 680](https://github.com/awslabs/palace/pull/680).
 
 ## [0.16.0] - 2026-03-05
 
