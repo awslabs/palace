@@ -13,8 +13,5 @@ leak:libevent
 leak:CeedStringAllocCopy
 leak:libceed
 
-# MFEM (NCMesh element allocations not freed at shutdown)
-leak:libmfem
-
 # OpenMPI internal strdup calls (no debug symbols, shows as <unknown module>)
 leak:strdup

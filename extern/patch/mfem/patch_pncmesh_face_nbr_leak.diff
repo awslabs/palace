@@ -1,0 +1,18 @@
+diff --git a/mesh/pncmesh.cpp b/mesh/pncmesh.cpp
+index 45433ee..ae01dd3 100644
+--- a/mesh/pncmesh.cpp
++++ b/mesh/pncmesh.cpp
+@@ -1095,6 +1095,13 @@ void ParNCMesh::GetFaceNeighbors(ParMesh &pmesh)
+    }
+    const int nranks = pmesh.face_nbr_group.Size();
+
++   // Free any previously allocated face neighbor elements to avoid leaking
++   // memory if GetFaceNeighbors is called more than once.
++   for (int i = 0; i < pmesh.face_nbr_elements.Size(); i++)
++   {
++      pmesh.FreeElement(pmesh.face_nbr_elements[i]);
++   }
++
+    // create a new mfem::Element for each face neighbor element
+    pmesh.face_nbr_elements.SetSize(0);
+    pmesh.face_nbr_elements.Reserve(fnbr.Size());
