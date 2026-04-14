@@ -1,0 +1,80 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Template to build a fully configured Palace with Spack.
+# 
+# - Compiler: GCC 15
+# - Math library: OpenBlas
+# - MPI Implementation: OpenMPI (with AWS EFA)
+
+spack:
+  concretizer:
+    reuse: false     # Do not force re-using existing binaries
+    unify: true      # Ensure that there is only one copy of each package
+    targets:         # Compile for the local microarchitecture
+      granularity: microarchitectures
+  config:       
+    # Padding is needed to ensure that the binaries can be relocated. Without
+    # padding, RPATH might be to short to allow for arbitrary relocation (so
+    # that the package has to be recompiled).
+    install_tree:
+      padded_length: 256
+    # Folders where to look for PalaceDockerfile
+    # $env is the current environment
+    # $spack is the spack root
+    template_dirs:
+      - $env
+      - $spack/share/spack/templates
+  packages:
+    all:
+      require: ~openmp       # We don't want any package with OpenMP
+  container:
+    format: docker
+    template: PalaceDockerfile
+    images:
+      os: "ubuntu:24.04"
+      spack: develop
+  # Find pre-compiled packages in binary caches. Requires GITHUB_USER and
+  # GITHUB_TOKEN (or a personal access token).
+  # 
+  # Remove this if you do not want to use binary mirrors
+  mirrors:
+    spack:
+      binary: true
+      url: https://binaries.spack.io/develop
+    local-buildcache:
+      binary: true
+      url: oci://ghcr.io/awslabs/palace-develop-testing
+      signed: false
+      access_pair:
+        id_variable: GITHUB_USER
+        secret_variable: GITHUB_TOKEN
+  specs:
+    # Compile gcc@15, then use it to compile everything else
+  - group: compilers
+    # explicit false means that we do not want to include this in the container,
+    # unless something depends on it
+    explicit: false
+    specs:
+      # If you change this, you might need to change PalaceDockerfile so that we
+      # remove the compiler from the container
+      - gcc@15
+    override:
+      concretizer:
+        # Do not force the target to be specific, let it generic, so that we can
+        # reuse compilers across different machines.
+        targets:
+          granularity: generic
+  - group: palace
+    needs: [compilers]
+    specs:
+    - palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64 %gcc@15 ^openblas@0.3.29 ^openmpi schedulers=none fabrics=ofi
+    override:
+      packages:
+        # Enable AWS EFA
+        libfabric:
+          require: fabrics=efa,lnx,mrail,rxm,shm,sockets,tcp,udp
+      develop:
+        palace:
+          spec: palace@=develop
+          path: /opt/palace

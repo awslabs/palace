@@ -50,9 +50,10 @@ the frequency or time domain, using the
 command `spack install palace`. Run `spack info palace` to get more information about the
 available configuration options and dependencies.
 
-Those wishing to work in a containerized environment may use the Singularity/Apptainer
-recipe for *Palace* in [`singularity/`](./singularity) to build a container containing
-*Palace* and all its dependencies.
+*Palace* can also be built as a container image using [Spack's container
+support](https://spack.readthedocs.io/en/latest/containers.html). See
+[documentation](https://awslabs.github.io/palace/dev/install/) for further
+details.
 
 Finally, instructions for obtaining *Palace* and building from source can be found in the
 [documentation](https://awslabs.github.io/palace/dev/install/). As part of the CMake build

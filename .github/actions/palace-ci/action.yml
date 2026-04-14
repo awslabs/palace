@@ -95,10 +95,6 @@ runs:
           concretizer:
             reuse: false
             unify: true
-            # generic cpu target so that we can increase cache hits
-            # (we also do not care too much about hyper-optimal performance)
-            targets:
-              granularity: generic
           packages:
             petsc:
               require: ~hdf5

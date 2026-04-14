@@ -1,0 +1,124 @@
+name: Build Palace Containers
+description: Build a Palace container image from the stored Spack environment
+
+runs:
+  using: composite
+  steps:
+    - name: Setup environment
+      uses: ./.github/actions/setup-runner
+      with:
+        # Spack develop because we want to have access to the most recent
+        # version of spack-packages
+        spack-version: 'develop'
+        julia-version: 'release'
+        llvm-version: 'dont-install'
+        setup-intel: 'false'
+
+    - name: Install Podman
+      shell: bash
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+
+        sudo add-apt-repository -y ppa:apptainer/ppa
+        sudo apt update
+
+        sudo apt install -y podman apptainer
+
+        # Configure podman to resolve short image names from Docker Hub
+        echo 'unqualified-search-registries = ["docker.io"]' | sudo tee /etc/containers/registries.conf.d/docker.conf
+
+        end_timer "Setup podman and apptainer"
+
+    - name: Compute image name
+      id: name
+      shell: bash
+      run: |
+        ARCH=$(spack arch -t)
+        SHORT_HASH=$(git rev-parse --short HEAD)
+        IMAGE_NAME="palace-${ARCH}-${SHORT_HASH}"
+        echo "image_name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+        echo "Image name: ${IMAGE_NAME}"
+
+    - name: Generate Dockerfile
+      shell: bash
+      run: |
+        cd .github/actions/build-container/spack_env && spack -e . containerize > $GITHUB_WORKSPACE/Dockerfile
+
+    - name: Check Dockerfile
+      shell: bash
+      run: |
+        podman run --rm -i ghcr.io/hadolint/hadolint hadolint --failure-threshold error - < $GITHUB_WORKSPACE/Dockerfile
+
+    - name: Build OCI image
+      shell: bash
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+
+        sudo podman build --format docker \
+          --build-arg GITHUB_USER=$GITHUB_USER \
+          --build-arg GITHUB_TOKEN=$GITHUB_TOKEN \
+          -t ${{ steps.name.outputs.image_name }} .
+
+        end_timer "Build OCI container"
+
+    - name: Save OCI image as tar
+      shell: bash
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+        sudo podman save ${{ steps.name.outputs.image_name }}:latest -o ${{ steps.name.outputs.image_name }}.tar
+        sudo chmod a+r ${{ steps.name.outputs.image_name }}.tar
+        end_timer "Save OCI image"
+
+    - name: Convert to SIF
+      shell: bash
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+        sudo apptainer build ${{ steps.name.outputs.image_name }}.sif docker-archive://${{ steps.name.outputs.image_name }}.tar
+        sudo chmod a+r ${{ steps.name.outputs.image_name }}.sif
+        end_timer "Convert to SIF"
+
+    - name: Test container
+      shell: bash
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+
+        # Use nproc, but halve to account for hyperthreading.
+        LOGICAL_CORES=$(nproc)
+        THREADS_PER_CORE=$(lscpu | grep "Thread(s) per core" | awk '{print $4}')
+        if [ "$THREADS_PER_CORE" = "2" ]; then
+          export NUM_PROC_TEST=$((LOGICAL_CORES / 2))
+        else
+          export NUM_PROC_TEST=$LOGICAL_CORES
+        fi
+
+        export PALACE_TEST="apptainer run $(pwd)/${{ steps.name.outputs.image_name }}.sif palace"
+
+        # Run integration tests.
+        julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
+        julia --project=test/examples --color=yes test/examples/runtests.jl
+
+        end_timer "Test container"
+
+    - name: Upload OCI image
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.name.outputs.image_name }}-oci
+        path: ${{ steps.name.outputs.image_name }}.tar
+        retention-days: 1
+
+    - name: Upload SIF image
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.name.outputs.image_name }}-sif
+        path: ${{ steps.name.outputs.image_name }}.sif
+        retention-days: 1
+
+    - name: Timing information
+      shell: bash
+      run: |
+        cat /tmp/timing.log

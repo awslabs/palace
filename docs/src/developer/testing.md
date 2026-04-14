@@ -391,7 +391,7 @@ and verify that the code reproduces results in reference files stored in
  1. Static analysis (`style.yml`): Code formatting (clang-format, Julia
     formatter), JSON schema validation, and test tag checks.
  2. Unit + regression tests (`build-and-test-linux.yml`,
-    `build-and-test-macos.yml`, `spack.yml`, `singularity.yml`): Builds *Palace*
+    `build-and-test-macos.yml`, `spack.yml`, `containers.yml`): Builds *Palace*
     using CMake, Spack, and Singularity with a matrix of compilers (GCC, Clang,
     Intel), MPI implementations (Open MPI, MPICH, Intel MPI), math libraries
     (OpenBLAS, ARMPL, MKL), and link/integer options across x86, ARM, macOS, and

@@ -7,13 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # Installation
 
-*Palace* can be built and installed using the
-[Spack HPC package manager](https://spack.io/), following the instructions in
-the [Build using Spack](#Build-using-Spack) section. Containerized builds are possible with
-Singularity/Apptainer, described in
-[Build using Singularity/Apptainer](#Build-using-Singularity/Apptainer). Alternatively,
-compiling from source using [CMake](https://cmake.org/download) is described in
-[Build from source](#Build-from-source).
+*Palace* can be built and installed using the [Spack HPC package
+manager](https://spack.io/), following the instructions in the [Build using
+Spack](#Build-using-Spack) section. Containerized builds using Docker or
+Singularity/Apptainer are described in [Build using
+containers](#Build-using-containers). Alternatively, compiling from source using
+[CMake](https://cmake.org/download) is described in [Build from
+source](#Build-from-source).
 
 If you are a user, we recommend you install [*Palace* with
 Spack](#Build-using-Spack). If you intend to develop *Palace*, [build from
@@ -69,25 +69,47 @@ for an introduction.
 If you are developing *Palace*, refer to the [Working with
 Spack](developer/spack.md) page.
 
-## Build using Singularity/Apptainer
+## Build using containers
 
-*Palace* can be built in a
-[Singularity/Apptainer](https://apptainer.org/docs/user/main/introduction.html) container
-for HPC environments
-supporting the Singularity/Apptainer container system. To build the container using the
-provided definition file in the
-[singularity/](https://github.com/awslabs/palace/blob/main/singularity) directory, first
-[set up Singularity/Apptainer on your system](https://github.com/apptainer/apptainer/blob/main/INSTALL.md)
-and subsequently run:
+*Palace* can be built as a container image using [Spack's container
+support](https://spack.readthedocs.io/en/latest/containers.html). Spack can
+generate both Dockerfiles and Singularity definition files from a Spack
+environment.
 
-```bash
-singularity build palace.sif <SOURCE_DIR>/singularity/singularity.def
+### Generating a container recipe
+
+Create a Spack environment file (`spack.yaml`) with the desired *Palace*
+configuration. A minimal example for a Singularity image:
+
+```yaml
+spack:
+  specs:
+    - palace
+  container:
+    format: singularity
+    images:
+      os: "ubuntu:24.04"
+      spack: develop
 ```
 
-where the repository source code has been cloned to `<SOURCE_DIR>`. For more information
-about Singularity/Apptainer, see the
-[Quick Start](https://apptainer.org/docs/user/main/quick_start.html) guide in the
-Singularity/Apptainer documentation.
+Then generate the recipe and build:
+
+```bash
+# Docker/Podman
+spack containerize > Dockerfile
+podman build --format docker -t palace:latest .  # or docker, or any other OCI-compatible tool 
+
+# Singularity/Apptainer
+spack containerize > palace.def
+apptainer build palace.sif palace.def
+```
+
+For a more complete example with binary caches, custom compilers, and a
+Dockerfile template that handles *Palace*-specific setup, see
+[`.github/actions/build-container/spack_env/spack.yaml`](https://github.com/awslabs/palace/blob/main/.github/actions/build-container/spack_env/spack.yaml).
+
+You can customize your *Palace* installation by adding variants to the `palace`
+spec (e.g., compiling with other solvers or with GPU support).
 
 ## Build from source
 
@@ -253,6 +275,7 @@ source code for these dependencies is downloaded during the build process:
   - [MAGMA](https://icl.utk.edu/magma/) (optional, when `PALACE_WITH_MAGMA=ON`)
   - [SUNDIALS](https://github.com/LLNL/sundials) (optional, when `PALACE_WITH_SUNDIALS=ON`)
   - [nlohmann/json](https://github.com/nlohmann/json)
+  - [pboettch/json-schema-validator](https://github.com/pboettch/json-schema-validator)
   - [fmt](https://fmt.dev/latest)
   - [Eigen](https://eigen.tuxfamily.org)
 
