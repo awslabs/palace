@@ -37,7 +37,8 @@
     ],
     "exclude": [
       ".git/**",
-      "docs/**/*.md"
+      "docs/**/*.md",
+      "changes/**"
     ],
     "license": "./.github/license-check/md.txt"
   }

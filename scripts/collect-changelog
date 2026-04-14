@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Collect changelog fragments from changes/ into CHANGELOG.md.
+
+Usage: collect-changelog <version> [--no-gh] [--date YYYY-MM-DD]
+
+Options:
+    --no-gh         Skip PR number lookup via gh CLI (omits PR links)
+    --date DATE     Override the release date (default: today)
+"""
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from datetime import date
+from pathlib import Path
+
+CATEGORY_ORDER = [
+    "New Features",
+    "Bug Fixes",
+    "Interface Changes",
+    "Build system",
+]
+CHANGES_DIR = Path("changes")
+CHANGELOG_PATH = Path("CHANGELOG.md")
+PRESERVE_FILES = {".gitkeep", "README.md"}
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Collect changelog fragments")
+    parser.add_argument("version", help="Version string, e.g. 0.17.0")
+    parser.add_argument(
+        "--no-gh",
+        action="store_true",
+        help="Skip PR number lookup (omits PR links)",
+    )
+    parser.add_argument(
+        "--date",
+        default=date.today().isoformat(),
+        help="Release date in YYYY-MM-DD format (default: today)",
+    )
+    return parser.parse_args()
+
+
+def get_repo_url():
+    """Extract GitHub repo URL from git remote."""
+    try:
+        url = (
+            subprocess.check_output(
+                ["git", "remote", "get-url", "origin"], stderr=subprocess.DEVNULL
+            )
+            .decode()
+            .strip()
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+    url = url.removesuffix(".git")
+    match = re.match(r"git@github\.com:(.+)", url)
+    if match:
+        return f"https://github.com/{match.group(1)}"
+    if "github.com" in url:
+        return url
+    return None
+
+
+def get_pr_number(filepath):
+    """Look up the PR number for a fragment file using gh CLI.
+
+    The fragment filename is the branch suffix by convention, so we search
+    for merged PRs whose branch name ends with the fragment stem.
+    """
+    branch_suffix = filepath.stem
+    try:
+        result = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--state",
+                "merged",
+                "--search",
+                f"head:{branch_suffix}",
+                "--json",
+                "number",
+                "--limit",
+                "5",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return None
+        prs = json.loads(result.stdout)
+        if prs:
+            return prs[0]["number"]
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def parse_fragment(path):
+    """Parse a fragment file into {category: [entries]}."""
+    text = path.read_text()
+    categories = {}
+    current_cat = None
+    current_entry_lines = []
+
+    def flush_entry():
+        if current_cat and current_entry_lines:
+            entry = "\n".join(current_entry_lines)
+            if entry.strip():
+                categories.setdefault(current_cat, []).append(entry)
+
+    for line in text.splitlines():
+        header_match = re.match(r"^### (.+)", line)
+        if header_match:
+            flush_entry()
+            cat = header_match.group(1)
+            if cat in CATEGORY_ORDER:
+                current_cat = cat
+                current_entry_lines = []
+            else:
+                print(f"  Warning: unknown category '{cat}' in {path.name}, skipping")
+                current_cat = None
+        elif current_cat is not None:
+            if line.startswith("  - "):
+                flush_entry()
+                current_entry_lines = [line]
+            elif line.strip() == "" and not current_entry_lines:
+                continue
+            elif current_entry_lines:
+                current_entry_lines.append(line)
+
+    flush_entry()
+    return categories
+
+
+def format_entry(entry, pr_number, repo_url):
+    """Append PR link inline at the end of an entry."""
+    if pr_number and repo_url:
+        pr_link = f"[PR {pr_number}]({repo_url}/pull/{pr_number})"
+        lines = entry.rstrip().splitlines()
+        last = lines[-1].rstrip()
+        if last.endswith("."):
+            lines[-1] = f"{last[:-1]} {pr_link}."
+        else:
+            lines[-1] = f"{last} {pr_link}."
+        return "\n".join(lines)
+    return entry.rstrip()
+
+
+def build_version_section(version, release_date, all_entries):
+    """Build the markdown for a new version section."""
+    lines = [f"## [{version}] - {release_date}", ""]
+    for cat in CATEGORY_ORDER:
+        entries = all_entries.get(cat, [])
+        if not entries:
+            continue
+        lines.append(f"#### {cat}")
+        lines.append("")
+        for entry in entries:
+            lines.append(entry)
+            lines.append("")
+    return "\n".join(lines)
+
+
+def insert_into_changelog(new_section):
+    """Insert the new version section into CHANGELOG.md."""
+    text = CHANGELOG_PATH.read_text()
+    lines = text.splitlines(keepends=True)
+    result = []
+    i = 0
+    inserted = False
+
+    while i < len(lines):
+        line = lines[i]
+        if not inserted and re.match(r"^## In progress", line, re.IGNORECASE):
+            i += 1
+            while i < len(lines) and not re.match(r"^## \[", lines[i]):
+                i += 1
+            result.append(new_section)
+            if not new_section.endswith("\n"):
+                result.append("\n")
+            inserted = True
+        elif not inserted and re.match(r"^## \[", line):
+            result.append(new_section)
+            if not new_section.endswith("\n"):
+                result.append("\n")
+            result.append(line)
+            inserted = True
+            i += 1
+        else:
+            result.append(line)
+            i += 1
+
+    if not inserted:
+        result.append("\n")
+        result.append(new_section)
+
+    CHANGELOG_PATH.write_text("".join(result))
+
+
+def main():
+    args = parse_args()
+
+    fragments = sorted(
+        p
+        for p in CHANGES_DIR.glob("*.md")
+        if p.name not in PRESERVE_FILES
+    )
+    if not fragments:
+        print("No changelog fragments found in changes/")
+        return 1
+
+    repo_url = get_repo_url()
+    if not args.no_gh and not repo_url:
+        print("Warning: could not determine repo URL, PR links will be omitted")
+
+    all_entries = {}
+    warnings = []
+
+    for frag in fragments:
+        print(f"Processing {frag.name}...")
+        categories = parse_fragment(frag)
+        if not categories:
+            warnings.append(f"  Warning: {frag.name} has no valid entries, skipping")
+            continue
+
+        pr_number = None
+        if not args.no_gh:
+            pr_number = get_pr_number(frag)
+            if pr_number is None:
+                warnings.append(
+                    f"  Warning: no PR found for {frag.name}, omitting link"
+                )
+
+        for cat, entries in categories.items():
+            for entry in entries:
+                formatted = format_entry(entry, pr_number, repo_url)
+                all_entries.setdefault(cat, []).append((pr_number, formatted))
+
+    # Sort entries within each category by PR number (ascending), None sorts last
+    for cat in all_entries:
+        all_entries[cat].sort(key=lambda x: (x[0] is None, x[0] or 0))
+        all_entries[cat] = [entry for _, entry in all_entries[cat]]
+
+    new_section = build_version_section(args.version, args.date, all_entries)
+    insert_into_changelog(new_section)
+
+    for frag in fragments:
+        frag.unlink()
+
+    total = sum(len(v) for v in all_entries.values())
+    print(f"\nCollected {total} entries from {len(fragments)} fragments into [{args.version}]")
+    for cat in CATEGORY_ORDER:
+        count = len(all_entries.get(cat, []))
+        if count:
+            print(f"  {cat}: {count}")
+    for w in warnings:
+        print(w)
+
+    # Format the updated CHANGELOG.md
+    scripts_dir = Path(__file__).resolve().parent
+    format_script = scripts_dir / "format-source"
+    if format_script.exists():
+        print("Formatting CHANGELOG.md...")
+        subprocess.run([str(format_script), "-jl"], check=True)
+
+    # Stage and commit the changelog update + deleted fragments
+    commit_msg = f"Final Changes for v{args.version}"
+    frag_paths = [str(f) for f in fragments]
+    subprocess.run(
+        ["git", "add", str(CHANGELOG_PATH)] + frag_paths,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", commit_msg],
+        check=True,
+    )
+    print(f"\nCommitted: {commit_msg}")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

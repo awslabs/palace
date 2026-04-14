@@ -83,3 +83,57 @@ jobs:
         with:
           config: .github/license-check/config.json
           strict: false
+
+  check-changelog:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'pull_request' &&
+      !contains(github.event.pull_request.labels.*.name, 'no-changelog')
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check changelog entry
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          SUFFIX="${BRANCH##*/}"
+          EXPECTED="changes/${SUFFIX}.md"
+
+          if [ ! -f "$EXPECTED" ]; then
+            echo "::error::Missing changelog entry '${EXPECTED}'"
+            echo ""
+            echo "Create a file matching your branch suffix with a ### Category header."
+            echo "Valid categories: New Features, Bug Fixes, Interface Changes, Build system"
+            echo ""
+            echo "Example (changes/${SUFFIX}.md):"
+            echo ""
+            echo "  ### Bug Fixes"
+            echo ""
+            echo "    - Fixed the specific thing that was broken."
+            echo ""
+            exit 1
+          fi
+
+          VALID_CATS="New Features|Bug Fixes|Interface Changes|Build system"
+          if ! grep -qE "^### ($VALID_CATS)" "$EXPECTED"; then
+            echo "::error::Changelog entry '${EXPECTED}' has no valid ### Category header"
+            echo ""
+            echo "Valid categories: New Features, Bug Fixes, Interface Changes, Build system"
+            exit 1
+          fi
+
+          # Check each category header has at least one bullet
+          FOUND_EMPTY=0
+          while IFS= read -r category; do
+            cat_name=$(echo "$category" | sed 's/^### //')
+            section=$(sed -n "/^### ${cat_name}/,/^### /{ /^### ${cat_name}/d; /^### /d; p; }" "$EXPECTED")
+            if ! echo "$section" | grep -q "^  - "; then
+              echo "::error::Category '${cat_name}' in '${EXPECTED}' has no bullet entries"
+              FOUND_EMPTY=1
+            fi
+          done < <(grep -E "^### ($VALID_CATS)" "$EXPECTED")
+
+          if [ "$FOUND_EMPTY" -ne 0 ]; then
+            exit 1
+          fi
+
+          echo "Changelog entry '${EXPECTED}' is valid"
