@@ -44,6 +44,9 @@ The format of this changelog is based on
   - Added warning when STRUMPACK is selected for magnetostatic problems, which
     will fail due to the singular curl-curl operator
     [PR 680](https://github.com/awslabs/palace/pull/680).
+  - Embedded JSON schemas are now regenerated at build time instead of configure time,
+    so schema edits no longer require a full CMake reconfigure
+    [PR 679](https://github.com/awslabs/palace/pull/679).
 
 ## [0.16.0] - 2026-03-05
 
