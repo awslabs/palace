@@ -98,7 +98,8 @@ PALACE_ENUM_STRING_DEFINE(LinearSolver, {{LinearSolver::DEFAULT, "Default"},
                                          {LinearSolver::SUPERLU, "SuperLU"},
                                          {LinearSolver::STRUMPACK, "STRUMPACK"},
                                          {LinearSolver::STRUMPACK_MP, "STRUMPACK-MP"},
-                                         {LinearSolver::JACOBI, "Jacobi"}})
+                                         {LinearSolver::JACOBI, "Jacobi"},
+                                         {LinearSolver::CUDSS, "cuDSS"}})
 
 PALACE_ENUM_STRING_DEFINE(KrylovSolver, {{KrylovSolver::DEFAULT, "Default"},
                                          {KrylovSolver::CG, "CG"},

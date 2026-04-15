@@ -2034,6 +2034,10 @@
         {
           "const": "Jacobi",
           "description": "Use the Jacobi preconditioner."
+        },
+        {
+          "const": "cuDSS",
+          "description": "Use the NVIDIA cuDSS sparse direct solver."
         }
       ]
     },
