@@ -8,6 +8,7 @@
 #include "linalg/ams.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/blockprecond.hpp"
+#include "linalg/cudss.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/iterative.hpp"

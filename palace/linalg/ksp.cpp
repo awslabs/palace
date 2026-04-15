@@ -7,6 +7,7 @@
 #include "fem/fespace.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
+#include "linalg/cudss.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/jacobi.hpp"
 #include "linalg/mumps.hpp"
@@ -116,6 +117,9 @@ auto MakeWrapperSolver(const config::LinearSolverData &linear, U &&...args)
 #if defined(MFEM_USE_MUMPS)
                                     std::is_same<T, MumpsSolver>::value ||
 #endif
+#if defined(MFEM_USE_CUDSS)
+                                    std::is_same<T, CuDSSSolver>::value ||
+#endif
                                     false);
   return std::make_unique<MfemWrapperSolver<OperType>>(
       std::make_unique<T>(std::forward<U>(args)...), save_assembled,
@@ -186,6 +190,16 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       break;
     case LinearSolver::JACOBI:
       pc = std::make_unique<JacobiSmoother<OperType>>(comm);
+      break;
+    case LinearSolver::CUDSS:
+#if defined(MFEM_USE_CUDSS)
+      pc = MakeWrapperSolver<OperType, CuDSSSolver>(linear, comm, pc_mat_sym,
+                                                    linear.sym_factorization,
+                                                    linear.reorder_reuse, print);
+#else
+      MFEM_ABORT(
+          "Solver was not built with cuDSS support, please choose a different solver!");
+#endif
       break;
     case LinearSolver::DEFAULT:
       MFEM_ABORT("Unexpected solver type for preconditioner configuration!");
