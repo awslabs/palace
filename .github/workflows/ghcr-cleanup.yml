@@ -1,0 +1,72 @@
+# GHCR Buildcache Cleanup
+#
+# The Spack CI (spack.yml) pushes binary packages to an OCI buildcache at
+# ghcr.io/awslabs/palace-develop-testing. Over time, this accumulates stale
+# versions as dependencies get rebuilt with new hashes.
+#
+# This workflow periodically prunes old versions, keeping the most recent ones
+# so that the cache remains useful without growing unboundedly.
+#
+# ## How GHCR package linking works
+#
+# GitHub Packages (GHCR) can be linked to a repository, which grants repo
+# collaborators with write access the ability to manage packages. This link
+# also allows the GITHUB_TOKEN in workflows to delete package versions.
+#
+# The link is established by adding an OCI config label:
+#
+#   org.opencontainers.image.source=https://github.com/awslabs/palace
+#
+# We used `crane mutate --label` to add this to a tag in the package, which
+# caused GHCR to auto-link the package to this repo. Once linked, the
+# association persists at the GitHub level regardless of individual tag labels.
+#
+# If the package is ever deleted and recreated (e.g., a full cache rebuild),
+# the link must be re-established. To do this:
+#
+#   1. Install crane: https://github.com/google/go-containerregistry
+#   2. Authenticate: echo $TOKEN | crane auth login ghcr.io -u USER --password-stdin
+#   3. Label any tag:
+#        crane mutate ghcr.io/awslabs/palace-develop-testing:index.spack \
+#          --label org.opencontainers.image.source=https://github.com/awslabs/palace
+#   4. Verify the link:
+#        gh api orgs/awslabs/packages/container/palace-develop-testing \
+#          --jq '.repository.full_name'
+#
+# Or as a GitHub Actions step:
+#
+#   - name: Install crane
+#     run: |
+#       curl -sL "https://github.com/google/go-containerregistry/releases/download/v0.20.3/go-containerregistry_Linux_x86_64.tar.gz" \
+#         | tar xz -C /usr/local/bin crane
+#
+#   - name: Link GHCR package to repository
+#     run: |
+#       echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login ghcr.io -u ${{ github.actor }} --password-stdin
+#       crane mutate ghcr.io/awslabs/palace-develop-testing:index.spack \
+#         --label org.opencontainers.image.source=https://github.com/${{ github.repository }}
+name: Cleanup GHCR Buildcache
+
+on:
+  schedule:
+    - cron: '0 6,18 * * *'  # Twice daily at 6:00 and 18:00 UTC
+  workflow_dispatch:
+
+permissions:
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      # Each Spack spec is a tagged version in the container package. We keep
+      # the most recent 500 versions (roughly 5-10 full build sets) and delete
+      # older ones. The action deletes at most 100 per run.
+      - name: Delete old buildcache versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: palace-develop-testing
+          package-type: container
+          owner: awslabs
+          min-versions-to-keep: 500
+          token: ${{ secrets.GITHUB_TOKEN }}
