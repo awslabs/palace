@@ -83,9 +83,6 @@ long GetPeakMemory()
   return 0;
 }
 
-namespace
-{
-
 std::string FormatBytes(double bytes)
 {
   constexpr double kB = 1024.0;
@@ -107,6 +104,9 @@ std::string FormatBytes(double bytes)
   return fmt::format("{:.1f}K", bytes / kB);
 }
 
+namespace
+{
+
 MemoryStats ComputeStats(std::string label, long local_value, MPI_Comm comm)
 {
   long val_min = local_value, val_max = local_value, val_sum = local_value;
@@ -116,7 +116,9 @@ MemoryStats ComputeStats(std::string label, long local_value, MPI_Comm comm)
   return {label, val_min, val_max, val_sum, static_cast<double>(val_sum) / Mpi::Size(comm)};
 }
 
-MemoryStats ComputeNodeStats(std::string label, long local_value, MPI_Comm comm)
+}  // namespace
+
+MemoryStats ComputeNodeMemoryStats(std::string label, long local_value, MPI_Comm comm)
 {
   // Split communicator into shared memory groups (processes on same node).
   MPI_Comm node_comm;
@@ -165,8 +167,6 @@ MemoryStats ComputeNodeStats(std::string label, long local_value, MPI_Comm comm)
   return stats;
 }
 
-}  // namespace
-
 MemoryStats GetCurrentMemoryStats(MPI_Comm comm)
 {
   return ComputeStats("current per-rank", GetCurrentMemory(), comm);
@@ -179,12 +179,12 @@ MemoryStats GetPeakMemoryStats(MPI_Comm comm)
 
 MemoryStats GetCurrentNodeMemoryStats(MPI_Comm comm)
 {
-  return ComputeNodeStats("current per-node", GetCurrentMemory(), comm);
+  return ComputeNodeMemoryStats("current per-node", GetCurrentMemory(), comm);
 }
 
 MemoryStats GetPeakNodeMemoryStats(MPI_Comm comm)
 {
-  return ComputeNodeStats("peak per-node", GetPeakMemory(), comm);
+  return ComputeNodeMemoryStats("peak per-node", GetPeakMemory(), comm);
 }
 
 void PrintMemoryUsage(MPI_Comm comm, const MemoryStats &stats)

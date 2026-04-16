@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "utils/communication.hpp"
 #include "utils/memoryreporting.hpp"
+#include "utils/timer.hpp"
 
 using namespace palace;
 using namespace palace::memory_reporting;
@@ -79,4 +80,51 @@ TEST_CASE("Node Memory Stats Multi Process", "[memoryreporting][Parallel]")
   CHECK(peak_stats.min > 0);
   CHECK(peak_stats.min <= peak_stats.max);
   CHECK(peak_stats.sum >= peak_stats.min);
+}
+
+TEST_CASE("Timer Memory Data Invariants", "[memoryreporting][Serial]")
+{
+  Timer timer;
+
+  // MemoryLap returns a non-negative delta (peak RSS is non-decreasing).
+  auto delta = timer.MemoryLap();
+  CHECK(delta >= 0);
+
+  // MarkMemory accumulates into the correct index and leaves others at zero.
+  timer.MarkMemory(Timer::CONSTRUCT, 100);
+  timer.MarkMemory(Timer::CONSTRUCT, 200);
+  CHECK(timer.MemoryData(Timer::CONSTRUCT) == 300);
+  CHECK(timer.MemoryData(Timer::KSP) == 0);
+
+  // TOTAL index assigns rather than accumulates.
+  timer.MarkMemory(Timer::TOTAL, 500);
+  timer.MarkMemory(Timer::TOTAL, 700);
+  CHECK(timer.MemoryData(Timer::TOTAL) == 700);
+
+  // MemoryFromStart is non-negative (peak can only grow).
+  CHECK(timer.MemoryFromStart() >= 0);
+}
+
+TEST_CASE("BlockTimer Finalize Contract", "[memoryreporting][Serial][Parallel]")
+{
+  // Finalize populates the stored reduction results.
+  BlockTimer::Finalize(MPI_COMM_WORLD);
+  CHECK(BlockTimer::IsFinalized());
+
+  // Stored vectors have the correct size.
+  CHECK(BlockTimer::NodeMemoryMin().size() == Timer::NUM_TIMINGS);
+  CHECK(BlockTimer::NodeMemoryMax().size() == Timer::NUM_TIMINGS);
+  CHECK(BlockTimer::NodeMemorySum().size() == Timer::NUM_TIMINGS);
+
+  // Per-node values are non-negative (peak RSS deltas can't be negative).
+  for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
+  {
+    CHECK(BlockTimer::NodeMemoryMin()[i] >= 0.0);
+    CHECK(BlockTimer::NodeMemoryMax()[i] >= BlockTimer::NodeMemoryMin()[i]);
+    CHECK(BlockTimer::NodeMemorySum()[i] >= BlockTimer::NodeMemoryMax()[i]);
+  }
+
+  // Calling Finalize again does not crash (idempotent for AMR loop usage).
+  BlockTimer::Finalize(MPI_COMM_WORLD);
+  CHECK(BlockTimer::IsFinalized());
 }
