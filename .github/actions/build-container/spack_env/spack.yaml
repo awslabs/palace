@@ -34,9 +34,13 @@ spack:
     images:
       os: "ubuntu:24.04"
       spack: develop
+  # Use Palace's local spack repo so our palace package (with its MFEM patches)
+  # overrides the builtin one.
+  repos:
+  - spack_repo/local
   # Find pre-compiled packages in binary caches. Requires GITHUB_USER and
   # GITHUB_TOKEN (or a personal access token).
-  # 
+  #
   # Remove this if you do not want to use binary mirrors
   mirrors:
     spack:
