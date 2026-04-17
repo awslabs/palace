@@ -16,8 +16,13 @@ RUN test -f /opt/palace/CMakeLists.txt || \
 
 # Set up spack repo and apply patches to builtin spack packages
 RUN mkdir -p /opt/spack-environment && \
+    # Link our local spack repo to /opt/spack-environment
     ln -s /opt/palace/spack_repo /opt/spack-environment/spack_repo && \
+    # Add it to spack
+    spack repo add /opt/palace/spack_repo/local && \
+    # Workaround for https://github.com/spack/spack/issues/51505
     ln -sf $(spack location --repo builtin)/packages/mfem /opt/palace/spack_repo/local/packages/mfem && \
+    # Apply patches to builtin repo
     cd $(cd $(spack location --repo builtin) && git rev-parse --show-toplevel) && \
     for patch in /opt/palace/spack_repo/patches/*.diff; do \
       if [ -f "$patch" ]; then \
