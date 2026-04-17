@@ -11,9 +11,9 @@
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
+#include "linalg/modeeigensolver.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
-#include "models/waveportoperator.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -129,11 +129,11 @@ private:
   // DBC attributes.
   mfem::Array<int> dbc_bcs;
 
-  // Multigrid configuration for the eigenvalue solver (must outlive port_data).
+  // Multigrid configuration for the eigenvalue solver (must outlive mode_solver).
   std::unique_ptr<ModeEigenSolverMultigridConfig> mg_config;
 
-  // Wave port data (owns the eigenvalue solver internally).
-  std::unique_ptr<WavePortData> port_data;
+  // Boundary-mode eigenvalue solver kernel (owned directly; no WavePortData wrapper).
+  std::unique_ptr<ModeEigenSolver> mode_solver;
 
   // Error estimator (owns its FE spaces for flux recovery).
   std::unique_ptr<mfem::RT_FECollection> rt_fec_est;

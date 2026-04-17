@@ -109,9 +109,6 @@ private:
   int voltage_n_samples = 100;
   bool has_voltage_coords = false;
 
-  // Whether this is a 2D direct port (no submesh).
-  bool is_2d_direct = false;
-
 public:
   // 3D submesh constructor: extracts submesh from parent mesh.
   WavePortData(const config::WavePortData &data, const config::BoundaryData &boundaries,
@@ -119,18 +116,6 @@ public:
                const config::LinearSolverData &linear, const Units &units,
                const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
                mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr);
-
-  // 2D direct constructor: uses provided mesh/spaces directly. No submesh extraction,
-  // no parent DOF transfer. Used by BoundaryModeOperator.
-  WavePortData(const MaterialOperator &mat_op, const mfem::Vector *normal,
-               SurfaceImpedanceOperator *surf_z_op, FarfieldBoundaryOperator *farfield_op,
-               SurfaceConductivityOperator *surf_sigma_op, FiniteElementSpace &nd_fespace,
-               FiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_tdof_list,
-               int num_modes, int num_vec, double eig_tol,
-               EigenvalueSolver::WhichType which_eig,
-               const config::LinearSolverData &linear, EigenSolverBackend eigen_backend,
-               int verbose, MPI_Comm solver_comm = MPI_COMM_NULL,
-               const ModeEigenSolverMultigridConfig *mg_config = nullptr);
 
   ~WavePortData();
 
@@ -140,11 +125,6 @@ public:
   const auto &GetAttrList() const { return attr_list; }
 
   void Initialize(double omega);
-
-  // Access the eigenvalue solver directly (for 2D direct mode used by
-  // BoundaryModeOperator).
-  ModeEigenSolver &GetEigenSolver() { return *mode_solver; }
-  const ModeEigenSolver &GetEigenSolver() const { return *mode_solver; }
 
   HYPRE_BigInt GlobalTrueNDSize() const { return port_nd_fespace->GlobalTrueVSize(); }
   HYPRE_BigInt GlobalTrueH1Size() const { return port_h1_fespace->GlobalTrueVSize(); }

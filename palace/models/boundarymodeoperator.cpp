@@ -8,7 +8,6 @@
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
-#include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/prettyprint.hpp"
@@ -234,7 +233,7 @@ void BoundaryModeOperator::SetUpEigenSolver()
                static_cast<int>(nd_fespaces.GetNumLevels()));
   }
 
-  port_data = std::make_unique<WavePortData>(
+  mode_solver = std::make_unique<ModeEigenSolver>(
       *mat_op, nullptr, surf_z_op.get(), farfield_op.get(), surf_sigma_op.get(), nd_fespace,
       h1_fespace, dbc_tdof_list, bm_data.n, bm_data.max_size, bm_data.tol, which_eig,
       iodata.solver.linear, bm_data.type, iodata.problem.verbose, solve_mesh->GetComm(),
@@ -245,43 +244,43 @@ BoundaryModeOperator::SolveResult BoundaryModeOperator::Solve(double omega,
                                                               double kn_target)
 {
   double sigma = -kn_target * kn_target;
-  auto result = port_data->GetEigenSolver().Solve(omega, sigma);
+  auto result = mode_solver->Solve(omega, sigma);
   return {result.num_converged, sigma};
 }
 
 std::complex<double> BoundaryModeOperator::GetEigenvalue(int i) const
 {
-  return port_data->GetEigenSolver().GetEigenvalue(i);
+  return mode_solver->GetEigenvalue(i);
 }
 
 void BoundaryModeOperator::GetEigenvector(int i, ComplexVector &x) const
 {
-  port_data->GetEigenSolver().GetEigenvector(i, x);
+  mode_solver->GetEigenvector(i, x);
 }
 
 double BoundaryModeOperator::GetError(int i, EigenvalueSolver::ErrorType type) const
 {
-  return port_data->GetEigenSolver().GetError(i, type);
+  return mode_solver->GetError(i, type);
 }
 
 const mfem::HypreParMatrix *BoundaryModeOperator::GetBtt() const
 {
-  return port_data->GetEigenSolver().GetBtt();
+  return mode_solver->GetBtt();
 }
 
 const mfem::HypreParMatrix *BoundaryModeOperator::GetAtnr() const
 {
-  return port_data->GetEigenSolver().GetAtnr();
+  return mode_solver->GetAtnr();
 }
 
 const mfem::HypreParMatrix *BoundaryModeOperator::GetAtni() const
 {
-  return port_data->GetEigenSolver().GetAtni();
+  return mode_solver->GetAtni();
 }
 
 const ComplexKspSolver *BoundaryModeOperator::GetLinearSolver() const
 {
-  return port_data->GetEigenSolver().GetLinearSolver();
+  return mode_solver->GetLinearSolver();
 }
 
 void BoundaryModeOperator::AddErrorIndicator(const ComplexVector &et,

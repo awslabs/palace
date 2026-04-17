@@ -591,32 +591,11 @@ WavePortData::WavePortData(const config::WavePortData &data,
   }
 }
 
-WavePortData::WavePortData(
-    const MaterialOperator &mat_op_ref, const mfem::Vector *normal_,
-    SurfaceImpedanceOperator *surf_z_op_, FarfieldBoundaryOperator *farfield_op_,
-    SurfaceConductivityOperator *surf_sigma_op_, FiniteElementSpace &nd_fespace,
-    FiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_tdof_list, int num_modes_,
-    int num_vec_, double eig_tol_, EigenvalueSolver::WhichType which_eig_,
-    const config::LinearSolverData &linear_, EigenSolverBackend eigen_backend_,
-    int verbose_, MPI_Comm solver_comm, const ModeEigenSolverMultigridConfig *mg_config)
-  : mat_op(mat_op_ref), excitation(0), active(true), is_2d_direct(true)
-{
-  mode_idx = 0;
-  d_offset = 0.0;
-  kn0 = 0.0;
-  omega0 = 0.0;
-
-  mode_solver = std::make_unique<ModeEigenSolver>(
-      mat_op_ref, normal_, surf_z_op_, farfield_op_, surf_sigma_op_, nd_fespace, h1_fespace,
-      dbc_tdof_list, num_modes_, num_vec_, eig_tol_, which_eig_, linear_, eigen_backend_,
-      verbose_, solver_comm, mg_config);
-}
-
 WavePortData::~WavePortData()
 {
   // Free the solver before the communicator on which it is based.
   mode_solver.reset();
-  if (!is_2d_direct && port_comm != MPI_COMM_NULL)
+  if (port_comm != MPI_COMM_NULL)
   {
     MPI_Comm_free(&port_comm);
   }
