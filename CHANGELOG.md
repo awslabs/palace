@@ -33,6 +33,9 @@ The format of this changelog is based on
   - Fixed linear solver stalling in the nonlinear eigenvalue solver by adding an absolute
     tolerance and adapting the relative tolerance to the outer residual
     [PR 694](https://github.com/awslabs/palace/pull/694).
+  - Fixed divergence of the Quasi-Newton nonlinear eigensolver by adding an
+    Armijo line search to damp overshooting Newton steps
+    [PR 713](https://github.com/awslabs/palace/pull/713).
   - Replaced boundary mass matrix CG solve workaround for lumped port excitation
     projection with direct interpolation via MFEM's
     `ProjectBdrCoefficientTangent`. An MFEM patch fixes the underlying face DOF
