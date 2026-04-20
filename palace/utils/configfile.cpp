@@ -69,6 +69,7 @@ PALACE_JSON_SERIALIZE_ENUM(CoordinateSystem,
 PALACE_JSON_SERIALIZE_ENUM(ProblemType, {{ProblemType::DRIVEN, "Driven"},
                                          {ProblemType::EIGENMODE, "Eigenmode"},
                                          {ProblemType::ELECTROSTATIC, "Electrostatic"},
+                                         {ProblemType::HEAT, "Heat"},
                                          {ProblemType::MAGNETOSTATIC, "Magnetostatic"},
                                          {ProblemType::TRANSIENT, "Transient"}})
 
@@ -1187,6 +1188,11 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
   n_post = electrostatic.value("Save", n_post);
 }
 
+HeatSolverData::HeatSolverData(const json &heat)
+{
+  n_post = heat.value("Save", n_post);
+}
+
 MagnetostaticSolverData::MagnetostaticSolverData(const json &magnetostatic)
 {
   n_post = magnetostatic.value("Save", n_post);
@@ -1283,6 +1289,7 @@ SolverData::SolverData(const json &solver)
   driven = ParseOptional<DrivenSolverData>(solver, "Driven");
   eigenmode = ParseOptional<EigenSolverData>(solver, "Eigenmode");
   electrostatic = ParseOptional<ElectrostaticSolverData>(solver, "Electrostatic");
+  heat = ParseOptional<HeatSolverData>(solver, "Heat");
   magnetostatic = ParseOptional<MagnetostaticSolverData>(solver, "Magnetostatic");
   transient = ParseOptional<TransientSolverData>(solver, "Transient");
   linear = ParseOptional<LinearSolverData>(solver, "Linear");

@@ -1,0 +1,54 @@
+{
+  "Problem":
+  {
+    "Type": "Heat",
+    "Verbose": 2,
+    "Output": "postpro/heat"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cylinder_hex.msh",
+    "L0": 1.0e-2  // cm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permittivity": 1.0  // Thermal conductivity (using permittivity field for now)
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "Ground":
+    {
+      "Attributes": [3]  // Bottom face: T = 0
+    },
+    "Terminal":
+    [
+      {
+        "Index": 1,
+        "Attributes": [2]  // Top face: T = 1
+      }
+    ]
+    // Exterior (attribute 4): natural BC (zero heat flux / insulated)
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Heat":
+    {
+      "Save": 1
+    },
+    "Linear":
+    {
+      "Type": "BoomerAMG",
+      "KSPType": "CG",
+      "Tol": 1.0e-8,
+      "MaxIts": 100
+    }
+  }
+}

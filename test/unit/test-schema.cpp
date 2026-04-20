@@ -575,7 +575,8 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
     CHECK(
         err ==
         "At [\"Problem\"][\"Type\"]: instance not found in required enum; valid values: "
-        "\"Eigenmode\", \"Driven\", \"Transient\", \"Electrostatic\", \"Magnetostatic\"\n");
+        "\"Eigenmode\", \"Driven\", \"Transient\", \"Electrostatic\", \"Heat\", "
+        "\"Magnetostatic\"\n");
   }
 
   SECTION("Invalid enum in nested array")

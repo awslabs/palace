@@ -1379,6 +1379,7 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const IoData &iodata,
 template class PostOperatorCSV<ProblemType::DRIVEN>;
 template class PostOperatorCSV<ProblemType::EIGENMODE>;
 template class PostOperatorCSV<ProblemType::ELECTROSTATIC>;
+template class PostOperatorCSV<ProblemType::HEAT>;
 template class PostOperatorCSV<ProblemType::MAGNETOSTATIC>;
 template class PostOperatorCSV<ProblemType::TRANSIENT>;
 

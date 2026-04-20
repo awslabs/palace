@@ -50,6 +50,11 @@ struct fem_op_map_type<ProblemType::ELECTROSTATIC>
   using type = LaplaceOperator;
 };
 template <>
+struct fem_op_map_type<ProblemType::HEAT>
+{
+  using type = LaplaceOperator;
+};
+template <>
 struct fem_op_map_type<ProblemType::MAGNETOSTATIC>
 {
   using type = CurlCurlOperator;

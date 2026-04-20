@@ -59,7 +59,7 @@ constexpr bool HasComplexGridFunction()
 template <ProblemType solver_t>
 constexpr bool HasVGridFunction()
 {
-  return solver_t == ProblemType::ELECTROSTATIC;
+  return solver_t == ProblemType::ELECTROSTATIC || solver_t == ProblemType::HEAT;
 }
 
 template <ProblemType solver_t>
@@ -77,7 +77,7 @@ constexpr bool HasEGridFunction()
 template <ProblemType solver_t>
 constexpr bool HasBGridFunction()
 {
-  return solver_t != ProblemType::ELECTROSTATIC;
+  return solver_t != ProblemType::ELECTROSTATIC && solver_t != ProblemType::HEAT;
 }
 
 // Scale gridfunctions after redimensionalizing the mesh.
@@ -392,6 +392,10 @@ public:
   template <ProblemType U = solver_t>
   auto MeasureAndPrintAll(int step, const Vector &v, const Vector &e, int idx)
       -> std::enable_if_t<U == ProblemType::ELECTROSTATIC, double>;
+
+  template <ProblemType U = solver_t>
+  auto MeasureAndPrintAll(int step, const Vector &v, const Vector &e, int idx)
+      -> std::enable_if_t<U == ProblemType::HEAT, double>;
 
   template <ProblemType U = solver_t>
   auto MeasureAndPrintAll(int step, const Vector &a, const Vector &b, int idx)

@@ -11,6 +11,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/drivensolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/eigensolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/electrostaticsolver.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/heatsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/magnetostaticsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/transientsolver.cpp
 )

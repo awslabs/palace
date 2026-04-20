@@ -755,6 +755,16 @@ public:
   ElectrostaticSolverData(const json &electrostatic);
 };
 
+struct HeatSolverData
+{
+public:
+  // Number of fields to write to disk.
+  int n_post = 0;
+
+  HeatSolverData() = default;
+  HeatSolverData(const json &heat);
+};
+
 struct MagnetostaticSolverData
 {
 public:
@@ -959,6 +969,7 @@ public:
   DrivenSolverData driven = {};
   EigenSolverData eigenmode = {};
   ElectrostaticSolverData electrostatic = {};
+  HeatSolverData heat = {};
   MagnetostaticSolverData magnetostatic = {};
   TransientSolverData transient = {};
   LinearSolverData linear = {};

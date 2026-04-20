@@ -134,6 +134,16 @@
         "Save": { "type": "integer", "minimum": 0 }
       }
     },
+    "Heat":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties":
+      {
+        "Save": { "type": "integer", "minimum": 0 }
+      }
+    },
     "Magnetostatic":
     {
       "type": "object",

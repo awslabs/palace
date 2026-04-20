@@ -322,6 +322,33 @@ void IoData::CheckConfiguration()
           "Electrostatic problem type does not support surface current excitation!\n");
     }
   }
+  else if (problem.type == ProblemType::HEAT)
+  {
+    if (!boundaries.farfield.empty())
+    {
+      Mpi::Warning(
+          "Heat problem type does not support absorbing boundary conditions!\n");
+    }
+    if (!boundaries.conductivity.empty())
+    {
+      Mpi::Warning(
+          "Heat problem type does not support surface conductivity boundary conditions!\n");
+    }
+    if (!boundaries.impedance.empty())
+    {
+      Mpi::Warning(
+          "Heat problem type does not support surface impedance boundary conditions!\n");
+    }
+    if (!boundaries.auxpec.empty() || !boundaries.waveport.empty())
+    {
+      Mpi::Warning(
+          "Heat problem type does not support wave port boundary conditions!\n");
+    }
+    if (!boundaries.current.empty())
+    {
+      Mpi::Warning("Heat problem type does not support surface current excitation!\n");
+    }
+  }
   else if (problem.type == ProblemType::MAGNETOSTATIC)
   {
     if (!boundaries.farfield.empty())
@@ -377,7 +404,8 @@ void IoData::CheckConfiguration()
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
   {
-    if (problem.type == ProblemType::ELECTROSTATIC)
+    if (problem.type == ProblemType::ELECTROSTATIC ||
+        problem.type == ProblemType::HEAT)
     {
       solver.linear.type = LinearSolver::BOOMER_AMG;
     }
@@ -404,6 +432,7 @@ void IoData::CheckConfiguration()
   {
     // Problems with SPD operators use CG by default, else GMRES.
     if (problem.type == ProblemType::ELECTROSTATIC ||
+        problem.type == ProblemType::HEAT ||
         problem.type == ProblemType::MAGNETOSTATIC ||
         problem.type == ProblemType::TRANSIENT)
     {
@@ -423,10 +452,11 @@ void IoData::CheckConfiguration()
     if ((problem.type == ProblemType::DRIVEN && solver.driven.adaptive_tol <= 0.0) ||
         problem.type == ProblemType::TRANSIENT ||
         problem.type == ProblemType::ELECTROSTATIC ||
+        problem.type == ProblemType::HEAT ||
         problem.type == ProblemType::MAGNETOSTATIC)
     {
       // Default true only driven simulations without adaptive frequency sweep, transient
-      // simulations, electrostatics, or magnetostatics.
+      // simulations, electrostatics, heat, or magnetostatics.
       solver.linear.initial_guess = 1;
     }
     else
@@ -449,6 +479,7 @@ void IoData::CheckConfiguration()
   // Compute matrix symmetry type for sparse direct solvers.
   if (solver.linear.pc_mat_shifted || problem.type == ProblemType::TRANSIENT ||
       problem.type == ProblemType::ELECTROSTATIC ||
+      problem.type == ProblemType::HEAT ||
       problem.type == ProblemType::MAGNETOSTATIC)
   {
     solver.linear.pc_mat_sym = MatrixSymmetry::SPD;
@@ -464,6 +495,7 @@ void IoData::CheckConfiguration()
   if (solver.linear.mg_smooth_aux < 0)
   {
     if (problem.type == ProblemType::ELECTROSTATIC ||
+        problem.type == ProblemType::HEAT ||
         problem.type == ProblemType::MAGNETOSTATIC)
     {
       // Disable auxiliary space smoothing using distributive relaxation by default for
@@ -486,6 +518,7 @@ void IoData::CheckConfiguration()
   if (solver.linear.amg_agg_coarsen < 0)
   {
     solver.linear.amg_agg_coarsen = (problem.type == ProblemType::ELECTROSTATIC ||
+                                     problem.type == ProblemType::HEAT ||
                                      problem.type == ProblemType::MAGNETOSTATIC ||
                                      problem.type == ProblemType::TRANSIENT);
   }

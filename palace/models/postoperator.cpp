@@ -34,6 +34,8 @@ std::string OutputFolderName(const ProblemType solver_t)
       return "eigenmode";
     case ProblemType::ELECTROSTATIC:
       return "electrostatic";
+    case ProblemType::HEAT:
+      return "heat";
     case ProblemType::MAGNETOSTATIC:
       return "magnetostatic";
     case ProblemType::TRANSIENT:
@@ -57,7 +59,8 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
     dom_post_op(std::move(
         [&domains, &fem_op_]()
         {
-          if constexpr (solver_t == ProblemType::ELECTROSTATIC)
+          if constexpr (solver_t == ProblemType::ELECTROSTATIC ||
+                       solver_t == ProblemType::HEAT)
           {
             return DomainPostOperator(domains.postpro, fem_op_.GetMaterialOp(),
                                       fem_op_.GetH1Space());
@@ -124,6 +127,10 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
   else if (solver_t == ProblemType::ELECTROSTATIC)
   {
     output_n_post = solver.electrostatic.n_post;
+  }
+  else if (solver_t == ProblemType::HEAT)
+  {
+    output_n_post = solver.heat.n_post;
   }
   else if (solver_t == ProblemType::MAGNETOSTATIC)
   {
@@ -1294,6 +1301,36 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const
 }
 template <ProblemType solver_t>
 template <ProblemType U>
+auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &v, const Vector &e,
+                                                int idx)
+    -> std::enable_if_t<U == ProblemType::HEAT, double>
+{
+  BlockTimer bt0(Timer::POSTPRO);
+  SetVGridFunction(v);
+  SetEGridFunction(e);
+
+  measurement_cache = {};
+  MeasureAllImpl();
+
+  int print_idx = step + 1;
+  post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
+  if (ShouldWriteParaviewFields(step))
+  {
+    Mpi::Print("\n");
+    WriteParaviewFields(step, idx);
+    Mpi::Print(" Wrote fields to disk (Paraview) for source {:d}\n", idx);
+  }
+  if (ShouldWriteGridFunctionFields(step))
+  {
+    Mpi::Print("\n");
+    WriteMFEMGridFunctions(step, idx);
+    Mpi::Print(" Wrote fields to disk (grid function) for source {:d}\n", idx);
+  }
+  return measurement_cache.domain_E_field_energy_all +
+         measurement_cache.domain_H_field_energy_all;
+}
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const Vector &a, const Vector &b,
                                                 int idx)
     -> std::enable_if_t<U == ProblemType::MAGNETOSTATIC, double>
@@ -1394,6 +1431,7 @@ auto PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e
 template class PostOperator<ProblemType::DRIVEN>;
 template class PostOperator<ProblemType::EIGENMODE>;
 template class PostOperator<ProblemType::ELECTROSTATIC>;
+template class PostOperator<ProblemType::HEAT>;
 template class PostOperator<ProblemType::MAGNETOSTATIC>;
 template class PostOperator<ProblemType::TRANSIENT>;
 
@@ -1411,6 +1449,9 @@ PostOperator<ProblemType::EIGENMODE>::MeasureAndPrintAll<ProblemType::EIGENMODE>
 
 template auto
 PostOperator<ProblemType::ELECTROSTATIC>::MeasureAndPrintAll<ProblemType::ELECTROSTATIC>(
+    int step, const Vector &v, const Vector &e, int idx) -> double;
+
+template auto PostOperator<ProblemType::HEAT>::MeasureAndPrintAll<ProblemType::HEAT>(
     int step, const Vector &v, const Vector &e, int idx) -> double;
 
 template auto

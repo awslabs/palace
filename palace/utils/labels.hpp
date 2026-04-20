@@ -20,6 +20,7 @@ enum class ProblemType : char
   DRIVEN,
   EIGENMODE,
   ELECTROSTATIC,
+  HEAT,
   MAGNETOSTATIC,
   TRANSIENT
 };

@@ -11,6 +11,7 @@
 #include "drivers/drivensolver.hpp"
 #include "drivers/eigensolver.hpp"
 #include "drivers/electrostaticsolver.hpp"
+#include "drivers/heatsolver.hpp"
 #include "drivers/magnetostaticsolver.hpp"
 #include "drivers/transientsolver.hpp"
 #include "fem/errorindicator.hpp"
@@ -266,6 +267,9 @@ int main(int argc, char *argv[])
       case ProblemType::ELECTROSTATIC:
         return std::make_unique<ElectrostaticSolver>(iodata, world_root, world_size,
                                                      omp_threads, GetPalaceGitTag());
+      case ProblemType::HEAT:
+        return std::make_unique<HeatSolver>(iodata, world_root, world_size, omp_threads,
+                                            GetPalaceGitTag());
       case ProblemType::MAGNETOSTATIC:
         return std::make_unique<MagnetostaticSolver>(iodata, world_root, world_size,
                                                      omp_threads, GetPalaceGitTag());
