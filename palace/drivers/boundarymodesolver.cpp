@@ -3,6 +3,8 @@
 
 #include "boundarymodesolver.hpp"
 
+#include "linalg/errorestimator.hpp"
+#include "linalg/modeeigensolver.hpp"
 #include "linalg/operator.hpp"
 #include "models/boundarymodeoperator.hpp"
 #include "models/postoperator.hpp"
@@ -25,9 +27,56 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              "(omega = {:.6e})\n",
              freq_GHz, omega);
 
-  // Construct the boundary mode operator (mesh, spaces, materials, eigen solver).
+  // Construct the boundary mode operator (mesh, spaces, materials, boundary ops).
   BlockTimer bt0(Timer::CONSTRUCT);
   BoundaryModeOperator mode_op(iodata, mesh);
+
+  // Construct the eigenvalue solver on top of the operator's FE context.
+  const int nd_size = mode_op.GetNDTrueVSize();
+  mfem::Array<int> dbc_tdof_list;
+  dbc_tdof_list.Append(mode_op.GetNDDbcTDofLists().back());
+  for (int i = 0; i < mode_op.GetH1DbcTDofLists().back().Size(); i++)
+  {
+    dbc_tdof_list.Append(nd_size + mode_op.GetH1DbcTDofLists().back()[i]);
+  }
+
+  ModeEigenSolverMultigridConfig mg_config;
+  if (mode_op.GetNDSpaceHierarchy().GetNumLevels() > 1)
+  {
+    mg_config.nd_fespaces = &mode_op.GetNDSpaceHierarchy();
+    mg_config.h1_fespaces = &mode_op.GetH1SpaceHierarchy();
+    mg_config.h1_aux_fespaces = &mode_op.GetH1AuxSpaceHierarchy();
+    mg_config.nd_dbc_tdof_lists = &mode_op.GetNDDbcTDofLists();
+    mg_config.h1_dbc_tdof_lists = &mode_op.GetH1DbcTDofLists();
+    mg_config.h1_aux_dbc_tdof_lists = &mode_op.GetH1AuxDbcTDofLists();
+    Mpi::Print(" Using p-multigrid preconditioning with {:d} levels\n",
+               static_cast<int>(mode_op.GetNDSpaceHierarchy().GetNumLevels()));
+  }
+  const auto which_eig = (bm_data.target > 0.0)
+                             ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
+                             : EigenvalueSolver::WhichType::LARGEST_REAL;
+  const bool have_mg = (mode_op.GetNDSpaceHierarchy().GetNumLevels() > 1);
+  ModeEigenSolver eig(mode_op.GetMaterialOp(), mode_op.GetSubmeshNormal(),
+                      mode_op.GetSurfZOp(), mode_op.GetFarfieldOp(),
+                      mode_op.GetSurfSigmaOp(), mode_op.GetNDSpace(), mode_op.GetH1Space(),
+                      dbc_tdof_list, num_modes, bm_data.max_size, bm_data.tol, which_eig,
+                      iodata.solver.linear, bm_data.type, iodata.problem.verbose,
+                      mode_op.GetComm(), have_mg ? &mg_config : nullptr);
+
+  // Construct the error estimator. It needs its own single-level hierarchies for flux
+  // recovery; build them here since the operator no longer owns them.
+  const int dim = mode_op.GetMesh().Dimension();
+  mfem::RT_FECollection rt_fec_est(mode_op.GetSolverOrder() - 1, dim);
+  FiniteElementSpaceHierarchy nd_fespaces_est(
+      std::make_unique<FiniteElementSpace>(mode_op.GetMesh(), mode_op.GetNDFEColl()));
+  FiniteElementSpaceHierarchy rt_fespaces_est(
+      std::make_unique<FiniteElementSpace>(mode_op.GetMesh(), &rt_fec_est));
+  FiniteElementSpaceHierarchy h1_fespaces_est(
+      std::make_unique<FiniteElementSpace>(mode_op.GetMesh(), mode_op.GetH1FEColl()));
+  BoundaryModeFluxErrorEstimator<ComplexVector> estimator(
+      mode_op.GetMaterialOp(), nd_fespaces_est, rt_fespaces_est, mode_op.GetCurlSpace(),
+      h1_fespaces_est, iodata.solver.linear.estimator_tol,
+      iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
 
   // Construct PostOperator.
   PostOperator<ProblemType::BOUNDARYMODE> post_op(iodata, mode_op);
@@ -39,8 +88,6 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                 mode_op.GetSubmeshE2());
   }
 
-  // Error indicator (estimator is owned by mode_op).
-  auto &nd_fespace = mode_op.GetNDSpace();
   ErrorIndicator indicator;
 
   // Determine kn_target.
@@ -53,7 +100,7 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   else
   {
     double c_min = mode_op.GetMaterialOp().GetLightSpeedMax().Min();
-    Mpi::GlobalMin(1, &c_min, nd_fespace.GetComm());
+    Mpi::GlobalMin(1, &c_min, mode_op.GetComm());
     MFEM_VERIFY(c_min > 0.0 && c_min < mfem::infinity(),
                 "Invalid material speed of light!");
     kn_target = omega / c_min * std::sqrt(1.1);
@@ -63,114 +110,63 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Solve the eigenvalue problem.
   BlockTimer bt1(Timer::EPS);
   Mpi::Print("\nSolving GEP for {:d} propagation mode(s)...\n", num_modes);
-  auto result = mode_op.Solve(omega, kn_target);
+  const double sigma = -kn_target * kn_target;
+  auto result = eig.Solve(omega, sigma);
   int num_conv = result.num_converged;
-  double sigma = result.sigma;
   Mpi::Print(" Found {:d} converged eigenvalue{} (sigma = {:.6e})\n", num_conv,
-             (num_conv != 1) ? "s" : "", sigma);
+             (num_conv != 1) ? "s" : "", result.sigma);
 
   for (int i = 0; i < num_conv; i++)
   {
-    std::complex<double> lambda = mode_op.GetEigenvalue(i);
-    std::complex<double> kn = std::sqrt(-sigma - 1.0 / lambda);
+    auto kn = eig.GetPropagationConstant(i);
     Mpi::Print(" eig {:d}: kn = {:.6e}{:+.6e}i, n_eff = {:.6e}{:+.6e}i\n", i, kn.real(),
                kn.imag(), kn.real() / omega, kn.imag() / omega);
   }
 
   // Postprocessing.
   BlockTimer bt2(Timer::POSTPRO);
-  if (const auto *ksp = mode_op.GetLinearSolver())
+  if (const auto *ksp = eig.GetLinearSolver())
   {
     SaveMetadata(*ksp);
   }
   Mpi::Print("\nComputing solution error estimates and performing postprocessing\n\n");
 
-  const int nd_size = mode_op.GetNDTrueVSize();
   const int h1_size = mode_op.GetH1TrueVSize();
-  auto &l2_curl_fespace = mode_op.GetCurlSpace();
-  const auto &CurlOp = l2_curl_fespace.GetDiscreteInterpolator(nd_fespace);
-  const int l2_size = l2_curl_fespace.GetTrueVSize();
+  const int l2_size = mode_op.GetCurlSpace().GetTrueVSize();
 
   const int n_print = std::min(num_conv, num_modes);
   for (int i = 0; i < n_print; i++)
   {
-    std::complex<double> lambda = mode_op.GetEigenvalue(i);
-    std::complex<double> kn = std::sqrt(-sigma - 1.0 / lambda);
-    double error_bkwd = mode_op.GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
-    double error_abs = mode_op.GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
-
     ComplexVector e0(nd_size + h1_size);
     e0.UseDevice(true);
-    mode_op.GetEigenvector(i, e0);
     ComplexVector et, en;
-    et.Real().MakeRef(e0.Real(), 0, nd_size);
-    et.Imag().MakeRef(e0.Imag(), 0, nd_size);
-    en.Real().MakeRef(e0.Real(), nd_size, h1_size);
-    en.Imag().MakeRef(e0.Imag(), nd_size, h1_size);
+    std::complex<double> kn = eig.GetPhysicalMode(i, omega, e0, et, en);
+    double error_bkwd = eig.GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
+    double error_abs = eig.GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
 
-    // Power-normalize eigenvector using the full Poynting integral:
-    //   P = (1/2) Re{conj(kn)/ω × et^H Btt et} + Re{1/(2ωkn) × et^H Atn ẽn}
-    // The second term accounts for the Et·∇t(En) cross-coupling. At this point en = ẽn
-    // (VD variable, not yet back-transformed to physical En).
+    // Poynting power P for impedance postprocessing (|P| ≈ 1 after normalization).
+    std::complex<double> P = eig.ComputePoyntingPower(omega, kn, et, en);
+
+    auto total_domain_energy = post_op.MeasureAndPrintAll(i, et, en, kn, P, omega,
+                                                          error_abs, error_bkwd, n_print);
+
+    if (i < num_modes && ModeEigenSolver::IsPropagating(kn))
     {
-      const auto *Btt = mode_op.GetBtt();
-      if (Btt)
-      {
-        auto etH_Btt_et = linalg::Dot(nd_fespace.GetComm(), et, *Btt, et);
-        std::complex<double> P = 0.5 * std::conj(kn) / omega * etH_Btt_et;
-
-        // Cross-term: Re{1/(2ωkn) × et^H Atn ẽn}.
-        const auto *Atnr = mode_op.GetAtnr();
-        if (Atnr)
-        {
-          ComplexWrapperOperator Atn(Atnr, mode_op.GetAtni());
-          P += 1.0 / (2.0 * omega * kn) * linalg::Dot(nd_fespace.GetComm(), en, Atn, et);
-        }
-
-        double P_abs = std::abs(P);
-        if (P_abs > 0.0)
-        {
-          e0 *= 1.0 / std::sqrt(P_abs);
-        }
-        else
-        {
-          // Fallback to Btt mass norm (etH_Btt_et is real for symmetric Btt).
-          double norm2 = etH_Btt_et.real();
-          if (norm2 > 0.0)
-          {
-            e0 *= 1.0 / std::sqrt(norm2);
-          }
-        }
-      }
-    }
-
-    // Back-transform en from VD variable ẽn = ikn·En to physical En = ẽn/(ikn).
-    {
-      auto ikn_inv = 1.0 / (std::complex<double>(0.0, 1.0) * kn);
-      ComplexVector::AXPBY(ikn_inv, en.Real(), en.Imag(), 0.0, en.Real(), en.Imag());
-    }
-
-    auto total_domain_energy =
-        post_op.MeasureAndPrintAll(i, et, en, kn, omega, error_abs, error_bkwd, n_print);
-
-    const bool is_propagating =
-        std::abs(kn.imag()) < 0.1 * std::abs(kn.real()) && std::abs(kn.real()) > 0.0;
-    if (i < num_modes && is_propagating)
-    {
+      // Bz = curl(Et) / (i·omega) = (Im(curl Et) - i·Re(curl Et)) / omega.
       ComplexVector bz(l2_size);
       bz.UseDevice(true);
-      {
-        Vector curl_etr(l2_size), curl_eti(l2_size);
-        curl_etr.UseDevice(true);
-        curl_eti.UseDevice(true);
-        CurlOp.Mult(et.Real(), curl_etr);
-        CurlOp.Mult(et.Imag(), curl_eti);
-        bz.Real() = curl_eti;
-        bz.Real() *= 1.0 / omega;
-        bz.Imag() = curl_etr;
-        bz.Imag() *= -1.0 / omega;
-      }
-      mode_op.AddErrorIndicator(et, bz, total_domain_energy, indicator);
+      const auto &CurlOp =
+          mode_op.GetCurlSpace().GetDiscreteInterpolator(mode_op.GetNDSpace());
+      Vector curl_etr(l2_size), curl_eti(l2_size);
+      curl_etr.UseDevice(true);
+      curl_eti.UseDevice(true);
+      CurlOp.Mult(et.Real(), curl_etr);
+      CurlOp.Mult(et.Imag(), curl_eti);
+      bz.Real() = curl_eti;
+      bz.Real() *= 1.0 / omega;
+      bz.Imag() = curl_etr;
+      bz.Imag() *= -1.0 / omega;
+      estimator.AddErrorIndicator(et, bz, total_domain_energy, indicator);
     }
   }
   Mpi::Print("\n");

@@ -1646,7 +1646,8 @@ template <ProblemType solver_t>
 template <ProblemType U>
 auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &et,
                                                 const ComplexVector &en,
-                                                std::complex<double> kn, double omega,
+                                                std::complex<double> kn,
+                                                std::complex<double> P, double omega,
                                                 double error_abs, double error_bkwd,
                                                 int num_conv)
     -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, double>
@@ -1793,41 +1794,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     return I;
   };
 
-  // Compute Poynting power P = (1/2) Re{kn*/ω} (et^H Btt et) — shared by all impedance
-  // entries.
-  std::complex<double> P(0.0, 0.0);
-  const auto *Btt = fem_op->GetBtt();
-  const auto *Atnr = fem_op->GetAtnr();
-  const auto *Atni = fem_op->GetAtni();
-  if (Btt != nullptr && !impedance_postpro.empty())
-  {
-    auto &nd_fespace = fem_op->GetNDSpace();
-    const int nd_size = nd_fespace.GetTrueVSize();
-    ComplexVector et_tdof(nd_size);
-    et_tdof.UseDevice(true);
-    E->Real().GetTrueDofs(et_tdof.Real());
-    E->Imag().GetTrueDofs(et_tdof.Imag());
-    P = 0.5 * std::conj(kn) / omega *
-        linalg::Dot(nd_fespace.GetComm(), et_tdof, *Btt, et_tdof);
-
-    // Cross-term: -Im{et^H Atn En} / (2ω). At this point En is physical (back-transformed).
-    if (Atnr != nullptr && En)
-    {
-      auto &h1_fespace = fem_op->GetH1Space();
-      const int h1_size = h1_fespace.GetTrueVSize();
-      ComplexVector en_tdof(h1_size);
-      en_tdof.UseDevice(true);
-      En->Real().GetTrueDofs(en_tdof.Real());
-      En->Imag().GetTrueDofs(en_tdof.Imag());
-      ComplexWrapperOperator Atn(Atnr, Atni);
-      auto etH_Atn_En = linalg::Dot(nd_fespace.GetComm(), en_tdof, Atn, et_tdof);
-      // For physical En: P_cross = (1/2) Re{-i/ω × conj(et^H Atn En)}
-      //                          = -Im{et^H Atn En} / (2ω)
-      P += std::complex<double>(-etH_Atn_En.imag(), etH_Atn_En.real()) / (2.0 * omega);
-    }
-  }
-
-  // Compute impedance for each configured entry.
+  // Compute impedance for each configured entry. P is the Poynting power of the
+  // power-normalized mode (|P| ≈ 1), computed by the caller on the mode eigensolver.
   for (const auto &[idx, cfg] : impedance_postpro)
   {
     auto V = ComputeVoltage(cfg.voltage_path, cfg.has_voltage_coordinates,
@@ -1973,7 +1941,8 @@ PostOperator<ProblemType::TRANSIENT>::MeasureAndPrintAll<ProblemType::TRANSIENT>
 template auto
 PostOperator<ProblemType::BOUNDARYMODE>::MeasureAndPrintAll<ProblemType::BOUNDARYMODE>(
     int step, const ComplexVector &et, const ComplexVector &en, std::complex<double> kn,
-    double omega, double error_abs, double error_bkwd, int num_conv) -> double;
+    std::complex<double> P, double omega, double error_abs, double error_bkwd,
+    int num_conv) -> double;
 
 template auto
 PostOperator<ProblemType::DRIVEN>::MeasureDomainFieldEnergyOnly<ProblemType::DRIVEN>(

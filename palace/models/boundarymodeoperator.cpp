@@ -10,7 +10,6 @@
 #include "models/surfaceimpedanceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
-#include "utils/prettyprint.hpp"
 
 namespace palace
 {
@@ -38,23 +37,6 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
   surf_z_op = std::make_unique<SurfaceImpedanceOperator>(iodata, *mat_op, pmesh);
   farfield_op = std::make_unique<FarfieldBoundaryOperator>(iodata, *mat_op, pmesh);
   surf_sigma_op = std::make_unique<SurfaceConductivityOperator>(iodata, *mat_op, pmesh);
-
-  // Phase 5: Eigenvalue solver.
-  SetUpEigenSolver();
-
-  // Phase 6: Error estimator.
-  const int dim = solve_mesh->Dimension();
-  rt_fec_est = std::make_unique<mfem::RT_FECollection>(solver_order - 1, dim);
-  nd_fespaces_est = std::make_unique<FiniteElementSpaceHierarchy>(
-      std::make_unique<FiniteElementSpace>(*solve_mesh, nd_fecs.back().get()));
-  rt_fespaces_est = std::make_unique<FiniteElementSpaceHierarchy>(
-      std::make_unique<FiniteElementSpace>(*solve_mesh, rt_fec_est.get()));
-  h1_fespaces_est = std::make_unique<FiniteElementSpaceHierarchy>(
-      std::make_unique<FiniteElementSpace>(*solve_mesh, h1_fecs.back().get()));
-  estimator = std::make_unique<BoundaryModeFluxErrorEstimator<ComplexVector>>(
-      *mat_op, *nd_fespaces_est, *rt_fespaces_est, *l2_curl_fespace, *h1_fespaces_est,
-      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-      iodata.solver.linear.estimator_mg);
 
   Mpi::Print(" ND space: {:d} DOFs, H1 space: {:d} DOFs, total: {:d}\n",
              GetNDSpace().GlobalTrueVSize(), GetH1Space().GlobalTrueVSize(),
@@ -198,97 +180,6 @@ void BoundaryModeOperator::SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>
   l2_curl_fec = std::make_unique<mfem::L2_FECollection>(
       solver_order - 1, dim, mfem::BasisType::GaussLegendre, mfem::FiniteElement::INTEGRAL);
   l2_curl_fespace = std::make_unique<FiniteElementSpace>(*solve_mesh, l2_curl_fec.get());
-}
-
-void BoundaryModeOperator::SetUpEigenSolver()
-{
-  const auto &bm_data = iodata.solver.boundary_mode;
-  auto &nd_fespace = GetNDSpace();
-  auto &h1_fespace = GetH1Space();
-  const int nd_size = nd_fespace.GetTrueVSize();
-
-  const auto which_eig = (bm_data.target > 0.0)
-                             ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
-                             : EigenvalueSolver::WhichType::LARGEST_REAL;
-
-  // Combined DBC tdof list for the block system.
-  mfem::Array<int> dbc_tdof_list;
-  dbc_tdof_list.Append(nd_dbc_tdof_lists.back());
-  for (int i = 0; i < h1_dbc_tdof_lists.back().Size(); i++)
-  {
-    dbc_tdof_list.Append(nd_size + h1_dbc_tdof_lists.back()[i]);
-  }
-
-  // Multigrid config (stored as member to outlive the eigenvalue solver).
-  if (nd_fespaces.GetNumLevels() > 1)
-  {
-    mg_config = std::make_unique<ModeEigenSolverMultigridConfig>();
-    mg_config->nd_fespaces = &nd_fespaces;
-    mg_config->h1_fespaces = &h1_fespaces;
-    mg_config->h1_aux_fespaces = &h1_aux_fespaces;
-    mg_config->nd_dbc_tdof_lists = &nd_dbc_tdof_lists;
-    mg_config->h1_dbc_tdof_lists = &h1_dbc_tdof_lists;
-    mg_config->h1_aux_dbc_tdof_lists = &h1_aux_dbc_tdof_lists;
-    Mpi::Print(" Using p-multigrid preconditioning with {:d} levels\n",
-               static_cast<int>(nd_fespaces.GetNumLevels()));
-  }
-
-  mode_solver = std::make_unique<ModeEigenSolver>(
-      *mat_op, nullptr, surf_z_op.get(), farfield_op.get(), surf_sigma_op.get(), nd_fespace,
-      h1_fespace, dbc_tdof_list, bm_data.n, bm_data.max_size, bm_data.tol, which_eig,
-      iodata.solver.linear, bm_data.type, iodata.problem.verbose, solve_mesh->GetComm(),
-      mg_config.get());
-}
-
-BoundaryModeOperator::SolveResult BoundaryModeOperator::Solve(double omega,
-                                                              double kn_target)
-{
-  double sigma = -kn_target * kn_target;
-  auto result = mode_solver->Solve(omega, sigma);
-  return {result.num_converged, sigma};
-}
-
-std::complex<double> BoundaryModeOperator::GetEigenvalue(int i) const
-{
-  return mode_solver->GetEigenvalue(i);
-}
-
-void BoundaryModeOperator::GetEigenvector(int i, ComplexVector &x) const
-{
-  mode_solver->GetEigenvector(i, x);
-}
-
-double BoundaryModeOperator::GetError(int i, EigenvalueSolver::ErrorType type) const
-{
-  return mode_solver->GetError(i, type);
-}
-
-const mfem::HypreParMatrix *BoundaryModeOperator::GetBtt() const
-{
-  return mode_solver->GetBtt();
-}
-
-const mfem::HypreParMatrix *BoundaryModeOperator::GetAtnr() const
-{
-  return mode_solver->GetAtnr();
-}
-
-const mfem::HypreParMatrix *BoundaryModeOperator::GetAtni() const
-{
-  return mode_solver->GetAtni();
-}
-
-const ComplexKspSolver *BoundaryModeOperator::GetLinearSolver() const
-{
-  return mode_solver->GetLinearSolver();
-}
-
-void BoundaryModeOperator::AddErrorIndicator(const ComplexVector &et,
-                                             const ComplexVector &bz,
-                                             double total_domain_energy,
-                                             ErrorIndicator &indicator)
-{
-  estimator->AddErrorIndicator(et, bz, total_domain_energy, indicator);
 }
 
 }  // namespace palace

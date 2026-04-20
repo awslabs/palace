@@ -124,6 +124,24 @@ public:
   // Get the eigenpair error for the i-th converged eigenvalue.
   double GetError(int i, EigenvalueSolver::ErrorType type) const;
 
+  // Propagation constant kn for mode i, recovered from the shift of the most recent Solve.
+  std::complex<double> GetPropagationConstant(int i) const;
+
+  // Load eigenvector i, back-transform the H1 block from the VD variable ẽn = i·kn·En to
+  // physical En = ẽn/(i·kn), and power-normalize the combined vector to unit Poynting
+  // power. Returns the propagation constant kn. et and en are aliased views into e0.
+  std::complex<double> GetPhysicalMode(int i, double omega, ComplexVector &e0,
+                                       ComplexVector &et, ComplexVector &en) const;
+
+  // Poynting power P = (1/2) conj(kn)/omega · etᴴ·Btt·et + i/(2·omega) · etᴴ·Atn·En
+  // for physical (et, En).
+  std::complex<double> ComputePoyntingPower(double omega, std::complex<double> kn,
+                                            const ComplexVector &et,
+                                            const ComplexVector &en) const;
+
+  // Heuristic classifier: |Im kn| < 0.1·|Re kn| and Re kn > 0.
+  static bool IsPropagating(std::complex<double> kn);
+
   // Access the assembled Btt and Atn matrices (needed for power normalization).
   const mfem::HypreParMatrix *GetBtt() const { return Bttr.get(); }
   const mfem::HypreParMatrix *GetAtnr() const { return Atnr.get(); }
@@ -162,6 +180,9 @@ private:
 
   // Cached FE space sizes.
   int nd_size, h1_size;
+
+  // Shift sigma = -kn_target^2 from the last Solve (used by GetPropagationConstant).
+  double sigma_cached = 0.0;
 
   // Frequency-independent assembled matrices.
   // Atn: gradient coupling -(mu^{-1} grad_t u, v).

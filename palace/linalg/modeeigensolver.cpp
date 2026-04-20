@@ -160,6 +160,8 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(double omega, double sigma,
                                                     bool has_solver,
                                                     const ComplexVector *initial_space)
 {
+  sigma_cached = sigma;
+
   // Assemble frequency-dependent matrices (MPI collective on FE space communicator).
   AssembleFrequencyDependent(omega, sigma);
 
@@ -243,6 +245,68 @@ double ModeEigenSolver::GetError(int i, EigenvalueSolver::ErrorType type) const
 void ModeEigenSolver::GetEigenvector(int i, ComplexVector &x) const
 {
   eigen->GetEigenvector(mode_perm[i], x);
+}
+
+std::complex<double> ModeEigenSolver::GetPropagationConstant(int i) const
+{
+  return std::sqrt(-sigma_cached - 1.0 / eigen->GetEigenvalue(mode_perm[i]));
+}
+
+std::complex<double> ModeEigenSolver::GetPhysicalMode(int i, double omega,
+                                                     ComplexVector &e0, ComplexVector &et,
+                                                     ComplexVector &en) const
+{
+  GetEigenvector(i, e0);
+  et.Real().MakeRef(e0.Real(), 0, nd_size);
+  et.Imag().MakeRef(e0.Imag(), 0, nd_size);
+  en.Real().MakeRef(e0.Real(), nd_size, h1_size);
+  en.Imag().MakeRef(e0.Imag(), nd_size, h1_size);
+
+  std::complex<double> kn = GetPropagationConstant(i);
+
+  // Back-transform en from VD variable ẽn = i·kn·En to physical En = ẽn/(i·kn).
+  {
+    auto ikn_inv = 1.0 / (std::complex<double>(0.0, 1.0) * kn);
+    ComplexVector::AXPBY(ikn_inv, en.Real(), en.Imag(), 0.0, en.Real(), en.Imag());
+  }
+
+  // Power-normalize the full eigenvector (et and En both get the same scalar factor).
+  auto P = ComputePoyntingPower(omega, kn, et, en);
+  double P_abs = std::abs(P);
+  if (P_abs > 0.0)
+  {
+    e0 *= 1.0 / std::sqrt(P_abs);
+  }
+  return kn;
+}
+
+std::complex<double> ModeEigenSolver::ComputePoyntingPower(double omega,
+                                                           std::complex<double> kn,
+                                                           const ComplexVector &et,
+                                                           const ComplexVector &en) const
+{
+  if (!Bttr)
+  {
+    return 0.0;
+  }
+  auto comm = nd_fespace.GetComm();
+
+  // Transverse term: (1/2) conj(kn)/omega · etᴴ·Btt·et (Btt symmetric ⇒ real valued).
+  std::complex<double> P = 0.5 * std::conj(kn) / omega * linalg::Dot(comm, et, *Bttr, et);
+
+  // Cross term.
+  if (Atnr && en.Size() == h1_size)
+  {
+    ComplexWrapperOperator Atn(const_cast<mfem::HypreParMatrix *>(Atnr.get()),
+                               const_cast<mfem::HypreParMatrix *>(Atni.get()));
+    P += std::complex<double>(0.0, 1.0) / (2.0 * omega) * linalg::Dot(comm, en, Atn, et);
+  }
+  return P;
+}
+
+bool ModeEigenSolver::IsPropagating(std::complex<double> kn)
+{
+  return std::abs(kn.imag()) < 0.1 * std::abs(kn.real()) && std::abs(kn.real()) > 0.0;
 }
 
 // Stiffness matrix (shifted): Att = (mu_cc^{-1} curl_t x u, curl_t x v)
