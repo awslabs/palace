@@ -74,6 +74,9 @@ spack:
         # Enable AWS EFA
         libfabric:
           require: fabrics=efa,lnx,mrail,rxm,shm,sockets,tcp,udp
+        # We do not want to include the full Python stack in the container
+        rdma-core:
+          require: ~pyverbs
       develop:
         palace:
           spec: palace@=develop

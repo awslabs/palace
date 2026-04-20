@@ -71,6 +71,12 @@ RUN find /opt/software -type d \( -name examples -o -name doc -o -name docs \) -
       fi; \
     done; \
     true
+
+# Remove header files not needed at runtime (keep libCEED headers for JIT compilation)
+RUN find /opt/software -type d -name include \
+      -not -path "*/libceed-*/include" \
+      -exec rm -rf {} + 2>/dev/null; \
+    true
 {% if strip %}
 
 # Strip all the binaries
