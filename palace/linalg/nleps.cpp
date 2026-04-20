@@ -372,24 +372,33 @@ int QuasiNewtonSolver::Solve()
     return nev;
   }
 
-  // Palace ComplexVectors of size n.
-  ComplexVector v, u, w, c, w0, z;
+  // Palace ComplexVectors of size n. u/u2 hold the residual at the current
+  // iterate (maintained across Newton iterations); du/du2 hold the Newton
+  // eigenvector correction; v_trial, u_trial are scratch vectors used by the
+  // Armijo line search.
+  ComplexVector v, u, w, c, w0, z, du, v_trial, u_trial;
   v.SetSize(n);
   u.SetSize(n);
   w.SetSize(n);
   c.SetSize(n);
   w0.SetSize(n);
   z.SetSize(n);
+  du.SetSize(n);
+  v_trial.SetSize(n);
+  u_trial.SetSize(n);
   v.UseDevice(true);
   u.UseDevice(true);
   w.UseDevice(true);
   c.UseDevice(true);
   w0.UseDevice(true);
   z.UseDevice(true);
+  du.UseDevice(true);
+  v_trial.UseDevice(true);
+  u_trial.UseDevice(true);
 
   // Eigen Matrix/Vectors for extended operator of size k.
   Eigen::MatrixXcd H;
-  Eigen::VectorXcd u2, z2, c2, w2, v2;
+  Eigen::VectorXcd u2, z2, c2, w2, v2, du2, v2_trial, u2_trial;
 
   // Storage for eigenpairs.
   std::vector<ComplexVector> X;
@@ -538,32 +547,58 @@ int QuasiNewtonSolver::Solve()
     w0 *= 1.0 / norm_w0;
     w2 *= 1.0 / norm_w0;
 
-    // Newton iterations.
-    double res = mfem::infinity();
+    // Helper that computes the (deflated) residual r = T(lam) vv + T(lam) X (lam I - H)^-1 vv2
+    // in rr, and rr2 = X^* vv when k > 0. Returns ||[rr; rr2]||. Used both for the
+    // initial residual and for Armijo line search trial points.
+    auto compute_residual = [&](std::complex<double> lam, const ComplexVector &vv,
+                                const Eigen::VectorXcd &vv2, ComplexVector &rr,
+                                Eigen::VectorXcd &rr2) -> double
+    {
+      auto A2n = (*funcA2)(std::abs(lam.imag()));
+      auto A = BuildParSumOperator({1.0 + 0.0i, lam, lam * lam, 1.0 + 0.0i},
+                                   {opK, opC, opM, A2n.get()}, true);
+      A->Mult(vv, rr);
+      if (k > 0)
+      {
+        const Eigen::MatrixXcd S = lam * Eigen::MatrixXcd::Identity(k, k) - H;
+        const ComplexVector XSvv2 = MatVecMult(X, S.fullPivLu().solve(vv2));
+        A->AddMult(XSvv2, rr, 1.0);
+        rr2.conservativeResize(k);
+        for (int j = 0; j < k; j++)
+        {
+          rr2(j) = linalg::Dot(GetComm(), vv, X[j]);
+        }
+      }
+      else
+      {
+        rr2.resize(0);
+      }
+      return std::sqrt(std::abs(linalg::Dot(GetComm(), rr, rr)) + rr2.squaredNorm());
+    };
+
+    // Armijo line search parameters. c controls sufficient-decrease (standard value 1e-4).
+    // We backtrack by 1/2 up to max_backtrack times; if no alpha passes Armijo we commit
+    // the smallest alpha tried so the iterate always moves (and divergence detection can
+    // trigger a restart if the step is truly bad).
+    constexpr double armijo_c = 1.0e-4;
+    constexpr double backtrack_factor = 0.5;
+    constexpr int max_backtrack = 10;
+
+    // Compute the initial residual at the starting (eig, v, v2). Subsequent iterations
+    // reuse the residual computed at the accepted trial point of the line search, so we
+    // only evaluate the residual once per committed iterate.
+    double res = compute_residual(eig, v, v2, u, u2);
+
     int it = 0, diverged_it = 0;
     while (it < nleps_it)
     {
-      // Compute u = A * v.
+      // Rebuild A at the current (post-line-search) eig for the Jacobian below. The A2n
+      // computed inside compute_residual on the previous iteration cannot be reused
+      // because that local operator goes out of scope when the lambda returns.
       auto A2n = (*funcA2)(std::abs(eig.imag()));
       auto A = BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
                                    {opK, opC, opM, A2n.get()}, true);
-      A->Mult(v, u);
-      if (k > 0)  // Deflation
-      {
-        // u1 = T(l) v1 + U(l) v2 = T(l) v1 + T(l)X(lI - H)^-1 v2.
-        const Eigen::MatrixXcd S = eig * Eigen::MatrixXcd::Identity(k, k) - H;
-        const ComplexVector XSv2 = MatVecMult(X, S.fullPivLu().solve(v2));
-        A->AddMult(XSv2, u, 1.0);
-        // u2 = X^* v1.
-        u2.conservativeResize(k);
-        for (int j = 0; j < k; j++)
-        {
-          u2(j) = linalg::Dot(GetComm(), v, X[j]);
-        }
-      }
 
-      // Compute residual.
-      res = std::sqrt(std::abs(linalg::Dot(GetComm(), u, u)) + u2.squaredNorm());
       if (print > 0)
       {
         Mpi::Print(GetComm(),
@@ -641,28 +676,85 @@ int QuasiNewtonSolver::Solve()
         A->AddMult(XSSv2, w, -1.0);
       }
 
-      // Compute delta = - dot(w0, u) / dot(w0, w).
+      // Compute delta_eig = - dot(w0, u) / dot(w0, w). This is the undamped Newton step
+      // for the eigenvalue; an Armijo line search below selects a damping factor alpha.
       const std::complex<double> u2_w0 = std::complex<double>(w2.adjoint() * u2);
-      const std::complex<double> delta =
+      const std::complex<double> delta_eig =
           -(linalg::Dot(GetComm(), u, w0) + u2_w0) / linalg::Dot(GetComm(), w, w0);
 
-      // Update eigenvalue.
-      eig += delta;
-
-      // Compute z = -(delta * w + u).
-      z.AXPBYPCZ(-delta, w, -1.0, u, 0.0);
+      // Compute z = -(delta_eig * w + u); this is the Newton-approximated residual at
+      // the predicted eigenvalue (eig + delta_eig) and the RHS of the linear solve for
+      // the eigenvector correction.
+      z.AXPBYPCZ(-delta_eig, w, -1.0, u, 0.0);
       z2 = -u2;
 
-      //  Update preconditioner if needed. Updating the preconditioner as infrequently as
-      //  possible gives the best performance and robustness. Updating the preconditioner
-      //  close to an eigenvalue can lead to numerical instability.
+      // Solve for the undamped Newton eigenvector correction du using the lagged
+      // preconditioner from a previous iteration (or the initial one). Use inexact
+      // Newton: adapt the linear solve tolerance to the outer residual to avoid
+      // over-solving when T(σ) is nearly singular near eigenvalues.
+      opInv->SetRelTol(std::max(ksp_rel_tol, std::min(inexact_tol, res)));
+      deflated_solve(z, z2, du, du2);
+
+      // Armijo line search. For alpha = 1, 1/2, 1/4, ... evaluate the residual at the
+      // trial point (eig + alpha * delta_eig, (v + alpha * du) / ||.||) and accept the
+      // first alpha satisfying the sufficient-decrease condition
+      //   res_trial <= (1 - armijo_c * alpha) * res.
+      // This fixes the failure mode where undamped Newton overshoots when the initial
+      // guess is outside the quadratic convergence basin (adapter/hybrid mode 3) or
+      // when w0 . w is near-singular (giving an unbounded delta_eig).
+      double alpha = 1.0;
+      std::complex<double> eig_accept = eig + delta_eig;
+      double res_accept = mfem::infinity();
+      int bt = 0;
+      for (; bt < max_backtrack; bt++)
+      {
+        const std::complex<double> eig_trial = eig + alpha * delta_eig;
+
+        // v_trial = v + alpha * du, then normalize the combined (v, v2) vector.
+        v_trial.AXPBYPCZ(1.0, v, alpha, du, 0.0);
+        v2_trial = v2 + alpha * du2;
+        const double norm_v_trial = std::sqrt(
+            std::abs(linalg::Dot(GetComm(), v_trial, v_trial)) + v2_trial.squaredNorm());
+        v_trial *= 1.0 / norm_v_trial;
+        v2_trial *= 1.0 / norm_v_trial;
+
+        const double res_trial =
+            compute_residual(eig_trial, v_trial, v2_trial, u_trial, u2_trial);
+
+        if (res_trial <= (1.0 - armijo_c * alpha) * res || bt == max_backtrack - 1)
+        {
+          eig_accept = eig_trial;
+          res_accept = res_trial;
+          // Swap trial storage into committed storage to avoid a redundant copy.
+          std::swap(v, v_trial);
+          std::swap(v2, v2_trial);
+          std::swap(u, u_trial);
+          std::swap(u2, u2_trial);
+          break;
+        }
+        alpha *= backtrack_factor;
+      }
+      if (print > 0 && (bt > 0 || alpha < 1.0))
+      {
+        Mpi::Print(GetComm(),
+                   "   NLEPS Armijo backtracks={:d}, alpha={:.3e}, res_new={:.6e}\n", bt,
+                   alpha, res_accept);
+      }
+      eig = eig_accept;
+      res = res_accept;
+
+      // Update preconditioner if needed, using the committed (post-line-search)
+      // eigenvalue so opInv reflects the accepted iterate. The update is lagged so
+      // the next iteration's eigenvector solve benefits; updating the preconditioner
+      // too close to an eigenvalue can lead to numerical instability.
       if (it > 0 && it % preconditioner_lag == 0 && res > preconditioner_tol)
       {
         eig_opInv = eig;
-        opA2 = (*funcA2)(std::abs(eig.imag()));
-        opA = BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
-                                  {opK, opC, opM, opA2.get()}, true);
-        opP = (*funcP)(1.0 + 0.0i, eig, eig * eig, eig.imag());
+        opA2 = (*funcA2)(std::abs(eig_opInv.imag()));
+        opA = BuildParSumOperator(
+            {1.0 + 0.0i, eig_opInv, eig_opInv * eig_opInv, 1.0 + 0.0i},
+            {opK, opC, opM, opA2.get()}, true);
+        opP = (*funcP)(1.0 + 0.0i, eig_opInv, eig_opInv * eig_opInv, eig_opInv.imag());
         opInv->SetOperators(*opA, *opP);
         // Recompute w0 and normalize.
         opInv->SetRelTol(std::max(ksp_rel_tol, inexact_tol));
@@ -672,19 +764,6 @@ int QuasiNewtonSolver::Solve()
         w0 *= 1.0 / norm_w0;
         w2 *= 1.0 / norm_w0;
       }
-
-      // Solve for Newton correction. Use inexact Newton: adapt the linear solve
-      // tolerance to the outer residual to avoid over-solving when T(σ) is nearly
-      // singular near eigenvalues.
-      opInv->SetRelTol(std::max(ksp_rel_tol, std::min(inexact_tol, res)));
-      deflated_solve(z, z2, u, u2);
-
-      // Update and normalize eigenvector estimate.
-      v += u;
-      v2 += u2;
-      norm_v = std::sqrt(std::abs(linalg::Dot(GetComm(), v, v)) + v2.squaredNorm());
-      v *= 1.0 / norm_v;
-      v2 *= 1.0 / norm_v;
 
       it++;
       if (it == nleps_it)
