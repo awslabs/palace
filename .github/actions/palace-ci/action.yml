@@ -73,9 +73,7 @@ runs:
           C_CXX_COMPILER="intel-oneapi-compilers"
           FORTRAN_COMPILER="intel-oneapi-compilers"
         else
-          # OpenBlas 0.3.30 has issues on arm
-          # https://github.com/OpenMathLib/OpenBLAS/issues/5459
-          MATH_LIBS="${{ inputs.math-libs || 'openblas@0.3.29' }}"
+          MATH_LIBS="${{ inputs.math-libs || 'openblas@develop' }}"
           MPI_IMPL="openmpi"
           C_CXX_COMPILER="${{ inputs.toolchain }}"
         fi
