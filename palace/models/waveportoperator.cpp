@@ -727,31 +727,10 @@ WavePortData::WavePortData(const config::WavePortData &data,
 
     // Define the eigenvalue solver.
     constexpr int print = 0;
-    EigenSolverBackend type = data.eigen_solver;
-    if (type == EigenSolverBackend::SLEPC)
-    {
-#if !defined(PALACE_WITH_SLEPC)
-      MFEM_ABORT("Solver was not built with SLEPc support, please choose a "
-                 "different solver!");
-#endif
-    }
-    else if (type == EigenSolverBackend::ARPACK)
-    {
-#if !defined(PALACE_WITH_ARPACK)
-      MFEM_ABORT("Solver was not built with ARPACK support, please choose a "
-                 "different solver!");
-#endif
-    }
-    else  // Default choice
-    {
-#if defined(PALACE_WITH_SLEPC)
-      type = EigenSolverBackend::SLEPC;
-#elif defined(PALACE_WITH_ARPACK)
-      type = EigenSolverBackend::ARPACK;
-#else
+    const EigenSolverBackend type = data.eigen_solver;
+#if !defined(PALACE_WITH_ARPACK) && !defined(PALACE_WITH_SLEPC)
 #error "Wave port solver requires building with ARPACK or SLEPc!"
 #endif
-    }
     if (type == EigenSolverBackend::ARPACK)
     {
 #if defined(PALACE_WITH_ARPACK)

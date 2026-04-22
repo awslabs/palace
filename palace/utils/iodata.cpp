@@ -155,9 +155,52 @@ IoData::IoData(const Units &units) : units(units), init(false)
   fem::DefaultIntegrationOrder::p_trial = -1;
 }
 
-IoData::IoData(nlohmann::json &&config_, bool print) : units(1.0, 1.0), init(false)
+json IoData::ParseAndValidate(const char *filename)
 {
-  auto config = std::move(config_);
+  // Open configuration file and preprocess: strip whitespace, comments, and expand integer
+  // ranges.
+  std::stringstream buffer = PreprocessFile(filename);
+
+  // Parse the configuration file. Use a callback function to detect and throw errors for
+  // duplicate keys.
+  json config;
+  std::stack<std::set<json>> parse_stack;
+  json::parser_callback_t check_duplicate_keys =
+      [&](int, json::parse_event_t event, json &parsed)
+  {
+    switch (event)
+    {
+      case json::parse_event_t::object_start:
+        parse_stack.push(std::set<json>());
+        break;
+      case json::parse_event_t::object_end:
+        parse_stack.pop();
+        break;
+      case json::parse_event_t::key:
+        {
+          const auto result = parse_stack.top().insert(parsed);
+          if (!result.second)
+          {
+            MFEM_ABORT("Error parsing configuration file!\nDuplicate key "
+                       << parsed << " was already seen in this object!");
+            return false;
+          }
+        }
+        break;
+      default:
+        break;
+    }
+    return true;
+  };
+  try
+  {
+    config = json::parse(buffer, check_duplicate_keys);
+  }
+  catch (json::parse_error &e)
+  {
+    MFEM_ABORT("Error parsing configuration file!\n  " << e.what());
+  }
+
   // Validate against JSON schema.
   {
     std::string err = ValidateConfig(config);
@@ -170,6 +213,11 @@ IoData::IoData(nlohmann::json &&config_, bool print) : units(1.0, 1.0), init(fal
     }
   }
 
+  return config;
+}
+
+IoData::IoData(const nlohmann::json &config, bool print) : units(1.0, 1.0), init(false)
+{
   if (print)
   {
     Mpi::Print("\n{}\n", config.dump(2));
@@ -201,69 +249,23 @@ IoData::IoData(nlohmann::json &&config_, bool print) : units(1.0, 1.0), init(fal
     solver = config::SolverData(*solver_it);
   }
 
-  // Cleanup and error checking.
-  config.erase("Problem");
-  config.erase("Model");
-  config.erase("Domains");
-  config.erase("Boundaries");
-  config.erase("Solver");
-  MFEM_VERIFY(config.empty(), "Found an unsupported configuration file section!\n"
-                                  << config.dump(2));
+  // Check for unsupported sections. Work on a copy since we don't own the input.
+  {
+    json remaining = config;
+    remaining.erase("Problem");
+    remaining.erase("Model");
+    remaining.erase("Domains");
+    remaining.erase("Boundaries");
+    remaining.erase("Solver");
+    MFEM_VERIFY(remaining.empty(), "Found an unsupported configuration file section!\n"
+                                       << remaining.dump(2));
+  }
 
   // Check compatibility of configuration file and problem type.
   CheckConfiguration();
 }
 
-IoData::IoData(const char *filename, bool print)
-  : IoData(
-        [&filename]()
-        {
-          // Open configuration file and preprocess: strip whitespace, comments, and expand
-          // integer ranges.
-          std::stringstream buffer = PreprocessFile(filename);
-
-          // Parse the configuration file. Use a callback function to detect and throw
-          // errors for duplicate keys.
-          json config;
-          std::stack<std::set<json>> parse_stack;
-          json::parser_callback_t check_duplicate_keys =
-              [&](int, json::parse_event_t event, json &parsed)
-          {
-            switch (event)
-            {
-              case json::parse_event_t::object_start:
-                parse_stack.emplace();
-                break;
-              case json::parse_event_t::object_end:
-                parse_stack.pop();
-                break;
-              case json::parse_event_t::key:
-                {
-                  const auto result = parse_stack.top().insert(parsed);
-                  if (!result.second)
-                  {
-                    MFEM_ABORT("Error parsing configuration file!\nDuplicate key "
-                               << parsed << " was already seen in this object!");
-                    return false;
-                  }
-                }
-                break;
-              default:
-                break;
-            }
-            return true;
-          };
-          try
-          {
-            config = json::parse(buffer, check_duplicate_keys);
-          }
-          catch (json::parse_error &e)
-          {
-            MFEM_ABORT("Error parsing configuration file!\n  " << e.what());
-          }
-          return config;
-        }(),
-        print)
+IoData::IoData(const char *filename, bool print) : IoData(ParseAndValidate(filename), print)
 {
 }
 
@@ -525,6 +527,48 @@ void IoData::CheckConfiguration()
     // subsequent preconditioners with complex coefficients.
     solver.linear.reorder_reuse = false;
   }
+  // Validate build-availability of requested solver backends. Centralized here so
+  // downstream code never encounters an unavailable backend at runtime.
+#if !defined(PALACE_WITH_SLEPC)
+  MFEM_VERIFY(solver.eigenmode.type != EigenSolverBackend::SLEPC,
+              "Eigenmode solver backend SLEPc requested but Palace was not built with "
+              "SLEPc support!");
+  for (const auto &[idx, data] : boundaries.waveport)
+  {
+    MFEM_VERIFY(data.eigen_solver != EigenSolverBackend::SLEPC,
+                "Wave port " << idx
+                             << " eigen solver SLEPc requested but Palace was not built "
+                                "with SLEPc support!");
+  }
+#endif
+#if !defined(PALACE_WITH_ARPACK)
+  MFEM_VERIFY(solver.eigenmode.type != EigenSolverBackend::ARPACK,
+              "Eigenmode solver backend ARPACK requested but Palace was not built with "
+              "ARPACK support!");
+  for (const auto &[idx, data] : boundaries.waveport)
+  {
+    MFEM_VERIFY(data.eigen_solver != EigenSolverBackend::ARPACK,
+                "Wave port " << idx
+                             << " eigen solver ARPACK requested but Palace was not built "
+                                "with ARPACK support!");
+  }
+#endif
+#if !defined(MFEM_USE_SUPERLU)
+  MFEM_VERIFY(solver.linear.type != LinearSolver::SUPERLU,
+              "Linear solver SuperLU requested but Palace was not built with SuperLU "
+              "support!");
+#endif
+#if !defined(MFEM_USE_STRUMPACK)
+  MFEM_VERIFY(solver.linear.type != LinearSolver::STRUMPACK &&
+                  solver.linear.type != LinearSolver::STRUMPACK_MP,
+              "Linear solver STRUMPACK requested but Palace was not built with STRUMPACK "
+              "support!");
+#endif
+#if !defined(MFEM_USE_MUMPS)
+  MFEM_VERIFY(solver.linear.type != LinearSolver::MUMPS,
+              "Linear solver MUMPS requested but Palace was not built with MUMPS support!");
+#endif
+
   // Configure settings for quadrature rules and partial assembly.
   BilinearForm::pa_order_threshold = solver.pa_order_threshold;
   fem::DefaultIntegrationOrder::p_trial = solver.order;

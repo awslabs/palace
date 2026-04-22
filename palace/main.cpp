@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 #include <mpi.h>
 #include <mfem.hpp>
+#include <nlohmann/json.hpp>
 #include "drivers/drivensolver.hpp"
 #include "drivers/eigensolver.hpp"
 #include "drivers/electrostaticsolver.hpp"
@@ -214,7 +216,8 @@ int main(int argc, char *argv[])
   {
     if (Mpi::Root(world_comm))
     {
-      IoData iodata(argv[argc - 1], false);
+      auto config = IoData::ParseAndValidate(argv[argc - 1]);
+      IoData iodata(config, false);
       if (!std::filesystem::exists(iodata.model.mesh))
       {
         MFEM_ABORT("Unable to open mesh file \"" << iodata.model.mesh << "\"!");
@@ -227,8 +230,29 @@ int main(int argc, char *argv[])
 
   // Parse configuration file.
   PrintPalaceBanner(world_comm);
-  IoData iodata(argv[1], false);
+  auto config = IoData::ParseAndValidate(argv[1]);
+  IoData iodata(config, false);
   MakeOutputFolder(iodata, world_comm);
+
+  // Write the resolved configuration to the output directory so users have a complete
+  // record of every Palace decision (all sentinels replaced with concrete values).
+  if (world_root)
+  {
+    IoData::ConcretizeDefaults(iodata, config);
+    std::filesystem::path config_path(argv[1]);
+    auto resolved_name = config_path.stem().string() + "-resolved.json";
+    auto resolved_path = std::filesystem::path(iodata.problem.output) / resolved_name;
+    std::ofstream out(resolved_path);
+    out << config.dump(2) << "\n";
+    out.close();
+    if (!out)
+    {
+      Mpi::Warning(world_comm,
+                   "Failed to write resolved configuration to \"{}\"; "
+                   "continuing without it.\n",
+                   resolved_path.string());
+    }
+  }
 
   BlockTimer bt1(Timer::INIT);
   // Initialize the MFEM device and configure libCEED backend.

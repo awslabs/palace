@@ -9,6 +9,7 @@ test/examples/ref/**/*.json
 .gitlab-ci-local
 Manifest.toml
 .vscode/
+.claude/
 
 # Coverage files
 *.profraw

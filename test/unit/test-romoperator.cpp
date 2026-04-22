@@ -187,7 +187,7 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-Port-Cube1
   setup_json["Solver"]["Linear"] = {
       {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
 
-  IoData iodata(std::move(setup_json));
+  IoData iodata(setup_json, false);
 
   auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
   SpaceOperator space_op(iodata, mesh_io);
@@ -422,7 +422,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-Port-Cube32
   setup_json["Solver"]["Linear"] = {
       {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
 
-  IoData iodata(std::move(setup_json));
+  IoData iodata(setup_json, false);
 
   auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
   SpaceOperator space_op(iodata, mesh_io);
@@ -653,7 +653,7 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-PortOrthog
   setup_json["Solver"]["Linear"] = {
       {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
 
-  IoData iodata(std::move(setup_json));
+  IoData iodata(setup_json, false);
   auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
   SpaceOperator space_op(iodata, mesh_io);
   std::size_t max_size_per_excitation = 100;
@@ -707,7 +707,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-LinearDepe
   setup_json["Solver"]["Linear"] = {
       {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
 
-  IoData iodata(std::move(setup_json));
+  IoData iodata(setup_json, false);
   auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
   SpaceOperator space_op(iodata, mesh_io);
   std::size_t max_size_per_excitation = 100;

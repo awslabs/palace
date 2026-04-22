@@ -47,11 +47,18 @@ public:
 
   explicit IoData(const Units &units);
 
-  // Take parsed json and override options defaults.
-  explicit IoData(nlohmann::json &&config, bool print = false);
+  // Construct from a pre-parsed and validated JSON config object.
+  IoData(const nlohmann::json &config, bool print);
 
-  // Parse command line arguments and override options defaults.
-  explicit IoData(const char *filename, bool print);
+  // Parse configuration file, validate, and construct IoData.
+  IoData(const char *filename, bool print);
+
+  // Parse and validate a configuration file, returning the JSON object.
+  static nlohmann::json ParseAndValidate(const char *filename);
+
+  // Write resolved IoData values back into the JSON config. Call after
+  // CheckConfiguration() to produce a self-describing config with all sentinels resolved.
+  static void ConcretizeDefaults(const IoData &iodata, nlohmann::json &config);
 
   // Nondimensionalize input values for use in the solver, including the mesh coordinates.
   void NondimensionalizeInputs(mfem::ParMesh &mesh);
