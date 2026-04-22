@@ -73,12 +73,14 @@ void IoData::ConcretizeDefaults(const IoData &iodata, json &config)
   j_linear["Tol"] = linear.tol;
   j_linear["MaxIts"] = linear.max_it;
   j_linear["MaxSize"] = linear.max_size;
-  j_linear["InitialGuess"] = linear.initial_guess;
-  j_linear["PCMatShifted"] = linear.pc_mat_shifted;
-  j_linear["MGAuxiliarySmoother"] = linear.mg_smooth_aux;
+  // Sentinel (-1) → concrete 0/1 int fields are declared as boolean in solver.json; emit
+  // as bool so the resolved config round-trips through schema validation cleanly.
+  j_linear["InitialGuess"] = static_cast<bool>(linear.initial_guess);
+  j_linear["PCMatShifted"] = static_cast<bool>(linear.pc_mat_shifted);
+  j_linear["MGAuxiliarySmoother"] = static_cast<bool>(linear.mg_smooth_aux);
   j_linear["MGSmoothOrder"] = linear.mg_smooth_order;
-  j_linear["AMSSingularOperator"] = linear.ams_singular_op;
-  j_linear["AMGAggressiveCoarsening"] = linear.amg_agg_coarsen;
+  j_linear["AMSSingularOperator"] = static_cast<bool>(linear.ams_singular_op);
+  j_linear["AMGAggressiveCoarsening"] = static_cast<bool>(linear.amg_agg_coarsen);
   j_linear["AMSMaxIts"] = linear.ams_max_it;
   j_linear["MGCycleIts"] = linear.mg_cycle_it;
   j_linear["PCMatSymmetry"] = MatrixSymmetryString(linear.pc_mat_sym);

@@ -172,6 +172,12 @@
         "ComplexCoarseSolve": {"type": "boolean"},
         "DropSmallEntries": {"type": "boolean"},
         "ReorderingReuse": {"type": "boolean"},
+        "PCMatSymmetry":
+        {
+          "description": "Computed from the problem and boundary types; ignored on parse but emitted by IoData::ConcretizeDefaults so the resolved config is self-describing.",
+          "type": "string",
+          "enum": ["SPD", "Symmetric", "Unsymmetric"]
+        },
         "PCSide": { "type": "string" },
         "ColumnOrdering": { "type": "string" },
         "STRUMPACKCompressionType": { "type": "string" },
