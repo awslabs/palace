@@ -5,7 +5,9 @@
 
 #include <complex>
 #include <mfem.hpp>
+#include "fem/bilinearform.hpp"
 #include "fem/errorindicator.hpp"
+#include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
@@ -394,6 +396,27 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->SetBMat(*KM);
     eigen->RescaleEigenvectors(num_conv);
   }
+  // For Floquet BCs, build the Floquet mass operator [k×]^T μ^{-1} [k×] on the ND space
+  // for detecting spurious near-gradient modes. The Floquet mass fraction
+  // Re{E^H K_f E} / Re{E^H K E} is >>1 for spurious modes and O(1) for physical modes.
+  std::unique_ptr<ComplexParOperator> K_floquet;
+  ComplexVector KE(E.Size()), KfE(E.Size());
+  KE.UseDevice(true);
+  KfE.UseDevice(true);
+  if (space_op.GetMaterialOp().HasWaveVector())
+  {
+    MaterialPropertyCoefficient floquet_mass_coeff(
+        space_op.GetMaterialOp().MaxCeedAttribute());
+    floquet_mass_coeff.AddCoefficient(space_op.GetMaterialOp().GetAttributeToMaterial(),
+                                      space_op.GetMaterialOp().GetFloquetMass(), 1.0);
+    constexpr bool skip_zeros = false;
+    BilinearForm kf(space_op.GetNDSpace());
+    kf.AddDomainIntegrator<VectorFEMassIntegrator>(floquet_mass_coeff);
+    K_floquet = std::make_unique<ComplexParOperator>(kf.Assemble(skip_zeros), nullptr,
+                                                     space_op.GetNDSpace());
+  }
+
+  int floquet_suspect_count = 0;
   Mpi::Print("\n");
 
   for (int i = 0; i < num_conv; i++)
@@ -419,6 +442,21 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     linalg::NormalizePhase(space_op.GetComm(), E);
 
+    // For Floquet BCs, compute Floquet mass fraction to detect spurious modes.
+    double floquet_mass_fraction = -1.0;
+    if (K_floquet)
+    {
+      K->Mult(E, KE);
+      K_floquet->Mult(E, KfE);
+      auto eKe = linalg::Dot(space_op.GetComm(), E, KE);
+      auto eKfe = linalg::Dot(space_op.GetComm(), E, KfE);
+      floquet_mass_fraction = (std::abs(eKe) > 0.0) ? eKfe.real() / eKe.real() : 0.0;
+      if (floquet_mass_fraction > 100.0)
+      {
+        floquet_suspect_count++;
+      }
+    }
+
     Curl.Mult(E.Real(), B.Real());
     Curl.Mult(E.Imag(), B.Imag());
     B *= -1.0 / (1i * omega);
@@ -429,8 +467,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       floquet_corr->AddMult(E, B, 1.0 / omega);
     }
 
-    auto total_domain_energy =
-        post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_conv);
+    auto total_domain_energy = post_op.MeasureAndPrintAll(
+        i, E, B, omega, error_abs, error_bkwd, num_conv, floquet_mass_fraction);
 
     // Calculate and record the error indicators.
     if (i < iodata.solver.eigenmode.n)
@@ -444,6 +482,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       post_op.MeasureFinalize(indicator);
     }
   }
+
+  if (K_floquet && floquet_suspect_count > 0)
+  {
+    Mpi::Warning(
+        "{:d} of {:d} eigenmodes may be spurious (large Floquet mass term contribution).\n"
+        "If these modes are undesired, consider refining the mesh, increasing the\n"
+        "polynomial order, or changing the target frequency.\n",
+        floquet_suspect_count, num_conv);
+  }
+
   MFEM_VERIFY(num_conv >= iodata.solver.eigenmode.n, "Eigenmode solve only found "
                                                          << num_conv << " modes when "
                                                          << iodata.solver.eigenmode.n

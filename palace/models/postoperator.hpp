@@ -386,7 +386,7 @@ public:
   template <ProblemType U = solver_t>
   auto MeasureAndPrintAll(int step, const ComplexVector &e, const ComplexVector &b,
                           std::complex<double> omega, double error_abs, double error_bkwd,
-                          int num_conv)
+                          int num_conv, double curl_energy_ratio = -1.0)
       -> std::enable_if_t<U == ProblemType::EIGENMODE, double>;
 
   template <ProblemType U = solver_t>

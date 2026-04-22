@@ -1239,7 +1239,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
                                                 const ComplexVector &b,
                                                 std::complex<double> omega,
                                                 double error_abs, double error_bkwd,
-                                                int num_conv)
+                                                int num_conv, double curl_energy_ratio)
     -> std::enable_if_t<U == ProblemType::EIGENMODE, double>
 {
   BlockTimer bt0(Timer::POSTPRO);
@@ -1270,6 +1270,10 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
     table.insert(Column("q", "Q") << measurement_cache.eigenmode_Q);
     table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);
     table.insert(Column("err_abs", "Error (Abs.)") << error_abs);
+    if (curl_energy_ratio >= 0.0)
+    {
+      table.insert(Column("floquet_frac", "Floq. Frac.") << curl_energy_ratio);
+    }
     table[0].print_as_int = true;
     Mpi::Print("{}", (step == 0) ? table.format_table() : table.format_row(0));
   }
@@ -1436,7 +1440,7 @@ template auto PostOperator<ProblemType::DRIVEN>::MeasureAndPrintAll<ProblemType:
 template auto
 PostOperator<ProblemType::EIGENMODE>::MeasureAndPrintAll<ProblemType::EIGENMODE>(
     int step, const ComplexVector &e, const ComplexVector &b, std::complex<double> omega,
-    double error_abs, double error_bkwd, int num_conv) -> double;
+    double error_abs, double error_bkwd, int num_conv, double curl_energy_ratio) -> double;
 
 template auto
 PostOperator<ProblemType::ELECTROSTATIC>::MeasureAndPrintAll<ProblemType::ELECTROSTATIC>(
