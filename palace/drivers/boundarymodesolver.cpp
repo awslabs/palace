@@ -40,28 +40,21 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     dbc_tdof_list.Append(nd_size + mode_op.GetH1DbcTDofLists().back()[i]);
   }
 
-  ModeEigenSolverMultigridConfig mg_config;
-  if (mode_op.GetNDSpaceHierarchy().GetNumLevels() > 1)
+  const bool have_mg = (mode_op.GetNDSpaceHierarchy().GetNumLevels() > 1);
+  if (have_mg)
   {
-    mg_config.nd_fespaces = &mode_op.GetNDSpaceHierarchy();
-    mg_config.h1_fespaces = &mode_op.GetH1SpaceHierarchy();
-    mg_config.h1_aux_fespaces = &mode_op.GetH1AuxSpaceHierarchy();
-    mg_config.nd_dbc_tdof_lists = &mode_op.GetNDDbcTDofLists();
-    mg_config.h1_dbc_tdof_lists = &mode_op.GetH1DbcTDofLists();
-    mg_config.h1_aux_dbc_tdof_lists = &mode_op.GetH1AuxDbcTDofLists();
     Mpi::Print(" Using p-multigrid preconditioning with {:d} levels\n",
                static_cast<int>(mode_op.GetNDSpaceHierarchy().GetNumLevels()));
   }
   const auto which_eig = (bm_data.target > 0.0)
                              ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
                              : EigenvalueSolver::WhichType::LARGEST_REAL;
-  const bool have_mg = (mode_op.GetNDSpaceHierarchy().GetNumLevels() > 1);
   ModeEigenSolver eig(mode_op.GetMaterialOp(), mode_op.GetSubmeshNormal(),
                       mode_op.GetSurfZOp(), mode_op.GetFarfieldOp(),
                       mode_op.GetSurfSigmaOp(), mode_op.GetNDSpace(), mode_op.GetH1Space(),
                       dbc_tdof_list, num_modes, bm_data.max_size, bm_data.tol, which_eig,
                       iodata.solver.linear, bm_data.type, iodata.problem.verbose,
-                      mode_op.GetComm(), have_mg ? &mg_config : nullptr);
+                      mode_op.GetComm(), have_mg ? &mode_op : nullptr);
 
   // Construct the error estimator. It needs its own single-level hierarchies for flux
   // recovery; build them here since the operator no longer owns them.

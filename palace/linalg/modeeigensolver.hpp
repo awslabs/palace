@@ -18,6 +18,7 @@
 namespace palace
 {
 
+class BoundaryModeOperator;
 class FarfieldBoundaryOperator;
 class FiniteElementSpace;
 class FiniteElementSpaceHierarchy;
@@ -32,26 +33,6 @@ namespace config
 {
 struct LinearSolverData;
 }  // namespace config
-
-//
-// Configuration for p-multigrid preconditioning of the boundary mode eigenvalue problem.
-// When provided, the ModeEigenSolver uses a block-diagonal GMG preconditioner
-// (ND p-multigrid + H1 p-multigrid) instead of a sparse direct solver.
-//
-struct ModeEigenSolverMultigridConfig
-{
-  // ND and H1 FE space hierarchies for the diagonal blocks (not owned).
-  FiniteElementSpaceHierarchy *nd_fespaces = nullptr;
-  FiniteElementSpaceHierarchy *h1_fespaces = nullptr;
-
-  // H1 auxiliary space hierarchy for Hiptmair distributive relaxation in the ND block.
-  FiniteElementSpaceHierarchy *h1_aux_fespaces = nullptr;
-
-  // Per-level essential BC true DOF lists for ND, H1, and H1 auxiliary blocks (not owned).
-  std::vector<mfem::Array<int>> *nd_dbc_tdof_lists = nullptr;
-  std::vector<mfem::Array<int>> *h1_dbc_tdof_lists = nullptr;
-  std::vector<mfem::Array<int>> *h1_aux_dbc_tdof_lists = nullptr;
-};
 
 //
 // Linear eigenvalue solver for 2D boundary mode computation using a direct linearization
@@ -105,7 +86,7 @@ public:
                   double eig_tol, EigenvalueSolver::WhichType which_eig,
                   const config::LinearSolverData &linear, EigenSolverBackend eigen_backend,
                   int verbose, MPI_Comm solver_comm = MPI_COMM_NULL,
-                  const ModeEigenSolverMultigridConfig *mg_config = nullptr);
+                  BoundaryModeOperator *bmo = nullptr);
 
   ~ModeEigenSolver();
 
@@ -240,8 +221,10 @@ private:
                                            const mfem::HypreParMatrix *Btni,
                                            const mfem::HypreParMatrix *Dnn) const;
 
-  // Optional multigrid configuration (not owned, may be nullptr for sparse direct path).
-  const ModeEigenSolverMultigridConfig *mg_config;
+  // Optional boundary-mode operator reference; when non-null, its FE space hierarchies
+  // and per-level DBC tdof lists drive p-multigrid preconditioning. When null (3D wave
+  // port submesh path), the sparse-direct preconditioner is used.
+  BoundaryModeOperator *bmo = nullptr;
 
   // Non-owning pointer to the block preconditioner (for setting operators in Solve).
   BlockDiagonalPreconditioner<ComplexOperator> *block_pc_ptr = nullptr;
