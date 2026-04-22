@@ -104,5 +104,3 @@ TEST_CASE("Timer Memory Data Invariants", "[memoryreporting][Serial]")
   // MemoryFromStart is non-negative (peak can only grow).
   CHECK(timer.MemoryFromStart() >= 0);
 }
-
-
