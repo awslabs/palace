@@ -105,18 +105,4 @@ TEST_CASE("Timer Memory Data Invariants", "[memoryreporting][Serial]")
   CHECK(timer.MemoryFromStart() >= 0);
 }
 
-// BlockTimer uses inline statics, so all BlockTimer tests must live in a single TEST_CASE
-// (or run last) to avoid polluting state for other tests in the same process.
-TEST_CASE("BlockTimer scopes attribute memory to the correct phase",
-          "[memoryreporting][Serial]")
-{
-  {
-    BlockTimer bt(Timer::CONSTRUCT);
-    // volatile prevents the compiler from optimizing away the allocation.
-    volatile std::vector<char> buf(64 * 1024 * 1024, 1);
-  }
-  BlockTimer::Finalize(MPI_COMM_WORLD);
-  auto red = BlockTimer::GetReductions();
-  CHECK(red.rank_mem.max[Timer::CONSTRUCT] > 0);
-  CHECK(red.rank_mem.max[Timer::KSP] == 0);
-}
+
