@@ -184,15 +184,22 @@ private:
   bool count;
 
   // Stored reduction results (populated by Finalize).
-  inline static std::vector<double> reduced_time_min;
-  inline static std::vector<double> reduced_time_max;
-  inline static std::vector<double> reduced_time_avg;
-  inline static std::vector<double> reduced_mem_min;
-  inline static std::vector<double> reduced_mem_max;
-  inline static std::vector<double> reduced_mem_sum;
-  inline static std::vector<double> reduced_node_mem_min;
-  inline static std::vector<double> reduced_node_mem_max;
-  inline static std::vector<double> reduced_node_mem_sum;
+  struct ReducedData
+  {
+    std::vector<double> min, max, sum, avg;
+    void resize(int n)
+    {
+      min.resize(n);
+      max.resize(n);
+      sum.resize(n);
+      avg.resize(n);
+    }
+    bool empty() const { return min.empty(); }
+  };
+
+  inline static ReducedData reduced_time;
+  inline static ReducedData reduced_rank_mem;
+  inline static ReducedData reduced_node_mem;
   inline static int num_nodes = 0;
 
   // Print a summary table with three columns. The row_fn callback produces the three
@@ -259,44 +266,19 @@ public:
   // Read-only access the static Timer object.
   static const Timer &GlobalTimer() { return timer; }
 
-  // Access stored per-rank memory reduction results (populated by Finalize).
-  static const std::vector<double> &RankMemoryMin()
+  // Access all stored reduction results (populated by Finalize).
+  struct Reductions
+  {
+    const ReducedData &time;
+    const ReducedData &rank_mem;
+    const ReducedData &node_mem;
+    int num_nodes;
+  };
+  static Reductions GetReductions()
   {
     MFEM_VERIFY(IsFinalized(),
                 "BlockTimer::Finalize() must be called before accessing results!");
-    return reduced_mem_min;
-  }
-  static const std::vector<double> &RankMemoryMax()
-  {
-    MFEM_VERIFY(IsFinalized(),
-                "BlockTimer::Finalize() must be called before accessing results!");
-    return reduced_mem_max;
-  }
-  static const std::vector<double> &RankMemorySum()
-  {
-    MFEM_VERIFY(IsFinalized(),
-                "BlockTimer::Finalize() must be called before accessing results!");
-    return reduced_mem_sum;
-  }
-
-  // Access stored per-node memory reduction results (populated by Finalize).
-  static const std::vector<double> &NodeMemoryMin()
-  {
-    MFEM_VERIFY(IsFinalized(),
-                "BlockTimer::Finalize() must be called before accessing results!");
-    return reduced_node_mem_min;
-  }
-  static const std::vector<double> &NodeMemoryMax()
-  {
-    MFEM_VERIFY(IsFinalized(),
-                "BlockTimer::Finalize() must be called before accessing results!");
-    return reduced_node_mem_max;
-  }
-  static const std::vector<double> &NodeMemorySum()
-  {
-    MFEM_VERIFY(IsFinalized(),
-                "BlockTimer::Finalize() must be called before accessing results!");
-    return reduced_node_mem_sum;
+    return {reduced_time, reduced_rank_mem, reduced_node_mem, num_nodes};
   }
 
   // Finalize timers and perform MPI reductions. Must be called before Print().
@@ -312,48 +294,44 @@ public:
     timer.MarkTime(Timer::TOTAL, timer.TimeFromStart());
     timer.MarkMemory(Timer::TOTAL, timer.MemoryFromStart());
 
+    const int n = Timer::NUM_TIMINGS;
+    const int np = Mpi::Size(comm);
+
     // Reduce timing data across ranks.
-    reduced_time_min.resize(Timer::NUM_TIMINGS);
-    reduced_time_max.resize(Timer::NUM_TIMINGS);
-    reduced_time_avg.resize(Timer::NUM_TIMINGS);
-    for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
+    reduced_time.resize(n);
+    for (int i = Timer::INIT; i < n; i++)
     {
-      reduced_time_min[i] = reduced_time_max[i] = reduced_time_avg[i] =
+      reduced_time.min[i] = reduced_time.max[i] = reduced_time.avg[i] =
           timer.Data((Timer::Index)i);
     }
-    Mpi::GlobalMin(Timer::NUM_TIMINGS, reduced_time_min.data(), comm);
-    Mpi::GlobalMax(Timer::NUM_TIMINGS, reduced_time_max.data(), comm);
-    Mpi::GlobalSum(Timer::NUM_TIMINGS, reduced_time_avg.data(), comm);
-    const int np = Mpi::Size(comm);
-    for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
+    Mpi::GlobalMin(n, reduced_time.min.data(), comm);
+    Mpi::GlobalMax(n, reduced_time.max.data(), comm);
+    Mpi::GlobalSum(n, reduced_time.avg.data(), comm);
+    for (int i = Timer::INIT; i < n; i++)
     {
-      reduced_time_avg[i] /= np;
+      reduced_time.avg[i] /= np;
     }
 
     // Reduce per-rank memory data across ranks.
-    reduced_mem_min.resize(Timer::NUM_TIMINGS);
-    reduced_mem_max.resize(Timer::NUM_TIMINGS);
-    reduced_mem_sum.resize(Timer::NUM_TIMINGS);
-    for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
+    reduced_rank_mem.resize(n);
+    for (int i = Timer::INIT; i < n; i++)
     {
-      reduced_mem_min[i] = reduced_mem_max[i] = reduced_mem_sum[i] =
+      reduced_rank_mem.min[i] = reduced_rank_mem.max[i] = reduced_rank_mem.sum[i] =
           static_cast<double>(timer.MemoryData((Timer::Index)i));
     }
-    Mpi::GlobalMin(Timer::NUM_TIMINGS, reduced_mem_min.data(), comm);
-    Mpi::GlobalMax(Timer::NUM_TIMINGS, reduced_mem_max.data(), comm);
-    Mpi::GlobalSum(Timer::NUM_TIMINGS, reduced_mem_sum.data(), comm);
+    Mpi::GlobalMin(n, reduced_rank_mem.min.data(), comm);
+    Mpi::GlobalMax(n, reduced_rank_mem.max.data(), comm);
+    Mpi::GlobalSum(n, reduced_rank_mem.sum.data(), comm);
 
     // Reduce per-node memory data across nodes.
-    reduced_node_mem_min.resize(Timer::NUM_TIMINGS);
-    reduced_node_mem_max.resize(Timer::NUM_TIMINGS);
-    reduced_node_mem_sum.resize(Timer::NUM_TIMINGS);
-    for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
+    reduced_node_mem.resize(n);
+    for (int i = Timer::INIT; i < n; i++)
     {
       auto stats = memory_reporting::ComputeNodeMemoryStats(
           "", timer.MemoryData((Timer::Index)i), comm);
-      reduced_node_mem_min[i] = static_cast<double>(stats.min);
-      reduced_node_mem_max[i] = static_cast<double>(stats.max);
-      reduced_node_mem_sum[i] = static_cast<double>(stats.sum);
+      reduced_node_mem.min[i] = static_cast<double>(stats.min);
+      reduced_node_mem.max[i] = static_cast<double>(stats.max);
+      reduced_node_mem.sum[i] = static_cast<double>(stats.sum);
     }
 
     // Count nodes.
@@ -367,7 +345,7 @@ public:
   }
 
   // Whether Finalize has been called.
-  static bool IsFinalized() { return !reduced_time_min.empty(); }
+  static bool IsFinalized() { return !reduced_time.empty(); }
 
   // Print timing and memory tables from stored reduction results.
   static void Print(MPI_Comm comm)
@@ -378,24 +356,25 @@ public:
     PrintTable(comm, "Elapsed Time Report (s)", "Min.", "Max.", "Avg.",
                [&](int i) -> std::tuple<std::string, std::string, std::string>
                {
-                 return {fmt::format("{:.{}f}", reduced_time_min[i], p),
-                         fmt::format("{:.{}f}", reduced_time_max[i], p),
-                         fmt::format("{:.{}f}", reduced_time_avg[i], p)};
+                 return {fmt::format("{:.{}f}", reduced_time.min[i], p),
+                         fmt::format("{:.{}f}", reduced_time.max[i], p),
+                         fmt::format("{:.{}f}", reduced_time.avg[i], p)};
                });
 
-    // Memory table. Single node: per-rank min/max/total. Multi-node: per-node
-    // min/max/total.
-    const auto &m_min = (num_nodes == 1) ? reduced_mem_min : reduced_node_mem_min;
-    const auto &m_max = (num_nodes == 1) ? reduced_mem_max : reduced_node_mem_max;
-    const auto &m_sum = (num_nodes == 1) ? reduced_mem_sum : reduced_node_mem_sum;
-    std::string title =
-        (num_nodes == 1) ? "Peak Memory Growth per Rank" : "Peak Memory Growth per Node";
-    PrintTable(comm, title, "Min.", "Max.", "Tot.",
+    // Memory table: per-node max, total across nodes, and cumulative total HWM.
+    const auto &nm = reduced_node_mem;
+    double hwm = 0.0;
+    PrintTable(comm, "Peak Memory", "Per-Node", "Total", "Total HWM",
                [&](int i) -> std::tuple<std::string, std::string, std::string>
                {
-                 return {memory_reporting::FormatBytes(m_min[i]),
-                         memory_reporting::FormatBytes(m_max[i]),
-                         memory_reporting::FormatBytes(m_sum[i])};
+                 if (i != Timer::TOTAL)
+                 {
+                   hwm += nm.sum[i];
+                 }
+                 return {memory_reporting::FormatBytes(nm.max[i]),
+                         memory_reporting::FormatBytes(nm.sum[i]),
+                         (i == Timer::TOTAL) ? memory_reporting::FormatBytes(nm.sum[i])
+                                             : memory_reporting::FormatBytes(hwm)};
                });
   }
 };

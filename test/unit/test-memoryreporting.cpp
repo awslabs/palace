@@ -105,26 +105,18 @@ TEST_CASE("Timer Memory Data Invariants", "[memoryreporting][Serial]")
   CHECK(timer.MemoryFromStart() >= 0);
 }
 
-TEST_CASE("BlockTimer Finalize Contract", "[memoryreporting][Serial][Parallel]")
+// BlockTimer uses inline statics, so all BlockTimer tests must live in a single TEST_CASE
+// (or run last) to avoid polluting state for other tests in the same process.
+TEST_CASE("BlockTimer scopes attribute memory to the correct phase",
+          "[memoryreporting][Serial]")
 {
-  // Finalize populates the stored reduction results.
-  BlockTimer::Finalize(MPI_COMM_WORLD);
-  CHECK(BlockTimer::IsFinalized());
-
-  // Stored vectors have the correct size.
-  CHECK(BlockTimer::NodeMemoryMin().size() == Timer::NUM_TIMINGS);
-  CHECK(BlockTimer::NodeMemoryMax().size() == Timer::NUM_TIMINGS);
-  CHECK(BlockTimer::NodeMemorySum().size() == Timer::NUM_TIMINGS);
-
-  // Per-node values are non-negative (peak RSS deltas can't be negative).
-  for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
   {
-    CHECK(BlockTimer::NodeMemoryMin()[i] >= 0.0);
-    CHECK(BlockTimer::NodeMemoryMax()[i] >= BlockTimer::NodeMemoryMin()[i]);
-    CHECK(BlockTimer::NodeMemorySum()[i] >= BlockTimer::NodeMemoryMax()[i]);
+    BlockTimer bt(Timer::CONSTRUCT);
+    // volatile prevents the compiler from optimizing away the allocation.
+    volatile std::vector<char> buf(64 * 1024 * 1024, 1);
   }
-
-  // Calling Finalize again does not crash (idempotent for AMR loop usage).
   BlockTimer::Finalize(MPI_COMM_WORLD);
-  CHECK(BlockTimer::IsFinalized());
+  auto red = BlockTimer::GetReductions();
+  CHECK(red.rank_mem.max[Timer::CONSTRUCT] > 0);
+  CHECK(red.rank_mem.max[Timer::KSP] == 0);
 }
