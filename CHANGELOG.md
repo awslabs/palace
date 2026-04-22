@@ -26,6 +26,8 @@ The format of this changelog is based on
 
 #### Bug Fixes
 
+  - Reduced memory usage when `MaxIts` for GMRES is larger than the number of
+    required iterations. [PR 715](https://github.com/awslabs/palace/pull/715)
   - Improved IO performance for simulations with Adaptive Mesh Refinement. Now,
     files from previous iterations are moved instead of being copied. The latest
     output is always available at the top level of the output directory (as
