@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Configuration File Schema -- \"Domains\"",
+  "title": "Domains",
+  "description": "Material and domain configuration.",
   "type": "object",
   "additionalProperties": false,
   "required": ["Materials"],
@@ -9,6 +10,7 @@
     "Materials":
     {
       "type": "array",
+      "description": "Array of material property objects, with each object specifying the following keys.",
       "additionalItems": false,
       "items":
       {
@@ -20,69 +22,64 @@
           "Attributes": { "$ref": "#/$defs/Attributes" },
           "Permeability":
           {
-            "oneOf" :
+            "description": "Relative permeability for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
+            "default": 1.0,
+            "oneOf":
             [
-              {"type": "number" },
-              {
-                "type": "array",
-                "items" : { "type" :"number" },
-                "minItems" : 3,
-                "maxItems" : 3
-              }
+              { "type": "number" },
+              { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 }
             ]
           },
           "Permittivity":
           {
-            "oneOf" :
+            "description": "Relative permittivity for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
+            "default": 1.0,
+            "oneOf":
             [
-              {"type": "number" },
-              {
-                "type": "array",
-                "items" : { "type" :"number" },
-                "minItems" : 3,
-                "maxItems" : 3
-              }
+              { "type": "number" },
+              { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 }
             ]
           },
           "LossTan":
           {
-            "oneOf" :
+            "description": "Loss tangent for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
+            "default": 0.0,
+            "oneOf":
             [
-              {"type": "number" },
-              {
-                "type": "array",
-                "items" : { "type" :"number" },
-                "minItems" : 3,
-                "maxItems" : 3
-              }
+              { "type": "number" },
+              { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 }
             ]
           },
           "Conductivity":
           {
-            "oneOf" :
+            "description": "Electrical conductivity for this material, S/m. Activates the Ohmic loss model in this domain. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
+            "default": 0.0,
+            "oneOf":
             [
-              {"type": "number" },
-              {
-                "type": "array",
-                "items" : { "type" :"number" },
-                "minItems" : 3,
-                "maxItems" : 3
-              }
+              { "type": "number" },
+              { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 }
             ]
           },
-          "LondonDepth": { "type": "number" },
+          "LondonDepth":
+          {
+            "type": "number",
+            "description": "London penetration depth for this material, specified in mesh length units. Activates the London equations-based model relating superconducting current and electromagnetic fields in this domain.",
+            "default": 0.0
+          },
           "MaterialAxes":
           {
-            "type" : "array",
-            "items" :
+            "type": "array",
+            "description": "Axes directions for specification of anisotropic material properties. Required to be unit length and orthogonal.",
+            "default": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            "items":
             {
-              "type" : "array",
-              "items" : { "type": "number" },
-              "minItems" : 3,
-              "maxItems" : 3
+              "type": "array",
+              "items": { "type": "number" },
+              "minItems": 3,
+              "maxItems": 3
             },
-            "minItems" : 3,
-            "maxItems" : 3
+            "minItems": 3,
+            "maxItems": 3
           }
         }
       }
@@ -90,6 +87,7 @@
     "CurrentDipole":
     {
       "type": "array",
+      "description": "Array of current dipole source excitations.",
       "additionalItems": false,
       "items":
       {
@@ -98,18 +96,29 @@
         "required": ["Index", "Moment", "Center", "Direction"],
         "properties":
         {
-          "Index": { "type": "integer", "exclusiveMinimum": 0 },
-          "Moment": { "type": "number" },
+          "Index":
+          {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Index of this current dipole source, used in postprocessing output files."
+          },
+          "Moment":
+          {
+            "type": "number",
+            "description": "Current dipole moment magnitude, A·m."
+          },
           "Center":
           {
             "type": "array",
             "additionalItems": false,
             "items": { "type": "number" },
             "minItems": 3,
-            "maxItems": 3
+            "maxItems": 3,
+            "description": "Coordinates of the dipole center position, in mesh length units."
           },
           "Direction":
           {
+            "description": "Direction of the Dirac current source specifying the dipole. Axis-aligned directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. The direction can alternatively be specified as a normalized array of three values, for example `[0.0, 1.0, 0.0]`.",
             "anyOf":
             [
               {
@@ -132,6 +141,8 @@
     "Postprocessing":
     {
       "type": "object",
+      "title": "Domain Postprocessing",
+      "description": "Configuration for domain postprocessing.",
       "additionalProperties": false,
       "required": [],
       "properties":
@@ -139,6 +150,7 @@
         "Energy":
         {
           "type": "array",
+          "description": "Array of objects for postprocessing domain energies. Postprocesses the electric and magnetic field energy inside a given domain. Results are written to `domain-E.csv` in the output directory.",
           "additionalItems": false,
           "items":
           {
@@ -147,7 +159,12 @@
             "required": ["Index", "Attributes"],
             "properties":
             {
-              "Index": { "type": "integer", "exclusiveMinimum": 0 },
+              "Index":
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "description": "Index of this energy postprocessing domain, used in output files."
+              },
               "Attributes": { "$ref": "#/$defs/Attributes" }
             }
           }
@@ -155,6 +172,7 @@
         "Probe":
         {
           "type": "array",
+          "description": "Array of probe points for evaluating field values at specified locations in space. The electric field **E** and magnetic flux density **B** are probed and written to `probe-E.csv` and `probe-B.csv` in the output directory.",
           "additionalItems": false,
           "items":
           {
@@ -163,14 +181,20 @@
             "required": ["Index", "Center"],
             "properties":
             {
-              "Index": { "type": "integer", "exclusiveMinimum": 0 },
+              "Index":
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "description": "Index of this probe, used in postprocessing output files."
+              },
               "Center":
               {
                 "type": "array",
                 "additionalItems": false,
                 "items": { "type": "number" },
                 "minItems": 3,
-                "maxItems": 3
+                "maxItems": 3,
+                "description": "Coordinates of this probe, in mesh length units."
               }
             }
           }
@@ -182,9 +206,10 @@
   {
     "Attributes":
     {
+      "description": "Integer array of mesh domain or boundary attributes this object applies to.",
       "type": "array",
       "additionalItems": false,
-      "items": { "type": "integer"},
+      "items": { "type": "integer" },
       "minItems": 1
     }
   }

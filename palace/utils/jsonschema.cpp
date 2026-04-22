@@ -267,6 +267,25 @@ json FindEnumInSchema(const json &schema, const std::string &ptr)
       }
     }
   }
+  // Handle oneOf+const enum pattern: every branch has "const", none have "properties".
+  // Collect all const values into an array for consistent error formatting.
+  if (current.contains("oneOf"))
+  {
+    const auto &branches = current["oneOf"];
+    bool is_const_enum =
+        !branches.empty() &&
+        std::all_of(branches.begin(), branches.end(), [](const json &b)
+                    { return b.contains("const") && !b.contains("properties"); });
+    if (is_const_enum)
+    {
+      json consts = json::array();
+      for (const auto &branch : branches)
+      {
+        consts.push_back(branch["const"]);
+      }
+      return consts;
+    }
+  }
   return json();
 }
 
@@ -318,6 +337,17 @@ public:
   void error(const json::json_pointer &ptr, const json &instance,
              const std::string &message) override
   {
+    // Suppress child oneOf branch errors when the parent path resolves to a const-enum
+    // field — those child errors are noise; the top-level message shows valid values.
+    if (schema && message.find("[combination: oneOf") != std::string::npos)
+    {
+      json enum_values = FindEnumInSchema(*schema, ptr.to_string());
+      if (!enum_values.is_null() && !enum_values.empty())
+      {
+        return;
+      }
+    }
+
     errors << "At " << FormatPath(ptr.to_string()) << ": " << message;
     // Enhance type mismatch errors with actual type. These message strings are
     // implementation details of json-schema-validator 2.4.0; update if upgrading.
@@ -325,8 +355,25 @@ public:
     {
       errors << " (got " << instance.type_name() << ")";
     }
-    // Enhance enum errors with valid values.
+    // Enhance enum errors with valid values (flat "enum" schema).
     else if (schema && message == "instance not found in required enum")
+    {
+      json enum_values = FindEnumInSchema(*schema, ptr.to_string());
+      if (!enum_values.is_null() && enum_values.is_array() && !enum_values.empty())
+      {
+        errors << "; valid values: ";
+        for (std::size_t i = 0; i < enum_values.size(); i++)
+        {
+          if (i > 0)
+          {
+            errors << ", ";
+          }
+          errors << enum_values[i].dump();
+        }
+      }
+    }
+    // Enhance oneOf+const enum errors with valid values.
+    else if (schema && message.rfind("no subschema has succeeded", 0) == 0)
     {
       json enum_values = FindEnumInSchema(*schema, ptr.to_string());
       if (!enum_values.is_null() && enum_values.is_array() && !enum_values.empty())

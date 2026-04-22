@@ -53,6 +53,11 @@ function rewrite_github_links(src_dir, git_ref)
     end
 end
 
+# Auto-generate configuration reference documentation from JSON schemas.
+include(joinpath(@__DIR__, "generate_config_docs.jl"))
+generate_all()
+@info "Configuration documentation generated from JSON schemas."
+
 git_ref = get_git_ref()
 @info "Building documentation with GitHub links pointing to: $git_ref"
 rewrite_github_links(joinpath(@__DIR__, "src"), git_ref)
@@ -64,7 +69,7 @@ makedocs(
         prettyurls=true,
         sidebar_sitename=false,
         collapselevel=2,
-        assets=["assets/favicon.ico"]
+        assets=["assets/favicon.ico", "assets/config.css"]
     ),
     sitename="Palace",
     authors="The Palace Developers and Maintainers, palace-maint@amazon.com",
@@ -81,14 +86,7 @@ makedocs(
             "guide/postprocessing.md",
             "guide/parallelism.md"
         ],
-        "Configuration File" => Any[
-            "config/config.md",
-            "config/problem.md",
-            "config/model.md",
-            "config/domains.md",
-            "config/boundaries.md",
-            "config/solver.md"
-        ],
+        "Configuration File" => Any["config/config.md", "config/reference.md"],
         "Features" => Any["features/farfield.md",],
         "Examples" => Any[
             "examples/examples.md",
