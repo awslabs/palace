@@ -16,6 +16,9 @@ The format of this changelog is based on
 
 #### New Features
 
+  - Added a new table reporting memory consumption for various stages in the
+    simulation. [PR 708](https://github.com/awslabs/palace/pull/708)
+
   - Expanded JSON schema validation to cover required fields, mutual exclusion constraints
     (e.g., `PEC`/`Ground`, `PMC`/`ZeroCharge`), array type validation, and numeric bounds.
     Many runtime checks are now caught earlier at configuration parsing time with clearer
@@ -23,6 +26,8 @@ The format of this changelog is based on
 
 #### Bug Fixes
 
+  - Reduced memory usage when `MaxIts` for GMRES is larger than the number of
+    required iterations. [PR 715](https://github.com/awslabs/palace/pull/715)
   - Improved IO performance for simulations with Adaptive Mesh Refinement. Now,
     files from previous iterations are moved instead of being copied. The latest
     output is always available at the top level of the output directory (as

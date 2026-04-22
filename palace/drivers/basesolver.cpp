@@ -181,6 +181,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   {
     // Print timing summary.
     Mpi::Print(comm, "\nCumulative timing statistics:\n");
+    BlockTimer::Finalize(comm);
     BlockTimer::Print(comm);
     auto peak_mem = memory_reporting::GetPeakMemoryStats(comm);
     auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(comm);
@@ -300,6 +301,9 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
 {
   if (root)
   {
+    constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
+    auto red = BlockTimer::GetReductions();
+
     json meta = LoadMetadata(post_dir);
     for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
     {
@@ -307,6 +311,12 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
       key.erase(std::remove_if(key.begin(), key.end(), isspace), key.end());
       meta["ElapsedTime"]["Durations"][key] = timer.Data((Timer::Index)i);
       meta["ElapsedTime"]["Counts"][key] = timer.Counts((Timer::Index)i);
+      meta["PeakMemoryGrowthMegabytes"]["Min"][key] = red.rank_mem.min[i] * to_mb;
+      meta["PeakMemoryGrowthMegabytes"]["Max"][key] = red.rank_mem.max[i] * to_mb;
+      meta["PeakMemoryGrowthMegabytes"]["Sum"][key] = red.rank_mem.sum[i] * to_mb;
+      meta["PeakNodeMemoryGrowthMegabytes"]["Min"][key] = red.node_mem.min[i] * to_mb;
+      meta["PeakNodeMemoryGrowthMegabytes"]["Max"][key] = red.node_mem.max[i] * to_mb;
+      meta["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = red.node_mem.sum[i] * to_mb;
     }
     WriteMetadata(post_dir, meta);
   }

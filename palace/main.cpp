@@ -304,6 +304,7 @@ int main(int argc, char *argv[])
   Mpi::Print(world_comm, "\n");
   memory_reporting::PrintMemoryUsage(world_comm, peak_mem);
   memory_reporting::PrintMemoryUsage(world_comm, peak_node_mem);
+  BlockTimer::Finalize(world_comm);
   BlockTimer::Print(world_comm);
   solver->SaveMetadata(BlockTimer::GlobalTimer());
   solver->SaveMetadata(peak_mem);
