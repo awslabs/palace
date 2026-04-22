@@ -111,9 +111,8 @@ void IoData::ConcretizeDefaults(const IoData &iodata, json &config)
     j_eigen["MassOrthogonal"] = eigenmode.mass_orthog;
   }
 
-  // Solver.Transient — resolved time-stepping scheme. TimeSteppingScheme::DEFAULT is a
-  // compile-time alias of GEN_ALPHA; recording the concrete name is load-bearing for
-  // repeatability (see configfile.cpp enum ordering contract).
+  // Solver.Transient — DEFAULT already resolved to the concrete scheme in
+  // CheckConfiguration, so EnumString produces the concrete name.
   if (iodata.problem.type == ProblemType::TRANSIENT)
   {
     if (!j_solver.contains("Transient"))

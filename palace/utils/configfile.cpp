@@ -17,14 +17,6 @@
 // This is similar to NLOHMANN_JSON_SERIALIZE_ENUM, but results in an error if an enum
 // value corresponding to the string cannot be found. Also adds an overload for stream
 // printing enum values.
-//
-// Ordering contract for enums with DEFAULT aliases (e.g. `DEFAULT = SLEPC` where
-// `DEFAULT` is declared as a compile-time alias of an existing concrete value):
-// `to_json` finds the FIRST entry whose key matches `e`. For enums used by
-// `IoData::ConcretizeDefaults`, the concrete value MUST be listed before the DEFAULT
-// alias so `to_json(DEFAULT)` emits the concrete name (e.g. `"SLEPc"`) rather than the
-// sentinel string (e.g. `"Default"`). Reordering these entries silently regresses the
-// `-resolved.json` output. See the EigenSolverBackend macro invocation below.
 #define PALACE_JSON_SERIALIZE_ENUM(ENUM_TYPE, ...)                                  \
   template <typename BasicJsonType>                                                 \
   inline void to_json(BasicJsonType &j, const ENUM_TYPE &e)                         \
@@ -80,14 +72,10 @@ PALACE_JSON_SERIALIZE_ENUM(ProblemType, {{ProblemType::DRIVEN, "Driven"},
                                          {ProblemType::MAGNETOSTATIC, "Magnetostatic"},
                                          {ProblemType::TRANSIENT, "Transient"}})
 
-// Helper for converting string keys to enum for EigenSolverBackend. DEFAULT is a
-// compile-time alias of SLEPC or ARPACK (see labels.hpp). The concrete entries MUST
-// appear before the DEFAULT entry so `to_json(DEFAULT)` resolves to the concrete name
-// (e.g. "SLEPc") — this is load-bearing for IoData::ConcretizeDefaults. See the
-// ordering contract comment on PALACE_JSON_SERIALIZE_ENUM above.
-PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::SLEPC, "SLEPc"},
-                                                {EigenSolverBackend::ARPACK, "ARPACK"},
-                                                {EigenSolverBackend::DEFAULT, "Default"}})
+// Helper for converting string keys to enum for EigenSolverBackend.
+PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "Default"},
+                                                {EigenSolverBackend::SLEPC, "SLEPc"},
+                                                {EigenSolverBackend::ARPACK, "ARPACK"}})
 
 // Helper for converting string keys to enum for EigenSolverBackend.
 PALACE_JSON_SERIALIZE_ENUM(NonlinearEigenSolver, {{NonlinearEigenSolver::HYBRID, "Hybrid"},
@@ -111,15 +99,12 @@ PALACE_JSON_SERIALIZE_ENUM(FrequencySampling, {{FrequencySampling::DEFAULT, "Def
                                                {FrequencySampling::POINT, "Point"}})
 
 // Helper for converting string keys to enum for TimeSteppingScheme and Excitation.
-// DEFAULT is a compile-time alias of GEN_ALPHA (see labels.hpp); the concrete entry
-// must appear before the DEFAULT entry so `to_json(DEFAULT)` resolves to
-// "GeneralizedAlpha" — see the ordering contract on PALACE_JSON_SERIALIZE_ENUM.
 PALACE_JSON_SERIALIZE_ENUM(TimeSteppingScheme,
-                           {{TimeSteppingScheme::GEN_ALPHA, "GeneralizedAlpha"},
+                           {{TimeSteppingScheme::DEFAULT, "Default"},
+                            {TimeSteppingScheme::GEN_ALPHA, "GeneralizedAlpha"},
                             {TimeSteppingScheme::RUNGE_KUTTA, "RungeKutta"},
                             {TimeSteppingScheme::CVODE, "CVODE"},
-                            {TimeSteppingScheme::ARKODE, "ARKODE"},
-                            {TimeSteppingScheme::DEFAULT, "Default"}})
+                            {TimeSteppingScheme::ARKODE, "ARKODE"}})
 PALACE_JSON_SERIALIZE_ENUM(Excitation,
                            {{Excitation::SINUSOIDAL, "Sinusoidal"},
                             {Excitation::GAUSSIAN, "Gaussian"},
