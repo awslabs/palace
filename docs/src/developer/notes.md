@@ -220,7 +220,7 @@ Total                           // < Total simulation time
 ## Memory Reporting
 
 Memory reporting in *Palace* tracks **peak** RSS (Resident Set Size) at two granularities:
-per-process snapshots and per-phase growth. Goal of this reporting is to understand the
+per-process snapshots and per-phase growth. The goal of this reporting is to understand the
 maximum memory required by a *Palace* simulation. We do not track how much memory *Palace*
 uses at any given time, instead, we measure how much various phases of the simulation
 increase the high-water mark. This is useful to understand and reduce the total memory
