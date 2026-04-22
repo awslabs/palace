@@ -1,0 +1,277 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+#ifndef PALACE_MODELS_FLOQUET_PORT_OPERATOR_HPP
+#define PALACE_MODELS_FLOQUET_PORT_OPERATOR_HPP
+
+#include <complex>
+#include <map>
+#include <memory>
+#include <string>
+#include <tuple>
+#include <vector>
+#include <mfem.hpp>
+#include "fem/gridfunction.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
+
+namespace palace
+{
+
+class Units;
+enum class ProblemType : char;
+class MaterialOperator;
+class MaterialPropertyCoefficient;
+
+namespace config
+{
+struct FloquetPortData;
+struct PeriodicBoundaryData;
+}  // namespace config
+
+// Flags controlling which subsystems use a given Floquet mode.
+enum class FloquetModeUse : std::uint8_t
+{
+  Output = 1,  // S-parameter CSV output (user-requested ±MaxOrder)
+  Dtn = 2,     // DtN boundary correction (BZ-centered range)
+  Both = 3     // Output | Dtn
+};
+inline bool HasFlag(FloquetModeUse u, FloquetModeUse flag)
+{
+  return (static_cast<uint8_t>(u) & static_cast<uint8_t>(flag)) != 0;
+}
+
+// Represents a single diffraction order (m, n) with a specific polarization (TE/TM).
+struct FloquetMode
+{
+  int m, n;            // Lattice indices (physical convention)
+  bool is_te;          // true = TE (s-pol), false = TM (p-pol)
+  FloquetModeUse use;  // Which subsystems use this mode
+  mfem::Vector B_mn;   // Transverse wavevector B_mn = m*b1 + n*b2
+  mfem::Vector e_pol;  // Polarization unit vector (3D, tangential to port)
+  ComplexVector v;     // Fourier projection: v_j = int_Gamma (nxnxN_j).e_p exp(-iB.r) dS
+  double gamma_sq;     // gamma_mn^2 = omega^2*mu*eps - |B_mn - k_F|^2 (freq-dependent)
+};
+
+// Low-rank complex operator: F*x = sum_k g_k conj(v_k) (v_k^T x).
+// Bilinear convention: v^T x (no conjugation in inner product), conj(v) in outer vector.
+// Used for the Floquet port boundary matrix.
+class LowRankComplexOperator : public ComplexOperator
+{
+public:
+  struct Term
+  {
+    const ComplexVector *v;  // Projection vector (not owned)
+    std::complex<double> g;  // Frequency-dependent scalar weight
+  };
+
+private:
+  std::vector<Term> terms;
+  MPI_Comm comm;
+  mutable ComplexVector tmp;
+
+public:
+  LowRankComplexOperator(MPI_Comm comm, int n) : ComplexOperator(n), comm(comm), tmp(n)
+  {
+    tmp.UseDevice(true);
+  }
+
+  void AddTerm(const ComplexVector *v, std::complex<double> g) { terms.push_back({v, g}); }
+
+  void Mult(const ComplexVector &x, ComplexVector &y) const override;
+
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a = 1.0) const override;
+};
+
+//
+// Data for a single Floquet port boundary.
+//
+class FloquetPortData
+{
+public:
+  int excitation;
+
+  [[nodiscard]] constexpr bool HasExcitation() const { return excitation != 0; }
+  const auto &GetAttrList() const { return attr_list; }
+
+  // Access the enumerated modes (for CSV column setup).
+  const auto &GetModes() const { return modes; }
+
+  // Check if mode (m, n, is_te) is part of the incident excitation at this port.
+  // For linear polarization (TE/TM), only one matches. For circular (RHC/LHC), both do.
+  [[nodiscard]] bool IsIncidentMode(int m, int n, bool is_te) const
+  {
+    if (m != 0 || n != 0)
+    {
+      return false;
+    }
+    return is_te ? (std::abs(inc_alpha_te) > 1e-14) : (std::abs(inc_alpha_tm) > 1e-14);
+  }
+
+  // Get the complex polarization coefficient for the incident mode.
+  [[nodiscard]] std::complex<double> GetIncidentAlpha(bool is_te) const
+  {
+    return is_te ? inc_alpha_te : inc_alpha_tm;
+  }
+
+  FloquetPortData(const config::FloquetPortData &data,
+                  const config::PeriodicBoundaryData &periodic, const Units &units,
+                  const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace);
+
+  // Update propagation constants for given omega. Cached.
+  void Initialize(double omega);
+
+  // Static utility functions (public for testability).
+  static void ComputeReciprocalLattice(const mfem::Vector &a1, const mfem::Vector &a2,
+                                       mfem::Vector &b1, mfem::Vector &b2);
+  static int ComputeBZOffset(const mfem::Vector &kF_unwrapped,
+                             const mfem::Vector &kF_wrapped, const mfem::Vector &b,
+                             double b_sq);
+
+  // Get the boundary DtN operator F(omega) for this port.
+  // Returns a LowRankComplexOperator with DtN correction coefficients.
+  std::unique_ptr<ComplexOperator> GetBoundaryOperator() const;
+
+  // Compute the DtN correction coefficient g_correction for a single mode at the current
+  // frequency. Returns 0 if the mode should be skipped (negligible or near-cutoff cap).
+  // Used by both GetBoundaryOperator and the ROM projection.
+  std::complex<double> ComputeDtNCorrectionCoeff(const FloquetMode &mode) const;
+
+  // S-parameter for all propagating orders at the current frequency.
+  // If subtract_incident is true, subtracts the incident field contribution from the
+  // driving port's (0,0) modes (total → scattered field conversion).
+  // Returns S-parameters in the TE/TM linear basis (always).
+  // Circular rotation, if needed, is applied by the caller.
+  std::map<std::tuple<int, int, bool>, std::complex<double>>
+  GetAllSParameters(const GridFunction &E, bool subtract_incident = false) const;
+
+  // Get the number of propagating orders at current frequency.
+  int NumPropagatingOrders() const;
+
+  // Add excitation vector contribution directly to the RHS.
+  // The incident field is normalized to inject 1 W (nondimensional) through the port,
+  // consistent with lumped and wave port conventions.
+  bool AddExcitationVector(double omega, ComplexVector &RHS) const;
+
+  // Returns 1 W: the port mode is normalized such that ∫ (E_inc × H_inc⋆) · n̂ dS = 1.
+  double GetExcitationPower() const { return HasExcitation() ? 1.0 : 0.0; }
+
+  // Material properties at the port (nondimensional, from adjacent volume element).
+  double GetMuEpsPort() const { return mu_eps_port; }
+  double GetMuRPort() const { return mu_r_port; }
+  double GetPortArea() const { return port_area; }
+
+private:
+  const MaterialOperator &mat_op;
+  mfem::Array<int> attr_list;
+
+  // Lattice and reciprocal lattice vectors.
+  mfem::Vector a1, a2, b1, b2;
+
+  // Bloch wave vector (BZ-wrapped, from MaterialOperator).
+  mfem::Vector k_F;
+
+  // Port geometry.
+  mfem::Vector port_normal;
+  double port_area;
+
+  // Material properties at the port.
+  double mu_eps_port;  // mu_r * eps_r (for propagation constant)
+  double mu_r_port;    // mu_r (for DtN coefficient and excitation)
+
+private:
+  // Diffraction order limits.
+  int max_order_m, max_order_n;
+
+  // All Floquet modes with pre-assembled projection vectors.
+  std::vector<FloquetMode> modes;
+
+  // FE space for re-assembling mode vectors when polarization changes with frequency.
+  mfem::ParFiniteElementSpace *nd_fespace_ptr = nullptr;
+
+  // Frequency cache.
+  double omega0 = 0.0;
+
+  // BZ wrapping offset: when MaterialOperator wraps k_F by subtracting G = bz_m*b1+bz_n*b2,
+  // the Fourier projection kernel must be shifted accordingly. Mode labels remain physical.
+  // The offset is frequency-dependent when FloquetReferenceFrequency is used.
+  int bz_m = 0, bz_n = 0;
+
+  // Unwrapped config k_F (in Lc units, before BZ wrapping and frequency scaling).
+  // Stored for computing frequency-dependent BZ offsets.
+  mfem::Vector kF_config_Lc;
+
+  // Incident polarization coefficients: E_inc = α_TE ê_TE + α_TM ê_TM.
+  // TE: (1,0). TM: (0,1). RHC: (1,j)/√2. LHC: (1,-j)/√2.
+  std::complex<double> inc_alpha_te, inc_alpha_tm;
+
+  // MPI communicator.
+  MPI_Comm comm;
+
+  // Compute the effective DtN eigenvalue and unit-power normalization for the incident
+  // polarization. Used by both AddExcitationVector and GetAllSParameters.
+  struct IncidentNormalization
+  {
+    double gamma_00;      // Propagation constant of the (0,0) mode
+    double lambda_te_00;  // TE DtN eigenvalue: γ
+    double lambda_tm_00;  // TM DtN eigenvalue: ω²με/γ
+    double lambda_eff;    // Weighted: |α_TE|²λ_TE + |α_TM|²λ_TM
+    double c_inc;         // Unit-power scale factor: 1/√(λ_eff |Γ| / (2ωμ))
+  };
+  IncidentNormalization ComputeIncidentNormalization(double omega) const;
+
+  // Compute the full DtN coefficient g_full (NOT the correction g_full - g_uniform).
+  // Used internally by ComputeDtNCorrectionCoeff.
+  std::complex<double> ComputeDtNFullCoeff(const FloquetMode &mode) const;
+
+  void EnumerateOrders();
+  void AssembleFourierProjections(mfem::ParFiniteElementSpace &nd_fespace);
+};
+
+//
+// Manager class for all Floquet port boundaries.
+//
+class FloquetPortOperator
+{
+private:
+  const MaterialOperator &mat_op;
+  std::map<int, FloquetPortData> ports;
+  bool suppress_output = false;
+
+public:
+  FloquetPortOperator(const std::map<int, config::FloquetPortData> &floquetport,
+                      const config::PeriodicBoundaryData &periodic,
+                      ProblemType problem_type, const Units &units,
+                      const MaterialOperator &mat_op,
+                      mfem::ParFiniteElementSpace &nd_fespace);
+
+  const FloquetPortData &GetPort(int idx) const { return ports.at(idx); }
+  auto begin() const { return ports.begin(); }
+  auto end() const { return ports.end(); }
+  auto Size() const { return ports.size(); }
+  bool Empty() const { return ports.empty(); }
+
+  void SetSuppressOutput(bool suppress) { suppress_output = suppress; }
+
+  // Initialize all ports for the given frequency.
+  void Initialize(double omega);
+
+  // Get the combined low-rank boundary operator F(omega) for all Floquet ports.
+  // Returns nullptr if no Floquet ports are configured.
+  std::unique_ptr<ComplexOperator> GetExtraSystemOperator(double omega);
+
+  // Add Robin boundary mass coefficient (iγ₀/μ) for absorption on Floquet port faces.
+  void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &fbr,
+                                     MaterialPropertyCoefficient &fbi);
+
+  // Add excitation vector contributions for the given excitation index.
+  bool AddExcitationVector(int excitation_idx, double omega, ComplexVector &RHS);
+
+  // Collect all boundary attributes from all Floquet ports.
+  mfem::Array<int> GetAttrList() const;
+};
+
+}  // namespace palace
+
+#endif  // PALACE_MODELS_FLOQUET_PORT_OPERATOR_HPP

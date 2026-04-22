@@ -477,6 +477,11 @@ public:
   // Floquet/Bloch wavevector specifying the phase delay in the X/Y/Z directions.
   std::array<double, 3> wave_vector = {0.0, 0.0, 0.0};
 
+  // Reference frequency (GHz) at which wave_vector is defined. When nonzero, k_F scales
+  // linearly with frequency: k_F(f) = wave_vector * (f / reference_freq). When zero
+  // (default), k_F is held constant across all frequencies.
+  double floquet_reference_freq = 0.0;
+
   PeriodicBoundaryData() = default;
   PeriodicBoundaryData(const json &periodic);
 };
@@ -518,6 +523,27 @@ public:
 
   WavePortData() = default;
   WavePortData(const json &port);
+};
+
+struct FloquetPortData
+{
+public:
+  // Input excitation for driven solver:
+  // - 1-based index if excited; 0 if not excited.
+  int excitation = 0;
+
+  // List of boundary attributes for this Floquet port.
+  std::vector<int> attributes = {};
+
+  // Incident mode polarization: "TE", "TM", "RHC" (right-hand circular),
+  // or "LHC" (left-hand circular).
+  std::string inc_polarization = "TE";
+
+  // Maximum diffraction order index to include. -1 = auto from geometry + frequency.
+  int max_order = -1;
+
+  FloquetPortData() = default;
+  FloquetPortData(const json &port);
 };
 
 struct SurfaceCurrentData
@@ -627,6 +653,7 @@ public:
   std::map<int, LumpedPortData> lumpedport = {};
   std::map<int, TerminalData> terminal = {};
   std::map<int, WavePortData> waveport = {};
+  std::map<int, FloquetPortData> floquetport = {};
   std::map<int, SurfaceCurrentData> current = {};
   PeriodicBoundaryData periodic = {};
   BoundaryPostData postpro = {};

@@ -11,6 +11,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/currentdipoleoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/domainpostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/farfieldboundaryoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/floquetportoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/laplaceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/lumpedportoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/materialoperator.cpp
