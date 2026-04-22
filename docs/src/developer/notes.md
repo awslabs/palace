@@ -245,9 +245,11 @@ scope attributes the memory growth so far to the outer scope, then starts tracki
 scope.
 
 The per-phase memory table is printed alongside the timing table at the end of each
-simulation. On a single node, the table shows per-rank statistics with min/max/total (sum
-across all ranks). On multiple nodes, it shows per-node statistics (sum of ranks within each
-node) with min/max/total across nodes.
+simulation. It has three columns:
+
+  - Per-Node: maximum growth on any single node for this phase.
+  - Total: sum of growth across all nodes for this phase.
+  - Total HWM (High Water Mark): high-water mark growth at the end of this phase summed across all the nodes.
 
 The `BlockTimer` constructor accepts a `count` parameter (default `true`). When `count` is
 `false`, both timing and memory tracking are disabled for that scope. This can be used to
