@@ -544,8 +544,7 @@ SlepcEPSSolverBase::~SlepcEPSSolverBase()
 
 void SlepcEPSSolverBase::SetNumModes(int num_eig, int num_vec)
 {
-  PalacePetscCall(EPSSetDimensions(eps, num_eig, (num_vec > 0) ? num_vec : PETSC_DEFAULT,
-                                   PETSC_DEFAULT));
+  PalacePetscCall(EPSSetDimensions(eps, num_eig, num_vec, PETSC_DEFAULT));
 }
 
 void SlepcEPSSolverBase::SetTol(PetscReal tol)
@@ -558,8 +557,7 @@ void SlepcEPSSolverBase::SetTol(PetscReal tol)
 
 void SlepcEPSSolverBase::SetMaxIter(int max_it)
 {
-  PalacePetscCall(
-      EPSSetTolerances(eps, PETSC_DEFAULT, (max_it > 0) ? max_it : PETSC_DEFAULT));
+  PalacePetscCall(EPSSetTolerances(eps, PETSC_DEFAULT, max_it));
 }
 
 void SlepcEPSSolverBase::SetWhichEigenpairs(EigenvalueSolver::WhichType type)
@@ -1033,8 +1031,7 @@ SlepcPEPSolverBase::~SlepcPEPSolverBase()
 
 void SlepcPEPSolverBase::SetNumModes(int num_eig, int num_vec)
 {
-  PalacePetscCall(PEPSetDimensions(pep, num_eig, (num_vec > 0) ? num_vec : PETSC_DEFAULT,
-                                   PETSC_DEFAULT));
+  PalacePetscCall(PEPSetDimensions(pep, num_eig, num_vec, PETSC_DEFAULT));
 }
 
 void SlepcPEPSolverBase::SetTol(PetscReal tol)
@@ -1046,8 +1043,7 @@ void SlepcPEPSolverBase::SetTol(PetscReal tol)
 
 void SlepcPEPSolverBase::SetMaxIter(int max_it)
 {
-  PalacePetscCall(
-      PEPSetTolerances(pep, PETSC_DEFAULT, (max_it > 0) ? max_it : PETSC_DEFAULT));
+  PalacePetscCall(PEPSetTolerances(pep, PETSC_DEFAULT, max_it));
 }
 
 void SlepcPEPSolverBase::SetWhichEigenpairs(EigenvalueSolver::WhichType type)
@@ -1385,8 +1381,7 @@ SlepcNEPSolverBase::~SlepcNEPSolverBase()
 
 void SlepcNEPSolverBase::SetNumModes(int num_eig, int num_vec)
 {
-  PalacePetscCall(NEPSetDimensions(nep, num_eig, (num_vec > 0) ? num_vec : PETSC_DEFAULT,
-                                   PETSC_DEFAULT));
+  PalacePetscCall(NEPSetDimensions(nep, num_eig, num_vec, PETSC_DEFAULT));
 }
 
 void SlepcNEPSolverBase::SetTol(PetscReal tol)
@@ -1397,8 +1392,7 @@ void SlepcNEPSolverBase::SetTol(PetscReal tol)
 
 void SlepcNEPSolverBase::SetMaxIter(int max_it)
 {
-  PalacePetscCall(
-      NEPSetTolerances(nep, PETSC_DEFAULT, (max_it > 0) ? max_it : PETSC_DEFAULT));
+  PalacePetscCall(NEPSetTolerances(nep, PETSC_DEFAULT, max_it));
 }
 
 void SlepcNEPSolverBase::SetShiftInvert(std::complex<double> s, bool precond)

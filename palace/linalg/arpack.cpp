@@ -220,7 +220,7 @@ void ArpackEigenvalueSolver::SetNumModes(int num_eig, int num_vec)
     V.reset();
   }
   nev = num_eig;
-  ncv = (num_vec > 0) ? num_vec : std::max(20, 2 * nev + 1);  // Default from SLEPc
+  ncv = num_vec;
 }
 
 void ArpackEigenvalueSolver::SetTol(double tol)

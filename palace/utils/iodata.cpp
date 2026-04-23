@@ -555,6 +555,19 @@ void IoData::CheckConfiguration()
     solver.transient.type = TimeSteppingScheme::GEN_ALPHA;
   }
 
+  // Resolve eigenvalue solver iteration / subspace sentinels to concrete Palace
+  // defaults so the SLEPc and ARPACK wrappers see fully-specified parameters and no
+  // sentinel interpretation remains scattered in drivers.
+  if (solver.eigenmode.max_it <= 0)
+  {
+    solver.eigenmode.max_it = 1000;
+  }
+  if (solver.eigenmode.max_size <= 0)
+  {
+    // Matches the SLEPc subspace-dimension heuristic already in arpack.cpp.
+    solver.eigenmode.max_size = std::max(20, 2 * solver.eigenmode.n + 1);
+  }
+
   // Validate build-availability of requested solver backends. Centralized here so
   // downstream code never encounters an unavailable backend at runtime.
 #if !defined(PALACE_WITH_SLEPC)

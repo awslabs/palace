@@ -128,17 +128,8 @@ void ConcretizeEigenmode(const config::EigenSolverData &eigenmode, json &j_eigen
 {
   FillIfMissing(j_eigen, "Target", eigenmode.target);
   FillIfMissing(j_eigen, "Tol", eigenmode.tol);
-  // max_it, max_size stay at the -1 library-default sentinel when the user does not set
-  // them — the eigenvalue library picks its own default at solve time. Leave the key
-  // absent rather than record -1.
-  if (eigenmode.max_it > 0)
-  {
-    FillIfMissing(j_eigen, "MaxIts", eigenmode.max_it);
-  }
-  if (eigenmode.max_size > 0)
-  {
-    FillIfMissing(j_eigen, "MaxSize", eigenmode.max_size);
-  }
+  FillIfMissing(j_eigen, "MaxIts", eigenmode.max_it);
+  FillIfMissing(j_eigen, "MaxSize", eigenmode.max_size);
   FillIfMissing(j_eigen, "N", eigenmode.n);
   FillIfMissing(j_eigen, "Save", eigenmode.n_post);
   FillIfMissing(j_eigen, "Type", EnumString(eigenmode.type));
