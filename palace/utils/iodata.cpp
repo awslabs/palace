@@ -557,15 +557,19 @@ void IoData::CheckConfiguration()
 
   // Resolve eigenvalue solver iteration / subspace sentinels to concrete Palace
   // defaults so the SLEPc and ARPACK wrappers see fully-specified parameters and no
-  // sentinel interpretation remains scattered in drivers.
+  // sentinel interpretation remains scattered in drivers. max_size follows SLEPc's
+  // Krylov-Schur formula for both backends — it controls the basis buffer. max_it is
+  // a single large constant because it only caps the iteration count (no buffers
+  // scale with it) and SLEPc's own default is already enormous at realistic problem
+  // sizes.
   if (solver.eigenmode.max_it <= 0)
   {
-    solver.eigenmode.max_it = 1000;
+    solver.eigenmode.max_it = 1'000'000;
   }
   if (solver.eigenmode.max_size <= 0)
   {
-    // Matches the SLEPc subspace-dimension heuristic already in arpack.cpp.
-    solver.eigenmode.max_size = std::max(20, 2 * solver.eigenmode.n + 1);
+    solver.eigenmode.max_size =
+        std::max(2 * solver.eigenmode.n, solver.eigenmode.n + 15);
   }
 
   // Validate build-availability of requested solver backends. Centralized here so

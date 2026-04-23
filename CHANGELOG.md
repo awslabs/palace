@@ -54,6 +54,16 @@ The format of this changelog is based on
     ([mfem/mfem#5246](https://github.com/mfem/mfem/pull/5246))
     [PR 706](https://github.com/awslabs/palace/pull/706).
 
+#### Interface Changes
+
+  - Changed default values for `Solver.Eigenmode.MaxIts` and `Solver.Eigenmode.MaxSize`.
+    `MaxIts` now defaults to `1'000'000` — a single generous cap, chosen because it only
+    bounds iteration count (no buffers scale with it) and SLEPc's own default is already
+    enormous at realistic problem sizes. `MaxSize` now defaults to `max(2 * N, N + 15)`
+    (SLEPc's Krylov-Schur formula) for both backends; previously ARPACK used
+    `max(20, 2 * N + 1)`. All in-tree example configs set these fields explicitly, so
+    the change is a no-op for existing Palace runs [PR TBD].
+
 ## [0.16.0] - 2026-03-05
 
 #### New Features
