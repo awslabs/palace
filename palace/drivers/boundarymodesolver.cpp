@@ -56,20 +56,13 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                       iodata.solver.linear, bm_data.type, iodata.problem.verbose,
                       mode_op.GetComm(), have_mg ? &mode_op : nullptr);
 
-  // Construct the error estimator. It needs its own single-level hierarchies for flux
-  // recovery; build them here since the operator no longer owns them.
-  const int dim = mode_op.GetMesh().Dimension();
-  mfem::RT_FECollection rt_fec_est(mode_op.GetSolverOrder() - 1, dim);
-  FiniteElementSpaceHierarchy nd_fespaces_est(
-      std::make_unique<FiniteElementSpace>(mode_op.GetMesh(), mode_op.GetNDFEColl()));
-  FiniteElementSpaceHierarchy rt_fespaces_est(
-      std::make_unique<FiniteElementSpace>(mode_op.GetMesh(), &rt_fec_est));
-  FiniteElementSpaceHierarchy h1_fespaces_est(
-      std::make_unique<FiniteElementSpace>(mode_op.GetMesh(), mode_op.GetH1FEColl()));
+  // Construct the error estimator. BoundaryModeOperator owns the RT hierarchy for
+  // flux recovery (analogous to SpaceOperator::rt_fespaces).
   BoundaryModeFluxErrorEstimator<ComplexVector> estimator(
-      mode_op.GetMaterialOp(), nd_fespaces_est, rt_fespaces_est, mode_op.GetCurlSpace(),
-      h1_fespaces_est, iodata.solver.linear.estimator_tol,
-      iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg);
+      mode_op.GetMaterialOp(), mode_op.GetNDSpaceHierarchy(),
+      mode_op.GetRTSpaceHierarchy(), mode_op.GetCurlSpace(), mode_op.GetH1SpaceHierarchy(),
+      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
+      iodata.solver.linear.estimator_mg);
 
   // Construct PostOperator.
   PostOperator<ProblemType::BOUNDARYMODE> post_op(iodata, mode_op);

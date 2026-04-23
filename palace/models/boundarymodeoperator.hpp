@@ -35,25 +35,25 @@ public:
   // Access FE spaces.
   FiniteElementSpace &GetNDSpace() { return nd_fespaces.GetFinestFESpace(); }
   FiniteElementSpace &GetH1Space() { return h1_fespaces.GetFinestFESpace(); }
+  FiniteElementSpace &GetRTSpace() { return rt_fespaces.GetFinestFESpace(); }
   FiniteElementSpace &GetCurlSpace() { return *l2_curl_fespace; }
   const FiniteElementSpace &GetNDSpace() const { return nd_fespaces.GetFinestFESpace(); }
   const FiniteElementSpace &GetH1Space() const { return h1_fespaces.GetFinestFESpace(); }
+  const FiniteElementSpace &GetRTSpace() const { return rt_fespaces.GetFinestFESpace(); }
   const FiniteElementSpace &GetCurlSpace() const { return *l2_curl_fespace; }
 
   // Access space hierarchies (for error estimation and multigrid).
   FiniteElementSpaceHierarchy &GetNDSpaceHierarchy() { return nd_fespaces; }
   FiniteElementSpaceHierarchy &GetH1SpaceHierarchy() { return h1_fespaces; }
   FiniteElementSpaceHierarchy &GetH1AuxSpaceHierarchy() { return h1_aux_fespaces; }
+  FiniteElementSpaceHierarchy &GetRTSpaceHierarchy() { return rt_fespaces; }
   const FiniteElementSpaceHierarchy &GetNDSpaceHierarchy() const { return nd_fespaces; }
   const FiniteElementSpaceHierarchy &GetH1SpaceHierarchy() const { return h1_fespaces; }
   const FiniteElementSpaceHierarchy &GetH1AuxSpaceHierarchy() const
   {
     return h1_aux_fespaces;
   }
-
-  // Access FE collections.
-  const mfem::FiniteElementCollection *GetNDFEColl() const { return nd_fecs.back().get(); }
-  const mfem::FiniteElementCollection *GetH1FEColl() const { return h1_fecs.back().get(); }
+  const FiniteElementSpaceHierarchy &GetRTSpaceHierarchy() const { return rt_fespaces; }
 
   // Access per-level essential BC true DOF lists for the block system.
   std::vector<mfem::Array<int>> &GetNDDbcTDofLists() { return nd_dbc_tdof_lists; }
@@ -105,7 +105,8 @@ private:
   std::vector<std::unique_ptr<mfem::ND_FECollection>> nd_fecs;
   std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_fecs;
   std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_aux_fecs;
-  FiniteElementSpaceHierarchy nd_fespaces, h1_fespaces, h1_aux_fespaces;
+  std::vector<std::unique_ptr<mfem::RT_FECollection>> rt_fecs;
+  FiniteElementSpaceHierarchy nd_fespaces, h1_fespaces, h1_aux_fespaces, rt_fespaces;
   std::vector<mfem::Array<int>> nd_dbc_tdof_lists, h1_dbc_tdof_lists, h1_aux_dbc_tdof_lists;
 
   // L2 curl space for B-field in 2D.

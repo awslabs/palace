@@ -154,6 +154,11 @@ void BoundaryModeOperator::SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>
       solver_order, dim, mg.mg_max_levels, mg.mg_coarsening, false);
   h1_aux_fecs = fem::ConstructFECollections<mfem::H1_FECollection>(
       solver_order, dim, mg.mg_max_levels, mg.mg_coarsening, false);
+  // RT collection (estimator flux recovery only; depth follows estimator_mg, mirroring
+  // SpaceOperator::rt_fespaces).
+  const int rt_mg_max_levels = mg.estimator_mg ? mg.mg_max_levels : 1;
+  rt_fecs = fem::ConstructFECollections<mfem::RT_FECollection>(
+      solver_order, dim, rt_mg_max_levels, mg.mg_coarsening, false);
 
   // For submesh: temporarily move owned_mesh into a vector for hierarchy construction.
   // For direct 2D: use the caller's mesh vector directly.
@@ -170,6 +175,8 @@ void BoundaryModeOperator::SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>
       mg.mg_max_levels, fespace_mesh, h1_fecs, &dbc_bcs, &h1_dbc_tdof_lists);
   h1_aux_fespaces = fem::ConstructFiniteElementSpaceHierarchy<mfem::H1_FECollection>(
       mg.mg_max_levels, fespace_mesh, h1_aux_fecs, &dbc_bcs, &h1_aux_dbc_tdof_lists);
+  rt_fespaces = fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
+      rt_mg_max_levels, fespace_mesh, rt_fecs);
 
   if (use_submesh)
   {

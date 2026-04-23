@@ -130,13 +130,6 @@ ModeEigenSolver::ModeEigenSolver(
   // else: non-port process with empty FE space -- no solvers needed.
 }
 
-ModeEigenSolver::~ModeEigenSolver()
-{
-  // Free the solvers before any communicator they depend on is freed externally.
-  ksp.reset();
-  eigen.reset();
-}
-
 void ModeEigenSolver::AssembleFrequencyDependent(double omega, double sigma)
 {
   auto [Attr, Atti] = AssembleAtt(omega, sigma);

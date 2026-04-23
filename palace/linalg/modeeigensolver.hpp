@@ -88,7 +88,7 @@ public:
                   int verbose, MPI_Comm solver_comm = MPI_COMM_NULL,
                   BoundaryModeOperator *bmo = nullptr);
 
-  ~ModeEigenSolver();
+  ~ModeEigenSolver() = default;
 
   // Assemble frequency-dependent matrices and solve the eigenvalue problem. The shift
   // sigma = -kn_target^2 is applied. An optional initial space vector can be provided
