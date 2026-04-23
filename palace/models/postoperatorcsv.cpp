@@ -722,22 +722,23 @@ auto PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_p
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::InitializeProbeE(const InterpolationOperator &interp_op,
-                                                 int v_dim)
+void PostOperatorCSV<solver_t>::InitializeProbeField(
+    std::optional<TableWithCSVFile> &probe_tbl, const InterpolationOperator &interp_op,
+    std::string_view file_name, std::string_view col_prefix, std::string_view label_base,
+    std::string_view unit, int v_dim)
 {
-  if (!(interp_op.GetProbes().size() > 0) || !HasEGridFunction<solver_t>())
+  if (!(interp_op.GetProbes().size() > 0) || v_dim <= 0)
   {
     return;
   }
-
-  probe_E = TableWithCSVFile(post_dir / "probe-E.csv", reload_table);
-
-  Table t;  // Define table locally first due to potential reload.
-  int scale_col = (HasComplexGridFunction<solver_t>() ? 2 : 1) * v_dim;
-  auto nr_expected_measurement_cols =
+  probe_tbl = TableWithCSVFile(post_dir / std::string(file_name), reload_table);
+  Table t;
+  const int scale_col = (HasComplexGridFunction<solver_t>() ? 2 : 1) * v_dim;
+  const auto nr_expected_measurement_cols =
       1 + ex_idx_v_all.size() * scale_col * interp_op.GetProbes().size();
   t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   t.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
+  const bool scalar = (v_dim == 1);
   for (const auto ex_idx : ex_idx_v_all)
   {
     std::string ex_label = HasSingleExIdx() ? "" : fmt::format("[{}]", ex_idx);
@@ -745,277 +746,125 @@ void PostOperatorCSV<solver_t>::InitializeProbeE(const InterpolationOperator &in
     {
       for (int i_dim = 0; i_dim < v_dim; i_dim++)
       {
+        auto col_key = scalar ? fmt::format("{}_{}_{}", col_prefix, idx, ex_idx)
+                              : fmt::format("{}{}_{}_{}", col_prefix, i_dim, idx, ex_idx);
+        auto label = scalar ? std::string(label_base)
+                            : fmt::format("{}_{}", label_base, DimLabel(i_dim));
         if constexpr (HasComplexGridFunction<solver_t>())
         {
-          t.insert(fmt::format("E{}_{}_{}_re", i_dim, idx, ex_idx),
-                   fmt::format("Re{{E_{}[{}]{}}} (V/m)", DimLabel(i_dim), idx, ex_label),
-                   ex_idx);
-          t.insert(fmt::format("E{}_{}_{}_im", i_dim, idx, ex_idx),
-                   fmt::format("Im{{E_{}[{}]{}}} (V/m)", DimLabel(i_dim), idx, ex_label),
-                   ex_idx);
+          t.insert(col_key + "_re",
+                   fmt::format("Re{{{}[{}]{}}} ({})", label, idx, ex_label, unit), ex_idx);
+          t.insert(col_key + "_im",
+                   fmt::format("Im{{{}[{}]{}}} ({})", label, idx, ex_label, unit), ex_idx);
         }
         else
         {
-          t.insert(fmt::format("E{}_{}_{}_re", i_dim, idx, ex_idx),
-                   fmt::format("E_{}[{}]{} (V/m)", DimLabel(i_dim), idx, ex_label), ex_idx);
+          t.insert(col_key + "_re",
+                   fmt::format("{}[{}]{} ({})", label, idx, ex_label, unit), ex_idx);
         }
       }
     }
   }
-  MoveTableValidateReload(*probe_E, std::move(t));
+  MoveTableValidateReload(*probe_tbl, std::move(t));
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::PrintProbeField(
+    std::optional<TableWithCSVFile> &probe_tbl, const InterpolationOperator &interp_op,
+    const std::vector<std::complex<double>> &field, std::string_view col_prefix, int v_dim)
+{
+  if (!probe_tbl)
+  {
+    return;
+  }
+  MFEM_VERIFY(
+      field.size() == static_cast<std::size_t>(v_dim) * interp_op.GetProbes().size(),
+      fmt::format("Size mismatch: '{}' probe expected {} * {} = {} entries, got {}",
+                  col_prefix, v_dim, interp_op.GetProbes().size(),
+                  v_dim * interp_op.GetProbes().size(), field.size()));
+  CheckAppendIndex(probe_tbl->table["idx"], row_idx_v, row_i);
+  const bool scalar = (v_dim == 1);
+  std::size_t i = 0;
+  for (const auto &idx : interp_op.GetProbes())
+  {
+    for (int i_dim = 0; i_dim < v_dim; i_dim++)
+    {
+      const auto val = field[i * v_dim + i_dim];
+      const auto col_key =
+          scalar ? fmt::format("{}_{}_{}", col_prefix, idx, m_ex_idx)
+                 : fmt::format("{}{}_{}_{}", col_prefix, i_dim, idx, m_ex_idx);
+      probe_tbl->table[col_key + "_re"] << val.real();
+      if constexpr (HasComplexGridFunction<solver_t>())
+      {
+        probe_tbl->table[col_key + "_im"] << val.imag();
+      }
+    }
+    i++;
+  }
+  probe_tbl->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::InitializeProbeE(const InterpolationOperator &interp_op,
+                                                 int v_dim)
+{
+  if constexpr (HasEGridFunction<solver_t>())
+  {
+    InitializeProbeField(probe_E, interp_op, "probe-E.csv", "E", "E", "V/m", v_dim);
+  }
 }
 
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::PrintProbeE(const InterpolationOperator &interp_op,
                                             int v_dim)
 {
-  if (!probe_E)
-  {
-    return;
-  }
-  auto probe_field = measurement_cache.probe_E_field;
-  MFEM_VERIFY(
-      probe_field.size() == v_dim * interp_op.GetProbes().size(),
-      fmt::format("Size mismatch: expect vector field to have size {} * {} = {}; got {}",
-                  v_dim, interp_op.GetProbes().size(), v_dim * interp_op.GetProbes().size(),
-                  probe_field.size()))
-
-  CheckAppendIndex(probe_E->table["idx"], row_idx_v, row_i);
-
-  std::size_t i = 0;
-  for (const auto &idx : interp_op.GetProbes())
-  {
-    for (int i_dim = 0; i_dim < v_dim; i_dim++)
-    {
-      auto val = probe_field[i * v_dim + i_dim];
-      probe_E->table[fmt::format("E{}_{}_{}_re", i_dim, idx, m_ex_idx)] << val.real();
-      if (HasComplexGridFunction<solver_t>())
-      {
-        probe_E->table[fmt::format("E{}_{}_{}_im", i_dim, idx, m_ex_idx)] << val.imag();
-      }
-    }
-    i++;
-  }
-  probe_E->WriteFullTableTrunc();
+  PrintProbeField(probe_E, interp_op, measurement_cache.probe_E_field, "E", v_dim);
 }
 
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeProbeEn(const InterpolationOperator &interp_op)
 {
-  if (!(interp_op.GetProbes().size() > 0) || solver_t != ProblemType::BOUNDARYMODE)
+  if constexpr (solver_t == ProblemType::BOUNDARYMODE)
   {
-    return;
+    InitializeProbeField(probe_En, interp_op, "probe-En.csv", "En", "E_n", "V/m", 1);
   }
-  probe_En = TableWithCSVFile(post_dir / "probe-En.csv", reload_table);
-  Table t;
-  constexpr int v_dim = 1;  // Scalar H1 field
-  int scale_col = (HasComplexGridFunction<solver_t>() ? 2 : 1) * v_dim;
-  auto nr_expected_measurement_cols =
-      1 + ex_idx_v_all.size() * scale_col * interp_op.GetProbes().size();
-  t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
-  t.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
-  for (const auto ex_idx : ex_idx_v_all)
-  {
-    std::string ex_label = HasSingleExIdx() ? "" : fmt::format("[{}]", ex_idx);
-    for (const auto &idx : interp_op.GetProbes())
-    {
-      if constexpr (HasComplexGridFunction<solver_t>())
-      {
-        t.insert(fmt::format("En_{}_{}_re", idx, ex_idx),
-                 fmt::format("Re{{E_n[{}]{}}} (V/m)", idx, ex_label), ex_idx);
-        t.insert(fmt::format("En_{}_{}_im", idx, ex_idx),
-                 fmt::format("Im{{E_n[{}]{}}} (V/m)", idx, ex_label), ex_idx);
-      }
-      else
-      {
-        t.insert(fmt::format("En_{}_{}_re", idx, ex_idx),
-                 fmt::format("E_n[{}]{} (V/m)", idx, ex_label), ex_idx);
-      }
-    }
-  }
-  MoveTableValidateReload(*probe_En, std::move(t));
 }
 
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::PrintProbeEn(const InterpolationOperator &interp_op)
 {
-  if (!probe_En)
-  {
-    return;
-  }
-  constexpr int v_dim = 1;
-  auto probe_field = measurement_cache.probe_En_field;
-  MFEM_VERIFY(probe_field.size() == v_dim * interp_op.GetProbes().size(),
-              fmt::format("Size mismatch for En probe: expect {} entries, got {}",
-                          interp_op.GetProbes().size(), probe_field.size()));
-
-  CheckAppendIndex(probe_En->table["idx"], row_idx_v, row_i);
-
-  std::size_t i = 0;
-  for (const auto &idx : interp_op.GetProbes())
-  {
-    auto val = probe_field[i];
-    probe_En->table[fmt::format("En_{}_{}_re", idx, m_ex_idx)] << val.real();
-    if (HasComplexGridFunction<solver_t>())
-    {
-      probe_En->table[fmt::format("En_{}_{}_im", idx, m_ex_idx)] << val.imag();
-    }
-    i++;
-  }
-  probe_En->WriteFullTableTrunc();
+  PrintProbeField(probe_En, interp_op, measurement_cache.probe_En_field, "En", 1);
 }
 
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeProbeBt(const InterpolationOperator &interp_op,
                                                   int v_dim)
 {
-  if (!(interp_op.GetProbes().size() > 0) || v_dim <= 0)
-  {
-    return;
-  }
-  probe_Bt = TableWithCSVFile(post_dir / "probe-Bt.csv", reload_table);
-  Table t;
-  int scale_col = (HasComplexGridFunction<solver_t>() ? 2 : 1) * v_dim;
-  auto nr_expected_measurement_cols =
-      1 + ex_idx_v_all.size() * scale_col * interp_op.GetProbes().size();
-  t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
-  t.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
-  for (const auto ex_idx : ex_idx_v_all)
-  {
-    std::string ex_label = HasSingleExIdx() ? "" : fmt::format("[{}]", ex_idx);
-    for (const auto &idx : interp_op.GetProbes())
-    {
-      for (int i_dim = 0; i_dim < v_dim; i_dim++)
-      {
-        if constexpr (HasComplexGridFunction<solver_t>())
-        {
-          t.insert(fmt::format("Bt{}_{}_{}_re", i_dim, idx, ex_idx),
-                   fmt::format("Re{{Bt_{}[{}]{}}} (T)", DimLabel(i_dim), idx, ex_label),
-                   ex_idx);
-          t.insert(fmt::format("Bt{}_{}_{}_im", i_dim, idx, ex_idx),
-                   fmt::format("Im{{Bt_{}[{}]{}}} (T)", DimLabel(i_dim), idx, ex_label),
-                   ex_idx);
-        }
-        else
-        {
-          t.insert(fmt::format("Bt{}_{}_{}_re", i_dim, idx, ex_idx),
-                   fmt::format("Bt_{}[{}]{} (T)", DimLabel(i_dim), idx, ex_label), ex_idx);
-        }
-      }
-    }
-  }
-  MoveTableValidateReload(*probe_Bt, std::move(t));
+  InitializeProbeField(probe_Bt, interp_op, "probe-Bt.csv", "Bt", "Bt", "T", v_dim);
 }
 
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::PrintProbeBt(const InterpolationOperator &interp_op,
                                              int v_dim)
 {
-  if (!probe_Bt)
-  {
-    return;
-  }
-  auto probe_field = measurement_cache.probe_Bt_field;
-  MFEM_VERIFY(probe_field.size() == v_dim * interp_op.GetProbes().size(),
-              fmt::format("Size mismatch for Bt probe: expect {} * {} = {}, got {}", v_dim,
-                          interp_op.GetProbes().size(),
-                          v_dim * interp_op.GetProbes().size(), probe_field.size()));
-
-  CheckAppendIndex(probe_Bt->table["idx"], row_idx_v, row_i);
-
-  std::size_t i = 0;
-  for (const auto &idx : interp_op.GetProbes())
-  {
-    for (int i_dim = 0; i_dim < v_dim; i_dim++)
-    {
-      auto val = probe_field[i * v_dim + i_dim];
-      probe_Bt->table[fmt::format("Bt{}_{}_{}_re", i_dim, idx, m_ex_idx)] << val.real();
-      if (HasComplexGridFunction<solver_t>())
-      {
-        probe_Bt->table[fmt::format("Bt{}_{}_{}_im", i_dim, idx, m_ex_idx)] << val.imag();
-      }
-    }
-    i++;
-  }
-  probe_Bt->WriteFullTableTrunc();
+  PrintProbeField(probe_Bt, interp_op, measurement_cache.probe_Bt_field, "Bt", v_dim);
 }
 
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeProbeB(const InterpolationOperator &interp_op,
                                                  int v_dim)
 {
-  if (!(interp_op.GetProbes().size() > 0) || !HasBGridFunction<solver_t>() || v_dim <= 0)
+  if constexpr (HasBGridFunction<solver_t>())
   {
-    return;
+    InitializeProbeField(probe_B, interp_op, "probe-B.csv", "B", "B", "Wb/m²", v_dim);
   }
-  probe_B = TableWithCSVFile(post_dir / "probe-B.csv", reload_table);
-  Table t;  // Define table locally first due to potential reload.
-  int scale_col = (HasComplexGridFunction<solver_t>() ? 2 : 1) * v_dim;
-  auto nr_expected_measurement_cols =
-      1 + ex_idx_v_all.size() * scale_col * interp_op.GetProbes().size();
-  t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
-  t.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
-  for (const auto ex_idx : ex_idx_v_all)
-  {
-    std::string ex_label = HasSingleExIdx() ? "" : fmt::format("[{}]", ex_idx);
-    for (const auto &idx : interp_op.GetProbes())
-    {
-      for (int i_dim = 0; i_dim < v_dim; i_dim++)
-      {
-        if (HasComplexGridFunction<solver_t>())
-        {
-          t.insert(fmt::format("B{}_{}_{}_re", i_dim, idx, ex_idx),
-                   fmt::format("Re{{B_{}[{}]{}}} (Wb/m²)", DimLabel(i_dim), idx, ex_label),
-                   ex_idx);
-          t.insert(fmt::format("B{}_{}_{}_im", i_dim, idx, ex_idx),
-                   fmt::format("Im{{B_{}[{}]{}}} (Wb/m²)", DimLabel(i_dim), idx, ex_label),
-                   ex_idx);
-        }
-        else
-        {
-          t.insert(fmt::format("B{}_{}_{}_re", i_dim, idx, ex_idx),
-                   fmt::format("B_{}[{}]{} (Wb/m²)", DimLabel(i_dim), idx, ex_label),
-                   ex_idx);
-        }
-      }
-    }
-  }
-  MoveTableValidateReload(*probe_B, std::move(t));
 }
 
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::PrintProbeB(const InterpolationOperator &interp_op,
                                             int v_dim)
 {
-  if (!probe_B)
-  {
-    return;
-  }
-
-  auto probe_field = measurement_cache.probe_B_field;
-  MFEM_VERIFY(
-      probe_field.size() == v_dim * interp_op.GetProbes().size(),
-      fmt::format("Size mismatch: expect vector field to have size {} * {} = {}; got {}",
-                  v_dim, interp_op.GetProbes().size(), v_dim * interp_op.GetProbes().size(),
-                  probe_field.size()))
-
-  CheckAppendIndex(probe_B->table["idx"], row_idx_v, row_i);
-
-  std::size_t i = 0;
-  for (const auto &idx : interp_op.GetProbes())
-  {
-    for (int i_dim = 0; i_dim < v_dim; i_dim++)
-    {
-      auto val = probe_field[i * v_dim + i_dim];
-      probe_B->table[fmt::format("B{}_{}_{}_re", i_dim, idx, m_ex_idx)] << val.real();
-      if (HasComplexGridFunction<solver_t>())
-      {
-        probe_B->table[fmt::format("B{}_{}_{}_im", i_dim, idx, m_ex_idx)] << val.imag();
-      }
-    }
-    i++;
-  }
-  probe_B->WriteFullTableTrunc();
+  PrintProbeField(probe_B, interp_op, measurement_cache.probe_B_field, "B", v_dim);
 }
 
 template <ProblemType solver_t>
