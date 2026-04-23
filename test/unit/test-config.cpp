@@ -664,7 +664,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata.solver.linear.pc_mat_sym == MatrixSymmetry::SPD);
 
     // ConcretizeDefaults should write resolved values back to JSON.
-    IoData::ConcretizeDefaults(iodata, config);
+    config = IoData::ConcretizeDefaults(iodata, config);
 
     auto &j_linear = config["Solver"]["Linear"];
     CHECK(j_linear["Type"].get<std::string>() == "BoomerAMG");
@@ -695,7 +695,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata.solver.linear.mg_cycle_it == 1);
     CHECK(iodata.solver.linear.pc_mat_sym == MatrixSymmetry::SPD);
 
-    IoData::ConcretizeDefaults(iodata, config);
+    config = IoData::ConcretizeDefaults(iodata, config);
     CHECK(config["Solver"]["Linear"]["Type"].get<std::string>() == "AMS");
     CHECK(config["Solver"]["Linear"]["AMSSingularOperator"].get<int>() == 1);
     CHECK(config["Solver"]["Linear"]["AMSMaxIts"].get<int>() == 1);
@@ -713,7 +713,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
         {"Solver", {{"Order", 3}, {"Linear", {{"Type", "BoomerAMG"}, {"KSPType", "CG"}}}}}};
 
     IoData iodata(config, false);
-    IoData::ConcretizeDefaults(iodata, config);
+    config = IoData::ConcretizeDefaults(iodata, config);
 
     // User-specified values should be preserved.
     CHECK(config["Solver"]["Order"].get<int>() == 3);
@@ -738,7 +738,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata.solver.eigenmode.type == EigenSolverBackend::ARPACK);
 #endif
 
-    IoData::ConcretizeDefaults(iodata, config);
+    config = IoData::ConcretizeDefaults(iodata, config);
 
     // The resolved config should say the concrete backend name, not "Default".
     auto type_str = config["Solver"]["Eigenmode"]["Type"].get<std::string>();
@@ -762,7 +762,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
            {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.5}}}}}}}}};
 
     IoData iodata(config, false);
-    IoData::ConcretizeDefaults(iodata, config);
+    config = IoData::ConcretizeDefaults(iodata, config);
 
     auto type_str = config["Boundaries"]["WavePort"][0]["SolverType"].get<std::string>();
 #if defined(PALACE_WITH_SLEPC)
@@ -786,7 +786,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     // ams_max_it defaults to solver.order = 5
     CHECK(iodata.solver.linear.ams_max_it == 5);
 
-    IoData::ConcretizeDefaults(iodata, config);
+    config = IoData::ConcretizeDefaults(iodata, config);
     CHECK(config["Solver"]["Linear"]["MGSmoothOrder"].get<int>() == 10);
     CHECK(config["Solver"]["Linear"]["AMSMaxIts"].get<int>() == 5);
   }
@@ -802,7 +802,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     IoData iodata(config, false);
     CHECK(iodata.solver.linear.max_size == 200);
 
-    IoData::ConcretizeDefaults(iodata, config);
+    config = IoData::ConcretizeDefaults(iodata, config);
     CHECK(config["Solver"]["Linear"]["MaxSize"].get<int>() == 200);
   }
 
@@ -817,7 +817,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     IoData iodata(config, false);
     CHECK(iodata.solver.order == 1);
 
-    IoData::ConcretizeDefaults(iodata, config);
+    config = IoData::ConcretizeDefaults(iodata, config);
     CHECK(config["Solver"]["Order"].get<int>() == 1);
   }
 
@@ -830,7 +830,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Solver", json::object()}};
 
     IoData iodata(config, false);
-    IoData::ConcretizeDefaults(iodata, config);
+    config = IoData::ConcretizeDefaults(iodata, config);
     auto &j_linear = config["Solver"]["Linear"];
 
     CHECK(j_linear["Tol"].get<double>() == Catch::Approx(1.0e-6));
@@ -858,7 +858,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     // DEFAULT is a compile-time alias of GEN_ALPHA.
     CHECK(iodata.solver.transient.type == TimeSteppingScheme::GEN_ALPHA);
 
-    IoData::ConcretizeDefaults(iodata, config);
+    config = IoData::ConcretizeDefaults(iodata, config);
     auto &j_transient = config["Solver"]["Transient"];
     // Must resolve to the concrete name, NOT "Default". This depends on the ordering
     // contract in PALACE_JSON_SERIALIZE_ENUM(TimeSteppingScheme, ...).
@@ -875,7 +875,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
 
     IoData iodata(config, false);
-    IoData::ConcretizeDefaults(iodata, config);
+    config = IoData::ConcretizeDefaults(iodata, config);
     auto &j_eigen = config["Solver"]["Eigenmode"];
 
     CHECK(j_eigen["Tol"].get<double>() == Catch::Approx(1.0e-6));
@@ -899,7 +899,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Solver", {{"Order", 3}, {"Linear", {{"MaxIts", 250}}}}}};
 
     IoData iodata1(config, false);
-    IoData::ConcretizeDefaults(iodata1, config);
+    config = IoData::ConcretizeDefaults(iodata1, config);
 
     // The resolved config must pass schema validation; otherwise a user cannot
     // actually re-run Palace on the produced file.
@@ -941,7 +941,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
 
     IoData iodata1(config, false);
-    IoData::ConcretizeDefaults(iodata1, config);
+    config = IoData::ConcretizeDefaults(iodata1, config);
 
     std::string err = ValidateConfig(config);
     INFO("schema validation error: " << err);
@@ -968,7 +968,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
            {{"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}}}}}};
 
     IoData iodata1(config, false);
-    IoData::ConcretizeDefaults(iodata1, config);
+    config = IoData::ConcretizeDefaults(iodata1, config);
 
     std::string err = ValidateConfig(config);
     INFO("schema validation error: " << err);

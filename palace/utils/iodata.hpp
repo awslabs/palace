@@ -56,9 +56,10 @@ public:
   // Parse and validate a configuration file, returning the JSON object.
   static nlohmann::json ParseAndValidate(const char *filename);
 
-  // Write resolved IoData values back into the JSON config. Call after
-  // CheckConfiguration() to produce a self-describing config with all sentinels resolved.
-  static void ConcretizeDefaults(const IoData &iodata, nlohmann::json &config);
+  // Return the user's config with any entries that were absent filled in from the
+  // resolved IoData. User-provided values pass through untouched; only missing keys
+  // are added. Call after CheckConfiguration() so the filled values are concrete.
+  static nlohmann::json ConcretizeDefaults(const IoData &iodata, nlohmann::json config);
 
   // Nondimensionalize input values for use in the solver, including the mesh coordinates.
   void NondimensionalizeInputs(mfem::ParMesh &mesh);

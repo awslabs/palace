@@ -235,15 +235,14 @@ int main(int argc, char *argv[])
   MakeOutputFolder(iodata, world_comm);
 
   // Write the resolved configuration to the output directory so users have a complete
-  // record of every Palace decision (all sentinels replaced with concrete values).
+  // record of every Palace decision (all defaults filled in).
   if (world_root)
   {
-    IoData::ConcretizeDefaults(iodata, config);
     std::filesystem::path config_path(argv[1]);
     auto resolved_name = config_path.stem().string() + "-resolved.json";
     auto resolved_path = std::filesystem::path(iodata.problem.output) / resolved_name;
     std::ofstream out(resolved_path);
-    out << config.dump(2) << "\n";
+    out << IoData::ConcretizeDefaults(iodata, config).dump(2) << "\n";
     out.close();
     if (!out)
     {
