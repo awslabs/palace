@@ -50,6 +50,20 @@ std::string OutputFolderName(const ProblemType solver_t)
   }
 }
 
+// Project each 3D point in `path` onto the 2D local frame (centroid, e1, e2). Leaves
+// entries that are already 2D untouched.
+void ProjectPathTo2D(std::vector<mfem::Vector> &path, const mfem::Vector &centroid,
+                     const mfem::Vector &e1, const mfem::Vector &e2)
+{
+  for (auto &p : path)
+  {
+    if (p.Size() == 3)
+    {
+      p = mesh::Project3Dto2D(p, centroid, e1, e2);
+    }
+  }
+}
+
 }  // namespace
 
 template <ProblemType solver_t>
@@ -1871,20 +1885,8 @@ void PostOperator<solver_t>::ProjectImpedancePaths(const mfem::Vector &centroid,
 {
   for (auto &[idx, cfg] : impedance_postpro)
   {
-    for (auto &p : cfg.voltage_path)
-    {
-      if (p.Size() == 3)
-      {
-        p = mesh::Project3Dto2D(p, centroid, e1, e2);
-      }
-    }
-    for (auto &p : cfg.current_path)
-    {
-      if (p.Size() == 3)
-      {
-        p = mesh::Project3Dto2D(p, centroid, e1, e2);
-      }
-    }
+    ProjectPathTo2D(cfg.voltage_path, centroid, e1, e2);
+    ProjectPathTo2D(cfg.current_path, centroid, e1, e2);
   }
 }
 
@@ -1895,13 +1897,7 @@ void PostOperator<solver_t>::ProjectVoltagePaths(const mfem::Vector &centroid,
 {
   for (auto &[idx, cfg] : voltage_postpro)
   {
-    for (auto &p : cfg.voltage_path)
-    {
-      if (p.Size() == 3)
-      {
-        p = mesh::Project3Dto2D(p, centroid, e1, e2);
-      }
-    }
+    ProjectPathTo2D(cfg.voltage_path, centroid, e1, e2);
   }
 }
 
