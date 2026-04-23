@@ -40,13 +40,23 @@ std::string MatrixSymmetryString(MatrixSymmetry s)
   return "Unsymmetric";
 }
 
-// Small helper: set `j[key]` only if it is not already present.
+// Small helper: write `value` under `key` only if the user left it blank or wrote the
+// explicit sentinel string "Default". Every other user entry passes through untouched.
+// The sentinel handling is load-bearing — CheckConfiguration resolves enum DEFAULT to
+// a concrete backend in-memory, and we have to propagate that resolution back into the
+// JSON so the written config contains no defaults.
 template <typename T>
 void FillIfMissing(json &j, const char *key, const T &value)
 {
-  if (!j.contains(key))
+  auto it = j.find(key);
+  if (it == j.end())
   {
     j[key] = value;
+    return;
+  }
+  if (it->is_string() && it->template get<std::string>() == "Default")
+  {
+    *it = value;
   }
 }
 

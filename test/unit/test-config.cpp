@@ -932,6 +932,28 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(l2.gs_orthog == l1.gs_orthog);
   }
 
+  SECTION("User-written \"Default\" is replaced with the resolved concrete value")
+  {
+    // If the user explicitly writes the sentinel string, we must still concretize —
+    // otherwise the resolved config contains a default, defeating the whole feature.
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Eigenmode", {{"Target", 1.0}, {"Type", "Default"}}},
+                     {"Linear", {{"Type", "Default"}, {"KSPType", "Default"}}}}}};
+
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+
+    auto &j_eigen = config["Solver"]["Eigenmode"];
+    auto &j_linear = config["Solver"]["Linear"];
+    CHECK(j_eigen["Type"].get<std::string>() != "Default");
+    CHECK(j_linear["Type"].get<std::string>() != "Default");
+    CHECK(j_linear["KSPType"].get<std::string>() != "Default");
+  }
+
   SECTION("Round-trip: Eigenmode DEFAULT backend resolved concretely")
   {
     json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
