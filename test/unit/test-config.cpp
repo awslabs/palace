@@ -8,6 +8,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
+#include "utils/jsonschema.hpp"
 
 using json = nlohmann::json;
 using namespace palace;
@@ -885,5 +886,99 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_eigen["StartVector"].get<bool>() == true);
     CHECK(j_eigen["StartVectorConstant"].get<bool>() == false);
     CHECK(j_eigen["MassOrthogonal"].get<bool>() == false);
+  }
+
+  SECTION("Round-trip: resolved config validates and re-parses identically")
+  {
+    // Start from a sparse Electrostatic config with one non-default (Order=3) and one
+    // user-set Linear field (MaxIts=250). Everything else resolves from defaults.
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Order", 3}, {"Linear", {{"MaxIts", 250}}}}}};
+
+    IoData iodata1(config, false);
+    IoData::ConcretizeDefaults(iodata1, config);
+
+    // The resolved config must pass schema validation; otherwise a user cannot
+    // actually re-run Palace on the produced file.
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+
+    CHECK(iodata2.solver.order == iodata1.solver.order);
+    const auto &l1 = iodata1.solver.linear;
+    const auto &l2 = iodata2.solver.linear;
+    CHECK(l2.type == l1.type);
+    CHECK(l2.krylov_solver == l1.krylov_solver);
+    CHECK(l2.tol == l1.tol);
+    CHECK(l2.max_it == l1.max_it);
+    CHECK(l2.max_size == l1.max_size);
+    CHECK(l2.initial_guess == l1.initial_guess);
+    CHECK(l2.pc_mat_shifted == l1.pc_mat_shifted);
+    CHECK(l2.mg_smooth_aux == l1.mg_smooth_aux);
+    CHECK(l2.mg_smooth_order == l1.mg_smooth_order);
+    CHECK(l2.mg_cycle_it == l1.mg_cycle_it);
+    CHECK(l2.ams_singular_op == l1.ams_singular_op);
+    CHECK(l2.ams_max_it == l1.ams_max_it);
+    CHECK(l2.amg_agg_coarsen == l1.amg_agg_coarsen);
+    CHECK(l2.pc_mat_sym == l1.pc_mat_sym);
+    CHECK(l2.reorder_reuse == l1.reorder_reuse);
+    CHECK(l2.pc_side == l1.pc_side);
+    CHECK(l2.sym_factorization == l1.sym_factorization);
+    CHECK(l2.gs_orthog == l1.gs_orthog);
+  }
+
+  SECTION("Round-trip: Eigenmode DEFAULT backend resolved concretely")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+
+    IoData iodata1(config, false);
+    IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+    CHECK(iodata2.solver.eigenmode.type == iodata1.solver.eigenmode.type);
+    CHECK(iodata2.solver.eigenmode.type != EigenSolverBackend::DEFAULT);
+    CHECK(iodata2.solver.eigenmode.target == iodata1.solver.eigenmode.target);
+    CHECK(iodata2.solver.eigenmode.target_upper == iodata1.solver.eigenmode.target_upper);
+    CHECK(iodata2.solver.eigenmode.max_it == iodata1.solver.eigenmode.max_it);
+    CHECK(iodata2.solver.eigenmode.max_size == iodata1.solver.eigenmode.max_size);
+  }
+
+  SECTION("Round-trip: Transient DEFAULT scheme resolved concretely")
+  {
+    json config = {
+        {"Problem", {{"Type", "Transient"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Transient",
+           {{"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}}}}}};
+
+    IoData iodata1(config, false);
+    IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+    CHECK(iodata2.solver.transient.type == iodata1.solver.transient.type);
+    CHECK(iodata2.solver.transient.type != TimeSteppingScheme::DEFAULT);
+    CHECK(iodata2.solver.transient.excitation == iodata1.solver.transient.excitation);
+    CHECK(iodata2.solver.transient.max_t == iodata1.solver.transient.max_t);
+    CHECK(iodata2.solver.transient.delta_t == iodata1.solver.transient.delta_t);
   }
 }

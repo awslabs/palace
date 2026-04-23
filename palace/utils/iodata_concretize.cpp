@@ -108,8 +108,17 @@ void ConcretizeEigenmode(const config::EigenSolverData &eigenmode, json &j_eigen
 {
   j_eigen["Target"] = eigenmode.target;
   j_eigen["Tol"] = eigenmode.tol;
-  j_eigen["MaxIts"] = eigenmode.max_it;
-  j_eigen["MaxSize"] = eigenmode.max_size;
+  // max_it, max_size stay at the -1 sentinel when the user does not set them — the
+  // eigenvalue library picks its own default at solve time. Omit rather than record
+  // -1 so the resolved config stays schema-valid.
+  if (eigenmode.max_it > 0)
+  {
+    j_eigen["MaxIts"] = eigenmode.max_it;
+  }
+  if (eigenmode.max_size > 0)
+  {
+    j_eigen["MaxSize"] = eigenmode.max_size;
+  }
   j_eigen["N"] = eigenmode.n;
   j_eigen["Save"] = eigenmode.n_post;
   j_eigen["Type"] = EnumString(eigenmode.type);
