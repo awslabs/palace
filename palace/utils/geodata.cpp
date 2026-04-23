@@ -79,173 +79,193 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm, std::unique_ptr<mfem::Me
 // mesh onto the root rank before scattering the partitioned mesh.
 void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &);
 
+// Apply box/sphere region-based refinement to a serial mesh in-place. For tensor-element
+// meshes the refinement is non-conforming and the mesh must already be nonconforming.
+// Refinement levels are applied one at a time; at each level every element whose geometry
+// intersects at least one active (level-appropriate) refinement region is refined.
+void RegionRefine(const config::RefinementData &refinement, mfem::Mesh &mesh);
+
 }  // namespace
 
 namespace mesh
 {
 
-std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
+namespace
 {
-  // If possible on root, read the serial mesh (converting format if necessary), and do all
-  // necessary serial preprocessing. When finished, distribute the mesh to all processes.
-  // Count disk I/O time separately for the mesh read from file.
+
+// True if the input file requests any h-refinement — adaptive, box, or sphere.
+bool UseAmr(const config::RefinementData &refinement)
+{
+  if (refinement.max_it > 0)
+  {
+    return true;
+  }
+  for (const auto &box : refinement.GetBoxes())
+  {
+    if (box.ref_levels > 0)
+    {
+      return true;
+    }
+  }
+  for (const auto &sphere : refinement.GetSpheres())
+  {
+    if (sphere.ref_levels > 0)
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+SerialMesh Load(IoData &iodata, MPI_Comm comm)
+{
   BlockTimer bt0(Timer::MESH_PREPROCESS);
 
-  // If not doing any local adaptation, or performing conformal adaptation, we can use the
-  // mesh partitioner.
-  std::unique_ptr<mfem::Mesh> smesh;
   const auto &refinement = iodata.model.refinement;
-  const bool use_amr = (refinement.max_it > 0) || [&refinement]()
-  {
-    for (const auto &box : refinement.GetBoxes())
-    {
-      if (box.ref_levels > 0)
-      {
-        return true;
-      }
-    }
-    for (const auto &sphere : refinement.GetSpheres())
-    {
-      if (sphere.ref_levels > 0)
-      {
-        return true;
-      }
-    }
-    return false;
-  }();
+  const bool use_amr = UseAmr(refinement);
 
-  const bool use_mesh_partitioner = [&]()
+  // Root loads first so conformality of the input mesh can be factored into the
+  // distribution-path decision. Non-conformal AMR on an already-nonconforming mesh
+  // forces the byte-string broadcast path, since MFEM's MeshPartitioner doesn't accept
+  // nonconforming meshes.
+  SerialMesh result;
+  result.use_mesh_partitioner = !use_amr || !refinement.nonconformal;
   {
-    // Root must load the mesh to discover if nonconformal, as a previously adapted mesh
-    // might be reused for nonadaptive simulations.
     BlockTimer bt(Timer::IO);
-    bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
     if (Mpi::Root(comm))
     {
-      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
-      use_mesh_partitioner &= smesh->Conforming();  // The initial mesh must be conformal
+      result.smesh =
+          LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
+      result.use_mesh_partitioner &= result.smesh->Conforming();
     }
-    Mpi::Broadcast(1, &use_mesh_partitioner, 0, comm);
-    return use_mesh_partitioner;
-  }();
+    Mpi::Broadcast(1, &result.use_mesh_partitioner, 0, comm);
+  }
 
-  MPI_Comm node_comm;
-  if (!use_mesh_partitioner)
+  MPI_Comm node_comm = MPI_COMM_NULL;
+  if (!result.use_mesh_partitioner)
   {
     MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
                         &node_comm);
   }
-
   {
     BlockTimer bt1(Timer::IO);
-    if (!use_mesh_partitioner && Mpi::Root(node_comm) && !Mpi::Root(comm))
+    if (!result.use_mesh_partitioner && Mpi::Root(node_comm) && !Mpi::Root(comm))
     {
-      // Only one process per node reads the serial mesh, if not using mesh partitioner.
-      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
-      MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
+      // Only one process per node reads the serial mesh when not using the partitioner.
+      result.smesh =
+          LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
+      MFEM_VERIFY(!(result.smesh->Nonconforming() && result.use_mesh_partitioner),
                   "Cannot use mesh partitioner on a nonconforming mesh!");
     }
     Mpi::Barrier(comm);
   }
-
-  // Do some mesh preprocessing, and generate the partitioning.
-  std::unique_ptr<int[]> partitioning;
-  if (smesh)
+  if (node_comm != MPI_COMM_NULL)
   {
-    // Check the the AMR specification and the mesh elements are compatible.
-    const auto element_types = CheckElements(*smesh);
-    MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_hexahedra ||
-                    refinement.nonconformal,
-                "If there are tensor elements, AMR must be nonconformal!");
-    MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_prisms ||
-                    refinement.nonconformal,
-                "If there are wedge elements, AMR must be nonconformal!");
-    MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_pyramids ||
-                    refinement.nonconformal,
-                "If there are pyramid elements, AMR must be nonconformal!");
-    MFEM_VERIFY(
-        smesh->Conforming() || !use_amr || refinement.nonconformal,
-        "The provided mesh is nonconformal, only nonconformal AMR can be performed!");
-
-    // Clean up unused domain elements from the mesh.
-    if (iodata.model.clean_unused_elements)
-    {
-      std::vector<int> attr_list;
-      std::merge(iodata.domains.attributes.begin(), iodata.domains.attributes.end(),
-                 iodata.domains.postpro.attributes.begin(),
-                 iodata.domains.postpro.attributes.end(), std::back_inserter(attr_list));
-      attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
-      CleanMesh(smesh, attr_list);
-    }
-
-    // Optionally convert mesh elements to simplices, for example in order to enable
-    // conformal mesh refinement, or hexes.
-    if (iodata.model.make_simplex || iodata.model.make_hex)
-    {
-      SplitMeshElements(smesh, iodata.model.make_simplex, iodata.model.make_hex);
-    }
-
-    // Optionally reorder elements (and vertices) based on spatial location after loading
-    // the serial mesh.
-    if (iodata.model.reorder_elements)
-    {
-      ReorderMeshElements(*smesh);
-    }
-
-    // Refine the serial mesh (not typically used, prefer parallel uniform refinement
-    // instead).
-    {
-      int ne = smesh->GetNE();
-      for (int l = 0; l < iodata.model.refinement.ser_uniform_ref_levels; l++)
-      {
-        smesh->UniformRefinement();
-      }
-      if (iodata.model.refinement.ser_uniform_ref_levels > 0)
-      {
-        Mpi::Print("Serial uniform mesh refinement levels added {:d} elements (initial = "
-                   "{:d}, final = {:d})\n",
-                   smesh->GetNE() - ne, ne, smesh->GetNE());
-      }
-    }
-
-    // Check the final mesh, throwing warnings if there are exterior boundaries with no
-    // associated boundary condition.
-    if (smesh->Conforming())
-    {
-      auto face_to_be = CheckMesh(*smesh, iodata.boundaries);
-
-      // Add new boundary elements for material interfaces if not present (with new unique
-      // boundary attributes). Also duplicate internal boundary elements associated with
-      // cracks if desired.
-      if ((iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements))
-      {
-        // Split all internal (non periodic) boundary elements for boundary attributes where
-        // BC are applied (not just postprocessing).
-        while (AddInterfaceBdrElements(iodata, smesh, face_to_be, comm) != 1)
-        {
-          // May require multiple calls due to early exit/retry approach.
-        }
-      }
-    }
-    else
-    {
-      Mpi::Warning("{} is a nonconformal mesh, assumed from previous AMR iteration.\n"
-                   "Skipping mesh modification preprocessing steps!\n\n",
-                   iodata.model.mesh);
-    }
-
-    // Finally, finalize the serial mesh. Mark tetrahedral meshes for refinement. There
-    // should be no need to fix orientation as this was done during initial mesh loading
-    // from disk.
-    constexpr bool refine = true, fix_orientation = false;
-    smesh->Finalize(refine, fix_orientation);
-
-    // Generate the mesh partitioning.
-    partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partitioning);
+    MPI_Comm_free(&node_comm);
   }
 
-  // Broadcast cracked boundary attributes to other ranks.
-  if ((iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements))
+  auto &smesh = result.smesh;
+  if (!smesh)
+  {
+    return result;
+  }
+
+  // AMR / element compatibility.
+  const auto element_types = CheckElements(*smesh);
+  MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_hexahedra ||
+                  refinement.nonconformal,
+              "If there are tensor elements, AMR must be nonconformal!");
+  MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_prisms ||
+                  refinement.nonconformal,
+              "If there are wedge elements, AMR must be nonconformal!");
+  MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_pyramids ||
+                  refinement.nonconformal,
+              "If there are pyramid elements, AMR must be nonconformal!");
+  MFEM_VERIFY(smesh->Conforming() || !use_amr || refinement.nonconformal,
+              "The provided mesh is nonconformal, only nonconformal AMR can be performed!");
+
+  // Clean up unused domain elements from the mesh.
+  if (iodata.model.clean_unused_elements)
+  {
+    std::vector<int> attr_list;
+    std::merge(iodata.domains.attributes.begin(), iodata.domains.attributes.end(),
+               iodata.domains.postpro.attributes.begin(),
+               iodata.domains.postpro.attributes.end(), std::back_inserter(attr_list));
+    attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
+    CleanMesh(smesh, attr_list);
+  }
+
+  // Optionally convert mesh elements to simplices or hexes.
+  if (iodata.model.make_simplex || iodata.model.make_hex)
+  {
+    SplitMeshElements(smesh, iodata.model.make_simplex, iodata.model.make_hex);
+  }
+
+  // Optionally reorder elements/vertices by spatial location for cache locality.
+  if (iodata.model.reorder_elements)
+  {
+    ReorderMeshElements(*smesh);
+  }
+
+  // Serial uniform refinement (seldom used; prefer parallel uniform refinement in
+  // RefineMesh).
+  {
+    int ne = smesh->GetNE();
+    for (int l = 0; l < refinement.ser_uniform_ref_levels; l++)
+    {
+      smesh->UniformRefinement();
+    }
+    if (refinement.ser_uniform_ref_levels > 0)
+    {
+      Mpi::Print("Serial uniform mesh refinement levels added {:d} elements (initial = "
+                 "{:d}, final = {:d})\n",
+                 smesh->GetNE() - ne, ne, smesh->GetNE());
+    }
+  }
+
+  // Region-based (box/sphere) refinement on the serial mesh. Formerly in parallel
+  // RefineMesh; done here so the user-facing 3D box/sphere geometry stays in sync with
+  // the mesh the problem type actually solves on (BoundaryMode's PreprocessMesh may
+  // extract a 2D submesh from this refined 3D mesh before partitioning).
+  RegionRefine(refinement, *smesh);
+
+  // Exterior-boundary check and optional material-interface / crack boundary element
+  // insertion. Only meaningful on an initial conformal mesh.
+  if (smesh->Conforming())
+  {
+    auto face_to_be = CheckMesh(*smesh, iodata.boundaries);
+    if (iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements)
+    {
+      while (AddInterfaceBdrElements(iodata, smesh, face_to_be, comm) != 1)
+      {
+        // May require multiple calls due to early exit/retry approach.
+      }
+    }
+  }
+  else
+  {
+    Mpi::Warning("{} is a nonconformal mesh, assumed from previous AMR iteration.\n"
+                 "Skipping mesh modification preprocessing steps!\n\n",
+                 iodata.model.mesh);
+  }
+
+  // Finalize: mark tetrahedral meshes for refinement. Initial orientation was already
+  // fixed at load.
+  constexpr bool refine = true, fix_orientation = false;
+  smesh->Finalize(refine, fix_orientation);
+
+  return result;
+}
+
+std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, SerialMesh mesh, MPI_Comm comm)
+{
+  BlockTimer bt0(Timer::MESH_PREPROCESS);
+  const auto &refinement = iodata.model.refinement;
+
+  // Broadcast cracked boundary attributes from root to all ranks.
+  if (iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements)
   {
     int size = iodata.boundaries.cracked_attributes.size();
     Mpi::Broadcast(1, &size, 0, comm);
@@ -260,7 +280,6 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
       data.resize(size);
     }
     Mpi::Broadcast(size, data.data(), 0, comm);
-
     if (!Mpi::Root(comm))
     {
       iodata.boundaries.cracked_attributes.clear();
@@ -268,29 +287,38 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
     }
   }
 
-  // Distribute the mesh.
-  std::unique_ptr<mfem::ParMesh> pmesh;
-  if (use_mesh_partitioner)
+  // Generate partitioning from the serial mesh on root (or each node-root in the
+  // byte-string path).
+  std::unique_ptr<int[]> partitioning;
+  if (mesh.smesh)
   {
-    pmesh = DistributeMesh(comm, smesh, partitioning.get(), iodata.problem.output);
+    partitioning =
+        GetMeshPartitioning(*mesh.smesh, Mpi::Size(comm), iodata.model.partitioning);
+  }
+
+  std::unique_ptr<mfem::ParMesh> pmesh;
+  if (mesh.use_mesh_partitioner)
+  {
+    pmesh = DistributeMesh(comm, mesh.smesh, partitioning.get(), iodata.problem.output);
   }
   else
   {
     // Send the preprocessed serial mesh and partitioning as a byte string.
+    MPI_Comm node_comm;
+    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
+                        &node_comm);
     constexpr bool generate_edges = false, refine = true, fix_orientation = false;
     std::string so;
     int slen = 0;
-    if (smesh)
+    if (mesh.smesh)
     {
       std::ostringstream fo(std::stringstream::out);
-      // fo << std::fixed;
       fo << std::scientific;
       fo.precision(MSH_FLT_PRECISION);
-      smesh->Print(fo);
-      smesh.reset();  // Root process needs to rebuild the mesh to ensure consistency with
-                      // the saved serial mesh (refinement marking, for example)
+      mesh.smesh->Print(fo);
+      mesh.smesh.reset();  // Root process needs to rebuild the mesh to ensure consistency
+                           // with the saved serial mesh (refinement marking, for example)
       so = fo.str();
-      // so = zlib::CompressString(fo.str());
       slen = static_cast<int>(so.size());
       MFEM_VERIFY(so.size() == (std::size_t)slen, "Overflow in stringbuffer size!");
     }
@@ -302,24 +330,26 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
     Mpi::Broadcast(slen, so.data(), 0, node_comm);
     {
       std::istringstream fi(so);
-      // std::istringstream fi(zlib::DecompressString(so));
-      smesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
+      mesh.smesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
       so.clear();
     }
-    if (refinement.nonconformal && use_amr)
+    // !use_mesh_partitioner implies use_amr && nonconformal; ensure the rebuilt mesh is
+    // NC-capable before constructing the ParMesh.
+    if (refinement.nonconformal && UseAmr(refinement))
     {
-      smesh->EnsureNCMesh(true);
+      mesh.smesh->EnsureNCMesh(true);
     }
     if (!partitioning)
     {
-      partitioning = std::make_unique<int[]>(smesh->GetNE());
+      partitioning = std::make_unique<int[]>(mesh.smesh->GetNE());
     }
-    Mpi::Broadcast(smesh->GetNE(), partitioning.get(), 0, node_comm);
+    Mpi::Broadcast(mesh.smesh->GetNE(), partitioning.get(), 0, node_comm);
     MPI_Comm_free(&node_comm);
-    pmesh = std::make_unique<mfem::ParMesh>(comm, *smesh, partitioning.get());
-    smesh.reset();
+    pmesh = std::make_unique<mfem::ParMesh>(comm, *mesh.smesh, partitioning.get());
+    mesh.smesh.reset();
   }
 
+  // Debug: optionally write the partitioned and final meshes to tmp/ for inspection.
   if constexpr (false)
   {
     auto tmp = fs::path(iodata.problem.output) / "tmp";
@@ -336,7 +366,6 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
       std::string pfile =
           mfem::MakeParFilename(tmp.string() + "part.", Mpi::Rank(comm), ".mesh", width);
       std::ofstream fo(pfile);
-      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
       fo.precision(MSH_FLT_PRECISION);
       gpmesh.ParPrint(fo);
     }
@@ -344,7 +373,6 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
       std::string pfile =
           mfem::MakeParFilename(tmp.string() + "final.", Mpi::Rank(comm), ".mesh", width);
       std::ofstream fo(pfile);
-      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
       fo.precision(MSH_FLT_PRECISION);
       pmesh->ParPrint(fo);
     }
@@ -353,30 +381,21 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
   return pmesh;
 }
 
+std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
+{
+  return Partition(iodata, Load(iodata, comm), comm);
+}
+
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
 {
-  // Prepare for uniform and region-based refinement.
+  // Parallel uniform refinement only. Region-based (box/sphere) refinement runs serially
+  // inside Load, before partitioning.
   MFEM_VERIFY(mesh.size() == 1,
               "Input mesh vector before refinement has more than a single mesh!");
   int uniform_ref_levels = iodata.model.refinement.uniform_ref_levels;
-  int max_region_ref_levels = 0;
-  for (const auto &box : iodata.model.refinement.GetBoxes())
-  {
-    if (max_region_ref_levels < box.ref_levels)
-    {
-      max_region_ref_levels = box.ref_levels;
-    }
-  }
-  for (const auto &sphere : iodata.model.refinement.GetSpheres())
-  {
-    if (max_region_ref_levels < sphere.ref_levels)
-    {
-      max_region_ref_levels = sphere.ref_levels;
-    }
-  }
   if (iodata.solver.linear.mg_use_mesh && iodata.solver.linear.mg_max_levels > 1)
   {
-    mesh.reserve(1 + uniform_ref_levels + max_region_ref_levels);
+    mesh.reserve(1 + uniform_ref_levels);
   }
 
   // Prior to MFEM's PR #1046, the tetrahedral mesh required reorientation after all mesh
@@ -408,133 +427,13 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   // the docstring for mfem::Mesh::UniformRefinement).
   const auto element_types = mesh::CheckElements(*mesh.back());
   if (element_types.has_simplices && uniform_ref_levels > 0 &&
-      (max_region_ref_levels > 0 || iodata.model.refinement.max_it > 0))
+      iodata.model.refinement.max_it > 0)
   {
     constexpr bool refine = true, fix_orientation = false;
     Mpi::Print("\nFlattening mesh sequence:\n Local mesh refinement will start from the "
                "final uniformly-refined mesh\n");
     mesh.erase(mesh.begin(), mesh.end() - 1);
     mesh.back()->Finalize(refine, fix_orientation);
-  }
-
-  // Proceed with region-based refinement, level-by-level for all regions. Currently support
-  // box and sphere region shapes. Any overlap between regions is ignored (take the union,
-  // don't double-refine).
-  MFEM_VERIFY(
-      max_region_ref_levels == 0 ||
-          !(element_types.has_hexahedra || element_types.has_prisms ||
-            element_types.has_pyramids) ||
-          mesh.back()->Nonconforming(),
-      "Region-based refinement for non-simplex meshes requires a nonconformal mesh!");
-  const bool use_nodes = (mesh.back()->GetNodes() != nullptr);
-  const int ref = use_nodes ? mesh.back()->GetNodes()->FESpace()->GetMaxElementOrder() : 1;
-  const int dim = mesh.back()->SpaceDimension();
-  int region_ref_level = 0;
-  while (region_ref_level < max_region_ref_levels)
-  {
-    // Mark elements for refinement in all regions. An element is marked for refinement if
-    // any of its vertices are inside any refinement region for the given level.
-    mfem::Array<mfem::Refinement> refinements;
-    for (int i = 0; i < mesh.back()->GetNE(); i++)
-    {
-      bool refine = false;
-      mfem::DenseMatrix pointmat;
-      if (use_nodes)
-      {
-        mfem::ElementTransformation &T = *mesh.back()->GetElementTransformation(i);
-        mfem::RefinedGeometry *RefG =
-            mfem::GlobGeometryRefiner.Refine(T.GetGeometryType(), ref);
-        T.Transform(RefG->RefPts, pointmat);
-      }
-      else
-      {
-        const int *verts = mesh.back()->GetElement(i)->GetVertices();
-        const int nv = mesh.back()->GetElement(i)->GetNVertices();
-        pointmat.SetSize(dim, nv);
-        for (int j = 0; j < nv; j++)
-        {
-          const double *coord = mesh.back()->GetVertex(verts[j]);
-          for (int d = 0; d < dim; d++)
-          {
-            pointmat(d, j) = coord[d];
-          }
-        }
-      }
-      for (const auto &box : iodata.model.refinement.GetBoxes())
-      {
-        if (region_ref_level < box.ref_levels)
-        {
-          for (int j = 0; j < pointmat.Width(); j++)
-          {
-            // Check if the point is inside the box.
-            int d = 0;
-            for (; d < pointmat.Height(); d++)
-            {
-              if (pointmat(d, j) < box.bbmin[d] || pointmat(d, j) > box.bbmax[d])
-              {
-                break;
-              }
-            }
-            if (d == dim)
-            {
-              refine = true;
-              break;
-            }
-          }
-          if (refine)
-          {
-            break;
-          }
-        }
-      }
-      if (refine)
-      {
-        refinements.Append(mfem::Refinement(i));
-        continue;
-      }
-      for (const auto &sphere : iodata.model.refinement.GetSpheres())
-      {
-        if (region_ref_level < sphere.ref_levels)
-        {
-          for (int j = 0; j < pointmat.Width(); j++)
-          {
-            // Check if the point is inside the sphere.
-            double dist = 0.0;
-            for (int d = 0; d < pointmat.Height(); d++)
-            {
-              double s = pointmat(d, j) - sphere.center[d];
-              dist += s * s;
-            }
-            if (dist <= sphere.r * sphere.r)
-            {
-              refine = true;
-              break;
-            }
-          }
-          if (refine)
-          {
-            break;
-          }
-        }
-      }
-      if (refine)
-      {
-        refinements.Append(mfem::Refinement(i));
-      }
-    }
-
-    // Do the refinement. For tensor element meshes, this may make the mesh nonconforming
-    // (adds hanging nodes).
-    if (mesh.capacity() > 1)
-    {
-      mesh.emplace_back(std::make_unique<mfem::ParMesh>(*mesh.back()));
-    }
-    mesh.back()->GeneralRefinement(refinements, -1);
-    region_ref_level++;
-  }
-  if (max_region_ref_levels > 0 && mesh.capacity() == 1)
-  {
-    RebalanceMesh(iodata, mesh[0]);
   }
 
   // Prior to MFEM's PR #1046, the tetrahedral mesh required reorientation after all mesh
@@ -3648,6 +3547,128 @@ void RebalanceConformalMesh(std::unique_ptr<mfem::ParMesh> &pmesh)
     partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), "", false);
   }
   pmesh = DistributeMesh(comm, smesh, partitioning.get());
+}
+
+void RegionRefine(const config::RefinementData &refinement, mfem::Mesh &mesh)
+{
+  int max_region_ref_levels = 0;
+  for (const auto &box : refinement.GetBoxes())
+  {
+    max_region_ref_levels = std::max(max_region_ref_levels, box.ref_levels);
+  }
+  for (const auto &sphere : refinement.GetSpheres())
+  {
+    max_region_ref_levels = std::max(max_region_ref_levels, sphere.ref_levels);
+  }
+  if (max_region_ref_levels == 0)
+  {
+    return;
+  }
+
+  const auto element_types = mesh::CheckElements(mesh);
+  MFEM_VERIFY(!(element_types.has_hexahedra || element_types.has_prisms ||
+                element_types.has_pyramids) ||
+                  mesh.Nonconforming(),
+              "Region-based refinement for non-simplex meshes requires a nonconformal "
+              "mesh!");
+
+  const bool use_nodes = (mesh.GetNodes() != nullptr);
+  const int ref = use_nodes ? mesh.GetNodes()->FESpace()->GetMaxElementOrder() : 1;
+  const int dim = mesh.SpaceDimension();
+  for (int region_ref_level = 0; region_ref_level < max_region_ref_levels;
+       region_ref_level++)
+  {
+    // Mark elements for refinement: any vertex inside any active refinement region.
+    mfem::Array<mfem::Refinement> refinements;
+    for (int i = 0; i < mesh.GetNE(); i++)
+    {
+      bool refine_elem = false;
+      mfem::DenseMatrix pointmat;
+      if (use_nodes)
+      {
+        mfem::ElementTransformation &T = *mesh.GetElementTransformation(i);
+        mfem::RefinedGeometry *RefG =
+            mfem::GlobGeometryRefiner.Refine(T.GetGeometryType(), ref);
+        T.Transform(RefG->RefPts, pointmat);
+      }
+      else
+      {
+        const int *verts = mesh.GetElement(i)->GetVertices();
+        const int nv = mesh.GetElement(i)->GetNVertices();
+        pointmat.SetSize(dim, nv);
+        for (int j = 0; j < nv; j++)
+        {
+          const double *coord = mesh.GetVertex(verts[j]);
+          for (int d = 0; d < dim; d++)
+          {
+            pointmat(d, j) = coord[d];
+          }
+        }
+      }
+      for (const auto &box : refinement.GetBoxes())
+      {
+        if (region_ref_level >= box.ref_levels)
+        {
+          continue;
+        }
+        for (int j = 0; j < pointmat.Width(); j++)
+        {
+          int d = 0;
+          for (; d < pointmat.Height(); d++)
+          {
+            if (pointmat(d, j) < box.bbmin[d] || pointmat(d, j) > box.bbmax[d])
+            {
+              break;
+            }
+          }
+          if (d == dim)
+          {
+            refine_elem = true;
+            break;
+          }
+        }
+        if (refine_elem)
+        {
+          break;
+        }
+      }
+      if (!refine_elem)
+      {
+        for (const auto &sphere : refinement.GetSpheres())
+        {
+          if (region_ref_level >= sphere.ref_levels)
+          {
+            continue;
+          }
+          for (int j = 0; j < pointmat.Width(); j++)
+          {
+            double dist = 0.0;
+            for (int d = 0; d < pointmat.Height(); d++)
+            {
+              double s = pointmat(d, j) - sphere.center[d];
+              dist += s * s;
+            }
+            if (dist <= sphere.r * sphere.r)
+            {
+              refine_elem = true;
+              break;
+            }
+          }
+          if (refine_elem)
+          {
+            break;
+          }
+        }
+      }
+      if (refine_elem)
+      {
+        refinements.Append(mfem::Refinement(i));
+      }
+    }
+    // For tensor element meshes the refinement may make the mesh nonconforming (adds
+    // hanging nodes).
+    mesh.GeneralRefinement(refinements, -1);
+  }
 }
 
 }  // namespace
