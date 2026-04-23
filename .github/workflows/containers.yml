@@ -45,7 +45,6 @@ jobs:
 
   build-containers:
     needs: filter
-    if: needs.filter.outputs.test == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -53,4 +52,6 @@ jobs:
     runs-on: [self-hosted, '${{ matrix.arch }}']
     steps:
       - uses: actions/checkout@v6
+        if: needs.filter.outputs.test == 'true'
       - uses: ./.github/actions/build-container
+        if: needs.filter.outputs.test == 'true'
