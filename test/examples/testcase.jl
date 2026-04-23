@@ -144,6 +144,10 @@ function testcase(
             end
             filter!(d -> d ∉ exclude_folders, dirs)
             for f in fs
+                # The "<stem>-resolved.json" sidecar is Palace's record of the fully
+                # resolved config; its name depends on the input filename, so skip it
+                # rather than listing it in expected_metafiles.
+                endswith(f, "-resolved.json") && continue
                 path = relroot == "." ? f : joinpath(relroot, f)
                 endswith(f, ".csv") ? push!(csvfiles, path) : push!(metafiles, path)
             end
