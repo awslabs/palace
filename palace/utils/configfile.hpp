@@ -235,6 +235,58 @@ public:
   }
 };
 
+// Per-material PML configuration. Attached to a MaterialData entry via
+// MaterialData::pml. See pml-plan.md §4 for the full schema.
+struct PMLData
+{
+public:
+  // Coordinate system for the stretch. v1: Cartesian only.
+  PMLCoordinateType coordinate_type = PMLCoordinateType::CARTESIAN;
+
+  // Active absorption directions: per-axis signs (±x, ±y, ±z). Each entry is +1 (absorb
+  // on the positive side of the physical domain), −1 (negative side), or 0 (no absorption
+  // in that direction). Layout: [x_neg, x_pos, y_neg, y_pos, z_neg, z_pos]. When left
+  // at the all-zero default, MaterialOperator auto-detects from mesh geometry.
+  std::array<int, 6> direction_signs{{0, 0, 0, 0, 0, 0}};
+
+  // PML layer thickness per face [m]. Same layout as direction_signs. When both this
+  // and direction_signs are left at their defaults, geometry is auto-detected.
+  std::array<double, 6> thickness{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
+
+  // True when the user did not specify Direction/Thickness in config; MaterialOperator
+  // will compute them from the per-attribute and global mesh bounding boxes.
+  bool autodetect_geometry = true;
+
+  // Polynomial grading order n in σ(x) = σ_max · ((x − x₀) / d)^n. Must be ≥ 2.
+  int order = 3;
+
+  // Peak σ value (per direction). If any entry is negative, it is auto-computed from
+  // reflection_target using σ_max = −(n+1) ln(R) / (2 d √(με)). Default: auto for all.
+  std::array<double, 3> sigma_max{{-1.0, -1.0, -1.0}};
+
+  // Peak κ (real coordinate scaling); 1.0 ⇒ pure UPML.
+  std::array<double, 3> kappa_max{{1.0, 1.0, 1.0}};
+
+  // Peak α (CFS real frequency shift). Nonzero ⇒ CFS-PML.
+  std::array<double, 3> alpha_max{{0.0, 0.0, 0.0}};
+
+  // Target round-trip reflection coefficient for auto-σ_max. Typical 1e-6 to 1e-8.
+  double reflection_target = 1.0e-6;
+
+  // Which stretch formulation to use.
+  PMLStretchFormulation formulation = PMLStretchFormulation::FIXED;
+
+  // Reference ω₀ (in Hz, nondimensionalized at load time) for FIXED and CFS. Negative
+  // ⇒ use the solver-appropriate default (driven center frequency / eigen target).
+  double reference_frequency = -1.0;
+
+  // If false (default), AMR refinement is disabled inside this PML region.
+  bool allow_refinement = false;
+
+  PMLData() = default;
+  PMLData(const json &pml);
+};
+
 struct MaterialData
 {
 public:
@@ -252,6 +304,9 @@ public:
 
   // London penetration depth [m].
   double lambda_L = 0.0;
+
+  // Optional PML configuration for this material's attributes.
+  std::optional<PMLData> pml;
 
   // List of domain attributes for this material.
   std::vector<int> attributes = {};

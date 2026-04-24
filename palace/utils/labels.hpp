@@ -184,6 +184,25 @@ enum class Device : char
   DEBUG
 };
 
+// Stretch formulation for Perfectly Matched Layers.
+enum class PMLStretchFormulation : char
+{
+  // UPML: s = 1 + i σ / ω₀, static (ω₀ fixed at config time).
+  FIXED,
+  // CFS-PML: s = κ + σ / (α + i ω₀ ε₀), static (ω₀ fixed at config time).
+  CFS,
+  // Honest ω-dependence — stretch is rebuilt per solve frequency (driven) or per NEP
+  // iteration (eigen via funcA2).
+  FREQUENCY_DEPENDENT
+};
+
+// Coordinate system for PML stretching. v1 supports Cartesian only; the enum is reserved
+// for future cylindrical / spherical variants.
+enum class PMLCoordinateType : char
+{
+  CARTESIAN
+};
+
 }  // namespace palace
 
 #endif  // PALACE_UTILS_LABELS_HPP

@@ -12,6 +12,7 @@
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 
+#include "communication.hpp"
 #include "units.hpp"
 
 // This is similar to NLOHMANN_JSON_SERIALIZE_ENUM, but results in an error if an enum
@@ -169,6 +170,16 @@ PALACE_JSON_SERIALIZE_ENUM(DomainOrthogonalizationWeight,
 PALACE_JSON_SERIALIZE_ENUM(Device, {{Device::CPU, "CPU"},
                                     {Device::GPU, "GPU"},
                                     {Device::DEBUG, "Debug"}})
+
+// Helpers for converting string keys to enum for PMLStretchFormulation.
+PALACE_JSON_SERIALIZE_ENUM(PMLStretchFormulation,
+                           {{PMLStretchFormulation::FIXED, "Fixed"},
+                            {PMLStretchFormulation::CFS, "CFS"},
+                            {PMLStretchFormulation::FREQUENCY_DEPENDENT,
+                             "FrequencyDependent"}})
+
+// Helpers for converting string keys to enum for PMLCoordinateType.
+PALACE_JSON_SERIALIZE_ENUM(PMLCoordinateType, {{PMLCoordinateType::CARTESIAN, "Cartesian"}})
 }  // namespace palace
 
 namespace palace::config
@@ -386,6 +397,153 @@ MaterialData::MaterialData(const json &domain)
   ParseSymmetricMatrixData(domain, "LossTan", tandelta);
   ParseSymmetricMatrixData(domain, "Conductivity", sigma);
   lambda_L = domain.value("LondonDepth", lambda_L);
+  if (auto it = domain.find("PML"); it != domain.end())
+  {
+    pml = PMLData(*it);
+  }
+}
+
+namespace
+{
+
+// Helper: parse an array of 6 direction strings like "+x", "-y", "+z" into per-face
+// signs. Entries may be omitted (empty string) to indicate no absorption on that face.
+std::array<int, 6> ParsePMLDirections(const json &pml)
+{
+  std::array<int, 6> signs{{0, 0, 0, 0, 0, 0}};
+  auto it = pml.find("Direction");
+  if (it == pml.end())
+  {
+    return signs;
+  }
+  MFEM_VERIFY(it->is_array(),
+              "\"PML.Direction\" must be an array of strings like \"+x\", \"-y\"!");
+  for (const auto &entry : *it)
+  {
+    auto s = entry.get<std::string>();
+    if (s.empty())
+    {
+      continue;
+    }
+    MFEM_VERIFY(s.size() == 2 && (s[0] == '+' || s[0] == '-') &&
+                    (s[1] == 'x' || s[1] == 'y' || s[1] == 'z'),
+                "\"PML.Direction\" entries must be \"+x\", \"-x\", \"+y\", \"-y\", "
+                "\"+z\", or \"-z\" (got: \""
+                    << s << "\")!");
+    const int axis = s[1] - 'x';             // 0, 1, 2
+    const int face = (s[0] == '-') ? 0 : 1;  // 0 = negative face, 1 = positive face
+    signs[2 * axis + face] = (s[0] == '-') ? -1 : 1;
+  }
+  return signs;
+}
+
+// Helper: parse a JSON field that may be a scalar or a 3-element array, writing into
+// `out` in either case. Leaves `out` untouched if the field is missing or null.
+void ParseScalarOrArray3(const json &pml, const std::string &key,
+                         std::array<double, 3> &out)
+{
+  auto it = pml.find(key);
+  if (it == pml.end() || it->is_null())
+  {
+    return;
+  }
+  if (it->is_array())
+  {
+    out = it->get<std::array<double, 3>>();
+  }
+  else
+  {
+    out.fill(it->get<double>());
+  }
+}
+
+}  // namespace
+
+PMLData::PMLData(const json &pml)
+{
+  coordinate_type = pml.value("CoordinateType", coordinate_type);
+  MFEM_VERIFY(coordinate_type == PMLCoordinateType::CARTESIAN,
+              "Only \"Cartesian\" PML CoordinateType is supported in this version!");
+
+  const bool has_direction = pml.find("Direction") != pml.end();
+  const bool has_thickness = pml.find("Thickness") != pml.end();
+  autodetect_geometry = !has_direction && !has_thickness;
+
+  direction_signs = ParsePMLDirections(pml);
+
+  if (has_thickness)
+  {
+    auto it = pml.find("Thickness");
+    if (it->is_array())
+    {
+      thickness = it->get<std::array<double, 6>>();
+    }
+    else
+    {
+      // Scalar: apply to every face that has a nonzero direction sign.
+      const double d = it->get<double>();
+      for (std::size_t i = 0; i < thickness.size(); i++)
+      {
+        thickness[i] = (direction_signs[i] != 0) ? d : 0.0;
+      }
+    }
+  }
+
+  MFEM_VERIFY(autodetect_geometry || has_direction,
+              "\"PML.Thickness\" was specified without \"PML.Direction\". Either "
+              "specify both (manual control) or omit both (auto-detect from mesh "
+              "geometry).");
+
+  order = pml.value("Order", order);
+  MFEM_VERIFY(order >= 2,
+              "\"PML.Order\" must be ≥ 2 to preserve continuity of the material tensor "
+              "and its first derivative across the PML/physical interface (got "
+                  << order << ")!");
+
+  // SigmaMax: leave as -1 sentinel if unspecified/null ⇒ auto from reflection_target.
+  ParseScalarOrArray3(pml, "SigmaMax", sigma_max);
+  ParseScalarOrArray3(pml, "KappaMax", kappa_max);
+  ParseScalarOrArray3(pml, "AlphaMax", alpha_max);
+
+  reflection_target = pml.value("ReflectionTarget", reflection_target);
+  MFEM_VERIFY(reflection_target > 0.0 && reflection_target < 1.0,
+              "\"PML.ReflectionTarget\" must be in (0, 1) (got " << reflection_target
+                                                                 << ")!");
+
+  formulation = pml.value("StretchFormulation", formulation);
+  reference_frequency = pml.value("ReferenceFrequency", reference_frequency);
+
+  if (formulation == PMLStretchFormulation::FREQUENCY_DEPENDENT &&
+      pml.find("ReferenceFrequency") != pml.end())
+  {
+    Mpi::Warning("\"PML.ReferenceFrequency\" is ignored when "
+                 "\"StretchFormulation\" is \"FrequencyDependent\".\n");
+  }
+
+  // Fixed and CFS formulations require a reference frequency — without it the PML
+  // tensors are zero and the layer is effectively inactive. Fail early rather than
+  // producing a silently-incorrect solve.
+  if ((formulation == PMLStretchFormulation::FIXED ||
+       formulation == PMLStretchFormulation::CFS) &&
+      reference_frequency <= 0.0)
+  {
+    MFEM_ABORT("\"PML.ReferenceFrequency\" must be specified and positive when "
+               "\"StretchFormulation\" is \"Fixed\" or \"CFS\". Set it to the center "
+               "frequency of your driven sweep, or the target frequency for eigenmode. "
+               "Use \"FrequencyDependent\" to avoid specifying a fixed reference.");
+  }
+
+  const bool has_cfs_params =
+      std::any_of(alpha_max.begin(), alpha_max.end(), [](double a) { return a > 0.0; }) ||
+      std::any_of(kappa_max.begin(), kappa_max.end(), [](double k) { return k != 1.0; });
+  if (has_cfs_params && formulation == PMLStretchFormulation::FIXED)
+  {
+    Mpi::Warning("\"PML.KappaMax\" or \"PML.AlphaMax\" specified but "
+                 "\"StretchFormulation\" is \"Fixed\" (pure UPML) — nonzero α and κ ≠ 1 "
+                 "will be ignored. Use \"CFS\" to enable CFS-PML.\n");
+  }
+
+  allow_refinement = pml.value("AllowRefinement", allow_refinement);
 }
 
 DomainEnergyData::DomainEnergyData(const json &domain)
@@ -1445,10 +1603,51 @@ void Nondimensionalize(const Units &units, RefinementData &data)
   }
 }
 
+void Nondimensionalize(const Units &units, PMLData &data)
+{
+  // Thickness per face [m] → nondimensional.
+  for (auto &t : data.thickness)
+  {
+    t /= units.GetMeshLengthRelativeScale();
+  }
+  // ω₀ [Hz] → angular nondimensional frequency. Palace's solver uses ω = 2πf
+  // (angular) when passing "omega" into GetExtraSystemMatrix and the stretch
+  // formulas, so reference_frequency must match that convention — multiply by 2π
+  // in addition to the unit conversion.
+  if (data.reference_frequency > 0.0)
+  {
+    data.reference_frequency = 2 * M_PI * data.reference_frequency /
+                               units.GetScaleFactor<Units::ValueType::FREQUENCY>();
+  }
+  // σ_max [S/m]-like (same units as conductivity) when explicitly specified by the user.
+  // Negative sentinels mean "auto-compute from reflection target" — leave them alone.
+  for (auto &s : data.sigma_max)
+  {
+    if (s > 0.0)
+    {
+      s /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
+    }
+  }
+  // α is an angular-frequency-like quantity in the CFS denominator (α + iω); apply
+  // the same 2π factor as reference_frequency so α and ω share units.
+  for (auto &a : data.alpha_max)
+  {
+    if (a > 0.0)
+    {
+      a = 2 * M_PI * a / units.GetScaleFactor<Units::ValueType::FREQUENCY>();
+    }
+  }
+  // κ is dimensionless; nothing to scale.
+}
+
 void Nondimensionalize(const Units &units, MaterialData &data)
 {
   data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
   data.lambda_L /= units.GetMeshLengthRelativeScale();
+  if (data.pml)
+  {
+    Nondimensionalize(units, *data.pml);
+  }
 }
 
 void Nondimensionalize(const Units &units, ProbeData &data)

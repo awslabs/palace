@@ -83,6 +83,83 @@
             },
             "minItems" : 3,
             "maxItems" : 3
+          },
+          "PML":
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties":
+            {
+              "CoordinateType": { "type": "string", "enum": ["Cartesian"] },
+              "Direction":
+              {
+                "type": "array",
+                "items": { "type": "string" },
+                "maxItems": 6
+              },
+              "Thickness":
+              {
+                "oneOf":
+                [
+                  { "type": "number" },
+                  {
+                    "type": "array",
+                    "items": { "type": "number" },
+                    "minItems": 6,
+                    "maxItems": 6
+                  }
+                ]
+              },
+              "Order": { "type": "integer", "minimum": 2 },
+              "SigmaMax":
+              {
+                "oneOf":
+                [
+                  { "type": "null" },
+                  { "type": "number" },
+                  {
+                    "type": "array",
+                    "items": { "type": "number" },
+                    "minItems": 3,
+                    "maxItems": 3
+                  }
+                ]
+              },
+              "KappaMax":
+              {
+                "oneOf":
+                [
+                  { "type": "number" },
+                  {
+                    "type": "array",
+                    "items": { "type": "number" },
+                    "minItems": 3,
+                    "maxItems": 3
+                  }
+                ]
+              },
+              "AlphaMax":
+              {
+                "oneOf":
+                [
+                  { "type": "number" },
+                  {
+                    "type": "array",
+                    "items": { "type": "number" },
+                    "minItems": 3,
+                    "maxItems": 3
+                  }
+                ]
+              },
+              "ReflectionTarget": { "type": "number", "exclusiveMinimum": 0 },
+              "StretchFormulation":
+              {
+                "type": "string",
+                "enum": ["Fixed", "CFS", "FrequencyDependent"]
+              },
+              "ReferenceFrequency": { "type": "number" },
+              "AllowRefinement": { "type": "boolean" }
+            }
           }
         }
       }
