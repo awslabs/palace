@@ -6,13 +6,82 @@
 #include "linalg/errorestimator.hpp"
 #include "linalg/modeeigensolver.hpp"
 #include "linalg/operator.hpp"
-#include "models/boundarymodeoperator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/geodata.hpp"
+#include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
 {
+
+void BoundaryModeSolver::PreprocessMesh(mesh::SerialMesh &smesh, MPI_Comm comm) const
+{
+  const auto &bm_data = iodata.solver.boundary_mode;
+  if (bm_data.attributes.empty())
+  {
+    return;  // Direct 2D path: caller-supplied mesh is already the solve mesh.
+  }
+
+  // Ensure the frame vectors are sized for the broadcast at the end regardless of whether
+  // this rank performed the extraction itself.
+  frame_.centroid.SetSize(3);
+  frame_.e1.SetSize(3);
+  frame_.e2.SetSize(3);
+  frame_.normal.SetSize(3);
+  frame_.centroid = 0.0;
+  frame_.e1 = 0.0;
+  frame_.e2 = 0.0;
+  frame_.normal = 0.0;
+  from_submesh_ = true;
+
+  // Ranks that hold a copy of the serial mesh (root always; one-per-node roots in the
+  // byte-string distribution path) perform the extraction locally. The existing parallel
+  // extractor operates on a ParMesh; wrap the serial mesh in a single-rank ParMesh over
+  // MPI_COMM_SELF so its internal collectives are no-ops and the work stays local.
+  if (smesh.smesh)
+  {
+    MFEM_VERIFY(smesh.smesh->Dimension() == 3,
+                "BoundaryMode with \"Attributes\" requires a 3D input mesh!");
+    Mpi::Print(" Extracting 2D submesh from 3D boundary attributes...\n");
+
+    mfem::ParMesh parent(MPI_COMM_SELF, *smesh.smesh);
+
+    mfem::Array<int> attr_list;
+    attr_list.Append(bm_data.attributes.data(), bm_data.attributes.size());
+
+    std::vector<int> internal_bdr_attrs;
+    const auto &bdr = iodata.boundaries;
+    internal_bdr_attrs.insert(internal_bdr_attrs.end(), bdr.pec.attributes.begin(),
+                              bdr.pec.attributes.end());
+    internal_bdr_attrs.insert(internal_bdr_attrs.end(), bdr.auxpec.attributes.begin(),
+                              bdr.auxpec.attributes.end());
+    for (const auto &d : bdr.impedance)
+    {
+      internal_bdr_attrs.insert(internal_bdr_attrs.end(), d.attributes.begin(),
+                                d.attributes.end());
+    }
+    for (const auto &d : bdr.conductivity)
+    {
+      internal_bdr_attrs.insert(internal_bdr_attrs.end(), d.attributes.begin(),
+                                d.attributes.end());
+    }
+    internal_bdr_attrs.insert(internal_bdr_attrs.end(), bdr.farfield.attributes.begin(),
+                              bdr.farfield.attributes.end());
+
+    smesh.smesh =
+        mesh::ExtractStandalone2DSubmesh(parent, attr_list, internal_bdr_attrs,
+                                         frame_.normal, frame_.centroid, frame_.e1,
+                                         frame_.e2);
+  }
+
+  // Broadcast the frame from world root so all ranks (including those that didn't hold a
+  // serial mesh) have it for material-tensor rotation and path projection downstream.
+  Mpi::Broadcast(3, frame_.centroid.HostReadWrite(), 0, comm);
+  Mpi::Broadcast(3, frame_.e1.HostReadWrite(), 0, comm);
+  Mpi::Broadcast(3, frame_.e2.HostReadWrite(), 0, comm);
+  Mpi::Broadcast(3, frame_.normal.HostReadWrite(), 0, comm);
+}
 
 std::pair<ErrorIndicator, long long int>
 BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -27,9 +96,11 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              "(omega = {:.6e})\n",
              freq_GHz, omega);
 
-  // Construct the boundary mode operator (mesh, spaces, materials, boundary ops).
+  // Construct the boundary mode operator (spaces, materials, boundary ops). When the
+  // solve mesh was extracted from a 3D parent, PreprocessMesh populated frame_ and the
+  // operator rotates its material tensors into the submesh tangent plane.
   BlockTimer bt0(Timer::CONSTRUCT);
-  BoundaryModeOperator mode_op(iodata, mesh);
+  BoundaryModeOperator mode_op(iodata, mesh, from_submesh_ ? &frame_ : nullptr);
 
   // Construct the eigenvalue solver on top of the operator's FE context.
   const int nd_size = mode_op.GetNDTrueVSize();
@@ -66,12 +137,10 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Construct PostOperator.
   PostOperator<ProblemType::BOUNDARYMODE> post_op(iodata, mode_op);
-  if (mode_op.IsFromSubmesh())
+  if (from_submesh_)
   {
-    post_op.ProjectImpedancePaths(mode_op.GetSubmeshCentroid(), mode_op.GetSubmeshE1(),
-                                  mode_op.GetSubmeshE2());
-    post_op.ProjectVoltagePaths(mode_op.GetSubmeshCentroid(), mode_op.GetSubmeshE1(),
-                                mode_op.GetSubmeshE2());
+    post_op.ProjectImpedancePaths(frame_.centroid, frame_.e1, frame_.e2);
+    post_op.ProjectVoltagePaths(frame_.centroid, frame_.e1, frame_.e2);
   }
 
   ErrorIndicator indicator;

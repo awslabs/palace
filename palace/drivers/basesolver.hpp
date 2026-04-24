@@ -9,6 +9,7 @@
 #include <fmt/os.h>
 #include "fem/errorindicator.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/geodata.hpp"
 #include "utils/memoryreporting.hpp"
 
 namespace palace
@@ -43,6 +44,12 @@ public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
              const char *git_tag = nullptr);
   virtual ~BaseSolver() = default;
+
+  // Problem-type-specific serial-stage mesh preprocessing hook. Called in the read-mesh
+  // pipeline between mesh::Load and mesh::Partition. The default is a no-op; BoundaryMode
+  // overrides this to extract a 2D submesh from a 3D parent before partitioning, so the
+  // rest of the pipeline (and AMR) operates on the mesh the problem actually solves on.
+  virtual void PreprocessMesh(mesh::SerialMesh &smesh, MPI_Comm comm) const {}
 
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine paradigm.
   // Dispatches to the Solve method for the driver specific calculations.

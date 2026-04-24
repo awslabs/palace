@@ -19,18 +19,30 @@ class FarfieldBoundaryOperator;
 class SurfaceConductivityOperator;
 class SurfaceImpedanceOperator;
 
+// Projection frame for a 2D submesh extracted from a 3D parent. All vectors are size 3
+// and describe the orientation of the extracted surface in the parent's 3D coordinate
+// system. Driven by BoundaryModeSolver::PreprocessMesh; consumed by BoundaryModeOperator
+// for material tensor rotation and by PostOperator for projecting 3D voltage/current path
+// coordinates onto the 2D solve mesh.
+struct SubmeshFrame
+{
+  mfem::Vector centroid, e1, e2, normal;
+};
+
 //
 // Top-level operator for 2D boundary mode analysis, analogous to SpaceOperator for 3D
-// driven/eigenmode problems. Owns the mesh, FE spaces, material operator, and boundary
-// operators. Constructed from IoData and a mesh (2D directly or 3D with boundary
-// attributes for submesh extraction). Does not own the eigenvalue solver or the error
-// estimator — the driver constructs those on top of this operator's FE context.
+// driven/eigenmode problems. Owns the FE spaces, material operator, and boundary
+// operators; the mesh itself is passed in and owned by the caller. When constructed with
+// a non-null SubmeshFrame, material tensors are rotated from the parent 3D frame onto the
+// submesh tangent plane. Does not own the eigenvalue solver or the error estimator — the
+// driver constructs those on top of this operator's FE context.
 //
 class BoundaryModeOperator
 {
 public:
   BoundaryModeOperator(const IoData &iodata,
-                       const std::vector<std::unique_ptr<Mesh>> &mesh);
+                       const std::vector<std::unique_ptr<Mesh>> &mesh,
+                       const SubmeshFrame *frame = nullptr);
 
   // Access FE spaces.
   FiniteElementSpace &GetNDSpace() { return nd_fespaces.GetFinestFESpace(); }
@@ -74,16 +86,8 @@ public:
   // Access solver order.
   int GetSolverOrder() const { return solver_order; }
 
-  // Submesh projection data (for coordinate transforms and material tensor rotation).
-  // For direct 2D, normal is nullptr.
-  bool IsFromSubmesh() const { return use_submesh; }
-  const mfem::Vector *GetSubmeshNormal() const
-  {
-    return use_submesh ? &submesh_normal : nullptr;
-  }
-  const mfem::Vector &GetSubmeshCentroid() const { return submesh_centroid; }
-  const mfem::Vector &GetSubmeshE1() const { return submesh_e1; }
-  const mfem::Vector &GetSubmeshE2() const { return submesh_e2; }
+  // Parent-frame normal for material tensor rotation; nullptr for direct 2D.
+  const mfem::Vector *GetSubmeshNormal() const { return frame_normal; }
 
   // True vector sizes.
   int GetNDTrueVSize() const { return nd_fespaces.GetFinestFESpace().GetTrueVSize(); }
@@ -92,14 +96,13 @@ public:
 private:
   const IoData &iodata;
   int solver_order;
-  bool use_submesh;
 
-  // Mesh (owned for submesh case, non-owning pointer for direct 2D).
-  std::unique_ptr<Mesh> owned_mesh;
+  // Non-owning pointer to the caller-owned solve mesh.
   Mesh *solve_mesh;
 
-  // Submesh projection geometry.
-  mfem::Vector submesh_centroid, submesh_e1, submesh_e2, submesh_normal;
+  // Parent-frame normal, non-null when the mesh was extracted from a 3D parent. Lifetime
+  // is managed by the caller (BoundaryModeSolver).
+  const mfem::Vector *frame_normal = nullptr;
 
   // FE collections and space hierarchies.
   std::vector<std::unique_ptr<mfem::ND_FECollection>> nd_fecs;
@@ -122,8 +125,7 @@ private:
   // DBC attributes.
   mfem::Array<int> dbc_bcs;
 
-  // Setup helpers.
-  void SetUpMesh(const std::vector<std::unique_ptr<Mesh>> &mesh);
+  // Setup helper.
   void SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>> &mesh);
 };
 
