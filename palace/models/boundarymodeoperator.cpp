@@ -104,10 +104,11 @@ void BoundaryModeOperator::SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>
   h1_aux_fecs = fem::ConstructFECollections<mfem::H1_FECollection>(
       solver_order, dim, mg.mg_max_levels, mg.mg_coarsening, false);
   // RT collection (estimator flux recovery only; depth follows estimator_mg, mirroring
-  // SpaceOperator::rt_fespaces).
+  // SpaceOperator::rt_fespaces). Order is solver_order - 1 because the recovered flux
+  // lives one polynomial degree below the primary ND space.
   const int rt_mg_max_levels = mg.estimator_mg ? mg.mg_max_levels : 1;
   rt_fecs = fem::ConstructFECollections<mfem::RT_FECollection>(
-      solver_order, dim, rt_mg_max_levels, mg.mg_coarsening, false);
+      solver_order - 1, dim, rt_mg_max_levels, mg.mg_coarsening, false);
 
   nd_fespaces = fem::ConstructFiniteElementSpaceHierarchy<mfem::ND_FECollection>(
       mg.mg_max_levels, mesh, nd_fecs, &dbc_bcs, &nd_dbc_tdof_lists);
