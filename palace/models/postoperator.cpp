@@ -1042,26 +1042,47 @@ void PostOperator<solver_t>::MeasureSParameter() const
   {
     using std::complex_literals::operator""i;
 
-    // Don't measure S-Matrix unless there is only one excitation per port. Also, we current
-    // don't support mixing wave and lumped ports, because we need to fix consistent
-    // conventions / de-embedding.
-    if (!fem_op->GetPortExcitations().IsMultipleSimple() ||
-        !((fem_op->GetLumpedPortOp().Size() > 0) xor (fem_op->GetWavePortOp().Size() > 0)))
+    // Don't measure S-Matrix unless there is only one excitation per port.
+    if (!fem_op->GetPortExcitations().IsMultipleSimple())
     {
       return;
     }
 
-    // Assumes that for single driving port the excitation index is equal to the port index.
-    auto drive_port_idx = measurement_cache.ex_idx;
+    // TODO: Fix Conventions with "generalized S-Paramters" in the Wave port case Deal with
+    // potentially complex power Z_R coming out of the wave-port solve Write up decisions &
+    // conventions in notes.
 
-    // Currently S-Parameters are not calculated for mixed lumped & wave ports, so don't
-    // combine output iterators.
+    // Get information about excited port
+    auto [drive_is_simple, drive_port_type, drive_port_idx] =
+        fem_op->GetPortExcitations().excitations.at(measurement_cache.ex_idx).IsSimple();
+
+    // Source Port Scale Factor
+    std::complex<double> scale_src_i = 1.0;
+
+    // Is drive a lumped-port or wave-port?
+    if (drive_port_type == PortType::LumpedPort)
+    {
+      const LumpedPortData &src_data = fem_op->GetLumpedPortOp().GetPort(drive_port_idx);
+      scale_src_i = std::sqrt(src_data.R);
+    }
+    else if (drive_port_type == PortType::WavePort)
+    {
+      const WavePortData &src_data = fem_op->GetWavePortOp().GetPort(drive_port_idx);
+      // Waveport: de-embedding exp(ikₙᵢ dᵢ)
+      scale_src_i = std::exp(1i * src_data.kn0 * src_data.d_offset);
+    }
+    else
+    {
+      // Scattering Matrix does note makes sense for CurrentPort or CurrentDipole. TODO:
+      // Should this abort? Do excitation verification with better interface?
+      return;
+    }
+
+    // Iterate over output lumped and wave ports.
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
       // Get previously computed data: should never fail as defined by MeasureLumpedPorts.
       auto &vi = measurement_cache.lumped_port_vi.at(idx);
-
-      const LumpedPortData &src_data = fem_op->GetLumpedPortOp().GetPort(drive_port_idx);
       if (idx == drive_port_idx)
       {
         vi.S.real(vi.S.real() - 1.0);
@@ -1069,7 +1090,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
       // Generalized S-parameters if the ports are resistive (avoids divide-by-zero).
       if (std::abs(data.R) > 0.0)
       {
-        vi.S *= std::sqrt(src_data.R / data.R);
+        vi.S *= scale_src_i / std::sqrt(data.R);
       }
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
@@ -1080,18 +1101,18 @@ void PostOperator<solver_t>::MeasureSParameter() const
     {
       // Get previously computed data: should never fail as defined by MeasureWavePorts.
       auto &vi = measurement_cache.wave_port_vi.at(idx);
-
-      // Wave port modes are not normalized to a characteristic impedance so no generalized
-      // S-parameters are available.
-      const WavePortData &src_data = fem_op->GetWavePortOp().GetPort(drive_port_idx);
       if (idx == drive_port_idx)
       {
         vi.S.real(vi.S.real() - 1.0);
       }
+
+      // Wave port modes are not normalized to a characteristic impedance so no generalized
+      // S-parameters are available.
+      // TODO: FIX CONVENTIONS HERE.
+
       // Port de-embedding: S_demb = S exp(ikₙᵢ dᵢ) exp(ikₙⱼ dⱼ) (distance offset is default
       // 0 unless specified).
-      vi.S *= std::exp(1i * src_data.kn0 * src_data.d_offset);
-      vi.S *= std::exp(1i * data.kn0 * data.d_offset);
+      vi.S *= scale_src_i * std::exp(1i * data.kn0 * data.d_offset);
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
                  fmt::format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
