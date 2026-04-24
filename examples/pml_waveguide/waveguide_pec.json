@@ -1,0 +1,38 @@
+{
+  // Sanity check: PEC termination on the waveguide's +z end.
+  // Expected: total reflection, |S11| = 1.
+  // (The "pml" attribute is also treated as vacuum with PEC on its outer face — the
+  //  whole guide is effectively 0.4 m long with a closed PEC back wall at z = 0.4.)
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/waveguide_pec"
+  },
+  "Model": { "Mesh": "mesh/waveguide.msh", "L0": 1.0 },
+  "Domains":
+  {
+    "Materials":
+    [
+      { "Attributes": [1, 2], "Permeability": 1.0, "Permittivity": 1.0 }
+    ]
+  },
+  "Boundaries":
+  {
+    "WavePort":
+    [
+      { "Index": 1, "Attributes": [3], "Mode": 1, "Excitation": true }
+    ],
+    "PEC": { "Attributes": [4, 5] }
+  },
+  "Solver":
+  {
+    "Order": 2, "Device": "CPU",
+    "Driven": { "MinFreq": 3.0, "MaxFreq": 3.0, "FreqStep": 0.5, "SaveStep": 1 },
+    "Linear":
+    {
+      "Type": "STRUMPACK", "KSPType": "GMRES", "Tol": 1.0e-8, "MaxIts": 100,
+      "MGMaxLevels": 1, "ComplexCoarseSolve": true
+    }
+  }
+}
