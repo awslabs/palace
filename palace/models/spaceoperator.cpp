@@ -363,6 +363,21 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
   return a.Assemble(fespaces, skip_zeros, l0);
 }
 
+// Add a per-attribute DenseTensor (one slab per libCEED attribute) into a
+// MaterialPropertyCoefficient. Uses the identity attribute-to-material map so each
+// attribute gets its own coefficient slot, as needed for PML where every attribute
+// has a distinct stretch tensor.
+void AddPerAttributeCoefficient(MaterialPropertyCoefficient &f,
+                                const mfem::DenseTensor &mat_coeff, double a)
+{
+  mfem::Array<int> identity(mat_coeff.SizeK());
+  for (int k = 0; k < identity.Size(); k++)
+  {
+    identity[k] = k;
+  }
+  f.AddCoefficient(identity, mat_coeff, a);
+}
+
 }  // namespace
 
 template <typename OperType>
@@ -371,15 +386,17 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()), f(mat_op.MaxCeedAttribute()),
-      fb(mat_op.MaxCeedBdrAttribute()), fc(mat_op.MaxCeedAttribute());
+      fb(mat_op.MaxCeedBdrAttribute()), fc(mat_op.MaxCeedAttribute()),
+      dfi(mat_op.MaxCeedAttribute());
   AddStiffnessCoefficients(1.0, df, f);
+  AddImagStiffnessCoefficients(1.0, dfi);
   AddStiffnessBdrCoefficients(1.0, fb);
   if (!mat_op.HasFloquetFrequencyScaling())
   {
     AddRealPeriodicCoefficients(1.0, f);
     AddImagPeriodicCoefficients(1.0, fc);
   }
-  int empty[2] = {(df.empty() && f.empty() && fb.empty()), (fc.empty())};
+  int empty[2] = {(df.empty() && f.empty() && fb.empty()), (fc.empty() && dfi.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -393,8 +410,10 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   }
   if (!empty[1])
   {
-    ki =
-        AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, &fc, skip_zeros);
+    // Imaginary branch: periodic imaginary coefficient (fc) plus PML imaginary μ̃⁻¹
+    // (dfi). Both are attribute-keyed MaterialPropertyCoefficients and compose as
+    // additive contributions through AssembleOperator.
+    ki = AssembleOperator(GetNDSpace(), &dfi, nullptr, nullptr, nullptr, &fc, skip_zeros);
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -504,7 +523,15 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       fbi(mat_op.MaxCeedBdrAttribute());
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
-  int empty[2] = {(dfbr.empty() && fbr.empty()), (dfbi.empty() && fbi.empty())};
+
+  // Domain coefficients for FREQUENCY_DEPENDENT PML. See helper docstring.
+  MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
+      dfi(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
+      fi(mat_op.MaxCeedAttribute());
+  AddFrequencyDependentPMLDomainCoefficients(omega, dfr, dfi, fr, fi);
+
+  int empty[2] = {(dfbr.empty() && fbr.empty() && dfr.empty() && fr.empty()),
+                  (dfbi.empty() && fbi.empty() && dfi.empty() && fi.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -514,11 +541,11 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   std::unique_ptr<Operator> ar, ai;
   if (!empty[0])
   {
-    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, skip_zeros);
+    ar = AssembleOperator(GetNDSpace(), &dfr, &fr, &dfbr, &fbr, nullptr, skip_zeros);
   }
   if (!empty[1])
   {
-    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, skip_zeros);
+    ai = AssembleOperator(GetNDSpace(), &dfi, &fi, &dfbi, &fbi, nullptr, skip_zeros);
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -711,6 +738,11 @@ void SpaceOperator::AssemblePreconditioner(
       fpr(mat_op.MaxCeedAttribute());
   AddStiffnessCoefficients(a0.real(), dfr, fr);
   AddStiffnessCoefficients(a0.imag(), dfi, fi);
+  // Cross-terms from the imaginary stiffness branch (PML μ̃⁻¹ imag part):
+  //   a0 · (kr + i ki) has real part a0r·kr − a0i·ki and imag part a0r·ki + a0i·kr.
+  // AddStiffnessCoefficients already handles the kr pieces; add the ki pieces here.
+  AddImagStiffnessCoefficients(a0.real(), dfi);
+  AddImagStiffnessCoefficients(-a0.imag(), dfr);
   AddStiffnessBdrCoefficients(a0.real(), fbr);
   AddStiffnessBdrCoefficients(a0.imag(), fbi);
   AddDampingCoefficients(a1.real(), fr);
@@ -724,6 +756,10 @@ void SpaceOperator::AssemblePreconditioner(
   AddImagMassCoefficients(a2.real(), fi);
   AddImagMassCoefficients(-a2.imag(), fr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
+  // FREQUENCY_DEPENDENT PML domain contributions at ω = a3 (same live-ω recipe as
+  // GetExtraSystemMatrix). The helper already bakes in the −ω² mass prefactor and
+  // 1·stiffness prefactor, matching the system matrix exactly when a0 = 1, a2 = −ω².
+  AddFrequencyDependentPMLDomainCoefficients(a3, dfr, dfi, fr, fi);
   if (mat_op.HasFloquetFrequencyScaling())
   {
     // k₀-based tensors: cross terms scale with a1, mass term with a2.
@@ -907,14 +943,32 @@ void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoeff
                                              MaterialPropertyCoefficient &f)
 {
   // Contribution from material permeability. In 2D, curl is scalar so the curl-curl
-  // coefficient is scalar (1x1).
+  // coefficient is scalar (1x1). MaterialOperator zeros out entries for PML attributes, so
+  // this line contributes nothing there; PML tensors are added below.
   df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetCurlCurlInvPermeability(),
                     coeff);
+
+  // PML real part of μ̃⁻¹ (FIXED/CFS attributes only — FREQUENCY_DEPENDENT goes through
+  // GetExtraSystemMatrix(ω) instead).
+  if (mat_op.HasPML())
+  {
+    AddPerAttributeCoefficient(df, mat_op.GetInvPermeabilityPMLStaticReal(), coeff);
+  }
 
   // Contribution for London superconductors.
   if (mat_op.HasLondonDepth())
   {
     f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvLondonDepth(), coeff);
+  }
+}
+
+void SpaceOperator::AddImagStiffnessCoefficients(double coeff,
+                                                 MaterialPropertyCoefficient &df)
+{
+  // PML imaginary part of μ̃⁻¹ (FIXED/CFS only).
+  if (mat_op.HasPML())
+  {
+    AddPerAttributeCoefficient(df, mat_op.GetInvPermeabilityPMLStaticImag(), coeff);
   }
 }
 
@@ -947,6 +1001,11 @@ void SpaceOperator::AddDampingBdrCoefficients(double coeff, MaterialPropertyCoef
 void SpaceOperator::AddRealMassCoefficients(double coeff, MaterialPropertyCoefficient &f)
 {
   f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityReal(), coeff);
+  if (mat_op.HasPML())
+  {
+    // PML real ε̃ (FIXED/CFS only).
+    AddPerAttributeCoefficient(f, mat_op.GetPermittivityPMLStaticReal(), coeff);
+  }
 }
 
 void SpaceOperator::AddRealMassBdrCoefficients(double coeff,
@@ -964,11 +1023,33 @@ void SpaceOperator::AddImagMassCoefficients(double coeff, MaterialPropertyCoeffi
   {
     f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityImag(), coeff);
   }
+  if (mat_op.HasPML())
+  {
+    // PML imag ε̃ (FIXED/CFS only).
+    AddPerAttributeCoefficient(f, mat_op.GetPermittivityPMLStaticImag(), coeff);
+  }
 }
 
 void SpaceOperator::AddAbsMassCoefficients(double coeff, MaterialPropertyCoefficient &f)
 {
   f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityAbs(), coeff);
+}
+
+void SpaceOperator::AddFrequencyDependentPMLDomainCoefficients(
+    double omega, MaterialPropertyCoefficient &dfr, MaterialPropertyCoefficient &dfi,
+    MaterialPropertyCoefficient &fr, MaterialPropertyCoefficient &fi)
+{
+  if (!mat_op.HasFrequencyDependentPML())
+  {
+    return;
+  }
+  mat_op.RebuildPMLTensors(omega, /*only_freq_dependent=*/true);
+  AddPerAttributeCoefficient(dfr, mat_op.GetInvPermeabilityPMLFreqReal(), 1.0);
+  AddPerAttributeCoefficient(dfi, mat_op.GetInvPermeabilityPMLFreqImag(), 1.0);
+  // Mass contribution enters with a −ω² prefactor so the returned A2 is inserted
+  // as-is into A = K + iωC − ω²M + A2.
+  AddPerAttributeCoefficient(fr, mat_op.GetPermittivityPMLFreqReal(), -omega * omega);
+  AddPerAttributeCoefficient(fi, mat_op.GetPermittivityPMLFreqImag(), -omega * omega);
 }
 
 void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,

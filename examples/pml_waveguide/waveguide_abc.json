@@ -1,0 +1,39 @@
+{
+  // Baseline: 2nd-order absorbing BC on the +z end (attribute 5). This is Palace's
+  // existing first/second-order farfield/ABC — it should absorb normally-incident
+  // waves well for a waveguide TE10 mode (the wave travels along +z, perpendicular
+  // to the termination plane). |S11| will reflect the ABC's residual reflection.
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/waveguide_abc"
+  },
+  "Model": { "Mesh": "mesh/waveguide.msh", "L0": 1.0 },
+  "Domains":
+  {
+    "Materials":
+    [
+      { "Attributes": [1, 2], "Permeability": 1.0, "Permittivity": 1.0 }
+    ]
+  },
+  "Boundaries":
+  {
+    "WavePort":
+    [
+      { "Index": 1, "Attributes": [3], "Mode": 1, "Excitation": true }
+    ],
+    "PEC": { "Attributes": [4] },
+    "Absorbing": { "Attributes": [5], "Order": 2 }
+  },
+  "Solver":
+  {
+    "Order": 2, "Device": "CPU",
+    "Driven": { "MinFreq": 3.0, "MaxFreq": 3.0, "FreqStep": 0.5, "SaveStep": 1 },
+    "Linear":
+    {
+      "Type": "STRUMPACK", "KSPType": "GMRES", "Tol": 1.0e-8, "MaxIts": 100,
+      "MGMaxLevels": 1, "ComplexCoarseSolve": true
+    }
+  }
+}
