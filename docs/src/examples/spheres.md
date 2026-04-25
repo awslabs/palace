@@ -94,7 +94,7 @@ Additionally, while the typical approach used by *Palace* for lumped parameter e
 uses the computed field energies, the capacitance can also be calculated by directly
 integrating the charge on a boundary surface and dividing by the excitation voltage. The
 configuration file for this example contains this information under
-[`config["Boundaries"]["Postprocessing"]["SurfaceFlux"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22SurfaceFlux%22%5D).
+[`config["Boundaries"]["Postprocessing"]["SurfaceFlux"]`](../config/reference.md#config-boundaries-postprocessing-surfaceflux).
 The resulting capacitances are written to `postpro/terminal-C.csv`:
 
 ```@example include_example

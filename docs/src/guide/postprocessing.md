@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 
 As described in the section [Problem Types](problem.md), each simulation type writes
 relevant postprocessed scalar quantities to disk in the directory specified by
-[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D), including
+[`config["Problem"]["Output"]`](../config/reference.md#config-problem), including
 but not limited to computed values like eigenfrequencies, scattering parameters, or lumped
 element parameters. In addition, each simulation type will write a file called
 `domain-E.csv`, which includes information about the electric and magnetic field energies,
@@ -33,7 +33,7 @@ or more points in space. This probe functionality is also described in
 Finally, as described further in [Visualization](#Visualization), various field quantities
 on the 3D computational domain as well as 2D domain boundaries and material interfaces are
 written to disk when requested using the relevant parameters under
-[`config["Solver"]`](../config/solver.md). These fields are meant to be visualized with
+[`config["Solver"]`](../config/reference.md#config-solver). These fields are meant to be visualized with
 [ParaView](https://www.paraview.org/) or [GLVis](https://glvis.org/).
 
 ## Ports and surface currents
@@ -52,16 +52,16 @@ currents, computed from the field phasors.
 ## Domain postprocessing
 
 Domain postprocessing capabilities are enabled by including objects under
-[`config["Domains"]["Postprocessing"]`](../config/domains.md) in the configuration file.
+[`config["Domains"]["Postprocessing"]`](../config/reference.md#config-domains) in the configuration file.
 These include:
 
-  - [`config["Domains"]["Postprocessing"]["Energy"]`](../config/domains.md#domains%5B%22Postprocessing%22%5D%5B%22Energy%22%5D) :
+  - [`config["Domains"]["Postprocessing"]["Energy"]`](../config/reference.md#config-domains-postprocessing-energy) :
     Postprocessess the electric and magnetic field energy inside of a given domain
     (associated with the specified domain attributes and indexed by the specified integer
     `"Index"`). These are from the electric and magnetic field solutions and written to the
     same `domain-E.csv` file in the specified postprocessing output directory used for the
     global energies (described above).
-  - [`config["Domains"]["Postprocessing"]["Probe"]`](../config/domains.md#domains%5B%22Postprocessing%22%5D%5B%22Probe%22%5D) :
+  - [`config["Domains"]["Postprocessing"]["Probe"]`](../config/reference.md#config-domains-postprocessing-probe) :
     Probe the values of the computed electric field and magnetic flux density solutions at
     specified locations in the computational domain. The availability of the ``\bm{E}`` and
     ``\bm{B}`` fields depends on the problem type (for example, for magnetostatic problems,
@@ -72,17 +72,17 @@ These include:
 ## Boundary postprocessing
 
 Boundary postprocessing capabilities are enabled by including objects under
-[`config["Boundaries"]["Postprocessing"]`](../config/boundaries.md) in the configuration
+[`config["Boundaries"]["Postprocessing"]`](../config/reference.md#config-boundaries) in the configuration
 file. These include:
 
-  - [`config["Boundaries"]["Postprocessing"]["SurfaceFlux"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22SurfaceFlux%22%5D) :
+  - [`config["Boundaries"]["Postprocessing"]["SurfaceFlux"]`](../config/reference.md#config-boundaries-postprocessing-surfaceflux) :
     Postprocess the integrated flux through a surface defined by a list of boundary
     attributes. Electric, magnetic, and power flux are all supported. Surface capacitance
     can be computed by dividing the computed electric flux by the excitation voltage, while
     inductance can be computed by dividing the computed magnetic flux by the excitation
     current. The resulting fluxes are written to `surface-F.csv` in the specified output
     directory.
-  - [`config["Boundaries"]["Postprocessing"]["Dielectric"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Dielectric%22%5D) :
+  - [`config["Boundaries"]["Postprocessing"]["Dielectric"]`](../config/reference.md#config-boundaries-postprocessing-dielectric) :
     Postprocesses interface dielectric loss at surfaces of the model by specifying the
     interface thickness, permittivity, and loss tangent. See the
     [Bulk and interface dielectric loss](../reference.md#Bulk-and-interface-dielectric-loss)
@@ -100,8 +100,8 @@ or [GLVis](https://glvis.org/). Various other postprocessed fields are also writ
 or grid function (GLVis) database as available, including electric and magnetic energy density,
 surface currents, and charge density. These files are found in the `paraview/` or `gridfunction/`
 directories located in the output directory specified under
-[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). The output
-formats are specified in [`config["Problem"]["OutputFormats"]`](../config/problem.md#config%5B%22Problem%22%5D).
+[`config["Problem"]["Output"]`](../config/reference.md#config-problem). The output
+formats are specified in [`config["Problem"]["OutputFormats"]`](../config/reference.md#config-problem).
 
 ParaView is recommended to visualize large simulations in parallel. The grid function (GLVis)
 format can be useful to embed visualizations in webpages with its
@@ -147,7 +147,7 @@ well as:
 ## Adaptive mesh refinement
 
 At the start of an adaptive mesh refinement (AMR) iteration, if
-[`config["Model"]["Refinement"]["SaveAdaptIterations"]`](../config/model.md#model%5B%22Refinement%22%5D)
+[`config["Model"]["Refinement"]["SaveAdaptIterations"]`](../config/reference.md#config-model-refinement)
 is enabled, the postprocessing results from the solve on the previous mesh will be saved off
 within a subdirectory denoted `iterationX`, where `X` is the (1-based) iteration number.
 The results in the top level directory will always be those from the most recent successful

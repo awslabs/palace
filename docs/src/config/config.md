@@ -54,8 +54,8 @@ section of the documentation.
 
 ## Contents
 
-  - [`config["Problem"]`](problem.md)
-  - [`config["Model"]`](model.md)
-  - [`config["Domains"]`](domains.md)
-  - [`config["Boundaries"]`](boundaries.md)
-  - [`config["Solver"]`](solver.md)
+  - [`config["Problem"]`](reference.md#config-problem)
+  - [`config["Model"]`](reference.md#config-model)
+  - [`config["Domains"]`](reference.md#config-domains)
+  - [`config["Boundaries"]`](reference.md#config-boundaries)
+  - [`config["Solver"]`](reference.md#config-solver)

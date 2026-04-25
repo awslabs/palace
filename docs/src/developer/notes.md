@@ -16,7 +16,7 @@ given *Palace* simulation.
 
 First, the mesh comes with its own unit of length. Users specify the conversion
 between one unit of length on the mesh to meters through the
-[`config["Model"]["L0"]`](../config/problem.md#config%5B%Model%22%5D) parameter.
+[`config["Model"]["L0"]`](../config/reference.md#config-model) parameter.
 
 Second, *Palace* defines a system of non-dimensional units where the actual
 solver operates.
@@ -34,7 +34,7 @@ The non-dimensional unit system is constructed as follows:
 
 Length: Lengths are measured in units of the characteristic length `Lc`, which
 is the mesh size in mesh units, unless `Lc` is manually specified in
-[`config["Model"]["Lc"]`](../config/problem.md#config%5B%Model%22%5D). The extent
+[`config["Model"]["Lc"]`](../config/reference.md#config-model). The extent
 of the mesh is 1 in these units, with extent defined as the largest single
 dimension (e.g., for a cuboid of size 10m x 20m x 40m, this would be 40m).
 

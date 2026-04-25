@@ -20,21 +20,21 @@ environment variable.
 
 Lastly, *Palace* supports GPU-acceleration using NVIDIA and AMD GPUs, activated with the
 build options `-DPALACE_WITH_CUDA=ON` and `-DPALACE_WITH_HIP=ON`, respectively. At runtime,
-the [`config["Solver"]["Device"]`](../config/solver.md#config%5B%22Solver%22%5D) parameter
+the [`config["Solver"]["Device"]`](../config/reference.md#config-solver) parameter
 in the configuration file can be set to `"CPU"` (the default) or `"GPU"` in order to
 configure *Palace* and MFEM to use the available GPU device or devices. The
-[`config["Solver"]["Backend"]`](../config/solver.md#config%5B%22Solver%22%5D) parameter, on
+[`config["Solver"]["Backend"]`](../config/reference.md#config-solver) parameter, on
 the other hand, controls the
 [libCEED backend](https://libceed.org/en/latest/gettingstarted/#backends). Users typically
 do not need to provide a value for this option and can instead rely on *Palace*'s default,
 which selects the most appropriate backend for the given value of
-[`config["Solver"]["Device"]`](../config/solver.md#config%5B%22Solver%22%5D).
+[`config["Solver"]["Device"]`](../config/reference.md#config-solver).
 
 In order to take full advantage of the performance benefits made available by GPU-
 acceleration, it is recommended to make use of
 [operator partial assembly](https://mfem.org/performance/), activated when the value of
-[`config["Solver"]["PartialAssemblyOrder"]`](../config/solver.md#config%5B%22Solver%22%5D)
-is less than [`config["Solver"]["Order"]`](../config/solver.md#config%5B%22Solver%22%5D).
+[`config["Solver"]["PartialAssemblyOrder"]`](../config/reference.md#config-solver)
+is less than [`config["Solver"]["Order"]`](../config/reference.md#config-solver).
 This feature avoids assembling a global sparse matrix and instead makes use of data
 structures for operators which lend themselves to more efficient asymptotic storage and
 application costs. See also

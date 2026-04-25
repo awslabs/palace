@@ -84,11 +84,11 @@ There are two configuration files for this problem,
 and
 [`cavity_impedance.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/cavity_impedance.json).
 
-In both, the [`config["Problem"]["Type"]`](../config/problem.md#config%5B%22Problem%22%5D)
+In both, the [`config["Problem"]["Type"]`](../config/reference.md#config-problem)
 field is set to `"Eigenmode"`, and we use the mesh shown above. The material properties for
 Teflon are entered under
-[`config["Domains"]["Materials"]`](../config/domains.md#domains%5B%22Materials%22%5D). The
-[`config["Domains"]["Postprocessing"]["Energy]"`](../config/domains.md#domains%5B%22Postprocessing%22%5D%5B%22Energy%22%5D)
+[`config["Domains"]["Materials"]`](../config/reference.md#config-domains-materials). The
+[`config["Domains"]["Postprocessing"]["Energy"]`](../config/reference.md#config-domains-postprocessing-energy)
 object is used to extract the quality factor due to bulk dielectric loss; in this problem
 since there is only one domain this is trivial, but in problems with multiple material
 domains this feature can be used to isolate the energy-participation ratio (EPR) and

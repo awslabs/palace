@@ -90,7 +90,7 @@ The typical approach used by *Palace* for lumped parameter extraction uses the c
 field energies, but one can also compute the inductance by explicitly integrating the
 magnetic flux through a surface and dividing by the excitation current. This is configured
 under
-[`config["Boundaries"]["Postprocessing"]["Inductance"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Inductance%22%5D)
+[`config["Boundaries"]["Postprocessing"]["SurfaceFlux"]`](../config/reference.md#config-boundaries-postprocessing-surfaceflux)
 in the configuration file. The postprocessed magnetic flux values are written to `postpro/surface-F.csv`:
 
 ```@example include_example

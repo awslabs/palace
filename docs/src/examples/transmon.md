@@ -61,9 +61,9 @@ external world, while a third port models the Josephson junction as a linearized
 LC circuit with both inductance and capacitance. The substrate is sapphire,
 chosen for its low dielectric loss and well-characterized anisotropic material
 properties (see,
-[`config["Domains"]["Materials"]`](../config/domains.md#domains%5B%22Materials%22%5D)
+[`config["Domains"]["Materials"]`](../config/reference.md#config-domains-materials)
 for more information on how to configure anisotropic materials).
-[`config["Boundaries"]["Absorbing"]`](../config/boundaries.md#boundaries%5B%22Absorbing%22%5D)
+[`config["Boundaries"]["Absorbing"]`](../config/reference.md#config-boundaries-absorbing)
 boundary conditions on the external boundaries of the simulation box capture electromagnetic
 radiation and prevent artificial reflections.
 
@@ -149,7 +149,7 @@ claw).
 !!! tip "Quick Start to GLVis"
 
     [GLVis](https://glvis.org) provides fast visualization of Palace output when
-    [`config["Problem"]["Output"]["OutputFormats"]["GridFunction"]`](../config/problem.md#problem%5B%OutputFormats%22%5D) is enabled.
+    [`config["Problem"]["Output"]["OutputFormats"]["GridFunction"]`](../config/reference.md#config-problem-outputformats) is enabled.
     While less quantitative than [ParaView](https://www.paraview.org/download/), GLVis excels at rapid solution inspection and is particularly well-suited
     for interactive exploration. The interface is primarily keyboard-driven with extensive
     [keybindings](https://github.com/glvis/glvis/blob/v4.4/README.md).
@@ -273,7 +273,7 @@ In *Palace*, AMR continues until one or more configurable conditions are met:
   - `MaxSize`: Maximum degrees of freedom (default: `0`, unlimited)
 
 See
-[`config["Model"]["Refinement"]`](../config/model.md#config%5B%22Model%22%5D)
+[`config["Model"]["Refinement"]`](../config/reference.md#config-model-refinement)
 for the various AMR parameters.
 
 For a more realistic simulation of a transmon, we enable AMR with:
