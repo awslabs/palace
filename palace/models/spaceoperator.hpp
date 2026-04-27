@@ -95,9 +95,6 @@ private:
   // operators in Maxwell's equations.
   void AddStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df,
                                 MaterialPropertyCoefficient &f);
-  // PML imaginary part of μ̃⁻¹, added to the curl-curl bilinear form in the imaginary
-  // branch of the complex stiffness operator. Empty (no-op) when HasPML() is false.
-  void AddImagStiffnessCoefficients(double coeff, MaterialPropertyCoefficient &df);
   void AddStiffnessBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
   void AddDampingCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
@@ -123,14 +120,6 @@ private:
       MaterialPropertyCoefficient &fbi, MaterialPropertyCoefficient &frbr,
       MaterialPropertyCoefficient &frbi, MaterialPropertyCoefficient *fpbr,
       MaterialPropertyCoefficient *fpbi);
-  // Rebuild FREQUENCY_DEPENDENT PML tensors at ω and add their contributions to the
-  // four real/imag domain coefficient containers. No-op when there are no FD PML
-  // attributes.
-  void AddFrequencyDependentPMLDomainCoefficients(double omega,
-                                                  MaterialPropertyCoefficient &dfr,
-                                                  MaterialPropertyCoefficient &dfi,
-                                                  MaterialPropertyCoefficient &fr,
-                                                  MaterialPropertyCoefficient &fi);
   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   // Floquet terms of second-order farfield boundaries, with a frequency dependent Floquet
