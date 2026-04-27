@@ -51,9 +51,26 @@ ymax(x) = bbox(x)[5];
 zmax(x) = bbox(x)[6]
 
 """
-    generate_waveguide_mesh(; filename, a, b, L, d, mesh_size, verbose, gui)
+    generate_waveguide_mesh(; filename, a, b, L, d, n_pml_slabs, mesh_size, verbose, gui)
 
 Generate the rectangular waveguide + PML slab mesh.
+
+# Arguments
+
+  - filename    - output .msh filename (written in this directory)
+  - a, b        - waveguide cross-section dimensions (m)
+  - L           - guide length (m)
+  - d           - total PML thickness (m)
+  - n_pml_slabs - number of axis-aligned PML slabs along +z. Each slab becomes its
+    own mesh attribute so Palace's per-attribute PML stretch tensor
+    discretizes the continuous σ(z) at `n_pml_slabs` successive
+    levels. More slabs ⇒ closer to the ideal continuously-varying
+    σ(z) ⇒ lower residual |S11|. Attributes assigned in z-order,
+    starting at 2 (slab closest to the physical region) through
+    `1 + n_pml_slabs` (outermost slab).
+  - mesh_size   - target element size (m)
+  - verbose     - gmsh verbosity (0-5)
+  - gui         - open gmsh GUI after mesh generation
 """
 function generate_waveguide_mesh(;
     filename::AbstractString="waveguide.msh",
@@ -61,10 +78,12 @@ function generate_waveguide_mesh(;
     b::Real=0.05,
     L::Real=0.3,
     d::Real=0.1,
+    n_pml_slabs::Integer=1,
     mesh_size::Real=0.015,
     verbose::Integer=3,
     gui::Bool=false
 )
+    @assert n_pml_slabs >= 1 "n_pml_slabs must be >= 1"
     gmsh.initialize()
     kernel = gmsh.model.occ
     gmsh.option.setNumber("General.Verbosity", verbose)
@@ -75,18 +94,25 @@ function generate_waveguide_mesh(;
     end
     gmsh.model.add("waveguide")
 
-    # Two boxes: guide (1) and PML slab (2), glued via fragment.
+    # Build the guide + N PML sub-slabs of equal thickness d/N along +z. Fragment
+    # glues all of them so shared faces are conformal.
+    slab_dz = d / n_pml_slabs
     guide = kernel.addBox(-a/2, -b/2, 0.0, a, b, L)
-    pml   = kernel.addBox(-a/2, -b/2, L, a, b, d)
-    kernel.fragment([(3, guide)], [(3, pml)])
+    pml_slab_tags = [
+        kernel.addBox(-a/2, -b/2, L + k*slab_dz, a, b, slab_dz) for k = 0:(n_pml_slabs - 1)
+    ]
+    kernel.fragment([(3, guide)], [(3, tag) for tag in pml_slab_tags])
     kernel.synchronize()
 
-    # Identify the two domains by midplane z.
+    # Identify all domains by centroid z. The guide has z_mid < L; each PML slab k
+    # has z_mid ≈ L + (k + 0.5) * slab_dz.
     all_3d = kernel.getEntities(3)
-    @assert length(all_3d) == 2
-    zmid(x)      = 0.5 * (zmin(x) + zmax(x))
+    @assert length(all_3d) == 1 + n_pml_slabs
+    zmid(x) = 0.5 * (zmin(x) + zmax(x))
     guide_dimtag = filter(e -> zmid(e) < L, all_3d) |> only
-    pml_dimtag   = filter(e -> zmid(e) > L, all_3d) |> only
+    # Sort PML slabs by z from inner (closest to physical) to outer.
+    pml_dimtags = sort(filter(e -> zmid(e) > L, all_3d); by=zmid)
+    @assert length(pml_dimtags) == n_pml_slabs
 
     # Boundary faces.
     all_2d = kernel.getEntities(2)
@@ -112,9 +138,18 @@ function generate_waveguide_mesh(;
     # Exclude any accidental internal interface faces (z-extent should be nontrivial).
     lateral_faces = filter(e -> (zmax(e) - zmin(e)) > eps, lateral_faces)
 
-    # Create physical groups. Order chosen so attributes come out 1, 2, 3, 4, 5.
+    # Create physical groups. Attributes come out in creation order:
+    #   1         = guide
+    #   2 .. 1+N  = PML slabs, inner-to-outer
+    #   next      = port, pec_lateral, pec_end (boundary attributes)
     guide_attr = gmsh.model.addPhysicalGroup(3, [extract_tag(guide_dimtag)], -1, "guide")
-    pml_attr = gmsh.model.addPhysicalGroup(3, [extract_tag(pml_dimtag)], -1, "pml")
+    pml_slab_attrs = Int[]
+    for (k, dt) in enumerate(pml_dimtags)
+        push!(
+            pml_slab_attrs,
+            gmsh.model.addPhysicalGroup(3, [extract_tag(dt)], -1, "pml_slab_$k")
+        )
+    end
     port_attr = gmsh.model.addPhysicalGroup(2, extract_tag.(port_faces), -1, "port")
     pec_lateral_attr =
         gmsh.model.addPhysicalGroup(2, extract_tag.(lateral_faces), -1, "pec_lateral")
@@ -136,9 +171,15 @@ function generate_waveguide_mesh(;
     gmsh.option.setNumber("Mesh.Binary", 1)
     gmsh.write(joinpath(@__DIR__, filename))
 
-    println("\n=== Mesh generated: $filename ===")
+    println("\n=== Mesh generated: $filename ($n_pml_slabs PML slab(s)) ===")
     println("  guide:       attr $guide_attr, bbox z ∈ [0, $L]")
-    println("  pml:         attr $pml_attr, bbox z ∈ [$L, $(L+d)]")
+    for (k, attr) in enumerate(pml_slab_attrs)
+        z0 = L + (k - 1) * slab_dz
+        z1 = L + k * slab_dz
+        println(
+            "  pml_slab_$k:  attr $attr, bbox z ∈ [$(round(z0; digits=4)), $(round(z1; digits=4))]"
+        )
+    end
     println("  port:        attr $port_attr (2D, z = 0)")
     println("  pec_lateral: attr $pec_lateral_attr (2D, ±x, ±y walls, entire length)")
     println("  pec_end:     attr $pec_end_attr (2D, z = $(L+d))")

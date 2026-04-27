@@ -256,13 +256,16 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   CeedVector elem_attr_vec;
   ceed::InitCeedVector(elem_attr, ceed, &elem_attr_vec);
 
-  // Allocate storage for geometry factor data (attribute + quadrature weight + Jacobian at
-  // each quadrature point). The vector is only ever written and read by libCEED operators
-  // on this Ceed context, so it is stored in the backend's own strided layout
-  // (CEED_STRIDES_BACKEND, as for the assembled quadrature data). Backends whose E-vector
-  // layout matches that layout (the GPU backends) then read the vector directly as the
-  // E-vector of every operator instead of gathering a copy of it per operator at setup.
-  CeedInt geom_data_size = 2 + data.space_dim * data.dim;
+  // Allocate storage for geometry factor data (attribute + quadrature weight + Jacobian +
+  // physical coordinate at each quadrature point). The physical coordinate is cached so
+  // QFunctions with spatially-varying coefficients (e.g. PML stretch) can sample at each
+  // quadrature point without additional plumbing at operator-apply time. The vector is only
+  // ever written and read by libCEED operators on this Ceed context, so it is stored in the
+  // backend's own strided layout (CEED_STRIDES_BACKEND, as for the assembled quadrature
+  // data). Backends whose E-vector layout matches that layout (the GPU backends) then read
+  // the vector directly as the E-vector of every operator instead of gathering a copy of it
+  // per operator at setup.
+  CeedInt geom_data_size = 2 + data.space_dim * (data.dim + 1);
   const CeedSize geom_data_length =
       static_cast<CeedSize>(num_elem) * num_qpts * geom_data_size;
   PalaceCeedCall(ceed, CeedVectorCreate(ceed, geom_data_length, &data.geom_data));

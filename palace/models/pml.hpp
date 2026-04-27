@@ -10,6 +10,11 @@
 #include "utils/configfile.hpp"
 #include "utils/labels.hpp"
 
+// Forward-declare the union used by libCEED QFunction contexts (defined in
+// fem/qfunctions/coeff/coeff_qf.h). Callers that invoke PackProfileContext need to
+// include that header themselves, after bringing in <ceed.h> first.
+union CeedIntScalar;
+
 namespace palace::pml
 {
 
@@ -146,6 +151,23 @@ SlabGeometry DetectSlabGeometry(const std::array<double, 3> &attr_min,
                                 const std::array<double, 3> &global_min,
                                 const std::array<double, 3> &global_max,
                                 double rel_tol = 1.0e-6);
+
+// Pack a Profile into the libCEED QFunction context layout consumed by pml_qf.h's
+// PMLEvalStretchTensors. Writes kPMLRegionStride entries into the output array.
+// See fem/qfunctions/coeff/pml_qf.h for the layout documentation. This must match
+// PALACE_PML_REGION_STRIDE in that file.
+constexpr int kPMLRegionStride = 29;
+void PackProfileContext(const Profile &profile, CeedIntScalar *out);
+
+// Build a complete PML QFunction context:
+//   [num_attr:int]
+//   [attr→profile map]            // one per libCEED attribute; -1 for non-PML
+//   [region 0 (27 entries)]
+//   [region 1 (27 entries)]
+//   ...
+// `attr_to_profile[k]` gives the profile index for libCEED attribute k+1 (0-based).
+std::vector<CeedIntScalar> PackProfileContextAll(const std::vector<int> &attr_to_profile,
+                                                 const std::vector<Profile> &profiles);
 
 }  // namespace palace::pml
 
