@@ -325,8 +325,9 @@ int CeedGeometryDataGetSpaceDimension(CeedElemRestriction geom_data_restr, CeedI
     PalaceCeedCallBackend(CeedElemRestrictionGetCeed(geom_data_restr, &ceed));
     PalaceCeedCall(ceed,
                    CeedElemRestrictionGetNumComponents(geom_data_restr, &geom_data_size));
-    *space_dim = (geom_data_size - 2) / dim;
-    MFEM_ASSERT(2 + (*space_dim) * dim == geom_data_size,
+    // Layout is {attr, w|J|, adj(J)^T/|J|, x} = 2 + space_dim * dim + space_dim entries.
+    *space_dim = (geom_data_size - 2) / (dim + 1);
+    MFEM_ASSERT(2 + (*space_dim) * (dim + 1) == geom_data_size,
                 "Invalid size for geometry quadrature data!");
   }
   return CEED_ERROR_SUCCESS;
@@ -377,16 +378,21 @@ void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
       build_qf = nullptr;  // Silence compiler warning
   }
 
-  // Inputs/outputs.
+  // Inputs/outputs. The physical coordinate x at each quadrature point is cached in
+  // geom_data so spatially-varying coefficients (e.g. PML stretch) can sample σ(x) at
+  // each QP without extra plumbing at operator-apply time. The active input here is the
+  // mesh nodes GridFunction, which we evaluate in two modes: GRAD → Jacobian,
+  // INTERP → physical position.
   PalaceCeedCall(ceed, CeedQFunctionAddInput(build_qf, "attr", 1, CEED_EVAL_INTERP));
   PalaceCeedCall(ceed, CeedQFunctionAddInput(build_qf, "q_w", 1, CEED_EVAL_WEIGHT));
   PalaceCeedCall(
       ceed, CeedQFunctionAddInput(build_qf, "grad_x", space_dim * dim, CEED_EVAL_GRAD));
+  PalaceCeedCall(ceed, CeedQFunctionAddInput(build_qf, "x", space_dim, CEED_EVAL_INTERP));
   {
     CeedInt geom_data_size;
     PalaceCeedCall(ceed,
                    CeedElemRestrictionGetNumComponents(geom_data_restr, &geom_data_size));
-    MFEM_VERIFY(geom_data_size == 2 + space_dim * dim,
+    MFEM_VERIFY(geom_data_size == 2 + space_dim * (dim + 1),
                 "Insufficient storage for geometry quadrature data!");
     PalaceCeedCall(ceed, CeedQFunctionAddOutput(build_qf, "geom_data", geom_data_size,
                                                 CEED_EVAL_NONE));
@@ -402,6 +408,8 @@ void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
   PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "q_w", CEED_ELEMRESTRICTION_NONE,
                                             mesh_basis, CEED_VECTOR_NONE));
   PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "grad_x", mesh_restr, mesh_basis,
+                                            CEED_VECTOR_ACTIVE));
+  PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "x", mesh_restr, mesh_basis,
                                             CEED_VECTOR_ACTIVE));
   PalaceCeedCall(ceed, CeedOperatorSetField(build_op, "geom_data", geom_data_restr,
                                             CEED_BASIS_NONE, CEED_VECTOR_ACTIVE));

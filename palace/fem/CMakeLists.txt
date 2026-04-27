@@ -17,6 +17,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/lumpedelement.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/mesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/curlcurl.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/integ/curlcurl_pml.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/curlcurlmass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/diffusion.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/diffusionmass.cpp

@@ -119,6 +119,52 @@ public:
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
 };
 
+// PML variants that evaluate μ̃⁻¹ / ε̃ per quadrature point from the physical QP
+// coordinate (cached in geom_data) and a PML profile context packed per the layout in
+// fem/qfunctions/coeff/pml_qf.h. Used together with the bulk integrators: the bulk
+// integrator handles non-PML attributes (PML attributes get zero contribution through
+// it, set up by MaterialOperator), and the PML integrator below handles PML attributes
+// (non-PML attributes are passed through at zero contribution by the QFunction itself).
+class CurlCurlPMLIntegrator : public BilinearFormIntegrator
+{
+protected:
+  const void *ctx;       // PML QFunction context (packed per pml_qf.h layout).
+  std::size_t ctx_size;  // Byte size of the context buffer.
+  bool imag_part;        // If true, uses Im(μ̃⁻¹); otherwise Re(μ̃⁻¹).
+
+public:
+  CurlCurlPMLIntegrator(const void *ctx, std::size_t ctx_size, bool imag_part)
+    : BilinearFormIntegrator(nullptr), ctx(ctx), ctx_size(ctx_size), imag_part(imag_part)
+  {
+  }
+
+  void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
+                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+};
+
+// Companion VectorFEMass integrator for H(curl) spaces, using the ε̃ tensor. Reuses the
+// same QFunction body as CurlCurlPMLIntegrator (the form A^T · coeff · A · u is the same
+// for both curl-curl and H(curl)-mass when the tensor is diagonal); the difference is
+// only in the EvalMode of the active input/output (curl vs. interp).
+class VectorFEMassPMLIntegrator : public BilinearFormIntegrator
+{
+protected:
+  const void *ctx;
+  std::size_t ctx_size;
+  bool imag_part;
+
+public:
+  VectorFEMassPMLIntegrator(const void *ctx, std::size_t ctx_size, bool imag_part)
+    : BilinearFormIntegrator(nullptr), ctx(ctx), ctx_size(ctx_size), imag_part(imag_part)
+  {
+  }
+
+  void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
+                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+};
+
 // Integrator for a(u, v) = (Q div u, div v) for Raviart-Thomas elements.
 class DivDivIntegrator : public BilinearFormIntegrator
 {
