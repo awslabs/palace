@@ -3,10 +3,13 @@
 
 #include "boundarymodesolver.hpp"
 
+#include <algorithm>
+#include <unordered_set>
 #include "linalg/errorestimator.hpp"
 #include "linalg/modeeigensolver.hpp"
 #include "linalg/operator.hpp"
 #include "models/boundarymodeoperator.hpp"
+#include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -21,8 +24,6 @@ BoundaryModeSolver::BoundaryModeSolver(const IoData &iodata, bool root, int size
   : BaseSolver(iodata, root, size, num_thread, git_tag)
 {
 }
-
-BoundaryModeSolver::~BoundaryModeSolver() = default;
 
 void BoundaryModeSolver::PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh,
                                         MPI_Comm comm) const
@@ -44,20 +45,23 @@ void BoundaryModeSolver::PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh,
   frame_->normal = 0.0;
 
   // Ranks that hold a copy of the serial mesh (root always; one-per-node roots in the
-  // byte-string distribution path) perform the extraction locally. The existing extractor
-  // operates on a ParMesh; wrap the serial mesh in a single-rank ParMesh over
-  // MPI_COMM_SELF so its internal collectives are no-ops and the work stays local.
+  // byte-string distribution path) perform the extraction locally. The mesh is still
+  // serial at this point (Partition runs next in main.cpp) so all submesh primitives run
+  // on mfem::SubMesh directly, with no MPI collectives and no ParMesh(COMM_SELF) wrapper.
   if (smesh)
   {
     MFEM_VERIFY(smesh->Dimension() == 3,
                 "BoundaryMode with \"Attributes\" requires a 3D input mesh!");
     Mpi::Print(" Extracting 2D submesh from 3D boundary attributes...\n");
 
-    mfem::ParMesh parent(MPI_COMM_SELF, *smesh);
-
     mfem::Array<int> attr_list;
     attr_list.Append(bm_data.attributes.data(), bm_data.attributes.size());
 
+    // Internal boundary attributes: parent boundary faces whose intersection with the
+    // cross-section should become 2D boundary edges. This is every BC type that pins
+    // the tangential E-field on the 2D eigenmode problem — PEC, auxpec, impedance,
+    // conductivity, farfield (absorbing) — plus any *other* waveports so their
+    // intersection edges appear as boundary elements and can be relabeled to PEC below.
     std::vector<int> internal_bdr_attrs;
     const auto &bdr = iodata.boundaries;
     internal_bdr_attrs.insert(internal_bdr_attrs.end(), bdr.pec.attributes.begin(),
@@ -77,9 +81,82 @@ void BoundaryModeSolver::PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh,
     internal_bdr_attrs.insert(internal_bdr_attrs.end(), bdr.farfield.attributes.begin(),
                               bdr.farfield.attributes.end());
 
-    smesh = mesh::ExtractStandalone2DSubmesh(parent, attr_list, internal_bdr_attrs,
-                                             frame_->normal, frame_->centroid, frame_->e1,
-                                             frame_->e2);
+    // Collect other-waveport attributes: waveports that are not part of the surface
+    // currently being solved. Edges where the cross-section intersects such a waveport
+    // behave as PEC for this mode problem (this cross-section doesn't see the other
+    // waveport as a port, only as a bounding conductor).
+    std::unordered_set<int> other_waveport_attrs;
+    {
+      const auto &bm_attrs = bm_data.attributes;
+      for (const auto &[idx, data] : bdr.waveport)
+      {
+        for (auto a : data.attributes)
+        {
+          if (std::find(bm_attrs.begin(), bm_attrs.end(), a) != bm_attrs.end())
+          {
+            continue;
+          }
+          other_waveport_attrs.insert(a);
+          internal_bdr_attrs.push_back(a);
+        }
+      }
+    }
+
+    // Step 1: extract the 2D SubMesh from the 3D boundary. SubMesh inherits from Mesh,
+    // so we hold it through a base-class pointer; downstream code never needs the
+    // SubMesh-specific API once extraction is done.
+    auto sub = std::make_unique<mfem::SubMesh>(
+        mfem::SubMesh::CreateFromBoundary(*smesh, attr_list));
+
+    // Step 2: remap domain attributes (from neighboring 3D elements) and boundary
+    // attributes (from parent boundary faces), then add internal boundary edges at
+    // surface/internal-boundary intersections. Must run while the parent is alive.
+    mesh::RemapSubMeshAttributes(*sub);
+    mesh::RemapSubMeshBdrAttributes(*sub, attr_list);
+    mesh::AddSubMeshInternalBoundaryElements(*sub, attr_list, internal_bdr_attrs);
+
+    // Step 3: relabel other-waveport attributes on the 2D boundary to the first PEC
+    // attribute. This bakes the "other waveports act as PEC on this cross-section"
+    // rule into the mesh itself, so BoundaryModeOperator sees plain PEC edges and has
+    // no parent/frame-dependent branch. Per-waveport frames therefore compose without
+    // mutating iodata.
+    if (!other_waveport_attrs.empty())
+    {
+      MFEM_VERIFY(!bdr.pec.attributes.empty(),
+                  "BoundaryMode submesh extraction found other-waveport edges on the "
+                  "cross-section but no PEC attribute is defined in the config to relabel "
+                  "them to \u2014 define at least one PEC boundary attribute.");
+      const int pec_attr = *std::min_element(bdr.pec.attributes.begin(),
+                                             bdr.pec.attributes.end());
+      int relabelled = 0;
+      for (int sbe = 0; sbe < sub->GetNBE(); sbe++)
+      {
+        const int a = sub->GetBdrAttribute(sbe);
+        if (other_waveport_attrs.count(a))
+        {
+          sub->SetBdrAttribute(sbe, pec_attr);
+          relabelled++;
+        }
+      }
+      if (relabelled > 0)
+      {
+        Mpi::Print(" Relabelled {:d} other-waveport boundary edge(s) as PEC (attr {:d})\n",
+                   relabelled, pec_attr);
+      }
+    }
+
+    // Step 4: project from 3D ambient to true 2D coordinates. Captures the surface
+    // normal and tangent frame (centroid, e1, e2) used by Solve for material tensor
+    // rotation and 3D-to-2D path projection.
+    frame_->normal = mesh::ProjectSubmeshTo2D(*sub, &frame_->centroid, &frame_->e1,
+                                              &frame_->e2);
+    Mpi::Print(" Surface normal = ({:+.3e}, {:+.3e}, {:+.3e})\n", frame_->normal(0),
+               frame_->normal(1), frame_->normal(2));
+
+    // Hand ownership over as a plain Mesh pointer. The SubMesh's parent_ pointer is now
+    // dangling but no downstream code (nondim, Partition, Refine, FE-space construction)
+    // dereferences it; only the Mesh base interface is used from here on.
+    smesh = std::move(sub);
   }
 
   // Broadcast the frame from world root so all ranks have it for downstream material-
@@ -105,11 +182,20 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              "(omega = {:.6e})\n",
              freq_GHz, omega);
 
-  // Construct the boundary mode operator (spaces, materials, boundary ops). When the
-  // solve mesh was extracted from a 3D parent, PreprocessMesh populated frame_ and the
-  // operator rotates its material tensors into the submesh tangent plane.
+  // Construct the MaterialOperator here rather than inside BoundaryModeOperator: when the
+  // solve mesh was extracted from a 3D parent (frame_ non-null) the tensors have to be
+  // rotated into the local tangent plane, and the frame lives on the driver. Keeping this
+  // out of BoundaryModeOperator lets the operator remain frame-agnostic (no knowledge of
+  // whether it came from a submesh) and makes per-waveport extractions compose cleanly
+  // without mutating iodata.
   BlockTimer bt0(Timer::CONSTRUCT);
-  BoundaryModeOperator mode_op(iodata, mesh, frame_.get());
+  auto mat_op = std::make_unique<MaterialOperator>(iodata, *mesh.back());
+  if (frame_)
+  {
+    mat_op->RotateMaterialTensors(iodata, frame_->e1, frame_->e2, frame_->normal);
+  }
+
+  BoundaryModeOperator mode_op(iodata, mesh, std::move(mat_op));
 
   // Construct the eigenvalue solver on top of the operator's FE context.
   const int nd_size = mode_op.GetNDTrueVSize();
@@ -129,12 +215,13 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const auto which_eig = (bm_data.target > 0.0)
                              ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
                              : EigenvalueSolver::WhichType::LARGEST_REAL;
-  ModeEigenSolver eig(mode_op.GetMaterialOp(), mode_op.GetSubmeshNormal(),
-                      mode_op.GetSurfZOp(), mode_op.GetFarfieldOp(),
-                      mode_op.GetSurfSigmaOp(), mode_op.GetNDSpace(), mode_op.GetH1Space(),
-                      dbc_tdof_list, num_modes, bm_data.max_size, bm_data.tol, which_eig,
-                      iodata.solver.linear, bm_data.type, iodata.problem.verbose,
-                      mode_op.GetComm(), have_mg ? &mode_op : nullptr);
+  const mfem::Vector *submesh_normal = frame_ ? &frame_->normal : nullptr;
+  ModeEigenSolver eig(mode_op.GetMaterialOp(), submesh_normal, mode_op.GetSurfZOp(),
+                      mode_op.GetFarfieldOp(), mode_op.GetSurfSigmaOp(),
+                      mode_op.GetNDSpace(), mode_op.GetH1Space(), dbc_tdof_list, num_modes,
+                      bm_data.max_size, bm_data.tol, which_eig, iodata.solver.linear,
+                      bm_data.type, iodata.problem.verbose, mode_op.GetComm(),
+                      have_mg ? &mode_op : nullptr);
 
   // Construct the error estimator. BoundaryModeOperator owns the RT hierarchy for
   // flux recovery (analogous to SpaceOperator::rt_fespaces).

@@ -205,16 +205,16 @@ TEST_CASE("RemapSubMeshBdrAttributes", "[geodata][Serial]")
   }
 }
 
-TEST_CASE("Tangent frame from ExtractStandalone2DSubmesh", "[geodata][Parallel]")
+TEST_CASE("Tangent frame from SubMesh extraction", "[geodata][Serial]")
 {
-  // Call the actual ExtractStandalone2DSubmesh on a simple 3D mesh and verify the
-  // tangent frame (e1, e2, normal) is orthonormal and right-handed.
-  MPI_Comm comm = Mpi::World();
+  // Build a simple 3D mesh, extract each face with mfem::SubMesh::CreateFromBoundary,
+  // project to 2D with mesh::ProjectSubmeshTo2D, and verify the resulting tangent frame
+  // (e1, e2, normal) is orthonormal. This mirrors the sequence BoundaryModeSolver::
+  // PreprocessMesh runs on the serial mesh before partitioning.
 
   // Create a unit cube mesh (single hex element).
   mfem::Mesh smesh = mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::HEXAHEDRON);
   smesh.EnsureNodes();
-  auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
 
   auto CheckOrthonormal =
       [](const mfem::Vector &e1, const mfem::Vector &e2, const mfem::Vector &n)
@@ -234,24 +234,21 @@ TEST_CASE("Tangent frame from ExtractStandalone2DSubmesh", "[geodata][Parallel]"
     {
       mfem::Array<int> surface_attrs;
       surface_attrs.Append(face_attr);
-      std::vector<int> pec_bdr_attrs;  // No internal BC edges for a single face.
 
-      mfem::Vector normal, centroid, e1, e2;
-      auto submesh = mesh::ExtractStandalone2DSubmesh(*pmesh, surface_attrs, pec_bdr_attrs,
-                                                      normal, centroid, e1, e2);
+      auto sub = std::make_unique<mfem::SubMesh>(
+          mfem::SubMesh::CreateFromBoundary(smesh, surface_attrs));
+      REQUIRE(sub->GetNE() > 0);
 
-      // Verify orthonormality of the tangent frame.
+      mfem::Vector centroid, e1, e2;
+      mfem::Vector normal = mesh::ProjectSubmeshTo2D(*sub, &centroid, &e1, &e2);
+
       REQUIRE(normal.Size() == 3);
       REQUIRE(e1.Size() == 3);
       REQUIRE(e2.Size() == 3);
       CheckOrthonormal(e1, e2, normal);
 
-      // Verify the extracted mesh is 2D with SpaceDimension == 2.
-      if (submesh)
-      {
-        CHECK(submesh->Dimension() == 2);
-        CHECK(submesh->SpaceDimension() == 2);
-      }
+      CHECK(sub->Dimension() == 2);
+      CHECK(sub->SpaceDimension() == 2);
     }
   }
 }

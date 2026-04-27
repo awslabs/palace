@@ -19,30 +19,25 @@ class FarfieldBoundaryOperator;
 class SurfaceConductivityOperator;
 class SurfaceImpedanceOperator;
 
-// Tangent frame of a 2D submesh in the parent 3D coordinate system. `centroid` is the
-// origin used by the 2D projection, `e1`/`e2` are orthonormal in-plane tangent vectors,
-// `normal` is out-of-plane. Produced by BoundaryModeSolver::PreprocessMesh during
-// extraction and held by the driver for operator construction (material-tensor rotation)
-// and for in-place 2D path projection during the same hook.
-struct SubmeshFrame
-{
-  mfem::Vector centroid, e1, e2, normal;
-};
-
 //
 // Top-level operator for 2D boundary mode analysis, analogous to SpaceOperator for 3D
-// driven/eigenmode problems. Owns the FE spaces, material operator, and boundary
-// operators; the mesh itself is passed in and owned by the caller. When constructed with
-// a non-null SubmeshFrame, material tensors are rotated from the parent 3D frame onto
-// the submesh tangent plane. Does not own the eigenvalue solver or the error estimator
-// — the driver constructs those on top of this operator's FE context.
+// driven/eigenmode problems. Owns the FE spaces and boundary operators; the solve mesh
+// and MaterialOperator are passed in and owned elsewhere. The operator is agnostic to
+// whether the mesh was authored directly in 2D or extracted from a 3D parent cross-section
+// — any frame-dependent preparation (material tensor rotation, bdr-attribute relabeling
+// of inherited 3D boundary conditions) happens upstream in BoundaryModeSolver. Does not
+// own the eigenvalue solver or the error estimator — the driver constructs those on top
+// of this operator's FE context.
 //
 class BoundaryModeOperator
 {
 public:
+  // Takes ownership of a pre-built MaterialOperator. When the solve mesh was extracted
+  // from a 3D parent, the driver rotates the material tensors into the local tangent
+  // frame before passing it in; for a direct 2D input the MaterialOperator is used as-is.
   BoundaryModeOperator(const IoData &iodata,
                        const std::vector<std::unique_ptr<Mesh>> &mesh,
-                       const SubmeshFrame *frame = nullptr);
+                       std::unique_ptr<MaterialOperator> mat_op);
 
   // Access FE spaces.
   FiniteElementSpace &GetNDSpace() { return nd_fespaces.GetFinestFESpace(); }
@@ -86,12 +81,6 @@ public:
   // Access solver order.
   int GetSolverOrder() const { return solver_order; }
 
-  // Parent-frame normal for material tensor rotation; nullptr for direct 2D.
-  const mfem::Vector *GetSubmeshNormal() const
-  {
-    return frame ? &frame->normal : nullptr;
-  }
-
   // True vector sizes.
   int GetNDTrueVSize() const { return nd_fespaces.GetFinestFESpace().GetTrueVSize(); }
   int GetH1TrueVSize() const { return h1_fespaces.GetFinestFESpace().GetTrueVSize(); }
@@ -102,10 +91,6 @@ private:
 
   // Non-owning pointer to the caller-owned solve mesh.
   Mesh *solve_mesh;
-
-  // Parent-frame tangent frame, non-null when the mesh was extracted from a 3D parent.
-  // Lifetime is managed by the caller (BoundaryModeSolver).
-  const SubmeshFrame *frame = nullptr;
 
   // FE collections and space hierarchies.
   std::vector<std::unique_ptr<mfem::ND_FECollection>> nd_fecs;

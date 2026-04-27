@@ -3,7 +3,6 @@
 
 #include "boundarymodeoperator.hpp"
 
-#include <algorithm>
 #include "fem/multigrid.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/surfaceconductivityoperator.hpp"
@@ -15,27 +14,20 @@ namespace palace
 
 BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
                                            const std::vector<std::unique_ptr<Mesh>> &mesh,
-                                           const SubmeshFrame *frame_in)
+                                           std::unique_ptr<MaterialOperator> mat_op_in)
   : iodata(iodata_), solver_order(iodata_.solver.order),
-    solve_mesh(mesh.back().get()), frame(frame_in)
+    solve_mesh(mesh.back().get()), mat_op(std::move(mat_op_in))
 {
   MFEM_VERIFY(solve_mesh->Dimension() == 2,
               "BoundaryMode solver requires a 2D mesh (waveguide cross-section). When "
               "configured with \"Attributes\", the driver's PreprocessMesh hook extracts "
               "the cross-section before this operator is constructed.");
+  MFEM_VERIFY(mat_op, "BoundaryModeOperator requires a non-null MaterialOperator!");
 
-  // Phase 1: Material operator. If the mesh came from a 3D parent, rotate tensors from
-  // the parent 3D frame onto the submesh tangent plane.
-  mat_op = std::make_unique<MaterialOperator>(iodata, *solve_mesh);
-  if (frame)
-  {
-    mat_op->RotateMaterialTensors(iodata, frame->e1, frame->e2, frame->normal);
-  }
-
-  // Phase 2: FE spaces.
+  // FE spaces.
   SetUpFESpaces(mesh);
 
-  // Phase 3: Boundary operators.
+  // Boundary operators.
   auto &pmesh = solve_mesh->Get();
   surf_z_op = std::make_unique<SurfaceImpedanceOperator>(iodata, *mat_op, pmesh);
   farfield_op = std::make_unique<FarfieldBoundaryOperator>(iodata, *mat_op, pmesh);
@@ -51,7 +43,11 @@ void BoundaryModeOperator::SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>
   const auto &mg = iodata.solver.linear;
   const int dim = solve_mesh->Dimension();
 
-  // Collect Dirichlet boundary attributes.
+  // Collect Dirichlet boundary attributes. The solve mesh carries all PEC-like edges as
+  // PEC attributes already — for direct 2D input the user defined them; for submesh
+  // extraction, BoundaryModeSolver::PreprocessMesh folded inherited 3D boundary conditions
+  // (other waveports, and faces already surfaced by the internal-boundary insertion
+  // step) into the appropriate 2D attributes before this operator was constructed.
   {
     const auto &pmesh = solve_mesh->Get();
     int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
@@ -67,28 +63,6 @@ void BoundaryModeOperator::SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>
       if (attr > 0 && attr <= bdr_attr_max)
       {
         dbc_bcs.Append(attr);
-      }
-    }
-    // When the mesh was extracted from a 3D parent, waveport attributes that landed on
-    // the 2D boundary (i.e. other waveports touching this cross-section) behave as PEC
-    // for the mode problem. For direct 2D input there is no parent, so no such inherited
-    // attributes exist.
-    if (frame)
-    {
-      for (const auto &[idx, data] : iodata.boundaries.waveport)
-      {
-        const auto &bm_attrs = iodata.solver.boundary_mode.attributes;
-        for (auto attr : data.attributes)
-        {
-          if (std::find(bm_attrs.begin(), bm_attrs.end(), attr) != bm_attrs.end())
-          {
-            continue;
-          }
-          if (attr > 0 && attr <= bdr_attr_max)
-          {
-            dbc_bcs.Append(attr);
-          }
-        }
       }
     }
     dbc_bcs.Sort();

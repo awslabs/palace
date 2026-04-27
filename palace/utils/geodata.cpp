@@ -1305,304 +1305,101 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
   return normal;
 }
 
-std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
-    const mfem::ParMesh &parent_mesh, const mfem::Array<int> &surface_attrs,
-    const std::vector<int> &pec_bdr_attrs, mfem::Vector &surface_normal,
-    mfem::Vector &centroid, mfem::Vector &e1, mfem::Vector &e2)
+mfem::Vector GetSurfaceNormal(const mfem::Mesh &mesh, const mfem::Array<int> &marker,
+                              bool average)
 {
-  MPI_Comm comm = parent_mesh.GetComm();
-
-  // Step 1: Extract ParSubMesh from 3D boundary.
-  auto par_submesh = mfem::ParSubMesh::CreateFromBoundary(parent_mesh, surface_attrs);
-
-  // Step 2: Compute surface normal (MPI collective).
-  surface_normal = GetSurfaceNormal(par_submesh);
-  Mpi::Print(" Surface normal = ({:+.3e}, {:+.3e}, {:+.3e})\n", surface_normal(0),
-             surface_normal(1), surface_normal(2));
-
-  // Step 3: Remap domain and boundary attributes.
-  RemapSubMeshAttributes(par_submesh);
-  RemapSubMeshBdrAttributes(par_submesh, surface_attrs);
-
-  // Step 4: Collect PEC internal edges via global vertex matching across all ranks.
-  // PEC boundary faces in the 3D parent are distributed; each rank contributes its
-  // local PEC edges, gathered to rank 0 for matching against submesh edges.
-  std::vector<std::array<int, 3>> pec_internal_edges;  // {v1, v2, attr}
+  // Serial counterpart of the ParMesh overload above. Used by mesh-extraction helpers
+  // (ProjectSubmeshTo2D) that run on the pre-partitioned serial mesh. Iterates over
+  // boundary elements (or domain elements for a surface mesh embedded in 3D) whose
+  // attribute is marked, accumulates face normals, and averages or returns the first.
+  const int dim = mesh.SpaceDimension();
+  mfem::IsoparametricTransformation T;
+  mfem::Vector loc_normal(dim), normal(dim);
+  normal = 0.0;
+  if (mesh.Dimension() == mesh.SpaceDimension())
   {
-    // Global vertex numbering (collective MPI operations).
-    mfem::Array<HYPRE_BigInt> pvert_gi;
-    parent_mesh.GetGlobalVertexIndices(pvert_gi);
-    mfem::Array<HYPRE_BigInt> svert_gi;
-    par_submesh.GetGlobalVertexIndices(svert_gi);
-
-    // Each rank: collect PEC edges as global vertex pairs.
-    std::vector<int> local_pec_flat;
+    for (int i = 0; i < mesh.GetNBE() && !(!average && normal.Norml2() > 0.0); i++)
     {
-      mfem::Array<int> edges, orientations, ev;
-      for (int be = 0; be < parent_mesh.GetNBE(); be++)
+      if (!marker[mesh.GetBdrAttribute(i) - 1])
       {
-        int attr = parent_mesh.GetBdrAttribute(be);
-        if (std::find(pec_bdr_attrs.begin(), pec_bdr_attrs.end(), attr) ==
-            pec_bdr_attrs.end())
-        {
-          continue;
-        }
-        parent_mesh.GetBdrElementEdges(be, edges, orientations);
-        for (int j = 0; j < edges.Size(); j++)
-        {
-          parent_mesh.GetEdgeVertices(edges[j], ev);
-          int gv0 = static_cast<int>(pvert_gi[ev[0]]);
-          int gv1 = static_cast<int>(pvert_gi[ev[1]]);
-          local_pec_flat.insert(local_pec_flat.end(),
-                                {std::min(gv0, gv1), std::max(gv0, gv1), attr});
-        }
+        continue;
       }
-    }
-
-    // Each rank: collect submesh edge → global vertex pair mappings.
-    std::vector<int> local_sub_flat;
-    {
-      const auto &parent_edge_map = par_submesh.GetParentEdgeIDMap();
-      for (int i = 0; i < parent_edge_map.Size(); i++)
-      {
-        mfem::Array<int> pev, sev;
-        parent_mesh.GetEdgeVertices(parent_edge_map[i], pev);
-        par_submesh.GetEdgeVertices(i, sev);
-        int gv0 = static_cast<int>(pvert_gi[pev[0]]);
-        int gv1 = static_cast<int>(pvert_gi[pev[1]]);
-        int sgv0 = static_cast<int>(svert_gi[sev[0]]);
-        int sgv1 = static_cast<int>(svert_gi[sev[1]]);
-        local_sub_flat.insert(local_sub_flat.end(),
-                              {std::min(gv0, gv1), std::max(gv0, gv1), sgv0, sgv1});
-      }
-    }
-
-    // Gather both sets on rank 0.
-    const int nprocs = Mpi::Size(comm);
-    auto GatherFlat = [&](const std::vector<int> &local, int stride) -> std::vector<int>
-    {
-      int local_n = static_cast<int>(local.size()) / stride;
-      std::vector<int> counts(nprocs);
-      MPI_Gather(&local_n, 1, MPI_INT, counts.data(), 1, MPI_INT, 0, comm);
-
-      std::vector<int> fcounts(nprocs), fdispls(nprocs);
-      int total = 0;
-      for (int i = 0; i < nprocs; i++)
-      {
-        fdispls[i] = total * stride;
-        fcounts[i] = counts[i] * stride;
-        total += counts[i];
-      }
-      std::vector<int> result;
-      if (Mpi::Root(comm))
-      {
-        result.resize(total * stride);
-      }
-      MPI_Gatherv(local.data(), local_n * stride, MPI_INT, result.data(), fcounts.data(),
-                  fdispls.data(), MPI_INT, 0, comm);
-      return result;
-    };
-
-    auto all_pec = GatherFlat(local_pec_flat, 3);
-    auto all_sub = GatherFlat(local_sub_flat, 4);
-
-    // Rank 0: match PEC edges against submesh edges.
-    if (Mpi::Root(comm))
-    {
-      std::map<std::pair<int, int>, std::pair<int, int>> gvpair_to_sub;
-      for (std::size_t i = 0; i < all_sub.size() / 4; i++)
-      {
-        gvpair_to_sub[{all_sub[4 * i], all_sub[4 * i + 1]}] = {all_sub[4 * i + 2],
-                                                               all_sub[4 * i + 3]};
-      }
-      std::set<std::pair<int, int>> seen;
-      for (std::size_t i = 0; i < all_pec.size() / 3; i++)
-      {
-        auto key = std::make_pair(all_pec[3 * i], all_pec[3 * i + 1]);
-        auto it = gvpair_to_sub.find(key);
-        if (it != gvpair_to_sub.end())
-        {
-          auto [sv0, sv1] = it->second;
-          if (seen.insert({std::min(sv0, sv1), std::max(sv0, sv1)}).second)
-          {
-            pec_internal_edges.push_back({sv0, sv1, all_pec[3 * i + 2]});
-          }
-        }
-      }
-    }
-
-    // Broadcast PEC edges to all ranks.
-    int n_pec = static_cast<int>(pec_internal_edges.size());
-    MPI_Bcast(&n_pec, 1, MPI_INT, 0, comm);
-    pec_internal_edges.resize(n_pec);
-    MPI_Bcast(pec_internal_edges.data(), n_pec * 3, MPI_INT, 0, comm);
-
-    Mpi::Print(" Found {:d} PEC internal edges on the cross-section\n", n_pec);
-  }
-
-  // Step 5: Gather parallel submesh as a serial mesh. GetSerialMesh properly deduplicates
-  // shared vertices (using H1 global TDof numbering) and preserves real attributes, unlike
-  // PrintAsOne which duplicates shared vertices and overwrites attributes with (rank + 1).
-  // The vertex numbering matches GetGlobalVertexIndices, so PEC edge vertices (stored as
-  // submesh global indices via svert_gi) are directly valid in the serial mesh.
-  std::string serial_str;
-  {
-    // GetSerialMesh is collective — all ranks must call it. The resulting mesh is only
-    // populated on rank 0; other ranks get an empty mesh.
-    auto serial_on_root = par_submesh.GetSerialMesh(0);
-    std::ostringstream oss;
-    if (Mpi::Root(comm))
-    {
-      serial_on_root.Print(oss);
-    }
-    serial_str = oss.str();
-  }
-  int str_size = static_cast<int>(serial_str.size());
-  MPI_Bcast(&str_size, 1, MPI_INT, 0, comm);
-  serial_str.resize(str_size);
-  MPI_Bcast(serial_str.data(), str_size, MPI_CHAR, 0, comm);
-
-  std::istringstream iss(serial_str);
-  auto serial_mesh = std::make_unique<mfem::Mesh>(iss);
-
-  // Step 6: Add PEC internal edges as boundary elements.
-  if (!pec_internal_edges.empty())
-  {
-    int dim_s = serial_mesh->Dimension();
-    int sdim_s = serial_mesh->SpaceDimension();
-    int nv_s = serial_mesh->GetNV();
-    int ne_s = serial_mesh->GetNE();
-    int nbe_s = serial_mesh->GetNBE();
-    int n_pec = static_cast<int>(pec_internal_edges.size());
-
-    auto new_mesh = std::make_unique<mfem::Mesh>(dim_s, nv_s, ne_s, nbe_s + n_pec, sdim_s);
-    for (int v = 0; v < nv_s; v++)
-    {
-      new_mesh->AddVertex(serial_mesh->GetVertex(v));
-    }
-    for (int e = 0; e < ne_s; e++)
-    {
-      new_mesh->AddElement(serial_mesh->GetElement(e)->Duplicate(new_mesh.get()));
-    }
-    for (int be = 0; be < nbe_s; be++)
-    {
-      new_mesh->AddBdrElement(serial_mesh->GetBdrElement(be)->Duplicate(new_mesh.get()));
-    }
-    for (const auto &edge : pec_internal_edges)
-    {
-      int vs[2] = {edge[0], edge[1]};
-      new_mesh->AddBdrSegment(vs, edge[2]);
-    }
-    new_mesh->FinalizeTopology();
-    new_mesh->EnsureNodes();
-    serial_mesh = std::move(new_mesh);
-  }
-
-  // Step 7: Project from 3D to 2D coordinates.
-  {
-    // Build orthonormal tangent frame from the surface normal.
-    e1.SetSize(3);
-    e2.SetSize(3);
-    {
-      int min_idx = 0;
-      double min_val = std::abs(surface_normal(0));
-      for (int d = 1; d < 3; d++)
-      {
-        if (std::abs(surface_normal(d)) < min_val)
-        {
-          min_val = std::abs(surface_normal(d));
-          min_idx = d;
-        }
-      }
-      mfem::Vector axis(3);
-      axis = 0.0;
-      axis(min_idx) = 1.0;
-      e1(0) = axis(1) * surface_normal(2) - axis(2) * surface_normal(1);
-      e1(1) = axis(2) * surface_normal(0) - axis(0) * surface_normal(2);
-      e1(2) = axis(0) * surface_normal(1) - axis(1) * surface_normal(0);
-      e1 /= e1.Norml2();
-      e2(0) = surface_normal(1) * e1(2) - surface_normal(2) * e1(1);
-      e2(1) = surface_normal(2) * e1(0) - surface_normal(0) * e1(2);
-      e2(2) = surface_normal(0) * e1(1) - surface_normal(1) * e1(0);
-      e2 /= e2.Norml2();
-    }
-
-    // Compute centroid.
-    centroid.SetSize(3);
-    centroid = 0.0;
-    int nv = serial_mesh->GetNV();
-    for (int i = 0; i < nv; i++)
-    {
-      const double *v = serial_mesh->GetVertex(i);
-      for (int d = 0; d < 3; d++)
-      {
-        centroid(d) += v[d];
-      }
-    }
-    if (nv > 0)
-    {
-      centroid /= nv;
-    }
-
-    // Project node coordinates to 2D.
-    int mesh_order = 1;
-    if (serial_mesh->GetNodes())
-    {
-      mesh_order = serial_mesh->GetNodes()->FESpace()->GetMaxElementOrder();
-    }
-    mfem::GridFunction *nodes3d = serial_mesh->GetNodes();
-    const int sdim = serial_mesh->SpaceDimension();
-    std::vector<std::array<double, 2>> projected;
-    if (nodes3d)
-    {
-      const int npts = nodes3d->Size() / sdim;
-      projected.resize(npts);
-      for (int i = 0; i < npts; i++)
-      {
-        double coords[3] = {0.0, 0.0, 0.0};
-        for (int d = 0; d < sdim; d++)
-        {
-          int idx = (nodes3d->FESpace()->GetOrdering() == mfem::Ordering::byNODES)
-                        ? d * npts + i
-                        : i * sdim + d;
-          coords[d] = (*nodes3d)(idx);
-        }
-        double dx = coords[0] - centroid(0);
-        double dy = coords[1] - centroid(1);
-        double dz = coords[2] - centroid(2);
-        projected[i][0] = dx * e1(0) + dy * e1(1) + dz * e1(2);
-        projected[i][1] = dx * e2(0) + dy * e2(1) + dz * e2(2);
-      }
-    }
-    else
-    {
-      // Linear mesh without nodes GridFunction: use vertex coordinates directly.
-      const int nv = serial_mesh->GetNV();
-      projected.resize(nv);
-      for (int i = 0; i < nv; i++)
-      {
-        const double *v = serial_mesh->GetVertex(i);
-        double dx = v[0] - centroid(0);
-        double dy = v[1] - centroid(1);
-        double dz = v[2] - centroid(2);
-        projected[i][0] = dx * e1(0) + dy * e1(1) + dz * e1(2);
-        projected[i][1] = dx * e2(0) + dy * e2(1) + dz * e2(2);
-      }
-    }
-    serial_mesh->SetCurvature(mesh_order, false, 2, mfem::Ordering::byNODES);
-    mfem::GridFunction *nodes2d = serial_mesh->GetNodes();
-    const int npts_2d = static_cast<int>(projected.size());
-    for (int i = 0; i < npts_2d; i++)
-    {
-      (*nodes2d)(0 * npts_2d + i) = projected[i][0];
-      (*nodes2d)(1 * npts_2d + i) = projected[i][1];
+      mesh.GetBdrElementTransformation(i, &T);
+      mesh::Normal(T, loc_normal, &normal);
+      normal += loc_normal;
     }
   }
-
-  return serial_mesh;
+  else
+  {
+    for (int i = 0; i < mesh.GetNE() && !(!average && normal.Norml2() > 0.0); i++)
+    {
+      if (!marker[mesh.GetAttribute(i) - 1])
+      {
+        continue;
+      }
+      mesh.GetElementTransformation(i, &T);
+      mesh::Normal(T, loc_normal, &normal);
+      normal += loc_normal;
+    }
+  }
+  const double norm = normal.Norml2();
+  if (norm > 0.0)
+  {
+    normal /= norm;
+  }
+  return normal;
 }
 
-void RemapSubMeshAttributes(mfem::ParSubMesh &submesh)
+namespace
+{
+
+// Trait helpers dispatching between serial (mfem::SubMesh / mfem::Mesh) and parallel
+// (mfem::ParSubMesh / mfem::ParMesh) submesh primitives. The parallel versions forward
+// to the real MPI calls; the serial versions return MPI_COMM_SELF and identity vertex
+// indices so a single templated implementation works for both without runtime overhead
+// on the serial path (MPI_COMM_SELF collectives degenerate to no-ops).
+inline MPI_Comm GetSubMeshComm(const mfem::SubMesh &) { return MPI_COMM_SELF; }
+inline MPI_Comm GetSubMeshComm(const mfem::ParSubMesh &s) { return s.GetComm(); }
+
+inline void GetParentGlobalVertexIndices(const mfem::Mesh &parent,
+                                         mfem::Array<HYPRE_BigInt> &gi)
+{
+  gi.SetSize(parent.GetNV());
+  for (int i = 0; i < parent.GetNV(); i++)
+  {
+    gi[i] = i;
+  }
+}
+inline void GetParentGlobalVertexIndices(const mfem::ParMesh &parent,
+                                         mfem::Array<HYPRE_BigInt> &gi)
+{
+  parent.GetGlobalVertexIndices(gi);
+}
+
+// Parent neighbor-transformation lookup. For a ParMesh parent, delegate to the Palace
+// helper that handles cross-rank shared faces; for a plain Mesh parent, there are no
+// cross-rank neighbors and MFEM's direct face-transformation API suffices.
+inline void GetBdrElementNeighborTransforms(int i, const mfem::Mesh &mesh,
+                                            mfem::FaceElementTransformations &FET,
+                                            mfem::IsoparametricTransformation &T1,
+                                            mfem::IsoparametricTransformation &T2)
+{
+  int f, o;
+  mesh.GetBdrElementFace(i, &f, &o);
+  mesh.GetFaceElementTransformations(f, FET, T1, T2);
+}
+inline void GetBdrElementNeighborTransforms(int i, const mfem::ParMesh &mesh,
+                                            mfem::FaceElementTransformations &FET,
+                                            mfem::IsoparametricTransformation &T1,
+                                            mfem::IsoparametricTransformation &T2)
+{
+  BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(i, mesh, FET, T1, T2);
+}
+
+}  // namespace
+
+template <class SubMeshT>
+void RemapSubMeshAttributes(SubMeshT &submesh)
 {
   MFEM_VERIFY(submesh.GetFrom() == mfem::SubMesh::From::Boundary,
               "RemapSubMeshAttributes requires a boundary ParSubMesh!");
@@ -1615,8 +1412,7 @@ void RemapSubMeshAttributes(mfem::ParSubMesh &submesh)
   for (int i = 0; i < submesh.GetNE(); i++)
   {
     int parent_bdr_elem = parent_elem_map[i];
-    BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(parent_bdr_elem,
-                                                                     parent, FET, T1, T2);
+    GetBdrElementNeighborTransforms(parent_bdr_elem, parent, FET, T1, T2);
     // Use the neighboring domain element's attribute. For internal boundaries, use the
     // element with the lower attribute (same convention as Palace's mesh.cpp).
     int nbr_attr = FET.Elem1->Attribute;
@@ -1628,14 +1424,15 @@ void RemapSubMeshAttributes(mfem::ParSubMesh &submesh)
   }
 }
 
-void RemapSubMeshBdrAttributes(mfem::ParSubMesh &submesh,
+template <class SubMeshT>
+void RemapSubMeshBdrAttributes(SubMeshT &submesh,
                                const mfem::Array<int> &surface_attrs)
 {
   MFEM_VERIFY(submesh.GetFrom() == mfem::SubMesh::From::Boundary,
-              "RemapSubMeshBdrAttributes requires a boundary ParSubMesh!");
+              "RemapSubMeshBdrAttributes requires a boundary submesh!");
 
   const auto &parent = *submesh.GetParent();
-  MPI_Comm comm = submesh.GetComm();
+  MPI_Comm comm = GetSubMeshComm(submesh);
 
   // Build a set of surface attributes for quick lookup.
   std::unordered_set<int> surface_attr_set;
@@ -1644,11 +1441,12 @@ void RemapSubMeshBdrAttributes(mfem::ParSubMesh &submesh,
     surface_attr_set.insert(surface_attrs[i]);
   }
 
-  // Get parent global vertex indices for rank-independent edge identification. An edge at
-  // the intersection of two parent boundary faces may be owned by different ranks — using
-  // local edge indices would miss the non-surface face if it's on another rank.
+  // Parent vertex indices used as rank-independent edge identifiers. For a ParMesh,
+  // this is ParMesh::GetGlobalVertexIndices; for a serial Mesh, this is just [0..NV).
+  // Edges at the intersection of two parent boundary faces may be owned by different
+  // ranks in the parallel case — using a stable identifier lets all ranks contribute.
   mfem::Array<HYPRE_BigInt> pvert_gi;
-  parent.GetGlobalVertexIndices(pvert_gi);
+  GetParentGlobalVertexIndices(parent, pvert_gi);
 
   // Each rank: collect (gv0, gv1, attr, is_surface) for edges of local parent boundary
   // elements, using sorted global vertex pairs as rank-independent edge identifiers.
@@ -1734,15 +1532,17 @@ void RemapSubMeshBdrAttributes(mfem::ParSubMesh &submesh,
   // bdr_attributes (even via SetAttributes) on a ParSubMesh can corrupt internal MFEM
   // state. The individual SetBdrAttribute() calls above are sufficient — the CEED boundary
   // attribute maps are rebuilt separately via Mesh::RebuildCeedAttributes(), which reads
-  // from GetBdrAttribute(i) directly.
+  // from GetBdrAttribute(i) directly. In the serial (MPI_COMM_SELF) case the Allgather
+  // above degenerates to a local memcpy so the same code path is used for both.
 }
 
-void AddSubMeshInternalBoundaryElements(mfem::ParSubMesh &submesh,
+template <class SubMeshT>
+void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
                                         const mfem::Array<int> &surface_attrs,
                                         const std::vector<int> &internal_bdr_attrs)
 {
   MFEM_VERIFY(submesh.GetFrom() == mfem::SubMesh::From::Boundary,
-              "AddSubMeshInternalBoundaryElements requires a boundary ParSubMesh!");
+              "AddSubMeshInternalBoundaryElements requires a boundary submesh!");
 
   if (internal_bdr_attrs.empty())
   {
@@ -1864,13 +1664,14 @@ void AddSubMeshInternalBoundaryElements(mfem::ParSubMesh &submesh,
   }
 }
 
-mfem::Vector ProjectSubmeshTo2D(mfem::ParMesh &submesh, mfem::Vector *out_centroid,
+mfem::Vector ProjectSubmeshTo2D(mfem::Mesh &submesh, mfem::Vector *out_centroid,
                                 mfem::Vector *out_e1, mfem::Vector *out_e2)
 {
   MFEM_VERIFY(submesh.Dimension() == 2 && submesh.SpaceDimension() == 3,
               "ProjectSubmeshTo2D requires a 2D submesh with 3D ambient coordinates!");
 
-  // Compute the surface normal from all domain elements of the submesh.
+  // Serial operation on the pre-partitioned mesh: compute the normal locally (no MPI
+  // reductions), build the tangent frame, and rewrite node coordinates in place.
   mfem::Vector normal = GetSurfaceNormal(submesh);
 
   // Build an orthonormal tangent frame (e1, e2) perpendicular to the normal.
@@ -1905,12 +1706,11 @@ mfem::Vector ProjectSubmeshTo2D(mfem::ParMesh &submesh, mfem::Vector *out_centro
     e2 /= e2.Norml2();
   }
 
-  // Compute the centroid of all submesh vertices (using local vertices, then averaging
-  // across MPI ranks).
+  // Compute the centroid of all submesh vertices. Serial — no MPI reduction needed.
   mfem::Vector centroid(3);
   centroid = 0.0;
-  int nv_local = submesh.GetNV();
-  for (int i = 0; i < nv_local; i++)
+  const int nv = submesh.GetNV();
+  for (int i = 0; i < nv; i++)
   {
     const double *v = submesh.GetVertex(i);
     for (int d = 0; d < 3; d++)
@@ -1918,29 +1718,19 @@ mfem::Vector ProjectSubmeshTo2D(mfem::ParMesh &submesh, mfem::Vector *out_centro
       centroid(d) += v[d];
     }
   }
-  int nv_global = nv_local;
-  MPI_Comm comm = submesh.GetComm();
-  Mpi::GlobalSum(3, centroid.HostReadWrite(), comm);
-  Mpi::GlobalSum(1, &nv_global, comm);
-  if (nv_global > 0)
+  if (nv > 0)
   {
-    centroid /= nv_global;
+    centroid /= nv;
   }
 
   // Read the 3D node coordinates, project to 2D, then rebuild the mesh with 2D nodes.
   // We read all coordinates first, then use SetCurvature to rebuild with SpaceDim=2.
   {
-    // Determine the mesh curvature order from the existing nodes. On empty partitions
-    // (zero elements), GetMaxElementOrder() may fail, so use MPI reduction.
-    int mesh_order = 0;
+    // Determine the mesh curvature order from the existing nodes.
+    int mesh_order = 1;
     if (submesh.GetNodes() && submesh.GetNE() > 0)
     {
       mesh_order = submesh.GetNodes()->FESpace()->GetMaxElementOrder();
-    }
-    Mpi::GlobalMax(1, &mesh_order, comm);
-    if (mesh_order < 1)
-    {
-      mesh_order = 1;
     }
 
     // Read all 3D node coordinates. For high-order meshes, nodes includes interior DOFs;
@@ -1973,8 +1763,8 @@ mfem::Vector ProjectSubmeshTo2D(mfem::ParMesh &submesh, mfem::Vector *out_centro
     }
     else
     {
-      projected.resize(nv_local);
-      for (int i = 0; i < nv_local; i++)
+      projected.resize(nv);
+      for (int i = 0; i < nv; i++)
       {
         const double *v = submesh.GetVertex(i);
         double dx = v[0] - centroid(0);
@@ -1986,31 +1776,22 @@ mfem::Vector ProjectSubmeshTo2D(mfem::ParMesh &submesh, mfem::Vector *out_centro
     }
 
     // Rebuild the mesh with 2D coordinates. SetCurvature creates a new Nodes
-    // GridFunction with the specified vdim (SpaceDim), replacing the old 3D one.
-    if (submesh.GetNE() > 0)
+    // GridFunction with the specified vdim (SpaceDim), replacing the old 3D one. Serial
+    // extraction always has NE > 0 on the rank that holds the mesh; empty-partition
+    // handling lives in the parallel path, which no longer exists.
+    MFEM_VERIFY(submesh.GetNE() > 0,
+                "ProjectSubmeshTo2D called on an empty mesh — extraction must run on a "
+                "rank that holds the serial mesh!");
+    submesh.SetCurvature(mesh_order, false, 2, mfem::Ordering::byNODES);
+    mfem::GridFunction *nodes2d = submesh.GetNodes();
+    const int npts = static_cast<int>(projected.size());
+    MFEM_VERIFY(nodes2d->Size() == 2 * npts,
+                "ProjectSubmeshTo2D: mismatch between projected points ("
+                    << npts << ") and new nodes size (" << nodes2d->Size() << ")!");
+    for (int i = 0; i < npts; i++)
     {
-      submesh.SetCurvature(mesh_order, false, 2, mfem::Ordering::byNODES);
-      mfem::GridFunction *nodes2d = submesh.GetNodes();
-      const int npts = static_cast<int>(projected.size());
-      MFEM_VERIFY(nodes2d->Size() == 2 * npts,
-                  "ProjectSubmeshTo2D: mismatch between projected points ("
-                      << npts << ") and new nodes size (" << nodes2d->Size() << ")!");
-      for (int i = 0; i < npts; i++)
-      {
-        (*nodes2d)(0 * npts + i) = projected[i][0];
-        (*nodes2d)(1 * npts + i) = projected[i][1];
-      }
-    }
-    else
-    {
-      // Empty partition: SetCurvature calls GetTypicalElementGeometry() which fails with
-      // zero elements. Manually create an empty Nodes GridFunction with vdim=2 to set
-      // SpaceDimension to 2.
-      auto *fec = new mfem::H1_FECollection(mesh_order, submesh.Dimension());
-      auto *fes = new mfem::FiniteElementSpace(&submesh, fec, 2, mfem::Ordering::byNODES);
-      auto *nodes = new mfem::GridFunction(fes);
-      nodes->MakeOwner(fec);
-      submesh.NewNodes(*nodes, true);
+      (*nodes2d)(0 * npts + i) = projected[i][0];
+      (*nodes2d)(1 * npts + i) = projected[i][1];
     }
   }
 
@@ -2032,6 +1813,21 @@ mfem::Vector ProjectSubmeshTo2D(mfem::ParMesh &submesh, mfem::Vector *out_centro
   }
   return normal;
 }
+
+// Explicit template instantiations for the submesh helpers. The serial (mfem::SubMesh)
+// path is consumed by BoundaryModeSolver::PreprocessMesh on the pre-partitioned mesh;
+// the parallel (mfem::ParSubMesh) path is consumed by WavePortOperator after the main
+// mesh has been partitioned.
+template void RemapSubMeshAttributes<mfem::SubMesh>(mfem::SubMesh &);
+template void RemapSubMeshAttributes<mfem::ParSubMesh>(mfem::ParSubMesh &);
+template void RemapSubMeshBdrAttributes<mfem::SubMesh>(mfem::SubMesh &,
+                                                      const mfem::Array<int> &);
+template void RemapSubMeshBdrAttributes<mfem::ParSubMesh>(mfem::ParSubMesh &,
+                                                          const mfem::Array<int> &);
+template void AddSubMeshInternalBoundaryElements<mfem::SubMesh>(
+    mfem::SubMesh &, const mfem::Array<int> &, const std::vector<int> &);
+template void AddSubMeshInternalBoundaryElements<mfem::ParSubMesh>(
+    mfem::ParSubMesh &, const mfem::Array<int> &, const std::vector<int> &);
 
 double GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
 {

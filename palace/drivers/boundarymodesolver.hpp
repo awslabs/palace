@@ -5,12 +5,21 @@
 #define PALACE_DRIVERS_BOUNDARY_MODE_SOLVER_HPP
 
 #include <memory>
+#include <mfem.hpp>
 #include "drivers/basesolver.hpp"
 
 namespace palace
 {
 
-struct SubmeshFrame;
+// Tangent frame of a 2D cross-section in the parent 3D coordinate system. Populated by
+// BoundaryModeSolver::PreprocessMesh during submesh extraction and held by the driver
+// for (a) rotating material tensors into the tangent plane when constructing the
+// MaterialOperator in Solve, and (b) projecting 3D iodata path coordinates onto the 2D
+// local frame. A direct-2D problem has no frame (frame_ stays null).
+struct SubmeshFrame
+{
+  mfem::Vector centroid, e1, e2, normal;
+};
 
 //
 // Driver class for 2D waveguide mode analysis. Constructs a BoundaryModeOperator (which
@@ -23,11 +32,9 @@ struct SubmeshFrame;
 class BoundaryModeSolver : public BaseSolver
 {
 public:
-  // Out-of-line ctor/dtor so that instantiations in main.cpp — where only the forward-
-  // declared SubmeshFrame is visible — don't need the full type for default_delete.
   BoundaryModeSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
                      const char *git_tag = nullptr);
-  ~BoundaryModeSolver() override;
+  ~BoundaryModeSolver() override = default;
 
   void PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh, MPI_Comm comm) const override;
 
@@ -36,8 +43,9 @@ public:
 
 private:
   // Non-null when the solve mesh was extracted from a 3D parent. Populated by
-  // PreprocessMesh; consumed by Solve. Mutable so the const PreprocessMesh hook can
-  // populate it; the frame is itself write-once per solver instance.
+  // PreprocessMesh; consumed by Solve for material-tensor rotation and iodata-path
+  // projection. Mutable so the const PreprocessMesh hook can populate it; write-once per
+  // solver instance.
   mutable std::unique_ptr<SubmeshFrame> frame_;
 };
 
