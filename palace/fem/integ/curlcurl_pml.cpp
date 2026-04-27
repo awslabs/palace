@@ -35,9 +35,9 @@ void CurlCurlPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
               "CurlCurlPMLIntegrator currently only supports 3D elements "
               "(got (space_dim, dim) = ("
                   << space_dim << ", " << dim << ")). Cartesian PML in 2D is a v2 item.");
-  info.apply_qf = imag_part ? f_apply_hcurl_pml_im_33 : f_apply_hcurl_pml_re_33;
-  info.apply_qf_path = PalaceQFunctionRelativePath(imag_part ? f_apply_hcurl_pml_im_33_loc
-                                                             : f_apply_hcurl_pml_re_33_loc);
+  info.apply_qf = imag_part ? f_apply_hcurl_pml_muinv_im_33 : f_apply_hcurl_pml_muinv_re_33;
+  info.apply_qf_path = PalaceQFunctionRelativePath(
+      imag_part ? f_apply_hcurl_pml_muinv_im_33_loc : f_apply_hcurl_pml_muinv_re_33_loc);
 
   info.trial_ops = EvalMode::Curl;
   info.test_ops = EvalMode::Curl;
@@ -61,9 +61,9 @@ void VectorFEMassPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_re
   PalaceCeedCall(ceed, CeedGeometryDataGetSpaceDimension(geom_data_restr, dim, &space_dim));
   MFEM_VERIFY(space_dim == 3 && dim == 3,
               "VectorFEMassPMLIntegrator currently only supports 3D elements.");
-  info.apply_qf = imag_part ? f_apply_hcurl_pml_im_33 : f_apply_hcurl_pml_re_33;
-  info.apply_qf_path = PalaceQFunctionRelativePath(imag_part ? f_apply_hcurl_pml_im_33_loc
-                                                             : f_apply_hcurl_pml_re_33_loc);
+  info.apply_qf = imag_part ? f_apply_hcurl_pml_eps_im_33 : f_apply_hcurl_pml_eps_re_33;
+  info.apply_qf_path = PalaceQFunctionRelativePath(
+      imag_part ? f_apply_hcurl_pml_eps_im_33_loc : f_apply_hcurl_pml_eps_re_33_loc);
 
   info.trial_ops = EvalMode::Interp;
   info.test_ops = EvalMode::Interp;

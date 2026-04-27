@@ -202,39 +202,42 @@ SlabGeometry DetectSlabGeometry(const std::array<double, 3> &attr_min,
                                 const std::array<double, 3> &global_min,
                                 const std::array<double, 3> &global_max, double rel_tol)
 {
-  // A PML face on axis a is "active" on the +/− side if the attribute's bbox sits
-  // entirely on that side of the global centroid, without spanning the full axis
-  // extent. This handles three cases:
-  //   - Outer slab (bbox touches the global boundary on the active side): standard.
-  //   - Inner slab in a multi-slab PML stack (bbox is interior but still on one side
-  //     of the centroid): standard +a or −a PML with thickness = bbox extent.
-  //   - Attribute crossing the centroid: ambiguous, no PML active on that axis.
-  // Thickness along an active axis is the attribute's own bbox extent on that axis.
+  // A PML face on axis a is active on the + side if the attribute's bbox touches the
+  // global +a boundary but not the −a boundary, and vice versa. Thickness = attr bbox
+  // extent along that axis. This handles:
+  //   - Outer slab touching one face: standard.
+  //   - Corner/edge slabs touching multiple faces: multiple axes activated.
+  //   - Attribute spanning the full axis extent (i.e., inner slab in a middle position):
+  //     ambiguous, no PML active on that axis.
+  // A previous version gated this on the centroid of the attribute's bbox being on one
+  // side of the global centroid. That broke down when the PML occupied more than half
+  // the domain on an axis (common for short guides): the PML bbox then straddled the
+  // global centroid even though the axis was clearly active. Using "touches global
+  // boundary" is more robust and matches users' expectation that PML attributes always
+  // live on the outer boundary of the mesh.
   SlabGeometry g;
   for (int axis = 0; axis < 3; axis++)
   {
     const double extent = global_max[axis] - global_min[axis];
     const double eps = rel_tol * std::max(extent, 1.0);
-    const double centroid = 0.5 * (global_min[axis] + global_max[axis]);
     const double attr_thickness = std::max(attr_max[axis] - attr_min[axis], 0.0);
-
-    // Spans the global centroid ⇒ no directional PML on this axis.
-    if (attr_min[axis] < centroid - eps && attr_max[axis] > centroid + eps)
+    if (attr_thickness <= eps)
     {
       continue;
     }
-    // Entirely on the +a side of the centroid (and not degenerate).
-    if (attr_min[axis] >= centroid - eps && attr_thickness > eps)
-    {
-      g.direction_signs[2 * axis + 1] = +1;
-      g.thickness[2 * axis + 1] = attr_thickness;
-    }
-    // Entirely on the −a side.
-    else if (attr_max[axis] <= centroid + eps && attr_thickness > eps)
+    const bool touches_neg = (attr_min[axis] <= global_min[axis] + eps);
+    const bool touches_pos = (attr_max[axis] >= global_max[axis] - eps);
+    if (touches_neg && !touches_pos)
     {
       g.direction_signs[2 * axis + 0] = -1;
       g.thickness[2 * axis + 0] = attr_thickness;
     }
+    else if (touches_pos && !touches_neg)
+    {
+      g.direction_signs[2 * axis + 1] = +1;
+      g.thickness[2 * axis + 1] = attr_thickness;
+    }
+    // Spans (touches both faces) or is interior (touches neither) ⇒ no PML on this axis.
   }
   return g;
 }
@@ -310,21 +313,43 @@ void PackProfileContext(const Profile &profile, CeedIntScalar *out)
 }
 
 std::vector<CeedIntScalar> PackProfileContextAll(const std::vector<int> &attr_to_profile,
-                                                 const std::vector<Profile> &profiles)
+                                                 const std::vector<Profile> &profiles,
+                                                 double scale)
 {
   const std::size_t num_attr = attr_to_profile.size();
   const std::size_t num_profiles = profiles.size();
-  std::vector<CeedIntScalar> ctx(1 + num_attr + kPMLRegionStride * num_profiles);
-  ctx[0].first = static_cast<int>(num_attr);
+  std::vector<CeedIntScalar> ctx(2 + num_attr + kPMLRegionStride * num_profiles);
+  ctx[0].second = scale;
+  ctx[1].first = static_cast<int>(num_attr);
   for (std::size_t i = 0; i < num_attr; i++)
   {
-    ctx[1 + i].first = attr_to_profile[i];
+    ctx[2 + i].first = attr_to_profile[i];
   }
   for (std::size_t p = 0; p < num_profiles; p++)
   {
-    PackProfileContext(profiles[p], ctx.data() + 1 + num_attr + kPMLRegionStride * p);
+    PackProfileContext(profiles[p], ctx.data() + 2 + num_attr + kPMLRegionStride * p);
   }
   return ctx;
+}
+
+void SetPMLContextScale(CeedIntScalar *ctx, double scale)
+{
+  ctx[0].second = scale;
+}
+
+void RefreshPMLContextFrequency(CeedIntScalar *ctx, int num_attr, int num_profiles,
+                                double omega)
+{
+  for (int p = 0; p < num_profiles; p++)
+  {
+    CeedIntScalar *region = ctx + 2 + num_attr + kPMLRegionStride * p;
+    // region[0] is formulation, region[4] is omega (see PackProfileContext layout).
+    const int formulation = region[0].first;
+    if (formulation == static_cast<int>(PMLStretchFormulation::FREQUENCY_DEPENDENT))
+    {
+      region[4].second = omega;
+    }
+  }
 }
 
 }  // namespace palace::pml
