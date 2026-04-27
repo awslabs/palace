@@ -61,6 +61,27 @@ jobs:
             exit 0
           fi
 
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+
+      - uses: julia-actions/cache@v3
+
+      - name: Check generated config docs are up to date
+        run: |
+          julia --project=docs -e 'using Pkg; Pkg.instantiate()'
+          julia --project=docs docs/generate_config_docs.jl
+          if [[ $(git status -s docs/src/config/reference.md | wc -l) -ne 0 ]]; then
+            echo 'Error: docs/src/config/reference.md is out of date!'
+            echo 'Run '\`'julia --project=docs docs/generate_config_docs.jl'\`' and commit the result.'
+            echo 'Summary of required changes:'
+            echo "$(git diff --stat docs/src/config/reference.md)"
+            exit 1
+          else
+            echo 'Config docs are up to date'
+            exit 0
+          fi
+
   check-tests-tags:
     runs-on: ubuntu-latest
     steps:
