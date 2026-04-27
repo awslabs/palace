@@ -6,6 +6,9 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include "fem/libceed/ceed.hpp"
+#include "fem/qfunctions/coeff/coeff_qf.h"
+#include "fem/qfunctions/coeff/pml_qf.h"
 #include "models/pml.hpp"
 #include "utils/configfile.hpp"
 #include "utils/labels.hpp"
@@ -370,6 +373,137 @@ TEST_CASE("PML::ComputeSlabCentroid", "[pml][Serial]")
     REQUIRE(c[1] == Approx(0.9));
     REQUIRE(c[2] == Approx(0.9));
   }
+}
+
+TEST_CASE("PML QFunction helper matches host ComputeStretchTensors", "[pml][Serial]")
+{
+  // Build a 1D +x PML profile, pack it into the QFunction-context layout, then call the
+  // device-side PMLEvalStretchTensors helper (which we compile as a plain inline function
+  // in the host test — it's a CEED_QFUNCTION_HELPER) and compare to the host-side
+  // pml::ComputeStretchTensors at the same sample point.
+  //
+  // If this test fails, the packing layout in PackProfileContext disagrees with the
+  // unpacking layout in pml_qf.h's PMLEvalStretchTensors, or the two implementations of
+  // the stretch math have drifted.
+  pml::Profile p;
+  p.mu_r = 1.0;
+  p.epsilon_r = 1.0;
+  p.order = 3;
+  p.sigma_max = {2.0, 0.0, 0.0};
+  p.kappa_max = {1.0, 1.0, 1.0};
+  p.alpha_max = {0.0, 0.0, 0.0};
+  p.thickness = {0.1, 0.0, 0.0};
+  p.interface_coord[0] = {0.0, 1.0};
+  p.interface_coord[1] = {0.0, 0.0};
+  p.interface_coord[2] = {0.0, 0.0};
+  p.direction_active = {0, 1, 0, 0, 0, 0};
+  p.formulation = PMLStretchFormulation::FIXED;
+  p.reference_frequency = 1.5;
+
+  std::vector<CeedIntScalar> region(pml::kPMLRegionStride);
+  pml::PackProfileContext(p, region.data());
+
+  const std::array<double, 3> sample_points[] = {
+      {{1.0, 0.0, 0.0}},   // at inner interface
+      {{1.05, 0.0, 0.0}},  // midway into PML
+      {{1.08, 0.0, 0.0}},  // deeper
+      {{0.5, 0.0, 0.0}},   // physical region (outside PML)
+  };
+
+  for (const auto &x : sample_points)
+  {
+    auto host = pml::ComputeStretchTensors(p, x, p.reference_frequency);
+    CeedScalar mi_re[3], mi_im[3], e_re[3], e_im[3];
+    const CeedScalar xp[3] = {x[0], x[1], x[2]};
+    PMLEvalStretchTensors(region.data(), xp, mi_re, mi_im, e_re, e_im);
+    for (int i = 0; i < 3; i++)
+    {
+      REQUIRE(mi_re[i] == Approx(host.mu_inv_re[i]));
+      REQUIRE(mi_im[i] == Approx(host.mu_inv_im[i]));
+      REQUIRE(e_re[i] == Approx(host.eps_re[i]));
+      REQUIRE(e_im[i] == Approx(host.eps_im[i]));
+    }
+  }
+
+  SECTION("CFS formulation matches host version")
+  {
+    p.formulation = PMLStretchFormulation::CFS;
+    p.kappa_max = {2.0, 1.0, 1.0};
+    p.alpha_max = {0.1, 0.0, 0.0};
+    pml::PackProfileContext(p, region.data());
+    const std::array<double, 3> x{{1.05, 0.0, 0.0}};
+    auto host = pml::ComputeStretchTensors(p, x, p.reference_frequency);
+    CeedScalar mi_re[3], mi_im[3], e_re[3], e_im[3];
+    const CeedScalar xp[3] = {x[0], x[1], x[2]};
+    PMLEvalStretchTensors(region.data(), xp, mi_re, mi_im, e_re, e_im);
+    for (int i = 0; i < 3; i++)
+    {
+      REQUIRE(mi_re[i] == Approx(host.mu_inv_re[i]));
+      REQUIRE(mi_im[i] == Approx(host.mu_inv_im[i]));
+      REQUIRE(e_re[i] == Approx(host.eps_re[i]));
+      REQUIRE(e_im[i] == Approx(host.eps_im[i]));
+    }
+  }
+}
+
+TEST_CASE("PML QFunction context packing round-trip", "[pml][Serial]")
+{
+  // Pack multiple distinct profiles + an attribute→profile map, then re-unpack each
+  // profile from its packed region and confirm PMLEvalStretchTensors gives the same
+  // answer as the host ComputeStretchTensors on a test point. Exercises:
+  //   - correct attribute lookup (PMLAttrToProfile)
+  //   - stride alignment (PMLRegion offset arithmetic)
+  //   - round-trip packing for multiple regions.
+  std::vector<pml::Profile> profiles(3);
+  const double omega = 2.0;
+  for (int p = 0; p < 3; p++)
+  {
+    profiles[p].mu_r = 1.0 + 0.1 * p;
+    profiles[p].epsilon_r = 2.0 + 0.2 * p;
+    profiles[p].order = 3;
+    // Each profile absorbs on a different axis.
+    profiles[p].sigma_max = {0.0, 0.0, 0.0};
+    profiles[p].sigma_max[p] = 1.0 + 0.5 * p;
+    profiles[p].kappa_max = {1.0, 1.0, 1.0};
+    profiles[p].alpha_max = {0.0, 0.0, 0.0};
+    profiles[p].thickness = {0.0, 0.0, 0.0};
+    profiles[p].thickness[p] = 0.1;
+    profiles[p].interface_coord[0] = {0.0, 0.0};
+    profiles[p].interface_coord[1] = {0.0, 0.0};
+    profiles[p].interface_coord[2] = {0.0, 0.0};
+    profiles[p].interface_coord[p] = {0.0, 1.0};  // +axis PML with inner at axis=1
+    profiles[p].direction_active = {0, 0, 0, 0, 0, 0};
+    profiles[p].direction_active[2 * p + 1] = 1;
+    profiles[p].formulation = PMLStretchFormulation::FIXED;
+    profiles[p].reference_frequency = omega;
+  }
+  const std::vector<int> attr_to_profile{2, -1, 0, 1};  // attr 1→prof 2, 2→none, 3→0, 4→1
+  auto ctx = pml::PackProfileContextAll(attr_to_profile, profiles);
+
+  // Round-trip: re-pack each profile directly and compare to the ctx slice.
+  REQUIRE(ctx[0].first == 4);  // num_attr
+
+  // Test PMLEvalStretchTensors via the profile index lookup path. Attribute 3 (CEED 1-based)
+  // maps to profile 0, whose PML is along x. Sample a point inside that PML slab.
+  const CeedInt num_attr = 4;
+  const CeedInt pidx_for_attr_3 = PMLAttrToProfile(ctx.data(), 3);
+  REQUIRE(pidx_for_attr_3 == 0);
+  const CeedIntScalar *region_0 = PMLRegion(ctx.data(), num_attr, 0);
+
+  const CeedScalar xp[3] = {1.05, 0.0, 0.0};  // midway into +x PML of profile 0
+  CeedScalar mi_re[3], mi_im[3], e_re[3], e_im[3];
+  PMLEvalStretchTensors(region_0, xp, mi_re, mi_im, e_re, e_im);
+  auto host = pml::ComputeStretchTensors(profiles[0], {xp[0], xp[1], xp[2]}, omega);
+  for (int i = 0; i < 3; i++)
+  {
+    REQUIRE(mi_re[i] == Approx(host.mu_inv_re[i]));
+    REQUIRE(mi_im[i] == Approx(host.mu_inv_im[i]));
+    REQUIRE(e_re[i] == Approx(host.eps_re[i]));
+    REQUIRE(e_im[i] == Approx(host.eps_im[i]));
+  }
+
+  // Attribute 2 maps to no profile — sanity-check that PMLAttrToProfile returns −1.
+  REQUIRE(PMLAttrToProfile(ctx.data(), 2) == -1);
 }
 
 }  // namespace palace

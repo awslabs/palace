@@ -5,6 +5,8 @@
 
 #include <cmath>
 #include <limits>
+#include "fem/libceed/ceed.hpp"
+#include "fem/qfunctions/coeff/coeff_qf.h"
 
 namespace palace::pml
 {
@@ -200,40 +202,39 @@ SlabGeometry DetectSlabGeometry(const std::array<double, 3> &attr_min,
                                 const std::array<double, 3> &global_min,
                                 const std::array<double, 3> &global_max, double rel_tol)
 {
-  // A PML face on axis a is "active" on the +/− side if the attribute's bbox reaches
-  // the global bbox on that side while being strictly inside on the opposite side. If
-  // the attribute spans both sides (e.g. a single attribute tagged for both +x and −x
-  // PML, which we treat as non-standard), we still flag both faces as active and use
-  // the attribute's extent along that axis as the thickness — but callers should
-  // prefer tagging ± slabs as separate attributes for clarity.
+  // A PML face on axis a is "active" on the +/− side if the attribute's bbox sits
+  // entirely on that side of the global centroid, without spanning the full axis
+  // extent. This handles three cases:
+  //   - Outer slab (bbox touches the global boundary on the active side): standard.
+  //   - Inner slab in a multi-slab PML stack (bbox is interior but still on one side
+  //     of the centroid): standard +a or −a PML with thickness = bbox extent.
+  //   - Attribute crossing the centroid: ambiguous, no PML active on that axis.
+  // Thickness along an active axis is the attribute's own bbox extent on that axis.
   SlabGeometry g;
   for (int axis = 0; axis < 3; axis++)
   {
     const double extent = global_max[axis] - global_min[axis];
     const double eps = rel_tol * std::max(extent, 1.0);
-    const bool touches_neg = (attr_min[axis] - global_min[axis]) < eps;
-    const bool touches_pos = (global_max[axis] - attr_max[axis]) < eps;
+    const double centroid = 0.5 * (global_min[axis] + global_max[axis]);
     const double attr_thickness = std::max(attr_max[axis] - attr_min[axis], 0.0);
 
-    if (touches_neg && !touches_pos)
+    // Spans the global centroid ⇒ no directional PML on this axis.
+    if (attr_min[axis] < centroid - eps && attr_max[axis] > centroid + eps)
     {
-      // PML slab on the −a face, thickness = attribute's extent along axis a.
-      g.direction_signs[2 * axis + 0] = -1;
-      g.thickness[2 * axis + 0] = attr_thickness;
+      continue;
     }
-    else if (touches_pos && !touches_neg)
+    // Entirely on the +a side of the centroid (and not degenerate).
+    if (attr_min[axis] >= centroid - eps && attr_thickness > eps)
     {
-      // PML slab on the +a face.
       g.direction_signs[2 * axis + 1] = +1;
       g.thickness[2 * axis + 1] = attr_thickness;
     }
-    else if (touches_pos && touches_neg)
+    // Entirely on the −a side.
+    else if (attr_max[axis] <= centroid + eps && attr_thickness > eps)
     {
-      // Spans the full global extent on this axis ⇒ not a PML in this direction.
-      // (The attribute extends across the physical region; absorption in this axis
-      // would not be well-defined.)
+      g.direction_signs[2 * axis + 0] = -1;
+      g.thickness[2 * axis + 0] = attr_thickness;
     }
-    // else: bbox is entirely interior along this axis — no absorption on this axis.
   }
   return g;
 }
@@ -271,6 +272,59 @@ std::array<double, 3> ComputeSlabCentroid(const config::PMLData &data,
     }
   }
   return c;
+}
+
+void PackProfileContext(const Profile &profile, CeedIntScalar *out)
+{
+  // Layout must match pml_qf.h's PMLEvalStretchTensors unpacker.
+  out[0].first = static_cast<int>(profile.formulation);
+  out[1].first = profile.order;
+  out[2].second = profile.mu_r;
+  out[3].second = profile.epsilon_r;
+  out[4].second = profile.reference_frequency;
+  out[5].second = profile.sigma_max[0];
+  out[6].second = profile.sigma_max[1];
+  out[7].second = profile.sigma_max[2];
+  out[8].second = profile.kappa_max[0];
+  out[9].second = profile.kappa_max[1];
+  out[10].second = profile.kappa_max[2];
+  out[11].second = profile.alpha_max[0];
+  out[12].second = profile.alpha_max[1];
+  out[13].second = profile.alpha_max[2];
+  out[14].second = profile.thickness[0];
+  out[15].second = profile.thickness[1];
+  out[16].second = profile.thickness[2];
+  // Interface coordinates are interleaved neg/pos per axis to match the unpacker.
+  out[17].second = profile.interface_coord[0][0];  // -x
+  out[18].second = profile.interface_coord[0][1];  // +x
+  out[19].second = profile.interface_coord[1][0];  // -y
+  out[20].second = profile.interface_coord[1][1];  // +y
+  out[21].second = profile.interface_coord[2][0];  // -z
+  out[22].second = profile.interface_coord[2][1];  // +z
+  out[23].first = profile.direction_active[0];     // -x
+  out[24].first = profile.direction_active[1];     // +x
+  out[25].first = profile.direction_active[2];     // -y
+  out[26].first = profile.direction_active[3];     // +y
+  out[27].first = profile.direction_active[4];     // -z
+  out[28].first = profile.direction_active[5];     // +z
+}
+
+std::vector<CeedIntScalar> PackProfileContextAll(const std::vector<int> &attr_to_profile,
+                                                 const std::vector<Profile> &profiles)
+{
+  const std::size_t num_attr = attr_to_profile.size();
+  const std::size_t num_profiles = profiles.size();
+  std::vector<CeedIntScalar> ctx(1 + num_attr + kPMLRegionStride * num_profiles);
+  ctx[0].first = static_cast<int>(num_attr);
+  for (std::size_t i = 0; i < num_attr; i++)
+  {
+    ctx[1 + i].first = attr_to_profile[i];
+  }
+  for (std::size_t p = 0; p < num_profiles; p++)
+  {
+    PackProfileContext(profiles[p], ctx.data() + 1 + num_attr + kPMLRegionStride * p);
+  }
+  return ctx;
 }
 
 }  // namespace palace::pml

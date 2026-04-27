@@ -178,8 +178,10 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   ceed::InitCeedVector(elem_attr, ceed, &elem_attr_vec);
 
   // Allocate storage for geometry factor data (stored as attribute + quadrature weight +
-  // Jacobian, column-major).
-  CeedInt geom_data_size = 2 + data.space_dim * data.dim;
+  // Jacobian + physical coordinate, column-major). The physical coordinate is cached so
+  // QFunctions with spatially-varying coefficients (e.g. PML stretch) can sample at each
+  // quadrature point without additional plumbing at operator-apply time.
+  CeedInt geom_data_size = 2 + data.space_dim * (data.dim + 1);
   PalaceCeedCall(ceed,
                  CeedVectorCreate(ceed, (CeedSize)num_elem * num_qpts * geom_data_size,
                                   &data.geom_data));
