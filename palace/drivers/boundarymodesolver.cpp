@@ -4,6 +4,7 @@
 #include "boundarymodesolver.hpp"
 
 #include <algorithm>
+#include <complex>
 #include <unordered_set>
 #include "linalg/errorestimator.hpp"
 #include "linalg/operator.hpp"
@@ -300,15 +301,26 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const int n_print = std::min(num_conv, num_modes);
   for (int i = 0; i < n_print; i++)
   {
+    // Load eigenvector i and split into physical (et, En) via the shared VD back-transform.
     ComplexVector e0(nd_size + h1_size);
     e0.UseDevice(true);
+    eig.GetEigenvector(i, e0);
     ComplexVector et, en;
-    std::complex<double> kn = eig.GetPhysicalMode(i, omega, e0, et, en);
-    double error_bkwd = eig.GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
-    double error_abs = eig.GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
+    const std::complex<double> kn = eig.GetPropagationConstant(i);
+    eig.ApplyVDBackTransform(e0, kn, et, en);
 
-    // Poynting power P for impedance postprocessing (|P| ≈ 1 after normalization).
-    std::complex<double> P = eig.ComputePoyntingPower(omega, kn, et, en);
+    // Power-normalize so that |P| = 1 for the Poynting cross-section integral; recompute
+    // P afterward so its phase (which matters for impedance postprocessing) reflects the
+    // normalized mode.
+    auto P = eig.ComputePoyntingPower(omega, kn, et, en);
+    if (std::abs(P) > 0.0)
+    {
+      e0 *= 1.0 / std::sqrt(std::abs(P));
+      P = eig.ComputePoyntingPower(omega, kn, et, en);
+    }
+
+    const double error_bkwd = eig.GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
+    const double error_abs = eig.GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
 
     auto total_domain_energy = post_op.MeasureAndPrintAll(i, et, en, kn, P, omega,
                                                           error_abs, error_bkwd, n_print);

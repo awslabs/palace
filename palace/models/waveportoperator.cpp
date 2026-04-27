@@ -629,13 +629,16 @@ void WavePortData::Initialize(double omega)
   kn0 = std::sqrt(-sigma - 1.0 / lambda);
   omega0 = omega;
 
-  // Separate the computed field out into eₜ and eₙ and and transform back to true
-  // electric field variables: Eₜ = eₜ and Eₙ = eₙ / ikₙ.
+  // Separate the computed field out into eₜ and eₙ and transform back to the physical
+  // electric field variables Eₜ = eₜ and Eₙ = eₙ / (i·kₙ). Order: load raw eigenvector,
+  // phase-normalize, then apply the shared VD back-transform.
   {
     if (port_comm != MPI_COMM_NULL)
     {
       mode_solver->GetEigenvector(mode_idx - 1, e0);
       linalg::NormalizePhase(port_comm, e0);
+      ComplexVector et_view, en_view;
+      mode_solver->ApplyVDBackTransform(e0, kn0, et_view, en_view);
     }
     else
     {
@@ -654,7 +657,6 @@ void WavePortData::Initialize(double omega)
     e0nr.UseDevice(true);
     e0ti.UseDevice(true);
     e0ni.UseDevice(true);
-    ComplexVector::AXPBY(1.0 / (1i * kn0), e0nr, e0ni, 0.0, e0nr, e0ni);
     port_E0t->Real().SetFromTrueDofs(e0tr);  // Parallel distribute
     port_E0t->Imag().SetFromTrueDofs(e0ti);
     port_E0n->Real().SetFromTrueDofs(e0nr);

@@ -55,9 +55,12 @@ struct LinearSolverData;
 // The A matrix is upper block-triangular (Ant = 0). The B matrix has Btn coupling from
 // Equation 2 and Bnn = 0. This is a standard GEP with shift-and-invert.
 //
-// The eigenvector contains [e_t; e_n_tilde] where e_n_tilde = i*kn*E_n. Recovery of
-// E_n = e_n_tilde / (i*kn) is performed by the caller (see GetPhysicalMode on the
-// owning operator).
+// The eigenvector contains [e_t; e_n_tilde] where e_n_tilde = i*kn*E_n. The
+// Vardapetyan–Demkowicz back-transform (recovery of E_n = e_n_tilde / (i*kn)) and
+// Poynting-power normalization are the caller's responsibility — the solver exposes
+// the raw eigenvector via GetEigenvector and kn via GetPropagationConstant, with the
+// Vardapetyan–Demkowicz back-transform en := ẽn / (i·kn) available as ApplyVDBackTransform
+// and Poynting power via ComputePoyntingPower.
 //
 class ModeEigenSolver
 {
@@ -107,25 +110,23 @@ public:
   // Propagation constant kn for mode i, recovered from the shift of the most recent Solve.
   std::complex<double> GetPropagationConstant(int i) const;
 
-  // Load eigenvector i, back-transform the H1 block from the VD variable ẽn = i·kn·En to
-  // physical En = ẽn/(i·kn), and power-normalize the combined vector to unit Poynting
-  // power. Returns the propagation constant kn. et and en are aliased views into e0.
-  std::complex<double> GetPhysicalMode(int i, double omega, ComplexVector &e0,
-                                       ComplexVector &et, ComplexVector &en) const;
+  // Alias the ND and H1 halves of a pre-loaded eigenvector e0 = [e_t_tilde; e_n_tilde] as
+  // et / en, and apply the Vardapetyan–Demkowicz back-transform en := ẽn / (i·kn) so en
+  // holds the physical En. Used by both drivers after GetEigenvector (and any desired
+  // phase normalization) to produce the physical mode fields; each driver applies its
+  // own power normalization flavor afterward.
+  void ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn, ComplexVector &et,
+                            ComplexVector &en) const;
 
-  // Poynting power P = (1/2) conj(kn)/omega · etᴴ·Btt·et + i/(2·omega) · etᴴ·Atn·En
-  // for physical (et, En).
+  // Poynting power P = (1/2) conj(kn)/omega · etᴴ Btt et + i/(2·omega) · etᴴ Atn En for
+  // physical (et, En). Used by BoundaryMode for power normalization and impedance
+  // postprocessing; WavePort uses a different normalization and does not call this.
   std::complex<double> ComputePoyntingPower(double omega, std::complex<double> kn,
                                             const ComplexVector &et,
                                             const ComplexVector &en) const;
 
   // Heuristic classifier: |Im kn| < 0.1·|Re kn| and Re kn > 0.
   static bool IsPropagating(std::complex<double> kn);
-
-  // Access the assembled Btt and Atn matrices (needed for power normalization).
-  const mfem::HypreParMatrix *GetBtt() const { return Bttr.get(); }
-  const mfem::HypreParMatrix *GetAtnr() const { return Atnr.get(); }
-  const mfem::HypreParMatrix *GetAtni() const { return Atni.get(); }
 
   // Get the true vector sizes for the ND and H1 FE spaces.
   int GetNDTrueVSize() const { return nd_size; }

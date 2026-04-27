@@ -243,32 +243,15 @@ std::complex<double> ModeEigenSolver::GetPropagationConstant(int i) const
   return std::sqrt(-sigma_cached - 1.0 / eigen->GetEigenvalue(mode_perm[i]));
 }
 
-std::complex<double> ModeEigenSolver::GetPhysicalMode(int i, double omega,
-                                                     ComplexVector &e0, ComplexVector &et,
-                                                     ComplexVector &en) const
+void ModeEigenSolver::ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn,
+                                           ComplexVector &et, ComplexVector &en) const
 {
-  GetEigenvector(i, e0);
   et.Real().MakeRef(e0.Real(), 0, nd_size);
   et.Imag().MakeRef(e0.Imag(), 0, nd_size);
   en.Real().MakeRef(e0.Real(), nd_size, h1_size);
   en.Imag().MakeRef(e0.Imag(), nd_size, h1_size);
-
-  std::complex<double> kn = GetPropagationConstant(i);
-
-  // Back-transform en from VD variable ẽn = i·kn·En to physical En = ẽn/(i·kn).
-  {
-    auto ikn_inv = 1.0 / (std::complex<double>(0.0, 1.0) * kn);
-    ComplexVector::AXPBY(ikn_inv, en.Real(), en.Imag(), 0.0, en.Real(), en.Imag());
-  }
-
-  // Power-normalize the full eigenvector (et and En both get the same scalar factor).
-  auto P = ComputePoyntingPower(omega, kn, et, en);
-  double P_abs = std::abs(P);
-  if (P_abs > 0.0)
-  {
-    e0 *= 1.0 / std::sqrt(P_abs);
-  }
-  return kn;
+  const auto ikn_inv = 1.0 / (std::complex<double>(0.0, 1.0) * kn);
+  ComplexVector::AXPBY(ikn_inv, en.Real(), en.Imag(), 0.0, en.Real(), en.Imag());
 }
 
 std::complex<double> ModeEigenSolver::ComputePoyntingPower(double omega,
@@ -281,11 +264,7 @@ std::complex<double> ModeEigenSolver::ComputePoyntingPower(double omega,
     return 0.0;
   }
   auto comm = nd_fespace.GetComm();
-
-  // Transverse term: (1/2) conj(kn)/omega · etᴴ·Btt·et (Btt symmetric ⇒ real valued).
   std::complex<double> P = 0.5 * std::conj(kn) / omega * linalg::Dot(comm, et, *Bttr, et);
-
-  // Cross term.
   if (Atnr && en.Size() == h1_size)
   {
     ComplexWrapperOperator Atn(const_cast<mfem::HypreParMatrix *>(Atnr.get()),
