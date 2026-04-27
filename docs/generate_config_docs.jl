@@ -1,3 +1,6 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # Auto-generates docs/src/config/*.md from scripts/schema/config/*.json
 # Run via: julia --project docs/generate_config_docs.jl
 # Or included in docs/make.jl
