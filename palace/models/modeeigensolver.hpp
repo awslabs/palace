@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_LINALG_MODE_EIGEN_SOLVER_HPP
-#define PALACE_LINALG_MODE_EIGEN_SOLVER_HPP
+#ifndef PALACE_MODELS_MODE_EIGEN_SOLVER_HPP
+#define PALACE_MODELS_MODE_EIGEN_SOLVER_HPP
 
 #include <complex>
 #include <memory>
@@ -255,4 +255,4 @@ private:
 
 }  // namespace palace
 
-#endif  // PALACE_LINALG_MODE_EIGEN_SOLVER_HPP
+#endif  // PALACE_MODELS_MODE_EIGEN_SOLVER_HPP

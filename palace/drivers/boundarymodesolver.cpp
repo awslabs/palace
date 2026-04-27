@@ -6,10 +6,10 @@
 #include <algorithm>
 #include <unordered_set>
 #include "linalg/errorestimator.hpp"
-#include "linalg/modeeigensolver.hpp"
 #include "linalg/operator.hpp"
 #include "models/boundarymodeoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/modeeigensolver.hpp"
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"

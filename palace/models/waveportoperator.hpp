@@ -14,7 +14,7 @@
 #include "fem/mesh.hpp"
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
-#include "linalg/modeeigensolver.hpp"
+#include "models/modeeigensolver.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "utils/configfile.hpp"
