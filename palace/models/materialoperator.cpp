@@ -6,6 +6,8 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include "fem/libceed/ceed.hpp"  // for <ceed.h> before coeff_qf.h
+#include "fem/qfunctions/coeff/coeff_qf.h"
 #include "linalg/densematrix.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -176,24 +178,14 @@ void MaterialOperator::SetUpMaterialProperties(
   mat_kx.SetSize(sdim, sdim, nmats);
   has_losstan_attr = has_conductivity_attr = has_london_attr = has_wave_attr = false;
 
-  // PML storage is keyed by libCEED attribute (same as attr_mat), not by material index,
-  // so SpaceOperator can assemble PML contributions directly from the ambient attribute-
-  // to-coefficient pipeline without needing a separate index space. Entries are zero
-  // for non-PML attributes so they can be assembled unconditionally. Two parallel sets
-  // (static = FIXED/CFS, freq = FREQUENCY_DEPENDENT) let the frequency-dependent path
-  // rebuild independently of the static bake.
-  for (auto *t :
-       {&mat_muinv_pml_static_re, &mat_muinv_pml_static_im, &mat_epsilon_pml_static_re,
-        &mat_epsilon_pml_static_im, &mat_muinv_pml_freq_re, &mat_muinv_pml_freq_im,
-        &mat_epsilon_pml_freq_re, &mat_epsilon_pml_freq_im})
-  {
-    t->SetSize(sdim, sdim, attr_mat.Size());
-    *t = 0.0;
-  }
-  pml_attr_to_profile.SetSize(attr_mat.Size());
-  pml_attr_to_profile = -1;
+  // PML profile registry: a per-libCEED-attribute index into pml_profiles (or -1 for
+  // non-PML attributes). The PML QFunction reads from the packed context (pml_ctx)
+  // built at the end of this function; it looks up the profile index from the element
+  // attribute and evaluates the stretch tensor at each quadrature point from the
+  // cached physical coordinate.
+  pml_attr_to_profile.assign(attr_mat.Size(), -1);
   pml_profiles.clear();
-  pml_centroid.clear();
+  pml_ctx.clear();
   has_pml_attr = false;
   has_pml_freq_dependent_attr = false;
 
@@ -342,10 +334,10 @@ void MaterialOperator::SetUpMaterialProperties(
   has_wave_attr = has_attr[3];
 
   // ---- PML setup (second pass) --------------------------------------------------
-  // For each material with a PML block, build a pml::Profile evaluated at the slab's
-  // midpoint and zero out the bulk material tensors on PML attributes so the standard
-  // coefficient path contributes nothing — PML contributions are added separately via
-  // the mat_muinv_pml_* / mat_epsilon_pml_* tensors.
+  // For each material with a PML block, build a pml::Profile and zero out the bulk
+  // material tensors on PML attributes so the standard coefficient path contributes
+  // nothing. PML contributions are applied per-quadrature-point in the PML QFunction
+  // (see fem/qfunctions/coeff/pml_qf.h) driven by a packed context built below.
   mfem::Vector bbmin_mfem, bbmax_mfem;
   mesh::GetAxisAlignedBoundingBox(mesh, bbmin_mfem, bbmax_mfem);
   const std::array<double, 3> bbmin{{bbmin_mfem[0], bbmin_mfem[1], bbmin_mfem[2]}};
@@ -358,6 +350,54 @@ void MaterialOperator::SetUpMaterialProperties(
   int attr_max = attr_max_local;
   Mpi::GlobalMax(1, &attr_max, mesh.GetComm());
 
+  // Pre-pass: compute the union bounding box of ALL PML attributes across ALL PML
+  // materials that want auto-detected geometry. When the user splits a single PML layer
+  // into N stacked slabs (either as multiple attributes of one material or as multiple
+  // materials with the same parameters), we want them to share ONE logical profile
+  // geometry: same inner interface, same total thickness, same σ_max. Otherwise each
+  // slab's σ(z) resets to 0 at its inner face, producing a sawtooth σ that gives
+  // substantially worse absorption than an unsplit layer of equivalent total thickness.
+  // Per-QP σ(x) then evaluates as a single continuous ramp across the whole PML extent
+  // regardless of how many attributes the user tagged it with.
+  pml::SlabGeometry unified_geom{};
+  bool any_autodetect = false;
+  {
+    mfem::Array<int> union_marker(attr_max);
+    union_marker = 0;
+    for (std::size_t i = 0; i < materials.size(); i++)
+    {
+      if (!materials[i].pml.has_value() || !materials[i].pml->autodetect_geometry)
+      {
+        continue;
+      }
+      any_autodetect = true;
+      for (auto attr : materials[i].attributes)
+      {
+        if (attr > 0 && attr <= attr_max_local)
+        {
+          union_marker[attr - 1] = 1;
+        }
+      }
+    }
+    if (any_autodetect)
+    {
+      mfem::Vector u_min_mfem, u_max_mfem;
+      mesh::GetAxisAlignedBoundingBox(mesh, union_marker, /*bdr=*/false, u_min_mfem,
+                                      u_max_mfem);
+      const std::array<double, 3> u_min{{u_min_mfem[0], u_min_mfem[1], u_min_mfem[2]}};
+      const std::array<double, 3> u_max{{u_max_mfem[0], u_max_mfem[1], u_max_mfem[2]}};
+      unified_geom = pml::DetectSlabGeometry(u_min, u_max, bbmin, bbmax);
+      const bool any_active =
+          std::any_of(unified_geom.direction_signs.begin(),
+                      unified_geom.direction_signs.end(), [](int s) { return s != 0; });
+      MFEM_VERIFY(any_active,
+                  "Auto-detected PML geometry found no PML attributes touching the "
+                  "global mesh bounding box. Ensure the PML region sits on the outer "
+                  "boundary of the mesh, or specify \"Direction\" and \"Thickness\" "
+                  "explicitly in each PML material.");
+    }
+  }
+
   for (std::size_t i = 0; i < materials.size(); i++)
   {
     if (!materials[i].pml.has_value())
@@ -368,51 +408,13 @@ void MaterialOperator::SetUpMaterialProperties(
     // Local copy that may have direction_signs / thickness filled in by auto-detection.
     auto pml_cfg = *data.pml;
 
-    // Auto-detect PML direction and thickness from mesh geometry when the user did not
-    // specify them in the config. This is the common case — users just tag their PML
-    // mesh attributes and let Palace figure out which faces are absorbing.
-    //
-    // GetAxisAlignedBoundingBox does a global MPI reduction, so every rank must call
-    // it in the same order — hence the `autodetect_geometry` check must be identical
-    // across ranks (driven by the config, which is collective) and the loop must not
-    // be skipped on ranks that happen not to own elements of this PML material.
+    // Auto-detected geometry uses the unified slab geometry computed in the pre-pass
+    // above, so all PML materials that participate in auto-detection share the same
+    // thickness and inner interface. This makes N-slab and 1-slab layouts equivalent.
     if (pml_cfg.autodetect_geometry)
     {
-      mfem::Array<int> pml_marker(attr_max);
-      pml_marker = 0;
-      for (auto attr : data.attributes)
-      {
-        if (attr > 0 && attr <= attr_max_local)
-        {
-          pml_marker[attr - 1] = 1;
-        }
-      }
-      mfem::Vector attr_min_mfem, attr_max_mfem;
-      mesh::GetAxisAlignedBoundingBox(mesh, pml_marker, /*bdr=*/false, attr_min_mfem,
-                                      attr_max_mfem);
-      const std::array<double, 3> attr_min{
-          {attr_min_mfem[0], attr_min_mfem[1], attr_min_mfem[2]}};
-      const std::array<double, 3> attr_max_pt{
-          {attr_max_mfem[0], attr_max_mfem[1], attr_max_mfem[2]}};
-      const auto geom = pml::DetectSlabGeometry(attr_min, attr_max_pt, bbmin, bbmax);
-      pml_cfg.direction_signs = geom.direction_signs;
-      pml_cfg.thickness = geom.thickness;
-
-      const bool any_active =
-          std::any_of(pml_cfg.direction_signs.begin(), pml_cfg.direction_signs.end(),
-                      [](int s) { return s != 0; });
-      MFEM_VERIFY(any_active,
-                  "Auto-detected PML geometry for attributes "
-                      << data.attributes[0]
-                      << "... found no faces touching the global mesh bounding box. "
-                         "Ensure the PML region sits on the outer boundary of the mesh, "
-                         "or specify \"Direction\" and \"Thickness\" explicitly.");
-    }
-
-    // From here on, skip this material on ranks that don't own any of its elements.
-    if (!mat_marker[i])
-    {
-      continue;
+      pml_cfg.direction_signs = unified_geom.direction_signs;
+      pml_cfg.thickness = unified_geom.thickness;
     }
 
     // Build the Profile. Use the isotropic average of the anisotropic ε_r / μ_r for the
@@ -425,7 +427,8 @@ void MaterialOperator::SetUpMaterialProperties(
 
     // Interface coordinates from the mesh bounding box. For each active face, the
     // inner interface is at bbmin[axis] + thickness_neg (for −face) or
-    // bbmax[axis] − thickness_pos (for +face).
+    // bbmax[axis] − thickness_pos (for +face). The PML QFunction uses these to compute
+    // the depth into the absorbing layer from the physical QP coordinate.
     for (int axis = 0; axis < 3; axis++)
     {
       profile.interface_coord[axis][0] = bbmin[axis] + pml_cfg.thickness[2 * axis + 0];
@@ -434,11 +437,11 @@ void MaterialOperator::SetUpMaterialProperties(
 
     const int profile_idx = static_cast<int>(pml_profiles.size());
     pml_profiles.push_back(profile);
-    pml_centroid.push_back(pml::ComputeSlabCentroid(pml_cfg, bbmin, bbmax));
 
     // Map each of this material's libCEED attributes to this profile, and zero out the
     // bulk mat_muinv / mat_epsilon entries for those attributes so the standard
-    // coefficient path contributes nothing.
+    // coefficient path contributes nothing. Only local attributes (those present in
+    // this rank's CEED attribute map) are mapped.
     for (auto attr : data.attributes)
     {
       auto it = loc_attr.find(attr);
@@ -473,9 +476,15 @@ void MaterialOperator::SetUpMaterialProperties(
   has_pml_attr = has_pml_buf[0];
   has_pml_freq_dependent_attr = has_pml_buf[1];
 
-  // Print a summary of PML regions on the root rank. Since auto-detect can leave
-  // pml_profiles empty on a rank that doesn't own any PML elements, gather a single
-  // representative Profile per PML material from whichever rank has it.
+  // Pack the PML QFunction context once at setup. Per-region ω fields for
+  // FIXED/CFS profiles are already set (to their reference_frequency). FREQUENCY_DEPENDENT
+  // regions have ω = 0 and will be refreshed by SpaceOperator::GetExtraSystemMatrix(ω).
+  if (has_pml_attr)
+  {
+    pml_ctx = pml::PackProfileContextAll(pml_attr_to_profile, pml_profiles);
+  }
+
+  // Print a summary of PML regions on the root rank.
   if (has_pml_attr && Mpi::Root(mesh.GetComm()) && !pml_profiles.empty())
   {
     Mpi::Print("\nConfigured PML regions ({} profile{} on rank 0):\n", pml_profiles.size(),
@@ -498,85 +507,16 @@ void MaterialOperator::SetUpMaterialProperties(
                  prof.thickness[0], prof.thickness[1], prof.thickness[2]);
     }
   }
-
-  // Initial PML tensor fill using each profile's own reference_frequency. For FIXED and
-  // CFS this is the final value; for FREQUENCY_DEPENDENT it is a placeholder and the
-  // SpaceOperator will call RebuildPMLTensors(ω) at each solve frequency.
-  if (has_pml_attr)
-  {
-    RebuildPMLTensors(/*omega=*/0.0);
-  }
 }
 
-void MaterialOperator::RebuildPMLTensors(double omega, bool only_freq_dependent)
+void MaterialOperator::RefreshPMLContextFrequency(double omega) const
 {
-  if (!has_pml_attr)
+  if (!has_pml_attr || pml_ctx.empty())
   {
     return;
   }
-  const int sdim = mat_muinv_pml_static_re.SizeI();
-
-  for (int k = 0; k < pml_attr_to_profile.Size(); k++)
-  {
-    const int pidx = pml_attr_to_profile[k];
-    if (pidx < 0)
-    {
-      continue;
-    }
-    const auto &profile = pml_profiles[pidx];
-    const bool is_freq_dependent =
-        (profile.formulation == PMLStretchFormulation::FREQUENCY_DEPENDENT);
-
-    if (only_freq_dependent && !is_freq_dependent)
-    {
-      continue;
-    }
-
-    // Zero the relevant slot before refilling.
-    if (is_freq_dependent)
-    {
-      mat_muinv_pml_freq_re(k) = 0.0;
-      mat_muinv_pml_freq_im(k) = 0.0;
-      mat_epsilon_pml_freq_re(k) = 0.0;
-      mat_epsilon_pml_freq_im(k) = 0.0;
-    }
-    else
-    {
-      mat_muinv_pml_static_re(k) = 0.0;
-      mat_muinv_pml_static_im(k) = 0.0;
-      mat_epsilon_pml_static_re(k) = 0.0;
-      mat_epsilon_pml_static_im(k) = 0.0;
-    }
-
-    const double w = is_freq_dependent ? omega : profile.reference_frequency;
-    if (w <= 0.0)
-    {
-      // FREQUENCY_DEPENDENT before first solve, or a PML profile whose
-      // reference_frequency is not yet set. Leave tensors zero — the config-load-time
-      // check in PMLData forbids this combination for FIXED/CFS.
-      continue;
-    }
-
-    const auto &centroid = pml_centroid[pidx];
-    const auto t = pml::ComputeStretchTensors(profile, centroid, w);
-    for (int d = 0; d < sdim; d++)
-    {
-      if (is_freq_dependent)
-      {
-        mat_muinv_pml_freq_re(k)(d, d) = t.mu_inv_re[d];
-        mat_muinv_pml_freq_im(k)(d, d) = t.mu_inv_im[d];
-        mat_epsilon_pml_freq_re(k)(d, d) = t.eps_re[d];
-        mat_epsilon_pml_freq_im(k)(d, d) = t.eps_im[d];
-      }
-      else
-      {
-        mat_muinv_pml_static_re(k)(d, d) = t.mu_inv_re[d];
-        mat_muinv_pml_static_im(k)(d, d) = t.mu_inv_im[d];
-        mat_epsilon_pml_static_re(k)(d, d) = t.eps_re[d];
-        mat_epsilon_pml_static_im(k)(d, d) = t.eps_im[d];
-      }
-    }
-  }
+  pml::RefreshPMLContextFrequency(pml_ctx.data(), GetPMLNumAttributes(),
+                                  GetPMLNumProfiles(), omega);
 }
 
 void MaterialOperator::SetUpFloquetWaveVector(const config::PeriodicBoundaryData &periodic,

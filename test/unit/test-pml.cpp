@@ -480,11 +480,11 @@ TEST_CASE("PML QFunction context packing round-trip", "[pml][Serial]")
   const std::vector<int> attr_to_profile{2, -1, 0, 1};  // attr 1→prof 2, 2→none, 3→0, 4→1
   auto ctx = pml::PackProfileContextAll(attr_to_profile, profiles);
 
-  // Round-trip: re-pack each profile directly and compare to the ctx slice.
-  REQUIRE(ctx[0].first == 4);  // num_attr
+  // Round-trip: header layout.
+  REQUIRE(ctx[0].second == Approx(1.0));  // default scale
+  REQUIRE(ctx[1].first == 4);             // num_attr
 
-  // Test PMLEvalStretchTensors via the profile index lookup path. Attribute 3 (CEED 1-based)
-  // maps to profile 0, whose PML is along x. Sample a point inside that PML slab.
+  // Attribute 3 (CEED 1-based) maps to profile 0, whose PML is along x.
   const CeedInt num_attr = 4;
   const CeedInt pidx_for_attr_3 = PMLAttrToProfile(ctx.data(), 3);
   REQUIRE(pidx_for_attr_3 == 0);
@@ -504,6 +504,28 @@ TEST_CASE("PML QFunction context packing round-trip", "[pml][Serial]")
 
   // Attribute 2 maps to no profile — sanity-check that PMLAttrToProfile returns −1.
   REQUIRE(PMLAttrToProfile(ctx.data(), 2) == -1);
+
+  SECTION("SetPMLContextScale updates scale in place")
+  {
+    pml::SetPMLContextScale(ctx.data(), -0.5);
+    REQUIRE(PMLScale(ctx.data()) == Approx(-0.5));
+    // Profile data untouched.
+    REQUIRE(PMLAttrToProfile(ctx.data(), 3) == 0);
+  }
+
+  SECTION("RefreshPMLContextFrequency only touches FD regions")
+  {
+    // Mark profile 1 as FD; keep 0 and 2 as FIXED.
+    profiles[1].formulation = PMLStretchFormulation::FREQUENCY_DEPENDENT;
+    auto ctx2 = pml::PackProfileContextAll(attr_to_profile, profiles);
+    pml::RefreshPMLContextFrequency(ctx2.data(), 4, 3, 7.5);
+    const CeedIntScalar *r0 = PMLRegion(ctx2.data(), 4, 0);
+    const CeedIntScalar *r1 = PMLRegion(ctx2.data(), 4, 1);
+    const CeedIntScalar *r2 = PMLRegion(ctx2.data(), 4, 2);
+    REQUIRE(r0[4].second == Approx(omega));  // FIXED, untouched
+    REQUIRE(r1[4].second == Approx(7.5));    // FD, updated
+    REQUIRE(r2[4].second == Approx(omega));  // FIXED, untouched
+  }
 }
 
 }  // namespace palace

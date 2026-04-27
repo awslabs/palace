@@ -160,14 +160,28 @@ constexpr int kPMLRegionStride = 29;
 void PackProfileContext(const Profile &profile, CeedIntScalar *out);
 
 // Build a complete PML QFunction context:
-//   [num_attr:int]
+//   [scale:CeedScalar]
+//   [num_attr:CeedInt]
 //   [attr→profile map]            // one per libCEED attribute; -1 for non-PML
-//   [region 0 (27 entries)]
-//   [region 1 (27 entries)]
+//   [region 0 (kPMLRegionStride entries)]
+//   [region 1 (kPMLRegionStride entries)]
 //   ...
 // `attr_to_profile[k]` gives the profile index for libCEED attribute k+1 (0-based).
+// `scale` multiplies the stretch-tensor output (used to combine PML contributions
+// with bilinear-form scalar prefactors like a0 in preconditioner cross-terms).
 std::vector<CeedIntScalar> PackProfileContextAll(const std::vector<int> &attr_to_profile,
-                                                 const std::vector<Profile> &profiles);
+                                                 const std::vector<Profile> &profiles,
+                                                 double scale = 1.0);
+
+// Write `scale` into an already-built context buffer. Used by solvers that need the
+// same PML QFunction with different coefficient scales (real vs imag cross-terms).
+void SetPMLContextScale(CeedIntScalar *ctx, double scale);
+
+// Write `omega` into every FREQUENCY_DEPENDENT region of an already-built context.
+// Called by SpaceOperator::GetExtraSystemMatrix(ω) each time the live solve frequency
+// changes. FIXED/CFS regions are left untouched.
+void RefreshPMLContextFrequency(CeedIntScalar *ctx, int num_attr, int num_profiles,
+                                double omega);
 
 }  // namespace palace::pml
 

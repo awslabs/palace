@@ -8,10 +8,13 @@
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
+#include "fem/libceed/ceed.hpp"  // for <ceed.h> before coeff_qf.h
 #include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
+#include "fem/qfunctions/coeff/coeff_qf.h"
 #include "linalg/hypre.hpp"
 #include "linalg/rap.hpp"
+#include "models/pml.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -239,11 +242,29 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
   print_hdr = false;
 }
 
+// One PML integrator to add to a BilinearForm. Callers build these (typically one for
+// curl-curl and one for mass, for each of Re/Im branches) and pass a list to
+// AddIntegrators. The caller owns the lifetime of the ctx buffer; the BilinearForm
+// takes a copy at libCEED operator build time via CEED_COPY_VALUES.
+enum class PMLIntegKind : char
+{
+  CurlCurl,
+  VectorFEMass
+};
+struct PMLIntegrator
+{
+  const void *ctx = nullptr;
+  std::size_t ctx_size = 0;
+  PMLIntegKind kind = PMLIntegKind::CurlCurl;
+  bool imag_part = false;  // true ⇒ use Im(μ̃⁻¹) or Im(ε̃)
+};
+
 void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
                     const MaterialPropertyCoefficient *f,
                     const MaterialPropertyCoefficient *dfb,
                     const MaterialPropertyCoefficient *fb,
-                    const MaterialPropertyCoefficient *fp, bool assemble_q_data = false)
+                    const MaterialPropertyCoefficient *fp, bool assemble_q_data = false,
+                    const std::vector<PMLIntegrator> *pml = nullptr)
 {
   if (df && !df->empty() && f && !f->empty())
   {
@@ -280,6 +301,24 @@ void AddIntegrators(BilinearForm &a, const MaterialPropertyCoefficient *df,
     a.AddDomainIntegrator<MixedVectorWeakCurlIntegrator>(*fp);
     a.AddDomainIntegrator<MixedVectorCurlIntegrator>(*fp, true);
   }
+  if (pml)
+  {
+    for (const auto &p : *pml)
+    {
+      if (!p.ctx)
+      {
+        continue;
+      }
+      if (p.kind == PMLIntegKind::CurlCurl)
+      {
+        a.AddDomainIntegrator<CurlCurlPMLIntegrator>(p.ctx, p.ctx_size, p.imag_part);
+      }
+      else
+      {
+        a.AddDomainIntegrator<VectorFEMassPMLIntegrator>(p.ctx, p.ctx_size, p.imag_part);
+      }
+    }
+  }
   if (assemble_q_data)
   {
     a.AssembleQuadratureData();
@@ -309,10 +348,11 @@ auto AssembleOperator(const FiniteElementSpace &fespace,
                       const MaterialPropertyCoefficient *dfb,
                       const MaterialPropertyCoefficient *fb,
                       const MaterialPropertyCoefficient *fp, bool skip_zeros = false,
-                      bool assemble_q_data = false)
+                      bool assemble_q_data = false,
+                      const std::vector<PMLIntegrator> *pml = nullptr)
 {
   BilinearForm a(fespace);
-  AddIntegrators(a, df, f, dfb, fb, fp, assemble_q_data);
+  AddIntegrators(a, df, f, dfb, fb, fp, assemble_q_data, pml);
   return a.Assemble(skip_zeros);
 }
 
@@ -322,10 +362,11 @@ auto AssembleOperators(const FiniteElementSpaceHierarchy &fespaces,
                        const MaterialPropertyCoefficient *dfb,
                        const MaterialPropertyCoefficient *fb,
                        const MaterialPropertyCoefficient *fp, bool skip_zeros = false,
-                       bool assemble_q_data = false, std::size_t l0 = 0)
+                       bool assemble_q_data = false, std::size_t l0 = 0,
+                       const std::vector<PMLIntegrator> *pml = nullptr)
 {
   BilinearForm a(fespaces.GetFinestFESpace());
-  AddIntegrators(a, df, f, dfb, fb, fp, assemble_q_data);
+  AddIntegrators(a, df, f, dfb, fb, fp, assemble_q_data, pml);
   return a.Assemble(fespaces, skip_zeros, l0);
 }
 
@@ -339,19 +380,111 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
   return a.Assemble(fespaces, skip_zeros, l0);
 }
 
-// Add a per-attribute DenseTensor (one slab per libCEED attribute) into a
-// MaterialPropertyCoefficient. Uses the identity attribute-to-material map so each
-// attribute gets its own coefficient slot, as needed for PML where every attribute
-// has a distinct stretch tensor.
-void AddPerAttributeCoefficient(MaterialPropertyCoefficient &f,
-                                const mfem::DenseTensor &mat_coeff, double a)
+// Short-lived holder for a (possibly-scaled, possibly-filtered) copy of the
+// MaterialOperator's packed PML QFunction context buffer. Used to feed
+// CurlCurlPMLIntegrator / VectorFEMassPMLIntegrator registrations: the context is copied
+// at libCEED operator build time, so different scales (e.g. a0.real() vs −a0.imag() in
+// the preconditioner) need distinct buffers.
+struct PMLContextBuffer
 {
-  mfem::Array<int> identity(mat_coeff.SizeK());
-  for (int k = 0; k < identity.Size(); k++)
+  std::vector<CeedIntScalar> buf;
+  bool valid = false;
+};
+
+// Which PML regions to include. The MaterialOperator packs all PML profiles into one
+// context; we filter at SpaceOperator level so that:
+//   - GetStiffnessMatrix/GetMassMatrix include only FIXED/CFS profiles (their ω₀ is
+//     baked into the context at setup).
+//   - GetExtraSystemMatrix(ω) includes only FREQUENCY_DEPENDENT profiles, and refreshes
+//     their ω field to the live solve frequency before assembly.
+// Filtering works by zeroing the attr→profile entries for excluded profiles: the
+// QFunction falls through to coeff = 0 for those attributes.
+enum class PMLFilter : char
+{
+  All,
+  FixedCFS,            // profiles with formulation == FIXED or CFS
+  FrequencyDependent,  // profiles with formulation == FREQUENCY_DEPENDENT
+};
+
+PMLContextBuffer MakePMLContext(const MaterialOperator &mat_op, double scale,
+                                PMLFilter filter = PMLFilter::All)
+{
+  PMLContextBuffer out;
+  if (!mat_op.HasPML() || scale == 0.0)
   {
-    identity[k] = k;
+    return out;
   }
-  f.AddCoefficient(identity, mat_coeff, a);
+  if (filter == PMLFilter::FrequencyDependent && !mat_op.HasFrequencyDependentPML())
+  {
+    return out;
+  }
+  const CeedIntScalar *src = mat_op.GetPMLContextData();
+  const std::size_t n = mat_op.GetPMLContextSize() / sizeof(CeedIntScalar);
+  out.buf.assign(src, src + n);
+  pml::SetPMLContextScale(out.buf.data(), scale);
+
+  // Apply filter: null out attr→profile entries whose profile doesn't match.
+  if (filter != PMLFilter::All)
+  {
+    const auto &profiles = mat_op.GetPMLProfiles();
+    const auto &attr_to_profile = mat_op.GetPMLAttrToProfile();
+    const int num_attr = static_cast<int>(attr_to_profile.size());
+    auto keep_profile = [&](int pidx)
+    {
+      if (pidx < 0 || pidx >= static_cast<int>(profiles.size()))
+      {
+        return false;
+      }
+      const auto f = profiles[pidx].formulation;
+      const bool is_fd = (f == PMLStretchFormulation::FREQUENCY_DEPENDENT);
+      return (filter == PMLFilter::FrequencyDependent) ? is_fd : !is_fd;
+    };
+    bool any = false;
+    for (int k = 0; k < num_attr; k++)
+    {
+      const int pidx = attr_to_profile[k];
+      if (keep_profile(pidx))
+      {
+        any = true;
+      }
+      else
+      {
+        // ctx[2 + k] is the attr→profile entry (see PackProfileContextAll).
+        out.buf[2 + k].first = -1;
+      }
+    }
+    if (!any)
+    {
+      return PMLContextBuffer{};
+    }
+  }
+  out.valid = true;
+  return out;
+}
+
+// Convenience: build a PMLIntegrator list for the curl-curl and/or mass parts at the
+// given real/imag branch, using a single scaled context. Returns empty when there's no
+// PML or when scale==0. The context buffer must outlive the BilinearForm::Assemble()
+// call; callers typically hold a local PMLContextBuffer and pass `spec.buf.data()`.
+std::vector<PMLIntegrator> MakePMLIntegrators(const PMLContextBuffer &ctx_buf,
+                                              bool include_curlcurl, bool include_mass,
+                                              bool imag_part)
+{
+  std::vector<PMLIntegrator> out;
+  if (!ctx_buf.valid)
+  {
+    return out;
+  }
+  const std::size_t bytes = ctx_buf.buf.size() * sizeof(CeedIntScalar);
+  if (include_curlcurl)
+  {
+    out.push_back({ctx_buf.buf.data(), bytes, PMLIntegKind::CurlCurl, imag_part});
+  }
+  if (include_mass)
+  {
+    out.push_back({ctx_buf.buf.data(), bytes, PMLIntegKind::VectorFEMass, imag_part});
+  }
+  return out;
 }
 
 }  // namespace
@@ -362,14 +495,23 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient df(mat_op.MaxCeedAttribute()), f(mat_op.MaxCeedAttribute()),
-      fb(mat_op.MaxCeedBdrAttribute()), fc(mat_op.MaxCeedAttribute()),
-      dfi(mat_op.MaxCeedAttribute());
+      fb(mat_op.MaxCeedBdrAttribute()), fc(mat_op.MaxCeedAttribute());
   AddStiffnessCoefficients(1.0, df, f);
-  AddImagStiffnessCoefficients(1.0, dfi);
   AddStiffnessBdrCoefficients(1.0, fb);
   AddRealPeriodicCoefficients(1.0, f);
   AddImagPeriodicCoefficients(1.0, fc);
-  int empty[2] = {(df.empty() && f.empty() && fb.empty()), (fc.empty() && dfi.empty())};
+
+  // PML integrators. Real branch: +1 · Re(μ̃⁻¹) curl-curl. Imag branch: +1 · Im(μ̃⁻¹)
+  // curl-curl. Only FIXED/CFS profiles contribute here (their reference ω₀ is baked
+  // into the context at setup). FREQUENCY_DEPENDENT profiles contribute only through
+  // GetExtraSystemMatrix(ω) where ω is the live solve frequency.
+  auto pml_ctx_re = MakePMLContext(mat_op, 1.0, PMLFilter::FixedCFS);
+  auto pml_ctx_im = MakePMLContext(mat_op, 1.0, PMLFilter::FixedCFS);
+  auto pml_re = MakePMLIntegrators(pml_ctx_re, /*curl=*/true, /*mass=*/false, false);
+  auto pml_im = MakePMLIntegrators(pml_ctx_im, /*curl=*/true, /*mass=*/false, true);
+
+  int empty[2] = {(df.empty() && f.empty() && fb.empty() && pml_re.empty()),
+                  (fc.empty() && pml_im.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -379,14 +521,14 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   std::unique_ptr<Operator> kr, ki;
   if (!empty[0])
   {
-    kr = AssembleOperator(GetNDSpace(), &df, &f, nullptr, &fb, nullptr, skip_zeros);
+    kr = AssembleOperator(GetNDSpace(), &df, &f, nullptr, &fb, nullptr, skip_zeros, false,
+                          &pml_re);
   }
   if (!empty[1])
   {
-    // Imaginary branch: periodic imaginary coefficient (fc) plus PML imaginary μ̃⁻¹
-    // (dfi). Both are attribute-keyed MaterialPropertyCoefficients and compose as
-    // additive contributions through AssembleOperator.
-    ki = AssembleOperator(GetNDSpace(), &dfi, nullptr, nullptr, nullptr, &fc, skip_zeros);
+    // Imaginary branch: periodic imaginary coefficient (fc) plus PML imag μ̃⁻¹ curl-curl.
+    ki = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, &fc, skip_zeros,
+                          false, &pml_im);
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -447,7 +589,19 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   {
     AddImagMassCoefficients(1.0, fi);
   }
-  int empty[2] = {(fr.empty() && fbr.empty()), (fi.empty() && fbi.empty())};
+  // PML ε̃ contributions for FIXED/CFS profiles. The frequency-dependent ones go into
+  // GetExtraSystemMatrix(ω).
+  PMLContextBuffer pml_ctx_re, pml_ctx_im;
+  std::vector<PMLIntegrator> pml_re, pml_im;
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    pml_ctx_re = MakePMLContext(mat_op, 1.0, PMLFilter::FixedCFS);
+    pml_ctx_im = MakePMLContext(mat_op, 1.0, PMLFilter::FixedCFS);
+    pml_re = MakePMLIntegrators(pml_ctx_re, /*curl=*/false, /*mass=*/true, false);
+    pml_im = MakePMLIntegrators(pml_ctx_im, /*curl=*/false, /*mass=*/true, true);
+  }
+  int empty[2] = {(fr.empty() && fbr.empty() && pml_re.empty()),
+                  (fi.empty() && fbi.empty() && pml_im.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -457,11 +611,13 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   std::unique_ptr<Operator> mr, mi;
   if (!empty[0])
   {
-    mr = AssembleOperator(GetNDSpace(), nullptr, &fr, nullptr, &fbr, nullptr, skip_zeros);
+    mr = AssembleOperator(GetNDSpace(), nullptr, &fr, nullptr, &fbr, nullptr, skip_zeros,
+                          false, &pml_re);
   }
   if (!empty[1])
   {
-    mi = AssembleOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, nullptr, skip_zeros);
+    mi = AssembleOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, nullptr, skip_zeros,
+                          false, &pml_im);
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -488,14 +644,31 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
       fbi(mat_op.MaxCeedBdrAttribute());
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
 
-  // Domain coefficients for FREQUENCY_DEPENDENT PML. See helper docstring.
-  MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()),
-      dfi(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
-      fi(mat_op.MaxCeedAttribute());
-  AddFrequencyDependentPMLDomainCoefficients(omega, dfr, dfi, fr, fi);
+  // FREQUENCY_DEPENDENT PML contributions. Refresh the live ω in the (shared) FD
+  // regions of the master context, then build branch-local, scale-local copies. The
+  // system composition is A = K + iω C − ω² M + A2. For FD regions, μ̃⁻¹ lives in A2
+  // with prefactor +1 (curl-curl); ε̃ lives in A2 with prefactor −ω² (mass).
+  mat_op.RefreshPMLContextFrequency(omega);
+  PMLContextBuffer pml_ctx_curl_re, pml_ctx_mass_re, pml_ctx_curl_im, pml_ctx_mass_im;
+  std::vector<PMLIntegrator> pml_re, pml_im;
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    pml_ctx_curl_re = MakePMLContext(mat_op, 1.0, PMLFilter::FrequencyDependent);
+    pml_ctx_mass_re = MakePMLContext(mat_op, -omega * omega, PMLFilter::FrequencyDependent);
+    pml_ctx_curl_im = MakePMLContext(mat_op, 1.0, PMLFilter::FrequencyDependent);
+    pml_ctx_mass_im = MakePMLContext(mat_op, -omega * omega, PMLFilter::FrequencyDependent);
+    auto re_curl = MakePMLIntegrators(pml_ctx_curl_re, true, false, false);
+    auto re_mass = MakePMLIntegrators(pml_ctx_mass_re, false, true, false);
+    auto im_curl = MakePMLIntegrators(pml_ctx_curl_im, true, false, true);
+    auto im_mass = MakePMLIntegrators(pml_ctx_mass_im, false, true, true);
+    pml_re.insert(pml_re.end(), re_curl.begin(), re_curl.end());
+    pml_re.insert(pml_re.end(), re_mass.begin(), re_mass.end());
+    pml_im.insert(pml_im.end(), im_curl.begin(), im_curl.end());
+    pml_im.insert(pml_im.end(), im_mass.begin(), im_mass.end());
+  }
 
-  int empty[2] = {(dfbr.empty() && fbr.empty() && dfr.empty() && fr.empty()),
-                  (dfbi.empty() && fbi.empty() && dfi.empty() && fi.empty())};
+  int empty[2] = {(dfbr.empty() && fbr.empty() && pml_re.empty()),
+                  (dfbi.empty() && fbi.empty() && pml_im.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
   {
@@ -505,11 +678,13 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   std::unique_ptr<Operator> ar, ai;
   if (!empty[0])
   {
-    ar = AssembleOperator(GetNDSpace(), &dfr, &fr, &dfbr, &fbr, nullptr, skip_zeros);
+    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, skip_zeros,
+                          false, &pml_re);
   }
   if (!empty[1])
   {
-    ai = AssembleOperator(GetNDSpace(), &dfi, &fi, &dfbi, &fbi, nullptr, skip_zeros);
+    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, skip_zeros,
+                          false, &pml_im);
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -590,11 +765,6 @@ void SpaceOperator::AssemblePreconditioner(
       fpr(mat_op.MaxCeedAttribute());
   AddStiffnessCoefficients(a0.real(), dfr, fr);
   AddStiffnessCoefficients(a0.imag(), dfi, fi);
-  // Cross-terms from the imaginary stiffness branch (PML μ̃⁻¹ imag part):
-  //   a0 · (kr + i ki) has real part a0r·kr − a0i·ki and imag part a0r·ki + a0i·kr.
-  // AddStiffnessCoefficients already handles the kr pieces; add the ki pieces here.
-  AddImagStiffnessCoefficients(a0.real(), dfi);
-  AddImagStiffnessCoefficients(-a0.imag(), dfr);
   AddStiffnessBdrCoefficients(a0.real(), fbr);
   AddStiffnessBdrCoefficients(a0.imag(), fbi);
   AddDampingCoefficients(a1.real(), fr);
@@ -608,29 +778,79 @@ void SpaceOperator::AssemblePreconditioner(
   AddImagMassCoefficients(a2.real(), fi);
   AddImagMassCoefficients(-a2.imag(), fr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
-  // FREQUENCY_DEPENDENT PML domain contributions at ω = a3 (same live-ω recipe as
-  // GetExtraSystemMatrix). The helper already bakes in the −ω² mass prefactor and
-  // 1·stiffness prefactor, matching the system matrix exactly when a0 = 1, a2 = −ω².
-  AddFrequencyDependentPMLDomainCoefficients(a3, dfr, dfi, fr, fi);
   AddRealPeriodicCoefficients(a0.real(), fr);
   AddRealPeriodicCoefficients(a0.imag(), fi);
   AddImagPeriodicCoefficients(a0.real(), fpi);
   AddImagPeriodicCoefficients(-a0.imag(), fpr);
-  int empty[2] = {
-      (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && fpr.empty()),
-      (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty() && fpi.empty())};
+
+  // PML integrators for the complex-valued preconditioner. The preconditioner mirrors
+  // the system matrix A = a0 K + a1 C + a2 M + A2(a3). For PML μ̃⁻¹ = μr + i μi and
+  // ε̃ = εr + i εi:
+  //   a0·μ̃⁻¹ · (u,v)curl has real part a0r·μr − a0i·μi and imag part a0r·μi + a0i·μr
+  //   a2·ε̃ · (u,v)      has real part a2r·εr − a2i·εi and imag part a2r·εi + a2i·εr
+  // For the shifted variant, only the real part of a2 gets |·|; the imag-branch cross
+  // term (−a2i·εr in the real branch) is shaped by the real part of ε̃ so we match the
+  // mass helpers above (which gate real-part scaling on pc_mat_shifted). FIXED/CFS
+  // profiles contribute at all frequencies here; FREQUENCY_DEPENDENT ones use ω = a3.
+  mat_op.RefreshPMLContextFrequency(a3);
+  const double a2r = pc_mat_shifted ? std::abs(a2.real()) : a2.real();
+  const double a2i = a2.imag();
+  PMLContextBuffer fc_re_mu_re, fc_re_mu_im, fc_im_mu_re, fc_im_mu_im;
+  PMLContextBuffer fc_re_ep_re, fc_re_ep_im, fc_im_ep_re, fc_im_ep_im;
+  PMLContextBuffer fd_re_mu_re, fd_re_mu_im, fd_im_mu_re, fd_im_mu_im;
+  PMLContextBuffer fd_re_ep_re, fd_re_ep_im, fd_im_ep_re, fd_im_ep_im;
+  fc_re_mu_re = MakePMLContext(mat_op, a0.real(), PMLFilter::FixedCFS);
+  fc_re_mu_im = MakePMLContext(mat_op, -a0.imag(), PMLFilter::FixedCFS);
+  fc_im_mu_re = MakePMLContext(mat_op, a0.imag(), PMLFilter::FixedCFS);
+  fc_im_mu_im = MakePMLContext(mat_op, a0.real(), PMLFilter::FixedCFS);
+  fc_re_ep_re = MakePMLContext(mat_op, a2r, PMLFilter::FixedCFS);
+  fc_re_ep_im = MakePMLContext(mat_op, -a2i, PMLFilter::FixedCFS);
+  fc_im_ep_re = MakePMLContext(mat_op, a2i, PMLFilter::FixedCFS);
+  fc_im_ep_im = MakePMLContext(mat_op, a2r, PMLFilter::FixedCFS);
+  fd_re_mu_re = MakePMLContext(mat_op, 1.0, PMLFilter::FrequencyDependent);
+  fd_im_mu_im = MakePMLContext(mat_op, 1.0, PMLFilter::FrequencyDependent);
+  fd_re_ep_re = MakePMLContext(mat_op, -a3 * a3, PMLFilter::FrequencyDependent);
+  fd_im_ep_im = MakePMLContext(mat_op, -a3 * a3, PMLFilter::FrequencyDependent);
+  // Real branch integrators: curl-curl (Re(μ̃⁻¹) with +a0r, Im(μ̃⁻¹) with −a0i) + mass
+  // (Re(ε̃) with a2r, Im(ε̃) with −a2i) + FD cross-terms at ω=a3.
+  std::vector<PMLIntegrator> pml_re, pml_im;
+  auto append = [](std::vector<PMLIntegrator> &dst, std::vector<PMLIntegrator> &&src)
+  {
+    for (auto &v : src)
+    {
+      dst.push_back(v);
+    }
+  };
+  append(pml_re, MakePMLIntegrators(fc_re_mu_re, true, false, false));
+  append(pml_re, MakePMLIntegrators(fc_re_mu_im, true, false, true));
+  append(pml_re, MakePMLIntegrators(fc_re_ep_re, false, true, false));
+  append(pml_re, MakePMLIntegrators(fc_re_ep_im, false, true, true));
+  append(pml_re, MakePMLIntegrators(fd_re_mu_re, true, false, false));
+  append(pml_re, MakePMLIntegrators(fd_re_ep_re, false, true, false));
+  // Imag branch integrators.
+  append(pml_im, MakePMLIntegrators(fc_im_mu_re, true, false, false));
+  append(pml_im, MakePMLIntegrators(fc_im_mu_im, true, false, true));
+  append(pml_im, MakePMLIntegrators(fc_im_ep_re, false, true, false));
+  append(pml_im, MakePMLIntegrators(fc_im_ep_im, false, true, true));
+  append(pml_im, MakePMLIntegrators(fd_im_mu_im, true, false, true));
+  append(pml_im, MakePMLIntegrators(fd_im_ep_im, false, true, true));
+
+  int empty[2] = {(dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() &&
+                   fpr.empty() && pml_re.empty()),
+                  (dfi.empty() && fi.empty() && dfbi.empty() && fbi.empty() &&
+                   fpi.empty() && pml_im.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (!empty[0])
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, skip_zeros,
-                               assemble_q_data);
+                               assemble_q_data, /*l0=*/0, &pml_re);
     br_aux_vec =
         AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_q_data);
   }
   if (!empty[1])
   {
     bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpi, skip_zeros,
-                               assemble_q_data);
+                               assemble_q_data, /*l0=*/0, &pml_im);
     bi_aux_vec =
         AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, skip_zeros, assemble_q_data);
   }
@@ -652,12 +872,37 @@ void SpaceOperator::AssemblePreconditioner(
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2.real()) : a2.real(), fbr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
   AddRealPeriodicCoefficients(a0.real(), fr);
-  int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty());
+
+  // Real-valued preconditioner approximation for PML: use Re(μ̃⁻¹) for the stiffness
+  // piece and Re(ε̃) for the mass piece, with the same sign/shifted rules as the bulk
+  // material. FIXED/CFS regions use their reference ω₀ (baked in at setup);
+  // FREQUENCY_DEPENDENT ones pick up ω = a3. Im(μ̃⁻¹) / Im(ε̃) are dropped — this is an
+  // approximation and the surrounding Krylov solver absorbs the leftover.
+  mat_op.RefreshPMLContextFrequency(a3);
+  const double a2r = pc_mat_shifted ? std::abs(a2.real()) : a2.real();
+  auto fc_mu = MakePMLContext(mat_op, a0.real(), PMLFilter::FixedCFS);
+  auto fc_ep = MakePMLContext(mat_op, a2r, PMLFilter::FixedCFS);
+  auto fd_mu = MakePMLContext(mat_op, 1.0, PMLFilter::FrequencyDependent);
+  auto fd_ep = MakePMLContext(mat_op, -a3 * a3, PMLFilter::FrequencyDependent);
+  std::vector<PMLIntegrator> pml;
+  auto append = [](std::vector<PMLIntegrator> &dst, std::vector<PMLIntegrator> &&src)
+  {
+    for (auto &v : src)
+    {
+      dst.push_back(v);
+    }
+  };
+  append(pml, MakePMLIntegrators(fc_mu, true, false, false));
+  append(pml, MakePMLIntegrators(fc_ep, false, true, false));
+  append(pml, MakePMLIntegrators(fd_mu, true, false, false));
+  append(pml, MakePMLIntegrators(fd_ep, false, true, false));
+
+  int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && pml.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, skip_zeros,
-                               assemble_q_data);
+                               assemble_q_data, /*l0=*/0, &pml);
     br_aux_vec =
         AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_q_data);
   }
@@ -679,12 +924,34 @@ void SpaceOperator::AssemblePreconditioner(
   AddRealMassBdrCoefficients(pc_mat_shifted ? std::abs(a2) : a2, fbr);
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbr, fbr, fbr);
   AddRealPeriodicCoefficients(a0, fr);
-  int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty());
+
+  // Real-valued PML preconditioner: Re(μ̃⁻¹) curl-curl and Re(ε̃) mass. Same filtering
+  // split by formulation as the complex variant. Im parts are dropped by design.
+  mat_op.RefreshPMLContextFrequency(a3);
+  const double a2r = pc_mat_shifted ? std::abs(a2) : a2;
+  auto fc_mu = MakePMLContext(mat_op, a0, PMLFilter::FixedCFS);
+  auto fc_ep = MakePMLContext(mat_op, a2r, PMLFilter::FixedCFS);
+  auto fd_mu = MakePMLContext(mat_op, 1.0, PMLFilter::FrequencyDependent);
+  auto fd_ep = MakePMLContext(mat_op, -a3 * a3, PMLFilter::FrequencyDependent);
+  std::vector<PMLIntegrator> pml;
+  auto append = [](std::vector<PMLIntegrator> &dst, std::vector<PMLIntegrator> &&src)
+  {
+    for (auto &v : src)
+    {
+      dst.push_back(v);
+    }
+  };
+  append(pml, MakePMLIntegrators(fc_mu, true, false, false));
+  append(pml, MakePMLIntegrators(fc_ep, false, true, false));
+  append(pml, MakePMLIntegrators(fd_mu, true, false, false));
+  append(pml, MakePMLIntegrators(fd_ep, false, true, false));
+
+  int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && pml.empty());
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, skip_zeros,
-                               assemble_q_data);
+                               assemble_q_data, /*l0=*/0, &pml);
     br_aux_vec =
         AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, skip_zeros, assemble_q_data);
   }
@@ -770,30 +1037,14 @@ void SpaceOperator::AddStiffnessCoefficients(double coeff, MaterialPropertyCoeff
                                              MaterialPropertyCoefficient &f)
 {
   // Contribution from material permeability. MaterialOperator zeros out entries for PML
-  // attributes, so this line contributes nothing there; PML tensors are added below.
+  // attributes, so this line contributes nothing there; PML contributions come from a
+  // separate CurlCurlPMLIntegrator queued at BilinearForm-registration time.
   df.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(), coeff);
-
-  // PML real part of μ̃⁻¹ (FIXED/CFS attributes only — FREQUENCY_DEPENDENT goes through
-  // GetExtraSystemMatrix(ω) instead).
-  if (mat_op.HasPML())
-  {
-    AddPerAttributeCoefficient(df, mat_op.GetInvPermeabilityPMLStaticReal(), coeff);
-  }
 
   // Contribution for London superconductors.
   if (mat_op.HasLondonDepth())
   {
     f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetInvLondonDepth(), coeff);
-  }
-}
-
-void SpaceOperator::AddImagStiffnessCoefficients(double coeff,
-                                                 MaterialPropertyCoefficient &df)
-{
-  // PML imaginary part of μ̃⁻¹ (FIXED/CFS only).
-  if (mat_op.HasPML())
-  {
-    AddPerAttributeCoefficient(df, mat_op.GetInvPermeabilityPMLStaticImag(), coeff);
   }
 }
 
@@ -825,12 +1076,9 @@ void SpaceOperator::AddDampingBdrCoefficients(double coeff, MaterialPropertyCoef
 
 void SpaceOperator::AddRealMassCoefficients(double coeff, MaterialPropertyCoefficient &f)
 {
+  // MaterialOperator zeros bulk ε for PML attributes; PML ε̃ is applied through a
+  // VectorFEMassPMLIntegrator queued separately at BilinearForm-registration time.
   f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityReal(), coeff);
-  if (mat_op.HasPML())
-  {
-    // PML real ε̃ (FIXED/CFS only).
-    AddPerAttributeCoefficient(f, mat_op.GetPermittivityPMLStaticReal(), coeff);
-  }
 }
 
 void SpaceOperator::AddRealMassBdrCoefficients(double coeff,
@@ -848,33 +1096,12 @@ void SpaceOperator::AddImagMassCoefficients(double coeff, MaterialPropertyCoeffi
   {
     f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityImag(), coeff);
   }
-  if (mat_op.HasPML())
-  {
-    // PML imag ε̃ (FIXED/CFS only).
-    AddPerAttributeCoefficient(f, mat_op.GetPermittivityPMLStaticImag(), coeff);
-  }
+  // PML imag ε̃ is applied through a separate VectorFEMassPMLIntegrator.
 }
 
 void SpaceOperator::AddAbsMassCoefficients(double coeff, MaterialPropertyCoefficient &f)
 {
   f.AddCoefficient(mat_op.GetAttributeToMaterial(), mat_op.GetPermittivityAbs(), coeff);
-}
-
-void SpaceOperator::AddFrequencyDependentPMLDomainCoefficients(
-    double omega, MaterialPropertyCoefficient &dfr, MaterialPropertyCoefficient &dfi,
-    MaterialPropertyCoefficient &fr, MaterialPropertyCoefficient &fi)
-{
-  if (!mat_op.HasFrequencyDependentPML())
-  {
-    return;
-  }
-  mat_op.RebuildPMLTensors(omega, /*only_freq_dependent=*/true);
-  AddPerAttributeCoefficient(dfr, mat_op.GetInvPermeabilityPMLFreqReal(), 1.0);
-  AddPerAttributeCoefficient(dfi, mat_op.GetInvPermeabilityPMLFreqImag(), 1.0);
-  // Mass contribution enters with a −ω² prefactor so the returned A2 is inserted
-  // as-is into A = K + iωC − ω²M + A2.
-  AddPerAttributeCoefficient(fr, mat_op.GetPermittivityPMLFreqReal(), -omega * omega);
-  AddPerAttributeCoefficient(fi, mat_op.GetPermittivityPMLFreqImag(), -omega * omega);
 }
 
 void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,

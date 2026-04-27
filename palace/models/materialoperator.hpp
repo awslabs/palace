@@ -7,7 +7,9 @@
 #include <array>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/libceed/ceed.hpp"  // brings <ceed.h> which coeff_qf.h depends on
 #include "fem/mesh.hpp"
+#include "fem/qfunctions/coeff/coeff_qf.h"  // defines CeedIntScalar
 #include "models/pml.hpp"
 #include "utils/configfile.hpp"
 
@@ -36,30 +38,17 @@ private:
   mfem::DenseMatrix wave_vector_cross;
   mfem::Array<double> mat_c0_min, mat_c0_max;
 
-  // PML material tensors. For each libCEED-attribute-indexed position (matching attr_mat
-  // size), these store the complex anisotropic μ̃⁻¹ and ε̃ split into real and imaginary
-  // parts. Entries are zero for non-PML attributes so they can be assembled
-  // unconditionally; SpaceOperator gates with HasPML().
-  //
-  // Two parallel tensor sets:
-  //   *_static_{re,im} — populated only for FIXED and CFS PML attributes. Baked into
-  //     K and M at setup. Static during a solve (constant across frequencies).
-  //   *_freq_{re,im}   — populated only for FREQUENCY_DEPENDENT PML attributes. Refilled
-  //     per solve frequency by RebuildPMLTensors and added into GetExtraSystemMatrix(ω).
-  mfem::DenseTensor mat_muinv_pml_static_re, mat_muinv_pml_static_im,
-      mat_epsilon_pml_static_re, mat_epsilon_pml_static_im;
-  mfem::DenseTensor mat_muinv_pml_freq_re, mat_muinv_pml_freq_im, mat_epsilon_pml_freq_re,
-      mat_epsilon_pml_freq_im;
-
   // Per-PML-attribute profile (one per user-declared PML material block). Indexed by
   // slot in pml_profiles; pml_attr_to_profile maps libCEED attribute → slot, or -1 for
   // non-PML attributes.
   std::vector<pml::Profile> pml_profiles;
-  mfem::Array<int> pml_attr_to_profile;
+  std::vector<int> pml_attr_to_profile;
 
-  // Centroid of each PML attribute's meshed region, in nondimensional coordinates. Used
-  // as the sample point for ComputeStretchTensors. One entry per pml_profiles slot.
-  std::vector<std::array<double, 3>> pml_centroid;
+  // Packed PML QFunction context (libCEED layout defined in fem/qfunctions/coeff/pml_qf.h).
+  // Built once at setup; SpaceOperator reads via GetPMLContext() and passes it into the
+  // PML QFunction. Contains FIXED/CFS regions at their reference ω and FREQUENCY_DEPENDENT
+  // regions at ω = 0 until RefreshPMLContextFrequency(ω) is called at solve time.
+  mutable std::vector<CeedIntScalar> pml_ctx;
 
   bool has_pml_attr = false;
   bool has_pml_freq_dependent_attr = false;
@@ -143,31 +132,27 @@ public:
   bool HasPML() const { return has_pml_attr; }
   bool HasFrequencyDependentPML() const { return has_pml_freq_dependent_attr; }
 
-  // PML tensor accessors (per libCEED attribute). Only meaningful when HasPML() is true.
-  //
-  // "Static" accessors hold contributions from FIXED/CFS PML attributes — added once to
-  // K and M at setup. "Freq" accessors hold contributions from FREQUENCY_DEPENDENT PML
-  // attributes — added to the extra system matrix A2(ω) at each solve frequency.
-  const auto &GetInvPermeabilityPMLStaticReal() const { return mat_muinv_pml_static_re; }
-  const auto &GetInvPermeabilityPMLStaticImag() const { return mat_muinv_pml_static_im; }
-  const auto &GetPermittivityPMLStaticReal() const { return mat_epsilon_pml_static_re; }
-  const auto &GetPermittivityPMLStaticImag() const { return mat_epsilon_pml_static_im; }
-  const auto &GetInvPermeabilityPMLFreqReal() const { return mat_muinv_pml_freq_re; }
-  const auto &GetInvPermeabilityPMLFreqImag() const { return mat_muinv_pml_freq_im; }
-  const auto &GetPermittivityPMLFreqReal() const { return mat_epsilon_pml_freq_re; }
-  const auto &GetPermittivityPMLFreqImag() const { return mat_epsilon_pml_freq_im; }
+  // Access to the packed PML QFunction context. Size in bytes is ctx.size() *
+  // sizeof(CeedIntScalar). The pointer is stable across calls but its FD-region ω fields
+  // may be updated in place by RefreshPMLContextFrequency (for the solve-time callers).
+  // Call sites must be careful: the libCEED operator CopyValues-copies the context when
+  // the operator is built, so mutating ctx after build time doesn't propagate — callers
+  // re-assemble the extra-system operator per frequency.
+  const CeedIntScalar *GetPMLContextData() const { return pml_ctx.data(); }
+  std::size_t GetPMLContextSize() const { return pml_ctx.size() * sizeof(CeedIntScalar); }
+  int GetPMLNumProfiles() const { return static_cast<int>(pml_profiles.size()); }
+  int GetPMLNumAttributes() const { return static_cast<int>(pml_attr_to_profile.size()); }
 
-  // Populate the eight PML tensors from pml_profiles. Two modes:
-  //
-  //   RebuildPMLTensors(ω, /*only_freq_dependent=*/false):
-  //     Rebuild both static and freq tensors. FIXED/CFS go into *_static_* at their
-  //     profile's reference_frequency; FREQUENCY_DEPENDENT goes into *_freq_* at the
-  //     passed ω (or zero if ω ≤ 0). Called once at setup.
-  //
-  //   RebuildPMLTensors(ω, /*only_freq_dependent=*/true):
-  //     Rebuild ONLY *_freq_* at the passed ω. *_static_* is left untouched. Called by
-  //     GetExtraSystemMatrix(ω) during a frequency sweep or NEP iteration.
-  void RebuildPMLTensors(double omega, bool only_freq_dependent = false);
+  // Read-only access to the raw profile list and the attribute→profile map, for callers
+  // that need to filter the context (e.g., keeping only FIXED/CFS or only
+  // FREQUENCY_DEPENDENT profiles when assembling different operator pieces).
+  const std::vector<pml::Profile> &GetPMLProfiles() const { return pml_profiles; }
+  const std::vector<int> &GetPMLAttrToProfile() const { return pml_attr_to_profile; }
+
+  // Refresh the `omega` field of each FREQUENCY_DEPENDENT PML region in the context
+  // buffer. FIXED/CFS regions are untouched. Call before each solve whose extra-system
+  // operator is being rebuilt at a new frequency.
+  void RefreshPMLContextFrequency(double omega) const;
 
   const auto &GetAttributeToMaterial() const { return attr_mat; }
   mfem::Array<int> GetBdrAttributeToMaterial() const;
