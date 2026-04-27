@@ -1,0 +1,153 @@
+/* Table of contents */
+dl.config-toc {
+  margin: 1em 0 2em 0;
+}
+
+dl.config-toc > dt {
+  font-weight: bold;
+  margin-top: 0.3em;
+}
+
+dl.config-toc > dd {
+  margin: 0 0 0 1em;
+  font-size: 0.9em;
+}
+
+/* JSON Pointer key path breadcrumb */
+p.config-keypath {
+  font-family: var(--code-font);
+  font-size: 0.9em;
+  margin: 0.2em 0 0.6em 0;
+}
+
+p.config-keypath a {
+  text-decoration: none;
+}
+
+p.config-keypath a:hover {
+  text-decoration: underline;
+}
+
+/* Badge row repeated under section headings */
+span.config-section-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  font-weight: bold;
+  gap: 0.4em;
+  margin-bottom: 0.6em;
+}
+
+/* Configuration reference: field entry list */
+dl.palace-config {
+  margin: 0.4em 0 1em 0;
+}
+
+dl.palace-config > dt {
+  font-family: var(--code-font);
+  font-size: 0.95em;
+  font-weight: bold;
+  padding: 0.35em 0;
+  margin-top: 0.6em;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4em;
+}
+
+dl.palace-config > dt > a {
+  color: inherit;
+  text-decoration: none;
+}
+
+dl.palace-config > dt > a:hover {
+  text-decoration: underline;
+}
+
+dl.palace-config > dd {
+  margin: 0 0 0 1.2em;
+  padding: 0.3em 0 0.2em 0.5em;
+  border-left: 1px solid var(--color-sidebar-border, #ddd);
+}
+
+dl.palace-config > dd > p {
+  margin: 0.2em 0;
+}
+
+/* Inline metadata badges */
+span.config-type {
+  font-family: var(--code-font);
+  font-size: 0.82em;
+  color: #555;
+  background: #e8e8e8;
+  border-radius: 3px;
+  padding: 0.1em 0.4em;
+}
+
+span.config-required {
+  font-family: var(--code-font);
+  font-size: 0.82em;
+  color: #555;
+  background: #f4eaea;
+  border-radius: 3px;
+  padding: 0.1em 0.4em;
+}
+
+span.config-default {
+  font-family: var(--code-font);
+  font-size: 0.82em;
+  color: #555;
+  background: #eaf4ea;
+  border-radius: 3px;
+  padding: 0.1em 0.4em;
+}
+
+span.config-advanced {
+  font-family: var(--code-font);
+  font-size: 0.82em;
+  color: #555;
+  background: #f4f0ea;
+  border-radius: 3px;
+  padding: 0.1em 0.4em;
+}
+
+span.config-deprecated {
+  font-family: var(--code-font);
+  font-size: 0.82em;
+  color: #555;
+  background: #eaeaf4;
+  border-radius: 3px;
+  padding: 0.1em 0.4em;
+}
+
+span.config-constraint {
+  font-family: var(--code-font);
+  font-size: 0.82em;
+  color: #555;
+  background: #f0eaff;
+  border-radius: 3px;
+  padding: 0.1em 0.4em;
+}
+
+/* Enum values: bullet-style nested dl */
+dl.config-enum {
+  margin: 0.5em 0 0.2em 0;
+  padding: 0;
+  list-style: none;
+}
+
+dl.config-enum > dt {
+  display: list-item;
+  list-style-type: disc;
+  list-style-position: inside;
+  font-family: var(--code-font);
+  font-size: 0.9em;
+  font-weight: normal;
+  margin: 0.15em 0 0 1em;
+}
+
+dl.config-enum > dd {
+  margin: 0 0 0.3em 2.5em;
+  font-size: 0.9em;
+  color: #444;
+}
+

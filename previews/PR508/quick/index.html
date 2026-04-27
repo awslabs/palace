@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Quick Start · Palace</title><meta name="title" content="Quick Start · Palace"/><meta property="og:title" content="Quick Start · Palace"/><meta property="twitter:title" content="Quick Start · Palace"/><meta name="description" content="Documentation for Palace."/><meta property="og:description" content="Documentation for Palace."/><meta property="twitter:description" content="Documentation for Palace."/><script data-outdated-warner src="../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../search_index.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script><link href="../assets/favicon.ico" rel="icon" type="image/x-icon"/></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href="../"><img class="docs-light-only" src="../assets/logo.png" alt="Palace logo"/><img class="docs-dark-only" src="../assets/logo-dark.png" alt="Palace logo"/></a><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../">Home</a></li><li class="is-active"><a class="tocitem" href>Quick Start</a><ul class="internal"><li><a class="tocitem" href="#A-bird&#39;s-eye-view-of-*Palace*"><span>A bird&#39;s-eye view of <em>Palace</em></span></a></li><li><a class="tocitem" href="#Installing-Palace"><span>Installing Palace</span></a></li><li><a class="tocitem" href="#(Optional)-Install-ParaView"><span>(Optional) Install ParaView</span></a></li><li><a class="tocitem" href="#The-mesh"><span>The mesh</span></a></li><li><a class="tocitem" href="#The-config-file"><span>The config file</span></a></li><li><a class="tocitem" href="#Where-to-go-next"><span>Where to go next</span></a></li></ul></li><li><a class="tocitem" href="../install/">Installation</a></li><li><a class="tocitem" href="../run/">Running <em>Palace</em></a></li><li><span class="tocitem">User Guide</span><ul><li><a class="tocitem" href="../guide/guide/">Overview</a></li><li><a class="tocitem" href="../guide/problem/">Problem Types</a></li><li><a class="tocitem" href="../guide/model/">Simulation Models</a></li><li><a class="tocitem" href="../guide/boundaries/">Boundary Conditions</a></li><li><a class="tocitem" href="../guide/postprocessing/">Postprocessing and Visualization</a></li><li><a class="tocitem" href="../guide/parallelism/">Parallelism and GPU Support</a></li></ul></li><li><span class="tocitem">Configuration File</span><ul><li><a class="tocitem" href="../config/config/">Overview</a></li><li><a class="tocitem" href="../config/problem/"><code>config[&quot;Problem&quot;]</code></a></li><li><a class="tocitem" href="../config/model/"><code>config[&quot;Model&quot;]</code></a></li><li><a class="tocitem" href="../config/domains/"><code>config[&quot;Domains&quot;]</code></a></li><li><a class="tocitem" href="../config/boundaries/"><code>config[&quot;Boundaries&quot;]</code></a></li><li><a class="tocitem" href="../config/solver/"><code>config[&quot;Solver&quot;]</code></a></li></ul></li><li><span class="tocitem">Examples</span><ul><li><a class="tocitem" href="../examples/examples/">Overview</a></li><li><a class="tocitem" href="../examples/spheres/">Capacitance Matrix for Two Spheres</a></li><li><a class="tocitem" href="../examples/rings/">Inductance Matrix for a Pair of Concentric Rings</a></li><li><a class="tocitem" href="../examples/cylinder/">Eigenmodes of a Cylinder</a></li><li><a class="tocitem" href="../examples/coaxial/">Signal Propagation in a Coaxial Cable</a></li><li><a class="tocitem" href="../examples/cpw/">Crosstalk Between Coplanar Waveguides</a></li></ul></li><li><span class="tocitem">For Developers</span><ul><li><a class="tocitem" href="../developer/notes/">Developer Notes</a></li><li><a class="tocitem" href="../developer/testing/">Testing</a></li></ul></li><li><a class="tocitem" href="../reference/">Reference</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li class="is-active"><a href>Quick Start</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Quick Start</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/awslabs/palace" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/awslabs/palace/blob/main/docs/src/quick.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><!--- Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved. --->
+<!--- SPDX-License-Identifier: Apache-2.0 ---><h1 id="Run-your-first-simulation-with-Palace"><a class="docs-heading-anchor" href="#Run-your-first-simulation-with-Palace">Run your first simulation with Palace</a><a id="Run-your-first-simulation-with-Palace-1"></a><a class="docs-heading-anchor-permalink" href="#Run-your-first-simulation-with-Palace" title="Permalink"></a></h1><p>Welcome to your first tutorial with <em>Palace</em>!</p><p>In this tutorial, we will:</p><ol><li><a href="#Installing-Palace">Install <em>Palace</em> using Spack</a></li><li><a href="#The-config-file">Set up a simulation using a provided mesh</a></li><li><a href="#Running-the-simulation-and-inspecting-the-output">Run the simulation and visualize results with ParaView</a></li></ol><p>By the end of this page, you&#39;ll understand the basic workflow of electromagnetic simulations with <em>Palace</em>. You will be able to follow the <a href="../examples/examples/">examples</a> and start experimenting with setting up and running your own simulations.</p><p>As a motivating example, we&#39;ll solve for the electrostatic potential and capacitance matrix of two conducting spheres inside a larger grounded sphere. Our system consists of:</p><ul><li>Two inner spherical conductors</li><li>A larger outer sphere at zero potential</li><li>Vacuum in between</li></ul><p>This is <a href="../examples/spheres/">one of the examples</a> included with <em>Palace</em>. For more details on the physics and comparisons against analytical results, see the <a href="../examples/spheres/">full example page</a>.</p><h2 id="A-bird&#39;s-eye-view-of-*Palace*"><a class="docs-heading-anchor" href="#A-bird&#39;s-eye-view-of-*Palace*">A bird&#39;s-eye view of <em>Palace</em></a><a id="A-bird&#39;s-eye-view-of-*Palace*-1"></a><a class="docs-heading-anchor-permalink" href="#A-bird&#39;s-eye-view-of-*Palace*" title="Permalink"></a></h2><p><em>Palace</em> is a finite-element code for <strong>PA</strong>rallel <strong>LA</strong>rge-scale <strong>C</strong>omputational <strong>E</strong>lectromagnetics. It is a command-line executable that runs on single or multiple nodes, supporting both <a href="../guide/parallelism/">CPUs and GPUs</a>.</p><p>A <em>Palace</em> simulation requires two main inputs:</p><ul><li><p><strong>Mesh file</strong>: The mesh file describes the target geometry. <em>Palace</em> does not construct meshes, so you must supply one. A large number of formats are supported, allowing you to use your preferred CAD or meshing software. See the <a href="../guide/model/#Supported-mesh-formats">supported mesh formats</a> for more details.</p></li><li><p><strong>Config file</strong>: A JSON file that defines what problem to solve and how. It specifies material properties, boundary conditions, problem type, solver parameters, and output settings. See the <a href="../config/config/">configuration documentation</a> for complete details.</p></li></ul><p><em>Palace</em> can solve Maxwell&#39;s equations under a few different set of assumptions, leading to different electromagnetic <a href="../guide/problem/">problem types</a>:</p><ul><li><strong>Electrostatic</strong>: Computes static electric fields and capacitance matrices (used in this tutorial)</li><li><strong>Magnetostatic</strong>: Computes static magnetic fields and inductance matrices</li><li><strong>Eigenmode</strong>: Computes eigenmodes and eigenvalues in the frequency domain</li><li><strong>Driven</strong>: Computes frequency-domain response to harmonic excitations</li><li><strong>Transient</strong>: Computes time-domain response to boundary excitations</li></ul><p><em>Palace</em> produces two types of primary output:</p><ol><li>CSV files with post-processed quantities (capacitance matrices, field values at probe points, etc.)</li><li>PVD files for visualizing fields with <a href="https://www.paraview.org">ParaView</a> or compatible software</li></ol><p>The full list of problem types and their outputs is available in the <a href="../config/problem/">problem configuration guide</a>.</p><p>In this tutorial, we&#39;ll use a mesh generated with <a href="https://gmsh.info/">Gmsh</a>, create a configuration file for an <code>Electrostatic</code> problem, and visualize the resulting electric field with ParaView.</p><h2 id="Installing-Palace"><a class="docs-heading-anchor" href="#Installing-Palace">Installing Palace</a><a id="Installing-Palace-1"></a><a class="docs-heading-anchor-permalink" href="#Installing-Palace" title="Permalink"></a></h2><p>As a user, the simplest way to install <em>Palace</em> is with <a href="https://spack.readthedocs.io">Spack</a>, a package manager designed for high-performance computing applications.</p><p>Follow the <a href="https://spack.readthedocs.io/en/latest/getting_started.html">instructions on the official website</a> to install Spack. This involves cloning a repository and sourcing a <code>setup-env</code> shell script. Come back here once you are done with that.</p><p>Let&#39;s check that Spack is correctly installed on your system. This can be accomplished by running:</p><pre><code class="language-bash hljs">spack --version</code></pre><p>You should see your Spack version (yours may differ, that&#39;s okay):</p><pre class="documenter-example-output"><code class="nohighlight hljs ansi">1.1.0.dev0 (97227839880551042830011623f5ac5c9903133d)</code></pre><div class="admonition is-info" id="spack-command-not-found-d913287b8be4d38f"><header class="admonition-header">spack command not found<a class="admonition-anchor" href="#spack-command-not-found-d913287b8be4d38f" title="Permalink"></a></header><div class="admonition-body"><p>If you get a <code>command not found</code> error, revisit the <a href="https://spack.readthedocs.io/en/latest/getting_started.html">Spack instructions</a> and ensure you&#39;ve completed all steps, including sourcing the setup script (the command starting with <code>.</code>). Consider adding this to your shell initialization file (typically, <code>.bashrc</code> or <code>.zshrc</code>).</p></div></div><p>With Spack installed, we can now move to <em>Palace</em>:</p><pre><code class="language-bash hljs">spack install palace</code></pre><p>This will download and compile the latest release of <em>Palace</em> and its dependencies. This step may take tens of minutes depending on your system.</p><p>Once installed, load <em>Palace</em> and verify it works:</p><pre><code class="language-bash hljs">spack load palace
+palace --help</code></pre><p>You should see:</p><pre class="documenter-example-output"><code class="nohighlight hljs ansi">Usage: palace [OPTIONS] CONFIG_FILE
+
+Wrapper for launching Palace using MPI
+
+Options:
+  -h, --help                       Show this help message and exit
+  -dry-run, --dry-run              Parse configuration file for errors and exit
+  -serial, --serial                Call Palace without MPI launcher, default is false
+  -np, --np NUM_PROCS              How many MPI processes to use, default is 1
+  -nt, --nt NUM_THREADS            Number of OpenMP threads to use for OpenMP builds, default is 1 or the value of OMP_NUM_THREADS in the environment
+  -launcher, --launcher LAUNCHER   MPI launcher, default is `mpirun`
+  -launcher-args,
+    --launcher-args ARGS           Any extra arguments to pass to MPI launcher, for example `--map-by` or `--bind-to` with their respective options (quoted)</code></pre><div class="admonition is-success" id="Loading-Palace-6b90b8fa6e43745d"><header class="admonition-header">Loading Palace<a class="admonition-anchor" href="#Loading-Palace-6b90b8fa6e43745d" title="Permalink"></a></header><div class="admonition-body"><p>You need to load <em>Palace</em> with <code>spack load palace</code> in each new shell session. For convenience, add this command to your shell initialization file if you are a frequent <em>Palace</em> user.</p></div></div><h2 id="(Optional)-Install-ParaView"><a class="docs-heading-anchor" href="#(Optional)-Install-ParaView">(Optional) Install ParaView</a><a id="(Optional)-Install-ParaView-1"></a><a class="docs-heading-anchor-permalink" href="#(Optional)-Install-ParaView" title="Permalink"></a></h2><p><em>Palace</em> optionally saves electromagnetic field data in the PVD format, which is immediately accessible by ParaView or ParaView-compatible software. You can download ParaView from the <a href="https://www. paraview.org/download/">official website</a> or using your package manager (<code>dnf</code>, <code>apt</code>, <code>brew</code>, ...). ParaView is not required for running simulations, but we will use it in this tutorial to visualize our simulated fields.</p><h2 id="The-mesh"><a class="docs-heading-anchor" href="#The-mesh">The mesh</a><a id="The-mesh-1"></a><a class="docs-heading-anchor-permalink" href="#The-mesh" title="Permalink"></a></h2><p>The mesh describes the geometry over which we want to solve the problem. Constructing a mesh is not <em>Palace</em>&#39;s responsibility and we&#39;ll use a pre-made mesh from the <em>Palace</em> examples for this tutorial.</p><p>Create a <code>mesh</code> directory and download the <a href="https://raw.githubusercontent.com/awslabs/palace/refs/heads/main/examples/spheres/mesh/spheres.msh">mesh file</a>:</p><pre><code class="language-bash hljs">mkdir -p mesh
+curl -o mesh/spheres.msh https://raw.githubusercontent.com/awslabs/palace/refs/heads/main/examples/spheres/mesh/spheres.msh</code></pre><p>This mesh was created using the <a href="https://julialang.org/">Julia</a> interface for Gmsh. If you&#39;re interested in how it was created, see the <a href="https://raw.githubusercontent.com/awslabs/palace/refs/heads/main/examples/spheres/mesh/mesh.jl"><code>mesh.jl</code></a> file.</p><h3 id="Understanding-mesh-attributes"><a class="docs-heading-anchor" href="#Understanding-mesh-attributes">Understanding mesh attributes</a><a id="Understanding-mesh-attributes-1"></a><a class="docs-heading-anchor-permalink" href="#Understanding-mesh-attributes" title="Permalink"></a></h3><p>To set up a simulation, you need to identify regions in the mesh (collections of volumes or surfaces) to assign material properties and boundary conditions. The mesh formats used within <em>Palace</em> all support this via a notion of <code>Attributes</code>. An attribute is a 1-based index within a mesh that indicates a subset of elements. The particulars of how these attributes are identified are specific to each mesh format.</p><p>Our mesh follows the <code>msh2</code> format and contains four distinct regions:</p><ol><li><code>domain</code> (3D volume, attribute: 1) - the vacuum region between spheres</li><li><code>farfield</code> (2D surface, attribute: 2) - the outer boundary surface</li><li><code>sphere_a</code> (2D surface, attribute: 3) - the first conductor surface</li><li><code>sphere_b</code> (2D surface, attribute: 4) - the second conductor surface</li></ol><p>We&#39;ll reference these attributes in our configuration file to specify boundary conditions and material properties.</p><h2 id="The-config-file"><a class="docs-heading-anchor" href="#The-config-file">The config file</a><a id="The-config-file-1"></a><a class="docs-heading-anchor-permalink" href="#The-config-file" title="Permalink"></a></h2><p>The configuration file defines the electromagnetic problem: what to solve for, material properties and boundary conditions, the details of the algorithm to be employed, and so on.</p><p><em>Palace</em> config files contain five sections:</p><ol><li><strong><code>Problem</code></strong>: Defines the physics type and output settings</li><li><strong><code>Model</code></strong>: Specifies the mesh file and geometric parameters</li><li><strong><code>Domains</code></strong>: Defines material properties for 3D regions and related postprocessing operations</li><li><strong><code>Boundaries</code></strong>: Sets boundary conditions for 2D surfaces and related postprocessing operations</li><li><strong><code>Solver</code></strong>: Controls numerical parameters and solution methods</li></ol><p>Here&#39;s a complete configuration for our electrostatic problem:</p><div style="max-height: 300px; overflow-y: auto;"><pre class="documenter-example-output"><code class="nohighlight hljs ansi">{
+    &quot;Problem&quot;: {
+        &quot;Type&quot;: &quot;Electrostatic&quot;,
+        &quot;Verbose&quot;: 2,
+        &quot;Output&quot;: &quot;postpro&quot;
+    },
+    &quot;Model&quot;: {
+        &quot;Mesh&quot;: &quot;mesh/spheres.msh&quot;,
+        &quot;L0&quot;: 0.01
+    },
+    &quot;Domains&quot;: {
+        &quot;Materials&quot;: [
+            {
+                &quot;Attributes&quot;: [1],
+                &quot;Permittivity&quot;: 1.0
+            }
+        ],
+        &quot;Postprocessing&quot;: {
+            &quot;Probe&quot;: [
+                {
+                    &quot;Index&quot;: 1,
+                    &quot;Center&quot;: [
+                        -1.5,
+                        0.0,
+                        0.0
+                    ]
+                }
+            ],
+            &quot;Energy&quot;: [
+                {
+                    &quot;Index&quot;: 1,
+                    &quot;Attributes&quot;: [1]
+                }
+            ]
+        }
+    },
+    &quot;Boundaries&quot;: {
+        &quot;Ground&quot;: {
+            &quot;Attributes&quot;: [2]
+        },
+        &quot;Terminal&quot;: [
+            {
+                &quot;Index&quot;: 1,
+                &quot;Attributes&quot;: [3]
+            },
+            {
+                &quot;Index&quot;: 2,
+                &quot;Attributes&quot;: [4]
+            }
+        ],
+        &quot;Postprocessing&quot;: {
+            &quot;SurfaceFlux&quot;: [
+                {
+                    &quot;Index&quot;: 1,
+                    &quot;Attributes&quot;: [3],
+                    &quot;Type&quot;: &quot;Electric&quot;
+                },
+                {
+                    &quot;Index&quot;: 2,
+                    &quot;Attributes&quot;: [4],
+                    &quot;Type&quot;: &quot;Electric&quot;
+                }
+            ]
+        }
+    },
+    &quot;Solver&quot;: {
+        &quot;Order&quot;: 3,
+        &quot;Device&quot;: &quot;CPU&quot;,
+        &quot;Electrostatic&quot;: {
+            &quot;Save&quot;: 2
+        },
+        &quot;Linear&quot;: {
+            &quot;Type&quot;: &quot;BoomerAMG&quot;,
+            &quot;KSPType&quot;: &quot;CG&quot;,
+            &quot;Tol&quot;: 1.0e-8,
+            &quot;MaxIts&quot;: 100
+        }
+    }
+}</code></pre></div><p>You can save this as <code>spheres.json</code> or download it directly:</p><pre><code class="language-bash hljs">curl -O https://raw.githubusercontent.com/awslabs/palace/refs/heads/main/examples/spheres/spheres.json</code></pre><p>Let&#39;s examine each section in detail. For complete documentation on all available options, see the <a href="../config/config/">configuration reference</a>.</p><p>If you wish to skip the explanation and jump directly to running your simulations, go to <a href="#Running-the-simulation-and-inspecting-the-output">Running the simulation and inspecting the output</a>.</p><h4 id="Section-1:-Problem-definition"><a class="docs-heading-anchor" href="#Section-1:-Problem-definition">Section 1: <code>Problem</code> definition</a><a id="Section-1:-Problem-definition-1"></a><a class="docs-heading-anchor-permalink" href="#Section-1:-Problem-definition" title="Permalink"></a></h4><p>The <code>Problem</code> section identifies the problem type and the output directory. In this case, we choose <code>Electrostatic</code>. This means that <em>Palace</em> solves Poisson&#39;s equation for electric potential sequentially activating all the <code>Terminals</code> on the mesh while setting the non-activated terminals to ground. All simulation types in <em>Palace</em> have some form of iteration (over frequencies, times, mode numbers, or terminals). The output is saved to the <code>&quot;Output&quot;</code> folder specified in the <code>&quot;Problem&quot;</code> section in the JSON file, <code>postpro</code> in this example. If the output already exists, it will be overwritten. See <a href="../config/problem/"><code>config[&quot;Problem&quot;]</code></a> for details on all available problem types and their outputs.</p><pre class="documenter-example-output"><code class="nohighlight hljs ansi">&quot;Problem&quot;:{
+    &quot;Type&quot;: &quot;Electrostatic&quot;,
+    &quot;Verbose&quot;: 2,
+    &quot;Output&quot;: &quot;postpro&quot;
+}</code></pre><h4 id="Section-2:-Model-specification"><a class="docs-heading-anchor" href="#Section-2:-Model-specification">Section 2: <code>Model</code> specification</a><a id="Section-2:-Model-specification-1"></a><a class="docs-heading-anchor-permalink" href="#Section-2:-Model-specification" title="Permalink"></a></h4><p>The <code>Model</code> section specifies the desired geometry. In addition to defining the mesh, it specifies how to convert mesh units to physical units using the <code>L0</code> parameter. For example, <code>L0</code> of <code>1e-2</code> means that one mesh unit corresponds to one centimeter. The <code>Model</code> section can also include settings for adaptive mesh refinement. See <a href="../config/model/"><code>config[&quot;Model&quot;]</code></a> for more information.</p><pre class="documenter-example-output"><code class="nohighlight hljs ansi">&quot;Model&quot;:{
+    &quot;Mesh&quot;: &quot;mesh/spheres.msh&quot;,
+    &quot;L0&quot;: 0.01
+}</code></pre><h4 id="Section-3:-Domain-properties"><a class="docs-heading-anchor" href="#Section-3:-Domain-properties">Section 3: <code>Domain</code> properties</a><a id="Section-3:-Domain-properties-1"></a><a class="docs-heading-anchor-permalink" href="#Section-3:-Domain-properties" title="Permalink"></a></h4><p>The <code>Domains</code> section defines properties for the 3D regions in the geometry.</p><p>Each 3D region (identified by its <code>Attribute</code>) must have a <code>Material</code> definition specifying its physical properties. In our mesh, we have just one 3D region (the vacuum between the spheres and outer boundary) identified by attribute 1. While vacuum properties are applied by default, you can specify various material characteristics as detailed in <a href="../config/domains/#domains%5B%22Materials%22%5D"><code>config[&quot;Domains&quot;][&quot;Materials&quot;]</code></a>.</p><p>The <code>Domains</code> section also includes a <code>Postprocessing</code> subsection for calculating specific quantities. In this example, we add:</p><ul><li><code>Energy</code>, which activates integrated energy calculations in the 3D domain</li><li><code>Probe</code>, which requests field values at specific coordinates defined by a <code>Center</code> (in mesh units)</li></ul><p>When configuring <code>Postprocessing</code>, you must specify an <code>Index</code> that determines the suffix for column headers in the output CSV files. For example, with <code>Index: 1</code>, the probe output will show headers like <code>E_x[1]</code>.</p><div class="admonition is-info" id="What-is-the-difference-between-Attributes-and-Index?-36d00e5366e90f00"><header class="admonition-header">What is the difference between `Attributes` and `Index`?<a class="admonition-anchor" href="#What-is-the-difference-between-Attributes-and-Index?-36d00e5366e90f00" title="Permalink"></a></header><div class="admonition-body"><p><code>Attributes</code> identify mesh regions and come from the mesh file. In our example, attributes 1-4 identify the vacuum region, outer boundary, and two spheres.</p><p><code>Index</code> is used only for postprocessing and defines a notation used in the output CSV files. It has no relation to mesh attributes and can be any positive integer.</p><p>Note how <code>Attributes</code> is an array and <code>Index</code> an integer: multiple attributes might be needed to specify a given region in the mesh that corresponds to a single output.</p></div></div><pre class="documenter-example-output"><code class="nohighlight hljs ansi">&quot;Domains&quot;:{
+    &quot;Materials&quot;: [
+        {
+            &quot;Attributes&quot;: [1],
+            &quot;Permittivity&quot;: 1.0
+        }
+    ],
+    &quot;Postprocessing&quot;: {
+        &quot;Probe&quot;: [
+            {
+                &quot;Index&quot;: 1,
+                &quot;Center&quot;: [
+                    -1.5,
+                    0.0,
+                    0.0
+                ]
+            }
+        ],
+        &quot;Energy&quot;: [
+            {
+                &quot;Index&quot;: 1,
+                &quot;Attributes&quot;: [1]
+            }
+        ]
+    }
+}</code></pre><h4 id="Section-4:-Boundary-conditions"><a class="docs-heading-anchor" href="#Section-4:-Boundary-conditions">Section 4: <code>Boundary</code> conditions</a><a id="Section-4:-Boundary-conditions-1"></a><a class="docs-heading-anchor-permalink" href="#Section-4:-Boundary-conditions" title="Permalink"></a></h4><p>The <code>Boundaries</code> section maps 2D surfaces in your mesh to their physical boundary conditions. <em>Palace</em> offers numerous boundary condition types, all documented in <a href="../config/boundaries/"><code>config[&quot;Boundaries&quot;]</code></a>.</p><p>Unlike 3D regions, which all require <code>Material</code> specifications, 2D surfaces have default behavior: any external surface without an explicit boundary condition is treated as a Perfect Magnetic Conductor (PMC), where the tangential component of the magnetic field is zero, and no conditions are imposed on internal surfaces (since terms from either sides cancel out on such boundaries).</p><p>For our electrostatic problem, we define:</p><ul><li>The outer boundary as <code>Ground</code> (zero potential)</li><li>Two <code>Terminal</code> surfaces (one for each sphere)</li></ul><p><code>Terminals</code> are particularly important for <code>Electrostatic</code> simulations. <em>Palace</em> activates each terminal sequentially (applying a unit of potential and grounding all the other ones) and solves Maxwell&#39;s equations. Each of these steps adds a new row to the output CSV files.</p><p>Like the <code>Domains</code> section, <code>Boundaries</code> also includes a <code>Postprocessing</code> subsection for calculating quantities such as surface fluxes across 2D regions. Here, we compute the fluxes of electric fields across the spherical conductors. See <a href="../config/boundaries/"><code>config[&quot;Boundaries&quot;]</code></a> for all available postprocessing options.</p><pre class="documenter-example-output"><code class="nohighlight hljs ansi">&quot;Boundaries&quot;:{
+    &quot;Ground&quot;: {
+        &quot;Attributes&quot;: [2]
+    },
+    &quot;Terminal&quot;: [
+        {
+            &quot;Index&quot;: 1,
+            &quot;Attributes&quot;: [3]
+        },
+        {
+            &quot;Index&quot;: 2,
+            &quot;Attributes&quot;: [4]
+        }
+    ],
+    &quot;Postprocessing&quot;: {
+        &quot;SurfaceFlux&quot;: [
+            {
+                &quot;Index&quot;: 1,
+                &quot;Attributes&quot;: [3],
+                &quot;Type&quot;: &quot;Electric&quot;
+            },
+            {
+                &quot;Index&quot;: 2,
+                &quot;Attributes&quot;: [4],
+                &quot;Type&quot;: &quot;Electric&quot;
+            }
+        ]
+    }
+}</code></pre><h4 id="Section-5:-Solver-settings"><a class="docs-heading-anchor" href="#Section-5:-Solver-settings">Section 5: Solver settings</a><a id="Section-5:-Solver-settings-1"></a><a class="docs-heading-anchor-permalink" href="#Section-5:-Solver-settings" title="Permalink"></a></h4><p>Finally, the <code>Solver</code> section prescribes properties of the problem and the numerical algorithm, what device to use for the solution, and how much to save as PVD files. For this problem, we run on CPU, specify third-order finite elements, and save the fields for both terminal activations. The details of the linear solver parameters in <code>&quot;Linear&quot;</code> are not essential for this tutorial.</p><p>Other problem types typically have more extensive <code>Solver</code> configurations, including excitation parameters and frequency sweep settings. For complete details on all solver options, see <a href="../config/solver/"><code>config[&quot;Solver&quot;]</code></a>.</p><pre class="documenter-example-output"><code class="nohighlight hljs ansi">&quot;Solver&quot;:{
+    &quot;Order&quot;: 3,
+    &quot;Device&quot;: &quot;CPU&quot;,
+    &quot;Electrostatic&quot;: {
+        &quot;Save&quot;: 2
+    },
+    &quot;Linear&quot;: {
+        &quot;Type&quot;: &quot;BoomerAMG&quot;,
+        &quot;KSPType&quot;: &quot;CG&quot;,
+        &quot;Tol&quot;: 1.0e-8,
+        &quot;MaxIts&quot;: 100
+    }
+}</code></pre><h3 id="Running-the-simulation-and-inspecting-the-output"><a class="docs-heading-anchor" href="#Running-the-simulation-and-inspecting-the-output">Running the simulation and inspecting the output</a><a id="Running-the-simulation-and-inspecting-the-output-1"></a><a class="docs-heading-anchor-permalink" href="#Running-the-simulation-and-inspecting-the-output" title="Permalink"></a></h3><p>If you&#39;ve followed along, you should now have two files:</p><pre><code class="nohighlight hljs">├── mesh
+│   └── spheres.msh
+└── spheres.json</code></pre><div class="admonition is-info" id="Do-not-have-the-files?-4dddcad196de1afb"><header class="admonition-header">Do not have the files?<a class="admonition-anchor" href="#Do-not-have-the-files?-4dddcad196de1afb" title="Permalink"></a></header><div class="admonition-body"><p>If you need to download the files, run:</p><pre><code class="language-bash hljs">mkdir -p mesh
+curl -o mesh/spheres.msh https://raw.githubusercontent.com/awslabs/palace/refs/heads/main/examples/spheres/mesh/spheres.msh
+curl -O https://raw.githubusercontent.com/awslabs/palace/refs/heads/main/examples/spheres/spheres.json</code></pre></div></div><p>Before running your simulation, it&#39;s a good idea to validate the configuration:</p><pre><code class="language-bash hljs">palace --dry-run spheres.json</code></pre><p>This checks for syntax errors and basic configuration issues. The validator should return:</p><pre class="documenter-example-output"><code class="nohighlight hljs ansi">&gt;&gt; /opt/spack/linux-x86_64_v3/openmpi-5.0.8-ne4yke4vrgsfy2ny33stmqidzu56a3tz/bin/mpirun -n 1 /opt/spack/linux-x86_64_v3/palace-git.hughcars_restrict-github-ci-trial_develop-73lbfnph4yv7ylb6mv3bw3wi2rld5sr3/bin/palace-x86_64.bin --dry-run spheres.json
+
+Dry-run: No errors detected in configuration file &quot;spheres.json&quot;</code></pre><p>Finally, we are ready to run the simulation:</p><pre><code class="language-bash hljs">palace -np 1 spheres.json</code></pre><p><code>-np 1</code> instruct <em>Palace</em> to run with a single MPI process.</p><p>You&#39;ll see output including mesh details, solver progress, and timing information. The amount of information can be controlled with the <code>Verbose</code> configuration option in the JSON file.</p><div style="max-height: 300px; overflow-y: auto;"><pre class="documenter-example-output"><code class="nohighlight hljs ansi">&gt;&gt; /opt/spack/linux-x86_64_v3/openmpi-5.0.8-ne4yke4vrgsfy2ny33stmqidzu56a3tz/bin/mpirun -n 1 /opt/spack/linux-x86_64_v3/palace-git.hughcars_restrict-github-ci-trial_develop-73lbfnph4yv7ylb6mv3bw3wi2rld5sr3/bin/palace-x86_64.bin spheres.json
+
+_____________     _______
+_____   __   \____ __   /____ ____________
+____   /_/  /  __ ` /  /  __ ` /  ___/  _ \
+___   _____/  /_/  /  /  /_/  /  /__/  ___/
+  /__/     \___,__/__/\___,__/\_____\_____/
+
+Git changeset ID: e8b3b6c
+Running with 1 MPI process
+Device configuration: cpu
+Memory configuration: host-std
+libCEED backend: /cpu/self/xsmm/blocked
+
+Finished partitioning mesh into 1 subdomain
+
+Characteristic length and time scales:
+ L₀ = 1.500e+00 m, t₀ = 5.003e+00 ns
+
+Mesh curvature order: 3
+Mesh bounding box:
+ (Xmin, Ymin, Zmin) = (-7.493e-01, -7.498e-01, -7.500e-01) m
+ (Xmax, Ymax, Zmax) = (+7.500e-01, +7.499e-01, +7.500e-01) m
+
+Parallel Mesh Stats:
+
+                minimum     average     maximum       total
+ vertices          2536        2536        2536        2536
+ edges            17321       17321       17321       17321
+ faces            29150       29150       29150       29150
+ elements         14362       14362       14362       14362
+ neighbors            0           0           0
+
+            minimum     maximum
+ h       0.00223266    0.164618
+ kappa      1.03541     8.77894
+
+Configuring Dirichlet BC at attributes:
+ 2-4
+
+Assembling system matrices, number of global unknowns:
+ H1 (p = 3): 66328, ND (p = 3): 269949, RT (p = 3): 347244
+ Operator assembly level: Partial
+ Mesh geometries:
+  Tetrahedron: P = 45, Q = 24 (quadrature order = 6)
+
+Assembling multigrid hierarchy:
+ Level 0 (p = 1): 2536 unknowns
+ Level 1 (p = 2): 19857 unknowns
+ Level 2 (p = 3): 66328 unknowns
+
+Computing electrostatic fields for 2 terminal boundaries
+
+It 1/2: Index = 1 (elapsed time = 1.40e-07 s)
+
+  Residual norms for PCG solve
+  0 KSP residual norm ||r||_B = 8.395588e-01
+  1 KSP residual norm ||r||_B = 7.135496e-02
+  2 KSP residual norm ||r||_B = 1.530790e-02
+  3 KSP residual norm ||r||_B = 3.327099e-03
+  4 KSP residual norm ||r||_B = 6.408637e-04
+  5 KSP residual norm ||r||_B = 8.913724e-05
+  6 KSP residual norm ||r||_B = 1.432229e-05
+  7 KSP residual norm ||r||_B = 2.628097e-06
+  8 KSP residual norm ||r||_B = 2.386088e-07
+PCG solver converged in 8 iterations (avg. reduction factor: 9.727e-02)
+ Sol. ||V|| = 5.872299e+01 (||RHS|| = 3.003335e+01)
+ Field energy E = 2.331e-01 J
+
+ Wrote fields to disk for source 1
+ Updating solution error estimates
+
+It 2/2: Index = 2 (elapsed time = 6.77e+00 s)
+
+  Residual norms for PCG solve
+  0 KSP residual norm ||r||_B = 1.201521e+00
+  1 KSP residual norm ||r||_B = 1.051406e-01
+  2 KSP residual norm ||r||_B = 2.383004e-02
+  3 KSP residual norm ||r||_B = 5.002471e-03
+  4 KSP residual norm ||r||_B = 8.435736e-04
+  5 KSP residual norm ||r||_B = 1.512779e-04
+  6 KSP residual norm ||r||_B = 2.217145e-05
+  7 KSP residual norm ||r||_B = 3.965631e-06
+  8 KSP residual norm ||r||_B = 4.503110e-07
+  9 KSP residual norm ||r||_B = 6.265999e-08
+PCG solver converged in 9 iterations (avg. reduction factor: 1.085e-01)
+ Sol. ||V|| = 6.509716e+01 (||RHS|| = 3.033164e+01)
+ Field energy E = 4.668e-01 J
+
+ Wrote fields to disk for source 2
+ Updating solution error estimates
+
+Completed 0 iterations of adaptive mesh refinement (AMR):
+ Indicator norm = 6.910e-03, global unknowns = 66328
+ Max. iterations = 0, tol. = 1.000e-02
+
+Elapsed Time Report (s)           Min.        Max.        Avg.
+==============================================================
+Initialization                   0.301       0.301       0.301
+  Mesh Preprocessing             0.424       0.424       0.424
+Operator Construction            4.261       4.261       4.261
+Linear Solve                     0.158       0.158       0.158
+  Setup                          2.247       2.247       2.247
+  Preconditioner                 3.850       3.850       3.850
+  Coarse Solve                   0.009       0.009       0.009
+Estimation                       0.045       0.045       0.045
+  Construction                   2.297       2.297       2.297
+  Solve                          2.254       2.254       2.254
+Postprocessing                   0.147       0.147       0.147
+Disk IO                          8.142       8.142       8.142
+--------------------------------------------------------------
+Total                           24.149      24.149      24.149</code></pre></div><p>Notice that <em>Palace</em> ran two iterations, one for each <code>Terminal</code>. Different problem types will have different iteration patterns (e.g., <code>Driven</code> iterating over frequencies or <code>Transient</code> over time steps) and many of the output CSV files are organized along these iterations.</p><h3 id="Understanding-the-output"><a class="docs-heading-anchor" href="#Understanding-the-output">Understanding the output</a><a id="Understanding-the-output-1"></a><a class="docs-heading-anchor-permalink" href="#Understanding-the-output" title="Permalink"></a></h3><p>Once the simulation is completed, you&#39;ll find a <code>postpro</code> directory containing:</p><pre class="documenter-example-output"><code class="nohighlight hljs ansi">postpro:
+domain-E.csv
+error-indicators.csv
+palace.json
+paraview
+probe-E.csv
+surface-F.csv
+terminal-C.csv
+terminal-Cinv.csv
+terminal-Cm.csv
+terminal-V.csv
+
+postpro/paraview:
+electrostatic
+electrostatic_boundary
+
+postpro/paraview/electrostatic:
+Cycle000001
+Cycle000002
+Cycle000003
+electrostatic.pvd
+
+postpro/paraview/electrostatic/Cycle000001:
+data.pvtu
+proc000000.vtu
+
+postpro/paraview/electrostatic/Cycle000002:
+data.pvtu
+proc000000.vtu
+
+postpro/paraview/electrostatic/Cycle000003:
+data.pvtu
+proc000000.vtu
+
+postpro/paraview/electrostatic_boundary:
+Cycle000001
+Cycle000002
+electrostatic_boundary.pvd
+
+postpro/paraview/electrostatic_boundary/Cycle000001:
+data.pvtu
+proc000000.vtu
+
+postpro/paraview/electrostatic_boundary/Cycle000002:
+data.pvtu
+proc000000.vtu</code></pre><p>In addition to the <code>palace.json</code>, which contains metadata about the simulation (including timing information and counts), the output consists of CSV and PVD files. You can safely ignore all the <code>Cycle</code> directories as their content is accessed through the corresponding PVD file. For more details on output files and formats, see the <a href="../guide/postprocessing/">output documentation</a>.</p><h4 id="CSV-files"><a class="docs-heading-anchor" href="#CSV-files">CSV files</a><a id="CSV-files-1"></a><a class="docs-heading-anchor-permalink" href="#CSV-files" title="Permalink"></a></h4><p>CSV files contain post-processed quantities and depend on the specific problem type chosen. Let&#39;s look at two examples:</p><p><code>probe-E.csv</code> shows electric field values at the probe point we defined in the <code>Postprocessing</code> section in <code>&quot;Domains&quot;</code>:</p><pre class="documenter-example-output"><code class="nohighlight hljs ansi">        i,               E_x[1] (V/m),               E_y[1] (V/m),               E_z[1] (V/m)
+ 1.00e+00,        +2.445559203450e+03,        -1.449177963678e+01,        +1.351677956272e+00
+ 2.00e+00,        -1.670643780146e+03,        +9.899822289826e+00,        -9.233766932299e-01</code></pre><p>The first column <code>i</code> indicates the iteration and corresponds to the <code>Index</code> associated to each <code>Terminal</code>, whereas the <code>[1]</code> in column headers corresponds to the <code>Index</code> we specified in the <code>Probe</code> section.</p><p>One of the key outputs of the <code>Electrostatics</code> problem type is the capacitance matrix, saved in <code>terminal-C.csv</code>:</p><pre class="documenter-example-output"><code class="nohighlight hljs ansi">        i,                C[i][1] (F),                C[i][2] (F)
+ 1.00e+00,        +1.237445610357e-12,        -4.770975738889e-13
+ 2.00e+00,        -4.770975738889e-13,        +2.478413459856e-12</code></pre><p>Here, both rows and columns correspond to <code>Terminal</code> indices. As expected, the matrix is symmetric.</p><h4 id="Visualizing-with-ParaView"><a class="docs-heading-anchor" href="#Visualizing-with-ParaView">Visualizing with ParaView</a><a id="Visualizing-with-ParaView-1"></a><a class="docs-heading-anchor-permalink" href="#Visualizing-with-ParaView" title="Permalink"></a></h4><p>In this final step, we&#39;ll create a visualization of our simulation results using <a href="https://www.paraview.org">ParaView</a>. We&#39;ll work with both the volume field data (<code>electrostatic.pvd</code>) and the boundary surface data (<code>electrostatic_boundaries.pvd</code>) to reproduce the figures in <a href="../examples/spheres/">the example page</a>.</p><ol><li><p>Launch ParaView and navigate to your <code>postpro/paraview</code> directory</p></li><li><p>Open the volume data:</p><ul><li>Click File → Open → Navigate to <code>postpro/paraview/electrostatic/electrostatic.pvd</code>, nothing should be rendered so far</li><li>Click the Apply button in the Properties panel (left side), a sphere should appear</li><li>In the Coloring section, select <code>V</code>, the sphere should now be colored according to the potential values</li></ul></li><li><p>Create a slice to see inside:</p><ul><li>From the menu bar, select Filters → Common → Slice</li><li>In the Properties panel (left side), set the Origin to (0, 0, 0)</li><li>Set the Normal to (0, 1, 0) for a vertical slice along the Y-axis</li><li>Click Apply</li><li>Use the mouse to rotate and zoom until you can see the outlines of both inner spheres</li></ul></li><li><p>Add the boundary surfaces:</p><ul><li>Click File → Open → Navigate to <code>postpro/paraview/electrostatic_boundaries/electrostatic_boundaries.pvd</code></li><li>Click Apply in the Properties panel</li><li>In the Coloring section, select <code>V</code></li><li>The two inner spheres should now appear with their surface potentials displayed</li></ul></li></ol><p>Notice the time slider at the top of the ParaView window:</p><ul><li>Frame 0: First terminal activated (first sphere at unit potential)</li><li>Frame 1: Second terminal activated (second sphere at unit potential)</li><li>Frame 99: Error estimates</li></ul><p>You can save the visualization as an image with File → Save Screenshot, or save the entire ParaView state with File → Save State (allows reopening your complete setup later). The result should look more or less like the images below:</p><br/><p align="center">
+  <img src="../assets/examples/spheres-3.png" width="45%" />
+  <img src="../assets/examples/spheres-4.png" width="45%" />
+</p><p>ParaView offers many more advanced features for data analysis and visualization. For more details, refer to the <a href="https://docs.paraview.org/en/latest/">official ParaView documentation</a>.</p><h2 id="Where-to-go-next"><a class="docs-heading-anchor" href="#Where-to-go-next">Where to go next</a><a id="Where-to-go-next-1"></a><a class="docs-heading-anchor-permalink" href="#Where-to-go-next" title="Permalink"></a></h2><p>Congratulations! You&#39;ve completed your first <em>Palace</em> simulation. To continue learning:</p><ol><li>Try looking at the other output files in this simulation</li><li>Try modifying this example with different materials or boundary conditions</li><li>Explore the <a href="../examples/examples/">examples</a> to see different problem types and more complex geometries</li><li>Read the <a href="../config/config/">configuration reference</a> to understand all available options</li></ol><p>If you encounter any issues or have questions, please report them to our <a href="https://github.com/awslabs/palace/issues">GitHub issue tracker</a>.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../">« Home</a><a class="docs-footer-nextpage" href="../install/">Installation »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.14.1 on <span class="colophon-date" title="Wednesday 1 October 2025 21:36">Wednesday 1 October 2025</span>. Using Julia version 1.11.7.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

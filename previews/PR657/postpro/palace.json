@@ -1,0 +1,83 @@
+{
+  "ElapsedTime": {
+    "Counts": {
+      "Adaptation": 0,
+      "CoarseSolve": 21,
+      "Construction": 1,
+      "DiskIO": 3,
+      "Div.-FreeProjection": 0,
+      "EigenvalueSolve": 0,
+      "Estimation": 2,
+      "FarFields": 0,
+      "Gridfunction": 3,
+      "Initialization": 2,
+      "LinearSolve": 2,
+      "MeshPreprocessing": 1,
+      "OperatorConstruction": 1,
+      "PROMConstruction": 0,
+      "PROMSolve": 0,
+      "Paraview": 3,
+      "Postprocessing": 6,
+      "Preconditioner": 21,
+      "Rebalancing": 0,
+      "Setup": 1,
+      "Solve": 2,
+      "TimeStepping": 0,
+      "Total": 1,
+      "WavePorts": 0
+    },
+    "Durations": {
+      "Adaptation": 0.0,
+      "CoarseSolve": 0.009169489000000001,
+      "Construction": 2.439663359,
+      "DiskIO": 0.375095893,
+      "Div.-FreeProjection": 0.0,
+      "EigenvalueSolve": 0.0,
+      "Estimation": 0.045786737999999993,
+      "FarFields": 0.0,
+      "Gridfunction": 3.3326875069999997,
+      "Initialization": 0.372589873,
+      "LinearSolve": 0.16274061199999998,
+      "MeshPreprocessing": 0.44765148299999996,
+      "OperatorConstruction": 4.859875571,
+      "PROMConstruction": 0.0,
+      "PROMSolve": 0.0,
+      "Paraview": 8.624109467,
+      "Postprocessing": 0.15795274899999998,
+      "Preconditioner": 3.7906028280000017,
+      "Rebalancing": 0.0,
+      "Setup": 2.302863201,
+      "Solve": 2.378565623,
+      "TimeStepping": 0.0,
+      "Total": 29.312331967,
+      "WavePorts": 0.0
+    }
+  },
+  "GitTag": "3e4f527",
+  "LinearSolver": {
+    "TotalIts": 17,
+    "TotalSolves": 2
+  },
+  "PeakMemoryMegabytes": {
+    "Average": 682.66796875,
+    "Max": 682.66796875,
+    "Min": 682.66796875,
+    "Total": 682.66796875
+  },
+  "PeakNodeMemoryMegabytes": {
+    "Average": 682.66796875,
+    "Max": 682.66796875,
+    "Min": 682.66796875,
+    "Total": 682.66796875
+  },
+  "Problem": {
+    "DegreesOfFreedom": 66328,
+    "MPISize": 1,
+    "MeshElements": 14362,
+    "MultigridDegreesOfFreedom": [
+      2536,
+      19857,
+      66328
+    ]
+  }
+}

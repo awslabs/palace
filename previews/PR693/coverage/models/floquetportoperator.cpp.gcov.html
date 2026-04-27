@@ -1,0 +1,1134 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - models/floquetportoperator.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">models</a> - floquetportoperator.cpp<span style="font-size: 80%;"> (source / <a href="floquetportoperator.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">7.2&nbsp;%</td>
+            <td class="headerCovTableEntry">403</td>
+            <td class="headerCovTableEntry">29</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-03-31 16:53:56</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryLo">12.5&nbsp;%</td>
+            <td class="headerCovTableEntry">24</td>
+            <td class="headerCovTableEntry">3</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &quot;floquetportoperator.hpp&quot;</span>
+<span id="L5"><span class="lineNum">       5</span>              : </span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;cmath&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;fmt/core.h&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &quot;fem/integrator.hpp&quot;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &quot;models/materialoperator.hpp&quot;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &quot;utils/communication.hpp&quot;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &quot;utils/configfile.hpp&quot;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &quot;utils/geodata.hpp&quot;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &quot;utils/iodata.hpp&quot;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &quot;utils/prettyprint.hpp&quot;</span>
+<span id="L16"><span class="lineNum">      16</span>              : </span>
+<span id="L17"><span class="lineNum">      17</span>              : namespace palace</span>
+<span id="L18"><span class="lineNum">      18</span>              : {</span>
+<span id="L19"><span class="lineNum">      19</span>              : </span>
+<span id="L20"><span class="lineNum">      20</span>              : using namespace std::complex_literals;</span>
+<span id="L21"><span class="lineNum">      21</span>              : </span>
+<span id="L22"><span class="lineNum">      22</span>              : // =============================================================================</span>
+<span id="L23"><span class="lineNum">      23</span>              : // LowRankComplexOperator</span>
+<span id="L24"><span class="lineNum">      24</span>              : // =============================================================================</span>
+<span id="L25"><span class="lineNum">      25</span>              : </span>
+<span id="L26"><span class="lineNum">      26</span> <span class="tlaUNC tlaBgUNC">           0 : void LowRankComplexOperator::Mult(const ComplexVector &amp;x, ComplexVector &amp;y) const</span></span>
+<span id="L27"><span class="lineNum">      27</span>              : {</span>
+<span id="L28"><span class="lineNum">      28</span>              :   y = 0.0;</span>
+<span id="L29"><span class="lineNum">      29</span> <span class="tlaUNC">           0 :   AddMult(x, y, 1.0);</span></span>
+<span id="L30"><span class="lineNum">      30</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L31"><span class="lineNum">      31</span>              : </span>
+<span id="L32"><span class="lineNum">      32</span> <span class="tlaUNC">           0 : void LowRankComplexOperator::AddMult(const ComplexVector &amp;x, ComplexVector &amp;y,</span></span>
+<span id="L33"><span class="lineNum">      33</span>              :                                      const std::complex&lt;double&gt; a) const</span>
+<span id="L34"><span class="lineNum">      34</span>              : {</span>
+<span id="L35"><span class="lineNum">      35</span>              :   // The Floquet DtN operator: F = Σ g_k v_k v_k^H / |Γ| (with 1/|Γ| absorbed into g_k).</span>
+<span id="L36"><span class="lineNum">      36</span> <span class="tlaUNC">           0 :   for (const auto &amp;t : terms)</span></span>
+<span id="L37"><span class="lineNum">      37</span>              :   {</span>
+<span id="L38"><span class="lineNum">      38</span>              :     // Hermitian dot product: dot = v^H x = Σ conj(v_j) x_j</span>
+<span id="L39"><span class="lineNum">      39</span>              :     // = (v_r · x_r + v_i · x_i) + i(v_r · x_i - v_i · x_r)</span>
+<span id="L40"><span class="lineNum">      40</span>              :     double dot_r =</span>
+<span id="L41"><span class="lineNum">      41</span> <span class="tlaUNC">           0 :         linalg::Dot(comm, t.v-&gt;Real(), x.Real()) + linalg::Dot(comm, t.v-&gt;Imag(), x.Imag());</span></span>
+<span id="L42"><span class="lineNum">      42</span>              :     double dot_i =</span>
+<span id="L43"><span class="lineNum">      43</span> <span class="tlaUNC">           0 :         linalg::Dot(comm, t.v-&gt;Real(), x.Imag()) - linalg::Dot(comm, t.v-&gt;Imag(), x.Real());</span></span>
+<span id="L44"><span class="lineNum">      44</span>              : </span>
+<span id="L45"><span class="lineNum">      45</span>              :     // Compute s = a * g * dot (complex scalar)</span>
+<span id="L46"><span class="lineNum">      46</span> <span class="tlaUNC">           0 :     std::complex&lt;double&gt; s = a * t.g * std::complex&lt;double&gt;(dot_r, dot_i);</span></span>
+<span id="L47"><span class="lineNum">      47</span>              : </span>
+<span id="L48"><span class="lineNum">      48</span>              :     // y += s * v = (s_r + i s_i)(v_r + i v_i)</span>
+<span id="L49"><span class="lineNum">      49</span>              :     //    Real part: s_r v_r - s_i v_i</span>
+<span id="L50"><span class="lineNum">      50</span>              :     //    Imag part: s_i v_r + s_r v_i</span>
+<span id="L51"><span class="lineNum">      51</span> <span class="tlaUNC">           0 :     y.Real().Add(s.real(), t.v-&gt;Real());</span></span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaUNC">           0 :     y.Real().Add(-s.imag(), t.v-&gt;Imag());</span></span>
+<span id="L53"><span class="lineNum">      53</span> <span class="tlaUNC">           0 :     y.Imag().Add(s.imag(), t.v-&gt;Real());</span></span>
+<span id="L54"><span class="lineNum">      54</span> <span class="tlaUNC">           0 :     y.Imag().Add(s.real(), t.v-&gt;Imag());</span></span>
+<span id="L55"><span class="lineNum">      55</span>              :   }</span>
+<span id="L56"><span class="lineNum">      56</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L57"><span class="lineNum">      57</span>              : </span>
+<span id="L58"><span class="lineNum">      58</span>              : namespace</span>
+<span id="L59"><span class="lineNum">      59</span>              : {</span>
+<span id="L60"><span class="lineNum">      60</span>              : </span>
+<span id="L61"><span class="lineNum">      61</span>              : void ComputePolarization(const mfem::Vector &amp;kt, const mfem::Vector &amp;port_normal,</span>
+<span id="L62"><span class="lineNum">      62</span>              :                          mfem::Vector &amp;e_te, mfem::Vector &amp;e_tm);</span>
+<span id="L63"><span class="lineNum">      63</span>              : </span>
+<span id="L64"><span class="lineNum">      64</span>              : }  // namespace</span>
+<span id="L65"><span class="lineNum">      65</span>              : </span>
+<span id="L66"><span class="lineNum">      66</span>              : // =============================================================================</span>
+<span id="L67"><span class="lineNum">      67</span>              : // FloquetPortData</span>
+<span id="L68"><span class="lineNum">      68</span>              : // =============================================================================</span>
+<span id="L69"><span class="lineNum">      69</span>              : </span>
+<span id="L70"><span class="lineNum">      70</span> <span class="tlaUNC">           0 : FloquetPortData::FloquetPortData(const config::FloquetPortData &amp;data,</span></span>
+<span id="L71"><span class="lineNum">      71</span>              :                                  const config::PeriodicBoundaryData &amp;periodic_data,</span>
+<span id="L72"><span class="lineNum">      72</span>              :                                  const Units &amp;units, const MaterialOperator &amp;mat_op_ref,</span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaUNC">           0 :                                  mfem::ParFiniteElementSpace &amp;nd_fespace)</span></span>
+<span id="L74"><span class="lineNum">      74</span> <span class="tlaUNC">           0 :   : excitation(data.excitation), mat_op(mat_op_ref), a1(3), a2(3), b1(3), b2(3), k_F(3),</span></span>
+<span id="L75"><span class="lineNum">      75</span> <span class="tlaUNC">           0 :     port_normal(3), comm(nd_fespace.GetComm())</span></span>
+<span id="L76"><span class="lineNum">      76</span>              : {</span>
+<span id="L77"><span class="lineNum">      77</span>              :   // Set incident polarization coefficients: E_inc = α_TE ê_TE + α_TM ê_TM.</span>
+<span id="L78"><span class="lineNum">      78</span>              :   const double inv_sqrt2 = 1.0 / std::sqrt(2.0);</span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaUNC">           0 :   if (data.inc_polarization == &quot;TE&quot;)</span></span>
+<span id="L80"><span class="lineNum">      80</span>              :   {</span>
+<span id="L81"><span class="lineNum">      81</span>              :     inc_alpha_te = 1.0;</span>
+<span id="L82"><span class="lineNum">      82</span>              :     inc_alpha_tm = 0.0;</span>
+<span id="L83"><span class="lineNum">      83</span>              :   }</span>
+<span id="L84"><span class="lineNum">      84</span> <span class="tlaUNC">           0 :   else if (data.inc_polarization == &quot;TM&quot;)</span></span>
+<span id="L85"><span class="lineNum">      85</span>              :   {</span>
+<span id="L86"><span class="lineNum">      86</span>              :     inc_alpha_te = 0.0;</span>
+<span id="L87"><span class="lineNum">      87</span>              :     inc_alpha_tm = 1.0;</span>
+<span id="L88"><span class="lineNum">      88</span>              :   }</span>
+<span id="L89"><span class="lineNum">      89</span> <span class="tlaUNC">           0 :   else if (data.inc_polarization == &quot;RHC&quot;)</span></span>
+<span id="L90"><span class="lineNum">      90</span>              :   {</span>
+<span id="L91"><span class="lineNum">      91</span>              :     inc_alpha_te = inv_sqrt2;</span>
+<span id="L92"><span class="lineNum">      92</span> <span class="tlaUNC">           0 :     inc_alpha_tm = std::complex&lt;double&gt;(0.0, inv_sqrt2);</span></span>
+<span id="L93"><span class="lineNum">      93</span>              :   }</span>
+<span id="L94"><span class="lineNum">      94</span> <span class="tlaUNC">           0 :   else if (data.inc_polarization == &quot;LHC&quot;)</span></span>
+<span id="L95"><span class="lineNum">      95</span>              :   {</span>
+<span id="L96"><span class="lineNum">      96</span>              :     inc_alpha_te = inv_sqrt2;</span>
+<span id="L97"><span class="lineNum">      97</span> <span class="tlaUNC">           0 :     inc_alpha_tm = std::complex&lt;double&gt;(0.0, -inv_sqrt2);</span></span>
+<span id="L98"><span class="lineNum">      98</span>              :   }</span>
+<span id="L99"><span class="lineNum">      99</span>              :   else</span>
+<span id="L100"><span class="lineNum">     100</span>              :   {</span>
+<span id="L101"><span class="lineNum">     101</span> <span class="tlaUNC">           0 :     MFEM_ABORT(&quot;Unknown IncidentPolarization: &quot; &lt;&lt; data.inc_polarization</span></span>
+<span id="L102"><span class="lineNum">     102</span>              :                                                 &lt;&lt; &quot;. Expected TE, TM, RHC, or LHC.&quot;);</span>
+<span id="L103"><span class="lineNum">     103</span>              :   }</span>
+<span id="L104"><span class="lineNum">     104</span>              : </span>
+<span id="L105"><span class="lineNum">     105</span>              :   // Store boundary attributes.</span>
+<span id="L106"><span class="lineNum">     106</span> <span class="tlaUNC">           0 :   attr_list.SetSize(static_cast&lt;int&gt;(data.attributes.size()));</span></span>
+<span id="L107"><span class="lineNum">     107</span> <span class="tlaUNC">           0 :   for (int i = 0; i &lt; attr_list.Size(); i++)</span></span>
+<span id="L108"><span class="lineNum">     108</span>              :   {</span>
+<span id="L109"><span class="lineNum">     109</span> <span class="tlaUNC">           0 :     attr_list[i] = data.attributes[i];</span></span>
+<span id="L110"><span class="lineNum">     110</span>              :   }</span>
+<span id="L111"><span class="lineNum">     111</span>              : </span>
+<span id="L112"><span class="lineNum">     112</span>              :   // Floquet ports require periodic boundary conditions in the transverse directions.</span>
+<span id="L113"><span class="lineNum">     113</span>              :   // The periodic mesh provides DOF identification on opposite faces, and the Floquet</span>
+<span id="L114"><span class="lineNum">     114</span>              :   // wave vector (if nonzero) provides the Bloch phase shift.</span>
+<span id="L115"><span class="lineNum">     115</span>              :   const auto &amp;periodic = periodic_data;</span>
+<span id="L116"><span class="lineNum">     116</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(!periodic.boundary_pairs.empty(),</span></span>
+<span id="L117"><span class="lineNum">     117</span>              :               &quot;FloquetPort requires periodic boundary conditions to be configured under &quot;</span>
+<span id="L118"><span class="lineNum">     118</span>              :               &quot;\&quot;Boundaries\&quot;/\&quot;Periodic\&quot;/\&quot;BoundaryPairs\&quot;. At least two periodic &quot;</span>
+<span id="L119"><span class="lineNum">     119</span>              :               &quot;boundary pairs are needed for 3D periodicity.&quot;);</span>
+<span id="L120"><span class="lineNum">     120</span>              : </span>
+<span id="L121"><span class="lineNum">     121</span>              :   // Extract lattice vectors. If periodic boundary pairs with translations are specified,</span>
+<span id="L122"><span class="lineNum">     122</span>              :   // use them. Otherwise, infer from the port face bounding box (works for axis-aligned</span>
+<span id="L123"><span class="lineNum">     123</span>              :   // rectangular cells with built-in mesh periodicity).</span>
+<span id="L124"><span class="lineNum">     124</span>              :   double mesh_scale = units.GetMeshLengthRelativeScale();</span>
+<span id="L125"><span class="lineNum">     125</span> <span class="tlaUNC">           0 :   if (periodic.boundary_pairs.size() &gt;= 2)</span></span>
+<span id="L126"><span class="lineNum">     126</span>              :   {</span>
+<span id="L127"><span class="lineNum">     127</span>              :     // The translation component of each affine transform is the lattice vector (in mesh</span>
+<span id="L128"><span class="lineNum">     128</span>              :     // units). Nondimensionalize by dividing by Lc/L0.</span>
+<span id="L129"><span class="lineNum">     129</span> <span class="tlaUNC">           0 :     for (int i = 0; i &lt; 3; i++)</span></span>
+<span id="L130"><span class="lineNum">     130</span>              :     {</span>
+<span id="L131"><span class="lineNum">     131</span> <span class="tlaUNC">           0 :       a1(i) = periodic.boundary_pairs[0].affine_transform[i * 4 + 3] / mesh_scale;</span></span>
+<span id="L132"><span class="lineNum">     132</span> <span class="tlaUNC">           0 :       a2(i) = periodic.boundary_pairs[1].affine_transform[i * 4 + 3] / mesh_scale;</span></span>
+<span id="L133"><span class="lineNum">     133</span>              :     }</span>
+<span id="L134"><span class="lineNum">     134</span>              :   }</span>
+<span id="L135"><span class="lineNum">     135</span>              :   // Fall back to port geometry if translations are missing (e.g., auto-detected periodicity</span>
+<span id="L136"><span class="lineNum">     136</span>              :   // from Gmsh setPeriodic, or no BoundaryPairs at all).</span>
+<span id="L137"><span class="lineNum">     137</span> <span class="tlaUNC">           0 :   if (a1.Norml2() &lt; 1e-12 || a2.Norml2() &lt; 1e-12)</span></span>
+<span id="L138"><span class="lineNum">     138</span>              :   {</span>
+<span id="L139"><span class="lineNum">     139</span>              :     // Infer lattice vectors from the port face bounding box. This works for axis-aligned</span>
+<span id="L140"><span class="lineNum">     140</span>              :     // rectangular periodic cells where the port face spans the full unit cell.</span>
+<span id="L141"><span class="lineNum">     141</span>              :     auto &amp;mesh = *nd_fespace.GetParMesh();</span>
+<span id="L142"><span class="lineNum">     142</span> <span class="tlaUNC">           0 :     int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;</span></span>
+<span id="L143"><span class="lineNum">     143</span> <span class="tlaUNC">           0 :     Mpi::GlobalMax(1, &amp;bdr_attr_max, comm);</span></span>
+<span id="L144"><span class="lineNum">     144</span> <span class="tlaUNC">           0 :     mfem::Array&lt;int&gt; bdr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list, true);</span></span>
+<span id="L145"><span class="lineNum">     145</span>              :     mfem::Vector bbmin, bbmax;</span>
+<span id="L146"><span class="lineNum">     146</span> <span class="tlaUNC">           0 :     mesh::GetAxisAlignedBoundingBox(mesh, bdr_marker, true, bbmin, bbmax);</span></span>
+<span id="L147"><span class="lineNum">     147</span>              :     mfem::Vector extent(3);</span>
+<span id="L148"><span class="lineNum">     148</span> <span class="tlaUNC">           0 :     for (int i = 0; i &lt; 3; i++)</span></span>
+<span id="L149"><span class="lineNum">     149</span>              :     {</span>
+<span id="L150"><span class="lineNum">     150</span> <span class="tlaUNC">           0 :       extent(i) = bbmax(i) - bbmin(i);</span></span>
+<span id="L151"><span class="lineNum">     151</span>              :     }</span>
+<span id="L152"><span class="lineNum">     152</span>              : </span>
+<span id="L153"><span class="lineNum">     153</span>              :     // The two tangential directions with the largest extents are the lattice directions.</span>
+<span id="L154"><span class="lineNum">     154</span>              :     // Sort dimensions by extent to identify the two periodic directions.</span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaUNC">           0 :     int dirs[3] = {0, 1, 2};</span></span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaUNC">           0 :     std::sort(dirs, dirs + 3, [&amp;](int a, int b) { return extent(a) &gt; extent(b); });</span></span>
+<span id="L157"><span class="lineNum">     157</span>              : </span>
+<span id="L158"><span class="lineNum">     158</span> <span class="tlaUNC">           0 :     a1 = 0.0;</span></span>
+<span id="L159"><span class="lineNum">     159</span> <span class="tlaUNC">           0 :     a2 = 0.0;</span></span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaUNC">           0 :     a1(dirs[0]) = extent(dirs[0]);</span></span>
+<span id="L161"><span class="lineNum">     161</span> <span class="tlaUNC">           0 :     a2(dirs[1]) = extent(dirs[1]);</span></span>
+<span id="L162"><span class="lineNum">     162</span>              : </span>
+<span id="L163"><span class="lineNum">     163</span> <span class="tlaUNC">           0 :     MFEM_VERIFY(a1.Norml2() &gt; 1e-12 &amp;&amp; a2.Norml2() &gt; 1e-12,</span></span>
+<span id="L164"><span class="lineNum">     164</span>              :                 &quot;Could not infer lattice vectors from port face bounding box. &quot;</span>
+<span id="L165"><span class="lineNum">     165</span>              :                 &quot;Please specify BoundaryPairs with Translation vectors.&quot;);</span>
+<span id="L166"><span class="lineNum">     166</span>              :   }</span>
+<span id="L167"><span class="lineNum">     167</span>              : </span>
+<span id="L168"><span class="lineNum">     168</span>              :   // Bloch wave vector: use the BZ-wrapped value from MaterialOperator so the port is</span>
+<span id="L169"><span class="lineNum">     169</span>              :   // consistent with the bulk ∇_F bilinear form. The Floquet port must use the same BZ</span>
+<span id="L170"><span class="lineNum">     170</span>              :   // convention as the volume solve for correct Fourier extraction (v^T E).</span>
+<span id="L171"><span class="lineNum">     171</span> <span class="tlaUNC">           0 :   const auto &amp;kF_mat = mat_op.GetWaveVector();</span></span>
+<span id="L172"><span class="lineNum">     172</span> <span class="tlaUNC">           0 :   for (int i = 0; i &lt; 3; i++)</span></span>
+<span id="L173"><span class="lineNum">     173</span>              :   {</span>
+<span id="L174"><span class="lineNum">     174</span> <span class="tlaUNC">           0 :     k_F(i) = (i &lt; kF_mat.Size()) ? kF_mat(i) : 0.0;</span></span>
+<span id="L175"><span class="lineNum">     175</span>              :   }</span>
+<span id="L176"><span class="lineNum">     176</span>              : </span>
+<span id="L177"><span class="lineNum">     177</span>              :   // Compute reciprocal lattice (MUST be before BZ offset which uses b1, b2).</span>
+<span id="L178"><span class="lineNum">     178</span> <span class="tlaUNC">           0 :   ComputeReciprocalLattice(a1, a2, b1, b2);</span></span>
+<span id="L179"><span class="lineNum">     179</span>              : </span>
+<span id="L180"><span class="lineNum">     180</span>              :   // Store the unwrapped config kF (Lc units) for frequency-dependent BZ offset.</span>
+<span id="L181"><span class="lineNum">     181</span> <span class="tlaUNC">           0 :   kF_config_Lc.SetSize(3);</span></span>
+<span id="L182"><span class="lineNum">     182</span> <span class="tlaUNC">           0 :   for (int i = 0; i &lt; 3; i++)</span></span>
+<span id="L183"><span class="lineNum">     183</span>              :   {</span>
+<span id="L184"><span class="lineNum">     184</span> <span class="tlaUNC">           0 :     kF_config_Lc(i) =</span></span>
+<span id="L185"><span class="lineNum">     185</span> <span class="tlaUNC">           0 :         (i &lt; static_cast&lt;int&gt;(periodic.wave_vector.size())) ? periodic.wave_vector[i] : 0.0;</span></span>
+<span id="L186"><span class="lineNum">     186</span>              :   }</span>
+<span id="L187"><span class="lineNum">     187</span>              : </span>
+<span id="L188"><span class="lineNum">     188</span>              :   // Compute the BZ wrapping offset at the reference frequency.</span>
+<span id="L189"><span class="lineNum">     189</span>              :   {</span>
+<span id="L190"><span class="lineNum">     190</span> <span class="tlaUNC">           0 :     const auto &amp;kF_bz = mat_op.GetWaveVectorBZ();</span></span>
+<span id="L191"><span class="lineNum">     191</span>              :     mfem::Vector kF_wrapped(3);</span>
+<span id="L192"><span class="lineNum">     192</span> <span class="tlaUNC">           0 :     for (int i = 0; i &lt; 3; i++)</span></span>
+<span id="L193"><span class="lineNum">     193</span>              :     {</span>
+<span id="L194"><span class="lineNum">     194</span> <span class="tlaUNC">           0 :       kF_wrapped(i) = (i &lt; kF_bz.Size()) ? kF_bz(i) : 0.0;</span></span>
+<span id="L195"><span class="lineNum">     195</span>              :     }</span>
+<span id="L196"><span class="lineNum">     196</span> <span class="tlaUNC">           0 :     bz_m = ComputeBZOffset(kF_config_Lc, kF_wrapped, b1, b1 * b1);</span></span>
+<span id="L197"><span class="lineNum">     197</span> <span class="tlaUNC">           0 :     bz_n = ComputeBZOffset(kF_config_Lc, kF_wrapped, b2, b2 * b2);</span></span>
+<span id="L198"><span class="lineNum">     198</span> <span class="tlaUNC">           0 :     if (bz_m != 0 || bz_n != 0)</span></span>
+<span id="L199"><span class="lineNum">     199</span>              :     {</span>
+<span id="L200"><span class="lineNum">     200</span> <span class="tlaUNC">           0 :       Mpi::Print(&quot; Floquet port: BZ wrapping at ref freq (shift = {:d}*b1 + {:d}*b2)\n&quot;,</span></span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaUNC">           0 :                  bz_m, bz_n);</span></span>
+<span id="L202"><span class="lineNum">     202</span>              :     }</span>
+<span id="L203"><span class="lineNum">     203</span>              :   }</span>
+<span id="L204"><span class="lineNum">     204</span>              : </span>
+<span id="L205"><span class="lineNum">     205</span>              :   // Compute port normal and area using geodata utilities.</span>
+<span id="L206"><span class="lineNum">     206</span>              :   {</span>
+<span id="L207"><span class="lineNum">     207</span>              :     auto &amp;mesh = *nd_fespace.GetParMesh();</span>
+<span id="L208"><span class="lineNum">     208</span> <span class="tlaUNC">           0 :     int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;</span></span>
+<span id="L209"><span class="lineNum">     209</span> <span class="tlaUNC">           0 :     Mpi::GlobalMax(1, &amp;bdr_attr_max, comm);</span></span>
+<span id="L210"><span class="lineNum">     210</span> <span class="tlaUNC">           0 :     mfem::Array&lt;int&gt; bdr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list, true);</span></span>
+<span id="L211"><span class="lineNum">     211</span> <span class="tlaUNC">           0 :     port_normal = mesh::GetSurfaceNormal(mesh, bdr_marker);</span></span>
+<span id="L212"><span class="lineNum">     212</span> <span class="tlaUNC">           0 :     port_area = mesh::GetSurfaceArea(mesh, bdr_marker);</span></span>
+<span id="L213"><span class="lineNum">     213</span>              :   }</span>
+<span id="L214"><span class="lineNum">     214</span>              : </span>
+<span id="L215"><span class="lineNum">     215</span>              :   // Material properties at the port: find the volume element adjacent to any boundary</span>
+<span id="L216"><span class="lineNum">     216</span>              :   // element on the port face and look up its mu_r, eps_r. In parallel, not all ranks may</span>
+<span id="L217"><span class="lineNum">     217</span>              :   // have port boundary elements — use MPI reduction to broadcast the found attribute.</span>
+<span id="L218"><span class="lineNum">     218</span>              :   {</span>
+<span id="L219"><span class="lineNum">     219</span>              :     auto &amp;mesh = *nd_fespace.GetParMesh();</span>
+<span id="L220"><span class="lineNum">     220</span>              :     int port_vol_attr = -1;</span>
+<span id="L221"><span class="lineNum">     221</span> <span class="tlaUNC">           0 :     for (int be = 0; be &lt; mesh.GetNBE(); be++)</span></span>
+<span id="L222"><span class="lineNum">     222</span>              :     {</span>
+<span id="L223"><span class="lineNum">     223</span>              :       int battr = mesh.GetBdrAttribute(be);</span>
+<span id="L224"><span class="lineNum">     224</span>              :       bool on_port = false;</span>
+<span id="L225"><span class="lineNum">     225</span> <span class="tlaUNC">           0 :       for (int i = 0; i &lt; attr_list.Size(); i++)</span></span>
+<span id="L226"><span class="lineNum">     226</span>              :       {</span>
+<span id="L227"><span class="lineNum">     227</span> <span class="tlaUNC">           0 :         if (battr == attr_list[i])</span></span>
+<span id="L228"><span class="lineNum">     228</span>              :         {</span>
+<span id="L229"><span class="lineNum">     229</span>              :           on_port = true;</span>
+<span id="L230"><span class="lineNum">     230</span>              :           break;</span>
+<span id="L231"><span class="lineNum">     231</span>              :         }</span>
+<span id="L232"><span class="lineNum">     232</span>              :       }</span>
+<span id="L233"><span class="lineNum">     233</span> <span class="tlaUNC">           0 :       if (!on_port)</span></span>
+<span id="L234"><span class="lineNum">     234</span>              :       {</span>
+<span id="L235"><span class="lineNum">     235</span> <span class="tlaUNC">           0 :         continue;</span></span>
+<span id="L236"><span class="lineNum">     236</span>              :       }</span>
+<span id="L237"><span class="lineNum">     237</span>              :       int f, o;</span>
+<span id="L238"><span class="lineNum">     238</span> <span class="tlaUNC">           0 :       mesh.GetBdrElementFace(be, &amp;f, &amp;o);</span></span>
+<span id="L239"><span class="lineNum">     239</span>              :       int iel1, iel2;</span>
+<span id="L240"><span class="lineNum">     240</span> <span class="tlaUNC">           0 :       mesh.GetFaceElements(f, &amp;iel1, &amp;iel2);</span></span>
+<span id="L241"><span class="lineNum">     241</span> <span class="tlaUNC">           0 :       int iel = (iel1 &gt;= 0) ? iel1 : iel2;</span></span>
+<span id="L242"><span class="lineNum">     242</span> <span class="tlaUNC">           0 :       if (iel &gt;= 0)</span></span>
+<span id="L243"><span class="lineNum">     243</span>              :       {</span>
+<span id="L244"><span class="lineNum">     244</span>              :         port_vol_attr = mesh.GetAttribute(iel);</span>
+<span id="L245"><span class="lineNum">     245</span> <span class="tlaUNC">           0 :         break;</span></span>
+<span id="L246"><span class="lineNum">     246</span>              :       }</span>
+<span id="L247"><span class="lineNum">     247</span>              :     }</span>
+<span id="L248"><span class="lineNum">     248</span>              :     // Look up material properties on the rank that found the boundary element, then</span>
+<span id="L249"><span class="lineNum">     249</span>              :     // broadcast. The CEED attribute map is rank-local (only includes attributes of elements</span>
+<span id="L250"><span class="lineNum">     250</span>              :     // owned by this rank), so mat_op.GetLightSpeedMin(attr) would fail on ranks that don't</span>
+<span id="L251"><span class="lineNum">     251</span>              :     // own elements with that volume attribute.</span>
+<span id="L252"><span class="lineNum">     252</span> <span class="tlaUNC">           0 :     double c_local = -1.0;</span></span>
+<span id="L253"><span class="lineNum">     253</span> <span class="tlaUNC">           0 :     double muinv_local = -1.0;</span></span>
+<span id="L254"><span class="lineNum">     254</span> <span class="tlaUNC">           0 :     if (port_vol_attr &gt; 0)</span></span>
+<span id="L255"><span class="lineNum">     255</span>              :     {</span>
+<span id="L256"><span class="lineNum">     256</span> <span class="tlaUNC">           0 :       c_local = mat_op.GetLightSpeedMin(port_vol_attr);</span></span>
+<span id="L257"><span class="lineNum">     257</span> <span class="tlaUNC">           0 :       muinv_local = mat_op.GetInvPermeability(port_vol_attr)(0, 0);</span></span>
+<span id="L258"><span class="lineNum">     258</span>              :     }</span>
+<span id="L259"><span class="lineNum">     259</span>              : </span>
+<span id="L260"><span class="lineNum">     260</span>              :     // Broadcast from the rank that found a valid attribute.</span>
+<span id="L261"><span class="lineNum">     261</span> <span class="tlaUNC">           0 :     int found_rank = (port_vol_attr &gt; 0) ? Mpi::Rank(comm) : Mpi::Size(comm);</span></span>
+<span id="L262"><span class="lineNum">     262</span> <span class="tlaUNC">           0 :     Mpi::GlobalMin(1, &amp;found_rank, comm);</span></span>
+<span id="L263"><span class="lineNum">     263</span> <span class="tlaUNC">           0 :     MFEM_VERIFY(found_rank &lt; Mpi::Size(comm),</span></span>
+<span id="L264"><span class="lineNum">     264</span>              :                 &quot;Could not find volume element adjacent to Floquet port!&quot;);</span>
+<span id="L265"><span class="lineNum">     265</span> <span class="tlaUNC">           0 :     MPI_Bcast(&amp;c_local, 1, MPI_DOUBLE, found_rank, comm);</span></span>
+<span id="L266"><span class="lineNum">     266</span> <span class="tlaUNC">           0 :     MPI_Bcast(&amp;muinv_local, 1, MPI_DOUBLE, found_rank, comm);</span></span>
+<span id="L267"><span class="lineNum">     267</span>              : </span>
+<span id="L268"><span class="lineNum">     268</span> <span class="tlaUNC">           0 :     MFEM_VERIFY(c_local &gt; 0.0, &quot;Invalid material speed of light at Floquet port!&quot;);</span></span>
+<span id="L269"><span class="lineNum">     269</span> <span class="tlaUNC">           0 :     mu_eps_port = 1.0 / (c_local * c_local);</span></span>
+<span id="L270"><span class="lineNum">     270</span> <span class="tlaUNC">           0 :     mu_r_port = 1.0 / muinv_local;</span></span>
+<span id="L271"><span class="lineNum">     271</span>              :   }</span>
+<span id="L272"><span class="lineNum">     272</span>              : </span>
+<span id="L273"><span class="lineNum">     273</span>              :   // Determine max diffraction order.</span>
+<span id="L274"><span class="lineNum">     274</span> <span class="tlaUNC">           0 :   if (data.max_order &gt;= 0)</span></span>
+<span id="L275"><span class="lineNum">     275</span>              :   {</span>
+<span id="L276"><span class="lineNum">     276</span> <span class="tlaUNC">           0 :     max_order_m = data.max_order;</span></span>
+<span id="L277"><span class="lineNum">     277</span> <span class="tlaUNC">           0 :     max_order_n = data.max_order;</span></span>
+<span id="L278"><span class="lineNum">     278</span>              :   }</span>
+<span id="L279"><span class="lineNum">     279</span>              :   else</span>
+<span id="L280"><span class="lineNum">     280</span>              :   {</span>
+<span id="L281"><span class="lineNum">     281</span>              :     // Auto-compute: start with a safe default, will be refined in Initialize().</span>
+<span id="L282"><span class="lineNum">     282</span> <span class="tlaUNC">           0 :     max_order_m = 3;</span></span>
+<span id="L283"><span class="lineNum">     283</span> <span class="tlaUNC">           0 :     max_order_n = 3;</span></span>
+<span id="L284"><span class="lineNum">     284</span>              :   }</span>
+<span id="L285"><span class="lineNum">     285</span>              : </span>
+<span id="L286"><span class="lineNum">     286</span>              :   // Cap MaxOrder at the mesh Nyquist limit: p-th order elements can resolve Fourier</span>
+<span id="L287"><span class="lineNum">     287</span>              :   // modes with |B|×h &lt; p×π. Beyond this, projections alias to ~0 with default quadrature.</span>
+<span id="L288"><span class="lineNum">     288</span>              :   {</span>
+<span id="L289"><span class="lineNum">     289</span>              :     auto &amp;mesh = *nd_fespace.GetParMesh();</span>
+<span id="L290"><span class="lineNum">     290</span> <span class="tlaUNC">           0 :     int bdr_attr_max = 0;</span></span>
+<span id="L291"><span class="lineNum">     291</span> <span class="tlaUNC">           0 :     for (int be = 0; be &lt; mesh.GetNBE(); be++)</span></span>
+<span id="L292"><span class="lineNum">     292</span>              :     {</span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaUNC">           0 :       bdr_attr_max = std::max(bdr_attr_max, mesh.GetBdrAttribute(be));</span></span>
+<span id="L294"><span class="lineNum">     294</span>              :     }</span>
+<span id="L295"><span class="lineNum">     295</span>              :     Mpi::GlobalMax(1, &amp;bdr_attr_max, nd_fespace.GetComm());</span>
+<span id="L296"><span class="lineNum">     296</span> <span class="tlaUNC">           0 :     auto bdr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list, true);</span></span>
+<span id="L297"><span class="lineNum">     297</span>              : </span>
+<span id="L298"><span class="lineNum">     298</span> <span class="tlaUNC">           0 :     double h_max = 0.0;</span></span>
+<span id="L299"><span class="lineNum">     299</span> <span class="tlaUNC">           0 :     for (int be = 0; be &lt; mesh.GetNBE(); be++)</span></span>
+<span id="L300"><span class="lineNum">     300</span>              :     {</span>
+<span id="L301"><span class="lineNum">     301</span> <span class="tlaUNC">           0 :       if (bdr_marker[mesh.GetBdrAttribute(be) - 1])</span></span>
+<span id="L302"><span class="lineNum">     302</span>              :       {</span>
+<span id="L303"><span class="lineNum">     303</span> <span class="tlaUNC">           0 :         auto *T = mesh.GetBdrElementTransformation(be);</span></span>
+<span id="L304"><span class="lineNum">     304</span>              :         T-&gt;SetIntPoint(&amp;mfem::Geometries.GetCenter(T-&gt;GetGeometryType()));</span>
+<span id="L305"><span class="lineNum">     305</span> <span class="tlaUNC">           0 :         h_max = std::max(h_max, T-&gt;Jacobian().CalcSingularvalue(0));</span></span>
+<span id="L306"><span class="lineNum">     306</span>              :       }</span>
+<span id="L307"><span class="lineNum">     307</span>              :     }</span>
+<span id="L308"><span class="lineNum">     308</span>              :     Mpi::GlobalMax(1, &amp;h_max, nd_fespace.GetComm());</span>
+<span id="L309"><span class="lineNum">     309</span>              : </span>
+<span id="L310"><span class="lineNum">     310</span> <span class="tlaUNC">           0 :     if (h_max &gt; 0.0)</span></span>
+<span id="L311"><span class="lineNum">     311</span>              :     {</span>
+<span id="L312"><span class="lineNum">     312</span> <span class="tlaUNC">           0 :       int p = nd_fespace.GetMaxElementOrder();</span></span>
+<span id="L313"><span class="lineNum">     313</span>              :       int nyquist_m =</span>
+<span id="L314"><span class="lineNum">     314</span> <span class="tlaUNC">           0 :           std::max(1, static_cast&lt;int&gt;(std::floor(p * M_PI / (b1.Norml2() * h_max))));</span></span>
+<span id="L315"><span class="lineNum">     315</span>              :       int nyquist_n =</span>
+<span id="L316"><span class="lineNum">     316</span> <span class="tlaUNC">           0 :           std::max(1, static_cast&lt;int&gt;(std::floor(p * M_PI / (b2.Norml2() * h_max))));</span></span>
+<span id="L317"><span class="lineNum">     317</span> <span class="tlaUNC">           0 :       if (max_order_m &gt; nyquist_m || max_order_n &gt; nyquist_n)</span></span>
+<span id="L318"><span class="lineNum">     318</span>              :       {</span>
+<span id="L319"><span class="lineNum">     319</span> <span class="tlaUNC">           0 :         Mpi::Print(&quot; Floquet port: capping MaxOrder from ({:d}, {:d}) to ({:d}, {:d}) &quot;</span></span>
+<span id="L320"><span class="lineNum">     320</span>              :                    &quot;(Nyquist limit for h_max={:.4e}, p={:d})\n&quot;,</span>
+<span id="L321"><span class="lineNum">     321</span> <span class="tlaUNC">           0 :                    max_order_m, max_order_n, std::min(max_order_m, nyquist_m),</span></span>
+<span id="L322"><span class="lineNum">     322</span> <span class="tlaUNC">           0 :                    std::min(max_order_n, nyquist_n), h_max, p);</span></span>
+<span id="L323"><span class="lineNum">     323</span> <span class="tlaUNC">           0 :         max_order_m = std::min(max_order_m, nyquist_m);</span></span>
+<span id="L324"><span class="lineNum">     324</span> <span class="tlaUNC">           0 :         max_order_n = std::min(max_order_n, nyquist_n);</span></span>
+<span id="L325"><span class="lineNum">     325</span>              :       }</span>
+<span id="L326"><span class="lineNum">     326</span>              :     }</span>
+<span id="L327"><span class="lineNum">     327</span>              :   }</span>
+<span id="L328"><span class="lineNum">     328</span>              : </span>
+<span id="L329"><span class="lineNum">     329</span>              :   // Enumerate diffraction orders and compute mode vectors.</span>
+<span id="L330"><span class="lineNum">     330</span> <span class="tlaUNC">           0 :   EnumerateOrders();</span></span>
+<span id="L331"><span class="lineNum">     331</span> <span class="tlaUNC">           0 :   AssembleFourierProjections(nd_fespace);</span></span>
+<span id="L332"><span class="lineNum">     332</span> <span class="tlaUNC">           0 :   nd_fespace_ptr = &amp;nd_fespace;  // Store for re-assembly in Initialize.</span></span>
+<span id="L333"><span class="lineNum">     333</span>              : </span>
+<span id="L334"><span class="lineNum">     334</span> <span class="tlaUNC">           0 :   Mpi::Print(&quot; Floquet port: {:d} modes ({:d} orders x 2 polarizations)\n&quot;,</span></span>
+<span id="L335"><span class="lineNum">     335</span> <span class="tlaUNC">           0 :              static_cast&lt;int&gt;(modes.size()), static_cast&lt;int&gt;(modes.size()) / 2);</span></span>
+<span id="L336"><span class="lineNum">     336</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L337"><span class="lineNum">     337</span>              : </span>
+<span id="L338"><span class="lineNum">     338</span> <span class="tlaGNC tlaBgGNC">           6 : void FloquetPortData::ComputeReciprocalLattice(const mfem::Vector &amp;a1,</span></span>
+<span id="L339"><span class="lineNum">     339</span>              :                                                const mfem::Vector &amp;a2, mfem::Vector &amp;b1,</span>
+<span id="L340"><span class="lineNum">     340</span>              :                                                mfem::Vector &amp;b2)</span>
+<span id="L341"><span class="lineNum">     341</span>              : {</span>
+<span id="L342"><span class="lineNum">     342</span>              :   // For 2D periodicity in 3D space, the reciprocal lattice vectors satisfy:</span>
+<span id="L343"><span class="lineNum">     343</span>              :   //   a_i . b_j = 2*pi * delta_ij</span>
+<span id="L344"><span class="lineNum">     344</span>              :   //   b_i is perpendicular to a_j (j != i) and lies in the plane of a1, a2.</span>
+<span id="L345"><span class="lineNum">     345</span>              : </span>
+<span id="L346"><span class="lineNum">     346</span>              :   // n = a1 x a2 (normal to the lattice plane)</span>
+<span id="L347"><span class="lineNum">     347</span>              :   mfem::Vector n(3);</span>
+<span id="L348"><span class="lineNum">     348</span> <span class="tlaGNC">           6 :   n(0) = a1(1) * a2(2) - a1(2) * a2(1);</span></span>
+<span id="L349"><span class="lineNum">     349</span> <span class="tlaGNC">           6 :   n(1) = a1(2) * a2(0) - a1(0) * a2(2);</span></span>
+<span id="L350"><span class="lineNum">     350</span> <span class="tlaGNC">           6 :   n(2) = a1(0) * a2(1) - a1(1) * a2(0);</span></span>
+<span id="L351"><span class="lineNum">     351</span> <span class="tlaGNC">           6 :   double vol = n.Norml2();  // |a1 x a2| = area of unit cell</span></span>
+<span id="L352"><span class="lineNum">     352</span>              : </span>
+<span id="L353"><span class="lineNum">     353</span> <span class="tlaGNC">           6 :   MFEM_VERIFY(vol &gt; 0.0, &quot;Lattice vectors a1, a2 are degenerate (zero cross product)!&quot;);</span></span>
+<span id="L354"><span class="lineNum">     354</span>              : </span>
+<span id="L355"><span class="lineNum">     355</span>              :   // b1 = 2*pi * (a2 x n) / |a1 x a2|^2</span>
+<span id="L356"><span class="lineNum">     356</span>              :   // b2 = 2*pi * (n x a1) / |a1 x a2|^2</span>
+<span id="L357"><span class="lineNum">     357</span>              :   mfem::Vector a2xn(3), nxa1(3);</span>
+<span id="L358"><span class="lineNum">     358</span> <span class="tlaGNC">           6 :   a2xn(0) = a2(1) * n(2) - a2(2) * n(1);</span></span>
+<span id="L359"><span class="lineNum">     359</span> <span class="tlaGNC">           6 :   a2xn(1) = a2(2) * n(0) - a2(0) * n(2);</span></span>
+<span id="L360"><span class="lineNum">     360</span> <span class="tlaGNC">           6 :   a2xn(2) = a2(0) * n(1) - a2(1) * n(0);</span></span>
+<span id="L361"><span class="lineNum">     361</span>              : </span>
+<span id="L362"><span class="lineNum">     362</span> <span class="tlaGNC">           6 :   nxa1(0) = n(1) * a1(2) - n(2) * a1(1);</span></span>
+<span id="L363"><span class="lineNum">     363</span> <span class="tlaGNC">           6 :   nxa1(1) = n(2) * a1(0) - n(0) * a1(2);</span></span>
+<span id="L364"><span class="lineNum">     364</span> <span class="tlaGNC">           6 :   nxa1(2) = n(0) * a1(1) - n(1) * a1(0);</span></span>
+<span id="L365"><span class="lineNum">     365</span>              : </span>
+<span id="L366"><span class="lineNum">     366</span> <span class="tlaGNC">           6 :   double vol_sq = vol * vol;</span></span>
+<span id="L367"><span class="lineNum">     367</span> <span class="tlaGNC">           6 :   b1.SetSize(3);</span></span>
+<span id="L368"><span class="lineNum">     368</span> <span class="tlaGNC">           6 :   b2.SetSize(3);</span></span>
+<span id="L369"><span class="lineNum">     369</span> <span class="tlaGNC">          24 :   for (int i = 0; i &lt; 3; i++)</span></span>
+<span id="L370"><span class="lineNum">     370</span>              :   {</span>
+<span id="L371"><span class="lineNum">     371</span> <span class="tlaGNC">          18 :     b1(i) = 2.0 * M_PI * a2xn(i) / vol_sq;</span></span>
+<span id="L372"><span class="lineNum">     372</span> <span class="tlaGNC">          18 :     b2(i) = 2.0 * M_PI * nxa1(i) / vol_sq;</span></span>
+<span id="L373"><span class="lineNum">     373</span>              :   }</span>
+<span id="L374"><span class="lineNum">     374</span>              : </span>
+<span id="L375"><span class="lineNum">     375</span>              :   // Verify: a_i . b_j = 2*pi * delta_ij.</span>
+<span id="L376"><span class="lineNum">     376</span> <span class="tlaGNC">           6 :   MFEM_VERIFY(std::abs(a1 * b1 - 2.0 * M_PI) &lt; 1e-10 &amp;&amp;</span></span>
+<span id="L377"><span class="lineNum">     377</span>              :                   std::abs(a2 * b2 - 2.0 * M_PI) &lt; 1e-10,</span>
+<span id="L378"><span class="lineNum">     378</span>              :               &quot;Reciprocal lattice computation failed: diagonal check!&quot;);</span>
+<span id="L379"><span class="lineNum">     379</span> <span class="tlaGNC">           6 :   MFEM_VERIFY(std::abs(a1 * b2) &lt; 1e-10 &amp;&amp; std::abs(a2 * b1) &lt; 1e-10,</span></span>
+<span id="L380"><span class="lineNum">     380</span>              :               &quot;Reciprocal lattice computation failed: off-diagonal check!&quot;);</span>
+<span id="L381"><span class="lineNum">     381</span> <span class="tlaGNC">           6 : }</span></span>
+<span id="L382"><span class="lineNum">     382</span>              : </span>
+<span id="L383"><span class="lineNum">     383</span> <span class="tlaGNC">           3 : int FloquetPortData::ComputeBZOffset(const mfem::Vector &amp;kF_unwrapped,</span></span>
+<span id="L384"><span class="lineNum">     384</span>              :                                      const mfem::Vector &amp;kF_wrapped, const mfem::Vector &amp;b,</span>
+<span id="L385"><span class="lineNum">     385</span>              :                                      double b_sq)</span>
+<span id="L386"><span class="lineNum">     386</span>              : {</span>
+<span id="L387"><span class="lineNum">     387</span>              :   mfem::Vector dkF(kF_unwrapped.Size());</span>
+<span id="L388"><span class="lineNum">     388</span> <span class="tlaGNC">          12 :   for (int i = 0; i &lt; kF_unwrapped.Size(); i++)</span></span>
+<span id="L389"><span class="lineNum">     389</span>              :   {</span>
+<span id="L390"><span class="lineNum">     390</span> <span class="tlaGNC">           9 :     dkF(i) = kF_unwrapped(i) - kF_wrapped(i);</span></span>
+<span id="L391"><span class="lineNum">     391</span>              :   }</span>
+<span id="L392"><span class="lineNum">     392</span> <span class="tlaGNC">           3 :   return static_cast&lt;int&gt;(std::round(dkF * b / b_sq));</span></span>
+<span id="L393"><span class="lineNum">     393</span>              : }</span>
+<span id="L394"><span class="lineNum">     394</span>              : </span>
+<span id="L395"><span class="lineNum">     395</span> <span class="tlaUNC tlaBgUNC">           0 : void FloquetPortData::EnumerateOrders()</span></span>
+<span id="L396"><span class="lineNum">     396</span>              : {</span>
+<span id="L397"><span class="lineNum">     397</span>              :   modes.clear();</span>
+<span id="L398"><span class="lineNum">     398</span>              : </span>
+<span id="L399"><span class="lineNum">     399</span>              :   // Enumerate physical mode indices. The range is the union of ±MaxOrder around the</span>
+<span id="L400"><span class="lineNum">     400</span>              :   // specular (0,0) and the BZ-shifted range. This ensures the user always sees their</span>
+<span id="L401"><span class="lineNum">     401</span>              :   // requested diffraction orders, while also including modes near the BZ boundary that</span>
+<span id="L402"><span class="lineNum">     402</span>              :   // are critical for the DtN correction when BZ wrapping is active.</span>
+<span id="L403"><span class="lineNum">     403</span> <span class="tlaUNC">           0 :   int m_lo = std::min(-max_order_m, -max_order_m + bz_m);</span></span>
+<span id="L404"><span class="lineNum">     404</span> <span class="tlaUNC">           0 :   int m_hi = std::max(max_order_m, max_order_m + bz_m);</span></span>
+<span id="L405"><span class="lineNum">     405</span> <span class="tlaUNC">           0 :   int n_lo = std::min(-max_order_n, -max_order_n + bz_n);</span></span>
+<span id="L406"><span class="lineNum">     406</span> <span class="tlaUNC">           0 :   int n_hi = std::max(max_order_n, max_order_n + bz_n);</span></span>
+<span id="L407"><span class="lineNum">     407</span> <span class="tlaUNC">           0 :   for (int m = m_lo; m &lt;= m_hi; m++)</span></span>
+<span id="L408"><span class="lineNum">     408</span>              :   {</span>
+<span id="L409"><span class="lineNum">     409</span> <span class="tlaUNC">           0 :     for (int n = n_lo; n &lt;= n_hi; n++)</span></span>
+<span id="L410"><span class="lineNum">     410</span>              :     {</span>
+<span id="L411"><span class="lineNum">     411</span>              :       // B_mn for the Fourier projection kernel: shifted by BZ offset so that</span>
+<span id="L412"><span class="lineNum">     412</span>              :       // exp(-j B_mn · r) extracts the correct coefficient from E_p (which was solved</span>
+<span id="L413"><span class="lineNum">     413</span>              :       // with the wrapped k_F). Physical mode labels (m, n) are preserved.</span>
+<span id="L414"><span class="lineNum">     414</span>              :       mfem::Vector B_mn(3);</span>
+<span id="L415"><span class="lineNum">     415</span> <span class="tlaUNC">           0 :       for (int i = 0; i &lt; 3; i++)</span></span>
+<span id="L416"><span class="lineNum">     416</span>              :       {</span>
+<span id="L417"><span class="lineNum">     417</span> <span class="tlaUNC">           0 :         B_mn(i) = (m - bz_m) * b1(i) + (n - bz_n) * b2(i);</span></span>
+<span id="L418"><span class="lineNum">     418</span>              :       }</span>
+<span id="L419"><span class="lineNum">     419</span>              : </span>
+<span id="L420"><span class="lineNum">     420</span>              :       // Propagation direction k_hat for this order.</span>
+<span id="L421"><span class="lineNum">     421</span>              :       // k_t = B_mn - k_F (transverse wavevector relative to the periodic field)</span>
+<span id="L422"><span class="lineNum">     422</span>              :       // With BZ shift: k_t = (m-bz_m)*b1 + (n-bz_n)*b2 - k_F_wrapped</span>
+<span id="L423"><span class="lineNum">     423</span>              :       //              = m*b1 + n*b2 - k_F_unwrapped (same physical k_t)</span>
+<span id="L424"><span class="lineNum">     424</span>              :       // gamma^2 = omega^2*mu*eps - |k_t|^2, computed in Initialize(omega).</span>
+<span id="L425"><span class="lineNum">     425</span>              : </span>
+<span id="L426"><span class="lineNum">     426</span>              :       // Compute TE and TM polarization vectors from the transverse wavevector.</span>
+<span id="L427"><span class="lineNum">     427</span>              :       // Use the physical k_F at the reference frequency for initial assembly.</span>
+<span id="L428"><span class="lineNum">     428</span>              :       // Initialize() will update the polarization when k_F changes with frequency.</span>
+<span id="L429"><span class="lineNum">     429</span>              :       mfem::Vector kt(3);</span>
+<span id="L430"><span class="lineNum">     430</span>              :       {</span>
+<span id="L431"><span class="lineNum">     431</span> <span class="tlaUNC">           0 :         const auto &amp;kF_phys = mat_op.HasFloquetFrequencyScaling() ? mat_op.GetWaveVectorBZ()</span></span>
+<span id="L432"><span class="lineNum">     432</span>              :                                                                   : mat_op.GetWaveVector();</span>
+<span id="L433"><span class="lineNum">     433</span> <span class="tlaUNC">           0 :         for (int i = 0; i &lt; 3; i++)</span></span>
+<span id="L434"><span class="lineNum">     434</span>              :         {</span>
+<span id="L435"><span class="lineNum">     435</span> <span class="tlaUNC">           0 :           kt(i) = B_mn(i) + ((i &lt; kF_phys.Size()) ? kF_phys(i) : 0.0);</span></span>
+<span id="L436"><span class="lineNum">     436</span>              :         }</span>
+<span id="L437"><span class="lineNum">     437</span>              :       }</span>
+<span id="L438"><span class="lineNum">     438</span>              :       mfem::Vector e_te(3), e_tm(3);</span>
+<span id="L439"><span class="lineNum">     439</span> <span class="tlaUNC">           0 :       ComputePolarization(kt, port_normal, e_te, e_tm);</span></span>
+<span id="L440"><span class="lineNum">     440</span>              : </span>
+<span id="L441"><span class="lineNum">     441</span>              :       // User-requested modes (±MaxOrder around specular) are for S-parameter output.</span>
+<span id="L442"><span class="lineNum">     442</span>              :       // BZ-shifted modes (±MaxOrder around BZ origin) are for the DtN correction.</span>
+<span id="L443"><span class="lineNum">     443</span> <span class="tlaUNC">           0 :       bool in_user_range = (std::abs(m) &lt;= max_order_m &amp;&amp; std::abs(n) &lt;= max_order_n);</span></span>
+<span id="L444"><span class="lineNum">     444</span>              :       bool in_dtn_range =</span>
+<span id="L445"><span class="lineNum">     445</span> <span class="tlaUNC">           0 :           (std::abs(m - bz_m) &lt;= max_order_m &amp;&amp; std::abs(n - bz_n) &lt;= max_order_n);</span></span>
+<span id="L446"><span class="lineNum">     446</span> <span class="tlaUNC">           0 :       auto use = static_cast&lt;FloquetModeUse&gt;(</span></span>
+<span id="L447"><span class="lineNum">     447</span> <span class="tlaUNC">           0 :           (in_user_range ? static_cast&lt;uint8_t&gt;(FloquetModeUse::Output) : 0) |</span></span>
+<span id="L448"><span class="lineNum">     448</span>              :           (in_dtn_range ? static_cast&lt;uint8_t&gt;(FloquetModeUse::Dtn) : 0));</span>
+<span id="L449"><span class="lineNum">     449</span>              : </span>
+<span id="L450"><span class="lineNum">     450</span>              :       // Add TE and TM modes for this order.</span>
+<span id="L451"><span class="lineNum">     451</span> <span class="tlaUNC">           0 :       for (bool is_te : {true, false})</span></span>
+<span id="L452"><span class="lineNum">     452</span>              :       {</span>
+<span id="L453"><span class="lineNum">     453</span> <span class="tlaUNC">           0 :         FloquetMode mode;</span></span>
+<span id="L454"><span class="lineNum">     454</span> <span class="tlaUNC">           0 :         mode.m = m;</span></span>
+<span id="L455"><span class="lineNum">     455</span> <span class="tlaUNC">           0 :         mode.n = n;</span></span>
+<span id="L456"><span class="lineNum">     456</span> <span class="tlaUNC">           0 :         mode.is_te = is_te;</span></span>
+<span id="L457"><span class="lineNum">     457</span> <span class="tlaUNC">           0 :         mode.use = use;</span></span>
+<span id="L458"><span class="lineNum">     458</span> <span class="tlaUNC">           0 :         mode.B_mn = B_mn;</span></span>
+<span id="L459"><span class="lineNum">     459</span> <span class="tlaUNC">           0 :         mode.e_pol = is_te ? e_te : e_tm;</span></span>
+<span id="L460"><span class="lineNum">     460</span> <span class="tlaUNC">           0 :         mode.gamma_sq = 0.0;</span></span>
+<span id="L461"><span class="lineNum">     461</span> <span class="tlaUNC">           0 :         modes.push_back(std::move(mode));</span></span>
+<span id="L462"><span class="lineNum">     462</span> <span class="tlaUNC">           0 :       }</span></span>
+<span id="L463"><span class="lineNum">     463</span>              :     }</span>
+<span id="L464"><span class="lineNum">     464</span>              :   }</span>
+<span id="L465"><span class="lineNum">     465</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L466"><span class="lineNum">     466</span>              : </span>
+<span id="L467"><span class="lineNum">     467</span> <span class="tlaUNC">           0 : void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &amp;nd_fespace)</span></span>
+<span id="L468"><span class="lineNum">     468</span>              : {</span>
+<span id="L469"><span class="lineNum">     469</span>              :   // For each mode, assemble: v_j = int_Gamma (n x [n x N_j]) . e_p exp(-i B_mn . r) dS</span>
+<span id="L470"><span class="lineNum">     470</span>              :   // The tangential projection n x (n x N_j) extracts the component of N_j tangential to</span>
+<span id="L471"><span class="lineNum">     471</span>              :   // the port face. For ND basis functions on a boundary face, VectorFEBoundaryLFIntegrator</span>
+<span id="L472"><span class="lineNum">     472</span>              :   // already computes int_Gamma (f . N_j) dS where f is a VectorCoefficient. Since ND basis</span>
+<span id="L473"><span class="lineNum">     473</span>              :   // functions on a face are tangential, (n x [n x N_j]) . e_p = N_j . e_p_tangential.</span>
+<span id="L474"><span class="lineNum">     474</span>              :   //</span>
+<span id="L475"><span class="lineNum">     475</span>              :   // So we need: v_j = int_Gamma N_j(r) . [e_p * exp(-i B_mn . r)] dS</span>
+<span id="L476"><span class="lineNum">     476</span>              :   //</span>
+<span id="L477"><span class="lineNum">     477</span>              :   // Split into real and imaginary parts:</span>
+<span id="L478"><span class="lineNum">     478</span>              :   //   Re: int_Gamma N_j . [e_p * cos(B_mn . r)] dS</span>
+<span id="L479"><span class="lineNum">     479</span>              :   //   Im: int_Gamma N_j . [e_p * (-sin(B_mn . r))] dS</span>
+<span id="L480"><span class="lineNum">     480</span>              : </span>
+<span id="L481"><span class="lineNum">     481</span>              :   // Create boundary attribute marker. Scan all local boundary elements for the actual max</span>
+<span id="L482"><span class="lineNum">     482</span>              :   // attribute (may include internally-added interface boundary elements).</span>
+<span id="L483"><span class="lineNum">     483</span>              :   auto &amp;mesh = *nd_fespace.GetParMesh();</span>
+<span id="L484"><span class="lineNum">     484</span> <span class="tlaUNC">           0 :   int bdr_attr_max = 0;</span></span>
+<span id="L485"><span class="lineNum">     485</span> <span class="tlaUNC">           0 :   for (int be = 0; be &lt; mesh.GetNBE(); be++)</span></span>
+<span id="L486"><span class="lineNum">     486</span>              :   {</span>
+<span id="L487"><span class="lineNum">     487</span> <span class="tlaUNC">           0 :     bdr_attr_max = std::max(bdr_attr_max, mesh.GetBdrAttribute(be));</span></span>
+<span id="L488"><span class="lineNum">     488</span>              :   }</span>
+<span id="L489"><span class="lineNum">     489</span>              :   Mpi::GlobalMax(1, &amp;bdr_attr_max, nd_fespace.GetComm());</span>
+<span id="L490"><span class="lineNum">     490</span> <span class="tlaUNC">           0 :   mfem::Array&lt;int&gt; bdr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list, true);</span></span>
+<span id="L491"><span class="lineNum">     491</span>              : </span>
+<span id="L492"><span class="lineNum">     492</span> <span class="tlaUNC">           0 :   int tdof_size = nd_fespace.GetTrueVSize();</span></span>
+<span id="L493"><span class="lineNum">     493</span>              : </span>
+<span id="L494"><span class="lineNum">     494</span> <span class="tlaUNC">           0 :   for (auto &amp;mode : modes)</span></span>
+<span id="L495"><span class="lineNum">     495</span>              :   {</span>
+<span id="L496"><span class="lineNum">     496</span> <span class="tlaUNC">           0 :     mode.v.SetSize(tdof_size);</span></span>
+<span id="L497"><span class="lineNum">     497</span>              :     mode.v = 0.0;</span>
+<span id="L498"><span class="lineNum">     498</span> <span class="tlaUNC">           0 :     mode.v.UseDevice(true);</span></span>
+<span id="L499"><span class="lineNum">     499</span>              : </span>
+<span id="L500"><span class="lineNum">     500</span>              :     // Coefficient for real part: e_p * cos(B_mn . r)</span>
+<span id="L501"><span class="lineNum">     501</span>              :     // Coefficient for imag part: e_p * (-sin(B_mn . r))</span>
+<span id="L502"><span class="lineNum">     502</span>              :     // We use a lambda-based VectorCoefficient.</span>
+<span id="L503"><span class="lineNum">     503</span>              : </span>
+<span id="L504"><span class="lineNum">     504</span>              :     class FloquetModeCoeff : public mfem::VectorCoefficient</span>
+<span id="L505"><span class="lineNum">     505</span>              :     {</span>
+<span id="L506"><span class="lineNum">     506</span>              :     public:</span>
+<span id="L507"><span class="lineNum">     507</span>              :       const mfem::Vector &amp;e_pol, &amp;B_mn;</span>
+<span id="L508"><span class="lineNum">     508</span>              :       bool is_real;  // true = cos part, false = -sin part</span>
+<span id="L509"><span class="lineNum">     509</span>              : </span>
+<span id="L510"><span class="lineNum">     510</span>              :       FloquetModeCoeff(const mfem::Vector &amp;e, const mfem::Vector &amp;B, bool real_part)</span>
+<span id="L511"><span class="lineNum">     511</span> <span class="tlaUNC">           0 :         : mfem::VectorCoefficient(3), e_pol(e), B_mn(B), is_real(real_part)</span></span>
+<span id="L512"><span class="lineNum">     512</span>              :       {</span>
+<span id="L513"><span class="lineNum">     513</span>              :       }</span>
+<span id="L514"><span class="lineNum">     514</span>              : </span>
+<span id="L515"><span class="lineNum">     515</span> <span class="tlaUNC">           0 :       void Eval(mfem::Vector &amp;V, mfem::ElementTransformation &amp;T,</span></span>
+<span id="L516"><span class="lineNum">     516</span>              :                 const mfem::IntegrationPoint &amp;ip) override</span>
+<span id="L517"><span class="lineNum">     517</span>              :       {</span>
+<span id="L518"><span class="lineNum">     518</span>              :         mfem::Vector x(3);</span>
+<span id="L519"><span class="lineNum">     519</span> <span class="tlaUNC">           0 :         T.Transform(ip, x);</span></span>
+<span id="L520"><span class="lineNum">     520</span>              :         double phase = 0.0;</span>
+<span id="L521"><span class="lineNum">     521</span> <span class="tlaUNC">           0 :         for (int i = 0; i &lt; 3; i++)</span></span>
+<span id="L522"><span class="lineNum">     522</span>              :         {</span>
+<span id="L523"><span class="lineNum">     523</span> <span class="tlaUNC">           0 :           phase += B_mn(i) * x(i);</span></span>
+<span id="L524"><span class="lineNum">     524</span>              :         }</span>
+<span id="L525"><span class="lineNum">     525</span> <span class="tlaUNC">           0 :         double scale = is_real ? std::cos(phase) : -std::sin(phase);</span></span>
+<span id="L526"><span class="lineNum">     526</span> <span class="tlaUNC">           0 :         V.SetSize(3);</span></span>
+<span id="L527"><span class="lineNum">     527</span> <span class="tlaUNC">           0 :         for (int i = 0; i &lt; 3; i++)</span></span>
+<span id="L528"><span class="lineNum">     528</span>              :         {</span>
+<span id="L529"><span class="lineNum">     529</span> <span class="tlaUNC">           0 :           V(i) = e_pol(i) * scale;</span></span>
+<span id="L530"><span class="lineNum">     530</span>              :         }</span>
+<span id="L531"><span class="lineNum">     531</span> <span class="tlaUNC">           0 :       }</span></span>
+<span id="L532"><span class="lineNum">     532</span>              :     };</span>
+<span id="L533"><span class="lineNum">     533</span>              : </span>
+<span id="L534"><span class="lineNum">     534</span> <span class="tlaUNC">           0 :     FloquetModeCoeff coeff_r(mode.e_pol, mode.B_mn, true);</span></span>
+<span id="L535"><span class="lineNum">     535</span>              :     FloquetModeCoeff coeff_i(mode.e_pol, mode.B_mn, false);</span>
+<span id="L536"><span class="lineNum">     536</span>              : </span>
+<span id="L537"><span class="lineNum">     537</span>              :     // Assemble real part: v_r = ∫_Γ N_j · [e_pol cos(B·r)] dS.</span>
+<span id="L538"><span class="lineNum">     538</span> <span class="tlaUNC">           0 :     mfem::LinearForm lf_r(&amp;nd_fespace);</span></span>
+<span id="L539"><span class="lineNum">     539</span> <span class="tlaUNC">           0 :     lf_r.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coeff_r), bdr_marker);</span></span>
+<span id="L540"><span class="lineNum">     540</span> <span class="tlaUNC">           0 :     lf_r.UseFastAssembly(false);</span></span>
+<span id="L541"><span class="lineNum">     541</span>              :     lf_r.UseDevice(false);</span>
+<span id="L542"><span class="lineNum">     542</span> <span class="tlaUNC">           0 :     lf_r.Assemble();</span></span>
+<span id="L543"><span class="lineNum">     543</span>              :     lf_r.UseDevice(true);</span>
+<span id="L544"><span class="lineNum">     544</span>              : </span>
+<span id="L545"><span class="lineNum">     545</span>              :     // Assemble imaginary part: v_i = ∫_Γ N_j · [e_pol (-sin(B·r))] dS.</span>
+<span id="L546"><span class="lineNum">     546</span> <span class="tlaUNC">           0 :     mfem::LinearForm lf_i(&amp;nd_fespace);</span></span>
+<span id="L547"><span class="lineNum">     547</span> <span class="tlaUNC">           0 :     lf_i.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coeff_i), bdr_marker);</span></span>
+<span id="L548"><span class="lineNum">     548</span> <span class="tlaUNC">           0 :     lf_i.UseFastAssembly(false);</span></span>
+<span id="L549"><span class="lineNum">     549</span>              :     lf_i.UseDevice(false);</span>
+<span id="L550"><span class="lineNum">     550</span> <span class="tlaUNC">           0 :     lf_i.Assemble();</span></span>
+<span id="L551"><span class="lineNum">     551</span>              :     lf_i.UseDevice(true);</span>
+<span id="L552"><span class="lineNum">     552</span>              : </span>
+<span id="L553"><span class="lineNum">     553</span>              :     // Project to true DOFs: v = P^T * lf.</span>
+<span id="L554"><span class="lineNum">     554</span> <span class="tlaUNC">           0 :     nd_fespace.GetProlongationMatrix()-&gt;MultTranspose(lf_r, mode.v.Real());</span></span>
+<span id="L555"><span class="lineNum">     555</span> <span class="tlaUNC">           0 :     nd_fespace.GetProlongationMatrix()-&gt;MultTranspose(lf_i, mode.v.Imag());</span></span>
+<span id="L556"><span class="lineNum">     556</span> <span class="tlaUNC">           0 :   }</span></span>
+<span id="L557"><span class="lineNum">     557</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L558"><span class="lineNum">     558</span>              : </span>
+<span id="L559"><span class="lineNum">     559</span>              : namespace</span>
+<span id="L560"><span class="lineNum">     560</span>              : {</span>
+<span id="L561"><span class="lineNum">     561</span>              : </span>
+<span id="L562"><span class="lineNum">     562</span> <span class="tlaUNC">           0 : void ComputePolarization(const mfem::Vector &amp;kt, const mfem::Vector &amp;port_normal,</span></span>
+<span id="L563"><span class="lineNum">     563</span>              :                          mfem::Vector &amp;e_te, mfem::Vector &amp;e_tm)</span>
+<span id="L564"><span class="lineNum">     564</span>              : {</span>
+<span id="L565"><span class="lineNum">     565</span> <span class="tlaUNC">           0 :   double kt_norm = kt.Norml2();</span></span>
+<span id="L566"><span class="lineNum">     566</span> <span class="tlaUNC">           0 :   e_te.SetSize(3);</span></span>
+<span id="L567"><span class="lineNum">     567</span> <span class="tlaUNC">           0 :   e_tm.SetSize(3);</span></span>
+<span id="L568"><span class="lineNum">     568</span>              : </span>
+<span id="L569"><span class="lineNum">     569</span> <span class="tlaUNC">           0 :   if (kt_norm &gt; 1e-12)</span></span>
+<span id="L570"><span class="lineNum">     570</span>              :   {</span>
+<span id="L571"><span class="lineNum">     571</span>              :     mfem::Vector kt_hat(3);</span>
+<span id="L572"><span class="lineNum">     572</span> <span class="tlaUNC">           0 :     kt_hat = kt;</span></span>
+<span id="L573"><span class="lineNum">     573</span> <span class="tlaUNC">           0 :     kt_hat *= 1.0 / kt_norm;</span></span>
+<span id="L574"><span class="lineNum">     574</span>              : </span>
+<span id="L575"><span class="lineNum">     575</span> <span class="tlaUNC">           0 :     e_te(0) = kt_hat(1) * port_normal(2) - kt_hat(2) * port_normal(1);</span></span>
+<span id="L576"><span class="lineNum">     576</span> <span class="tlaUNC">           0 :     e_te(1) = kt_hat(2) * port_normal(0) - kt_hat(0) * port_normal(2);</span></span>
+<span id="L577"><span class="lineNum">     577</span> <span class="tlaUNC">           0 :     e_te(2) = kt_hat(0) * port_normal(1) - kt_hat(1) * port_normal(0);</span></span>
+<span id="L578"><span class="lineNum">     578</span> <span class="tlaUNC">           0 :     double e_te_norm = e_te.Norml2();</span></span>
+<span id="L579"><span class="lineNum">     579</span> <span class="tlaUNC">           0 :     if (e_te_norm &gt; 1e-12)</span></span>
+<span id="L580"><span class="lineNum">     580</span>              :     {</span>
+<span id="L581"><span class="lineNum">     581</span> <span class="tlaUNC">           0 :       e_te *= 1.0 / e_te_norm;</span></span>
+<span id="L582"><span class="lineNum">     582</span>              :     }</span>
+<span id="L583"><span class="lineNum">     583</span>              : </span>
+<span id="L584"><span class="lineNum">     584</span> <span class="tlaUNC">           0 :     e_tm(0) = port_normal(1) * e_te(2) - port_normal(2) * e_te(1);</span></span>
+<span id="L585"><span class="lineNum">     585</span> <span class="tlaUNC">           0 :     e_tm(1) = port_normal(2) * e_te(0) - port_normal(0) * e_te(2);</span></span>
+<span id="L586"><span class="lineNum">     586</span> <span class="tlaUNC">           0 :     e_tm(2) = port_normal(0) * e_te(1) - port_normal(1) * e_te(0);</span></span>
+<span id="L587"><span class="lineNum">     587</span> <span class="tlaUNC">           0 :     double e_tm_norm = e_tm.Norml2();</span></span>
+<span id="L588"><span class="lineNum">     588</span> <span class="tlaUNC">           0 :     if (e_tm_norm &gt; 1e-12)</span></span>
+<span id="L589"><span class="lineNum">     589</span>              :     {</span>
+<span id="L590"><span class="lineNum">     590</span> <span class="tlaUNC">           0 :       e_tm *= 1.0 / e_tm_norm;</span></span>
+<span id="L591"><span class="lineNum">     591</span>              :     }</span>
+<span id="L592"><span class="lineNum">     592</span>              :   }</span>
+<span id="L593"><span class="lineNum">     593</span>              :   else</span>
+<span id="L594"><span class="lineNum">     594</span>              :   {</span>
+<span id="L595"><span class="lineNum">     595</span>              :     // Normal incidence: degenerate TE/TM. Use consistent reference direction.</span>
+<span id="L596"><span class="lineNum">     596</span>              :     mfem::Vector abs_n(3);</span>
+<span id="L597"><span class="lineNum">     597</span> <span class="tlaUNC">           0 :     for (int d = 0; d &lt; 3; d++)</span></span>
+<span id="L598"><span class="lineNum">     598</span>              :     {</span>
+<span id="L599"><span class="lineNum">     599</span> <span class="tlaUNC">           0 :       abs_n(d) = std::abs(port_normal(d));</span></span>
+<span id="L600"><span class="lineNum">     600</span>              :     }</span>
+<span id="L601"><span class="lineNum">     601</span>              :     mfem::Vector ref(3);</span>
+<span id="L602"><span class="lineNum">     602</span> <span class="tlaUNC">           0 :     ref = 0.0;</span></span>
+<span id="L603"><span class="lineNum">     603</span>              :     int min_idx = 0;</span>
+<span id="L604"><span class="lineNum">     604</span> <span class="tlaUNC">           0 :     double min_val = abs_n(0);</span></span>
+<span id="L605"><span class="lineNum">     605</span> <span class="tlaUNC">           0 :     for (int d = 1; d &lt; 3; d++)</span></span>
+<span id="L606"><span class="lineNum">     606</span>              :     {</span>
+<span id="L607"><span class="lineNum">     607</span> <span class="tlaUNC">           0 :       if (abs_n(d) &lt; min_val)</span></span>
+<span id="L608"><span class="lineNum">     608</span>              :       {</span>
+<span id="L609"><span class="lineNum">     609</span>              :         min_val = abs_n(d);</span>
+<span id="L610"><span class="lineNum">     610</span>              :         min_idx = d;</span>
+<span id="L611"><span class="lineNum">     611</span>              :       }</span>
+<span id="L612"><span class="lineNum">     612</span>              :     }</span>
+<span id="L613"><span class="lineNum">     613</span> <span class="tlaUNC">           0 :     ref(min_idx) = 1.0;</span></span>
+<span id="L614"><span class="lineNum">     614</span>              : </span>
+<span id="L615"><span class="lineNum">     615</span> <span class="tlaUNC">           0 :     e_te(0) = ref(1) * abs_n(2) - ref(2) * abs_n(1);</span></span>
+<span id="L616"><span class="lineNum">     616</span> <span class="tlaUNC">           0 :     e_te(1) = ref(2) * abs_n(0) - ref(0) * abs_n(2);</span></span>
+<span id="L617"><span class="lineNum">     617</span> <span class="tlaUNC">           0 :     e_te(2) = ref(0) * abs_n(1) - ref(1) * abs_n(0);</span></span>
+<span id="L618"><span class="lineNum">     618</span> <span class="tlaUNC">           0 :     double e_te_norm = e_te.Norml2();</span></span>
+<span id="L619"><span class="lineNum">     619</span> <span class="tlaUNC">           0 :     e_te *= 1.0 / e_te_norm;</span></span>
+<span id="L620"><span class="lineNum">     620</span>              : </span>
+<span id="L621"><span class="lineNum">     621</span> <span class="tlaUNC">           0 :     e_tm(0) = abs_n(1) * e_te(2) - abs_n(2) * e_te(1);</span></span>
+<span id="L622"><span class="lineNum">     622</span> <span class="tlaUNC">           0 :     e_tm(1) = abs_n(2) * e_te(0) - abs_n(0) * e_te(2);</span></span>
+<span id="L623"><span class="lineNum">     623</span> <span class="tlaUNC">           0 :     e_tm(2) = abs_n(0) * e_te(1) - abs_n(1) * e_te(0);</span></span>
+<span id="L624"><span class="lineNum">     624</span> <span class="tlaUNC">           0 :     double e_tm_norm = e_tm.Norml2();</span></span>
+<span id="L625"><span class="lineNum">     625</span> <span class="tlaUNC">           0 :     e_tm *= 1.0 / e_tm_norm;</span></span>
+<span id="L626"><span class="lineNum">     626</span>              :   }</span>
+<span id="L627"><span class="lineNum">     627</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L628"><span class="lineNum">     628</span>              : </span>
+<span id="L629"><span class="lineNum">     629</span>              : }  // namespace</span>
+<span id="L630"><span class="lineNum">     630</span>              : </span>
+<span id="L631"><span class="lineNum">     631</span> <span class="tlaUNC">           0 : void FloquetPortData::Initialize(double omega)</span></span>
+<span id="L632"><span class="lineNum">     632</span>              : {</span>
+<span id="L633"><span class="lineNum">     633</span> <span class="tlaUNC">           0 :   if (omega == omega0 &amp;&amp; omega0 != 0.0)</span></span>
+<span id="L634"><span class="lineNum">     634</span>              :   {</span>
+<span id="L635"><span class="lineNum">     635</span>              :     return;</span>
+<span id="L636"><span class="lineNum">     636</span>              :   }</span>
+<span id="L637"><span class="lineNum">     637</span> <span class="tlaUNC">           0 :   omega0 = omega;</span></span>
+<span id="L638"><span class="lineNum">     638</span>              : </span>
+<span id="L639"><span class="lineNum">     639</span>              :   // Compute k_F at this frequency. When frequency scaling is active, the stored k_F is</span>
+<span id="L640"><span class="lineNum">     640</span>              :   // k₀ = k_F/ω (frequency-independent), so k_F(ω) = ω × k₀. Without scaling, k_F is the</span>
+<span id="L641"><span class="lineNum">     641</span>              :   // fixed Bloch vector and kF_scale = 1.</span>
+<span id="L642"><span class="lineNum">     642</span> <span class="tlaUNC">           0 :   double kF_scale = mat_op.HasFloquetFrequencyScaling() ? omega : 1.0;</span></span>
+<span id="L643"><span class="lineNum">     643</span>              : </span>
+<span id="L644"><span class="lineNum">     644</span>              :   // BZ consistency: when frequency scaling is active, BZ wrapping is disabled in</span>
+<span id="L645"><span class="lineNum">     645</span>              :   // MaterialOperator (the volume and port both use the unwrapped kF). No zone</span>
+<span id="L646"><span class="lineNum">     646</span>              :   // transitions are needed. For fixed kF (no frequency scaling), BZ wrapping is</span>
+<span id="L647"><span class="lineNum">     647</span>              :   // handled at construction and stays fixed.</span>
+<span id="L648"><span class="lineNum">     648</span>              :   // (No runtime BZ check needed.)</span>
+<span id="L649"><span class="lineNum">     649</span>              : </span>
+<span id="L650"><span class="lineNum">     650</span>              :   bool need_reassemble = false;</span>
+<span id="L651"><span class="lineNum">     651</span> <span class="tlaUNC">           0 :   for (auto &amp;mode : modes)</span></span>
+<span id="L652"><span class="lineNum">     652</span>              :   {</span>
+<span id="L653"><span class="lineNum">     653</span>              :     // gamma_mn^2 = omega^2 * mu_r * eps_r - |B_mn + k_F(ω)|^2</span>
+<span id="L654"><span class="lineNum">     654</span>              :     mfem::Vector kt(3);</span>
+<span id="L655"><span class="lineNum">     655</span> <span class="tlaUNC">           0 :     for (int i = 0; i &lt; 3; i++)</span></span>
+<span id="L656"><span class="lineNum">     656</span>              :     {</span>
+<span id="L657"><span class="lineNum">     657</span> <span class="tlaUNC">           0 :       kt(i) = mode.B_mn(i) + kF_scale * k_F(i);</span></span>
+<span id="L658"><span class="lineNum">     658</span>              :     }</span>
+<span id="L659"><span class="lineNum">     659</span> <span class="tlaUNC">           0 :     double kt_sq = kt * kt;</span></span>
+<span id="L660"><span class="lineNum">     660</span> <span class="tlaUNC">           0 :     mode.gamma_sq = omega * omega * mu_eps_port - kt_sq;</span></span>
+<span id="L661"><span class="lineNum">     661</span>              : </span>
+<span id="L662"><span class="lineNum">     662</span>              :     // When k_F scales with frequency, the transverse wavevector direction changes,</span>
+<span id="L663"><span class="lineNum">     663</span>              :     // which rotates the TE/TM polarization vectors. Recompute them.</span>
+<span id="L664"><span class="lineNum">     664</span> <span class="tlaUNC">           0 :     if (mat_op.HasFloquetFrequencyScaling())</span></span>
+<span id="L665"><span class="lineNum">     665</span>              :     {</span>
+<span id="L666"><span class="lineNum">     666</span>              :       mfem::Vector e_te(3), e_tm(3);</span>
+<span id="L667"><span class="lineNum">     667</span> <span class="tlaUNC">           0 :       ComputePolarization(kt, port_normal, e_te, e_tm);</span></span>
+<span id="L668"><span class="lineNum">     668</span> <span class="tlaUNC">           0 :       mfem::Vector &amp;new_pol = mode.is_te ? e_te : e_tm;</span></span>
+<span id="L669"><span class="lineNum">     669</span>              :       // Check if polarization changed (avoid unnecessary reassembly).</span>
+<span id="L670"><span class="lineNum">     670</span>              :       double pol_diff = 0.0;</span>
+<span id="L671"><span class="lineNum">     671</span> <span class="tlaUNC">           0 :       for (int d = 0; d &lt; 3; d++)</span></span>
+<span id="L672"><span class="lineNum">     672</span>              :       {</span>
+<span id="L673"><span class="lineNum">     673</span> <span class="tlaUNC">           0 :         pol_diff += std::abs(mode.e_pol(d) - new_pol(d));</span></span>
+<span id="L674"><span class="lineNum">     674</span>              :       }</span>
+<span id="L675"><span class="lineNum">     675</span> <span class="tlaUNC">           0 :       if (pol_diff &gt; 1e-14)</span></span>
+<span id="L676"><span class="lineNum">     676</span>              :       {</span>
+<span id="L677"><span class="lineNum">     677</span> <span class="tlaUNC">           0 :         mode.e_pol = new_pol;</span></span>
+<span id="L678"><span class="lineNum">     678</span>              :         need_reassemble = true;</span>
+<span id="L679"><span class="lineNum">     679</span>              :       }</span>
+<span id="L680"><span class="lineNum">     680</span>              :     }</span>
+<span id="L681"><span class="lineNum">     681</span>              :   }</span>
+<span id="L682"><span class="lineNum">     682</span>              : </span>
+<span id="L683"><span class="lineNum">     683</span>              :   // Re-assemble mode vectors if polarization changed.</span>
+<span id="L684"><span class="lineNum">     684</span> <span class="tlaUNC">           0 :   if (need_reassemble &amp;&amp; nd_fespace_ptr)</span></span>
+<span id="L685"><span class="lineNum">     685</span>              :   {</span>
+<span id="L686"><span class="lineNum">     686</span> <span class="tlaUNC">           0 :     AssembleFourierProjections(*nd_fespace_ptr);</span></span>
+<span id="L687"><span class="lineNum">     687</span>              :   }</span>
+<span id="L688"><span class="lineNum">     688</span>              : }</span>
+<span id="L689"><span class="lineNum">     689</span>              : </span>
+<span id="L690"><span class="lineNum">     690</span> <span class="tlaUNC">           0 : int FloquetPortData::NumPropagatingOrders() const</span></span>
+<span id="L691"><span class="lineNum">     691</span>              : {</span>
+<span id="L692"><span class="lineNum">     692</span>              :   int count = 0;</span>
+<span id="L693"><span class="lineNum">     693</span> <span class="tlaUNC">           0 :   for (const auto &amp;mode : modes)</span></span>
+<span id="L694"><span class="lineNum">     694</span>              :   {</span>
+<span id="L695"><span class="lineNum">     695</span> <span class="tlaUNC">           0 :     if (mode.gamma_sq &gt; 0.0)</span></span>
+<span id="L696"><span class="lineNum">     696</span>              :     {</span>
+<span id="L697"><span class="lineNum">     697</span> <span class="tlaUNC">           0 :       count++;</span></span>
+<span id="L698"><span class="lineNum">     698</span>              :     }</span>
+<span id="L699"><span class="lineNum">     699</span>              :   }</span>
+<span id="L700"><span class="lineNum">     700</span> <span class="tlaUNC">           0 :   return count;</span></span>
+<span id="L701"><span class="lineNum">     701</span>              : }</span>
+<span id="L702"><span class="lineNum">     702</span>              : </span>
+<span id="L703"><span class="lineNum">     703</span>              : std::complex&lt;double&gt;</span>
+<span id="L704"><span class="lineNum">     704</span> <span class="tlaUNC">           0 : FloquetPortData::ComputeDtNCorrectionCoeff(const FloquetMode &amp;mode) const</span></span>
+<span id="L705"><span class="lineNum">     705</span>              : {</span>
+<span id="L706"><span class="lineNum">     706</span>              :   // Compute g_correction = g_full - g_uniform for a single mode.</span>
+<span id="L707"><span class="lineNum">     707</span>              :   // g_uniform uses the TE (0,0) propagation constant as the Robin reference.</span>
+<span id="L708"><span class="lineNum">     708</span>              :   double gamma0 = 0.0;</span>
+<span id="L709"><span class="lineNum">     709</span> <span class="tlaUNC">           0 :   for (const auto &amp;m0 : modes)</span></span>
+<span id="L710"><span class="lineNum">     710</span>              :   {</span>
+<span id="L711"><span class="lineNum">     711</span> <span class="tlaUNC">           0 :     if (m0.m == 0 &amp;&amp; m0.n == 0 &amp;&amp; m0.is_te)</span></span>
+<span id="L712"><span class="lineNum">     712</span>              :     {</span>
+<span id="L713"><span class="lineNum">     713</span> <span class="tlaUNC">           0 :       gamma0 = std::sqrt(std::max(m0.gamma_sq, 0.0));</span></span>
+<span id="L714"><span class="lineNum">     714</span> <span class="tlaUNC">           0 :       break;</span></span>
+<span id="L715"><span class="lineNum">     715</span>              :     }</span>
+<span id="L716"><span class="lineNum">     716</span>              :   }</span>
+<span id="L717"><span class="lineNum">     717</span>              : </span>
+<span id="L718"><span class="lineNum">     718</span> <span class="tlaUNC">           0 :   std::complex&lt;double&gt; g_uniform = 1i * gamma0 / (mu_r_port * port_area);</span></span>
+<span id="L719"><span class="lineNum">     719</span> <span class="tlaUNC">           0 :   std::complex&lt;double&gt; g_full = ComputeDtNFullCoeff(mode);</span></span>
+<span id="L720"><span class="lineNum">     720</span>              :   if (g_full == 0.0)</span>
+<span id="L721"><span class="lineNum">     721</span>              :   {</span>
+<span id="L722"><span class="lineNum">     722</span> <span class="tlaUNC">           0 :     return 0.0;</span></span>
+<span id="L723"><span class="lineNum">     723</span>              :   }</span>
+<span id="L724"><span class="lineNum">     724</span>              : </span>
+<span id="L725"><span class="lineNum">     725</span>              :   std::complex&lt;double&gt; g_correction = g_full - g_uniform;</span>
+<span id="L726"><span class="lineNum">     726</span>              : </span>
+<span id="L727"><span class="lineNum">     727</span>              :   // Skip negligible corrections.</span>
+<span id="L728"><span class="lineNum">     728</span> <span class="tlaUNC">           0 :   if (std::abs(g_correction) &lt; 1e-14 * std::abs(g_full))</span></span>
+<span id="L729"><span class="lineNum">     729</span>              :   {</span>
+<span id="L730"><span class="lineNum">     730</span> <span class="tlaUNC">           0 :     return 0.0;</span></span>
+<span id="L731"><span class="lineNum">     731</span>              :   }</span>
+<span id="L732"><span class="lineNum">     732</span>              : </span>
+<span id="L733"><span class="lineNum">     733</span> <span class="tlaUNC">           0 :   return g_correction;</span></span>
+<span id="L734"><span class="lineNum">     734</span>              : }</span>
+<span id="L735"><span class="lineNum">     735</span>              : </span>
+<span id="L736"><span class="lineNum">     736</span> <span class="tlaUNC">           0 : std::complex&lt;double&gt; FloquetPortData::ComputeDtNFullCoeff(const FloquetMode &amp;mode) const</span></span>
+<span id="L737"><span class="lineNum">     737</span>              : {</span>
+<span id="L738"><span class="lineNum">     738</span>              :   // Return the full DtN coefficient g_full (NOT the correction g_full - g_uniform).</span>
+<span id="L739"><span class="lineNum">     739</span> <span class="tlaUNC">           0 :   if (mode.gamma_sq &gt; 0.0)</span></span>
+<span id="L740"><span class="lineNum">     740</span>              :   {</span>
+<span id="L741"><span class="lineNum">     741</span> <span class="tlaUNC">           0 :     double gamma = std::sqrt(mode.gamma_sq);</span></span>
+<span id="L742"><span class="lineNum">     742</span> <span class="tlaUNC">           0 :     return mode.is_te</span></span>
+<span id="L743"><span class="lineNum">     743</span> <span class="tlaUNC">           0 :                ? 1i * gamma / (mu_r_port * port_area)</span></span>
+<span id="L744"><span class="lineNum">     744</span> <span class="tlaUNC">           0 :                : 1i * omega0 * omega0 * mu_eps_port / (gamma * mu_r_port * port_area);</span></span>
+<span id="L745"><span class="lineNum">     745</span>              :   }</span>
+<span id="L746"><span class="lineNum">     746</span> <span class="tlaUNC">           0 :   else if (mode.gamma_sq &lt; 0.0)</span></span>
+<span id="L747"><span class="lineNum">     747</span>              :   {</span>
+<span id="L748"><span class="lineNum">     748</span> <span class="tlaUNC">           0 :     double gamma_abs = std::sqrt(-mode.gamma_sq);</span></span>
+<span id="L749"><span class="lineNum">     749</span> <span class="tlaUNC">           0 :     return mode.is_te</span></span>
+<span id="L750"><span class="lineNum">     750</span> <span class="tlaUNC">           0 :                ? gamma_abs / (mu_r_port * port_area)</span></span>
+<span id="L751"><span class="lineNum">     751</span> <span class="tlaUNC">           0 :                : -omega0 * omega0 * mu_eps_port / (gamma_abs * mu_r_port * port_area);</span></span>
+<span id="L752"><span class="lineNum">     752</span>              :   }</span>
+<span id="L753"><span class="lineNum">     753</span> <span class="tlaUNC">           0 :   return 0.0;</span></span>
+<span id="L754"><span class="lineNum">     754</span>              : }</span>
+<span id="L755"><span class="lineNum">     755</span>              : </span>
+<span id="L756"><span class="lineNum">     756</span> <span class="tlaUNC">           0 : std::unique_ptr&lt;ComplexOperator&gt; FloquetPortData::GetBoundaryOperator() const</span></span>
+<span id="L757"><span class="lineNum">     757</span>              : {</span>
+<span id="L758"><span class="lineNum">     758</span> <span class="tlaUNC">           0 :   int n = modes.empty() ? 0 : static_cast&lt;int&gt;(modes[0].v.Size());</span></span>
+<span id="L759"><span class="lineNum">     759</span>              : </span>
+<span id="L760"><span class="lineNum">     760</span>              :   // Robin+correction: the system matrix includes a Robin BC (iγ₀/μ × M_bdr) for the</span>
+<span id="L761"><span class="lineNum">     761</span>              :   // (0,0) mode. This low-rank operator adds per-mode corrections g_k - g_uniform so</span>
+<span id="L762"><span class="lineNum">     762</span>              :   // that each mode sees its correct DtN eigenvalue.</span>
+<span id="L763"><span class="lineNum">     763</span> <span class="tlaUNC">           0 :   auto op = std::make_unique&lt;LowRankComplexOperator&gt;(comm, n);</span></span>
+<span id="L764"><span class="lineNum">     764</span> <span class="tlaUNC">           0 :   for (const auto &amp;mode : modes)</span></span>
+<span id="L765"><span class="lineNum">     765</span>              :   {</span>
+<span id="L766"><span class="lineNum">     766</span> <span class="tlaUNC">           0 :     if (!HasFlag(mode.use, FloquetModeUse::Dtn))</span></span>
+<span id="L767"><span class="lineNum">     767</span>              :     {</span>
+<span id="L768"><span class="lineNum">     768</span>              :       continue;</span>
+<span id="L769"><span class="lineNum">     769</span>              :     }</span>
+<span id="L770"><span class="lineNum">     770</span> <span class="tlaUNC">           0 :     auto g = ComputeDtNCorrectionCoeff(mode);</span></span>
+<span id="L771"><span class="lineNum">     771</span>              :     if (g != 0.0)</span>
+<span id="L772"><span class="lineNum">     772</span>              :     {</span>
+<span id="L773"><span class="lineNum">     773</span> <span class="tlaUNC">           0 :       op-&gt;AddTerm(&amp;mode.v, g);</span></span>
+<span id="L774"><span class="lineNum">     774</span>              :     }</span>
+<span id="L775"><span class="lineNum">     775</span>              :   }</span>
+<span id="L776"><span class="lineNum">     776</span> <span class="tlaUNC">           0 :   return op;</span></span>
+<span id="L777"><span class="lineNum">     777</span>              : }</span>
+<span id="L778"><span class="lineNum">     778</span>              : </span>
+<span id="L779"><span class="lineNum">     779</span>              : FloquetPortData::IncidentNormalization</span>
+<span id="L780"><span class="lineNum">     780</span> <span class="tlaUNC">           0 : FloquetPortData::ComputeIncidentNormalization(double omega) const</span></span>
+<span id="L781"><span class="lineNum">     781</span>              : {</span>
+<span id="L782"><span class="lineNum">     782</span> <span class="tlaUNC">           0 :   IncidentNormalization norm{};</span></span>
+<span id="L783"><span class="lineNum">     783</span>              :   // TE and TM of the same (0,0) order share the same gamma_sq, so it doesn't matter</span>
+<span id="L784"><span class="lineNum">     784</span>              :   // which polarization we find first.</span>
+<span id="L785"><span class="lineNum">     785</span> <span class="tlaUNC">           0 :   for (const auto &amp;mode : modes)</span></span>
+<span id="L786"><span class="lineNum">     786</span>              :   {</span>
+<span id="L787"><span class="lineNum">     787</span> <span class="tlaUNC">           0 :     if (mode.m == 0 &amp;&amp; mode.n == 0 &amp;&amp; mode.gamma_sq &gt; 0.0)</span></span>
+<span id="L788"><span class="lineNum">     788</span>              :     {</span>
+<span id="L789"><span class="lineNum">     789</span> <span class="tlaUNC">           0 :       norm.gamma_00 = std::sqrt(mode.gamma_sq);</span></span>
+<span id="L790"><span class="lineNum">     790</span> <span class="tlaUNC">           0 :       break;</span></span>
+<span id="L791"><span class="lineNum">     791</span>              :     }</span>
+<span id="L792"><span class="lineNum">     792</span>              :   }</span>
+<span id="L793"><span class="lineNum">     793</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(norm.gamma_00 &gt; 0.0, &quot;Incident Floquet mode is evanescent or not found!&quot;);</span></span>
+<span id="L794"><span class="lineNum">     794</span> <span class="tlaUNC">           0 :   norm.lambda_te_00 = norm.gamma_00;</span></span>
+<span id="L795"><span class="lineNum">     795</span> <span class="tlaUNC">           0 :   norm.lambda_tm_00 = omega * omega * mu_eps_port / norm.gamma_00;</span></span>
+<span id="L796"><span class="lineNum">     796</span> <span class="tlaUNC">           0 :   norm.lambda_eff = std::norm(inc_alpha_te) * norm.lambda_te_00 +</span></span>
+<span id="L797"><span class="lineNum">     797</span> <span class="tlaUNC">           0 :                     std::norm(inc_alpha_tm) * norm.lambda_tm_00;</span></span>
+<span id="L798"><span class="lineNum">     798</span> <span class="tlaUNC">           0 :   double p_unit = norm.lambda_eff * port_area / (2.0 * omega * mu_r_port);</span></span>
+<span id="L799"><span class="lineNum">     799</span> <span class="tlaUNC">           0 :   norm.c_inc = 1.0 / std::sqrt(p_unit);</span></span>
+<span id="L800"><span class="lineNum">     800</span> <span class="tlaUNC">           0 :   return norm;</span></span>
+<span id="L801"><span class="lineNum">     801</span>              : }</span>
+<span id="L802"><span class="lineNum">     802</span>              : </span>
+<span id="L803"><span class="lineNum">     803</span>              : std::map&lt;std::tuple&lt;int, int, bool&gt;, std::complex&lt;double&gt;&gt;</span>
+<span id="L804"><span class="lineNum">     804</span> <span class="tlaUNC">           0 : FloquetPortData::GetAllSParameters(const GridFunction &amp;E, bool subtract_incident) const</span></span>
+<span id="L805"><span class="lineNum">     805</span>              : {</span>
+<span id="L806"><span class="lineNum">     806</span>              :   std::map&lt;std::tuple&lt;int, int, bool&gt;, std::complex&lt;double&gt;&gt; result;</span>
+<span id="L807"><span class="lineNum">     807</span>              : </span>
+<span id="L808"><span class="lineNum">     808</span>              :   // Power-normalized S-parameter extraction.</span>
+<span id="L809"><span class="lineNum">     809</span>              :   //</span>
+<span id="L810"><span class="lineNum">     810</span>              :   // Step 1: Field amplitude c_mn = v_mn^T E / |Γ| (Fourier coefficient of total field).</span>
+<span id="L811"><span class="lineNum">     811</span>              :   // Step 2: Power normalization: S_mn = √(γ_mn / γ_inc) × c_mn.</span>
+<span id="L812"><span class="lineNum">     812</span>              :   //</span>
+<span id="L813"><span class="lineNum">     813</span>              :   // This ensures Σ |S_mn|² = 1 for energy conservation (lossless). The factor √(γ_mn/γ_inc)</span>
+<span id="L814"><span class="lineNum">     814</span>              :   // accounts for different power-per-amplitude for different diffraction orders</span>
+<span id="L815"><span class="lineNum">     815</span>              :   // (higher-angle orders carry less power per unit amplitude due to oblique propagation).</span>
+<span id="L816"><span class="lineNum">     816</span>              :   //</span>
+<span id="L817"><span class="lineNum">     817</span>              :   // For the incident (0,0) mode: γ_inc = γ_00 = ω √(μ_r ε_r), so √(γ/γ_inc) = 1.</span>
+<span id="L818"><span class="lineNum">     818</span>              :   // For the driving port: S = √(γ/γ_inc) × c - δ_{incident mode} (subtract 1).</span>
+<span id="L819"><span class="lineNum">     819</span>              : </span>
+<span id="L820"><span class="lineNum">     820</span> <span class="tlaUNC">           0 :   auto norm = ComputeIncidentNormalization(omega0);</span></span>
+<span id="L821"><span class="lineNum">     821</span> <span class="tlaUNC">           0 :   double lambda_te_00 = norm.lambda_te_00;</span></span>
+<span id="L822"><span class="lineNum">     822</span> <span class="tlaUNC">           0 :   double lambda_tm_00 = norm.lambda_tm_00;</span></span>
+<span id="L823"><span class="lineNum">     823</span> <span class="tlaUNC">           0 :   double lambda_eff = norm.lambda_eff;</span></span>
+<span id="L824"><span class="lineNum">     824</span> <span class="tlaUNC">           0 :   double c_inc = norm.c_inc;</span></span>
+<span id="L825"><span class="lineNum">     825</span>              : </span>
+<span id="L826"><span class="lineNum">     826</span>              :   // Extract E in the true DOF space. Use GetTrueDofs (extracts owned DOF values)</span>
+<span id="L827"><span class="lineNum">     827</span>              :   // instead of P^T × E_local (which sums shared DOF copies and over-counts in parallel).</span>
+<span id="L828"><span class="lineNum">     828</span> <span class="tlaUNC">           0 :   int tdof_size = modes.empty() ? 0 : static_cast&lt;int&gt;(modes[0].v.Size());</span></span>
+<span id="L829"><span class="lineNum">     829</span>              :   Vector E_r_tdof(tdof_size), E_i_tdof(tdof_size);</span>
+<span id="L830"><span class="lineNum">     830</span> <span class="tlaUNC">           0 :   E.Real().GetTrueDofs(E_r_tdof);</span></span>
+<span id="L831"><span class="lineNum">     831</span> <span class="tlaUNC">           0 :   if (E.HasImag())</span></span>
+<span id="L832"><span class="lineNum">     832</span>              :   {</span>
+<span id="L833"><span class="lineNum">     833</span> <span class="tlaUNC">           0 :     E.Imag().GetTrueDofs(E_i_tdof);</span></span>
+<span id="L834"><span class="lineNum">     834</span>              :   }</span>
+<span id="L835"><span class="lineNum">     835</span>              :   else</span>
+<span id="L836"><span class="lineNum">     836</span>              :   {</span>
+<span id="L837"><span class="lineNum">     837</span> <span class="tlaUNC">           0 :     E_i_tdof = 0.0;</span></span>
+<span id="L838"><span class="lineNum">     838</span>              :   }</span>
+<span id="L839"><span class="lineNum">     839</span>              : </span>
+<span id="L840"><span class="lineNum">     840</span> <span class="tlaUNC">           0 :   for (const auto &amp;mode : modes)</span></span>
+<span id="L841"><span class="lineNum">     841</span>              :   {</span>
+<span id="L842"><span class="lineNum">     842</span> <span class="tlaUNC">           0 :     if (!HasFlag(mode.use, FloquetModeUse::Output) || mode.gamma_sq &lt;= 0.0)</span></span>
+<span id="L843"><span class="lineNum">     843</span>              :     {</span>
+<span id="L844"><span class="lineNum">     844</span> <span class="tlaUNC">           0 :       continue;  // Only user-requested propagating orders carry S-parameters.</span></span>
+<span id="L845"><span class="lineNum">     845</span>              :     }</span>
+<span id="L846"><span class="lineNum">     846</span>              : </span>
+<span id="L847"><span class="lineNum">     847</span> <span class="tlaUNC">           0 :     double gamma_mn = std::sqrt(mode.gamma_sq);</span></span>
+<span id="L848"><span class="lineNum">     848</span>              : </span>
+<span id="L849"><span class="lineNum">     849</span>              :     // Hermitian v^H E = (v_r·E_r + v_i·E_i) + i(v_r·E_i - v_i·E_r).</span>
+<span id="L850"><span class="lineNum">     850</span> <span class="tlaUNC">           0 :     double sr = linalg::Dot(comm, mode.v.Real(), E_r_tdof) +</span></span>
+<span id="L851"><span class="lineNum">     851</span> <span class="tlaUNC">           0 :                 linalg::Dot(comm, mode.v.Imag(), E_i_tdof);</span></span>
+<span id="L852"><span class="lineNum">     852</span> <span class="tlaUNC">           0 :     double si = linalg::Dot(comm, mode.v.Real(), E_i_tdof) -</span></span>
+<span id="L853"><span class="lineNum">     853</span> <span class="tlaUNC">           0 :                 linalg::Dot(comm, mode.v.Imag(), E_r_tdof);</span></span>
+<span id="L854"><span class="lineNum">     854</span>              : </span>
+<span id="L855"><span class="lineNum">     855</span>              :     // Field amplitude: c = v^T E / (c_inc × |Γ|), where c_inc accounts for the</span>
+<span id="L856"><span class="lineNum">     856</span>              :     // unit-power normalization applied to the excitation.</span>
+<span id="L857"><span class="lineNum">     857</span>              :     // Power normalization: S = √(λ_mn / λ_eff) × c, where λ is the DtN eigenvalue.</span>
+<span id="L858"><span class="lineNum">     858</span>              :     // TE: λ = γ. TM: λ = ω²με/γ. λ_eff is the weighted incident eigenvalue.</span>
+<span id="L859"><span class="lineNum">     859</span> <span class="tlaUNC">           0 :     double lambda_mn = mode.is_te ? gamma_mn : omega0 * omega0 * mu_eps_port / gamma_mn;</span></span>
+<span id="L860"><span class="lineNum">     860</span> <span class="tlaUNC">           0 :     double power_factor = std::sqrt(lambda_mn / lambda_eff);</span></span>
+<span id="L861"><span class="lineNum">     861</span>              : </span>
+<span id="L862"><span class="lineNum">     862</span>              :     auto key = std::make_tuple(mode.m, mode.n, mode.is_te);</span>
+<span id="L863"><span class="lineNum">     863</span> <span class="tlaUNC">           0 :     result[key] = power_factor * std::complex&lt;double&gt;(sr, si) / (c_inc * port_area);</span></span>
+<span id="L864"><span class="lineNum">     864</span>              :   }</span>
+<span id="L865"><span class="lineNum">     865</span>              : </span>
+<span id="L866"><span class="lineNum">     866</span>              :   // Subtract incident field contribution for the driving port.</span>
+<span id="L867"><span class="lineNum">     867</span>              :   // S_{0,0,p} -= √(λ_p / λ_eff) × α_p for each incident polarization component.</span>
+<span id="L868"><span class="lineNum">     868</span> <span class="tlaUNC">           0 :   if (subtract_incident)</span></span>
+<span id="L869"><span class="lineNum">     869</span>              :   {</span>
+<span id="L870"><span class="lineNum">     870</span> <span class="tlaUNC">           0 :     for (auto &amp;[key, S] : result)</span></span>
+<span id="L871"><span class="lineNum">     871</span>              :     {</span>
+<span id="L872"><span class="lineNum">     872</span> <span class="tlaUNC">           0 :       auto [m, n, is_te] = key;</span></span>
+<span id="L873"><span class="lineNum">     873</span> <span class="tlaUNC">           0 :       if (IsIncidentMode(m, n, is_te))</span></span>
+<span id="L874"><span class="lineNum">     874</span>              :       {</span>
+<span id="L875"><span class="lineNum">     875</span> <span class="tlaUNC">           0 :         double lambda_p = is_te ? lambda_te_00 : lambda_tm_00;</span></span>
+<span id="L876"><span class="lineNum">     876</span> <span class="tlaUNC">           0 :         S -= std::sqrt(lambda_p / lambda_eff) * GetIncidentAlpha(is_te);</span></span>
+<span id="L877"><span class="lineNum">     877</span>              :       }</span>
+<span id="L878"><span class="lineNum">     878</span>              :     }</span>
+<span id="L879"><span class="lineNum">     879</span>              :   }</span>
+<span id="L880"><span class="lineNum">     880</span>              : </span>
+<span id="L881"><span class="lineNum">     881</span> <span class="tlaUNC">           0 :   return result;</span></span>
+<span id="L882"><span class="lineNum">     882</span>              : }</span>
+<span id="L883"><span class="lineNum">     883</span>              : </span>
+<span id="L884"><span class="lineNum">     884</span> <span class="tlaUNC">           0 : bool FloquetPortData::AddExcitationVector(double omega, ComplexVector &amp;RHS) const</span></span>
+<span id="L885"><span class="lineNum">     885</span>              : {</span>
+<span id="L886"><span class="lineNum">     886</span>              :   // Collect the (0,0) TE and TM modes for the incident excitation.</span>
+<span id="L887"><span class="lineNum">     887</span>              :   const FloquetMode *mode_te = nullptr, *mode_tm = nullptr;</span>
+<span id="L888"><span class="lineNum">     888</span> <span class="tlaUNC">           0 :   for (const auto &amp;mode : modes)</span></span>
+<span id="L889"><span class="lineNum">     889</span>              :   {</span>
+<span id="L890"><span class="lineNum">     890</span> <span class="tlaUNC">           0 :     if (mode.m == 0 &amp;&amp; mode.n == 0)</span></span>
+<span id="L891"><span class="lineNum">     891</span>              :     {</span>
+<span id="L892"><span class="lineNum">     892</span> <span class="tlaUNC">           0 :       if (mode.is_te)</span></span>
+<span id="L893"><span class="lineNum">     893</span>              :       {</span>
+<span id="L894"><span class="lineNum">     894</span>              :         mode_te = &amp;mode;</span>
+<span id="L895"><span class="lineNum">     895</span>              :       }</span>
+<span id="L896"><span class="lineNum">     896</span>              :       else</span>
+<span id="L897"><span class="lineNum">     897</span>              :       {</span>
+<span id="L898"><span class="lineNum">     898</span>              :         mode_tm = &amp;mode;</span>
+<span id="L899"><span class="lineNum">     899</span>              :       }</span>
+<span id="L900"><span class="lineNum">     900</span>              :     }</span>
+<span id="L901"><span class="lineNum">     901</span>              :   }</span>
+<span id="L902"><span class="lineNum">     902</span> <span class="tlaUNC">           0 :   if (!mode_te &amp;&amp; !mode_tm)</span></span>
+<span id="L903"><span class="lineNum">     903</span>              :   {</span>
+<span id="L904"><span class="lineNum">     904</span>              :     return false;</span>
+<span id="L905"><span class="lineNum">     905</span>              :   }</span>
+<span id="L906"><span class="lineNum">     906</span>              : </span>
+<span id="L907"><span class="lineNum">     907</span> <span class="tlaUNC">           0 :   auto norm = ComputeIncidentNormalization(omega);</span></span>
+<span id="L908"><span class="lineNum">     908</span> <span class="tlaUNC">           0 :   double lambda_te = norm.lambda_te_00;</span></span>
+<span id="L909"><span class="lineNum">     909</span> <span class="tlaUNC">           0 :   double lambda_tm = norm.lambda_tm_00;</span></span>
+<span id="L910"><span class="lineNum">     910</span> <span class="tlaUNC">           0 :   double c_inc = norm.c_inc;</span></span>
+<span id="L911"><span class="lineNum">     911</span>              : </span>
+<span id="L912"><span class="lineNum">     912</span>              :   // f = Σ_p c_inc × 2i × α_p × λ_p / μ_r × conj(v_p)</span>
+<span id="L913"><span class="lineNum">     913</span>              :   // conj(v) appears because the bilinear form uses v^T (not v^H), and the incident</span>
+<span id="L914"><span class="lineNum">     914</span>              :   // field ê exp(+iB·r) projects to conj(v).</span>
+<span id="L915"><span class="lineNum">     915</span> <span class="tlaUNC">           0 :   auto add_pol = [&amp;](const FloquetMode *mode, std::complex&lt;double&gt; alpha, double lambda)</span></span>
+<span id="L916"><span class="lineNum">     916</span>              :   {</span>
+<span id="L917"><span class="lineNum">     917</span> <span class="tlaUNC">           0 :     if (!mode || std::abs(alpha) &lt; 1e-14)</span></span>
+<span id="L918"><span class="lineNum">     918</span>              :     {</span>
+<span id="L919"><span class="lineNum">     919</span>              :       return;</span>
+<span id="L920"><span class="lineNum">     920</span>              :     }</span>
+<span id="L921"><span class="lineNum">     921</span>              :     // s = c_inc × 2i × alpha × lambda / mu_r (complex scalar)</span>
+<span id="L922"><span class="lineNum">     922</span> <span class="tlaUNC">           0 :     std::complex&lt;double&gt; s = c_inc * 2.0 * 1i * alpha * lambda / mu_r_port;</span></span>
+<span id="L923"><span class="lineNum">     923</span>              :     // RHS += s × conj(v) = (s_r + i s_i)(v_r - i v_i)</span>
+<span id="L924"><span class="lineNum">     924</span> <span class="tlaUNC">           0 :     RHS.Real().Add(s.real(), mode-&gt;v.Real());</span></span>
+<span id="L925"><span class="lineNum">     925</span> <span class="tlaUNC">           0 :     RHS.Real().Add(s.imag(), mode-&gt;v.Imag());</span></span>
+<span id="L926"><span class="lineNum">     926</span> <span class="tlaUNC">           0 :     RHS.Imag().Add(s.imag(), mode-&gt;v.Real());</span></span>
+<span id="L927"><span class="lineNum">     927</span> <span class="tlaUNC">           0 :     RHS.Imag().Add(-s.real(), mode-&gt;v.Imag());</span></span>
+<span id="L928"><span class="lineNum">     928</span> <span class="tlaUNC">           0 :   };</span></span>
+<span id="L929"><span class="lineNum">     929</span> <span class="tlaUNC">           0 :   add_pol(mode_te, inc_alpha_te, lambda_te);</span></span>
+<span id="L930"><span class="lineNum">     930</span> <span class="tlaUNC">           0 :   add_pol(mode_tm, inc_alpha_tm, lambda_tm);</span></span>
+<span id="L931"><span class="lineNum">     931</span>              :   return true;</span>
+<span id="L932"><span class="lineNum">     932</span>              : }</span>
+<span id="L933"><span class="lineNum">     933</span>              : </span>
+<span id="L934"><span class="lineNum">     934</span>              : // =============================================================================</span>
+<span id="L935"><span class="lineNum">     935</span>              : // FloquetPortOperator</span>
+<span id="L936"><span class="lineNum">     936</span>              : // =============================================================================</span>
+<span id="L937"><span class="lineNum">     937</span>              : </span>
+<span id="L938"><span class="lineNum">     938</span> <span class="tlaGNC tlaBgGNC">         156 : FloquetPortOperator::FloquetPortOperator(</span></span>
+<span id="L939"><span class="lineNum">     939</span>              :     const std::map&lt;int, config::FloquetPortData&gt; &amp;floquetport,</span>
+<span id="L940"><span class="lineNum">     940</span>              :     const config::PeriodicBoundaryData &amp;periodic, ProblemType problem_type,</span>
+<span id="L941"><span class="lineNum">     941</span>              :     const Units &amp;units, const MaterialOperator &amp;mat_op_ref,</span>
+<span id="L942"><span class="lineNum">     942</span> <span class="tlaGNC">         156 :     mfem::ParFiniteElementSpace &amp;nd_fespace)</span></span>
+<span id="L943"><span class="lineNum">     943</span> <span class="tlaGNC">         156 :   : mat_op(mat_op_ref)</span></span>
+<span id="L944"><span class="lineNum">     944</span>              : {</span>
+<span id="L945"><span class="lineNum">     945</span> <span class="tlaGNC">         156 :   if (floquetport.empty())</span></span>
+<span id="L946"><span class="lineNum">     946</span>              :   {</span>
+<span id="L947"><span class="lineNum">     947</span>              :     return;</span>
+<span id="L948"><span class="lineNum">     948</span>              :   }</span>
+<span id="L949"><span class="lineNum">     949</span> <span class="tlaUNC tlaBgUNC">           0 :   MFEM_VERIFY(problem_type == ProblemType::DRIVEN,</span></span>
+<span id="L950"><span class="lineNum">     950</span>              :               &quot;Floquet port boundaries are only available for frequency domain driven &quot;</span>
+<span id="L951"><span class="lineNum">     951</span>              :               &quot;simulations!&quot;);</span>
+<span id="L952"><span class="lineNum">     952</span>              : </span>
+<span id="L953"><span class="lineNum">     953</span> <span class="tlaUNC">           0 :   Mpi::Print(&quot;\nConfiguring {:d} Floquet port boundar{}\n&quot;, floquetport.size(),</span></span>
+<span id="L954"><span class="lineNum">     954</span> <span class="tlaUNC">           0 :              (floquetport.size() &gt; 1) ? &quot;ies&quot; : &quot;y&quot;);</span></span>
+<span id="L955"><span class="lineNum">     955</span>              : </span>
+<span id="L956"><span class="lineNum">     956</span> <span class="tlaUNC">           0 :   for (const auto &amp;[idx, data] : floquetport)</span></span>
+<span id="L957"><span class="lineNum">     957</span>              :   {</span>
+<span id="L958"><span class="lineNum">     958</span> <span class="tlaUNC">           0 :     ports.try_emplace(idx, data, periodic, units, mat_op_ref, nd_fespace);</span></span>
+<span id="L959"><span class="lineNum">     959</span>              :   }</span>
+<span id="L960"><span class="lineNum">     960</span>              : }</span>
+<span id="L961"><span class="lineNum">     961</span>              : </span>
+<span id="L962"><span class="lineNum">     962</span> <span class="tlaUNC">           0 : void FloquetPortOperator::Initialize(double omega)</span></span>
+<span id="L963"><span class="lineNum">     963</span>              : {</span>
+<span id="L964"><span class="lineNum">     964</span> <span class="tlaUNC">           0 :   for (auto &amp;[idx, port] : ports)</span></span>
+<span id="L965"><span class="lineNum">     965</span>              :   {</span>
+<span id="L966"><span class="lineNum">     966</span> <span class="tlaUNC">           0 :     port.Initialize(omega);</span></span>
+<span id="L967"><span class="lineNum">     967</span>              :   }</span>
+<span id="L968"><span class="lineNum">     968</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L969"><span class="lineNum">     969</span>              : </span>
+<span id="L970"><span class="lineNum">     970</span> <span class="tlaUNC">           0 : std::unique_ptr&lt;ComplexOperator&gt; FloquetPortOperator::GetExtraSystemOperator(double omega)</span></span>
+<span id="L971"><span class="lineNum">     971</span>              : {</span>
+<span id="L972"><span class="lineNum">     972</span> <span class="tlaUNC">           0 :   if (ports.empty())</span></span>
+<span id="L973"><span class="lineNum">     973</span>              :   {</span>
+<span id="L974"><span class="lineNum">     974</span>              :     return nullptr;</span>
+<span id="L975"><span class="lineNum">     975</span>              :   }</span>
+<span id="L976"><span class="lineNum">     976</span>              : </span>
+<span id="L977"><span class="lineNum">     977</span> <span class="tlaUNC">           0 :   Initialize(omega);</span></span>
+<span id="L978"><span class="lineNum">     978</span>              : </span>
+<span id="L979"><span class="lineNum">     979</span>              :   // Combine boundary operators from all ports.</span>
+<span id="L980"><span class="lineNum">     980</span>              :   // For a single port, return it directly. For multiple, chain with SumComplexOperator.</span>
+<span id="L981"><span class="lineNum">     981</span> <span class="tlaUNC">           0 :   std::unique_ptr&lt;ComplexOperator&gt; combined;</span></span>
+<span id="L982"><span class="lineNum">     982</span> <span class="tlaUNC">           0 :   for (auto &amp;[idx, port] : ports)</span></span>
+<span id="L983"><span class="lineNum">     983</span>              :   {</span>
+<span id="L984"><span class="lineNum">     984</span> <span class="tlaUNC">           0 :     auto F = port.GetBoundaryOperator();</span></span>
+<span id="L985"><span class="lineNum">     985</span> <span class="tlaUNC">           0 :     if (!combined)</span></span>
+<span id="L986"><span class="lineNum">     986</span>              :     {</span>
+<span id="L987"><span class="lineNum">     987</span>              :       combined = std::move(F);</span>
+<span id="L988"><span class="lineNum">     988</span>              :     }</span>
+<span id="L989"><span class="lineNum">     989</span>              :     else</span>
+<span id="L990"><span class="lineNum">     990</span>              :     {</span>
+<span id="L991"><span class="lineNum">     991</span> <span class="tlaUNC">           0 :       combined = std::make_unique&lt;SumComplexOperator&gt;(std::move(combined), std::move(F));</span></span>
+<span id="L992"><span class="lineNum">     992</span>              :     }</span>
+<span id="L993"><span class="lineNum">     993</span>              :   }</span>
+<span id="L994"><span class="lineNum">     994</span>              : </span>
+<span id="L995"><span class="lineNum">     995</span>              :   return combined;</span>
+<span id="L996"><span class="lineNum">     996</span>              : }</span>
+<span id="L997"><span class="lineNum">     997</span>              : </span>
+<span id="L998"><span class="lineNum">     998</span> <span class="tlaUNC">           0 : void FloquetPortOperator::AddExtraSystemBdrCoefficients(double omega,</span></span>
+<span id="L999"><span class="lineNum">     999</span>              :                                                         MaterialPropertyCoefficient &amp;fbr,</span>
+<span id="L1000"><span class="lineNum">    1000</span>              :                                                         MaterialPropertyCoefficient &amp;fbi)</span>
+<span id="L1001"><span class="lineNum">    1001</span>              : {</span>
+<span id="L1002"><span class="lineNum">    1002</span>              :   // Add a full-rank Robin BC (iγ₀/μ) on the Floquet port boundary faces.</span>
+<span id="L1003"><span class="lineNum">    1003</span> <span class="tlaUNC">           0 :   Initialize(omega);</span></span>
+<span id="L1004"><span class="lineNum">    1004</span> <span class="tlaUNC">           0 :   for (const auto &amp;[idx, port] : ports)</span></span>
+<span id="L1005"><span class="lineNum">    1005</span>              :   {</span>
+<span id="L1006"><span class="lineNum">    1006</span>              :     // γ₀ = TE (0,0) mode propagation constant.</span>
+<span id="L1007"><span class="lineNum">    1007</span>              :     double gamma0 = 0.0;</span>
+<span id="L1008"><span class="lineNum">    1008</span> <span class="tlaUNC">           0 :     for (const auto &amp;mode : port.GetModes())</span></span>
+<span id="L1009"><span class="lineNum">    1009</span>              :     {</span>
+<span id="L1010"><span class="lineNum">    1010</span> <span class="tlaUNC">           0 :       if (mode.m == 0 &amp;&amp; mode.n == 0 &amp;&amp; mode.is_te)</span></span>
+<span id="L1011"><span class="lineNum">    1011</span>              :       {</span>
+<span id="L1012"><span class="lineNum">    1012</span> <span class="tlaUNC">           0 :         gamma0 = std::sqrt(std::max(mode.gamma_sq, 0.0));</span></span>
+<span id="L1013"><span class="lineNum">    1013</span> <span class="tlaUNC">           0 :         break;</span></span>
+<span id="L1014"><span class="lineNum">    1014</span>              :       }</span>
+<span id="L1015"><span class="lineNum">    1015</span>              :     }</span>
+<span id="L1016"><span class="lineNum">    1016</span> <span class="tlaUNC">           0 :     MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),</span></span>
+<span id="L1017"><span class="lineNum">    1017</span> <span class="tlaUNC">           0 :                                            mat_op.GetInvPermeability());</span></span>
+<span id="L1018"><span class="lineNum">    1018</span> <span class="tlaUNC">           0 :     muinv_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(port.GetAttrList()));</span></span>
+<span id="L1019"><span class="lineNum">    1019</span> <span class="tlaUNC">           0 :     fbi.AddCoefficient(muinv_func.GetAttributeToMaterial(),</span></span>
+<span id="L1020"><span class="lineNum">    1020</span>              :                        muinv_func.GetMaterialProperties(), gamma0);</span>
+<span id="L1021"><span class="lineNum">    1021</span> <span class="tlaUNC">           0 :   }</span></span>
+<span id="L1022"><span class="lineNum">    1022</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L1023"><span class="lineNum">    1023</span>              : </span>
+<span id="L1024"><span class="lineNum">    1024</span> <span class="tlaUNC">           0 : bool FloquetPortOperator::AddExcitationVector(int excitation_idx, double omega,</span></span>
+<span id="L1025"><span class="lineNum">    1025</span>              :                                               ComplexVector &amp;RHS)</span>
+<span id="L1026"><span class="lineNum">    1026</span>              : {</span>
+<span id="L1027"><span class="lineNum">    1027</span> <span class="tlaUNC">           0 :   Initialize(omega);</span></span>
+<span id="L1028"><span class="lineNum">    1028</span>              :   bool nnz = false;</span>
+<span id="L1029"><span class="lineNum">    1029</span> <span class="tlaUNC">           0 :   for (auto &amp;[idx, port] : ports)</span></span>
+<span id="L1030"><span class="lineNum">    1030</span>              :   {</span>
+<span id="L1031"><span class="lineNum">    1031</span> <span class="tlaUNC">           0 :     if (port.excitation != excitation_idx)</span></span>
+<span id="L1032"><span class="lineNum">    1032</span>              :     {</span>
+<span id="L1033"><span class="lineNum">    1033</span> <span class="tlaUNC">           0 :       continue;</span></span>
+<span id="L1034"><span class="lineNum">    1034</span>              :     }</span>
+<span id="L1035"><span class="lineNum">    1035</span> <span class="tlaUNC">           0 :     nnz |= port.AddExcitationVector(omega, RHS);</span></span>
+<span id="L1036"><span class="lineNum">    1036</span>              :   }</span>
+<span id="L1037"><span class="lineNum">    1037</span> <span class="tlaUNC">           0 :   return nnz;</span></span>
+<span id="L1038"><span class="lineNum">    1038</span>              : }</span>
+<span id="L1039"><span class="lineNum">    1039</span>              : </span>
+<span id="L1040"><span class="lineNum">    1040</span> <span class="tlaUNC">           0 : mfem::Array&lt;int&gt; FloquetPortOperator::GetAttrList() const</span></span>
+<span id="L1041"><span class="lineNum">    1041</span>              : {</span>
+<span id="L1042"><span class="lineNum">    1042</span>              :   mfem::Array&lt;int&gt; attr_list;</span>
+<span id="L1043"><span class="lineNum">    1043</span> <span class="tlaUNC">           0 :   for (const auto &amp;[idx, port] : ports)</span></span>
+<span id="L1044"><span class="lineNum">    1044</span>              :   {</span>
+<span id="L1045"><span class="lineNum">    1045</span>              :     attr_list.Append(port.GetAttrList());</span>
+<span id="L1046"><span class="lineNum">    1046</span>              :   }</span>
+<span id="L1047"><span class="lineNum">    1047</span> <span class="tlaUNC">           0 :   return attr_list;</span></span>
+<span id="L1048"><span class="lineNum">    1048</span>              : }</span>
+<span id="L1049"><span class="lineNum">    1049</span>              : </span>
+<span id="L1050"><span class="lineNum">    1050</span>              : }  // namespace palace</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
