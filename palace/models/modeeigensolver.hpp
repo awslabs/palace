@@ -90,12 +90,11 @@ public:
 
   ~ModeEigenSolver() = default;
 
-  // Assemble frequency-dependent matrices and solve the eigenvalue problem. The shift
-  // sigma = -kn_target^2 is applied. An optional initial space vector can be provided
-  // for eigenvalue solver warm-starting. When has_solver is true (default), the calling
-  // process participates in the eigenvalue solve; when false (wave port non-port process),
-  // only assembly is performed.
-  SolveResult Solve(double omega, double sigma, bool has_solver = true,
+  // Assemble frequency-dependent matrices and solve the shifted GEP with shift sigma =
+  // -kn_target^2. Ranks whose FE space has no local DOFs (wave port non-port ranks) are
+  // configured without a solver during construction; they contribute to assembly only
+  // and return num_converged = 0.
+  SolveResult Solve(double omega, double sigma,
                     const ComplexVector *initial_space = nullptr);
 
   // Access converged eigenvalues and eigenvectors.

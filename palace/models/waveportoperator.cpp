@@ -613,8 +613,8 @@ void WavePortData::Initialize(double omega)
   const double sigma = -omega * omega * mu_eps_max;
   std::complex<double> lambda;
   {
-    bool has_solver = (port_comm != MPI_COMM_NULL);
-    auto result = mode_solver->Solve(omega, sigma, has_solver, has_solver ? &v0 : nullptr);
+    const bool has_solver = (port_comm != MPI_COMM_NULL);
+    auto result = mode_solver->Solve(omega, sigma, has_solver ? &v0 : nullptr);
     if (has_solver)
     {
       MFEM_VERIFY(result.num_converged >= mode_idx,

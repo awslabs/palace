@@ -150,24 +150,21 @@ void ModeEigenSolver::AssembleFrequencyDependent(double omega, double sigma)
   opA = std::make_unique<ComplexWrapperOperator>(std::move(Ar), std::move(Ai));
 }
 
-ModeEigenSolver::SolveResult ModeEigenSolver::Solve(double omega, double sigma,
-                                                    bool has_solver,
-                                                    const ComplexVector *initial_space)
+ModeEigenSolver::SolveResult
+ModeEigenSolver::Solve(double omega, double sigma, const ComplexVector *initial_space)
 {
   sigma_cached = sigma;
 
-  // Assemble frequency-dependent matrices (MPI collective on FE space communicator).
+  // Assemble frequency-dependent matrices on the FE space communicator (all ranks
+  // sharing the mesh participate in assembly).
   AssembleFrequencyDependent(omega, sigma);
 
-  // Only processes with solvers participate in the eigenvalue solve. For BoundaryMode
-  // (has_solver=true on all processes) all processes solve. For WavePort, only port
-  // processes solve while non-port processes skip.
-  if (!has_solver)
+  // Ranks without a configured solver — wave port non-port ranks whose port submesh has
+  // no local DOFs — contribute to assembly only and return here.
+  if (!ksp || !eigen)
   {
     return {0, sigma};
   }
-
-  MFEM_VERIFY(ksp && eigen, "ModeEigenSolver::Solve called on process without solvers!");
 
   if (block_pc_ptr)
   {
