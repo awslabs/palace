@@ -1486,10 +1486,11 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh,
     }
   }
 
-  // Allgather edge attribute data so every rank has the complete picture.
-  int local_count = static_cast<int>(local_edge_attrs.size());
+  // Allgather edge attribute data so every rank has the complete picture. The serial
+  // instantiation runs over MPI_COMM_SELF; the collectives degenerate to memcpy.
+  const int local_count = static_cast<int>(local_edge_attrs.size());
   std::vector<int> recv_counts(Mpi::Size(comm));
-  MPI_Allgather(&local_count, 1, MPI_INT, recv_counts.data(), 1, MPI_INT, comm);
+  Mpi::Allgather(1, &local_count, recv_counts.data(), comm);
 
   std::vector<int> displs(Mpi::Size(comm));
   int total = 0;
@@ -1499,8 +1500,8 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh,
     total += recv_counts[i];
   }
   std::vector<int> all_edge_attrs(total);
-  MPI_Allgatherv(local_edge_attrs.data(), local_count, MPI_INT, all_edge_attrs.data(),
-                 recv_counts.data(), displs.data(), MPI_INT, comm);
+  Mpi::Allgatherv(local_count, local_edge_attrs.data(), all_edge_attrs.data(),
+                  recv_counts.data(), displs.data(), comm);
 
   // Build resolved global vertex pair → attribute map. For edges shared by multiple parent
   // boundary faces, prefer the face that is NOT part of the mode analysis surface.

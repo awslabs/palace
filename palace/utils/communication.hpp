@@ -324,6 +324,25 @@ public:
     MPI_Bcast(buff, len, mpi::DataType<T>(), root, comm);
   }
 
+  // Allgather a fixed count of items per rank; every rank ends up with the concatenated
+  // result (sized sendcount * Size(comm)) in recvbuf.
+  template <typename T>
+  static void Allgather(int sendcount, const T *sendbuf, T *recvbuf, MPI_Comm comm)
+  {
+    MPI_Allgather(sendbuf, sendcount, mpi::DataType<T>(), recvbuf, sendcount,
+                  mpi::DataType<T>(), comm);
+  }
+
+  // Allgather a variable number of items per rank; recvcounts/displs are per-rank arrays
+  // sized Size(comm). Every rank ends up with the complete concatenated picture.
+  template <typename T>
+  static void Allgatherv(int sendcount, const T *sendbuf, T *recvbuf,
+                         const int *recvcounts, const int *displs, MPI_Comm comm)
+  {
+    MPI_Allgatherv(sendbuf, sendcount, mpi::DataType<T>(), recvbuf, recvcounts, displs,
+                   mpi::DataType<T>(), comm);
+  }
+
   // Print methods only print on the root process of MPI_COMM_WORLD or a given MPI_Comm.
   template <typename... T>
   static void Print(MPI_Comm comm, fmt::format_string<T...> fmt, T &&...args)
