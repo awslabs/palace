@@ -10,10 +10,14 @@
 // tensors ε̃ and μ̃⁻¹ at a single quadrature point, given the physical coordinate x and
 // a packed profile context.
 //
-// Context layout: the first entry is the number of libCEED attributes; the next
-// `num_attr` entries are the attr→profile map (-1 for non-PML attributes); the
-// remaining entries hold the per-profile data in blocks of PALACE_PML_REGION_STRIDE
-// entries each.
+// Context layout:
+//   ctx[0]              = scale (CeedScalar)  — multiplies the output tensor, enables
+//                         per-bilinear-form coefficient scaling (e.g., a0_r or −a0_i in
+//                         the preconditioner cross-term expansion).
+//   ctx[1]              = num_attr (CeedInt)
+//   ctx[2..1+num_attr]  = attr→profile map (-1 for non-PML attributes)
+//   ctx[2+num_attr..]   = per-profile data in blocks of PALACE_PML_REGION_STRIDE
+//                         entries each.
 //
 // Per-region layout (29 entries, indexed 0..28):
 //   [0]         formulation (int; 0=FIXED, 1=CFS, 2=FREQUENCY_DEPENDENT)
@@ -33,21 +37,26 @@
 
 #define PALACE_PML_REGION_STRIDE 29
 
+CEED_QFUNCTION_HELPER CeedScalar PMLScale(const CeedIntScalar *ctx)
+{
+  return ctx[0].second;
+}
+
 CEED_QFUNCTION_HELPER CeedInt PMLNumProfiles(const CeedIntScalar *ctx)
 {
-  return ctx[0].first;
+  return ctx[1].first;
 }
 
 CEED_QFUNCTION_HELPER CeedInt PMLAttrToProfile(const CeedIntScalar *ctx, CeedInt attr)
 {
-  // attr is 1-based; ctx[1 + attr - 1] holds the profile index (-1 for non-PML).
-  return ctx[1 + attr - 1].first;
+  // attr is 1-based; ctx[2 + attr - 1] holds the profile index (-1 for non-PML).
+  return ctx[2 + attr - 1].first;
 }
 
 CEED_QFUNCTION_HELPER const CeedIntScalar *PMLRegion(const CeedIntScalar *ctx,
                                                      CeedInt num_attr, CeedInt pidx)
 {
-  return ctx + 1 + num_attr + PALACE_PML_REGION_STRIDE * pidx;
+  return ctx + 2 + num_attr + PALACE_PML_REGION_STRIDE * pidx;
 }
 
 // Integer pow for non-negative exponent.
