@@ -65,8 +65,13 @@ auto LoadScaleParMesh2(IoData &iodata, MPI_Comm world_comm)
   std::vector<std::unique_ptr<Mesh>> mesh_;
   {
     std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
-    mfem_mesh.push_back(mesh::ReadMesh(iodata, world_comm));
-    iodata.NondimensionalizeInputs(*mfem_mesh[0]);
+    auto smesh = mesh::Load(iodata, world_comm);
+    if (iodata.model.Lc <= 0.0)
+    {
+      iodata.model.Lc = mesh::ComputeReferenceLength(smesh, world_comm);
+    }
+    iodata.NondimensionalizeInputs(smesh);
+    mfem_mesh.push_back(mesh::Partition(iodata, std::move(smesh), world_comm));
     mesh::RefineMesh(iodata, mfem_mesh);
     for (auto &m : mfem_mesh)
     {

@@ -393,6 +393,22 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
   return Partition(iodata, Load(iodata, comm), comm);
 }
 
+double ComputeReferenceLength(const std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm comm)
+{
+  // Ranks without a copy of the serial mesh contribute 0; the Allreduce(MAX) picks up
+  // the value from the rank(s) that hold one.
+  double Lc_local = 0.0;
+  if (mesh)
+  {
+    mfem::Vector bbmin, bbmax;
+    mesh->GetBoundingBox(bbmin, bbmax);
+    bbmax -= bbmin;
+    Lc_local = *std::max_element(bbmax.begin(), bbmax.end());
+  }
+  Mpi::GlobalMax(1, &Lc_local, comm);
+  return Lc_local;
+}
+
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
 {
   // Parallel uniform refinement only. Region-based (box/sphere) refinement runs serially

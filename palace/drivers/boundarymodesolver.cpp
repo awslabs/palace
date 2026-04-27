@@ -25,13 +25,15 @@ BoundaryModeSolver::BoundaryModeSolver(const IoData &iodata, bool root, int size
 {
 }
 
-void BoundaryModeSolver::PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh,
-                                        MPI_Comm comm) const
+double BoundaryModeSolver::PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh,
+                                          MPI_Comm comm) const
 {
   const auto &bm_data = iodata.solver.boundary_mode;
   if (bm_data.attributes.empty())
   {
-    return;  // Direct 2D path: caller-supplied mesh is already the solve mesh.
+    // Direct 2D path: caller-supplied mesh is already the solve mesh. Let the base
+    // implementation resolve Lc from it.
+    return BaseSolver::PreprocessMesh(smesh, comm);
   }
 
   frame_ = std::make_unique<SubmeshFrame>();
@@ -167,6 +169,11 @@ void BoundaryModeSolver::PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh,
   Mpi::Broadcast(3, frame_->e1.HostReadWrite(), 0, comm);
   Mpi::Broadcast(3, frame_->e2.HostReadWrite(), 0, comm);
   Mpi::Broadcast(3, frame_->normal.HostReadWrite(), 0, comm);
+
+  // Delegate to the base to resolve Lc from the now-reshaped 2D solve mesh (which may
+  // have a bbox very different from the 3D parent's). Running Lc on the submesh is the
+  // whole reason this hook runs before nondimensionalization.
+  return BaseSolver::PreprocessMesh(smesh, comm);
 }
 
 std::pair<ErrorIndicator, long long int>

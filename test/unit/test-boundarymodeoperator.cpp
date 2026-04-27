@@ -65,8 +65,8 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
 
   auto serial_mesh = std::make_unique<mfem::Mesh>(
       mfem::Mesh::MakeCartesian2D(10, 5, mfem::Element::TRIANGLE, false, width, height));
+  iodata.NondimensionalizeInputs(serial_mesh);
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
-  iodata.NondimensionalizeInputs(*par_mesh);
   iodata.CheckConfiguration();
   Mesh palace_mesh(std::move(par_mesh));
 

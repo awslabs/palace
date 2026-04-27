@@ -40,6 +40,15 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata,
 // Convenience wrapper: Load followed by Partition with no PreprocessMesh hook.
 std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);
 
+// Compute the maximum axis-aligned bounding-box extent of the (still-serial) mesh,
+// reduced over `comm` so every rank receives the same value. Used to derive
+// IoData::model::Lc on ranks that don't hold a copy of the serial mesh (the mesh-
+// partitioner path holds it on root only; the byte-string path holds it on per-node
+// roots). Returns 0 when no rank holds a mesh. The caller is expected to assign the
+// result to iodata.model.Lc before IoData::NondimensionalizeInputs runs; separating the
+// two keeps nondimensionalization itself MPI-free.
+double ComputeReferenceLength(const std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm comm);
+
 // Refine the provided mesh according to the data in the input file (parallel uniform
 // refinement only; region-based refinement now happens in Load on the serial mesh). If
 // levels of refinement are requested, the refined meshes are stored in order of increased

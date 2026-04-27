@@ -54,11 +54,12 @@ public:
   explicit IoData(const char *filename, bool print);
 
   // Nondimensionalize input values for use in the solver, including the mesh coordinates.
-  // Operates on the serial mesh produced by mesh::Load. The reference length Lc is
-  // computed on the rank(s) holding a copy of the serial mesh, broadcast on `comm`, and
-  // then all ranks scale iodata consistently. Ranks that do not hold a serial mesh pass
-  // a null pointer.
-  void NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm comm);
+  // Requires model.Lc > 0; the caller is responsible for populating Lc (from the config
+  // or via mesh::ComputeReferenceLength) so that every rank agrees on the scale before
+  // this is called. The mesh pointer may be null on ranks that don't hold a copy of the
+  // serial mesh in the byte-string distribution path; iodata is still scaled everywhere.
+  // Pure on the MPI side: no collectives.
+  void NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh);
 };
 
 }  // namespace palace

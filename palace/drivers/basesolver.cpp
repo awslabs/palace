@@ -140,6 +140,18 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
   }
 }
 
+double BaseSolver::PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh, MPI_Comm comm) const
+{
+  // Default: no mesh reshape, just resolve Lc. A user-supplied iodata.model.Lc wins;
+  // otherwise derive it from the serial mesh bounding box. The MPI reduction inside
+  // ComputeReferenceLength handles the case where only a subset of ranks holds the
+  // serial mesh (byte-string distribution path), so every rank returns the same value.
+  // Overrides (BoundaryModeSolver) reshape the mesh first and then delegate here so the
+  // Lc reflects the actual solve mesh.
+  return (iodata.model.Lc > 0.0) ? iodata.model.Lc
+                                 : mesh::ComputeReferenceLength(smesh, comm);
+}
+
 void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   const auto &refinement = iodata.model.refinement;

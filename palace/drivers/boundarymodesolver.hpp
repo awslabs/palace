@@ -36,7 +36,7 @@ public:
                      const char *git_tag = nullptr);
   ~BoundaryModeSolver() override = default;
 
-  void PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh, MPI_Comm comm) const override;
+  double PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh, MPI_Comm comm) const override;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;

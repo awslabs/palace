@@ -289,8 +289,13 @@ int main(int argc, char *argv[])
   std::vector<std::unique_ptr<Mesh>> mesh;
   {
     auto smesh = mesh::Load(iodata, world_comm);
-    solver->PreprocessMesh(smesh, world_comm);
-    iodata.NondimensionalizeInputs(smesh, world_comm);
+    // PreprocessMesh runs any problem-type-specific reshape (BoundaryMode extracts a 2D
+    // submesh from a 3D parent) and returns the characteristic length Lc for the solve
+    // mesh after that reshape. All MPI needed to share Lc across ranks that don't hold
+    // the serial mesh is internal to the hook, so NondimensionalizeInputs itself is
+    // purely local.
+    iodata.model.Lc = solver->PreprocessMesh(smesh, world_comm);
+    iodata.NondimensionalizeInputs(smesh);
     std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
     mfem_mesh.push_back(mesh::Partition(iodata, std::move(smesh), world_comm));
     mesh::RefineMesh(iodata, mfem_mesh);

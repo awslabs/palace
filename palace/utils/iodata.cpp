@@ -558,32 +558,21 @@ void IoData::CheckConfiguration()
   fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;
 }
 
-void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm comm)
+void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
 {
   // Nondimensionalization of the equations is based on a given length Lc in [m], typically
   // the largest domain dimension. Configuration file lengths and the mesh coordinates are
-  // provided with units of model.L0 x [m].
+  // provided with units of model.L0 x [m]. Pre-condition: model.Lc > 0 on all ranks. The
+  // caller populates it either from the config or via mesh::ComputeReferenceLength; this
+  // function itself does no MPI.
   MFEM_VERIFY(!init, "NondimensionalizeInputs should only be called once!");
+  MFEM_VERIFY(model.Lc > 0.0,
+              "NondimensionalizeInputs requires model.Lc > 0.0 \u2014 set it from the "
+              "config or call mesh::ComputeReferenceLength before this hook.");
   init = true;
 
-  // Calculate the reference length and time. A user specified model.Lc is in mesh length
-  // units. Otherwise, compute it from the serial mesh's bounding box on the ranks that
-  // hold one (root always; one-per-node roots on the byte-string distribution path) and
-  // broadcast so every rank scales iodata with the same Lc.
-  if (model.Lc <= 0.0)
-  {
-    double Lc_local = 0.0;
-    if (mesh)
-    {
-      mfem::Vector bbmin, bbmax;
-      mesh->GetBoundingBox(bbmin, bbmax);
-      bbmax -= bbmin;
-      Lc_local = *std::max_element(bbmax.begin(), bbmax.end());
-    }
-    Mpi::GlobalMax(1, &Lc_local, comm);
-    model.Lc = Lc_local;
-  }
-  // Define units now mesh length set. Note: In model field Lc is measured in units of L0.
+  // Define units now that the reference length is set. Note: In the model field Lc is
+  // measured in units of L0.
   units = Units(model.L0, model.Lc * model.L0);
 
   // Mesh refinement parameters.
@@ -689,10 +678,10 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm
   }
 
   // Print some information.
-  Mpi::Print(comm,
-             "\nCharacteristic length and time scales:\n Lc = {:.3e} m, tc = {:.3e} ns\n",
-             units.GetScaleFactor<Units::ValueType::LENGTH>(),
-             units.GetScaleFactor<Units::ValueType::TIME>());
+  Mpi::Print(
+      "\nCharacteristic length and time scales:\n Lc = {:.3e} m, tc = {:.3e} ns\n",
+      units.GetScaleFactor<Units::ValueType::LENGTH>(),
+      units.GetScaleFactor<Units::ValueType::TIME>());
 }
 
 }  // namespace palace
