@@ -4,11 +4,13 @@
 #ifndef PALACE_DRIVERS_BOUNDARY_MODE_SOLVER_HPP
 #define PALACE_DRIVERS_BOUNDARY_MODE_SOLVER_HPP
 
+#include <memory>
 #include "drivers/basesolver.hpp"
-#include "models/boundarymodeoperator.hpp"
 
 namespace palace
 {
+
+struct SubmeshFrame;
 
 //
 // Driver class for 2D waveguide mode analysis. Constructs a BoundaryModeOperator (which
@@ -21,19 +23,22 @@ namespace palace
 class BoundaryModeSolver : public BaseSolver
 {
 public:
-  using BaseSolver::BaseSolver;
+  // Out-of-line ctor/dtor so that instantiations in main.cpp — where only the forward-
+  // declared SubmeshFrame is visible — don't need the full type for default_delete.
+  BoundaryModeSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
+                     const char *git_tag = nullptr);
+  ~BoundaryModeSolver() override;
 
-  void PreprocessMesh(mesh::SerialMesh &smesh, MPI_Comm comm) const override;
+  void PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh, MPI_Comm comm) const override;
 
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 
 private:
-  // Projection frame for the extracted submesh. Populated by PreprocessMesh when a 3D
-  // cross-section is being analysed; empty otherwise. Mutable so the const
-  // PreprocessMesh hook can write to it; read by Solve.
-  mutable SubmeshFrame frame_;
-  mutable bool from_submesh_ = false;
+  // Non-null when the solve mesh was extracted from a 3D parent. Populated by
+  // PreprocessMesh; consumed by Solve. Mutable so the const PreprocessMesh hook can
+  // populate it; the frame is itself write-once per solver instance.
+  mutable std::unique_ptr<SubmeshFrame> frame_;
 };
 
 }  // namespace palace

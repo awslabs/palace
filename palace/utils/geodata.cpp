@@ -119,7 +119,7 @@ bool UseAmr(const config::RefinementData &refinement)
 
 }  // namespace
 
-SerialMesh Load(IoData &iodata, MPI_Comm comm)
+std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
 {
   BlockTimer bt0(Timer::MESH_PREPROCESS);
 
@@ -130,33 +130,31 @@ SerialMesh Load(IoData &iodata, MPI_Comm comm)
   // distribution-path decision. Non-conformal AMR on an already-nonconforming mesh
   // forces the byte-string broadcast path, since MFEM's MeshPartitioner doesn't accept
   // nonconforming meshes.
-  SerialMesh result;
-  result.use_mesh_partitioner = !use_amr || !refinement.nonconformal;
+  std::unique_ptr<mfem::Mesh> smesh;
+  bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
   {
     BlockTimer bt(Timer::IO);
     if (Mpi::Root(comm))
     {
-      result.smesh =
-          LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
-      result.use_mesh_partitioner &= result.smesh->Conforming();
+      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
+      use_mesh_partitioner &= smesh->Conforming();
     }
-    Mpi::Broadcast(1, &result.use_mesh_partitioner, 0, comm);
+    Mpi::Broadcast(1, &use_mesh_partitioner, 0, comm);
   }
 
   MPI_Comm node_comm = MPI_COMM_NULL;
-  if (!result.use_mesh_partitioner)
+  if (!use_mesh_partitioner)
   {
     MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
                         &node_comm);
   }
   {
     BlockTimer bt1(Timer::IO);
-    if (!result.use_mesh_partitioner && Mpi::Root(node_comm) && !Mpi::Root(comm))
+    if (!use_mesh_partitioner && Mpi::Root(node_comm) && !Mpi::Root(comm))
     {
       // Only one process per node reads the serial mesh when not using the partitioner.
-      result.smesh =
-          LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
-      MFEM_VERIFY(!(result.smesh->Nonconforming() && result.use_mesh_partitioner),
+      smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
+      MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
                   "Cannot use mesh partitioner on a nonconforming mesh!");
     }
     Mpi::Barrier(comm);
@@ -166,10 +164,9 @@ SerialMesh Load(IoData &iodata, MPI_Comm comm)
     MPI_Comm_free(&node_comm);
   }
 
-  auto &smesh = result.smesh;
   if (!smesh)
   {
-    return result;
+    return smesh;
   }
 
   // AMR / element compatibility.
@@ -256,13 +253,24 @@ SerialMesh Load(IoData &iodata, MPI_Comm comm)
   constexpr bool refine = true, fix_orientation = false;
   smesh->Finalize(refine, fix_orientation);
 
-  return result;
+  return smesh;
 }
 
-std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, SerialMesh mesh, MPI_Comm comm)
+std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata,
+                                         std::unique_ptr<mfem::Mesh> smesh, MPI_Comm comm)
 {
   BlockTimer bt0(Timer::MESH_PREPROCESS);
   const auto &refinement = iodata.model.refinement;
+  const bool use_amr = UseAmr(refinement);
+
+  // Re-derive the distribution-path decision that Load already used. Both halves of the
+  // pipeline run on the same iodata + the same initial mesh, so the result is identical.
+  bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
+  if (Mpi::Root(comm) && smesh)
+  {
+    use_mesh_partitioner &= smesh->Conforming();
+  }
+  Mpi::Broadcast(1, &use_mesh_partitioner, 0, comm);
 
   // Broadcast cracked boundary attributes from root to all ranks.
   if (iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements)
@@ -290,16 +298,15 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, SerialMesh mesh, MPI_Co
   // Generate partitioning from the serial mesh on root (or each node-root in the
   // byte-string path).
   std::unique_ptr<int[]> partitioning;
-  if (mesh.smesh)
+  if (smesh)
   {
-    partitioning =
-        GetMeshPartitioning(*mesh.smesh, Mpi::Size(comm), iodata.model.partitioning);
+    partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partitioning);
   }
 
   std::unique_ptr<mfem::ParMesh> pmesh;
-  if (mesh.use_mesh_partitioner)
+  if (use_mesh_partitioner)
   {
-    pmesh = DistributeMesh(comm, mesh.smesh, partitioning.get(), iodata.problem.output);
+    pmesh = DistributeMesh(comm, smesh, partitioning.get(), iodata.problem.output);
   }
   else
   {
@@ -310,14 +317,14 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, SerialMesh mesh, MPI_Co
     constexpr bool generate_edges = false, refine = true, fix_orientation = false;
     std::string so;
     int slen = 0;
-    if (mesh.smesh)
+    if (smesh)
     {
       std::ostringstream fo(std::stringstream::out);
       fo << std::scientific;
       fo.precision(MSH_FLT_PRECISION);
-      mesh.smesh->Print(fo);
-      mesh.smesh.reset();  // Root process needs to rebuild the mesh to ensure consistency
-                           // with the saved serial mesh (refinement marking, for example)
+      smesh->Print(fo);
+      smesh.reset();  // Root process needs to rebuild the mesh to ensure consistency
+                      // with the saved serial mesh (refinement marking, for example)
       so = fo.str();
       slen = static_cast<int>(so.size());
       MFEM_VERIFY(so.size() == (std::size_t)slen, "Overflow in stringbuffer size!");
@@ -330,23 +337,23 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, SerialMesh mesh, MPI_Co
     Mpi::Broadcast(slen, so.data(), 0, node_comm);
     {
       std::istringstream fi(so);
-      mesh.smesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
+      smesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
       so.clear();
     }
     // !use_mesh_partitioner implies use_amr && nonconformal; ensure the rebuilt mesh is
     // NC-capable before constructing the ParMesh.
-    if (refinement.nonconformal && UseAmr(refinement))
+    if (refinement.nonconformal && use_amr)
     {
-      mesh.smesh->EnsureNCMesh(true);
+      smesh->EnsureNCMesh(true);
     }
     if (!partitioning)
     {
-      partitioning = std::make_unique<int[]>(mesh.smesh->GetNE());
+      partitioning = std::make_unique<int[]>(smesh->GetNE());
     }
-    Mpi::Broadcast(mesh.smesh->GetNE(), partitioning.get(), 0, node_comm);
+    Mpi::Broadcast(smesh->GetNE(), partitioning.get(), 0, node_comm);
     MPI_Comm_free(&node_comm);
-    pmesh = std::make_unique<mfem::ParMesh>(comm, *mesh.smesh, partitioning.get());
-    mesh.smesh.reset();
+    pmesh = std::make_unique<mfem::ParMesh>(comm, *smesh, partitioning.get());
+    smesh.reset();
   }
 
   // Debug: optionally write the partitioned and final meshes to tmp/ for inspection.

@@ -54,7 +54,11 @@ public:
   explicit IoData(const char *filename, bool print);
 
   // Nondimensionalize input values for use in the solver, including the mesh coordinates.
-  void NondimensionalizeInputs(mfem::ParMesh &mesh);
+  // Operates on the serial mesh produced by mesh::Load. The reference length Lc is
+  // computed on the rank(s) holding a copy of the serial mesh, broadcast on `comm`, and
+  // then all ranks scale iodata consistently. Ranks that do not hold a serial mesh pass
+  // a null pointer.
+  void NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm comm);
 };
 
 }  // namespace palace

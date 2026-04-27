@@ -15,10 +15,9 @@ namespace palace
 
 BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
                                            const std::vector<std::unique_ptr<Mesh>> &mesh,
-                                           const SubmeshFrame *frame)
+                                           const SubmeshFrame *frame_in)
   : iodata(iodata_), solver_order(iodata_.solver.order),
-    solve_mesh(mesh.back().get()),
-    frame_normal(frame ? &frame->normal : nullptr)
+    solve_mesh(mesh.back().get()), frame(frame_in)
 {
   MFEM_VERIFY(solve_mesh->Dimension() == 2,
               "BoundaryMode solver requires a 2D mesh (waveguide cross-section). When "
@@ -74,7 +73,7 @@ void BoundaryModeOperator::SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>
     // the 2D boundary (i.e. other waveports touching this cross-section) behave as PEC
     // for the mode problem. For direct 2D input there is no parent, so no such inherited
     // attributes exist.
-    if (frame_normal)
+    if (frame)
     {
       for (const auto &[idx, data] : iodata.boundaries.waveport)
       {

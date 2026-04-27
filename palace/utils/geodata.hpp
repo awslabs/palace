@@ -22,26 +22,20 @@ namespace mesh
 // Functions for mesh related functionality.
 //
 
-// Result of the serial-stage mesh preparation. `smesh` is non-null on ranks that loaded
-// it (root always; one-per-node roots additionally, when `use_mesh_partitioner` is false).
-// `use_mesh_partitioner` selects the distribution path in Partition: true routes through
-// METIS + MeshPartitioner, false broadcasts the serial mesh byte-string and builds a
-// ParMesh on every rank.
-struct SerialMesh
-{
-  std::unique_ptr<mfem::Mesh> smesh;
-  bool use_mesh_partitioner = true;
-};
-
 // Load a serial mesh from disk and perform all serial-stage preparation: AMR compat
 // checks, cleanup, simplex/hex conversion, element reordering, serial uniform refinement,
-// region-based (box/sphere) refinement, boundary cracking, and finalization. Called from
-// the read-mesh stage of main.cpp, between which PreprocessMesh hooks on the solver may
-// mutate the serial mesh (e.g. BoundaryMode submesh extraction).
-SerialMesh Load(IoData &iodata, MPI_Comm comm);
+// region-based (box/sphere) refinement, boundary cracking, and finalization. Returns a
+// null pointer on ranks that do not hold a copy of the serial mesh (root always holds
+// one; one-per-node roots additionally hold one when the byte-string distribution path
+// is taken). Called by main.cpp before PreprocessMesh hooks on the solver mutate the
+// serial mesh (e.g. BoundaryMode submesh extraction).
+std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm);
 
 // Partition and distribute a serial mesh prepared by Load, producing a parallel mesh.
-std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, SerialMesh smesh, MPI_Comm comm);
+// `smesh` is non-null only on loading ranks (see Load's contract).
+std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata,
+                                         std::unique_ptr<mfem::Mesh> smesh,
+                                         MPI_Comm comm);
 
 // Convenience wrapper: Load followed by Partition with no PreprocessMesh hook.
 std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);

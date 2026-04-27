@@ -280,18 +280,19 @@ int main(int argc, char *argv[])
     return nullptr;
   }();
 
-  // Read the mesh from file, refine, partition, and distribute it. Then nondimensionalize
-  // it and the input parameters. The problem-type-specific PreprocessMesh hook runs
-  // between serial-stage loading and parallel partitioning so that any problem-specific
-  // mesh reshaping (e.g. BoundaryMode 2D submesh extraction from a 3D parent) lands on
-  // the serial mesh and the rest of the parallel pipeline operates on the solve mesh.
+  // Load the serial mesh, apply problem-type-specific serial-stage preprocessing,
+  // nondimensionalize, then partition, distribute, and refine. PreprocessMesh runs on
+  // the serial mesh so any problem-type reshaping (e.g. BoundaryMode 2D submesh
+  // extraction from a 3D parent) lands before nondimensionalization — Lc is then
+  // computed from the solve mesh (2D for BoundaryMode-from-submesh), giving correct
+  // conditioning for the problem actually solved.
   std::vector<std::unique_ptr<Mesh>> mesh;
   {
     auto smesh = mesh::Load(iodata, world_comm);
     solver->PreprocessMesh(smesh, world_comm);
+    iodata.NondimensionalizeInputs(smesh, world_comm);
     std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
     mfem_mesh.push_back(mesh::Partition(iodata, std::move(smesh), world_comm));
-    iodata.NondimensionalizeInputs(*mfem_mesh[0]);
     mesh::RefineMesh(iodata, mfem_mesh);
     Mpi::Print(world_comm, "\n");
     memory_reporting::PrintMemoryUsage(world_comm,

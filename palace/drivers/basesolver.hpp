@@ -46,10 +46,13 @@ public:
   virtual ~BaseSolver() = default;
 
   // Problem-type-specific serial-stage mesh preprocessing hook. Called in the read-mesh
-  // pipeline between mesh::Load and mesh::Partition. The default is a no-op; BoundaryMode
-  // overrides this to extract a 2D submesh from a 3D parent before partitioning, so the
-  // rest of the pipeline (and AMR) operates on the mesh the problem actually solves on.
-  virtual void PreprocessMesh(mesh::SerialMesh &smesh, MPI_Comm comm) const {}
+  // pipeline between mesh::Load and IoData::NondimensionalizeInputs. The default is a
+  // no-op; BoundaryMode overrides this to extract a 2D submesh from a 3D parent before
+  // nondimensionalization and partitioning, so the rest of the pipeline (and AMR)
+  // operates on the mesh the problem actually solves on. `smesh` is null on ranks that
+  // do not hold a copy of the serial mesh (see mesh::Load's contract) — overrides must
+  // guard accordingly.
+  virtual void PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh, MPI_Comm comm) const {}
 
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine paradigm.
   // Dispatches to the Solve method for the driver specific calculations.
