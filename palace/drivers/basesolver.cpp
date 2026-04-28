@@ -140,6 +140,16 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
   }
 }
 
+void BaseSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
+                            MPI_Comm comm) const
+{
+  if (!(iodata.model.Lc > 0.0))
+  {
+    iodata.model.Lc = mesh::ComputeReferenceLength(smesh, comm);
+  }
+  iodata.NondimensionalizeInputs(smesh);
+}
+
 void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   const auto &refinement = iodata.model.refinement;
@@ -148,13 +158,6 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     if (refinement.max_it > 0 && iodata.problem.type == ProblemType::TRANSIENT)
     {
       Mpi::Warning("AMR is not currently supported for transient simulations!\n");
-      return false;
-    }
-    if (refinement.max_it > 0 && iodata.problem.type == ProblemType::BOUNDARYMODE &&
-        !iodata.solver.boundary_mode.attributes.empty())
-    {
-      Mpi::Warning("AMR is not currently supported for boundary mode analysis on 3D mesh "
-                   "cross-sections (BoundaryMode with Attributes)!\n");
       return false;
     }
     return (refinement.max_it > 0);

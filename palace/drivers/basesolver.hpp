@@ -9,6 +9,7 @@
 #include <fmt/os.h>
 #include "fem/errorindicator.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/geodata.hpp"
 #include "utils/memoryreporting.hpp"
 
 namespace palace
@@ -43,6 +44,11 @@ public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
              const char *git_tag = nullptr);
   virtual ~BaseSolver() = default;
+
+  // Applying driver specific transformations to config data or mesh, including
+  // nondimensionalization.
+  virtual void Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
+                          MPI_Comm comm) const;
 
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine paradigm.
   // Dispatches to the Solve method for the driver specific calculations.

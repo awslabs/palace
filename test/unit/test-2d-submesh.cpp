@@ -33,8 +33,8 @@ TEST_CASE("RotateMaterialTensors", "[materialoperator][Serial]")
 
   auto serial_mesh = std::make_unique<mfem::Mesh>(
       mfem::Mesh::MakeCartesian2D(2, 2, mfem::Element::TRIANGLE, false, 1.0, 1.0));
+  iodata.NondimensionalizeInputs(serial_mesh);
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
-  iodata.NondimensionalizeInputs(*par_mesh);
   iodata.CheckConfiguration();
   Mesh palace_mesh(std::move(par_mesh));
   MaterialOperator mat_op(iodata, palace_mesh);

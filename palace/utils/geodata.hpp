@@ -22,14 +22,32 @@ namespace mesh
 // Functions for mesh related functionality.
 //
 
-// Read and partition a serial mesh from file, returning a pointer to the new parallel mesh
-// object, which should be destroyed by the user.
+// Load a serial mesh from disk and perform all serial-stage preparation: AMR compat
+// checks, cleanup, simplex/hex conversion, element reordering, serial uniform refinement,
+// region-based (box/sphere) refinement, boundary cracking, and finalization. Returns a
+// null pointer on ranks that do not hold a copy of the serial mesh. Called by main.cpp
+// before PreprocessMesh hooks on the solver mutate the serial mesh (e.g. BoundaryMode
+// submesh extraction).
+std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm);
+
+// Partition and distribute a serial mesh prepared by Load, producing a parallel mesh.
+// `smesh` is non-null only on loading ranks (see Load's contract).
+std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::Mesh> smesh,
+                                         MPI_Comm comm);
+
+// Convenience wrapper: Load followed by Partition with no PreprocessMesh hook.
 std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);
 
-// Refine the provided mesh according to the data in the input file. If levels of refinement
-// are requested, the refined meshes are stored in order of increased refinement. Ownership
-// of the initial coarse mesh is inherited by the fine meshes and it should not be deleted.
-// The fine mesh hierarchy is owned by the user.
+// Maximum axis-aligned bbox extent of the pre-partition serial mesh, reduced over
+// `comm` so every rank sees the same value. Returns 0 when no rank holds a mesh.
+// Used by BaseSolver::PreprocessMesh to derive iodata.model.Lc from a non-user-set value.
+double ComputeReferenceLength(const std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm comm);
+
+// Refine the provided mesh according to the data in the input file (parallel uniform
+// refinement only; region-based refinement now happens in Load on the serial mesh). If
+// levels of refinement are requested, the refined meshes are stored in order of increased
+// refinement. Ownership of the initial coarse mesh is inherited by the fine meshes and
+// it should not be deleted. The fine mesh hierarchy is owned by the user.
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
 
 // Dimensionalize a mesh for use in exporting a mesh. Scales vertices and nodes by L.

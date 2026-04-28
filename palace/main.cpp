@@ -280,13 +280,14 @@ int main(int argc, char *argv[])
     return nullptr;
   }();
 
-  // Read the mesh from file, refine, partition, and distribute it. Then nondimensionalize
-  // it and the input parameters.
+  // Load the serial mesh, apply problem-type-specific serial-stage preprocessing,
+  // nondimensionalize, then partition, distribute, and refine.
   std::vector<std::unique_ptr<Mesh>> mesh;
   {
+    auto smesh = mesh::Load(iodata, world_comm);
+    solver->Preprocess(iodata, smesh, world_comm);
     std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
-    mfem_mesh.push_back(mesh::ReadMesh(iodata, world_comm));
-    iodata.NondimensionalizeInputs(*mfem_mesh[0]);
+    mfem_mesh.push_back(mesh::Partition(iodata, std::move(smesh), world_comm));
     mesh::RefineMesh(iodata, mfem_mesh);
     Mpi::Print(world_comm, "\n");
     memory_reporting::PrintMemoryUsage(world_comm,

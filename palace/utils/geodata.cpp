@@ -119,168 +119,171 @@ bool UseAmr(const config::RefinementData &refinement)
 
 }  // namespace
 
-std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
+std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
 {
-  // If possible on root, read the serial mesh (converting format if necessary), and do all
-  // necessary serial preprocessing. When finished, distribute the mesh to all processes.
-  // Count disk I/O time separately for the mesh read from file.
   BlockTimer bt0(Timer::MESH_PREPROCESS);
 
-  // If not doing any local adaptation, or performing conformal adaptation, we can use the
-  // mesh partitioner.
-  std::unique_ptr<mfem::Mesh> smesh;
   const auto &refinement = iodata.model.refinement;
-  const bool use_amr = (refinement.max_it > 0) || [&refinement]()
-  {
-    for (const auto &box : refinement.GetBoxes())
-    {
-      if (box.ref_levels > 0)
-      {
-        return true;
-      }
-    }
-    for (const auto &sphere : refinement.GetSpheres())
-    {
-      if (sphere.ref_levels > 0)
-      {
-        return true;
-      }
-    }
-    return false;
-  }();
+  const bool use_amr = UseAmr(refinement);
 
-  const bool use_mesh_partitioner = [&]()
+  // Root loads first so conformality of the input mesh can be factored into the
+  // distribution-path decision. Non-conformal AMR on an already-nonconforming mesh
+  // forces the byte-string broadcast path, since MFEM's MeshPartitioner doesn't accept
+  // nonconforming meshes.
+  std::unique_ptr<mfem::Mesh> smesh;
+  bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
   {
-    // Root must load the mesh to discover if nonconformal, as a previously adapted mesh
-    // might be reused for nonadaptive simulations.
     BlockTimer bt(Timer::IO);
-    bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
     if (Mpi::Root(comm))
     {
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
-      use_mesh_partitioner &= smesh->Conforming();  // The initial mesh must be conformal
+      use_mesh_partitioner &= smesh->Conforming();
     }
     Mpi::Broadcast(1, &use_mesh_partitioner, 0, comm);
-    return use_mesh_partitioner;
-  }();
+  }
 
-  MPI_Comm node_comm;
+  MPI_Comm node_comm = MPI_COMM_NULL;
   if (!use_mesh_partitioner)
   {
     MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
                         &node_comm);
   }
-
   {
     BlockTimer bt1(Timer::IO);
     if (!use_mesh_partitioner && Mpi::Root(node_comm) && !Mpi::Root(comm))
     {
-      // Only one process per node reads the serial mesh, if not using mesh partitioner.
+      // Only one process per node reads the serial mesh when not using the partitioner.
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
       MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
                   "Cannot use mesh partitioner on a nonconforming mesh!");
     }
     Mpi::Barrier(comm);
   }
-
-  // Do some mesh preprocessing, and generate the partitioning.
-  std::unique_ptr<int[]> partitioning;
-  if (smesh)
+  if (node_comm != MPI_COMM_NULL)
   {
-    // Check the the AMR specification and the mesh elements are compatible.
-    const auto element_types = CheckElements(*smesh);
-    MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_hexahedra ||
-                    refinement.nonconformal,
-                "If there are tensor elements, AMR must be nonconformal!");
-    MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_prisms ||
-                    refinement.nonconformal,
-                "If there are wedge elements, AMR must be nonconformal!");
-    MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_pyramids ||
-                    refinement.nonconformal,
-                "If there are pyramid elements, AMR must be nonconformal!");
-    MFEM_VERIFY(
-        smesh->Conforming() || !use_amr || refinement.nonconformal,
-        "The provided mesh is nonconformal, only nonconformal AMR can be performed!");
-
-    // Clean up unused domain elements from the mesh.
-    if (iodata.model.clean_unused_elements)
-    {
-      std::vector<int> attr_list;
-      std::merge(iodata.domains.attributes.begin(), iodata.domains.attributes.end(),
-                 iodata.domains.postpro.attributes.begin(),
-                 iodata.domains.postpro.attributes.end(), std::back_inserter(attr_list));
-      attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
-      CleanMesh(smesh, attr_list);
-    }
-
-    // Optionally convert mesh elements to simplices, for example in order to enable
-    // conformal mesh refinement, or hexes.
-    if (iodata.model.make_simplex || iodata.model.make_hex)
-    {
-      SplitMeshElements(smesh, iodata.model.make_simplex, iodata.model.make_hex);
-    }
-
-    // Optionally reorder elements (and vertices) based on spatial location after loading
-    // the serial mesh.
-    if (iodata.model.reorder_elements)
-    {
-      ReorderMeshElements(*smesh);
-    }
-
-    // Refine the serial mesh (not typically used, prefer parallel uniform refinement
-    // instead).
-    {
-      int ne = smesh->GetNE();
-      for (int l = 0; l < iodata.model.refinement.ser_uniform_ref_levels; l++)
-      {
-        smesh->UniformRefinement();
-      }
-      if (iodata.model.refinement.ser_uniform_ref_levels > 0)
-      {
-        Mpi::Print("Serial uniform mesh refinement levels added {:d} elements (initial = "
-                   "{:d}, final = {:d})\n",
-                   smesh->GetNE() - ne, ne, smesh->GetNE());
-      }
-    }
-
-    // Check the final mesh, throwing warnings if there are exterior boundaries with no
-    // associated boundary condition.
-    if (smesh->Conforming())
-    {
-      auto face_to_be = CheckMesh(*smesh, iodata.boundaries);
-
-      // Add new boundary elements for material interfaces if not present (with new unique
-      // boundary attributes). Also duplicate internal boundary elements associated with
-      // cracks if desired.
-      if ((iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements))
-      {
-        // Split all internal (non periodic) boundary elements for boundary attributes where
-        // BC are applied (not just postprocessing).
-        while (AddInterfaceBdrElements(iodata, smesh, face_to_be, comm) != 1)
-        {
-          // May require multiple calls due to early exit/retry approach.
-        }
-      }
-    }
-    else
-    {
-      Mpi::Warning("{} is a nonconformal mesh, assumed from previous AMR iteration.\n"
-                   "Skipping mesh modification preprocessing steps!\n\n",
-                   iodata.model.mesh);
-    }
-
-    // Finally, finalize the serial mesh. Mark tetrahedral meshes for refinement. There
-    // should be no need to fix orientation as this was done during initial mesh loading
-    // from disk.
-    constexpr bool refine = true, fix_orientation = false;
-    smesh->Finalize(refine, fix_orientation);
-
-    // Generate the mesh partitioning.
-    partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partitioning);
+    MPI_Comm_free(&node_comm);
   }
 
-  // Broadcast cracked boundary attributes to other ranks.
-  if ((iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements))
+  if (!smesh)
+  {
+    return smesh;
+  }
+
+  // AMR / element compatibility.
+  const auto element_types = CheckElements(*smesh);
+  MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_hexahedra ||
+                  refinement.nonconformal,
+              "If there are tensor elements, AMR must be nonconformal!");
+  MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_prisms ||
+                  refinement.nonconformal,
+              "If there are wedge elements, AMR must be nonconformal!");
+  MFEM_VERIFY(!use_amr || iodata.model.make_simplex || !element_types.has_pyramids ||
+                  refinement.nonconformal,
+              "If there are pyramid elements, AMR must be nonconformal!");
+  MFEM_VERIFY(smesh->Conforming() || !use_amr || refinement.nonconformal,
+              "The provided mesh is nonconformal, only nonconformal AMR can be performed!");
+
+  // Clean up unused domain elements from the mesh.
+  if (iodata.model.clean_unused_elements)
+  {
+    std::vector<int> attr_list;
+    std::merge(iodata.domains.attributes.begin(), iodata.domains.attributes.end(),
+               iodata.domains.postpro.attributes.begin(),
+               iodata.domains.postpro.attributes.end(), std::back_inserter(attr_list));
+    attr_list.erase(std::unique(attr_list.begin(), attr_list.end()), attr_list.end());
+    CleanMesh(smesh, attr_list);
+  }
+
+  // Optionally convert mesh elements to simplices or hexes.
+  if (iodata.model.make_simplex || iodata.model.make_hex)
+  {
+    SplitMeshElements(smesh, iodata.model.make_simplex, iodata.model.make_hex);
+  }
+
+  // Optionally reorder elements/vertices by spatial location for cache locality.
+  if (iodata.model.reorder_elements)
+  {
+    ReorderMeshElements(*smesh);
+  }
+
+  // Serial uniform refinement (seldom used; prefer parallel uniform refinement in
+  // RefineMesh).
+  {
+    int ne = smesh->GetNE();
+    for (int l = 0; l < refinement.ser_uniform_ref_levels; l++)
+    {
+      smesh->UniformRefinement();
+    }
+    if (refinement.ser_uniform_ref_levels > 0)
+    {
+      Mpi::Print("Serial uniform mesh refinement levels added {:d} elements (initial = "
+                 "{:d}, final = {:d})\n",
+                 smesh->GetNE() - ne, ne, smesh->GetNE());
+    }
+  }
+
+  // Region-based (box/sphere) refinement on the serial mesh. Formerly in parallel
+  // RefineMesh; done here so the user-facing 3D box/sphere geometry stays in sync with
+  // the mesh the problem type actually solves on (BoundaryMode's PreprocessMesh may
+  // extract a 2D submesh from this refined 3D mesh before partitioning).
+  //
+  // For tensor meshes under nonconformal AMR, convert to NC representation first:
+  // RegionRefine's own verify asserts Nonconforming() for tensor elements. Before the
+  // Load/Partition split, this conversion happened later inside Partition's byte-string
+  // broadcast path (still below), after region refinement had already run in parallel
+  // RefineMesh on an already-NC ParMesh; the reorder makes it Load's responsibility.
+  if (use_amr && refinement.nonconformal)
+  {
+    smesh->EnsureNCMesh(true);
+  }
+  RegionRefine(refinement, *smesh);
+
+  // Exterior-boundary check and optional material-interface / crack boundary element
+  // insertion. Only meaningful on an initial conformal mesh.
+  if (smesh->Conforming())
+  {
+    auto face_to_be = CheckMesh(*smesh, iodata.boundaries);
+    if (iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements)
+    {
+      while (AddInterfaceBdrElements(iodata, smesh, face_to_be, comm) != 1)
+      {
+        // May require multiple calls due to early exit/retry approach.
+      }
+    }
+  }
+  else
+  {
+    Mpi::Warning("{} is a nonconformal mesh, assumed from previous AMR iteration.\n"
+                 "Skipping mesh modification preprocessing steps!\n\n",
+                 iodata.model.mesh);
+  }
+
+  // Finalize: mark tetrahedral meshes for refinement. Initial orientation was already
+  // fixed at load.
+  constexpr bool refine = true, fix_orientation = false;
+  smesh->Finalize(refine, fix_orientation);
+
+  return smesh;
+}
+
+std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::Mesh> smesh,
+                                         MPI_Comm comm)
+{
+  BlockTimer bt0(Timer::MESH_PREPROCESS);
+  const auto &refinement = iodata.model.refinement;
+  const bool use_amr = UseAmr(refinement);
+
+  // Re-derive the distribution-path decision that Load already used. Both halves of the
+  // pipeline run on the same iodata + the same initial mesh, so the result is identical.
+  bool use_mesh_partitioner = !use_amr || !refinement.nonconformal;
+  if (Mpi::Root(comm) && smesh)
+  {
+    use_mesh_partitioner &= smesh->Conforming();
+  }
+  Mpi::Broadcast(1, &use_mesh_partitioner, 0, comm);
+
+  // Broadcast cracked boundary attributes from root to all ranks.
+  if (iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements)
   {
     int size = iodata.boundaries.cracked_attributes.size();
     Mpi::Broadcast(1, &size, 0, comm);
@@ -295,7 +298,6 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
       data.resize(size);
     }
     Mpi::Broadcast(size, data.data(), 0, comm);
-
     if (!Mpi::Root(comm))
     {
       iodata.boundaries.cracked_attributes.clear();
@@ -303,7 +305,13 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
     }
   }
 
-  // Distribute the mesh.
+  // Generate partitioning from the serial mesh on loading ranks.
+  std::unique_ptr<int[]> partitioning;
+  if (smesh)
+  {
+    partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partitioning);
+  }
+
   std::unique_ptr<mfem::ParMesh> pmesh;
   if (use_mesh_partitioner)
   {
@@ -312,20 +320,21 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
   else
   {
     // Send the preprocessed serial mesh and partitioning as a byte string.
+    MPI_Comm node_comm;
+    MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
+                        &node_comm);
     constexpr bool generate_edges = false, refine = true, fix_orientation = false;
     std::string so;
     int slen = 0;
     if (smesh)
     {
       std::ostringstream fo(std::stringstream::out);
-      // fo << std::fixed;
       fo << std::scientific;
       fo.precision(MSH_FLT_PRECISION);
       smesh->Print(fo);
-      smesh.reset();  // Root process needs to rebuild the mesh to ensure consistency with
-                      // the saved serial mesh (refinement marking, for example)
+      smesh.reset();  // Root process needs to rebuild the mesh to ensure consistency
+                      // with the saved serial mesh (refinement marking, for example)
       so = fo.str();
-      // so = zlib::CompressString(fo.str());
       slen = static_cast<int>(so.size());
       MFEM_VERIFY(so.size() == (std::size_t)slen, "Overflow in stringbuffer size!");
     }
@@ -337,10 +346,11 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
     Mpi::Broadcast(slen, so.data(), 0, node_comm);
     {
       std::istringstream fi(so);
-      // std::istringstream fi(zlib::DecompressString(so));
       smesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
       so.clear();
     }
+    // !use_mesh_partitioner implies use_amr && nonconformal; ensure the rebuilt mesh is
+    // NC-capable before constructing the ParMesh.
     if (refinement.nonconformal && use_amr)
     {
       smesh->EnsureNCMesh(true);
@@ -355,6 +365,7 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
     smesh.reset();
   }
 
+  // Debug: optionally write the partitioned and final meshes to tmp/ for inspection.
   if constexpr (false)
   {
     auto tmp = fs::path(iodata.problem.output) / "tmp";
@@ -371,7 +382,6 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
       std::string pfile =
           mfem::MakeParFilename(tmp.string() + "part.", Mpi::Rank(comm), ".mesh", width);
       std::ofstream fo(pfile);
-      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
       fo.precision(MSH_FLT_PRECISION);
       gpmesh.ParPrint(fo);
     }
@@ -379,13 +389,33 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
       std::string pfile =
           mfem::MakeParFilename(tmp.string() + "final.", Mpi::Rank(comm), ".mesh", width);
       std::ofstream fo(pfile);
-      // mfem::ofgzstream fo(pfile, true);  // Use zlib compression if available
       fo.precision(MSH_FLT_PRECISION);
       pmesh->ParPrint(fo);
     }
   }
 
   return pmesh;
+}
+
+std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm)
+{
+  return Partition(iodata, Load(iodata, comm), comm);
+}
+
+double ComputeReferenceLength(const std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm comm)
+{
+  // Ranks without a copy of the serial mesh contribute 0; the Allreduce(MAX) picks up
+  // the value from the rank(s) that hold one.
+  double Lc_local = 0.0;
+  if (mesh)
+  {
+    mfem::Vector bbmin, bbmax;
+    mesh->GetBoundingBox(bbmin, bbmax);
+    bbmax -= bbmin;
+    Lc_local = *std::max_element(bbmax.begin(), bbmax.end());
+  }
+  Mpi::GlobalMax(1, &Lc_local, comm);
+  return Lc_local;
 }
 
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
