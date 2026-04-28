@@ -148,12 +148,6 @@ PALACE_ENUM_STRING_DEFINE(Device, {{Device::CPU, "CPU"},
                                    {Device::GPU, "GPU"},
                                    {Device::DEBUG, "Debug"}})
 
-PALACE_ENUM_STRING_DEFINE(PMLStretchFormulation,
-                          {{PMLStretchFormulation::FIXED, "Fixed"},
-                           {PMLStretchFormulation::CFS, "CFS"},
-                           {PMLStretchFormulation::FREQUENCY_DEPENDENT,
-                            "FrequencyDependent"}})
-
 PALACE_ENUM_STRING_DEFINE(PMLCoordinateType,
                           {{PMLCoordinateType::CARTESIAN, "Cartesian"}})
 

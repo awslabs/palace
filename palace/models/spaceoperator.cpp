@@ -402,13 +402,13 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
 
 // Which PML profiles participate in a given operator piece. MaterialOperator packs all
 // profiles into one context; SpaceOperator filters so GetStiffnessMatrix and
-// GetMassMatrix pick up FIXED/CFS profiles (their ω₀ is baked into the context at
-// setup), while GetExtraSystemMatrix(ω) picks up FREQUENCY_DEPENDENT profiles (ω is
-// refreshed to the live solve frequency just before assembly). Filtering zeros the
-// attr→profile slot of excluded profiles; the QFunction treats pidx<0 as coeff=0.
+// GetMassMatrix pick up static profiles (their ω₀ is baked into the context at setup),
+// while GetExtraSystemMatrix(ω) picks up frequency-dependent profiles (ω is refreshed
+// to the live solve frequency just before assembly). Filtering zeros the attr→profile
+// slot of excluded profiles; the QFunction treats pidx<0 as coeff=0.
 enum class PMLFilter : char
 {
-  FixedCFS,
+  Static,
   FrequencyDependent
 };
 
@@ -437,9 +437,8 @@ std::optional<PMLIntegrator> BuildPMLIntegrator(const MaterialOperator &mat_op,
   for (std::size_t k = 0; k < attr_to_profile.size(); k++)
   {
     const int pidx = attr_to_profile[k];
-    const bool is_fd =
-        (pidx >= 0 && pidx < static_cast<int>(profiles.size())) &&
-        (profiles[pidx].formulation == PMLStretchFormulation::FREQUENCY_DEPENDENT);
+    const bool is_fd = (pidx >= 0 && pidx < static_cast<int>(profiles.size())) &&
+                       profiles[pidx].frequency_dependent;
     const bool keep = (pidx >= 0) && (is_fd == want_fd);
     if (keep)
     {
@@ -514,14 +513,13 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
     AddImagPeriodicCoefficients(1.0, fc);
   }
 
-  // PML μ̃⁻¹ curl-curl for FIXED/CFS profiles (their reference ω₀ is baked into the
-  // context at setup). FREQUENCY_DEPENDENT profiles contribute only through
-  // GetExtraSystemMatrix(ω).
+  // PML μ̃⁻¹ curl-curl for static profiles (their ω₀ is baked into the context at
+  // setup). Frequency-dependent profiles contribute only through GetExtraSystemMatrix(ω).
   std::vector<PMLIntegrator> pml_re, pml_im;
   AppendPML(pml_re, BuildPMLIntegrator(mat_op, PMLIntegKind::CurlCurl, 1.0, false,
-                                       PMLFilter::FixedCFS));
+                                       PMLFilter::Static));
   AppendPML(pml_im, BuildPMLIntegrator(mat_op, PMLIntegKind::CurlCurl, 1.0, true,
-                                       PMLFilter::FixedCFS));
+                                       PMLFilter::Static));
 
   int empty[2] = {(df.empty() && f.empty() && fb.empty() && pml_re.empty()),
                   (fc.empty() && pml_im.empty())};
@@ -611,15 +609,15 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   {
     AddImagMassCoefficients(1.0, fi);
   }
-  // PML ε̃ mass for FIXED/CFS profiles (the frequency-dependent ones go into
+  // PML ε̃ mass for static profiles (frequency-dependent ones go into
   // GetExtraSystemMatrix(ω)). Only the complex operator gets PML contributions.
   std::vector<PMLIntegrator> pml_re, pml_im;
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     AppendPML(pml_re, BuildPMLIntegrator(mat_op, PMLIntegKind::Mass, 1.0, false,
-                                         PMLFilter::FixedCFS));
-    AppendPML(pml_im, BuildPMLIntegrator(mat_op, PMLIntegKind::Mass, 1.0, true,
-                                         PMLFilter::FixedCFS));
+                                         PMLFilter::Static));
+    AppendPML(pml_im,
+              BuildPMLIntegrator(mat_op, PMLIntegKind::Mass, 1.0, true, PMLFilter::Static));
   }
   int empty[2] = {(fr.empty() && fbr.empty() && pml_re.empty()),
                   (fi.empty() && fbi.empty() && pml_im.empty())};
@@ -665,7 +663,7 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
       fbi(mat_op.MaxCeedBdrAttribute());
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
 
-  // FREQUENCY_DEPENDENT PML contributions. Refresh the live ω in the (shared) FD
+  // Frequency-dependent PML contributions. Refresh the live ω in the (shared) FD
   // regions of the master context, then build branch-local, scale-local copies. The
   // system composition is A = K + iω C − ω² M + A2. For FD regions, μ̃⁻¹ lives in A2
   // with prefactor +1 (curl-curl); ε̃ lives in A2 with prefactor −ω² (mass).
@@ -919,10 +917,10 @@ void SpaceOperator::AssemblePreconditioner(
   }
 
   // PML integrators mirror the system matrix A = a0·K + a1·C + a2·M + A2(a3):
-  //   FIXED/CFS → four-way expansion of (a0·μ̃⁻¹) and (a2·ε̃) on each branch
-  //   FREQUENCY_DEPENDENT → (1·μ̃⁻¹) and (−a3²·ε̃) at ω = a3, only on the main-sign
-  //     branch (cross terms are absorbed by the Krylov solver, matching how the bulk
-  //     extra-system matrix is built above).
+  //   static          → four-way expansion of (a0·μ̃⁻¹) and (a2·ε̃) on each branch
+  //   frequency-dep   → (1·μ̃⁻¹) and (−a3²·ε̃) at ω = a3, only on the main-sign branch
+  //                     (cross terms are absorbed by the Krylov solver, matching how
+  //                     the bulk extra-system matrix is built above).
   // Shifted variant only affects the real part of a2; the complex cross-term structure
   // is the same.
   mat_op.RefreshPMLContextFrequency(a3);
@@ -930,13 +928,13 @@ void SpaceOperator::AssemblePreconditioner(
                                         a2.imag()};
   std::vector<PMLIntegrator> pml_re, pml_im;
   AppendPMLComplexProduct(pml_re, mat_op, PMLIntegKind::CurlCurl, a0, false,
-                          PMLFilter::FixedCFS);
+                          PMLFilter::Static);
   AppendPMLComplexProduct(pml_im, mat_op, PMLIntegKind::CurlCurl, a0, true,
-                          PMLFilter::FixedCFS);
+                          PMLFilter::Static);
   AppendPMLComplexProduct(pml_re, mat_op, PMLIntegKind::Mass, a2_shifted, false,
-                          PMLFilter::FixedCFS);
+                          PMLFilter::Static);
   AppendPMLComplexProduct(pml_im, mat_op, PMLIntegKind::Mass, a2_shifted, true,
-                          PMLFilter::FixedCFS);
+                          PMLFilter::Static);
   AppendPMLBranch(pml_re, mat_op, 1.0, -a3 * a3, false, PMLFilter::FrequencyDependent);
   AppendPMLBranch(pml_im, mat_op, 1.0, -a3 * a3, true, PMLFilter::FrequencyDependent);
 
@@ -987,12 +985,12 @@ void SpaceOperator::AssemblePreconditioner(
 
   // Real-valued preconditioner approximation for PML: Re(μ̃⁻¹) curl-curl and Re(ε̃) mass
   // with the same sign/shifted rules as the bulk material. Im parts are dropped by
-  // design (Krylov absorbs the residual). FIXED/CFS regions use their reference ω₀;
-  // FREQUENCY_DEPENDENT regions use ω = a3.
+  // design (Krylov absorbs the residual). Static regions use their reference ω₀;
+  // frequency-dependent regions use ω = a3.
   mat_op.RefreshPMLContextFrequency(a3);
   const double a2r = pc_mat_shifted ? std::abs(a2.real()) : a2.real();
   std::vector<PMLIntegrator> pml;
-  AppendPMLBranch(pml, mat_op, a0.real(), a2r, /*imag_part=*/false, PMLFilter::FixedCFS);
+  AppendPMLBranch(pml, mat_op, a0.real(), a2r, /*imag_part=*/false, PMLFilter::Static);
   AppendPMLBranch(pml, mat_op, 1.0, -a3 * a3, /*imag_part=*/false,
                   PMLFilter::FrequencyDependent);
 
@@ -1036,7 +1034,7 @@ void SpaceOperator::AssemblePreconditioner(
   mat_op.RefreshPMLContextFrequency(a3);
   const double a2r = pc_mat_shifted ? std::abs(a2) : a2;
   std::vector<PMLIntegrator> pml;
-  AppendPMLBranch(pml, mat_op, a0, a2r, /*imag_part=*/false, PMLFilter::FixedCFS);
+  AppendPMLBranch(pml, mat_op, a0, a2r, /*imag_part=*/false, PMLFilter::Static);
   AppendPMLBranch(pml, mat_op, 1.0, -a3 * a3, /*imag_part=*/false,
                   PMLFilter::FrequencyDependent);
 

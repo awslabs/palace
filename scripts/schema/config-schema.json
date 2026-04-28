@@ -742,13 +742,8 @@
               "type": "number",
               "exclusiveMinimum": 0
             },
-            "StretchFormulation": {
-              "type": "string",
-              "enum": [
-                "Fixed",
-                "CFS",
-                "FrequencyDependent"
-              ]
+            "FrequencyDependent": {
+              "type": "boolean"
             },
             "ReferenceFrequency": {
               "type": "number"

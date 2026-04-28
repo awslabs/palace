@@ -56,7 +56,6 @@ PALACE_JSON_SERIALIZE_ENUM(SparseCompression)
 PALACE_JSON_SERIALIZE_ENUM(Orthogonalization)
 PALACE_JSON_SERIALIZE_ENUM(DomainOrthogonalizationWeight)
 PALACE_JSON_SERIALIZE_ENUM(Device)
-PALACE_JSON_SERIALIZE_ENUM(PMLStretchFormulation)
 PALACE_JSON_SERIALIZE_ENUM(PMLCoordinateType)
 }  // namespace palace
 
@@ -395,37 +394,24 @@ PMLData::PMLData(const json &pml)
               "\"PML.ReflectionTarget\" must be in (0, 1) (got " << reflection_target
                                                                  << ")!");
 
-  formulation = pml.value("StretchFormulation", formulation);
+  frequency_dependent = pml.value("FrequencyDependent", frequency_dependent);
   reference_frequency = pml.value("ReferenceFrequency", reference_frequency);
 
-  if (formulation == PMLStretchFormulation::FREQUENCY_DEPENDENT &&
-      pml.find("ReferenceFrequency") != pml.end())
+  if (frequency_dependent && pml.find("ReferenceFrequency") != pml.end())
   {
     Mpi::Warning("\"PML.ReferenceFrequency\" is ignored when "
-                 "\"StretchFormulation\" is \"FrequencyDependent\".\n");
+                 "\"PML.FrequencyDependent\" is true.\n");
   }
 
-  // Fixed and CFS formulations require a reference frequency — without it the PML
-  // tensors are zero and the layer is effectively inactive. Fail early rather than
-  // producing a silently-incorrect solve.
-  if ((formulation == PMLStretchFormulation::FIXED ||
-       formulation == PMLStretchFormulation::CFS) &&
-      reference_frequency <= 0.0)
+  // Static PML requires a reference frequency — without it the stretch is zero and the
+  // layer is effectively inactive. Fail early rather than producing a silently-
+  // incorrect solve.
+  if (!frequency_dependent && reference_frequency <= 0.0)
   {
-    MFEM_ABORT("\"PML.ReferenceFrequency\" must be specified and positive when "
-               "\"StretchFormulation\" is \"Fixed\" or \"CFS\". Set it to the center "
-               "frequency of your driven sweep, or the target frequency for eigenmode. "
-               "Use \"FrequencyDependent\" to avoid specifying a fixed reference.");
-  }
-
-  const bool has_cfs_params =
-      std::any_of(alpha_max.begin(), alpha_max.end(), [](double a) { return a > 0.0; }) ||
-      std::any_of(kappa_max.begin(), kappa_max.end(), [](double k) { return k != 1.0; });
-  if (has_cfs_params && formulation == PMLStretchFormulation::FIXED)
-  {
-    Mpi::Warning("\"PML.KappaMax\" or \"PML.AlphaMax\" specified but "
-                 "\"StretchFormulation\" is \"Fixed\" (pure UPML) — nonzero α and κ ≠ 1 "
-                 "will be ignored. Use \"CFS\" to enable CFS-PML.\n");
+    MFEM_ABORT("\"PML.ReferenceFrequency\" must be specified and positive for static "
+               "PML. Set it to the center frequency of your driven sweep, or the "
+               "target frequency for eigenmode. Set \"PML.FrequencyDependent\" to true "
+               "to avoid specifying a fixed reference.");
   }
 
   allow_refinement = pml.value("AllowRefinement", allow_refinement);
