@@ -10,11 +10,11 @@ SPDX-License-Identifier: Apache-2.0
 ## Eigenmode problems
 
 For eigenmode simulations,
-[`config["Problem"]["Type"]: "Eigenmode"`](../config/problem.md#config%5B%22Problem%22%5D),
+[`config["Problem"]["Type"]: "Eigenmode"`](../config/reference.md#config-problem),
 the user should specify a nonzero (but arbitrarily small) frequency above which to search
 for eigenmodes. The computed eigenvalues are written to an ASCII file named `eig.csv`, in
 the directory specified by
-[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). Also in
+[`config["Problem"]["Output"]`](../config/reference.md#config-problem). Also in
 this file are the mode quality factors and errors (absolute and backward) computed for each
 eigenpair.
 
@@ -39,7 +39,7 @@ type, see the sections [Domain postprocessing](postprocessing.md#Domain-postproc
 ## Driven problems in the frequency domain
 
 For frequency domain driven simulations,
-[`config["Problem"]["Type"]: "Driven"`](../config/problem.md#config%5B%22Problem%22%5D), the
+[`config["Problem"]["Type"]: "Driven"`](../config/reference.md#config-problem), the
 model is excited by a time harmonic incident field (port boundary) or surface current.
 The user can specify a port excitation using
 [lumped ports or numeric wave ports](boundaries.md#Lumped-and-wave-port-excitation).
@@ -48,7 +48,7 @@ The default frequency sweep behavior for frequency domain driven simulations is 
 uniform sampling from the minimum to the maximum specified frequency of interest, using the
 user specified step size. An adaptive fast frequency sweep strategy can also be used,
 activated by specifying a nonzero value for `"AdaptiveTol"` under the
-[`config["Solver"]["Driven"]`](../config/solver.md#solver%5B%22Driven%22%5D) object. In this
+[`config["Solver"]["Driven"]`](../config/reference.md#config-solver-driven) object. In this
 case, using the high-dimensional model solution computed at a few automatically selected
 frequency samples, a low-cost model is constructed and used to compute the frequency
 response over the entire frequency range of interest. The specified error tolerance ensures
@@ -60,7 +60,7 @@ speedup over the default strategy.
 Port scattering parameters, or S-parameters, are postprocessed for the column of the
 scattering matrix corresponding to the driven port index automatically for this simulation
 type and stored in an ASCII file named `port-S.csv`, in the directory specified by
-[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). Both the
+[`config["Problem"]["Output"]`](../config/reference.md#config-problem). Both the
 ``\text{dB}`` magnitude (``20\log_{10}(|S_{ij}|)``) and the phase ``\angle(S_{ij})``
 (in degrees) are written to the file. In the case that more than a single lumped or wave
 port is excited or surface current excitations are used, scattering parameter output will
@@ -105,7 +105,7 @@ for i in range(4):
 The previous simulation types describe simulations based on frequency domain formulations of
 Maxwell's equations. Time domain simulations are also possible through the transient
 simulation type:
-[`config["Problem"]["Type"]: "Transient"`](../config/problem.md#config%5B%22Problem%22%5D).
+[`config["Problem"]["Type"]: "Transient"`](../config/reference.md#config-problem).
 
 Similar to the driven simulation type in the frequency domain, transient simulations involve
 simulating the response of the system to a time-dependent excitation field specified at
@@ -113,35 +113,35 @@ lumped ports or surface current excitations in the model. The system is always s
 rest with zero initial conditions and time-integrated for a user specified duration, given
 in nanoseconds. There are several available excitation types which define the time
 dependence of the pulse or excitation waveform. These are specified under the
-[`config["Solver"]["Transient"]`](../config/solver.md#solver%5B%22Transient%22%5D) object
+[`config["Solver"]["Transient"]`](../config/reference.md#config-solver-transient) object
 using the `"Excitation"` keyword.
 
 The time histories of the lumped port voltages and currents are postprocessed and
 automatically written to ASCII files named `port-V.csv` and `port-I.csv`, respectively, in
 the directory specified by
-[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D).
+[`config["Problem"]["Output"]`](../config/reference.md#config-problem).
 Additionally, surface current excitation time histories are written to `surface-I.csv`.
 
 ## Electrostatic problems
 
 For electrostatic simulations,
-([`config["Problem"]["Type"]: "Electrostatic"`](../config/problem.md#config%5B%22Problem%22%5D),
+([`config["Problem"]["Type"]: "Electrostatic"`](../config/reference.md#config-problem),
 the user should specify a number of terminal boundaries
-([`config["Boundaries"]["Terminal"]`](../config/boundaries.md#boundaries%5B%22Terminal%22%5D))
+([`config["Boundaries"]["Terminal"]`](../config/reference.md#config-boundaries-terminal))
 as well as boundaries which are grounded
-([`config["Boundaries"]["Ground"]`](../config/boundaries.md#boundaries%5B%22Ground%22%5D)).
+([`config["Boundaries"]["Ground"]`](../config/reference.md#config-boundaries-ground)).
 For each terminal, an electrostatic field is computed by assigning the terminal of interest
 a positive unit voltage and all other terminals and grounded boundaries a zero voltage. The
 resulting fields are then used to compute the Maxwell capacitance matrix and its inverse,
 which are written to an ASCII file named `terminal-C.csv` and `terminal-Cinv.csv`,
 respectively, in the directory specified by
-[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). The mutual
+[`config["Problem"]["Output"]`](../config/reference.md#config-problem). The mutual
 capacitance matrix is also computed and written to `terminal-Cm.csv` in the same directory.
 
 ## Magnetostatic problems
 
 For magnetostatic simulations,
-([`config["Problem"]["Type"]: "Magnetostatic"`](../config/problem.md#config%5B%22Problem%22%5D),
+([`config["Problem"]["Type"]: "Magnetostatic"`](../config/reference.md#config-problem),
 the user should specify a number of source current boundaries. For each current source, a
 magnetostatic field is computed by applying a unit current to the source index of interest,
 leaving all other sources open with no excitation. Surfaces which are expected to carry
@@ -150,7 +150,7 @@ current should be labeled as perfectly conducting, which prescribes a zero magne
 boundary condition. The resulting fields are used to compute the inductance matrix and its
 inverse, which are written to an ASCII file named `terminal-M.csv` and `terminal-Minv.csv`,
 respectively, in the directory specified by
-[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D). A "mutual"
+[`config["Problem"]["Output"]`](../config/reference.md#config-problem). A "mutual"
 inductance matrix which has the same form as the mutual capacitance matrix (its entries are
 based on current differences between ports rather than absolute currents) is computed and
 written to `terminal-Mm.csv` in the same directory.

@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Configuration File Schema -- \"Boundaries\"",
+  "title": "Boundaries",
+  "description": "Boundary condition configuration.",
   "type": "object",
   "additionalProperties": false,
   "required": [],
@@ -13,6 +14,8 @@
     "PEC":
     {
       "type": "object",
+      "title": "PEC Boundary",
+      "description": "Perfect electric conductor (PEC) boundary condition: enforces zero tangential electric field. This is a homogeneous Dirichlet condition for frequency/time domain and magnetostatic formulations.",
       "additionalProperties": false,
       "required": ["Attributes"],
       "properties":
@@ -23,6 +26,8 @@
     "PMC":
     {
       "type": "object",
+      "title": "PMC Boundary",
+      "description": "Perfect magnetic conductor (PMC) boundary condition: enforces zero tangential magnetic field. This is the natural (homogeneous Neumann) boundary condition; it also imposes symmetry of the electric field across the surface.",
       "additionalProperties": false,
       "required": ["Attributes"],
       "properties":
@@ -33,6 +38,7 @@
     "Impedance":
     {
       "type": "array",
+      "description": "Array of surface impedance boundary conditions. The surface impedance relates the tangential electric and magnetic fields using the parallel combination of the specified resistance, inductance, and capacitance per square.",
       "additionalItems": false,
       "items":
       {
@@ -42,26 +48,52 @@
         "properties":
         {
           "Attributes": { "$ref": "#/$defs/Attributes" },
-          "Rs": { "type": "number" },
-          "Ls": { "type": "number" },
-          "Cs": { "type": "number" }
+          "Rs":
+          {
+            "type": "number",
+            "description": "Surface resistance for this impedance boundary, Ω/sq.",
+            "default": 0.0
+          },
+          "Ls":
+          {
+            "type": "number",
+            "description": "Surface inductance for this impedance boundary, H/sq.",
+            "default": 0.0
+          },
+          "Cs":
+          {
+            "type": "number",
+            "description": "Surface capacitance for this impedance boundary, F/sq.",
+            "default": 0.0
+          }
         }
       }
     },
     "Absorbing":
     {
       "type": "object",
+      "title": "Absorbing Boundary",
+      "description": "Farfield absorbing (scattering) boundary conditions. These are artificial boundary conditions applied at farfield boundaries to minimize reflections.",
       "additionalProperties": false,
       "required": ["Attributes"],
       "properties":
       {
         "Attributes": { "$ref": "#/$defs/Attributes" },
-        "Order": { "type": "integer", "minimum": 1, "maximum": 2 }
+        "Order":
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2,
+          "description": "Specify a first- or second-order approximation for the absorbing boundary condition. Second-order is only available for frequency domain driven simulations.",
+          "default": 1,
+          "x-palace-advanced": true
+        }
       }
     },
     "Conductivity":
     {
       "type": "array",
+      "description": "Array of finite conductivity surface impedance boundaries. Models the effect of a boundary with non-infinite conductivity for conductors with thickness much larger than the skin depth. Only available for frequency domain driven and eigenmode simulations.",
       "additionalItems": false,
       "items":
       {
@@ -71,16 +103,37 @@
         "properties":
         {
           "Attributes": { "$ref": "#/$defs/Attributes" },
-          "Conductivity": { "type": "number" },
-          "Permeability": { "type": "number" },
-          "Thickness": { "type": "number" },
-          "External": { "type": "boolean" }
+          "Conductivity":
+          {
+            "type": "number",
+            "description": "Electrical conductivity for this boundary, S/m."
+          },
+          "Permeability":
+          {
+            "type": "number",
+            "description": "Relative permeability for this boundary.",
+            "default": 1.0
+          },
+          "Thickness":
+          {
+            "type": "number",
+            "description": "Optional conductor thickness in mesh length units. Activates a finite-thickness boundary condition for metal.",
+            "default": 0.0
+          },
+          "External":
+          {
+            "type": "boolean",
+            "description": "Whether this boundary is on the exterior of the computational domain. Relevant for the thickness correction.",
+            "default": false
+          }
         }
       }
     },
     "LumpedPort":
     {
       "type": "array",
+      "title": "Lumped Port",
+      "description": "Array of lumped port boundary conditions. Lumped ports can be specified on boundaries internal to the computational domain.",
       "additionalItems": false,
       "items":
       {
@@ -93,26 +146,79 @@
         ],
         "properties":
         {
-          "Index": { "type": "integer", "exclusiveMinimum": 0 },
-          "Attributes": { "$ref": "#/$defs/Attributes" },
+          "Index":
+          {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Index of this lumped port, used in postprocessing output files. Must be unique across all port and source types."
+          },
+          "Attributes": { "$ref": "#/$defs/Attributes", "description": "Integer array of mesh boundary attributes for this lumped port boundary. If this port is to be a multielement lumped port with more than a single lumped element, use the \"Elements\" array described below." },
           "Direction": { "$ref": "#/$defs/Direction" },
-          "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
-          "R": { "type": "number" },
-          "L": { "type": "number" },
-          "C": { "type": "number" },
-          "Rs": { "type": "number" },
-          "Ls": { "type": "number" },
-          "Cs": { "type": "number" },
-          "Excitation": {
-            "oneOf" : [
+          "CoordinateSystem":
+          {
+            "description": "Coordinate system used to express the `\"Direction\"` vector. If a keyword argument is used for `\"Direction\"` this value is ignored.",
+            "default": "Cartesian",
+            "oneOf": [
+              { "const": "Cartesian",   "description": "Standard Cartesian coordinates." },
+              { "const": "Cylindrical", "description": "Cylindrical coordinates (enables `+R`/`-R` directions)." }
+            ]
+          },
+          "R":
+          {
+            "type": "number",
+            "description": "Circuit resistance, Ω. Use with `\"L\"` and `\"C\"`; do not mix with surface parameters `\"Rs\"`, `\"Ls\"`, `\"Cs\"`.",
+            "default": 0.0
+          },
+          "L":
+          {
+            "type": "number",
+            "description": "Circuit inductance, H. Use with `\"R\"` and `\"C\"`; do not mix with surface parameters `\"Rs\"`, `\"Ls\"`, `\"Cs\"`.",
+            "default": 0.0
+          },
+          "C":
+          {
+            "type": "number",
+            "description": "Circuit capacitance, F. Use with `\"R\"` and `\"L\"`; do not mix with surface parameters `\"Rs\"`, `\"Ls\"`, `\"Cs\"`.",
+            "default": 0.0
+          },
+          "Rs":
+          {
+            "type": "number",
+            "description": "Surface resistance, Ω/sq. Use with `\"Ls\"` and `\"Cs\"`; do not mix with circuit parameters `\"R\"`, `\"L\"`, `\"C\"`.",
+            "default": 0.0
+          },
+          "Ls":
+          {
+            "type": "number",
+            "description": "Surface inductance, H/sq. Use with `\"Rs\"` and `\"Cs\"`; do not mix with circuit parameters `\"R\"`, `\"L\"`, `\"C\"`.",
+            "default": 0.0
+          },
+          "Cs":
+          {
+            "type": "number",
+            "description": "Surface capacitance, F/sq. Use with `\"Rs\"` and `\"Ls\"`; do not mix with circuit parameters `\"R\"`, `\"L\"`, `\"C\"`.",
+            "default": 0.0
+          },
+          "Excitation":
+          {
+            "description": "Turns on or off port excitation for driven or transient simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
+            "default": false,
+            "oneOf":
+            [
               { "type": "boolean" },
               { "type": "integer", "minimum": 0 }
             ]
           },
-          "Active": { "type": "boolean" },
+          "Active":
+          {
+            "type": "boolean",
+            "description": "Turns on or off the damping boundary condition for this port for driven or transient simulations.",
+            "default": true
+          },
           "Elements":
           {
             "type": "array",
+            "description": "Sub-elements for a multielement lumped port. Use this instead of the top-level `\"Attributes\"`/`\"Direction\"`/`\"CoordinateSystem\"` when the port spans multiple disjoint boundary surfaces. Elements add in parallel.",
             "additionalItems": false,
             "items":
             {
@@ -123,7 +229,15 @@
               {
                 "Attributes": { "$ref": "#/$defs/Attributes" },
                 "Direction": { "$ref": "#/$defs/Direction" },
-                "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] }
+                "CoordinateSystem":
+                {
+                  "description": "Coordinate system for this element's `\"Direction\"` vector.",
+                  "default": "Cartesian",
+                  "oneOf": [
+                    { "const": "Cartesian",   "description": "Standard Cartesian coordinates." },
+                    { "const": "Cylindrical", "description": "Cylindrical coordinates." }
+                  ]
+                }
               }
             }
           }
@@ -133,6 +247,8 @@
     "WavePort":
     {
       "type": "array",
+      "title": "Wave Port",
+      "description": "Array of numeric wave port boundary conditions. Wave ports can only be specified on the true boundary of the computational domain (they must be \"one-sided\"). A 2D boundary mode eigenproblem is solved on each wave port to compute the port mode shape. Only available for frequency domain driven and eigenmode simulations.",
       "additionalItems": false,
       "items":
       {
@@ -141,28 +257,89 @@
         "required": ["Index", "Attributes"],
         "properties":
         {
-          "Index": { "type": "integer", "exclusiveMinimum": 0 },
+          "Index":
+          {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Index of this wave port, used in postprocessing output files. Must be unique across all port and source types."
+          },
           "Attributes": { "$ref": "#/$defs/Attributes" },
-          "Mode": { "type": "integer", "exclusiveMinimum": 0 },
-          "Offset": { "type": "number", "minimum": 0.0 },
-          "SolverType": { "type": "string" },
-          "Excitation": {
-            "oneOf" : [
+          "Mode":
+          {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Mode index (1-based) for the characteristic port mode of this wave port, ranked in order of decreasing wave number.",
+            "default": 1
+          },
+          "Offset":
+          {
+            "type": "number",
+            "minimum": 0.0,
+            "description": "Offset distance used for S-parameter de-embedding for this wave port, specified in mesh length units.",
+            "default": 0.0
+          },
+          "SolverType":
+          {
+            "type": "string",
+            "description": "Eigenvalue solver for computing the boundary mode. Accepts the same options as [`/Solver/Eigenmode/Type`](@ref config-solver-eigenmode-type).",
+            "default": "Default"
+          },
+          "Excitation":
+          {
+            "description": "Turns on or off port excitation for driven simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
+            "default": false,
+            "oneOf":
+            [
               { "type": "boolean" },
               { "type": "integer", "minimum": 0 }
             ]
           },
-          "Active": { "type": "boolean" },
-          "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
-          "KSPTol": { "type": "number", "exclusiveMinimum": 0.0 },
-          "EigenTol": { "type": "number", "exclusiveMinimum": 0.0 },
-          "Verbose": { "type": "integer", "minimum": 0.0 }
+          "Active":
+          {
+            "type": "boolean",
+            "description": "Turns on or off the damping boundary condition for this port for driven simulations.",
+            "default": true
+          },
+          "MaxIts":
+          {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Maximum number of iterations for the GMRES solver used in the wave port boundary mode analysis.",
+            "default": 45,
+            "x-palace-advanced": true
+          },
+          "KSPTol":
+          {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "description": "Tolerance for the linear solver used in the wave port boundary mode analysis.",
+            "default": 1.0e-8,
+            "x-palace-advanced": true
+          },
+          "EigenTol":
+          {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "description": "Tolerance for the eigenvalue solver used in the wave port boundary mode analysis.",
+            "default": 1.0e-6,
+            "x-palace-advanced": true
+          },
+          "Verbose":
+          {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Verbosity level for the wave port linear and eigensolvers.",
+            "default": 0,
+            "x-palace-advanced": true
+          }
         }
       }
     },
     "WavePortPEC":
     {
       "type": "object",
+      "title": "Wave Port PEC",
+      "description": "Additional PEC boundary conditions for the 2D eigensolve used in wave port mode analysis, along with those already specified under [PEC](@ref config-boundaries-pec) and [Conductivity](@ref config-boundaries-conductivity). Only relevant when [WavePort](@ref config-boundaries-waveport) boundaries are present.",
       "additionalProperties": false,
       "required": ["Attributes"],
       "properties":
@@ -173,6 +350,8 @@
     "SurfaceCurrent":
     {
       "type": "array",
+      "title": "Surface Current",
+      "description": "Array of surface current source boundaries. Prescribes a unit source surface current excitation on the given boundary to excite a driven, transient, or magnetostatic simulation. For magnetostatic simulations, inductance matrix entries are extracted for each surface current boundary.",
       "additionalItems": false,
       "items":
       {
@@ -185,13 +364,27 @@
         ],
         "properties":
         {
-          "Index": { "type": "integer", "exclusiveMinimum": 0 },
-          "Attributes": { "$ref": "#/$defs/Attributes" },
+          "Index":
+          {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Index of this surface current source, used in postprocessing output files. Must be unique across all port and source types."
+          },
+          "Attributes": { "$ref": "#/$defs/Attributes", "description": "Integer array of mesh boundary attributes for this surface current boundary. If this is to be a object with more than a single element, use the \"Elements\" array described below." },
           "Direction": { "$ref": "#/$defs/Direction" },
-          "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
+          "CoordinateSystem":
+          {
+            "description": "Coordinate system for the `\"Direction\"` vector. Same options as [`/LumpedPort/CoordinateSystem`](@ref config-boundaries-lumpedport-coordinatesystem).",
+            "default": "Cartesian",
+            "oneOf": [
+              { "const": "Cartesian",   "description": "Standard Cartesian coordinates." },
+              { "const": "Cylindrical", "description": "Cylindrical coordinates." }
+            ]
+          },
           "Elements":
           {
             "type": "array",
+            "description": "Sub-elements for a multielement surface current source. Use this instead of the top-level `\"Attributes\"`/`\"Direction\"`/`\"CoordinateSystem\"` when the source spans multiple disjoint boundary surfaces. Elements add in parallel to give the same total current as a single-element source.",
             "additionalItems": false,
             "items":
             {
@@ -202,7 +395,15 @@
               {
                 "Attributes": { "$ref": "#/$defs/Attributes" },
                 "Direction": { "$ref": "#/$defs/Direction" },
-                "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] }
+                "CoordinateSystem":
+                {
+                  "description": "Coordinate system for this element's `\"Direction\"` vector.",
+                  "default": "Cartesian",
+                  "oneOf": [
+                    { "const": "Cartesian",   "description": "Standard Cartesian coordinates." },
+                    { "const": "Cylindrical", "description": "Cylindrical coordinates." }
+                  ]
+                }
               }
             }
           }
@@ -212,6 +413,8 @@
     "Ground":
     {
       "type": "object",
+      "title": "Ground Boundary",
+      "description": "Zero-voltage (ground) boundary condition for electrostatic simulations. Mutually exclusive with [PEC](@ref config-boundaries-pec).",
       "additionalProperties": false,
       "required": ["Attributes"],
       "properties":
@@ -222,6 +425,8 @@
     "ZeroCharge":
     {
       "type": "object",
+      "title": "Zero Charge Boundary",
+      "description": "Zero surface charge (homogeneous Neumann) boundary condition for electrostatic simulations. Also imposes symmetry of the electric field across the surface. Mutually exclusive with [PMC](@ref config-boundaries-pmc).",
       "additionalProperties": false,
       "required": ["Attributes"],
       "properties":
@@ -232,6 +437,7 @@
     "Terminal":
     {
       "type": "array",
+      "description": "Array of terminal boundaries for electrostatic simulations. Capacitance matrix entries are extracted for each terminal.",
       "additionalItems": false,
       "items":
       {
@@ -240,7 +446,12 @@
         "required": ["Index", "Attributes"],
         "properties":
         {
-          "Index": { "type": "integer", "exclusiveMinimum": 0 },
+          "Index":
+          {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "description": "Index of this terminal, used in postprocessing output files and to index the computed capacitance matrix."
+          },
           "Attributes": { "$ref": "#/$defs/Attributes" }
         }
       }
@@ -248,6 +459,8 @@
     "Periodic":
     {
       "type": "object",
+      "title": "Periodic Boundary",
+      "description": "Periodic boundary conditions for surfaces whose meshes are identical after translation and/or rotation. Floquet periodic boundary conditions with a phase shift are also supported.",
       "additionalProperties": false,
       "required": ["BoundaryPairs"],
       "properties":
@@ -256,6 +469,7 @@
         "BoundaryPairs":
         {
           "type": "array",
+          "description": "Array of donor–receiver boundary pairs defining the periodic mapping.",
           "additionalItems": false,
           "items":
           {
@@ -276,6 +490,8 @@
     "Postprocessing":
     {
       "type": "object",
+      "title": "Boundary Postprocessing",
+      "description": "Configuration for boundary postprocessing.",
       "additionalProperties": false,
       "required": [],
       "properties":
@@ -283,6 +499,8 @@
         "SurfaceFlux":
         {
           "type": "array",
+          "title": "Surface Flux",
+          "description": "Array of surface flux postprocessing boundaries. Results are written to `surface-F.csv` in the output directory.",
           "additionalItems": false,
           "items":
           {
@@ -291,17 +509,36 @@
             "required": ["Index", "Attributes", "Type"],
             "properties":
             {
-              "Index": { "type": "integer", "exclusiveMinimum": 0 },
+              "Index":
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "description": "Index of this surface flux postprocessing boundary, used in output files."
+              },
               "Attributes": { "$ref": "#/$defs/Attributes" },
-              "Type": { "type": "string", "enum": ["Electric", "Magnetic", "Power"] },
-              "TwoSided": { "type": "boolean" },
+              "Type":
+              {
+                "description": "Type of surface flux to integrate over the boundary.",
+                "oneOf": [
+                  { "const": "Electric", "description": "Integrate the electric flux density." },
+                  { "const": "Magnetic", "description": "Integrate the magnetic flux density." },
+                  { "const": "Power",    "description": "Integrate the Poynting vector (energy flux)." }
+                ]
+              },
+              "TwoSided":
+              {
+                "type": "boolean",
+                "description": "For internal boundary surfaces: when `false`, the flux on both sides is averaged; when `true`, it is summed with opposite normal direction.",
+                "default": false
+              },
               "Center":
               {
                 "type": "array",
                 "additionalItems": false,
                 "items": { "type": "number" },
                 "minItems": 3,
-                "maxItems": 3
+                "maxItems": 3,
+                "description": "Point used to determine the outward normal orientation, in mesh length units. Only used when `\"TwoSided\"` is `false`. If not specified, the point will be computed as the centroid of the axis-aligned bounding box for all elements making up the postprocessing boundary."
               }
             }
           }
@@ -309,6 +546,7 @@
         "Dielectric":
         {
           "type": "array",
+          "description": "Array of interface dielectric loss postprocessing boundaries. Computes energy participation ratios (EPR) and quality factors for dielectric interfaces. See also the [reference documentation](../reference.md#Bulk-and-interface-dielectric-loss). Results are written to `surface-Q.csv` in the output directory.",
           "additionalItems": false,
           "items":
           {
@@ -317,27 +555,68 @@
             "required": ["Index", "Attributes", "Thickness", "Permittivity"],
             "properties":
             {
-              "Index": { "type": "integer", "exclusiveMinimum": 0 },
+              "Index":
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "description": "Index of this dielectric interface, used in output files."
+              },
               "Attributes": { "$ref": "#/$defs/Attributes" },
-              "Type": { "type": "string", "enum": ["Default", "MA", "MS", "SA"] },
-              "Thickness": { "type": "number" },
-              "Permittivity": { "type": "number" },
-              "LossTan": { "type": "number" }
+              "Type":
+              {
+                "description": "Interface type used to determine the boundary conditions for computing the EPR. See also [theory reference](../reference.md#Bulk-and-interface-dielectric-loss).",
+                "default": "Default",
+                "oneOf": [
+                  { "const": "Default", "description": "Use the full electric field evaluated at the boundary." },
+                  { "const": "MA",      "description": "Use metal-air interface boundary conditions." },
+                  { "const": "MS",      "description": "Use metal-substrate interface boundary conditions." },
+                  { "const": "SA",      "description": "Use substrate-air interface boundary conditions." }
+                ]
+              },
+              "Thickness":
+              {
+                "type": "number",
+                "description": "Thickness of this dielectric interface, in mesh length units."
+              },
+              "Permittivity":
+              {
+                "type": "number",
+                "description": "Relative permittivity of this dielectric interface layer. This should be the interface layer permittivity for the specific \"Type\" of interface specified."
+              },
+              "LossTan":
+              {
+                "type": "number",
+                "description": "Loss tangent of this dielectric interface.",
+                "default": 0.0
+              }
             }
           }
         },
-        "FarField": {
+        "FarField":
+        {
           "type": "object",
+          "title": "Far Field",
+          "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary.",
           "additionalProperties": false,
           "required": ["Attributes"],
-          "properties": {
+          "properties":
+          {
             "Attributes": { "$ref": "#/$defs/Attributes" },
-            "NSample": { "type": "integer", "minimum": 0 },
-            "ThetaPhis": {
+            "NSample":
+            {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Number of uniformly-spaced points used to discretize the far-field sphere.",
+              "default": 0
+            },
+            "ThetaPhis":
+            {
               "type": "array",
-              "items": {
+              "description": "Additional specific (θ, φ) angle pairs in degrees at which to evaluate the far field. θ ∈ [0°, 180°] is the polar angle, φ ∈ [0°, 360°] is the azimuthal angle.",
+              "items":
+              {
                 "type": "array",
-                "items": {"type": "number"},
+                "items": { "type": "number" },
                 "minItems": 2,
                 "maxItems": 2
               }
@@ -351,27 +630,31 @@
   {
     "Attributes":
     {
+      "description": "Integer array of mesh boundary attributes this object applies to.",
       "type": "array",
       "additionalItems": false,
-      "items": { "type": "integer"},
+      "items": { "type": "integer" },
       "minItems": 1
     },
     "DonorAttributes":
     {
+      "description": "Integer array of donor mesh boundary attributes for a periodic boundary pair.",
       "type": "array",
       "additionalItems": false,
-      "items": { "type": "integer"},
+      "items": { "type": "integer" },
       "minItems": 1
     },
     "ReceiverAttributes":
     {
+      "description": "Integer array of receiver mesh boundary attributes for a periodic boundary pair.",
       "type": "array",
       "additionalItems": false,
-      "items": { "type": "integer"},
+      "items": { "type": "integer" },
       "minItems": 1
     },
     "Translation":
     {
+      "description": "3-element translation vector `[dx, dy, dz]` from donor to receiver boundary, in mesh length units. If neither `\"Translation\"` nor `\"AffineTransformation\"` are specified, the transformation is detected automatically.",
       "type": "array",
       "additionalItems": false,
       "items": { "type": "number" },
@@ -380,6 +663,7 @@
     },
     "AffineTransformation":
     {
+      "description": "16-element row-major 4×4 affine transformation matrix from donor to receiver boundary, in mesh length units. If neither `\"Translation\"` nor `\"AffineTransformation\"` are specified, the transformation is detected automatically.",
       "type": "array",
       "additionalItems": false,
       "items": { "type": "number" },
@@ -388,14 +672,17 @@
     },
     "FloquetWaveVector":
     {
+      "description": "3-element Floquet wave vector `[kx, ky, kz]` defining the phase delay between periodic boundaries, in radians per mesh length unit.",
       "type": "array",
       "additionalItems": false,
       "items": { "type": "number" },
       "minItems": 3,
-      "maxItems": 3
+      "maxItems": 3,
+      "default": [0.0, 0.0, 0.0]
     },
     "Direction":
     {
+      "description": "Excitation direction. Axis-aligned Cartesian directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. Coaxial directions use `\"+R\"`, `\"-R\"`. Alternatively, specify a normalized 3-element array, e.g. `[0.0, 1.0, 0.0]`. The coordinate system is determined by `\"CoordinateSystem\"`.",
       "anyOf":
       [
         {

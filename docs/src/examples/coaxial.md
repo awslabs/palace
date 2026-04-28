@@ -51,7 +51,7 @@ boundary condition, enforcing zero tangential magnetic field and thus zero surfa
 density.
 
 The excitation pulse is configured under
-[`config["Solver"]["Transient"]`](../config/solver.md#solver%5B%22Transient%22%5D). Here, we
+[`config["Solver"]["Transient"]`](../config/reference.md#config-solver-transient). Here, we
 use a modulated Gaussian pulse shape, with time dependence given by the expression
 
 ```math

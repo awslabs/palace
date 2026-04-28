@@ -16,7 +16,7 @@ given *Palace* simulation.
 
 First, the mesh comes with its own unit of length. Users specify the conversion
 between one unit of length on the mesh to meters through the
-[`config["Model"]["L0"]`](../config/problem.md#config%5B%Model%22%5D) parameter.
+[`config["Model"]["L0"]`](../config/reference.md#config-model) parameter.
 
 Second, *Palace* defines a system of non-dimensional units where the actual
 solver operates.
@@ -34,7 +34,7 @@ The non-dimensional unit system is constructed as follows:
 
 Length: Lengths are measured in units of the characteristic length `Lc`, which
 is the mesh size in mesh units, unless `Lc` is manually specified in
-[`config["Model"]["Lc"]`](../config/problem.md#config%5B%Model%22%5D). The extent
+[`config["Model"]["Lc"]`](../config/reference.md#config-model). The extent
 of the mesh is 1 in these units, with extent defined as the largest single
 dimension (e.g., for a cuboid of size 10m x 20m x 40m, this would be 40m).
 
@@ -154,6 +154,33 @@ provided in [`scripts/schema/`](https://github.com/awslabs/palace/blob/main/scri
 to parse the configuration file and check that the fields are correctly specified. This
 script and the associated Schema are also installed and can be accessed in
 `<INSTALL_DIR>/bin`.
+
+### Automatic documentation generation
+
+The [configuration file reference](../config/reference.md) is generated from the same JSON Schema
+files, using the script
+[`docs/generate_config_docs.jl`](https://github.com/awslabs/palace/blob/main/docs/generate_config_docs.jl).
+When adding a new configuration key in C++, add a corresponding Schema entry, including `"title"`,
+`"description"`, `"type"`, and `"default"`/`"required"` where applicable. Run the generator
+afterwards to update `docs/src/config/reference.md` and commit both the Schema and the generated
+`.md` file.
+
+Note that the `"default"` values in the Schema are documentation placeholders only and are not read
+or enforced by the C++ solver.
+
+The generator reads the following JSON Schema fields:
+
+  - `"title"`: Human-readable section or field name. Falls back to the JSON key if absent.
+  - `"description"`: Extended documentation rendered below the field name.
+  - `"type"`: Shown in type badge (`integer`, `number`, etc.)
+  - `"default"`: Shown in `default` badge. Fields without a default should generally be marked as
+    `"required"`. Fields without a default (and without `required`) are shown as `—`.
+  - `"required"`: Fields listed here receive a `required` badge instead of a default.
+  - `"enum"` / `"oneOf"` with `"const"`: Renders an inline enumeration table with per-value
+    descriptions within the field's description.
+  - `"minimum"`, `"maximum"`, `"exclusiveMinimum"`, `"exclusiveMaximum"`: Shown in constraint badge.
+  - `"x-palace-advanced"`: Custom field; shows `advanced` badge if `true`.
+  - `"x-palace-deprecated"`: Custom field; shows `deprecated` badge if `true`.
 
 ## Timing
 

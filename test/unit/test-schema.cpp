@@ -572,10 +572,9 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
                    {"Solver", json::object()}};
 
     std::string err = ValidateConfig(config);
-    CHECK(
-        err ==
-        "At [\"Problem\"][\"Type\"]: instance not found in required enum; valid values: "
-        "\"Eigenmode\", \"Driven\", \"Transient\", \"Electrostatic\", \"Magnetostatic\"\n");
+    CHECK(err.find("[\"Problem\"][\"Type\"]") != std::string::npos);
+    CHECK(err.find("valid values: \"Eigenmode\", \"Driven\", \"Transient\", "
+                   "\"Electrostatic\", \"Magnetostatic\"") != std::string::npos);
   }
 
   SECTION("Invalid enum in nested array")
@@ -626,6 +625,25 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
           "property 'Attributes' not found in object\n"
           "At [\"Boundaries\"][\"LumpedPort\"][0]: [combination: oneOf / case#1] required "
           "property 'Elements' not found in object\n");
+  }
+
+  SECTION("Check oneOf child errors shown, if not oneOf + const enum replacement")
+  {
+    // LumpedPort requires either Attributes or Elements. Here oneOf is not just an enum
+    // replacement.
+    json config = {
+        {"Problem", {{"Type", "Driven"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", {{"LumpedPort", {{{"Index", 1}, {"R", 50.0}}}}}},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
+
+    std::string err = ValidateConfig(config);
+    // Child branch errors for oneOf
+    CHECK(err.find("case#0") != std::string::npos);
+    CHECK(err.find("case#1") != std::string::npos);
+    // Must NOT list "valid values:"
+    CHECK(err.find("valid values:") == std::string::npos);
   }
 
   SECTION("Additional property in nested object not allowed")

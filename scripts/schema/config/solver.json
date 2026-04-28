@@ -1,93 +1,290 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Configuration File Schema -- \"Solver\"",
+  "title": "Solver",
+  "description": "Solver configuration for all simulation types.",
   "type": "object",
   "additionalProperties": false,
   "required": [],
   "properties":
   {
-    "Order": { "type": "integer", "minimum": 1 },
-    "PartialAssemblyOrder": { "type": "integer", "minimum": 1 },
-    "QuadratureOrderJacobian": { "type": "boolean" },
-    "QuadratureOrderExtra": { "type": "integer" },
-    "Device": { "type": "string", "enum": ["CPU", "GPU", "Debug"] },
-    "Backend": { "type": "string" },
+    "Order":
+    {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Finite element order (degree). Arbitrary high-order spaces are supported.",
+      "default": 1
+    },
+    "PartialAssemblyOrder":
+    {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Order at which to switch from full assembly of finite element operators to [partial assembly](https://mfem.org/howto/assembly_levels/). Setting to `1` fully activates partial assembly on all levels; a large value (greater than [Order](@ref config-solver-order)) results in fully assembled sparse matrix operators.",
+      "default": 1
+    },
+    "QuadratureOrderJacobian":
+    {
+      "type": "boolean",
+      "description": "Use the Jacobian-based quadrature order instead of the default.",
+      "default": false,
+      "x-palace-advanced": true
+    },
+    "QuadratureOrderExtra":
+    {
+      "type": "integer",
+      "description": "Extra quadrature order added on top of the default.",
+      "default": 0,
+      "x-palace-advanced": true
+    },
+    "Device":
+    {
+      "description": "The runtime device configuration passed to [MFEM](https://mfem.org/howto/assembly_levels/) to activate different computation backends. When *Palace* is built with OpenMP support (`PALACE_WITH_OPENMP=ON`), `omp` is automatically added to the MFEM device list.",
+      "default": "CPU",
+      "oneOf": [
+        { "const": "CPU",   "description": "Run on CPU." },
+        { "const": "GPU",   "description": "Run on GPU via CUDA (`MFEM_USE_CUDA=ON`) or HIP (`MFEM_USE_HIP=ON`)." },
+        { "const": "Debug", "description": "MFEM debug device, useful for diagnosing GPU-related issues." }
+      ]
+    },
+    "Backend":
+    {
+      "type": "string",
+      "description": "Specifies the [libCEED backend](https://libceed.org/en/latest/gettingstarted/#backends) to use. If empty, a suitable default is selected based on [Device](@ref config-solver-device).",
+      "default": ""
+    },
     "Eigenmode":
     {
       "type": "object",
+      "title": "Eigenmode Solver",
+      "description": "Configuration for the eigenvalue solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Eigenmode\"`.",
       "additionalProperties": false,
       "required": ["Target"],
       "properties":
       {
-        "Target": { "type": "number", "exclusiveMinimum": 0.0 },
-        "Tol": { "type": "number", "minimum": 0.0 },
-        "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
-        "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
-        "N": { "type": "integer", "exclusiveMinimum": 0 },
-        "Save": { "type": "integer" },
-        "Type": { "type": "string" },
-        "PEPLinear": { "type": "boolean" },
-        "Scaling": { "type": "boolean" },
-        "StartVector": { "type": "boolean" },
-        "StartVectorConstant": { "type": "boolean" },
-        "MassOrthogonal": { "type": "boolean" },
-        "NonlinearType": { "type": "string" },
-        "RefineNonlinear": { "type": "boolean" },
-        "LinearTol": { "type": "number", "minimum": 0.0 },
-        "TargetUpper": { "type": "number" },
-        "PreconditionerLag": { "type" : "integer", "minimum": 0 },
-        "PreconditionerLagTol": { "type": "number", "minimum": 0.0 },
-        "MaxRestart": { "type" : "integer", "minimum": 0 }
+        "Target":
+        {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "(Nonzero) frequency target above which to search for eigenvalues, GHz."
+        },
+        "Tol":
+        {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Relative convergence tolerance for the eigenvalue solver.",
+          "default": 1.0e-6
+        },
+        "MaxIts":
+        {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Maximum number of iterations for the iterative eigenvalue solver. A value less than 1 uses the solver default.",
+          "default": 0
+        },
+        "MaxSize":
+        {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Maximum subspace dimension for the eigenvalue solver. A value less than 1 uses the solver default.",
+          "default": 0
+        },
+        "N":
+        {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Number of eigenvalues to compute.",
+          "default": 1
+        },
+        "Save":
+        {
+          "type": "integer",
+          "description": "Number of computed field modes to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization). Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
+          "default": 0
+        },
+        "Type":
+        {
+          "description": "Specifies the eigenvalue solver backend.",
+          "default": "Default",
+          "oneOf": [
+            { "const": "SLEPc",   "description": "Krylov-Schur solver from SLEPc." },
+            { "const": "ARPACK",  "description": "ARPACK eigensolver." },
+            { "const": "Default", "description": "Use the default solver (currently SLEPc Krylov-Schur)." }
+          ]
+        },
+        "NonlinearType":
+        {
+          "description": "Specifies the nonlinear eigenvalue solver for problems with frequency-dependent boundary conditions.",
+          "default": "Hybrid",
+          "oneOf": [
+            { "const": "Hybrid", "description": "Hybrid algorithm: solve a polynomial (quadratic) approximation first, then refine with a quasi-Newton nonlinear eigensolver." },
+            { "const": "SLP",    "description": "SLEPc Successive Linear Problem (SLP) nonlinear eigensolver." }
+          ]
+        },
+        "TargetUpper":
+        {
+          "type": "number",
+          "description": "Upper frequency bound for the eigenvalue search, GHz. Only used for nonlinear problems. A value less than or equal to zero uses `3 × Target` automatically. An inaccurate upper bound can negatively affect convergence of the nonlinear eigensolver.",
+          "default": -1,
+          "x-palace-advanced": true
+        },
+        "PEPLinear":
+        {
+          "type": "boolean",
+          "description": "Linearize the polynomial eigenvalue problem before solving.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "Scaling":
+        {
+          "type": "boolean",
+          "description": "Enable scaling of the eigenvalue problem.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "StartVector":
+        {
+          "type": "boolean",
+          "description": "Use a random start vector for the eigensolver.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "StartVectorConstant":
+        {
+          "type": "boolean",
+          "description": "Use a constant start vector instead of a random one.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "MassOrthogonal":
+        {
+          "type": "boolean",
+          "description": "Orthogonalize eigenvectors with respect to the mass matrix.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "RefineNonlinear":
+        {
+          "type": "boolean",
+          "description": "Refine nonlinear eigenvalue solutions after the initial solve.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "LinearTol":
+        {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Tolerance for the inner linear solve within the nonlinear eigensolver.",
+          "default": 1.0e-3,
+          "x-palace-advanced": true
+        },
+        "PreconditionerLag":
+        {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of eigensolver iterations between preconditioner updates.",
+          "default": 10,
+          "x-palace-advanced": true
+        },
+        "PreconditionerLagTol":
+        {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Residual tolerance below which preconditioner updates are skipped.",
+          "default": 1.0e-4,
+          "x-palace-advanced": true
+        },
+        "MaxRestart":
+        {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum number of restarts for the eigensolver.",
+          "default": 2,
+          "x-palace-advanced": true
+        }
       }
     },
     "Driven":
     {
       "type": "object",
+      "title": "Driven Solver",
+      "description": "Configuration for the frequency domain driven solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Driven\"`.",
       "additionalProperties": false,
       "properties":
       {
-        "MinFreq": { "type": "number" },
-        "MaxFreq": { "type": "number" },
-        "FreqStep": { "type": "number" },
-        "SaveStep": { "type": "integer" },
-        "Samples": {
+        "MinFreq":
+        {
+          "type": "number",
+          "description": "Lower bound of the frequency sweep interval, GHz. Deprecated: use [`Linear Samples`](@ref config-solver-driven-samples-linear) interface instead.", 
+          "x-palace-deprecated": true
+        },
+        "MaxFreq":
+        {
+          "type": "number",
+          "description": "Upper bound of the frequency sweep interval, GHz. Deprecated: use [`Linear Samples`](@ref config-solver-driven-samples-linear) interface instead.", 
+          "x-palace-deprecated": true
+        },
+        "FreqStep":
+        {
+          "type": "number",
+          "description": "Frequency step size for the frequency sweep, GHz. Deprecated: use [`Linear Samples`](@ref config-solver-driven-samples-linear) interface instead.", 
+          "x-palace-deprecated": true
+        },
+        "SaveStep":
+        {
+          "type": "integer",
+          "description": "Controls how often, in number of frequency steps, to save computed fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization). Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output). Deprecated: use [`Linear Samples`](@ref config-solver-driven-samples-linear) interface instead.",
+          "default": 0,
+          "x-palace-deprecated": true
+        },
+        "Samples":
+        {
           "type": "array",
-          "items": {
+          "description": "Array of frequency sample specifications. Combined with `\"MinFreq\"`/`\"MaxFreq\"`/`\"FreqStep\"` to form a sorted, unique set of samples.",
+          "items":
+          {
             "oneOf": [
               {
                 "type": "object",
-                "properties": {
-                  "Type": { "const": "Point" },
-                  "Freq": { "type": "array", "items": { "type": "number" } },
-                  "SaveStep": { "type": "integer" },
-                  "AddToPROM": { "type": "boolean" }
+                "title": "Point Samples",
+                "description": "Explicit list of frequency sample points.",
+                "properties":
+                {
+                  "Type": { "const": "Point", "default": "Point" },
+                  "Freq": { "type": "array", "items": { "type": "number" }, "description": "Explicit frequencies to sample, GHz." },
+                  "SaveStep": { "type": "integer", "description": "Save fields every N steps within this sample. `0` disables saving.", "default": 0 },
+                  "AddToPROM": { "type": "boolean", "description": "Force inclusion of these points in the PROM for adaptive sweep (primarily a debugging tool).", "default": false }
                 },
                 "required": ["Freq"],
                 "additionalProperties": false
               },
               {
                 "type": "object",
-                "properties": {
-                  "Type": { "const": "Linear" },
-                  "MinFreq": { "type": "number", "minimum": 0.0 },
-                  "MaxFreq": { "type": "number", "minimum": 0.0 },
-                  "FreqStep": { "type": "number", "minimum": 0.0 },
-                  "NSample": { "type": "integer", "minimum": 0 },
-                  "SaveStep": { "type": "integer" },
-                  "AddToPROM": { "type": "boolean" }
+                "title": "Linear Samples",
+                "description": "Linearly-spaced frequency samples.",
+                "properties":
+                {
+                  "Type": { "const": "Linear", "default": "Linear" },
+                  "MinFreq": { "type": "number", "minimum": 0.0, "description": "Lower bound, GHz." },
+                  "MaxFreq": { "type": "number", "minimum": 0.0, "description": "Upper bound, GHz." },
+                  "FreqStep": { "type": "number", "minimum": 0.0, "description": "Step size, GHz. Mutually exclusive with `\"NSample\"`." },
+                  "NSample": { "type": "integer", "minimum": 0, "description": "Number of samples. Mutually exclusive with `\"FreqStep\"`." },
+                  "SaveStep": { "type": "integer", "description": "Save fields every N steps. `0` disables saving.", "default": 0 },
+                  "AddToPROM": { "type": "boolean", "description": "Force inclusion in the PROM for adaptive sweep.", "default": false }
                 },
                 "required": ["MinFreq", "MaxFreq"],
                 "additionalProperties": false
               },
               {
                 "type": "object",
-                "properties": {
-                  "Type": { "const": "Log" },
-                  "MinFreq": { "type": "number", "exclusiveMinimum": 0.0 },
-                  "MaxFreq": { "type": "number", "exclusiveMinimum": 0.0 },
-                  "NSample": { "type": "integer", "minimum": 1 },
-                  "SaveStep": { "type": "integer" },
-                  "AddToPROM": { "type": "boolean" }
+                "title": "Log Samples",
+                "description": "Logarithmically-spaced frequency samples.",
+                "properties":
+                {
+                  "Type": { "const": "Log", "default": "Log" },
+                  "MinFreq": { "type": "number", "exclusiveMinimum": 0.0, "description": "Lower bound, GHz." },
+                  "MaxFreq": { "type": "number", "exclusiveMinimum": 0.0, "description": "Upper bound, GHz." },
+                  "NSample": { "type": "integer", "minimum": 1, "description": "Number of samples." },
+                  "SaveStep": { "type": "integer", "description": "Save fields every N steps. `0` disables saving.", "default": 0 },
+                  "AddToPROM": { "type": "boolean", "description": "Force inclusion in the PROM for adaptive sweep.", "default": false }
                 },
                 "required": ["Type", "MinFreq", "MaxFreq", "NSample"],
                 "additionalProperties": false
@@ -95,100 +292,488 @@
             ]
           }
         },
-        "Save": { "type": "array", "additionalItems": false, "items": { "type": "number" }},
-        "Restart": { "type": "integer", "exclusiveMinimum": 0 },
-        "AdaptiveTol": { "type": "number", "minimum": 0.0 },
-        "AdaptiveMaxSamples": { "type": "number", "exclusiveMinimum": 0 },
-        "AdaptiveConvergenceMemory": { "type": "integer", "exclusiveMinimum": 0 },
-        "AdaptiveGSOrthogonalization": { "type": "string", "enum": ["MGS", "CGS", "CGS2"] },
-        "AdaptiveCircuitSynthesis": { "type": "boolean" },
-        "AdaptiveCircuitSynthesisDomainOrthogonalization": { "type": "string", "enum": ["Energy", "FEBasisIdentity", "SpaceOverlap"] }
+        "Save":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items": { "type": "number" },
+          "description": "Additional frequencies at which to save computed fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), in addition to those specified by `\"SaveStep\"`. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output)."
+        },
+        "Restart":
+        {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "1-based sample index from which to restart a partial frequency sweep (i.e. `\"Restart\": x` starts from the *x*-th sample of the combined sample set). Not valid for adaptive sweep.",
+          "default": 1
+        },
+        "AdaptiveTol":
+        {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Relative error convergence tolerance for adaptive fast frequency sweep. A value of `0` disables adaptive sweep and the full-order model is solved at each frequency step. A positive value ensures the reduced-order model is reliable relative to the full-order model in the frequency band of interest.",
+          "default": 0.0
+        },
+        "AdaptiveMaxSamples":
+        {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Maximum number of frequency samples used to construct the reduced-order model for adaptive sweep, if the tolerance (`\"AdaptiveTol\"`) is not met first. In simulations with multiple excitations, this is the maximum per excitation.",
+          "default": 20
+        },
+        "AdaptiveConvergenceMemory":
+        {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Number of consecutive samples satisfying the error tolerance required to declare convergence of the adaptive sampling algorithm.",
+          "default": 2
+        },
+        "AdaptiveGSOrthogonalization":
+        {
+          "description": "Gram-Schmidt variant for orthogonalizing the adaptive reduced-order model basis. Same options as [`/Linear/GSOrthogonalization`](@ref config-solver-linear-gsorthogonalization).",
+          "default": "CGS2",
+          "oneOf": [
+            { "const": "MGS",  "description": "Modified Gram-Schmidt." },
+            { "const": "CGS",  "description": "Classical Gram-Schmidt." },
+            { "const": "CGS2", "description": "Two-step classical Gram-Schmidt with reorthogonalization." }
+          ],
+          "x-palace-advanced": true
+        },
+        "AdaptiveCircuitSynthesis":
+        {
+          "type": "boolean",
+          "description": "Use the adaptive reduced-order model to print synthesized circuit-like matrices (L⁻¹, R⁻¹, C). Requires adaptive sweep to be enabled, all `LumpedPort` fields to be orthogonal, and only LRC-type frequency dependence (no `WavePort`, `Conductivity`, or second-order farfield BCs).",
+          "default": false
+        },
+        "AdaptiveCircuitSynthesisDomainOrthogonalization":
+        {
+          "description": "Weight matrix type for domain orthogonalization when building synthesized circuit matrices.",
+          "default": "Energy",
+          "oneOf": [
+            { "const": "Energy",         "description": "Use the energy-based domain mass matrix." },
+            { "const": "FEBasisIdentity", "description": "Use the identity matrix in the finite element basis." },
+            { "const": "SpaceOverlap",    "description": "Use the physical-space field overlap." }
+          ],
+          "x-palace-advanced": true
+        }
       }
     },
     "Transient":
     {
       "type": "object",
+      "title": "Transient Solver",
+      "description": "Configuration for the time domain driven solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Transient\"`. Simulations always start from rest at *t* = 0.",
       "additionalProperties": false,
       "required": ["Excitation", "MaxTime", "TimeStep"],
       "properties":
       {
-        "Type": { "type": "string" },
-        "Excitation": { "type": "string" },
-        "ExcitationFreq": { "type": "number" },
-        "ExcitationWidth": { "type": "number" },
-        "MaxTime": { "type": "number", "exclusiveMinimum": 0.0 },
-        "TimeStep": { "type": "number", "exclusiveMinimum": 0.0 },
-        "SaveStep": { "type": "integer" },
-        "Order": {"type": "integer", "minimum": 2, "maximum": 5},
-        "RelTol": {"type": "number", "exclusiveMinimum": 0.0},
-        "AbsTol": {"type": "number", "exclusiveMinimum": 0.0}
+        "Type":
+        {
+          "description": "Time integration scheme for the second-order ODE system.",
+          "default": "Default",
+          "oneOf": [
+            { "const": "GeneralizedAlpha", "description": "Second-order implicit generalized-α method with ``\\rho_\\infty = 1``. Unconditionally stable." },
+            { "const": "ARKODE",           "description": "SUNDIALS ARKode implicit Runge-Kutta with adaptive time-stepping. Requires SUNDIALS support (see [installation options](../install.md#Configuration-options))." },
+            { "const": "CVODE",            "description": "SUNDIALS CVODE implicit multistep method with adaptive time-stepping. Requires SUNDIALS support (see [installation options](../install.md#Configuration-options))." },
+            { "const": "RungeKutta",       "description": "Two-stage singly diagonal implicit Runge-Kutta (SDIRK). Second-order, L-stable." },
+            { "const": "Default",          "description": "Use the default `\"GeneralizedAlpha\"` scheme." }
+          ]
+        },
+        "Excitation":
+        {
+          "description": "Controls the time dependence of the source excitation.",
+          "oneOf": [
+            { "const": "Sinusoidal",             "description": "Sinusoidal excitation at a user-specified frequency." },
+            { "const": "Gaussian",               "description": "Gaussian pulse with a user-specified width (defines the bandwidth)." },
+            { "const": "DifferentiatedGaussian", "description": "Differentiated Gaussian pulse with a user-specified width." },
+            { "const": "ModulatedGaussian",      "description": "Modulated Gaussian pulse at a center frequency and width, with no DC component." },
+            { "const": "Ramp",                   "description": "Differentiable unit step function to model the ramp up to a DC signal." },
+            { "const": "SmoothStep",             "description": "Smooth many-times differentiable unit step over a specified width." }
+          ]
+        },
+        "ExcitationFreq":
+        {
+          "type": "number",
+          "description": "Center frequency for harmonic source excitations, GHz. Only relevant when `\"Excitation\"` is `\"Sinusoidal\"`, `\"Gaussian\"`, `\"DifferentiatedGaussian\"`, or `\"ModulatedGaussian\"`.",
+          "default": 0.0
+        },
+        "ExcitationWidth":
+        {
+          "type": "number",
+          "description": "Pulse width for Gaussian-type source excitations, ns. Only relevant when `\"Excitation\"` is `\"Gaussian\"`, `\"DifferentiatedGaussian\"`, `\"ModulatedGaussian\"`, or `\"SmoothStep\"`.",
+          "default": 0.0
+        },
+        "MaxTime":
+        {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "End of simulation time interval, ns."
+        },
+        "TimeStep":
+        {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Uniform time step size, ns."
+        },
+        "SaveStep":
+        {
+          "type": "integer",
+          "description": "Controls how often, in number of time steps, to save computed fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization). Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
+          "default": 0
+        },
+        "Order":
+        {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 5,
+          "description": "Order of adaptive Runge-Kutta integrators or maximum multistep method order, must be within `[2, 5]`. Only relevant when `\"Type\"` is `\"ARKODE\"` or `\"CVODE\"`.",
+          "default": 2
+        },
+        "RelTol":
+        {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Relative tolerance for adaptive time-stepping. Only relevant when `\"Type\"` is `\"ARKODE\"` or `\"CVODE\"`.",
+          "default": 1.0e-4
+        },
+        "AbsTol":
+        {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Absolute tolerance for adaptive time-stepping. Only relevant when `\"Type\"` is `\"ARKODE\"` or `\"CVODE\"`.",
+          "default": 1.0e-9
+        }
       }
     },
     "Electrostatic":
     {
       "type": "object",
+      "title": "Electrostatic Solver",
+      "description": "Configuration for the electrostatic solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Electrostatic\"`.",
       "additionalProperties": false,
       "required": [],
       "properties":
       {
-        "Save": { "type": "integer", "minimum": 0 }
+        "Save":
+        {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of computed electric field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the entries in the computed capacitance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
+          "default": 0
+        }
       }
     },
     "Magnetostatic":
     {
       "type": "object",
+      "title": "Magnetostatic Solver",
+      "description": "Configuration for the magnetostatic solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Magnetostatic\"`.",
       "additionalProperties": false,
       "required": [],
       "properties":
       {
-        "Save": { "type": "integer", "minimum": 0 }
+        "Save":
+        {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of computed magnetic field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the entries in the computed inductance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
+          "default": 0
+        }
       }
     },
     "Linear":
     {
       "type": "object",
+      "title": "Linear Solver",
+      "description": "Configuration for the linear solver used by all simulation types.",
       "additionalProperties": false,
       "required": [],
       "properties":
       {
-        "Type": { "type": "string" },
-        "KSPType": { "type": "string" },
-        "Tol": { "type": "number", "minimum": 0.0 },
-        "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
-        "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
-        "InitialGuess": { "type": "boolean" },
-        "MGMaxLevels": { "type": "integer", "minimum": 1 },
-        "MGCoarsenType": { "type": "string" },
-        "MGUseMesh": { "type": "boolean" },
-        "MGAuxiliarySmoother": { "type": "boolean" },
-        "MGCycleIts": { "type": "integer", "exclusiveMinimum": 0 },
-        "MGSmoothIts": { "type": "integer", "exclusiveMinimum": 0 },
-        "MGSmoothOrder": { "type": "integer", "exclusiveMinimum": 0 },
-        "MGSmoothEigScaleMax": { "type": "number", "exclusiveMinimum": 0 },
-        "MGSmoothEigScaleMin": { "type": "number", "minimum": 0 },
-        "MGSmoothChebyshev4th": { "type": "boolean" },
-        "PCMatReal": { "type": "boolean" },
-        "PCMatShifted": { "type": "boolean" },
-        "ComplexCoarseSolve": {"type": "boolean"},
-        "DropSmallEntries": {"type": "boolean"},
-        "ReorderingReuse": {"type": "boolean"},
-        "PCSide": { "type": "string" },
-        "ColumnOrdering": { "type": "string" },
-        "STRUMPACKCompressionType": { "type": "string" },
-        "STRUMPACKCompressionTol": { "type": "number", "minimum": 0.0 },
-        "STRUMPACKLossyPrecision": { "type": "integer", "minimum": 0 },
-        "STRUMPACKButterflyLevels": { "type": "integer", "minimum": 0 },
-        "SuperLU3DCommunicator": { "type": "boolean" },
-        "AMSVectorInterpolation": { "type": "boolean" },
-        "AMSSingularOperator": { "type": "boolean" },
-        "AMGAggressiveCoarsening": { "type": "boolean" },
-        "AMSMaxIts": { "type": "integer", "minimum": 0 },
-        "DivFreeTol": { "type": "number", "minimum": 0.0 },
-        "DivFreeMaxIts": { "type": "integer", "minimum": 0 },
-        "EstimatorTol": { "type": "number", "minimum": 0.0 },
-        "EstimatorMaxIts": { "type": "integer", "minimum": 0 },
-        "EstimatorMG": { "type": "boolean" },
-        "GSOrthogonalization": { "type": "string", "enum": ["MGS", "CGS", "CGS2"] }
+        "Type":
+        {
+          "description": "Specifies the solver used for preconditioning the linear system.",
+          "default": "Default",
+          "oneOf": [
+            { "const": "SuperLU",   "description": "[SuperLU_DIST](https://github.com/xiaoyeli/superlu_dist) sparse direct solver in real double precision. For frequency domain problems uses a real approximation to the complex system matrix. Requires SuperLU_DIST support (see [installation options](../install.md#Configuration-options))." },
+            { "const": "STRUMPACK", "description": "[STRUMPACK](https://portal.nersc.gov/project/sparse/strumpack) sparse direct solver in real double precision. Not compatible with magnetostatics (singular curl-curl operator); use `\"AMS\"` instead. Requires STRUMPACK support (see [installation options](../install.md#Configuration-options))." },
+            { "const": "MUMPS",     "description": "[MUMPS](http://mumps.enseeiht.fr/) sparse direct solver in real double precision. Requires MUMPS support (see [installation options](../install.md#Configuration-options))." },
+            { "const": "AMS",       "description": "Hypre's [Auxiliary-space Maxwell Solver (AMS)](https://hypre.readthedocs.io/en/latest/solvers-ams.html), an algebraic multigrid (AMG)-based preconditioner for curl-curl operators." },
+            { "const": "BoomerAMG", "description": "Hypre's [BoomerAMG](https://hypre.readthedocs.io/en/latest/solvers-boomeramg.html) algebraic multigrid solver." },
+            { "const": "Jacobi",    "description": "Diagonal Jacobi preconditioner (not recommended in general)." },
+            { "const": "Default",   "description": "Use `\"AMS\"` for curl-curl and time-domain problems; a sparse direct solver (if available) for frequency domain; `\"BoomerAMG\"` for electrostatics." }
+          ]
+        },
+        "KSPType":
+        {
+          "description": "Specifies the iterative Krylov subspace solver.",
+          "default": "Default",
+          "oneOf": [
+            { "const": "CG",      "description": "Preconditioned conjugate gradient." },
+            { "const": "GMRES",   "description": "GMRES." },
+            { "const": "FGMRES",  "description": "Flexible GMRES." },
+            { "const": "Default", "description": "Use `\"GMRES\"` for frequency domain problems; `\"CG\"` for real symmetric positive-definite problems (transient, electrostatic, magnetostatic)." }
+          ]
+        },
+        "Tol":
+        {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Relative residual convergence tolerance for the iterative linear solver.",
+          "default": 1.0e-6
+        },
+        "MaxIts":
+        {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Maximum number of iterations for the iterative linear solver.",
+          "default": 100
+        },
+        "MaxSize":
+        {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Maximum Krylov space size for GMRES/FGMRES. A value less than 1 defaults to `\"MaxIts\"`.",
+          "default": 0
+        },
+        "InitialGuess":
+        {
+          "type": "boolean",
+          "description": "Use the previous solution as an initial guess for the iterative solver.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "MGMaxLevels":
+        {
+          "type": "integer",
+          "minimum": 1,
+          "description": "When greater than 1, enables [geometric multigrid preconditioning](https://en.wikipedia.org/wiki/Multigrid_method) using p- and h-multigrid coarsening. The solver specified by `\"Type\"` is used on the coarsest level; fine levels use Chebyshev smoothing.",
+          "default": 100
+        },
+        "MGCoarsenType":
+        {
+          "description": "Coarsening strategy for constructing p-multigrid levels.",
+          "default": "Logarithmic",
+          "oneOf": [
+            { "const": "Logarithmic", "description": "Logarithmic coarsening." },
+            { "const": "Linear",      "description": "Linear coarsening." }
+          ]
+        },
+        "MGUseMesh":
+        {
+          "type": "boolean",
+          "description": "Use the mesh hierarchy for h-multigrid coarsening.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "MGAuxiliarySmoother":
+        {
+          "type": "boolean",
+          "description": "Use an auxiliary space smoother on multigrid levels.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "MGCycleIts":
+        {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Number of V-cycle iterations per preconditioner application for multigrid preconditioners (when geometric multigrid is enabled or `\"Type\"` is `\"AMS\"` or `\"BoomerAMG\"`). A value less than 1 defaults to 2 for AMS frequency domain problems, 1 otherwise.",
+          "default": 0
+        },
+        "MGSmoothIts":
+        {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Number of pre- and post-smooth iterations for multigrid preconditioners, when the geometric multigrid preconditioner is enabled.",
+          "default": 1
+        },
+        "MGSmoothOrder":
+        {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Polynomial smoothing order for geometric multigrid. A value less than 1 defaults to `max(2 × solution order, 4)`.",
+          "default": 0
+        },
+        "MGSmoothEigScaleMax":
+        {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Maximum eigenvalue scale for the Chebyshev smoother.",
+          "default": 1.0,
+          "x-palace-advanced": true
+        },
+        "MGSmoothEigScaleMin":
+        {
+          "type": "number",
+          "minimum": 0,
+          "description": "Minimum eigenvalue scale for the Chebyshev smoother.",
+          "default": 0.0,
+          "x-palace-advanced": true
+        },
+        "MGSmoothChebyshev4th":
+        {
+          "type": "boolean",
+          "description": "Use 4th-kind Chebyshev polynomial smoother.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "PCMatReal":
+        {
+          "type": "boolean",
+          "description": "When `true`, builds the preconditioner for frequency domain problems using a real-valued approximation of the system matrix. Always used on the coarsest multigrid level regardless of this setting.",
+          "default": false
+        },
+        "PCMatShifted":
+        {
+          "type": "boolean",
+          "description": "When `true`, builds the preconditioner using a positive-definite approximation by flipping the sign of the mass matrix contribution. Can improve performance at high frequencies relative to the lowest nonzero eigenfrequencies of the model.",
+          "default": false
+        },
+        "ComplexCoarseSolve":
+        {
+          "type": "boolean",
+          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver. When `false`, uses the real-valued approximation.",
+          "default": false
+        },
+        "DropSmallEntries":
+        {
+          "type": "boolean",
+          "description": "When `true`, drops entries smaller than double-precision machine epsilon from the system matrix used in the sparse direct solver.",
+          "default": false
+        },
+        "ReorderingReuse":
+        {
+          "type": "boolean",
+          "description": "Reuse the matrix reordering from the previous solve.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "PCSide":
+        {
+          "description": "Preconditioning side. Not all options are available for all iterative solver choices.",
+          "default": "Default",
+          "oneOf": [
+            { "const": "Left",    "description": "Left preconditioning." },
+            { "const": "Right",   "description": "Right preconditioning." },
+            { "const": "Default", "description": "Solver-default side." }
+          ]
+        },
+        "ColumnOrdering":
+        {
+          "type": "string",
+          "description": "Column ordering algorithm for sparse direct solvers: `\"METIS\"`, `\"ParMETIS\"`, `\"Scotch\"`, `\"PTScotch\"`, `\"PORD\"`, `\"AMD\"`, `\"RCM\"`, `\"Default\"`.",
+          "default": "Default",
+          "x-palace-advanced": true
+        },
+        "STRUMPACKCompressionType":
+        {
+          "type": "string",
+          "description": "STRUMPACK compression type: `\"None\"`, `\"BLR\"`, `\"HSS\"`, `\"HODLR\"`, `\"ZFP\"`, `\"BLR-HODLR\"`, `\"ZFP-BLR-HODLR\"`.",
+          "default": "None",
+          "x-palace-advanced": true
+        },
+        "STRUMPACKCompressionTol":
+        {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Tolerance for STRUMPACK lossy compression.",
+          "default": 1.0e-3,
+          "x-palace-advanced": true
+        },
+        "STRUMPACKLossyPrecision":
+        {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Precision bits for STRUMPACK ZFP lossy compression.",
+          "default": 16,
+          "x-palace-advanced": true
+        },
+        "STRUMPACKButterflyLevels":
+        {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of butterfly levels for STRUMPACK HODLR compression.",
+          "default": 1,
+          "x-palace-advanced": true
+        },
+        "SuperLU3DCommunicator":
+        {
+          "type": "boolean",
+          "description": "Use a 3D process grid communicator for SuperLU_DIST.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "AMSVectorInterpolation":
+        {
+          "type": "boolean",
+          "description": "Use vector interpolation in AMS.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "AMSSingularOperator":
+        {
+          "type": "boolean",
+          "description": "Indicate to AMS that the operator is singular (e.g. magnetostatics with no essential boundary conditions).",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "AMGAggressiveCoarsening":
+        {
+          "type": "boolean",
+          "description": "Enable aggressive coarsening in BoomerAMG.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "AMSMaxIts":
+        {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of AMS iterations per preconditioner application when geometric multigrid is enabled (`\"MGMaxLevels\"` > 1). A value less than 1 defaults to the solution order ([`/Solver/Order`](@ref config-solver-order)).",
+          "default": 0
+        },
+        "DivFreeTol":
+        {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Relative tolerance for divergence-free cleaning used in the eigenmode simulation type. Ignored when a nonzero Floquet wave vector is specified or when a nonzero [LondonDepth](@ref config-domains-materials-londondepth) is used.",
+          "default": 1.0e-12
+        },
+        "DivFreeMaxIts":
+        {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum number of iterations for divergence-free cleaning. Ignored under the same conditions as `\"DivFreeTol\"`.",
+          "default": 1000
+        },
+        "EstimatorTol":
+        {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Relative tolerance for the flux projection solve used in the error estimate calculation.",
+          "default": 1.0e-6
+        },
+        "EstimatorMaxIts":
+        {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum number of iterations for the flux projection solve used in the error estimate calculation.",
+          "default": 10000
+        },
+        "EstimatorMG":
+        {
+          "type": "boolean",
+          "description": "When `true`, uses a multigrid preconditioner with AMG coarse solve for the error estimator linear solver instead of Jacobi.",
+          "default": false
+        },
+        "GSOrthogonalization":
+        {
+          "description": "Gram-Schmidt variant used to orthogonalize vectors in Krylov subspace methods and other parts of the solver.",
+          "default": "MGS",
+          "oneOf": [
+            { "const": "MGS",  "description": "Modified Gram-Schmidt." },
+            { "const": "CGS",  "description": "Classical Gram-Schmidt." },
+            { "const": "CGS2", "description": "Two-step classical Gram-Schmidt with reorthogonalization." }
+          ]
+        }
       }
     }
   }

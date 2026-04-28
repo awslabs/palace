@@ -1,47 +1,208 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Configuration File Schema -- \"Model\"",
+  "title": "Model",
+  "description": "Mesh and model configuration.",
   "type": "object",
   "additionalProperties": false,
   "required": ["Mesh"],
   "properties":
   {
-    "Mesh": { "type": "string" },
-    "L0": { "type": "number", "exclusiveMinimum": 0.0 },
-    "Lc": { "type": "number", "exclusiveMinimum": 0.0 },
-    "RemoveCurvature": { "type": "boolean" },
-    "MakeSimplex": { "type": "boolean" },
-    "MakeHexahedral": { "type": "boolean" },
-    "ReorderElements": { "type": "boolean" },
-    "CleanUnusedElements": { "type": "boolean" },
-    "CrackInternalBoundaryElements": { "type": "boolean" },
-    "RefineCrackElements": { "type": "boolean" },
-    "CrackDisplacementFactor": { "type": "number", "minimum": 0.0 },
-    "AddInterfaceBoundaryElements": { "type": "boolean" },
-    "ExportPrerefinedMesh": { "type": "boolean" },
-    "ReorientTetMesh": { "type": "boolean" },
-    "Partitioning": { "type": "string" },
+    "Mesh":
+    {
+      "type": "string",
+      "description": "Input mesh file path. An absolute path is recommended. If the provided mesh is nonconformal, it is assumed to come from a previous *Palace* AMR solve, and all mesh preprocessing checks and modifications (for example [CrackInternalBoundaryElements](@ref config-model-crackinternalboundaryelements)) are skipped."
+    },
+    "L0":
+    {
+      "type": "number",
+      "exclusiveMinimum": 0.0,
+      "description": "Unit, relative to meters, for mesh vertex coordinates. For example, a value of `1.0e-6` means the mesh coordinates are in μm.",
+      "default": 1.0e-6
+    },
+    "Lc":
+    {
+      "type": "number",
+      "description": "Characteristic length scale used for nondimensionalization, specified in mesh length units. This keyword should typically not be specified by the user. A value less than or equal to zero uses an internally calculated length scale based on the bounding box of the computational domain. A value of `1.0` will disable nondimensionalization, so that all computations will take place in the same units as the mesh.",
+      "default": 0.0
+    },
+    "RemoveCurvature":
+    {
+      "type": "boolean",
+      "description": "Project high-order nodes to the mesh surface, removing all curvature before the simulation.",
+      "default": false,
+      "x-palace-advanced": true
+    },
+    "MakeSimplex":
+    {
+      "type": "boolean",
+      "description": "Convert all mesh elements to simplices (tetrahedra/triangles).",
+      "default": false,
+      "x-palace-advanced": true
+    },
+    "MakeHexahedral":
+    {
+      "type": "boolean",
+      "description": "Convert all mesh elements to hexahedra.",
+      "default": false,
+      "x-palace-advanced": true
+    },
+    "ReorderElements":
+    {
+      "type": "boolean",
+      "description": "Reorder mesh elements to improve cache efficiency.",
+      "default": false,
+      "x-palace-advanced": true
+    },
+    "CleanUnusedElements":
+    {
+      "type": "boolean",
+      "description": "Remove elements not connected to any domain material.",
+      "default": true,
+      "x-palace-advanced": true
+    },
+    "CrackInternalBoundaryElements":
+    {
+      "type": "boolean",
+      "description": "Duplicate nodes along internal boundary elements to create a crack.",
+      "default": true,
+      "x-palace-advanced": true
+    },
+    "RefineCrackElements":
+    {
+      "type": "boolean",
+      "description": "Refine elements adjacent to cracked internal boundaries.",
+      "default": true,
+      "x-palace-advanced": true
+    },
+    "CrackDisplacementFactor":
+    {
+      "type": "number",
+      "minimum": 0.0,
+      "description": "Displacement factor applied to cracked nodes as a fraction of the local element size.",
+      "default": 1.0e-12,
+      "x-palace-advanced": true
+    },
+    "AddInterfaceBoundaryElements":
+    {
+      "type": "boolean",
+      "description": "Add boundary elements at interfaces between domains that lack them.",
+      "default": true,
+      "x-palace-advanced": true
+    },
+    "ExportPrerefinedMesh":
+    {
+      "type": "boolean",
+      "description": "Export the mesh after preprocessing but before AMR refinement.",
+      "default": false,
+      "x-palace-advanced": true
+    },
+    "ReorientTetMesh":
+    {
+      "type": "boolean",
+      "description": "Reorient tetrahedral elements to ensure positive Jacobians.",
+      "default": false,
+      "x-palace-advanced": true
+    },
+    "Partitioning":
+    {
+      "type": "string",
+      "description": "Path to a mesh partitioning file. If empty, partitioning is computed automatically.",
+      "default": "",
+      "x-palace-advanced": true
+    },
     "Refinement":
     {
       "type": "object",
+      "title": "Mesh Refinement",
+      "description": "Configuration for adaptive and uniform mesh refinement.",
       "additionalProperties": false,
       "required": [],
       "properties":
       {
-        "Tol": {"type": "number", "exclusiveMinimum": 0.0},
-        "MaxIts": {"type": "integer", "minimum": 0},
-        "MaxSize": {"type": "number", "minimum": 0},
-        "UpdateFraction": {"type": "number", "exclusiveMinimum": 0.0, "exclusiveMaximum": 1.0},
-        "Nonconformal": {"type": "boolean"},
-        "MaxNCLevels": {"type": "integer", "minimum": 0},
-        "MaximumImbalance": {"type": "number", "minimum": 1.0},
-        "SaveAdaptIterations": {"type": "boolean"},
-        "SaveAdaptMesh": {"type": "boolean"},
-        "UniformLevels": { "type": "integer", "minimum": 0 },
-        "SerialUniformLevels": { "type": "integer", "minimum": 0 },
+        "Tol":
+        {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Stop adaptive mesh refinement (AMR) when the norm of the estimated error falls below this value. The error is reported in `error-indicators.csv`.",
+          "default": 1.0e-2
+        },
+        "MaxIts":
+        {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum number of AMR iterations to perform.",
+          "default": 0
+        },
+        "MaxSize":
+        {
+          "type": "number",
+          "minimum": 0,
+          "description": "The maximum allowable number of degrees of freedom for AMR. If an adapted mesh exceeds this value no further adaptation will occur. A value less than 1 means that no maximum size constraint will be imposed.",
+          "default": 0
+        },
+        "UpdateFraction":
+        {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "exclusiveMaximum": 1.0,
+          "description": "Dörfler marking fraction used to specify which elements to refine. This marking strategy will mark the smallest number of elements that make up \"UpdateFraction\" of the total error in the mesh. A larger value will refine more elements per iteration, at the cost of the final mesh being less efficient.",
+          "default": 0.7
+        },
+        "Nonconformal":
+        {
+          "type": "boolean",
+          "description": "Use nonconformal refinement in adaptation. Required for non-simplex meshes.",
+          "default": true
+        },
+        "MaxNCLevels":
+        {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum number of nonconformal refinement levels. `0` means no limit.",
+          "default": 1,
+          "x-palace-advanced": true
+        },
+        "MaximumImbalance":
+        {
+          "type": "number",
+          "minimum": 1.0,
+          "description": "Maximum ratio of elements between the most- and least-loaded MPI ranks before repartitioning.",
+          "default": 1.1,
+          "x-palace-advanced": true
+        },
+        "SaveAdaptIterations":
+        {
+          "type": "boolean",
+          "description": "Save postprocessing results from each AMR iteration in a subdirectory `iterationX`.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "SaveAdaptMesh":
+        {
+          "type": "boolean",
+          "description": "Save the final adapted mesh to disk.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "UniformLevels":
+        {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Levels of uniform parallel mesh refinement to be performed on the input mesh. If not performing AMR, these may be used as levels within a geometric multigrid scheme. If performing AMR the most refined mesh is used as the initial mesh and the coarser meshes cannot be used in a geometric multigrid scheme.",
+          "default": 0
+        },
+        "SerialUniformLevels":
+        {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Levels of uniform serial mesh refinement applied before parallel distribution.",
+          "default": 0,
+          "x-palace-advanced": true
+        },
         "Boxes":
         {
           "type": "array",
+          "description": "Array of axis-aligned box refinement regions. All elements with a node inside the box are marked for refinement.",
           "additionalItems": false,
           "items":
           {
@@ -50,14 +211,20 @@
             "required": ["Levels", "BoundingBoxMin", "BoundingBoxMax"],
             "properties":
             {
-              "Levels": { "type": "integer", "minimum": 0 },
+              "Levels":
+              {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Levels of parallel mesh refinement inside this box region."
+              },
               "BoundingBoxMin":
               {
                 "type": "array",
                 "additionalItems": false,
                 "items": { "type": "number" },
                 "minItems": 3,
-                "maxItems": 3
+                "maxItems": 3,
+                "description": "Minimum coordinates `[x, y, z]` of the axis-aligned bounding box for this refinement region, in mesh length units."
               },
               "BoundingBoxMax":
               {
@@ -65,7 +232,8 @@
                 "additionalItems": false,
                 "items": { "type": "number" },
                 "minItems": 3,
-                "maxItems": 3
+                "maxItems": 3,
+                "description": "Maximum coordinates `[x, y, z]` of the axis-aligned bounding box for this refinement region, in mesh length units."
               }
             }
           }
@@ -73,6 +241,7 @@
         "Spheres":
         {
           "type": "array",
+          "description": "Array of sphere refinement regions. All elements with a node inside the sphere are marked for refinement.",
           "additionalItems": false,
           "items":
           {
@@ -81,15 +250,26 @@
             "required": ["Levels", "Radius", "Center"],
             "properties":
             {
-              "Levels": { "type": "integer", "minimum": 0 },
-              "Radius": { "type": "number", "exclusiveMinimum": 0.0 },
+              "Levels":
+              {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Levels of parallel mesh refinement inside this sphere region."
+              },
+              "Radius":
+              {
+                "type": "number",
+                "exclusiveMinimum": 0.0,
+                "description": "Radius of the sphere, in mesh length units."
+              },
               "Center":
               {
                 "type": "array",
                 "additionalItems": false,
                 "items": { "type": "number" },
                 "minItems": 3,
-                "maxItems": 3
+                "maxItems": 3,
+                "description": "Center coordinates `[x, y, z]` of the sphere, in mesh length units."
               }
             }
           }

@@ -21,6 +21,9 @@ docs:
 	$(JULIA) --project=docs -e 'using Pkg; Pkg.instantiate()'
 	$(JULIA) --project=docs --color=yes docs/make.jl
 
+docs-generate-config:
+	$(JULIA)  --project=docs --color=yes docs/generate_config_docs.jl
+
 # Tests
 tests:
 	$(JULIA) --project=test/examples -e 'using Pkg; Pkg.instantiate()'

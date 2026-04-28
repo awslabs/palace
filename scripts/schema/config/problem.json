@@ -1,6 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Configuration File Schema -- \"Problem\"",
+  "title": "Problem",
+  "description": "Top-level configuration for the simulation type and output.",
   "type": "object",
   "additionalProperties": false,
   "required": ["Type"],
@@ -9,18 +10,48 @@
     "Type":
     {
       "type": "string",
-      "enum": ["Eigenmode", "Driven", "Transient", "Electrostatic", "Magnetostatic"]
+      "description": "Controls the simulation type.",
+      "oneOf": [
+        { "const": "Eigenmode",     "description": "Perform an undamped or damped eigenfrequency analysis." },
+        { "const": "Driven",        "description": "Perform a frequency-domain driven simulation." },
+        { "const": "Transient",     "description": "Perform a time-domain excitation response simulation." },
+        { "const": "Electrostatic", "description": "Perform an electrostatic analysis to compute the capacitance matrix for a set of voltage terminals." },
+        { "const": "Magnetostatic", "description": "Perform a magnetostatic analysis to compute the inductance matrix for a set of current sources." }
+      ]
     },
-    "Verbose": { "type": "integer", "minimum": 0 },
-    "Output": { "type": "string" },
+    "Verbose":
+    {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Controls the level of log file printing.",
+      "default": 1
+    },
+    "Output":
+    {
+      "type": "string",
+      "description": "Directory path for saving postprocessing outputs.",
+      "default": ""
+    },
     "OutputFormats":
     {
       "type": "object",
+      "title": "Output Formats",
       "additionalProperties": false,
+      "description": "Configures the field output formats.",
       "properties":
       {
-        "Paraview": { "type": "boolean" },
-        "GridFunction": { "type": "boolean" }
+        "Paraview":
+        {
+          "type": "boolean",
+          "description": "Set to `true` to output fields in [ParaView](https://www.paraview.org/) format.",
+          "default": true
+        },
+        "GridFunction":
+        {
+          "type": "boolean",
+          "description": "Set to `true` to output fields in MFEM grid function format for visualization with [GLVis](https://glvis.org/).",
+          "default": false
+        }
       }
     }
   }
