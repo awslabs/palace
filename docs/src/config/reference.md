@@ -16,7 +16,7 @@ SPDX-License-Identifier: Apache-2.0
   <dt><a href="#config-domains">Domains</a></dt>
   <dd><a href="#config-domains-materials">Materials</a> · <a href="#config-domains-currentdipole">CurrentDipole</a> · <a href="#config-domains-postprocessing">Domain Postprocessing</a></dd>
   <dt><a href="#config-boundaries">Boundaries</a></dt>
-  <dd><a href="#config-boundaries-pec">PEC Boundary</a> · <a href="#config-boundaries-pmc">PMC Boundary</a> · <a href="#config-boundaries-impedance">Impedance</a> · <a href="#config-boundaries-absorbing">Absorbing Boundary</a> · <a href="#config-boundaries-conductivity">Conductivity</a> · <a href="#config-boundaries-lumpedport">LumpedPort</a> · <a href="#config-boundaries-waveport">WavePort</a> · <a href="#config-boundaries-waveportpec">Wave Port PEC</a> · <a href="#config-boundaries-surfacecurrent">SurfaceCurrent</a> · <a href="#config-boundaries-ground">Ground Boundary</a> · <a href="#config-boundaries-zerocharge">Zero Charge Boundary</a> · <a href="#config-boundaries-terminal">Terminal</a> · <a href="#config-boundaries-periodic">Periodic Boundary</a> · <a href="#config-boundaries-postprocessing">Boundary Postprocessing</a></dd>
+  <dd><a href="#config-boundaries-pec">PEC Boundary</a> · <a href="#config-boundaries-pmc">PMC Boundary</a> · <a href="#config-boundaries-impedance">Impedance</a> · <a href="#config-boundaries-absorbing">Absorbing Boundary</a> · <a href="#config-boundaries-conductivity">Conductivity</a> · <a href="#config-boundaries-lumpedport">Lumped Port</a> · <a href="#config-boundaries-waveport">Wave Port</a> · <a href="#config-boundaries-waveportpec">Wave Port PEC</a> · <a href="#config-boundaries-surfacecurrent">Surface Current</a> · <a href="#config-boundaries-ground">Ground Boundary</a> · <a href="#config-boundaries-zerocharge">Zero Charge Boundary</a> · <a href="#config-boundaries-terminal">Terminal</a> · <a href="#config-boundaries-periodic">Periodic Boundary</a> · <a href="#config-boundaries-postprocessing">Boundary Postprocessing</a></dd>
   <dt><a href="#config-solver">Solver</a></dt>
   <dd><a href="#config-solver-eigenmode">Eigenmode Solver</a> · <a href="#config-solver-driven">Driven Solver</a> · <a href="#config-solver-transient">Transient Solver</a> · <a href="#config-solver-electrostatic">Electrostatic Solver</a> · <a href="#config-solver-magnetostatic">Magnetostatic Solver</a> · <a href="#config-solver-linear">Linear Solver</a></dd>
 </dl>
@@ -25,7 +25,7 @@ SPDX-License-Identifier: Apache-2.0
 ## [Problem](@id config-problem)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-problem"><code>Problem</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-problem">Problem</a></code></p>
 ```
 
 ```@raw html
@@ -70,7 +70,7 @@ Top-level configuration for the simulation type and output.
 ### [Output Formats](@id config-problem-outputformats)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-problem"><code>Problem</code></a><code>/</code><a href="#config-problem-outputformats"><code>OutputFormats</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-problem">Problem</a>/<a href="#config-problem-outputformats">OutputFormats</a></code></p>
 ```
 
 ```@raw html
@@ -95,7 +95,7 @@ Configures the field output formats.
 ## [Model](@id config-model)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-model"><code>Model</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-model">Model</a></code></p>
 ```
 
 ```@raw html
@@ -176,7 +176,7 @@ Mesh and model configuration.
 ### [Mesh Refinement](@id config-model-refinement)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-model"><code>Model</code></a><code>/</code><a href="#config-model-refinement"><code>Refinement</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-model">Model</a>/<a href="#config-model-refinement">Refinement</a></code></p>
 ```
 
 ```@raw html
@@ -203,7 +203,7 @@ Configuration for adaptive and uniform mesh refinement.
   <dd>
     <p>Dörfler marking fraction used to specify which elements to refine. This marking strategy will mark the smallest number of elements that make up &quot;UpdateFraction&quot; of the total error in the mesh. A larger value will refine more elements per iteration, at the cost of the final mesh being less efficient.</p>
   </dd>
-  <dt id="config-model-refinement-nonconformal"><a href="#config-model-refinement-nonconformal"><code>"Nonconformal"</code></a> <span class="config-type">boolean</span> <span class="config-default">default: <code>true</code></span> <span class="config-advanced">advanced</span></dt>
+  <dt id="config-model-refinement-nonconformal"><a href="#config-model-refinement-nonconformal"><code>"Nonconformal"</code></a> <span class="config-type">boolean</span> <span class="config-default">default: <code>true</code></span></dt>
   <dd>
     <p>Use nonconformal refinement in adaptation. Required for non-simplex meshes.</p>
   </dd>
@@ -245,7 +245,7 @@ Configuration for adaptive and uniform mesh refinement.
 #### [Boxes](@id config-model-refinement-boxes)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-model"><code>Model</code></a><code>/</code><a href="#config-model-refinement"><code>Refinement</code></a><code>/</code><a href="#config-model-refinement-boxes"><code>Boxes</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-model">Model</a>/<a href="#config-model-refinement">Refinement</a>/<a href="#config-model-refinement-boxes">Boxes</a></code></p>
 ```
 
 ```@raw html
@@ -255,7 +255,7 @@ Configuration for adaptive and uniform mesh refinement.
 Array of axis-aligned box refinement regions. All elements with a node inside the box are marked for refinement.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-model"><code>Model</code></a><code>/</code><a href="#config-model-refinement"><code>Refinement</code></a><code>/</code><a href="#config-model-refinement-boxes"><code>Boxes</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-model">Model</a>/<a href="#config-model-refinement">Refinement</a>/<a href="#config-model-refinement-boxes">Boxes</a>/0</code></p>
 ```
 
 ```@raw html
@@ -278,7 +278,7 @@ Array of axis-aligned box refinement regions. All elements with a node inside th
 #### [Spheres](@id config-model-refinement-spheres)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-model"><code>Model</code></a><code>/</code><a href="#config-model-refinement"><code>Refinement</code></a><code>/</code><a href="#config-model-refinement-spheres"><code>Spheres</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-model">Model</a>/<a href="#config-model-refinement">Refinement</a>/<a href="#config-model-refinement-spheres">Spheres</a></code></p>
 ```
 
 ```@raw html
@@ -288,7 +288,7 @@ Array of axis-aligned box refinement regions. All elements with a node inside th
 Array of sphere refinement regions. All elements with a node inside the sphere are marked for refinement.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-model"><code>Model</code></a><code>/</code><a href="#config-model-refinement"><code>Refinement</code></a><code>/</code><a href="#config-model-refinement-spheres"><code>Spheres</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-model">Model</a>/<a href="#config-model-refinement">Refinement</a>/<a href="#config-model-refinement-spheres">Spheres</a>/0</code></p>
 ```
 
 ```@raw html
@@ -311,7 +311,7 @@ Array of sphere refinement regions. All elements with a node inside the sphere a
 ## [Domains](@id config-domains)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-domains"><code>Domains</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-domains">Domains</a></code></p>
 ```
 
 ```@raw html
@@ -340,24 +340,24 @@ Material and domain configuration.
 ### [Materials](@id config-domains-materials)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-domains"><code>Domains</code></a><code>/</code><a href="#config-domains-materials"><code>Materials</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-domains">Domains</a>/<a href="#config-domains-materials">Materials</a></code></p>
 ```
 
 ```@raw html
 <span class="config-section-badges"><span class="config-type">[object, ...]</span> <span class="config-required">required</span></span>
 ```
 
-Array of material property objects, with each object specifying the following keys.
+Array of material property objects.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-domains"><code>Domains</code></a><code>/</code><a href="#config-domains-materials"><code>Materials</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-domains">Domains</a>/<a href="#config-domains-materials">Materials</a>/0</code></p>
 ```
 
 ```@raw html
 <dl class="palace-config">
   <dt id="config-domains-materials-attributes"><a href="#config-domains-materials-attributes"><code>"Attributes"</code></a> <span class="config-type">[integer, ...]</span> <span class="config-required">required</span></dt>
   <dd>
-    <p>Integer array of mesh domain or boundary attributes this object applies to.</p>
+    <p>Integer array of mesh domain this object applies to.</p>
   </dd>
   <dt id="config-domains-materials-permeability"><a href="#config-domains-materials-permeability"><code>"Permeability"</code></a> <span class="config-type">number or [number × 3]</span> <span class="config-default">default: <code>1.0</code></span></dt>
   <dd>
@@ -389,7 +389,7 @@ Array of material property objects, with each object specifying the following ke
 ### [CurrentDipole](@id config-domains-currentdipole)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-domains"><code>Domains</code></a><code>/</code><a href="#config-domains-currentdipole"><code>CurrentDipole</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-domains">Domains</a>/<a href="#config-domains-currentdipole">CurrentDipole</a></code></p>
 ```
 
 ```@raw html
@@ -399,7 +399,7 @@ Array of material property objects, with each object specifying the following ke
 Array of current dipole source excitations.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-domains"><code>Domains</code></a><code>/</code><a href="#config-domains-currentdipole"><code>CurrentDipole</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-domains">Domains</a>/<a href="#config-domains-currentdipole">CurrentDipole</a>/0</code></p>
 ```
 
 ```@raw html
@@ -414,7 +414,7 @@ Array of current dipole source excitations.
   </dd>
   <dt id="config-domains-currentdipole-center"><a href="#config-domains-currentdipole-center"><code>"Center"</code></a> <span class="config-type">[number × 3]</span> <span class="config-required">required</span></dt>
   <dd>
-    <p>Coordinates of the dipole center position, in mesh length units.</p>
+    <p>Coordinates of the dipole center position <code>[x, y, z]</code>, in mesh length units.</p>
   </dd>
   <dt id="config-domains-currentdipole-direction"><a href="#config-domains-currentdipole-direction"><code>"Direction"</code></a> <span class="config-type">string or [number × 3]</span> <span class="config-required">required</span></dt>
   <dd>
@@ -426,7 +426,7 @@ Array of current dipole source excitations.
 ### [Domain Postprocessing](@id config-domains-postprocessing)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-domains"><code>Domains</code></a><code>/</code><a href="#config-domains-postprocessing"><code>Postprocessing</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-domains">Domains</a>/<a href="#config-domains-postprocessing">Postprocessing</a></code></p>
 ```
 
 ```@raw html
@@ -451,7 +451,7 @@ Configuration for domain postprocessing.
 #### [Energy](@id config-domains-postprocessing-energy)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-domains"><code>Domains</code></a><code>/</code><a href="#config-domains-postprocessing"><code>Postprocessing</code></a><code>/</code><a href="#config-domains-postprocessing-energy"><code>Energy</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-domains">Domains</a>/<a href="#config-domains-postprocessing">Postprocessing</a>/<a href="#config-domains-postprocessing-energy">Energy</a></code></p>
 ```
 
 ```@raw html
@@ -461,7 +461,7 @@ Configuration for domain postprocessing.
 Array of objects for postprocessing domain energies. Postprocesses the electric and magnetic field energy inside a given domain. Results are written to `domain-E.csv` in the output directory.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-domains"><code>Domains</code></a><code>/</code><a href="#config-domains-postprocessing"><code>Postprocessing</code></a><code>/</code><a href="#config-domains-postprocessing-energy"><code>Energy</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-domains">Domains</a>/<a href="#config-domains-postprocessing">Postprocessing</a>/<a href="#config-domains-postprocessing-energy">Energy</a>/0</code></p>
 ```
 
 ```@raw html
@@ -472,7 +472,7 @@ Array of objects for postprocessing domain energies. Postprocesses the electric 
   </dd>
   <dt id="config-domains-postprocessing-energy-attributes"><a href="#config-domains-postprocessing-energy-attributes"><code>"Attributes"</code></a> <span class="config-type">[integer, ...]</span> <span class="config-required">required</span></dt>
   <dd>
-    <p>Integer array of mesh domain or boundary attributes this object applies to.</p>
+    <p>Integer array of mesh domain this object applies to.</p>
   </dd>
 </dl>
 ```
@@ -480,7 +480,7 @@ Array of objects for postprocessing domain energies. Postprocesses the electric 
 #### [Probe](@id config-domains-postprocessing-probe)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-domains"><code>Domains</code></a><code>/</code><a href="#config-domains-postprocessing"><code>Postprocessing</code></a><code>/</code><a href="#config-domains-postprocessing-probe"><code>Probe</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-domains">Domains</a>/<a href="#config-domains-postprocessing">Postprocessing</a>/<a href="#config-domains-postprocessing-probe">Probe</a></code></p>
 ```
 
 ```@raw html
@@ -490,7 +490,7 @@ Array of objects for postprocessing domain energies. Postprocesses the electric 
 Array of probe points for evaluating field values at specified locations in space. The electric field **E** and magnetic flux density **B** are probed and written to `probe-E.csv` and `probe-B.csv` in the output directory.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-domains"><code>Domains</code></a><code>/</code><a href="#config-domains-postprocessing"><code>Postprocessing</code></a><code>/</code><a href="#config-domains-postprocessing-probe"><code>Probe</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-domains">Domains</a>/<a href="#config-domains-postprocessing">Postprocessing</a>/<a href="#config-domains-postprocessing-probe">Probe</a>/0</code></p>
 ```
 
 ```@raw html
@@ -501,7 +501,7 @@ Array of probe points for evaluating field values at specified locations in spac
   </dd>
   <dt id="config-domains-postprocessing-probe-center"><a href="#config-domains-postprocessing-probe-center"><code>"Center"</code></a> <span class="config-type">[number × 3]</span> <span class="config-required">required</span></dt>
   <dd>
-    <p>Coordinates of this probe, in mesh length units.</p>
+    <p>Coordinates of this probe <code>[x, y, z]</code>, in mesh length units.</p>
   </dd>
 </dl>
 ```
@@ -509,7 +509,7 @@ Array of probe points for evaluating field values at specified locations in spac
 ## [Boundaries](@id config-boundaries)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a></code></p>
 ```
 
 ```@raw html
@@ -582,7 +582,7 @@ Boundary condition configuration.
 ### [PEC Boundary](@id config-boundaries-pec)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-pec"><code>PEC</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-pec">PEC</a></code></p>
 ```
 
 ```@raw html
@@ -603,7 +603,7 @@ Perfect electric conductor (PEC) boundary condition: enforces zero tangential el
 ### [PMC Boundary](@id config-boundaries-pmc)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-pmc"><code>PMC</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-pmc">PMC</a></code></p>
 ```
 
 ```@raw html
@@ -624,7 +624,7 @@ Perfect magnetic conductor (PMC) boundary condition: enforces zero tangential ma
 ### [Impedance](@id config-boundaries-impedance)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-impedance"><code>Impedance</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-impedance">Impedance</a></code></p>
 ```
 
 ```@raw html
@@ -634,7 +634,7 @@ Perfect magnetic conductor (PMC) boundary condition: enforces zero tangential ma
 Array of surface impedance boundary conditions. The surface impedance relates the tangential electric and magnetic fields using the parallel combination of the specified resistance, inductance, and capacitance per square.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-impedance"><code>Impedance</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-impedance">Impedance</a>/0</code></p>
 ```
 
 ```@raw html
@@ -661,7 +661,7 @@ Array of surface impedance boundary conditions. The surface impedance relates th
 ### [Absorbing Boundary](@id config-boundaries-absorbing)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-absorbing"><code>Absorbing</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-absorbing">Absorbing</a></code></p>
 ```
 
 ```@raw html
@@ -686,7 +686,7 @@ Farfield absorbing (scattering) boundary conditions. These are artificial bounda
 ### [Conductivity](@id config-boundaries-conductivity)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-conductivity"><code>Conductivity</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-conductivity">Conductivity</a></code></p>
 ```
 
 ```@raw html
@@ -696,7 +696,7 @@ Farfield absorbing (scattering) boundary conditions. These are artificial bounda
 Array of finite conductivity surface impedance boundaries. Models the effect of a boundary with non-infinite conductivity for conductors with thickness much larger than the skin depth. Only available for frequency domain driven and eigenmode simulations.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-conductivity"><code>Conductivity</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-conductivity">Conductivity</a>/0</code></p>
 ```
 
 ```@raw html
@@ -715,29 +715,29 @@ Array of finite conductivity surface impedance boundaries. Models the effect of 
   </dd>
   <dt id="config-boundaries-conductivity-thickness"><a href="#config-boundaries-conductivity-thickness"><code>"Thickness"</code></a> <span class="config-type">number</span> <span class="config-default">default: <code>0.0</code></span></dt>
   <dd>
-    <p>Optional conductor thickness in mesh length units. Activates a finite-thickness boundary condition when specified.</p>
+    <p>Optional conductor thickness in mesh length units. Activates a finite-thickness boundary condition for metal.</p>
   </dd>
   <dt id="config-boundaries-conductivity-external"><a href="#config-boundaries-conductivity-external"><code>"External"</code></a> <span class="config-type">boolean</span> <span class="config-default">default: <code>false</code></span></dt>
   <dd>
-    <p>Whether this boundary is on the exterior of the computational domain.</p>
+    <p>Whether this boundary is on the exterior of the computational domain. Relevant for the thickness correction.</p>
   </dd>
 </dl>
 ```
 
-### [LumpedPort](@id config-boundaries-lumpedport)
+### [Lumped Port](@id config-boundaries-lumpedport)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-lumpedport"><code>LumpedPort</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-lumpedport">LumpedPort</a></code></p>
 ```
 
 ```@raw html
 <span class="config-section-badges"><span class="config-type">[object, ...]</span> <span class="config-default">default: <code>—</code></span></span>
 ```
 
-Array of lumped port boundary conditions. Lumped ports can be specified on boundaries internal to the computational domain. For each simulation type they serve a different purpose: driven — excitation and S-parameter postprocessing; transient — time-domain port excitation; eigenmode — energy-participation ratio (EPR) calculations; electrostatic/magnetostatic — not used.
+Array of lumped port boundary conditions. Lumped ports can be specified on boundaries internal to the computational domain.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-lumpedport"><code>LumpedPort</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-lumpedport">LumpedPort</a>/0</code></p>
 ```
 
 ```@raw html
@@ -748,7 +748,7 @@ Array of lumped port boundary conditions. Lumped ports can be specified on bound
   </dd>
   <dt id="config-boundaries-lumpedport-attributes"><a href="#config-boundaries-lumpedport-attributes"><code>"Attributes"</code></a> <span class="config-type">[integer, ...]</span> <span class="config-default">default: <code>—</code></span></dt>
   <dd>
-    <p>Integer array of mesh boundary attributes this object applies to.</p>
+    <p>Integer array of mesh boundary attributes for this lumped port boundary. If this port is to be a multielement lumped port with more than a single lumped element, use the &quot;Elements&quot; array described below.</p>
   </dd>
   <dt id="config-boundaries-lumpedport-direction"><a href="#config-boundaries-lumpedport-direction"><code>"Direction"</code></a> <span class="config-type">string or [number × 3]</span> <span class="config-default">default: <code>—</code></span></dt>
   <dd>
@@ -790,7 +790,7 @@ Array of lumped port boundary conditions. Lumped ports can be specified on bound
   </dd>
   <dt id="config-boundaries-lumpedport-excitation"><a href="#config-boundaries-lumpedport-excitation"><code>"Excitation"</code></a> <span class="config-type">boolean or integer</span> <span class="config-default">default: <code>false</code></span></dt>
   <dd>
-    <p>Turns on or off port excitation for driven or transient simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the <a href="../guide/boundaries.md#Lumped-and-wave-port-excitation">boundary conditions guide</a> for details.</p>
+    <p>Turns on or off port excitation for driven or transient simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the <a href="../../guide/boundaries/#Lumped-and-wave-port-excitation">boundary conditions guide</a> for details.</p>
   </dd>
   <dt id="config-boundaries-lumpedport-active"><a href="#config-boundaries-lumpedport-active"><code>"Active"</code></a> <span class="config-type">boolean</span> <span class="config-default">default: <code>true</code></span></dt>
   <dd>
@@ -806,17 +806,17 @@ Array of lumped port boundary conditions. Lumped ports can be specified on bound
 #### [Elements](@id config-boundaries-lumpedport-elements)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-lumpedport"><code>LumpedPort</code></a><code>/</code><a href="#config-boundaries-lumpedport-elements"><code>Elements</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-lumpedport">LumpedPort</a>/<a href="#config-boundaries-lumpedport-elements">Elements</a></code></p>
 ```
 
 ```@raw html
 <span class="config-section-badges"><span class="config-type">[object, ...]</span> <span class="config-default">default: <code>—</code></span></span>
 ```
 
-Sub-elements for a multielement lumped port. Use this instead of the top-level `"Attributes"` and `"Direction"` when the port spans multiple disjoint boundary surfaces. Elements add in parallel.
+Sub-elements for a multielement lumped port. Use this instead of the top-level `"Attributes"`/`"Direction"`/`"CoordinateSystem"` when the port spans multiple disjoint boundary surfaces. Elements add in parallel.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-lumpedport"><code>LumpedPort</code></a><code>/</code><a href="#config-boundaries-lumpedport-elements"><code>Elements</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-lumpedport">LumpedPort</a>/<a href="#config-boundaries-lumpedport-elements">Elements</a>/0</code></p>
 ```
 
 ```@raw html
@@ -842,10 +842,10 @@ Sub-elements for a multielement lumped port. Use this instead of the top-level `
 </dl>
 ```
 
-### [WavePort](@id config-boundaries-waveport)
+### [Wave Port](@id config-boundaries-waveport)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-waveport"><code>WavePort</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-waveport">WavePort</a></code></p>
 ```
 
 ```@raw html
@@ -855,7 +855,7 @@ Sub-elements for a multielement lumped port. Use this instead of the top-level `
 Array of numeric wave port boundary conditions. Wave ports can only be specified on the true boundary of the computational domain (they must be "one-sided"). A 2D boundary mode eigenproblem is solved on each wave port to compute the port mode shape. Only available for frequency domain driven and eigenmode simulations.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-waveport"><code>WavePort</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-waveport">WavePort</a>/0</code></p>
 ```
 
 ```@raw html
@@ -882,7 +882,7 @@ Array of numeric wave port boundary conditions. Wave ports can only be specified
   </dd>
   <dt id="config-boundaries-waveport-excitation"><a href="#config-boundaries-waveport-excitation"><code>"Excitation"</code></a> <span class="config-type">boolean or integer</span> <span class="config-default">default: <code>false</code></span></dt>
   <dd>
-    <p>Turns on or off port excitation for driven simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the <a href="../guide/boundaries.md#Lumped-and-wave-port-excitation">boundary conditions guide</a> for details.</p>
+    <p>Turns on or off port excitation for driven simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the <a href="../../guide/boundaries/#Lumped-and-wave-port-excitation">boundary conditions guide</a> for details.</p>
   </dd>
   <dt id="config-boundaries-waveport-active"><a href="#config-boundaries-waveport-active"><code>"Active"</code></a> <span class="config-type">boolean</span> <span class="config-default">default: <code>true</code></span></dt>
   <dd>
@@ -910,7 +910,7 @@ Array of numeric wave port boundary conditions. Wave ports can only be specified
 ### [Wave Port PEC](@id config-boundaries-waveportpec)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-waveportpec"><code>WavePortPEC</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-waveportpec">WavePortPEC</a></code></p>
 ```
 
 ```@raw html
@@ -928,10 +928,10 @@ Additional PEC boundary conditions for the 2D eigensolve used in wave port mode 
 </dl>
 ```
 
-### [SurfaceCurrent](@id config-boundaries-surfacecurrent)
+### [Surface Current](@id config-boundaries-surfacecurrent)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-surfacecurrent"><code>SurfaceCurrent</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-surfacecurrent">SurfaceCurrent</a></code></p>
 ```
 
 ```@raw html
@@ -941,7 +941,7 @@ Additional PEC boundary conditions for the 2D eigensolve used in wave port mode 
 Array of surface current source boundaries. Prescribes a unit source surface current excitation on the given boundary to excite a driven, transient, or magnetostatic simulation. For magnetostatic simulations, inductance matrix entries are extracted for each surface current boundary.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-surfacecurrent"><code>SurfaceCurrent</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-surfacecurrent">SurfaceCurrent</a>/0</code></p>
 ```
 
 ```@raw html
@@ -952,7 +952,7 @@ Array of surface current source boundaries. Prescribes a unit source surface cur
   </dd>
   <dt id="config-boundaries-surfacecurrent-attributes"><a href="#config-boundaries-surfacecurrent-attributes"><code>"Attributes"</code></a> <span class="config-type">[integer, ...]</span> <span class="config-default">default: <code>—</code></span></dt>
   <dd>
-    <p>Integer array of mesh boundary attributes this object applies to.</p>
+    <p>Integer array of mesh boundary attributes for this surface current boundary. If this is to be a object with more than a single element, use the &quot;Elements&quot; array described below.</p>
   </dd>
   <dt id="config-boundaries-surfacecurrent-direction"><a href="#config-boundaries-surfacecurrent-direction"><code>"Direction"</code></a> <span class="config-type">string or [number × 3]</span> <span class="config-default">default: <code>—</code></span></dt>
   <dd>
@@ -978,17 +978,17 @@ Array of surface current source boundaries. Prescribes a unit source surface cur
 #### [Elements](@id config-boundaries-surfacecurrent-elements)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-surfacecurrent"><code>SurfaceCurrent</code></a><code>/</code><a href="#config-boundaries-surfacecurrent-elements"><code>Elements</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-surfacecurrent">SurfaceCurrent</a>/<a href="#config-boundaries-surfacecurrent-elements">Elements</a></code></p>
 ```
 
 ```@raw html
 <span class="config-section-badges"><span class="config-type">[object, ...]</span> <span class="config-default">default: <code>—</code></span></span>
 ```
 
-Sub-elements for a multielement surface current source. Elements add in parallel to give the same total current as a single-element source.
+Sub-elements for a multielement surface current source. Use this instead of the top-level `"Attributes"`/`"Direction"`/`"CoordinateSystem"` when the source spans multiple disjoint boundary surfaces. Elements add in parallel to give the same total current as a single-element source.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-surfacecurrent"><code>SurfaceCurrent</code></a><code>/</code><a href="#config-boundaries-surfacecurrent-elements"><code>Elements</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-surfacecurrent">SurfaceCurrent</a>/<a href="#config-boundaries-surfacecurrent-elements">Elements</a>/0</code></p>
 ```
 
 ```@raw html
@@ -1017,7 +1017,7 @@ Sub-elements for a multielement surface current source. Elements add in parallel
 ### [Ground Boundary](@id config-boundaries-ground)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-ground"><code>Ground</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-ground">Ground</a></code></p>
 ```
 
 ```@raw html
@@ -1038,7 +1038,7 @@ Zero-voltage (ground) boundary condition for electrostatic simulations. Mutually
 ### [Zero Charge Boundary](@id config-boundaries-zerocharge)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-zerocharge"><code>ZeroCharge</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-zerocharge">ZeroCharge</a></code></p>
 ```
 
 ```@raw html
@@ -1059,7 +1059,7 @@ Zero surface charge (homogeneous Neumann) boundary condition for electrostatic s
 ### [Terminal](@id config-boundaries-terminal)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-terminal"><code>Terminal</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-terminal">Terminal</a></code></p>
 ```
 
 ```@raw html
@@ -1069,7 +1069,7 @@ Zero surface charge (homogeneous Neumann) boundary condition for electrostatic s
 Array of terminal boundaries for electrostatic simulations. Capacitance matrix entries are extracted for each terminal.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-terminal"><code>Terminal</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-terminal">Terminal</a>/0</code></p>
 ```
 
 ```@raw html
@@ -1088,7 +1088,7 @@ Array of terminal boundaries for electrostatic simulations. Capacitance matrix e
 ### [Periodic Boundary](@id config-boundaries-periodic)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-periodic"><code>Periodic</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-periodic">Periodic</a></code></p>
 ```
 
 ```@raw html
@@ -1113,7 +1113,7 @@ Periodic boundary conditions for surfaces whose meshes are identical after trans
 #### [BoundaryPairs](@id config-boundaries-periodic-boundarypairs)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-periodic"><code>Periodic</code></a><code>/</code><a href="#config-boundaries-periodic-boundarypairs"><code>BoundaryPairs</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-periodic">Periodic</a>/<a href="#config-boundaries-periodic-boundarypairs">BoundaryPairs</a></code></p>
 ```
 
 ```@raw html
@@ -1123,7 +1123,7 @@ Periodic boundary conditions for surfaces whose meshes are identical after trans
 Array of donor–receiver boundary pairs defining the periodic mapping.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-periodic"><code>Periodic</code></a><code>/</code><a href="#config-boundaries-periodic-boundarypairs"><code>BoundaryPairs</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-periodic">Periodic</a>/<a href="#config-boundaries-periodic-boundarypairs">BoundaryPairs</a>/0</code></p>
 ```
 
 ```@raw html
@@ -1150,7 +1150,7 @@ Array of donor–receiver boundary pairs defining the periodic mapping.
 ### [Boundary Postprocessing](@id config-boundaries-postprocessing)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-postprocessing"><code>Postprocessing</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-postprocessing">Postprocessing</a></code></p>
 ```
 
 ```@raw html
@@ -1176,10 +1176,10 @@ Configuration for boundary postprocessing.
 </dl>
 ```
 
-#### [SurfaceFlux](@id config-boundaries-postprocessing-surfaceflux)
+#### [Surface Flux](@id config-boundaries-postprocessing-surfaceflux)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-postprocessing"><code>Postprocessing</code></a><code>/</code><a href="#config-boundaries-postprocessing-surfaceflux"><code>SurfaceFlux</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-postprocessing">Postprocessing</a>/<a href="#config-boundaries-postprocessing-surfaceflux">SurfaceFlux</a></code></p>
 ```
 
 ```@raw html
@@ -1189,7 +1189,7 @@ Configuration for boundary postprocessing.
 Array of surface flux postprocessing boundaries. Results are written to `surface-F.csv` in the output directory.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-postprocessing"><code>Postprocessing</code></a><code>/</code><a href="#config-boundaries-postprocessing-surfaceflux"><code>SurfaceFlux</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-postprocessing">Postprocessing</a>/<a href="#config-boundaries-postprocessing-surfaceflux">SurfaceFlux</a>/0</code></p>
 ```
 
 ```@raw html
@@ -1220,7 +1220,7 @@ Array of surface flux postprocessing boundaries. Results are written to `surface
   </dd>
   <dt id="config-boundaries-postprocessing-surfaceflux-center"><a href="#config-boundaries-postprocessing-surfaceflux-center"><code>"Center"</code></a> <span class="config-type">[number × 3]</span> <span class="config-default">default: <code>—</code></span></dt>
   <dd>
-    <p>Point used to determine the outward normal orientation, in mesh length units. Only used when <code>&quot;TwoSided&quot;</code> is <code>false</code>. Defaults to the centroid of the bounding box of the boundary elements.</p>
+    <p>Point used to determine the outward normal orientation, in mesh length units. Only used when <code>&quot;TwoSided&quot;</code> is <code>false</code>. If not specified, the point will be computed as the centroid of the axis-aligned bounding box for all elements making up the postprocessing boundary.</p>
   </dd>
 </dl>
 ```
@@ -1228,7 +1228,7 @@ Array of surface flux postprocessing boundaries. Results are written to `surface
 #### [Dielectric](@id config-boundaries-postprocessing-dielectric)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-postprocessing"><code>Postprocessing</code></a><code>/</code><a href="#config-boundaries-postprocessing-dielectric"><code>Dielectric</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-postprocessing">Postprocessing</a>/<a href="#config-boundaries-postprocessing-dielectric">Dielectric</a></code></p>
 ```
 
 ```@raw html
@@ -1238,7 +1238,7 @@ Array of surface flux postprocessing boundaries. Results are written to `surface
 Array of interface dielectric loss postprocessing boundaries. Computes energy participation ratios (EPR) and quality factors for dielectric interfaces. See also the [reference documentation](../reference.md#Bulk-and-interface-dielectric-loss). Results are written to `surface-Q.csv` in the output directory.
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-postprocessing"><code>Postprocessing</code></a><code>/</code><a href="#config-boundaries-postprocessing-dielectric"><code>Dielectric</code></a><code>/0</code></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-postprocessing">Postprocessing</a>/<a href="#config-boundaries-postprocessing-dielectric">Dielectric</a>/0</code></p>
 ```
 
 ```@raw html
@@ -1257,11 +1257,11 @@ Array of interface dielectric loss postprocessing boundaries. Computes energy pa
   </dd>
   <dt id="config-boundaries-postprocessing-dielectric-permittivity"><a href="#config-boundaries-postprocessing-dielectric-permittivity"><code>"Permittivity"</code></a> <span class="config-type">number</span> <span class="config-required">required</span></dt>
   <dd>
-    <p>Relative permittivity of this dielectric interface layer.</p>
+    <p>Relative permittivity of this dielectric interface layer. This should be the interface layer permittivity for the specific &quot;Type&quot; of interface specified.</p>
   </dd>
   <dt id="config-boundaries-postprocessing-dielectric-type"><a href="#config-boundaries-postprocessing-dielectric-type"><code>"Type"</code></a> <span class="config-type">string</span> <span class="config-default">default: <code>&quot;Default&quot;</code></span></dt>
   <dd>
-    <p>Interface type used to determine the boundary conditions for computing the EPR.</p>
+    <p>Interface type used to determine the boundary conditions for computing the EPR. See also <a href="../../reference/#Bulk-and-interface-dielectric-loss">theory reference</a>.</p>
     <dl class="config-enum">
       <dt><code>"Default"</code></dt>
       <dd>Use the full electric field evaluated at the boundary.</dd>
@@ -1283,7 +1283,7 @@ Array of interface dielectric loss postprocessing boundaries. Computes energy pa
 #### [Far Field](@id config-boundaries-postprocessing-farfield)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-boundaries"><code>Boundaries</code></a><code>/</code><a href="#config-boundaries-postprocessing"><code>Postprocessing</code></a><code>/</code><a href="#config-boundaries-postprocessing-farfield"><code>FarField</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-boundaries">Boundaries</a>/<a href="#config-boundaries-postprocessing">Postprocessing</a>/<a href="#config-boundaries-postprocessing-farfield">FarField</a></code></p>
 ```
 
 ```@raw html
@@ -1312,7 +1312,7 @@ Far-field electric field extraction. The boundary attributes must enclose the sy
 ## [Solver](@id config-solver)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-solver"><code>Solver</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-solver">Solver</a></code></p>
 ```
 
 ```@raw html
@@ -1385,7 +1385,7 @@ Solver configuration for all simulation types.
 ### [Eigenmode Solver](@id config-solver-eigenmode)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-solver"><code>Solver</code></a><code>/</code><a href="#config-solver-eigenmode"><code>Eigenmode</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-solver">Solver</a>/<a href="#config-solver-eigenmode">Eigenmode</a></code></p>
 ```
 
 ```@raw html
@@ -1418,7 +1418,7 @@ Configuration for the eigenvalue solver. Only relevant when [`/Problem/Type`](#c
   </dd>
   <dt id="config-solver-eigenmode-save"><a href="#config-solver-eigenmode-save"><code>"Save"</code></a> <span class="config-type">integer</span> <span class="config-default">default: <code>0</code></span></dt>
   <dd>
-    <p>Number of computed field modes to save to disk for <a href="../guide/postprocessing.md#Visualization">visualization with ParaView</a>. Files are saved in the <code>paraview/</code> (and/or <code>gridfunction/</code>) directory under <a href="#config-problem-output"><code>/Problem/Output</code></a>.</p>
+    <p>Number of computed field modes to save to disk for <a href="../../guide/postprocessing/#Visualization">visualization with ParaView</a>. Files are saved in the <code>paraview/</code> (and/or <code>gridfunction/</code>) directory under <a href="#config-problem-output"><code>/Problem/Output</code></a>.</p>
   </dd>
   <dt id="config-solver-eigenmode-type"><a href="#config-solver-eigenmode-type"><code>"Type"</code></a> <span class="config-type">string</span> <span class="config-default">default: <code>&quot;Default&quot;</code></span></dt>
   <dd>
@@ -1437,7 +1437,7 @@ Configuration for the eigenvalue solver. Only relevant when [`/Problem/Type`](#c
     <p>Specifies the nonlinear eigenvalue solver for problems with frequency-dependent boundary conditions.</p>
     <dl class="config-enum">
       <dt><code>"Hybrid"</code></dt>
-      <dd>Hybrid algorithm: solve a polynomial approximation first, then refine with a quasi-Newton nonlinear eigensolver.</dd>
+      <dd>Hybrid algorithm: solve a polynomial (quadratic) approximation first, then refine with a quasi-Newton nonlinear eigensolver.</dd>
       <dt><code>"SLP"</code></dt>
       <dd>SLEPc Successive Linear Problem (SLP) nonlinear eigensolver.</dd>
     </dl>
@@ -1492,7 +1492,7 @@ Configuration for the eigenvalue solver. Only relevant when [`/Problem/Type`](#c
 ### [Driven Solver](@id config-solver-driven)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-solver"><code>Solver</code></a><code>/</code><a href="#config-solver-driven"><code>Driven</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-solver">Solver</a>/<a href="#config-solver-driven">Driven</a></code></p>
 ```
 
 ```@raw html
@@ -1505,19 +1505,19 @@ Configuration for the frequency domain driven solver. Only relevant when [`/Prob
 <dl class="palace-config">
   <dt id="config-solver-driven-minfreq"><a href="#config-solver-driven-minfreq"><code>"MinFreq"</code></a> <span class="config-type">number</span> <span class="config-default">default: <code>—</code></span> <span class="config-deprecated">deprecated</span></dt>
   <dd>
-    <p>Lower bound of the frequency sweep interval, GHz. Deprecated: use <a href="#config-solver-driven-samples-linear"><code>/Samples/Linear</code></a> interface instead.</p>
+    <p>Lower bound of the frequency sweep interval, GHz. Deprecated: use <a href="#config-solver-driven-samples-linear"><code>Linear Samples</code></a> interface instead.</p>
   </dd>
   <dt id="config-solver-driven-maxfreq"><a href="#config-solver-driven-maxfreq"><code>"MaxFreq"</code></a> <span class="config-type">number</span> <span class="config-default">default: <code>—</code></span> <span class="config-deprecated">deprecated</span></dt>
   <dd>
-    <p>Upper bound of the frequency sweep interval, GHz. Deprecated: use <a href="#config-solver-driven-samples-linear"><code>/Samples/Linear</code></a> interface instead.</p>
+    <p>Upper bound of the frequency sweep interval, GHz. Deprecated: use <a href="#config-solver-driven-samples-linear"><code>Linear Samples</code></a> interface instead.</p>
   </dd>
   <dt id="config-solver-driven-freqstep"><a href="#config-solver-driven-freqstep"><code>"FreqStep"</code></a> <span class="config-type">number</span> <span class="config-default">default: <code>—</code></span> <span class="config-deprecated">deprecated</span></dt>
   <dd>
-    <p>Frequency step size for the frequency sweep, GHz. Deprecated: use <a href="#config-solver-driven-samples-linear"><code>/Samples/Linear</code></a> interface instead.</p>
+    <p>Frequency step size for the frequency sweep, GHz. Deprecated: use <a href="#config-solver-driven-samples-linear"><code>Linear Samples</code></a> interface instead.</p>
   </dd>
-  <dt id="config-solver-driven-savestep"><a href="#config-solver-driven-savestep"><code>"SaveStep"</code></a> <span class="config-type">integer</span> <span class="config-default">default: <code>0</code></span></dt>
+  <dt id="config-solver-driven-savestep"><a href="#config-solver-driven-savestep"><code>"SaveStep"</code></a> <span class="config-type">integer</span> <span class="config-default">default: <code>0</code></span> <span class="config-deprecated">deprecated</span></dt>
   <dd>
-    <p>Controls how often, in number of frequency steps, to save computed fields to disk for <a href="../guide/postprocessing.md#Visualization">visualization with ParaView</a>. Files are saved in the <code>paraview/</code> (and/or <code>gridfunction/</code>) directory under <a href="#config-problem-output"><code>/Problem/Output</code></a>.</p>
+    <p>Controls how often, in number of frequency steps, to save computed fields to disk for <a href="../../guide/postprocessing/#Visualization">visualization with ParaView</a>. Files are saved in the <code>paraview/</code> (and/or <code>gridfunction/</code>) directory under <a href="#config-problem-output"><code>/Problem/Output</code></a>. Deprecated: use <a href="#config-solver-driven-samples-linear"><code>Linear Samples</code></a> interface instead.</p>
   </dd>
   <dt><code>"Samples"</code> <span class="config-type">[object, ...]</span> <span class="config-default">default: <code>—</code></span></dt>
   <dd>
@@ -1525,7 +1525,7 @@ Configuration for the frequency domain driven solver. Only relevant when [`/Prob
   </dd>
   <dt id="config-solver-driven-save"><a href="#config-solver-driven-save"><code>"Save"</code></a> <span class="config-type">[number, ...]</span> <span class="config-default">default: <code>—</code></span></dt>
   <dd>
-    <p>Additional frequencies at which to save computed fields to disk for <a href="../guide/postprocessing.md#Visualization">visualization with ParaView</a>, in addition to those specified by <code>&quot;SaveStep&quot;</code>. Files are saved in the <code>paraview/</code> (and/or <code>gridfunction/</code>) directory under <a href="#config-problem-output"><code>/Problem/Output</code></a>.</p>
+    <p>Additional frequencies at which to save computed fields to disk for <a href="../../guide/postprocessing/#Visualization">visualization with ParaView</a>, in addition to those specified by <code>&quot;SaveStep&quot;</code>. Files are saved in the <code>paraview/</code> (and/or <code>gridfunction/</code>) directory under <a href="#config-problem-output"><code>/Problem/Output</code></a>.</p>
   </dd>
   <dt id="config-solver-driven-restart"><a href="#config-solver-driven-restart"><code>"Restart"</code></a> <span class="config-type">integer</span> <span class="config-default">default: <code>1</code></span> <span class="config-constraint"><code>&gt; 0</code></span></dt>
   <dd>
@@ -1543,7 +1543,7 @@ Configuration for the frequency domain driven solver. Only relevant when [`/Prob
   <dd>
     <p>Number of consecutive samples satisfying the error tolerance required to declare convergence of the adaptive sampling algorithm.</p>
   </dd>
-  <dt id="config-solver-driven-adaptivegsorthogonalization"><a href="#config-solver-driven-adaptivegsorthogonalization"><code>"AdaptiveGSOrthogonalization"</code></a> <span class="config-type">string</span> <span class="config-default">default: <code>&quot;CGS2&quot;</code></span></dt>
+  <dt id="config-solver-driven-adaptivegsorthogonalization"><a href="#config-solver-driven-adaptivegsorthogonalization"><code>"AdaptiveGSOrthogonalization"</code></a> <span class="config-type">string</span> <span class="config-default">default: <code>&quot;CGS2&quot;</code></span> <span class="config-advanced">advanced</span></dt>
   <dd>
     <p>Gram-Schmidt variant for orthogonalizing the adaptive reduced-order model basis. Same options as <a href="#config-solver-linear-gsorthogonalization"><code>/Linear/GSOrthogonalization</code></a>.</p>
     <dl class="config-enum">
@@ -1559,7 +1559,7 @@ Configuration for the frequency domain driven solver. Only relevant when [`/Prob
   <dd>
     <p>Use the adaptive reduced-order model to print synthesized circuit-like matrices (L⁻¹, R⁻¹, C). Requires adaptive sweep to be enabled, all <code>LumpedPort</code> fields to be orthogonal, and only LRC-type frequency dependence (no <code>WavePort</code>, <code>Conductivity</code>, or second-order farfield BCs).</p>
   </dd>
-  <dt id="config-solver-driven-adaptivecircuitsynthesisdomainorthogonalization"><a href="#config-solver-driven-adaptivecircuitsynthesisdomainorthogonalization"><code>"AdaptiveCircuitSynthesisDomainOrthogonalization"</code></a> <span class="config-type">string</span> <span class="config-default">default: <code>&quot;Energy&quot;</code></span></dt>
+  <dt id="config-solver-driven-adaptivecircuitsynthesisdomainorthogonalization"><a href="#config-solver-driven-adaptivecircuitsynthesisdomainorthogonalization"><code>"AdaptiveCircuitSynthesisDomainOrthogonalization"</code></a> <span class="config-type">string</span> <span class="config-default">default: <code>&quot;Energy&quot;</code></span> <span class="config-advanced">advanced</span></dt>
   <dd>
     <p>Weight matrix type for domain orthogonalization when building synthesized circuit matrices.</p>
     <dl class="config-enum">
@@ -1577,7 +1577,7 @@ Configuration for the frequency domain driven solver. Only relevant when [`/Prob
 #### [Samples](@id config-solver-driven-samples)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-solver"><code>Solver</code></a><code>/</code><a href="#config-solver-driven"><code>Driven</code></a><code>/</code><a href="#config-solver-driven-samples"><code>Samples</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-solver">Solver</a>/<a href="#config-solver-driven">Driven</a>/<a href="#config-solver-driven-samples">Samples</a></code></p>
 ```
 
 ```@raw html
@@ -1589,7 +1589,7 @@ Array of frequency sample specifications. Combined with `"MinFreq"`/`"MaxFreq"`/
 ##### [Point Samples](@id config-solver-driven-samples-point)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-solver"><code>Solver</code></a><code>/</code><a href="#config-solver-driven"><code>Driven</code></a><code>/</code><a href="#config-solver-driven-samples"><code>Samples</code></a><code>/</code><a href="#config-solver-driven-samples-point"><code>0</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-solver">Solver</a>/<a href="#config-solver-driven">Driven</a>/<a href="#config-solver-driven-samples">Samples</a>/<a href="#config-solver-driven-samples-point">0</a></code></p>
 ```
 
 Explicit list of frequency sample points.
@@ -1600,7 +1600,7 @@ Explicit list of frequency sample points.
   <dd>
     <p>Explicit frequencies to sample, GHz.</p>
   </dd>
-  <dt id="config-solver-driven-samples-point-type"><a href="#config-solver-driven-samples-point-type"><code>"Type"</code></a> <span class="config-type">any</span> <span class="config-default">default: <code>—</code></span></dt>
+  <dt id="config-solver-driven-samples-point-type"><a href="#config-solver-driven-samples-point-type"><code>"Type"</code></a> <span class="config-type">any</span> <span class="config-default">default: <code>&quot;Point&quot;</code></span></dt>
   <dd>
   </dd>
   <dt id="config-solver-driven-samples-point-savestep"><a href="#config-solver-driven-samples-point-savestep"><code>"SaveStep"</code></a> <span class="config-type">integer</span> <span class="config-default">default: <code>0</code></span></dt>
@@ -1617,7 +1617,7 @@ Explicit list of frequency sample points.
 ##### [Linear Samples](@id config-solver-driven-samples-linear)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-solver"><code>Solver</code></a><code>/</code><a href="#config-solver-driven"><code>Driven</code></a><code>/</code><a href="#config-solver-driven-samples"><code>Samples</code></a><code>/</code><a href="#config-solver-driven-samples-linear"><code>1</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-solver">Solver</a>/<a href="#config-solver-driven">Driven</a>/<a href="#config-solver-driven-samples">Samples</a>/<a href="#config-solver-driven-samples-linear">1</a></code></p>
 ```
 
 Linearly-spaced frequency samples.
@@ -1632,7 +1632,7 @@ Linearly-spaced frequency samples.
   <dd>
     <p>Upper bound, GHz.</p>
   </dd>
-  <dt id="config-solver-driven-samples-linear-type"><a href="#config-solver-driven-samples-linear-type"><code>"Type"</code></a> <span class="config-type">any</span> <span class="config-default">default: <code>—</code></span></dt>
+  <dt id="config-solver-driven-samples-linear-type"><a href="#config-solver-driven-samples-linear-type"><code>"Type"</code></a> <span class="config-type">any</span> <span class="config-default">default: <code>&quot;Linear&quot;</code></span></dt>
   <dd>
   </dd>
   <dt id="config-solver-driven-samples-linear-freqstep"><a href="#config-solver-driven-samples-linear-freqstep"><code>"FreqStep"</code></a> <span class="config-type">number</span> <span class="config-default">default: <code>—</code></span> <span class="config-constraint"><code>≥ 0.0</code></span></dt>
@@ -1657,7 +1657,7 @@ Linearly-spaced frequency samples.
 ##### [Log Samples](@id config-solver-driven-samples-log)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-solver"><code>Solver</code></a><code>/</code><a href="#config-solver-driven"><code>Driven</code></a><code>/</code><a href="#config-solver-driven-samples"><code>Samples</code></a><code>/</code><a href="#config-solver-driven-samples-log"><code>2</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-solver">Solver</a>/<a href="#config-solver-driven">Driven</a>/<a href="#config-solver-driven-samples">Samples</a>/<a href="#config-solver-driven-samples-log">2</a></code></p>
 ```
 
 Logarithmically-spaced frequency samples.
@@ -1693,7 +1693,7 @@ Logarithmically-spaced frequency samples.
 ### [Transient Solver](@id config-solver-transient)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-solver"><code>Solver</code></a><code>/</code><a href="#config-solver-transient"><code>Transient</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-solver">Solver</a>/<a href="#config-solver-transient">Transient</a></code></p>
 ```
 
 ```@raw html
@@ -1735,11 +1735,11 @@ Configuration for the time domain driven solver. Only relevant when [`/Problem/T
     <p>Time integration scheme for the second-order ODE system.</p>
     <dl class="config-enum">
       <dt><code>"GeneralizedAlpha"</code></dt>
-      <dd>Second-order implicit generalized-α method with ρ∞ = 1. Unconditionally stable.</dd>
+      <dd>Second-order implicit generalized-α method with $\rho_\infty = 1$. Unconditionally stable.</dd>
       <dt><code>"ARKODE"</code></dt>
-      <dd>SUNDIALS ARKode implicit Runge-Kutta with adaptive time-stepping. Requires SUNDIALS support (see <a href="../install.md#Configuration-options">installation options</a>).</dd>
+      <dd>SUNDIALS ARKode implicit Runge-Kutta with adaptive time-stepping. Requires SUNDIALS support (see <a href="../../install/#Configuration-options">installation options</a>).</dd>
       <dt><code>"CVODE"</code></dt>
-      <dd>SUNDIALS CVODE implicit multistep method with adaptive time-stepping. Requires SUNDIALS support (see <a href="../install.md#Configuration-options">installation options</a>).</dd>
+      <dd>SUNDIALS CVODE implicit multistep method with adaptive time-stepping. Requires SUNDIALS support (see <a href="../../install/#Configuration-options">installation options</a>).</dd>
       <dt><code>"RungeKutta"</code></dt>
       <dd>Two-stage singly diagonal implicit Runge-Kutta (SDIRK). Second-order, L-stable.</dd>
       <dt><code>"Default"</code></dt>
@@ -1756,7 +1756,7 @@ Configuration for the time domain driven solver. Only relevant when [`/Problem/T
   </dd>
   <dt id="config-solver-transient-savestep"><a href="#config-solver-transient-savestep"><code>"SaveStep"</code></a> <span class="config-type">integer</span> <span class="config-default">default: <code>0</code></span></dt>
   <dd>
-    <p>Controls how often, in number of time steps, to save computed fields to disk for <a href="../guide/postprocessing.md#Visualization">visualization with ParaView</a>. Files are saved in the <code>paraview/</code> (and/or <code>gridfunction/</code>) directory under <a href="#config-problem-output"><code>/Problem/Output</code></a>.</p>
+    <p>Controls how often, in number of time steps, to save computed fields to disk for <a href="../../guide/postprocessing/#Visualization">visualization with ParaView</a>. Files are saved in the <code>paraview/</code> (and/or <code>gridfunction/</code>) directory under <a href="#config-problem-output"><code>/Problem/Output</code></a>.</p>
   </dd>
   <dt id="config-solver-transient-order"><a href="#config-solver-transient-order"><code>"Order"</code></a> <span class="config-type">integer</span> <span class="config-default">default: <code>2</code></span> <span class="config-constraint"><code>≥ 2, ≤ 5</code></span></dt>
   <dd>
@@ -1776,7 +1776,7 @@ Configuration for the time domain driven solver. Only relevant when [`/Problem/T
 ### [Electrostatic Solver](@id config-solver-electrostatic)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-solver"><code>Solver</code></a><code>/</code><a href="#config-solver-electrostatic"><code>Electrostatic</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-solver">Solver</a>/<a href="#config-solver-electrostatic">Electrostatic</a></code></p>
 ```
 
 ```@raw html
@@ -1789,7 +1789,7 @@ Configuration for the electrostatic solver. Only relevant when [`/Problem/Type`]
 <dl class="palace-config">
   <dt id="config-solver-electrostatic-save"><a href="#config-solver-electrostatic-save"><code>"Save"</code></a> <span class="config-type">integer</span> <span class="config-default">default: <code>0</code></span> <span class="config-constraint"><code>≥ 0</code></span></dt>
   <dd>
-    <p>Number of computed electric field solutions to save to disk for <a href="../guide/postprocessing.md#Visualization">visualization with ParaView</a>, ordered by the entries in the computed capacitance matrix. Files are saved in the <code>paraview/</code> (and/or <code>gridfunction/</code>) directory under <a href="#config-problem-output"><code>/Problem/Output</code></a>.</p>
+    <p>Number of computed electric field solutions to save to disk for <a href="../../guide/postprocessing/#Visualization">visualization with ParaView</a>, ordered by the entries in the computed capacitance matrix. Files are saved in the <code>paraview/</code> (and/or <code>gridfunction/</code>) directory under <a href="#config-problem-output"><code>/Problem/Output</code></a>.</p>
   </dd>
 </dl>
 ```
@@ -1797,7 +1797,7 @@ Configuration for the electrostatic solver. Only relevant when [`/Problem/Type`]
 ### [Magnetostatic Solver](@id config-solver-magnetostatic)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-solver"><code>Solver</code></a><code>/</code><a href="#config-solver-magnetostatic"><code>Magnetostatic</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-solver">Solver</a>/<a href="#config-solver-magnetostatic">Magnetostatic</a></code></p>
 ```
 
 ```@raw html
@@ -1810,7 +1810,7 @@ Configuration for the magnetostatic solver. Only relevant when [`/Problem/Type`]
 <dl class="palace-config">
   <dt id="config-solver-magnetostatic-save"><a href="#config-solver-magnetostatic-save"><code>"Save"</code></a> <span class="config-type">integer</span> <span class="config-default">default: <code>0</code></span> <span class="config-constraint"><code>≥ 0</code></span></dt>
   <dd>
-    <p>Number of computed magnetic field solutions to save to disk for <a href="../guide/postprocessing.md#Visualization">visualization with ParaView</a>, ordered by the entries in the computed inductance matrix. Files are saved in the <code>paraview/</code> (and/or <code>gridfunction/</code>) directory under <a href="#config-problem-output"><code>/Problem/Output</code></a>.</p>
+    <p>Number of computed magnetic field solutions to save to disk for <a href="../../guide/postprocessing/#Visualization">visualization with ParaView</a>, ordered by the entries in the computed inductance matrix. Files are saved in the <code>paraview/</code> (and/or <code>gridfunction/</code>) directory under <a href="#config-problem-output"><code>/Problem/Output</code></a>.</p>
   </dd>
 </dl>
 ```
@@ -1818,7 +1818,7 @@ Configuration for the magnetostatic solver. Only relevant when [`/Problem/Type`]
 ### [Linear Solver](@id config-solver-linear)
 
 ```@raw html
-<p class="config-keypath"><em>Path:</em> <code>/</code><a href="#config-solver"><code>Solver</code></a><code>/</code><a href="#config-solver-linear"><code>Linear</code></a></p>
+<p class="config-keypath"><em>Path:</em> <code>/<a href="#config-solver">Solver</a>/<a href="#config-solver-linear">Linear</a></code></p>
 ```
 
 ```@raw html
@@ -1834,11 +1834,11 @@ Configuration for the linear solver used by all simulation types.
     <p>Specifies the solver used for preconditioning the linear system.</p>
     <dl class="config-enum">
       <dt><code>"SuperLU"</code></dt>
-      <dd><a href="https://github.com/xiaoyeli/superlu_dist">SuperLU_DIST</a> sparse direct solver in real double precision. For frequency domain problems uses a real approximation to the complex system matrix. Requires SuperLU_DIST support (see <a href="../install.md#Configuration-options">installation options</a>).</dd>
+      <dd><a href="https://github.com/xiaoyeli/superlu_dist">SuperLU_DIST</a> sparse direct solver in real double precision. For frequency domain problems uses a real approximation to the complex system matrix. Requires SuperLU_DIST support (see <a href="../../install/#Configuration-options">installation options</a>).</dd>
       <dt><code>"STRUMPACK"</code></dt>
-      <dd><a href="https://portal.nersc.gov/project/sparse/strumpack">STRUMPACK</a> sparse direct solver in real double precision. Not compatible with magnetostatics (singular curl-curl operator); use <code>&quot;AMS&quot;</code> instead. Requires STRUMPACK support (see <a href="../install.md#Configuration-options">installation options</a>).</dd>
+      <dd><a href="https://portal.nersc.gov/project/sparse/strumpack">STRUMPACK</a> sparse direct solver in real double precision. Not compatible with magnetostatics (singular curl-curl operator); use <code>&quot;AMS&quot;</code> instead. Requires STRUMPACK support (see <a href="../../install/#Configuration-options">installation options</a>).</dd>
       <dt><code>"MUMPS"</code></dt>
-      <dd><a href="http://mumps.enseeiht.fr/">MUMPS</a> sparse direct solver in real double precision. Requires MUMPS support (see <a href="../install.md#Configuration-options">installation options</a>).</dd>
+      <dd><a href="http://mumps.enseeiht.fr/">MUMPS</a> sparse direct solver in real double precision. Requires MUMPS support (see <a href="../../install/#Configuration-options">installation options</a>).</dd>
       <dt><code>"AMS"</code></dt>
       <dd>Hypre's <a href="https://hypre.readthedocs.io/en/latest/solvers-ams.html">Auxiliary-space Maxwell Solver (AMS)</a>, an algebraic multigrid (AMG)-based preconditioner for curl-curl operators.</dd>
       <dt><code>"BoomerAMG"</code></dt>
@@ -1907,7 +1907,7 @@ Configuration for the linear solver used by all simulation types.
   </dd>
   <dt id="config-solver-linear-mgsmoothits"><a href="#config-solver-linear-mgsmoothits"><code>"MGSmoothIts"</code></a> <span class="config-type">integer</span> <span class="config-default">default: <code>1</code></span> <span class="config-constraint"><code>&gt; 0</code></span></dt>
   <dd>
-    <p>Number of pre- and post-smooth iterations for multigrid preconditioners.</p>
+    <p>Number of pre- and post-smooth iterations for multigrid preconditioners, when the geometric multigrid preconditioner is enabled.</p>
   </dd>
   <dt id="config-solver-linear-mgsmoothorder"><a href="#config-solver-linear-mgsmoothorder"><code>"MGSmoothOrder"</code></a> <span class="config-type">integer</span> <span class="config-default">default: <code>0</code></span> <span class="config-constraint"><code>&gt; 0</code></span></dt>
   <dd>

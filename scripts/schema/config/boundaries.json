@@ -117,13 +117,13 @@
           "Thickness":
           {
             "type": "number",
-            "description": "Optional conductor thickness in mesh length units. Activates a finite-thickness boundary condition when specified.",
+            "description": "Optional conductor thickness in mesh length units. Activates a finite-thickness boundary condition for metal.",
             "default": 0.0
           },
           "External":
           {
             "type": "boolean",
-            "description": "Whether this boundary is on the exterior of the computational domain.",
+            "description": "Whether this boundary is on the exterior of the computational domain. Relevant for the thickness correction.",
             "default": false
           }
         }
@@ -132,7 +132,8 @@
     "LumpedPort":
     {
       "type": "array",
-      "description": "Array of lumped port boundary conditions. Lumped ports can be specified on boundaries internal to the computational domain. For each simulation type they serve a different purpose: driven — excitation and S-parameter postprocessing; transient — time-domain port excitation; eigenmode — energy-participation ratio (EPR) calculations; electrostatic/magnetostatic — not used.",
+      "title": "Lumped Port",
+      "description": "Array of lumped port boundary conditions. Lumped ports can be specified on boundaries internal to the computational domain.",
       "additionalItems": false,
       "items":
       {
@@ -151,7 +152,7 @@
             "exclusiveMinimum": 0,
             "description": "Index of this lumped port, used in postprocessing output files. Must be unique across all port and source types."
           },
-          "Attributes": { "$ref": "#/$defs/Attributes" },
+          "Attributes": { "$ref": "#/$defs/Attributes", "description": "Integer array of mesh boundary attributes for this lumped port boundary. If this port is to be a multielement lumped port with more than a single lumped element, use the \"Elements\" array described below." },
           "Direction": { "$ref": "#/$defs/Direction" },
           "CoordinateSystem":
           {
@@ -217,7 +218,7 @@
           "Elements":
           {
             "type": "array",
-            "description": "Sub-elements for a multielement lumped port. Use this instead of the top-level `\"Attributes\"` and `\"Direction\"` when the port spans multiple disjoint boundary surfaces. Elements add in parallel.",
+            "description": "Sub-elements for a multielement lumped port. Use this instead of the top-level `\"Attributes\"`/`\"Direction\"`/`\"CoordinateSystem\"` when the port spans multiple disjoint boundary surfaces. Elements add in parallel.",
             "additionalItems": false,
             "items":
             {
@@ -246,6 +247,7 @@
     "WavePort":
     {
       "type": "array",
+      "title": "Wave Port",
       "description": "Array of numeric wave port boundary conditions. Wave ports can only be specified on the true boundary of the computational domain (they must be \"one-sided\"). A 2D boundary mode eigenproblem is solved on each wave port to compute the port mode shape. Only available for frequency domain driven and eigenmode simulations.",
       "additionalItems": false,
       "items":
@@ -348,6 +350,7 @@
     "SurfaceCurrent":
     {
       "type": "array",
+      "title": "Surface Current",
       "description": "Array of surface current source boundaries. Prescribes a unit source surface current excitation on the given boundary to excite a driven, transient, or magnetostatic simulation. For magnetostatic simulations, inductance matrix entries are extracted for each surface current boundary.",
       "additionalItems": false,
       "items":
@@ -367,7 +370,7 @@
             "exclusiveMinimum": 0,
             "description": "Index of this surface current source, used in postprocessing output files. Must be unique across all port and source types."
           },
-          "Attributes": { "$ref": "#/$defs/Attributes" },
+          "Attributes": { "$ref": "#/$defs/Attributes", "description": "Integer array of mesh boundary attributes for this surface current boundary. If this is to be a object with more than a single element, use the \"Elements\" array described below." },
           "Direction": { "$ref": "#/$defs/Direction" },
           "CoordinateSystem":
           {
@@ -381,7 +384,7 @@
           "Elements":
           {
             "type": "array",
-            "description": "Sub-elements for a multielement surface current source. Elements add in parallel to give the same total current as a single-element source.",
+            "description": "Sub-elements for a multielement surface current source. Use this instead of the top-level `\"Attributes\"`/`\"Direction\"`/`\"CoordinateSystem\"` when the source spans multiple disjoint boundary surfaces. Elements add in parallel to give the same total current as a single-element source.",
             "additionalItems": false,
             "items":
             {
@@ -496,6 +499,7 @@
         "SurfaceFlux":
         {
           "type": "array",
+          "title": "Surface Flux",
           "description": "Array of surface flux postprocessing boundaries. Results are written to `surface-F.csv` in the output directory.",
           "additionalItems": false,
           "items":
@@ -534,7 +538,7 @@
                 "items": { "type": "number" },
                 "minItems": 3,
                 "maxItems": 3,
-                "description": "Point used to determine the outward normal orientation, in mesh length units. Only used when `\"TwoSided\"` is `false`. Defaults to the centroid of the bounding box of the boundary elements."
+                "description": "Point used to determine the outward normal orientation, in mesh length units. Only used when `\"TwoSided\"` is `false`. If not specified, the point will be computed as the centroid of the axis-aligned bounding box for all elements making up the postprocessing boundary."
               }
             }
           }
@@ -560,7 +564,7 @@
               "Attributes": { "$ref": "#/$defs/Attributes" },
               "Type":
               {
-                "description": "Interface type used to determine the boundary conditions for computing the EPR.",
+                "description": "Interface type used to determine the boundary conditions for computing the EPR. See also [theory reference](../reference.md#Bulk-and-interface-dielectric-loss).",
                 "default": "Default",
                 "oneOf": [
                   { "const": "Default", "description": "Use the full electric field evaluated at the boundary." },
@@ -577,7 +581,7 @@
               "Permittivity":
               {
                 "type": "number",
-                "description": "Relative permittivity of this dielectric interface layer."
+                "description": "Relative permittivity of this dielectric interface layer. This should be the interface layer permittivity for the specific \"Type\" of interface specified."
               },
               "LossTan":
               {

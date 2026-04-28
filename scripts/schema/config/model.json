@@ -152,8 +152,7 @@
         {
           "type": "boolean",
           "description": "Use nonconformal refinement in adaptation. Required for non-simplex meshes.",
-          "default": true,
-          "x-palace-advanced": true
+          "default": true
         },
         "MaxNCLevels":
         {

@@ -314,22 +314,19 @@ function render_keypath(
     real_path = drop_last ? path[1:(end - 1)] : path
     buf = IOBuffer()
     println(buf, "```@raw html")
-    print(buf, "<p class=\"config-keypath\"><em>Path:</em> ")
+    print(buf, "<p class=\"config-keypath\"><em>Path:</em> <code>")
     for (i, seg) in enumerate(real_path)
         id = anchor_id(real_path[1:i])
-        print(buf, "<code>/</code><a href=\"#$id\"><code>$(html_escape(seg))</code></a>")
+        print(buf, "/<a href=\"#$id\">$(html_escape(seg))</a>")
     end
     if array_index >= 0
         if !isempty(array_anchor)
-            print(
-                buf,
-                "<code>/</code><a href=\"#$array_anchor\"><code>$(array_index)</code></a>"
-            )
+            print(buf, "/<a href=\"#$array_anchor\">$(array_index)</a>")
         else
-            print(buf, "<code>/$(array_index)</code>")
+            print(buf, "/$(array_index)")
         end
     end
-    println(buf, "</p>")
+    println(buf, "</code></p>")
     println(buf, "```")
     return String(take!(buf))
 end
@@ -349,7 +346,25 @@ Returns inner HTML with surrounding <p> tags stripped.
 """
 function render_description(s::String)::String
     isempty(s) && return ""
-    md = replace(s, r"\[([^\]]+)\]\(@ref ([^\)]+)\)" => s"[\1](#\2)")
+    # Convert double-backtick math ``...`` to $...$ so KaTeX auto-render picks it up.
+    # Documenter's KaTeX is configured with $ as the inline delimiter (not \(...\)).
+    md = replace(s, r"``(.*?)``" => s"$\1$")
+    # Convert Documenter @ref cross-references to plain anchor links.
+    md = replace(md, r"\[([^\]]+)\]\(@ref ([^\)]+)\)" => s"[\1](#\2)")
+    # Rewrite relative .md links for the built site. Raw HTML blocks are not processed by
+    # Documenter, so we must do this ourselves. Two adjustments are needed:
+    #
+    # 1. prettyurls=true (docs/make.jl): foo.md is built as foo/index.html, so links must
+    #    use foo/ (trailing slash, no .md).
+    #
+    # 2. Depth correction: the source file is docs/src/config/reference.md but with
+    #    prettyurls it is served at config/reference/index.html — one level deeper than the
+    #    source. Documenter corrects this for normal Markdown links but not raw HTML. A
+    #    relative link ../foo (correct relative to the source) must become ../../foo in the
+    #    built page. We prepend an extra ../ to all relative links (those starting with ./).
+    #
+    # If prettyurls is ever disabled, remove the trailing slash and the extra ../ prefix.
+    md = replace(md, r"\[([^\]]*)\]\((\.\.?/[^)]*?)\.md(#[^)]*)?\)" => s"[\1](../\2/\3)")
     buf = IOBuffer()
     html(buf, _CM_PARSER(md))
     result = String(take!(buf))

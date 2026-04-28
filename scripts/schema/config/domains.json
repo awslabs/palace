@@ -10,7 +10,7 @@
     "Materials":
     {
       "type": "array",
-      "description": "Array of material property objects, with each object specifying the following keys.",
+      "description": "Array of material property objects.",
       "additionalItems": false,
       "items":
       {
@@ -114,7 +114,7 @@
             "items": { "type": "number" },
             "minItems": 3,
             "maxItems": 3,
-            "description": "Coordinates of the dipole center position, in mesh length units."
+            "description": "Coordinates of the dipole center position `[x, y, z]`, in mesh length units."
           },
           "Direction":
           {
@@ -194,7 +194,7 @@
                 "items": { "type": "number" },
                 "minItems": 3,
                 "maxItems": 3,
-                "description": "Coordinates of this probe, in mesh length units."
+                "description": "Coordinates of this probe `[x, y, z]`, in mesh length units."
               }
             }
           }
@@ -206,7 +206,7 @@
   {
     "Attributes":
     {
-      "description": "Integer array of mesh domain or boundary attributes this object applies to.",
+      "description": "Integer array of mesh domain this object applies to.",
       "type": "array",
       "additionalItems": false,
       "items": { "type": "integer" },

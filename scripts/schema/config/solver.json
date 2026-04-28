@@ -115,7 +115,7 @@
           "description": "Specifies the nonlinear eigenvalue solver for problems with frequency-dependent boundary conditions.",
           "default": "Hybrid",
           "oneOf": [
-            { "const": "Hybrid", "description": "Hybrid algorithm: solve a polynomial approximation first, then refine with a quasi-Newton nonlinear eigensolver." },
+            { "const": "Hybrid", "description": "Hybrid algorithm: solve a polynomial (quadratic) approximation first, then refine with a quasi-Newton nonlinear eigensolver." },
             { "const": "SLP",    "description": "SLEPc Successive Linear Problem (SLP) nonlinear eigensolver." }
           ]
         },
@@ -213,26 +213,27 @@
         "MinFreq":
         {
           "type": "number",
-          "description": "Lower bound of the frequency sweep interval, GHz. Deprecated: use [`/Samples/Linear`](@ref config-solver-driven-samples-linear) interface instead.", 
+          "description": "Lower bound of the frequency sweep interval, GHz. Deprecated: use [`Linear Samples`](@ref config-solver-driven-samples-linear) interface instead.", 
           "x-palace-deprecated": true
         },
         "MaxFreq":
         {
           "type": "number",
-          "description": "Upper bound of the frequency sweep interval, GHz. Deprecated: use [`/Samples/Linear`](@ref config-solver-driven-samples-linear) interface instead.", 
+          "description": "Upper bound of the frequency sweep interval, GHz. Deprecated: use [`Linear Samples`](@ref config-solver-driven-samples-linear) interface instead.", 
           "x-palace-deprecated": true
         },
         "FreqStep":
         {
           "type": "number",
-          "description": "Frequency step size for the frequency sweep, GHz. Deprecated: use [`/Samples/Linear`](@ref config-solver-driven-samples-linear) interface instead.", 
+          "description": "Frequency step size for the frequency sweep, GHz. Deprecated: use [`Linear Samples`](@ref config-solver-driven-samples-linear) interface instead.", 
           "x-palace-deprecated": true
         },
         "SaveStep":
         {
           "type": "integer",
-          "description": "Controls how often, in number of frequency steps, to save computed fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization). Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
-          "default": 0
+          "description": "Controls how often, in number of frequency steps, to save computed fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization). Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output). Deprecated: use [`Linear Samples`](@ref config-solver-driven-samples-linear) interface instead.",
+          "default": 0,
+          "x-palace-deprecated": true
         },
         "Samples":
         {
@@ -247,7 +248,7 @@
                 "description": "Explicit list of frequency sample points.",
                 "properties":
                 {
-                  "Type": { "const": "Point" },
+                  "Type": { "const": "Point", "default": "Point" },
                   "Freq": { "type": "array", "items": { "type": "number" }, "description": "Explicit frequencies to sample, GHz." },
                   "SaveStep": { "type": "integer", "description": "Save fields every N steps within this sample. `0` disables saving.", "default": 0 },
                   "AddToPROM": { "type": "boolean", "description": "Force inclusion of these points in the PROM for adaptive sweep (primarily a debugging tool).", "default": false }
@@ -261,7 +262,7 @@
                 "description": "Linearly-spaced frequency samples.",
                 "properties":
                 {
-                  "Type": { "const": "Linear" },
+                  "Type": { "const": "Linear", "default": "Linear" },
                   "MinFreq": { "type": "number", "minimum": 0.0, "description": "Lower bound, GHz." },
                   "MaxFreq": { "type": "number", "minimum": 0.0, "description": "Upper bound, GHz." },
                   "FreqStep": { "type": "number", "minimum": 0.0, "description": "Step size, GHz. Mutually exclusive with `\"NSample\"`." },
@@ -278,7 +279,7 @@
                 "description": "Logarithmically-spaced frequency samples.",
                 "properties":
                 {
-                  "Type": { "const": "Log" },
+                  "Type": { "const": "Log", "default": "Log" },
                   "MinFreq": { "type": "number", "exclusiveMinimum": 0.0, "description": "Lower bound, GHz." },
                   "MaxFreq": { "type": "number", "exclusiveMinimum": 0.0, "description": "Upper bound, GHz." },
                   "NSample": { "type": "integer", "minimum": 1, "description": "Number of samples." },
@@ -334,7 +335,8 @@
             { "const": "MGS",  "description": "Modified Gram-Schmidt." },
             { "const": "CGS",  "description": "Classical Gram-Schmidt." },
             { "const": "CGS2", "description": "Two-step classical Gram-Schmidt with reorthogonalization." }
-          ]
+          ],
+          "x-palace-advanced": true
         },
         "AdaptiveCircuitSynthesis":
         {
@@ -350,7 +352,8 @@
             { "const": "Energy",         "description": "Use the energy-based domain mass matrix." },
             { "const": "FEBasisIdentity", "description": "Use the identity matrix in the finite element basis." },
             { "const": "SpaceOverlap",    "description": "Use the physical-space field overlap." }
-          ]
+          ],
+          "x-palace-advanced": true
         }
       }
     },
@@ -368,7 +371,7 @@
           "description": "Time integration scheme for the second-order ODE system.",
           "default": "Default",
           "oneOf": [
-            { "const": "GeneralizedAlpha", "description": "Second-order implicit generalized-α method with ρ∞ = 1. Unconditionally stable." },
+            { "const": "GeneralizedAlpha", "description": "Second-order implicit generalized-α method with ``\\rho_\\infty = 1``. Unconditionally stable." },
             { "const": "ARKODE",           "description": "SUNDIALS ARKode implicit Runge-Kutta with adaptive time-stepping. Requires SUNDIALS support (see [installation options](../install.md#Configuration-options))." },
             { "const": "CVODE",            "description": "SUNDIALS CVODE implicit multistep method with adaptive time-stepping. Requires SUNDIALS support (see [installation options](../install.md#Configuration-options))." },
             { "const": "RungeKutta",       "description": "Two-stage singly diagonal implicit Runge-Kutta (SDIRK). Second-order, L-stable." },
@@ -580,7 +583,7 @@
         {
           "type": "integer",
           "exclusiveMinimum": 0,
-          "description": "Number of pre- and post-smooth iterations for multigrid preconditioners.",
+          "description": "Number of pre- and post-smooth iterations for multigrid preconditioners, when the geometric multigrid preconditioner is enabled.",
           "default": 1
         },
         "MGSmoothOrder":
