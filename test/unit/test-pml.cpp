@@ -23,8 +23,7 @@ namespace
 // Construct a minimal Profile for a 1D PML on the +x face (absorption in +x direction
 // only). Physical domain is x ∈ [0, 1]; PML is x ∈ [1, 1.1]; d = 0.1, n = 3,
 // σ_max = σ, κ_max = 1 (pure UPML), α_max = 0.
-pml::Profile MakeSimpleXProfile(double sigma_max = 1.0,
-                                PMLStretchFormulation f = PMLStretchFormulation::FIXED,
+pml::Profile MakeSimpleXProfile(double sigma_max = 1.0, bool frequency_dependent = false,
                                 double omega0 = 1.0)
 {
   pml::Profile p;
@@ -40,7 +39,7 @@ pml::Profile MakeSimpleXProfile(double sigma_max = 1.0,
   p.interface_coord[1] = {0.0, 0.0};
   p.interface_coord[2] = {0.0, 0.0};
   p.direction_active = {0, 1, 0, 0, 0, 0};  // +x only
-  p.formulation = f;
+  p.frequency_dependent = frequency_dependent;
   p.reference_frequency = omega0;
   return p;
 }
@@ -119,59 +118,47 @@ TEST_CASE("PML::ComputeLocalStretchParams polynomial grading", "[pml][Serial]")
   }
 }
 
-TEST_CASE("PML::ComputeStretch formulations", "[pml][Serial]")
+TEST_CASE("PML::ComputeStretch", "[pml][Serial]")
 {
-  SECTION("FIXED: s_x = 1 − i σ / ω₀ (Palace e^{+iωt} convention)")
+  SECTION("UPML (α = 0, κ = 1): s_x = 1 − i σ / ω (Palace e^{+iωt} convention)")
   {
     pml::LocalStretchParams lp;
     lp.sigma = {0.5, 0.0, 0.0};
     lp.kappa = {1.0, 1.0, 1.0};
     lp.alpha = {0.0, 0.0, 0.0};
-    auto s = pml::ComputeStretch(lp, /*omega=*/2.0, PMLStretchFormulation::FIXED);
+    auto s = pml::ComputeStretch(lp, /*omega=*/2.0);
     REQUIRE(s[0].real() == Approx(1.0));
     REQUIRE(s[0].imag() == Approx(-0.25));  // −σ/ω = −0.5/2
     REQUIRE(s[1] == std::complex<double>(1.0, 0.0));
     REQUIRE(s[2] == std::complex<double>(1.0, 0.0));
   }
 
-  SECTION("FREQUENCY_DEPENDENT behaves like FIXED with live ω")
-  {
-    pml::LocalStretchParams lp;
-    lp.sigma = {0.5, 0.0, 0.0};
-    lp.kappa = {1.0, 1.0, 1.0};
-    auto s_fd =
-        pml::ComputeStretch(lp, /*omega=*/4.0, PMLStretchFormulation::FREQUENCY_DEPENDENT);
-    auto s_fixed = pml::ComputeStretch(lp, /*omega=*/4.0, PMLStretchFormulation::FIXED);
-    REQUIRE(s_fd[0] == s_fixed[0]);
-  }
-
-  SECTION("CFS: s = κ + σ/(α + iω) (Palace e^{+iωt} convention)")
+  SECTION("CFS (α > 0, κ > 1): s = κ + σ/(α + iω)")
   {
     pml::LocalStretchParams lp;
     lp.sigma = {1.0, 0.0, 0.0};
     lp.kappa = {1.5, 1.0, 1.0};
     lp.alpha = {0.2, 0.0, 0.0};
     const double omega = 3.0;
-    auto s = pml::ComputeStretch(lp, omega, PMLStretchFormulation::CFS);
+    auto s = pml::ComputeStretch(lp, omega);
     // σ / (α + i ω) = σ (α − i ω) / (α² + ω²)
     const double denom = 0.2 * 0.2 + omega * omega;
-    const double re_expected = 1.5 + 1.0 * 0.2 / denom;
-    const double im_expected = -1.0 * omega / denom;
-    REQUIRE(s[0].real() == Approx(re_expected));
-    REQUIRE(s[0].imag() == Approx(im_expected));
+    REQUIRE(s[0].real() == Approx(1.5 + 1.0 * 0.2 / denom));
+    REQUIRE(s[0].imag() == Approx(-1.0 * omega / denom));
   }
 
-  SECTION("CFS with α = 0 and κ = 1 reduces to FIXED-equivalent")
+  SECTION("Stretch depends only on ω — same value regardless of static/FD flag")
   {
     pml::LocalStretchParams lp;
     lp.sigma = {0.8, 0.0, 0.0};
     lp.kappa = {1.0, 1.0, 1.0};
     lp.alpha = {0.0, 0.0, 0.0};
+    // The profile's frequency_dependent flag is irrelevant at the ComputeStretch level
+    // — it only decides which ω the caller passes in.
     const double omega = 2.5;
-    auto s_cfs = pml::ComputeStretch(lp, omega, PMLStretchFormulation::CFS);
-    auto s_fixed = pml::ComputeStretch(lp, omega, PMLStretchFormulation::FIXED);
-    REQUIRE(s_cfs[0].real() == Approx(s_fixed[0].real()));
-    REQUIRE(s_cfs[0].imag() == Approx(s_fixed[0].imag()));
+    auto s1 = pml::ComputeStretch(lp, omega);
+    auto s2 = pml::ComputeStretch(lp, omega);
+    REQUIRE(s1[0] == s2[0]);
   }
 }
 
@@ -201,7 +188,7 @@ TEST_CASE("PML::ComputeStretchTensors produces diagonal UPML Jacobian", "[pml][S
     // (μ_r = ε_r = 1 here.)
     const std::array<double, 3> x = {1.05, 0.0, 0.0};  // midway
     auto lp = pml::ComputeLocalStretchParams(p, x);
-    auto s = pml::ComputeStretch(lp, 1.0, p.formulation);
+    auto s = pml::ComputeStretch(lp, 1.0);
     const std::complex<double> sx = s[0];
     const std::complex<double> inv_sx = 1.0 / sx;
 
@@ -250,7 +237,7 @@ TEST_CASE("PML::BuildProfile wires config into Profile", "[pml][Serial]")
   data.sigma_max = {-1.0, -1.0, -1.0};
   data.kappa_max = {1.0, 1.0, 1.0};
   data.alpha_max = {0.0, 0.0, 0.0};
-  data.formulation = PMLStretchFormulation::FIXED;
+  data.frequency_dependent = false;
   data.reference_frequency = 5.0;
   data.allow_refinement = false;
 
@@ -259,15 +246,15 @@ TEST_CASE("PML::BuildProfile wires config into Profile", "[pml][Serial]")
   REQUIRE(p.direction_active[1] == 1);  // +x active
   REQUIRE(p.direction_active[0] == 0);
   REQUIRE(p.thickness[0] == Approx(0.1));
-  REQUIRE(p.reference_frequency == Approx(5.0));  // FIXED picks up the config value
+  REQUIRE(p.reference_frequency == Approx(5.0));  // static picks up the config value
 
   // Auto σ_max is resolved.
   const double expected = -4.0 * std::log(1.0e-6) / (2.0 * 0.1 * 1.0);
   REQUIRE(p.sigma_max[0] == Approx(expected));
 
-  SECTION("FrequencyDependent leaves reference_frequency at zero")
+  SECTION("frequency_dependent leaves reference_frequency at zero")
   {
-    data.formulation = PMLStretchFormulation::FREQUENCY_DEPENDENT;
+    data.frequency_dependent = true;
     data.reference_frequency = 5.0;
     auto p2 = pml::BuildProfile(data, 1.0, 1.0);
     REQUIRE(p2.reference_frequency == Approx(0.0));
@@ -397,7 +384,7 @@ TEST_CASE("PML QFunction helper matches host ComputeStretchTensors", "[pml][Seri
   p.interface_coord[1] = {0.0, 0.0};
   p.interface_coord[2] = {0.0, 0.0};
   p.direction_active = {0, 1, 0, 0, 0, 0};
-  p.formulation = PMLStretchFormulation::FIXED;
+  p.frequency_dependent = false;
   p.reference_frequency = 1.5;
 
   std::vector<CeedIntScalar> region(pml::kPMLRegionStride);
@@ -425,9 +412,8 @@ TEST_CASE("PML QFunction helper matches host ComputeStretchTensors", "[pml][Seri
     }
   }
 
-  SECTION("CFS formulation matches host version")
+  SECTION("Nonzero α and κ > 1 (CFS-PML) match host version")
   {
-    p.formulation = PMLStretchFormulation::CFS;
     p.kappa_max = {2.0, 1.0, 1.0};
     p.alpha_max = {0.1, 0.0, 0.0};
     pml::PackProfileContext(p, region.data());
@@ -474,7 +460,7 @@ TEST_CASE("PML QFunction context packing round-trip", "[pml][Serial]")
     profiles[p].interface_coord[p] = {0.0, 1.0};  // +axis PML with inner at axis=1
     profiles[p].direction_active = {0, 0, 0, 0, 0, 0};
     profiles[p].direction_active[2 * p + 1] = 1;
-    profiles[p].formulation = PMLStretchFormulation::FIXED;
+    profiles[p].frequency_dependent = false;
     profiles[p].reference_frequency = omega;
   }
   const std::vector<int> attr_to_profile{2, -1, 0, 1};  // attr 1→prof 2, 2→none, 3→0, 4→1
@@ -513,18 +499,18 @@ TEST_CASE("PML QFunction context packing round-trip", "[pml][Serial]")
     REQUIRE(PMLAttrToProfile(ctx.data(), 3) == 0);
   }
 
-  SECTION("RefreshPMLContextFrequency only touches FD regions")
+  SECTION("RefreshPMLContextFrequency only touches frequency-dependent regions")
   {
-    // Mark profile 1 as FD; keep 0 and 2 as FIXED.
-    profiles[1].formulation = PMLStretchFormulation::FREQUENCY_DEPENDENT;
+    // Mark profile 1 as frequency-dependent; keep 0 and 2 as static.
+    profiles[1].frequency_dependent = true;
     auto ctx2 = pml::PackProfileContextAll(attr_to_profile, profiles);
     pml::RefreshPMLContextFrequency(ctx2.data(), 4, 3, 7.5);
     const CeedIntScalar *r0 = PMLRegion(ctx2.data(), 4, 0);
     const CeedIntScalar *r1 = PMLRegion(ctx2.data(), 4, 1);
     const CeedIntScalar *r2 = PMLRegion(ctx2.data(), 4, 2);
-    REQUIRE(r0[4].second == Approx(omega));  // FIXED, untouched
-    REQUIRE(r1[4].second == Approx(7.5));    // FD, updated
-    REQUIRE(r2[4].second == Approx(omega));  // FIXED, untouched
+    REQUIRE(r0[4].second == Approx(omega));  // static, untouched
+    REQUIRE(r1[4].second == Approx(7.5));    // frequency-dependent, updated
+    REQUIRE(r2[4].second == Approx(omega));  // static, untouched
   }
 }
 

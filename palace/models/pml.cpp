@@ -60,47 +60,32 @@ LocalStretchParams ComputeLocalStretchParams(const Profile &profile,
 }
 
 std::array<std::complex<double>, 3> ComputeStretch(const LocalStretchParams &local,
-                                                   double omega,
-                                                   PMLStretchFormulation formulation)
+                                                   double omega)
 {
+  // Palace's e^{+iωt} time convention: an outgoing spherical wave ∝ e^{i(ωt − kr)}, and
+  // analytic continuation r → r̃ = r − (i/ω)∫₀^r σ dr′ gives decay e^{−kΣ/ω}. The
+  // resulting Jacobian is the CFS-PML stretch s = κ + σ/(α + iω), which reduces to
+  // classic UPML (s = 1 − iσ/ω) at α=0, κ=1. The literature's e^{−iωt} convention has
+  // the opposite sign (s = 1 + iσ/ω); that flip is load-bearing.
+  //
+  // The caller picks ω: the config's reference_frequency for static PML, the live
+  // solve frequency for frequency-dependent PML.
   using cdouble = std::complex<double>;
   std::array<cdouble, 3> s{{cdouble{1.0, 0.0}, cdouble{1.0, 0.0}, cdouble{1.0, 0.0}}};
-
-  // Guard against ω = 0: the FIXED and FREQUENCY_DEPENDENT formulas divide by ω. At ω=0
-  // the stretch is degenerate; callers are expected to avoid this, but we fall back to
-  // s=1 (inactive PML) rather than producing NaNs.
-  const double safe_omega =
-      (std::abs(omega) > 0.0) ? omega : std::numeric_limits<double>::infinity();
-
   for (int axis = 0; axis < 3; axis++)
   {
     const double sigma = local.sigma[axis];
     const double kappa = local.kappa[axis];
     const double alpha = local.alpha[axis];
-    // Palace uses the e^{+iωt} time convention. An outgoing spherical wave is
-    // ∝ e^{i(ωt − kr)}, and analytic continuation r → r̃ = r − (i/ω)∫₀^r σ dr′ yields
-    // decay e^{−kΣ/ω}. The resulting Jacobian is s = 1 − iσ/ω (FIXED/FREQUENCY_DEPENDENT)
-    // or s = κ + σ/(α + iωε₀) (CFS, which reduces to FIXED when α → 0, κ → 1). The
-    // difference between FIXED and FREQUENCY_DEPENDENT is only which ω is supplied by
-    // the caller: a fixed ω₀ at setup versus the live solve frequency. The literature's
-    // e^{−iωt} convention has the opposite sign (s = 1 + iσ/ω); that flip is load-bearing.
-    if (formulation == PMLStretchFormulation::CFS)
+    const double denom = alpha * alpha + omega * omega;
+    if (denom > 0.0)
     {
-      const double denom = alpha * alpha + safe_omega * safe_omega;
-      if (denom > 0.0)
-      {
-        const double re = kappa + sigma * alpha / denom;
-        const double im = -sigma * safe_omega / denom;
-        s[axis] = cdouble{re, im};
-      }
-      else
-      {
-        s[axis] = cdouble{kappa, 0.0};
-      }
+      s[axis] = cdouble{kappa + sigma * alpha / denom, -sigma * omega / denom};
     }
     else
     {
-      s[axis] = cdouble{1.0, -sigma / safe_omega};
+      // Degenerate α=ω=0 case — fall back to a no-op stretch rather than NaN.
+      s[axis] = cdouble{kappa, 0.0};
     }
   }
   return s;
@@ -111,7 +96,7 @@ StretchTensors ComputeStretchTensors(const Profile &profile, const std::array<do
 {
   using cdouble = std::complex<double>;
   const auto local = ComputeLocalStretchParams(profile, x);
-  const auto s = ComputeStretch(local, omega, profile.formulation);
+  const auto s = ComputeStretch(local, omega);
 
   // Chew–Weedon UPML with isotropic background: ε̃ = ε_r · Λ, μ̃ = μ_r · Λ, where
   // Λ_ii = s_j · s_k / s_i (i, j, k cyclic). The curl-curl bilinear form uses μ̃⁻¹,
@@ -168,7 +153,7 @@ Profile BuildProfile(const config::PMLData &data, double mu_r, double epsilon_r)
   p.order = data.order;
   p.kappa_max = data.kappa_max;
   p.alpha_max = data.alpha_max;
-  p.formulation = data.formulation;
+  p.frequency_dependent = data.frequency_dependent;
   for (std::size_t i = 0; i < data.direction_signs.size(); i++)
   {
     p.direction_active[i] = (data.direction_signs[i] != 0) ? 1 : 0;
@@ -185,11 +170,9 @@ Profile BuildProfile(const config::PMLData &data, double mu_r, double epsilon_r)
 
   ResolveSigmaMaxDefaults(data, mu_r, epsilon_r, p.sigma_max);
 
-  // Reference frequency: FIXED and CFS require a positive config value (enforced at
-  // config parse time); FREQUENCY_DEPENDENT is set per solve and stays zero here.
-  p.reference_frequency = (data.formulation == PMLStretchFormulation::FREQUENCY_DEPENDENT)
-                              ? 0.0
-                              : data.reference_frequency;
+  // Static PML requires a positive reference frequency (enforced at config parse time).
+  // Frequency-dependent PML leaves ω at zero here; SpaceOperator refreshes it per solve.
+  p.reference_frequency = data.frequency_dependent ? 0.0 : data.reference_frequency;
 
   // interface_coord is populated by the caller (pml region setup in MaterialOperator)
   // because it depends on the mesh bounding box.
@@ -280,7 +263,7 @@ std::array<double, 3> ComputeSlabCentroid(const config::PMLData &data,
 void PackProfileContext(const Profile &profile, CeedIntScalar *out)
 {
   // Layout must match pml_qf.h's PMLEvalStretchTensors unpacker.
-  out[0].first = static_cast<int>(profile.formulation);
+  out[0].first = profile.frequency_dependent ? 1 : 0;
   out[1].first = profile.order;
   out[2].second = profile.mu_r;
   out[3].second = profile.epsilon_r;
@@ -343,9 +326,8 @@ void RefreshPMLContextFrequency(CeedIntScalar *ctx, int num_attr, int num_profil
   for (int p = 0; p < num_profiles; p++)
   {
     CeedIntScalar *region = ctx + 2 + num_attr + kPMLRegionStride * p;
-    // region[0] is formulation, region[4] is omega (see PackProfileContext layout).
-    const int formulation = region[0].first;
-    if (formulation == static_cast<int>(PMLStretchFormulation::FREQUENCY_DEPENDENT))
+    // region[0] is frequency_dependent flag, region[4] is omega.
+    if (region[0].first)
     {
       region[4].second = omega;
     }

@@ -20,11 +20,12 @@
 //                         entries each.
 //
 // Per-region layout (29 entries, indexed 0..28):
-//   [0]         formulation (int; 0=FIXED, 1=CFS, 2=FREQUENCY_DEPENDENT)
+//   [0]         frequency_dependent flag (int; 0 = static ω₀, 1 = live ω, refreshed by
+//               pml::RefreshPMLContextFrequency before each ω-dependent solve)
 //   [1]         polynomial grading order (int)
 //   [2]         mu_r
 //   [3]         eps_r
-//   [4]         omega (reference frequency for FIXED/CFS, live ω for FD)
+//   [4]         omega (reference_frequency for static, live ω for frequency-dependent)
 //   [5..7]      sigma_max[axis] for axis ∈ {x, y, z}
 //   [8..10]     kappa_max[axis]
 //   [11..13]    alpha_max[axis]
@@ -32,8 +33,6 @@
 //   [17..22]    interface_coord interleaved: {neg_x, pos_x, neg_y, pos_y, neg_z, pos_z}
 //   [23..28]    direction_active interleaved: {neg_x, pos_x, neg_y, pos_y, neg_z, pos_z}
 //               (int; nonzero ⇒ face active)
-//
-// PML formulation tags must match PMLStretchFormulation enum in labels.hpp.
 
 #define PALACE_PML_REGION_STRIDE 29
 
@@ -74,29 +73,16 @@ CEED_QFUNCTION_HELPER CeedScalar PMLIntPow(CeedScalar x, CeedInt n)
 // for a single PML profile. Writes 12 scalars: [mu_inv_re[3], mu_inv_im[3], eps_re[3],
 // eps_im[3]].
 //
-// Palace's e^{+iωt} convention: s_axis = 1 − iσ/ω (FIXED/FREQUENCY_DEPENDENT) or
-// κ + σ/(α + iω) (CFS). See palace/models/pml.cpp for the host-side derivation.
+// Palace's e^{+iωt} convention: the single CFS-PML stretch s = κ + σ/(α + iω) covers
+// all formulations: at α=0, κ=1 it reduces to classic UPML s = 1 − iσ/ω. See
+// palace/models/pml.cpp for the derivation.
 CEED_QFUNCTION_HELPER void PMLEvalStretchTensors(const CeedIntScalar *region,
                                                  const CeedScalar x[3],
                                                  CeedScalar mu_inv_re[3],
                                                  CeedScalar mu_inv_im[3],
                                                  CeedScalar eps_re[3], CeedScalar eps_im[3])
 {
-  // Unpack region fields. Layout (27 entries):
-  //   [0]     formulation (int)
-  //   [1]     order (int)
-  //   [2]     mu_r
-  //   [3]     eps_r
-  //   [4]     omega
-  //   [5..7]  sigma_max[axis]
-  //   [8..10] kappa_max[axis]
-  //   [11..13] alpha_max[axis]
-  //   [14..16] thickness[axis]
-  //   [17, 19, 21] iface_neg[axis]     // per axis: neg, pos interleaved
-  //   [18, 20, 22] iface_pos[axis]
-  //   [23, 25, 27-2] active_neg[axis]
-  //   [24, 26, 27-1] active_pos[axis]
-  const CeedInt formulation = region[0].first;
+  // Unpack region fields (see PackProfileContext for layout).
   const CeedInt order = region[1].first;
   const CeedScalar mu_r = region[2].second;
   const CeedScalar eps_r = region[3].second;
@@ -150,24 +136,16 @@ CEED_QFUNCTION_HELPER void PMLEvalStretchTensors(const CeedIntScalar *region,
     const CeedScalar sg = sigma_loc[axis];
     const CeedScalar kp = kappa_loc[axis];
     const CeedScalar al = alpha_loc[axis];
-    if (formulation == 1)  // CFS
+    const CeedScalar denom = al * al + safe_omega * safe_omega;
+    if (denom > 0.0)
     {
-      const CeedScalar denom = al * al + safe_omega * safe_omega;
-      if (denom > 0.0)
-      {
-        s_re[axis] = kp + sg * al / denom;
-        s_im[axis] = -sg * safe_omega / denom;
-      }
-      else
-      {
-        s_re[axis] = kp;
-        s_im[axis] = 0.0;
-      }
+      s_re[axis] = kp + sg * al / denom;
+      s_im[axis] = -sg * safe_omega / denom;
     }
-    else  // FIXED or FREQUENCY_DEPENDENT
+    else
     {
-      s_re[axis] = 1.0;
-      s_im[axis] = -sg / safe_omega;
+      s_re[axis] = kp;
+      s_im[axis] = 0.0;
     }
   }
 
