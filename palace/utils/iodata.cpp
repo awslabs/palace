@@ -585,6 +585,15 @@ void IoData::CheckConfiguration()
     solver.transient.type = TimeSteppingScheme::GEN_ALPHA;
   }
 
+  if (solver.eigenmode.max_it <= 0)
+  {
+    solver.eigenmode.max_it = 1'000'000;
+  }
+  if (solver.eigenmode.max_size <= 0)
+  {
+    solver.eigenmode.max_size = std::max(2 * solver.eigenmode.n, solver.eigenmode.n + 15);
+  }
+
   // Configure settings for quadrature rules and partial assembly.
   BilinearForm::pa_order_threshold = solver.pa_order_threshold;
   fem::DefaultIntegrationOrder::p_trial = solver.order;
