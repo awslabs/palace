@@ -46,8 +46,8 @@ double BoundaryModeSolver::PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh,
   frame_->normal.SetSize(3);
   frame_->normal = 0.0;
 
-  // Ranks holding the serial mesh (root + node-roots in the byte-string path) run the
-  // extraction locally via mfem::SubMesh; non-holders receive the frame via broadcast.
+  // Ranks holding the serial mesh run the extraction locally via mfem::SubMesh;
+  // non-holders receive the frame via broadcast.
   if (smesh)
   {
     MFEM_VERIFY(smesh->Dimension() == 3,

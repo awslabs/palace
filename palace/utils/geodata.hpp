@@ -25,10 +25,9 @@ namespace mesh
 // Load a serial mesh from disk and perform all serial-stage preparation: AMR compat
 // checks, cleanup, simplex/hex conversion, element reordering, serial uniform refinement,
 // region-based (box/sphere) refinement, boundary cracking, and finalization. Returns a
-// null pointer on ranks that do not hold a copy of the serial mesh (root always holds
-// one; one-per-node roots additionally hold one when the byte-string distribution path
-// is taken). Called by main.cpp before PreprocessMesh hooks on the solver mutate the
-// serial mesh (e.g. BoundaryMode submesh extraction).
+// null pointer on ranks that do not hold a copy of the serial mesh. Called by main.cpp
+// before PreprocessMesh hooks on the solver mutate the serial mesh (e.g. BoundaryMode
+// submesh extraction).
 std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm);
 
 // Partition and distribute a serial mesh prepared by Load, producing a parallel mesh.

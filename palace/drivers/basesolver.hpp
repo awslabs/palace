@@ -45,11 +45,9 @@ public:
              const char *git_tag = nullptr);
   virtual ~BaseSolver() = default;
 
-  // Serial-stage mesh hook, called between mesh::Load and NondimensionalizeInputs.
-  // Returns the characteristic length Lc for the solve mesh. Default: use
-  // iodata.model.Lc when set, otherwise derive it from the bounding box. Overrides
-  // (BoundaryModeSolver) may reshape the mesh before delegating to the base. `smesh`
-  // is null on ranks that don't hold a copy of the serial mesh.
+  // Serial-stage mesh hook between mesh::Load and NondimensionalizeInputs. Returns Lc
+  // for the solve mesh. Overrides may reshape the mesh first before delegating to the
+  // base.
   virtual double PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh, MPI_Comm comm) const;
 
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine paradigm.

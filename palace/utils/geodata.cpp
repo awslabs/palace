@@ -295,8 +295,7 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata,
     }
   }
 
-  // Generate partitioning from the serial mesh on root (or each node-root in the
-  // byte-string path).
+  // Generate partitioning from the serial mesh on loading ranks.
   std::unique_ptr<int[]> partitioning;
   if (smesh)
   {
