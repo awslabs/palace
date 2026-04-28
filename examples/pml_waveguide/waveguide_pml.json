@@ -22,7 +22,6 @@
           "Direction": ["+z"],
           "Thickness": 0.1,
           "Order": 3,
-          "StretchFormulation": "Fixed",
           "ReferenceFrequency": 3.0
         }
       }

@@ -62,9 +62,12 @@ struct Profile
   // config::PMLData::direction_signs.
   std::array<int, 6> direction_active{{0, 0, 0, 0, 0, 0}};
 
-  PMLStretchFormulation formulation = PMLStretchFormulation::FIXED;
+  // If true, the stretch ω is the live solve frequency (refreshed per frequency in
+  // SpaceOperator). If false, ω is baked into reference_frequency at setup.
+  bool frequency_dependent = false;
 
-  // Reference ω₀ for FIXED and CFS (nondimensional). Must be set (> 0) before use.
+  // Reference ω₀ for static PML (nondimensional). Must be set (> 0) before use when
+  // frequency_dependent is false. Left at 0 when frequency_dependent is true.
   double reference_frequency = 0.0;
 
   bool allow_refinement = false;
@@ -87,15 +90,12 @@ struct LocalStretchParams
 LocalStretchParams ComputeLocalStretchParams(const Profile &profile,
                                              const std::array<double, 3> &x);
 
-// Compute the diagonal stretch s_i(ω) for the three formulations (Palace's e^{+iωt}
-// time convention):
-//   FIXED / FREQUENCY_DEPENDENT: s_i = 1 − i σ_i/ω
-//   CFS                        : s_i = κ_i + σ_i/(α_i + iω)   (ε₀ absorbed into nondim)
-// The callers decide which ω to pass in (profile.reference_frequency for FIXED/CFS,
-// the live solve frequency for FREQUENCY_DEPENDENT).
+// Compute the diagonal CFS-PML stretch s_i(ω) = κ_i + σ_i/(α_i + iω), using Palace's
+// e^{+iωt} time convention. Reduces to classic UPML (s = 1 − iσ/ω) at α=0, κ=1. The
+// caller picks ω: profile.reference_frequency for static PML, the live solve frequency
+// for frequency-dependent PML.
 std::array<std::complex<double>, 3> ComputeStretch(const LocalStretchParams &local,
-                                                   double omega,
-                                                   PMLStretchFormulation formulation);
+                                                   double omega);
 
 // The complex anisotropic μ̃⁻¹ and ε̃ tensors needed by Palace's real/imag-paired
 // integrator path, for a Cartesian (diagonal) PML. Each tensor is stored as the three
