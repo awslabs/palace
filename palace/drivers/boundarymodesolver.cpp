@@ -171,22 +171,23 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     dbc_tdof_list.Append(nd_size + mode_op.GetH1DbcTDofLists().back()[i]);
   }
 
-  const bool have_mg = (mode_op.GetNDSpaceHierarchy().GetNumLevels() > 1);
-  if (have_mg)
+  if (const auto n_levels = mode_op.GetNDSpaceHierarchy().GetNumLevels(); n_levels > 1)
   {
     Mpi::Print(" Using p-multigrid preconditioning with {:d} levels\n",
-               static_cast<int>(mode_op.GetNDSpaceHierarchy().GetNumLevels()));
+               static_cast<int>(n_levels));
   }
   const auto which_eig = (bm_data.target > 0.0)
                              ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
                              : EigenvalueSolver::WhichType::LARGEST_REAL;
   const mfem::Vector *submesh_normal = frame_ ? &frame_->normal : nullptr;
-  ModeEigenSolver eig(mode_op.GetMaterialOp(), submesh_normal, mode_op.GetSurfZOp(),
-                      mode_op.GetFarfieldOp(), mode_op.GetSurfSigmaOp(),
-                      mode_op.GetNDSpace(), mode_op.GetH1Space(), dbc_tdof_list, num_modes,
-                      bm_data.max_size, bm_data.tol, which_eig, iodata.solver.linear,
-                      bm_data.type, iodata.problem.verbose, mode_op.GetComm(),
-                      have_mg ? &mode_op : nullptr);
+  ModeEigenSolver eig(
+      mode_op.GetMaterialOp(), submesh_normal, mode_op.GetSurfZOp(),
+      mode_op.GetFarfieldOp(), mode_op.GetSurfSigmaOp(),
+      mode_op.GetNDSpaceHierarchy(), mode_op.GetH1SpaceHierarchy(),
+      mode_op.GetH1AuxSpaceHierarchy(), mode_op.GetNDDbcTDofLists(),
+      mode_op.GetH1DbcTDofLists(), mode_op.GetH1AuxDbcTDofLists(), dbc_tdof_list,
+      num_modes, bm_data.max_size, bm_data.tol, which_eig, iodata.solver.linear,
+      bm_data.type, iodata.problem.verbose);
 
   BoundaryModeFluxErrorEstimator<ComplexVector> estimator(
       mode_op.GetMaterialOp(), mode_op.GetNDSpaceHierarchy(),

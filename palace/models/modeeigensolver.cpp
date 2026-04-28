@@ -22,7 +22,6 @@
 #include "linalg/solver.hpp"
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
-#include "models/boundarymodeoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/surfaceconductivityoperator.hpp"
@@ -50,24 +49,54 @@ ModeEigenSolver::ModeEigenSolver(
     const FiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_tdof_list,
     int num_modes, int num_vec, double eig_tol, EigenvalueSolver::WhichType which_eig,
     const config::LinearSolverData &linear, EigenSolverBackend eigen_backend, int verbose,
-    MPI_Comm solver_comm, BoundaryModeOperator *bmo)
+    MPI_Comm solver_comm)
   : num_modes(num_modes), num_vec(num_vec), eig_tol(eig_tol), which_eig(which_eig),
     linear(linear), eigen_backend(eigen_backend), verbose(verbose), mat_op(mat_op),
     normal(normal), surf_z_op(surf_z_op), farfield_op(farfield_op),
     surf_sigma_op(surf_sigma_op), nd_fespace(nd_fespace), h1_fespace(h1_fespace),
-    dbc_tdof_list(dbc_tdof_list), bmo(bmo)
+    dbc_tdof_list(dbc_tdof_list)
+{
+  Init(solver_comm);
+}
+
+ModeEigenSolver::ModeEigenSolver(
+    const MaterialOperator &mat_op, const mfem::Vector *normal,
+    SurfaceImpedanceOperator *surf_z_op, FarfieldBoundaryOperator *farfield_op,
+    SurfaceConductivityOperator *surf_sigma_op,
+    FiniteElementSpaceHierarchy &nd_fespaces,
+    FiniteElementSpaceHierarchy &h1_fespaces,
+    FiniteElementSpaceHierarchy &h1_aux_fespaces,
+    const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
+    const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists,
+    const std::vector<mfem::Array<int>> &h1_aux_dbc_tdof_lists,
+    const mfem::Array<int> &dbc_tdof_list, int num_modes, int num_vec, double eig_tol,
+    EigenvalueSolver::WhichType which_eig, const config::LinearSolverData &linear,
+    EigenSolverBackend eigen_backend, int verbose)
+  : num_modes(num_modes), num_vec(num_vec), eig_tol(eig_tol), which_eig(which_eig),
+    linear(linear), eigen_backend(eigen_backend), verbose(verbose), mat_op(mat_op),
+    normal(normal), surf_z_op(surf_z_op), farfield_op(farfield_op),
+    surf_sigma_op(surf_sigma_op),
+    nd_fespace(nd_fespaces.GetFinestFESpace()),
+    h1_fespace(h1_fespaces.GetFinestFESpace()), dbc_tdof_list(dbc_tdof_list),
+    nd_fespaces(&nd_fespaces), h1_fespaces(&h1_fespaces),
+    h1_aux_fespaces(&h1_aux_fespaces), nd_dbc_tdof_lists(&nd_dbc_tdof_lists),
+    h1_dbc_tdof_lists(&h1_dbc_tdof_lists),
+    h1_aux_dbc_tdof_lists(&h1_aux_dbc_tdof_lists)
+{
+  Init(this->nd_fespace.GetComm());
+}
+
+void ModeEigenSolver::Init(MPI_Comm solver_comm)
 {
   nd_size = nd_fespace.GetTrueVSize();
   h1_size = h1_fespace.GetTrueVSize();
 
-  // Assemble frequency-independent matrices. These use the FE space communicator
-  // (all processes that share the mesh), NOT solver_comm.
-  //
+  // Assemble frequency-independent matrices on the FE space communicator.
   // Atn: gradient coupling -(mu^{-1} grad_t u, v).
   std::tie(Atnr, Atni) = AssembleAtn();
 
-  // Btn: NEGATED transpose of Atn. Atn = -(mu^{-1} grad ·, ·), so Atn^T = -(mu^{-1} ·,
-  // grad·). The physical Btn from Eq 2 is +(mu^{-1} ·, grad·) (positive), so Btn = -Atn^T.
+  // Btn = -Atn^T. Atn is -(mu^{-1} grad·, ·); the physical Btn from Eq 2 is
+  // +(mu^{-1} ·, grad·), so Btn = -Atn^T.
   Btnr.reset(Atnr->Transpose());
   *Btnr *= -1.0;
   if (Atni)
@@ -76,12 +105,11 @@ ModeEigenSolver::ModeEigenSolver(
     *Btni *= -1.0;
   }
 
-  // Assemble Btt (negative mu^{-1} ND mass) and build the block B matrix.
+  // Assemble Btt (positive (mu^{-1} u, v) ND mass) and build the block B matrix.
   {
     auto [bttr, btti] = AssembleBtt();
     Bttr = std::make_unique<mfem::HypreParMatrix>(*bttr);  // Keep a copy for external use
 
-    // Construct the zero diagonal block for the H1 portion of B.
     Vector d(h1_size);
     d.UseDevice(false);  // SparseMatrix constructor uses Vector on host
     d = 0.0;
@@ -95,11 +123,11 @@ ModeEigenSolver::ModeEigenSolver(
     opB = std::make_unique<ComplexWrapperOperator>(std::move(Br), std::move(Bi));
   }
 
-  // Pick a communicator for the solvers: solver_comm if supplied (WavePort port ranks),
-  // else the FE space comm (BoundaryMode, all ranks). Ranks with no DOFs and no
-  // solver_comm (WavePort non-port ranks) skip solver setup entirely and return
-  // num_converged = 0 from Solve.
-  const bool use_mg = bmo && bmo->GetNDSpaceHierarchy().GetNumLevels() > 1;
+  // Pick a communicator for the solvers: `solver_comm` if non-null (WavePort sub-
+  // communicator), else the FE space comm. Ranks with no DOFs and no solver_comm
+  // (WavePort non-port ranks) skip solver setup entirely and return num_converged = 0
+  // from Solve.
+  const bool use_mg = nd_fespaces && nd_fespaces->GetNumLevels() > 1;
   MPI_Comm configure_comm = (solver_comm != MPI_COMM_NULL) ? solver_comm
                                                            : (nd_size > 0)
                                                                  ? nd_fespace.GetComm()
@@ -729,8 +757,8 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
 
 void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
 {
-  MFEM_VERIFY(bmo,
-              "Multigrid linear solver requires a BoundaryModeOperator reference!");
+  MFEM_VERIFY(nd_fespaces && h1_fespaces && h1_aux_fespaces,
+              "Multigrid linear solver requires hierarchy-constructor companions!");
   const int print = verbose - 1;
 
   // Determine coarse solver types for the ND and H1 blocks from the config. The default
@@ -758,11 +786,11 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
     switch (type)
     {
       case LinearSolver::AMS:
-        MFEM_VERIFY(bmo, "AMS coarse solver requires auxiliary H1 space!");
+        MFEM_VERIFY(h1_aux_fespaces, "AMS coarse solver requires auxiliary H1 space!");
         return std::make_unique<MfemWrapperSolver<ComplexOperator>>(
             std::make_unique<HypreAmsSolver>(
-                bmo->GetNDSpaceHierarchy().GetFESpaceAtLevel(0),
-                bmo->GetH1AuxSpaceHierarchy().GetFESpaceAtLevel(0), linear.ams_max_it,
+                (*nd_fespaces).GetFESpaceAtLevel(0),
+                (*h1_aux_fespaces).GetFESpaceAtLevel(0), linear.ams_max_it,
                 linear.mg_smooth_it, linear.ams_vector_interp, linear.ams_singular_op,
                 linear.amg_agg_coarsen, print),
             true, linear.complex_coarse_solve, linear.drop_small_entries,
@@ -817,9 +845,9 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
   };
 
   // ND block: p-multigrid with Hiptmair distributive relaxation smoothing.
-  const auto nd_P = bmo->GetNDSpaceHierarchy().GetProlongationOperators();
+  const auto nd_P = (*nd_fespaces).GetProlongationOperators();
   const auto nd_G =
-      bmo->GetNDSpaceHierarchy().GetDiscreteInterpolators(bmo->GetH1AuxSpaceHierarchy());
+      (*nd_fespaces).GetDiscreteInterpolators((*h1_aux_fespaces));
   auto nd_gmg = std::make_unique<GeometricMultigridSolver<ComplexOperator>>(
       comm, MakeCoarseSolver(nd_pc_type), nd_P, &nd_G, linear.mg_cycle_it,
       linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,
@@ -827,7 +855,7 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
   nd_gmg->EnableTimer();
 
   // H1 block: p-multigrid with Chebyshev smoothing.
-  const auto h1_P = bmo->GetH1SpaceHierarchy().GetProlongationOperators();
+  const auto h1_P = (*h1_fespaces).GetProlongationOperators();
   auto h1_gmg = std::make_unique<GeometricMultigridSolver<ComplexOperator>>(
       comm, MakeCoarseSolver(h1_pc_type), h1_P, nullptr, linear.mg_cycle_it,
       linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,
@@ -874,8 +902,9 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
 std::unique_ptr<ComplexMultigridOperator>
 ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
 {
-  MFEM_VERIFY(bmo, "AssembleAttPreconditioner requires a BoundaryModeOperator!");
-  const auto n_levels = bmo->GetNDSpaceHierarchy().GetNumLevels();
+  MFEM_VERIFY(nd_fespaces && h1_aux_fespaces,
+              "AssembleAttPreconditioner requires hierarchy-constructor companions!");
+  const auto n_levels = (*nd_fespaces).GetNumLevels();
   auto B = std::make_unique<ComplexMultigridOperator>(n_levels);
 
   // Material coefficients (same at all levels — indexed by element attribute, not by p).
@@ -928,42 +957,42 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   // space and uses Assemble(fespaces) to produce operators at all levels.
   constexpr bool assemble_q_data = false;
   {
-    BilinearForm att(bmo->GetNDSpaceHierarchy().GetFinestFESpace());
+    BilinearForm att((*nd_fespaces).GetFinestFESpace());
     att.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_cc_func, eps_shifted_pc);
     if (!fbr.empty())
     {
       att.AddBoundaryIntegrator<VectorFEMassIntegrator>(fbr);
     }
-    auto att_ops = att.Assemble(bmo->GetNDSpaceHierarchy(), skip_zeros);
+    auto att_ops = att.Assemble((*nd_fespaces), skip_zeros);
 
     // Auxiliary H1 operators for Hiptmair smoothing (matching SpaceOperator::
     // AssembleAuxOperators — uses DiffusionIntegrator with the mass coefficient).
-    BilinearForm att_aux(bmo->GetH1AuxSpaceHierarchy().GetFinestFESpace());
+    BilinearForm att_aux((*h1_aux_fespaces).GetFinestFESpace());
     att_aux.AddDomainIntegrator<DiffusionIntegrator>(eps_shifted_pc);
     if (!fbr.empty())
     {
       att_aux.AddBoundaryIntegrator<DiffusionIntegrator>(fbr);
     }
-    auto att_aux_ops = att_aux.Assemble(bmo->GetH1AuxSpaceHierarchy(), skip_zeros);
+    auto att_aux_ops = att_aux.Assemble((*h1_aux_fespaces), skip_zeros);
 
     for (std::size_t l = 0; l < n_levels; l++)
     {
-      const auto &nd_fespace_l = bmo->GetNDSpaceHierarchy().GetFESpaceAtLevel(l);
+      const auto &nd_fespace_l = (*nd_fespaces).GetFESpaceAtLevel(l);
       auto B_l = std::make_unique<ComplexParOperator>(std::move(att_ops[l]), nullptr,
                                                       nd_fespace_l);
-      if (l < bmo->GetNDDbcTDofLists().size())
+      if (l < (*nd_dbc_tdof_lists).size())
       {
-        B_l->SetEssentialTrueDofs(bmo->GetNDDbcTDofLists()[l],
+        B_l->SetEssentialTrueDofs((*nd_dbc_tdof_lists)[l],
                                   Operator::DiagonalPolicy::DIAG_ONE);
       }
       B->AddOperator(std::move(B_l));
 
-      const auto &h1_aux_l = bmo->GetH1AuxSpaceHierarchy().GetFESpaceAtLevel(l);
+      const auto &h1_aux_l = (*h1_aux_fespaces).GetFESpaceAtLevel(l);
       auto B_aux_l = std::make_unique<ComplexParOperator>(std::move(att_aux_ops[l]),
                                                           nullptr, h1_aux_l);
-      if (l < bmo->GetH1AuxDbcTDofLists().size())
+      if (l < (*h1_aux_dbc_tdof_lists).size())
       {
-        B_aux_l->SetEssentialTrueDofs(bmo->GetH1AuxDbcTDofLists()[l],
+        B_aux_l->SetEssentialTrueDofs((*h1_aux_dbc_tdof_lists)[l],
                                       Operator::DiagonalPolicy::DIAG_ONE);
       }
       B->AddAuxiliaryOperator(std::move(B_aux_l));
@@ -976,8 +1005,9 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
 std::unique_ptr<ComplexMultigridOperator>
 ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
 {
-  MFEM_VERIFY(bmo, "AssembleAnnPreconditioner requires a BoundaryModeOperator!");
-  const auto n_levels = bmo->GetH1SpaceHierarchy().GetNumLevels();
+  MFEM_VERIFY(h1_fespaces,
+              "AssembleAnnPreconditioner requires hierarchy-constructor companions!");
+  const auto n_levels = (*h1_fespaces).GetNumLevels();
   auto B = std::make_unique<ComplexMultigridOperator>(n_levels);
 
   // Material coefficients matching AssembleAnn (real part only). The negative diffusion
@@ -1039,22 +1069,22 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
 
   // Assemble H1 operators at all levels using hierarchy-aware assembly.
   {
-    BilinearForm ann(bmo->GetH1SpaceHierarchy().GetFinestFESpace());
+    BilinearForm ann((*h1_fespaces).GetFinestFESpace());
     ann.AddDomainIntegrator<DiffusionMassIntegrator>(neg_muinv_func, poseps_h1_func);
     if (!nn_fbr.empty())
     {
       ann.AddBoundaryIntegrator<MassIntegrator>(nn_fbr);
     }
-    auto ann_ops = ann.Assemble(bmo->GetH1SpaceHierarchy(), skip_zeros);
+    auto ann_ops = ann.Assemble((*h1_fespaces), skip_zeros);
 
     for (std::size_t l = 0; l < n_levels; l++)
     {
-      const auto &h1_fespace_l = bmo->GetH1SpaceHierarchy().GetFESpaceAtLevel(l);
+      const auto &h1_fespace_l = (*h1_fespaces).GetFESpaceAtLevel(l);
       auto B_l = std::make_unique<ComplexParOperator>(std::move(ann_ops[l]), nullptr,
                                                       h1_fespace_l);
-      if (l < bmo->GetH1DbcTDofLists().size())
+      if (l < (*h1_dbc_tdof_lists).size())
       {
-        B_l->SetEssentialTrueDofs(bmo->GetH1DbcTDofLists()[l],
+        B_l->SetEssentialTrueDofs((*h1_dbc_tdof_lists)[l],
                                   Operator::DiagonalPolicy::DIAG_ONE);
       }
       B->AddOperator(std::move(B_l));

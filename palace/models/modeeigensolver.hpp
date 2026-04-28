@@ -60,14 +60,10 @@ public:
     double sigma;
   };
 
-  // Assembles frequency-independent matrices (Atn, Btn = -Atn^T, Btt) and configures the
-  // linear + eigenvalue solvers. Frequency-dependent matrices (Att, Ann) are rebuilt per
-  // Solve. Matrix assembly runs on the FE space communicator; the solver runs on
-  // `solver_comm` when non-null (WavePort restricts to port ranks) or on the FE space
-  // communicator otherwise (BoundaryMode). When bmo is supplied the solver uses
-  // p-multigrid preconditioning driven by its hierarchies; otherwise sparse-direct.
-  // For 3D wave port submeshes `normal` is the outward surface normal; for 2D domain
-  // meshes pass nullptr. Boundary operators may each be nullptr.
+  // Bare FE space constructor, used by WavePort (no p-multigrid). Matrix assembly runs
+  // on the FE space communicator; the solver runs on `solver_comm` when non-null (port
+  // ranks only) or on the FE space communicator otherwise. For 3D wave port submeshes
+  // `normal` is the outward surface normal; boundary operators may each be null.
   ModeEigenSolver(const MaterialOperator &mat_op, const mfem::Vector *normal,
                   SurfaceImpedanceOperator *surf_z_op,
                   FarfieldBoundaryOperator *farfield_op,
@@ -77,8 +73,25 @@ public:
                   const mfem::Array<int> &dbc_tdof_list, int num_modes, int num_vec,
                   double eig_tol, EigenvalueSolver::WhichType which_eig,
                   const config::LinearSolverData &linear, EigenSolverBackend eigen_backend,
-                  int verbose, MPI_Comm solver_comm = MPI_COMM_NULL,
-                  BoundaryModeOperator *bmo = nullptr);
+                  int verbose, MPI_Comm solver_comm = MPI_COMM_NULL);
+
+  // Hierarchy constructor, used by BoundaryMode. p-multigrid preconditioning is enabled
+  // automatically when the hierarchies have > 1 level; otherwise sparse-direct. For a 2D
+  // domain mesh pass normal = nullptr.
+  ModeEigenSolver(const MaterialOperator &mat_op, const mfem::Vector *normal,
+                  SurfaceImpedanceOperator *surf_z_op,
+                  FarfieldBoundaryOperator *farfield_op,
+                  SurfaceConductivityOperator *surf_sigma_op,
+                  FiniteElementSpaceHierarchy &nd_fespaces,
+                  FiniteElementSpaceHierarchy &h1_fespaces,
+                  FiniteElementSpaceHierarchy &h1_aux_fespaces,
+                  const std::vector<mfem::Array<int>> &nd_dbc_tdof_lists,
+                  const std::vector<mfem::Array<int>> &h1_dbc_tdof_lists,
+                  const std::vector<mfem::Array<int>> &h1_aux_dbc_tdof_lists,
+                  const mfem::Array<int> &dbc_tdof_list, int num_modes, int num_vec,
+                  double eig_tol, EigenvalueSolver::WhichType which_eig,
+                  const config::LinearSolverData &linear, EigenSolverBackend eigen_backend,
+                  int verbose);
 
   ~ModeEigenSolver() = default;
 
@@ -209,10 +222,15 @@ private:
                                            const mfem::HypreParMatrix *Btni,
                                            const mfem::HypreParMatrix *Dnn) const;
 
-  // Optional boundary-mode operator reference; when non-null, its FE space hierarchies
-  // and per-level DBC tdof lists drive p-multigrid preconditioning. When null (3D wave
-  // port submesh path), the sparse-direct preconditioner is used.
-  BoundaryModeOperator *bmo = nullptr;
+  // p-multigrid context. Non-null only on the hierarchy ctor path (BoundaryMode); the
+  // bare ctor (WavePort) leaves them null and the solver uses sparse-direct. The finest
+  // level of nd_fespaces / h1_fespaces is what nd_fespace / h1_fespace above reference.
+  FiniteElementSpaceHierarchy *nd_fespaces = nullptr;
+  FiniteElementSpaceHierarchy *h1_fespaces = nullptr;
+  FiniteElementSpaceHierarchy *h1_aux_fespaces = nullptr;
+  const std::vector<mfem::Array<int>> *nd_dbc_tdof_lists = nullptr;
+  const std::vector<mfem::Array<int>> *h1_dbc_tdof_lists = nullptr;
+  const std::vector<mfem::Array<int>> *h1_aux_dbc_tdof_lists = nullptr;
 
   // Non-owning pointer to the block preconditioner (for setting operators in Solve).
   BlockDiagonalPreconditioner<ComplexOperator> *block_pc_ptr = nullptr;
@@ -239,6 +257,12 @@ private:
 
   // Set up the eigenvalue solver (SLEPc or ARPACK).
   void SetUpEigenSolver(MPI_Comm comm);
+
+  // Shared ctor body: frequency-independent matrix assembly and linear + eigenvalue
+  // solver setup. `solver_comm` is the WavePort sub-communicator when not null; it's
+  // derived from the FE space comm for the bare-ctor default path and for the
+  // hierarchy ctor.
+  void Init(MPI_Comm solver_comm);
 };
 
 }  // namespace palace
