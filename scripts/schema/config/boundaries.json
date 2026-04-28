@@ -305,7 +305,7 @@
             "type": "integer",
             "exclusiveMinimum": 0,
             "description": "Maximum number of iterations for the GMRES solver used in the wave port boundary mode analysis.",
-            "default": 30,
+            "default": 45,
             "x-palace-advanced": true
           },
           "KSPTol":
