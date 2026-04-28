@@ -138,13 +138,6 @@ public:
   const auto &GetAttributeToMaterial() const { return attr_mat; }
   mfem::Array<int> GetBdrAttributeToMaterial() const;
 
-  // Re-compute all material tensors by rotating the 3x3 config-file material properties
-  // into the local tangent frame (e1, e2) of a 2D cross-section. This corrects the default
-  // 2x2 truncation (leading submatrix) when the cross-section is not aligned with the
-  // xy-plane. The normal vector is used for scalar out-of-plane quantities.
-  void RotateMaterialTensors(const IoData &iodata, const mfem::Vector &e1,
-                             const mfem::Vector &e2, const mfem::Vector &normal);
-
   template <typename T>
   auto GetCeedAttributes(const T &attr_list) const
   {
@@ -207,6 +200,17 @@ public:
 
   void NormalProjectedCoefficient(const mfem::Vector &normal);
 };
+
+// Rotate each 3x3 config-file symmetric tensor (mu_r, epsilon_r, tandelta, sigma) in
+// `materials` into a local frame whose in-plane axes are (e1, e2) and out-of-plane axis
+// is `normal`, zeroing cross terms between the two. After this call, a 2D MaterialOperator
+// constructed from the mutated iodata yields the physically correct in-plane 2x2 block
+// (leading submatrix = R^T M R) and scalar out-of-plane components ((2,2) = n^T M n) via
+// the default 2D construction path — no additional frame information is required
+// downstream. `lambda_L` is a scalar length, unaffected.
+void RotateMaterialDefinitions(std::vector<config::MaterialData> &materials,
+                               const mfem::Vector &e1, const mfem::Vector &e2,
+                               const mfem::Vector &normal);
 
 }  // namespace palace
 

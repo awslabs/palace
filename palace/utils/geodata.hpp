@@ -26,7 +26,7 @@ namespace mesh
 // checks, cleanup, simplex/hex conversion, element reordering, serial uniform refinement,
 // region-based (box/sphere) refinement, boundary cracking, and finalization. Returns a
 // null pointer on ranks that do not hold a copy of the serial mesh. Called by main.cpp
-// before PreprocessMesh hooks on the solver mutate the serial mesh (e.g. BoundaryMode
+// before Preprocess hooks on the solver mutate the serial mesh (e.g. BoundaryMode
 // submesh extraction).
 std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm);
 
@@ -35,12 +35,11 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm);
 std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::Mesh> smesh,
                                          MPI_Comm comm);
 
-// Convenience wrapper: Load followed by Partition with no PreprocessMesh hook.
+// Convenience wrapper: Load followed by Partition with no Preprocess hook.
 std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);
 
 // Maximum axis-aligned bbox extent of the pre-partition serial mesh, reduced over
 // `comm` so every rank sees the same value. Returns 0 when no rank holds a mesh.
-// Used by BaseSolver::PreprocessMesh to derive iodata.model.Lc from a non-user-set value.
 double ComputeReferenceLength(const std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm comm);
 
 // Refine the provided mesh according to the data in the input file (parallel uniform
@@ -238,7 +237,7 @@ inline mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, bool average = t
   return GetSurfaceNormal(mesh, AttrToMarker(attributes.Max(), attributes), average);
 }
 
-// Serial overload of GetSurfaceNormal for the pre-partition extraction path.
+// Serial overload of GetSurfaceNormal for use during pre-partition extraction.
 mfem::Vector GetSurfaceNormal(const mfem::Mesh &mesh, const mfem::Array<int> &marker,
                               bool average = true);
 
@@ -248,16 +247,6 @@ inline mfem::Vector GetSurfaceNormal(const mfem::Mesh &mesh, bool average = true
   const auto &attributes = bdr ? mesh.bdr_attributes : mesh.attributes;
   return GetSurfaceNormal(mesh, AttrToMarker(attributes.Max(), attributes), average);
 }
-
-// Extract a standalone 2D serial mesh from a 3D parallel mesh boundary. Performs the
-// full 3D-boundary -> 2D-submesh pipeline (ParSubMesh extraction + attribute remap +
-// internal-boundary edge insertion + 3D->2D projection) and returns a serial Mesh
-// replicated on loading ranks. Surface normal / centroid / tangent frame (e1, e2) are
-// output parameters.
-std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
-    const mfem::ParMesh &parent_mesh, const mfem::Array<int> &surface_attrs,
-    const std::vector<int> &pec_bdr_attrs, mfem::Vector &surface_normal,
-    mfem::Vector &centroid, mfem::Vector &e1, mfem::Vector &e2);
 
 // Submesh post-extraction helpers. Templated over SubMeshT (mfem::SubMesh for the serial
 // BoundaryMode path, mfem::ParSubMesh for the parallel WavePort path). MPI reductions
@@ -285,19 +274,12 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
 
 // Project a planar 2D submesh (3D ambient coords) to true 2D coordinates. Replaces node
 // coordinates with their projection onto the tangent plane so SpaceDimension() == 2 and
-// all 2D infrastructure works as for a native 2D mesh. Returns the surface normal (3D);
-// optional out-parameters yield the centroid and tangent vectors for projecting
-// additional 3D coordinates (e.g. iodata path points) into the same 2D frame. Serial
-// only — extraction runs before partitioning.
-// Project a planar 2D submesh with 3D ambient coordinates to true 2D coordinates.
-// ParMesh overload (used by ExtractStandalone2DSubmesh on the existing path); a serial
-// overload below supports the pre-partition extraction path.
-mfem::Vector ProjectSubmeshTo2D(mfem::ParMesh &submesh, mfem::Vector *centroid = nullptr,
-                                mfem::Vector *e1 = nullptr, mfem::Vector *e2 = nullptr);
-
-// Serial overload of ProjectSubmeshTo2D. Used by the pre-partition extraction path.
-mfem::Vector ProjectSubmeshTo2D(mfem::Mesh &submesh, mfem::Vector *centroid = nullptr,
-                                mfem::Vector *e1 = nullptr, mfem::Vector *e2 = nullptr);
+// all 2D infrastructure works as for a native 2D mesh. Returns the surface normal (3D)
+// and fills `centroid`, `e1`, `e2` with the tangent frame used for the projection
+// (needed by the caller for projecting additional 3D coordinates into the same 2D
+// frame). Serial only — extraction runs before partitioning.
+mfem::Vector ProjectSubmeshTo2D(mfem::Mesh &submesh, mfem::Vector &centroid,
+                                mfem::Vector &e1, mfem::Vector &e2);
 
 // Project a 3D point to 2D local coordinates using a previously computed tangent frame.
 inline mfem::Vector Project3Dto2D(const mfem::Vector &p3d, const mfem::Vector &centroid,

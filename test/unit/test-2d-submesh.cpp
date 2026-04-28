@@ -17,10 +17,11 @@ namespace palace
 {
 using namespace Catch::Matchers;
 
-TEST_CASE("RotateMaterialTensors", "[materialoperator][Serial]")
+TEST_CASE("RotateMaterialDefinitions", "[materialoperator][Serial]")
 {
-  // Create a 2D mesh and MaterialOperator with anisotropic sapphire-like material.
-  // Then rotate from global to a known local frame and verify tensor values.
+  // Create a 2D mesh and anisotropic sapphire-like material, rotate the config-level
+  // material definitions into a known local frame, and verify the resulting 2D-native
+  // MaterialOperator tensors.
   MPI_Comm comm = Mpi::World();
   Units units(1.0, 1.0);
   IoData iodata(units);
@@ -37,20 +38,23 @@ TEST_CASE("RotateMaterialTensors", "[materialoperator][Serial]")
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
   iodata.CheckConfiguration();
   Mesh palace_mesh(std::move(par_mesh));
-  MaterialOperator mat_op(iodata, palace_mesh);
 
-  // Before rotation: 2D MaterialOperator truncates to leading 2x2 = diag(2, 3).
-  const auto &eps_before = mat_op.GetPermittivityReal();
-  // Material index 0 (the only material).
-  REQUIRE(eps_before.SizeI() == 2);
-  CHECK_THAT(eps_before(0, 0, 0), WithinAbs(2.0, 1e-12));
-  CHECK_THAT(eps_before(1, 1, 0), WithinAbs(3.0, 1e-12));
+  {
+    // Unrotated: 2D MaterialOperator truncates to leading 2x2 = diag(2, 3); scalar
+    // out-of-plane = eps_zz = 5.
+    MaterialOperator mat_op(iodata, palace_mesh);
+    const auto &eps = mat_op.GetPermittivityReal();
+    REQUIRE(eps.SizeI() == 2);
+    CHECK_THAT(eps(0, 0, 0), WithinAbs(2.0, 1e-12));
+    CHECK_THAT(eps(1, 1, 0), WithinAbs(3.0, 1e-12));
+    CHECK_THAT(mat_op.GetPermittivityScalar()(0, 0, 0), WithinAbs(5.0, 1e-12));
+  }
 
   SECTION("Rotation with normal along x-axis")
   {
     // Surface normal = x, tangent frame: e1 = z, e2 = y.
     // Rotated eps_2x2 = R^T diag(2,3,5) R where R = [e1|e2] = [[0,0],[0,1],[1,0]]
-    // Result: eps_2x2 = diag(5, 3) (zz, yy components).
+    // Result: eps_2x2 = diag(5, 3) (zz, yy components); eps_nn = eps_xx = 2.
     mfem::Vector e1(3), e2(3), normal(3);
     e1 = 0.0;
     e1(2) = 1.0;  // z
@@ -59,21 +63,20 @@ TEST_CASE("RotateMaterialTensors", "[materialoperator][Serial]")
     normal = 0.0;
     normal(0) = 1.0;  // x
 
-    mat_op.RotateMaterialTensors(iodata, e1, e2, normal);
+    RotateMaterialDefinitions(iodata.domains.materials, e1, e2, normal);
+    MaterialOperator mat_op(iodata, palace_mesh);
 
     const auto &eps = mat_op.GetPermittivityReal();
     CHECK_THAT(eps(0, 0, 0), WithinAbs(5.0, 1e-12));  // e1=z component
     CHECK_THAT(eps(1, 1, 0), WithinAbs(3.0, 1e-12));  // e2=y component
     CHECK_THAT(eps(0, 1, 0), WithinAbs(0.0, 1e-12));  // off-diagonal
 
-    // Scalar (out-of-plane) = n^T eps n = eps_xx = 2.0
-    const auto &eps_s = mat_op.GetPermittivityScalar();
-    CHECK_THAT(eps_s(0, 0, 0), WithinAbs(2.0, 1e-12));
+    // Scalar (out-of-plane) = n^T eps n = eps_xx = 2.0.
+    CHECK_THAT(mat_op.GetPermittivityScalar()(0, 0, 0), WithinAbs(2.0, 1e-12));
 
     // Curl-curl inv permeability (scalar, out-of-plane mu^{-1}).
     // mu = diag(1,1,1) by default, so mu^{-1}_nn = 1.0.
-    const auto &muinv_s = mat_op.GetCurlCurlInvPermeability();
-    CHECK_THAT(muinv_s(0, 0, 0), WithinAbs(1.0, 1e-12));
+    CHECK_THAT(mat_op.GetCurlCurlInvPermeability()(0, 0, 0), WithinAbs(1.0, 1e-12));
   }
 
   SECTION("Rotation with normal along z-axis (identity)")
@@ -88,15 +91,15 @@ TEST_CASE("RotateMaterialTensors", "[materialoperator][Serial]")
     normal = 0.0;
     normal(2) = 1.0;  // z
 
-    mat_op.RotateMaterialTensors(iodata, e1, e2, normal);
+    RotateMaterialDefinitions(iodata.domains.materials, e1, e2, normal);
+    MaterialOperator mat_op(iodata, palace_mesh);
 
     const auto &eps = mat_op.GetPermittivityReal();
     CHECK_THAT(eps(0, 0, 0), WithinAbs(2.0, 1e-12));
     CHECK_THAT(eps(1, 1, 0), WithinAbs(3.0, 1e-12));
 
-    // Scalar (out-of-plane) = eps_zz = 5.0
-    const auto &eps_s = mat_op.GetPermittivityScalar();
-    CHECK_THAT(eps_s(0, 0, 0), WithinAbs(5.0, 1e-12));
+    // Scalar (out-of-plane) = eps_zz = 5.0.
+    CHECK_THAT(mat_op.GetPermittivityScalar()(0, 0, 0), WithinAbs(5.0, 1e-12));
   }
 }
 
@@ -205,16 +208,16 @@ TEST_CASE("RemapSubMeshBdrAttributes", "[geodata][Serial]")
   }
 }
 
-TEST_CASE("Tangent frame from ExtractStandalone2DSubmesh", "[geodata][Parallel]")
+TEST_CASE("Tangent frame from SubMesh extraction", "[geodata][Serial]")
 {
-  // Call the actual ExtractStandalone2DSubmesh on a simple 3D mesh and verify the
-  // tangent frame (e1, e2, normal) is orthonormal and right-handed.
-  MPI_Comm comm = Mpi::World();
+  // Build a simple 3D mesh, extract each face with mfem::SubMesh::CreateFromBoundary,
+  // project to 2D with mesh::ProjectSubmeshTo2D, and verify the resulting tangent frame
+  // (e1, e2, normal) is orthonormal. This mirrors the sequence BoundaryModeSolver::
+  // Preprocess runs on the serial mesh before partitioning.
 
   // Create a unit cube mesh (single hex element).
   mfem::Mesh smesh = mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::HEXAHEDRON);
   smesh.EnsureNodes();
-  auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
 
   auto CheckOrthonormal =
       [](const mfem::Vector &e1, const mfem::Vector &e2, const mfem::Vector &n)
@@ -234,24 +237,21 @@ TEST_CASE("Tangent frame from ExtractStandalone2DSubmesh", "[geodata][Parallel]"
     {
       mfem::Array<int> surface_attrs;
       surface_attrs.Append(face_attr);
-      std::vector<int> pec_bdr_attrs;  // No internal BC edges for a single face.
 
-      mfem::Vector normal, centroid, e1, e2;
-      auto submesh = mesh::ExtractStandalone2DSubmesh(*pmesh, surface_attrs, pec_bdr_attrs,
-                                                      normal, centroid, e1, e2);
+      auto sub = std::make_unique<mfem::SubMesh>(
+          mfem::SubMesh::CreateFromBoundary(smesh, surface_attrs));
+      REQUIRE(sub->GetNE() > 0);
 
-      // Verify orthonormality of the tangent frame.
+      mfem::Vector centroid, e1, e2;
+      mfem::Vector normal = mesh::ProjectSubmeshTo2D(*sub, centroid, e1, e2);
+
       REQUIRE(normal.Size() == 3);
       REQUIRE(e1.Size() == 3);
       REQUIRE(e2.Size() == 3);
       CheckOrthonormal(e1, e2, normal);
 
-      // Verify the extracted mesh is 2D with SpaceDimension == 2.
-      if (submesh)
-      {
-        CHECK(submesh->Dimension() == 2);
-        CHECK(submesh->SpaceDimension() == 2);
-      }
+      CHECK(sub->Dimension() == 2);
+      CHECK(sub->SpaceDimension() == 2);
     }
   }
 }
