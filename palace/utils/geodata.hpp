@@ -304,6 +304,39 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
 mfem::Vector ProjectSubmeshTo2D(mfem::Mesh &submesh, mfem::Vector *centroid = nullptr,
                                 mfem::Vector *e1 = nullptr, mfem::Vector *e2 = nullptr);
 
+// Tangent frame of a 2D submesh in its parent 3D coordinate system. Centroid is the
+// 3D origin used by ProjectSubmeshTo2D, e1/e2 are orthonormal in-plane tangent vectors,
+// and normal is the out-of-plane axis. Produced by ExtractBoundary2DSubmesh and carried
+// by the driver for material-tensor rotation and 3D→2D path projection.
+struct SubmeshFrame
+{
+  mfem::Vector centroid, e1, e2, normal;
+};
+
+// Result of extracting a standalone 2D submesh from a 3D boundary: the 2D mesh itself
+// and the tangent frame captured during the projection.
+struct Submesh2DExtraction
+{
+  std::unique_ptr<mfem::Mesh> mesh;
+  SubmeshFrame frame;
+};
+
+// Full 3D-boundary → 2D-submesh pipeline on the pre-partitioned serial mesh:
+//   1. mfem::SubMesh::CreateFromBoundary(parent, surface_attrs)
+//   2. RemapSubMeshAttributes / RemapSubMeshBdrAttributes (domain and boundary attrs
+//      inherit adjacent 3D element / face attributes)
+//   3. AddSubMeshInternalBoundaryElements (edges at surface ∩ internal_bdr_attrs faces
+//      become boundary elements carrying the intersected face's attribute)
+//   4. ProjectSubmeshTo2D (3D ambient → true 2D coordinates, captures tangent frame)
+// Valid only on ranks that hold a copy of the serial mesh; parent must remain alive
+// through steps 1–3 (SubMesh holds a pointer to it). After this returns, the submesh no
+// longer references the parent and callers can free it. Caller-specific post-mutation
+// (e.g. relabeling certain bdr attributes) is expected to happen between this and
+// downstream consumers.
+Submesh2DExtraction ExtractBoundary2DSubmesh(
+    mfem::Mesh &parent, const mfem::Array<int> &surface_attrs,
+    const std::vector<int> &internal_bdr_attrs);
+
 // Project a 3D point to 2D local coordinates using a previously computed tangent frame.
 inline mfem::Vector Project3Dto2D(const mfem::Vector &p3d, const mfem::Vector &centroid,
                                   const mfem::Vector &e1, const mfem::Vector &e2)

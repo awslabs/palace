@@ -1831,6 +1831,24 @@ mfem::Vector ProjectSubmeshTo2D(mfem::Mesh &submesh, mfem::Vector *out_centroid,
   return normal;
 }
 
+Submesh2DExtraction ExtractBoundary2DSubmesh(mfem::Mesh &parent,
+                                             const mfem::Array<int> &surface_attrs,
+                                             const std::vector<int> &internal_bdr_attrs)
+{
+  Submesh2DExtraction out;
+  auto sub = std::make_unique<mfem::SubMesh>(
+      mfem::SubMesh::CreateFromBoundary(parent, surface_attrs));
+  RemapSubMeshAttributes(*sub);
+  RemapSubMeshBdrAttributes(*sub, surface_attrs);
+  AddSubMeshInternalBoundaryElements(*sub, surface_attrs, internal_bdr_attrs);
+  out.frame.normal = ProjectSubmeshTo2D(*sub, &out.frame.centroid, &out.frame.e1,
+                                        &out.frame.e2);
+  // After the projection, SubMesh's parent_ pointer is no longer dereferenced downstream;
+  // hand ownership out as a plain Mesh.
+  out.mesh = std::move(sub);
+  return out;
+}
+
 // Explicit template instantiations for the submesh helpers. The serial (mfem::SubMesh)
 // path is consumed by BoundaryModeSolver::PreprocessMesh on the pre-partitioned mesh;
 // the parallel (mfem::ParSubMesh) path is consumed by WavePortOperator after the main
