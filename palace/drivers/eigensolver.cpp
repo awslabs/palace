@@ -206,7 +206,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
   if (iodata.solver.linear.divfree_max_it > 0 &&
       !space_op.GetMaterialOp().HasWaveVector() &&
-      !space_op.GetMaterialOp().HasLondonDepth())
+      !space_op.GetMaterialOp().HasLondonDepth() &&
+      !space_op.GetMaterialOp().HasPML())
   {
     Mpi::Print(" Configuring divergence-free projection\n");
     constexpr int divfree_verbose = 0;
