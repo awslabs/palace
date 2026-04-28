@@ -32,7 +32,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     # Note: 'cuda' and 'cuda_arch' variants are added by the CudaPackage
     # Note: 'rocm' and 'amdgpu_target' variants are added by the ROCmPackage
-    variant("cxxstd", default="17", values=("17", "20"), description="C++ standard", when="@0.16:")
+    variant("cxxstd", default="17", values=("17", "20"), description="C++ standard", when="@0.16:0.16")
+    variant("cxxstd", default="20", values=("20",), description="C++ standard", when="@0.17:")
     variant("shared", default=True, description="Build shared libraries")
     variant("int64", default=False, description="Use 64 bit integers")
     variant("openmp", default=False, description="Use OpenMP for shared-memory parallelism")
