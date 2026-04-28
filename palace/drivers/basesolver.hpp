@@ -45,17 +45,11 @@ public:
              const char *git_tag = nullptr);
   virtual ~BaseSolver() = default;
 
-  // Problem-type-specific serial-stage mesh preprocessing hook. Called in the read-mesh
-  // pipeline between mesh::Load and IoData::NondimensionalizeInputs. Default behavior:
-  // return the characteristic length Lc for the (unchanged) solve mesh — either the user-
-  // supplied iodata.model.Lc when set, otherwise the maximum bounding-box extent with an
-  // MPI_Allreduce(MAX) over `comm` so every rank sees the same value.
-  // BoundaryModeSolver overrides this to extract a 2D submesh from a 3D parent first,
-  // then delegates to the base implementation to compute Lc on the now-reshaped solve
-  // mesh. All communication related to the serial-mesh asymmetry lives here so callers
-  // (main.cpp and unit tests) never pass a comm to NondimensionalizeInputs.
-  // `smesh` is null on ranks that do not hold a copy of the serial mesh (see
-  // mesh::Load's contract) — overrides must guard accordingly.
+  // Serial-stage mesh hook, called between mesh::Load and NondimensionalizeInputs.
+  // Returns the characteristic length Lc for the solve mesh. Default: use
+  // iodata.model.Lc when set, otherwise derive it from the bounding box. Overrides
+  // (BoundaryModeSolver) may reshape the mesh before delegating to the base. `smesh`
+  // is null on ranks that don't hold a copy of the serial mesh.
   virtual double PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh, MPI_Comm comm) const;
 
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine paradigm.

@@ -95,39 +95,27 @@ ModeEigenSolver::ModeEigenSolver(
     opB = std::make_unique<ComplexWrapperOperator>(std::move(Br), std::move(Bi));
   }
 
-  // Configure linear and eigenvalue solvers.
-  // - BoundaryMode: solver_comm == MPI_COMM_NULL -> use FE space communicator (all procs).
-  // - WavePort on port procs: solver_comm is a valid subset communicator -> use it.
-  // - WavePort on non-port procs: solver_comm == MPI_COMM_NULL but FE space has no local
-  //   DOFs -> skip solver setup (ksp and eigen remain null).
-  const bool use_mg =
-      bmo && bmo->GetNDSpaceHierarchy().GetNumLevels() > 1;
-  if (solver_comm != MPI_COMM_NULL)
+  // Pick a communicator for the solvers: solver_comm if supplied (WavePort port ranks),
+  // else the FE space comm (BoundaryMode, all ranks). Ranks with no DOFs and no
+  // solver_comm (WavePort non-port ranks) skip solver setup entirely and return
+  // num_converged = 0 from Solve.
+  const bool use_mg = bmo && bmo->GetNDSpaceHierarchy().GetNumLevels() > 1;
+  MPI_Comm configure_comm = (solver_comm != MPI_COMM_NULL) ? solver_comm
+                                                           : (nd_size > 0)
+                                                                 ? nd_fespace.GetComm()
+                                                                 : MPI_COMM_NULL;
+  if (configure_comm != MPI_COMM_NULL)
   {
     if (use_mg)
     {
-      SetUpMultigridLinearSolver(solver_comm);
+      SetUpMultigridLinearSolver(configure_comm);
     }
     else
     {
-      SetUpLinearSolver(solver_comm);
+      SetUpLinearSolver(configure_comm);
     }
-    SetUpEigenSolver(solver_comm);
+    SetUpEigenSolver(configure_comm);
   }
-  else if (nd_size > 0)
-  {
-    // Standalone mode (BoundaryMode): all procs have DOFs, use FE space comm.
-    if (use_mg)
-    {
-      SetUpMultigridLinearSolver(nd_fespace.GetComm());
-    }
-    else
-    {
-      SetUpLinearSolver(nd_fespace.GetComm());
-    }
-    SetUpEigenSolver(nd_fespace.GetComm());
-  }
-  // else: non-port process with empty FE space -- no solvers needed.
 }
 
 void ModeEigenSolver::AssembleFrequencyDependent(double omega, double sigma)
@@ -155,12 +143,10 @@ ModeEigenSolver::Solve(double omega, double sigma, const ComplexVector *initial_
 {
   sigma_cached = sigma;
 
-  // Assemble frequency-dependent matrices on the FE space communicator (all ranks
-  // sharing the mesh participate in assembly).
+  // Frequency-dependent matrices assemble on the FE space communicator.
   AssembleFrequencyDependent(omega, sigma);
 
-  // Ranks without a configured solver — wave port non-port ranks whose port submesh has
-  // no local DOFs — contribute to assembly only and return here.
+  // Ranks configured without a solver (wave port non-port ranks) return after assembly.
   if (!ksp || !eigen)
   {
     return {0, sigma};

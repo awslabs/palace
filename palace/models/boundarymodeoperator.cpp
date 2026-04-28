@@ -20,8 +20,8 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
 {
   MFEM_VERIFY(solve_mesh->Dimension() == 2,
               "BoundaryMode solver requires a 2D mesh (waveguide cross-section). When "
-              "configured with \"Attributes\", the driver's PreprocessMesh hook extracts "
-              "the cross-section before this operator is constructed.");
+              "\"Attributes\" is set the driver's PreprocessMesh hook extracts it from "
+              "the 3D parent before this operator is constructed.");
   MFEM_VERIFY(mat_op, "BoundaryModeOperator requires a non-null MaterialOperator!");
 
   // FE spaces.
@@ -43,11 +43,9 @@ void BoundaryModeOperator::SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>
   const auto &mg = iodata.solver.linear;
   const int dim = solve_mesh->Dimension();
 
-  // Collect Dirichlet boundary attributes. The solve mesh carries all PEC-like edges as
-  // PEC attributes already — for direct 2D input the user defined them; for submesh
-  // extraction, BoundaryModeSolver::PreprocessMesh folded inherited 3D boundary conditions
-  // (other waveports, and faces already surfaced by the internal-boundary insertion
-  // step) into the appropriate 2D attributes before this operator was constructed.
+  // Dirichlet bdr attrs. The solve mesh already carries PEC on every edge that needs it:
+  // for direct 2D, the user defined it; for submesh extraction, the driver folded the
+  // inherited 3D boundary conditions into 2D attributes before this runs.
   {
     const auto &pmesh = solve_mesh->Get();
     int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
@@ -76,9 +74,8 @@ void BoundaryModeOperator::SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>
       solver_order, dim, mg.mg_max_levels, mg.mg_coarsening, false);
   h1_aux_fecs = fem::ConstructFECollections<mfem::H1_FECollection>(
       solver_order, dim, mg.mg_max_levels, mg.mg_coarsening, false);
-  // RT collection (estimator flux recovery only; depth follows estimator_mg, mirroring
-  // SpaceOperator::rt_fespaces). Order is solver_order - 1 because the recovered flux
-  // lives one polynomial degree below the primary ND space.
+  // RT collection for estimator flux recovery (order = solver_order - 1 since the
+  // recovered flux lives one polynomial degree below the primary ND space).
   const int rt_mg_max_levels = mg.estimator_mg ? mg.mg_max_levels : 1;
   rt_fecs = fem::ConstructFECollections<mfem::RT_FECollection>(
       solver_order - 1, dim, rt_mg_max_levels, mg.mg_coarsening, false);

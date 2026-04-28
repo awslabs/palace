@@ -1324,10 +1324,8 @@ mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, const mfem::Array<int> 
 mfem::Vector GetSurfaceNormal(const mfem::Mesh &mesh, const mfem::Array<int> &marker,
                               bool average)
 {
-  // Serial counterpart of the ParMesh overload above. Used by mesh-extraction helpers
-  // (ProjectSubmeshTo2D) that run on the pre-partitioned serial mesh. Iterates over
-  // boundary elements (or domain elements for a surface mesh embedded in 3D) whose
-  // attribute is marked, accumulates face normals, and averages or returns the first.
+  // Serial counterpart of the ParMesh overload; no MPI. Used by ProjectSubmeshTo2D on
+  // the pre-partition serial mesh.
   const int dim = mesh.SpaceDimension();
   mfem::IsoparametricTransformation T;
   mfem::Vector loc_normal(dim), normal(dim);
@@ -1370,10 +1368,9 @@ namespace
 {
 
 // Trait helpers dispatching between serial (mfem::SubMesh / mfem::Mesh) and parallel
-// (mfem::ParSubMesh / mfem::ParMesh) submesh primitives. The parallel versions forward
-// to the real MPI calls; the serial versions return MPI_COMM_SELF and identity vertex
-// indices so a single templated implementation works for both without runtime overhead
-// on the serial path (MPI_COMM_SELF collectives degenerate to no-ops).
+// (mfem::ParSubMesh / mfem::ParMesh) submesh primitives so a single templated body
+// serves both. The serial versions return MPI_COMM_SELF and identity vertex indices;
+// collectives over MPI_COMM_SELF degenerate to no-ops.
 inline MPI_Comm GetSubMeshComm(const mfem::SubMesh &) { return MPI_COMM_SELF; }
 inline MPI_Comm GetSubMeshComm(const mfem::ParSubMesh &s) { return s.GetComm(); }
 
@@ -1392,9 +1389,9 @@ inline void GetParentGlobalVertexIndices(const mfem::ParMesh &parent,
   parent.GetGlobalVertexIndices(gi);
 }
 
-// Parent neighbor-transformation lookup. For a ParMesh parent, delegate to the Palace
-// helper that handles cross-rank shared faces; for a plain Mesh parent, there are no
-// cross-rank neighbors and MFEM's direct face-transformation API suffices.
+// Parent neighbor-transformation lookup. ParMesh delegates to the Palace helper that
+// handles cross-rank shared faces; serial Mesh uses MFEM's face-transformation API
+// directly (no cross-rank neighbors).
 inline void GetBdrElementNeighborTransforms(int i, const mfem::Mesh &mesh,
                                             mfem::FaceElementTransformations &FET,
                                             mfem::IsoparametricTransformation &T1,
@@ -1457,15 +1454,14 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh,
     surface_attr_set.insert(surface_attrs[i]);
   }
 
-  // Parent vertex indices used as rank-independent edge identifiers. For a ParMesh,
-  // this is ParMesh::GetGlobalVertexIndices; for a serial Mesh, this is just [0..NV).
-  // Edges at the intersection of two parent boundary faces may be owned by different
-  // ranks in the parallel case — using a stable identifier lets all ranks contribute.
+  // Rank-independent edge identifiers: ParMesh global vertex indices, or [0..NV) for
+  // serial. Edges at the intersection of two parent boundary faces may live on different
+  // ranks, so a stable identifier is needed before the Allgather.
   mfem::Array<HYPRE_BigInt> pvert_gi;
   GetParentGlobalVertexIndices(parent, pvert_gi);
 
-  // Each rank: collect (gv0, gv1, attr, is_surface) for edges of local parent boundary
-  // elements, using sorted global vertex pairs as rank-independent edge identifiers.
+  // Each rank: collect (gv0, gv1, attr, is_surface) for every edge of its local parent
+  // boundary elements, using sorted global vertex pairs as edge keys.
   std::vector<int> local_edge_attrs;
   {
     mfem::Array<int> edges, orientations, ev;
@@ -1545,12 +1541,9 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh,
     }
   }
 
-  // Note: We intentionally do NOT modify submesh.bdr_attributes here. Modifying
-  // bdr_attributes (even via SetAttributes) on a ParSubMesh can corrupt internal MFEM
-  // state. The individual SetBdrAttribute() calls above are sufficient — the CEED boundary
-  // attribute maps are rebuilt separately via Mesh::RebuildCeedAttributes(), which reads
-  // from GetBdrAttribute(i) directly. In the serial (MPI_COMM_SELF) case the Allgather
-  // above degenerates to a local memcpy so the same code path is used for both.
+  // Note: do not touch submesh.bdr_attributes directly — modifying it on a ParSubMesh
+  // can corrupt internal MFEM state. The per-element SetBdrAttribute calls above are
+  // sufficient; RebuildCeedAttributes reads GetBdrAttribute(i) on demand.
 }
 
 template <class SubMeshT>
@@ -1849,10 +1842,9 @@ Submesh2DExtraction ExtractBoundary2DSubmesh(mfem::Mesh &parent,
   return out;
 }
 
-// Explicit template instantiations for the submesh helpers. The serial (mfem::SubMesh)
-// path is consumed by BoundaryModeSolver::PreprocessMesh on the pre-partitioned mesh;
-// the parallel (mfem::ParSubMesh) path is consumed by WavePortOperator after the main
-// mesh has been partitioned.
+// Explicit instantiations for the submesh helpers. Serial (mfem::SubMesh) is used by
+// BoundaryModeSolver on the pre-partition mesh; parallel (mfem::ParSubMesh) by WavePort
+// after partitioning.
 template void RemapSubMeshAttributes<mfem::SubMesh>(mfem::SubMesh &);
 template void RemapSubMeshAttributes<mfem::ParSubMesh>(mfem::ParSubMesh &);
 template void RemapSubMeshBdrAttributes<mfem::SubMesh>(mfem::SubMesh &,

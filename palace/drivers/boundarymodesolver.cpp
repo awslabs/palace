@@ -38,17 +38,16 @@ double BoundaryModeSolver::PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh,
 
   frame_ = std::make_unique<mesh::SubmeshFrame>();
   frame_->centroid.SetSize(3);
-  frame_->e1.SetSize(3);
-  frame_->e2.SetSize(3);
-  frame_->normal.SetSize(3);
   frame_->centroid = 0.0;
+  frame_->e1.SetSize(3);
   frame_->e1 = 0.0;
+  frame_->e2.SetSize(3);
   frame_->e2 = 0.0;
+  frame_->normal.SetSize(3);
   frame_->normal = 0.0;
 
-  // Ranks that hold a copy of the serial mesh (root always; one-per-node roots in the
-  // byte-string distribution path) perform the extraction locally. The mesh is still
-  // serial at this point so the extraction runs via mfem::SubMesh with no MPI.
+  // Ranks holding the serial mesh (root + node-roots in the byte-string path) run the
+  // extraction locally via mfem::SubMesh; non-holders receive the frame via broadcast.
   if (smesh)
   {
     MFEM_VERIFY(smesh->Dimension() == 3,
@@ -58,10 +57,9 @@ double BoundaryModeSolver::PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh,
     mfem::Array<int> attr_list;
     attr_list.Append(bm_data.attributes.data(), bm_data.attributes.size());
 
-    // Internal bdr attrs: parent boundary face types whose intersection with the
-    // cross-section should become 2D boundary edges. Includes every BC that pins the
-    // tangential E-field on the mode problem plus other-waveports (those edges get
-    // relabeled to PEC below).
+    // Parent boundary face types whose intersection with the cross-section should
+    // become 2D boundary edges: BCs that pin the tangential E-field (PEC, auxpec,
+    // impedance, conductivity, farfield) plus other-waveports (relabeled to PEC below).
     std::vector<int> internal_bdr_attrs;
     const auto &bdr = iodata.boundaries;
     auto append = [&](const auto &src) {
@@ -90,11 +88,9 @@ double BoundaryModeSolver::PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh,
 
     auto extr = mesh::ExtractBoundary2DSubmesh(*smesh, attr_list, internal_bdr_attrs);
 
-    // Relabel other-waveport edges to the first configured PEC attribute so that
-    // BoundaryModeOperator sees plain PEC boundary elements. This bakes the "other
-    // waveports act as PEC on this cross-section" rule into the mesh, keeping the
-    // operator frame-agnostic and letting per-waveport frames compose without mutating
-    // iodata.
+    // Bake "other waveports act as PEC on this cross-section" into the mesh so the
+    // operator sees plain PEC edges and has no frame-dependent branch. Per-waveport
+    // frames compose this way without mutating iodata.
     if (!other_waveport_attrs.empty())
     {
       MFEM_VERIFY(!bdr.pec.attributes.empty(),
@@ -125,15 +121,15 @@ double BoundaryModeSolver::PreprocessMesh(std::unique_ptr<mfem::Mesh> &smesh,
                frame_->normal(1), frame_->normal(2));
   }
 
-  // Broadcast the (still user-units) frame from world root so non-holding ranks have it.
+  // Broadcast user-units frame to non-holding ranks.
   Mpi::Broadcast(3, frame_->centroid.HostReadWrite(), 0, comm);
   Mpi::Broadcast(3, frame_->e1.HostReadWrite(), 0, comm);
   Mpi::Broadcast(3, frame_->e2.HostReadWrite(), 0, comm);
   Mpi::Broadcast(3, frame_->normal.HostReadWrite(), 0, comm);
 
-  // Resolve Lc from the 2D solve mesh and rescale the centroid into nondim units so
-  // the frame is ready for Solve to consume without further rescaling. e1/e2/normal are
-  // unit vectors and don't need scaling.
+  // Resolve Lc from the 2D solve mesh, then rescale the centroid into nondim units so
+  // the frame is ready for Solve to consume without further rescaling (e1/e2/normal are
+  // unit vectors).
   const double Lc = BaseSolver::PreprocessMesh(smesh, comm);
   MFEM_VERIFY(Lc > 0.0, "BoundaryMode: failed to resolve a positive reference length "
                         "from the extracted 2D submesh!");
@@ -154,12 +150,9 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              "(omega = {:.6e})\n",
              freq_GHz, omega);
 
-  // Construct the MaterialOperator here rather than inside BoundaryModeOperator: when the
-  // solve mesh was extracted from a 3D parent (frame_ non-null) the tensors have to be
-  // rotated into the local tangent plane, and the frame lives on the driver. Keeping this
-  // out of BoundaryModeOperator lets the operator remain frame-agnostic (no knowledge of
-  // whether it came from a submesh) and makes per-waveport extractions compose cleanly
-  // without mutating iodata.
+  // Construct MaterialOperator on the driver side: when the solve mesh came from a 3D
+  // parent (frame_ non-null), tensors need rotating into the tangent plane and the frame
+  // lives here. Injecting it into BoundaryModeOperator keeps the operator frame-agnostic.
   BlockTimer bt0(Timer::CONSTRUCT);
   auto mat_op = std::make_unique<MaterialOperator>(iodata, *mesh.back());
   if (frame_)
@@ -169,7 +162,7 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   BoundaryModeOperator mode_op(iodata, mesh, std::move(mat_op));
 
-  // Construct the eigenvalue solver on top of the operator's FE context.
+  // Combined block system DBC tdof list: ND indices, then H1 indices offset by nd_size.
   const int nd_size = mode_op.GetNDTrueVSize();
   mfem::Array<int> dbc_tdof_list;
   dbc_tdof_list.Append(mode_op.GetNDDbcTDofLists().back());
@@ -195,18 +188,14 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                       bm_data.type, iodata.problem.verbose, mode_op.GetComm(),
                       have_mg ? &mode_op : nullptr);
 
-  // Construct the error estimator. BoundaryModeOperator owns the RT hierarchy for
-  // flux recovery (analogous to SpaceOperator::rt_fespaces).
   BoundaryModeFluxErrorEstimator<ComplexVector> estimator(
       mode_op.GetMaterialOp(), mode_op.GetNDSpaceHierarchy(),
       mode_op.GetRTSpaceHierarchy(), mode_op.GetCurlSpace(), mode_op.GetH1SpaceHierarchy(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
       iodata.solver.linear.estimator_mg);
 
-  // Construct PostOperator. When the solve mesh was extracted from a 3D parent, project
-  // iodata 3D path coordinates onto the 2D local frame. The frame's centroid was scaled
-  // into nondim units during PreprocessMesh, matching iodata which NondimensionalizeInputs
-  // has since scaled.
+  // Project iodata 3D path coordinates onto the 2D local frame when we came from a 3D
+  // parent. Frame is already in nondim units (see PreprocessMesh).
   PostOperator<ProblemType::BOUNDARYMODE> post_op(iodata, mode_op);
   if (frame_)
   {
@@ -263,7 +252,7 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const int n_print = std::min(num_conv, num_modes);
   for (int i = 0; i < n_print; i++)
   {
-    // Load eigenvector i and split into physical (et, En) via the shared VD back-transform.
+    // Load eigenvector i, apply the shared VD back-transform so en holds physical En.
     ComplexVector e0(nd_size + h1_size);
     e0.UseDevice(true);
     eig.GetEigenvector(i, e0);
@@ -271,9 +260,8 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const std::complex<double> kn = eig.GetPropagationConstant(i);
     eig.ApplyVDBackTransform(e0, kn, et, en);
 
-    // Power-normalize so that |P| = 1 for the Poynting cross-section integral; recompute
-    // P afterward so its phase (which matters for impedance postprocessing) reflects the
-    // normalized mode.
+    // Power-normalize to |P| = 1. Recompute P on the normalized mode so its phase
+    // (used downstream for impedance postprocessing) reflects the final field.
     auto P = eig.ComputePoyntingPower(omega, kn, et, en);
     if (std::abs(P) > 0.0)
     {

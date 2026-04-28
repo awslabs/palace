@@ -290,9 +290,8 @@ int main(int argc, char *argv[])
   {
     auto smesh = mesh::Load(iodata, world_comm);
     // PreprocessMesh runs any problem-type-specific reshape (BoundaryMode extracts a 2D
-    // submesh from a 3D parent) and returns the characteristic length Lc for the solve
-    // mesh after that reshape. All MPI needed to share Lc across ranks that don't hold
-    // the serial mesh is internal to the hook, so NondimensionalizeInputs itself is
+    // submesh from a 3D parent) and returns Lc for the resulting solve mesh. All MPI
+    // related to the serial-mesh asymmetry happens inside; NondimensionalizeInputs is
     // purely local.
     iodata.model.Lc = solver->PreprocessMesh(smesh, world_comm);
     iodata.NondimensionalizeInputs(smesh);

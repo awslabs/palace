@@ -560,19 +560,16 @@ void IoData::CheckConfiguration()
 
 void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
 {
-  // Nondimensionalization of the equations is based on a given length Lc in [m], typically
-  // the largest domain dimension. Configuration file lengths and the mesh coordinates are
-  // provided with units of model.L0 x [m]. Pre-condition: model.Lc > 0 on all ranks. The
-  // caller populates it either from the config or via mesh::ComputeReferenceLength; this
-  // function itself does no MPI.
+  // Lc is the reference length in [m], typically the largest domain dimension. Mesh
+  // coordinates and iodata lengths are both in units of model.L0 [m]. No MPI — Lc must
+  // already be set on all ranks (caller uses mesh::ComputeReferenceLength when needed).
   MFEM_VERIFY(!init, "NondimensionalizeInputs should only be called once!");
   MFEM_VERIFY(model.Lc > 0.0,
               "NondimensionalizeInputs requires model.Lc > 0.0 \u2014 set it from the "
               "config or call mesh::ComputeReferenceLength before this hook.");
   init = true;
 
-  // Define units now that the reference length is set. Note: In the model field Lc is
-  // measured in units of L0.
+  // In the model field Lc is measured in units of L0.
   units = Units(model.L0, model.Lc * model.L0);
 
   // Mesh refinement parameters.

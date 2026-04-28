@@ -53,12 +53,10 @@ public:
   // Parse command line arguments and override options defaults.
   explicit IoData(const char *filename, bool print);
 
-  // Nondimensionalize input values for use in the solver, including the mesh coordinates.
-  // Requires model.Lc > 0; the caller is responsible for populating Lc (from the config
-  // or via mesh::ComputeReferenceLength) so that every rank agrees on the scale before
-  // this is called. The mesh pointer may be null on ranks that don't hold a copy of the
-  // serial mesh in the byte-string distribution path; iodata is still scaled everywhere.
-  // Pure on the MPI side: no collectives.
+  // Nondimensionalize input values and mesh coordinates. Requires model.Lc > 0 (caller
+  // populates it from the config or via mesh::ComputeReferenceLength). `mesh` may be
+  // null on ranks that don't hold the serial mesh; iodata is scaled on every rank. No
+  // MPI.
   void NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh);
 };
 

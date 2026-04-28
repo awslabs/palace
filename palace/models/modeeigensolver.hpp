@@ -35,32 +35,21 @@ struct LinearSolverData;
 }  // namespace config
 
 //
-// Linear eigenvalue solver for 2D boundary mode computation using a direct linearization
-// of the transverse curl-curl (Equation 1) and normal curl-curl (Equation 2) equations
-// with the Vardapetyan-Demkowicz substitution e_n_tilde = i*kn*E_n, e_t = E_t.
-//
-// Assembles and solves the generalized eigenvalue problem:
+// Linear eigenvalue solver for 2D boundary mode analysis. Uses the Vardapetyan–Demkowicz
+// substitution e_n_tilde = i*kn*E_n (with e_t = E_t) to linearize the coupled transverse
+// and normal curl-curl equations into the shifted GEP
 //
 //   [Att  Atn] [et]           [Btt  Btn] [et]
 //   [ 0   Ann] [en] = lambda  [ 0    0 ] [en]
 //
-// where:
-//   Att = mu_cc^{-1}(curl_t u, curl_t v) - omega^2(eps u, v) + BC-t
-//   Atn = -(mu^{-1} grad_t u, v)
-//   Ann = -(mu^{-1} grad u, grad v) + omega^2(eps u, v) + BC-n (H1 stiffness + mass +
-//          impedance boundary)
-//   Btt = (mu^{-1} u, v)
-//   Btn = -Atn^T (negative transpose coupling from Equation 2)
+// where Att is the frequency-dependent ND block (curl-curl + mass + BC-t), Atn is the
+// ND/H1 gradient coupling, Ann is the H1 block (stiffness + mass + BC-n), Btt is the ND
+// mass, and Btn = -Atn^T. Solved via shift-and-invert on sigma = -kn_target^2.
 //
-// The A matrix is upper block-triangular (Ant = 0). The B matrix has Btn coupling from
-// Equation 2 and Bnn = 0. This is a standard GEP with shift-and-invert.
-//
-// The eigenvector contains [e_t; e_n_tilde] where e_n_tilde = i*kn*E_n. The
-// Vardapetyan–Demkowicz back-transform (recovery of E_n = e_n_tilde / (i*kn)) and
-// Poynting-power normalization are the caller's responsibility — the solver exposes
-// the raw eigenvector via GetEigenvector and kn via GetPropagationConstant, with the
-// Vardapetyan–Demkowicz back-transform en := ẽn / (i·kn) available as ApplyVDBackTransform
-// and Poynting power via ComputePoyntingPower.
+// Callers get raw eigenvectors [et; e_n_tilde] via GetEigenvector and propagation
+// constants via GetPropagationConstant. ApplyVDBackTransform recovers physical en = e_n_tilde
+// / (i*kn); ComputePoyntingPower provides the shared Poynting integral. Each driver
+// handles its own phase / power normalization on top of these primitives.
 //
 class ModeEigenSolver
 {
@@ -71,14 +60,14 @@ public:
     double sigma;
   };
 
-  // The constructor assembles frequency-independent matrices (Atn, Btn = Atn^T, Btt)
-  // and configures linear and eigenvalue solvers. Frequency-dependent matrices (Att, Ann)
-  // are assembled at solve time via AssembleFrequencyDependent(). Matrix assembly uses
-  // the FE space communicator (all processes). If solver_comm != MPI_COMM_NULL, the
-  // linear and eigenvalue solvers are configured on that communicator.
-  // Constructor. Material properties and attribute mapping come from mat_op directly.
-  // For 3D wave port submeshes, normal is the outward surface normal; for 2D domain
-  // meshes, normal is nullptr. Boundary operators are optional (nullptr = none).
+  // Assembles frequency-independent matrices (Atn, Btn = -Atn^T, Btt) and configures the
+  // linear + eigenvalue solvers. Frequency-dependent matrices (Att, Ann) are rebuilt per
+  // Solve. Matrix assembly runs on the FE space communicator; the solver runs on
+  // `solver_comm` when non-null (WavePort restricts to port ranks) or on the FE space
+  // communicator otherwise (BoundaryMode). When bmo is supplied the solver uses
+  // p-multigrid preconditioning driven by its hierarchies; otherwise sparse-direct.
+  // For 3D wave port submeshes `normal` is the outward surface normal; for 2D domain
+  // meshes pass nullptr. Boundary operators may each be nullptr.
   ModeEigenSolver(const MaterialOperator &mat_op, const mfem::Vector *normal,
                   SurfaceImpedanceOperator *surf_z_op,
                   FarfieldBoundaryOperator *farfield_op,
@@ -93,9 +82,8 @@ public:
 
   ~ModeEigenSolver() = default;
 
-  // Assemble frequency-dependent matrices and solve the shifted GEP with shift sigma =
-  // -kn_target^2. Ranks whose FE space has no local DOFs (wave port non-port ranks) are
-  // configured without a solver during construction; they contribute to assembly only
+  // Solve the shifted GEP with shift sigma = -kn_target^2. Ranks configured without a
+  // solver (WavePort non-port ranks with empty FE spaces) contribute to assembly only
   // and return num_converged = 0.
   SolveResult Solve(double omega, double sigma,
                     const ComplexVector *initial_space = nullptr);
