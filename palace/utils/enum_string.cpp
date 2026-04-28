@@ -152,12 +152,6 @@ PALACE_ENUM_STRING_DEFINE(Device, {{Device::CPU, "CPU"},
 PALACE_ENUM_STRING_DEFINE(InactivePortMode, {{InactivePortMode::OPEN, "Open"},
                                              {InactivePortMode::SHORT, "Short"}})
 
-PALACE_ENUM_STRING_DEFINE(PMLStretchFormulation,
-                          {{PMLStretchFormulation::FIXED, "Fixed"},
-                           {PMLStretchFormulation::CFS, "CFS"},
-                           {PMLStretchFormulation::FREQUENCY_DEPENDENT,
-                            "FrequencyDependent"}})
-
 PALACE_ENUM_STRING_DEFINE(PMLCoordinateType,
                           {{PMLCoordinateType::CARTESIAN, "Cartesian"}})
 

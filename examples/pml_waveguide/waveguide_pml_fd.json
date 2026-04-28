@@ -22,7 +22,7 @@
           "Direction": ["+z"],
           "Thickness": 0.1,
           "Order": 3,
-          "StretchFormulation": "FrequencyDependent"
+          "FrequencyDependent": true
         }
       }
     ]

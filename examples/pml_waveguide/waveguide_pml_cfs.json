@@ -22,7 +22,7 @@
           "Direction": ["+z"],
           "Thickness": 0.1,
           "Order": 3,
-          "KappaMax": 2.0, "AlphaMax": 0.1, "StretchFormulation": "CFS",
+          "KappaMax": 2.0, "AlphaMax": 0.1,
           "ReferenceFrequency": 3.0
         }
       }

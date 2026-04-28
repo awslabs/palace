@@ -17,7 +17,6 @@
       { "Attributes": [2], "Permeability": 1.0, "Permittivity": 1.0,
         "PML":
         {
-          "StretchFormulation": "Fixed",
           "ReferenceFrequency": 3.0
         }
       }

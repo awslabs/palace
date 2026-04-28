@@ -274,11 +274,15 @@ public:
   // Target round-trip reflection coefficient for auto-σ_max. Typical 1e-6 to 1e-8.
   double reflection_target = 1.0e-6;
 
-  // Which stretch formulation to use.
-  PMLStretchFormulation formulation = PMLStretchFormulation::FIXED;
+  // If true, the stretch ω is the live solve frequency (rebuilt per frequency in the
+  // driven sweep or per eigen solve). If false (default), ω is the static reference
+  // below. Default static PML is cheapest for narrow-band and eigenmode; frequency-
+  // dependent PML gives uniform absorption across a broadband sweep.
+  bool frequency_dependent = false;
 
-  // Reference ω₀ (in Hz, nondimensionalized at load time) for FIXED and CFS. Negative
-  // ⇒ use the solver-appropriate default (driven center frequency / eigen target).
+  // Reference ω₀ (in Hz, nondimensionalized at load time) for static PML. Negative ⇒
+  // use the solver-appropriate default (driven center frequency / eigen target).
+  // Ignored when frequency_dependent is true.
   double reference_frequency = -1.0;
 
   // If false (default), AMR refinement is disabled inside this PML region.

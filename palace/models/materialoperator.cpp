@@ -569,7 +569,7 @@ void MaterialOperator::SetUpMaterialProperties(
     }
 
     has_pml_attr = true;
-    if (pml_cfg.formulation == PMLStretchFormulation::FREQUENCY_DEPENDENT)
+    if (pml_cfg.frequency_dependent)
     {
       has_pml_freq_dependent_attr = true;
     }
