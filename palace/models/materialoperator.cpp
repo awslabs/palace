@@ -93,6 +93,63 @@ mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data)
 
 }  // namespace internal::mat
 
+namespace
+{
+
+// Union-bounding-box pre-pass over all PML materials that use auto-detected geometry,
+// so N stacked slabs (multiple attributes, possibly across multiple materials) share
+// one logical profile geometry: same inner interface, same total thickness, same
+// σ_max. Without this, each slab's σ(z) resets to 0 at its inner face and auto-σ_max
+// is computed from the per-slab (smaller) thickness — which gives substantially worse
+// absorption than an unsplit layer of the same total thickness.
+pml::SlabGeometry
+DetectUnifiedPMLSlabGeometry(const std::vector<config::MaterialData> &materials,
+                             const mfem::ParMesh &mesh, int attr_max, int attr_max_local,
+                             const std::array<double, 3> &bbmin,
+                             const std::array<double, 3> &bbmax)
+{
+  mfem::Array<int> union_marker(attr_max);
+  union_marker = 0;
+  bool any_autodetect = false;
+  for (const auto &data : materials)
+  {
+    if (!data.pml.has_value() || !data.pml->autodetect_geometry)
+    {
+      continue;
+    }
+    any_autodetect = true;
+    for (auto attr : data.attributes)
+    {
+      if (attr > 0 && attr <= attr_max_local)
+      {
+        union_marker[attr - 1] = 1;
+      }
+    }
+  }
+  if (!any_autodetect)
+  {
+    return {};
+  }
+  // GetAxisAlignedBoundingBox does a global MPI reduction, so every rank must call it.
+  mfem::Vector u_min_mfem, u_max_mfem;
+  mesh::GetAxisAlignedBoundingBox(mesh, union_marker, /*bdr=*/false, u_min_mfem,
+                                  u_max_mfem);
+  const std::array<double, 3> u_min{{u_min_mfem[0], u_min_mfem[1], u_min_mfem[2]}};
+  const std::array<double, 3> u_max{{u_max_mfem[0], u_max_mfem[1], u_max_mfem[2]}};
+  auto geom = pml::DetectSlabGeometry(u_min, u_max, bbmin, bbmax);
+  const bool any_active =
+      std::any_of(geom.direction_signs.begin(), geom.direction_signs.end(),
+                  [](int s) { return s != 0; });
+  MFEM_VERIFY(any_active,
+              "Auto-detected PML geometry found no PML attributes touching the global "
+              "mesh bounding box. Ensure the PML region sits on the outer boundary of "
+              "the mesh, or specify \"Direction\" and \"Thickness\" explicitly in each "
+              "PML material.");
+  return geom;
+}
+
+}  // namespace
+
 MaterialOperator::MaterialOperator(const std::vector<config::MaterialData> &materials,
                                    const config::PeriodicBoundaryData &periodic,
                                    ProblemType problem_type, const Mesh &mesh)
@@ -350,53 +407,8 @@ void MaterialOperator::SetUpMaterialProperties(
   int attr_max = attr_max_local;
   Mpi::GlobalMax(1, &attr_max, mesh.GetComm());
 
-  // Pre-pass: compute the union bounding box of ALL PML attributes across ALL PML
-  // materials that want auto-detected geometry. When the user splits a single PML layer
-  // into N stacked slabs (either as multiple attributes of one material or as multiple
-  // materials with the same parameters), we want them to share ONE logical profile
-  // geometry: same inner interface, same total thickness, same σ_max. Otherwise each
-  // slab's σ(z) resets to 0 at its inner face, producing a sawtooth σ that gives
-  // substantially worse absorption than an unsplit layer of equivalent total thickness.
-  // Per-QP σ(x) then evaluates as a single continuous ramp across the whole PML extent
-  // regardless of how many attributes the user tagged it with.
-  pml::SlabGeometry unified_geom{};
-  bool any_autodetect = false;
-  {
-    mfem::Array<int> union_marker(attr_max);
-    union_marker = 0;
-    for (std::size_t i = 0; i < materials.size(); i++)
-    {
-      if (!materials[i].pml.has_value() || !materials[i].pml->autodetect_geometry)
-      {
-        continue;
-      }
-      any_autodetect = true;
-      for (auto attr : materials[i].attributes)
-      {
-        if (attr > 0 && attr <= attr_max_local)
-        {
-          union_marker[attr - 1] = 1;
-        }
-      }
-    }
-    if (any_autodetect)
-    {
-      mfem::Vector u_min_mfem, u_max_mfem;
-      mesh::GetAxisAlignedBoundingBox(mesh, union_marker, /*bdr=*/false, u_min_mfem,
-                                      u_max_mfem);
-      const std::array<double, 3> u_min{{u_min_mfem[0], u_min_mfem[1], u_min_mfem[2]}};
-      const std::array<double, 3> u_max{{u_max_mfem[0], u_max_mfem[1], u_max_mfem[2]}};
-      unified_geom = pml::DetectSlabGeometry(u_min, u_max, bbmin, bbmax);
-      const bool any_active =
-          std::any_of(unified_geom.direction_signs.begin(),
-                      unified_geom.direction_signs.end(), [](int s) { return s != 0; });
-      MFEM_VERIFY(any_active,
-                  "Auto-detected PML geometry found no PML attributes touching the "
-                  "global mesh bounding box. Ensure the PML region sits on the outer "
-                  "boundary of the mesh, or specify \"Direction\" and \"Thickness\" "
-                  "explicitly in each PML material.");
-    }
-  }
+  const auto unified_geom =
+      DetectUnifiedPMLSlabGeometry(materials, mesh, attr_max, attr_max_local, bbmin, bbmax);
 
   for (std::size_t i = 0; i < materials.size(); i++)
   {
