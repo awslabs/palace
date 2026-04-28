@@ -267,16 +267,17 @@ json FindEnumInSchema(const json &schema, const std::string &ptr)
       }
     }
   }
-  // Handle oneOf+const enum pattern: every branch has "const", none have "properties".
-  // Collect all const values into an array for consistent error formatting.
+  // oneOf is used in two ways: the "usual" way to constrain types and as an emum
+  // replacement using the oneOf+const pattern, which allows us to add documentation fields
+  // to enum entries. For oneOf+const we want to collect all values into an array for
+  // consistent error formatting.
   if (current.contains("oneOf"))
   {
     const auto &branches = current["oneOf"];
-    bool is_const_enum =
-        !branches.empty() &&
+    // Check if oneOf + const enum: all items in oneOf have "cosnt" and no "properties"
+    if (!branches.empty() &&
         std::all_of(branches.begin(), branches.end(), [](const json &b)
-                    { return b.contains("const") && !b.contains("properties"); });
-    if (is_const_enum)
+                    { return b.contains("const") && !b.contains("properties"); }))
     {
       json consts = json::array();
       for (const auto &branch : branches)
@@ -337,9 +338,9 @@ public:
   void error(const json::json_pointer &ptr, const json &instance,
              const std::string &message) override
   {
-    // Suppress child oneOf branch errors when the parent path resolves to a const-enum
-    // field — those child errors are noise; the top-level message shows valid values.
-    if (schema && message.find("[combination: oneOf") != std::string::npos)
+    // If a oneOf+const enum, we only want to print the top-level path, since that already
+    // contains all information. Individual schema mismatch of items has no new information.
+    if ((schema != nullptr) && message.find("[combination: oneOf") != std::string::npos)
     {
       json enum_values = FindEnumInSchema(*schema, ptr.to_string());
       if (!enum_values.is_null() && !enum_values.empty())
@@ -355,25 +356,10 @@ public:
     {
       errors << " (got " << instance.type_name() << ")";
     }
-    // Enhance enum errors with valid values (flat "enum" schema).
-    else if (schema && message == "instance not found in required enum")
-    {
-      json enum_values = FindEnumInSchema(*schema, ptr.to_string());
-      if (!enum_values.is_null() && enum_values.is_array() && !enum_values.empty())
-      {
-        errors << "; valid values: ";
-        for (std::size_t i = 0; i < enum_values.size(); i++)
-        {
-          if (i > 0)
-          {
-            errors << ", ";
-          }
-          errors << enum_values[i].dump();
-        }
-      }
-    }
-    // Enhance oneOf+const enum errors with valid values.
-    else if (schema && message.rfind("no subschema has succeeded", 0) == 0)
+    // Enhance enum errors with valid values — handles both flat "enum" arrays and
+    // oneOf+const patterns (both resolve to a list of valid values via FindEnumInSchema).
+    else if ((schema != nullptr) && (message == "instance not found in required enum" ||
+                                     message.rfind("no subschema has succeeded", 0) == 0))
     {
       json enum_values = FindEnumInSchema(*schema, ptr.to_string());
       if (!enum_values.is_null() && enum_values.is_array() && !enum_values.empty())
