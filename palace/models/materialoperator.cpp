@@ -513,7 +513,8 @@ void MaterialOperator::SetUpMaterialProperties(
       pml_attr_to_profile[ceed_attr - 1] = profile_idx;
 
       // Zero out the bulk material tensors for this attribute so the bulk coefficient
-      // path contributes nothing (PML tensors are assembled separately).
+      // path contributes nothing (PML tensors are assembled separately via per-QP
+      // integrators).
       const int mat_idx = attr_mat[ceed_attr - 1];
       if (mat_idx >= 0)
       {
