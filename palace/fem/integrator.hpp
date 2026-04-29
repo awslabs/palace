@@ -125,16 +125,24 @@ public:
 // integrator handles non-PML attributes (PML attributes get zero contribution through
 // it, set up by MaterialOperator), and the PML integrator below handles PML attributes
 // (non-PML attributes are passed through at zero contribution by the QFunction itself).
+// PMLTensorPart selects the real or imaginary part of the tensor for the system matrix
+// real/imag branches.
+enum class PMLTensorPart : char
+{
+  Re,
+  Im
+};
+
 class CurlCurlPMLIntegrator : public BilinearFormIntegrator
 {
 protected:
   const void *ctx;       // PML QFunction context (packed per pml_qf.h layout).
   std::size_t ctx_size;  // Byte size of the context buffer.
-  bool imag_part;        // If true, uses Im(μ̃⁻¹); otherwise Re(μ̃⁻¹).
+  PMLTensorPart part;
 
 public:
-  CurlCurlPMLIntegrator(const void *ctx, std::size_t ctx_size, bool imag_part)
-    : BilinearFormIntegrator(nullptr), ctx(ctx), ctx_size(ctx_size), imag_part(imag_part)
+  CurlCurlPMLIntegrator(const void *ctx, std::size_t ctx_size, PMLTensorPart part)
+    : BilinearFormIntegrator(nullptr), ctx(ctx), ctx_size(ctx_size), part(part)
   {
   }
 
@@ -152,11 +160,36 @@ class VectorFEMassPMLIntegrator : public BilinearFormIntegrator
 protected:
   const void *ctx;
   std::size_t ctx_size;
-  bool imag_part;
+  PMLTensorPart part;
 
 public:
-  VectorFEMassPMLIntegrator(const void *ctx, std::size_t ctx_size, bool imag_part)
-    : BilinearFormIntegrator(nullptr), ctx(ctx), ctx_size(ctx_size), imag_part(imag_part)
+  VectorFEMassPMLIntegrator(const void *ctx, std::size_t ctx_size, PMLTensorPart part)
+    : BilinearFormIntegrator(nullptr), ctx(ctx), ctx_size(ctx_size), part(part)
+  {
+  }
+
+  void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
+                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+};
+
+// PML diffusion integrator a(φ, ψ) = (ε̃ ∇φ, ∇ψ) for H1 scalar elements. This is the
+// auxiliary-space companion to VectorFEMassPMLIntegrator: the Hiptmair/AFW-type GMG
+// preconditioner splits the H(curl) operator into a primary ND smoother and an auxiliary
+// H1 smoother on the gradient subspace, and the mass term (a2·ε̃, u, v) restricted to
+// gradients u = ∇φ becomes the H1 diffusion (a2·ε̃, ∇φ, ∇ψ). Uses the same per-QP PML
+// stretch ε̃(x) as the ND mass integrator. Reuses the eps_{re,im}_33 QFunctions because
+// H1 gradients and H(curl) fields share the same reference→physical transform adj(J)^T.
+class DiffusionPMLIntegrator : public BilinearFormIntegrator
+{
+protected:
+  const void *ctx;
+  std::size_t ctx_size;
+  PMLTensorPart part;
+
+public:
+  DiffusionPMLIntegrator(const void *ctx, std::size_t ctx_size, PMLTensorPart part)
+    : BilinearFormIntegrator(nullptr), ctx(ctx), ctx_size(ctx_size), part(part)
   {
   }
 
