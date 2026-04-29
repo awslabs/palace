@@ -21,9 +21,8 @@ using namespace ceed;
 namespace
 {
 
-// Build the libCEED operator for a 3D PML integrator. Both CurlCurl (μ̃⁻¹) and
-// VectorFEMass (ε̃) paths share everything except the QFunction pointer and the eval
-// mode, so they factor into a common helper.
+// Build the libCEED operator for a 3D PML integrator. All PML paths share everything
+// except the QFunction pointer and the eval mode, so they factor into a common helper.
 void AssemblePML33(CeedQFunctionUser apply_qf, const char *apply_qf_path,
                    EvalMode eval_mode, const void *ctx, std::size_t ctx_size, Ceed ceed,
                    CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
@@ -47,6 +46,35 @@ void AssemblePML33(CeedQFunctionUser apply_qf, const char *apply_qf_path,
                        test_restr, trial_basis, test_basis, geom_data, geom_data_restr, op);
 }
 
+// Select the μ̃⁻¹ or ε̃ QFunction (real or imaginary part) and its loc string.
+struct QFPair
+{
+  CeedQFunctionUser qf;
+  const char *loc;
+};
+QFPair MuInvQF(PMLTensorPart part)
+{
+  switch (part)
+  {
+    case PMLTensorPart::Re:
+      return {f_apply_hcurl_pml_muinv_re_33, f_apply_hcurl_pml_muinv_re_33_loc};
+    case PMLTensorPart::Im:
+      return {f_apply_hcurl_pml_muinv_im_33, f_apply_hcurl_pml_muinv_im_33_loc};
+  }
+  MFEM_ABORT("Unreachable PMLTensorPart");
+}
+QFPair EpsQF(PMLTensorPart part)
+{
+  switch (part)
+  {
+    case PMLTensorPart::Re:
+      return {f_apply_hcurl_pml_eps_re_33, f_apply_hcurl_pml_eps_re_33_loc};
+    case PMLTensorPart::Im:
+      return {f_apply_hcurl_pml_eps_im_33, f_apply_hcurl_pml_eps_im_33_loc};
+  }
+  MFEM_ABORT("Unreachable PMLTensorPart");
+}
+
 }  // namespace
 
 void CurlCurlPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
@@ -55,11 +83,9 @@ void CurlCurlPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
                                      CeedElemRestriction geom_data_restr,
                                      CeedOperator *op) const
 {
-  AssemblePML33(imag_part ? f_apply_hcurl_pml_muinv_im_33 : f_apply_hcurl_pml_muinv_re_33,
-                imag_part ? f_apply_hcurl_pml_muinv_im_33_loc
-                          : f_apply_hcurl_pml_muinv_re_33_loc,
-                EvalMode::Curl, ctx, ctx_size, ceed, trial_restr, test_restr, trial_basis,
-                test_basis, geom_data, geom_data_restr, op);
+  const auto qf = MuInvQF(part);
+  AssemblePML33(qf.qf, qf.loc, EvalMode::Curl, ctx, ctx_size, ceed, trial_restr, test_restr,
+                trial_basis, test_basis, geom_data, geom_data_restr, op);
 }
 
 void VectorFEMassPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
@@ -69,11 +95,23 @@ void VectorFEMassPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_re
                                          CeedElemRestriction geom_data_restr,
                                          CeedOperator *op) const
 {
-  AssemblePML33(imag_part ? f_apply_hcurl_pml_eps_im_33 : f_apply_hcurl_pml_eps_re_33,
-                imag_part ? f_apply_hcurl_pml_eps_im_33_loc
-                          : f_apply_hcurl_pml_eps_re_33_loc,
-                EvalMode::Interp, ctx, ctx_size, ceed, trial_restr, test_restr, trial_basis,
-                test_basis, geom_data, geom_data_restr, op);
+  const auto qf = EpsQF(part);
+  AssemblePML33(qf.qf, qf.loc, EvalMode::Interp, ctx, ctx_size, ceed, trial_restr,
+                test_restr, trial_basis, test_basis, geom_data, geom_data_restr, op);
+}
+
+void DiffusionPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
+                                      CeedElemRestriction test_restr, CeedBasis trial_basis,
+                                      CeedBasis test_basis, CeedVector geom_data,
+                                      CeedElemRestriction geom_data_restr,
+                                      CeedOperator *op) const
+{
+  // H1 gradient transforms via adj(J)^T just like H(curl) fields, so the eps QFunction
+  // (which applies adj(J)^T·ε̃·adj(J)^T·u with weight w|J|) computes the diffusion form
+  // (ε̃ ∇φ, ∇ψ) when the basis eval mode is Grad instead of Interp.
+  const auto qf = EpsQF(part);
+  AssemblePML33(qf.qf, qf.loc, EvalMode::Grad, ctx, ctx_size, ceed, trial_restr, test_restr,
+                trial_basis, test_basis, geom_data, geom_data_restr, op);
 }
 
 }  // namespace palace
