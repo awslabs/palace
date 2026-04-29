@@ -155,9 +155,6 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear, int verbos
       pc = MakeWrapperSolver<OperType, SuperLUSolver>(
           linear, comm, linear.sym_factorization, linear.superlu_3d, linear.reorder_reuse,
           print);
-#else
-      MFEM_ABORT("Solver was not built with SuperLU_DIST support, please choose a "
-                 "different solver!");
 #endif
       break;
     case LinearSolver::STRUMPACK:
@@ -166,9 +163,6 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear, int verbos
           linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
           linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
           linear.strumpack_lossy_precision, linear.reorder_reuse, print);
-#else
-      MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
-                 "different solver!");
 #endif
       break;
     case LinearSolver::STRUMPACK_MP:
@@ -177,9 +171,6 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear, int verbos
           linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
           linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
           linear.strumpack_lossy_precision, linear.reorder_reuse, print);
-#else
-      MFEM_ABORT("Solver was not built with STRUMPACK support, please choose a "
-                 "different solver!");
 #endif
       break;
     case LinearSolver::MUMPS:
@@ -190,9 +181,6 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear, int verbos
               ? linear.strumpack_lr_tol
               : 0.0,
           linear.reorder_reuse, print);
-#else
-      MFEM_ABORT(
-          "Solver was not built with MUMPS support, please choose a different solver!");
 #endif
       break;
     case LinearSolver::JACOBI:

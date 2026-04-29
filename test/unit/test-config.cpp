@@ -8,6 +8,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
+#include "utils/jsonschema.hpp"
 
 using json = nlohmann::json;
 using namespace palace;
@@ -636,4 +637,370 @@ TEST_CASE("ParseStringAsDirection", "[config][Serial]")
   }
 
   CHECK_NOTHROW(config::ParseStringAsDirection("", false));
+}
+
+TEST_CASE("ConcretizeDefaults", "[config][Serial]")
+{
+  SECTION("Electrostatic resolves linear solver sentinels")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
+
+    IoData iodata(config, false);
+
+    // CheckConfiguration should have resolved the sentinels.
+    CHECK(iodata.solver.linear.type == LinearSolver::BOOMER_AMG);
+    CHECK(iodata.solver.linear.krylov_solver == KrylovSolver::CG);
+    CHECK(iodata.solver.linear.initial_guess == 1);
+    CHECK(iodata.solver.linear.pc_mat_shifted == 0);
+    CHECK(iodata.solver.linear.mg_smooth_aux == 0);
+    CHECK(iodata.solver.linear.ams_singular_op == 0);
+    CHECK(iodata.solver.linear.amg_agg_coarsen == 1);
+    CHECK(iodata.solver.linear.ams_max_it == 1);
+    CHECK(iodata.solver.linear.mg_cycle_it == 1);
+    CHECK(iodata.solver.linear.pc_mat_sym == MatrixSymmetry::SPD);
+
+    // ConcretizeDefaults should write resolved values back to JSON.
+    config = IoData::ConcretizeDefaults(iodata, config);
+
+    auto &j_linear = config["Solver"]["Linear"];
+    CHECK(j_linear["Type"].get<std::string>() == "BoomerAMG");
+    CHECK(j_linear["KSPType"].get<std::string>() == "CG");
+    CHECK(j_linear["InitialGuess"].get<int>() == 1);
+    CHECK(j_linear["PCMatShifted"].get<int>() == 0);
+    CHECK(j_linear["MGAuxiliarySmoother"].get<int>() == 0);
+    CHECK(j_linear["AMSSingularOperator"].get<int>() == 0);
+    CHECK(j_linear["AMGAggressiveCoarsening"].get<int>() == 1);
+    CHECK(j_linear["AMSMaxIts"].get<int>() == 1);
+    CHECK(j_linear["MGCycleIts"].get<int>() == 1);
+    CHECK(j_linear["PCMatSymmetry"].get<std::string>() == "SPD");
+  }
+
+  SECTION("Magnetostatic resolves to AMS with singular operator")
+  {
+    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
+
+    IoData iodata(config, false);
+    CHECK(iodata.solver.linear.type == LinearSolver::AMS);
+    CHECK(iodata.solver.linear.krylov_solver == KrylovSolver::CG);
+    CHECK(iodata.solver.linear.ams_singular_op == 1);
+    CHECK(iodata.solver.linear.ams_max_it == 1);
+    CHECK(iodata.solver.linear.mg_cycle_it == 1);
+    CHECK(iodata.solver.linear.pc_mat_sym == MatrixSymmetry::SPD);
+
+    config = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(config["Solver"]["Linear"]["Type"].get<std::string>() == "AMS");
+    CHECK(config["Solver"]["Linear"]["AMSSingularOperator"].get<int>() == 1);
+    CHECK(config["Solver"]["Linear"]["AMSMaxIts"].get<int>() == 1);
+    CHECK(config["Solver"]["Linear"]["MGCycleIts"].get<int>() == 1);
+    CHECK(config["Solver"]["Linear"]["PCMatSymmetry"].get<std::string>() == "SPD");
+  }
+
+  SECTION("User-specified values survive concretization")
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver", {{"Order", 3}, {"Linear", {{"Type", "BoomerAMG"}, {"KSPType", "CG"}}}}}};
+
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+
+    // User-specified values should be preserved.
+    CHECK(config["Solver"]["Order"].get<int>() == 3);
+    CHECK(config["Solver"]["Linear"]["Type"].get<std::string>() == "BoomerAMG");
+    CHECK(config["Solver"]["Linear"]["KSPType"].get<std::string>() == "CG");
+  }
+
+  SECTION("EigenSolverBackend DEFAULT resolves to concrete backend")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+
+    IoData iodata(config, false);
+
+    // DEFAULT is a compile-time alias — it should equal the concrete backend.
+#if defined(PALACE_WITH_SLEPC)
+    CHECK(iodata.solver.eigenmode.type == EigenSolverBackend::SLEPC);
+#elif defined(PALACE_WITH_ARPACK)
+    CHECK(iodata.solver.eigenmode.type == EigenSolverBackend::ARPACK);
+#endif
+
+    config = IoData::ConcretizeDefaults(iodata, config);
+
+    // The resolved config should say the concrete backend name, not "Default".
+    auto type_str = config["Solver"]["Eigenmode"]["Type"].get<std::string>();
+#if defined(PALACE_WITH_SLEPC)
+    CHECK(type_str == "SLEPc");
+#elif defined(PALACE_WITH_ARPACK)
+    CHECK(type_str == "ARPACK");
+#endif
+  }
+
+  SECTION("WavePort eigen solver DEFAULT resolves to concrete backend")
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries",
+         {{"WavePort", {{{"Index", 1}, {"Attributes", {2}}, {"Excitation", true}}}}}},
+        {"Solver",
+         {{"Driven",
+           {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.5}}}}}}}}};
+
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+
+    auto type_str = config["Boundaries"]["WavePort"][0]["SolverType"].get<std::string>();
+#if defined(PALACE_WITH_SLEPC)
+    CHECK(type_str == "SLEPc");
+#elif defined(PALACE_WITH_ARPACK)
+    CHECK(type_str == "ARPACK");
+#endif
+  }
+
+  SECTION("mg_smooth_order resolves from solver order")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Order", 5}}}};
+
+    IoData iodata(config, false);
+    // max(2 * 5, 4) = 10
+    CHECK(iodata.solver.linear.mg_smooth_order == 10);
+    // ams_max_it defaults to solver.order = 5
+    CHECK(iodata.solver.linear.ams_max_it == 5);
+
+    config = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(config["Solver"]["Linear"]["MGSmoothOrder"].get<int>() == 10);
+    CHECK(config["Solver"]["Linear"]["AMSMaxIts"].get<int>() == 5);
+  }
+
+  SECTION("max_size defaults to max_it")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Linear", {{"MaxIts", 200}}}}}};
+
+    IoData iodata(config, false);
+    CHECK(iodata.solver.linear.max_size == 200);
+
+    config = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(config["Solver"]["Linear"]["MaxSize"].get<int>() == 200);
+  }
+
+  SECTION("Solver.Order default captured")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
+
+    IoData iodata(config, false);
+    CHECK(iodata.solver.order == 1);
+
+    config = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(config["Solver"]["Order"].get<int>() == 1);
+  }
+
+  SECTION("Linear default Tol, MaxIts, and orthogonalization captured")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
+
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+    auto &j_linear = config["Solver"]["Linear"];
+
+    CHECK(j_linear["Tol"].get<double>() == Catch::Approx(1.0e-6));
+    CHECK(j_linear["MaxIts"].get<int>() == 100);
+    CHECK(j_linear["GSOrthogonalization"].get<std::string>() == "MGS");
+    // PCSide and ColumnOrdering default to the DEFAULT enum value (not a compile-time
+    // alias); the concretized name records that the user accepted Palace's internal
+    // default rather than naming a specific backend option.
+    CHECK(j_linear["PCSide"].get<std::string>() == "Default");
+    CHECK(j_linear["ColumnOrdering"].get<std::string>() == "Default");
+  }
+
+  SECTION("Transient resolves Type DEFAULT to GeneralizedAlpha")
+  {
+    json config = {
+        {"Problem", {{"Type", "Transient"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Transient",
+           {{"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}}}}}};
+
+    IoData iodata(config, false);
+    // DEFAULT is a compile-time alias of GEN_ALPHA.
+    CHECK(iodata.solver.transient.type == TimeSteppingScheme::GEN_ALPHA);
+
+    config = IoData::ConcretizeDefaults(iodata, config);
+    auto &j_transient = config["Solver"]["Transient"];
+    // Must resolve to the concrete name, NOT "Default". This depends on the ordering
+    // contract in PALACE_JSON_SERIALIZE_ENUM(TimeSteppingScheme, ...).
+    CHECK(j_transient["Type"].get<std::string>() == "GeneralizedAlpha");
+    CHECK(j_transient["Order"].get<int>() == 2);
+  }
+
+  SECTION("Eigenmode captures additional defaults")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+    auto &j_eigen = config["Solver"]["Eigenmode"];
+
+    CHECK(j_eigen["Tol"].get<double>() == Catch::Approx(1.0e-6));
+    CHECK(j_eigen["N"].get<int>() == 1);
+    CHECK(j_eigen["Save"].get<int>() == 0);
+    CHECK(j_eigen["PEPLinear"].get<bool>() == true);
+    CHECK(j_eigen["Scaling"].get<bool>() == true);
+    CHECK(j_eigen["StartVector"].get<bool>() == true);
+    CHECK(j_eigen["StartVectorConstant"].get<bool>() == false);
+    CHECK(j_eigen["MassOrthogonal"].get<bool>() == false);
+  }
+
+  SECTION("Round-trip: resolved config validates and re-parses identically")
+  {
+    // Start from a sparse Electrostatic config with one non-default (Order=3) and one
+    // user-set Linear field (MaxIts=250). Everything else resolves from defaults.
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Order", 3}, {"Linear", {{"MaxIts", 250}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    // The resolved config must pass schema validation; otherwise a user cannot
+    // actually re-run Palace on the produced file.
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+
+    CHECK(iodata2.solver.order == iodata1.solver.order);
+    const auto &l1 = iodata1.solver.linear;
+    const auto &l2 = iodata2.solver.linear;
+    CHECK(l2.type == l1.type);
+    CHECK(l2.krylov_solver == l1.krylov_solver);
+    CHECK(l2.tol == l1.tol);
+    CHECK(l2.max_it == l1.max_it);
+    CHECK(l2.max_size == l1.max_size);
+    CHECK(l2.initial_guess == l1.initial_guess);
+    CHECK(l2.pc_mat_shifted == l1.pc_mat_shifted);
+    CHECK(l2.mg_smooth_aux == l1.mg_smooth_aux);
+    CHECK(l2.mg_smooth_order == l1.mg_smooth_order);
+    CHECK(l2.mg_cycle_it == l1.mg_cycle_it);
+    CHECK(l2.ams_singular_op == l1.ams_singular_op);
+    CHECK(l2.ams_max_it == l1.ams_max_it);
+    CHECK(l2.amg_agg_coarsen == l1.amg_agg_coarsen);
+    CHECK(l2.pc_mat_sym == l1.pc_mat_sym);
+    CHECK(l2.reorder_reuse == l1.reorder_reuse);
+    CHECK(l2.pc_side == l1.pc_side);
+    CHECK(l2.sym_factorization == l1.sym_factorization);
+    CHECK(l2.gs_orthog == l1.gs_orthog);
+  }
+
+  SECTION("User-written \"Default\" is replaced with the resolved concrete value")
+  {
+    // If the user explicitly writes the sentinel string, we must still concretize —
+    // otherwise the resolved config contains a default, defeating the whole feature.
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Eigenmode", {{"Target", 1.0}, {"Type", "Default"}}},
+                     {"Linear", {{"Type", "Default"}, {"KSPType", "Default"}}}}}};
+
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+
+    auto &j_eigen = config["Solver"]["Eigenmode"];
+    auto &j_linear = config["Solver"]["Linear"];
+    CHECK(j_eigen["Type"].get<std::string>() != "Default");
+    CHECK(j_linear["Type"].get<std::string>() != "Default");
+    CHECK(j_linear["KSPType"].get<std::string>() != "Default");
+  }
+
+  SECTION("Round-trip: Eigenmode DEFAULT backend resolved concretely")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+    CHECK(iodata2.solver.eigenmode.type == iodata1.solver.eigenmode.type);
+    CHECK(iodata2.solver.eigenmode.type != EigenSolverBackend::DEFAULT);
+    CHECK(iodata2.solver.eigenmode.target == iodata1.solver.eigenmode.target);
+    CHECK(iodata2.solver.eigenmode.target_upper == iodata1.solver.eigenmode.target_upper);
+    CHECK(iodata2.solver.eigenmode.max_it == iodata1.solver.eigenmode.max_it);
+    CHECK(iodata2.solver.eigenmode.max_size == iodata1.solver.eigenmode.max_size);
+  }
+
+  SECTION("Round-trip: Transient DEFAULT scheme resolved concretely")
+  {
+    json config = {
+        {"Problem", {{"Type", "Transient"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Transient",
+           {{"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+    CHECK(iodata2.solver.transient.type == iodata1.solver.transient.type);
+    CHECK(iodata2.solver.transient.type != TimeSteppingScheme::DEFAULT);
+    CHECK(iodata2.solver.transient.excitation == iodata1.solver.transient.excitation);
+    CHECK(iodata2.solver.transient.max_t == iodata1.solver.transient.max_t);
+    CHECK(iodata2.solver.transient.delta_t == iodata1.solver.transient.delta_t);
+  }
 }

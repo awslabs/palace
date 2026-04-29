@@ -47,11 +47,19 @@ public:
 
   explicit IoData(const Units &units);
 
-  // Take parsed json and override options defaults.
-  explicit IoData(nlohmann::json &&config, bool print = false);
+  // Construct from a pre-parsed and validated JSON config object.
+  IoData(const nlohmann::json &config, bool print);
 
-  // Parse command line arguments and override options defaults.
-  explicit IoData(const char *filename, bool print);
+  // Parse configuration file, validate, and construct IoData.
+  IoData(const char *filename, bool print);
+
+  // Parse and validate a configuration file, returning the JSON object.
+  static nlohmann::json ParseAndValidate(const char *filename);
+
+  // Return the user's config with any entries that were absent filled in from the
+  // resolved IoData. User-provided values pass through untouched; only missing keys
+  // are added. Call after CheckConfiguration() so the filled values are concrete.
+  static nlohmann::json ConcretizeDefaults(const IoData &iodata, nlohmann::json config);
 
   // Nondimensionalize input values and mesh coordinates. Requires model.Lc > 0 (caller
   // populates it from the config or via mesh::ComputeReferenceLength). `mesh` may be
