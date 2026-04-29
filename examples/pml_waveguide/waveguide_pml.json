@@ -41,8 +41,8 @@
     "Driven": { "MinFreq": 3.0, "MaxFreq": 3.0, "FreqStep": 0.5, "SaveStep": 1 },
     "Linear":
     {
-      "Type": "STRUMPACK", "KSPType": "GMRES", "Tol": 1.0e-8, "MaxIts": 100,
-      "MGMaxLevels": 1, "ComplexCoarseSolve": true
+      "Type": "STRUMPACK", "KSPType": "GMRES", "Tol": 1.0e-8, "MaxIts": 500,
+      "ComplexCoarseSolve": true
     }
   }
 }
