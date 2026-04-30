@@ -3,6 +3,7 @@
 
 #include "errorestimator.hpp"
 
+#include <cmath>
 #include <limits>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
@@ -35,6 +36,24 @@ namespace palace
 
 namespace
 {
+
+// PML attributes have mat_epsilon / mat_muinv zeroed out by MaterialOperator (the PML
+// tensors are applied separately via per-QP integrators). MatrixPow(zero, -0.5) evaluates
+// pow(0, -0.5) = +inf on each eigenvalue, which would poison the flux-recovery error
+// integrand on PML elements. Replace those non-finite entries with zero so the weighted
+// residual ||√ε·E − ε^{-1/2}·D||² collapses to 0 on PML elements (E and D are both zero
+// there through the coefficient path, so the semantic is "PML contributes no error").
+void ZeroNonFiniteEntries(mfem::DenseTensor &T)
+{
+  double *d = T.Data();
+  for (int i = 0, n = T.TotalSize(); i < n; i++)
+  {
+    if (!std::isfinite(d[i]))
+    {
+      d[i] = 0.0;
+    }
+  }
+}
 
 template <typename OperType>
 auto BuildLevelParOperator(std::unique_ptr<Operator> &&a,
@@ -330,6 +349,7 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
       // Construct coefficient for discontinuous flux, then smooth flux.
       auto mat_sqrtepsilon = linalg::MatrixSqrt(mat_op.GetPermittivityReal());
       auto mat_invsqrtepsilon = linalg::MatrixPow(mat_op.GetPermittivityReal(), -0.5);
+      ZeroNonFiniteEntries(mat_invsqrtepsilon);
       MaterialPropertyCoefficient sqrtepsilon_func(mat_op.GetAttributeToMaterial(),
                                                    mat_sqrtepsilon);
       MaterialPropertyCoefficient invsqrtepsilon_func(mat_op.GetAttributeToMaterial(),
@@ -452,6 +472,7 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
           scalar_curl ? mat_op.GetCurlCurlInvPermeability() : mat_op.GetInvPermeability();
       auto mat_invsqrtmu = linalg::MatrixSqrt(muinv_tensor);
       auto mat_sqrtmu = linalg::MatrixPow(muinv_tensor, -0.5);
+      ZeroNonFiniteEntries(mat_sqrtmu);  // See note at ZeroNonFiniteEntries (PML μ⁻¹=0).
       MaterialPropertyCoefficient invsqrtmu_func(mat_op.GetAttributeToMaterial(),
                                                  mat_invsqrtmu);
       MaterialPropertyCoefficient sqrtmu_func(mat_op.GetAttributeToMaterial(), mat_sqrtmu);
