@@ -41,10 +41,16 @@ ExtractBoundary2DSubmesh(mfem::Mesh &parent, const mfem::Array<int> &surface_att
 {
   auto sub = std::make_unique<mfem::SubMesh>(
       mfem::SubMesh::CreateFromBoundary(parent, surface_attrs));
+  // Project to 2D and compute the tangent frame *before* remapping element attributes.
+  // mfem::Mesh::attributes (the unique-list) is not kept in sync with per-element
+  // SetAttribute calls, so after RemapSubMeshAttributes the default-marker
+  // GetSurfaceNormal path (used inside ProjectSubmeshTo2D) would silently return zero
+  // — no element's (new) volume-style attribute matches the (old) boundary-style
+  // attribute in the stale unique-list, so every iteration is skipped.
+  frame.normal = mesh::ProjectSubmeshTo2D(*sub, frame.centroid, frame.e1, frame.e2);
   mesh::RemapSubMeshAttributes(*sub);
   mesh::RemapSubMeshBdrAttributes(*sub, surface_attrs);
   mesh::AddSubMeshInternalBoundaryElements(*sub, surface_attrs, internal_bdr_attrs);
-  frame.normal = mesh::ProjectSubmeshTo2D(*sub, frame.centroid, frame.e1, frame.e2);
   return sub;
 }
 
