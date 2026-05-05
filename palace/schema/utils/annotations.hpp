@@ -37,10 +37,18 @@ namespace palace::schema::utils
 //
 // `version`, if non-empty, is emitted as a `"version"` key on the root
 // object of the schema.
+//
+// `defs_prefix`, if non-empty, is stripped from every `$defs` entry name
+// and every `$ref` string in the final schema. reflect-cpp derives each
+// `$defs` key from `rfl::parsing::make_type_name<T>()`, which renders
+// `palace::schema::Foo` as `palace__schema__Foo`. Passing
+// `"palace__schema__"` here collapses those to just `Foo`, matching the
+// hand-written-schema conventions in `scripts/schema/`.
 struct SchemaOptions
 {
   bool emit_defaults = true;
   std::string version;
+  std::string defs_prefix;
 };
 
 // Convenience alias for rfl::Description. Mirrors the StringLiteral<N> class-

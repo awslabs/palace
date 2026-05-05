@@ -92,6 +92,13 @@ std::string rewrite_root_composition(std::string schema_json, std::string from,
 // safely. Skipped by the caller when `version` is empty.
 std::string inject_root_version(std::string schema_json, std::string version);
 
+// Defined in src/schema.cpp. Strips `prefix` from every `$defs` entry name
+// and rewrites any `$ref` string pointing at those entries to match. Other
+// strings in the document are untouched — the rename operates only on the
+// `$defs` map's keys and `$ref` string values. No-op when `prefix` is
+// empty or when no entries start with it.
+std::string strip_defs_prefix(std::string schema_json, std::string prefix);
+
 // Defined in src/schema.cpp. For each `(struct_name, field_name, pairs)`
 // triple, locates `$defs[struct_name]/properties[field_name]`. If the body
 // matches reflect-cpp's inline-enum shape (`{"type": "string", "enum":
@@ -615,6 +622,13 @@ std::string schema(SchemaOptions opts)
   if (!opts.version.empty())
   {
     s = detail::inject_root_version(std::move(s), std::move(opts.version));
+  }
+  // Runs last so earlier passes can key on reflect-cpp's native
+  // fully-qualified `$defs` names (e.g. `palace__schema__ProblemData`)
+  // without having to account for the rename.
+  if (!opts.defs_prefix.empty())
+  {
+    s = detail::strip_defs_prefix(std::move(s), std::move(opts.defs_prefix));
   }
   return s;
 }

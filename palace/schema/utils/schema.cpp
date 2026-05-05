@@ -816,4 +816,82 @@ std::string inject_root_version(std::string schema_json, std::string version)
   return rfl::json::write(*schema_gen_r, rfl::json::pretty);
 }
 
+// Recursively walk a JSON tree and rewrite every `$ref` string that begins
+// with `"#/$defs/<prefix>"` by removing `<prefix>`. Leaves all other
+// strings alone. Used to keep `$ref` targets in lock-step with the
+// `$defs` key renames done by `strip_defs_prefix`.
+namespace
+{
+void rewrite_refs(rfl::Generic &node, const std::string &prefix)
+{
+  const std::string needle = "#/$defs/" + prefix;
+  if (std::holds_alternative<rfl::Generic::Object>(node.value()))
+  {
+    auto &obj = std::get<rfl::Generic::Object>(node.value());
+    for (auto &entry : obj)
+    {
+      if (entry.first == "$ref" &&
+          std::holds_alternative<std::string>(entry.second.value()))
+      {
+        auto &s = std::get<std::string>(entry.second.value());
+        if (s.rfind(needle, 0) == 0)
+        {
+          s = "#/$defs/" + s.substr(needle.size());
+        }
+      }
+      rewrite_refs(entry.second, prefix);
+    }
+  }
+  else if (std::holds_alternative<rfl::Generic::Array>(node.value()))
+  {
+    for (auto &v : std::get<rfl::Generic::Array>(node.value()))
+    {
+      rewrite_refs(v, prefix);
+    }
+  }
+}
+}  // namespace
+
+// Strip `prefix` from every `$defs` entry name and matching `$ref` string.
+// reflect-cpp emits `$defs` keys from `rfl::parsing::make_type_name<T>()`,
+// which renders `palace::schema::Foo` as `palace__schema__Foo`. Callers
+// pass `"palace__schema__"` to collapse those to plain `Foo`. Entries not
+// starting with the prefix, and refs pointing elsewhere, are untouched.
+std::string strip_defs_prefix(std::string schema_json, std::string prefix)
+{
+  if (prefix.empty())
+    return schema_json;
+  auto schema_gen_r = rfl::json::read<rfl::Generic>(schema_json);
+  if (!schema_gen_r)
+    return schema_json;
+
+  auto &schema_var = schema_gen_r->value();
+  if (!std::holds_alternative<rfl::Generic::Object>(schema_var))
+    return schema_json;
+  auto &root_obj = std::get<rfl::Generic::Object>(schema_var);
+
+  if (root_obj.count("$defs") != 0)
+  {
+    auto &defs_var = root_obj.at("$defs").value();
+    if (std::holds_alternative<rfl::Generic::Object>(defs_var))
+    {
+      auto &defs = std::get<rfl::Generic::Object>(defs_var);
+      // rfl::Object preserves insertion order and exposes pair access via
+      // its iterator — rename keys in place so the relative order of
+      // definitions is preserved across the rewrite.
+      for (auto &entry : defs)
+      {
+        if (entry.first.rfind(prefix, 0) == 0)
+        {
+          entry.first = entry.first.substr(prefix.size());
+        }
+      }
+    }
+  }
+
+  rewrite_refs(*schema_gen_r, prefix);
+
+  return rfl::json::write(*schema_gen_r, rfl::json::pretty);
+}
+
 }  // namespace palace::schema::utils::detail
