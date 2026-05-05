@@ -15,10 +15,7 @@
 
 #include "schema/utils/generator.hpp"
 #include "schema/types/config.hpp"
-
-#ifndef PALACE_VERSION
-#  define PALACE_VERSION "unknown"
-#endif
+#include "schema/version.hpp"
 
 namespace {
 
@@ -103,7 +100,8 @@ std::string inject_root_allof(std::string schema_json) {
 int main()
 {
     auto s = palace::schema::utils::schema<palace::schema::PalaceConfig>(
-        {.emit_defaults = true, .version = PALACE_VERSION});
+        {.emit_defaults = true,
+         .version = std::string(palace::schema::schema_version)});
     s = inject_root_allof(std::move(s));
     std::cout << s;
     return 0;

@@ -26,6 +26,3 @@ target_compile_features(palace_schema_utils PUBLIC cxx_std_20)
 add_executable(palace_emit_schema emit_schema.cpp)
 target_link_libraries(palace_emit_schema PRIVATE palace_schema_utils)
 target_compile_features(palace_emit_schema PRIVATE cxx_std_20)
-target_compile_definitions(palace_emit_schema PRIVATE
-    PALACE_VERSION="${PROJECT_VERSION}"
-)
