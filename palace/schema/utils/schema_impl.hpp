@@ -91,6 +91,34 @@ std::string rewrite_root_composition(std::string schema_json,
 // safely. Skipped by the caller when `version` is empty.
 std::string inject_root_version(std::string schema_json, std::string version);
 
+// Defined in src/schema.cpp. For each `(struct_name, field_name, pairs)`
+// triple, locates `$defs[struct_name]/properties[field_name]`. If the body
+// matches reflect-cpp's inline-enum shape (`{"type": "string", "enum":
+// [...]}`), it is rewritten to PR-716's `{"oneOf": [{"const": v,
+// "description": d}, ...]}` form using `pairs` as the (value, description)
+// map. Outer `description` / `default` / other keys are preserved; `type`
+// and `enum` are removed since `oneOf` subsumes them.
+struct EnumDescEntry {
+    std::string struct_name;
+    std::string field_name;
+    std::vector<std::pair<std::string, std::string>> pairs;
+};
+std::string inject_enum_descriptions(std::string schema_json,
+                                     const std::vector<EnumDescEntry>& entries);
+
+// Defined in src/schema.cpp. For each `(struct_name, field_name, flag)`
+// triple, stamps `"x-palace-<flag>": true` onto the matching property body
+// under `$defs[struct_name]/properties[field_name]`. Flag strings are
+// `"advanced"` / `"deprecated"` in practice; any other string is accepted
+// and written through verbatim.
+struct FieldFlag {
+    std::string struct_name;
+    std::string field_name;
+    std::string flag;
+};
+std::string inject_custom_keywords(std::string schema_json,
+                                   const std::vector<FieldFlag>& flags);
+
 // Compile-time dispatch helper: pattern-matches a `rfl::TaggedUnion<tag,
 // Arms...>` via a pointer parameter so we can fold over the arm pack and pull
 // each arm's discriminator literal out of `rfl::internal::tag_t`. Only arms
@@ -224,6 +252,13 @@ inline constexpr bool is_scalar_v =
 struct DefaultsAccum {
     std::unordered_map<std::string, std::string> entries;
     std::unordered_map<std::string, std::vector<std::string>> prune_map;
+    // Per-enum-value descriptions and per-field custom-keyword flags are
+    // harvested while walking the same type graph so consumers can run a
+    // single pass. `enum_descs` is flattened into one entry per
+    // (struct, enum-field) pair; `field_flags` is one entry per flagged
+    // field.
+    std::vector<EnumDescEntry> enum_descs;
+    std::vector<FieldFlag> field_flags;
     std::unordered_set<std::string> seen;
 };
 
@@ -309,6 +344,81 @@ struct prune_fields_walker<T, rfl::Tuple<Fs...>> {
     }
 };
 
+// Per-field walker that collects two kinds of annotation in one pass:
+//
+//   * Enum-description entries: for every `rfl::Field<name, Type>` whose
+//     cleaned value type is an enum E with non-empty
+//     `enum_descriptions<E>`, emit an EnumDescEntry keyed on U's `$defs`
+//     name and the field name. Enums without a specialization stay flat.
+//
+//   * Custom-keyword flags: for every field declared via
+//     `PALACE_SCHEMA_DESC_ADVANCED` / `PALACE_SCHEMA_DESC_DEPRECATED`, the
+//     macro injects a hidden-friend overload of `palace_schema_field_flag`
+//     keyed on `FieldFlagTag<"FieldName">`. We discover it via ADL by
+//     passing a `const U*` as the second argument (hidden friends are
+//     found through their enclosing class's associated namespace/type
+//     set). The `requires` check falls through silently for fields
+//     without a flag.
+template <class U, class FieldsTup>
+struct field_annotations_walker;
+
+template <class U, class... Fs>
+struct field_annotations_walker<U, rfl::Tuple<Fs...>> {
+    static void apply(const std::string& struct_name,
+                      std::vector<EnumDescEntry>& enum_out,
+                      std::vector<FieldFlag>& flag_out) {
+        (check_one<Fs>(struct_name, enum_out, flag_out), ...);
+    }
+
+    template <class F>
+    static void check_one(const std::string& struct_name,
+                          std::vector<EnumDescEntry>& enum_out,
+                          std::vector<FieldFlag>& flag_out) {
+        check_one_impl(struct_name, enum_out, flag_out,
+                       static_cast<F*>(nullptr));
+    }
+
+    template <rfl::internal::StringLiteral name, class Type>
+    static void check_one_impl(const std::string& struct_name,
+                               std::vector<EnumDescEntry>& enum_out,
+                               std::vector<FieldFlag>& flag_out,
+                               rfl::Field<name, Type>*) {
+        using Clean = strip_ann_t<std::remove_cvref_t<Type>>;
+        // The enum-description rewrite handles direct enum properties,
+        // which covers every PR-716 per-value-description site. Enums
+        // inside optionals, vectors, or tagged unions fall back to their
+        // flat shape.
+        if constexpr (std::is_enum_v<Clean>) {
+            if constexpr (enum_descriptions<Clean>::value.size() != 0) {
+                EnumDescEntry entry;
+                entry.struct_name = struct_name;
+                entry.field_name.assign(std::string_view{name.str()});
+                for (auto [v, d] : enum_descriptions<Clean>::value) {
+                    entry.pairs.emplace_back(std::string(v), std::string(d));
+                }
+                enum_out.push_back(std::move(entry));
+            }
+        }
+        // ADL-probe for a PALACE_SCHEMA_DESC_ADVANCED /
+        // PALACE_SCHEMA_DESC_DEPRECATED hidden friend on U. The friend's
+        // first parameter type `FieldFlagTag<name>` discriminates per
+        // field; the second `const auto*` accepts the `const U*` we pass
+        // so U's hidden friends are looked up via ADL.
+        if constexpr (requires {
+            palace_schema_field_flag(FieldFlagTag<name>{},
+                                     static_cast<const U*>(nullptr));
+        }) {
+            constexpr auto flag_sv = palace_schema_field_flag(
+                FieldFlagTag<name>{}, static_cast<const U*>(nullptr));
+            FieldFlag f;
+            f.struct_name = struct_name;
+            f.field_name.assign(std::string_view{name.str()});
+            f.flag.assign(flag_sv);
+            flag_out.push_back(std::move(f));
+        }
+    }
+};
+
 // Compute the prune list for one aggregate U. Serialises U{} once, then
 // walks its compile-time field list against the parsed object.
 template <class U>
@@ -358,12 +468,14 @@ void visit_type(DefaultsAccum& acc) {
         auto name = rfl::parsing::make_type_name<U>();
         if (acc.seen.count(name) != 0) return;
         acc.seen.insert(name);
-        auto name_copy = name;  // used for prune_map key below
-        acc.entries.emplace(std::move(name), rfl::json::write(U{}));
+        acc.entries.emplace(name, rfl::json::write(U{}));
         auto prune_list = collect_prune_list_for<U>();
         if (!prune_list.empty()) {
-            acc.prune_map.emplace(std::move(name_copy), std::move(prune_list));
+            acc.prune_map.emplace(name, std::move(prune_list));
         }
+        using Fields = typename rfl::named_tuple_t<U>::Fields;
+        field_annotations_walker<U, Fields>::apply(
+            name, acc.enum_descs, acc.field_flags);
         walk_struct_fields<U>(acc);
     }
     // Anything else (function pointers, unsupported types) silently falls
@@ -398,18 +510,22 @@ std::string schema(SchemaOptions opts) {
     // the `prune_required` pass below drops everything that shouldn't be
     // there per the rule. This keeps the schema in sync with the loader.
     auto s = rfl::json::to_schema<T>(rfl::json::pretty);
+    // One type-graph walk produces the inputs for every per-$defs-entry
+    // pass: default JSON snapshots, prune lists, enum descriptions, and
+    // custom-keyword flags. Walk unconditionally — `emit_defaults=false`
+    // still needs the enum + flag passes to match PR-716 schema shape.
+    auto accum = detail::collect_defaults_accum<T>();
     if (opts.emit_defaults) {
-        // Build one <$defs-key, defaults JSON> pair plus a parallel
-        // <$defs-key, [pruneable field names]> map per reachable aggregate
-        // type. Drives the per-entry injection and prune passes in
-        // src/schema.cpp so nested structs reached via `items.$ref` (arrays
-        // of structs) or TaggedUnion arms get defaults on their properties
-        // just like the top-level entry.
-        auto accum = detail::collect_defaults_accum<T>();
         s = detail::inject_defaults(std::move(s), accum.entries);
         s = detail::prune_required(std::move(s), accum.prune_map);
     }
     s = detail::inject_additional_properties_false(std::move(s));
+    if (!accum.enum_descs.empty()) {
+        s = detail::inject_enum_descriptions(std::move(s), accum.enum_descs);
+    }
+    if (!accum.field_flags.empty()) {
+        s = detail::inject_custom_keywords(std::move(s), accum.field_flags);
+    }
     if constexpr (is_tagged_union<T>::value) {
         s = detail::inject_tag_descriptions_for<T>(std::move(s));
     }

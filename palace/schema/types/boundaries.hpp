@@ -88,8 +88,7 @@ struct FarfieldBoundaryData {
     PALACE_SCHEMA_DESC(Attributes, "Integer array of mesh boundary attributes this object applies to.",
              AttributeList) = {};
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(Order,
+    PALACE_SCHEMA_DESC_ADVANCED(Order,
              "Specify a first- or second-order approximation for the absorbing "
              "boundary condition. Second-order is only available for frequency "
              "domain driven simulations.",
@@ -255,26 +254,22 @@ struct WavePortData {
              "driven simulations.",
              bool) = true;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(MaxIts,
+    PALACE_SCHEMA_DESC_ADVANCED(MaxIts,
              "Maximum number of iterations for the GMRES solver used in the "
              "wave port boundary mode analysis.",
              palace::schema::utils::XMin<int, 0>) = 45;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(KSPTol,
+    PALACE_SCHEMA_DESC_ADVANCED(KSPTol,
              "Tolerance for the linear solver used in the wave port boundary "
              "mode analysis.",
              palace::schema::utils::XMin<double, 0.0>) = 1.0e-8;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(EigenTol,
+    PALACE_SCHEMA_DESC_ADVANCED(EigenTol,
              "Tolerance for the eigenvalue solver used in the wave port "
              "boundary mode analysis.",
              palace::schema::utils::XMin<double, 0.0>) = 1.0e-6;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(Verbose, "Verbosity level for the wave port linear and eigensolvers.",
+    PALACE_SCHEMA_DESC_ADVANCED(Verbose, "Verbosity level for the wave port linear and eigensolvers.",
              palace::schema::utils::Min<int, 0>) = 0;
 };
 

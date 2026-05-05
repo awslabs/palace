@@ -8,8 +8,13 @@
 // section. Enumerator names are the JSON wire format — reflect-cpp emits the
 // enumerator name as the JSON value, so the casing here is load-bearing.
 // Palace values containing hyphens (e.g. "STRUMPACK-MP", "BLR-HODLR") are not
-// legal C++ identifiers and become underscored here; the Phase 1.5 enum-
-// description pass maps them back to the hyphenated wire value.
+// legal C++ identifiers and become underscored here; the Phase 2 rename pass
+// will map them back to the hyphenated wire value.
+//
+// Enums that carry PR-716 per-value descriptions are declared via
+// `PALACE_SCHEMA_ENUM` — the macro emits the enum body *and* the
+// `enum_descriptions<E>` specialization from a single list. Enums without
+// descriptions stay as plain `enum class`.
 
 #include <vector>
 
@@ -28,97 +33,86 @@ using AttributeList = std::vector<int>;
 
 // --- Problem section -------------------------------------------------------
 
-enum class ProblemType {
-    Eigenmode,
-    Driven,
-    Transient,
-    Electrostatic,
-    Magnetostatic,
-};
+PALACE_SCHEMA_ENUM(ProblemType,
+    (Eigenmode,     "Perform an undamped or damped eigenfrequency analysis."),
+    (Driven,        "Perform a frequency-domain driven simulation."),
+    (Transient,     "Perform a time-domain excitation response simulation."),
+    (Electrostatic, "Perform an electrostatic analysis to compute the capacitance matrix for a set of voltage terminals."),
+    (Magnetostatic, "Perform a magnetostatic analysis to compute the inductance matrix for a set of current sources."));
 
 // --- Boundary / shared ------------------------------------------------------
 
-enum class CoordinateSystem {
-    Cartesian,
-    Cylindrical,
-};
+PALACE_SCHEMA_ENUM(CoordinateSystem,
+    (Cartesian,   "Standard Cartesian coordinates."),
+    (Cylindrical, "Cylindrical coordinates (enables `+R`/`-R` directions)."));
 
-enum class EigenSolverBackend {
-    Default,
-    SLEPc,
-    ARPACK,
-};
+PALACE_SCHEMA_ENUM(EigenSolverBackend,
+    (Default, "Use the default solver (currently SLEPc Krylov-Schur)."),
+    (SLEPc,   "Krylov-Schur solver from SLEPc."),
+    (ARPACK,  "ARPACK eigensolver."));
 
-enum class NonlinearEigenSolver {
-    Hybrid,
-    SLP,
-};
+PALACE_SCHEMA_ENUM(NonlinearEigenSolver,
+    (Hybrid, "Hybrid algorithm: solve a polynomial (quadratic) approximation first, then refine with a quasi-Newton nonlinear eigensolver."),
+    (SLP,    "SLEPc Successive Linear Problem (SLP) nonlinear eigensolver."));
 
-enum class SurfaceFlux {
-    Electric,
-    Magnetic,
-    Power,
-};
+PALACE_SCHEMA_ENUM(SurfaceFlux,
+    (Electric, "Integrate the electric flux density."),
+    (Magnetic, "Integrate the magnetic flux density."),
+    (Power,    "Integrate the Poynting vector (energy flux)."));
 
-enum class InterfaceDielectric {
-    Default,
-    MA,
-    MS,
-    SA,
-};
+PALACE_SCHEMA_ENUM(InterfaceDielectric,
+    (Default, "Use the full electric field evaluated at the boundary."),
+    (MA,      "Use metal-air interface boundary conditions."),
+    (MS,      "Use metal-substrate interface boundary conditions."),
+    (SA,      "Use substrate-air interface boundary conditions."));
 
 // --- Solver section --------------------------------------------------------
 
-enum class TimeSteppingScheme {
-    Default,
-    GeneralizedAlpha,
-    RungeKutta,
-    CVODE,
-    ARKODE,
-};
+PALACE_SCHEMA_ENUM(TimeSteppingScheme,
+    (Default,          "Use the default `\"GeneralizedAlpha\"` scheme."),
+    (GeneralizedAlpha, "Second-order implicit generalized-α method with ``\\rho_\\infty = 1``. Unconditionally stable."),
+    (RungeKutta,       "Two-stage singly diagonal implicit Runge-Kutta (SDIRK). Second-order, L-stable."),
+    (CVODE,            "SUNDIALS CVODE implicit multistep method with adaptive time-stepping. Requires SUNDIALS support (see [installation options](../install.md#Configuration-options))."),
+    (ARKODE,           "SUNDIALS ARKode implicit Runge-Kutta with adaptive time-stepping. Requires SUNDIALS support (see [installation options](../install.md#Configuration-options))."));
 
-enum class Excitation {
-    Sinusoidal,
-    Gaussian,
-    DifferentiatedGaussian,
-    ModulatedGaussian,
-    Ramp,
-    SmoothStep,
-};
+PALACE_SCHEMA_ENUM(Excitation,
+    (Sinusoidal,             "Sinusoidal excitation at a user-specified frequency."),
+    (Gaussian,               "Gaussian pulse with a user-specified width (defines the bandwidth)."),
+    (DifferentiatedGaussian, "Differentiated Gaussian pulse with a user-specified width."),
+    (ModulatedGaussian,      "Modulated Gaussian pulse at a center frequency and width, with no DC component."),
+    (Ramp,                   "Differentiable unit step function to model the ramp up to a DC signal."),
+    (SmoothStep,             "Smooth many-times differentiable unit step over a specified width."));
 
-enum class LinearSolver {
-    Default,
-    AMS,
-    BoomerAMG,
-    MUMPS,
-    SuperLU,
-    STRUMPACK,
-    // Palace JSON spells this "STRUMPACK-MP"; hyphen is not a legal C++
-    // identifier character. Phase 1.5 remaps the underscored form to the
-    // hyphenated wire value during schema emission.
-    STRUMPACK_MP,
-    Jacobi,
-};
+// Palace JSON spells `STRUMPACK_MP` as "STRUMPACK-MP" on the wire; that
+// rename is a Phase 2 concern. For now, the enumerator name is the wire
+// value.
+PALACE_SCHEMA_ENUM(LinearSolver,
+    (Default,      "Use `\"AMS\"` for curl-curl and time-domain problems; a sparse direct solver (if available) for frequency domain; `\"BoomerAMG\"` for electrostatics."),
+    (AMS,          "Hypre's [Auxiliary-space Maxwell Solver (AMS)](https://hypre.readthedocs.io/en/latest/solvers-ams.html), an algebraic multigrid (AMG)-based preconditioner for curl-curl operators."),
+    (BoomerAMG,    "Hypre's [BoomerAMG](https://hypre.readthedocs.io/en/latest/solvers-boomeramg.html) algebraic multigrid solver."),
+    (MUMPS,        "[MUMPS](http://mumps.enseeiht.fr/) sparse direct solver in real double precision. Requires MUMPS support (see [installation options](../install.md#Configuration-options))."),
+    (SuperLU,      "[SuperLU_DIST](https://github.com/xiaoyeli/superlu_dist) sparse direct solver in real double precision. For frequency domain problems uses a real approximation to the complex system matrix. Requires SuperLU_DIST support (see [installation options](../install.md#Configuration-options))."),
+    (STRUMPACK,    "[STRUMPACK](https://portal.nersc.gov/project/sparse/strumpack) sparse direct solver in real double precision. Not compatible with magnetostatics (singular curl-curl operator); use `\"AMS\"` instead. Requires STRUMPACK support (see [installation options](../install.md#Configuration-options))."),
+    (STRUMPACK_MP, ""),
+    (Jacobi,       "Diagonal Jacobi preconditioner (not recommended in general)."));
 
-enum class KrylovSolver {
-    Default,
-    CG,
-    MINRES,
-    GMRES,
-    FGMRES,
-    BiCGSTAB,
-};
+// MINRES and BiCGSTAB have no PR-716 description — empty strings opt out.
+PALACE_SCHEMA_ENUM(KrylovSolver,
+    (Default,  "Use `\"GMRES\"` for frequency domain problems; `\"CG\"` for real symmetric positive-definite problems (transient, electrostatic, magnetostatic)."),
+    (CG,       "Preconditioned conjugate gradient."),
+    (MINRES,   ""),
+    (GMRES,    "GMRES."),
+    (FGMRES,   "Flexible GMRES."),
+    (BiCGSTAB, ""));
 
-enum class MultigridCoarsening {
-    Linear,
-    Logarithmic,
-};
+PALACE_SCHEMA_ENUM(MultigridCoarsening,
+    (Linear,      "Linear coarsening."),
+    (Logarithmic, "Logarithmic coarsening."));
 
-enum class PreconditionerSide {
-    Default,
-    Right,
-    Left,
-};
+PALACE_SCHEMA_ENUM(PreconditionerSide,
+    (Default, "Solver-default side."),
+    (Right,   "Right preconditioning."),
+    (Left,    "Left preconditioning."));
 
 enum class SymbolicFactorization {
     Default,
@@ -131,28 +125,27 @@ enum class SymbolicFactorization {
     RCM,
 };
 
+// See STRUMPACK_MP: `BLR_HODLR` / `ZFP_BLR_HODLR` are underscored C++
+// enumerators for wire values `"BLR-HODLR"` / `"ZFP-BLR-HODLR"`.
 enum class SparseCompression {
     None,
     BLR,
     HSS,
     HODLR,
     ZFP,
-    // See STRUMPACK_MP above — hyphen → underscore.
     BLR_HODLR,
     ZFP_BLR_HODLR,
 };
 
-enum class Orthogonalization {
-    MGS,
-    CGS,
-    CGS2,
-};
+PALACE_SCHEMA_ENUM(Orthogonalization,
+    (MGS,  "Modified Gram-Schmidt."),
+    (CGS,  "Classical Gram-Schmidt."),
+    (CGS2, "Two-step classical Gram-Schmidt with reorthogonalization."));
 
-enum class Device {
-    CPU,
-    GPU,
-    Debug,
-};
+PALACE_SCHEMA_ENUM(Device,
+    (CPU,   "Run on CPU."),
+    (GPU,   "Run on GPU via CUDA (`MFEM_USE_CUDA=ON`) or HIP (`MFEM_USE_HIP=ON`)."),
+    (Debug, "MFEM debug device, useful for diagnosing GPU-related issues."));
 
 }  // namespace palace::schema
 

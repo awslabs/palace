@@ -14,6 +14,11 @@
 #include <rfl/Generic.hpp>
 #include <rfl/json.hpp>
 
+// Needed for the `EnumDescEntry` / `FieldFlag` struct definitions, which
+// are shared with the compile-time type-graph walker in the template
+// header.
+#include "schema_impl.hpp"
+
 namespace palace::schema::utils::detail {
 
 namespace {
@@ -494,6 +499,145 @@ std::string rewrite_root_composition(std::string schema_json,
             entry.first = to;
             break;
         }
+    }
+
+    return rfl::json::write(*schema_gen_r, rfl::json::pretty);
+}
+
+// Rewrite an inline-enum property body in place to PR-716's per-value
+// oneOf form. Expects `prop_obj` to carry `{"type": "string", "enum":
+// [...string-array...]}`. The `pairs` vector supplies (value, description)
+// entries; any enum values missing from `pairs` are still emitted as a
+// `{"const": value}` arm without a `description`, keeping the schema
+// shape-equivalent. `type` and `enum` are dropped; surrounding keys
+// (`description`, `default`) are preserved.
+namespace {
+
+bool rewrite_enum_body(rfl::Generic::Object& prop_obj,
+                       const std::vector<std::pair<std::string, std::string>>& pairs) {
+    if (prop_obj.count("type") == 0 || prop_obj.count("enum") == 0) {
+        return false;
+    }
+    const auto& type_var = prop_obj.at("type").value();
+    if (!std::holds_alternative<std::string>(type_var)) return false;
+    if (std::get<std::string>(type_var) != "string") return false;
+
+    const auto& enum_var = prop_obj.at("enum").value();
+    if (!std::holds_alternative<rfl::Generic::Array>(enum_var)) return false;
+    const auto& enum_arr = std::get<rfl::Generic::Array>(enum_var);
+
+    rfl::Generic::Array one_of;
+    for (const auto& v : enum_arr) {
+        if (!std::holds_alternative<std::string>(v.value())) return false;
+        const auto& val = std::get<std::string>(v.value());
+        rfl::Generic::Object arm;
+        arm["const"] = rfl::Generic(val);
+        for (const auto& [p_val, p_desc] : pairs) {
+            if (p_val != val) continue;
+            // Empty `p_desc` is the caller's opt-out: PALACE_SCHEMA_ENUM
+            // forces every enumerator to appear in the description array
+            // so the enum body and the descs stay synchronized, and `""`
+            // marks "no user-facing description" — skip the key to keep
+            // the arm as a bare `{"const": ...}`.
+            if (!p_desc.empty()) {
+                arm["description"] = rfl::Generic(p_desc);
+            }
+            break;
+        }
+        one_of.emplace_back(std::move(arm));
+    }
+
+    // rfl::Object (ordered map) — rename `enum` to `oneOf` in place, drop
+    // `type`. Rename first so the new key lands in the same slot the old
+    // `enum` occupied, which keeps key ordering stable across rebuilds.
+    for (auto& entry : prop_obj) {
+        if (entry.first == "enum") {
+            entry.first = "oneOf";
+            entry.second = rfl::Generic(std::move(one_of));
+            break;
+        }
+    }
+    // Remove `type` by rebuilding the object without it.
+    rfl::Generic::Object filtered;
+    for (auto& entry : prop_obj) {
+        if (entry.first == "type") continue;
+        filtered.insert(std::move(entry.first), std::move(entry.second));
+    }
+    prop_obj = std::move(filtered);
+    return true;
+}
+
+}  // namespace
+
+std::string inject_enum_descriptions(
+    std::string schema_json,
+    const std::vector<EnumDescEntry>& entries) {
+    if (entries.empty()) return schema_json;
+    auto schema_gen_r = rfl::json::read<rfl::Generic>(schema_json);
+    if (!schema_gen_r) return schema_json;
+
+    auto& schema_var = schema_gen_r->value();
+    if (!std::holds_alternative<rfl::Generic::Object>(schema_var)) return schema_json;
+    auto& root_obj = std::get<rfl::Generic::Object>(schema_var);
+
+    if (root_obj.count("$defs") == 0) return schema_json;
+    auto& defs_var = root_obj.at("$defs").value();
+    if (!std::holds_alternative<rfl::Generic::Object>(defs_var)) return schema_json;
+    auto& defs = std::get<rfl::Generic::Object>(defs_var);
+
+    for (const auto& entry : entries) {
+        if (defs.count(entry.struct_name) == 0) continue;
+        auto& def_var = defs.at(entry.struct_name).value();
+        if (!std::holds_alternative<rfl::Generic::Object>(def_var)) continue;
+        auto& def_obj = std::get<rfl::Generic::Object>(def_var);
+        if (def_obj.count("properties") == 0) continue;
+        auto& props_var = def_obj.at("properties").value();
+        if (!std::holds_alternative<rfl::Generic::Object>(props_var)) continue;
+        auto& props = std::get<rfl::Generic::Object>(props_var);
+        if (props.count(entry.field_name) == 0) continue;
+        auto& prop_var = props.at(entry.field_name).value();
+        if (!std::holds_alternative<rfl::Generic::Object>(prop_var)) continue;
+        auto& prop_obj = std::get<rfl::Generic::Object>(prop_var);
+        rewrite_enum_body(prop_obj, entry.pairs);
+    }
+
+    return rfl::json::write(*schema_gen_r, rfl::json::pretty);
+}
+
+// Stamp `"x-palace-<flag>": true` on each listed property. `flag` is
+// typically `"advanced"` or `"deprecated"`; any other value rides along
+// under the `x-palace-` prefix (JSON Schema's reserved vendor-extension
+// namespace, so validators ignore them).
+std::string inject_custom_keywords(
+    std::string schema_json,
+    const std::vector<FieldFlag>& flags) {
+    if (flags.empty()) return schema_json;
+    auto schema_gen_r = rfl::json::read<rfl::Generic>(schema_json);
+    if (!schema_gen_r) return schema_json;
+
+    auto& schema_var = schema_gen_r->value();
+    if (!std::holds_alternative<rfl::Generic::Object>(schema_var)) return schema_json;
+    auto& root_obj = std::get<rfl::Generic::Object>(schema_var);
+
+    if (root_obj.count("$defs") == 0) return schema_json;
+    auto& defs_var = root_obj.at("$defs").value();
+    if (!std::holds_alternative<rfl::Generic::Object>(defs_var)) return schema_json;
+    auto& defs = std::get<rfl::Generic::Object>(defs_var);
+
+    for (const auto& f : flags) {
+        if (defs.count(f.struct_name) == 0) continue;
+        auto& def_var = defs.at(f.struct_name).value();
+        if (!std::holds_alternative<rfl::Generic::Object>(def_var)) continue;
+        auto& def_obj = std::get<rfl::Generic::Object>(def_var);
+        if (def_obj.count("properties") == 0) continue;
+        auto& props_var = def_obj.at("properties").value();
+        if (!std::holds_alternative<rfl::Generic::Object>(props_var)) continue;
+        auto& props = std::get<rfl::Generic::Object>(props_var);
+        if (props.count(f.field_name) == 0) continue;
+        auto& prop_var = props.at(f.field_name).value();
+        if (!std::holds_alternative<rfl::Generic::Object>(prop_var)) continue;
+        auto& prop_obj = std::get<rfl::Generic::Object>(prop_var);
+        prop_obj["x-palace-" + f.flag] = rfl::Generic(true);
     }
 
     return rfl::json::write(*schema_gen_r, rfl::json::pretty);

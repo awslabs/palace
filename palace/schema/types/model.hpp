@@ -7,11 +7,6 @@
 // Mirrors palace::config::{ModelData, RefinementData, BoxRefinementData,
 // SphereRefinementData} (palace/utils/configfile.hpp). Descriptions match
 // PR 716's scripts/schema/config/model.json.
-//
-// Fields marked `x-palace-advanced` in PR 716 are called out in adjacent
-// comments until Phase 1.5 lands the PALACE_SCHEMA_DESC_ADVANCED macro; they end up
-// as plain PALACE_SCHEMA_DESC for now (no loss of validation, just no `advanced` badge
-// in the generated docs).
 
 #include <array>
 #include <optional>
@@ -82,25 +77,21 @@ struct RefinementData {
              "meshes.",
              bool) = true;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(MaxNCLevels,
+    PALACE_SCHEMA_DESC_ADVANCED(MaxNCLevels,
              "Maximum number of nonconformal refinement levels. `0` means no limit.",
              palace::schema::utils::Min<int, 0>) = 1;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(MaximumImbalance,
+    PALACE_SCHEMA_DESC_ADVANCED(MaximumImbalance,
              "Maximum ratio of elements between the most- and least-loaded MPI "
              "ranks before repartitioning.",
              palace::schema::utils::Min<double, 1.0>) = 1.1;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(SaveAdaptIterations,
+    PALACE_SCHEMA_DESC_ADVANCED(SaveAdaptIterations,
              "Save postprocessing results from each AMR iteration in a "
              "subdirectory `iterationX`.",
              bool) = true;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(SaveAdaptMesh, "Save the final adapted mesh to disk.", bool) = false;
+    PALACE_SCHEMA_DESC_ADVANCED(SaveAdaptMesh, "Save the final adapted mesh to disk.", bool) = false;
 
     PALACE_SCHEMA_DESC(UniformLevels,
              "Levels of uniform parallel mesh refinement to be performed on the "
@@ -110,8 +101,7 @@ struct RefinementData {
              "a geometric multigrid scheme.",
              palace::schema::utils::Min<int, 0>) = 0;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(SerialUniformLevels,
+    PALACE_SCHEMA_DESC_ADVANCED(SerialUniformLevels,
              "Levels of uniform serial mesh refinement applied before parallel "
              "distribution.",
              palace::schema::utils::Min<int, 0>) = 0;
@@ -152,61 +142,49 @@ struct ModelData {
              "the same units as the mesh.",
              double) = 0.0;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(RemoveCurvature,
+    PALACE_SCHEMA_DESC_ADVANCED(RemoveCurvature,
              "Project high-order nodes to the mesh surface, removing all curvature "
              "before the simulation.",
              bool) = false;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(MakeSimplex,
+    PALACE_SCHEMA_DESC_ADVANCED(MakeSimplex,
              "Convert all mesh elements to simplices (tetrahedra/triangles).",
              bool) = false;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(MakeHexahedral, "Convert all mesh elements to hexahedra.", bool) = false;
+    PALACE_SCHEMA_DESC_ADVANCED(MakeHexahedral, "Convert all mesh elements to hexahedra.", bool) = false;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(ReorderElements,
+    PALACE_SCHEMA_DESC_ADVANCED(ReorderElements,
              "Reorder mesh elements to improve cache efficiency.", bool) = false;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(CleanUnusedElements,
+    PALACE_SCHEMA_DESC_ADVANCED(CleanUnusedElements,
              "Remove elements not connected to any domain material.", bool) = true;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(CrackInternalBoundaryElements,
+    PALACE_SCHEMA_DESC_ADVANCED(CrackInternalBoundaryElements,
              "Duplicate nodes along internal boundary elements to create a crack.",
              bool) = true;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(RefineCrackElements,
+    PALACE_SCHEMA_DESC_ADVANCED(RefineCrackElements,
              "Refine elements adjacent to cracked internal boundaries.",
              bool) = true;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(CrackDisplacementFactor,
+    PALACE_SCHEMA_DESC_ADVANCED(CrackDisplacementFactor,
              "Displacement factor applied to cracked nodes as a fraction of the "
              "local element size.",
              palace::schema::utils::Min<double, 0.0>) = 1.0e-12;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(AddInterfaceBoundaryElements,
+    PALACE_SCHEMA_DESC_ADVANCED(AddInterfaceBoundaryElements,
              "Add boundary elements at interfaces between domains that lack them.",
              bool) = true;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(ExportPrerefinedMesh,
+    PALACE_SCHEMA_DESC_ADVANCED(ExportPrerefinedMesh,
              "Export the mesh after preprocessing but before AMR refinement.",
              bool) = false;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(ReorientTetMesh,
+    PALACE_SCHEMA_DESC_ADVANCED(ReorientTetMesh,
              "Reorient tetrahedral elements to ensure positive Jacobians.",
              bool) = false;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(Partitioning,
+    PALACE_SCHEMA_DESC_ADVANCED(Partitioning,
              "Path to a mesh partitioning file. If empty, partitioning is computed "
              "automatically.",
              std::string) = "";

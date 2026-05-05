@@ -34,11 +34,10 @@ namespace palace::schema {
 
 // New enums introduced by PR 716 (not present in labels.hpp).
 
-enum class AdaptiveCircuitSynthesisDomainOrthogonalization {
-    Energy,
-    FEBasisIdentity,
-    SpaceOverlap,
-};
+PALACE_SCHEMA_ENUM(AdaptiveCircuitSynthesisDomainOrthogonalization,
+    (Energy,          "Use the energy-based domain mass matrix."),
+    (FEBasisIdentity, "Use the identity matrix in the finite element basis."),
+    (SpaceOverlap,    "Use the physical-space field overlap."));
 
 // --- Samples (tagged union arms) -------------------------------------------
 
@@ -102,29 +101,25 @@ using Sample =
 // --- DrivenSolverData ------------------------------------------------------
 
 struct DrivenSolverData {
-    // x-palace-deprecated
-    PALACE_SCHEMA_DESC(MinFreq,
+    PALACE_SCHEMA_DESC_DEPRECATED(MinFreq,
              "Lower bound of the frequency sweep interval, GHz. Deprecated: use "
              "[`Linear Samples`](@ref config-solver-driven-samples-linear) "
              "interface instead.",
              std::optional<double>) = std::nullopt;
 
-    // x-palace-deprecated
-    PALACE_SCHEMA_DESC(MaxFreq,
+    PALACE_SCHEMA_DESC_DEPRECATED(MaxFreq,
              "Upper bound of the frequency sweep interval, GHz. Deprecated: use "
              "[`Linear Samples`](@ref config-solver-driven-samples-linear) "
              "interface instead.",
              std::optional<double>) = std::nullopt;
 
-    // x-palace-deprecated
-    PALACE_SCHEMA_DESC(FreqStep,
+    PALACE_SCHEMA_DESC_DEPRECATED(FreqStep,
              "Frequency step size for the frequency sweep, GHz. Deprecated: use "
              "[`Linear Samples`](@ref config-solver-driven-samples-linear) "
              "interface instead.",
              std::optional<double>) = std::nullopt;
 
-    // x-palace-deprecated
-    PALACE_SCHEMA_DESC(SaveStep,
+    PALACE_SCHEMA_DESC_DEPRECATED(SaveStep,
              "Controls how often, in number of frequency steps, to save computed "
              "fields to disk for [visualization with ParaView]"
              "(../guide/postprocessing.md#Visualization). Files are saved in the "
@@ -176,8 +171,7 @@ struct DrivenSolverData {
              "algorithm.",
              palace::schema::utils::XMin<int, 0>) = 2;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(AdaptiveGSOrthogonalization,
+    PALACE_SCHEMA_DESC_ADVANCED(AdaptiveGSOrthogonalization,
              "Gram-Schmidt variant for orthogonalizing the adaptive "
              "reduced-order model basis. Same options as "
              "[`/Linear/GSOrthogonalization`](@ref "
@@ -192,8 +186,7 @@ struct DrivenSolverData {
              "second-order farfield BCs).",
              bool) = false;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(AdaptiveCircuitSynthesisDomainOrthogonalization,
+    PALACE_SCHEMA_DESC_ADVANCED(AdaptiveCircuitSynthesisDomainOrthogonalization,
              "Weight matrix type for domain orthogonalization when building "
              "synthesized circuit matrices.",
              AdaptiveCircuitSynthesisDomainOrthogonalization) =
@@ -240,60 +233,49 @@ struct EigenSolverData {
              "frequency-dependent boundary conditions.",
              NonlinearEigenSolver) = NonlinearEigenSolver::Hybrid;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(TargetUpper,
+    PALACE_SCHEMA_DESC_ADVANCED(TargetUpper,
              "Upper frequency bound for the eigenvalue search, GHz. Only used "
              "for nonlinear problems. A value less than or equal to zero uses "
              "`3 × Target` automatically. An inaccurate upper bound can "
              "negatively affect convergence of the nonlinear eigensolver.",
              double) = -1.0;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(PEPLinear,
+    PALACE_SCHEMA_DESC_ADVANCED(PEPLinear,
              "Linearize the polynomial eigenvalue problem before solving.",
              bool) = true;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(Scaling, "Enable scaling of the eigenvalue problem.",
+    PALACE_SCHEMA_DESC_ADVANCED(Scaling, "Enable scaling of the eigenvalue problem.",
              bool) = true;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(StartVector,
+    PALACE_SCHEMA_DESC_ADVANCED(StartVector,
              "Use a random start vector for the eigensolver.", bool) = true;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(StartVectorConstant,
+    PALACE_SCHEMA_DESC_ADVANCED(StartVectorConstant,
              "Use a constant start vector instead of a random one.",
              bool) = false;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(MassOrthogonal,
+    PALACE_SCHEMA_DESC_ADVANCED(MassOrthogonal,
              "Orthogonalize eigenvectors with respect to the mass matrix.",
              bool) = false;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(RefineNonlinear,
+    PALACE_SCHEMA_DESC_ADVANCED(RefineNonlinear,
              "Refine nonlinear eigenvalue solutions after the initial solve.",
              bool) = true;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(LinearTol,
+    PALACE_SCHEMA_DESC_ADVANCED(LinearTol,
              "Tolerance for the inner linear solve within the nonlinear "
              "eigensolver.",
              palace::schema::utils::Min<double, 0.0>) = 1.0e-3;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(PreconditionerLag,
+    PALACE_SCHEMA_DESC_ADVANCED(PreconditionerLag,
              "Number of eigensolver iterations between preconditioner updates.",
              palace::schema::utils::Min<int, 0>) = 10;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(PreconditionerLagTol,
+    PALACE_SCHEMA_DESC_ADVANCED(PreconditionerLagTol,
              "Residual tolerance below which preconditioner updates are skipped.",
              palace::schema::utils::Min<double, 0.0>) = 1.0e-4;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(MaxRestart, "Maximum number of restarts for the eigensolver.",
+    PALACE_SCHEMA_DESC_ADVANCED(MaxRestart, "Maximum number of restarts for the eigensolver.",
              palace::schema::utils::Min<int, 0>) = 2;
 };
 
@@ -399,8 +381,7 @@ struct LinearSolverData {
              "defaults to `\"MaxIts\"`.",
              palace::schema::utils::XMin<int, 0>) = 1;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(InitialGuess,
+    PALACE_SCHEMA_DESC_ADVANCED(InitialGuess,
              "Use the previous solution as an initial guess for the iterative "
              "solver.",
              bool) = true;
@@ -416,12 +397,10 @@ struct LinearSolverData {
              "Coarsening strategy for constructing p-multigrid levels.",
              MultigridCoarsening) = MultigridCoarsening::Logarithmic;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(MGUseMesh, "Use the mesh hierarchy for h-multigrid coarsening.",
+    PALACE_SCHEMA_DESC_ADVANCED(MGUseMesh, "Use the mesh hierarchy for h-multigrid coarsening.",
              bool) = true;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(MGAuxiliarySmoother,
+    PALACE_SCHEMA_DESC_ADVANCED(MGAuxiliarySmoother,
              "Use an auxiliary space smoother on multigrid levels.",
              bool) = true;
 
@@ -444,18 +423,15 @@ struct LinearSolverData {
              "than 1 defaults to `max(2 × solution order, 4)`.",
              palace::schema::utils::XMin<int, 0>) = 1;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(MGSmoothEigScaleMax,
+    PALACE_SCHEMA_DESC_ADVANCED(MGSmoothEigScaleMax,
              "Maximum eigenvalue scale for the Chebyshev smoother.",
              palace::schema::utils::XMin<double, 0.0>) = 1.0;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(MGSmoothEigScaleMin,
+    PALACE_SCHEMA_DESC_ADVANCED(MGSmoothEigScaleMin,
              "Minimum eigenvalue scale for the Chebyshev smoother.",
              palace::schema::utils::Min<double, 0.0>) = 0.0;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(MGSmoothChebyshev4th,
+    PALACE_SCHEMA_DESC_ADVANCED(MGSmoothChebyshev4th,
              "Use 4th-kind Chebyshev polynomial smoother.", bool) = true;
 
     PALACE_SCHEMA_DESC(PCMatReal,
@@ -483,8 +459,7 @@ struct LinearSolverData {
              "epsilon from the system matrix used in the sparse direct solver.",
              bool) = false;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(ReorderingReuse,
+    PALACE_SCHEMA_DESC_ADVANCED(ReorderingReuse,
              "Reuse the matrix reordering from the previous solve.",
              bool) = true;
 
@@ -493,51 +468,42 @@ struct LinearSolverData {
              "iterative solver choices.",
              PreconditionerSide) = PreconditionerSide::Default;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(ColumnOrdering,
+    PALACE_SCHEMA_DESC_ADVANCED(ColumnOrdering,
              "Column ordering algorithm for sparse direct solvers: "
              "`\"METIS\"`, `\"ParMETIS\"`, `\"Scotch\"`, `\"PTScotch\"`, "
              "`\"PORD\"`, `\"AMD\"`, `\"RCM\"`, `\"Default\"`.",
              SymbolicFactorization) = SymbolicFactorization::Default;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(STRUMPACKCompressionType,
+    PALACE_SCHEMA_DESC_ADVANCED(STRUMPACKCompressionType,
              "STRUMPACK compression type: `\"None\"`, `\"BLR\"`, `\"HSS\"`, "
              "`\"HODLR\"`, `\"ZFP\"`, `\"BLR-HODLR\"`, `\"ZFP-BLR-HODLR\"`.",
              SparseCompression) = SparseCompression::None;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(STRUMPACKCompressionTol,
+    PALACE_SCHEMA_DESC_ADVANCED(STRUMPACKCompressionTol,
              "Tolerance for STRUMPACK lossy compression.",
              palace::schema::utils::Min<double, 0.0>) = 1.0e-3;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(STRUMPACKLossyPrecision,
+    PALACE_SCHEMA_DESC_ADVANCED(STRUMPACKLossyPrecision,
              "Precision bits for STRUMPACK ZFP lossy compression.",
              palace::schema::utils::Min<int, 0>) = 16;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(STRUMPACKButterflyLevels,
+    PALACE_SCHEMA_DESC_ADVANCED(STRUMPACKButterflyLevels,
              "Number of butterfly levels for STRUMPACK HODLR compression.",
              palace::schema::utils::Min<int, 0>) = 1;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(SuperLU3DCommunicator,
+    PALACE_SCHEMA_DESC_ADVANCED(SuperLU3DCommunicator,
              "Use a 3D process grid communicator for SuperLU_DIST.",
              bool) = false;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(AMSVectorInterpolation, "Use vector interpolation in AMS.",
+    PALACE_SCHEMA_DESC_ADVANCED(AMSVectorInterpolation, "Use vector interpolation in AMS.",
              bool) = false;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(AMSSingularOperator,
+    PALACE_SCHEMA_DESC_ADVANCED(AMSSingularOperator,
              "Indicate to AMS that the operator is singular (e.g. "
              "magnetostatics with no essential boundary conditions).",
              bool) = false;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(AMGAggressiveCoarsening,
+    PALACE_SCHEMA_DESC_ADVANCED(AMGAggressiveCoarsening,
              "Enable aggressive coarsening in BoomerAMG.", bool) = false;
 
     PALACE_SCHEMA_DESC(AMSMaxIts,
@@ -597,13 +563,11 @@ struct SolverData {
              "assembled sparse matrix operators.",
              palace::schema::utils::Min<int, 1>) = 1;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(QuadratureOrderJacobian,
+    PALACE_SCHEMA_DESC_ADVANCED(QuadratureOrderJacobian,
              "Use the Jacobian-based quadrature order instead of the default.",
              bool) = false;
 
-    // x-palace-advanced
-    PALACE_SCHEMA_DESC(QuadratureOrderExtra,
+    PALACE_SCHEMA_DESC_ADVANCED(QuadratureOrderExtra,
              "Extra quadrature order added on top of the default.",
              int) = 0;
 
