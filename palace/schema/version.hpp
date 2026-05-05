@@ -6,7 +6,8 @@
 
 #include <string_view>
 
-namespace palace::schema {
+namespace palace::schema
+{
 
 // SchemaVer version of the Palace configuration schema.
 // See https://docs.snowplow.io/docs/api-reference/iglu/common-architecture/schemaver/

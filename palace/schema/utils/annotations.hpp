@@ -14,7 +14,8 @@
 
 #include <rfl.hpp>
 
-namespace palace::schema::utils {
+namespace palace::schema::utils
+{
 
 // --- Schema emission options -------------------------------------------------
 //
@@ -36,9 +37,10 @@ namespace palace::schema::utils {
 //
 // `version`, if non-empty, is emitted as a `"version"` key on the root
 // object of the schema.
-struct SchemaOptions {
-    bool emit_defaults = true;
-    std::string version;
+struct SchemaOptions
+{
+  bool emit_defaults = true;
+  std::string version;
 };
 
 // Convenience alias for rfl::Description. Mirrors the StringLiteral<N> class-
@@ -58,17 +60,20 @@ using Desc = rfl::Description<text, T>;
 // (de)serialization.
 template <class T>
 concept has_tag_description = requires {
-    { T::tag_description } -> std::convertible_to<std::string_view>;
+  { T::tag_description } -> std::convertible_to<std::string_view>;
 };
 
 // Trait matching `rfl::TaggedUnion<tag, Arms...>` so `schema<T>()` can
 // dispatch the tag-description injection pass only for tagged unions.
 template <class T>
-struct is_tagged_union : std::false_type {};
+struct is_tagged_union : std::false_type
+{
+};
 
 template <rfl::internal::StringLiteral tag, class... Arms>
-struct is_tagged_union<rfl::TaggedUnion<tag, Arms...>> : std::true_type {
-    static constexpr auto discriminator = tag;
+struct is_tagged_union<rfl::TaggedUnion<tag, Arms...>> : std::true_type
+{
+  static constexpr auto discriminator = tag;
 };
 
 // --- Schema composition keyword control ------------------------------------
@@ -79,11 +84,16 @@ struct is_tagged_union<rfl::TaggedUnion<tag, Arms...>> : std::true_type {
 // rfl::TaggedUnion — correct at runtime, but Palace's convention is `oneOf`
 // for discriminated unions. Specialize `schema_composition<T>` for the
 // user-side alias to rewrite the combiner keyword after emission.
-enum class Compose { AnyOf, OneOf };
+enum class Compose
+{
+  AnyOf,
+  OneOf
+};
 
 template <class T>
-struct schema_composition {
-    static constexpr auto value = Compose::AnyOf;
+struct schema_composition
+{
+  static constexpr auto value = Compose::AnyOf;
 };
 
 // --- Per-enum-value descriptions -------------------------------------------
@@ -97,9 +107,10 @@ struct schema_composition {
 //
 // Empty specializations (the primary template) leave the flat enum alone.
 template <class E>
-struct enum_descriptions {
-    static constexpr auto value =
-        std::array<std::pair<std::string_view, std::string_view>, 0>{};
+struct enum_descriptions
+{
+  static constexpr auto value =
+      std::array<std::pair<std::string_view, std::string_view>, 0>{};
 };
 
 // --- Per-field custom-keyword flags ----------------------------------------
@@ -115,7 +126,9 @@ struct enum_descriptions {
 // `(struct_name, field_name, flag)` triples for the post-emit
 // `inject_custom_keywords` pass.
 template <rfl::internal::StringLiteral FieldName>
-struct FieldFlagTag {};
+struct FieldFlagTag
+{
+};
 
 // --- Validator sugar -------------------------------------------------------
 //
@@ -161,17 +174,17 @@ using RightOpen = rfl::Validator<T, rfl::Minimum<lo>, rfl::ExclusiveMaximum<hi>>
 //   PALACE_SCHEMA_TAG(Type, "Point", "Explicit frequency list.");
 // The trailing `;` terminates the rfl::Literal member declaration; the inner
 // `;` separates the two member declarations.
-#define PALACE_SCHEMA_TAG(FieldName, Value, Desc)                              \
-    static constexpr ::std::string_view tag_description = (Desc);              \
-    ::rfl::Literal<Value> FieldName
+#define PALACE_SCHEMA_TAG(FieldName, Value, Desc)               \
+  static constexpr ::std::string_view tag_description = (Desc); \
+  ::rfl::Literal<Value> FieldName
 
 // Declare a described member. Call-site form:
 //   PALACE_SCHEMA_DESC(Verbose, "Level of printing",
 //                      palace::schema::utils::Min<int, 0>) = 1;
 // Type is the trailing variadic so commas inside template arguments pass
 // through the preprocessor without extra parentheses.
-#define PALACE_SCHEMA_DESC(FieldName, Description, .../*Type*/)                \
-    ::palace::schema::utils::Desc<Description, __VA_ARGS__> FieldName
+#define PALACE_SCHEMA_DESC(FieldName, Description, ... /*Type*/) \
+  ::palace::schema::utils::Desc<Description, __VA_ARGS__> FieldName
 
 // Declare a described member that also carries an `x-palace-advanced`
 // flag. Expands to the same `Desc<>` field `PALACE_SCHEMA_DESC` produces
@@ -183,21 +196,25 @@ using RightOpen = rfl::Validator<T, rfl::Minimum<lo>, rfl::ExclusiveMaximum<hi>>
 // friends are considered. Because the static-ness of the friend is
 // invisible to reflect-cpp's aggregate-init field probe, this has no
 // effect on (de)serialisation.
-#define PALACE_SCHEMA_DESC_ADVANCED(FieldName, Description, .../*Type*/)       \
-    friend constexpr ::std::string_view palace_schema_field_flag(              \
-        ::palace::schema::utils::FieldFlagTag<#FieldName>,                     \
-        const auto*) { return "advanced"; }                                    \
-    ::palace::schema::utils::Desc<Description, __VA_ARGS__> FieldName
+#define PALACE_SCHEMA_DESC_ADVANCED(FieldName, Description, ... /*Type*/) \
+  friend constexpr ::std::string_view palace_schema_field_flag(           \
+      ::palace::schema::utils::FieldFlagTag<#FieldName>, const auto *)    \
+  {                                                                       \
+    return "advanced";                                                    \
+  }                                                                       \
+  ::palace::schema::utils::Desc<Description, __VA_ARGS__> FieldName
 
 // As above, but stamps `x-palace-deprecated`. Intended for legacy keys the
 // loader still accepts but docs should label as discouraged. The field
 // declaration comes last so a call-site `= default;` initializer attaches
 // to it, mirroring `PALACE_SCHEMA_DESC`.
-#define PALACE_SCHEMA_DESC_DEPRECATED(FieldName, Description, .../*Type*/)     \
-    friend constexpr ::std::string_view palace_schema_field_flag(              \
-        ::palace::schema::utils::FieldFlagTag<#FieldName>,                     \
-        const auto*) { return "deprecated"; }                                  \
-    ::palace::schema::utils::Desc<Description, __VA_ARGS__> FieldName
+#define PALACE_SCHEMA_DESC_DEPRECATED(FieldName, Description, ... /*Type*/) \
+  friend constexpr ::std::string_view palace_schema_field_flag(             \
+      ::palace::schema::utils::FieldFlagTag<#FieldName>, const auto *)      \
+  {                                                                         \
+    return "deprecated";                                                    \
+  }                                                                         \
+  ::palace::schema::utils::Desc<Description, __VA_ARGS__> FieldName
 
 // --- PALACE_SCHEMA_ENUM ----------------------------------------------------
 //
@@ -234,40 +251,39 @@ using RightOpen = rfl::Validator<T, rfl::Minimum<lo>, rfl::ExclusiveMaximum<hi>>
 #define PAL_SCHEMA_TUPLE_DESC_IMPL(name, desc) desc
 #define PAL_SCHEMA_TUPLE_DESC(t) PAL_SCHEMA_EXPAND(PAL_SCHEMA_TUPLE_DESC_IMPL t)
 
-#define PAL_SCHEMA_FE_1(F, x)       F(x)
-#define PAL_SCHEMA_FE_2(F, x, ...)  F(x) PAL_SCHEMA_FE_1(F, __VA_ARGS__)
-#define PAL_SCHEMA_FE_3(F, x, ...)  F(x) PAL_SCHEMA_FE_2(F, __VA_ARGS__)
-#define PAL_SCHEMA_FE_4(F, x, ...)  F(x) PAL_SCHEMA_FE_3(F, __VA_ARGS__)
-#define PAL_SCHEMA_FE_5(F, x, ...)  F(x) PAL_SCHEMA_FE_4(F, __VA_ARGS__)
-#define PAL_SCHEMA_FE_6(F, x, ...)  F(x) PAL_SCHEMA_FE_5(F, __VA_ARGS__)
-#define PAL_SCHEMA_FE_7(F, x, ...)  F(x) PAL_SCHEMA_FE_6(F, __VA_ARGS__)
-#define PAL_SCHEMA_FE_8(F, x, ...)  F(x) PAL_SCHEMA_FE_7(F, __VA_ARGS__)
-#define PAL_SCHEMA_FE_9(F, x, ...)  F(x) PAL_SCHEMA_FE_8(F, __VA_ARGS__)
+#define PAL_SCHEMA_FE_1(F, x) F(x)
+#define PAL_SCHEMA_FE_2(F, x, ...) F(x) PAL_SCHEMA_FE_1(F, __VA_ARGS__)
+#define PAL_SCHEMA_FE_3(F, x, ...) F(x) PAL_SCHEMA_FE_2(F, __VA_ARGS__)
+#define PAL_SCHEMA_FE_4(F, x, ...) F(x) PAL_SCHEMA_FE_3(F, __VA_ARGS__)
+#define PAL_SCHEMA_FE_5(F, x, ...) F(x) PAL_SCHEMA_FE_4(F, __VA_ARGS__)
+#define PAL_SCHEMA_FE_6(F, x, ...) F(x) PAL_SCHEMA_FE_5(F, __VA_ARGS__)
+#define PAL_SCHEMA_FE_7(F, x, ...) F(x) PAL_SCHEMA_FE_6(F, __VA_ARGS__)
+#define PAL_SCHEMA_FE_8(F, x, ...) F(x) PAL_SCHEMA_FE_7(F, __VA_ARGS__)
+#define PAL_SCHEMA_FE_9(F, x, ...) F(x) PAL_SCHEMA_FE_8(F, __VA_ARGS__)
 #define PAL_SCHEMA_FE_10(F, x, ...) F(x) PAL_SCHEMA_FE_9(F, __VA_ARGS__)
 
 #define PAL_SCHEMA_PICK_FE(_1, _2, _3, _4, _5, _6, _7, _8, _9, _10, N, ...) N
-#define PAL_SCHEMA_FOR_EACH(F, ...)                                            \
-    PAL_SCHEMA_EXPAND(PAL_SCHEMA_PICK_FE(__VA_ARGS__,                          \
-        PAL_SCHEMA_FE_10, PAL_SCHEMA_FE_9,  PAL_SCHEMA_FE_8,                   \
-        PAL_SCHEMA_FE_7,  PAL_SCHEMA_FE_6,  PAL_SCHEMA_FE_5,                   \
-        PAL_SCHEMA_FE_4,  PAL_SCHEMA_FE_3,  PAL_SCHEMA_FE_2,                   \
-        PAL_SCHEMA_FE_1)(F, __VA_ARGS__))
+#define PAL_SCHEMA_FOR_EACH(F, ...)                                                       \
+  PAL_SCHEMA_EXPAND(PAL_SCHEMA_PICK_FE(__VA_ARGS__, PAL_SCHEMA_FE_10, PAL_SCHEMA_FE_9,    \
+                                       PAL_SCHEMA_FE_8, PAL_SCHEMA_FE_7, PAL_SCHEMA_FE_6, \
+                                       PAL_SCHEMA_FE_5, PAL_SCHEMA_FE_4, PAL_SCHEMA_FE_3, \
+                                       PAL_SCHEMA_FE_2, PAL_SCHEMA_FE_1)(F, __VA_ARGS__))
 
 #define PAL_SCHEMA_ENUM_EMIT_NAME(t) PAL_SCHEMA_TUPLE_NAME(t),
-#define PAL_SCHEMA_ENUM_EMIT_PAIR(t)                                           \
-    ::std::pair<::std::string_view, ::std::string_view>{                       \
-        PAL_SCHEMA_STR(PAL_SCHEMA_TUPLE_NAME(t)),                              \
-        PAL_SCHEMA_TUPLE_DESC(t)},
+#define PAL_SCHEMA_ENUM_EMIT_PAIR(t)                   \
+  ::std::pair<::std::string_view, ::std::string_view>{ \
+      PAL_SCHEMA_STR(PAL_SCHEMA_TUPLE_NAME(t)), PAL_SCHEMA_TUPLE_DESC(t)},
 
-#define PALACE_SCHEMA_ENUM(EnumName, ...)                                      \
-    enum class EnumName {                                                      \
-        PAL_SCHEMA_FOR_EACH(PAL_SCHEMA_ENUM_EMIT_NAME, __VA_ARGS__)            \
-    };                                                                         \
-    template <>                                                                \
-    struct ::palace::schema::utils::enum_descriptions<EnumName> {              \
-        static constexpr auto value = ::std::array{                            \
-            PAL_SCHEMA_FOR_EACH(PAL_SCHEMA_ENUM_EMIT_PAIR, __VA_ARGS__)        \
-        };                                                                     \
-    }
+#define PALACE_SCHEMA_ENUM(EnumName, ...)                                          \
+  enum class EnumName                                                              \
+  {                                                                                \
+    PAL_SCHEMA_FOR_EACH(PAL_SCHEMA_ENUM_EMIT_NAME, __VA_ARGS__)                    \
+  };                                                                               \
+  template <>                                                                      \
+  struct ::palace::schema::utils::enum_descriptions<EnumName>                      \
+  {                                                                                \
+    static constexpr auto value =                                                  \
+        ::std::array{PAL_SCHEMA_FOR_EACH(PAL_SCHEMA_ENUM_EMIT_PAIR, __VA_ARGS__)}; \
+  }
 
 #endif  // PALACE_SCHEMA_UTILS_ANNOTATIONS_HPP

@@ -12,33 +12,38 @@
 
 #include <rfl.hpp>
 
-#include "schema/utils/annotations.hpp"
 #include "common.hpp"
+#include "schema/utils/annotations.hpp"
 
-namespace palace::schema {
+namespace palace::schema
+{
 
-struct OutputFormatsData {
-    PALACE_SCHEMA_DESC(Paraview,
-             "Set to `true` to output fields in [ParaView](https://www.paraview.org/) format.",
-             bool) = true;
+struct OutputFormatsData
+{
+  PALACE_SCHEMA_DESC(
+      Paraview,
+      "Set to `true` to output fields in [ParaView](https://www.paraview.org/) format.",
+      bool) = true;
 
-    PALACE_SCHEMA_DESC(GridFunction,
-             "Set to `true` to output fields in MFEM grid function format for "
-             "visualization with [GLVis](https://glvis.org/).",
-             bool) = false;
+  PALACE_SCHEMA_DESC(GridFunction,
+                     "Set to `true` to output fields in MFEM grid function format for "
+                     "visualization with [GLVis](https://glvis.org/).",
+                     bool) = false;
 };
 
-struct ProblemData {
-    PALACE_SCHEMA_DESC(Type, "Controls the simulation type.", ProblemType) = ProblemType::Driven;
+struct ProblemData
+{
+  PALACE_SCHEMA_DESC(Type, "Controls the simulation type.",
+                     ProblemType) = ProblemType::Driven;
 
-    PALACE_SCHEMA_DESC(Verbose, "Controls the level of log file printing.",
-             palace::schema::utils::Min<int, 0>) = 1;
+  PALACE_SCHEMA_DESC(Verbose, "Controls the level of log file printing.",
+                     palace::schema::utils::Min<int, 0>) = 1;
 
-    PALACE_SCHEMA_DESC(Output, "Directory path for saving postprocessing outputs.",
-             std::string) = "";
+  PALACE_SCHEMA_DESC(Output, "Directory path for saving postprocessing outputs.",
+                     std::string) = "";
 
-    PALACE_SCHEMA_DESC(OutputFormats, "Configures the field output formats.",
-             OutputFormatsData) = {};
+  PALACE_SCHEMA_DESC(OutputFormats, "Configures the field output formats.",
+                     OutputFormatsData) = {};
 };
 
 }  // namespace palace::schema

@@ -13,11 +13,12 @@
 #include <rfl/Generic.hpp>
 #include <rfl/json.hpp>
 
-#include "schema/utils/generator.hpp"
 #include "schema/types/config.hpp"
+#include "schema/utils/generator.hpp"
 #include "schema/version.hpp"
 
-namespace {
+namespace
+{
 
 // Root-level cross-field rule: when `Problem.Type` picks a specific
 // simulation mode, the matching `Solver.<Mode>` sub-block is required. This
@@ -25,7 +26,7 @@ namespace {
 // alone; the fragment is copied verbatim from the pre-rewrite
 // `scripts/schema/config-schema.json` so runtime validators (including
 // Julia's `JSONSchema.jl`) enforce the same contract as Palace's drivers.
-constexpr const char* kRootConditional = R"([
+constexpr const char *kRootConditional = R"([
     {
       "if": {
         "properties": {
@@ -76,33 +77,36 @@ constexpr const char* kRootConditional = R"([
 // Parse the conditional-block JSON array and splice it into the root
 // schema's `allOf` key. Any pre-existing `allOf` on the root is replaced —
 // reflect-cpp does not emit one, and this is the single intended producer.
-std::string inject_root_allof(std::string schema_json) {
-    auto root_r = rfl::json::read<rfl::Generic>(schema_json);
-    if (!root_r) {
-        return schema_json;
-    }
-    auto& root_var = root_r->value();
-    if (!std::holds_alternative<rfl::Generic::Object>(root_var)) {
-        return schema_json;
-    }
-    auto& root_obj = std::get<rfl::Generic::Object>(root_var);
+std::string inject_root_allof(std::string schema_json)
+{
+  auto root_r = rfl::json::read<rfl::Generic>(schema_json);
+  if (!root_r)
+  {
+    return schema_json;
+  }
+  auto &root_var = root_r->value();
+  if (!std::holds_alternative<rfl::Generic::Object>(root_var))
+  {
+    return schema_json;
+  }
+  auto &root_obj = std::get<rfl::Generic::Object>(root_var);
 
-    auto cond_r = rfl::json::read<rfl::Generic>(kRootConditional);
-    if (!cond_r) {
-        return schema_json;
-    }
-    root_obj["allOf"] = std::move(*cond_r);
-    return rfl::json::write(*root_r, rfl::json::pretty);
+  auto cond_r = rfl::json::read<rfl::Generic>(kRootConditional);
+  if (!cond_r)
+  {
+    return schema_json;
+  }
+  root_obj["allOf"] = std::move(*cond_r);
+  return rfl::json::write(*root_r, rfl::json::pretty);
 }
 
 }  // namespace
 
 int main()
 {
-    auto s = palace::schema::utils::schema<palace::schema::PalaceConfig>(
-        {.emit_defaults = true,
-         .version = std::string(palace::schema::schema_version)});
-    s = inject_root_allof(std::move(s));
-    std::cout << s;
-    return 0;
+  auto s = palace::schema::utils::schema<palace::schema::PalaceConfig>(
+      {.emit_defaults = true, .version = std::string(palace::schema::schema_version)});
+  s = inject_root_allof(std::move(s));
+  std::cout << s;
+  return 0;
 }

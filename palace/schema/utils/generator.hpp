@@ -8,7 +8,8 @@
 
 #include "annotations.hpp"
 
-namespace palace::schema::utils {
+namespace palace::schema::utils
+{
 
 // Emit a JSON Schema (draft 2020-12) string for `T`.
 //

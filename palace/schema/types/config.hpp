@@ -14,29 +14,29 @@
 
 #include <rfl.hpp>
 
-#include "schema/utils/annotations.hpp"
 #include "boundaries.hpp"
 #include "domains.hpp"
 #include "model.hpp"
 #include "problem.hpp"
+#include "schema/utils/annotations.hpp"
 #include "solver.hpp"
 
-namespace palace::schema {
+namespace palace::schema
+{
 
-struct PalaceConfig {
-    PALACE_SCHEMA_DESC(Problem,
-             "Top-level configuration for the simulation type and output.",
-             ProblemData) = {};
+struct PalaceConfig
+{
+  PALACE_SCHEMA_DESC(Problem, "Top-level configuration for the simulation type and output.",
+                     ProblemData) = {};
 
-    PALACE_SCHEMA_DESC(Model, "Mesh and model configuration.", ModelData) = {};
+  PALACE_SCHEMA_DESC(Model, "Mesh and model configuration.", ModelData) = {};
 
-    PALACE_SCHEMA_DESC(Domains, "Material and domain configuration.", DomainData) = {};
+  PALACE_SCHEMA_DESC(Domains, "Material and domain configuration.", DomainData) = {};
 
-    PALACE_SCHEMA_DESC(Boundaries, "Boundary condition configuration.",
-             BoundaryData) = {};
+  PALACE_SCHEMA_DESC(Boundaries, "Boundary condition configuration.", BoundaryData) = {};
 
-    PALACE_SCHEMA_DESC(Solver, "Solver configuration for all simulation types.",
-             SolverData) = {};
+  PALACE_SCHEMA_DESC(Solver, "Solver configuration for all simulation types.",
+                     SolverData) = {};
 };
 
 }  // namespace palace::schema
