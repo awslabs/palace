@@ -49,15 +49,25 @@ inject_defaults(std::string schema_json,
 // it can run in schemas emitted without defaults too.
 std::string inject_additional_properties_false(std::string schema_json);
 
-// Defined in src/schema.cpp. Walks `$defs` and, for each entry whose name
-// appears in `prune_map`, removes the listed field names from the entry's
-// `required` array. This implements the "required ⟺ not optional AND no
-// meaningful default" rule — fields with a C++ default that overrides the
-// field type's zero-init baseline get dropped from `required`, matching the
-// loader's silent-default behavior for those fields.
+// Defined in src/schema.cpp. Collapses multi-constraint `allOf` blocks
+// produced by chained rfl::Validator<T, C1, C2, ...> emissions into a
+// single flat body. E.g. `Closed<int, 1, 2>` originally serialises as
+// `{allOf: [{type:"integer", minimum:1}, {type:"integer", maximum:2}]}`
+// and becomes `{type:"integer", minimum:1, maximum:2}`. Arms that mix
+// non-constraint keywords or disagree on `type` are left untouched — the
+// pass only flattens the specific shape rfl's Validator emitter
+// produces.
+std::string flatten_validator_allof(std::string schema_json);
+
+// Defined in src/schema.cpp. Walks `$defs` and replaces each entry's
+// `required` array with the explicit list supplied in `required_map`. An
+// entry absent from the map (no fields marked required) gets `required`
+// dropped entirely. This implements the "required ⟺ explicitly marked
+// via PALACE_SCHEMA_DESC_REQUIRED or PALACE_SCHEMA_TAG" rule, inverting
+// reflect-cpp's default-everything-required behaviour.
 std::string
-prune_required(std::string schema_json,
-               const std::unordered_map<std::string, std::vector<std::string>> &prune_map);
+set_required(std::string schema_json,
+             const std::unordered_map<std::string, std::vector<std::string>> &required_map);
 
 // Defined in src/schema.cpp. Walks a palace::schema::utils-emitted schema alongside an
 // input JSON document, returning dotted paths of every key listed in a `required` array
@@ -129,6 +139,20 @@ struct FieldFlag
 std::string inject_custom_keywords(std::string schema_json,
                                    const std::vector<FieldFlag> &flags);
 
+// Defined in src/schema.cpp. For each entry, splices
+// `{"oneOf": [{"required": arms[0]}, {"required": arms[1]}, ...]}` into
+// `$defs[struct_name]`. Used to express "this struct must satisfy exactly
+// one of these required-field alternatives" (e.g. LumpedPort: either
+// `Attributes` or `Elements`). Coexists with the plain `required` list
+// — the `oneOf` is added alongside, not replacing.
+struct OneOfRequired
+{
+  std::string struct_name;
+  std::vector<std::vector<std::string>> arms;
+};
+std::string inject_oneof_required(std::string schema_json,
+                                  const std::vector<OneOfRequired> &entries);
+
 // Compile-time dispatch helper: pattern-matches a `rfl::TaggedUnion<tag,
 // Arms...>` via a pointer parameter so we can fold over the arm pack and pull
 // each arm's discriminator literal out of `rfl::internal::tag_t`. Only arms
@@ -195,7 +219,7 @@ std::string inject_tag_descriptions_for(std::string s)
 // Strip annotation wrappers recursively: peel Description/Rename/Validator/
 // DefaultVal layers until the underlying type surfaces. The wrappers nest in
 // arbitrary orders (Validator inside Description is the common case, see
-// ProblemData::Verbose), so the recursion has to continue until the type
+// Problem::Verbose), so the recursion has to continue until the type
 // stops matching any wrapper specialization.
 template <class T>
 struct strip_ann
@@ -205,6 +229,28 @@ struct strip_ann
 
 template <rfl::internal::StringLiteral name, class T>
 struct strip_ann<rfl::Description<name, T>>
+{
+  using type = typename strip_ann<T>::type;
+};
+
+// Peel Palace-specific Description subtypes the same way — the walker
+// keeps the outer type for trait-based `is_desc_required_v` / `is_desc_advanced_v`
+// detection, but everywhere `Clean` is computed we want the underlying
+// value type.
+template <rfl::internal::StringLiteral name, class T>
+struct strip_ann<DescRequired<name, T>>
+{
+  using type = typename strip_ann<T>::type;
+};
+
+template <rfl::internal::StringLiteral name, class T>
+struct strip_ann<DescAdvanced<name, T>>
+{
+  using type = typename strip_ann<T>::type;
+};
+
+template <rfl::internal::StringLiteral name, class T>
+struct strip_ann<DescDeprecated<name, T>>
 {
   using type = typename strip_ann<T>::type;
 };
@@ -278,29 +324,18 @@ struct is_rfl_literal<rfl::Literal<names...>> : std::true_type
 {
 };
 
-// "Scalar" for the prune rule: a leaf type whose JSON representation is a
-// single primitive token — arithmetic, enum, string, or rfl::Literal (a
-// one-of-these-strings tag). Scalars are the only kind of field that stays
-// in `required` under the prune rule; aggregates and containers are always
-// pruneable because a parent-level `= {}` defers to the child's own
-// defaults, which is semantically optional.
-template <class T>
-inline constexpr bool is_scalar_v =
-    std::is_arithmetic_v<T> || std::is_enum_v<T> || std::is_same_v<T, std::string> ||
-    is_rfl_literal<T>::value;
-
 // Accumulator for the type-graph walk. Plain struct so the recursion can pass
 // it by reference without per-call template-parameter noise.
 //
-// `prune_map` records the names of fields whose C++ default differs from the
-// field type's zero-init baseline. Those fields have a "meaningful" default
-// and get dropped from the schema's `required` list (and become defaultable
-// in the loader). Keyed by `$defs` name so the runtime pass can look up per
-// aggregate type.
+// `required_map` records the names of fields explicitly marked required
+// (via `PALACE_SCHEMA_DESC_REQUIRED` or `PALACE_SCHEMA_TAG`). Keyed by
+// `$defs` name; the runtime `set_required` pass uses this to REPLACE
+// reflect-cpp's native required array — anything not listed becomes
+// optional.
 struct DefaultsAccum
 {
   std::unordered_map<std::string, std::string> entries;
-  std::unordered_map<std::string, std::vector<std::string>> prune_map;
+  std::unordered_map<std::string, std::vector<std::string>> required_map;
   // Per-enum-value descriptions and per-field custom-keyword flags are
   // harvested while walking the same type graph so consumers can run a
   // single pass. `enum_descs` is flattened into one entry per
@@ -308,6 +343,9 @@ struct DefaultsAccum
   // field.
   std::vector<EnumDescEntry> enum_descs;
   std::vector<FieldFlag> field_flags;
+  // Cross-field `oneOf` required alternatives — one entry per struct
+  // type that specializes `schema_oneof_required<T>`.
+  std::vector<OneOfRequired> oneof_required;
   std::unordered_set<std::string> seen;
 };
 
@@ -336,86 +374,27 @@ void walk_struct_fields(DefaultsAccum &acc)
   walk_tuple<Values>::apply(acc);
 }
 
-// Per-field prune detector. For each `rfl::Field<name, Type>` in U's named
-// tuple, strip annotations to the clean value type, then compare the actual
-// value inside U{} (as serialised via rfl::json::write(U{})) against the
-// baseline `rfl::json::write(Clean{})`. Mismatch means "user overrode the
-// type's zero-init default" → the field is optional with that default.
-//
-// std::optional fields are skipped (they're already optional structurally —
-// reflect-cpp emits them as anyOf[T, null] and never lists them in required).
-// Non-reachable or unserialisable fields are left alone (the prune list stays
-// conservative — fewer prunes = more-required schema, which is the safer
-// direction).
-template <class T, class FieldsTup>
-struct prune_fields_walker;
-
-template <class T, class... Fs>
-struct prune_fields_walker<T, rfl::Tuple<Fs...>>
-{
-  static void apply(const rfl::Generic::Object &u_obj, std::vector<std::string> &out)
-  {
-    (check_one<Fs>(u_obj, out), ...);
-  }
-
-  template <class F>
-  static void check_one(const rfl::Generic::Object &u_obj, std::vector<std::string> &out)
-  {
-    check_one_impl(u_obj, out, static_cast<F *>(nullptr));
-  }
-
-  template <rfl::internal::StringLiteral name, class Type>
-  static void check_one_impl(const rfl::Generic::Object &u_obj,
-                             std::vector<std::string> &out, rfl::Field<name, Type> *)
-  {
-    using Clean = strip_ann_t<std::remove_cvref_t<Type>>;
-    if constexpr (is_optional<Clean>::value)
-    {
-      return;  // optional fields are never in `required` to begin with
-    }
-    else if constexpr (!is_scalar_v<Clean>)
-    {
-      // Aggregates / vectors / arrays / tagged unions: always
-      // pruneable. A parent writing `Field = {}` (or any other form)
-      // defers to the child's own defaults, which is the idiomatic C++
-      // way to say "this sub-section is optional, use its defaults if
-      // absent". Schema-side this translates to an entry with a
-      // documented `"default"` and no seat in `required`.
-      out.push_back(std::string{std::string_view{name.str()}});
-    }
-    else
-    {
-      // Scalars: stay required iff the parent didn't override the
-      // type's zero-init (e.g. `int Index;` or `int Index = 0;` stays
-      // required; `int Verbose = 1;` gets pruned with default 1).
-      std::string field_name{std::string_view{name.str()}};
-      if (u_obj.count(field_name) == 0)
-        return;
-      auto actual_str = rfl::json::write(u_obj.at(field_name));
-      auto baseline_str = rfl::json::write(Clean{});
-      if (actual_str != baseline_str)
-      {
-        out.push_back(std::move(field_name));
-      }
-    }
-  }
-};
-
-// Per-field walker that collects two kinds of annotation in one pass:
+// Per-field walker that collects three kinds of annotation in one pass:
 //
 //   * Enum-description entries: for every `rfl::Field<name, Type>` whose
 //     cleaned value type is an enum E with non-empty
 //     `enum_descriptions<E>`, emit an EnumDescEntry keyed on U's `$defs`
-//     name and the field name. Enums without a specialization stay flat.
+//     name and the field name.
 //
 //   * Custom-keyword flags: for every field declared via
 //     `PALACE_SCHEMA_DESC_ADVANCED` / `PALACE_SCHEMA_DESC_DEPRECATED`, the
-//     macro injects a hidden-friend overload of `palace_schema_field_flag`
-//     keyed on `FieldFlagTag<"FieldName">`. We discover it via ADL by
-//     passing a `const U*` as the second argument (hidden friends are
-//     found through their enclosing class's associated namespace/type
-//     set). The `requires` check falls through silently for fields
-//     without a flag.
+//     field's declared type is `DescAdvanced<>` / `DescDeprecated<>` —
+//     detected via `is_desc_advanced_v` / `is_desc_deprecated_v` traits.
+//
+//   * Required-field marks: a field declared via
+//     `PALACE_SCHEMA_DESC_REQUIRED` has declared type `DescRequired<>`,
+//     detected via `is_desc_required_v`. Tagged-union discriminators
+//     declared via `PALACE_SCHEMA_TAG` have type `rfl::Literal<Value>`,
+//     and the macro emits a hidden-friend `palace_schema_field_required`
+//     keyed on `const rfl::Literal<Value>*` — probed via ADL using the
+//     cleaned field type. The Literal type is unique per arm (different
+//     `Value`), so multiple arms' friends never collide at namespace
+//     scope.
 template <class U, class FieldsTup>
 struct field_annotations_walker;
 
@@ -423,29 +402,31 @@ template <class U, class... Fs>
 struct field_annotations_walker<U, rfl::Tuple<Fs...>>
 {
   static void apply(const std::string &struct_name, std::vector<EnumDescEntry> &enum_out,
-                    std::vector<FieldFlag> &flag_out)
+                    std::vector<FieldFlag> &flag_out,
+                    std::vector<std::string> &required_out)
   {
-    (check_one<Fs>(struct_name, enum_out, flag_out), ...);
+    (check_one<Fs>(struct_name, enum_out, flag_out, required_out), ...);
   }
 
   template <class F>
-  static void check_one(const std::string &struct_name,
-                        std::vector<EnumDescEntry> &enum_out,
-                        std::vector<FieldFlag> &flag_out)
+  static void
+  check_one(const std::string &struct_name, std::vector<EnumDescEntry> &enum_out,
+            std::vector<FieldFlag> &flag_out, std::vector<std::string> &required_out)
   {
-    check_one_impl(struct_name, enum_out, flag_out, static_cast<F *>(nullptr));
+    check_one_impl(struct_name, enum_out, flag_out, required_out,
+                   static_cast<F *>(nullptr));
   }
 
   template <rfl::internal::StringLiteral name, class Type>
-  static void check_one_impl(const std::string &struct_name,
-                             std::vector<EnumDescEntry> &enum_out,
-                             std::vector<FieldFlag> &flag_out, rfl::Field<name, Type> *)
+  static void
+  check_one_impl(const std::string &struct_name, std::vector<EnumDescEntry> &enum_out,
+                 std::vector<FieldFlag> &flag_out, std::vector<std::string> &required_out,
+                 rfl::Field<name, Type> *)
   {
-    using Clean = strip_ann_t<std::remove_cvref_t<Type>>;
+    using Raw = std::remove_cvref_t<Type>;
+    using Clean = strip_ann_t<Raw>;
     // The enum-description rewrite handles direct enum properties,
-    // which covers every PR-716 per-value-description site. Enums
-    // inside optionals, vectors, or tagged unions fall back to their
-    // flat shape.
+    // which covers every PR-716 per-value-description site.
     if constexpr (std::is_enum_v<Clean>)
     {
       if constexpr (enum_descriptions<Clean>::value.size() != 0)
@@ -460,46 +441,34 @@ struct field_annotations_walker<U, rfl::Tuple<Fs...>>
         enum_out.push_back(std::move(entry));
       }
     }
-    // ADL-probe for a PALACE_SCHEMA_DESC_ADVANCED /
-    // PALACE_SCHEMA_DESC_DEPRECATED hidden friend on U. The friend's
-    // first parameter type `FieldFlagTag<name>` discriminates per
-    // field; the second `const auto*` accepts the `const U*` we pass
-    // so U's hidden friends are looked up via ADL.
-    if constexpr (requires {
-                    palace_schema_field_flag(FieldFlagTag<name>{},
-                                             static_cast<const U *>(nullptr));
-                  })
+    // Advanced / deprecated flags: declared type IS the wrapper subclass,
+    // so detection is a pure type-trait check on the un-stripped type.
+    if constexpr (is_desc_advanced<Raw>::value)
     {
-      constexpr auto flag_sv =
-          palace_schema_field_flag(FieldFlagTag<name>{}, static_cast<const U *>(nullptr));
       FieldFlag f;
       f.struct_name = struct_name;
       f.field_name.assign(std::string_view{name.str()});
-      f.flag.assign(flag_sv);
+      f.flag = "advanced";
       flag_out.push_back(std::move(f));
+    }
+    if constexpr (is_desc_deprecated<Raw>::value)
+    {
+      FieldFlag f;
+      f.struct_name = struct_name;
+      f.field_name.assign(std::string_view{name.str()});
+      f.flag = "deprecated";
+      flag_out.push_back(std::move(f));
+    }
+    // Required: either the field's declared type is DescRequired<> (via
+    // PALACE_SCHEMA_DESC_REQUIRED), or it is an `rfl::Literal<...>` (a
+    // tagged-union discriminator declared via PALACE_SCHEMA_TAG — the
+    // discriminator is always required for the union to parse).
+    if constexpr (is_desc_required<Raw>::value || is_rfl_literal<Clean>::value)
+    {
+      required_out.emplace_back(std::string_view{name.str()});
     }
   }
 };
-
-// Compute the prune list for one aggregate U. Serialises U{} once, then
-// walks its compile-time field list against the parsed object.
-template <class U>
-std::vector<std::string> collect_prune_list_for()
-{
-  auto u_json = rfl::json::write(U{});
-  auto u_parsed = rfl::json::read<rfl::Generic>(u_json);
-  if (!u_parsed)
-    return {};
-  if (!std::holds_alternative<rfl::Generic::Object>(u_parsed->value()))
-  {
-    return {};
-  }
-  const auto &u_obj = std::get<rfl::Generic::Object>(u_parsed->value());
-  std::vector<std::string> out;
-  using Fields = typename rfl::named_tuple_t<U>::Fields;
-  prune_fields_walker<U, Fields>::apply(u_obj, out);
-  return out;
-}
 
 // Visit one type-graph node. Dispatches to the right recursion (containers,
 // optionals, TaggedUnion arms, or struct fields) and records a `$defs` entry
@@ -548,13 +517,28 @@ void visit_type(DefaultsAccum &acc)
       return;
     acc.seen.insert(name);
     acc.entries.emplace(name, rfl::json::write(U{}));
-    auto prune_list = collect_prune_list_for<U>();
-    if (!prune_list.empty())
-    {
-      acc.prune_map.emplace(name, std::move(prune_list));
-    }
     using Fields = typename rfl::named_tuple_t<U>::Fields;
-    field_annotations_walker<U, Fields>::apply(name, acc.enum_descs, acc.field_flags);
+    std::vector<std::string> required;
+    field_annotations_walker<U, Fields>::apply(name, acc.enum_descs, acc.field_flags,
+                                               required);
+    // Always record an entry (even if empty) so the `set_required` pass
+    // knows to replace reflect-cpp's native required array — the empty
+    // list signals "nothing required", which collapses to an entry with
+    // no `required` key.
+    acc.required_map.emplace(name, std::move(required));
+    // Pick up a `schema_oneof_required<U>` specialization if the user
+    // provided one. The primary template returns an empty vector and
+    // produces no entry.
+    {
+      auto arms = schema_oneof_required<U>::value();
+      if (!arms.empty())
+      {
+        OneOfRequired one;
+        one.struct_name = name;
+        one.arms = std::move(arms);
+        acc.oneof_required.push_back(std::move(one));
+      }
+    }
     walk_struct_fields<U>(acc);
   }
   // Anything else (function pointers, unsupported types) silently falls
@@ -577,31 +561,29 @@ namespace palace::schema::utils
 template <class T>
 std::string schema(SchemaOptions opts)
 {
-  // `required` rule: a field is required iff ALL of
-  //   (1) its type is not `std::optional<T>`,
-  //   (2) its clean type is a scalar primitive (arithmetic / enum /
-  //       std::string / rfl::Literal), and
-  //   (3) `T{}.field` equals `FieldType{}` (the field did not override its
-  //       type's zero-init).
-  // Anything that's not a scalar — nested aggregates, vectors, arrays,
-  // tagged unions — is always pruneable: a parent-level `Field = {}`
-  // semantically defers to the child's own defaults, which matches "this
-  // sub-section is optional" in the JSON-config sense. The child type is
-  // responsible for marking its own scalar fields as required.
-  // reflect-cpp natively emits every non-optional field in `required`;
-  // the `prune_required` pass below drops everything that shouldn't be
-  // there per the rule. This keeps the schema in sync with the loader.
+  // `required` rule: a field is required iff it is explicitly marked via
+  // `PALACE_SCHEMA_DESC_REQUIRED` (or, for tagged-union discriminators,
+  // `PALACE_SCHEMA_TAG`). Anything declared with plain `PALACE_SCHEMA_DESC`
+  // — including non-optional scalars with in-class initializers — is
+  // optional. This inverts reflect-cpp's default (every non-`std::optional`
+  // field is required) so authors don't have to fight a heuristic that
+  // can't distinguish `bool x = false;` from `bool x;`.
   auto s = rfl::json::to_schema<T>(rfl::json::pretty);
+  // Flatten Validator-induced `allOf` blocks first so every later pass
+  // — defaults, required, enum descriptions, custom keywords — sees
+  // property bodies in their final shape. Keeps the post-emit pipeline
+  // uniform instead of having each pass re-derive the collapse rule.
+  s = detail::flatten_validator_allof(std::move(s));
   // One type-graph walk produces the inputs for every per-$defs-entry
-  // pass: default JSON snapshots, prune lists, enum descriptions, and
+  // pass: default JSON snapshots, required lists, enum descriptions, and
   // custom-keyword flags. Walk unconditionally — `emit_defaults=false`
   // still needs the enum + flag passes to match PR-716 schema shape.
   auto accum = detail::collect_defaults_accum<T>();
   if (opts.emit_defaults)
   {
     s = detail::inject_defaults(std::move(s), accum.entries);
-    s = detail::prune_required(std::move(s), accum.prune_map);
   }
+  s = detail::set_required(std::move(s), accum.required_map);
   s = detail::inject_additional_properties_false(std::move(s));
   if (!accum.enum_descs.empty())
   {
@@ -610,6 +592,10 @@ std::string schema(SchemaOptions opts)
   if (!accum.field_flags.empty())
   {
     s = detail::inject_custom_keywords(std::move(s), accum.field_flags);
+  }
+  if (!accum.oneof_required.empty())
+  {
+    s = detail::inject_oneof_required(std::move(s), accum.oneof_required);
   }
   if constexpr (is_tagged_union<T>::value)
   {

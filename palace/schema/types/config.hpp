@@ -27,16 +27,15 @@ namespace palace::schema
 struct PalaceConfig
 {
   PALACE_SCHEMA_DESC(Problem, "Top-level configuration for the simulation type and output.",
-                     ProblemData) = {};
+                     Problem) = {};
 
-  PALACE_SCHEMA_DESC(Model, "Mesh and model configuration.", ModelData) = {};
+  PALACE_SCHEMA_DESC(Model, "Mesh and model configuration.", Model) = {};
 
-  PALACE_SCHEMA_DESC(Domains, "Material and domain configuration.", DomainData) = {};
+  PALACE_SCHEMA_DESC(Domains, "Material and domain configuration.", Domain) = {};
 
-  PALACE_SCHEMA_DESC(Boundaries, "Boundary condition configuration.", BoundaryData) = {};
+  PALACE_SCHEMA_DESC(Boundaries, "Boundary condition configuration.", Boundary) = {};
 
-  PALACE_SCHEMA_DESC(Solver, "Solver configuration for all simulation types.",
-                     SolverData) = {};
+  PALACE_SCHEMA_DESC(Solver, "Solver configuration for all simulation types.", Solver) = {};
 };
 
 }  // namespace palace::schema

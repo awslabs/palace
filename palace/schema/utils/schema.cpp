@@ -62,6 +62,14 @@ void inject_properties(rfl::Generic::Object &schema_entry,
     }
     auto &prop_obj = std::get<rfl::Generic::Object>(prop_generic.value());
 
+    // Properties carrying a `$ref` inherit their default from the
+    // referenced `$defs` entry; stamping a `"default"` here would
+    // duplicate that information and bloat the schema. Skip them.
+    if (prop_obj.count("$ref") != 0)
+    {
+      continue;
+    }
+
     if (defaults_map.count(name) == 0)
     {
       prop_obj["default"] = rfl::Generic(std::nullopt);
@@ -103,7 +111,145 @@ void inject_additional_properties_false_walk(rfl::Generic &node)
   }
 }
 
+// Collapse a multi-constraint `allOf` block produced by rfl's schema
+// emitter into a single flat body. Each rfl::Validator contributes its
+// own `{type, <keyword>}` object; a Closed<int, 1, 2> (two validators)
+// comes out as `allOf: [{type:"integer", minimum:1}, {type:"integer",
+// maximum:2}]`. Callers prefer `{type:"integer", minimum:1, maximum:2}`
+// — same meaning, simpler schema.
+//
+// Preconditions for merging: every arm of `allOf` must be an object,
+// contain only keys from the numeric-constraint whitelist, and agree on
+// `type`. When any arm violates those, the `allOf` is left as-is (the
+// emitter uses `allOf` for legitimately compound schemas too, and we
+// only want to flatten the Validator-induced shape).
+bool is_numeric_constraint_key(std::string_view k)
+{
+  return k == "type" || k == "minimum" || k == "maximum" || k == "exclusiveMinimum" ||
+         k == "exclusiveMaximum" || k == "multipleOf";
+}
+
+bool arm_is_mergeable(const rfl::Generic &arm,
+                      const std::optional<std::string> &expected_type)
+{
+  if (!std::holds_alternative<rfl::Generic::Object>(arm.value()))
+    return false;
+  const auto &obj = std::get<rfl::Generic::Object>(arm.value());
+  for (const auto &entry : obj)
+  {
+    if (!is_numeric_constraint_key(entry.first))
+      return false;
+  }
+  if (expected_type && obj.count("type") != 0)
+  {
+    const auto &t = obj.at("type").value();
+    if (!std::holds_alternative<std::string>(t))
+      return false;
+    if (std::get<std::string>(t) != *expected_type)
+      return false;
+  }
+  return true;
+}
+
+void flatten_validator_allof_walk(rfl::Generic &node)
+{
+  if (std::holds_alternative<rfl::Generic::Object>(node.value()))
+  {
+    auto &obj = std::get<rfl::Generic::Object>(node.value());
+    if (obj.count("allOf") != 0 &&
+        std::holds_alternative<rfl::Generic::Array>(obj.at("allOf").value()))
+    {
+      auto &arr = std::get<rfl::Generic::Array>(obj.at("allOf").value());
+      // Determine the expected `type` across arms — use the first arm's
+      // type if any arm declares one.
+      std::optional<std::string> expected_type;
+      for (const auto &arm : arr)
+      {
+        if (!std::holds_alternative<rfl::Generic::Object>(arm.value()))
+        {
+          break;
+        }
+        const auto &a = std::get<rfl::Generic::Object>(arm.value());
+        if (a.count("type") != 0 &&
+            std::holds_alternative<std::string>(a.at("type").value()))
+        {
+          expected_type = std::get<std::string>(a.at("type").value());
+          break;
+        }
+      }
+      bool all_mergeable = !arr.empty();
+      for (const auto &arm : arr)
+      {
+        if (!arm_is_mergeable(arm, expected_type))
+        {
+          all_mergeable = false;
+          break;
+        }
+      }
+      if (all_mergeable)
+      {
+        // Collect the union of constraint keys. `allOf` arms are
+        // guaranteed by rfl's emitter to touch disjoint constraint
+        // keys, so naive overwrite is safe; but we defensively skip
+        // duplicates to preserve determinism if that ever changes.
+        rfl::Generic::Object merged;
+        for (auto &arm : arr)
+        {
+          auto &a = std::get<rfl::Generic::Object>(arm.value());
+          for (auto &kv : a)
+          {
+            if (merged.count(kv.first) != 0)
+              continue;
+            merged.insert(std::move(kv.first), std::move(kv.second));
+          }
+        }
+        // Splice merged keys into the parent object in place of
+        // `allOf`. Preserve surrounding keys (description, default,
+        // x-palace-*) by iterating the parent and rebuilding with
+        // constraints slotted where `allOf` sat.
+        rfl::Generic::Object rebuilt;
+        for (auto &entry : obj)
+        {
+          if (entry.first == "allOf")
+          {
+            for (auto &mkv : merged)
+            {
+              if (rebuilt.count(mkv.first) != 0)
+                continue;
+              rebuilt.insert(std::move(mkv.first), std::move(mkv.second));
+            }
+            continue;
+          }
+          rebuilt.insert(std::move(entry.first), std::move(entry.second));
+        }
+        obj = std::move(rebuilt);
+      }
+    }
+    for (auto &[_, v] : obj)
+    {
+      flatten_validator_allof_walk(v);
+    }
+  }
+  else if (std::holds_alternative<rfl::Generic::Array>(node.value()))
+  {
+    auto &arr = std::get<rfl::Generic::Array>(node.value());
+    for (auto &v : arr)
+    {
+      flatten_validator_allof_walk(v);
+    }
+  }
+}
+
 }  // namespace
+
+std::string flatten_validator_allof(std::string schema_json)
+{
+  auto schema_gen_r = rfl::json::read<rfl::Generic>(schema_json);
+  if (!schema_gen_r)
+    return schema_json;
+  flatten_validator_allof_walk(*schema_gen_r);
+  return rfl::json::write(*schema_gen_r, rfl::json::pretty);
+}
 
 std::string
 inject_defaults(std::string schema_json,
@@ -257,16 +403,16 @@ inject_tag_descriptions(std::string schema_json, std::string tag_name,
   return rfl::json::write(*schema_gen_r, rfl::json::pretty);
 }
 
-// Prune the listed field names from each matching `$defs` entry's `required`
-// array. Implements the "required ⟺ not optional AND no meaningful C++
-// default" rule: fields whose `T{}.field` differs from `FieldType{}` (i.e.
-// the user supplied a non-zero-init default) get removed from `required` and
-// keep their `"default": ...` injection from the earlier pass.
+// Replace each matching `$defs` entry's `required` array with the explicit
+// list supplied in `required_map`. An entry whose list is empty drops the
+// `required` key entirely (rather than leaving `"required": []`, which is
+// noise). Entries absent from the map are left alone — this only happens
+// for `$defs` entries we couldn't reach via the compile-time walker.
 std::string
-prune_required(std::string schema_json,
-               const std::unordered_map<std::string, std::vector<std::string>> &prune_map)
+set_required(std::string schema_json,
+             const std::unordered_map<std::string, std::vector<std::string>> &required_map)
 {
-  if (prune_map.empty())
+  if (required_map.empty())
     return schema_json;
   auto schema_gen_r = rfl::json::read<rfl::Generic>(schema_json);
   if (!schema_gen_r)
@@ -290,37 +436,39 @@ prune_required(std::string schema_json,
 
   for (auto &[def_name, def_g] : defs)
   {
-    const auto it = prune_map.find(def_name);
-    if (it == prune_map.end() || it->second.empty())
+    const auto it = required_map.find(def_name);
+    if (it == required_map.end())
       continue;
     if (!std::holds_alternative<rfl::Generic::Object>(def_g.value()))
     {
       continue;
     }
     auto &def_obj = std::get<rfl::Generic::Object>(def_g.value());
-    if (def_obj.count("required") == 0)
-      continue;
-    auto &req_var = def_obj.at("required").value();
-    if (!std::holds_alternative<rfl::Generic::Array>(req_var))
-      continue;
-    auto &req_arr = std::get<rfl::Generic::Array>(req_var);
 
-    const auto &pruned = it->second;
-    rfl::Generic::Array filtered;
-    for (auto &item : req_arr)
+    if (it->second.empty())
     {
-      if (!std::holds_alternative<std::string>(item.value()))
+      // Drop the key entirely. rfl::Object has no erase; rebuild
+      // without the `required` slot.
+      rfl::Generic::Object filtered;
+      for (auto &entry : def_obj)
       {
-        filtered.emplace_back(std::move(item));
-        continue;
+        if (entry.first == "required")
+          continue;
+        filtered.insert(std::move(entry.first), std::move(entry.second));
       }
-      const auto &s = std::get<std::string>(item.value());
-      if (std::find(pruned.begin(), pruned.end(), s) == pruned.end())
-      {
-        filtered.emplace_back(std::move(item));
-      }
+      def_obj = std::move(filtered);
+      continue;
     }
-    req_arr = std::move(filtered);
+
+    rfl::Generic::Array arr;
+    for (const auto &n : it->second)
+    {
+      arr.emplace_back(rfl::Generic(n));
+    }
+    // operator[] overwrites the existing slot, preserving key order
+    // (and inserts if missing — happens when reflect-cpp emitted no
+    // required array for this entry, e.g. all fields were optional).
+    def_obj["required"] = rfl::Generic(std::move(arr));
   }
 
   return rfl::json::write(*schema_gen_r, rfl::json::pretty);
@@ -741,6 +889,61 @@ std::string inject_enum_descriptions(std::string schema_json,
       continue;
     auto &prop_obj = std::get<rfl::Generic::Object>(prop_var);
     rewrite_enum_body(prop_obj, entry.pairs);
+  }
+
+  return rfl::json::write(*schema_gen_r, rfl::json::pretty);
+}
+
+// Splice a `"oneOf": [{"required": [...]}, ...]` block into each listed
+// `$defs` entry. This coexists with the entry's ordinary `required`
+// array — the two apply independently: every item in `required` is
+// universally required, while `oneOf` demands exactly one arm be
+// satisfied. Typical use is "one of (Attributes | Elements)" on
+// LumpedPort / SurfaceCurrent where the struct body can be described
+// two ways, and PR 716's schema enforces the choice at validation time.
+std::string inject_oneof_required(std::string schema_json,
+                                  const std::vector<OneOfRequired> &entries)
+{
+  if (entries.empty())
+    return schema_json;
+  auto schema_gen_r = rfl::json::read<rfl::Generic>(schema_json);
+  if (!schema_gen_r)
+    return schema_json;
+
+  auto &schema_var = schema_gen_r->value();
+  if (!std::holds_alternative<rfl::Generic::Object>(schema_var))
+    return schema_json;
+  auto &root_obj = std::get<rfl::Generic::Object>(schema_var);
+
+  if (root_obj.count("$defs") == 0)
+    return schema_json;
+  auto &defs_var = root_obj.at("$defs").value();
+  if (!std::holds_alternative<rfl::Generic::Object>(defs_var))
+    return schema_json;
+  auto &defs = std::get<rfl::Generic::Object>(defs_var);
+
+  for (const auto &e : entries)
+  {
+    if (defs.count(e.struct_name) == 0)
+      continue;
+    auto &def_var = defs.at(e.struct_name).value();
+    if (!std::holds_alternative<rfl::Generic::Object>(def_var))
+      continue;
+    auto &def_obj = std::get<rfl::Generic::Object>(def_var);
+
+    rfl::Generic::Array one_of;
+    for (const auto &arm : e.arms)
+    {
+      rfl::Generic::Object arm_obj;
+      rfl::Generic::Array req_arr;
+      for (const auto &name : arm)
+      {
+        req_arr.emplace_back(rfl::Generic(name));
+      }
+      arm_obj["required"] = rfl::Generic(std::move(req_arr));
+      one_of.emplace_back(std::move(arm_obj));
+    }
+    def_obj["oneOf"] = rfl::Generic(std::move(one_of));
   }
 
   return rfl::json::write(*schema_gen_r, rfl::json::pretty);

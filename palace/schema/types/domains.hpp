@@ -4,8 +4,8 @@
 #ifndef PALACE_SCHEMA_TYPES_DOMAINS_HPP
 #define PALACE_SCHEMA_TYPES_DOMAINS_HPP
 
-// Mirrors palace::config::{DomainData, MaterialData, DomainEnergyData,
-// ProbeData, CurrentDipoleData, DomainPostData} (palace/utils/configfile.hpp).
+// Mirrors palace::config::{Domain, Material, DomainEnergy,
+// Probe, CurrentDipole, DomainPost} (palace/utils/configfile.hpp).
 //
 // Deviations from PR 716's domains.json for Phase 1:
 //
@@ -25,7 +25,6 @@
 //     element member, which is what we model here.
 
 #include <array>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -37,10 +36,11 @@
 namespace palace::schema
 {
 
-struct MaterialData
+struct Material
 {
-  PALACE_SCHEMA_DESC(Attributes, "Integer array of mesh domain this object applies to.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(Attributes,
+                              "Integer array of mesh domain this object applies to.",
+                              AttributeList) = {};
 
   PALACE_SCHEMA_DESC(Permeability,
                      "Relative permeability for this material. Scalar or vector of 3 "
@@ -78,78 +78,85 @@ struct MaterialData
                      double) = 0.0;
 };
 
-struct CurrentDipoleData
+struct CurrentDipole
 {
-  PALACE_SCHEMA_DESC(Index,
-                     "Index of this current dipole source, used in postprocessing output "
-                     "files.",
-                     palace::schema::utils::XMin<int, 0>) = 1;
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Index,
+      "Index of this current dipole source, used in postprocessing output "
+      "files.",
+      palace::schema::utils::XMin<int, 0>) = 1;
 
-  PALACE_SCHEMA_DESC(Moment, "Current dipole moment magnitude, A·m.", double) = 0.0;
+  PALACE_SCHEMA_DESC_REQUIRED(Moment, "Current dipole moment magnitude, A·m.",
+                              double) = 0.0;
 
-  PALACE_SCHEMA_DESC(Center,
-                     "Coordinates of the dipole center position `[x, y, z]`, in mesh "
-                     "length units.",
-                     std::array<double, 3>) = {
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Center,
+      "Coordinates of the dipole center position `[x, y, z]`, in mesh "
+      "length units.",
+      std::array<double, 3>) = {
     {0.0, 0.0, 0.0}
   };
 
-  PALACE_SCHEMA_DESC(Direction,
-                     "Direction of the Dirac current source specifying the dipole. "
-                     "Axis-aligned directions can be specified using keywords: `\"+X\"`, "
-                     "`\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. The direction can "
-                     "alternatively be specified as a normalized array of three values, "
-                     "for example `[0.0, 1.0, 0.0]`.",
-                     std::string) = "";
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Direction,
+      "Direction of the Dirac current source specifying the dipole. "
+      "Axis-aligned directions can be specified using keywords: `\"+X\"`, "
+      "`\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. The direction can "
+      "alternatively be specified as a normalized array of three values, "
+      "for example `[0.0, 1.0, 0.0]`.",
+      std::string) = "";
 };
 
-struct DomainEnergyData
+struct DomainEnergy
 {
-  PALACE_SCHEMA_DESC(Index,
-                     "Index of this energy postprocessing domain, used in output files.",
-                     palace::schema::utils::XMin<int, 0>) = 1;
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Index, "Index of this energy postprocessing domain, used in output files.",
+      palace::schema::utils::XMin<int, 0>) = 1;
 
-  PALACE_SCHEMA_DESC(Attributes, "Integer array of mesh domain this object applies to.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(Attributes,
+                              "Integer array of mesh domain this object applies to.",
+                              AttributeList) = {};
 };
 
-struct ProbeData
+struct Probe
 {
-  PALACE_SCHEMA_DESC(Index, "Index of this probe, used in postprocessing output files.",
-                     palace::schema::utils::XMin<int, 0>) = 1;
+  PALACE_SCHEMA_DESC_REQUIRED(Index,
+                              "Index of this probe, used in postprocessing output files.",
+                              palace::schema::utils::XMin<int, 0>) = 1;
 
-  PALACE_SCHEMA_DESC(Center, "Coordinates of this probe `[x, y, z]`, in mesh length units.",
-                     std::array<double, 3>) = {
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Center, "Coordinates of this probe `[x, y, z]`, in mesh length units.",
+      std::array<double, 3>) = {
     {0.0, 0.0, 0.0}
   };
 };
 
-struct DomainPostData
+struct DomainPost
 {
   PALACE_SCHEMA_DESC(Energy,
                      "Array of objects for postprocessing domain energies. Postprocesses "
                      "the electric and magnetic field energy inside a given domain. "
                      "Results are written to `domain-E.csv` in the output directory.",
-                     std::vector<DomainEnergyData>) = {};
+                     std::vector<DomainEnergy>) = {};
 
   PALACE_SCHEMA_DESC(Probe,
                      "Array of probe points for evaluating field values at specified "
                      "locations in space. The electric field **E** and magnetic flux "
                      "density **B** are probed and written to `probe-E.csv` and "
                      "`probe-B.csv` in the output directory.",
-                     std::vector<ProbeData>) = {};
+                     std::vector<Probe>) = {};
 };
 
-struct DomainData
+struct Domain
 {
-  PALACE_SCHEMA_DESC(Materials, "Array of material property objects.",
-                     std::vector<MaterialData>) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(Materials, "Array of material property objects.",
+                              std::vector<Material>) = {};
 
   PALACE_SCHEMA_DESC(CurrentDipole, "Array of current dipole source excitations.",
-                     std::vector<CurrentDipoleData>) = {};
+                     std::vector<CurrentDipole>) = {};
 
   PALACE_SCHEMA_DESC(Postprocessing, "Configuration for domain postprocessing.",
-                     DomainPostData) = {};
+                     DomainPost) = {};
 };
 
 }  // namespace palace::schema

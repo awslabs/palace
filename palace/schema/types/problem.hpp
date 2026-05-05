@@ -4,7 +4,7 @@
 #ifndef PALACE_SCHEMA_TYPES_PROBLEM_HPP
 #define PALACE_SCHEMA_TYPES_PROBLEM_HPP
 
-// Mirrors palace::config::ProblemData (palace/utils/configfile.hpp). Field
+// Mirrors palace::config::Problem (palace/utils/configfile.hpp). Field
 // names match PR 716's scripts/schema/config/problem.json exactly; C++ members
 // are PascalCase so reflect-cpp emits the right JSON keys with no rfl::Rename.
 
@@ -18,7 +18,7 @@
 namespace palace::schema
 {
 
-struct OutputFormatsData
+struct OutputFormats
 {
   PALACE_SCHEMA_DESC(
       Paraview,
@@ -31,10 +31,10 @@ struct OutputFormatsData
                      bool) = false;
 };
 
-struct ProblemData
+struct Problem
 {
-  PALACE_SCHEMA_DESC(Type, "Controls the simulation type.",
-                     ProblemType) = ProblemType::Driven;
+  PALACE_SCHEMA_DESC_REQUIRED(Type, "Controls the simulation type.",
+                              ProblemType) = ProblemType::Driven;
 
   PALACE_SCHEMA_DESC(Verbose, "Controls the level of log file printing.",
                      palace::schema::utils::Min<int, 0>) = 1;
@@ -43,7 +43,7 @@ struct ProblemData
                      std::string) = "";
 
   PALACE_SCHEMA_DESC(OutputFormats, "Configures the field output formats.",
-                     OutputFormatsData) = {};
+                     OutputFormats) = {};
 };
 
 }  // namespace palace::schema

@@ -11,8 +11,12 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include <rfl.hpp>
+#include <rfl/Description.hpp>
+#include <rfl/internal/StringLiteral.hpp>
+#include <rfl/internal/is_description.hpp>
 
 namespace palace::schema::utils
 {
@@ -30,10 +34,9 @@ namespace palace::schema::utils
 //   false — no `"default"` keys are emitted. Matches Palace's legacy
 //         hand-maintained schemas, which carried only the strict contract.
 //
-// The `required` list is unaffected by this flag — it always contains every
-// non-`std::optional` field (matching reflect-cpp's native inference).
-// Other passes (additionalProperties:false, TaggedUnion tag descriptions,
-// schema_composition rewrite) also run regardless.
+// `required` is not controlled by this flag. It is driven entirely by
+// explicit markers (`PALACE_SCHEMA_DESC_REQUIRED`, `PALACE_SCHEMA_TAG`);
+// anything else is optional and the loader substitutes the C++ default.
 //
 // `version`, if non-empty, is emitted as a `"version"` key on the root
 // object of the schema.
@@ -56,6 +59,73 @@ struct SchemaOptions
 // `palace::schema::utils::Desc<"text", T>` directly.
 template <rfl::internal::StringLiteral text, class T>
 using Desc = rfl::Description<text, T>;
+
+// --- Annotated description subtypes ----------------------------------------
+//
+// Three thin subclasses of `rfl::Description<text, T>` carry Palace-specific
+// per-field metadata entirely at the type level. Because they inherit from
+// `Description`, they preserve its `ReflectionType`, `Content`, and
+// `reflection()` members — reflect-cpp's JSON reader/writer route through
+// them transparently (via `has_reflection_type_v`), and a companion
+// `is_description` specialization below makes the schema emitter also treat
+// them as plain descriptions. The walker in `schema_impl.hpp` detects the
+// subtype on each field via a type trait and emits:
+//
+//   DescRequired<text, T>   → property listed in its parent's `required`
+//   DescAdvanced<text, T>   → `"x-palace-advanced": true` on the property
+//   DescDeprecated<text, T> → `"x-palace-deprecated": true` on the property
+//
+// No ADL tricks, no class-scope boilerplate: the marker is a property of
+// the field's declared type, which is all the walker needs.
+template <rfl::internal::StringLiteral text, class T>
+struct DescRequired : rfl::Description<text, T>
+{
+  using rfl::Description<text, T>::Description;
+  using rfl::Description<text, T>::operator=;
+};
+
+template <rfl::internal::StringLiteral text, class T>
+struct DescAdvanced : rfl::Description<text, T>
+{
+  using rfl::Description<text, T>::Description;
+  using rfl::Description<text, T>::operator=;
+};
+
+template <rfl::internal::StringLiteral text, class T>
+struct DescDeprecated : rfl::Description<text, T>
+{
+  using rfl::Description<text, T>::Description;
+  using rfl::Description<text, T>::operator=;
+};
+
+// --- Type traits used by the walker ----------------------------------------
+
+template <class>
+struct is_desc_required : std::false_type
+{
+};
+template <rfl::internal::StringLiteral text, class T>
+struct is_desc_required<DescRequired<text, T>> : std::true_type
+{
+};
+
+template <class>
+struct is_desc_advanced : std::false_type
+{
+};
+template <rfl::internal::StringLiteral text, class T>
+struct is_desc_advanced<DescAdvanced<text, T>> : std::true_type
+{
+};
+
+template <class>
+struct is_desc_deprecated : std::false_type
+{
+};
+template <rfl::internal::StringLiteral text, class T>
+struct is_desc_deprecated<DescDeprecated<text, T>> : std::true_type
+{
+};
 
 // --- TaggedUnion arm-discriminator descriptions -----------------------------
 //
@@ -104,6 +174,26 @@ struct schema_composition
   static constexpr auto value = Compose::AnyOf;
 };
 
+// --- Cross-field `oneOf` required alternatives ----------------------------
+//
+// Some structs satisfy one of several mutually-exclusive "shapes" — e.g.
+// a LumpedPort item must provide either `Attributes` (single-element
+// port) or `Elements` (multi-element port) but not both. That is not
+// representable by a simple `required` list; JSON Schema expresses it as
+// `oneOf: [{required:[...A]}, {required:[...B]}]`. Specialize
+// `schema_oneof_required<T>` for any struct that needs this shape; the
+// post-emit `inject_oneof_required` pass splices the resulting `oneOf`
+// into `$defs[type_name(T)]`, alongside the ordinary `required` array.
+//
+// Returning the value as a `std::vector<std::vector<std::string>>` from a
+// static member function keeps the API flexible (arms of different
+// lengths) while avoiding constexpr-array-of-arrays gymnastics.
+template <class T>
+struct schema_oneof_required
+{
+  static std::vector<std::vector<std::string>> value() { return {}; }
+};
+
 // --- Per-enum-value descriptions -------------------------------------------
 //
 // reflect-cpp emits `enum class E` as an inline `{"type": "string", "enum":
@@ -119,23 +209,6 @@ struct enum_descriptions
 {
   static constexpr auto value =
       std::array<std::pair<std::string_view, std::string_view>, 0>{};
-};
-
-// --- Per-field custom-keyword flags ----------------------------------------
-//
-// JSON Schema reserves the `x-*` prefix for vendor extensions. Palace uses
-// `x-palace-advanced` / `x-palace-deprecated` to flag fine-tuning knobs and
-// legacy keys — the Julia doc generator renders a matching badge. Flags are
-// attached at the field declaration via the `PALACE_SCHEMA_DESC_ADVANCED` /
-// `PALACE_SCHEMA_DESC_DEPRECATED` macros (below), which expand to the
-// annotated field plus a hidden-friend function keyed on a
-// `FieldFlagTag<"FieldName">` tag type. The walker in schema_impl.hpp
-// discovers the friend via ADL on the struct type and collects
-// `(struct_name, field_name, flag)` triples for the post-emit
-// `inject_custom_keywords` pass.
-template <rfl::internal::StringLiteral FieldName>
-struct FieldFlagTag
-{
 };
 
 // --- Validator sugar -------------------------------------------------------
@@ -177,11 +250,38 @@ using RightOpen = rfl::Validator<T, rfl::Minimum<lo>, rfl::ExclusiveMaximum<hi>>
 
 }  // namespace palace::schema::utils
 
-// Attach a description to a TaggedUnion arm's discriminator literal. Call-site
-// form:
+// Teach reflect-cpp's schema emitter to treat our Description subtypes as
+// plain descriptions. `is_description_v` drives the `make_description`
+// branch in `rfl::parsing::Parser_default::to_schema`, which uses
+// `U::Content` and `U::Type` — both inherited from `rfl::Description` by
+// our subtypes — to render the property body. Without these
+// specializations, the emitter would fall through to `has_reflection_type_v`
+// and register each subtype as a separate `$defs` entry.
+namespace rfl::internal
+{
+template <StringLiteral text, class T>
+class is_description<::palace::schema::utils::DescRequired<text, T>> : public std::true_type
+{
+};
+template <StringLiteral text, class T>
+class is_description<::palace::schema::utils::DescAdvanced<text, T>> : public std::true_type
+{
+};
+template <StringLiteral text, class T>
+class is_description<::palace::schema::utils::DescDeprecated<text, T>>
+  : public std::true_type
+{
+};
+}  // namespace rfl::internal
+
+// Attach a description to a TaggedUnion arm's discriminator literal.
+// Call-site form:
 //   PALACE_SCHEMA_TAG(Type, "Point", "Explicit frequency list.");
-// The trailing `;` terminates the rfl::Literal member declaration; the inner
-// `;` separates the two member declarations.
+// The description travels through a `tag_description` side channel (see
+// the `has_tag_description` concept above). The walker marks any field
+// of type `rfl::Literal<...>` as required, so the discriminator is
+// automatically part of the arm's `required` array — no extra machinery
+// here.
 #define PALACE_SCHEMA_TAG(FieldName, Value, Desc)               \
   static constexpr ::std::string_view tag_description = (Desc); \
   ::rfl::Literal<Value> FieldName
@@ -194,35 +294,25 @@ using RightOpen = rfl::Validator<T, rfl::Minimum<lo>, rfl::ExclusiveMaximum<hi>>
 #define PALACE_SCHEMA_DESC(FieldName, Description, ... /*Type*/) \
   ::palace::schema::utils::Desc<Description, __VA_ARGS__> FieldName
 
-// Declare a described member that also carries an `x-palace-advanced`
-// flag. Expands to the same `Desc<>` field `PALACE_SCHEMA_DESC` produces
-// plus a hidden-friend overload selected by `FieldFlagTag<"FieldName">`;
-// the walker in schema_impl.hpp finds that friend via ADL on the enclosing
-// struct and records a `(struct, field, "advanced")` triple for
-// `inject_custom_keywords`. The second parameter (`_palace_struct_tag_t*`)
-// exists purely to bring the enclosing class into the ADL lookup so hidden
-// friends are considered. Because the static-ness of the friend is
-// invisible to reflect-cpp's aggregate-init field probe, this has no
-// effect on (de)serialisation.
+// Declare a described member carrying the `x-palace-advanced` flag. The
+// walker detects the `DescAdvanced<>` wrapper type at field-probe time and
+// stamps `"x-palace-advanced": true` on the emitted property body.
 #define PALACE_SCHEMA_DESC_ADVANCED(FieldName, Description, ... /*Type*/) \
-  friend constexpr ::std::string_view palace_schema_field_flag(           \
-      ::palace::schema::utils::FieldFlagTag<#FieldName>, const auto *)    \
-  {                                                                       \
-    return "advanced";                                                    \
-  }                                                                       \
-  ::palace::schema::utils::Desc<Description, __VA_ARGS__> FieldName
+  ::palace::schema::utils::DescAdvanced<Description, __VA_ARGS__> FieldName
 
-// As above, but stamps `x-palace-deprecated`. Intended for legacy keys the
-// loader still accepts but docs should label as discouraged. The field
-// declaration comes last so a call-site `= default;` initializer attaches
-// to it, mirroring `PALACE_SCHEMA_DESC`.
+// Declare a described member carrying the `x-palace-deprecated` flag.
+// Intended for legacy keys the loader still accepts but docs should label
+// as discouraged.
 #define PALACE_SCHEMA_DESC_DEPRECATED(FieldName, Description, ... /*Type*/) \
-  friend constexpr ::std::string_view palace_schema_field_flag(             \
-      ::palace::schema::utils::FieldFlagTag<#FieldName>, const auto *)      \
-  {                                                                         \
-    return "deprecated";                                                    \
-  }                                                                         \
-  ::palace::schema::utils::Desc<Description, __VA_ARGS__> FieldName
+  ::palace::schema::utils::DescDeprecated<Description, __VA_ARGS__> FieldName
+
+// Declare a described member and mark it as required in the emitted
+// schema. The walker replaces reflect-cpp's native `required` array with
+// only the fields whose declared type is `DescRequired<>` — anything
+// declared via plain `PALACE_SCHEMA_DESC` is optional and the loader
+// substitutes the C++ initializer when the key is absent.
+#define PALACE_SCHEMA_DESC_REQUIRED(FieldName, Description, ... /*Type*/) \
+  ::palace::schema::utils::DescRequired<Description, __VA_ARGS__> FieldName
 
 // --- PALACE_SCHEMA_ENUM ----------------------------------------------------
 //

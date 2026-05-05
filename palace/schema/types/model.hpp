@@ -4,12 +4,11 @@
 #ifndef PALACE_SCHEMA_TYPES_MODEL_HPP
 #define PALACE_SCHEMA_TYPES_MODEL_HPP
 
-// Mirrors palace::config::{ModelData, RefinementData, BoxRefinementData,
-// SphereRefinementData} (palace/utils/configfile.hpp). Descriptions match
+// Mirrors palace::config::{Model, Refinement, BoxRefinement,
+// SphereRefinement} (palace/utils/configfile.hpp). Descriptions match
 // PR 716's scripts/schema/config/model.json.
 
 #include <array>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -21,43 +20,46 @@
 namespace palace::schema
 {
 
-struct BoxRefinementData
+struct BoxRefinement
 {
-  PALACE_SCHEMA_DESC(Levels, "Levels of parallel mesh refinement inside this box region.",
-                     palace::schema::utils::Min<int, 0>) = 0;
+  PALACE_SCHEMA_DESC_REQUIRED(Levels,
+                              "Levels of parallel mesh refinement inside this box region.",
+                              palace::schema::utils::Min<int, 0>) = 0;
 
-  PALACE_SCHEMA_DESC(BoundingBoxMin,
-                     "Minimum coordinates `[x, y, z]` of the axis-aligned bounding box for "
-                     "this refinement region, in mesh length units.",
-                     std::array<double, 3>) = {
+  PALACE_SCHEMA_DESC_REQUIRED(
+      BoundingBoxMin,
+      "Minimum coordinates `[x, y, z]` of the axis-aligned bounding box for "
+      "this refinement region, in mesh length units.",
+      std::array<double, 3>) = {
     {0.0, 0.0, 0.0}
   };
 
-  PALACE_SCHEMA_DESC(BoundingBoxMax,
-                     "Maximum coordinates `[x, y, z]` of the axis-aligned bounding box for "
-                     "this refinement region, in mesh length units.",
-                     std::array<double, 3>) = {
+  PALACE_SCHEMA_DESC_REQUIRED(
+      BoundingBoxMax,
+      "Maximum coordinates `[x, y, z]` of the axis-aligned bounding box for "
+      "this refinement region, in mesh length units.",
+      std::array<double, 3>) = {
     {0.0, 0.0, 0.0}
   };
 };
 
-struct SphereRefinementData
+struct SphereRefinement
 {
-  PALACE_SCHEMA_DESC(Levels,
-                     "Levels of parallel mesh refinement inside this sphere region.",
-                     palace::schema::utils::Min<int, 0>) = 0;
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Levels, "Levels of parallel mesh refinement inside this sphere region.",
+      palace::schema::utils::Min<int, 0>) = 0;
 
-  PALACE_SCHEMA_DESC(Radius, "Radius of the sphere, in mesh length units.",
-                     palace::schema::utils::XMin<double, 0.0>) = 1.0;
+  PALACE_SCHEMA_DESC_REQUIRED(Radius, "Radius of the sphere, in mesh length units.",
+                              palace::schema::utils::XMin<double, 0.0>) = 1.0;
 
-  PALACE_SCHEMA_DESC(Center,
-                     "Center coordinates `[x, y, z]` of the sphere, in mesh length units.",
-                     std::array<double, 3>) = {
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Center, "Center coordinates `[x, y, z]` of the sphere, in mesh length units.",
+      std::array<double, 3>) = {
     {0.0, 0.0, 0.0}
   };
 };
 
-struct RefinementData
+struct Refinement
 {
   PALACE_SCHEMA_DESC(Tol,
                      "Stop adaptive mesh refinement (AMR) when the norm of the estimated "
@@ -124,24 +126,25 @@ struct RefinementData
   PALACE_SCHEMA_DESC(Boxes,
                      "Array of axis-aligned box refinement regions. All elements with a "
                      "node inside the box are marked for refinement.",
-                     std::vector<BoxRefinementData>) = {};
+                     std::vector<BoxRefinement>) = {};
 
   PALACE_SCHEMA_DESC(Spheres,
                      "Array of sphere refinement regions. All elements with a node inside "
                      "the sphere are marked for refinement.",
-                     std::vector<SphereRefinementData>) = {};
+                     std::vector<SphereRefinement>) = {};
 };
 
-struct ModelData
+struct Model
 {
-  PALACE_SCHEMA_DESC(Mesh,
-                     "Input mesh file path. An absolute path is recommended. If the "
-                     "provided mesh is nonconformal, it is assumed to come from a previous "
-                     "*Palace* AMR solve, and all mesh preprocessing checks and "
-                     "modifications (for example "
-                     "[CrackInternalBoundaryElements](@ref "
-                     "config-model-crackinternalboundaryelements)) are skipped.",
-                     std::string) = "";
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Mesh,
+      "Input mesh file path. An absolute path is recommended. If the "
+      "provided mesh is nonconformal, it is assumed to come from a previous "
+      "*Palace* AMR solve, and all mesh preprocessing checks and "
+      "modifications (for example "
+      "[CrackInternalBoundaryElements](@ref "
+      "config-model-crackinternalboundaryelements)) are skipped.",
+      std::string) = "";
 
   PALACE_SCHEMA_DESC(L0,
                      "Unit, relative to meters, for mesh vertex coordinates. For example, "
@@ -212,7 +215,7 @@ struct ModelData
       std::string) = "";
 
   PALACE_SCHEMA_DESC(Refinement, "Configuration for adaptive and uniform mesh refinement.",
-                     RefinementData) = {};
+                     Refinement) = {};
 };
 
 }  // namespace palace::schema

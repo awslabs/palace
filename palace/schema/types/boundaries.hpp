@@ -4,7 +4,7 @@
 #ifndef PALACE_SCHEMA_TYPES_BOUNDARIES_HPP
 #define PALACE_SCHEMA_TYPES_BOUNDARIES_HPP
 
-// Mirrors palace::config::BoundaryData and its children. Descriptions match
+// Mirrors palace::config::Boundary and its children. Descriptions match
 // PR 716's scripts/schema/config/boundaries.json.
 //
 // Phase 1 deviations from PR 716:
@@ -26,7 +26,6 @@
 //   - Materials.*.oneOf scalar-or-3-array pattern: see domains.hpp.
 
 #include <array>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,20 +37,21 @@
 namespace palace::schema
 {
 
-struct ElementData
+struct Element
 {
-  PALACE_SCHEMA_DESC(Attributes,
-                     "Integer array of mesh boundary attributes this object applies to.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Attributes, "Integer array of mesh boundary attributes this object applies to.",
+      AttributeList) = {};
 
-  PALACE_SCHEMA_DESC(Direction,
-                     "Excitation direction. Axis-aligned Cartesian directions can be "
-                     "specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, "
-                     "`\"+Z\"`, `\"-Z\"`. Coaxial directions use `\"+R\"`, `\"-R\"`. "
-                     "Alternatively, specify a normalized 3-element array, e.g. `[0.0, "
-                     "1.0, 0.0]`. The coordinate system is determined by "
-                     "`\"CoordinateSystem\"`.",
-                     std::string) = "";
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Direction,
+      "Excitation direction. Axis-aligned Cartesian directions can be "
+      "specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, "
+      "`\"+Z\"`, `\"-Z\"`. Coaxial directions use `\"+R\"`, `\"-R\"`. "
+      "Alternatively, specify a normalized 3-element array, e.g. `[0.0, "
+      "1.0, 0.0]`. The coordinate system is determined by "
+      "`\"CoordinateSystem\"`.",
+      std::string) = "";
 
   PALACE_SCHEMA_DESC(CoordinateSystem,
                      "Coordinate system for this element's `\"Direction\"` vector.",
@@ -60,48 +60,48 @@ struct ElementData
 
 // --- Dirichlet-like attribute-only blocks ----------------------------------
 
-struct PECBoundaryData
+struct PECBoundary
 {
-  PALACE_SCHEMA_DESC(Attributes,
-                     "Integer array of mesh boundary attributes this object applies to.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Attributes, "Integer array of mesh boundary attributes this object applies to.",
+      AttributeList) = {};
 };
 
-struct PMCBoundaryData
+struct PMCBoundary
 {
-  PALACE_SCHEMA_DESC(Attributes,
-                     "Integer array of mesh boundary attributes this object applies to.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Attributes, "Integer array of mesh boundary attributes this object applies to.",
+      AttributeList) = {};
 };
 
-struct GroundBoundaryData
+struct GroundBoundary
 {
-  PALACE_SCHEMA_DESC(Attributes,
-                     "Integer array of mesh boundary attributes this object applies to.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Attributes, "Integer array of mesh boundary attributes this object applies to.",
+      AttributeList) = {};
 };
 
-struct ZeroChargeBoundaryData
+struct ZeroChargeBoundary
 {
-  PALACE_SCHEMA_DESC(Attributes,
-                     "Integer array of mesh boundary attributes this object applies to.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Attributes, "Integer array of mesh boundary attributes this object applies to.",
+      AttributeList) = {};
 };
 
-struct WavePortPECBoundaryData
+struct WavePortPECBoundary
 {
-  PALACE_SCHEMA_DESC(Attributes,
-                     "Integer array of mesh boundary attributes this object applies to.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Attributes, "Integer array of mesh boundary attributes this object applies to.",
+      AttributeList) = {};
 };
 
 // --- Absorbing / Conductivity / Impedance ----------------------------------
 
-struct FarfieldBoundaryData
+struct FarfieldBoundary
 {
-  PALACE_SCHEMA_DESC(Attributes,
-                     "Integer array of mesh boundary attributes this object applies to.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Attributes, "Integer array of mesh boundary attributes this object applies to.",
+      AttributeList) = {};
 
   PALACE_SCHEMA_DESC_ADVANCED(
       Order,
@@ -111,14 +111,15 @@ struct FarfieldBoundaryData
       palace::schema::utils::Closed<int, 1, 2>) = 1;
 };
 
-struct ConductivityData
+struct Conductivity
 {
-  PALACE_SCHEMA_DESC(Attributes,
-                     "Integer array of mesh boundary attributes this object applies to.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Attributes, "Integer array of mesh boundary attributes this object applies to.",
+      AttributeList) = {};
 
-  PALACE_SCHEMA_DESC(Conductivity, "Electrical conductivity for this boundary, S/m.",
-                     palace::schema::utils::Min<double, 0.0>) = 0.0;
+  PALACE_SCHEMA_DESC_REQUIRED(Conductivity,
+                              "Electrical conductivity for this boundary, S/m.",
+                              palace::schema::utils::Min<double, 0.0>) = 0.0;
 
   PALACE_SCHEMA_DESC(Permeability, "Relative permeability for this boundary.",
                      palace::schema::utils::Min<double, 0.0>) = 1.0;
@@ -134,11 +135,11 @@ struct ConductivityData
                      bool) = false;
 };
 
-struct ImpedanceData
+struct Impedance
 {
-  PALACE_SCHEMA_DESC(Attributes,
-                     "Integer array of mesh boundary attributes this object applies to.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Attributes, "Integer array of mesh boundary attributes this object applies to.",
+      AttributeList) = {};
 
   PALACE_SCHEMA_DESC(Rs, "Surface resistance for this impedance boundary, Ω/sq.",
                      double) = 0.0;
@@ -152,12 +153,13 @@ struct ImpedanceData
 
 // --- LumpedPort / WavePort / Terminal / SurfaceCurrent ---------------------
 
-struct LumpedPortData
+struct LumpedPort
 {
-  PALACE_SCHEMA_DESC(Index,
-                     "Index of this lumped port, used in postprocessing output files. "
-                     "Must be unique across all port and source types.",
-                     palace::schema::utils::XMin<int, 0>) = 1;
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Index,
+      "Index of this lumped port, used in postprocessing output files. "
+      "Must be unique across all port and source types.",
+      palace::schema::utils::XMin<int, 0>) = 1;
 
   PALACE_SCHEMA_DESC(Attributes,
                      "Integer array of mesh boundary attributes for this lumped port "
@@ -224,31 +226,33 @@ struct LumpedPortData
                      "the top-level `\"Attributes\"`/`\"Direction\"`/"
                      "`\"CoordinateSystem\"` when the port spans multiple disjoint "
                      "boundary surfaces. Elements add in parallel.",
-                     std::vector<ElementData>) = {};
+                     std::vector<Element>) = {};
 };
 
-struct TerminalData
+struct Terminal
 {
-  PALACE_SCHEMA_DESC(Index,
-                     "Index of this terminal, used in postprocessing output files and to "
-                     "index the computed capacitance matrix.",
-                     palace::schema::utils::XMin<int, 0>) = 1;
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Index,
+      "Index of this terminal, used in postprocessing output files and to "
+      "index the computed capacitance matrix.",
+      palace::schema::utils::XMin<int, 0>) = 1;
 
-  PALACE_SCHEMA_DESC(Attributes,
-                     "Integer array of mesh boundary attributes this object applies to.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Attributes, "Integer array of mesh boundary attributes this object applies to.",
+      AttributeList) = {};
 };
 
-struct WavePortData
+struct WavePort
 {
-  PALACE_SCHEMA_DESC(Index,
-                     "Index of this wave port, used in postprocessing output files. Must "
-                     "be unique across all port and source types.",
-                     palace::schema::utils::XMin<int, 0>) = 1;
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Index,
+      "Index of this wave port, used in postprocessing output files. Must "
+      "be unique across all port and source types.",
+      palace::schema::utils::XMin<int, 0>) = 1;
 
-  PALACE_SCHEMA_DESC(Attributes,
-                     "Integer array of mesh boundary attributes this object applies to.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Attributes, "Integer array of mesh boundary attributes this object applies to.",
+      AttributeList) = {};
 
   PALACE_SCHEMA_DESC(Mode,
                      "Mode index (1-based) for the characteristic port mode of this wave "
@@ -301,12 +305,13 @@ struct WavePortData
                               palace::schema::utils::Min<int, 0>) = 0;
 };
 
-struct SurfaceCurrentData
+struct SurfaceCurrent
 {
-  PALACE_SCHEMA_DESC(Index,
-                     "Index of this surface current source, used in postprocessing "
-                     "output files. Must be unique across all port and source types.",
-                     palace::schema::utils::XMin<int, 0>) = 1;
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Index,
+      "Index of this surface current source, used in postprocessing "
+      "output files. Must be unique across all port and source types.",
+      palace::schema::utils::XMin<int, 0>) = 1;
 
   PALACE_SCHEMA_DESC(Attributes,
                      "Integer array of mesh boundary attributes for this surface "
@@ -330,22 +335,23 @@ struct SurfaceCurrentData
                      "`\"CoordinateSystem\"` when the source spans multiple disjoint "
                      "boundary surfaces. Elements add in parallel to give the same "
                      "total current as a single-element source.",
-                     std::vector<ElementData>) = {};
+                     std::vector<Element>) = {};
 };
 
 // --- Periodic --------------------------------------------------------------
 
-struct PeriodicPairData
+struct PeriodicPair
 {
-  PALACE_SCHEMA_DESC(DonorAttributes,
-                     "Integer array of donor mesh boundary attributes for a periodic "
-                     "boundary pair.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(
+      DonorAttributes,
+      "Integer array of donor mesh boundary attributes for a periodic "
+      "boundary pair.",
+      AttributeList) = {};
 
-  PALACE_SCHEMA_DESC(ReceiverAttributes,
-                     "Integer array of receiver mesh boundary attributes for a "
-                     "periodic boundary pair.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(ReceiverAttributes,
+                              "Integer array of receiver mesh boundary attributes for a "
+                              "periodic boundary pair.",
+                              AttributeList) = {};
 
   PALACE_SCHEMA_DESC(Translation,
                      "3-element translation vector `[dx, dy, dz]` from donor to "
@@ -366,7 +372,7 @@ struct PeriodicPairData
   };
 };
 
-struct PeriodicBoundaryData
+struct PeriodicBoundary
 {
   PALACE_SCHEMA_DESC(FloquetWaveVector,
                      "3-element Floquet wave vector `[kx, ky, kz]` defining the phase "
@@ -376,27 +382,28 @@ struct PeriodicBoundaryData
     {0.0, 0.0, 0.0}
   };
 
-  PALACE_SCHEMA_DESC(BoundaryPairs,
-                     "Array of donor–receiver boundary pairs defining the periodic "
-                     "mapping.",
-                     std::vector<PeriodicPairData>) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(
+      BoundaryPairs,
+      "Array of donor–receiver boundary pairs defining the periodic "
+      "mapping.",
+      std::vector<PeriodicPair>) = {};
 };
 
 // --- Boundary postprocessing -----------------------------------------------
 
-struct SurfaceFluxData
+struct SurfaceFluxProbe
 {
-  PALACE_SCHEMA_DESC(Index,
-                     "Index of this surface flux postprocessing boundary, used in "
-                     "output files.",
-                     palace::schema::utils::XMin<int, 0>) = 1;
+  PALACE_SCHEMA_DESC_REQUIRED(Index,
+                              "Index of this surface flux postprocessing boundary, used in "
+                              "output files.",
+                              palace::schema::utils::XMin<int, 0>) = 1;
 
-  PALACE_SCHEMA_DESC(Attributes,
-                     "Integer array of mesh boundary attributes this object applies to.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Attributes, "Integer array of mesh boundary attributes this object applies to.",
+      AttributeList) = {};
 
-  PALACE_SCHEMA_DESC(Type, "Type of surface flux to integrate over the boundary.",
-                     SurfaceFlux) = SurfaceFlux::Electric;
+  PALACE_SCHEMA_DESC_REQUIRED(Type, "Type of surface flux to integrate over the boundary.",
+                              SurfaceFlux) = SurfaceFlux::Electric;
 
   PALACE_SCHEMA_DESC(TwoSided,
                      "For internal boundary surfaces: when `false`, the flux on both "
@@ -415,7 +422,7 @@ struct SurfaceFluxData
   };
 };
 
-struct InterfaceDielectricData
+struct DielectricInterface
 {
   PALACE_SCHEMA_DESC(Index, "Index of this dielectric interface, used in output files.",
                      palace::schema::utils::XMin<int, 0>) = 1;
@@ -430,25 +437,26 @@ struct InterfaceDielectricData
                      "reference](../reference.md#Bulk-and-interface-dielectric-loss).",
                      InterfaceDielectric) = InterfaceDielectric::Default;
 
-  PALACE_SCHEMA_DESC(Thickness,
-                     "Thickness of this dielectric interface, in mesh length units.",
-                     palace::schema::utils::Min<double, 0.0>) = 0.0;
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Thickness, "Thickness of this dielectric interface, in mesh length units.",
+      palace::schema::utils::Min<double, 0.0>) = 0.0;
 
-  PALACE_SCHEMA_DESC(Permittivity,
-                     "Relative permittivity of this dielectric interface layer. This "
-                     "should be the interface layer permittivity for the specific "
-                     "\"Type\" of interface specified.",
-                     palace::schema::utils::Min<double, 0.0>) = 0.0;
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Permittivity,
+      "Relative permittivity of this dielectric interface layer. This "
+      "should be the interface layer permittivity for the specific "
+      "\"Type\" of interface specified.",
+      palace::schema::utils::Min<double, 0.0>) = 0.0;
 
   PALACE_SCHEMA_DESC(LossTan, "Loss tangent of this dielectric interface.",
                      palace::schema::utils::Min<double, 0.0>) = 0.0;
 };
 
-struct FarFieldPostData
+struct FarFieldPost
 {
-  PALACE_SCHEMA_DESC(Attributes,
-                     "Integer array of mesh boundary attributes this object applies to.",
-                     AttributeList) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Attributes, "Integer array of mesh boundary attributes this object applies to.",
+      AttributeList) = {};
 
   PALACE_SCHEMA_DESC(NSample,
                      "Number of uniformly-spaced points used to discretize the "
@@ -462,12 +470,12 @@ struct FarFieldPostData
                      std::vector<std::array<double, 2>>) = {};
 };
 
-struct BoundaryPostData
+struct BoundaryPost
 {
   PALACE_SCHEMA_DESC(SurfaceFlux,
                      "Array of surface flux postprocessing boundaries. Results are "
                      "written to `surface-F.csv` in the output directory.",
-                     std::vector<SurfaceFluxData>) = {};
+                     std::vector<SurfaceFluxProbe>) = {};
 
   PALACE_SCHEMA_DESC(Dielectric,
                      "Array of interface dielectric loss postprocessing boundaries. "
@@ -476,44 +484,44 @@ struct BoundaryPostData
                      "documentation](../reference.md#Bulk-and-interface-dielectric-loss"
                      "). Results are written to `surface-Q.csv` in the output "
                      "directory.",
-                     std::vector<InterfaceDielectricData>) = {};
+                     std::vector<DielectricInterface>) = {};
 
   PALACE_SCHEMA_DESC(FarField,
                      "Far-field electric field extraction. The boundary attributes "
                      "must enclose the system and be on an external boundary.",
-                     FarFieldPostData) = {};
+                     FarFieldPost) = {};
 };
 
-// --- Top-level BoundaryData ------------------------------------------------
+// --- Top-level Boundary ------------------------------------------------
 
-struct BoundaryData
+struct Boundary
 {
   PALACE_SCHEMA_DESC(PEC,
                      "Perfect electric conductor (PEC) boundary condition: enforces "
                      "zero tangential electric field. This is a homogeneous Dirichlet "
                      "condition for frequency/time domain and magnetostatic "
                      "formulations.",
-                     PECBoundaryData) = {};
+                     PECBoundary) = {};
 
   PALACE_SCHEMA_DESC(PMC,
                      "Perfect magnetic conductor (PMC) boundary condition: enforces "
                      "zero tangential magnetic field. This is the natural "
                      "(homogeneous Neumann) boundary condition; it also imposes "
                      "symmetry of the electric field across the surface.",
-                     PMCBoundaryData) = {};
+                     PMCBoundary) = {};
 
   PALACE_SCHEMA_DESC(Ground,
                      "Zero-voltage (ground) boundary condition for electrostatic "
                      "simulations. Mutually exclusive with [PEC](@ref "
                      "config-boundaries-pec).",
-                     GroundBoundaryData) = {};
+                     GroundBoundary) = {};
 
   PALACE_SCHEMA_DESC(ZeroCharge,
                      "Zero surface charge (homogeneous Neumann) boundary condition "
                      "for electrostatic simulations. Also imposes symmetry of the "
                      "electric field across the surface. Mutually exclusive with "
                      "[PMC](@ref config-boundaries-pmc).",
-                     ZeroChargeBoundaryData) = {};
+                     ZeroChargeBoundary) = {};
 
   PALACE_SCHEMA_DESC(WavePortPEC,
                      "Additional PEC boundary conditions for the 2D eigensolve used "
@@ -521,13 +529,13 @@ struct BoundaryData
                      "under [PEC](@ref config-boundaries-pec) and [Conductivity](@ref "
                      "config-boundaries-conductivity). Only relevant when [WavePort]"
                      "(@ref config-boundaries-waveport) boundaries are present.",
-                     WavePortPECBoundaryData) = {};
+                     WavePortPECBoundary) = {};
 
   PALACE_SCHEMA_DESC(Absorbing,
                      "Farfield absorbing (scattering) boundary conditions. These are "
                      "artificial boundary conditions applied at farfield boundaries "
                      "to minimize reflections.",
-                     FarfieldBoundaryData) = {};
+                     FarfieldBoundary) = {};
 
   PALACE_SCHEMA_DESC(Conductivity,
                      "Array of finite conductivity surface impedance boundaries. "
@@ -535,24 +543,24 @@ struct BoundaryData
                      "for conductors with thickness much larger than the skin depth. "
                      "Only available for frequency domain driven and eigenmode "
                      "simulations.",
-                     std::vector<ConductivityData>) = {};
+                     std::vector<Conductivity>) = {};
 
   PALACE_SCHEMA_DESC(Impedance,
                      "Array of surface impedance boundary conditions. The surface "
                      "impedance relates the tangential electric and magnetic fields "
                      "using the parallel combination of the specified resistance, "
                      "inductance, and capacitance per square.",
-                     std::vector<ImpedanceData>) = {};
+                     std::vector<Impedance>) = {};
 
   PALACE_SCHEMA_DESC(LumpedPort,
                      "Array of lumped port boundary conditions. Lumped ports can be "
                      "specified on boundaries internal to the computational domain.",
-                     std::vector<LumpedPortData>) = {};
+                     std::vector<LumpedPort>) = {};
 
   PALACE_SCHEMA_DESC(Terminal,
                      "Array of terminal boundaries for electrostatic simulations. "
                      "Capacitance matrix entries are extracted for each terminal.",
-                     std::vector<TerminalData>) = {};
+                     std::vector<Terminal>) = {};
 
   PALACE_SCHEMA_DESC(WavePort,
                      "Array of numeric wave port boundary conditions. Wave ports can "
@@ -561,7 +569,7 @@ struct BoundaryData
                      "eigenproblem is solved on each wave port to compute the port "
                      "mode shape. Only available for frequency domain driven and "
                      "eigenmode simulations.",
-                     std::vector<WavePortData>) = {};
+                     std::vector<WavePort>) = {};
 
   PALACE_SCHEMA_DESC(SurfaceCurrent,
                      "Array of surface current source boundaries. Prescribes a unit "
@@ -569,18 +577,46 @@ struct BoundaryData
                      "excite a driven, transient, or magnetostatic simulation. For "
                      "magnetostatic simulations, inductance matrix entries are "
                      "extracted for each surface current boundary.",
-                     std::vector<SurfaceCurrentData>) = {};
+                     std::vector<SurfaceCurrent>) = {};
 
   PALACE_SCHEMA_DESC(Periodic,
                      "Periodic boundary conditions for surfaces whose meshes are "
                      "identical after translation and/or rotation. Floquet periodic "
                      "boundary conditions with a phase shift are also supported.",
-                     PeriodicBoundaryData) = {};
+                     PeriodicBoundary) = {};
 
   PALACE_SCHEMA_DESC(Postprocessing, "Configuration for boundary postprocessing.",
-                     BoundaryPostData) = {};
+                     BoundaryPost) = {};
 };
 
 }  // namespace palace::schema
+
+// --- Cross-field constraints ----------------------------------------------
+//
+// `LumpedPort` and `SurfaceCurrent` describe their boundary either via a
+// flat `Attributes` list (single-element form) or via `Elements` (one or
+// more sub-elements, for multi-element ports). The schema encodes this
+// as `oneOf: [{required:["Attributes"]}, {required:["Elements"]}]`,
+// which the post-emit `inject_oneof_required` pass splices into the
+// matching `$defs` entry.
+namespace palace::schema::utils
+{
+template <>
+struct schema_oneof_required<::palace::schema::LumpedPort>
+{
+  static std::vector<std::vector<std::string>> value()
+  {
+    return {{"Attributes"}, {"Elements"}};
+  }
+};
+template <>
+struct schema_oneof_required<::palace::schema::SurfaceCurrent>
+{
+  static std::vector<std::vector<std::string>> value()
+  {
+    return {{"Attributes"}, {"Elements"}};
+  }
+};
+}  // namespace palace::schema::utils
 
 #endif  // PALACE_SCHEMA_TYPES_BOUNDARIES_HPP

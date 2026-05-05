@@ -4,7 +4,7 @@
 #ifndef PALACE_SCHEMA_TYPES_SOLVER_HPP
 #define PALACE_SCHEMA_TYPES_SOLVER_HPP
 
-// Mirrors palace::config::SolverData and its arm types. Descriptions match
+// Mirrors palace::config::Solver and its arm types. Descriptions match
 // PR 716's scripts/schema/config/solver.json.
 //
 // Phase 1 notes:
@@ -21,7 +21,6 @@
 //     an int sentinel (-1 = default, 0/1 otherwise). We follow PR 716's
 //     boolean wire format for Phase 1.
 
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -47,87 +46,86 @@ struct SamplesPoint
 {
   PALACE_SCHEMA_TAG(Type, "Point", "Explicit list of frequency sample points.");
 
-  PALACE_SCHEMA_DESC(Freq, "Explicit frequencies to sample, GHz.", std::vector<double>) = {
-  };
+  PALACE_SCHEMA_DESC_REQUIRED(Freq, "Explicit frequencies to sample, GHz.",
+                              std::vector<double>) = {};
 
   PALACE_SCHEMA_DESC(SaveStep,
                      "Save fields every N steps within this sample. `0` disables saving.",
-                     std::optional<int>) = 0;
+                     int) = 0;
 
   PALACE_SCHEMA_DESC(AddToPROM,
                      "Force inclusion of these points in the PROM for adaptive sweep "
                      "(primarily a debugging tool).",
-                     std::optional<bool>) = false;
+                     bool) = false;
 };
 
 struct SamplesLinear
 {
   PALACE_SCHEMA_TAG(Type, "Linear", "Linearly-spaced frequency samples.");
 
-  PALACE_SCHEMA_DESC(MinFreq, "Lower bound, GHz.",
-                     palace::schema::utils::Min<double, 0.0>) = 0.0;
+  PALACE_SCHEMA_DESC_REQUIRED(MinFreq, "Lower bound, GHz.",
+                              palace::schema::utils::Min<double, 0.0>) = 0.0;
 
-  PALACE_SCHEMA_DESC(MaxFreq, "Upper bound, GHz.",
-                     palace::schema::utils::Min<double, 0.0>) = 0.0;
+  PALACE_SCHEMA_DESC_REQUIRED(MaxFreq, "Upper bound, GHz.",
+                              palace::schema::utils::Min<double, 0.0>) = 0.0;
 
   PALACE_SCHEMA_DESC(FreqStep, "Step size, GHz. Mutually exclusive with `\"NSample\"`.",
-                     std::optional<double>) = std::nullopt;
+                     double) = 0.0;
 
   PALACE_SCHEMA_DESC(NSample, "Number of samples. Mutually exclusive with `\"FreqStep\"`.",
-                     std::optional<int>) = std::nullopt;
+                     int) = 0;
 
-  PALACE_SCHEMA_DESC(SaveStep, "Save fields every N steps. `0` disables saving.",
-                     std::optional<int>) = 0;
+  PALACE_SCHEMA_DESC(SaveStep, "Save fields every N steps. `0` disables saving.", int) = 0;
 
   PALACE_SCHEMA_DESC(AddToPROM, "Force inclusion in the PROM for adaptive sweep.",
-                     std::optional<bool>) = false;
+                     bool) = false;
 };
 
 struct SamplesLog
 {
   PALACE_SCHEMA_TAG(Type, "Log", "Logarithmically-spaced frequency samples.");
 
-  PALACE_SCHEMA_DESC(MinFreq, "Lower bound, GHz.",
-                     palace::schema::utils::XMin<double, 0.0>) = 1.0;
+  PALACE_SCHEMA_DESC_REQUIRED(MinFreq, "Lower bound, GHz.",
+                              palace::schema::utils::XMin<double, 0.0>) = 1.0;
 
-  PALACE_SCHEMA_DESC(MaxFreq, "Upper bound, GHz.",
-                     palace::schema::utils::XMin<double, 0.0>) = 1.0;
+  PALACE_SCHEMA_DESC_REQUIRED(MaxFreq, "Upper bound, GHz.",
+                              palace::schema::utils::XMin<double, 0.0>) = 1.0;
 
-  PALACE_SCHEMA_DESC(NSample, "Number of samples.", palace::schema::utils::Min<int, 1>) = 1;
+  PALACE_SCHEMA_DESC_REQUIRED(NSample, "Number of samples.",
+                              palace::schema::utils::Min<int, 1>) = 1;
 
-  PALACE_SCHEMA_DESC(SaveStep, "Save fields every N steps. `0` disables saving.",
-                     std::optional<int>) = 0;
+  PALACE_SCHEMA_DESC(SaveStep, "Save fields every N steps. `0` disables saving.", int) = 0;
 
   PALACE_SCHEMA_DESC(AddToPROM, "Force inclusion in the PROM for adaptive sweep.",
-                     std::optional<bool>) = false;
+                     bool) = false;
 };
 
 using Sample = rfl::TaggedUnion<"Type", SamplesPoint, SamplesLinear, SamplesLog>;
 
-// --- DrivenSolverData ------------------------------------------------------
+// --- DrivenSolver ------------------------------------------------------
 
-struct DrivenSolverData
+struct DrivenSolver
 {
   PALACE_SCHEMA_DESC_DEPRECATED(
       MinFreq,
       "Lower bound of the frequency sweep interval, GHz. Deprecated: use "
       "[`Linear Samples`](@ref config-solver-driven-samples-linear) "
       "interface instead.",
-      std::optional<double>) = std::nullopt;
+      double) = 0.0;
 
   PALACE_SCHEMA_DESC_DEPRECATED(
       MaxFreq,
       "Upper bound of the frequency sweep interval, GHz. Deprecated: use "
       "[`Linear Samples`](@ref config-solver-driven-samples-linear) "
       "interface instead.",
-      std::optional<double>) = std::nullopt;
+      double) = 0.0;
 
   PALACE_SCHEMA_DESC_DEPRECATED(
       FreqStep,
       "Frequency step size for the frequency sweep, GHz. Deprecated: use "
       "[`Linear Samples`](@ref config-solver-driven-samples-linear) "
       "interface instead.",
-      std::optional<double>) = std::nullopt;
+      double) = 0.0;
 
   PALACE_SCHEMA_DESC_DEPRECATED(
       SaveStep,
@@ -138,7 +136,7 @@ struct DrivenSolverData
       "[`/Problem/Output`](@ref config-problem-output). Deprecated: use "
       "[`Linear Samples`](@ref config-solver-driven-samples-linear) "
       "interface instead.",
-      std::optional<int>) = 0;
+      int) = 0;
 
   PALACE_SCHEMA_DESC(Samples,
                      "Array of frequency sample specifications. Combined with "
@@ -205,14 +203,14 @@ struct DrivenSolverData
       AdaptiveCircuitSynthesisDomainOrthogonalization::Energy;
 };
 
-// --- EigenSolverData -------------------------------------------------------
+// --- EigenSolver -------------------------------------------------------
 
-struct EigenSolverData
+struct EigenSolver
 {
-  PALACE_SCHEMA_DESC(Target,
-                     "(Nonzero) frequency target above which to search for "
-                     "eigenvalues, GHz.",
-                     palace::schema::utils::XMin<double, 0.0>) = 1.0;
+  PALACE_SCHEMA_DESC_REQUIRED(Target,
+                              "(Nonzero) frequency target above which to search for "
+                              "eigenvalues, GHz.",
+                              palace::schema::utils::XMin<double, 0.0>) = 1.0;
 
   PALACE_SCHEMA_DESC(Tol, "Relative convergence tolerance for the eigenvalue solver.",
                      palace::schema::utils::Min<double, 0.0>) = 1.0e-6;
@@ -294,15 +292,16 @@ struct EigenSolverData
                               palace::schema::utils::Min<int, 0>) = 2;
 };
 
-// --- TransientSolverData ---------------------------------------------------
+// --- TransientSolver ---------------------------------------------------
 
-struct TransientSolverData
+struct TransientSolver
 {
   PALACE_SCHEMA_DESC(Type, "Time integration scheme for the second-order ODE system.",
                      TimeSteppingScheme) = TimeSteppingScheme::Default;
 
-  PALACE_SCHEMA_DESC(Excitation, "Controls the time dependence of the source excitation.",
-                     Excitation) = Excitation::Sinusoidal;
+  PALACE_SCHEMA_DESC_REQUIRED(Excitation,
+                              "Controls the time dependence of the source excitation.",
+                              Excitation) = Excitation::Sinusoidal;
 
   PALACE_SCHEMA_DESC(ExcitationFreq,
                      "Center frequency for harmonic source excitations, GHz. Only "
@@ -318,11 +317,11 @@ struct TransientSolverData
                      "`\"SmoothStep\"`.",
                      double) = 0.0;
 
-  PALACE_SCHEMA_DESC(MaxTime, "End of simulation time interval, ns.",
-                     palace::schema::utils::XMin<double, 0.0>) = 1.0;
+  PALACE_SCHEMA_DESC_REQUIRED(MaxTime, "End of simulation time interval, ns.",
+                              palace::schema::utils::XMin<double, 0.0>) = 1.0;
 
-  PALACE_SCHEMA_DESC(TimeStep, "Uniform time step size, ns.",
-                     palace::schema::utils::XMin<double, 0.0>) = 1.0e-2;
+  PALACE_SCHEMA_DESC_REQUIRED(TimeStep, "Uniform time step size, ns.",
+                              palace::schema::utils::XMin<double, 0.0>) = 1.0e-2;
 
   PALACE_SCHEMA_DESC(SaveStep,
                      "Controls how often, in number of time steps, to save computed "
@@ -351,7 +350,7 @@ struct TransientSolverData
 
 // --- Electrostatic / Magnetostatic -----------------------------------------
 
-struct ElectrostaticSolverData
+struct ElectrostaticSolver
 {
   PALACE_SCHEMA_DESC(Save,
                      "Number of computed electric field solutions to save to disk for "
@@ -363,7 +362,7 @@ struct ElectrostaticSolverData
                      palace::schema::utils::Min<int, 0>) = 0;
 };
 
-struct MagnetostaticSolverData
+struct MagnetostaticSolver
 {
   PALACE_SCHEMA_DESC(Save,
                      "Number of computed magnetic field solutions to save to disk for "
@@ -375,9 +374,9 @@ struct MagnetostaticSolverData
                      palace::schema::utils::Min<int, 0>) = 0;
 };
 
-// --- LinearSolverData ------------------------------------------------------
+// --- LinearSolver ------------------------------------------------------
 
-struct LinearSolverData
+struct LinearSolverConfig
 {
   PALACE_SCHEMA_DESC(Type,
                      "Specifies the solver used for preconditioning the linear system.",
@@ -568,9 +567,9 @@ struct LinearSolverData
                      Orthogonalization) = Orthogonalization::MGS;
 };
 
-// --- Top-level SolverData --------------------------------------------------
+// --- Top-level Solver --------------------------------------------------
 
-struct SolverData
+struct Solver
 {
   PALACE_SCHEMA_DESC(Order,
                      "Finite element order (degree). Arbitrary high-order spaces are "
@@ -613,34 +612,34 @@ struct SolverData
                      "Configuration for the frequency domain driven solver. Only "
                      "relevant when [`/Problem/Type`](@ref config-problem-type) is "
                      "`\"Driven\"`.",
-                     DrivenSolverData) = {};
+                     DrivenSolver) = {};
 
   PALACE_SCHEMA_DESC(Eigenmode,
                      "Configuration for the eigenvalue solver. Only relevant when "
                      "[`/Problem/Type`](@ref config-problem-type) is `\"Eigenmode\"`.",
-                     EigenSolverData) = {};
+                     EigenSolver) = {};
 
   PALACE_SCHEMA_DESC(Electrostatic,
                      "Configuration for the electrostatic solver. Only relevant when "
                      "[`/Problem/Type`](@ref config-problem-type) is "
                      "`\"Electrostatic\"`.",
-                     ElectrostaticSolverData) = {};
+                     ElectrostaticSolver) = {};
 
   PALACE_SCHEMA_DESC(Magnetostatic,
                      "Configuration for the magnetostatic solver. Only relevant when "
                      "[`/Problem/Type`](@ref config-problem-type) is "
                      "`\"Magnetostatic\"`.",
-                     MagnetostaticSolverData) = {};
+                     MagnetostaticSolver) = {};
 
   PALACE_SCHEMA_DESC(Transient,
                      "Configuration for the time domain driven solver. Only relevant "
                      "when [`/Problem/Type`](@ref config-problem-type) is "
                      "`\"Transient\"`. Simulations always start from rest at *t* = 0.",
-                     TransientSolverData) = {};
+                     TransientSolver) = {};
 
   PALACE_SCHEMA_DESC(Linear,
                      "Configuration for the linear solver used by all simulation types.",
-                     LinearSolverData) = {};
+                     LinearSolver) = {};
 };
 
 }  // namespace palace::schema
