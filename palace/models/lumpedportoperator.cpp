@@ -270,7 +270,9 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
     pi.UseDevice(true);
     dot += -(pi * E.Imag()) + 1i * (pi * E.Real());
     Mpi::GlobalSum(1, &dot, E.ParFESpace()->GetComm());
-    return dot;
+    // Complex phasors carry an extra ½ from peak-to-time-averaging; the real-field
+    // (transient) branch below reports instantaneous E × H.
+    return 0.5 * dot;
   }
   else
   {

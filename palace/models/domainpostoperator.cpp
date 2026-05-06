@@ -166,7 +166,8 @@ double DomainPostOperator::GetElectricFieldEnergy(const GridFunction &E) const
       dot += linalg::LocalDot(E.Imag(), D);
     }
     Mpi::GlobalSum(1, &dot, E.GetComm());
-    return 0.5 * dot;
+    // Complex phasors carry an extra ½ from peak-to-time-averaging.
+    return (E.HasImag() ? 0.5 : 1.0) * 0.5 * dot;
   }
   MFEM_ABORT(
       "Domain postprocessing is not configured for electric field energy calculation!");
@@ -185,7 +186,8 @@ double DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B) const
       dot += linalg::LocalDot(B.Imag(), H);
     }
     Mpi::GlobalSum(1, &dot, B.GetComm());
-    return 0.5 * dot;
+    // Complex phasors carry an extra ½ from peak-to-time-averaging.
+    return (B.HasImag() ? 0.5 : 1.0) * 0.5 * dot;
   }
   MFEM_ABORT(
       "Domain postprocessing is not configured for magnetic field energy calculation!");
@@ -211,7 +213,8 @@ double DomainPostOperator::GetDomainElectricFieldEnergy(int idx,
     dot += linalg::LocalDot(E.Imag(), D);
   }
   Mpi::GlobalSum(1, &dot, E.GetComm());
-  return 0.5 * dot;
+  // Complex phasors carry an extra ½ from peak-to-time-averaging.
+  return (E.HasImag() ? 0.5 : 1.0) * 0.5 * dot;
 }
 
 double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
@@ -233,7 +236,8 @@ double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx,
     dot += linalg::LocalDot(B.Imag(), H);
   }
   Mpi::GlobalSum(1, &dot, B.GetComm());
-  return 0.5 * dot;
+  // Complex phasors carry an extra ½ from peak-to-time-averaging.
+  return (B.HasImag() ? 0.5 : 1.0) * 0.5 * dot;
 }
 
 }  // namespace palace

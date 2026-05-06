@@ -515,7 +515,8 @@ inline double EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>::GetLocalEne
     U.Imag().GetVectorValue(T, T.GetIntPoint(), V);
     dot += mat_op.GetPermittivityReal(T.Attribute).InnerProduct(V, V);
   }
-  return 0.5 * dot * scaling;
+  // Complex phasors carry an extra ½ from peak-to-time-averaging.
+  return (U.HasImag() ? 0.5 : 1.0) * 0.5 * dot * scaling;
 }
 
 template <>
@@ -531,11 +532,13 @@ inline double EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>::GetLocalEne
     U.Imag().GetVectorValue(T, T.GetIntPoint(), V);
     dot += mat_op.GetInvPermeability(T.Attribute).InnerProduct(V, V);
   }
-  return 0.5 * dot * scaling;
+  // Complex phasors carry an extra ½ from peak-to-time-averaging.
+  return (U.HasImag() ? 0.5 : 1.0) * 0.5 * dot * scaling;
 }
 
-// Compute time-averaged Poynting vector Re{E x H⋆}, without the typical factor of 1/2. For
-// internal boundary elements, the solution is taken as the average.
+// Compute time-averaged Poynting vector ½ Re{E x H⋆} for complex phasors (or the
+// instantaneous E x H for real / transient fields). For internal boundary elements,
+// the solution is taken as the average.
 class PoyntingVectorCoefficient : public mfem::VectorCoefficient,
                                   public BdrGridFunctionCoefficient
 {
@@ -559,7 +562,8 @@ private:
       E.Imag().GetVectorValue(T, T.GetIntPoint(), W1);
       linalg::Cross3(W1, W2, V, true);
     }
-    V *= scaling;
+    // Complex phasors carry an extra ½ from peak-to-time-averaging.
+    V *= (E.HasImag() ? 0.5 : 1.0) * scaling;
   }
 
 public:

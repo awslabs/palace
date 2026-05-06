@@ -1023,7 +1023,9 @@ std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) co
     dot += -(pi * E.Imag()) + 1i * (pi * E.Real());
   }
   Mpi::GlobalSum(1, &dot, nd_fespace.GetComm());
-  return dot;
+  // Wave ports always carry complex (time-harmonic) phasors (asserted above); the ½
+  // is the peak-to-time-averaging factor.
+  return 0.5 * dot;
 }
 
 std::complex<double> WavePortData::GetSParameter(GridFunction &E) const

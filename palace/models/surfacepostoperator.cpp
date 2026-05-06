@@ -318,6 +318,12 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
     }
   }
   Mpi::GlobalSum(1, &dot, (E) ? E->GetComm() : B->GetComm());
+  // Complex phasors carry an extra ½ from peak-to-time-averaging on POWER
+  // fluxes; linear Φ_elec / Φ_mag fluxes are untouched.
+  if (it->second.type == SurfaceFlux::POWER)
+  {
+    dot *= (has_imag ? 0.5 : 1.0);
+  }
   return dot;
 }
 
@@ -341,7 +347,8 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
   auto f = it->second.GetCoefficient(E, mat_op);
   double dot = GetLocalSurfaceIntegral(*f, attr_marker);
   Mpi::GlobalSum(1, &dot, E.GetComm());
-  return dot;
+  // Complex phasors carry an extra ½ from peak-to-time-averaging.
+  return (E.HasImag() ? 0.5 : 1.0) * dot;
 }
 
 double
