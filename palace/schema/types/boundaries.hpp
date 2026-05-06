@@ -19,10 +19,6 @@
 //     shape from a single C++ type. We model as `int` (Palace stores it as
 //     an int internally: 0/false = inactive, >0 = excitation group index).
 //
-//   - Direction: PR 716 accepts a 24-value string enum OR a 3-array via
-//     `anyOf`. We model as `std::string` (the axis-aligned labels); the
-//     numeric-array form is unavailable until a variant-aware schema pass.
-//
 //   - Materials.*.oneOf scalar-or-3-array pattern: see domains.hpp.
 
 #include <array>
@@ -51,7 +47,7 @@ struct Element
       "Alternatively, specify a normalized 3-element array, e.g. `[0.0, "
       "1.0, 0.0]`. The coordinate system is determined by "
       "`\"CoordinateSystem\"`.",
-      PALACE_SCHEMA_PATTERN("[+-][XYZR]", "direction")) = "+X";
+      Direction) = DirectionLabel("+X");
 
   PALACE_SCHEMA_DESC(CoordinateSystem,
                      "Coordinate system for this element's `\"Direction\"` vector.",
@@ -170,7 +166,7 @@ struct LumpedPort
 
   PALACE_SCHEMA_DESC(Direction,
                      "Excitation direction keyword or 3-array (see Direction schema).",
-                     std::string) = "";
+                     Direction) = DirectionLabel("+X");
 
   PALACE_SCHEMA_DESC(CoordinateSystem,
                      "Coordinate system used to express the `\"Direction\"` vector. If "
@@ -321,7 +317,7 @@ struct SurfaceCurrent
 
   PALACE_SCHEMA_DESC(Direction,
                      "Excitation direction keyword or 3-array (see Direction schema).",
-                     std::string) = "";
+                     Direction) = DirectionLabel("+X");
 
   PALACE_SCHEMA_DESC(CoordinateSystem,
                      "Coordinate system for the `\"Direction\"` vector. Same options as "

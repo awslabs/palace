@@ -16,6 +16,7 @@
 // `enum_descriptions<E>` specialization from a single list. Enums without
 // descriptions stay as plain `enum class`.
 
+#include <array>
 #include <vector>
 
 #include <rfl.hpp>
@@ -31,6 +32,33 @@ namespace palace::schema
 // only composes with scalar numeric types, so minItems is enforced at the
 // application layer via MFEM_VERIFY (same as Palace does today).
 using AttributeList = std::vector<int>;
+
+// Shared alias for the "direction" field used by ports, sources, and the
+// current-dipole postprocessor. PR 716 accepts either an axis keyword (with
+// optional sign and case, covering Cartesian X/Y/Z and cylindrical R) or an
+// explicit 3-element numeric vector. We emit that as
+// `anyOf: [{string, pattern}, {array, 3 numbers}]` via `rfl::Variant`.
+//
+// `DirectionLabel` is the pattern-validated string arm, exposed as a nested
+// type so in-class initializers can construct a Direction from a C++ string
+// literal (the variant itself is not constructible from `const char*`).
+using DirectionLabel = rfl::Pattern<"^[+\\-]?[XYZRxyzr]$", "direction">;
+using Direction = rfl::Variant<DirectionLabel, std::array<double, 3>>;
+
+}  // namespace palace::schema
+
+// Hoist every `Direction` field into a shared `$defs/Direction` entry so
+// the emitted JSON Schema matches PR 716's hand-authored layout. Without
+// this, reflect-cpp expands the `rfl::Variant` inline at every use site
+// (CurrentDipole, Element, LumpedPort, SurfaceCurrent).
+template <>
+struct palace::schema::utils::schema_alias_name<::palace::schema::Direction>
+{
+  static constexpr std::string_view value = "Direction";
+};
+
+namespace palace::schema
+{
 
 // --- Problem section -------------------------------------------------------
 

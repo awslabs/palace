@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -995,6 +996,104 @@ std::string inject_custom_keywords(std::string schema_json,
       continue;
     auto &prop_obj = std::get<rfl::Generic::Object>(prop_var);
     prop_obj["x-palace-" + f.flag] = rfl::Generic(true);
+  }
+
+  return rfl::json::write(*schema_gen_r, rfl::json::pretty);
+}
+
+// Hoist each `FieldAlias` site into a shared `$defs` entry, replacing the
+// inline body with `{"$ref": "#/$defs/<alias>"}`. The first field seen for a
+// given alias name supplies the canonical body; identical subsequent fields
+// are just rewritten to the ref. `description` and `default` are
+// field-specific in JSON-Schema convention and are kept as siblings of
+// `$ref` at the field site; the `$defs` body carries only the
+// schema-describing keys.
+std::string inject_field_aliases(std::string schema_json,
+                                 const std::vector<FieldAlias> &entries)
+{
+  if (entries.empty())
+    return schema_json;
+  auto schema_gen_r = rfl::json::read<rfl::Generic>(schema_json);
+  if (!schema_gen_r)
+    return schema_json;
+
+  auto &schema_var = schema_gen_r->value();
+  if (!std::holds_alternative<rfl::Generic::Object>(schema_var))
+    return schema_json;
+  auto &root_obj = std::get<rfl::Generic::Object>(schema_var);
+
+  if (root_obj.count("$defs") == 0)
+    root_obj["$defs"] = rfl::Generic(rfl::Generic::Object{});
+  auto &defs_var = root_obj.at("$defs").value();
+  if (!std::holds_alternative<rfl::Generic::Object>(defs_var))
+    return schema_json;
+  auto &defs = std::get<rfl::Generic::Object>(defs_var);
+
+  // Keys that belong to the field site, not to the canonical body. They
+  // ride alongside `$ref` — draft 2020-12 allows `$ref` siblings, and
+  // existing Palace consumers treat a `description`/`default` next to
+  // `$ref` as field-specific metadata.
+  const std::array<std::string_view, 4> kSiteKeys{"description", "default", "title",
+                                                  "examples"};
+
+  for (const auto &e : entries)
+  {
+    if (defs.count(e.struct_name) == 0)
+      continue;
+    auto &def_var = defs.at(e.struct_name).value();
+    if (!std::holds_alternative<rfl::Generic::Object>(def_var))
+      continue;
+    auto &def_obj = std::get<rfl::Generic::Object>(def_var);
+    if (def_obj.count("properties") == 0)
+      continue;
+    auto &props_var = def_obj.at("properties").value();
+    if (!std::holds_alternative<rfl::Generic::Object>(props_var))
+      continue;
+    auto &props = std::get<rfl::Generic::Object>(props_var);
+    if (props.count(e.field_name) == 0)
+      continue;
+    auto &prop_var = props.at(e.field_name).value();
+    if (!std::holds_alternative<rfl::Generic::Object>(prop_var))
+      continue;
+    auto &prop_obj = std::get<rfl::Generic::Object>(prop_var);
+
+    // `rfl::Object` exposes insertion-order iteration but no `erase`, so
+    // partition the property's key/value pairs into the canonical body
+    // (everything that defines the schema shape) and the field-site
+    // keys (`description`, `default`, etc.) that travel alongside `$ref`.
+    const auto is_site_key = [&](const std::string &key)
+    {
+      return std::find(kSiteKeys.begin(), kSiteKeys.end(), key) != kSiteKeys.end();
+    };
+    rfl::Generic::Object body;
+    rfl::Generic::Object site_keys;
+    for (auto &kv : prop_obj)
+    {
+      if (is_site_key(kv.first))
+      {
+        site_keys[kv.first] = std::move(kv.second);
+      }
+      else
+      {
+        body[kv.first] = std::move(kv.second);
+      }
+    }
+
+    // Install the canonical body on first occurrence. Later occurrences
+    // share the same `$defs` entry — their own body is dropped in favour
+    // of the `$ref`.
+    if (defs.count(e.alias_name) == 0)
+    {
+      defs[e.alias_name] = rfl::Generic(std::move(body));
+    }
+
+    rfl::Generic::Object ref_obj;
+    ref_obj["$ref"] = rfl::Generic(std::string("#/$defs/") + e.alias_name);
+    for (auto &kv : site_keys)
+    {
+      ref_obj[kv.first] = std::move(kv.second);
+    }
+    props[e.field_name] = rfl::Generic(std::move(ref_obj));
   }
 
   return rfl::json::write(*schema_gen_r, rfl::json::pretty);

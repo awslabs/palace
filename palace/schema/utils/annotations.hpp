@@ -195,6 +195,25 @@ struct schema_oneof_required
   static std::vector<std::vector<std::string>> value() { return {}; }
 };
 
+// --- Named alias hoisting --------------------------------------------------
+//
+// reflect-cpp promotes only class/struct types into `$defs`; aliases like
+// `using Direction = rfl::Variant<...>` expand inline at every use site,
+// producing duplicated `anyOf` bodies in the emitted schema. Specialize
+// `schema_alias_name<T>` with a non-empty `value` and the post-emit
+// `inject_field_aliases` pass hoists every field of that type into a shared
+// `$defs[alias]` entry, leaving `{"$ref": "#/$defs/<alias>"}` (plus any
+// field-specific `description` / `default`) at the field site.
+//
+// The specialization is keyed on the *concrete* type — for an alias, that is
+// the aliased template instantiation, so specializing on the alias name
+// works: `template<> struct schema_alias_name<::palace::schema::Direction>`.
+template <class T>
+struct schema_alias_name
+{
+  static constexpr std::string_view value{};
+};
+
 // --- Per-enum-value descriptions -------------------------------------------
 //
 // reflect-cpp emits `enum class E` as an inline `{"type": "string", "enum":

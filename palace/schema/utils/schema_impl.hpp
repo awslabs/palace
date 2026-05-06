@@ -153,6 +153,24 @@ struct OneOfRequired
 std::string inject_oneof_required(std::string schema_json,
                                   const std::vector<OneOfRequired> &entries);
 
+// Defined in src/schema.cpp. For each entry, hoists
+// `$defs[struct_name]/properties[field_name]` into a shared
+// `$defs[alias_name]` entry (keeping only the schema-describing keys —
+// `description` / `default` / `title` / `examples` stay at the field site)
+// and replaces the field body with `{"$ref": "#/$defs/<alias>"}`. The first
+// occurrence of each alias supplies the canonical body; later occurrences
+// are just rewritten to `$ref`. Runs after every body-mutating pass
+// (defaults, required, enum descriptions, custom keywords) so the hoisted
+// body reflects the final property shape.
+struct FieldAlias
+{
+  std::string struct_name;
+  std::string field_name;
+  std::string alias_name;
+};
+std::string inject_field_aliases(std::string schema_json,
+                                 const std::vector<FieldAlias> &entries);
+
 // Compile-time dispatch helper: pattern-matches a `rfl::TaggedUnion<tag,
 // Arms...>` via a pointer parameter so we can fold over the arm pack and pull
 // each arm's discriminator literal out of `rfl::internal::tag_t`. Only arms
@@ -315,6 +333,22 @@ struct is_rfl_tagged_union<rfl::TaggedUnion<tag, Arms...>> : std::true_type
 {
 };
 
+// rfl::Variant<Alts...> is emitted inline by reflect-cpp as `anyOf: [...]`;
+// it never becomes a `$defs` entry of its own. The walker must recurse into
+// each alternative to collect defaults/required/etc. from reachable structs,
+// but must not treat the Variant itself as a reflectable aggregate (it is
+// not default-schema-emittable as a struct, and default-constructing one
+// would invoke the first alternative's default ctor, which for a validated
+// string would validate an empty value).
+template <class>
+struct is_rfl_variant : std::false_type
+{
+};
+template <class... Alts>
+struct is_rfl_variant<rfl::Variant<Alts...>> : std::true_type
+{
+};
+
 template <class>
 struct is_rfl_literal : std::false_type
 {
@@ -346,6 +380,9 @@ struct DefaultsAccum
   // Cross-field `oneOf` required alternatives — one entry per struct
   // type that specializes `schema_oneof_required<T>`.
   std::vector<OneOfRequired> oneof_required;
+  // Named-alias hoist sites — one entry per field whose cleaned type
+  // specializes `schema_alias_name<T>`.
+  std::vector<FieldAlias> field_aliases;
   std::unordered_set<std::string> seen;
 };
 
@@ -403,17 +440,19 @@ struct field_annotations_walker<U, rfl::Tuple<Fs...>>
 {
   static void apply(const std::string &struct_name, std::vector<EnumDescEntry> &enum_out,
                     std::vector<FieldFlag> &flag_out,
-                    std::vector<std::string> &required_out)
+                    std::vector<std::string> &required_out,
+                    std::vector<FieldAlias> &alias_out)
   {
-    (check_one<Fs>(struct_name, enum_out, flag_out, required_out), ...);
+    (check_one<Fs>(struct_name, enum_out, flag_out, required_out, alias_out), ...);
   }
 
   template <class F>
   static void
   check_one(const std::string &struct_name, std::vector<EnumDescEntry> &enum_out,
-            std::vector<FieldFlag> &flag_out, std::vector<std::string> &required_out)
+            std::vector<FieldFlag> &flag_out, std::vector<std::string> &required_out,
+            std::vector<FieldAlias> &alias_out)
   {
-    check_one_impl(struct_name, enum_out, flag_out, required_out,
+    check_one_impl(struct_name, enum_out, flag_out, required_out, alias_out,
                    static_cast<F *>(nullptr));
   }
 
@@ -421,7 +460,7 @@ struct field_annotations_walker<U, rfl::Tuple<Fs...>>
   static void
   check_one_impl(const std::string &struct_name, std::vector<EnumDescEntry> &enum_out,
                  std::vector<FieldFlag> &flag_out, std::vector<std::string> &required_out,
-                 rfl::Field<name, Type> *)
+                 std::vector<FieldAlias> &alias_out, rfl::Field<name, Type> *)
   {
     using Raw = std::remove_cvref_t<Type>;
     using Clean = strip_ann_t<Raw>;
@@ -458,6 +497,18 @@ struct field_annotations_walker<U, rfl::Tuple<Fs...>>
       f.field_name.assign(std::string_view{name.str()});
       f.flag = "deprecated";
       flag_out.push_back(std::move(f));
+    }
+    // Named-alias hoist: record a FieldAlias entry for every field whose
+    // cleaned type T has a non-empty `schema_alias_name<T>` specialization.
+    // The post-emit pass uses this to promote inline-emitted bodies (e.g.
+    // `rfl::Variant<...>` for `Direction`) into shared `$defs` entries.
+    if constexpr (!schema_alias_name<Clean>::value.empty())
+    {
+      FieldAlias a;
+      a.struct_name = struct_name;
+      a.field_name.assign(std::string_view{name.str()});
+      a.alias_name.assign(schema_alias_name<Clean>::value);
+      alias_out.push_back(std::move(a));
     }
     // Required: either the field's declared type is DescRequired<> (via
     // PALACE_SCHEMA_DESC_REQUIRED), or it is an `rfl::Literal<...>` (a
@@ -498,6 +549,14 @@ void visit_type(DefaultsAccum &acc)
                                                         rfl::TaggedUnion<tag, Arms...> *)
     { (visit_type<Arms>(a), ...); }(acc, static_cast<U *>(nullptr));
   }
+  else if constexpr (is_rfl_variant<U>::value)
+  {
+    // rfl::Variant alternatives are emitted inline as `anyOf` — no `$defs`
+    // entry for the variant itself, but each alternative may still reach
+    // further reflectable structs that need to be walked.
+    []<class... Alts>(DefaultsAccum &a, rfl::Variant<Alts...> *)
+    { (visit_type<strip_ann_t<Alts>>(a), ...); }(acc, static_cast<U *>(nullptr));
+  }
   else if constexpr (is_rfl_literal<U>::value)
   {
     // rfl::Literal is a primitive-ish at the schema level (string + enum).
@@ -520,7 +579,7 @@ void visit_type(DefaultsAccum &acc)
     using Fields = typename rfl::named_tuple_t<U>::Fields;
     std::vector<std::string> required;
     field_annotations_walker<U, Fields>::apply(name, acc.enum_descs, acc.field_flags,
-                                               required);
+                                               required, acc.field_aliases);
     // Always record an entry (even if empty) so the `set_required` pass
     // knows to replace reflect-cpp's native required array — the empty
     // list signals "nothing required", which collapses to an entry with
@@ -596,6 +655,13 @@ std::string schema(SchemaOptions opts)
   if (!accum.oneof_required.empty())
   {
     s = detail::inject_oneof_required(std::move(s), accum.oneof_required);
+  }
+  // Runs after every body-mutating pass so the hoisted `$defs` body
+  // already reflects defaults/required/enum-description/custom-keyword
+  // rewrites.
+  if (!accum.field_aliases.empty())
+  {
+    s = detail::inject_field_aliases(std::move(s), accum.field_aliases);
   }
   if constexpr (is_tagged_union<T>::value)
   {
