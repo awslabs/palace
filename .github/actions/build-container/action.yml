@@ -30,11 +30,6 @@ runs:
 
         end_timer "Setup podman and apptainer"
 
-    - name: Sleep on failure
-      shell: bash
-      if: failure()
-      run: sleep 7200
-
     - name: Compute image name
       id: name
       shell: bash
