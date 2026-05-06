@@ -104,7 +104,7 @@ std::string inject_root_allof(std::string schema_json)
 
 int main()
 {
-  auto s = palace::schema::utils::schema<palace::schema::PalaceConfig>(
+  auto s = palace::schema::utils::schema<palace::schema::PalaceConfiguration>(
       {.emit_defaults = true,
        .version = std::string(palace::schema::schema_version),
        .defs_prefix = "palace__schema__"});

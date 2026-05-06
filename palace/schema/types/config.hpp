@@ -12,6 +12,8 @@
 // `required` list still names all five because of the pruning rule — Palace
 // enforces presence via MFEM_VERIFY at SetUp time.
 
+#include <string>
+
 #include <rfl.hpp>
 
 #include "boundaries.hpp"
@@ -24,8 +26,15 @@
 namespace palace::schema
 {
 
-struct PalaceConfig
+struct PalaceConfiguration
 {
+  PALACE_SCHEMA_DESC(SchemaVersion,
+                     "Schema version in SchemaVer format: `MODEL-REVISION-ADDITION` "
+                     "(three non-negative integers, hyphen-separated, e.g. "
+                     "`1-0-0`). See https://docs.snowplow.io/docs/api-reference/"
+                     "iglu/common-architecture/schemaver/.",
+                     PALACE_SCHEMA_PATTERN("[0-9]+-[0-9]+-[0-9]+", "schema-ver")) = "1-0-0";
+
   PALACE_SCHEMA_DESC(Problem, "Top-level configuration for the simulation type and output.",
                      Problem) = {};
 
@@ -33,7 +42,7 @@ struct PalaceConfig
 
   PALACE_SCHEMA_DESC(Domains, "Material and domain configuration.", Domain) = {};
 
-  PALACE_SCHEMA_DESC(Boundaries, "Boundary condition configuration.", Boundary) = {};
+  PALACE_SCHEMA_DESC(Boundaries, "Boundary condition configuration.", Boundaries) = {};
 
   PALACE_SCHEMA_DESC(Solver, "Solver configuration for all simulation types.", Solver) = {};
 };

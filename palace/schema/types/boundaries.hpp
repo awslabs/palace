@@ -51,7 +51,7 @@ struct Element
       "Alternatively, specify a normalized 3-element array, e.g. `[0.0, "
       "1.0, 0.0]`. The coordinate system is determined by "
       "`\"CoordinateSystem\"`.",
-      std::string) = "";
+      PALACE_SCHEMA_PATTERN("[+-][XYZR]", "direction")) = "+X";
 
   PALACE_SCHEMA_DESC(CoordinateSystem,
                      "Coordinate system for this element's `\"Direction\"` vector.",
@@ -60,35 +60,35 @@ struct Element
 
 // --- Dirichlet-like attribute-only blocks ----------------------------------
 
-struct PECBoundary
+struct PEC
 {
   PALACE_SCHEMA_DESC_REQUIRED(
       Attributes, "Integer array of mesh boundary attributes this object applies to.",
       AttributeList) = {};
 };
 
-struct PMCBoundary
+struct PMC
 {
   PALACE_SCHEMA_DESC_REQUIRED(
       Attributes, "Integer array of mesh boundary attributes this object applies to.",
       AttributeList) = {};
 };
 
-struct GroundBoundary
+struct Ground
 {
   PALACE_SCHEMA_DESC_REQUIRED(
       Attributes, "Integer array of mesh boundary attributes this object applies to.",
       AttributeList) = {};
 };
 
-struct ZeroChargeBoundary
+struct ZeroCharge
 {
   PALACE_SCHEMA_DESC_REQUIRED(
       Attributes, "Integer array of mesh boundary attributes this object applies to.",
       AttributeList) = {};
 };
 
-struct WavePortPECBoundary
+struct WavePortPEC
 {
   PALACE_SCHEMA_DESC_REQUIRED(
       Attributes, "Integer array of mesh boundary attributes this object applies to.",
@@ -97,7 +97,7 @@ struct WavePortPECBoundary
 
 // --- Absorbing / Conductivity / Impedance ----------------------------------
 
-struct FarfieldBoundary
+struct FarField
 {
   PALACE_SCHEMA_DESC_REQUIRED(
       Attributes, "Integer array of mesh boundary attributes this object applies to.",
@@ -340,7 +340,7 @@ struct SurfaceCurrent
 
 // --- Periodic --------------------------------------------------------------
 
-struct PeriodicPair
+struct BoundaryPair
 {
   PALACE_SCHEMA_DESC_REQUIRED(
       DonorAttributes,
@@ -372,7 +372,7 @@ struct PeriodicPair
   };
 };
 
-struct PeriodicBoundary
+struct Periodic
 {
   PALACE_SCHEMA_DESC(FloquetWaveVector,
                      "3-element Floquet wave vector `[kx, ky, kz]` defining the phase "
@@ -386,12 +386,12 @@ struct PeriodicBoundary
       BoundaryPairs,
       "Array of donor–receiver boundary pairs defining the periodic "
       "mapping.",
-      std::vector<PeriodicPair>) = {};
+      std::vector<BoundaryPair>) = {};
 };
 
 // --- Boundary postprocessing -----------------------------------------------
 
-struct SurfaceFluxProbe
+struct SurfaceFlux
 {
   PALACE_SCHEMA_DESC_REQUIRED(Index,
                               "Index of this surface flux postprocessing boundary, used in "
@@ -403,7 +403,7 @@ struct SurfaceFluxProbe
       AttributeList) = {};
 
   PALACE_SCHEMA_DESC_REQUIRED(Type, "Type of surface flux to integrate over the boundary.",
-                              SurfaceFlux) = SurfaceFlux::Electric;
+                              SurfaceFluxType) = SurfaceFluxType::Electric;
 
   PALACE_SCHEMA_DESC(TwoSided,
                      "For internal boundary surfaces: when `false`, the flux on both "
@@ -422,7 +422,7 @@ struct SurfaceFluxProbe
   };
 };
 
-struct DielectricInterface
+struct Dielectric
 {
   PALACE_SCHEMA_DESC(Index, "Index of this dielectric interface, used in output files.",
                      palace::schema::utils::XMin<int, 0>) = 1;
@@ -452,7 +452,7 @@ struct DielectricInterface
                      palace::schema::utils::Min<double, 0.0>) = 0.0;
 };
 
-struct FarFieldPost
+struct FarFieldPostprocessing
 {
   PALACE_SCHEMA_DESC_REQUIRED(
       Attributes, "Integer array of mesh boundary attributes this object applies to.",
@@ -470,12 +470,12 @@ struct FarFieldPost
                      std::vector<std::array<double, 2>>) = {};
 };
 
-struct BoundaryPost
+struct BoundaryPostprocessing
 {
   PALACE_SCHEMA_DESC(SurfaceFlux,
                      "Array of surface flux postprocessing boundaries. Results are "
                      "written to `surface-F.csv` in the output directory.",
-                     std::vector<SurfaceFluxProbe>) = {};
+                     std::vector<SurfaceFlux>) = {};
 
   PALACE_SCHEMA_DESC(Dielectric,
                      "Array of interface dielectric loss postprocessing boundaries. "
@@ -484,44 +484,44 @@ struct BoundaryPost
                      "documentation](../reference.md#Bulk-and-interface-dielectric-loss"
                      "). Results are written to `surface-Q.csv` in the output "
                      "directory.",
-                     std::vector<DielectricInterface>) = {};
+                     std::vector<Dielectric>) = {};
 
   PALACE_SCHEMA_DESC(FarField,
                      "Far-field electric field extraction. The boundary attributes "
                      "must enclose the system and be on an external boundary.",
-                     FarFieldPost) = {};
+                     FarFieldPostprocessing) = {};
 };
 
 // --- Top-level Boundary ------------------------------------------------
 
-struct Boundary
+struct Boundaries
 {
   PALACE_SCHEMA_DESC(PEC,
                      "Perfect electric conductor (PEC) boundary condition: enforces "
                      "zero tangential electric field. This is a homogeneous Dirichlet "
                      "condition for frequency/time domain and magnetostatic "
                      "formulations.",
-                     PECBoundary) = {};
+                     PEC) = {};
 
   PALACE_SCHEMA_DESC(PMC,
                      "Perfect magnetic conductor (PMC) boundary condition: enforces "
                      "zero tangential magnetic field. This is the natural "
                      "(homogeneous Neumann) boundary condition; it also imposes "
                      "symmetry of the electric field across the surface.",
-                     PMCBoundary) = {};
+                     PMC) = {};
 
   PALACE_SCHEMA_DESC(Ground,
                      "Zero-voltage (ground) boundary condition for electrostatic "
                      "simulations. Mutually exclusive with [PEC](@ref "
                      "config-boundaries-pec).",
-                     GroundBoundary) = {};
+                     Ground) = {};
 
   PALACE_SCHEMA_DESC(ZeroCharge,
                      "Zero surface charge (homogeneous Neumann) boundary condition "
                      "for electrostatic simulations. Also imposes symmetry of the "
                      "electric field across the surface. Mutually exclusive with "
                      "[PMC](@ref config-boundaries-pmc).",
-                     ZeroChargeBoundary) = {};
+                     ZeroCharge) = {};
 
   PALACE_SCHEMA_DESC(WavePortPEC,
                      "Additional PEC boundary conditions for the 2D eigensolve used "
@@ -529,13 +529,13 @@ struct Boundary
                      "under [PEC](@ref config-boundaries-pec) and [Conductivity](@ref "
                      "config-boundaries-conductivity). Only relevant when [WavePort]"
                      "(@ref config-boundaries-waveport) boundaries are present.",
-                     WavePortPECBoundary) = {};
+                     WavePortPEC) = {};
 
   PALACE_SCHEMA_DESC(Absorbing,
                      "Farfield absorbing (scattering) boundary conditions. These are "
                      "artificial boundary conditions applied at farfield boundaries "
                      "to minimize reflections.",
-                     FarfieldBoundary) = {};
+                     FarField) = {};
 
   PALACE_SCHEMA_DESC(Conductivity,
                      "Array of finite conductivity surface impedance boundaries. "
@@ -583,10 +583,10 @@ struct Boundary
                      "Periodic boundary conditions for surfaces whose meshes are "
                      "identical after translation and/or rotation. Floquet periodic "
                      "boundary conditions with a phase shift are also supported.",
-                     PeriodicBoundary) = {};
+                     Periodic) = {};
 
   PALACE_SCHEMA_DESC(Postprocessing, "Configuration for boundary postprocessing.",
-                     BoundaryPost) = {};
+                     BoundaryPostprocessing) = {};
 };
 
 }  // namespace palace::schema

@@ -60,7 +60,7 @@ PALACE_SCHEMA_ENUM(NonlinearEigenSolver,
                     "then refine with a quasi-Newton nonlinear eigensolver."),
                    (SLP, "SLEPc Successive Linear Problem (SLP) nonlinear eigensolver."));
 
-PALACE_SCHEMA_ENUM(SurfaceFlux, (Electric, "Integrate the electric flux density."),
+PALACE_SCHEMA_ENUM(SurfaceFluxType, (Electric, "Integrate the electric flux density."),
                    (Magnetic, "Integrate the magnetic flux density."),
                    (Power, "Integrate the Poynting vector (energy flux)."));
 

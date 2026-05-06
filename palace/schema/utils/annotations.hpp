@@ -15,6 +15,7 @@
 
 #include <rfl.hpp>
 #include <rfl/Description.hpp>
+#include <rfl/Pattern.hpp>
 #include <rfl/internal/StringLiteral.hpp>
 #include <rfl/internal/is_description.hpp>
 
@@ -313,6 +314,20 @@ class is_description<::palace::schema::utils::DescDeprecated<text, T>>
 // substitutes the C++ initializer when the key is absent.
 #define PALACE_SCHEMA_DESC_REQUIRED(FieldName, Description, ... /*Type*/) \
   ::palace::schema::utils::DescRequired<Description, __VA_ARGS__> FieldName
+
+// Construct a `std::string` field type with a ctre-style regex pattern
+// attached. The emitted JSON Schema property gets a `"pattern"` keyword
+// next to `"type": "string"`; JSON Schema validators will reject values
+// that do not match before Palace parses them.
+//
+// Call-site form (as the `Type` argument to `PALACE_SCHEMA_DESC(_REQUIRED)`):
+//   PALACE_SCHEMA_DESC(Version, "Schema version in SchemaVer format.",
+//                      PALACE_SCHEMA_PATTERN("[0-9]+-[0-9]+-[0-9]+",
+//                                            "schema-ver")) = "1-0-0";
+//
+// `Name` is used by reflect-cpp for the runtime validation error message
+// only — it does not appear in the emitted schema.
+#define PALACE_SCHEMA_PATTERN(Regex, Name) ::rfl::Pattern<Regex, Name>
 
 // --- PALACE_SCHEMA_ENUM ----------------------------------------------------
 //

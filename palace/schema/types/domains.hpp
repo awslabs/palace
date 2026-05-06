@@ -107,7 +107,7 @@ struct CurrentDipole
       std::string) = "";
 };
 
-struct DomainEnergy
+struct Energy
 {
   PALACE_SCHEMA_DESC_REQUIRED(
       Index, "Index of this energy postprocessing domain, used in output files.",
@@ -131,13 +131,13 @@ struct Probe
   };
 };
 
-struct DomainPost
+struct DomainPostprocessing
 {
   PALACE_SCHEMA_DESC(Energy,
                      "Array of objects for postprocessing domain energies. Postprocesses "
                      "the electric and magnetic field energy inside a given domain. "
                      "Results are written to `domain-E.csv` in the output directory.",
-                     std::vector<DomainEnergy>) = {};
+                     std::vector<Energy>) = {};
 
   PALACE_SCHEMA_DESC(Probe,
                      "Array of probe points for evaluating field values at specified "
@@ -156,7 +156,7 @@ struct Domain
                      std::vector<CurrentDipole>) = {};
 
   PALACE_SCHEMA_DESC(Postprocessing, "Configuration for domain postprocessing.",
-                     DomainPost) = {};
+                     DomainPostprocessing) = {};
 };
 
 }  // namespace palace::schema

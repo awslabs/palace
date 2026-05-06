@@ -20,7 +20,7 @@
 namespace palace::schema
 {
 
-struct BoxRefinement
+struct Box
 {
   PALACE_SCHEMA_DESC_REQUIRED(Levels,
                               "Levels of parallel mesh refinement inside this box region.",
@@ -43,7 +43,7 @@ struct BoxRefinement
   };
 };
 
-struct SphereRefinement
+struct Sphere
 {
   PALACE_SCHEMA_DESC_REQUIRED(
       Levels, "Levels of parallel mesh refinement inside this sphere region.",
@@ -126,12 +126,12 @@ struct Refinement
   PALACE_SCHEMA_DESC(Boxes,
                      "Array of axis-aligned box refinement regions. All elements with a "
                      "node inside the box are marked for refinement.",
-                     std::vector<BoxRefinement>) = {};
+                     std::vector<Box>) = {};
 
   PALACE_SCHEMA_DESC(Spheres,
                      "Array of sphere refinement regions. All elements with a node inside "
                      "the sphere are marked for refinement.",
-                     std::vector<SphereRefinement>) = {};
+                     std::vector<Sphere>) = {};
 };
 
 struct Model

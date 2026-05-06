@@ -104,7 +104,7 @@ using Sample = rfl::TaggedUnion<"Type", SamplesPoint, SamplesLinear, SamplesLog>
 
 // --- DrivenSolver ------------------------------------------------------
 
-struct DrivenSolver
+struct Driven
 {
   PALACE_SCHEMA_DESC_DEPRECATED(
       MinFreq,
@@ -205,7 +205,7 @@ struct DrivenSolver
 
 // --- EigenSolver -------------------------------------------------------
 
-struct EigenSolver
+struct Eigenmode
 {
   PALACE_SCHEMA_DESC_REQUIRED(Target,
                               "(Nonzero) frequency target above which to search for "
@@ -294,7 +294,7 @@ struct EigenSolver
 
 // --- TransientSolver ---------------------------------------------------
 
-struct TransientSolver
+struct Transient
 {
   PALACE_SCHEMA_DESC(Type, "Time integration scheme for the second-order ODE system.",
                      TimeSteppingScheme) = TimeSteppingScheme::Default;
@@ -350,7 +350,7 @@ struct TransientSolver
 
 // --- Electrostatic / Magnetostatic -----------------------------------------
 
-struct ElectrostaticSolver
+struct Electrostatic
 {
   PALACE_SCHEMA_DESC(Save,
                      "Number of computed electric field solutions to save to disk for "
@@ -362,7 +362,7 @@ struct ElectrostaticSolver
                      palace::schema::utils::Min<int, 0>) = 0;
 };
 
-struct MagnetostaticSolver
+struct Magnetostatic
 {
   PALACE_SCHEMA_DESC(Save,
                      "Number of computed magnetic field solutions to save to disk for "
@@ -612,34 +612,34 @@ struct Solver
                      "Configuration for the frequency domain driven solver. Only "
                      "relevant when [`/Problem/Type`](@ref config-problem-type) is "
                      "`\"Driven\"`.",
-                     DrivenSolver) = {};
+                     Driven) = {};
 
   PALACE_SCHEMA_DESC(Eigenmode,
                      "Configuration for the eigenvalue solver. Only relevant when "
                      "[`/Problem/Type`](@ref config-problem-type) is `\"Eigenmode\"`.",
-                     EigenSolver) = {};
+                     Eigenmode) = {};
 
   PALACE_SCHEMA_DESC(Electrostatic,
                      "Configuration for the electrostatic solver. Only relevant when "
                      "[`/Problem/Type`](@ref config-problem-type) is "
                      "`\"Electrostatic\"`.",
-                     ElectrostaticSolver) = {};
+                     Electrostatic) = {};
 
   PALACE_SCHEMA_DESC(Magnetostatic,
                      "Configuration for the magnetostatic solver. Only relevant when "
                      "[`/Problem/Type`](@ref config-problem-type) is "
                      "`\"Magnetostatic\"`.",
-                     MagnetostaticSolver) = {};
+                     Magnetostatic) = {};
 
   PALACE_SCHEMA_DESC(Transient,
                      "Configuration for the time domain driven solver. Only relevant "
                      "when [`/Problem/Type`](@ref config-problem-type) is "
                      "`\"Transient\"`. Simulations always start from rest at *t* = 0.",
-                     TransientSolver) = {};
+                     Transient) = {};
 
   PALACE_SCHEMA_DESC(Linear,
                      "Configuration for the linear solver used by all simulation types.",
-                     LinearSolver) = {};
+                     LinearSolverConfig) = {};
 };
 
 }  // namespace palace::schema
