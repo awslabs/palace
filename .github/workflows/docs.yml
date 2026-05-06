@@ -177,7 +177,7 @@ jobs:
       - name: Build Dependencies
         if: needs.filter.outputs.should_build == 'true'
         run: |
-          spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies
+          spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --include-build-deps --only dependencies
 
         # Explicitly not using cache to get latest develop
       - name: Build Palace
