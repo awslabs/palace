@@ -144,11 +144,7 @@ function testcase(
             end
             filter!(d -> d ∉ exclude_folders, dirs)
             for f in fs
-                # The "<stem>-resolved.json" sidecar is Palace's record of the fully
-                # resolved config; the stem is the Julia tempfile name, so normalise
-                # to a fixed "-resolved.json" key for the expected-metafiles check.
-                name = endswith(f, "-resolved.json") ? "-resolved.json" : f
-                path = relroot == "." ? name : joinpath(relroot, name)
+                path = relroot == "." ? f : joinpath(relroot, f)
                 endswith(f, ".csv") ? push!(csvfiles, path) : push!(metafiles, path)
             end
         end
@@ -180,7 +176,7 @@ function testcase(
         @test alldirs == expected_dirs || (@show alldirs, expected_dirs; false)
         @test sort(csvfiles) == sort(csvfilesref) || (@show csvfiles, csvfilesref; false)
 
-        expected_metafiles = ["palace.json", "-resolved.json"]
+        expected_metafiles = ["palace.json", "config.json"]
         for i = 1:max_its
             push!(expected_metafiles, "iteration$(i)/palace.json")
         end

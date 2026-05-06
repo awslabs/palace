@@ -239,12 +239,11 @@ int main(int argc, char *argv[])
   // record of every Palace decision (all defaults filled in).
   if (world_root)
   {
-    std::filesystem::path config_path(argv[1]);
-    auto resolved_name = config_path.stem().string() + "-resolved.json";
-    auto resolved_path = std::filesystem::path(iodata.problem.output) / resolved_name;
+    auto resolved_path = std::filesystem::path(iodata.problem.output) / "config.json";
     std::ofstream out(resolved_path);
     out << IoData::ConcretizeDefaults(iodata, config).dump(2) << "\n";
     out.close();
+    Mpi::Print(world_comm, "Wrote resolved config: {}\n", resolved_path.string());
     if (!out)
     {
       Mpi::Warning(world_comm,
