@@ -302,6 +302,11 @@ add_subdirectory(linalg)
 add_subdirectory(models)
 add_subdirectory(utils)
 
+target_sources(${LIB_TARGET_NAME}
+  PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/driver.cpp
+)
+
 # Add executable target
 set(TARGET_NAME palace)
 add_executable(${TARGET_NAME} ${CMAKE_SOURCE_DIR}/main.cpp)
