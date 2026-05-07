@@ -1097,6 +1097,78 @@ std::string inject_field_aliases(std::string schema_json,
   return rfl::json::write(*schema_gen_r, rfl::json::pretty);
 }
 
+// For each entry, locate
+// `$defs[struct_name]/properties[field_name]/anyOf[arm_index]` and rewrite
+// that arm body into `{"$ref": "#/$defs/<alias_name>"}`, moving the
+// arm body into `$defs[alias_name]` (first occurrence wins). Sibling keys
+// on the outer property (description, default) are untouched. Used to
+// match PR 716's `Direction` shape: `anyOf: [{$ref: PortDirection}, {$ref:
+// Vector3}]` rather than two inline bodies.
+std::string inject_variant_arm_aliases(std::string schema_json,
+                                       const std::vector<VariantArmAlias> &entries)
+{
+  if (entries.empty())
+    return schema_json;
+  auto schema_gen_r = rfl::json::read<rfl::Generic>(schema_json);
+  if (!schema_gen_r)
+    return schema_json;
+
+  auto &schema_var = schema_gen_r->value();
+  if (!std::holds_alternative<rfl::Generic::Object>(schema_var))
+    return schema_json;
+  auto &root_obj = std::get<rfl::Generic::Object>(schema_var);
+
+  if (root_obj.count("$defs") == 0)
+    root_obj["$defs"] = rfl::Generic(rfl::Generic::Object{});
+  auto &defs_var = root_obj.at("$defs").value();
+  if (!std::holds_alternative<rfl::Generic::Object>(defs_var))
+    return schema_json;
+  auto &defs = std::get<rfl::Generic::Object>(defs_var);
+
+  for (const auto &e : entries)
+  {
+    if (defs.count(e.struct_name) == 0)
+      continue;
+    auto &def_var = defs.at(e.struct_name).value();
+    if (!std::holds_alternative<rfl::Generic::Object>(def_var))
+      continue;
+    auto &def_obj = std::get<rfl::Generic::Object>(def_var);
+    if (def_obj.count("properties") == 0)
+      continue;
+    auto &props_var = def_obj.at("properties").value();
+    if (!std::holds_alternative<rfl::Generic::Object>(props_var))
+      continue;
+    auto &props = std::get<rfl::Generic::Object>(props_var);
+    if (props.count(e.field_name) == 0)
+      continue;
+    auto &prop_var = props.at(e.field_name).value();
+    if (!std::holds_alternative<rfl::Generic::Object>(prop_var))
+      continue;
+    auto &prop_obj = std::get<rfl::Generic::Object>(prop_var);
+    if (prop_obj.count("anyOf") == 0)
+      continue;
+    auto &arms_var = prop_obj.at("anyOf").value();
+    if (!std::holds_alternative<rfl::Generic::Array>(arms_var))
+      continue;
+    auto &arms = std::get<rfl::Generic::Array>(arms_var);
+    if (e.arm_index >= arms.size())
+      continue;
+
+    // Snapshot the arm body before overwriting it. First occurrence of
+    // each alias wins — later overlapping aliases share the entry.
+    if (defs.count(e.alias_name) == 0)
+    {
+      defs[e.alias_name] = std::move(arms[e.arm_index]);
+    }
+
+    rfl::Generic::Object ref_obj;
+    ref_obj["$ref"] = rfl::Generic(std::string("#/$defs/") + e.alias_name);
+    arms[e.arm_index] = rfl::Generic(std::move(ref_obj));
+  }
+
+  return rfl::json::write(*schema_gen_r, rfl::json::pretty);
+}
+
 // Stamp `"version": <value>` on the root object. JSON Schema allows custom
 // root keywords, so this is a lightweight schema-level annotation (it does
 // not affect instance validation).

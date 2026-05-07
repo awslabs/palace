@@ -16,9 +16,10 @@
 //     expand `2.0` to `[2.0, 2.0, 2.0]`.
 //
 //   - MaterialAxes is not modelled in Phase 1 for the same reason (scalar-or-
-//     3-array inline shape). `CurrentDipole.Direction` now uses the shared
-//     `palace::schema::Direction` alias (axis-keyword string OR 3-array) from
-//     `common.hpp`, backed by reflect-cpp's `rfl::Variant` emitter.
+//     3-array inline shape). `CurrentDipole.Direction` uses the
+//     `palace::schema::DipoleDirection` alias (Cartesian axis-keyword string
+//     OR 3-array) from `common.hpp` — Dirac dipole sources have no notion of
+//     a cylindrical frame, so the keyword set excludes `R`/`r` variants.
 //
 //   - Palace's runtime uses `std::map<int, T>` keyed by Index for Energy /
 //     Probe entries. The JSON wire format is always an array with Index as an
@@ -104,7 +105,7 @@ struct CurrentDipole
       "`\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. The direction can "
       "alternatively be specified as a normalized array of three values, "
       "for example `[0.0, 1.0, 0.0]`.",
-      Direction) = {};
+      DipoleDirection) = {};
 };
 
 struct Energy

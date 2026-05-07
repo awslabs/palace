@@ -47,7 +47,7 @@ struct Element
       "Alternatively, specify a normalized 3-element array, e.g. `[0.0, "
       "1.0, 0.0]`. The coordinate system is determined by "
       "`\"CoordinateSystem\"`.",
-      Direction) = {};
+      PortDirection) = {};
 
   PALACE_SCHEMA_DESC(CoordinateSystem,
                      "Coordinate system for this element's `\"Direction\"` vector.",
@@ -165,8 +165,8 @@ struct LumpedPort
                      AttributeList) = {};
 
   PALACE_SCHEMA_DESC(Direction,
-                     "Excitation direction keyword or 3-array (see Direction schema).",
-                     Direction) = DirectionLabel("+X");
+                     "Excitation direction keyword or 3-array (see PortDirection schema).",
+                     PortDirection) = PortDirectionLabel("+X");
 
   PALACE_SCHEMA_DESC(CoordinateSystem,
                      "Coordinate system used to express the `\"Direction\"` vector. If "
@@ -316,8 +316,8 @@ struct SurfaceCurrent
                      AttributeList) = {};
 
   PALACE_SCHEMA_DESC(Direction,
-                     "Excitation direction keyword or 3-array (see Direction schema).",
-                     Direction) = DirectionLabel("+X");
+                     "Excitation direction keyword or 3-array (see PortDirection schema).",
+                     PortDirection) = PortDirectionLabel("+X");
 
   PALACE_SCHEMA_DESC(CoordinateSystem,
                      "Coordinate system for the `\"Direction\"` vector. Same options as "

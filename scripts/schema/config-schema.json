@@ -108,13 +108,8 @@
                     "default": []
                 },
                 "Translation": {
-                    "type": "array",
+                    "$ref": "#/$defs/Vector3",
                     "description": "3-element translation vector `[dx, dy, dz]` from donor to receiver boundary, in mesh length units. If neither `\"Translation\"` nor `\"AffineTransformation\"` are specified, the transformation is detected automatically.",
-                    "items": {
-                        "type": "number"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3,
                     "default": [
                         0.0,
                         0.0,
@@ -191,13 +186,8 @@
                     "default": 0
                 },
                 "BoundingBoxMin": {
-                    "type": "array",
+                    "$ref": "#/$defs/Vector3",
                     "description": "Minimum coordinates `[x, y, z]` of the axis-aligned bounding box for this refinement region, in mesh length units.",
-                    "items": {
-                        "type": "number"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3,
                     "default": [
                         0.0,
                         0.0,
@@ -205,13 +195,8 @@
                     ]
                 },
                 "BoundingBoxMax": {
-                    "type": "array",
+                    "$ref": "#/$defs/Vector3",
                     "description": "Maximum coordinates `[x, y, z]` of the axis-aligned bounding box for this refinement region, in mesh length units.",
-                    "items": {
-                        "type": "number"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3,
                     "default": [
                         0.0,
                         0.0,
@@ -282,13 +267,8 @@
                     "default": 0.0
                 },
                 "Center": {
-                    "type": "array",
+                    "$ref": "#/$defs/Vector3",
                     "description": "Coordinates of the dipole center position `[x, y, z]`, in mesh length units.",
-                    "items": {
-                        "type": "number"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3,
                     "default": [
                         0.0,
                         0.0,
@@ -296,9 +276,16 @@
                     ]
                 },
                 "Direction": {
-                    "$ref": "#/$defs/Direction",
                     "description": "Direction of the Dirac current source specifying the dipole. Axis-aligned directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. The direction can alternatively be specified as a normalized array of three values, for example `[0.0, 1.0, 0.0]`.",
-                    "default": "R"
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/DipoleDirection"
+                        },
+                        {
+                            "$ref": "#/$defs/Vector3"
+                        }
+                    ],
+                    "default": "X"
                 }
             },
             "required": [
@@ -717,8 +704,15 @@
                     "default": []
                 },
                 "Direction": {
-                    "$ref": "#/$defs/Direction",
                     "description": "Excitation direction. Axis-aligned Cartesian directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. Coaxial directions use `\"+R\"`, `\"-R\"`. Alternatively, specify a normalized 3-element array, e.g. `[0.0, 1.0, 0.0]`. The coordinate system is determined by `\"CoordinateSystem\"`.",
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/PortDirection"
+                        },
+                        {
+                            "$ref": "#/$defs/Vector3"
+                        }
+                    ],
                     "default": "R"
                 },
                 "CoordinateSystem": {
@@ -1223,8 +1217,15 @@
                     "default": []
                 },
                 "Direction": {
-                    "$ref": "#/$defs/Direction",
-                    "description": "Excitation direction keyword or 3-array (see Direction schema).",
+                    "description": "Excitation direction keyword or 3-array (see PortDirection schema).",
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/PortDirection"
+                        },
+                        {
+                            "$ref": "#/$defs/Vector3"
+                        }
+                    ],
                     "default": "+X"
                 },
                 "CoordinateSystem": {
@@ -1323,13 +1324,8 @@
                     "default": []
                 },
                 "Permeability": {
-                    "type": "array",
+                    "$ref": "#/$defs/Vector3",
                     "description": "Relative permeability for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
-                    "items": {
-                        "type": "number"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3,
                     "default": [
                         1.0,
                         1.0,
@@ -1337,13 +1333,8 @@
                     ]
                 },
                 "Permittivity": {
-                    "type": "array",
+                    "$ref": "#/$defs/Vector3",
                     "description": "Relative permittivity for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
-                    "items": {
-                        "type": "number"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3,
                     "default": [
                         1.0,
                         1.0,
@@ -1351,13 +1342,8 @@
                     ]
                 },
                 "LossTan": {
-                    "type": "array",
+                    "$ref": "#/$defs/Vector3",
                     "description": "Loss tangent for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
-                    "items": {
-                        "type": "number"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3,
                     "default": [
                         0.0,
                         0.0,
@@ -1365,13 +1351,8 @@
                     ]
                 },
                 "Conductivity": {
-                    "type": "array",
+                    "$ref": "#/$defs/Vector3",
                     "description": "Electrical conductivity for this material, S/m. Activates the Ohmic loss model in this domain. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
-                    "items": {
-                        "type": "number"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3,
                     "default": [
                         0.0,
                         0.0,
@@ -1577,13 +1558,8 @@
             "type": "object",
             "properties": {
                 "FloquetWaveVector": {
-                    "type": "array",
+                    "$ref": "#/$defs/Vector3",
                     "description": "3-element Floquet wave vector `[kx, ky, kz]` defining the phase delay between periodic boundaries, in radians per mesh length unit.",
-                    "items": {
-                        "type": "number"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3,
                     "default": [
                         0.0,
                         0.0,
@@ -1614,13 +1590,8 @@
                     "default": 1
                 },
                 "Center": {
-                    "type": "array",
+                    "$ref": "#/$defs/Vector3",
                     "description": "Coordinates of this probe `[x, y, z]`, in mesh length units.",
-                    "items": {
-                        "type": "number"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3,
                     "default": [
                         0.0,
                         0.0,
@@ -2000,13 +1971,8 @@
                     "default": 1.0
                 },
                 "Center": {
-                    "type": "array",
+                    "$ref": "#/$defs/Vector3",
                     "description": "Center coordinates `[x, y, z]` of the sphere, in mesh length units.",
-                    "items": {
-                        "type": "number"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3,
                     "default": [
                         0.0,
                         0.0,
@@ -2039,8 +2005,15 @@
                     "default": []
                 },
                 "Direction": {
-                    "$ref": "#/$defs/Direction",
-                    "description": "Excitation direction keyword or 3-array (see Direction schema).",
+                    "description": "Excitation direction keyword or 3-array (see PortDirection schema).",
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/PortDirection"
+                        },
+                        {
+                            "$ref": "#/$defs/Vector3"
+                        }
+                    ],
                     "default": "+X"
                 },
                 "CoordinateSystem": {
@@ -2115,13 +2088,8 @@
                     "default": false
                 },
                 "Center": {
-                    "type": "array",
+                    "$ref": "#/$defs/Vector3",
                     "description": "Point used to determine the outward normal orientation, in mesh length units. Only used when `\"TwoSided\"` is `false`. If not specified, the point will be computed as the centroid of the axis-aligned bounding box for all elements making up the postprocessing boundary.",
-                    "items": {
-                        "type": "number"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3,
                     "default": [
                         0.0,
                         0.0,
@@ -2400,45 +2368,64 @@
             ],
             "additionalProperties": false
         },
-        "Direction": {
-            "anyOf": [
-                {
-                    "type": "string",
-                    "enum": [
-                        "R",
-                        "X",
-                        "Y",
-                        "Z",
-                        "+R",
-                        "+X",
-                        "+Y",
-                        "+Z",
-                        "-R",
-                        "-X",
-                        "-Y",
-                        "-Z",
-                        "r",
-                        "x",
-                        "y",
-                        "z",
-                        "+r",
-                        "+x",
-                        "+y",
-                        "+z",
-                        "-r",
-                        "-x",
-                        "-y",
-                        "-z"
-                    ]
-                },
-                {
-                    "type": "array",
-                    "items": {
-                        "type": "number"
-                    },
-                    "minItems": 3,
-                    "maxItems": 3
-                }
+        "DipoleDirection": {
+            "type": "string",
+            "enum": [
+                "X",
+                "Y",
+                "Z",
+                "+X",
+                "+Y",
+                "+Z",
+                "-X",
+                "-Y",
+                "-Z",
+                "x",
+                "y",
+                "z",
+                "+x",
+                "+y",
+                "+z",
+                "-x",
+                "-y",
+                "-z"
+            ]
+        },
+        "Vector3": {
+            "type": "array",
+            "items": {
+                "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3
+        },
+        "PortDirection": {
+            "type": "string",
+            "enum": [
+                "R",
+                "X",
+                "Y",
+                "Z",
+                "+R",
+                "+X",
+                "+Y",
+                "+Z",
+                "-R",
+                "-X",
+                "-Y",
+                "-Z",
+                "r",
+                "x",
+                "y",
+                "z",
+                "+r",
+                "+x",
+                "+y",
+                "+z",
+                "-r",
+                "-x",
+                "-y",
+                "-z"
             ]
         },
         "CoordinateSystem": {

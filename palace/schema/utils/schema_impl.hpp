@@ -171,6 +171,24 @@ struct FieldAlias
 std::string inject_field_aliases(std::string schema_json,
                                  const std::vector<FieldAlias> &entries);
 
+// Defined in src/schema.cpp. Counterpart to `inject_field_aliases` for
+// `rfl::Variant<...>` fields whose alternatives expand inline as
+// `anyOf: [{<arm0 body>}, {<arm1 body>}, ...]`. For each entry, locates
+// `$defs[struct_name]/properties[field_name]/anyOf[arm_index]`, moves the
+// arm's body into `$defs[alias_name]` (first occurrence wins), and replaces
+// the arm with `{"$ref": "#/$defs/<alias_name>"}`. Sibling keys on the
+// outer property (description, default) stay where they are — only the
+// arm body is rewritten.
+struct VariantArmAlias
+{
+  std::string struct_name;
+  std::string field_name;
+  std::size_t arm_index;
+  std::string alias_name;
+};
+std::string inject_variant_arm_aliases(std::string schema_json,
+                                       const std::vector<VariantArmAlias> &entries);
+
 // Compile-time dispatch helper: pattern-matches a `rfl::TaggedUnion<tag,
 // Arms...>` via a pointer parameter so we can fold over the arm pack and pull
 // each arm's discriminator literal out of `rfl::internal::tag_t`. Only arms
@@ -383,6 +401,10 @@ struct DefaultsAccum
   // Named-alias hoist sites — one entry per field whose cleaned type
   // specializes `schema_alias_name<T>`.
   std::vector<FieldAlias> field_aliases;
+  // Per-arm alias hoist sites for `rfl::Variant<...>` fields: one entry
+  // per (struct, field, arm-index) whose cleaned arm type specializes
+  // `schema_alias_name<T>`.
+  std::vector<VariantArmAlias> variant_arm_aliases;
   std::unordered_set<std::string> seen;
 };
 
@@ -441,26 +463,32 @@ struct field_annotations_walker<U, rfl::Tuple<Fs...>>
   static void apply(const std::string &struct_name, std::vector<EnumDescEntry> &enum_out,
                     std::vector<FieldFlag> &flag_out,
                     std::vector<std::string> &required_out,
-                    std::vector<FieldAlias> &alias_out)
+                    std::vector<FieldAlias> &alias_out,
+                    std::vector<VariantArmAlias> &variant_arm_alias_out)
   {
-    (check_one<Fs>(struct_name, enum_out, flag_out, required_out, alias_out), ...);
+    (check_one<Fs>(struct_name, enum_out, flag_out, required_out, alias_out,
+                   variant_arm_alias_out),
+     ...);
   }
 
   template <class F>
   static void
   check_one(const std::string &struct_name, std::vector<EnumDescEntry> &enum_out,
             std::vector<FieldFlag> &flag_out, std::vector<std::string> &required_out,
-            std::vector<FieldAlias> &alias_out)
+            std::vector<FieldAlias> &alias_out,
+            std::vector<VariantArmAlias> &variant_arm_alias_out)
   {
     check_one_impl(struct_name, enum_out, flag_out, required_out, alias_out,
-                   static_cast<F *>(nullptr));
+                   variant_arm_alias_out, static_cast<F *>(nullptr));
   }
 
   template <rfl::internal::StringLiteral name, class Type>
   static void
   check_one_impl(const std::string &struct_name, std::vector<EnumDescEntry> &enum_out,
                  std::vector<FieldFlag> &flag_out, std::vector<std::string> &required_out,
-                 std::vector<FieldAlias> &alias_out, rfl::Field<name, Type> *)
+                 std::vector<FieldAlias> &alias_out,
+                 std::vector<VariantArmAlias> &variant_arm_alias_out,
+                 rfl::Field<name, Type> *)
   {
     using Raw = std::remove_cvref_t<Type>;
     using Clean = strip_ann_t<Raw>;
@@ -500,8 +528,9 @@ struct field_annotations_walker<U, rfl::Tuple<Fs...>>
     }
     // Named-alias hoist: record a FieldAlias entry for every field whose
     // cleaned type T has a non-empty `schema_alias_name<T>` specialization.
-    // The post-emit pass uses this to promote inline-emitted bodies (e.g.
-    // `rfl::Variant<...>` for `Direction`) into shared `$defs` entries.
+    // The post-emit pass uses this to promote inline-emitted bodies into
+    // shared `$defs` entries — e.g. `std::array<double, 3>` becomes
+    // `$defs/Vector3`.
     if constexpr (!schema_alias_name<Clean>::value.empty())
     {
       FieldAlias a;
@@ -509,6 +538,38 @@ struct field_annotations_walker<U, rfl::Tuple<Fs...>>
       a.field_name.assign(std::string_view{name.str()});
       a.alias_name.assign(schema_alias_name<Clean>::value);
       alias_out.push_back(std::move(a));
+    }
+    // Per-arm alias hoist: when the cleaned field type is `rfl::Variant<
+    // Alts...>`, the schema emits `anyOf: [{<arm0>}, {<arm1>}, ...]`. For
+    // each arm whose cleaned type specializes `schema_alias_name<T>`, emit
+    // a `VariantArmAlias` so the post-emit pass can rewrite that arm into
+    // `{"$ref": "#/$defs/<alias>"}`. Used to wire `Direction` variants to
+    // shared `$defs/PortDirection` / `$defs/DipoleDirection` / `$defs/Vector3`
+    // entries.
+    if constexpr (is_rfl_variant<Clean>::value)
+    {
+      []<class... Alts>(
+          const std::string &sn, std::string_view fn,
+          std::vector<VariantArmAlias> &out, rfl::Variant<Alts...> *)
+      {
+        std::size_t idx = 0;
+        auto emit_one = [&]<class Alt>()
+        {
+          using AltClean = strip_ann_t<Alt>;
+          if constexpr (!schema_alias_name<AltClean>::value.empty())
+          {
+            VariantArmAlias v;
+            v.struct_name = sn;
+            v.field_name.assign(fn);
+            v.arm_index = idx;
+            v.alias_name.assign(schema_alias_name<AltClean>::value);
+            out.push_back(std::move(v));
+          }
+          ++idx;
+        };
+        (emit_one.template operator()<Alts>(), ...);
+      }(struct_name, std::string_view{name.str()}, variant_arm_alias_out,
+        static_cast<Clean *>(nullptr));
     }
     // Required: either the field's declared type is DescRequired<> (via
     // PALACE_SCHEMA_DESC_REQUIRED), or it is an `rfl::Literal<...>` (a
@@ -579,7 +640,8 @@ void visit_type(DefaultsAccum &acc)
     using Fields = typename rfl::named_tuple_t<U>::Fields;
     std::vector<std::string> required;
     field_annotations_walker<U, Fields>::apply(name, acc.enum_descs, acc.field_flags,
-                                               required, acc.field_aliases);
+                                               required, acc.field_aliases,
+                                               acc.variant_arm_aliases);
     // Always record an entry (even if empty) so the `set_required` pass
     // knows to replace reflect-cpp's native required array — the empty
     // list signals "nothing required", which collapses to an entry with
@@ -655,6 +717,17 @@ std::string schema(SchemaOptions opts)
   if (!accum.oneof_required.empty())
   {
     s = detail::inject_oneof_required(std::move(s), accum.oneof_required);
+  }
+  // Variant-arm aliasing must run before the whole-field alias pass: a
+  // `Direction` field uses `rfl::Variant<Label, Vector3>`, where the
+  // numeric arm shares the `$defs/Vector3` alias with plain
+  // `std::array<double, 3>` field sites. Hoisting the arm first installs
+  // the canonical body; the later field-alias pass for plain `Vector3`
+  // fields then sees the entry already populated and only writes a
+  // `$ref`.
+  if (!accum.variant_arm_aliases.empty())
+  {
+    s = detail::inject_variant_arm_aliases(std::move(s), accum.variant_arm_aliases);
   }
   // Runs after every body-mutating pass so the hoisted `$defs` body
   // already reflects defaults/required/enum-description/custom-keyword

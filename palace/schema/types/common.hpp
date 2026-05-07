@@ -33,35 +33,71 @@ namespace palace::schema
 // application layer via MFEM_VERIFY (same as Palace does today).
 using AttributeList = std::vector<int>;
 
-// Shared alias for the "direction" field used by ports, sources, and the
-// current-dipole postprocessor. PR 716 accepts either an axis keyword
-// (Cartesian X/Y/Z or cylindrical R, with optional sign and case) or an
-// explicit 3-element numeric vector. We emit that as
+// Shared alias for the "direction" field used by ports and sources
+// (LumpedPort, Element, SurfaceCurrent). PR 716 accepts either an axis
+// keyword (Cartesian X/Y/Z or cylindrical R, with optional sign and case)
+// or an explicit 3-element numeric vector. We emit that as
 // `anyOf: [{string, enum}, {array, 3 numbers}]` via `rfl::Variant`.
 //
-// `DirectionLabel` is the `rfl::Literal` enumerating the 24 allowed axis
-// keywords; reflect-cpp renders it inline as `{"type": "string", "enum":
-// [...]}`. Exposed as a nested type so in-class initializers can
-// construct a Direction from a C++ string literal (the variant itself is
-// not constructible from `const char*`).
-using DirectionLabel = rfl::Literal<"R", "X", "Y", "Z",      //
-                                    "+R", "+X", "+Y", "+Z",  //
-                                    "-R", "-X", "-Y", "-Z",  //
-                                    "r", "x", "y", "z",      //
-                                    "+r", "+x", "+y", "+z",  //
-                                    "-r", "-x", "-y", "-z">;
-using Direction = rfl::Variant<DirectionLabel, std::array<double, 3>>;
+// `PortDirectionLabel` is the `rfl::Literal` enumerating the 24 allowed
+// axis keywords; reflect-cpp renders it inline as `{"type": "string",
+// "enum": [...]}`. Exposed as a nested type so in-class initializers can
+// construct a PortDirection from a C++ string literal (the variant itself
+// is not constructible from `const char*`).
+using PortDirectionLabel = rfl::Literal<"R", "X", "Y", "Z",      //
+                                        "+R", "+X", "+Y", "+Z",  //
+                                        "-R", "-X", "-Y", "-Z",  //
+                                        "r", "x", "y", "z",      //
+                                        "+r", "+x", "+y", "+z",  //
+                                        "-r", "-x", "-y", "-z">;
+using PortDirection = rfl::Variant<PortDirectionLabel, std::array<double, 3>>;
+
+// Cartesian-only counterpart used by `CurrentDipole`. PR 716's
+// `domains.json` constrains the dipole direction to the 18 Cartesian axis
+// keywords (no `R`/`r` cylindrical variants), since a Dirac current
+// source has no notion of a cylindrical frame.
+using DipoleDirectionLabel = rfl::Literal<"X", "Y", "Z",      //
+                                          "+X", "+Y", "+Z",  //
+                                          "-X", "-Y", "-Z",  //
+                                          "x", "y", "z",      //
+                                          "+x", "+y", "+z",  //
+                                          "-x", "-y", "-z">;
+using DipoleDirection = rfl::Variant<DipoleDirectionLabel, std::array<double, 3>>;
 
 }  // namespace palace::schema
 
-// Hoist every `Direction` field into a shared `$defs/Direction` entry so
-// the emitted JSON Schema matches PR 716's hand-authored layout. Without
-// this, reflect-cpp expands the `rfl::Variant` inline at every use site
-// (CurrentDipole, Element, LumpedPort, SurfaceCurrent).
+// Per-arm aliases for the `PortDirection` and `DipoleDirection` variants.
+// The variant itself stays inline as `anyOf: [...]`, but each arm is
+// rewritten to `{"$ref": "#/$defs/<alias>"}` so the emitted JSON Schema
+// matches PR 716's hand-authored layout:
+//
+//   "Direction": { "anyOf": [
+//       { "$ref": "#/$defs/PortDirection" },
+//       { "$ref": "#/$defs/Vector3" } ] }
+//
+// PortDirectionLabel / DipoleDirectionLabel are `rfl::Literal<...>` enums
+// rendered inline by reflect-cpp; the arm-alias pass hoists their bodies
+// into `$defs/PortDirection` and `$defs/DipoleDirection` respectively.
 template <>
-struct palace::schema::utils::schema_alias_name<::palace::schema::Direction>
+struct palace::schema::utils::schema_alias_name<::palace::schema::PortDirectionLabel>
 {
-  static constexpr std::string_view value = "Direction";
+  static constexpr std::string_view value = "PortDirection";
+};
+
+template <>
+struct palace::schema::utils::schema_alias_name<::palace::schema::DipoleDirectionLabel>
+{
+  static constexpr std::string_view value = "DipoleDirection";
+};
+
+// Hoist every fixed 3-element `double` array into the shared
+// `$defs/Vector3` entry. Used by Center / Translation / FloquetWaveVector
+// / etc. as plain field types, and by the `Direction` variants as their
+// numeric-vector arm.
+template <>
+struct palace::schema::utils::schema_alias_name<::std::array<double, 3>>
+{
+  static constexpr std::string_view value = "Vector3";
 };
 
 namespace palace::schema
