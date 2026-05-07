@@ -8,6 +8,7 @@
 #include "fem/libceed/ceed.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/slepc.hpp"
+#include "regression_helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/device.hpp"
 #include "utils/omp.hpp"
@@ -33,12 +34,45 @@ int main(int argc, char *argv[])
   std::string device_str("cpu");          // MFEM device
   std::string ceed_backend("/cpu/self");  // libCEED backend
 
+  // Regression-suite overrides. Each mirrors a Catch2 CLI flag;
+  // examples-dir / regression-ref-dir fall back to their compile-time
+  // defaults (PALACE_EXAMPLES_DIR_DEFAULT /
+  // PALACE_REGRESSION_REF_DIR_DEFAULT wired in via
+  // test/unit/CMakeLists.txt) when not overridden. Empty = "no
+  // override".
+  std::string examples_dir;        // --examples-dir
+  std::string regression_ref_dir;  // --regression-ref-dir
+  std::string regression_run_dir;  // --regression-run-dir
+  std::string palace_solver;       // --palace-solver
+  std::string palace_eigensolver;  // --palace-eigensolver
+  std::string palace_device;       // --palace-device
+
   // Build a new parser on top of Catch2's.
   using namespace Catch::Clara;
   auto cli = session.cli() |
              Opt(device_str, "device")["--device"]("MFEM device (default: \"cpu\")") |
              Opt(ceed_backend,
                  "backend")["--backend"]("libCEED backend (default: \"/cpu/self\")") |
+             Opt(examples_dir, "path")["--examples-dir"](
+                 "Override for the source-tree examples/ directory used by "
+                 "[Regression] cases (default: compile-time "
+                 "PALACE_EXAMPLES_DIR_DEFAULT)") |
+             Opt(regression_ref_dir, "path")["--regression-ref-dir"](
+                 "Override for the test/examples/ref/ directory used by [Regression] "
+                 "cases (default: compile-time PALACE_REGRESSION_REF_DIR_DEFAULT)") |
+             Opt(regression_run_dir, "path")["--regression-run-dir"](
+                 "Staging root under which each [Regression] case gets its own "
+                 "subdirectory (inputs symlinked from examples/, outputs written "
+                 "there). Default: std::filesystem::temp_directory_path() / "
+                 "\"palace-regression\"") |
+             Opt(palace_solver, "type")["--palace-solver"](
+                 "Override Solver.Linear.Type for [Regression] cases (e.g. "
+                 "SuperLU, STRUMPACK)") |
+             Opt(palace_eigensolver, "type")["--palace-eigensolver"](
+                 "Override Solver.Eigenmode.Type for [Regression] cases (e.g. "
+                 "SLEPc, ARPACK)") |
+             Opt(palace_device, "name")["--palace-device"](
+                 "Override Solver.Device for [Regression] cases (CPU or GPU)") |
              Opt(benchmark_ref_levels, "levels")["--benchmark-ref-levels"](
                  "Levels of uniform mesh refinement for benchmarks (default: 0)") |
              Opt(benchmark_order, "order")["--benchmark-order"](
@@ -98,6 +132,18 @@ int main(int argc, char *argv[])
   // of MPI processes we detect.
 
   auto cfg = session.configData();
+
+  // Whether the user passed any explicit test selector on the command
+  // line (name, wildcard, or tag spec). Bare invocation leaves this
+  // empty and triggers our convenience defaults below; anything
+  // explicit runs exactly what was asked for. This matters for
+  // regression cases in particular: they're tagged `[Regression]`
+  // only, so auto-adding `[Serial]` or `~[Regression]` would either
+  // fold in unrelated unit tests (separate positive filters are
+  // OR'd in Catch2) or silently exclude the very test the user
+  // selected by name.
+  const bool user_selected_tests = !cfg.testsOrTags.empty();
+
   // Check if device is GPU capable, if yes, add the [GPU] tag.
   if (device.Allows(mfem::Backend::CUDA_MASK | mfem::Backend::HIP_MASK))
   {
@@ -111,17 +157,33 @@ int main(int argc, char *argv[])
           device.Allows(mfem::Backend::CUDA_MASK) ? "/gpu/cuda/magma" : "/gpu/hip/magma";
     }
   }
-  // Check if we are running with more than 1 MPI process, if yes, add the
-  // [Parallel] tag, if not add the [Serial] tag.
-  if (Mpi::Size(Mpi::World()) > 1)
+  // Bare invocation: auto-select by MPI world size, and defensively
+  // exclude [Regression] (which is slow and has its own explicit
+  // entry point; long regression cases are tagged [Regression][Long]
+  // so they're caught here too). With any explicit user selector,
+  // run exactly what was asked for.
+  if (!user_selected_tests)
   {
-    cfg.testsOrTags.emplace_back("[Parallel]");
-  }
-  else
-  {
-    cfg.testsOrTags.emplace_back("[Serial]");
+    if (Mpi::Size(Mpi::World()) > 1)
+    {
+      cfg.testsOrTags.emplace_back("[Parallel]");
+    }
+    else
+    {
+      cfg.testsOrTags.emplace_back("[Serial]");
+    }
+    cfg.testsOrTags.emplace_back("~[Regression]");
   }
   session.useConfigData(cfg);
+
+  // Forward regression-harness overrides into the helpers. Empty strings
+  // leave the chain intact (env var, then compile-time default).
+  palace::test::SetExamplesDirOverride(examples_dir);
+  palace::test::SetRegressionRefDirOverride(regression_ref_dir);
+  palace::test::SetRegressionRunDirOverride(regression_run_dir);
+  palace::test::SetSolverOverride(palace_solver);
+  palace::test::SetEigenSolverOverride(palace_eigensolver);
+  palace::test::SetDeviceOverride(palace_device);
 
   // Only print from the root process.
   // TODO: Print errors from other processes as well.

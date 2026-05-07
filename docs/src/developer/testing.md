@@ -162,8 +162,11 @@ _tags_. When creating a test, you provide a name and a series of tags
 TEST_CASE("My name", "[MyFirstTag][MyOtherTag][Serial]"){ ... }
 ```
 
-`Catch2` tags are typically used for filtering tests. *Palace* defines three
-special tags that control when tests execute based on the runtime environment:
+`Catch2` tags are typically used for filtering tests. *Palace* defines two
+orthogonal axes of special tags:
+
+**Execution-style tags** — control when a test runs based on the runtime
+environment.
 
   - `[Serial]` tests run only with a single MPI process. Use this for tests that
     verify single-process behavior.
@@ -172,6 +175,27 @@ special tags that control when tests execute based on the runtime environment:
     inter-process communication.
   - `[GPU]` tests run only when GPU devices are available. Use this for tests that
     are meaningful and interesting on GPU hardware.
+
+**Category tags** — say what kind of test this is. Used by CTest registrations
+to group cases into separate sweeps.
+
+  - `[Regression]` tests are end-to-end Palace solves diffed against the
+    reference data under `test/examples/ref/`. Slow enough to deserve
+    their own ctest registration (`regression-*`, label `regression`)
+    and skipped from the default unit-test sweep. Opt in with
+    `ctest -L "^regression$"` or
+    `palace-unit-tests "[Regression]~[Long]"`. Each case lives in
+    `test/unit/regression/cases.cpp`.
+  - `[Long]` is a *modifier* on a regression case for solves that take
+    long enough (~10 minutes) that they shouldn't run on every PR.
+    These cases are tagged `[Regression][Long]` and registered as
+    `long-*` ctest entries (label `long`); the long-tests CI workflow
+    runs them via `ctest -L "^long$"` when the `trigger-long-tests`
+    PR label is applied.
+
+Category tags are orthogonal to execution-style tags: a regression case is
+still `[Serial][Parallel][Regression]` because the same case is valid at
+any rank count.
 
 These tags are inclusive, meaning that a test can be marked with multiple
 special tags, if the test is meaningful in different contexts (e.g., if a test

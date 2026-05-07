@@ -167,7 +167,11 @@ set(SHOULD_SET_LLVM_PROFILE_FILE "$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<
 # Serial tests
 catch_discover_tests(unit-tests
   TEST_PREFIX "serial-"
-  TEST_SPEC "[Serial]"
+  # Exclude [Regression] so the fast unit-test sweep stays fast; regression
+  # cases are invoked directly via `mpirun -np N palace-unit-tests
+  # "[Regression]"` from the workflow (see
+  # .github/workflows/build-and-test-*.yml).
+  TEST_SPEC "[Serial]~[Regression]"
   EXTRA_ARGS --skip-benchmarks
   PROPERTIES
     SKIP_RETURN_CODE 4
@@ -178,7 +182,7 @@ catch_discover_tests(unit-tests
 # MPI tests  
 catch_discover_tests(unit-tests
   TEST_PREFIX "mpi-"
-  TEST_SPEC "[Parallel]"
+  TEST_SPEC "[Parallel]~[Regression]"
   TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2 ${MPIEXEC_PREFLAGS}
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS} --skip-benchmarks
   PROPERTIES
@@ -186,6 +190,64 @@ catch_discover_tests(unit-tests
     SKIP_RETURN_CODE 4
     # When building with coverage, set LLVM_PROFILE_FILE for parallel execution
     ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
+)
+
+# Regression tests: full-mesh Palace solves diffed against test/examples/ref/.
+# Regression tests: full-mesh Palace solves diffed against
+# test/examples/ref/. Slow enough to deserve their own ctest prefix
+# (`ctest -L "^regression$"` to select, `-LE "^(regression|long)$"` to
+# skip both regression flavors).
+#
+# Rank count is a *runtime* knob, not a build option: each ctest entry
+# launches via the generated `run_regression_test.sh` wrapper, which
+# reads `$PALACE_REGRESSION_NUMPROC` (default below) and exec's mpirun.
+# Use `PALACE_REGRESSION_NUMPROC=8 ctest -L "^regression$" -j 1` to fan
+# out at 8 ranks per case; `PALACE_REGRESSION_NUMPROC=4 ctest -L
+# "^regression$" -j 2` to run two 4-rank cases in parallel; etc.
+set(PALACE_REGRESSION_NUMPROC_DEFAULT 2 CACHE STRING
+    "Default MPI rank count for the [Regression] ctest registration. Overridden at run time by the PALACE_REGRESSION_NUMPROC environment variable.")
+
+list(JOIN MPIEXEC_PREFLAGS " " MPIEXEC_PREFLAGS_STR)
+configure_file(
+  ${CMAKE_CURRENT_SOURCE_DIR}/run_regression_test.sh.in
+  ${CMAKE_CURRENT_BINARY_DIR}/run_regression_test.sh
+  @ONLY)
+file(CHMOD ${CMAKE_CURRENT_BINARY_DIR}/run_regression_test.sh
+     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                 GROUP_READ GROUP_EXECUTE
+                 WORLD_READ WORLD_EXECUTE)
+
+catch_discover_tests(unit-tests
+  TEST_PREFIX "regression-"
+  TEST_SPEC "[Regression]~[Long]"
+  TEST_EXECUTOR ${CMAKE_CURRENT_BINARY_DIR}/run_regression_test.sh
+  EXTRA_ARGS ${MPIEXEC_POSTFLAGS}
+  PROPERTIES
+    LABELS regression
+    SKIP_RETURN_CODE 4
+    # Cylinder eigen cases can take ~50s on 2 ranks; give a generous ceiling.
+    TIMEOUT 600
+    ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/regression/coverage-%p.profraw>"
+)
+
+# Long regression tests: full-mesh Palace solves that take 10+ minutes
+# even at modest rank counts (transmon eigenmodes). Tagged
+# `[Regression][Long]` and registered as `long-*` ctest entries with
+# label `long`. Default `palace-unit-tests` and
+# `ctest -L "^regression$"` runs skip them; the long-tests CI workflow
+# (triggered by the `trigger-long-tests` PR label) selects them via
+# `ctest -L "^long$"`.
+catch_discover_tests(unit-tests
+  TEST_PREFIX "long-"
+  TEST_SPEC "[Long]"
+  TEST_EXECUTOR ${CMAKE_CURRENT_BINARY_DIR}/run_regression_test.sh
+  EXTRA_ARGS ${MPIEXEC_POSTFLAGS}
+  PROPERTIES
+    LABELS long
+    SKIP_RETURN_CODE 4
+    # Transmon eigen cases take ~10 minutes at np=2; allow 30 min headroom.
+    TIMEOUT 1800
+    ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/regression/coverage-%p.profraw>"
 )
 
 # GPU tests (if available)
@@ -198,7 +260,11 @@ endif()
 if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
   catch_discover_tests(unit-tests
     TEST_PREFIX "gpu-"
-    TEST_SPEC "[GPU]"
+    # Exclude [Regression] so the GPU sweep stays focused on unit
+    # tests; regression cases (including the [Long] transmon ones,
+    # which also carry [Regression]) have their own registration and
+    # are exercised on GPU via .github/actions/run-regression-tests.
+    TEST_SPEC "[GPU]~[Regression]"
     EXTRA_ARGS --device ${PALACE_GPU_DEVICE} --skip-benchmarks
     PROPERTIES
       # Don't allow more than one GPU test at a time.

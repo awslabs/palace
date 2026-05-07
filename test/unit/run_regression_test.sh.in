@@ -1,0 +1,10 @@
+#!/bin/sh
+# Runs a [Regression] Catch2 test under mpiexec. The number of MPI ranks
+# is read from the PALACE_REGRESSION_NUMPROC environment variable (default
+# baked in at CMake configure time via test/unit/CMakeLists.txt). The test
+# binary path and the Catch2 test name are appended by CTest.
+#
+# Usage:
+#   PALACE_REGRESSION_NUMPROC=8 ctest -L "^regression$" -j 1 --output-on-failure
+NRANKS="${PALACE_REGRESSION_NUMPROC:-@PALACE_REGRESSION_NUMPROC_DEFAULT@}"
+exec @MPIEXEC_EXECUTABLE@ @MPIEXEC_NUMPROC_FLAG@ "$NRANKS" @MPIEXEC_PREFLAGS_STR@ "$@"
