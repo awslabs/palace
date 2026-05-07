@@ -104,7 +104,7 @@ struct CurrentDipole
       "`\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. The direction can "
       "alternatively be specified as a normalized array of three values, "
       "for example `[0.0, 1.0, 0.0]`.",
-      Direction) = DirectionLabel("+X");
+      Direction) = {};
 };
 
 struct Energy

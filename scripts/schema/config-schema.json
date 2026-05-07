@@ -298,7 +298,7 @@
                 "Direction": {
                     "$ref": "#/$defs/Direction",
                     "description": "Direction of the Dirac current source specifying the dipole. Axis-aligned directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. The direction can alternatively be specified as a normalized array of three values, for example `[0.0, 1.0, 0.0]`.",
-                    "default": "+X"
+                    "default": "R"
                 }
             },
             "required": [
@@ -719,20 +719,11 @@
                 "Direction": {
                     "$ref": "#/$defs/Direction",
                     "description": "Excitation direction. Axis-aligned Cartesian directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. Coaxial directions use `\"+R\"`, `\"-R\"`. Alternatively, specify a normalized 3-element array, e.g. `[0.0, 1.0, 0.0]`. The coordinate system is determined by `\"CoordinateSystem\"`.",
-                    "default": "+X"
+                    "default": "R"
                 },
                 "CoordinateSystem": {
+                    "$ref": "#/$defs/CoordinateSystem",
                     "description": "Coordinate system for this element's `\"Direction\"` vector.",
-                    "oneOf": [
-                        {
-                            "const": "Cartesian",
-                            "description": "Standard Cartesian coordinates."
-                        },
-                        {
-                            "const": "Cylindrical",
-                            "description": "Cylindrical coordinates (enables `+R`/`-R` directions)."
-                        }
-                    ],
                     "default": "Cartesian"
                 }
             },
@@ -1237,17 +1228,8 @@
                     "default": "+X"
                 },
                 "CoordinateSystem": {
+                    "$ref": "#/$defs/CoordinateSystem",
                     "description": "Coordinate system used to express the `\"Direction\"` vector. If a keyword argument is used for `\"Direction\"` this value is ignored.",
-                    "oneOf": [
-                        {
-                            "const": "Cartesian",
-                            "description": "Standard Cartesian coordinates."
-                        },
-                        {
-                            "const": "Cylindrical",
-                            "description": "Cylindrical coordinates (enables `+R`/`-R` directions)."
-                        }
-                    ],
                     "default": "Cartesian"
                 },
                 "R": {
@@ -2062,17 +2044,8 @@
                     "default": "+X"
                 },
                 "CoordinateSystem": {
+                    "$ref": "#/$defs/CoordinateSystem",
                     "description": "Coordinate system for the `\"Direction\"` vector. Same options as [`/LumpedPort/CoordinateSystem`](@ref config-boundaries-lumpedport-coordinatesystem).",
-                    "oneOf": [
-                        {
-                            "const": "Cartesian",
-                            "description": "Standard Cartesian coordinates."
-                        },
-                        {
-                            "const": "Cylindrical",
-                            "description": "Cylindrical coordinates (enables `+R`/`-R` directions)."
-                        }
-                    ],
                     "default": "Cartesian"
                 },
                 "Elements": {
@@ -2431,7 +2404,32 @@
             "anyOf": [
                 {
                     "type": "string",
-                    "pattern": "^[+\\-]?[XYZRxyzr]$"
+                    "enum": [
+                        "R",
+                        "X",
+                        "Y",
+                        "Z",
+                        "+R",
+                        "+X",
+                        "+Y",
+                        "+Z",
+                        "-R",
+                        "-X",
+                        "-Y",
+                        "-Z",
+                        "r",
+                        "x",
+                        "y",
+                        "z",
+                        "+r",
+                        "+x",
+                        "+y",
+                        "+z",
+                        "-r",
+                        "-x",
+                        "-y",
+                        "-z"
+                    ]
                 },
                 {
                     "type": "array",
@@ -2440,6 +2438,18 @@
                     },
                     "minItems": 3,
                     "maxItems": 3
+                }
+            ]
+        },
+        "CoordinateSystem": {
+            "oneOf": [
+                {
+                    "const": "Cartesian",
+                    "description": "Standard Cartesian coordinates."
+                },
+                {
+                    "const": "Cylindrical",
+                    "description": "Cylindrical coordinates (enables `+R`/`-R` directions)."
                 }
             ]
         }

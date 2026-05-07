@@ -1062,9 +1062,7 @@ std::string inject_field_aliases(std::string schema_json,
     // (everything that defines the schema shape) and the field-site
     // keys (`description`, `default`, etc.) that travel alongside `$ref`.
     const auto is_site_key = [&](const std::string &key)
-    {
-      return std::find(kSiteKeys.begin(), kSiteKeys.end(), key) != kSiteKeys.end();
-    };
+    { return std::find(kSiteKeys.begin(), kSiteKeys.end(), key) != kSiteKeys.end(); };
     rfl::Generic::Object body;
     rfl::Generic::Object site_keys;
     for (auto &kv : prop_obj)

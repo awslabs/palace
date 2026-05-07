@@ -47,7 +47,7 @@ struct Element
       "Alternatively, specify a normalized 3-element array, e.g. `[0.0, "
       "1.0, 0.0]`. The coordinate system is determined by "
       "`\"CoordinateSystem\"`.",
-      Direction) = DirectionLabel("+X");
+      Direction) = {};
 
   PALACE_SCHEMA_DESC(CoordinateSystem,
                      "Coordinate system for this element's `\"Direction\"` vector.",

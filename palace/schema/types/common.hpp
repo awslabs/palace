@@ -34,15 +34,22 @@ namespace palace::schema
 using AttributeList = std::vector<int>;
 
 // Shared alias for the "direction" field used by ports, sources, and the
-// current-dipole postprocessor. PR 716 accepts either an axis keyword (with
-// optional sign and case, covering Cartesian X/Y/Z and cylindrical R) or an
+// current-dipole postprocessor. PR 716 accepts either an axis keyword
+// (Cartesian X/Y/Z or cylindrical R, with optional sign and case) or an
 // explicit 3-element numeric vector. We emit that as
-// `anyOf: [{string, pattern}, {array, 3 numbers}]` via `rfl::Variant`.
+// `anyOf: [{string, enum}, {array, 3 numbers}]` via `rfl::Variant`.
 //
-// `DirectionLabel` is the pattern-validated string arm, exposed as a nested
-// type so in-class initializers can construct a Direction from a C++ string
-// literal (the variant itself is not constructible from `const char*`).
-using DirectionLabel = rfl::Pattern<"^[+\\-]?[XYZRxyzr]$", "direction">;
+// `DirectionLabel` is the `rfl::Literal` enumerating the 24 allowed axis
+// keywords; reflect-cpp renders it inline as `{"type": "string", "enum":
+// [...]}`. Exposed as a nested type so in-class initializers can
+// construct a Direction from a C++ string literal (the variant itself is
+// not constructible from `const char*`).
+using DirectionLabel = rfl::Literal<"R", "X", "Y", "Z",      //
+                                    "+R", "+X", "+Y", "+Z",  //
+                                    "-R", "-X", "-Y", "-Z",  //
+                                    "r", "x", "y", "z",      //
+                                    "+r", "+x", "+y", "+z",  //
+                                    "-r", "-x", "-y", "-z">;
 using Direction = rfl::Variant<DirectionLabel, std::array<double, 3>>;
 
 }  // namespace palace::schema
@@ -200,5 +207,14 @@ PALACE_SCHEMA_ENUM(Device, (CPU, "Run on CPU."),
                    (Debug, "MFEM debug device, useful for diagnosing GPU-related issues."));
 
 }  // namespace palace::schema
+
+// Hoist every `CoordinateSystem` field into a shared `$defs/CoordinateSystem`
+// entry. Runs after `inject_enum_descriptions`, so the canonical body is
+// the fully-decorated `oneOf` with per-value `const`/`description` pairs.
+template <>
+struct palace::schema::utils::schema_alias_name<::palace::schema::CoordinateSystem>
+{
+  static constexpr std::string_view value = "CoordinateSystem";
+};
 
 #endif  // PALACE_SCHEMA_TYPES_COMMON_HPP
