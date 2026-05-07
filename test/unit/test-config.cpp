@@ -676,7 +676,6 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_linear["AMGAggressiveCoarsening"].get<int>() == 1);
     CHECK(j_linear["AMSMaxIts"].get<int>() == 1);
     CHECK(j_linear["MGCycleIts"].get<int>() == 1);
-    CHECK(j_linear["PCMatSymmetry"].get<std::string>() == "SPD");
   }
 
   SECTION("Magnetostatic resolves to AMS with singular operator")
@@ -700,7 +699,6 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(config["Solver"]["Linear"]["AMSSingularOperator"].get<int>() == 1);
     CHECK(config["Solver"]["Linear"]["AMSMaxIts"].get<int>() == 1);
     CHECK(config["Solver"]["Linear"]["MGCycleIts"].get<int>() == 1);
-    CHECK(config["Solver"]["Linear"]["PCMatSymmetry"].get<std::string>() == "SPD");
   }
 
   SECTION("User-specified values survive concretization")
@@ -731,7 +729,6 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
     IoData iodata(config, false);
 
-    // DEFAULT is a compile-time alias — it should equal the concrete backend.
 #if defined(PALACE_WITH_SLEPC)
     CHECK(iodata.solver.eigenmode.type == EigenSolverBackend::SLEPC);
 #elif defined(PALACE_WITH_ARPACK)
@@ -855,7 +852,6 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
            {{"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}}}}}};
 
     IoData iodata(config, false);
-    // DEFAULT is a compile-time alias of GEN_ALPHA.
     CHECK(iodata.solver.transient.type == TimeSteppingScheme::GEN_ALPHA);
 
     config = IoData::ConcretizeDefaults(iodata, config);

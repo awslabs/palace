@@ -27,20 +27,6 @@ std::string EnumString(E e)
   return oss.str();
 }
 
-std::string MatrixSymmetryString(MatrixSymmetry s)
-{
-  switch (s)
-  {
-    case MatrixSymmetry::SPD:
-      return "SPD";
-    case MatrixSymmetry::SYMMETRIC:
-      return "Symmetric";
-    case MatrixSymmetry::UNSYMMETRIC:
-      return "Unsymmetric";
-  }
-  return "Unsymmetric";
-}
-
 // Fill the key if absent, or if the user wrote the explicit "Default" sentinel.
 void Concretize(json &j, const std::string &key, const json &value)
 {
@@ -102,7 +88,6 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"ComplexCoarseSolve", linear.complex_coarse_solve},
                 {"DropSmallEntries", linear.drop_small_entries},
                 {"ReorderingReuse", linear.reorder_reuse},
-                {"PCMatSymmetry", MatrixSymmetryString(linear.pc_mat_sym)},
                 {"PCSide", EnumString(linear.pc_side)},
                 {"ColumnOrdering", EnumString(linear.sym_factorization)},
                 {"STRUMPACKCompressionType", EnumString(linear.strumpack_compression_type)},

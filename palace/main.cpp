@@ -243,7 +243,6 @@ int main(int argc, char *argv[])
     std::ofstream out(resolved_path);
     out << IoData::ConcretizeDefaults(iodata, config).dump(2) << "\n";
     out.close();
-    Mpi::Print(world_comm, "Wrote resolved config: {}\n", resolved_path.string());
     if (!out)
     {
       Mpi::Warning(world_comm,
