@@ -194,8 +194,8 @@ to group cases into separate sweeps.
     PR label is applied.
 
 Category tags are orthogonal to execution-style tags: a regression case is
-still `[Serial][Parallel][Regression]` because the same case is valid at
-any rank count.
+still `[Serial][Parallel][GPU][Regression]` because the same case is valid
+at any rank count and on either CPU or GPU.
 
 These tags are inclusive, meaning that a test can be marked with multiple
 special tags, if the test is meaningful in different contexts (e.g., if a test

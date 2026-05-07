@@ -96,14 +96,14 @@ case directory, config JSON, postpro subdirectory, and case-specific
 tolerances / excluded-column list / custom per-CSV checks (for
 phase-invariant eigenmode and farfield magnitude comparisons).
 
-Each regression `TEST_CASE` carries `[Serial][Parallel][Regression]` —
-`[Regression]` is the category tag, `[Serial]/[Parallel]` say the case
-is valid under any rank count. The rank count itself comes from the
-launch command (either the `mpirun -n N` invocation for a direct
-selector run, or `$PALACE_REGRESSION_NUMPROC` for the ctest-driven
-fan-out path). The two transmon eigen cases additionally carry
-`[Long]`; they're registered as `long-*` ctest entries (label `long`)
-and kept out of the default sweep.
+Each regression `TEST_CASE` carries `[Serial][Parallel][GPU][Regression]` —
+`[Regression]` is the category tag, `[Serial]/[Parallel]/[GPU]` say the
+case is valid under any rank count and on either CPU or GPU. The rank
+count itself comes from the launch command (either the `mpirun -n N`
+invocation for a direct selector run, or `$PALACE_REGRESSION_NUMPROC`
+for the ctest-driven fan-out path). The two transmon eigen cases
+additionally carry `[Long]`; they're registered as `long-*` ctest
+entries (label `long`) and kept out of the default sweep.
 
 ## Overrides
 
@@ -129,8 +129,8 @@ Empty string = no override; the value from the config JSON is used.
 
  1. Drop the config under `examples/<name>/` and the reference postpro
     tree under `test/examples/ref/<name>/<subdir>/`.
- 2. Add a `TEST_CASE("<name>", "[Serial][Parallel][Regression]")` to
-    `test/unit/regression/cases.cpp`. Tack on `[Long]` if the case
+ 2. Add a `TEST_CASE("<name>", "[Serial][Parallel][GPU][Regression]")`
+    to `test/unit/regression/cases.cpp`. Tack on `[Long]` if the case
     runs longer than the default `regression-` ctest TIMEOUT.
     to set `rtol`, `atol`, `excluded_columns`, `skip_rowcount`, and
     any `custom_checks` callbacks.

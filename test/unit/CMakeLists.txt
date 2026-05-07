@@ -52,6 +52,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-waveportimpedance.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/regression_helpers.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/regression/cases.cpp
 )
 
 # Set output name for installed binary
