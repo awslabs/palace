@@ -72,6 +72,15 @@ The format of this changelog is based on
 
 #### Interface Changes
 
+  - The regression test suite has moved from the Julia harness in
+    `test/examples/runtests.jl` to Catch2 cases registered in the
+    `palace-unit-tests` binary. Run with
+    `mpirun -np $NUM_PROC_TEST palace-unit-tests "[Regression]"` or via
+    CTest as `ctest -R "^regression-"`. Reference CSVs under
+    `test/examples/ref/` are unchanged. Re-baselining is now
+    `palace -np N <config.json>` followed by copying the live `postpro/`
+    CSVs into the matching `test/examples/ref/<case>/` directory.
+    [PR 735](https://github.com/awslabs/palace/pull/735).
   - Box and sphere region refinement (specified under
     `config["Model"]["Refinement"]["Boxes"]` and
     `config["Model"]["Refinement"]["Spheres"]`) is now applied to the mesh before

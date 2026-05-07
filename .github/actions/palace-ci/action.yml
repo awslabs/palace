@@ -38,7 +38,7 @@ runs:
     - name: Setup environment
       uses: ./.github/actions/setup-runner
       with:
-        julia-version: 'release'
+        julia-version: 'dont-install'
         # Spack develop because we want to have access to the most recent
         # version of spack-packages
         spack-version: 'develop'

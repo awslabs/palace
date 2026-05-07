@@ -41,7 +41,7 @@ runs:
       if: inputs.testing-on-build-runner != 'true'
       uses: ./.github/actions/setup-runner
       with:
-        julia-version: 'release'
+        julia-version: 'dont-install'
         spack-version: 'develop'
         llvm-version: ${{ inputs.toolchain == 'llvm' && '19' || 'dont-install' }}
         setup-intel: ${{ inputs.toolchain == 'intel-oneapi' && 'true' || 'false' }}

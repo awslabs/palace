@@ -391,6 +391,8 @@ jobs:
           $MPICC mpi_test.c -o mpi_test
           mpirun -np 2 ./mpi_test
 
+      # Julia is needed for the antenna postprocessing example below; the
+      # regression sweep itself uses the Catch2 binary and doesn't need it.
       - uses: julia-actions/setup-julia@v2
         if: needs.filter.outputs.test == 'true'
         with:
@@ -602,6 +604,14 @@ jobs:
 
       - name: Check antenna postprocessing example
         if: needs.filter.outputs.test == 'true' && !matrix.with-sanitizers
+        # The Julia plot script that ships with the antenna example is
+        # exercised here so it doesn't bit-rot. The regression step
+        # above already ran antenna_short_dipole and left its output in
+        # the staging tree under $TMPDIR/palace-regression/antenna/...
+        # (PALACE_REGRESSION_RUN_DIR override would let us pick a
+        # different root; we use the default here).
         run: |
+          STAGE_ROOT="${TMPDIR:-/tmp}/palace-regression"
+          FARFIELD="$STAGE_ROOT/antenna/antenna_short_dipole/postpro/antenna_short_dipole/farfield-rE.csv"
           julia --project=examples -e 'using Pkg; Pkg.instantiate()'
-          julia --project=examples examples/antenna/plot_farfield.jl examples/antenna/postpro/farfield-rE.csv
+          julia --project=examples examples/antenna/plot_farfield.jl "$FARFIELD"
