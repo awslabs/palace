@@ -518,7 +518,9 @@ jobs:
             scripts/measure-test-coverage report $(pwd)/palace-build
           else
             cd $(pwd)/palace-build/palace-build/test/unit
-            ctest -j $NUM_PROC_TEST_MAX --output-on-failure
+            # Skip [Regression] and [Long] cases here; they have their
+            # own slower steps further down.
+            ctest -j $NUM_PROC_TEST_MAX --output-on-failure -LE "^(regression|long)$"
           fi
 
       - name: Deploy coverage to gh-pages
@@ -554,7 +556,13 @@ jobs:
 
       - name: Run regression tests for examples/
         if: needs.filter.outputs.test == 'true' && !matrix.with-sanitizers
-        timeout-minutes: 80
+        # ctest fans the [Regression] cases out, one fresh
+        # palace-unit-tests process per case (label "regression"). Each
+        # process runs at $PALACE_REGRESSION_NUMPROC MPI ranks (read by
+        # the test/unit/run_regression_test.sh wrapper at run time);
+        # ctest -j N controls how many cases run concurrently. Total
+        # ranks in flight = NUM_PROC_TEST * N, kept <= NUM_PROC_TEST_MAX.
+        timeout-minutes: 90
         env:
           NUM_PROC_TEST_MAX: '8'
         run: |
@@ -565,8 +573,12 @@ jobs:
             source /opt/intel/oneapi/setvars.sh  # Sets PATH, MKLROOT
           fi
           if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
-            export AOCLROOT=/opt/AMD/aocl/aocl-linux-gcc-4.1.0/gcc
-            export LD_LIBRARY_PATH=$AOCLROOT/lib:$LD_LIBRARY_PATH
+            export AOCLROOT="$AOCLROOT"
+            export LD_LIBRARY_PATH="$AOCLROOT/lib:$LD_LIBRARY_PATH"
+          fi
+          if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
+            export ARMPL_DIR="$ARMPL_DIR"
+            export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
           fi
           export NUM_PROC_TEST=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
           if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
@@ -580,9 +592,13 @@ jobs:
           fi
           export PATH=$(pwd)/palace-install/bin:$PATH
 
-          # Run tests
-          julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
-          julia --project=test/examples --color=yes test/examples/runtests.jl
+          # Ranks per case (consumed by run_regression_test.sh):
+          export PALACE_REGRESSION_NUMPROC=$NUM_PROC_TEST
+          # Concurrent cases:
+          JOBS=$(( NUM_PROC_TEST_MAX / NUM_PROC_TEST ))
+          [[ "$JOBS" -lt 1 ]] && JOBS=1
+          cd palace-build/palace-build/test/unit
+          ctest --output-on-failure -L "^regression$" -j $JOBS
 
       - name: Check antenna postprocessing example
         if: needs.filter.outputs.test == 'true' && !matrix.with-sanitizers

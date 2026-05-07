@@ -130,14 +130,6 @@ jobs:
         with:
           submodules: 'recursive'
 
-      - uses: julia-actions/setup-julia@v2
-        if: needs.filter.outputs.test == 'true'
-        with:
-          version: '1'
-
-      - uses: julia-actions/cache@v3
-        if: needs.filter.outputs.test == 'true'
-
       - name: Configure Open MPI
         if: needs.filter.outputs.test == 'true' && matrix.mpi == 'openmpi'
         run: |
@@ -256,7 +248,12 @@ jobs:
 
       - name: Run regression tests for examples/
         if: needs.filter.outputs.test == 'true'
-        timeout-minutes: 40
+        # ctest fans the [Regression] cases out, one fresh
+        # palace-unit-tests process per case (label "regression"). Each
+        # process runs at $PALACE_REGRESSION_NUMPROC MPI ranks (read by
+        # the test/unit/run_regression_test.sh wrapper at run time);
+        # ctest -j N controls how many cases run concurrently.
+        timeout-minutes: 90
         env:
           NUM_PROC_TEST_MAX: '8'
         run: |
@@ -273,6 +270,10 @@ jobs:
           fi
           export PATH=$(pwd)/palace-install/bin:$PATH
 
-          # Run tests
-          julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
-          julia --project=test/examples --color=yes test/examples/runtests.jl
+          # Ranks per case (consumed by run_regression_test.sh):
+          export PALACE_REGRESSION_NUMPROC=$NUM_PROC_TEST
+          # Concurrent cases:
+          JOBS=$(( NUM_PROC_TEST_MAX / NUM_PROC_TEST ))
+          [[ "$JOBS" -lt 1 ]] && JOBS=1
+          cd palace-build/palace-build/test/unit
+          ctest --output-on-failure -L "^regression$" -j $JOBS

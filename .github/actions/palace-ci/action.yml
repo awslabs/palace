@@ -327,7 +327,10 @@ runs:
         export OMPI_MCA_hwloc_base_binding_policy=none
 
         # Runs all hardware-compatible tests, skipping Catch2 benchmarks.
-        ctest -j $NUM_PROC_TEST --output-on-failure $CTEST_EXCLUDE
+        # [Regression] and [Long] cases (labels "regression" / "long")
+        # run separately via ./.github/actions/run-regression-tests at
+        # NUM_PROC_TEST; exclude them here so they don't run twice.
+        ctest -j $NUM_PROC_TEST --output-on-failure -LE "^(regression|long)$" $CTEST_EXCLUDE
 
         end_timer "Run Unit Tests"
 

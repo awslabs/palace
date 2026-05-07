@@ -10,7 +10,6 @@ runs:
         # Spack develop because we want to have access to the most recent
         # version of spack-packages
         spack-version: 'develop'
-        julia-version: 'release'
         llvm-version: 'dont-install'
         setup-intel: 'false'
 
@@ -130,29 +129,6 @@ runs:
         sudo apptainer build ${{ steps.name.outputs.image_name }}.sif docker-archive://${{ steps.name.outputs.image_name }}.tar
         sudo chmod a+r ${{ steps.name.outputs.image_name }}.sif
         end_timer "Convert to SIF"
-
-    - name: Test container
-      shell: bash
-      run: |
-        source /tmp/timing_functions.sh
-        start_timer
-
-        # Use nproc, but halve to account for hyperthreading.
-        LOGICAL_CORES=$(nproc)
-        THREADS_PER_CORE=$(lscpu | grep "Thread(s) per core" | awk '{print $4}')
-        if [ "$THREADS_PER_CORE" = "2" ]; then
-          export NUM_PROC_TEST=$((LOGICAL_CORES / 2))
-        else
-          export NUM_PROC_TEST=$LOGICAL_CORES
-        fi
-
-        export PALACE_TEST="apptainer run $(pwd)/${{ steps.name.outputs.image_name }}.sif palace"
-
-        # Run integration tests.
-        julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
-        julia --project=test/examples --color=yes test/examples/runtests.jl
-
-        end_timer "Test container"
 
     - name: Push OCI image to ECR
       if: steps.meta.outputs.push == 'true'

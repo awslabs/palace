@@ -86,29 +86,60 @@ runs:
         fi
 
         eval $(spack -e . load --sh palace)
-        julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
-        
+
+        # Catch2 CLI knobs match the old Julia harness flags one-for-one;
+        # palace-unit-tests --help lists them in full.
+        SOLVER_OVERRIDE=()
+        if [[ -n "${{ inputs.solver }}" && "${{ inputs.solver }}" != "Default" ]]; then
+          SOLVER_OVERRIDE=(--palace-solver "${{ inputs.solver }}")
+        fi
+
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
-          export PALACE_DEVICE=GPU
+          SOLVER_OVERRIDE+=(--palace-device GPU)
           export NUM_PROC_TEST=1
         fi
 
-        TEST_CASES="${{ inputs.test-cases }}"
-        if [[ "$TEST_CASES" == "long" ]]; then
-          TEST_CASES="transmon/transmon_amr"
-        elif [[ "$TEST_CASES" == "default" ]]; then
-          TEST_CASES=""
-        fi
+        # Translate the action's `test-cases` input to a list of Catch2
+        # case names. "default" / empty -> the [Regression] tag (the
+        # always-on suite, enumerated dynamically); "long" -> the
+        # [Long] tag (transmon eigenmodes, ~10 min each);
+        # anything else is treated as a Julia-style "<dir>/<sub>" list
+        # and converted to the underscored TEST_CASE names
+        # palace-unit-tests registers.
+        translate_cases() {
+          local raw="$1"
+          if [[ -z "$raw" || "$raw" == "default" ]]; then
+            palace-unit-tests "[Regression]~[Long]" --list-tests | awk '/^  [a-z]/ {print $1}'
+            return
+          fi
+          if [[ "$raw" == "long" ]]; then
+            palace-unit-tests "[Long]" --list-tests | awk '/^  [a-z]/ {print $1}'
+            return
+          fi
+          # "cylinder/cavity_pec antenna/antenna_short_dipole" ->
+          # "cylinder_cavity_pec\nantenna_short_dipole".
+          echo "$raw" | tr '/' '_' | tr ' ' '\n'
+        }
 
-        julia --project=test/examples --color=yes test/examples/runtests.jl \
-          --palace-solver ${{ inputs.solver }} \
-          ${TEST_CASES:+--test-cases "$TEST_CASES"}
+        # One mpirun per case. Each case runs in a fresh process so
+        # long-lived library state (libCEED kernel cache, MFEM /
+        # HYPRE singletons, PETSc heap) doesn't accumulate across the
+        # whole suite.
+        run_cases() {
+          while IFS= read -r case; do
+            [[ -z "$case" ]] && continue
+            echo "=== Running $case ==="
+            mpirun -np $NUM_PROC_TEST palace-unit-tests \
+              "${SOLVER_OVERRIDE[@]}" \
+              "$case"
+          done
+        }
+
+        translate_cases "${{ inputs.test-cases }}" | run_cases
 
         ADDITIONAL="${{ inputs.additional-test-cases }}"
         if [[ -n "$ADDITIONAL" ]]; then
-          julia --project=test/examples --color=yes test/examples/runtests.jl \
-            --palace-solver ${{ inputs.solver }} \
-            --test-cases "$ADDITIONAL"
+          translate_cases "$ADDITIONAL" | run_cases
         fi
 
         end_timer "Run Integration Tests"
