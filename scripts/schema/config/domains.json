@@ -10,126 +10,61 @@
     {
       "type": "array",
       "additionalItems": false,
-      "items":
-      {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["Attributes"],
-        "properties":
-        {
-          "Attributes": { "$ref": "#/$defs/Attributes" },
-          "Permeability":
-          {
-            "oneOf" :
-            [
-              {"type": "number" },
-              {
-                "type": "array",
-                "items" : { "type" :"number" },
-                "minItems" : 3,
-                "maxItems" : 3
-              }
-            ]
-          },
-          "Permittivity":
-          {
-            "oneOf" :
-            [
-              {"type": "number" },
-              {
-                "type": "array",
-                "items" : { "type" :"number" },
-                "minItems" : 3,
-                "maxItems" : 3
-              }
-            ]
-          },
-          "LossTan":
-          {
-            "oneOf" :
-            [
-              {"type": "number" },
-              {
-                "type": "array",
-                "items" : { "type" :"number" },
-                "minItems" : 3,
-                "maxItems" : 3
-              }
-            ]
-          },
-          "Conductivity":
-          {
-            "oneOf" :
-            [
-              {"type": "number" },
-              {
-                "type": "array",
-                "items" : { "type" :"number" },
-                "minItems" : 3,
-                "maxItems" : 3
-              }
-            ]
-          },
-          "LondonDepth": { "type": "number" },
-          "MaterialAxes":
-          {
-            "type" : "array",
-            "items" :
-            {
-              "type" : "array",
-              "items" : { "type": "number" },
-              "minItems" : 3,
-              "maxItems" : 3
-            },
-            "minItems" : 3,
-            "maxItems" : 3
-          }
-        }
-      }
+      "items": { "$ref": "#/$defs/Material" }
     },
     "CurrentDipole":
     {
       "type": "array",
       "additionalItems": false,
-      "items":
+      "items": { "$ref": "#/$defs/CurrentDipole" }
+    },
+    "Postprocessing": { "$ref": "#/$defs/DomainPostprocessing" }
+  },
+  "$defs":
+  {
+    "Material":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Attributes"],
+      "properties":
       {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["Index", "Moment", "Center", "Direction"],
-        "properties":
+        "Attributes": { "$ref": "#/$defs/Attributes" },
+        "Permeability": { "$ref": "#/$defs/ScalarOrVector3" },
+        "Permittivity": { "$ref": "#/$defs/ScalarOrVector3" },
+        "LossTan": { "$ref": "#/$defs/ScalarOrVector3" },
+        "Conductivity": { "$ref": "#/$defs/ScalarOrVector3" },
+        "LondonDepth": { "type": "number" },
+        "MaterialAxes":
         {
-          "Index": { "type": "integer", "exclusiveMinimum": 0 },
-          "Moment": { "type": "number" },
-          "Center":
-          {
-            "type": "array",
-            "additionalItems": false,
-            "items": { "type": "number" },
-            "minItems": 3,
-            "maxItems": 3
-          },
-          "Direction":
-          {
-            "anyOf":
-            [
-              {
-                "type": "string",
-                "enum": ["X", "Y", "Z", "+X", "+Y", "+Z", "-X", "-Y", "-Z",
-                         "x", "y", "z", "+x", "+y", "+z", "-x", "-y", "-z"]
-              },
-              {
-                "type": "array",
-                "additionalItems": false,
-                "items": { "type": "number" },
-                "minItems": 3,
-                "maxItems": 3
-              }
-            ]
-          }
+          "type": "array",
+          "items": { "$ref": "#/$defs/Vector3" },
+          "minItems": 3,
+          "maxItems": 3
         }
       }
     },
-    "Postprocessing":
+    "CurrentDipole":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Index", "Moment", "Center", "Direction"],
+      "properties":
+      {
+        "Index": { "type": "integer", "exclusiveMinimum": 0 },
+        "Moment": { "type": "number" },
+        "Center": { "$ref": "#/$defs/Vector3" },
+        "Direction":
+        {
+          "anyOf":
+          [
+            { "$ref": "#/$defs/DipoleDirection" },
+            { "$ref": "#/$defs/Vector3" }
+          ]
+        }
+      }
+    },
+    "DomainPostprocessing":
     {
       "type": "object",
       "additionalProperties": false,
@@ -140,52 +75,66 @@
         {
           "type": "array",
           "additionalItems": false,
-          "items":
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["Index", "Attributes"],
-            "properties":
-            {
-              "Index": { "type": "integer", "exclusiveMinimum": 0 },
-              "Attributes": { "$ref": "#/$defs/Attributes" }
-            }
-          }
+          "items": { "$ref": "#/$defs/DomainEnergy" }
         },
         "Probe":
         {
           "type": "array",
           "additionalItems": false,
-          "items":
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["Index", "Center"],
-            "properties":
-            {
-              "Index": { "type": "integer", "exclusiveMinimum": 0 },
-              "Center":
-              {
-                "type": "array",
-                "additionalItems": false,
-                "items": { "type": "number" },
-                "minItems": 3,
-                "maxItems": 3
-              }
-            }
-          }
+          "items": { "$ref": "#/$defs/Probe" }
         }
       }
-    }
-  },
-  "$defs":
-  {
+    },
+    "DomainEnergy":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Index", "Attributes"],
+      "properties":
+      {
+        "Index": { "type": "integer", "exclusiveMinimum": 0 },
+        "Attributes": { "$ref": "#/$defs/Attributes" }
+      }
+    },
+    "Probe":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Index", "Center"],
+      "properties":
+      {
+        "Index": { "type": "integer", "exclusiveMinimum": 0 },
+        "Center": { "$ref": "#/$defs/Vector3" }
+      }
+    },
     "Attributes":
     {
       "type": "array",
       "additionalItems": false,
-      "items": { "type": "integer"},
+      "items": { "type": "integer" },
       "minItems": 1
+    },
+    "Vector3":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "ScalarOrVector3":
+    {
+      "oneOf":
+      [
+        { "type": "number" },
+        { "$ref": "#/$defs/Vector3" }
+      ]
+    },
+    "DipoleDirection":
+    {
+      "type": "string",
+      "enum": ["X", "Y", "Z", "+X", "+Y", "+Z", "-X", "-Y", "-Z",
+               "x", "y", "z", "+x", "+y", "+z", "-x", "-y", "-z"]
     }
   }
 }

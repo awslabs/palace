@@ -6,13 +6,18 @@
   "required": ["Type"],
   "properties":
   {
-    "Type":
+    "Type": { "$ref": "#/$defs/ProblemType" },
+    "Verbose": { "type": "integer", "minimum": 0 },
+    "Output": { "type": "string" },
+    "OutputFormats": { "$ref": "#/$defs/OutputFormats" }
+  },
+  "$defs":
+  {
+    "ProblemType":
     {
       "type": "string",
       "enum": ["Eigenmode", "Driven", "Transient", "Electrostatic", "Magnetostatic", "BoundaryMode"]
     },
-    "Verbose": { "type": "integer", "minimum": 0 },
-    "Output": { "type": "string" },
     "OutputFormats":
     {
       "type": "object",
