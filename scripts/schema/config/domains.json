@@ -75,7 +75,7 @@
         {
           "type": "array",
           "additionalItems": false,
-          "items": { "$ref": "#/$defs/DomainEnergy" }
+          "items": { "$ref": "#/$defs/Energy" }
         },
         "Probe":
         {
@@ -85,7 +85,7 @@
         }
       }
     },
-    "DomainEnergy":
+    "Energy":
     {
       "type": "object",
       "additionalProperties": false,
