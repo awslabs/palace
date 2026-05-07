@@ -51,10 +51,14 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-waveportimpedance.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/regression_helpers.cpp
 )
 
 # Set output name for installed binary
 set_target_properties(unit-tests PROPERTIES OUTPUT_NAME palace-unit-tests)
+
+# Let regression/*.cpp find regression_helpers.hpp via a bare include.
+target_include_directories(unit-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # Below we link using WHOLE_ARCHIVE with coverage, otherwise LLVM won't report coverage of
 # all palace files. The actual linker commands to do this by hand is delicate. (see
 # https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_LINK_LIBRARY_USING_FEATURE.html#loading-a-whole-static-library)
@@ -106,6 +110,13 @@ set_property(
 target_compile_definitions(
   unit-tests
   PRIVATE "PALACE_TEST_DATA_DIR=\"${CMAKE_INSTALL_PREFIX}/share/palace/test/data\""
+  # Source-tree roots used by the regression suite. Baking these into the
+  # binary keeps the common path ("run the built binary") free of env
+  # plumbing. RunRegressionCase honours a PALACE_EXAMPLES_DIR /
+  # PALACE_REGRESSION_REF_DIR environment override and a Catch2 CLI flag
+  # for relocated installs; these are the last-resort defaults.
+  PRIVATE "PALACE_EXAMPLES_DIR_DEFAULT=\"${CMAKE_SOURCE_DIR}/../examples\""
+  PRIVATE "PALACE_REGRESSION_REF_DIR_DEFAULT=\"${CMAKE_CURRENT_SOURCE_DIR}/../examples/ref\""
   PRIVATE $<TARGET_PROPERTY:${LIB_TARGET_NAME},COMPILE_DEFINITIONS>
           $<$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:IntelLLVM>>>:PALACE_WITH_COVERAGE="LLVM">
           $<$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<CXX_COMPILER_ID:GNU>>:PALACE_WITH_COVERAGE="GCC">
