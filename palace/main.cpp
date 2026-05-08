@@ -242,8 +242,7 @@ int main(int argc, char *argv[])
     std::filesystem::path post_dir(iodata.problem.output);
     std::string path = post_dir / "config.json";
     std::ofstream fo(path);
-    MFEM_VERIFY(fo.is_open(),
-                "Unable to open resolved config file \"" << path << "\"!");
+    MFEM_VERIFY(fo.is_open(), "Unable to open resolved config file \"" << path << "\"!");
     fo << IoData::ConcretizeDefaults(iodata, config).dump(2) << '\n';
     fo.close();
     MFEM_VERIFY(std::filesystem::exists(path),

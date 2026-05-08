@@ -180,15 +180,8 @@ function testcase(
         for i = 1:max_its
             push!(expected_metafiles, "iteration$(i)/palace.json")
         end
-        @test sort(metafiles) == sort(expected_metafiles) || (
-            @show metafiles, expected_metafiles;
-            @warn "Contents of $(postprodir):";
-            run(`ls -laR $(postprodir)`);
-            @warn "Contents of stdout ($(logdir)/log.out):";
-            isfile(joinpath(logdir, "log.out")) &&
-                println(String(read(joinpath(logdir, "log.out"))));
-            false
-        )
+        @test sort(metafiles) == sort(expected_metafiles) ||
+              (@show metafiles, expected_metafiles; false)
 
         # Helper to extract the stdout and stderr files and dump their contents.
         # Useful when debugging a failure
