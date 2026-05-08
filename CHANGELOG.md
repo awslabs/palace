@@ -12,6 +12,23 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## In progress
+
+#### New Features
+
+  - Added `BoundaryMode` solver for mode analysis on 2D meshes, supporting both standalone 2D meshes
+    and 2D boundary submesh extracted from a 3D mesh [PR 657](https://github.com/awslabs/palace/pull/657).
+  - Added support for 2D meshes in all simulation types [PR 657](https://github.com/awslabs/palace/pull/657).
+  - Changed waveport formulation to enable support for impedance boundary conditions [PR 657](https://github.com/awslabs/palace/pull/657).
+  - Enabled voltage and impedance postprocessing for waveport and BoundaryMode by specifying a line
+    from ground to conductor, either through mesh coordinates or boundary attribute
+    in `config["Boundaries"]["Postprocessing"]["Impedance"]` [PR 657](https://github.com/awslabs/palace/pull/657).
+
+#### Bug Fixes
+
+  - Fixed a bug where nonconformal AMR would lead to erroneous results when waveports are present.
+    Part of [PR 657](https://github.com/awslabs/palace/pull/657).
+
 ## [0.16.1] - 2026-04-24
 
 #### New Features
@@ -85,13 +102,6 @@ The format of this changelog is based on
     basis orthogonalization matrix. Extended tests on aspects related to ROM and LumpedPortOp. [PR 326](https://github.com/awslabs/palace/pull/326).
   - Upgraded internal orthogonalization routines to optionally allow taking non-identity weights in
     inner product. Part of [PR 326](https://github.com/awslabs/palace/pull/326).
-  - Added `BoundaryMode` solver for mode analysis on 2D meshes, supporting both standalone 2D meshes
-    and 2D boundary submesh extracted from a 3D mesh [PR 657](https://github.com/awslabs/palace/pull/657).
-  - Added support for 2D meshes in all simulation types [PR 657](https://github.com/awslabs/palace/pull/657).
-  - Changed waveport formulation to enable support for impedance boundary conditions [PR 657](https://github.com/awslabs/palace/pull/657).
-  - Enabled voltage and impedance postprocessing for waveport and BoundaryMode by specifying a line
-    from ground to conductor, either through mesh coordinates or boundary attribute
-    in `config["Boundaries"]["Postprocessing"]["Impedance"]` [PR 657](https://github.com/awslabs/palace/pull/657).
 
 #### Bug Fixes
 
@@ -104,8 +114,6 @@ The format of this changelog is based on
   - Fixed a bug in complex diagonal operator multiplication where the imaginary part used an
     incorrect term in `AddMult` and `AddMultHermitianTranspose`.
     [PR 633](https://github.com/awslabs/palace/pull/633).
-  - Fixed a bug where nonconformal AMR would lead to erroneous results when waveports are present.
-    Part of [PR 657](https://github.com/awslabs/palace/pull/657).
 
 #### Interface Changes
 
