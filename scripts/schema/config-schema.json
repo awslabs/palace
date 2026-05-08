@@ -1267,6 +1267,32 @@
                     "type": "number",
                     "description": "London penetration depth for this material, specified in mesh length units. Activates the London equations-based model relating superconducting current and electromagnetic fields in this domain.",
                     "default": 0.0
+                },
+                "MaterialAxes": {
+                    "type": "array",
+                    "description": "Axes directions for specification of anisotropic material properties. Required to be unit length and orthogonal.",
+                    "items": {
+                        "$ref": "#/$defs/Vector3"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "default": [
+                        [
+                            1.0,
+                            0.0,
+                            0.0
+                        ],
+                        [
+                            0.0,
+                            1.0,
+                            0.0
+                        ],
+                        [
+                            0.0,
+                            0.0,
+                            1.0
+                        ]
+                    ]
                 }
             },
             "required": [

@@ -30,7 +30,7 @@ struct Box
       BoundingBoxMin,
       "Minimum coordinates `[x, y, z]` of the axis-aligned bounding box for "
       "this refinement region, in mesh length units.",
-      std::array<double, 3>) = {
+      Vector3) = {
     {0.0, 0.0, 0.0}
   };
 
@@ -38,7 +38,7 @@ struct Box
       BoundingBoxMax,
       "Maximum coordinates `[x, y, z]` of the axis-aligned bounding box for "
       "this refinement region, in mesh length units.",
-      std::array<double, 3>) = {
+      Vector3) = {
     {0.0, 0.0, 0.0}
   };
 };
@@ -54,7 +54,7 @@ struct Sphere
 
   PALACE_SCHEMA_DESC_REQUIRED(
       Center, "Center coordinates `[x, y, z]` of the sphere, in mesh length units.",
-      std::array<double, 3>) = {
+      Vector3) = {
     {0.0, 0.0, 0.0}
   };
 };

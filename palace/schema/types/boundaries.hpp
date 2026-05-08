@@ -392,7 +392,7 @@ struct BoundaryPair
                      "receiver boundary, in mesh length units. If neither "
                      "`\"Translation\"` nor `\"AffineTransformation\"` are specified, "
                      "the transformation is detected automatically.",
-                     std::array<double, 3>) = {
+                     Vector3) = {
     {0.0, 0.0, 0.0}
   };
 
@@ -412,7 +412,7 @@ struct Periodic
                      "3-element Floquet wave vector `[kx, ky, kz]` defining the phase "
                      "delay between periodic boundaries, in radians per mesh length "
                      "unit.",
-                     std::array<double, 3>) = {
+                     Vector3) = {
     {0.0, 0.0, 0.0}
   };
 
@@ -451,7 +451,7 @@ struct SurfaceFlux
                      "specified, the point will be computed as the centroid of the "
                      "axis-aligned bounding box for all elements making up the "
                      "postprocessing boundary.",
-                     std::array<double, 3>) = {
+                     Vector3) = {
     {0.0, 0.0, 0.0}
   };
 };

@@ -15,11 +15,10 @@
 //     on the 3-array form here. Users migrating from scalar notation must
 //     expand `2.0` to `[2.0, 2.0, 2.0]`.
 //
-//   - MaterialAxes is not modelled in Phase 1 for the same reason (scalar-or-
-//     3-array inline shape). `CurrentDipole.Direction` uses the
-//     `palace::schema::DipoleDirection` alias (Cartesian axis-keyword string
-//     OR 3-array) from `common.hpp` — Dirac dipole sources have no notion of
-//     a cylindrical frame, so the keyword set excludes `R`/`r` variants.
+//   - `CurrentDipole.Direction` uses the `palace::schema::DipoleDirection`
+//     alias (Cartesian axis-keyword string OR 3-array) from `common.hpp` —
+//     Dirac dipole sources have no notion of a cylindrical frame, so the
+//     keyword set excludes `R`/`r` variants.
 //
 //   - Palace's runtime uses `std::map<int, T>` keyed by Index for Energy /
 //     Probe entries. The JSON wire format is always an array with Index as an
@@ -46,21 +45,21 @@ struct Material
   PALACE_SCHEMA_DESC(Permeability,
                      "Relative permeability for this material. Scalar or vector of 3 "
                      "coefficients corresponding to each of `\"MaterialAxes\"`.",
-                     std::array<double, 3>) = {
+                     Vector3) = {
     {1.0, 1.0, 1.0}
   };
 
   PALACE_SCHEMA_DESC(Permittivity,
                      "Relative permittivity for this material. Scalar or vector of 3 "
                      "coefficients corresponding to each of `\"MaterialAxes\"`.",
-                     std::array<double, 3>) = {
+                     Vector3) = {
     {1.0, 1.0, 1.0}
   };
 
   PALACE_SCHEMA_DESC(LossTan,
                      "Loss tangent for this material. Scalar or vector of 3 coefficients "
                      "corresponding to each of `\"MaterialAxes\"`.",
-                     std::array<double, 3>) = {
+                     Vector3) = {
     {0.0, 0.0, 0.0}
   };
 
@@ -68,7 +67,7 @@ struct Material
                      "Electrical conductivity for this material, S/m. Activates the Ohmic "
                      "loss model in this domain. Scalar or vector of 3 coefficients "
                      "corresponding to each of `\"MaterialAxes\"`.",
-                     std::array<double, 3>) = {
+                     Vector3) = {
     {0.0, 0.0, 0.0}
   };
 
@@ -77,6 +76,14 @@ struct Material
                      "units. Activates the London equations-based model relating "
                      "superconducting current and electromagnetic fields in this domain.",
                      double) = 0.0;
+
+  PALACE_SCHEMA_DESC(
+      MaterialAxes,
+      "Axes directions for specification of anisotropic material properties. "
+      "Required to be unit length and orthogonal.",
+      std::array<Vector3, 3>) = std::array<Vector3, 3> {
+    {{{1.0, 0.0, 0.0}}, {{0.0, 1.0, 0.0}}, {{0.0, 0.0, 1.0}}}
+  };
 };
 
 struct CurrentDipole
@@ -94,7 +101,7 @@ struct CurrentDipole
       Center,
       "Coordinates of the dipole center position `[x, y, z]`, in mesh "
       "length units.",
-      std::array<double, 3>) = {
+      Vector3) = {
     {0.0, 0.0, 0.0}
   };
 
@@ -126,8 +133,7 @@ struct Probe
                               palace::schema::utils::XMin<int, 0>) = 1;
 
   PALACE_SCHEMA_DESC_REQUIRED(
-      Center, "Coordinates of this probe `[x, y, z]`, in mesh length units.",
-      std::array<double, 3>) = {
+      Center, "Coordinates of this probe `[x, y, z]`, in mesh length units.", Vector3) = {
     {0.0, 0.0, 0.0}
   };
 };

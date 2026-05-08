@@ -1114,6 +1114,81 @@ std::string inject_field_aliases(std::string schema_json,
   return rfl::json::write(*schema_gen_r, rfl::json::pretty);
 }
 
+// Hoist each `NestedItemsAlias` site: locate
+// `$defs[struct_name]/properties[field_name]/items` and rewrite that
+// inline body into `{"$ref": "#/$defs/<alias>"}`. If `$defs[alias]` is
+// not already populated (e.g. by a sibling top-level FieldAlias hoist),
+// install the displaced body as the canonical entry. The outer field
+// keeps its `description`/`default`/`minItems`/`maxItems` siblings
+// untouched — only `items` is rewritten. Used to make the inner row of
+// `MaterialAxes` (a 3×3 array of doubles) share `$defs/Vector3` with
+// every other 3-vector field site, instead of inlining a duplicate
+// `{type:array, items:number, min/maxItems:3}` body.
+std::string inject_nested_items_aliases(std::string schema_json,
+                                        const std::vector<NestedItemsAlias> &entries)
+{
+  if (entries.empty())
+    return schema_json;
+  auto schema_gen_r = rfl::json::read<rfl::Generic>(schema_json);
+  if (!schema_gen_r)
+    return schema_json;
+
+  auto &schema_var = schema_gen_r->value();
+  if (!std::holds_alternative<rfl::Generic::Object>(schema_var))
+    return schema_json;
+  auto &root_obj = std::get<rfl::Generic::Object>(schema_var);
+
+  if (root_obj.count("$defs") == 0)
+    root_obj["$defs"] = rfl::Generic(rfl::Generic::Object{});
+  auto &defs_var = root_obj.at("$defs").value();
+  if (!std::holds_alternative<rfl::Generic::Object>(defs_var))
+    return schema_json;
+  auto &defs = std::get<rfl::Generic::Object>(defs_var);
+
+  for (const auto &e : entries)
+  {
+    if (defs.count(e.struct_name) == 0)
+      continue;
+    auto &def_var = defs.at(e.struct_name).value();
+    if (!std::holds_alternative<rfl::Generic::Object>(def_var))
+      continue;
+    auto &def_obj = std::get<rfl::Generic::Object>(def_var);
+    if (def_obj.count("properties") == 0)
+      continue;
+    auto &props_var = def_obj.at("properties").value();
+    if (!std::holds_alternative<rfl::Generic::Object>(props_var))
+      continue;
+    auto &props = std::get<rfl::Generic::Object>(props_var);
+    if (props.count(e.field_name) == 0)
+      continue;
+    auto &prop_var = props.at(e.field_name).value();
+    if (!std::holds_alternative<rfl::Generic::Object>(prop_var))
+      continue;
+    auto &prop_obj = std::get<rfl::Generic::Object>(prop_var);
+    if (prop_obj.count("items") == 0)
+      continue;
+    auto &items_var = prop_obj.at("items").value();
+    if (!std::holds_alternative<rfl::Generic::Object>(items_var))
+      continue;
+    auto items_body = std::get<rfl::Generic::Object>(items_var);
+
+    // Install the canonical body if no other site has populated this
+    // alias yet. Sibling FieldAlias hoists for plain `Vector3` fields
+    // run before this pass and almost always win the race; this is the
+    // safety net for schemas where the only use of an alias is nested.
+    if (defs.count(e.alias_name) == 0)
+    {
+      defs[e.alias_name] = rfl::Generic(std::move(items_body));
+    }
+
+    rfl::Generic::Object ref_obj;
+    ref_obj["$ref"] = rfl::Generic(std::string("#/$defs/") + e.alias_name);
+    prop_obj["items"] = rfl::Generic(std::move(ref_obj));
+  }
+
+  return rfl::json::write(*schema_gen_r, rfl::json::pretty);
+}
+
 // For each entry, locate
 // `$defs[struct_name]/properties[field_name]/anyOf[arm_index]` and rewrite
 // that arm body into `{"$ref": "#/$defs/<alias_name>"}`, moving the

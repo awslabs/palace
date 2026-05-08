@@ -26,6 +26,8 @@
 namespace palace::schema
 {
 
+using Vector3 = std::array<double, 3>;
+
 // Shared alias for "list of integer attributes." Palace's hand-written schema
 // defines `#/$defs/Attributes` with a `minItems: 1` constraint and $refs it
 // from every boundary / material entry. reflect-cpp's Validator<T, Minimum>
@@ -50,7 +52,7 @@ using PortDirectionLabel = rfl::Literal<"R", "X", "Y", "Z",      //
                                         "r", "x", "y", "z",      //
                                         "+r", "+x", "+y", "+z",  //
                                         "-r", "-x", "-y", "-z">;
-using PortDirection = rfl::Variant<PortDirectionLabel, std::array<double, 3>>;
+using PortDirection = rfl::Variant<PortDirectionLabel, Vector3>;
 
 // Cartesian-only counterpart used by `CurrentDipole`. PR 716's
 // `domains.json` constrains the dipole direction to the 18 Cartesian axis
@@ -62,7 +64,7 @@ using DipoleDirectionLabel = rfl::Literal<"X", "Y", "Z",     //
                                           "x", "y", "z",     //
                                           "+x", "+y", "+z",  //
                                           "-x", "-y", "-z">;
-using DipoleDirection = rfl::Variant<DipoleDirectionLabel, std::array<double, 3>>;
+using DipoleDirection = rfl::Variant<DipoleDirectionLabel, Vector3>;
 
 }  // namespace palace::schema
 
@@ -95,7 +97,7 @@ struct palace::schema::utils::schema_alias_name<::palace::schema::DipoleDirectio
 // / etc. as plain field types, and by the `Direction` variants as their
 // numeric-vector arm.
 template <>
-struct palace::schema::utils::schema_alias_name<::std::array<double, 3>>
+struct palace::schema::utils::schema_alias_name<::palace::schema::Vector3>
 {
   static constexpr std::string_view value = "Vector3";
 };

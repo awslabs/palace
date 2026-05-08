@@ -173,6 +173,26 @@ std::string inject_field_aliases(std::string schema_json,
                                  const std::vector<FieldAlias> &entries);
 
 // Defined in src/schema.cpp. Counterpart to `inject_field_aliases` for
+// fields whose declared type is a container (`std::vector<U>` /
+// `std::array<U, N>`) and whose *inner* type U specializes
+// `schema_alias_name`. reflect-cpp emits the inner body inline at
+// `properties[field]/items`; this pass rewrites that nested body into
+// `{"$ref": "#/$defs/<alias>"}`. Used to share the `Vector3` alias for the
+// inner row of `MaterialAxes` (a 3×3 array of doubles) — the outer
+// `field-alias` pass only fires when the field type itself has an alias.
+// The first occurrence supplies the canonical `$defs[alias]` body if
+// nothing else has installed it yet; later occurrences just rewrite to
+// `$ref`.
+struct NestedItemsAlias
+{
+  std::string struct_name;
+  std::string field_name;
+  std::string alias_name;
+};
+std::string inject_nested_items_aliases(std::string schema_json,
+                                        const std::vector<NestedItemsAlias> &entries);
+
+// Defined in src/schema.cpp. Counterpart to `inject_field_aliases` for
 // `rfl::Variant<...>` fields whose alternatives expand inline as
 // `anyOf: [{<arm0 body>}, {<arm1 body>}, ...]`. For each entry, locates
 // `$defs[struct_name]/properties[field_name]/anyOf[arm_index]`, moves the
@@ -443,6 +463,11 @@ struct DefaultsAccum
   // Named-alias hoist sites — one entry per field whose cleaned type
   // specializes `schema_alias_name<T>`.
   std::vector<FieldAlias> field_aliases;
+  // Container-element alias hoist sites: one entry per field whose
+  // declared type is `std::vector<U>` / `std::array<U, N>` and whose
+  // element type U specializes `schema_alias_name<U>`. Rewrites
+  // `properties[field]/items` to `{"$ref": "#/$defs/<alias>"}`.
+  std::vector<NestedItemsAlias> nested_items_aliases;
   // Per-arm alias hoist sites for `rfl::Variant<...>` fields: one entry
   // per (struct, field, arm-index) whose cleaned arm type specializes
   // `schema_alias_name<T>`.
@@ -524,11 +549,12 @@ struct field_annotations_walker<U, rfl::Tuple<Fs...>>
                     std::vector<FieldFlag> &flag_out,
                     std::vector<std::string> &required_out,
                     std::vector<FieldAlias> &alias_out,
+                    std::vector<NestedItemsAlias> &nested_items_alias_out,
                     std::vector<VariantArmAlias> &variant_arm_alias_out,
                     std::vector<FieldCompositionRewrite> &field_composition_out)
   {
     (check_one<Fs>(struct_name, enum_out, flag_out, required_out, alias_out,
-                   variant_arm_alias_out, field_composition_out),
+                   nested_items_alias_out, variant_arm_alias_out, field_composition_out),
      ...);
   }
 
@@ -537,11 +563,13 @@ struct field_annotations_walker<U, rfl::Tuple<Fs...>>
   check_one(const std::string &struct_name, std::vector<EnumDescEntry> &enum_out,
             std::vector<FieldFlag> &flag_out, std::vector<std::string> &required_out,
             std::vector<FieldAlias> &alias_out,
+            std::vector<NestedItemsAlias> &nested_items_alias_out,
             std::vector<VariantArmAlias> &variant_arm_alias_out,
             std::vector<FieldCompositionRewrite> &field_composition_out)
   {
     check_one_impl(struct_name, enum_out, flag_out, required_out, alias_out,
-                   variant_arm_alias_out, field_composition_out, static_cast<F *>(nullptr));
+                   nested_items_alias_out, variant_arm_alias_out, field_composition_out,
+                   static_cast<F *>(nullptr));
   }
 
   template <rfl::internal::StringLiteral name, class Type>
@@ -549,6 +577,7 @@ struct field_annotations_walker<U, rfl::Tuple<Fs...>>
   check_one_impl(const std::string &struct_name, std::vector<EnumDescEntry> &enum_out,
                  std::vector<FieldFlag> &flag_out, std::vector<std::string> &required_out,
                  std::vector<FieldAlias> &alias_out,
+                 std::vector<NestedItemsAlias> &nested_items_alias_out,
                  std::vector<VariantArmAlias> &variant_arm_alias_out,
                  std::vector<FieldCompositionRewrite> &field_composition_out,
                  rfl::Field<name, Type> *)
@@ -601,6 +630,28 @@ struct field_annotations_walker<U, rfl::Tuple<Fs...>>
       a.field_name.assign(std::string_view{name.str()});
       a.alias_name.assign(schema_alias_name<Clean>::value);
       alias_out.push_back(std::move(a));
+    }
+    // Container-element alias hoist: if the field type is a container
+    // (`std::vector<U>` / `std::array<U, N>`) whose element type U has a
+    // `schema_alias_name` and U itself is *not* a variant (variants are
+    // handled by the per-arm pass below) and the field type itself does
+    // not already have a top-level alias (avoid double rewrites), record
+    // a NestedItemsAlias so the post-emit pass replaces
+    // `properties[field]/items` with `{"$ref": "#/$defs/<alias>"}`.
+    // Used for `MaterialAxes: std::array<std::array<double, 3>, 3>` →
+    // inner row becomes `$ref: Vector3`.
+    else if constexpr (is_vector<Clean>::value || is_std_array<Clean>::value)
+    {
+      using ItemClean = strip_ann_t<typename Clean::value_type>;
+      if constexpr (!schema_alias_name<ItemClean>::value.empty() &&
+                    !is_rfl_variant<ItemClean>::value)
+      {
+        NestedItemsAlias a;
+        a.struct_name = struct_name;
+        a.field_name.assign(std::string_view{name.str()});
+        a.alias_name.assign(schema_alias_name<ItemClean>::value);
+        nested_items_alias_out.push_back(std::move(a));
+      }
     }
     // Per-arm alias / composition hoist: when the cleaned field type
     // *contains* a variant (directly or through a `std::vector` /
@@ -745,7 +796,7 @@ void visit_type(DefaultsAccum &acc)
     std::vector<std::string> required;
     field_annotations_walker<U, Fields>::apply(
         name, acc.enum_descs, acc.field_flags, required, acc.field_aliases,
-        acc.variant_arm_aliases, acc.field_compositions);
+        acc.nested_items_aliases, acc.variant_arm_aliases, acc.field_compositions);
     // Always record an entry (even if empty) so the `set_required` pass
     // knows to replace reflect-cpp's native required array — the empty
     // list signals "nothing required", which collapses to an entry with
@@ -847,6 +898,16 @@ std::string schema(SchemaOptions opts)
   if (!accum.field_aliases.empty())
   {
     s = detail::inject_field_aliases(std::move(s), accum.field_aliases);
+  }
+  // Container-element alias hoist runs after the whole-field alias pass:
+  // by this point any alias used by a top-level field site has already
+  // installed its canonical body into `$defs`, so the nested rewrite only
+  // needs to swap the inner body for a `$ref`. (When no top-level field
+  // shares the alias — unlikely in practice — this pass installs the body
+  // itself on first occurrence.)
+  if (!accum.nested_items_aliases.empty())
+  {
+    s = detail::inject_nested_items_aliases(std::move(s), accum.nested_items_aliases);
   }
   // Run for every TaggedUnion encountered during the type-graph walk,
   // not only when the root T is itself a tagged union. Nested unions
