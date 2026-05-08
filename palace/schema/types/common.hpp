@@ -56,10 +56,10 @@ using PortDirection = rfl::Variant<PortDirectionLabel, std::array<double, 3>>;
 // `domains.json` constrains the dipole direction to the 18 Cartesian axis
 // keywords (no `R`/`r` cylindrical variants), since a Dirac current
 // source has no notion of a cylindrical frame.
-using DipoleDirectionLabel = rfl::Literal<"X", "Y", "Z",      //
+using DipoleDirectionLabel = rfl::Literal<"X", "Y", "Z",     //
                                           "+X", "+Y", "+Z",  //
                                           "-X", "-Y", "-Z",  //
-                                          "x", "y", "z",      //
+                                          "x", "y", "z",     //
                                           "+x", "+y", "+z",  //
                                           "-x", "-y", "-z">;
 using DipoleDirection = rfl::Variant<DipoleDirectionLabel, std::array<double, 3>>;
@@ -243,14 +243,5 @@ PALACE_SCHEMA_ENUM(Device, (CPU, "Run on CPU."),
                    (Debug, "MFEM debug device, useful for diagnosing GPU-related issues."));
 
 }  // namespace palace::schema
-
-// Hoist every `CoordinateSystem` field into a shared `$defs/CoordinateSystem`
-// entry. Runs after `inject_enum_descriptions`, so the canonical body is
-// the fully-decorated `oneOf` with per-value `const`/`description` pairs.
-template <>
-struct palace::schema::utils::schema_alias_name<::palace::schema::CoordinateSystem>
-{
-  static constexpr std::string_view value = "CoordinateSystem";
-};
 
 #endif  // PALACE_SCHEMA_TYPES_COMMON_HPP

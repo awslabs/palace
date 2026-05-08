@@ -148,7 +148,7 @@ struct DomainPostprocessing
                      std::vector<Probe>) = {};
 };
 
-struct Domain
+struct Domains
 {
   PALACE_SCHEMA_DESC_REQUIRED(Materials, "Array of material property objects.",
                               std::vector<Material>) = {};

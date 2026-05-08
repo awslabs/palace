@@ -416,6 +416,15 @@ class is_description<::palace::schema::utils::DescDeprecated<text, T>>
   {                                                                                \
     static constexpr auto value =                                                  \
         ::std::array{PAL_SCHEMA_FOR_EACH(PAL_SCHEMA_ENUM_EMIT_PAIR, __VA_ARGS__)}; \
+  };                                                                               \
+  /* Auto-hoist every described enum into a `$defs/<EnumName>` entry so            \
+   * the rewritten `oneOf` body appears once and every use site emits a            \
+   * `{"$ref": "#/$defs/<EnumName>"}`. Keeps the schema layout aligned             \
+   * with PR-716 without a per-enum `schema_alias_name` specialization. */         \
+  template <>                                                                      \
+  struct ::palace::schema::utils::schema_alias_name<EnumName>                      \
+  {                                                                                \
+    static constexpr ::std::string_view value = #EnumName;                         \
   }
 
 #endif  // PALACE_SCHEMA_UTILS_ANNOTATIONS_HPP

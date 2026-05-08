@@ -388,17 +388,34 @@ inject_tag_descriptions(std::string schema_json, std::string tag_name,
       continue;
     if (!std::holds_alternative<std::string>(enum_arr[0].value()))
       continue;
-    const auto &discriminator = std::get<std::string>(enum_arr[0].value());
+    std::string discriminator = std::get<std::string>(enum_arr[0].value());
 
+    // Locate the matching arm description (if any). Missing description
+    // is fine — we still rewrite the shape so every discriminator looks
+    // the same in the emitted schema.
+    std::string description;
+    bool have_desc = false;
     for (const auto &[disc, desc] : arm_descs)
     {
-      if (disc != discriminator)
-        continue;
-      if (tag_prop.count("description") != 0)
+      if (disc == discriminator)
+      {
+        description = desc;
+        have_desc = true;
         break;
-      tag_prop["description"] = rfl::Generic(desc);
-      break;
+      }
     }
+    if (!have_desc)
+      continue;
+
+    // Rewrite `{type:"string", enum:[X], default:X}` to
+    // `{const:X, description:...}`. PR-716 spells discriminator arms as
+    // `{"const": "Log", "description": "..."}` rather than the verbose
+    // string-enum form rfl emits by default. Default is dropped: a
+    // singleton enum is its own default, and PR-716 omits the key.
+    rfl::Generic::Object new_body;
+    new_body["const"] = rfl::Generic(std::move(discriminator));
+    new_body["description"] = rfl::Generic(std::move(description));
+    tag_prop = std::move(new_body);
   }
 
   return rfl::json::write(*schema_gen_r, rfl::json::pretty);
@@ -1169,10 +1186,89 @@ std::string inject_variant_arm_aliases(std::string schema_json,
   return rfl::json::write(*schema_gen_r, rfl::json::pretty);
 }
 
-// Stamp `"version": <value>` on the root object. JSON Schema allows custom
-// root keywords, so this is a lightweight schema-level annotation (it does
-// not affect instance validation).
-std::string inject_root_version(std::string schema_json, std::string version)
+// Per-field composition rewrite: locate `$defs[struct]/properties[field]`,
+// peel one layer of `items` if the field is an array, and rename the
+// combiner keyword (`anyOf` → `oneOf` in practice) on the resulting
+// object. Sibling keys on the property (description, default) are
+// preserved. Used to satisfy `schema_composition<Variant<...>>` opt-ins
+// for nested variant fields, since the root-level
+// `rewrite_root_composition` only edits the top-level object.
+std::string inject_field_composition(std::string schema_json,
+                                     const std::vector<FieldCompositionRewrite> &entries)
+{
+  if (entries.empty())
+    return schema_json;
+  auto schema_gen_r = rfl::json::read<rfl::Generic>(schema_json);
+  if (!schema_gen_r)
+    return schema_json;
+
+  auto &schema_var = schema_gen_r->value();
+  if (!std::holds_alternative<rfl::Generic::Object>(schema_var))
+    return schema_json;
+  auto &root_obj = std::get<rfl::Generic::Object>(schema_var);
+
+  if (root_obj.count("$defs") == 0)
+    return schema_json;
+  auto &defs_var = root_obj.at("$defs").value();
+  if (!std::holds_alternative<rfl::Generic::Object>(defs_var))
+    return schema_json;
+  auto &defs = std::get<rfl::Generic::Object>(defs_var);
+
+  for (const auto &e : entries)
+  {
+    if (defs.count(e.struct_name) == 0)
+      continue;
+    auto &def_var = defs.at(e.struct_name).value();
+    if (!std::holds_alternative<rfl::Generic::Object>(def_var))
+      continue;
+    auto &def_obj = std::get<rfl::Generic::Object>(def_var);
+    if (def_obj.count("properties") == 0)
+      continue;
+    auto &props_var = def_obj.at("properties").value();
+    if (!std::holds_alternative<rfl::Generic::Object>(props_var))
+      continue;
+    auto &props = std::get<rfl::Generic::Object>(props_var);
+    if (props.count(e.field_name) == 0)
+      continue;
+    auto &prop_var = props.at(e.field_name).value();
+    if (!std::holds_alternative<rfl::Generic::Object>(prop_var))
+      continue;
+    auto *target = &std::get<rfl::Generic::Object>(prop_var);
+    // For array-of-variant fields, the variant body lives at
+    // `properties[field]/items` rather than directly on the property.
+    if (target->count(e.from) == 0 && target->count("items") != 0)
+    {
+      auto &items_var = target->at("items").value();
+      if (std::holds_alternative<rfl::Generic::Object>(items_var))
+      {
+        target = &std::get<rfl::Generic::Object>(items_var);
+      }
+    }
+    if (target->count(e.from) == 0)
+      continue;
+
+    // rfl::Object preserves insertion order and has no erase. Rename the
+    // key in place by walking the underlying pair list.
+    for (auto &entry : *target)
+    {
+      if (entry.first == e.from)
+      {
+        entry.first = e.to;
+        break;
+      }
+    }
+  }
+
+  return rfl::json::write(*schema_gen_r, rfl::json::pretty);
+}
+
+// Stamp `"$id": "urn:palace:schema:<version>"` on the root object. The URN
+// form is the spec-blessed way to carry a schema-document identifier (and
+// its version) — `$id` is reserved by JSON Schema for exactly this, and
+// validators use it as the base URI for `$ref` resolution. Inserted
+// immediately after `$schema` to match the conventional ordering of the
+// dialect/identifier pair at the top of the document.
+std::string inject_root_id(std::string schema_json, std::string version)
 {
   auto schema_gen_r = rfl::json::read<rfl::Generic>(schema_json);
   if (!schema_gen_r)
@@ -1183,7 +1279,41 @@ std::string inject_root_version(std::string schema_json, std::string version)
     return schema_json;
   auto &root_obj = std::get<rfl::Generic::Object>(schema_var);
 
-  root_obj["version"] = rfl::Generic(std::move(version));
+  std::string id = "urn:palace:schema:" + version;
+
+  // rfl::Object preserves insertion order. Rebuild the root so `$id` sits
+  // right after `$schema` (replacing any prior `$id`), rather than
+  // tacking it onto the end the way operator[] would. Falls back to
+  // first slot if `$schema` is absent — keeps the identifier near the
+  // top regardless of input shape.
+  rfl::Generic::Object rebuilt;
+  bool have_schema_key = false;
+  for (auto &entry : root_obj)
+  {
+    if (entry.first == "$schema")
+    {
+      have_schema_key = true;
+      break;
+    }
+  }
+  if (!have_schema_key)
+  {
+    rebuilt["$id"] = rfl::Generic(id);
+  }
+  for (auto &entry : root_obj)
+  {
+    if (entry.first == "$id")
+      continue;
+    bool place_after = (entry.first == "$schema");
+    std::string key = std::move(entry.first);
+    rfl::Generic value = std::move(entry.second);
+    rebuilt.insert(std::move(key), std::move(value));
+    if (place_after)
+    {
+      rebuilt["$id"] = rfl::Generic(id);
+    }
+  }
+  root_obj = std::move(rebuilt);
 
   return rfl::json::write(*schema_gen_r, rfl::json::pretty);
 }

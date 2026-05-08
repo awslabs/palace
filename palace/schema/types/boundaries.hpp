@@ -149,30 +149,17 @@ struct Impedance
 
 // --- LumpedPort / WavePort / Terminal / SurfaceCurrent ---------------------
 
-struct LumpedPort
+// Common circuit/surface parameters and excitation knobs shared by the
+// `Attributes` and `Elements` forms of `LumpedPort`. Folded inline at
+// each variant arm via inheritance — reflect-cpp aggregates the base
+// fields into the derived struct's emitted properties.
+struct LumpedPortCommon
 {
   PALACE_SCHEMA_DESC_REQUIRED(
       Index,
       "Index of this lumped port, used in postprocessing output files. "
       "Must be unique across all port and source types.",
       palace::schema::utils::XMin<int, 0>) = 1;
-
-  PALACE_SCHEMA_DESC(Attributes,
-                     "Integer array of mesh boundary attributes for this lumped port "
-                     "boundary. If this port is to be a multielement lumped port with "
-                     "more than a single lumped element, use the \"Elements\" array "
-                     "described below.",
-                     AttributeList) = {};
-
-  PALACE_SCHEMA_DESC(Direction,
-                     "Excitation direction keyword or 3-array (see PortDirection schema).",
-                     PortDirection) = PortDirectionLabel("+X");
-
-  PALACE_SCHEMA_DESC(CoordinateSystem,
-                     "Coordinate system used to express the `\"Direction\"` vector. If "
-                     "a keyword argument is used for `\"Direction\"` this value is "
-                     "ignored.",
-                     CoordinateSystem) = CoordinateSystem::Cartesian;
 
   PALACE_SCHEMA_DESC(R,
                      "Circuit resistance, Ω. Use with `\"L\"` and `\"C\"`; do not mix "
@@ -216,14 +203,50 @@ struct LumpedPort
                      "Turns on or off the damping boundary condition for this port for "
                      "driven or transient simulations.",
                      bool) = true;
-
-  PALACE_SCHEMA_DESC(Elements,
-                     "Sub-elements for a multielement lumped port. Use this instead of "
-                     "the top-level `\"Attributes\"`/`\"Direction\"`/"
-                     "`\"CoordinateSystem\"` when the port spans multiple disjoint "
-                     "boundary surfaces. Elements add in parallel.",
-                     std::vector<Element>) = {};
 };
+
+// Single-element form: a port covers a contiguous attribute set with a
+// single direction. The `LumpedPortCommon` fields are inlined via
+// `rfl::Flatten` so the emitted schema lists `Index`/`R`/`L`/... at the
+// top level rather than nesting them under a `Common` key. Required
+// keys: `Index` (from the common block) and `Attributes`.
+struct LumpedPortAttributes
+{
+  rfl::Flatten<LumpedPortCommon> common = {};
+
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Attributes,
+      "Integer array of mesh boundary attributes for this lumped port "
+      "boundary.",
+      AttributeList) = {};
+
+  PALACE_SCHEMA_DESC(Direction,
+                     "Excitation direction keyword or 3-array (see PortDirection schema).",
+                     PortDirection) = PortDirectionLabel("+X");
+
+  PALACE_SCHEMA_DESC(CoordinateSystem,
+                     "Coordinate system used to express the `\"Direction\"` vector. If "
+                     "a keyword argument is used for `\"Direction\"` this value is "
+                     "ignored.",
+                     CoordinateSystem) = CoordinateSystem::Cartesian;
+};
+
+// Multi-element form: the port spans multiple disjoint surfaces, each
+// with its own direction. Required keys: `Index` (from the common
+// block) and `Elements`.
+struct LumpedPortElements
+{
+  rfl::Flatten<LumpedPortCommon> common = {};
+
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Elements,
+      "Sub-elements for a multielement lumped port. Each element provides "
+      "its own attributes / direction / coordinate system. Elements add "
+      "in parallel.",
+      std::vector<Element>) = {};
+};
+
+using LumpedPort = rfl::Variant<LumpedPortAttributes, LumpedPortElements>;
 
 struct Terminal
 {
@@ -301,19 +324,27 @@ struct WavePort
                               palace::schema::utils::Min<int, 0>) = 0;
 };
 
-struct SurfaceCurrent
+// Surface current sources mirror lumped ports' single-vs-multi-element
+// shape: the variant has one arm with a flat `Attributes` list and
+// another with an `Elements` array.
+struct SurfaceCurrentCommon
 {
   PALACE_SCHEMA_DESC_REQUIRED(
       Index,
       "Index of this surface current source, used in postprocessing "
       "output files. Must be unique across all port and source types.",
       palace::schema::utils::XMin<int, 0>) = 1;
+};
 
-  PALACE_SCHEMA_DESC(Attributes,
-                     "Integer array of mesh boundary attributes for this surface "
-                     "current boundary. If this is to be a object with more than a "
-                     "single element, use the \"Elements\" array described below.",
-                     AttributeList) = {};
+struct SurfaceCurrentAttributes
+{
+  rfl::Flatten<SurfaceCurrentCommon> common = {};
+
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Attributes,
+      "Integer array of mesh boundary attributes for this surface current "
+      "boundary.",
+      AttributeList) = {};
 
   PALACE_SCHEMA_DESC(Direction,
                      "Excitation direction keyword or 3-array (see PortDirection schema).",
@@ -324,15 +355,22 @@ struct SurfaceCurrent
                      "[`/LumpedPort/CoordinateSystem`](@ref "
                      "config-boundaries-lumpedport-coordinatesystem).",
                      CoordinateSystem) = CoordinateSystem::Cartesian;
-
-  PALACE_SCHEMA_DESC(Elements,
-                     "Sub-elements for a multielement surface current source. Use this "
-                     "instead of the top-level `\"Attributes\"`/`\"Direction\"`/"
-                     "`\"CoordinateSystem\"` when the source spans multiple disjoint "
-                     "boundary surfaces. Elements add in parallel to give the same "
-                     "total current as a single-element source.",
-                     std::vector<Element>) = {};
 };
+
+struct SurfaceCurrentElements
+{
+  rfl::Flatten<SurfaceCurrentCommon> common = {};
+
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Elements,
+      "Sub-elements for a multielement surface current source. Each "
+      "element provides its own attributes / direction / coordinate "
+      "system. Elements add in parallel to give the same total current "
+      "as a single-element source.",
+      std::vector<Element>) = {};
+};
+
+using SurfaceCurrent = rfl::Variant<SurfaceCurrentAttributes, SurfaceCurrentElements>;
 
 // --- Periodic --------------------------------------------------------------
 
@@ -587,32 +625,47 @@ struct Boundaries
 
 }  // namespace palace::schema
 
-// --- Cross-field constraints ----------------------------------------------
+// --- Variant arm aliases for LumpedPort / SurfaceCurrent ------------------
 //
-// `LumpedPort` and `SurfaceCurrent` describe their boundary either via a
-// flat `Attributes` list (single-element form) or via `Elements` (one or
-// more sub-elements, for multi-element ports). The schema encodes this
-// as `oneOf: [{required:["Attributes"]}, {required:["Elements"]}]`,
-// which the post-emit `inject_oneof_required` pass splices into the
-// matching `$defs` entry.
-namespace palace::schema::utils
-{
+// Each array element of `LumpedPort` / `SurfaceCurrent` is a variant
+// over the `Attributes` and `Elements` shapes. The variant is emitted
+// inline as `oneOf: [{<arm0 body>}, {<arm1 body>}]`; these alias
+// specializations promote each arm body into its own `$defs` entry and
+// rewrite the inline arm to a `$ref`, matching PR-716's hand-authored
+// layout.
 template <>
-struct schema_oneof_required<::palace::schema::LumpedPort>
+struct palace::schema::utils::schema_alias_name<::palace::schema::LumpedPortAttributes>
 {
-  static std::vector<std::vector<std::string>> value()
-  {
-    return {{"Attributes"}, {"Elements"}};
-  }
+  static constexpr std::string_view value = "LumpedPortAttributes";
 };
 template <>
-struct schema_oneof_required<::palace::schema::SurfaceCurrent>
+struct palace::schema::utils::schema_alias_name<::palace::schema::LumpedPortElements>
 {
-  static std::vector<std::vector<std::string>> value()
-  {
-    return {{"Attributes"}, {"Elements"}};
-  }
+  static constexpr std::string_view value = "LumpedPortElements";
 };
-}  // namespace palace::schema::utils
+template <>
+struct palace::schema::utils::schema_alias_name<::palace::schema::SurfaceCurrentAttributes>
+{
+  static constexpr std::string_view value = "SurfaceCurrentAttributes";
+};
+template <>
+struct palace::schema::utils::schema_alias_name<::palace::schema::SurfaceCurrentElements>
+{
+  static constexpr std::string_view value = "SurfaceCurrentElements";
+};
+
+// Force the variant arm composition keyword to `oneOf`. reflect-cpp's
+// default for `rfl::Variant` is `anyOf`; PR-716 expresses these
+// mutually-exclusive shapes via `oneOf` (exactly one arm matches).
+template <>
+struct palace::schema::utils::schema_composition<::palace::schema::LumpedPort>
+{
+  static constexpr auto value = palace::schema::utils::Compose::OneOf;
+};
+template <>
+struct palace::schema::utils::schema_composition<::palace::schema::SurfaceCurrent>
+{
+  static constexpr auto value = palace::schema::utils::Compose::OneOf;
+};
 
 #endif  // PALACE_SCHEMA_TYPES_BOUNDARIES_HPP

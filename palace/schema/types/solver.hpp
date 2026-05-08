@@ -376,7 +376,7 @@ struct Magnetostatic
 
 // --- LinearSolver ------------------------------------------------------
 
-struct LinearSolverConfig
+struct Linear
 {
   PALACE_SCHEMA_DESC(Type,
                      "Specifies the solver used for preconditioning the linear system.",
@@ -639,7 +639,7 @@ struct Solver
 
   PALACE_SCHEMA_DESC(Linear,
                      "Configuration for the linear solver used by all simulation types.",
-                     LinearSolverConfig) = {};
+                     Linear) = {};
 };
 
 }  // namespace palace::schema

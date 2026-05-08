@@ -1,5 +1,6 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "urn:palace:schema:1-0-0",
     "$ref": "#/$defs/PalaceConfiguration",
     "$defs": {
         "Boundaries": {
@@ -49,7 +50,14 @@
                     "type": "array",
                     "description": "Array of lumped port boundary conditions. Lumped ports can be specified on boundaries internal to the computational domain.",
                     "items": {
-                        "$ref": "#/$defs/LumpedPort"
+                        "oneOf": [
+                            {
+                                "$ref": "#/$defs/LumpedPortAttributes"
+                            },
+                            {
+                                "$ref": "#/$defs/LumpedPortElements"
+                            }
+                        ]
                     },
                     "default": []
                 },
@@ -73,7 +81,14 @@
                     "type": "array",
                     "description": "Array of surface current source boundaries. Prescribes a unit source surface current excitation on the given boundary to excite a driven, transient, or magnetostatic simulation. For magnetostatic simulations, inductance matrix entries are extracted for each surface current boundary.",
                     "items": {
-                        "$ref": "#/$defs/SurfaceCurrent"
+                        "oneOf": [
+                            {
+                                "$ref": "#/$defs/SurfaceCurrentAttributes"
+                            },
+                            {
+                                "$ref": "#/$defs/SurfaceCurrentElements"
+                            }
+                        ]
                     },
                     "default": []
                 },
@@ -314,25 +329,8 @@
                     "default": []
                 },
                 "Type": {
+                    "$ref": "#/$defs/InterfaceDielectric",
                     "description": "Interface type used to determine the boundary conditions for computing the EPR. See also [theory reference](../reference.md#Bulk-and-interface-dielectric-loss).",
-                    "oneOf": [
-                        {
-                            "const": "Default",
-                            "description": "Use the full electric field evaluated at the boundary."
-                        },
-                        {
-                            "const": "MA",
-                            "description": "Use metal-air interface boundary conditions."
-                        },
-                        {
-                            "const": "MS",
-                            "description": "Use metal-substrate interface boundary conditions."
-                        },
-                        {
-                            "const": "SA",
-                            "description": "Use substrate-air interface boundary conditions."
-                        }
-                    ],
                     "default": "Default"
                 },
                 "Thickness": {
@@ -360,7 +358,29 @@
             ],
             "additionalProperties": false
         },
-        "Domain": {
+        "DomainPostprocessing": {
+            "type": "object",
+            "properties": {
+                "Energy": {
+                    "type": "array",
+                    "description": "Array of objects for postprocessing domain energies. Postprocesses the electric and magnetic field energy inside a given domain. Results are written to `domain-E.csv` in the output directory.",
+                    "items": {
+                        "$ref": "#/$defs/Energy"
+                    },
+                    "default": []
+                },
+                "Probe": {
+                    "type": "array",
+                    "description": "Array of probe points for evaluating field values at specified locations in space. The electric field **E** and magnetic flux density **B** are probed and written to `probe-E.csv` and `probe-B.csv` in the output directory.",
+                    "items": {
+                        "$ref": "#/$defs/Probe"
+                    },
+                    "default": []
+                }
+            },
+            "additionalProperties": false
+        },
+        "Domains": {
             "type": "object",
             "properties": {
                 "Materials": {
@@ -387,28 +407,6 @@
             "required": [
                 "Materials"
             ],
-            "additionalProperties": false
-        },
-        "DomainPostprocessing": {
-            "type": "object",
-            "properties": {
-                "Energy": {
-                    "type": "array",
-                    "description": "Array of objects for postprocessing domain energies. Postprocesses the electric and magnetic field energy inside a given domain. Results are written to `domain-E.csv` in the output directory.",
-                    "items": {
-                        "$ref": "#/$defs/Energy"
-                    },
-                    "default": []
-                },
-                "Probe": {
-                    "type": "array",
-                    "description": "Array of probe points for evaluating field values at specified locations in space. The electric field **E** and magnetic flux density **B** are probed and written to `probe-E.csv` and `probe-B.csv` in the output directory.",
-                    "items": {
-                        "$ref": "#/$defs/Probe"
-                    },
-                    "default": []
-                }
-            },
             "additionalProperties": false
         },
         "Driven": {
@@ -489,23 +487,9 @@
                     "default": 2
                 },
                 "AdaptiveGSOrthogonalization": {
+                    "$ref": "#/$defs/Orthogonalization",
                     "description": "Gram-Schmidt variant for orthogonalizing the adaptive reduced-order model basis. Same options as [`/Linear/GSOrthogonalization`](@ref config-solver-linear-gsorthogonalization).",
-                    "oneOf": [
-                        {
-                            "const": "MGS",
-                            "description": "Modified Gram-Schmidt."
-                        },
-                        {
-                            "const": "CGS",
-                            "description": "Classical Gram-Schmidt."
-                        },
-                        {
-                            "const": "CGS2",
-                            "description": "Two-step classical Gram-Schmidt with reorthogonalization."
-                        }
-                    ],
-                    "default": "CGS2",
-                    "x-palace-advanced": true
+                    "default": "CGS2"
                 },
                 "AdaptiveCircuitSynthesis": {
                     "description": "Use the adaptive reduced-order model to print synthesized circuit-like matrices (L⁻¹, R⁻¹, C). Requires adaptive sweep to be enabled, all `LumpedPort` fields to be orthogonal, and only LRC-type frequency dependence (no `WavePort`, `Conductivity`, or second-order farfield BCs).",
@@ -513,23 +497,9 @@
                     "default": false
                 },
                 "AdaptiveCircuitSynthesisDomainOrthogonalization": {
+                    "$ref": "#/$defs/AdaptiveCircuitSynthesisDomainOrthogonalization",
                     "description": "Weight matrix type for domain orthogonalization when building synthesized circuit matrices.",
-                    "oneOf": [
-                        {
-                            "const": "Energy",
-                            "description": "Use the energy-based domain mass matrix."
-                        },
-                        {
-                            "const": "FEBasisIdentity",
-                            "description": "Use the identity matrix in the finite element basis."
-                        },
-                        {
-                            "const": "SpaceOverlap",
-                            "description": "Use the physical-space field overlap."
-                        }
-                    ],
-                    "default": "Energy",
-                    "x-palace-advanced": true
+                    "default": "Energy"
                 }
             },
             "additionalProperties": false
@@ -573,35 +543,13 @@
                     "default": 0
                 },
                 "Type": {
+                    "$ref": "#/$defs/EigenSolverBackend",
                     "description": "Specifies the eigenvalue solver backend.",
-                    "oneOf": [
-                        {
-                            "const": "Default",
-                            "description": "Use the default solver (currently SLEPc Krylov-Schur)."
-                        },
-                        {
-                            "const": "SLEPc",
-                            "description": "Krylov-Schur solver from SLEPc."
-                        },
-                        {
-                            "const": "ARPACK",
-                            "description": "ARPACK eigensolver."
-                        }
-                    ],
                     "default": "Default"
                 },
                 "NonlinearType": {
+                    "$ref": "#/$defs/NonlinearEigenSolver",
                     "description": "Specifies the nonlinear eigenvalue solver for problems with frequency-dependent boundary conditions.",
-                    "oneOf": [
-                        {
-                            "const": "Hybrid",
-                            "description": "Hybrid algorithm: solve a polynomial (quadratic) approximation first, then refine with a quasi-Newton nonlinear eigensolver."
-                        },
-                        {
-                            "const": "SLP",
-                            "description": "SLEPc Successive Linear Problem (SLP) nonlinear eigensolver."
-                        }
-                    ],
                     "default": "Hybrid"
                 },
                 "TargetUpper": {
@@ -861,72 +809,17 @@
             ],
             "additionalProperties": false
         },
-        "LinearSolverConfig": {
+        "Linear": {
             "type": "object",
             "properties": {
                 "Type": {
+                    "$ref": "#/$defs/LinearSolver",
                     "description": "Specifies the solver used for preconditioning the linear system.",
-                    "oneOf": [
-                        {
-                            "const": "Default",
-                            "description": "Use `\"AMS\"` for curl-curl and time-domain problems; a sparse direct solver (if available) for frequency domain; `\"BoomerAMG\"` for electrostatics."
-                        },
-                        {
-                            "const": "AMS",
-                            "description": "Hypre's [Auxiliary-space Maxwell Solver (AMS)](https://hypre.readthedocs.io/en/latest/solvers-ams.html), an algebraic multigrid (AMG)-based preconditioner for curl-curl operators."
-                        },
-                        {
-                            "const": "BoomerAMG",
-                            "description": "Hypre's [BoomerAMG](https://hypre.readthedocs.io/en/latest/solvers-boomeramg.html) algebraic multigrid solver."
-                        },
-                        {
-                            "const": "MUMPS",
-                            "description": "[MUMPS](http://mumps.enseeiht.fr/) sparse direct solver in real double precision. Requires MUMPS support (see [installation options](../install.md#Configuration-options))."
-                        },
-                        {
-                            "const": "SuperLU",
-                            "description": "[SuperLU_DIST](https://github.com/xiaoyeli/superlu_dist) sparse direct solver in real double precision. For frequency domain problems uses a real approximation to the complex system matrix. Requires SuperLU_DIST support (see [installation options](../install.md#Configuration-options))."
-                        },
-                        {
-                            "const": "STRUMPACK",
-                            "description": "[STRUMPACK](https://portal.nersc.gov/project/sparse/strumpack) sparse direct solver in real double precision. Not compatible with magnetostatics (singular curl-curl operator); use `\"AMS\"` instead. Requires STRUMPACK support (see [installation options](../install.md#Configuration-options))."
-                        },
-                        {
-                            "const": "STRUMPACK_MP"
-                        },
-                        {
-                            "const": "Jacobi",
-                            "description": "Diagonal Jacobi preconditioner (not recommended in general)."
-                        }
-                    ],
                     "default": "Default"
                 },
                 "KSPType": {
+                    "$ref": "#/$defs/KrylovSolver",
                     "description": "Specifies the iterative Krylov subspace solver.",
-                    "oneOf": [
-                        {
-                            "const": "Default",
-                            "description": "Use `\"GMRES\"` for frequency domain problems; `\"CG\"` for real symmetric positive-definite problems (transient, electrostatic, magnetostatic)."
-                        },
-                        {
-                            "const": "CG",
-                            "description": "Preconditioned conjugate gradient."
-                        },
-                        {
-                            "const": "MINRES"
-                        },
-                        {
-                            "const": "GMRES",
-                            "description": "GMRES."
-                        },
-                        {
-                            "const": "FGMRES",
-                            "description": "Flexible GMRES."
-                        },
-                        {
-                            "const": "BiCGSTAB"
-                        }
-                    ],
                     "default": "Default"
                 },
                 "Tol": {
@@ -960,17 +853,8 @@
                     "default": 100
                 },
                 "MGCoarsenType": {
+                    "$ref": "#/$defs/MultigridCoarsening",
                     "description": "Coarsening strategy for constructing p-multigrid levels.",
-                    "oneOf": [
-                        {
-                            "const": "Linear",
-                            "description": "Linear coarsening."
-                        },
-                        {
-                            "const": "Logarithmic",
-                            "description": "Logarithmic coarsening."
-                        }
-                    ],
                     "default": "Logarithmic"
                 },
                 "MGUseMesh": {
@@ -1050,21 +934,8 @@
                     "x-palace-advanced": true
                 },
                 "PCSide": {
+                    "$ref": "#/$defs/PreconditionerSide",
                     "description": "Preconditioning side. Not all options are available for all iterative solver choices.",
-                    "oneOf": [
-                        {
-                            "const": "Default",
-                            "description": "Solver-default side."
-                        },
-                        {
-                            "const": "Right",
-                            "description": "Right preconditioning."
-                        },
-                        {
-                            "const": "Left",
-                            "description": "Left preconditioning."
-                        }
-                    ],
                     "default": "Default"
                 },
                 "ColumnOrdering": {
@@ -1179,27 +1050,14 @@
                     "default": false
                 },
                 "GSOrthogonalization": {
+                    "$ref": "#/$defs/Orthogonalization",
                     "description": "Gram-Schmidt variant used to orthogonalize vectors in Krylov subspace methods and other parts of the solver.",
-                    "oneOf": [
-                        {
-                            "const": "MGS",
-                            "description": "Modified Gram-Schmidt."
-                        },
-                        {
-                            "const": "CGS",
-                            "description": "Classical Gram-Schmidt."
-                        },
-                        {
-                            "const": "CGS2",
-                            "description": "Two-step classical Gram-Schmidt with reorthogonalization."
-                        }
-                    ],
                     "default": "MGS"
                 }
             },
             "additionalProperties": false
         },
-        "LumpedPort": {
+        "LumpedPortAttributes": {
             "type": "object",
             "properties": {
                 "Index": {
@@ -1208,9 +1066,50 @@
                     "type": "integer",
                     "default": 1
                 },
+                "R": {
+                    "type": "number",
+                    "description": "Circuit resistance, Ω. Use with `\"L\"` and `\"C\"`; do not mix with surface parameters `\"Rs\"`, `\"Ls\"`, `\"Cs\"`.",
+                    "default": 0.0
+                },
+                "L": {
+                    "type": "number",
+                    "description": "Circuit inductance, H. Use with `\"R\"` and `\"C\"`; do not mix with surface parameters `\"Rs\"`, `\"Ls\"`, `\"Cs\"`.",
+                    "default": 0.0
+                },
+                "C": {
+                    "type": "number",
+                    "description": "Circuit capacitance, F. Use with `\"R\"` and `\"L\"`; do not mix with surface parameters `\"Rs\"`, `\"Ls\"`, `\"Cs\"`.",
+                    "default": 0.0
+                },
+                "Rs": {
+                    "type": "number",
+                    "description": "Surface resistance, Ω/sq. Use with `\"Ls\"` and `\"Cs\"`; do not mix with circuit parameters `\"R\"`, `\"L\"`, `\"C\"`.",
+                    "default": 0.0
+                },
+                "Ls": {
+                    "type": "number",
+                    "description": "Surface inductance, H/sq. Use with `\"Rs\"` and `\"Cs\"`; do not mix with circuit parameters `\"R\"`, `\"L\"`, `\"C\"`.",
+                    "default": 0.0
+                },
+                "Cs": {
+                    "type": "number",
+                    "description": "Surface capacitance, F/sq. Use with `\"Rs\"` and `\"Ls\"`; do not mix with circuit parameters `\"R\"`, `\"L\"`, `\"C\"`.",
+                    "default": 0.0
+                },
+                "Excitation": {
+                    "description": "Turns on or off port excitation for driven or transient simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
+                    "minimum": 0,
+                    "type": "integer",
+                    "default": 0
+                },
+                "Active": {
+                    "description": "Turns on or off the damping boundary condition for this port for driven or transient simulations.",
+                    "type": "boolean",
+                    "default": true
+                },
                 "Attributes": {
                     "type": "array",
-                    "description": "Integer array of mesh boundary attributes for this lumped port boundary. If this port is to be a multielement lumped port with more than a single lumped element, use the \"Elements\" array described below.",
+                    "description": "Integer array of mesh boundary attributes for this lumped port boundary.",
                     "items": {
                         "type": "integer"
                     },
@@ -1232,6 +1131,22 @@
                     "$ref": "#/$defs/CoordinateSystem",
                     "description": "Coordinate system used to express the `\"Direction\"` vector. If a keyword argument is used for `\"Direction\"` this value is ignored.",
                     "default": "Cartesian"
+                }
+            },
+            "required": [
+                "Index",
+                "Attributes"
+            ],
+            "additionalProperties": false
+        },
+        "LumpedPortElements": {
+            "type": "object",
+            "properties": {
+                "Index": {
+                    "description": "Index of this lumped port, used in postprocessing output files. Must be unique across all port and source types.",
+                    "exclusiveMinimum": 0,
+                    "type": "integer",
+                    "default": 1
                 },
                 "R": {
                     "type": "number",
@@ -1276,7 +1191,7 @@
                 },
                 "Elements": {
                     "type": "array",
-                    "description": "Sub-elements for a multielement lumped port. Use this instead of the top-level `\"Attributes\"`/`\"Direction\"`/`\"CoordinateSystem\"` when the port spans multiple disjoint boundary surfaces. Elements add in parallel.",
+                    "description": "Sub-elements for a multielement lumped port. Each element provides its own attributes / direction / coordinate system. Elements add in parallel.",
                     "items": {
                         "$ref": "#/$defs/Element"
                     },
@@ -1284,21 +1199,10 @@
                 }
             },
             "required": [
-                "Index"
+                "Index",
+                "Elements"
             ],
-            "additionalProperties": false,
-            "oneOf": [
-                {
-                    "required": [
-                        "Attributes"
-                    ]
-                },
-                {
-                    "required": [
-                        "Elements"
-                    ]
-                }
-            ]
+            "additionalProperties": false
         },
         "Magnetostatic": {
             "type": "object",
@@ -1540,7 +1444,7 @@
                     "description": "Mesh and model configuration."
                 },
                 "Domains": {
-                    "$ref": "#/$defs/Domain",
+                    "$ref": "#/$defs/Domains",
                     "description": "Material and domain configuration."
                 },
                 "Boundaries": {
@@ -1552,6 +1456,9 @@
                     "description": "Solver configuration for all simulation types."
                 }
             },
+            "required": [
+                "SchemaVersion"
+            ],
             "additionalProperties": false
         },
         "Periodic": {
@@ -1609,29 +1516,8 @@
             "type": "object",
             "properties": {
                 "Type": {
+                    "$ref": "#/$defs/ProblemType",
                     "description": "Controls the simulation type.",
-                    "oneOf": [
-                        {
-                            "const": "Eigenmode",
-                            "description": "Perform an undamped or damped eigenfrequency analysis."
-                        },
-                        {
-                            "const": "Driven",
-                            "description": "Perform a frequency-domain driven simulation."
-                        },
-                        {
-                            "const": "Transient",
-                            "description": "Perform a time-domain excitation response simulation."
-                        },
-                        {
-                            "const": "Electrostatic",
-                            "description": "Perform an electrostatic analysis to compute the capacitance matrix for a set of voltage terminals."
-                        },
-                        {
-                            "const": "Magnetostatic",
-                            "description": "Perform a magnetostatic analysis to compute the inductance matrix for a set of current sources."
-                        }
-                    ],
                     "default": "Driven"
                 },
                 "Verbose": {
@@ -1750,11 +1636,8 @@
             "type": "object",
             "properties": {
                 "Type": {
-                    "type": "string",
-                    "enum": [
-                        "Linear"
-                    ],
-                    "default": "Linear"
+                    "const": "Linear",
+                    "description": "Linearly-spaced frequency samples."
                 },
                 "MinFreq": {
                     "description": "Lower bound, GHz.",
@@ -1800,11 +1683,8 @@
             "type": "object",
             "properties": {
                 "Type": {
-                    "type": "string",
-                    "enum": [
-                        "Log"
-                    ],
-                    "default": "Log"
+                    "const": "Log",
+                    "description": "Logarithmically-spaced frequency samples."
                 },
                 "MinFreq": {
                     "description": "Lower bound, GHz.",
@@ -1847,11 +1727,8 @@
             "type": "object",
             "properties": {
                 "Type": {
-                    "type": "string",
-                    "enum": [
-                        "Point"
-                    ],
-                    "default": "Point"
+                    "const": "Point",
+                    "description": "Explicit list of frequency sample points."
                 },
                 "Freq": {
                     "type": "array",
@@ -1906,21 +1783,8 @@
                     "x-palace-advanced": true
                 },
                 "Device": {
+                    "$ref": "#/$defs/Device",
                     "description": "The runtime device configuration passed to [MFEM](https://mfem.org/howto/assembly_levels/) to activate different computation backends. When *Palace* is built with OpenMP support (`PALACE_WITH_OPENMP=ON`), `omp` is automatically added to the MFEM device list.",
-                    "oneOf": [
-                        {
-                            "const": "CPU",
-                            "description": "Run on CPU."
-                        },
-                        {
-                            "const": "GPU",
-                            "description": "Run on GPU via CUDA (`MFEM_USE_CUDA=ON`) or HIP (`MFEM_USE_HIP=ON`)."
-                        },
-                        {
-                            "const": "Debug",
-                            "description": "MFEM debug device, useful for diagnosing GPU-related issues."
-                        }
-                    ],
                     "default": "CPU"
                 },
                 "Backend": {
@@ -1949,7 +1813,7 @@
                     "description": "Configuration for the time domain driven solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Transient\"`. Simulations always start from rest at *t* = 0."
                 },
                 "Linear": {
-                    "$ref": "#/$defs/LinearSolverConfig",
+                    "$ref": "#/$defs/Linear",
                     "description": "Configuration for the linear solver used by all simulation types."
                 }
             },
@@ -1987,7 +1851,7 @@
             ],
             "additionalProperties": false
         },
-        "SurfaceCurrent": {
+        "SurfaceCurrentAttributes": {
             "type": "object",
             "properties": {
                 "Index": {
@@ -1998,7 +1862,7 @@
                 },
                 "Attributes": {
                     "type": "array",
-                    "description": "Integer array of mesh boundary attributes for this surface current boundary. If this is to be a object with more than a single element, use the \"Elements\" array described below.",
+                    "description": "Integer array of mesh boundary attributes for this surface current boundary.",
                     "items": {
                         "type": "integer"
                     },
@@ -2020,10 +1884,26 @@
                     "$ref": "#/$defs/CoordinateSystem",
                     "description": "Coordinate system for the `\"Direction\"` vector. Same options as [`/LumpedPort/CoordinateSystem`](@ref config-boundaries-lumpedport-coordinatesystem).",
                     "default": "Cartesian"
+                }
+            },
+            "required": [
+                "Index",
+                "Attributes"
+            ],
+            "additionalProperties": false
+        },
+        "SurfaceCurrentElements": {
+            "type": "object",
+            "properties": {
+                "Index": {
+                    "description": "Index of this surface current source, used in postprocessing output files. Must be unique across all port and source types.",
+                    "exclusiveMinimum": 0,
+                    "type": "integer",
+                    "default": 1
                 },
                 "Elements": {
                     "type": "array",
-                    "description": "Sub-elements for a multielement surface current source. Use this instead of the top-level `\"Attributes\"`/`\"Direction\"`/`\"CoordinateSystem\"` when the source spans multiple disjoint boundary surfaces. Elements add in parallel to give the same total current as a single-element source.",
+                    "description": "Sub-elements for a multielement surface current source. Each element provides its own attributes / direction / coordinate system. Elements add in parallel to give the same total current as a single-element source.",
                     "items": {
                         "$ref": "#/$defs/Element"
                     },
@@ -2031,21 +1911,10 @@
                 }
             },
             "required": [
-                "Index"
+                "Index",
+                "Elements"
             ],
-            "additionalProperties": false,
-            "oneOf": [
-                {
-                    "required": [
-                        "Attributes"
-                    ]
-                },
-                {
-                    "required": [
-                        "Elements"
-                    ]
-                }
-            ]
+            "additionalProperties": false
         },
         "SurfaceFlux": {
             "type": "object",
@@ -2065,21 +1934,8 @@
                     "default": []
                 },
                 "Type": {
+                    "$ref": "#/$defs/SurfaceFluxType",
                     "description": "Type of surface flux to integrate over the boundary.",
-                    "oneOf": [
-                        {
-                            "const": "Electric",
-                            "description": "Integrate the electric flux density."
-                        },
-                        {
-                            "const": "Magnetic",
-                            "description": "Integrate the magnetic flux density."
-                        },
-                        {
-                            "const": "Power",
-                            "description": "Integrate the Poynting vector (energy flux)."
-                        }
-                    ],
                     "default": "Electric"
                 },
                 "TwoSided": {
@@ -2132,59 +1988,13 @@
             "type": "object",
             "properties": {
                 "Type": {
+                    "$ref": "#/$defs/TimeSteppingScheme",
                     "description": "Time integration scheme for the second-order ODE system.",
-                    "oneOf": [
-                        {
-                            "const": "Default",
-                            "description": "Use the default `\"GeneralizedAlpha\"` scheme."
-                        },
-                        {
-                            "const": "GeneralizedAlpha",
-                            "description": "Second-order implicit generalized-α method with ``\\rho_\\infty = 1``. Unconditionally stable."
-                        },
-                        {
-                            "const": "RungeKutta",
-                            "description": "Two-stage singly diagonal implicit Runge-Kutta (SDIRK). Second-order, L-stable."
-                        },
-                        {
-                            "const": "CVODE",
-                            "description": "SUNDIALS CVODE implicit multistep method with adaptive time-stepping. Requires SUNDIALS support (see [installation options](../install.md#Configuration-options))."
-                        },
-                        {
-                            "const": "ARKODE",
-                            "description": "SUNDIALS ARKode implicit Runge-Kutta with adaptive time-stepping. Requires SUNDIALS support (see [installation options](../install.md#Configuration-options))."
-                        }
-                    ],
                     "default": "Default"
                 },
                 "Excitation": {
+                    "$ref": "#/$defs/Excitation",
                     "description": "Controls the time dependence of the source excitation.",
-                    "oneOf": [
-                        {
-                            "const": "Sinusoidal",
-                            "description": "Sinusoidal excitation at a user-specified frequency."
-                        },
-                        {
-                            "const": "Gaussian",
-                            "description": "Gaussian pulse with a user-specified width (defines the bandwidth)."
-                        },
-                        {
-                            "const": "DifferentiatedGaussian",
-                            "description": "Differentiated Gaussian pulse with a user-specified width."
-                        },
-                        {
-                            "const": "ModulatedGaussian",
-                            "description": "Modulated Gaussian pulse at a center frequency and width, with no DC component."
-                        },
-                        {
-                            "const": "Ramp",
-                            "description": "Differentiable unit step function to model the ramp up to a DC signal."
-                        },
-                        {
-                            "const": "SmoothStep",
-                            "description": "Smooth many-times differentiable unit step over a specified width."
-                        }
-                    ],
                     "default": "Sinusoidal"
                 },
                 "ExcitationFreq": {
@@ -2271,21 +2081,8 @@
                     "default": 0.0
                 },
                 "SolverType": {
+                    "$ref": "#/$defs/EigenSolverBackend",
                     "description": "Eigenvalue solver for computing the boundary mode. Accepts the same options as [`/Solver/Eigenmode/Type`](@ref config-solver-eigenmode-type).",
-                    "oneOf": [
-                        {
-                            "const": "Default",
-                            "description": "Use the default solver (currently SLEPc Krylov-Schur)."
-                        },
-                        {
-                            "const": "SLEPc",
-                            "description": "Krylov-Schur solver from SLEPc."
-                        },
-                        {
-                            "const": "ARPACK",
-                            "description": "ARPACK eigensolver."
-                        }
-                    ],
                     "default": "Default"
                 },
                 "Excitation": {
@@ -2428,6 +2225,30 @@
                 "-z"
             ]
         },
+        "ProblemType": {
+            "oneOf": [
+                {
+                    "const": "Eigenmode",
+                    "description": "Perform an undamped or damped eigenfrequency analysis."
+                },
+                {
+                    "const": "Driven",
+                    "description": "Perform a frequency-domain driven simulation."
+                },
+                {
+                    "const": "Transient",
+                    "description": "Perform a time-domain excitation response simulation."
+                },
+                {
+                    "const": "Electrostatic",
+                    "description": "Perform an electrostatic analysis to compute the capacitance matrix for a set of voltage terminals."
+                },
+                {
+                    "const": "Magnetostatic",
+                    "description": "Perform a magnetostatic analysis to compute the inductance matrix for a set of current sources."
+                }
+            ]
+        },
         "CoordinateSystem": {
             "oneOf": [
                 {
@@ -2439,9 +2260,263 @@
                     "description": "Cylindrical coordinates (enables `+R`/`-R` directions)."
                 }
             ]
+        },
+        "EigenSolverBackend": {
+            "oneOf": [
+                {
+                    "const": "Default",
+                    "description": "Use the default solver (currently SLEPc Krylov-Schur)."
+                },
+                {
+                    "const": "SLEPc",
+                    "description": "Krylov-Schur solver from SLEPc."
+                },
+                {
+                    "const": "ARPACK",
+                    "description": "ARPACK eigensolver."
+                }
+            ]
+        },
+        "SurfaceFluxType": {
+            "oneOf": [
+                {
+                    "const": "Electric",
+                    "description": "Integrate the electric flux density."
+                },
+                {
+                    "const": "Magnetic",
+                    "description": "Integrate the magnetic flux density."
+                },
+                {
+                    "const": "Power",
+                    "description": "Integrate the Poynting vector (energy flux)."
+                }
+            ]
+        },
+        "InterfaceDielectric": {
+            "oneOf": [
+                {
+                    "const": "Default",
+                    "description": "Use the full electric field evaluated at the boundary."
+                },
+                {
+                    "const": "MA",
+                    "description": "Use metal-air interface boundary conditions."
+                },
+                {
+                    "const": "MS",
+                    "description": "Use metal-substrate interface boundary conditions."
+                },
+                {
+                    "const": "SA",
+                    "description": "Use substrate-air interface boundary conditions."
+                }
+            ]
+        },
+        "Device": {
+            "oneOf": [
+                {
+                    "const": "CPU",
+                    "description": "Run on CPU."
+                },
+                {
+                    "const": "GPU",
+                    "description": "Run on GPU via CUDA (`MFEM_USE_CUDA=ON`) or HIP (`MFEM_USE_HIP=ON`)."
+                },
+                {
+                    "const": "Debug",
+                    "description": "MFEM debug device, useful for diagnosing GPU-related issues."
+                }
+            ]
+        },
+        "Orthogonalization": {
+            "oneOf": [
+                {
+                    "const": "MGS",
+                    "description": "Modified Gram-Schmidt."
+                },
+                {
+                    "const": "CGS",
+                    "description": "Classical Gram-Schmidt."
+                },
+                {
+                    "const": "CGS2",
+                    "description": "Two-step classical Gram-Schmidt with reorthogonalization."
+                }
+            ],
+            "x-palace-advanced": true
+        },
+        "AdaptiveCircuitSynthesisDomainOrthogonalization": {
+            "oneOf": [
+                {
+                    "const": "Energy",
+                    "description": "Use the energy-based domain mass matrix."
+                },
+                {
+                    "const": "FEBasisIdentity",
+                    "description": "Use the identity matrix in the finite element basis."
+                },
+                {
+                    "const": "SpaceOverlap",
+                    "description": "Use the physical-space field overlap."
+                }
+            ],
+            "x-palace-advanced": true
+        },
+        "NonlinearEigenSolver": {
+            "oneOf": [
+                {
+                    "const": "Hybrid",
+                    "description": "Hybrid algorithm: solve a polynomial (quadratic) approximation first, then refine with a quasi-Newton nonlinear eigensolver."
+                },
+                {
+                    "const": "SLP",
+                    "description": "SLEPc Successive Linear Problem (SLP) nonlinear eigensolver."
+                }
+            ]
+        },
+        "TimeSteppingScheme": {
+            "oneOf": [
+                {
+                    "const": "Default",
+                    "description": "Use the default `\"GeneralizedAlpha\"` scheme."
+                },
+                {
+                    "const": "GeneralizedAlpha",
+                    "description": "Second-order implicit generalized-α method with ``\\rho_\\infty = 1``. Unconditionally stable."
+                },
+                {
+                    "const": "RungeKutta",
+                    "description": "Two-stage singly diagonal implicit Runge-Kutta (SDIRK). Second-order, L-stable."
+                },
+                {
+                    "const": "CVODE",
+                    "description": "SUNDIALS CVODE implicit multistep method with adaptive time-stepping. Requires SUNDIALS support (see [installation options](../install.md#Configuration-options))."
+                },
+                {
+                    "const": "ARKODE",
+                    "description": "SUNDIALS ARKode implicit Runge-Kutta with adaptive time-stepping. Requires SUNDIALS support (see [installation options](../install.md#Configuration-options))."
+                }
+            ]
+        },
+        "Excitation": {
+            "oneOf": [
+                {
+                    "const": "Sinusoidal",
+                    "description": "Sinusoidal excitation at a user-specified frequency."
+                },
+                {
+                    "const": "Gaussian",
+                    "description": "Gaussian pulse with a user-specified width (defines the bandwidth)."
+                },
+                {
+                    "const": "DifferentiatedGaussian",
+                    "description": "Differentiated Gaussian pulse with a user-specified width."
+                },
+                {
+                    "const": "ModulatedGaussian",
+                    "description": "Modulated Gaussian pulse at a center frequency and width, with no DC component."
+                },
+                {
+                    "const": "Ramp",
+                    "description": "Differentiable unit step function to model the ramp up to a DC signal."
+                },
+                {
+                    "const": "SmoothStep",
+                    "description": "Smooth many-times differentiable unit step over a specified width."
+                }
+            ]
+        },
+        "LinearSolver": {
+            "oneOf": [
+                {
+                    "const": "Default",
+                    "description": "Use `\"AMS\"` for curl-curl and time-domain problems; a sparse direct solver (if available) for frequency domain; `\"BoomerAMG\"` for electrostatics."
+                },
+                {
+                    "const": "AMS",
+                    "description": "Hypre's [Auxiliary-space Maxwell Solver (AMS)](https://hypre.readthedocs.io/en/latest/solvers-ams.html), an algebraic multigrid (AMG)-based preconditioner for curl-curl operators."
+                },
+                {
+                    "const": "BoomerAMG",
+                    "description": "Hypre's [BoomerAMG](https://hypre.readthedocs.io/en/latest/solvers-boomeramg.html) algebraic multigrid solver."
+                },
+                {
+                    "const": "MUMPS",
+                    "description": "[MUMPS](http://mumps.enseeiht.fr/) sparse direct solver in real double precision. Requires MUMPS support (see [installation options](../install.md#Configuration-options))."
+                },
+                {
+                    "const": "SuperLU",
+                    "description": "[SuperLU_DIST](https://github.com/xiaoyeli/superlu_dist) sparse direct solver in real double precision. For frequency domain problems uses a real approximation to the complex system matrix. Requires SuperLU_DIST support (see [installation options](../install.md#Configuration-options))."
+                },
+                {
+                    "const": "STRUMPACK",
+                    "description": "[STRUMPACK](https://portal.nersc.gov/project/sparse/strumpack) sparse direct solver in real double precision. Not compatible with magnetostatics (singular curl-curl operator); use `\"AMS\"` instead. Requires STRUMPACK support (see [installation options](../install.md#Configuration-options))."
+                },
+                {
+                    "const": "STRUMPACK_MP"
+                },
+                {
+                    "const": "Jacobi",
+                    "description": "Diagonal Jacobi preconditioner (not recommended in general)."
+                }
+            ]
+        },
+        "KrylovSolver": {
+            "oneOf": [
+                {
+                    "const": "Default",
+                    "description": "Use `\"GMRES\"` for frequency domain problems; `\"CG\"` for real symmetric positive-definite problems (transient, electrostatic, magnetostatic)."
+                },
+                {
+                    "const": "CG",
+                    "description": "Preconditioned conjugate gradient."
+                },
+                {
+                    "const": "MINRES"
+                },
+                {
+                    "const": "GMRES",
+                    "description": "GMRES."
+                },
+                {
+                    "const": "FGMRES",
+                    "description": "Flexible GMRES."
+                },
+                {
+                    "const": "BiCGSTAB"
+                }
+            ]
+        },
+        "MultigridCoarsening": {
+            "oneOf": [
+                {
+                    "const": "Linear",
+                    "description": "Linear coarsening."
+                },
+                {
+                    "const": "Logarithmic",
+                    "description": "Logarithmic coarsening."
+                }
+            ]
+        },
+        "PreconditionerSide": {
+            "oneOf": [
+                {
+                    "const": "Default",
+                    "description": "Solver-default side."
+                },
+                {
+                    "const": "Right",
+                    "description": "Right preconditioning."
+                },
+                {
+                    "const": "Left",
+                    "description": "Left preconditioning."
+                }
+            ]
         }
     },
-    "version": "1-0-0",
     "allOf": [
         {
             "if": {

@@ -28,19 +28,20 @@ namespace palace::schema
 
 struct PalaceConfiguration
 {
-  PALACE_SCHEMA_DESC(SchemaVersion,
-                     "Schema version in SchemaVer format: `MODEL-REVISION-ADDITION` "
-                     "(three non-negative integers, hyphen-separated, e.g. "
-                     "`1-0-0`). See https://docs.snowplow.io/docs/api-reference/"
-                     "iglu/common-architecture/schemaver/.",
-                     PALACE_SCHEMA_PATTERN("[0-9]+-[0-9]+-[0-9]+", "schema-ver")) = "1-0-0";
+  PALACE_SCHEMA_DESC_REQUIRED(
+      SchemaVersion,
+      "Schema version in SchemaVer format: `MODEL-REVISION-ADDITION` "
+      "(three non-negative integers, hyphen-separated, e.g. "
+      "`1-0-0`). See https://docs.snowplow.io/docs/api-reference/"
+      "iglu/common-architecture/schemaver/.",
+      PALACE_SCHEMA_PATTERN("[0-9]+-[0-9]+-[0-9]+", "schema-ver")) = "1-0-0";
 
   PALACE_SCHEMA_DESC(Problem, "Top-level configuration for the simulation type and output.",
                      Problem) = {};
 
   PALACE_SCHEMA_DESC(Model, "Mesh and model configuration.", Model) = {};
 
-  PALACE_SCHEMA_DESC(Domains, "Material and domain configuration.", Domain) = {};
+  PALACE_SCHEMA_DESC(Domains, "Material and domain configuration.", Domains) = {};
 
   PALACE_SCHEMA_DESC(Boundaries, "Boundary condition configuration.", Boundaries) = {};
 

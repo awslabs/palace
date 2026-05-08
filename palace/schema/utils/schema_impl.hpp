@@ -97,10 +97,11 @@ inject_tag_descriptions(std::string schema_json, std::string tag_name,
 std::string rewrite_root_composition(std::string schema_json, std::string from,
                                      std::string to);
 
-// Defined in src/schema.cpp. Writes `"version": <value>` onto the root of
-// the schema. Overwrites any existing value so callers can re-run the pass
-// safely. Skipped by the caller when `version` is empty.
-std::string inject_root_version(std::string schema_json, std::string version);
+// Defined in src/schema.cpp. Writes `"$id": "urn:palace:schema:<version>"`
+// onto the root of the schema, placed immediately after `$schema`.
+// Overwrites any existing `$id` so callers can re-run the pass safely.
+// Skipped by the caller when `version` is empty.
+std::string inject_root_id(std::string schema_json, std::string version);
 
 // Defined in src/schema.cpp. Strips `prefix` from every `$defs` entry name
 // and rewrites any `$ref` string pointing at those entries to match. Other
@@ -188,6 +189,24 @@ struct VariantArmAlias
 };
 std::string inject_variant_arm_aliases(std::string schema_json,
                                        const std::vector<VariantArmAlias> &entries);
+
+// Defined in src/schema.cpp. Renames the combiner keyword on a specific
+// nested property body. Each entry locates
+// `$defs[struct_name]/properties[field_name]` (descending through `items`
+// for array-of-variant fields) and replaces the `from` key with `to` if
+// present. Used to flip the inline `rfl::Variant` composition from rfl's
+// default `anyOf` to PR-716's `oneOf`. The whole-schema variant of this
+// pass (`rewrite_root_composition`) only touches the root, so nested
+// variants need a separate field-targeted rewrite.
+struct FieldCompositionRewrite
+{
+  std::string struct_name;
+  std::string field_name;
+  std::string from;
+  std::string to;
+};
+std::string inject_field_composition(std::string schema_json,
+                                     const std::vector<FieldCompositionRewrite> &entries);
 
 // Compile-time dispatch helper: pattern-matches a `rfl::TaggedUnion<tag,
 // Arms...>` via a pointer parameter so we can fold over the arm pack and pull
@@ -351,6 +370,29 @@ struct is_rfl_tagged_union<rfl::TaggedUnion<tag, Arms...>> : std::true_type
 {
 };
 
+// Peel one layer of `std::vector<U>` / `std::array<U, N>` to get the
+// element type. Lazy: when T has no inner element type, `type` resolves
+// to T itself, so callers can probe the wrapped variant without
+// force-instantiating `T::value_type` on non-container types (which is
+// what `std::conditional_t` would do).
+template <class T>
+struct container_inner
+{
+  using type = T;
+};
+template <class U, class A>
+struct container_inner<std::vector<U, A>>
+{
+  using type = U;
+};
+template <class U, std::size_t N>
+struct container_inner<std::array<U, N>>
+{
+  using type = U;
+};
+template <class T>
+using container_inner_t = typename container_inner<T>::type;
+
 // rfl::Variant<Alts...> is emitted inline by reflect-cpp as `anyOf: [...]`;
 // it never becomes a `$defs` entry of its own. The walker must recurse into
 // each alternative to collect defaults/required/etc. from reachable structs,
@@ -405,6 +447,24 @@ struct DefaultsAccum
   // per (struct, field, arm-index) whose cleaned arm type specializes
   // `schema_alias_name<T>`.
   std::vector<VariantArmAlias> variant_arm_aliases;
+  // Field-level composition rewrites for `rfl::Variant<...>` fields whose
+  // variant type opts into `Compose::OneOf` via `schema_composition<U>`.
+  // The post-emit pass flips the inline `anyOf` to `oneOf` at the
+  // matching field site (descending through `items` for array fields).
+  std::vector<FieldCompositionRewrite> field_compositions;
+  // One entry per `rfl::TaggedUnion<tag, Arms...>` reached during the
+  // type-graph walk. Each entry carries the discriminator field name
+  // and the (tag-value, description) pairs harvested from arms whose
+  // type provides `tag_description`. Used by the runtime
+  // `inject_tag_descriptions` pass to rewrite every arm's discriminator
+  // property body from `{type:string, enum:[X], default:X}` into
+  // `{const:X, description:...}` regardless of nesting depth.
+  struct TaggedUnionDispatch
+  {
+    std::string tag_name;
+    std::vector<std::pair<std::string, std::string>> arm_descs;
+  };
+  std::vector<TaggedUnionDispatch> tagged_unions;
   std::unordered_set<std::string> seen;
 };
 
@@ -464,10 +524,11 @@ struct field_annotations_walker<U, rfl::Tuple<Fs...>>
                     std::vector<FieldFlag> &flag_out,
                     std::vector<std::string> &required_out,
                     std::vector<FieldAlias> &alias_out,
-                    std::vector<VariantArmAlias> &variant_arm_alias_out)
+                    std::vector<VariantArmAlias> &variant_arm_alias_out,
+                    std::vector<FieldCompositionRewrite> &field_composition_out)
   {
     (check_one<Fs>(struct_name, enum_out, flag_out, required_out, alias_out,
-                   variant_arm_alias_out),
+                   variant_arm_alias_out, field_composition_out),
      ...);
   }
 
@@ -476,10 +537,11 @@ struct field_annotations_walker<U, rfl::Tuple<Fs...>>
   check_one(const std::string &struct_name, std::vector<EnumDescEntry> &enum_out,
             std::vector<FieldFlag> &flag_out, std::vector<std::string> &required_out,
             std::vector<FieldAlias> &alias_out,
-            std::vector<VariantArmAlias> &variant_arm_alias_out)
+            std::vector<VariantArmAlias> &variant_arm_alias_out,
+            std::vector<FieldCompositionRewrite> &field_composition_out)
   {
     check_one_impl(struct_name, enum_out, flag_out, required_out, alias_out,
-                   variant_arm_alias_out, static_cast<F *>(nullptr));
+                   variant_arm_alias_out, field_composition_out, static_cast<F *>(nullptr));
   }
 
   template <rfl::internal::StringLiteral name, class Type>
@@ -488,6 +550,7 @@ struct field_annotations_walker<U, rfl::Tuple<Fs...>>
                  std::vector<FieldFlag> &flag_out, std::vector<std::string> &required_out,
                  std::vector<FieldAlias> &alias_out,
                  std::vector<VariantArmAlias> &variant_arm_alias_out,
+                 std::vector<FieldCompositionRewrite> &field_composition_out,
                  rfl::Field<name, Type> *)
   {
     using Raw = std::remove_cvref_t<Type>;
@@ -539,37 +602,61 @@ struct field_annotations_walker<U, rfl::Tuple<Fs...>>
       a.alias_name.assign(schema_alias_name<Clean>::value);
       alias_out.push_back(std::move(a));
     }
-    // Per-arm alias hoist: when the cleaned field type is `rfl::Variant<
-    // Alts...>`, the schema emits `anyOf: [{<arm0>}, {<arm1>}, ...]`. For
-    // each arm whose cleaned type specializes `schema_alias_name<T>`, emit
-    // a `VariantArmAlias` so the post-emit pass can rewrite that arm into
-    // `{"$ref": "#/$defs/<alias>"}`. Used to wire `Direction` variants to
-    // shared `$defs/PortDirection` / `$defs/DipoleDirection` / `$defs/Vector3`
-    // entries.
-    if constexpr (is_rfl_variant<Clean>::value)
+    // Per-arm alias / composition hoist: when the cleaned field type
+    // *contains* a variant (directly or through a `std::vector` /
+    // `std::array` wrapper, since reflect-cpp emits the variant inline at
+    // every container element), record per-arm aliases and an optional
+    // `anyOf → oneOf` field-composition rewrite for the inline body.
+    //
+    // Used to wire:
+    //   * `Direction` variants → shared `$defs/PortDirection` /
+    //     `$defs/DipoleDirection` / `$defs/Vector3` entries.
+    //   * `LumpedPort` / `SurfaceCurrent` array elements → arm-specific
+    //     `$defs/LumpedPortAttributes` etc., with `oneOf` semantics.
     {
-      []<class... Alts>(
-          const std::string &sn, std::string_view fn,
-          std::vector<VariantArmAlias> &out, rfl::Variant<Alts...> *)
+      // Strip one layer of std::vector<>/std::array<> if present so the
+      // inner type can be inspected as a variant. `std::conditional_t`
+      // would force-instantiate `Clean::value_type` even on the false
+      // branch, so dispatch through a helper trait (`container_inner_t`)
+      // defined elsewhere in this header that resolves to `Clean` when
+      // it isn't a container.
+      using Inner = strip_ann_t<container_inner_t<Clean>>;
+      if constexpr (is_rfl_variant<Inner>::value)
       {
-        std::size_t idx = 0;
-        auto emit_one = [&]<class Alt>()
+        []<class... Alts>(const std::string &sn, std::string_view fn,
+                          std::vector<VariantArmAlias> &out, rfl::Variant<Alts...> *)
         {
-          using AltClean = strip_ann_t<Alt>;
-          if constexpr (!schema_alias_name<AltClean>::value.empty())
+          std::size_t idx = 0;
+          auto emit_one = [&]<class Alt>()
           {
-            VariantArmAlias v;
-            v.struct_name = sn;
-            v.field_name.assign(fn);
-            v.arm_index = idx;
-            v.alias_name.assign(schema_alias_name<AltClean>::value);
-            out.push_back(std::move(v));
-          }
-          ++idx;
-        };
-        (emit_one.template operator()<Alts>(), ...);
-      }(struct_name, std::string_view{name.str()}, variant_arm_alias_out,
-        static_cast<Clean *>(nullptr));
+            using AltClean = strip_ann_t<Alt>;
+            if constexpr (!schema_alias_name<AltClean>::value.empty())
+            {
+              VariantArmAlias v;
+              v.struct_name = sn;
+              v.field_name.assign(fn);
+              v.arm_index = idx;
+              v.alias_name.assign(schema_alias_name<AltClean>::value);
+              out.push_back(std::move(v));
+            }
+            ++idx;
+          };
+          (emit_one.template operator()<Alts>(), ...);
+        }(struct_name, std::string_view{name.str()}, variant_arm_alias_out,
+          static_cast<Inner *>(nullptr));
+        // Field-level composition: if the variant alias opted into
+        // `Compose::OneOf`, queue an `anyOf → oneOf` rewrite at this
+        // field site.
+        if constexpr (schema_composition<Inner>::value == Compose::OneOf)
+        {
+          FieldCompositionRewrite c;
+          c.struct_name = struct_name;
+          c.field_name.assign(std::string_view{name.str()});
+          c.from = "anyOf";
+          c.to = "oneOf";
+          field_composition_out.push_back(std::move(c));
+        }
+      }
     }
     // Required: either the field's declared type is DescRequired<> (via
     // PALACE_SCHEMA_DESC_REQUIRED), or it is an `rfl::Literal<...>` (a
@@ -606,9 +693,26 @@ void visit_type(DefaultsAccum &acc)
   {
     // Peel the union at the type level so the arm pack becomes visible.
     // Each arm gets its own `$defs` entry; the union itself does not.
+    // While here, harvest the discriminator name and per-arm tag
+    // descriptions so the runtime pass can rewrite each arm's
+    // discriminator property body into a `{const, description}` pair.
     []<rfl::internal::StringLiteral tag, class... Arms>(DefaultsAccum &a,
                                                         rfl::TaggedUnion<tag, Arms...> *)
-    { (visit_type<Arms>(a), ...); }(acc, static_cast<U *>(nullptr));
+    {
+      DefaultsAccum::TaggedUnionDispatch d;
+      d.tag_name = tag.str();
+      auto push_desc = [&]<class Arm>()
+      {
+        if constexpr (has_tag_description<Arm>)
+        {
+          using Lit = rfl::internal::tag_t<tag, Arm>;
+          d.arm_descs.emplace_back(Lit{}.name(), std::string(Arm::tag_description));
+        }
+      };
+      (push_desc.template operator()<Arms>(), ...);
+      a.tagged_unions.push_back(std::move(d));
+      (visit_type<Arms>(a), ...);
+    }(acc, static_cast<U *>(nullptr));
   }
   else if constexpr (is_rfl_variant<U>::value)
   {
@@ -639,9 +743,9 @@ void visit_type(DefaultsAccum &acc)
     acc.entries.emplace(name, rfl::json::write(U{}));
     using Fields = typename rfl::named_tuple_t<U>::Fields;
     std::vector<std::string> required;
-    field_annotations_walker<U, Fields>::apply(name, acc.enum_descs, acc.field_flags,
-                                               required, acc.field_aliases,
-                                               acc.variant_arm_aliases);
+    field_annotations_walker<U, Fields>::apply(
+        name, acc.enum_descs, acc.field_flags, required, acc.field_aliases,
+        acc.variant_arm_aliases, acc.field_compositions);
     // Always record an entry (even if empty) so the `set_required` pass
     // knows to replace reflect-cpp's native required array — the empty
     // list signals "nothing required", which collapses to an entry with
@@ -729,6 +833,14 @@ std::string schema(SchemaOptions opts)
   {
     s = detail::inject_variant_arm_aliases(std::move(s), accum.variant_arm_aliases);
   }
+  // Field-level composition rewrite (`anyOf` → `oneOf`) for variant
+  // fields opted in via `schema_composition<Variant<...>>`. Runs after
+  // the arm-alias pass — at this point each arm is already `{$ref:...}`,
+  // so the only edit at the field site is the combiner keyword.
+  if (!accum.field_compositions.empty())
+  {
+    s = detail::inject_field_composition(std::move(s), accum.field_compositions);
+  }
   // Runs after every body-mutating pass so the hoisted `$defs` body
   // already reflects defaults/required/enum-description/custom-keyword
   // rewrites.
@@ -736,9 +848,14 @@ std::string schema(SchemaOptions opts)
   {
     s = detail::inject_field_aliases(std::move(s), accum.field_aliases);
   }
-  if constexpr (is_tagged_union<T>::value)
+  // Run for every TaggedUnion encountered during the type-graph walk,
+  // not only when the root T is itself a tagged union. Nested unions
+  // (e.g. `Sample` under `Driven.Samples`) need the same body rewrite.
+  for (const auto &d : accum.tagged_unions)
   {
-    s = detail::inject_tag_descriptions_for<T>(std::move(s));
+    if (d.arm_descs.empty())
+      continue;
+    s = detail::inject_tag_descriptions(std::move(s), d.tag_name, d.arm_descs);
   }
   if constexpr (schema_composition<T>::value == Compose::OneOf)
   {
@@ -746,7 +863,7 @@ std::string schema(SchemaOptions opts)
   }
   if (!opts.version.empty())
   {
-    s = detail::inject_root_version(std::move(s), std::move(opts.version));
+    s = detail::inject_root_id(std::move(s), std::move(opts.version));
   }
   // Runs last so earlier passes can key on reflect-cpp's native
   // fully-qualified `$defs` names (e.g. `palace__schema__ProblemData`)
