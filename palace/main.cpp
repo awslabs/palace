@@ -239,17 +239,15 @@ int main(int argc, char *argv[])
   // record of every Palace decision (all defaults filled in).
   if (world_root)
   {
-    auto resolved_path = std::filesystem::path(iodata.problem.output) / "config.json";
-    std::ofstream out(resolved_path);
-    out << IoData::ConcretizeDefaults(iodata, config).dump(2) << "\n";
-    out.close();
-    if (!out)
-    {
-      Mpi::Warning(world_comm,
-                   "Failed to write resolved configuration to \"{}\"; "
-                   "continuing without it.\n",
-                   resolved_path.string());
-    }
+    std::filesystem::path post_dir(iodata.problem.output);
+    std::string path = post_dir / "config.json";
+    std::ofstream fo(path);
+    MFEM_VERIFY(fo.is_open(),
+                "Unable to open resolved config file \"" << path << "\"!");
+    fo << IoData::ConcretizeDefaults(iodata, config).dump(2) << '\n';
+    fo.close();
+    MFEM_VERIFY(std::filesystem::exists(path),
+                "Resolved config file was not created at \"" << path << "\"!");
   }
 
   BlockTimer bt1(Timer::INIT);
