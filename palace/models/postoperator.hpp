@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_POST_OPERATOR_HPP
 #define PALACE_MODELS_POST_OPERATOR_HPP
 
+#include <algorithm>
 #include <complex>
 #include <map>
 #include <memory>
@@ -50,7 +51,8 @@ struct SolverData;
 template <ProblemType solver_t>
 constexpr bool HasComplexGridFunction()
 {
-  return solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE;
+  return solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE ||
+         solver_t == ProblemType::BOUNDARYMODE;
 }
 
 // Statically specify what fields a solver uses
@@ -120,6 +122,11 @@ protected:
   // Fields: Electric, Magnetic, Scalar Potential, Vector Potential.
   std::unique_ptr<GridFunction> E, B, V, A;
 
+  // Mode analysis: normal (out-of-plane) E component on H1 space, and in-plane B field
+  // on ND space for visualization. The in-plane B is the dominant component:
+  //   Bt = -(kn/omega)(z_hat x Et) + (1/(i*omega))(grad_t(Ez) x z_hat)
+  std::unique_ptr<GridFunction> En, Bt_inplane;
+
   // Field output format control flags.
   bool enable_paraview_output = false;
   bool enable_gridfunction_output = false;
@@ -181,9 +188,12 @@ protected:
 
   // Measurements of field solution for ParaView files (full domain or surfaces).
 
-  // Poynting Coefficient, Electric Boundary Field (re+im), Magnetic Boundary Field (re+im),
-  // Vector Potential Boundary Field, Surface Current (re+im).
+  // Poynting Coefficient (vector for 3D, scalar Sn for boundary mode), Electric Boundary
+  // Field (re+im), Magnetic Boundary Field (re+im), Vector Potential Boundary Field,
+  // Surface Current (re+im).
   std::unique_ptr<mfem::VectorCoefficient> S, E_sr, E_si, B_sr, B_si, A_s, J_sr, J_si;
+  std::unique_ptr<mfem::Coefficient> Sn;
+  bool sn_registered = false;
 
   // Electric Energy Density, Magnetic Energy Density, Scalar Potential Boundary Field,
   // Surface Charge (re+im).
@@ -237,6 +247,30 @@ protected:
   mutable InterpolationOperator interp_op;  // E & B fields: mutates during measure
 
   mutable Measurement measurement_cache;
+
+  // Per-entry impedance postprocessing configuration (keyed by config index).
+  struct ImpedancePostproConfig
+  {
+    mfem::Array<int> voltage_marker;
+    mfem::Array<int> current_marker;
+    std::vector<mfem::Vector> voltage_path;
+    std::vector<mfem::Vector> current_path;
+    int n_samples = 100;
+    bool has_voltage_coordinates = false;
+    bool has_current_path = false;
+    bool has_current = false;
+  };
+  std::map<int, ImpedancePostproConfig> impedance_postpro;
+
+  // Per-entry voltage-only postprocessing configuration (keyed by config index).
+  struct VoltagePostproConfig
+  {
+    mfem::Array<int> voltage_marker;
+    std::vector<mfem::Vector> voltage_path;
+    int n_samples = 100;
+    bool has_coordinates = false;
+  };
+  std::map<int, VoltagePostproConfig> voltage_postpro;
 
   // Individual measurements to fill the cache/workspace. Measurements functions are not
   // constrained by solver type in the signature since they are private member functions.
@@ -402,6 +436,14 @@ public:
                           double J_coef)
       -> std::enable_if_t<U == ProblemType::TRANSIENT, double>;
 
+  // Mode analysis: complex E-field tangential (ND) and normal (H1) eigenvectors,
+  // propagation constant kn, and eigensolver error estimates.
+  template <ProblemType U = solver_t>
+  auto MeasureAndPrintAll(int step, const ComplexVector &et, const ComplexVector &en,
+                          std::complex<double> kn, double omega, double error_abs,
+                          double error_bkwd, int num_conv)
+      -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, double>;
+
   // Write error indicator into ParaView file and print summary statistics to csv. Should be
   // called once at the end of the solver loop.
   void MeasureFinalize(const ErrorIndicator &indicator);
@@ -447,6 +489,21 @@ public:
   {
     return *A;
   }
+
+  // Whether impedance/voltage postprocessing is configured (mode analysis).
+  bool HasImpedancePostprocessing() const { return !impedance_postpro.empty(); }
+  bool HasCurrent() const
+  {
+    return std::any_of(impedance_postpro.begin(), impedance_postpro.end(),
+                       [](const auto &p) { return p.second.has_current; });
+  }
+  bool HasVoltagePostprocessing() const { return !voltage_postpro.empty(); }
+
+  // Project 3D impedance/voltage path coordinates to 2D local frame (submesh).
+  void ProjectImpedancePaths(const mfem::Vector &centroid, const mfem::Vector &e1,
+                             const mfem::Vector &e2);
+  void ProjectVoltagePaths(const mfem::Vector &centroid, const mfem::Vector &e1,
+                           const mfem::Vector &e2);
 
   // Access to number of padding digits.
   constexpr auto GetPadDigitsDefault() const { return pad_digits_default; }

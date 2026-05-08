@@ -124,6 +124,29 @@
         "AbsTol": {"type": "number", "exclusiveMinimum": 0.0}
       }
     },
+    "BoundaryMode":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Freq"],
+      "properties":
+      {
+        "Freq": { "type": "number", "exclusiveMinimum": 0.0 },
+        "N": { "type": "integer", "minimum": 1 },
+        "Save": { "type": "integer", "minimum": 0 },
+        "Target": { "type": "number", "minimum": 0.0 },
+        "Tol": { "type": "number", "exclusiveMinimum": 0.0 },
+        "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
+        "Type": { "type": "string" },
+        "Attributes":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items": { "type": "integer" },
+          "minItems": 1
+        }
+      }
+    },
     "Electrostatic":
     {
       "type": "object",

@@ -8,6 +8,7 @@
 #include <vector>
 #include <mpi.h>
 #include <mfem.hpp>
+#include "drivers/boundarymodesolver.hpp"
 #include "drivers/drivensolver.hpp"
 #include "drivers/eigensolver.hpp"
 #include "drivers/electrostaticsolver.hpp"
@@ -272,6 +273,9 @@ int main(int argc, char *argv[])
       case ProblemType::TRANSIENT:
         return std::make_unique<TransientSolver>(iodata, world_root, world_size,
                                                  omp_threads, GetPalaceGitTag());
+      case ProblemType::BOUNDARYMODE:
+        return std::make_unique<BoundaryModeSolver>(iodata, world_root, world_size,
+                                                    omp_threads, GetPalaceGitTag());
     }
     return nullptr;
   }();

@@ -28,8 +28,10 @@ private:
   // Material properties: relative permeability, relative permittivity, and others (like
   // electrical conductivity, London penetration depth for superconductors and Floquet wave
   // vector).
-  mfem::DenseTensor mat_muinv, mat_epsilon, mat_epsilon_imag, mat_epsilon_abs, mat_invz0,
-      mat_c0, mat_sigma, mat_invLondon, mat_kxTmuinv, mat_muinvkx, mat_kxTmuinvkx, mat_kx;
+  mfem::DenseTensor mat_muinv, mat_muinv_scalar, mat_epsilon, mat_epsilon_scalar,
+      mat_epsilon_imag, mat_epsilon_imag_scalar, mat_epsilon_abs, mat_invz0, mat_c0,
+      mat_sigma, mat_invLondon, mat_invLondon_scalar, mat_kxTmuinv, mat_muinvkx,
+      mat_kxTmuinvkx, mat_kx;
   mfem::DenseMatrix wave_vector_cross;
   mfem::Array<double> mat_c0_min, mat_c0_max;
 
@@ -74,9 +76,24 @@ public:
   int SpaceDimension() const { return mat_muinv.SizeI(); }
 
   auto GetInvPermeability(int attr) const { return Wrap(mat_muinv, attr); }
+  // Returns the scalar z-z (out-of-plane) component of the inverse permeability for a
+  // given attribute. In 2D, this is stored in mat_muinv_scalar; in 3D, it is the (2,2)
+  // entry of the full inverse permeability tensor.
+  double GetInvPermeabilityZZ(int attr) const
+  {
+    if (mat_muinv.SizeI() == 2)
+    {
+      return Wrap(mat_muinv_scalar, attr)(0, 0);
+    }
+    return Wrap(mat_muinv, attr)(2, 2);
+  }
   auto GetPermittivityReal(int attr) const { return Wrap(mat_epsilon, attr); }
   auto GetPermittivityImag(int attr) const { return Wrap(mat_epsilon_imag, attr); }
   auto GetPermittivityAbs(int attr) const { return Wrap(mat_epsilon_abs, attr); }
+  // Scalar (1x1) permittivity for the out-of-plane component in 2D mode analysis.
+  const auto &GetPermittivityScalar() const { return mat_epsilon_scalar; }
+  // Scalar (1x1) imaginary permittivity for the out-of-plane component in 2D.
+  const auto &GetPermittivityImagScalar() const { return mat_epsilon_imag_scalar; }
   auto GetInvImpedance(int attr) const { return Wrap(mat_invz0, attr); }
   auto GetLightSpeed(int attr) const { return Wrap(mat_c0, attr); }
   auto GetConductivity(int attr) const { return Wrap(mat_sigma, attr); }
@@ -90,6 +107,12 @@ public:
 
   bool IsIsotropic(int attr) const { return attr_is_isotropic[AttrToMat(attr)]; }
 
+  // Returns scalar (1x1) inverse permeability for 2D curl-curl (curl is scalar in 2D),
+  // or the full matrix for 3D.
+  const auto &GetCurlCurlInvPermeability() const
+  {
+    return (mat_muinv.SizeI() == 2) ? mat_muinv_scalar : mat_muinv;
+  }
   const auto &GetInvPermeability() const { return mat_muinv; }
   const auto &GetPermittivityReal() const { return mat_epsilon; }
   const auto &GetPermittivityImag() const { return mat_epsilon_imag; }
@@ -98,6 +121,8 @@ public:
   const auto &GetLightSpeed() const { return mat_c0; }
   const auto &GetConductivity() const { return mat_sigma; }
   const auto &GetInvLondonDepth() const { return mat_invLondon; }
+  // Scalar (1x1) out-of-plane London depth for the H1 Ann mass in 2D mode analysis.
+  const auto &GetInvLondonDepthScalar() const { return mat_invLondon_scalar; }
   const auto &GetFloquetCurl() const { return mat_muinvkx; }
   const auto &GetFloquetMass() const { return mat_kxTmuinvkx; }
   const auto &GetFloquetCross() const { return mat_kx; }
@@ -112,6 +137,13 @@ public:
 
   const auto &GetAttributeToMaterial() const { return attr_mat; }
   mfem::Array<int> GetBdrAttributeToMaterial() const;
+
+  // Re-compute all material tensors by rotating the 3x3 config-file material properties
+  // into the local tangent frame (e1, e2) of a 2D cross-section. This corrects the default
+  // 2x2 truncation (leading submatrix) when the cross-section is not aligned with the
+  // xy-plane. The normal vector is used for scalar out-of-plane quantities.
+  void RotateMaterialTensors(const IoData &iodata, const mfem::Vector &e1,
+                             const mfem::Vector &e2, const mfem::Vector &normal);
 
   template <typename T>
   auto GetCeedAttributes(const T &attr_list) const

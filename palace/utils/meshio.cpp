@@ -15,8 +15,31 @@ namespace palace
 namespace
 {
 
+// Return the topological dimension of a COMSOL element type (1-based internal indexing).
+inline int ElemDimComsol(int elem_type)
+{
+  if (elem_type == 1 || elem_type == 8)
+  {
+    return 1;  // 2-node or 3-node edge
+  }
+  if (elem_type == 15)
+  {
+    return 0;  // 1-node point
+  }
+  if (elem_type == 2 || elem_type == 3 || elem_type == 9 || elem_type == 10 ||
+      elem_type == 16)
+  {
+    return 2;  // triangle, quad, and their 2nd-order variants
+  }
+  return 3;  // tet, hex, prism, pyramid and their 2nd-order variants
+}
+
 inline int ElemTypeComsol(const std::string &type)
 {
+  if (!type.compare("edg"))  // 2-node edge (1D boundary element)
+  {
+    return 1;
+  }
   if (!type.compare("tri"))  // 3-node triangle
   {
     return 2;
@@ -40,6 +63,10 @@ inline int ElemTypeComsol(const std::string &type)
   if (!type.compare("pyr"))  // 5-node pyramid
   {
     return 7;
+  }
+  if (!type.compare("edg2"))  // 3-node edge (1D boundary element, 2nd order)
+  {
+    return 8;
   }
   if (!type.compare("tri2"))  // 6-node triangle
   {
@@ -171,18 +198,19 @@ inline int LOElemTypeGmsh(int ho_type)
   return ho_type;
 }
 
-constexpr int ElemNumNodes[] = {-1,  // 2-node edge
-                                3,  4,  4,  8,  6,  5,
-                                -1,  // 3-node edge
-                                6,  9,  10, 27, 18, 14,
-                                -1,  // 1-node node
-                                8,  20, 15, 13};
+constexpr int ElemNumNodes[] = {2,  // 2-node edge (Gmsh type 1)
+                                3, 4,  4,  8,  6,  5,
+                                3,  // 3-node edge (Gmsh type 8, 2nd order)
+                                6, 9,  10, 27, 18, 14,
+                                1,  // 1-node point (Gmsh type 15)
+                                8, 20, 15, 13};
 
 // From COMSOL or Nastran to Gmsh ordering. See:
 //   - https://gmsh.info/doc/texinfo/gmsh.html#Node-ordering
 //   - https://tinyurl.com/yezswzfv
 //   - https://tinyurl.com/4d32zxtn
 constexpr int SkipElem[] = {-1};
+constexpr int Msh2[] = {0, 1};
 constexpr int Msh3[] = {0, 1, 2};
 constexpr int Msh4[] = {0, 1, 2, 3};
 constexpr int Msh5[] = {0, 1, 2, 3, 4};
@@ -207,8 +235,8 @@ constexpr int NasHex20[] = {0,  1, 2,  3,  4,  5,  6,  7,  8,  11,
 constexpr int NasWdg15[] = {0, 1, 2, 3, 4, 5, 6, 9, 7, 8, 10, 11, 12, 14, 13};
 constexpr int NasPyr13[] = {0, 1, 2, 3, 4, 5, 8, 10, 6, 7, 9, 11, 12};
 
-constexpr const int *ElemNodesComsol[] = {SkipElem, Msh3,     MphQuad4, Msh4,     MphHex8,
-                                          Msh6,     MphPyr5,  SkipElem, MphTri6,  MphQuad9,
+constexpr const int *ElemNodesComsol[] = {Msh2,     Msh3,     MphQuad4, Msh4,     MphHex8,
+                                          Msh6,     MphPyr5,  Msh3,     MphTri6,  MphQuad9,
                                           MphTet10, MphHex27, MphWdg18, MphPyr14, SkipElem,
                                           SkipElem, SkipElem, SkipElem, SkipElem};
 constexpr const int *ElemNodesNastran[] = {SkipElem, Msh3,     Msh4,     Msh4,     Msh8,
@@ -803,12 +831,12 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
                           "Unexpected element data size!");
             }
 
-            // Parse all element geometry tags (stored at beginning of element nodes). For
-            // geometric entities in < 3D, the exported COMSOL tags are 0-based and need
-            // correcting to 1-based for Gmsh.
+            // Parse all element geometry tags (stored at beginning of element nodes).
+            // COMSOL uses 0-based entity indices for boundary elements (lower
+            // dimensional than the mesh: edges in 2D, faces in 3D) and 1-based for
+            // domain elements. Gmsh requires 1-based, so add +1 for boundary elements.
             int i = 0;
-            const int geom_start =
-                (elem_type < 4 || (elem_type > 7 && elem_type < 11)) ? 1 : 0;
+            const int geom_start = (ElemDimComsol(elem_type) < sdim) ? 1 : 0;
             while (i < num_elem)
             {
               line = GetLineComsol(input);
@@ -885,7 +913,10 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
                     "COMSOL mesh file should have geometry tags for all elements!");
 
         i = 0;
-        const int geom_start = (elem_type < 4 || (elem_type > 7 && elem_type < 11)) ? 1 : 0;
+        // Boundary elements (dim < sdim) use 0-based COMSOL geometry entity indices while
+        // domain elements use 1-based. Add +1 for boundary elements to make all 1-based.
+        // This must match the text reader logic (which uses elem_dim < sdim).
+        const int geom_start = (ElemDimComsol(elem_type) < sdim) ? 1 : 0;
         int geom_tag;
         while (i < num_elem)
         {

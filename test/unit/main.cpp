@@ -73,6 +73,8 @@ int main(int argc, char *argv[])
   // Initialize HYPRE with correct memory location based on device.
   // TODO: Create a palace::Device class that takes care of all of this.
   hypre::Initialize();
+
+  // Initialize SLEPc/PETSc (needed for eigenvalue solver tests).
 #if defined(PALACE_WITH_SLEPC)
   slepc::Initialize();
   if (PETSC_COMM_WORLD != Mpi::World())
