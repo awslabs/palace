@@ -456,7 +456,7 @@
       {
         "Index": { "type": "integer", "exclusiveMinimum": 0 },
         "Attributes": { "$ref": "#/$defs/Attributes" },
-        "Type": { "$ref": "#/$defs/DielectricType" },
+        "Type": { "$ref": "#/$defs/InterfaceDielectric" },
         "Thickness": { "type": "number" },
         "Permittivity": { "type": "number" },
         "LossTan": { "type": "number" }
@@ -493,7 +493,7 @@
       "type": "string",
       "enum": ["Electric", "Magnetic", "Power"]
     },
-    "DielectricType":
+    "InterfaceDielectric":
     {
       "type": "string",
       "enum": ["Default", "MA", "MS", "SA"]
