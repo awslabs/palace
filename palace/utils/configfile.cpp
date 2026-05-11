@@ -632,6 +632,12 @@ WavePortData::WavePortData(const json &port)
     }
   }
   n_samples = port.value("NSamples", n_samples);
+
+  // Resolve subspace sentinel: fed directly into ModeEigenSolver → SLEPc/ARPACK.
+  if (max_size <= 0)
+  {
+    max_size = std::max(2 * mode_idx, mode_idx + 15);
+  }
 }
 
 SurfaceCurrentData::SurfaceCurrentData(const json &source)
@@ -1269,6 +1275,19 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   preconditioner_lag_tol = eigenmode.value("PreconditionerLagTol", preconditioner_lag_tol);
   max_restart = eigenmode.value("MaxRestart", max_restart);
 
+  // Resolve iteration / subspace sentinels to concrete values at parse time so nothing
+  // downstream sees -1. max_size follows SLEPc's Krylov-Schur formula (applies to both
+  // ARPACK and SLEPc wrappers); max_it is a single large cap because it only bounds
+  // iteration count, with no buffers scaling with it.
+  if (max_it <= 0)
+  {
+    max_it = 1'000'000;
+  }
+  if (max_size <= 0)
+  {
+    max_size = std::max(2 * n, n + 15);
+  }
+
   target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
   MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "
                                      "greater than config[\"Eigenmode\"][\"Target\"]!");
@@ -1326,6 +1345,13 @@ BoundaryModeSolverData::BoundaryModeSolverData(const json &ma)
   {
     attributes = it->get<std::vector<int>>();
     std::sort(attributes.begin(), attributes.end());
+  }
+
+  // Resolve subspace sentinel: ModeEigenSolver forwards this to SLEPc/ARPACK, which
+  // treat negative sizes as memory corruption, not as "use default".
+  if (max_size <= 0)
+  {
+    max_size = std::max(2 * n, n + 15);
   }
 }
 

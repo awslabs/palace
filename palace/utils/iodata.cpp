@@ -588,38 +588,6 @@ void IoData::CheckConfiguration()
     solver.transient.type = TimeSteppingScheme::GEN_ALPHA;
   }
 
-  // Resolve eigenvalue solver iteration / subspace sentinels to concrete Palace
-  // defaults so the SLEPc and ARPACK wrappers see fully-specified parameters and no
-  // sentinel interpretation remains scattered in drivers. max_size follows SLEPc's
-  // Krylov-Schur formula for both backends — it controls the basis buffer. max_it is
-  // a single large constant because it only caps the iteration count (no buffers
-  // scale with it) and SLEPc's own default is already enormous at realistic problem
-  // sizes.
-  if (solver.eigenmode.max_it <= 0)
-  {
-    solver.eigenmode.max_it = 1'000'000;
-  }
-  if (solver.eigenmode.max_size <= 0)
-  {
-    solver.eigenmode.max_size = std::max(2 * solver.eigenmode.n, solver.eigenmode.n + 15);
-  }
-  // BoundaryMode and wave ports reuse the same SLEPc/ARPACK wrappers via
-  // ModeEigenSolver. Leaving the sentinel here would feed -1 into the library entry
-  // points (SetNumModes) as an unsigned array size and segfault. Resolve with the same
-  // Krylov-Schur formula the eigenmode driver uses.
-  if (solver.boundary_mode.max_size <= 0)
-  {
-    solver.boundary_mode.max_size =
-        std::max(2 * solver.boundary_mode.n, solver.boundary_mode.n + 15);
-  }
-  for (auto &[idx, data] : boundaries.waveport)
-  {
-    if (data.max_size <= 0)
-    {
-      data.max_size = std::max(2 * data.mode_idx, data.mode_idx + 15);
-    }
-  }
-
   // Validate build-availability of requested solver backends. Centralized here so
   // downstream code never encounters an unavailable backend at runtime.
 #if !defined(PALACE_WITH_SLEPC)
