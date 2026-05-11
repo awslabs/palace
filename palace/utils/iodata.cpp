@@ -576,6 +576,7 @@ void IoData::CheckConfiguration()
     }
   };
   resolve_default_eigen_backend(solver.eigenmode.type);
+  resolve_default_eigen_backend(solver.boundary_mode.type);
   for (auto &[idx, data] : boundaries.waveport)
   {
     resolve_default_eigen_backend(data.eigen_solver);
@@ -601,6 +602,22 @@ void IoData::CheckConfiguration()
   if (solver.eigenmode.max_size <= 0)
   {
     solver.eigenmode.max_size = std::max(2 * solver.eigenmode.n, solver.eigenmode.n + 15);
+  }
+  // BoundaryMode and wave ports reuse the same SLEPc/ARPACK wrappers via
+  // ModeEigenSolver. Leaving the sentinel here would feed -1 into the library entry
+  // points (SetNumModes) as an unsigned array size and segfault. Resolve with the same
+  // Krylov-Schur formula the eigenmode driver uses.
+  if (solver.boundary_mode.max_size <= 0)
+  {
+    solver.boundary_mode.max_size =
+        std::max(2 * solver.boundary_mode.n, solver.boundary_mode.n + 15);
+  }
+  for (auto &[idx, data] : boundaries.waveport)
+  {
+    if (data.max_size <= 0)
+    {
+      data.max_size = std::max(2 * data.mode_idx, data.mode_idx + 15);
+    }
   }
 
   // Validate build-availability of requested solver backends. Centralized here so
