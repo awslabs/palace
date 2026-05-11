@@ -220,10 +220,7 @@ void ArpackEigenvalueSolver::SetNumModes(int num_eig, int num_vec)
     V.reset();
   }
   nev = num_eig;
-  // Sentinel num_vec <= 0 means "use the library default". This defensive fallback
-  // mirrors SLEPc's PETSC_DEFAULT behavior and is kept because internal callers (e.g.
-  // ModeEigenSolver) pass -1 directly without going through the JSON/Concretize path.
-  ncv = (num_vec > 0) ? num_vec : std::max(20, 2 * nev + 1);  // Default from SLEPc
+  ncv = num_vec;
 }
 
 void ArpackEigenvalueSolver::SetTol(double tol)
