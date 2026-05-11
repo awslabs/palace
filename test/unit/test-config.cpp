@@ -1148,4 +1148,39 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(b2.type == b1.type);
     CHECK(b2.type != EigenSolverBackend::DEFAULT);
   }
+
+  SECTION("Round-trip: WavePort defaulted fields are reproducible")
+  {
+    // Index, Attributes are required at parse; only defaulted fields need verification.
+    json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", {{"WavePort", {{{"Index", 1}, {"Attributes", {2}}}}}}},
+                   {"Solver",
+                    {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}},
+                     {"Linear", {{"Type", "SuperLU"}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+    REQUIRE(iodata2.boundaries.waveport.count(1) == 1);
+    const auto &w1 = iodata1.boundaries.waveport.at(1);
+    const auto &w2 = iodata2.boundaries.waveport.at(1);
+    CHECK(w2.mode_idx == w1.mode_idx);
+    CHECK(w2.d_offset == w1.d_offset);
+    CHECK(w2.eigen_solver == w1.eigen_solver);
+    CHECK(w2.eigen_solver != EigenSolverBackend::DEFAULT);
+    CHECK(w2.active == w1.active);
+    CHECK(w2.ksp_max_its == w1.ksp_max_its);
+    CHECK(w2.ksp_tol == w1.ksp_tol);
+    CHECK(w2.eig_tol == w1.eig_tol);
+    CHECK(w2.max_size == w1.max_size);
+    CHECK(w2.verbose == w1.verbose);
+    CHECK(w2.n_samples == w1.n_samples);
+  }
 }
