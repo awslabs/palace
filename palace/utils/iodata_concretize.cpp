@@ -216,6 +216,28 @@ void ConcretizeModel(const config::ModelData &model, json &j_model)
                 {"SerialUniformLevels", ref.ser_uniform_ref_levels}});
 }
 
+void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
+{
+  // Materials: positional match to the C++ vector. Emit the scalar (isotropic) baseline
+  // when a physical property key is absent, preserving any user-written scalar or
+  // tensor form. SymmetricMatrixData<3> with s={v,v,v} and identity v is exactly what
+  // the parser reconstructs from a single number.
+  if (j_domains.contains("Materials"))
+  {
+    auto &j_mats = j_domains["Materials"];
+    const std::size_t n = std::min(j_mats.size(), domains.materials.size());
+    for (std::size_t i = 0; i < n; ++i)
+    {
+      const auto &m = domains.materials[i];
+      ApplyEntries(j_mats[i], {{"Permeability", m.mu_r.s[0]},
+                               {"Permittivity", m.epsilon_r.s[0]},
+                               {"LossTan", m.tandelta.s[0]},
+                               {"Conductivity", m.sigma.s[0]},
+                               {"LondonDepth", m.lambda_L}});
+    }
+  }
+}
+
 void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_boundaries)
 {
   // Absorbing (farfield) boundary. Only touch it if the user declared it.
@@ -464,6 +486,11 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
       }
       ConcretizeBoundaryMode(iodata.solver.boundary_mode, j_solver["BoundaryMode"]);
       break;
+  }
+
+  if (config.contains("Domains"))
+  {
+    ConcretizeDomains(iodata.domains, config["Domains"]);
   }
 
   if (config.contains("Boundaries"))

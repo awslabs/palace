@@ -1183,4 +1183,46 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(w2.verbose == w1.verbose);
     CHECK(w2.n_samples == w1.n_samples);
   }
+
+  SECTION("Round-trip: Material defaulted physical properties are reproducible")
+  {
+    // Attributes is required at parse; physical properties (mu_r, epsilon_r, tandelta,
+    // sigma, lambda_L) all have scalar defaults that must survive concretize → reparse.
+    json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}},
+                     {"Linear", {{"Type", "SuperLU"}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    // The concretized JSON must mention every defaulted physical property.
+    auto &j_mat = config["Domains"]["Materials"][0];
+    CHECK(j_mat.contains("Permeability"));
+    CHECK(j_mat.contains("Permittivity"));
+    CHECK(j_mat.contains("LossTan"));
+    CHECK(j_mat.contains("Conductivity"));
+    CHECK(j_mat.contains("LondonDepth"));
+
+    IoData iodata2(config, false);
+    REQUIRE(iodata1.domains.materials.size() == 1);
+    REQUIRE(iodata2.domains.materials.size() == 1);
+    const auto &m1 = iodata1.domains.materials[0];
+    const auto &m2 = iodata2.domains.materials[0];
+    for (int k = 0; k < 3; ++k)
+    {
+      CHECK(m2.mu_r.s[k] == m1.mu_r.s[k]);
+      CHECK(m2.epsilon_r.s[k] == m1.epsilon_r.s[k]);
+      CHECK(m2.tandelta.s[k] == m1.tandelta.s[k]);
+      CHECK(m2.sigma.s[k] == m1.sigma.s[k]);
+    }
+    CHECK(m2.lambda_L == m1.lambda_L);
+  }
 }
