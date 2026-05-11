@@ -168,6 +168,211 @@ void ConcretizeBoundaryMode(const config::BoundaryModeSolverData &bm, json &j_bm
                       {"Type", EnumString(bm.type)}});
 }
 
+void ConcretizeModel(const config::ModelData &model, json &j_model)
+{
+  ApplyEntries(j_model,
+               {{"L0", model.L0},
+                {"Lc", model.Lc},
+                {"RemoveCurvature", model.remove_curvature},
+                {"MakeSimplex", model.make_simplex},
+                {"MakeHexahedral", model.make_hex},
+                {"ReorderElements", model.reorder_elements},
+                {"CleanUnusedElements", model.clean_unused_elements},
+                {"CrackInternalBoundaryElements", model.crack_bdr_elements},
+                {"RefineCrackElements", model.refine_crack_elements},
+                {"CrackDisplacementFactor", model.crack_displ_factor},
+                {"AddInterfaceBoundaryElements", model.add_bdr_elements},
+                {"ExportPrerefinedMesh", model.export_prerefined_mesh},
+                {"ReorientTetMesh", model.reorient_tet_mesh},
+                {"Partitioning", model.partitioning}});
+  if (!j_model.contains("Refinement"))
+  {
+    j_model["Refinement"] = json::object();
+  }
+  const auto &ref = model.refinement;
+  ApplyEntries(j_model["Refinement"],
+               {{"Tol", ref.tol},
+                {"MaxIts", ref.max_it},
+                {"MaxSize", ref.max_size},
+                {"Nonconformal", ref.nonconformal},
+                {"MaxNCLevels", ref.max_nc_levels},
+                {"UpdateFraction", ref.update_fraction},
+                {"MaximumImbalance", ref.maximum_imbalance},
+                {"SaveAdaptIterations", ref.save_adapt_iterations},
+                {"SaveAdaptMesh", ref.save_adapt_mesh},
+                {"UniformLevels", ref.uniform_ref_levels},
+                {"SerialUniformLevels", ref.ser_uniform_ref_levels}});
+}
+
+void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_boundaries)
+{
+  // Absorbing (farfield) boundary. Only touch it if the user declared it.
+  if (j_boundaries.contains("Absorbing"))
+  {
+    Concretize(j_boundaries["Absorbing"], "Order", boundaries.farfield.order);
+  }
+
+  // Conductivity: JSON array of objects, C++ vector (positional). Match by index.
+  if (j_boundaries.contains("Conductivity"))
+  {
+    auto &j_cond = j_boundaries["Conductivity"];
+    const std::size_t n = std::min(j_cond.size(), boundaries.conductivity.size());
+    for (std::size_t i = 0; i < n; ++i)
+    {
+      const auto &c = boundaries.conductivity[i];
+      ApplyEntries(j_cond[i], {{"Permeability", c.mu_r},
+                               {"Thickness", c.h},
+                               {"External", c.external}});
+    }
+  }
+
+  // Impedance: JSON array of objects, C++ vector (positional).
+  if (j_boundaries.contains("Impedance"))
+  {
+    auto &j_imp = j_boundaries["Impedance"];
+    const std::size_t n = std::min(j_imp.size(), boundaries.impedance.size());
+    for (std::size_t i = 0; i < n; ++i)
+    {
+      const auto &imp = boundaries.impedance[i];
+      ApplyEntries(j_imp[i],
+                   {{"Rs", imp.Rs}, {"Ls", imp.Ls}, {"Cs", imp.Cs}});
+    }
+  }
+
+  // LumpedPort: JSON array with Index, C++ map keyed by Index.
+  if (j_boundaries.contains("LumpedPort"))
+  {
+    for (auto &j_port : j_boundaries["LumpedPort"])
+    {
+      auto idx_it = j_port.find("Index");
+      if (idx_it == j_port.end())
+      {
+        continue;
+      }
+      auto it = boundaries.lumpedport.find(idx_it->get<int>());
+      if (it == boundaries.lumpedport.end())
+      {
+        continue;
+      }
+      const auto &lp = it->second;
+      ApplyEntries(j_port, {{"R", lp.R},
+                            {"L", lp.L},
+                            {"C", lp.C},
+                            {"Rs", lp.Rs},
+                            {"Ls", lp.Ls},
+                            {"Cs", lp.Cs},
+                            {"Excitation", lp.excitation},
+                            {"Active", lp.active}});
+    }
+  }
+
+  // WavePort: JSON array with Index, C++ map keyed by Index.
+  if (j_boundaries.contains("WavePort"))
+  {
+    for (auto &j_port : j_boundaries["WavePort"])
+    {
+      auto idx_it = j_port.find("Index");
+      if (idx_it == j_port.end())
+      {
+        continue;
+      }
+      auto it = boundaries.waveport.find(idx_it->get<int>());
+      if (it == boundaries.waveport.end())
+      {
+        continue;
+      }
+      const auto &wp = it->second;
+      ApplyEntries(j_port, {{"Mode", wp.mode_idx},
+                            {"Offset", wp.d_offset},
+                            {"SolverType", EnumString(wp.eigen_solver)},
+                            {"Excitation", wp.excitation},
+                            {"Active", wp.active},
+                            {"MaxIts", wp.ksp_max_its},
+                            {"KSPTol", wp.ksp_tol},
+                            {"EigenTol", wp.eig_tol},
+                            {"MaxSize", wp.max_size},
+                            {"Verbose", wp.verbose},
+                            {"NSamples", wp.n_samples}});
+    }
+  }
+
+  // Periodic: single object with a Floquet wave vector.
+  if (j_boundaries.contains("Periodic"))
+  {
+    Concretize(j_boundaries["Periodic"], "FloquetWaveVector",
+               json::array({boundaries.periodic.wave_vector[0],
+                            boundaries.periodic.wave_vector[1],
+                            boundaries.periodic.wave_vector[2]}));
+  }
+
+  // Postprocessing: per-index maps for flux/dielectric/impedance/voltage.
+  if (j_boundaries.contains("Postprocessing"))
+  {
+    auto &j_pp = j_boundaries["Postprocessing"];
+    const auto &pp = boundaries.postpro;
+
+    auto ApplyIndexed = [&](const char *key, auto &&per_entry)
+    {
+      auto sect_it = j_pp.find(key);
+      if (sect_it == j_pp.end())
+      {
+        return;
+      }
+      for (auto &j_entry : *sect_it)
+      {
+        auto idx_it = j_entry.find("Index");
+        if (idx_it == j_entry.end())
+        {
+          continue;
+        }
+        per_entry(idx_it->get<int>(), j_entry);
+      }
+    };
+
+    ApplyIndexed("SurfaceFlux",
+                 [&](int idx, json &j_entry)
+                 {
+                   auto it = pp.flux.find(idx);
+                   if (it != pp.flux.end())
+                   {
+                     ApplyEntries(j_entry, {{"Type", EnumString(it->second.type)},
+                                            {"TwoSided", it->second.two_sided}});
+                   }
+                 });
+
+    ApplyIndexed("Dielectric",
+                 [&](int idx, json &j_entry)
+                 {
+                   auto it = pp.dielectric.find(idx);
+                   if (it != pp.dielectric.end())
+                   {
+                     ApplyEntries(j_entry, {{"Type", EnumString(it->second.type)},
+                                            {"LossTan", it->second.tandelta}});
+                   }
+                 });
+
+    ApplyIndexed("Impedance",
+                 [&](int idx, json &j_entry)
+                 {
+                   auto it = pp.impedance.find(idx);
+                   if (it != pp.impedance.end())
+                   {
+                     Concretize(j_entry, "NSamples", it->second.n_samples);
+                   }
+                 });
+
+    ApplyIndexed("Voltage",
+                 [&](int idx, json &j_entry)
+                 {
+                   auto it = pp.voltage.find(idx);
+                   if (it != pp.voltage.end())
+                   {
+                     Concretize(j_entry, "NSamples", it->second.n_samples);
+                   }
+                 });
+  }
+}
+
 }  // namespace
 
 json IoData::ConcretizeDefaults(const IoData &iodata, json config)
@@ -177,6 +382,12 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
     config["Problem"] = json::object();
   }
   ConcretizeProblem(iodata.problem, config["Problem"]);
+
+  if (!config.contains("Model"))
+  {
+    config["Model"] = json::object();
+  }
+  ConcretizeModel(iodata.model, config["Model"]);
 
   if (!config.contains("Solver"))
   {
@@ -245,19 +456,7 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
 
   if (config.contains("Boundaries"))
   {
-    auto &j_boundaries = config["Boundaries"];
-    if (j_boundaries.contains("WavePort"))
-    {
-      for (auto &j_port : j_boundaries["WavePort"])
-      {
-        int idx = j_port.at("Index").get<int>();
-        auto it = iodata.boundaries.waveport.find(idx);
-        if (it != iodata.boundaries.waveport.end())
-        {
-          Concretize(j_port, "SolverType", EnumString(it->second.eigen_solver));
-        }
-      }
-    }
+    ConcretizeBoundaries(iodata.boundaries, config["Boundaries"]);
   }
 
   return config;
