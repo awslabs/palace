@@ -859,7 +859,11 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     // Must resolve to the concrete name, NOT "Default". This depends on the ordering
     // contract in PALACE_JSON_SERIALIZE_ENUM(TimeSteppingScheme, ...).
     CHECK(j_transient["Type"].get<std::string>() == "GeneralizedAlpha");
-    CHECK(j_transient["Order"].get<int>() == 2);
+    // Order is not consumed by GeneralizedAlpha/RungeKutta and triggers a warning at
+    // parse time if emitted; ConcretizeTransient must omit it for these schemes.
+    CHECK_FALSE(j_transient.contains("Order"));
+    CHECK_FALSE(j_transient.contains("RelTol"));
+    CHECK_FALSE(j_transient.contains("AbsTol"));
   }
 
   SECTION("Eigenmode captures additional defaults")
@@ -952,7 +956,10 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
              {"L", 1.0e-9},
              {"Excitation", true},
              {"Active", false}}}},
-          {"Periodic", {{"FloquetWaveVector", {0.1, 0.2, 0.3}}}},
+          {"Periodic",
+           {{"FloquetWaveVector", {0.1, 0.2, 0.3}},
+            {"BoundaryPairs",
+             {{{"DonorAttributes", {10}}, {"ReceiverAttributes", {11}}}}}}},
           {"Postprocessing",
            {{"SurfaceFlux",
              {{{"Index", 1},

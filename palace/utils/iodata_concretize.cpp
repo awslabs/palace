@@ -138,10 +138,18 @@ void ConcretizeTransient(const config::TransientSolverData &transient, json &j_t
                              {"ExcitationWidth", transient.pulse_tau},
                              {"MaxTime", transient.max_t},
                              {"TimeStep", transient.delta_t},
-                             {"SaveStep", transient.delta_post},
-                             {"Order", transient.order},
-                             {"RelTol", transient.rel_tol},
-                             {"AbsTol", transient.abs_tol}});
+                             {"SaveStep", transient.delta_post}});
+  // Order and RelTol/AbsTol are only meaningful for the adaptive CVODE/ARKODE schemes.
+  // GeneralizedAlpha and RungeKutta warn at parse time if these keys are present, so we
+  // must only emit them for schemes that actually consume them.
+  const bool adaptive = (transient.type == TimeSteppingScheme::CVODE ||
+                         transient.type == TimeSteppingScheme::ARKODE);
+  if (adaptive)
+  {
+    ApplyEntries(j_transient, {{"Order", transient.order},
+                               {"RelTol", transient.rel_tol},
+                               {"AbsTol", transient.abs_tol}});
+  }
 }
 
 void ConcretizeDriven(const config::DrivenSolverData &driven, json &j_driven)
@@ -170,21 +178,25 @@ void ConcretizeBoundaryMode(const config::BoundaryModeSolverData &bm, json &j_bm
 
 void ConcretizeModel(const config::ModelData &model, json &j_model)
 {
-  ApplyEntries(j_model,
-               {{"L0", model.L0},
-                {"Lc", model.Lc},
-                {"RemoveCurvature", model.remove_curvature},
-                {"MakeSimplex", model.make_simplex},
-                {"MakeHexahedral", model.make_hex},
-                {"ReorderElements", model.reorder_elements},
-                {"CleanUnusedElements", model.clean_unused_elements},
-                {"CrackInternalBoundaryElements", model.crack_bdr_elements},
-                {"RefineCrackElements", model.refine_crack_elements},
-                {"CrackDisplacementFactor", model.crack_displ_factor},
-                {"AddInterfaceBoundaryElements", model.add_bdr_elements},
-                {"ExportPrerefinedMesh", model.export_prerefined_mesh},
-                {"ReorientTetMesh", model.reorient_tet_mesh},
-                {"Partitioning", model.partitioning}});
+  // Note: Lc is deliberately NOT emitted. It defaults to a sentinel (-1) that
+  // NondimensionalizeInputs() resolves from the mesh bounding box at runtime, after
+  // ConcretizeDefaults has already produced the sidecar. Emitting the sentinel would
+  // fail schema validation (Lc > 0); emitting a concrete value is impossible here
+  // because the mesh has not been loaded yet. If the user wrote Lc explicitly, the
+  // original key already survives untouched.
+  ApplyEntries(j_model, {{"L0", model.L0},
+                         {"RemoveCurvature", model.remove_curvature},
+                         {"MakeSimplex", model.make_simplex},
+                         {"MakeHexahedral", model.make_hex},
+                         {"ReorderElements", model.reorder_elements},
+                         {"CleanUnusedElements", model.clean_unused_elements},
+                         {"CrackInternalBoundaryElements", model.crack_bdr_elements},
+                         {"RefineCrackElements", model.refine_crack_elements},
+                         {"CrackDisplacementFactor", model.crack_displ_factor},
+                         {"AddInterfaceBoundaryElements", model.add_bdr_elements},
+                         {"ExportPrerefinedMesh", model.export_prerefined_mesh},
+                         {"ReorientTetMesh", model.reorient_tet_mesh},
+                         {"Partitioning", model.partitioning}});
   if (!j_model.contains("Refinement"))
   {
     j_model["Refinement"] = json::object();
