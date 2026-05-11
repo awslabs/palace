@@ -928,6 +928,120 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(l2.gs_orthog == l1.gs_orthog);
   }
 
+  SECTION("Round-trip: Model, Refinement, and Boundaries are reproducible")
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model",
+         {{"Mesh", "test.msh"},
+          {"L0", 1.0e-3},
+          {"MakeSimplex", true},
+          {"Partitioning", "parts.txt"},
+          {"Refinement", {{"MaxIts", 4}, {"MaxSize", 1000}, {"UpdateFraction", 0.5}}}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries",
+         {{"Absorbing", {{"Attributes", {2}}, {"Order", 2}}},
+          {"Conductivity", {{{"Attributes", {3}}, {"Conductivity", 5.8e7}}}},
+          {"Impedance",
+           {{{"Attributes", {4}}, {"Rs", 50.0}, {"Ls", 1.0e-9}, {"Cs", 1.0e-12}}}},
+          {"LumpedPort",
+           {{{"Index", 1},
+             {"Attributes", {5}},
+             {"Direction", "+X"},
+             {"R", 50.0},
+             {"L", 1.0e-9},
+             {"Excitation", true},
+             {"Active", false}}}},
+          {"Periodic", {{"FloquetWaveVector", {0.1, 0.2, 0.3}}}},
+          {"Postprocessing",
+           {{"SurfaceFlux",
+             {{{"Index", 1},
+               {"Attributes", {6}},
+               {"Type", "Electric"},
+               {"TwoSided", true}}}},
+            {"Dielectric",
+             {{{"Index", 1},
+               {"Attributes", {7}},
+               {"Type", "MA"},
+               {"Thickness", 1.0e-9},
+               {"Permittivity", 4.0},
+               {"LossTan", 0.002}}}}}}}},
+        {"Solver",
+         {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}},
+          {"Linear", {{"Type", "SuperLU"}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+
+    const auto &m1 = iodata1.model;
+    const auto &m2 = iodata2.model;
+    CHECK(m2.L0 == m1.L0);
+    CHECK(m2.Lc == m1.Lc);
+    CHECK(m2.remove_curvature == m1.remove_curvature);
+    CHECK(m2.make_simplex == m1.make_simplex);
+    CHECK(m2.make_hex == m1.make_hex);
+    CHECK(m2.reorder_elements == m1.reorder_elements);
+    CHECK(m2.clean_unused_elements == m1.clean_unused_elements);
+    CHECK(m2.crack_bdr_elements == m1.crack_bdr_elements);
+    CHECK(m2.refine_crack_elements == m1.refine_crack_elements);
+    CHECK(m2.crack_displ_factor == m1.crack_displ_factor);
+    CHECK(m2.add_bdr_elements == m1.add_bdr_elements);
+    CHECK(m2.export_prerefined_mesh == m1.export_prerefined_mesh);
+    CHECK(m2.reorient_tet_mesh == m1.reorient_tet_mesh);
+    CHECK(m2.partitioning == m1.partitioning);
+    const auto &r1 = m1.refinement;
+    const auto &r2 = m2.refinement;
+    CHECK(r2.tol == r1.tol);
+    CHECK(r2.max_it == r1.max_it);
+    CHECK(r2.max_size == r1.max_size);
+    CHECK(r2.nonconformal == r1.nonconformal);
+    CHECK(r2.max_nc_levels == r1.max_nc_levels);
+    CHECK(r2.update_fraction == r1.update_fraction);
+    CHECK(r2.maximum_imbalance == r1.maximum_imbalance);
+    CHECK(r2.save_adapt_iterations == r1.save_adapt_iterations);
+    CHECK(r2.save_adapt_mesh == r1.save_adapt_mesh);
+    CHECK(r2.uniform_ref_levels == r1.uniform_ref_levels);
+    CHECK(r2.ser_uniform_ref_levels == r1.ser_uniform_ref_levels);
+    CHECK(iodata2.boundaries.farfield.order == iodata1.boundaries.farfield.order);
+    REQUIRE(iodata1.boundaries.conductivity.size() == 1);
+    REQUIRE(iodata2.boundaries.conductivity.size() == 1);
+    CHECK(iodata2.boundaries.conductivity[0].h == iodata1.boundaries.conductivity[0].h);
+    CHECK(iodata2.boundaries.conductivity[0].external ==
+          iodata1.boundaries.conductivity[0].external);
+    REQUIRE(iodata1.boundaries.impedance.size() == 1);
+    REQUIRE(iodata2.boundaries.impedance.size() == 1);
+    CHECK(iodata2.boundaries.impedance[0].Rs == iodata1.boundaries.impedance[0].Rs);
+    CHECK(iodata2.boundaries.impedance[0].Ls == iodata1.boundaries.impedance[0].Ls);
+    CHECK(iodata2.boundaries.impedance[0].Cs == iodata1.boundaries.impedance[0].Cs);
+    REQUIRE(iodata2.boundaries.lumpedport.count(1) == 1);
+    const auto &lp1 = iodata1.boundaries.lumpedport.at(1);
+    const auto &lp2 = iodata2.boundaries.lumpedport.at(1);
+    CHECK(lp2.R == lp1.R);
+    CHECK(lp2.L == lp1.L);
+    CHECK(lp2.C == lp1.C);
+    CHECK(lp2.Rs == lp1.Rs);
+    CHECK(lp2.Ls == lp1.Ls);
+    CHECK(lp2.Cs == lp1.Cs);
+    CHECK(lp2.excitation == lp1.excitation);
+    CHECK(lp2.active == lp1.active);
+    CHECK(iodata2.boundaries.periodic.wave_vector ==
+          iodata1.boundaries.periodic.wave_vector);
+    REQUIRE(iodata2.boundaries.postpro.flux.count(1) == 1);
+    CHECK(iodata2.boundaries.postpro.flux.at(1).two_sided ==
+          iodata1.boundaries.postpro.flux.at(1).two_sided);
+    REQUIRE(iodata2.boundaries.postpro.dielectric.count(1) == 1);
+    CHECK(iodata2.boundaries.postpro.dielectric.at(1).type ==
+          iodata1.boundaries.postpro.dielectric.at(1).type);
+    CHECK(iodata2.boundaries.postpro.dielectric.at(1).tandelta ==
+          iodata1.boundaries.postpro.dielectric.at(1).tandelta);
+  }
+
   SECTION("User-written \"Default\" is replaced with the resolved concrete value")
   {
     // If the user explicitly writes the sentinel string, we must still concretize —
