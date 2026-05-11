@@ -1120,4 +1120,32 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata2.solver.transient.max_t == iodata1.solver.transient.max_t);
     CHECK(iodata2.solver.transient.delta_t == iodata1.solver.transient.delta_t);
   }
+
+  SECTION("Round-trip: BoundaryMode defaulted fields are reproducible")
+  {
+    // Freq is required at parse; only defaulted fields need verification.
+    json config = {{"Problem", {{"Type", "BoundaryMode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"BoundaryMode", {{"Freq", 10.0}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+    const auto &b1 = iodata1.solver.boundary_mode;
+    const auto &b2 = iodata2.solver.boundary_mode;
+    CHECK(b2.n == b1.n);
+    CHECK(b2.n_post == b1.n_post);
+    CHECK(b2.target == b1.target);
+    CHECK(b2.tol == b1.tol);
+    CHECK(b2.max_size == b1.max_size);
+    CHECK(b2.type == b1.type);
+    CHECK(b2.type != EigenSolverBackend::DEFAULT);
+  }
 }
