@@ -157,6 +157,17 @@ void ConcretizeDriven(const config::DrivenSolverData &driven, json &j_driven)
                            EnumString(driven.adaptive_circuit_synthesis_domain_orthog)}});
 }
 
+void ConcretizeBoundaryMode(const config::BoundaryModeSolverData &bm, json &j_bm)
+{
+  ApplyEntries(j_bm, {{"Freq", bm.freq},
+                      {"N", bm.n},
+                      {"Save", bm.n_post},
+                      {"Target", bm.target},
+                      {"Tol", bm.tol},
+                      {"MaxSize", bm.max_size},
+                      {"Type", EnumString(bm.type)}});
+}
+
 }  // namespace
 
 json IoData::ConcretizeDefaults(const IoData &iodata, json config)
@@ -222,6 +233,13 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
         j_solver["Magnetostatic"] = json::object();
       }
       Concretize(j_solver["Magnetostatic"], "Save", iodata.solver.magnetostatic.n_post);
+      break;
+    case ProblemType::BOUNDARYMODE:
+      if (!j_solver.contains("BoundaryMode"))
+      {
+        j_solver["BoundaryMode"] = json::object();
+      }
+      ConcretizeBoundaryMode(iodata.solver.boundary_mode, j_solver["BoundaryMode"]);
       break;
   }
 
