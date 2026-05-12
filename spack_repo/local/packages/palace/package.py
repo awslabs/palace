@@ -94,13 +94,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         msg="GCC does not support AddressSanitizer on macOS (Apple Silicon). Use Clang instead.",
     )
 
-    # CurrentDipole is numerically fragile: changes in MKL FP accumulation
-    # between 2025 and 2026 shift antenna_short_dipole results by ~27%. See #710.
-    conflicts(
-        "^intel-oneapi-mkl@2026:",
-        msg="antenna_short_dipole regression with MKL 2026+; see awslabs/palace#710",
-    )
-
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
     with when("+mumps"):
         depends_on("fortran", type="build")
