@@ -128,7 +128,7 @@ runs:
               require: fflags=-nofor-main
             libffi:
               require: "@:3.4.8"
-            # MKL 2026+ miscomputes CurrentDipole; pin to 2025.
+            # CurrentDipole numerics shift with MKL 2026+ (see awslabs/palace#710).
             intel-oneapi-mkl:
               require: "@:2025"
         INTELEOF
