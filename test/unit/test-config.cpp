@@ -973,9 +973,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                {"Thickness", 1.0e-9},
                {"Permittivity", 4.0},
                {"LossTan", 0.002}}}}}}}},
-        {"Solver",
-         {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}},
-          {"Linear", {{"Type", "SuperLU"}}}}}};
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
 
     IoData iodata1(config, false);
     config = IoData::ConcretizeDefaults(iodata1, config);
@@ -1152,13 +1150,12 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
   SECTION("Round-trip: WavePort defaulted fields are reproducible")
   {
     // Index, Attributes are required at parse; only defaulted fields need verification.
-    json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
-                   {"Model", {{"Mesh", "test.msh"}}},
-                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-                   {"Boundaries", {{"WavePort", {{{"Index", 1}, {"Attributes", {2}}}}}}},
-                   {"Solver",
-                    {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}},
-                     {"Linear", {{"Type", "SuperLU"}}}}}};
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", {{"WavePort", {{{"Index", 1}, {"Attributes", {2}}}}}}},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
 
     IoData iodata1(config, false);
     config = IoData::ConcretizeDefaults(iodata1, config);
@@ -1188,13 +1185,12 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
   {
     // Attributes is required at parse; physical properties (mu_r, epsilon_r, tandelta,
     // sigma, lambda_L) all have scalar defaults that must survive concretize → reparse.
-    json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
-                   {"Model", {{"Mesh", "test.msh"}}},
-                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-                   {"Boundaries", json::object()},
-                   {"Solver",
-                    {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}},
-                     {"Linear", {{"Type", "SuperLU"}}}}}};
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
 
     IoData iodata1(config, false);
     config = IoData::ConcretizeDefaults(iodata1, config);
