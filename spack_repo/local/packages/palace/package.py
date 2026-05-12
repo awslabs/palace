@@ -94,6 +94,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         msg="GCC does not support AddressSanitizer on macOS (Apple Silicon). Use Clang instead.",
     )
 
+    # MKL 2026+ miscomputes CurrentDipole (~27% off on antenna_short_dipole).
+    conflicts(
+        "^intel-oneapi-mkl@2026:",
+        msg="MKL 2026+ miscomputes CurrentDipole; pin to @:2025",
+    )
+
     conflicts("^mumps+int64", msg="Palace requires MUMPS without 64 bit integers")
     with when("+mumps"):
         depends_on("fortran", type="build")

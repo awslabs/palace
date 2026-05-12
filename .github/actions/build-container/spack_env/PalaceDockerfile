@@ -49,12 +49,15 @@ RUN cd {{ paths.environment }} && spack env activate . && \
       echo "WARNING: Binary cache is not reachable, all packages will be built from source"; \
     fi
 
-# Install the software
-RUN cd {{ paths.environment }} && spack env activate . && spack install --include-build-deps -j$(nproc) --fail-fast
-
-# Push installed packages to the binary cache
+# palace@develop is pinned to branch="main", so every branch shares a spec
+# hash with different source. Build Palace --no-cache and push only deps.
 RUN cd {{ paths.environment }} && spack env activate . && \
-    spack buildcache push --unsigned local-buildcache
+    spack install --include-build-deps --only dependencies -j$(nproc) --fail-fast && \
+    spack install --only package --no-cache -j$(nproc) --fail-fast
+
+# Push deps only; Palace itself is branch-specific (see above).
+RUN cd {{ paths.environment }} && spack env activate . && \
+    spack buildcache push --only dependencies --unsigned local-buildcache
 
 # Remove unnecessary deps
 # TODO: Remove gcc and build-only dependencies to reduce image size.

@@ -128,6 +128,9 @@ runs:
               require: fflags=-nofor-main
             libffi:
               require: "@:3.4.8"
+            # MKL 2026+ miscomputes CurrentDipole; pin to 2025.
+            intel-oneapi-mkl:
+              require: "@:2025"
         INTELEOF
         fi
 
@@ -316,7 +319,8 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache || true
+        # Push deps only; Palace itself is branch-specific (same reason as the container build).
+        spack -e . buildcache push --force --with-build-dependencies --only dependencies --unsigned --update-index local-buildcache || true
         end_timer "Push to GHCR cache"
 
     - name: Run Regression Tests
