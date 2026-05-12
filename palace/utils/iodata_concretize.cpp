@@ -254,9 +254,9 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
     for (std::size_t i = 0; i < n; ++i)
     {
       const auto &c = boundaries.conductivity[i];
-      ApplyEntries(j_cond[i], {{"Permeability", c.mu_r},
-                               {"Thickness", c.h},
-                               {"External", c.external}});
+      ApplyEntries(
+          j_cond[i],
+          {{"Permeability", c.mu_r}, {"Thickness", c.h}, {"External", c.external}});
     }
   }
 
@@ -268,8 +268,7 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
     for (std::size_t i = 0; i < n; ++i)
     {
       const auto &imp = boundaries.impedance[i];
-      ApplyEntries(j_imp[i],
-                   {{"Rs", imp.Rs}, {"Ls", imp.Ls}, {"Cs", imp.Cs}});
+      ApplyEntries(j_imp[i], {{"Rs", imp.Rs}, {"Ls", imp.Ls}, {"Cs", imp.Cs}});
     }
   }
 
@@ -333,10 +332,10 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
   // Periodic: single object with a Floquet wave vector.
   if (j_boundaries.contains("Periodic"))
   {
-    Concretize(j_boundaries["Periodic"], "FloquetWaveVector",
-               json::array({boundaries.periodic.wave_vector[0],
-                            boundaries.periodic.wave_vector[1],
-                            boundaries.periodic.wave_vector[2]}));
+    Concretize(
+        j_boundaries["Periodic"], "FloquetWaveVector",
+        json::array({boundaries.periodic.wave_vector[0], boundaries.periodic.wave_vector[1],
+                     boundaries.periodic.wave_vector[2]}));
   }
 
   // Postprocessing: per-index maps for flux/dielectric/impedance/voltage.
