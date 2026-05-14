@@ -25,14 +25,17 @@ enum class ProblemType : char
   BOUNDARYMODE
 };
 
-// Eigenvalue solver type. DEFAULT is resolved to SLEPC or ARPACK in
-// IoData::CheckConfiguration based on which backend Palace was built with, so drivers
-// never observe the sentinel.
+// Eigenvalue solver type.
 enum class EigenSolverBackend : char
 {
-  DEFAULT,
   SLEPC,
-  ARPACK
+  ARPACK,
+  DEFAULT =
+#if defined(PALACE_WITH_SLEPC)
+      SLEPC
+#elif defined(PALACE_WITH_ARPACK)
+      ARPACK
+#endif
 };
 
 // Nonlinear eigenvalue solver type.
@@ -68,15 +71,14 @@ enum class FrequencySampling : char
   DEFAULT = LINEAR
 };
 
-// Time integration scheme type. DEFAULT is resolved to GEN_ALPHA in
-// IoData::CheckConfiguration so drivers never observe the sentinel.
+// Time integration scheme type.
 enum class TimeSteppingScheme : char
 {
-  DEFAULT,
   GEN_ALPHA,
   RUNGE_KUTTA,
   ARKODE,
-  CVODE
+  CVODE,
+  DEFAULT = GEN_ALPHA
 };
 
 // Excitation type for port excitation.

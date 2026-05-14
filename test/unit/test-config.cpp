@@ -1189,7 +1189,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
     IoData iodata2(config, false);
     CHECK(iodata2.solver.eigenmode.type == iodata1.solver.eigenmode.type);
-    CHECK(iodata2.solver.eigenmode.type != EigenSolverBackend::DEFAULT);
+    // The emitted Type must be the concrete backend name, not the alias "Default".
+    CHECK(config["Solver"]["Eigenmode"]["Type"].get<std::string>() != "Default");
     CHECK(iodata2.solver.eigenmode.target == iodata1.solver.eigenmode.target);
     CHECK(iodata2.solver.eigenmode.target_upper == iodata1.solver.eigenmode.target_upper);
     CHECK(iodata2.solver.eigenmode.max_it == iodata1.solver.eigenmode.max_it);
@@ -1224,7 +1225,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
     IoData iodata2(config, false);
     CHECK(iodata2.solver.transient.type == iodata1.solver.transient.type);
-    CHECK(iodata2.solver.transient.type != TimeSteppingScheme::DEFAULT);
+    CHECK(config["Solver"]["Transient"]["Type"].get<std::string>() != "Default");
     CHECK(iodata2.solver.transient.excitation == iodata1.solver.transient.excitation);
     CHECK(iodata2.solver.transient.max_t == iodata1.solver.transient.max_t);
     CHECK(iodata2.solver.transient.delta_t == iodata1.solver.transient.delta_t);
@@ -1264,7 +1265,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(b2.tol == b1.tol);
     CHECK(b2.max_size == b1.max_size);
     CHECK(b2.type == b1.type);
-    CHECK(b2.type != EigenSolverBackend::DEFAULT);
+    CHECK(config["Solver"]["BoundaryMode"]["Type"].get<std::string>() != "Default");
 
     // Coverage gate. Attributes is opt-in (used to extract a 2D submesh from a 3D
     // mesh); leaving it absent means "use the parent mesh as-is", so we skip it.
@@ -1299,7 +1300,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(w2.mode_idx == w1.mode_idx);
     CHECK(w2.d_offset == w1.d_offset);
     CHECK(w2.eigen_solver == w1.eigen_solver);
-    CHECK(w2.eigen_solver != EigenSolverBackend::DEFAULT);
+    CHECK(config["Boundaries"]["WavePort"][0]["SolverType"].get<std::string>() !=
+          "Default");
     CHECK(w2.active == w1.active);
     CHECK(w2.ksp_max_its == w1.ksp_max_its);
     CHECK(w2.ksp_tol == w1.ksp_tol);

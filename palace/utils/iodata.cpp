@@ -560,33 +560,9 @@ void IoData::CheckConfiguration()
     solver.linear.reorder_reuse = false;
   }
 
-  // Resolve eigen solver DEFAULT to the concrete backend Palace was built with, so
-  // downstream code never has to handle the sentinel.
-  auto resolve_default_eigen_backend = [](EigenSolverBackend &type)
-  {
-    if (type == EigenSolverBackend::DEFAULT)
-    {
-#if defined(PALACE_WITH_SLEPC)
-      type = EigenSolverBackend::SLEPC;
-#elif defined(PALACE_WITH_ARPACK)
-      type = EigenSolverBackend::ARPACK;
-#else
-      MFEM_ABORT("Palace requires either SLEPc or ARPACK support for eigenvalue solves!");
-#endif
-    }
-  };
-  resolve_default_eigen_backend(solver.eigenmode.type);
-  resolve_default_eigen_backend(solver.boundary_mode.type);
-  for (auto &[idx, data] : boundaries.waveport)
-  {
-    resolve_default_eigen_backend(data.eigen_solver);
-  }
-
-  // Resolve transient scheme DEFAULT to the concrete default.
-  if (solver.transient.type == TimeSteppingScheme::DEFAULT)
-  {
-    solver.transient.type = TimeSteppingScheme::GEN_ALPHA;
-  }
+  // EigenSolverBackend::DEFAULT and TimeSteppingScheme::DEFAULT are header-level
+  // aliases for the concrete values, so default-constructed fields are already at
+  // their resolved values and no runtime resolution is needed here.
 
   // Validate build-availability of requested solver backends. Centralized here so
   // downstream code never encounters an unavailable backend at runtime.

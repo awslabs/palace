@@ -73,10 +73,14 @@ PALACE_JSON_SERIALIZE_ENUM(ProblemType, {{ProblemType::DRIVEN, "Driven"},
                                          {ProblemType::TRANSIENT, "Transient"},
                                          {ProblemType::BOUNDARYMODE, "BoundaryMode"}})
 
-// Helper for converting string keys to enum for EigenSolverBackend.
-PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "Default"},
-                                                {EigenSolverBackend::SLEPC, "SLEPc"},
-                                                {EigenSolverBackend::ARPACK, "ARPACK"}})
+// Helper for converting string keys to enum for EigenSolverBackend. The list order
+// matters: PALACE_JSON_SERIALIZE_ENUM uses linear find_if for both directions, so
+// concrete entries must come before DEFAULT (the alias). to_json then emits the
+// concrete name ("SLEPc" or "ARPACK") rather than "Default"; from_json on either
+// string still maps to the same underlying value as the alias.
+PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::SLEPC, "SLEPc"},
+                                                {EigenSolverBackend::ARPACK, "ARPACK"},
+                                                {EigenSolverBackend::DEFAULT, "Default"}})
 
 // Helper for converting string keys to enum for EigenSolverBackend.
 PALACE_JSON_SERIALIZE_ENUM(NonlinearEigenSolver, {{NonlinearEigenSolver::HYBRID, "Hybrid"},
@@ -100,12 +104,14 @@ PALACE_JSON_SERIALIZE_ENUM(FrequencySampling, {{FrequencySampling::DEFAULT, "Def
                                                {FrequencySampling::POINT, "Point"}})
 
 // Helper for converting string keys to enum for TimeSteppingScheme and Excitation.
+// DEFAULT is an alias for GEN_ALPHA; placing it last ensures to_json emits
+// "GeneralizedAlpha" rather than "Default" while still accepting "Default" as input.
 PALACE_JSON_SERIALIZE_ENUM(TimeSteppingScheme,
-                           {{TimeSteppingScheme::DEFAULT, "Default"},
-                            {TimeSteppingScheme::GEN_ALPHA, "GeneralizedAlpha"},
+                           {{TimeSteppingScheme::GEN_ALPHA, "GeneralizedAlpha"},
                             {TimeSteppingScheme::RUNGE_KUTTA, "RungeKutta"},
                             {TimeSteppingScheme::CVODE, "CVODE"},
-                            {TimeSteppingScheme::ARKODE, "ARKODE"}})
+                            {TimeSteppingScheme::ARKODE, "ARKODE"},
+                            {TimeSteppingScheme::DEFAULT, "Default"}})
 PALACE_JSON_SERIALIZE_ENUM(Excitation,
                            {{Excitation::SINUSOIDAL, "Sinusoidal"},
                             {Excitation::GAUSSIAN, "Gaussian"},
