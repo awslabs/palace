@@ -9,8 +9,12 @@
 #include <fmt/os.h>
 #include "fem/errorindicator.hpp"
 #include "utils/filesystem.hpp"
-#include "utils/geodata.hpp"
 #include "utils/memoryreporting.hpp"
+
+namespace mfem
+{
+class Mesh;
+}  // namespace mfem
 
 namespace palace
 {

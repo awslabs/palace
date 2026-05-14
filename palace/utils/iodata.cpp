@@ -572,8 +572,8 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
   // already be set on all ranks (caller uses mesh::ComputeReferenceLength when needed).
   MFEM_VERIFY(!init, "NondimensionalizeInputs should only be called once!");
   MFEM_VERIFY(model.Lc > 0.0,
-              "NondimensionalizeInputs requires model.Lc > 0.0 \u2014 set it from the "
-              "config or call mesh::ComputeReferenceLength before this hook.");
+              "NondimensionalizeInputs requires model.Lc > 0.0; set it from the config "
+              "or call mesh::ComputeReferenceLength before this hook.");
   init = true;
 
   // In the model field Lc is measured in units of L0.

@@ -24,15 +24,13 @@ class SurfaceImpedanceOperator;
 
 //
 // Top-level operator for 2D boundary mode analysis, analogous to SpaceOperator for 3D
-// problems. Owns FE spaces and boundary operators; the operator is agnostic to whether the
-// mesh was authored directly in 2D or extracted from a 3D parent.
+// problems. Owns FE spaces and boundary operators. The driver is expected to fold any
+// 3D-parent frame information into mesh + iodata before construction.
 //
 class BoundaryModeOperator
 {
 public:
-  // Caller owns mat_op; it must outlive this operator. The solve mesh is 2D-native: the
-  // driver has folded any 3D-parent frame information into the mesh + iodata before this
-  // runs, so the operator has no frame-dependent branches.
+  // Caller owns mat_op; it must outlive this operator.
   BoundaryModeOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh,
                        const MaterialOperator &mat_op);
 

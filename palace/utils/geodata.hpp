@@ -43,10 +43,10 @@ std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);
 double ComputeReferenceLength(const std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm comm);
 
 // Refine the provided mesh according to the data in the input file (parallel uniform
-// refinement only; region-based refinement now happens in Load on the serial mesh). If
-// levels of refinement are requested, the refined meshes are stored in order of increased
-// refinement. Ownership of the initial coarse mesh is inherited by the fine meshes and
-// it should not be deleted. The fine mesh hierarchy is owned by the user.
+// refinement only; box / sphere region refinement happens in Load on the serial mesh).
+// If levels of refinement are requested, the refined meshes are stored in order of
+// increased refinement. Ownership of the initial coarse mesh is inherited by the fine
+// meshes and it should not be deleted. The fine mesh hierarchy is owned by the user.
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
 
 // Dimensionalize a mesh for use in exporting a mesh. Scales vertices and nodes by L.

@@ -7,7 +7,7 @@
 #include <complex>
 #include <unordered_set>
 #include "linalg/errorestimator.hpp"
-#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
 #include "models/boundarymodeoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/modeeigensolver.hpp"
@@ -25,10 +25,13 @@ namespace
 
 // Tangent frame of the extracted 2D submesh in the parent 3D coordinates. Used by
 // Preprocess to rotate material tensors and project path coordinates into the local
-// frame; does not escape the driver.
+// frame.
 struct SubmeshFrame
 {
-  mfem::Vector centroid, e1, e2, normal;
+  mfem::Vector centroid{0.0, 0.0, 0.0};
+  mfem::Vector e1{0.0, 0.0, 0.0};
+  mfem::Vector e2{0.0, 0.0, 0.0};
+  mfem::Vector normal{0.0, 0.0, 0.0};
 };
 
 // Full 3D-boundary → 2D-submesh pipeline on the pre-partitioned serial mesh:
@@ -41,12 +44,9 @@ ExtractBoundary2DSubmesh(mfem::Mesh &parent, const mfem::Array<int> &surface_att
 {
   auto sub = std::make_unique<mfem::SubMesh>(
       mfem::SubMesh::CreateFromBoundary(parent, surface_attrs));
-  // Project to 2D and compute the tangent frame *before* remapping element attributes.
-  // mfem::Mesh::attributes (the unique-list) is not kept in sync with per-element
-  // SetAttribute calls, so after RemapSubMeshAttributes the default-marker
-  // GetSurfaceNormal path (used inside ProjectSubmeshTo2D) would silently return zero
-  // — no element's (new) volume-style attribute matches the (old) boundary-style
-  // attribute in the stale unique-list, so every iteration is skipped.
+  // Project to 2D before remapping element attributes: ProjectSubmeshTo2D's call to
+  // GetSurfaceNormal walks the mesh's unique-attribute list, which RemapSubMeshAttributes
+  // leaves stale relative to the per-element attributes it just rewrote.
   frame.normal = mesh::ProjectSubmeshTo2D(*sub, frame.centroid, frame.e1, frame.e2);
   mesh::RemapSubMeshAttributes(*sub);
   mesh::RemapSubMeshBdrAttributes(*sub, surface_attrs);
@@ -93,14 +93,6 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
   }
 
   SubmeshFrame frame;
-  frame.centroid.SetSize(3);
-  frame.centroid = 0.0;
-  frame.e1.SetSize(3);
-  frame.e1 = 0.0;
-  frame.e2.SetSize(3);
-  frame.e2 = 0.0;
-  frame.normal.SetSize(3);
-  frame.normal = 0.0;
 
   // Ranks holding the serial mesh run the extraction locally via mfem::SubMesh;
   // non-holders receive the frame via broadcast below.
@@ -148,15 +140,14 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
 
     auto extracted = ExtractBoundary2DSubmesh(*smesh, attr_list, internal_bdr_attrs, frame);
 
-    // Bake "other waveports act as PEC on this cross-section" into the mesh so the
-    // operator sees plain PEC edges and has no frame-dependent branch. Per-waveport
-    // frames compose this way without mutating iodata.
+    // Relabel other-waveport edges as PEC on this cross-section: for the
+    // BoundaryMode solve they act as conducting boundaries.
     if (!other_waveport_attrs.empty())
     {
       MFEM_VERIFY(!bdr.pec.attributes.empty(),
                   "BoundaryMode submesh extraction found other-waveport edges on the "
-                  "cross-section but no PEC attribute is defined in the config to "
-                  "relabel them to \u2014 define at least one PEC boundary attribute.");
+                  "cross-section. Define at least one PEC boundary attribute to "
+                  "relabel them to.");
       const int pec_attr =
           *std::min_element(bdr.pec.attributes.begin(), bdr.pec.attributes.end());
       int relabelled = 0;
@@ -191,7 +182,6 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
   //     natively-2D downstream;
   //   - impedance / voltage 3D path coordinates projected to 2D local coords so
   //     PostOperator parses them as 2D paths directly.
-  // All subsequent downstream code is frame-agnostic.
   RotateMaterialDefinitions(iodata.domains.materials, frame.e1, frame.e2, frame.normal);
   for (auto &[idx, imp] : iodata.boundaries.postpro.impedance)
   {
@@ -220,8 +210,6 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
              "(omega = {:.6e})\n",
              freq_GHz, omega);
 
-  // MaterialOperator constructs natively-2D from (possibly pre-rotated) iodata; no
-  // post-hoc rotation is needed here.
   BlockTimer bt0(Timer::CONSTRUCT);
   MaterialOperator mat_op(iodata, *mesh.back());
 

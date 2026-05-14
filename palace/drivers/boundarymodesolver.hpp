@@ -17,12 +17,9 @@ class BoundaryModeSolver : public BaseSolver
 public:
   BoundaryModeSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
                      const char *git_tag = nullptr);
-  ~BoundaryModeSolver() override = default;
 
-  // When Solver.BoundaryMode.Attributes is set, extracts a 2D cross-section submesh from
-  // the 3D parent, bakes the local tangent frame into `iodata` (material rotation +
-  // impedance/voltage path projection), then resolves Lc + nondimensionalizes. Otherwise
-  // falls through to the base (direct-2D) hook.
+  // If original mesh is 3D, extract 2D submesh from boundary attributes and changes
+  // frame of IoData to match 2D coordinate system.
   void Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
                   MPI_Comm comm) const override;
 

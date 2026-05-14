@@ -222,16 +222,13 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
     }
   }
 
-  // Region-based (box/sphere) refinement on the serial mesh. Formerly in parallel
-  // RefineMesh; done here so the user-facing 3D box/sphere geometry stays in sync with
-  // the mesh the problem type actually solves on (BoundaryMode's Preprocess may
-  // extract a 2D submesh from this refined 3D mesh before partitioning).
+  // Box / sphere region refinement on the serial mesh, before partitioning. Done here
+  // (rather than in parallel RefineMesh) so the user-facing 3D box / sphere geometry
+  // stays in sync with the mesh the problem actually solves on — BoundaryMode's
+  // Preprocess may extract a 2D submesh from this refined 3D mesh.
   //
-  // For tensor meshes under nonconformal AMR, convert to NC representation first:
-  // RegionRefine's own verify asserts Nonconforming() for tensor elements. Before the
-  // Load/Partition split, this conversion happened later inside Partition's byte-string
-  // broadcast path (still below), after region refinement had already run in parallel
-  // RefineMesh on an already-NC ParMesh; the reorder makes it Load's responsibility.
+  // EnsureNCMesh first for tensor meshes under nonconformal AMR: RegionRefine's verify
+  // requires Nonconforming() for tensor elements.
   if (use_amr && refinement.nonconformal)
   {
     smesh->EnsureNCMesh(true);
@@ -418,8 +415,7 @@ double ComputeReferenceLength(const std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm 
 
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh)
 {
-  // Parallel uniform refinement only. Region-based (box/sphere) refinement runs serially
-  // inside Load, before partitioning.
+  // Parallel uniform refinement only. Box / sphere region refinement happens in Load.
   MFEM_VERIFY(mesh.size() == 1,
               "Input mesh vector before refinement has more than a single mesh!");
   int uniform_ref_levels = iodata.model.refinement.uniform_ref_levels;
@@ -1800,9 +1796,8 @@ mfem::Vector ProjectSubmeshTo2D(mfem::Mesh &submesh, mfem::Vector &centroid,
     }
 
     // Rebuild the mesh with 2D coordinates. SetCurvature creates a new Nodes
-    // GridFunction with the specified vdim (SpaceDim), replacing the old 3D one. Serial
-    // extraction always has NE > 0 on the rank that holds the mesh; empty-partition
-    // handling lives in the parallel path, which no longer exists.
+    // GridFunction with the specified vdim (SpaceDim). Extraction runs on a rank that
+    // holds the serial mesh, so submesh.GetNE() > 0 is required.
     MFEM_VERIFY(submesh.GetNE() > 0,
                 "ProjectSubmeshTo2D called on an empty mesh — extraction must run on a "
                 "rank that holds the serial mesh!");
