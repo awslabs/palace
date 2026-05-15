@@ -1400,6 +1400,32 @@ inline void GetParentGlobalVertexIndices(const mfem::Mesh &parent,
 inline void GetParentGlobalVertexIndices(const mfem::ParMesh &parent,
                                          mfem::Array<HYPRE_BigInt> &gi)
 {
+  // For an NC parmesh, parent.GetGlobalVertexIndices internally builds an order-1 H1
+  // ParFiniteElementSpace and calls GetGlobalTDofNumber on every vertex DoF. NC parmesh
+  // GetGlobalTDofNumber asserts that the ldof is a true DoF, which is not guaranteed
+  // for vertices that are shared / not owned by this rank (and is reliably broken when
+  // the parent has cracked-boundary duplicate vertices). Use the NCMesh node-id table
+  // directly: NCMesh nodes are replicated across ranks with rank-consistent ids, and
+  // every local vertex is the vert_index of exactly one node.
+  gi.SetSize(parent.GetNV());
+  if (parent.Nonconforming())
+  {
+    gi = -1;
+    const auto &ncmesh = *parent.ncmesh;
+    for (int n = 0; n < ncmesh.GetNumNodes(); n++)
+    {
+      const auto &node = ncmesh.GetNode(n);
+      if (node.HasVertex())
+      {
+        const int v = node.vert_index;
+        if (v >= 0 && v < parent.GetNV())
+        {
+          gi[v] = n;
+        }
+      }
+    }
+    return;
+  }
   parent.GetGlobalVertexIndices(gi);
 }
 
