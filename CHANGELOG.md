@@ -34,6 +34,10 @@ The format of this changelog is based on
   - Adaptive mesh refinement is now supported for `BoundaryMode` simulations on a
     2D submesh extracted from a 3D input mesh.
     [PR 727](https://github.com/awslabs/palace/pull/727).
+  - Palace now writes a fully-resolved copy of the run configuration to
+    `<output_dir>/config.json` at startup, with every implicit default and `"Default"`
+    sentinel filled in. The sidecar passes schema validation and can be used to re-run
+    the same simulation deterministically [PR 719](https://github.com/awslabs/palace/pull/719).
 
 #### Interface Changes
 
@@ -51,6 +55,9 @@ The format of this changelog is based on
     is uniquely identifiable. Existing single-excitation output gains the
     column too (a constant value), shifting downstream column indices by one.
     [PR 746](https://github.com/awslabs/palace/pull/746).
+  - `Solver.Eigenmode.MaxSize` now defaults to `max(2 * N, N + 15)` for both SLEPc and
+    ARPACK. `Solver.Eigenmode.MaxIts` now defaults to `1'000'000`
+    [PR 719](https://github.com/awslabs/palace/pull/719).
 
 #### Bug Fixes
 
@@ -118,11 +125,6 @@ The format of this changelog is based on
   - Backport positive-weight simplex quadrature rules from MFEM
     ([mfem/mfem#5246](https://github.com/mfem/mfem/pull/5246))
     [PR 706](https://github.com/awslabs/palace/pull/706).
-
-#### Interface Changes
-
-  - `Solver.Eigenmode.MaxSize` now defaults to `max(2 * N, N + 15)` for both SLEPc and
-    ARPACK. `Solver.Eigenmode.MaxIts` now defaults to `1'000'000` [PR TBD].
 
 ## [0.16.0] - 2026-03-05
 
