@@ -3,10 +3,13 @@
 
 #include "iodata.hpp"
 
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
+#include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "utils/enum_string.hpp"
 
@@ -165,6 +168,18 @@ void ConcretizeDriven(const config::DrivenSolverData &driven, json &j_driven)
                            EnumString(driven.adaptive_circuit_synthesis_domain_orthog)}});
 }
 
+void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostatic,
+                             json &j_electrostatic)
+{
+  Concretize(j_electrostatic, "Save", electrostatic.n_post);
+}
+
+void ConcretizeMagnetostatic(const config::MagnetostaticSolverData &magnetostatic,
+                             json &j_magnetostatic)
+{
+  Concretize(j_magnetostatic, "Save", magnetostatic.n_post);
+}
+
 void ConcretizeBoundaryMode(const config::BoundaryModeSolverData &bm, json &j_bm)
 {
   ApplyEntries(j_bm, {{"Freq", bm.freq},
@@ -218,10 +233,10 @@ void ConcretizeModel(const config::ModelData &model, json &j_model)
 
 void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
 {
-  // Materials: positional match to the C++ vector. Emit the scalar (isotropic) baseline
-  // when a physical property key is absent, preserving any user-written scalar or
-  // tensor form. SymmetricMatrixData<3> with s={v,v,v} and identity v is exactly what
-  // the parser reconstructs from a single number.
+  // Materials: positional match to the C++ vector. Emit the per-property baseline only
+  // when the user omitted the key (Concretize skips already-present keys), so the C++
+  // struct here always holds the default — which is isotropic, with s[0]==s[1]==s[2]
+  // and v = identity. Anisotropic data the user wrote in the JSON is never overwritten.
   if (j_domains.contains("Materials"))
   {
     auto &j_mats = j_domains["Materials"];
@@ -469,14 +484,14 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
       {
         j_solver["Electrostatic"] = json::object();
       }
-      Concretize(j_solver["Electrostatic"], "Save", iodata.solver.electrostatic.n_post);
+      ConcretizeElectrostatic(iodata.solver.electrostatic, j_solver["Electrostatic"]);
       break;
     case ProblemType::MAGNETOSTATIC:
       if (!j_solver.contains("Magnetostatic"))
       {
         j_solver["Magnetostatic"] = json::object();
       }
-      Concretize(j_solver["Magnetostatic"], "Save", iodata.solver.magnetostatic.n_post);
+      ConcretizeMagnetostatic(iodata.solver.magnetostatic, j_solver["Magnetostatic"]);
       break;
     case ProblemType::BOUNDARYMODE:
       if (!j_solver.contains("BoundaryMode"))
@@ -498,6 +513,18 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
   }
 
   return config;
+}
+
+void IoData::WriteResolvedConfig(const json &raw_config) const
+{
+  std::filesystem::path post_dir(problem.output);
+  const std::string path = post_dir / "config.json";
+  std::ofstream fo(path);
+  MFEM_VERIFY(fo.is_open(), "Unable to open resolved config file \"" << path << "\"!");
+  fo << ConcretizeDefaults(*this, raw_config).dump(2) << '\n';
+  fo.close();
+  MFEM_VERIFY(std::filesystem::exists(path),
+              "Resolved config file was not created at \"" << path << "\"!");
 }
 
 }  // namespace palace

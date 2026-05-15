@@ -61,6 +61,12 @@ public:
   // are added. Call after CheckConfiguration() so the filled values are concrete.
   static nlohmann::json ConcretizeDefaults(const IoData &iodata, nlohmann::json config);
 
+  // Concretize defaults from `raw_config` and write the result to
+  // `<problem.output>/config.json` so users have a self-contained record of every
+  // Palace decision. The caller is responsible for ensuring this is invoked on a
+  // single process (e.g. MPI rank 0). Aborts on filesystem failure.
+  void WriteResolvedConfig(const nlohmann::json &raw_config) const;
+
   // Nondimensionalize input values and mesh coordinates. Requires model.Lc > 0 (caller
   // populates it from the config or via mesh::ComputeReferenceLength). `mesh` may be
   // null on ranks that don't hold the serial mesh; iodata is scaled on every rank. No
