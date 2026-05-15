@@ -222,17 +222,18 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
     }
   }
 
+  // Finalize before any further refinement: GeneralRefinement (used by RegionRefine)
+  // needs tet refinement flags set, which Finalize(refine=true) provides. Initial
+  // orientation was already fixed at load.
+  {
+    constexpr bool refine = true, fix_orientation = false;
+    smesh->Finalize(refine, fix_orientation);
+  }
+
   // Box / sphere region refinement on the serial mesh, before partitioning. Done here
   // (rather than in parallel RefineMesh) so the user-facing 3D box / sphere geometry
   // stays in sync with the mesh the problem actually solves on — BoundaryMode's
   // Preprocess may extract a 2D submesh from this refined 3D mesh.
-  //
-  // EnsureNCMesh first for tensor meshes under nonconformal AMR: RegionRefine's verify
-  // requires Nonconforming() for tensor elements.
-  if (use_amr && refinement.nonconformal)
-  {
-    smesh->EnsureNCMesh(true);
-  }
   RegionRefine(refinement, *smesh);
 
   // Exterior-boundary check and optional material-interface / crack boundary element
@@ -255,11 +256,6 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
                  iodata.model.mesh);
   }
 
-  // Finalize: mark tetrahedral meshes for refinement. Initial orientation was already
-  // fixed at load.
-  constexpr bool refine = true, fix_orientation = false;
-  smesh->Finalize(refine, fix_orientation);
-
   return smesh;
 }
 
@@ -278,6 +274,14 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
     use_mesh_partitioner &= smesh->Conforming();
   }
   Mpi::Broadcast(1, &use_mesh_partitioner, 0, comm);
+
+  // For nonconformal AMR, each loading rank converts its own serial copy to NC here
+  // (after Load has done all preprocessing and EnsureNodes), before partitioning. The
+  // resulting ParMesh inherits the NC structure with Nodes intact.
+  if (use_amr && refinement.nonconformal && smesh)
+  {
+    smesh->EnsureNCMesh(true);
+  }
 
   // Broadcast cracked boundary attributes from root to all ranks.
   if (iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements)
@@ -346,8 +350,9 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
       smesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
       so.clear();
     }
-    // !use_mesh_partitioner implies use_amr && nonconformal; ensure the rebuilt mesh is
-    // NC-capable before constructing the ParMesh.
+    // !use_mesh_partitioner implies use_amr && nonconformal. EnsureNCMesh has already
+    // been called on each loading rank's serial copy above; the rebuilt mesh below
+    // needs the same treatment.
     if (refinement.nonconformal && use_amr)
     {
       smesh->EnsureNCMesh(true);
@@ -3374,11 +3379,14 @@ void RegionRefine(const config::RefinementData &refinement, mfem::Mesh &mesh)
   }
 
   const auto element_types = mesh::CheckElements(mesh);
-  MFEM_VERIFY(!(element_types.has_hexahedra || element_types.has_prisms ||
-                element_types.has_pyramids) ||
-                  mesh.Nonconforming(),
-              "Region-based refinement for non-simplex meshes requires a nonconformal "
-              "mesh!");
+  if ((element_types.has_hexahedra || element_types.has_prisms ||
+       element_types.has_pyramids) &&
+      !mesh.Nonconforming())
+  {
+    // Region refinement of tensor meshes hangs hanging nodes; convert to NC. Simplex
+    // meshes don't need NC for GeneralRefinement and stay conforming.
+    mesh.EnsureNCMesh(true);
+  }
 
   const bool use_nodes = (mesh.GetNodes() != nullptr);
   const int ref = use_nodes ? mesh.GetNodes()->FESpace()->GetMaxElementOrder() : 1;
