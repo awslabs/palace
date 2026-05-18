@@ -13,7 +13,6 @@
 #include "linalg/mumps.hpp"
 #include "linalg/rap.hpp"
 #include "linalg/solver.hpp"
-#include "models/mode_assembly.hpp"
 
 #include <fmt/ranges.h>
 #include "fem/coefficient.hpp"

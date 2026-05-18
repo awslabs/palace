@@ -6,7 +6,7 @@
 #include "fem/multigrid.hpp"
 #include "linalg/operator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
-#include "models/mode_assembly.hpp"
+#include "models/modeeigensolver.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
 #include "utils/communication.hpp"
