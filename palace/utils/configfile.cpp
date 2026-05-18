@@ -1328,6 +1328,7 @@ LinearSolverData::LinearSolverData(const json &linear)
   type = linear.value("Type", type);
   krylov_solver = linear.value("KSPType", krylov_solver);
   tol = linear.value("Tol", tol);
+  abs_tol = linear.value("AbsTol", abs_tol);
   max_it = linear.value("MaxIts", max_it);
   max_size = linear.value("MaxSize", max_size);
   initial_guess = linear.value("InitialGuess", initial_guess);
