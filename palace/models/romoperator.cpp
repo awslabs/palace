@@ -436,6 +436,18 @@ HybridBulkBoundaryOperator::HybridBulkBoundaryOperator(
       port_attr_list_local.Append(elem->GetAttrList());
     }
   }
+  // Add wave-port boundaries. The waveport modal field is added to the basis as a
+  // synthesis port mode (see RomOperator::AddWavePortModesForSynthesis); to enforce
+  // power orthogonality consistently the waveport boundary contributes the same kind of
+  // overlap integral as the lumped ports. Using a unit weight here corresponds to a
+  // reference impedance Z_R = 1 (in internal units) for the waveport, matching the
+  // lumped-port convention. The exact value only affects diagonal scaling of synthesis
+  // matrices, not their off-diagonal structure or the recovered S-parameters.
+  for (const auto &[idx, data] : space_op.GetWavePortOp())
+  {
+    fb_port.AddMaterialProperty(mat_op.GetCeedBdrAttributes(data.GetAttrList()), 1.0);
+    port_attr_list_local.Append(data.GetAttrList());
+  }
   // Need to check this as this per MPI rank. Ranks where the material property is empty
   // should not add this integrator.
   if (!fb_port.empty())
@@ -532,6 +544,24 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     has_other_A2 = (A2_other_probe != nullptr);
   }
 
+  // Capture sweep band and synthesis tolerance for later use in
+  // CalculateNormalizedPROMMatrices (polynomial fit residual + bound). After
+  // config::Nondimensionalize (utils/configfile.cpp), sample_f stores
+  // 2π·f_nondim — i.e. ω in nondimensional units, not the linear frequency. Use it
+  // directly. Default the synthesis tol to adaptive_tol when the user did not set one
+  // explicitly.
+  const auto &sample_f = iodata.solver.driven.sample_f;
+  if (!sample_f.empty())
+  {
+    sweep_omega_min = *std::min_element(sample_f.begin(), sample_f.end());
+    sweep_omega_max = *std::max_element(sample_f.begin(), sample_f.end());
+  }
+  waveport_synthesis_tol = iodata.solver.driven.waveport_synthesis_tol > 0.0
+                               ? iodata.solver.driven.waveport_synthesis_tol
+                               : iodata.solver.driven.adaptive_tol;
+  waveport_synthesis_order_max = iodata.solver.driven.waveport_synthesis_order_max;
+  waveport_synthesis_force = iodata.solver.driven.waveport_synthesis_force;
+
   // Initialize working vector storage.
   r.SetSize(K->Height());
   r.UseDevice(true);
@@ -554,6 +584,10 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     // included count, not the total port count, to avoid over-reserving basis storage
     // (one full-FE-space vector per excluded port would otherwise be reserved).
     max_prom_size += NumSynthesisPortModes();
+    // Wave-port modes are added once per port (one mode per port today). The seeded
+    // basis vector at the reference frequency is generally complex (mode field has both
+    // real and imaginary parts), so reserve up to two slots per port.
+    max_prom_size += 2 * space_op.GetWavePortOp().Size();
 
     // Build inner-product weight matrix.
     weight_op_W = HybridBulkBoundaryOperator{
@@ -729,6 +763,30 @@ void RomOperator::AddLumpedPortModesForSynthesis()
   MFEM_VERIFY(orth_R.isDiagonal(diag_tol),
               "Lumped port fields on the mesh should have exactly zero overlap. This may "
               "be non-zero if attributes share edges.");
+}
+
+void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
+{
+  // Add the modal field of each wave port to the basis as a port mode for synthesis,
+  // analogous to AddLumpedPortModesForSynthesis. The modal field is evaluated at a
+  // single reference frequency (typically the band centre) and projected onto the
+  // parent ND space, restricted to the port boundary attributes.
+  //
+  // The mode field is generally complex; UpdatePROM splits it into real and imaginary
+  // basis vectors as needed (only those that pass the orthogonalisation tolerance are
+  // retained). The hybrid weight matrix W (now extended to include wave-port boundary
+  // mass, see HybridBulkBoundaryOperator::HybridBulkBoundaryOperator) enforces the
+  // boundary-overlap orthogonality condition for synthesis.
+  ComplexVector vec;
+  vec.SetSize(space_op.GetNDSpace().GetTrueVSize());
+  vec.UseDevice(true);
+  vec = 0.0;
+
+  for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
+  {
+    space_op.GetWavePortFieldVectorPrimaryEt(port_idx, omega_ref, vec, true);
+    UpdatePROM(vec, fmt::format("waveport_{:d}", port_idx));
+  }
 }
 
 void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
@@ -991,34 +1049,181 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   // poor condition of the circuit matrices.
   //
   // Lumped ports are real, at the beginning and in order. Only ports with
-  // include_in_synthesis contribute a basis row, so the number of leading port-mode rows
-  // is NumSynthesisPortModes(), NOT the total number of lumped ports. Iterating to the
-  // total port count here would over-run v_conc whenever a port is excluded.
+  // include_in_synthesis contribute a basis row, so the number of leading lumped-port
+  // rows is NumSynthesisPortModes(), NOT the total number of lumped ports. Wave-port
+  // modes follow the lumped ports in the basis (added by AddWavePortModesForSynthesis);
+  // they may have both real and imaginary parts. The synthesised matrices are scaled
+  // symmetrically by orth_R for those rows as well so the port-block diagonal entries
+  // take their physical port-impedance value.
   const long n_port_modes = static_cast<long>(NumSynthesisPortModes());
   MFEM_ASSERT(n_port_modes <= GetReducedDimension(),
               "More lumped port modes than PROM basis vectors; basis is inconsistent!");
-  for (long j = 0; j < n_port_modes; j++)
+  // Wave-port basis vectors come right after the lumped-port rows; count how many were
+  // actually added (real + imaginary parts each count separately, see
+  // AddWavePortModesForSynthesis → UpdatePROM).
+  long n_waveport_rows = 0;
+  if (!Mwp_p_r.empty())
   {
-    // For the ideal port defined in LumpedPortOp, this should be: sqrt(\vert e_t \vert^2)
-    // = sqrt(port.GetExcitationFieldEtNormSqWithUnityZR()).
+    for (long j = n_port_modes; j < static_cast<long>(v_node_label.size()); j++)
+    {
+      if (v_node_label[j].rfind("waveport_", 0) == 0)
+      {
+        n_waveport_rows++;
+      }
+      else
+      {
+        break;
+      }
+    }
+  }
+  for (long j = 0; j < n_port_modes + n_waveport_rows; j++)
+  {
     v_conc[j] = orth_R(j, j);
   }
 
   // Lazy diagonal representation
   auto v_d = v_conc.asDiagonal();
 
+  // Polynomial-fit corrections for wave-port dispersion. The wave-port contribution
+  // i·kₙ,p(ω)·Mp_r enters the system matrix; its polynomial expansion
+  // kₙ,p(ω) ≈ α₀ + α₁ω + α₂ω² is absorbed into Kr/Cr/Mr as documented in the design
+  // notes (cf. prom-waveport.md):
+  //   i α₀ Mp_r           → Im(Kr)        → Im(L⁻¹)
+  //   α₁ Mp_r             → Re(Cr)        → Re(R⁻¹)
+  //   −i α₂ Mp_r          → Im(Mr)        → Im(C)
+  // (The signs follow Ar = Kr + iωCr − ω²Mr.)
+  // Higher-order terms cannot be absorbed and require the augmented state space (regime
+  // 2, future). For now: fit at order ≤ 2 and warn if the residual exceeds tolerance.
+  Eigen::MatrixXcd Kr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
+  Eigen::MatrixXcd Cr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
+  Eigen::MatrixXcd Mr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
+  if (!Mwp_p_r.empty() && sweep_omega_max > sweep_omega_min)
+  {
+    constexpr int n_fit = 30;
+    constexpr int n_dense = 1000;
+    const double w_lo = sweep_omega_min;
+    const double w_hi = sweep_omega_max;
+    auto sample_omega = [w_lo, w_hi](int n)
+    {
+      std::vector<double> ws(n);
+      for (int i = 0; i < n; i++)
+      {
+        ws[i] = w_lo + (w_hi - w_lo) * i / std::max(n - 1, 1);
+      }
+      return ws;
+    };
+    auto fit_omegas = sample_omega(n_fit);
+    auto dense_omegas = sample_omega(n_dense);
+
+    bool any_force_polynomial =
+        (waveport_synthesis_force == WavePortSynthesisRegime::POLYNOMIAL);
+    bool any_force_augmented =
+        (waveport_synthesis_force == WavePortSynthesisRegime::AUGMENTED);
+
+    for (auto &[port_idx, Mp_r] : Mwp_p_r)
+    {
+      // Sample kₙ,p at fit and dense grids. Each call triggers (or hits the cache of)
+      // WavePortData::Initialize. Cheap because the cross-section EVP is small.
+      Eigen::VectorXd y_fit(n_fit);
+      for (int i = 0; i < n_fit; i++)
+      {
+        y_fit(i) = space_op.GetWavePortOp().GetWavePortKn(port_idx, fit_omegas[i]);
+      }
+      // LSQ polynomial fit at order 2 in ω. Higher orders won't help here because there
+      // is no place for them in K + iωC − ω²M.
+      Eigen::MatrixXd vandermonde(n_fit, 3);
+      for (int i = 0; i < n_fit; i++)
+      {
+        const double w = fit_omegas[i];
+        vandermonde(i, 0) = 1.0;
+        vandermonde(i, 1) = w;
+        vandermonde(i, 2) = w * w;
+      }
+      Eigen::Vector3d coeffs = vandermonde.colPivHouseholderQr().solve(y_fit);
+      const double alpha0 = coeffs(0);
+      const double alpha1 = coeffs(1);
+      const double alpha2 = coeffs(2);
+
+      // Evaluate residual on the dense grid: relative error on Y_p(ω) = kₙ,p/(ωμ₀).
+      // The 1/(ωμ₀) factor cancels in the ratio, so we use kₙ directly.
+      double max_rel = 0.0, max_abs_truth = 0.0;
+      for (int i = 0; i < n_dense; i++)
+      {
+        const double w = dense_omegas[i];
+        const double truth = space_op.GetWavePortOp().GetWavePortKn(port_idx, w);
+        const double fit = alpha0 + alpha1 * w + alpha2 * w * w;
+        max_abs_truth = std::max(max_abs_truth, std::abs(truth));
+        max_rel = std::max(max_rel, std::abs(fit - truth));
+      }
+      double rel_err = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
+
+      bool meets_tol = (rel_err <= waveport_synthesis_tol);
+      if (any_force_augmented)
+      {
+        Mpi::Warning(
+            "Wave port {:d}: WavePortSynthesisForce=Augmented requested but augmented "
+            "state-space synthesis is not yet implemented; falling back to polynomial "
+            "fit (rel err {:.3e}, tol {:.3e}).\n",
+            port_idx, rel_err, waveport_synthesis_tol);
+      }
+      else if (!meets_tol)
+      {
+        if (any_force_polynomial)
+        {
+          Mpi::Warning("Wave port {:d}: polynomial fit residual {:.3e} exceeds "
+                       "WavePortSynthesisTol={:.3e}, but Force=Polynomial — proceeding "
+                       "with the larger error.\n",
+                       port_idx, rel_err, waveport_synthesis_tol);
+        }
+        else
+        {
+          // AUTO regime: tolerance not met. Augmented state space would be needed to
+          // recover the cutoff/branch behaviour — emit a clear warning so the user knows
+          // the synthesis output is approximate.
+          Mpi::Warning("Wave port {:d}: polynomial fit residual {:.3e} exceeds "
+                       "WavePortSynthesisTol={:.3e}. Augmented state space (LC ladder) "
+                       "would be required for tighter accuracy but is not yet "
+                       "implemented; proceeding with polynomial fit (regime 1).\n",
+                       port_idx, rel_err, waveport_synthesis_tol);
+        }
+      }
+      else
+      {
+        Mpi::Print(" Wave port {:d}: polynomial synthesis residual {:.3e} (tol {:.3e}, "
+                   "α₀={:.3e}, α₁={:.3e}, α₂={:.3e})\n",
+                   port_idx, rel_err, waveport_synthesis_tol, alpha0, alpha1, alpha2);
+      }
+
+      // Apply absorbed contributions. Online, SolvePROM assembles
+      //   Ar = Kr + iωCr − ω²Mr + Σ_p kₙ,p(ω) · Mp_r,
+      // where Mp_r is purely imaginary (Re=0, Im = projected boundary mass M_proj).
+      // Substituting kₙ,p(ω) ≈ α₀ + α₁ω + α₂ω² and matching ω-powers gives the
+      // effective folded matrices:
+      //   Kr_eff = Kr + α₀·Mp_r              (Im(Kr) gains α₀·M_proj)
+      //   Cr_eff = Cr + (−i α₁)·Mp_r         (Re(Cr) gains α₁·M_proj)
+      //   Mr_eff = Mr + (−α₂)·Mp_r           (Im(Mr) gains −α₂·M_proj)
+      // The synthesis output then maps Kr→L⁻¹, Cr→R⁻¹, Mr→C with appropriate units.
+      Kr_corr += std::complex<double>(alpha0, 0.0) * Mp_r;
+      Cr_corr += std::complex<double>(0.0, -alpha1) * Mp_r;
+      Mr_corr += std::complex<double>(-alpha2, 0.0) * Mp_r;
+    }
+  }
+
   auto unit_henry_inv = 1.0 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
-  inductance_L_inv = std::make_unique<mat_t>(((unit_henry_inv * v_d) * Kr * v_d).eval());
+  inductance_L_inv =
+      std::make_unique<mat_t>(((unit_henry_inv * v_d) * (Kr + Kr_corr) * v_d).eval());
 
   auto unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
-  capacitance_C = std::make_unique<mat_t>(((unit_farad * v_d) * Mr * v_d).eval());
+  capacitance_C =
+      std::make_unique<mat_t>(((unit_farad * v_d) * (Mr + Mr_corr) * v_d).eval());
 
   // C & Cr are optional in UpdatePROM so follow this here. In practice, Cr always exists
   // since we need dissipative ports for a driven response, but this may change.
   if (C)
   {
     auto unit_ohm_inv = 1.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
-    resistance_R_inv = std::make_unique<mat_t>(((unit_ohm_inv * v_d) * Cr * v_d).eval());
+    resistance_R_inv =
+        std::make_unique<mat_t>(((unit_ohm_inv * v_d) * (Cr + Cr_corr) * v_d).eval());
   }
 
   return std::make_tuple(std::move(inductance_L_inv), std::move(resistance_R_inv),
@@ -1029,6 +1234,13 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
 {
   BlockTimer bt0(Timer::POSTPRO);
   Mpi::Print(" Printing PROM Matrices to disk.\n");
+
+  // Build the synthesised matrices on every rank, since the polynomial-fit step inside
+  // calls into WavePortOperator::GetWavePortKn which triggers the cross-section EVP —
+  // a collective operation that would deadlock if only the root participated. The
+  // resulting matrices are replicated; only the root will write them to disk below.
+  const auto [inductance_L_inv, resistance_R_inv, capacitance_C] =
+      CalculateNormalizedPROMMatrices(units);
 
   if (!Mpi::Root(space_op.GetComm()))
   {
@@ -1053,9 +1265,6 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     }
     out.WriteFullTableTrunc();
   };
-
-  const auto [inductance_L_inv, resistance_R_inv, capacitance_C] =
-      CalculateNormalizedPROMMatrices(units);
 
   // Note: When checking for imaginary parts, it is better to do this for K,C,M as this is
   // a nullptr check. Kr, Mr, Cr would require a numerical check on imag elements.
