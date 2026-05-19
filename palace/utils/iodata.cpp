@@ -565,24 +565,18 @@ void IoData::CheckConfiguration()
   fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;
 }
 
-void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
+void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
 {
-  // Nondimensionalization of the equations is based on a given length Lc in [m], typically
-  // the largest domain dimension. Configuration file lengths and the mesh coordinates are
-  // provided with units of model.L0 x [m].
+  // Lc is the reference length in [m], typically the largest domain dimension. Mesh
+  // coordinates and iodata lengths are both in units of model.L0 [m]. No MPI — Lc must
+  // already be set on all ranks (caller uses mesh::ComputeReferenceLength when needed).
   MFEM_VERIFY(!init, "NondimensionalizeInputs should only be called once!");
+  MFEM_VERIFY(model.Lc > 0.0,
+              "NondimensionalizeInputs requires model.Lc > 0.0; set it from the config "
+              "or call mesh::ComputeReferenceLength before this hook.");
   init = true;
 
-  // Calculate the reference length and time. A user specified model.Lc is in mesh length
-  // units.
-  if (model.Lc <= 0.0)
-  {
-    mfem::Vector bbmin, bbmax;
-    mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
-    bbmax -= bbmin;
-    model.Lc = *std::max_element(bbmax.begin(), bbmax.end());
-  }
-  // Define units now mesh length set. Note: In model field Lc is measured in units of L0.
+  // In the model field Lc is measured in units of L0.
   units = Units(model.L0, model.Lc * model.L0);
 
   // Mesh refinement parameters.
@@ -680,12 +674,15 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   config::Nondimensionalize(units, solver.driven);
   config::Nondimensionalize(units, solver.transient);
 
-  // Scale mesh vertices for correct nondimensionalization.
-  mesh::NondimensionalizeMesh(mesh, units.GetMeshLengthRelativeScale());
+  // Scale the serial mesh vertices on ranks that hold one. The ParMesh constructed later
+  // by mesh::Partition inherits the scaled coordinates.
+  if (mesh)
+  {
+    mesh::NondimensionalizeMesh(*mesh, units.GetMeshLengthRelativeScale());
+  }
 
   // Print some information.
-  Mpi::Print(mesh.GetComm(),
-             "\nCharacteristic length and time scales:\n Lc = {:.3e} m, tc = {:.3e} ns\n",
+  Mpi::Print("\nCharacteristic length and time scales:\n Lc = {:.3e} m, tc = {:.3e} ns\n",
              units.GetScaleFactor<Units::ValueType::LENGTH>(),
              units.GetScaleFactor<Units::ValueType::TIME>());
 }

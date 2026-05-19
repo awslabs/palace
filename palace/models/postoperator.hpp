@@ -437,7 +437,8 @@ public:
       -> std::enable_if_t<U == ProblemType::TRANSIENT, double>;
 
   // Mode analysis: complex E-field tangential (ND) and normal (H1) eigenvectors,
-  // propagation constant kn, and eigensolver error estimates.
+  // propagation constant kn, and eigensolver error estimates. The Poynting power is
+  // computed internally via fem_op->ComputePoyntingPower.
   template <ProblemType U = solver_t>
   auto MeasureAndPrintAll(int step, const ComplexVector &et, const ComplexVector &en,
                           std::complex<double> kn, double omega, double error_abs,
@@ -498,12 +499,6 @@ public:
                        [](const auto &p) { return p.second.has_current; });
   }
   bool HasVoltagePostprocessing() const { return !voltage_postpro.empty(); }
-
-  // Project 3D impedance/voltage path coordinates to 2D local frame (submesh).
-  void ProjectImpedancePaths(const mfem::Vector &centroid, const mfem::Vector &e1,
-                             const mfem::Vector &e2);
-  void ProjectVoltagePaths(const mfem::Vector &centroid, const mfem::Vector &e1,
-                           const mfem::Vector &e2);
 
   // Access to number of padding digits.
   constexpr auto GetPadDigitsDefault() const { return pad_digits_default; }

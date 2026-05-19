@@ -65,8 +65,8 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
 
   auto serial_mesh = std::make_unique<mfem::Mesh>(
       mfem::Mesh::MakeCartesian2D(10, 5, mfem::Element::TRIANGLE, false, width, height));
+  iodata.NondimensionalizeInputs(serial_mesh);
   auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
-  iodata.NondimensionalizeInputs(*par_mesh);
   iodata.CheckConfiguration();
   Mesh palace_mesh(std::move(par_mesh));
 
@@ -104,7 +104,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   double kn_target = omega / c_min * std::sqrt(1.1);
 
   ModeEigenSolver mode_solver(
-      mat_op, nullptr, &surf_z_op, &farfield_op, &surf_sigma_op, nd_fespace, h1_fespace,
+      mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op, nd_fespace, h1_fespace,
       dbc_tdof_list, num_modes, -1, 1.0e-8, EigenvalueSolver::WhichType::LARGEST_REAL,
       iodata.solver.linear, iodata.solver.boundary_mode.type, 0, nd_fespace.GetComm());
 

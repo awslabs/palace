@@ -22,14 +22,31 @@ namespace mesh
 // Functions for mesh related functionality.
 //
 
-// Read and partition a serial mesh from file, returning a pointer to the new parallel mesh
-// object, which should be destroyed by the user.
+// Load a serial mesh from disk and perform all serial-stage preparation: AMR compat
+// checks, cleanup, simplex/hex conversion, element reordering, serial uniform refinement,
+// region-based (box/sphere) refinement, boundary cracking, and finalization. Returns a
+// null pointer on ranks that do not hold a copy of the serial mesh. Called by main.cpp
+// before Preprocess hooks on the solver mutate the serial mesh (e.g. BoundaryMode
+// submesh extraction).
+std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm);
+
+// Partition and distribute a serial mesh prepared by Load, producing a parallel mesh.
+// `smesh` is non-null only on loading ranks (see Load's contract).
+std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::Mesh> smesh,
+                                         MPI_Comm comm);
+
+// Convenience wrapper: Load followed by Partition with no Preprocess hook.
 std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);
 
-// Refine the provided mesh according to the data in the input file. If levels of refinement
-// are requested, the refined meshes are stored in order of increased refinement. Ownership
-// of the initial coarse mesh is inherited by the fine meshes and it should not be deleted.
-// The fine mesh hierarchy is owned by the user.
+// Maximum axis-aligned bbox extent of the pre-partition serial mesh, reduced over
+// `comm` so every rank sees the same value. Returns 0 when no rank holds a mesh.
+double ComputeReferenceLength(const std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm comm);
+
+// Refine the provided mesh according to the data in the input file (parallel uniform
+// refinement only; box / sphere region refinement happens in Load on the serial mesh).
+// If levels of refinement are requested, the refined meshes are stored in order of
+// increased refinement. Ownership of the initial coarse mesh is inherited by the fine
+// meshes and it should not be deleted. The fine mesh hierarchy is owned by the user.
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
 
 // Dimensionalize a mesh for use in exporting a mesh. Scales vertices and nodes by L.
@@ -220,56 +237,49 @@ inline mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, bool average = t
   return GetSurfaceNormal(mesh, AttrToMarker(attributes.Max(), attributes), average);
 }
 
-// Extract a standalone 2D serial mesh from a 3D parallel mesh boundary. Performs:
-//   1. ParSubMesh extraction from the given boundary attributes
-//   2. Domain attribute remapping (from neighboring 3D elements)
-//   3. Boundary attribute remapping (from parent boundary faces)
-//   4. PEC internal edge detection (metal traces at material interfaces)
-//   5. Serialization via PrintAsOne with attribute preservation
-//   6. PEC edge insertion as boundary elements
-//   7. Projection to true 2D coordinates
-// Returns a serial Mesh (replicated on all ranks) ready for METIS repartitioning.
-// The surface normal, centroid, and tangent frame (e1, e2) are output parameters.
-std::unique_ptr<mfem::Mesh> ExtractStandalone2DSubmesh(
-    const mfem::ParMesh &parent_mesh, const mfem::Array<int> &surface_attrs,
-    const std::vector<int> &pec_bdr_attrs, mfem::Vector &surface_normal,
-    mfem::Vector &centroid, mfem::Vector &e1, mfem::Vector &e2);
+// Serial overload of GetSurfaceNormal for use during pre-partition extraction.
+mfem::Vector GetSurfaceNormal(const mfem::Mesh &mesh, const mfem::Array<int> &marker,
+                              bool average = true);
 
-// Remap domain element attributes of a boundary ParSubMesh from parent boundary face
-// attributes to the neighboring domain element attributes in the parent mesh. After this
-// call, each submesh element has the attribute of its adjacent domain element in the parent
-// mesh, matching the material definitions in the config. This enables creating a
-// MaterialOperator directly on the submesh.
-void RemapSubMeshAttributes(mfem::ParSubMesh &submesh);
+inline mfem::Vector GetSurfaceNormal(const mfem::Mesh &mesh, bool average = true)
+{
+  const bool bdr = (mesh.Dimension() == mesh.SpaceDimension());
+  const auto &attributes = bdr ? mesh.bdr_attributes : mesh.attributes;
+  return GetSurfaceNormal(mesh, AttrToMarker(attributes.Max(), attributes), average);
+}
 
-// Remap boundary element attributes of a boundary ParSubMesh. By default, MFEM assigns
-// all submesh boundary elements the same attribute. This function traces each submesh
-// boundary edge back to the parent 3D mesh to find which parent boundary face contains it,
-// and assigns that face's attribute. After this call, the submesh boundary attributes match
-// the parent mesh's boundary conditions (PEC, absorbing, wave port, etc.).
-void RemapSubMeshBdrAttributes(mfem::ParSubMesh &submesh,
-                               const mfem::Array<int> &surface_attrs);
+// Submesh post-extraction helpers. Templated over SubMeshT (mfem::SubMesh for the serial
+// BoundaryMode path, mfem::ParSubMesh for the parallel WavePort path). MPI reductions
+// degenerate to no-ops on the serial (MPI_COMM_SELF) instantiation.
 
-// Add internal boundary elements to a boundary ParSubMesh for edges that correspond to
-// intersections with parent boundary faces having attributes in internal_bdr_attrs. This
-// is needed because ParSubMesh::CreateFromBoundary only creates boundary elements at the
-// geometric boundary of the selected face region, but internal edges where the surface
-// meets other boundary faces (PEC, impedance, conductivity, absorbing) must also be
-// treated as boundary elements for the 2D eigenvalue problem.
-void AddSubMeshInternalBoundaryElements(mfem::ParSubMesh &submesh,
+// Remap domain element attributes to match the parent's neighboring 3D element's
+// attribute (so material definitions apply directly to the submesh).
+template <class SubMeshT>
+void RemapSubMeshAttributes(SubMeshT &submesh);
+
+// Trace each submesh boundary edge back to its parent boundary face and assign that
+// face's attribute. For edges shared by multiple parent faces, the non-surface face
+// wins. The parallel instantiation resolves cross-rank contributions via MPI_Allgather.
+template <class SubMeshT>
+void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surface_attrs);
+
+// Add boundary elements at edges where the selected surface meets a parent boundary
+// face whose attribute is in internal_bdr_attrs. CreateFromBoundary only emits boundary
+// elements at the geometric boundary of the selected region, so these internal
+// intersections have to be added explicitly.
+template <class SubMeshT>
+void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
                                         const mfem::Array<int> &surface_attrs,
                                         const std::vector<int> &internal_bdr_attrs);
 
-// Project a planar 2D submesh (with 3D ambient coordinates from ParSubMesh) to true 2D
-// coordinates. Computes the surface normal and tangent frame from the mesh, then replaces
-// each node coordinate with its projection onto the tangent plane. After this call, the
-// mesh has SpaceDimension() == 2 and all downstream 2D infrastructure (FE spaces, GSLIB)
-// works as for a native 2D mesh. Returns the surface normal (3D) for use in material
-// tensor projection (ModeEigenSolver (in waveportoperator)). The optional centroid and
-// tangent vectors (e1, e2) are output parameters for transforming additional 3D coordinates
-// (e.g., voltage/current path points) to the same 2D frame.
-mfem::Vector ProjectSubmeshTo2D(mfem::ParMesh &submesh, mfem::Vector *centroid = nullptr,
-                                mfem::Vector *e1 = nullptr, mfem::Vector *e2 = nullptr);
+// Project a planar 2D submesh (3D ambient coords) to true 2D coordinates. Replaces node
+// coordinates with their projection onto the tangent plane so SpaceDimension() == 2 and
+// all 2D infrastructure works as for a native 2D mesh. Returns the surface normal (3D)
+// and fills `centroid`, `e1`, `e2` with the tangent frame used for the projection
+// (needed by the caller for projecting additional 3D coordinates into the same 2D
+// frame). Serial only — extraction runs before partitioning.
+mfem::Vector ProjectSubmeshTo2D(mfem::Mesh &submesh, mfem::Vector &centroid,
+                                mfem::Vector &e1, mfem::Vector &e2);
 
 // Project a 3D point to 2D local coordinates using a previously computed tangent frame.
 inline mfem::Vector Project3Dto2D(const mfem::Vector &p3d, const mfem::Vector &centroid,

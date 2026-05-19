@@ -15,6 +15,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/laplaceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/lumpedportoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/materialoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/modeeigensolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/portexcitations.cpp

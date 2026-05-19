@@ -90,10 +90,9 @@ TEST_CASE("Nondimensionalize via IoData", "[nondimensionalize][Serial]")
   // Create a simple mesh to pass to NondimensionalizeInputs
   auto serial_mesh = std::make_unique<mfem::Mesh>(
       mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON, Lc, Lc, Lc));
-  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
 
-  // Call the original nondimensionalization
-  iodata.NondimensionalizeInputs(*par_mesh);
+  // Call the original nondimensionalization on the serial mesh (pre-partition).
+  iodata.NondimensionalizeInputs(serial_mesh);
 
   // Now verify all the nondimensionalized values
   const double mesh_scale = units.GetMeshLengthRelativeScale();

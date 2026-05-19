@@ -273,9 +273,9 @@ void MaterialOperator::SetUpMaterialProperties(
     if (sdim == 2)
     {
       // In 2D, compute out-of-plane scalar components using n^T M_3x3 n projection.
-      // For coordinate-aligned meshes n = [0,0,1], giving the (2,2) entry. Using
-      // ProjectNormal makes this correct for any normal direction and consistent with
-      // the RotateMaterialTensors path used for submesh-derived 2D meshes.
+      // For axis-aligned meshes n = [0, 0, 1], giving the (2, 2) entry; this remains
+      // correct for non-axis-aligned cross-sections once the driver has pre-rotated
+      // the config materials into the local frame via RotateMaterialDefinitions.
       const mfem::Vector normal({0.0, 0.0, 1.0});
       auto ProjectNormal = [&normal](const mfem::DenseMatrix &M3) -> double
       { return M3.InnerProduct(normal, normal); };
@@ -448,14 +448,11 @@ mfem::Array<int> MaterialOperator::GetBdrAttributeToMaterial() const
   return bdr_attr_mat;
 }
 
-void MaterialOperator::RotateMaterialTensors(const IoData &iodata, const mfem::Vector &e1,
-                                             const mfem::Vector &e2,
-                                             const mfem::Vector &normal)
+void RotateMaterialDefinitions(std::vector<config::MaterialData> &materials,
+                               const mfem::Vector &e1, const mfem::Vector &e2,
+                               const mfem::Vector &normal)
 {
-  MFEM_VERIFY(mat_muinv.SizeI() == 2,
-              "RotateMaterialTensors should only be called on a 2D MaterialOperator!");
-
-  // Build the 3x2 rotation matrix R = [e1 | e2] mapping local 2D to global 3D.
+  // Build the 3x2 rotation R = [e1 | e2] mapping local 2D → global 3D.
   mfem::DenseMatrix R(3, 2);
   for (int d = 0; d < 3; d++)
   {
@@ -463,124 +460,59 @@ void MaterialOperator::RotateMaterialTensors(const IoData &iodata, const mfem::V
     R(d, 1) = e2(d);
   }
 
-  // Helper: rotate a 3x3 symmetric tensor to 2x2 in-plane via R^T M R and store directly
-  // into a DenseTensor slice. We avoid DenseMatrix::operator= on the non-owning view
-  // returned by DenseTensor::operator()(k), which may not copy data correctly.
-  auto RotateInto = [&R](const mfem::DenseMatrix &M3, mfem::DenseTensor &dst, int k)
+  // Rotate a 3x3 symmetric M into the local frame and encode the result as a
+  // SymmetricMatrixData<3>. The rotated tensor is block-diagonal in the local frame:
+  //   leading 2x2 = R^T M R   (in-plane)
+  //   (2, 2)     = n^T M n    (out-of-plane)
+  //   cross terms 0.
+  // We represent the 2x2 block via its 2x2 eigendecomposition (two unit eigenvectors
+  // lifted to 3D with a trailing 0) and the scalar out-of-plane via (0, 0, 1).
+  auto Rotated = [&](const mfem::DenseMatrix &M3)
   {
-    mfem::DenseMatrix temp(3, 2), result(2, 2);
+    mfem::DenseMatrix temp(3, 2), A(2, 2);
     Mult(M3, R, temp);
-    MultAtB(R, temp, result);
-    for (int di = 0; di < 2; di++)
+    MultAtB(R, temp, A);
+    const double a = A(0, 0), b = 0.5 * (A(0, 1) + A(1, 0)), d = A(1, 1);
+    const double tr = a + d;
+    const double disc = std::sqrt(std::max(0.25 * (a - d) * (a - d) + b * b, 0.0));
+    double s1 = 0.5 * tr + disc, s2 = 0.5 * tr - disc;
+    std::array<double, 2> w1, w2;
+    const double scale = std::abs(a) + std::abs(d) + 1.0;
+    if (std::abs(b) > 1.0e-14 * scale)
     {
-      for (int dj = 0; dj < 2; dj++)
-      {
-        dst(di, dj, k) = result(di, dj);
-      }
+      // Eigenvector for s1: proportional to (b, s1 - a) (or (s1 - d, b)).
+      double nx = s1 - d, ny = b;
+      const double nrm = std::sqrt(nx * nx + ny * ny);
+      w1 = {nx / nrm, ny / nrm};
+      w2 = {-w1[1], w1[0]};
     }
+    else
+    {
+      // Already diagonal; eigenvalues are a and d themselves.
+      s1 = a;
+      s2 = d;
+      w1 = {1.0, 0.0};
+      w2 = {0.0, 1.0};
+    }
+    const double sn = M3.InnerProduct(normal, normal);
+    config::SymmetricMatrixData<3> out(0.0);
+    out.s = {s1, s2, sn};
+    out.v = {{{w1[0], w1[1], 0.0}, {w2[0], w2[1], 0.0}, {0.0, 0.0, 1.0}}};
+    return out;
   };
 
-  // Helper: compute scalar out-of-plane component n^T M n.
-  auto ProjectNormal = [&normal](const mfem::DenseMatrix &M3) -> double
-  { return M3.InnerProduct(normal, normal); };
-
-  const auto &loc_attr = mesh.GetCeedAttributes();
-  int count = 0;
-  for (std::size_t i = 0; i < iodata.domains.materials.size(); i++)
+  for (auto &data : materials)
   {
-    const auto &data = iodata.domains.materials[i];
-    bool has_local = false;
-    for (auto attr : data.attributes)
-    {
-      if (loc_attr.find(attr) != loc_attr.end())
-      {
-        has_local = true;
-        break;
-      }
-    }
-    if (!has_local)
-    {
-      continue;
-    }
+    const mfem::DenseMatrix mu_3d = internal::mat::ToDenseMatrix(data.mu_r);
+    const mfem::DenseMatrix eps_3d = internal::mat::ToDenseMatrix(data.epsilon_r);
+    const mfem::DenseMatrix tandelta_3d = internal::mat::ToDenseMatrix(data.tandelta);
+    const mfem::DenseMatrix sigma_3d = internal::mat::ToDenseMatrix(data.sigma);
 
-    // Reconstruct full 3x3 base tensors from config.
-    mfem::DenseMatrix mu_3d = internal::mat::ToDenseMatrix(data.mu_r);
-    mfem::DenseMatrix muinv_3d(3, 3);
-    mfem::DenseMatrixInverse(mu_3d, true).GetInverseMatrix(muinv_3d);
-    mfem::DenseMatrix eps_3d = internal::mat::ToDenseMatrix(data.epsilon_r);
-    mfem::DenseMatrix tandelta_3d = internal::mat::ToDenseMatrix(data.tandelta);
-    mfem::DenseMatrix sigma_3d = internal::mat::ToDenseMatrix(data.sigma);
-
-    // In-plane inverse permeability: R^T μ^{-1}_{3x3} R.
-    RotateInto(muinv_3d, mat_muinv, count);
-
-    // Scalar μ^{-1} for curl-curl (out-of-plane): n^T μ^{-1}_{3x3} n.
-    mat_muinv_scalar(count)(0, 0) = ProjectNormal(muinv_3d);
-
-    // In-plane permittivity: R^T ε_{3x3} R.
-    RotateInto(eps_3d, mat_epsilon, count);
-
-    // Scalar ε for normal component: n^T ε_{3x3} n.
-    mat_epsilon_scalar(count)(0, 0) = ProjectNormal(eps_3d);
-
-    // Scalar Im{ε} for normal component: -n^T (ε tan(δ))_{3x3} n.
-    {
-      mfem::DenseMatrix epstd(3, 3);
-      Mult(eps_3d, tandelta_3d, epstd);
-      mat_epsilon_imag_scalar(count)(0, 0) = -ProjectNormal(epstd);
-    }
-
-    // Im{ε} = -ε tan(δ), rotated.
-    {
-      mfem::DenseMatrix T(3, 3);
-      Mult(eps_3d, tandelta_3d, T);
-      T *= -1.0;
-      RotateInto(T, mat_epsilon_imag, count);
-    }
-
-    // |ε| = ε √(I + tan(δ) tan(δ)^T), rotated.
-    {
-      mfem::DenseMatrix T(3, 3);
-      MultAAt(tandelta_3d, T);
-      for (int d = 0; d < 3; d++)
-      {
-        T(d, d) += 1.0;
-      }
-      mfem::DenseMatrix eps_abs_3d(3, 3);
-      Mult(eps_3d, linalg::MatrixSqrt(T), eps_abs_3d);
-      RotateInto(eps_abs_3d, mat_epsilon_abs, count);
-    }
-
-    // Z_0^{-1} = √(μ^{-1} ε), rotated.
-    {
-      mfem::DenseMatrix T(3, 3);
-      Mult(muinv_3d, eps_3d, T);
-      RotateInto(linalg::MatrixSqrt(T), mat_invz0, count);
-    }
-
-    // c_0 = √((μ ε)^{-1}), rotated.
-    {
-      mfem::DenseMatrix T(3, 3);
-      Mult(mu_3d, eps_3d, T);
-      RotateInto(linalg::MatrixPow(T, -0.5), mat_c0, count);
-      mat_c0_min[count] = linalg::SingularValueMin(mat_c0(count));
-      mat_c0_max[count] = linalg::SingularValueMax(mat_c0(count));
-    }
-
-    // Electrical conductivity σ, rotated.
-    RotateInto(sigma_3d, mat_sigma, count);
-
-    // London depth: λ^{-2} μ^{-1}, rotated.
-    {
-      double invL2 = std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
-      mfem::DenseMatrix london_3d(muinv_3d);
-      london_3d *= invL2;
-      RotateInto(london_3d, mat_invLondon, count);
-      // Scalar out-of-plane London depth: n^T (λ^{-2} μ^{-1})_{3x3} n.
-      mat_invLondon_scalar(count)(0, 0) = ProjectNormal(london_3d);
-    }
-
-    count++;
+    data.mu_r = Rotated(mu_3d);
+    data.epsilon_r = Rotated(eps_3d);
+    data.tandelta = Rotated(tandelta_3d);
+    data.sigma = Rotated(sigma_3d);
+    // `lambda_L` is a scalar length; unchanged by rotation.
   }
 }
 
