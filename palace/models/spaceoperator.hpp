@@ -100,7 +100,8 @@ private:
   void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &dfbr,
                                      MaterialPropertyCoefficient &dfbi,
                                      MaterialPropertyCoefficient &fbr,
-                                     MaterialPropertyCoefficient &fbi);
+                                     MaterialPropertyCoefficient &fbi,
+                                     bool include_wave_ports = true);
   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
 
@@ -202,6 +203,15 @@ public:
   template <typename OperType>
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
                                                  Operator::DiagonalPolicy diag_policy);
+
+  // As GetExtraSystemMatrix, but optionally excluding the wave-port contribution. Used by
+  // the reduced-order model to apply the wave-port term separately via per-port factored
+  // operators while keeping the slow path for any remaining ω-dependent BCs (e.g.
+  // second-order farfield, surface conductivity).
+  template <typename OperType>
+  std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
+                                                 Operator::DiagonalPolicy diag_policy,
+                                                 bool include_wave_ports);
 
   // Construct the ω-independent boundary mass matrix M^(p)_{μ⁻¹} for a single wave port,
   // returned with PEC essential DoF rows handled by `diag_policy`. The full wave-port

@@ -5,6 +5,7 @@
 #define PALACE_MODELS_ROM_OPERATOR_HPP
 
 #include <complex>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -172,6 +173,18 @@ protected:
   // - Need to recompute RHS1 when excitation index changes (cf excitation_idx_cache).
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   ComplexVector RHS1, RHS2, r;
+
+  // Per-port wave-port boundary mass operators M^(p)_{μ⁻¹} (ω-independent). The
+  // wave-port contribution to A(ω) factors as i·Σ_p kₙ,p(ω)·M^(p)_{μ⁻¹}; storing the
+  // ω-independent operator once and the per-port reduced projection separately lets the
+  // PROM online phase apply the wave-port term without touching any HDM-size object.
+  // Keys are wave-port indices.
+  std::map<int, std::unique_ptr<ComplexOperator>> Mwp_p;
+  std::map<int, Eigen::MatrixXcd> Mwp_p_r;
+  // True iff GetExtraSystemMatrix has any non-wave-port contributors (currently
+  // second-order farfield, surface conductivity, or Floquet Robin terms). Set in the
+  // ctor; controls the slow SolvePROM A2 fallback path.
+  bool has_other_A2 = false;
 
   // System properties: will be set when calling SetExcitationIndex & SolveHDM.
   bool has_A2 = true;
