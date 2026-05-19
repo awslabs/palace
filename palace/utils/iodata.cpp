@@ -286,8 +286,7 @@ void IoData::CheckConfiguration()
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
                 "at least one port (LumpedPort or WavePort) boundary condition!\n");
     MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
-                    (boundaries.auxpec.empty() &&
-                     (boundaries.farfield.empty() || boundaries.farfield.order == 1) &&
+                    ((boundaries.farfield.empty() || boundaries.farfield.order == 1) &&
                      boundaries.conductivity.empty() &&
                      boundaries.rational_impedance.empty()),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) is not "
@@ -297,6 +296,9 @@ void IoData::CheckConfiguration()
     // Wave ports are supported via polynomial fit of the modal dispersion kₙ,p(ω).
     // The fit residual is checked against waveport_synthesis_tol at the end of the
     // greedy phase. The runtime check is in RomOperator::CalculateNormalizedPROMMatrices.
+    // WavePortPEC (boundaries.auxpec) is also supported: it only affects the per-port
+    // cross-section eigenvalue problem (forces the port submesh outer rim to PEC) and
+    // does not change the parent FE system, so synthesis works correctly with it.
   }
   else if (problem.type == ProblemType::EIGENMODE)
   {
