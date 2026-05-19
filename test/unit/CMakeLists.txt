@@ -51,6 +51,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-waveportimpedance.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-waveportoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/regression_helpers.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/regression/cases.cpp
 )
@@ -111,6 +112,7 @@ set_property(
 target_compile_definitions(
   unit-tests
   PRIVATE "PALACE_TEST_DATA_DIR=\"${CMAKE_INSTALL_PREFIX}/share/palace/test/data\""
+  PRIVATE "PALACE_SOURCE_EXAMPLES_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../../examples\""
   PRIVATE $<TARGET_PROPERTY:${LIB_TARGET_NAME},COMPILE_DEFINITIONS>
           $<$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:IntelLLVM>>>:PALACE_WITH_COVERAGE="LLVM">
           $<$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<CXX_COMPILER_ID:GNU>>:PALACE_WITH_COVERAGE="GCC">

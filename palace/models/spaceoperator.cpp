@@ -536,6 +536,40 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   }
 }
 
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
+                                             Operator::DiagonalPolicy diag_policy)
+{
+  // Per-port μ⁻¹ boundary mass matrix, ω-independent — see
+  // WavePortOperator::AddBoundaryMassBdrCoefficients. Pure imaginary part of A2(ω) when
+  // the per-ω scalar i·kₙ(ω) is reattached.
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
+  wave_port_op.AddBoundaryMassBdrCoefficients(port_idx, fb);
+  int empty = fb.empty();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto m =
+      AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+  else
+  {
+    auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+}
+
 template <typename OperType, typename ScalarType>
 std::unique_ptr<OperType>
 SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
@@ -1234,6 +1268,11 @@ template std::unique_ptr<Operator>
 SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy);
+
+template std::unique_ptr<Operator>
+SpaceOperator::GetWavePortBoundaryMassMatrix(int, Operator::DiagonalPolicy);
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetWavePortBoundaryMassMatrix(int, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, const Operator *,
