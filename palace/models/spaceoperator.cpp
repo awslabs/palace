@@ -3,6 +3,7 @@
 
 #include "spaceoperator.hpp"
 
+#include <limits>
 #include <set>
 #include <type_traits>
 #include "fem/bilinearform.hpp"
@@ -11,6 +12,9 @@
 #include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/hypre.hpp"
+#include "linalg/iterative.hpp"
+#include "linalg/jacobi.hpp"
+#include "linalg/ksp.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -559,6 +563,91 @@ auto BuildLevelParOperator<ComplexOperator>(std::unique_ptr<Operator> &&br,
   return std::make_unique<ComplexParOperator>(std::move(br), std::move(bi), fespace);
 }
 
+// L2-project a boundary VectorCoefficient onto the Nedelec tangent-trace space on the
+// port surface: assemble the boundary mass M_bdr on port elements and CG-solve
+// M_bdr * e = f. MFEM's ProjectBdrCoefficientTangent is a DOF-functional interpolant,
+// not an L2 projection, so it returns a different vector (see PR #684 revert).
+//
+// TODO(future): Restrict the system to port-supported DOFs. The current full-T-space
+// solve with DIAG_ONE on non-port DOFs is correct but pays for a trivially-identity
+// block over most unknowns; a port-DOF-only system would be much smaller.
+void ProjectBdrCoefficientViaMassSolve(SumVectorCoefficient &fb, const LumpedPortData &data,
+                                       const MaterialOperator &mat_op,
+                                       FiniteElementSpace &nd_fespace, MPI_Comm comm,
+                                       Vector &result)
+{
+  // Assemble the boundary linear form f = ∫ φ_i · coeff dS (parallel-correct via P^T).
+  mfem::LinearForm rhs(&nd_fespace.Get());
+  rhs.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
+  rhs.UseFastAssembly(false);
+  rhs.UseDevice(false);
+  rhs.Assemble();
+  rhs.UseDevice(true);
+  nd_fespace.GetProlongationMatrix()->MultTranspose(rhs, result);
+
+  // Assemble boundary mass matrix M_bdr = ∫ φ_i · φ_j dS on port surface.
+  MaterialPropertyCoefficient fb_mass(mat_op.MaxCeedBdrAttribute());
+  for (const auto &elem : data.elems)
+  {
+    fb_mass.AddMaterialProperty(mat_op.GetCeedBdrAttributes(elem->GetAttrList()), 1.0);
+  }
+  BilinearForm m_bdr(nd_fespace);
+  if (!fb_mass.empty())
+  {
+    m_bdr.AddBoundaryIntegrator<VectorFEMassIntegrator>(fb_mass);
+  }
+  auto M_bdr = std::make_unique<ParOperator>(m_bdr.Assemble(false), nd_fespace);
+
+  // M_bdr is zero off the port, so set non-port DOFs essential with DIAG_ONE to get a
+  // full-rank SPD system on the full T-space. non_port_tdof_list must outlive M_bdr.
+  mfem::Array<int> attr_list;
+  for (const auto &elem : data.elems)
+  {
+    attr_list.Append(elem->GetAttrList());
+  }
+  const auto &mesh = nd_fespace.GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker;
+  mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
+
+  mfem::Array<int> port_tdof_list;
+  nd_fespace.Get().GetEssentialTrueDofs(attr_marker, port_tdof_list);
+
+  mfem::Array<int> non_port_tdof_list;
+  {
+    std::vector<bool> is_port(nd_fespace.GetTrueVSize(), false);
+    for (int i = 0; i < port_tdof_list.Size(); i++)
+    {
+      is_port[port_tdof_list[i]] = true;
+    }
+    for (int i = 0; i < nd_fespace.GetTrueVSize(); i++)
+    {
+      if (!is_port[i])
+      {
+        non_port_tdof_list.Append(i);
+      }
+    }
+  }
+  M_bdr->SetEssentialTrueDofs(non_port_tdof_list, Operator::DIAG_ONE);
+
+  // CG solve M_bdr * e = f entirely in T-vector space.
+  // TODO: Make solver parameters configurable from IoData, or inherit other settings.
+  auto pcg = std::make_unique<CgSolver<Operator>>(comm, 0);
+  pcg->SetInitialGuess(false);
+  pcg->SetRelTol(1.0e-14);
+  pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+  pcg->SetMaxIter(200);
+  auto jac = std::make_unique<JacobiSmoother<Operator>>(comm);
+  auto ksp = std::make_unique<BaseKspSolver<Operator>>(std::move(pcg), std::move(jac));
+  ksp->SetOperators(*M_bdr, *M_bdr);
+
+  Vector sol(nd_fespace.GetTrueVSize());
+  sol.UseDevice(true);
+  sol = 0.0;
+  ksp->Mult(result, sol);
+  result = sol;
+}
+
 }  // namespace
 
 void SpaceOperator::AssemblePreconditioner(
@@ -878,29 +967,22 @@ void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
   const auto &data = GetLumpedPortOp().GetPort(port_idx);
 
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
-  mfem::Array<int> attr_list;
   for (const auto &elem : data.elems)
   {
     const double Rs = 1.0 * data.GetToSquare(*elem);
     const double Einc = std::sqrt(
         Rs / (elem->GetGeometryWidth() * elem->GetGeometryLength() * data.elems.size()));
     fb.AddCoefficient(elem->GetModeCoefficient(Einc));
-    attr_list.Append(elem->GetAttrList());
   }
 
   Et_primary.SetSize(GetNDSpace().GetTrueVSize());
   Et_primary.UseDevice(true);
   Et_primary = 0.0;
 
-  const auto &mesh = GetNDSpace().GetParMesh();
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  mfem::Array<int> attr_marker;
-  mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
-
-  GridFunction rhs(GetNDSpace());
-  rhs = 0.0;
-  rhs.Real().ProjectBdrCoefficientTangent(fb, attr_marker);
-  GetNDSpace().GetRestrictionMatrix()->Mult(rhs.Real(), Et_primary.Real());
+  // L2-project the port mode onto the ND tangent-trace space; DOF interpolation
+  // gives a different vector and breaks the W-norm = 1 invariant Einc relies on.
+  ProjectBdrCoefficientViaMassSolve(fb, data, mat_op, GetNDSpace(), GetComm(),
+                                    Et_primary.Real());
 
   if (zero_metal)
   {
@@ -915,29 +997,22 @@ void SpaceOperator::GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
   const auto &data = lumped_port_op.GetPort(port_idx);
 
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
-  mfem::Array<int> attr_list;
   for (const auto &elem : data.elems)
   {
     const double Rs = 1.0 * data.GetToSquare(*elem);
     const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
                                         elem->GetGeometryLength() * data.elems.size());
     fb.AddCoefficient(elem->GetModeCoefficient(Hinc));
-    attr_list.Append(elem->GetAttrList());
   }
 
   Htcn_primary.SetSize(GetNDSpace().GetTrueVSize());
   Htcn_primary.UseDevice(true);
   Htcn_primary = 0.0;
 
-  const auto &mesh = GetNDSpace().GetParMesh();
-  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  mfem::Array<int> attr_marker;
-  mesh::AttrToMarker(bdr_attr_max, attr_list, attr_marker);
-
-  GridFunction rhs(GetNDSpace());
-  rhs = 0.0;
-  rhs.Real().ProjectBdrCoefficientTangent(fb, attr_marker);
-  GetNDSpace().GetRestrictionMatrix()->Mult(rhs.Real(), Htcn_primary.Real());
+  // L2-project the port mode onto the ND tangent-trace space; DOF interpolation
+  // gives a different vector and breaks the W-norm = 1 invariant Einc relies on.
+  ProjectBdrCoefficientViaMassSolve(fb, data, mat_op, GetNDSpace(), GetComm(),
+                                    Htcn_primary.Real());
 
   if (zero_metal)
   {

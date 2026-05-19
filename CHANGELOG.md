@@ -40,6 +40,7 @@ The format of this changelog is based on
 
 #### Bug Fixes
 
+  - Revert change of adaptive PROM from interpolation back to projection.
   - Fixed a bug where nonconformal AMR would lead to erroneous results when waveports are present.
     Part of [PR 657](https://github.com/awslabs/palace/pull/657).
   - For `BoundaryMode` simulations on a 3D mesh, the non-dimensionalization
