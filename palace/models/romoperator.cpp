@@ -1229,13 +1229,21 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   capacitance_C =
       std::make_unique<mat_t>(((unit_farad * v_d) * (Mr + Mr_corr) * v_d).eval());
 
-  // C & Cr are optional in UpdatePROM so follow this here. In practice, Cr always exists
-  // since we need dissipative ports for a driven response, but this may change.
-  if (C)
+  // C & Cr are optional in UpdatePROM. In practice Cr exists whenever there is a
+  // dissipative contribution: a lumped resistive port, surface conductivity, or — newly
+  // — a wave port (its polynomial-fit α₁ term contributes to Cr_corr even when no
+  // lumped C matrix exists). Emit R⁻¹ whenever any of these contributes.
+  const bool has_R_inv = C || (Cr_corr.cwiseAbs().maxCoeff() > 0.0);
+  if (has_R_inv)
   {
     auto unit_ohm_inv = 1.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+    Eigen::MatrixXcd Cr_total = Cr_corr;
+    if (C)
+    {
+      Cr_total += Cr;
+    }
     resistance_R_inv =
-        std::make_unique<mat_t>(((unit_ohm_inv * v_d) * (Cr + Cr_corr) * v_d).eval());
+        std::make_unique<mat_t>(((unit_ohm_inv * v_d) * Cr_total * v_d).eval());
   }
 
   return std::make_tuple(std::move(inductance_L_inv), std::move(resistance_R_inv),
@@ -1299,15 +1307,19 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     print_table(capacitance_C->imag(), "rom-C-im.csv");
   }
 
-  // C & Cr are optional in UpdatePROM so follow this here. In practice, Cr always exists
-  // since we need dissipative ports for a driven response, but this may change.
-  if (C)
+  // R⁻¹ is emitted whenever there is a dissipative contribution (lumped resistance,
+  // surface conductivity, or wave-port polynomial-fit α₁). When `C` (the Palace damping
+  // matrix) is null, we still emit if `resistance_R_inv` is non-null — this is the case
+  // for wave-port-only systems where the dissipation comes through Cr_corr.
+  if (resistance_R_inv)
   {
-    if (C->Real())
+    const bool has_real = (resistance_R_inv->real().cwiseAbs().maxCoeff() > 0.0);
+    const bool has_imag = (resistance_R_inv->imag().cwiseAbs().maxCoeff() > 0.0);
+    if (has_real)
     {
       print_table(resistance_R_inv->real(), "rom-Rinv-re.csv");
     }
-    if (C->Imag())
+    if (has_imag)
     {
       print_table(resistance_R_inv->imag(), "rom-Rinv-im.csv");
     }
