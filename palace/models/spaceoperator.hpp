@@ -296,6 +296,14 @@ public:
   void GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx, ComplexVector &Htcn_primary,
                                                 bool zero_metal);
 
+  // Fill vector corresponding to the tangential modal electric field E_t at a wave port,
+  // evaluated at the reference frequency `omega_ref`. Used by the synthesis code path to
+  // seed the basis with a port mode (analogous to GetLumpedPortExcitationVectorPrimaryEt
+  // for lumped ports). Triggers the cross-section EVP for this port if it has not
+  // already been initialised at the requested frequency.
+  void GetWavePortFieldVectorPrimaryEt(int port_idx, double omega_ref,
+                                       ComplexVector &Et_primary, bool zero_metal);
+
   // Construct a constant or randomly initialized vector which satisfies the PEC essential
   // boundary conditions.
   void GetRandomInitialVector(ComplexVector &v);

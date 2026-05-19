@@ -182,6 +182,17 @@ enum class DomainOrthogonalizationWeight : char
   SPACE_OVERLAP
 };
 
+// Regime selection for wave-port circuit synthesis. AUTO selects the polynomial fit
+// when its residual meets the user-supplied tolerance; otherwise falls back to the
+// augmented LC ladder (not yet implemented). POLYNOMIAL forces the polynomial fit.
+// AUGMENTED forces the LC ladder (also pending implementation).
+enum class WavePortSynthesisRegime : char
+{
+  AUTO,
+  POLYNOMIAL,
+  AUGMENTED
+};
+
 // Device used to configure MFEM.
 enum class Device : char
 {

@@ -281,16 +281,20 @@ void IoData::CheckConfiguration()
                     solver.driven.adaptive_tol > 0.0,
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
                 "adaptive frequency sweep (AdaptiveTol > 0.0)!\n");
-    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis || !boundaries.lumpedport.empty(),
-                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
-                "at least one LumpedPort boundary condition!\n");
     MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
-                    (boundaries.auxpec.empty() && boundaries.waveport.empty() &&
+                    !boundaries.lumpedport.empty() || !boundaries.waveport.empty(),
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
+                "at least one port (LumpedPort or WavePort) boundary condition!\n");
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
+                    (boundaries.auxpec.empty() &&
                      (boundaries.farfield.empty() || boundaries.farfield.order == 1) &&
                      boundaries.conductivity.empty()),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) is not "
                 "supported in systems with any of: "
-                "WavePort, Absorbing (order > 1), or Conductivity boundary conditions!\n");
+                "Absorbing (order > 1) or Conductivity boundary conditions!\n");
+    // Wave ports are supported via polynomial fit of the modal dispersion kₙ,p(ω).
+    // The fit residual is checked against waveport_synthesis_tol at the end of the
+    // greedy phase. The runtime check is in RomOperator::CalculateNormalizedPROMMatrices.
   }
   else if (problem.type == ProblemType::EIGENMODE)
   {

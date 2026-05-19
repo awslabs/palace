@@ -1067,6 +1067,49 @@ void SpaceOperator::GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
   }
 }
 
+void SpaceOperator::GetWavePortFieldVectorPrimaryEt(int port_idx, double omega_ref,
+                                                    ComplexVector &Et_primary,
+                                                    bool zero_metal)
+{
+  // Trigger (or refresh) the cross-section EVP at omega_ref. WavePortData::Initialize
+  // caches by omega so calling this is cheap if already initialised.
+  wave_port_op.GetWavePortKn(port_idx, omega_ref);
+  const auto &data = wave_port_op.GetPort(port_idx);
+
+  // Project the modal tangential E-field onto the parent ND space, restricted to the
+  // port boundary attributes. Real and imaginary parts are projected separately, since
+  // the full waveport mode is generally complex.
+  Et_primary.SetSize(GetNDSpace().GetTrueVSize());
+  Et_primary.UseDevice(true);
+  Et_primary = 0.0;
+
+  const auto &mesh = GetNDSpace().GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker;
+  mesh::AttrToMarker(bdr_attr_max, data.GetAttrList(), attr_marker);
+
+  GridFunction rhs_re(GetNDSpace());
+  GridFunction rhs_im(GetNDSpace());
+  rhs_re = 0.0;
+  rhs_im = 0.0;
+  {
+    auto fb_re = data.GetModeFieldCoefficientReal(1.0);
+    rhs_re.Real().ProjectBdrCoefficientTangent(*fb_re, attr_marker);
+  }
+  {
+    auto fb_im = data.GetModeFieldCoefficientImag(1.0);
+    rhs_im.Real().ProjectBdrCoefficientTangent(*fb_im, attr_marker);
+  }
+  GetNDSpace().GetRestrictionMatrix()->Mult(rhs_re.Real(), Et_primary.Real());
+  GetNDSpace().GetRestrictionMatrix()->Mult(rhs_im.Real(), Et_primary.Imag());
+
+  if (zero_metal)
+  {
+    linalg::SetSubVector(Et_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
+    linalg::SetSubVector(Et_primary.Imag(), GetNDDbcTDofLists().back(), 0.0);
+  }
+}
+
 bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1)
 {
   // Assemble the frequency domain excitation term with linear frequency dependence

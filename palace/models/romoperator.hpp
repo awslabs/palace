@@ -182,6 +182,17 @@ protected:
   // SolvePROM A2 fallback path.
   bool has_other_A2 = false;
 
+  // Sweep band [ω_min, ω_max] (nondimensional, rad) captured from iodata at construction
+  // time. Used to (a) sample kₙ,p(ω) for the synthesis polynomial fit, and (b) define the
+  // dense grid over which the fit residual is evaluated.
+  double sweep_omega_min = 0.0;
+  double sweep_omega_max = 0.0;
+  // Synthesis-side polynomial-fit configuration captured from iodata.
+  double waveport_synthesis_tol = 0.0;
+  std::size_t waveport_synthesis_order_max = 4;
+  // Force regime (auto/polynomial/augmented), see utils/labels.hpp.
+  WavePortSynthesisRegime waveport_synthesis_force = WavePortSynthesisRegime::AUTO;
+
   // System properties: will be set when calling SetExcitationIndex & SolveHDM.
   bool has_A2 = true;
   bool has_RHS1 = true;
@@ -275,6 +286,14 @@ public:
   // fields that are orthogonal to boundary overlap and primary fields, which requires
   // custom weight matrix in orthogonality — see weight_op_W.
   void AddLumpedPortModesForSynthesis();
+
+  // As above for wave ports. Adds one basis vector per (port, mode) seeded from the
+  // cross-section EVP at `omega_ref`. The reference frequency should be inside the
+  // sweep band (typically the band centre); the choice rescales the basis vector but
+  // does not change correctness. Mode field is generally complex, so up to two basis
+  // vectors are added per wave port (real + imaginary parts that survive the
+  // orthogonalisation tolerance).
+  void AddWavePortModesForSynthesis(double omega_ref);
 
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
   // "node_label". This will be printed in the header of the csv files when printing PROM

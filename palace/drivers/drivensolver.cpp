@@ -311,6 +311,17 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
     prom_op.AddLumpedPortModesForSynthesis();
+    if (space_op.GetWavePortOp().Size() > 0)
+    {
+      // Use the band centre as the reference frequency for seeding wave-port modes.
+      // The choice rescales the basis vector but does not change correctness; band
+      // centre keeps the modal field representative across the sweep. Mode-shape drift
+      // is small in the regime where the polynomial fit converges (cf. prom-waveport
+      // empirical study), and the augmented state space (regime 2, future work) will
+      // capture larger drift via auxiliary states.
+      const double omega_ref = 0.5 * (omega_sample.front() + omega_sample.back());
+      prom_op.AddWavePortModesForSynthesis(omega_ref);
+    }
   }
 
   // Initialize the basis with samples from the top and bottom of the frequency

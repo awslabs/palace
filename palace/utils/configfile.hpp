@@ -744,6 +744,26 @@ public:
   DomainOrthogonalizationWeight adaptive_circuit_synthesis_domain_orthog =
       DomainOrthogonalizationWeight::ENERGY;
 
+  // Tolerance for the polynomial fit of kₙ,p(ω) when wave ports participate in
+  // circuit synthesis. The metric is the relative error on the per-port wave admittance
+  // Y_p(ω) = kₙ,p(ω)/(iωμ) over a dense ω grid in the sweep band. If the configured
+  // value is non-positive, defaults to adaptive_tol.
+  double waveport_synthesis_tol = 0.0;
+
+  // Maximum polynomial fit order to consider for the wave-port dispersion. Order > 2
+  // can be requested but cannot be absorbed into the existing K + iωC − ω²M synthesis
+  // structure (orders ≥ 3 require the augmented LC-ladder, not yet implemented). Used
+  // mostly as a guard against runaway fit attempts during diagnostics.
+  std::size_t waveport_synthesis_order_max = 4;
+
+  // Force a particular fit regime. AUTO selects polynomial when its residual meets
+  // waveport_synthesis_tol (regime 1), otherwise augmented state space (regime 2,
+  // future). POLYNOMIAL forces the polynomial fit even if the tolerance is not met
+  // (caller assumes responsibility for the larger error). AUGMENTED requests the LC
+  // ladder unconditionally — not yet implemented. See WavePortSynthesisRegime in
+  // utils/labels.hpp.
+  WavePortSynthesisRegime waveport_synthesis_force = WavePortSynthesisRegime::AUTO;
+
   DrivenSolverData() = default;
   DrivenSolverData(const json &driven);
 };

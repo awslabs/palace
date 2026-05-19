@@ -144,6 +144,11 @@ PALACE_ENUM_STRING_DEFINE(DomainOrthogonalizationWeight,
                             "FEBasisIdentity"},
                            {DomainOrthogonalizationWeight::SPACE_OVERLAP, "SpaceOverlap"}})
 
+PALACE_ENUM_STRING_DEFINE(WavePortSynthesisRegime,
+                          {{WavePortSynthesisRegime::AUTO, "Auto"},
+                           {WavePortSynthesisRegime::POLYNOMIAL, "Polynomial"},
+                           {WavePortSynthesisRegime::AUGMENTED, "Augmented"}})
+
 PALACE_ENUM_STRING_DEFINE(Device, {{Device::CPU, "CPU"},
                                    {Device::GPU, "GPU"},
                                    {Device::DEBUG, "Debug"}})
