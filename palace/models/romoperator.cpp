@@ -1115,9 +1115,9 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
     auto fit_omegas = sample_omega(n_fit);
     auto dense_omegas = sample_omega(n_dense);
 
-    bool any_force_polynomial =
+    const bool force_polynomial =
         (waveport_synthesis_force == WavePortSynthesisRegime::POLYNOMIAL);
-    bool any_force_augmented =
+    const bool force_augmented =
         (waveport_synthesis_force == WavePortSynthesisRegime::AUGMENTED);
 
     for (auto &[port_idx, Mp_r] : Mwp_p_r)
@@ -1129,8 +1129,8 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       {
         y_fit(i) = space_op.GetWavePortOp().GetWavePortKn(port_idx, fit_omegas[i]);
       }
-      // LSQ polynomial fit at order 2 in ω. Higher orders won't help here because there
-      // is no place for them in K + iωC − ω²M.
+      // LSQ polynomial fit at order 2 in ω. Higher orders cannot be absorbed into the
+      // K + iωC − ω²M synthesis structure (cf. design notes).
       Eigen::MatrixXd vandermonde(n_fit, 3);
       for (int i = 0; i < n_fit; i++)
       {
@@ -1144,8 +1144,10 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       const double alpha1 = coeffs(1);
       const double alpha2 = coeffs(2);
 
-      // Evaluate residual on the dense grid: relative error on Y_p(ω) = kₙ,p/(ωμ₀).
-      // The 1/(ωμ₀) factor cancels in the ratio, so we use kₙ directly.
+      // Evaluate residual on the dense grid: relative error on the per-port wave
+      // admittance Y_p(ω) = kₙ,p(ω)/(iωμ). The 1/(ωμ) factor cancels in the ratio, so
+      // we use kₙ directly. This is the cheap proxy for the user-visible synthesis
+      // accuracy (no HDM data required).
       double max_rel = 0.0, max_abs_truth = 0.0;
       for (int i = 0; i < n_dense; i++)
       {
@@ -1155,37 +1157,47 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
         max_abs_truth = std::max(max_abs_truth, std::abs(truth));
         max_rel = std::max(max_rel, std::abs(fit - truth));
       }
-      double rel_err = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
+      const double rel_err = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
+      const bool meets_tol = (rel_err <= waveport_synthesis_tol);
 
-      bool meets_tol = (rel_err <= waveport_synthesis_tol);
-      if (any_force_augmented)
+      // Regime auto-dispatch. Today only regime 1 (polynomial absorption into L/R/C) is
+      // implemented; regime 2 (augmented LC ladder) is reserved for cutoff-spanning
+      // ports where the polynomial fit cannot meet the tolerance. Until regime 2 is
+      // implemented, emit a clear warning when the polynomial path is the wrong choice
+      // so the user knows their synthesis is approximate. The dispatch variable is
+      // currently informational; once regime 2 lands it will gate the augmented-state
+      // matrix construction below.
+      WavePortSynthesisRegime regime_used = WavePortSynthesisRegime::POLYNOMIAL;
+      (void)regime_used;  // suppress unused-variable until regime 2 lands
+      if (force_augmented)
       {
         Mpi::Warning(
-            "Wave port {:d}: WavePortSynthesisForce=Augmented requested but augmented "
-            "state-space synthesis is not yet implemented; falling back to polynomial "
-            "fit (rel err {:.3e}, tol {:.3e}).\n",
+            "Wave port {:d}: WavePortSynthesisForce=Augmented requested but the "
+            "augmented state-space (LC-ladder) synthesis is not yet implemented in this "
+            "build. Falling back to polynomial fit (regime 1). Polynomial residual = "
+            "{:.3e}, tol = {:.3e}.\n",
+            port_idx, rel_err, waveport_synthesis_tol);
+      }
+      else if (force_polynomial && !meets_tol)
+      {
+        Mpi::Warning(
+            "Wave port {:d}: WavePortSynthesisForce=Polynomial, but the order-2 fit "
+            "residual {:.3e} exceeds WavePortSynthesisTol={:.3e}. Proceeding with the "
+            "larger error per user request.\n",
             port_idx, rel_err, waveport_synthesis_tol);
       }
       else if (!meets_tol)
       {
-        if (any_force_polynomial)
-        {
-          Mpi::Warning("Wave port {:d}: polynomial fit residual {:.3e} exceeds "
-                       "WavePortSynthesisTol={:.3e}, but Force=Polynomial — proceeding "
-                       "with the larger error.\n",
-                       port_idx, rel_err, waveport_synthesis_tol);
-        }
-        else
-        {
-          // AUTO regime: tolerance not met. Augmented state space would be needed to
-          // recover the cutoff/branch behaviour — emit a clear warning so the user knows
-          // the synthesis output is approximate.
-          Mpi::Warning("Wave port {:d}: polynomial fit residual {:.3e} exceeds "
-                       "WavePortSynthesisTol={:.3e}. Augmented state space (LC ladder) "
-                       "would be required for tighter accuracy but is not yet "
-                       "implemented; proceeding with polynomial fit (regime 1).\n",
-                       port_idx, rel_err, waveport_synthesis_tol);
-        }
+        // AUTO regime, polynomial insufficient. Most likely a closed-waveguide port
+        // operating near a modal cutoff (cf. prom-waveport.md "Case B"). The synthesis
+        // output remains usable but accuracy is bounded by the residual reported here.
+        Mpi::Warning(
+            "Wave port {:d}: order-2 polynomial fit residual {:.3e} exceeds "
+            "WavePortSynthesisTol={:.3e}. This typically indicates a closed-waveguide "
+            "port operating near a modal cutoff. Augmented state-space (LC-ladder) "
+            "synthesis would be needed for tighter accuracy but is not yet implemented; "
+            "proceeding with the order-2 polynomial fit.\n",
+            port_idx, rel_err, waveport_synthesis_tol);
       }
       else
       {
