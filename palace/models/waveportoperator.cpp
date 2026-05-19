@@ -1243,16 +1243,44 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
     {
       continue;
     }
-    const MaterialOperator &mat_op = data.mat_op;
-    MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
-                                           mat_op.GetInvPermeability());
-    muinv_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(data.GetAttrList()));
-    // fbr.AddCoefficient(muinv_func.GetAttributeToMaterial(),
-    //                    muinv_func.GetMaterialProperties(),
-    //                    -data.kn0.imag());
-    fbi.AddCoefficient(muinv_func.GetAttributeToMaterial(),
-                       muinv_func.GetMaterialProperties(), data.kn0.real());
+    AddBoundaryMassBdrCoefficients(idx, fbi, data.kn0.real());
   }
+}
+
+void WavePortOperator::AddBoundaryMassBdrCoefficients(int port_idx,
+                                                      MaterialPropertyCoefficient &fb) const
+{
+  AddBoundaryMassBdrCoefficients(port_idx, fb, 1.0);
+}
+
+void WavePortOperator::AddBoundaryMassBdrCoefficients(int port_idx,
+                                                      MaterialPropertyCoefficient &fb,
+                                                      double scale) const
+{
+  // Per-port μ⁻¹ boundary mass coefficient with optional scalar scaling. Pulling this out
+  // of AddExtraSystemBdrCoefficients gives the reduced-order model access to the
+  // ω-independent operator separately from its per-ω scaling kₙ(ω).
+  auto it = ports.find(port_idx);
+  if (it == ports.end() || !it->second.active)
+  {
+    return;
+  }
+  const auto &data = it->second;
+  const MaterialOperator &mat_op = data.mat_op;
+  MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
+                                         mat_op.GetInvPermeability());
+  muinv_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(data.GetAttrList()));
+  fb.AddCoefficient(muinv_func.GetAttributeToMaterial(), muinv_func.GetMaterialProperties(),
+                    scale);
+}
+
+double WavePortOperator::GetWavePortKn(int port_idx, double omega)
+{
+  auto it = ports.find(port_idx);
+  MFEM_VERIFY(it != ports.end(),
+              "GetWavePortKn called with unknown port index " << port_idx << "!");
+  it->second.Initialize(omega);
+  return it->second.kn0.real();
 }
 
 void WavePortOperator::AddExcitationBdrCoefficients(int excitation_idx, double omega,

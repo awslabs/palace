@@ -192,6 +192,15 @@ public:
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
                                                  Operator::DiagonalPolicy diag_policy);
 
+  // Construct the ω-independent boundary mass matrix M^(p)_{μ⁻¹} for a single wave port,
+  // returned with PEC essential DoF rows handled by `diag_policy`. The full wave-port
+  // contribution to the system matrix at frequency ω is `i·kₙ,p(ω)·M^(p)_{μ⁻¹}` with
+  // `kₙ,p` from `GetWavePortOp().GetWavePortKn(port_idx, ω)`. Returns a null pointer if
+  // the port boundary contributes no DoFs on this rank.
+  template <typename OperType>
+  std::unique_ptr<OperType>
+  GetWavePortBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
+
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:
   //                     A = a0 K + a1 C + a2 (Mr + i Mi) + A2.
