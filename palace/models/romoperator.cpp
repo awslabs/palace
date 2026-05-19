@@ -124,6 +124,71 @@ inline void ProjectVecInternal(MPI_Comm comm, const std::vector<Vector> &V,
   Mpi::GlobalSum(n - n0, br.data() + n0, comm);
 }
 
+// Evaluate the barycentric Lagrange interpolant of a vector-valued function f(ω) at the
+// given ω, given samples {(ωₖ, fₖ)}. The samples map is keyed by ω (sorted by std::map),
+// and the values are fixed-dimension Eigen::VectorXcd (the projected RHS2 in our use).
+//
+// Returns the result by value. If `omega` matches a sample point exactly to round-off,
+// returns that sample directly to avoid 0/0. Tiny sample sets (S=1) reduce to constant
+// extrapolation; S=2 to linear. Weights are recomputed at every call (S² in the number
+// of samples, negligible compared to the linear-in-n cost of the result).
+inline Eigen::VectorXcd
+BarycentricInterpolate(const std::map<double, Eigen::VectorXcd> &samples, double omega)
+{
+  MFEM_VERIFY(!samples.empty(), "BarycentricInterpolate requires at least one sample!");
+  if (samples.size() == 1)
+  {
+    return samples.begin()->second;
+  }
+  // Detect exact-match sample (within a relative tolerance proportional to the spread
+  // of the sample frequencies, since ω⋆ values are inserted from a finite list of
+  // double-precision frequencies and may compare exactly).
+  double omega_max = std::abs(samples.rbegin()->first);
+  double match_tol = 1.0e-14 * std::max(omega_max, 1.0);
+  for (const auto &[w, v] : samples)
+  {
+    if (std::abs(w - omega) <= match_tol)
+    {
+      return v;
+    }
+  }
+  // Recompute barycentric weights wₖ = 1 / Π_{j≠k} (ωₖ − ωⱼ).
+  const std::size_t S = samples.size();
+  std::vector<double> w_pts;
+  std::vector<const Eigen::VectorXcd *> v_pts;
+  w_pts.reserve(S);
+  v_pts.reserve(S);
+  for (const auto &[w, v] : samples)
+  {
+    w_pts.push_back(w);
+    v_pts.push_back(&v);
+  }
+  std::vector<double> bary(S);
+  for (std::size_t k = 0; k < S; k++)
+  {
+    double prod = 1.0;
+    for (std::size_t j = 0; j < S; j++)
+    {
+      if (j == k)
+      {
+        continue;
+      }
+      prod *= (w_pts[k] - w_pts[j]);
+    }
+    bary[k] = 1.0 / prod;
+  }
+  // f(ω) = Σ (wₖ/(ω-ωₖ)) fₖ / Σ (wₖ/(ω-ωₖ)).
+  Eigen::VectorXcd num = Eigen::VectorXcd::Zero(v_pts[0]->size());
+  std::complex<double> denom{0.0, 0.0};
+  for (std::size_t k = 0; k < S; k++)
+  {
+    double coeff = bary[k] / (omega - w_pts[k]);
+    num += coeff * (*v_pts[k]);
+    denom += coeff;
+  }
+  return num / denom;
+}
+
 inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
 {
   // Compute the coefficients of the minimal rational interpolation (MRI):
@@ -558,11 +623,31 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
       1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega + 0.0i);
   ksp->SetOperators(*A, *P);
 
-  // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
+  // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω). When RHS2 is
+  // present (excited wave port), capture an HDM-side copy at this ω⋆ for later
+  // interpolation in SolvePROM. The HDM solution u itself is added to the basis by
+  // UpdatePROM, but the projected RHS2 cannot be reconstructed from u alone, so the
+  // sample must be cached here.
   Mpi::Print("\n");
   if (has_RHS2)
   {
     has_RHS2 = space_op.GetExcitationVector2(excitation_idx, omega, r);
+    if (has_RHS2)
+    {
+      auto &cache = RHS2_hdm_samples[excitation_idx][omega];
+      cache.SetSize(r.Size());
+      cache.UseDevice(true);
+      cache = r;
+      // Project into the current basis (lazy — may be empty if this is the first
+      // sample). Extension for newly added basis vectors happens in UpdatePROM.
+      auto dim_V = V.size();
+      auto &cache_r = RHS2_r_samples[excitation_idx][omega];
+      cache_r.resize(dim_V);
+      if (dim_V > 0)
+      {
+        ProjectVecInternal(space_op.GetComm(), V, cache, cache_r, 0);
+      }
+    }
   }
   else
   {
@@ -751,6 +836,19 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     RHS1r.conservativeResize(dim_V_new);
     ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V_old);
   }
+  // Extend the cached projected RHS2 samples (one per offline (excitation, ω⋆) pair) to
+  // cover the new basis vectors. The underlying HDM-side RHS2 sample is preserved so we
+  // can compute the new entries Vᴴ·RHS2_hdm only for the newly added basis vectors.
+  for (auto &[exc_idx, samples_r] : RHS2_r_samples)
+  {
+    auto &samples_hdm = RHS2_hdm_samples.at(exc_idx);
+    for (auto &[omega_star, sample_r] : samples_r)
+    {
+      auto &sample_hdm = samples_hdm.at(omega_star);
+      sample_r.conservativeResize(dim_V_new);
+      ProjectVecInternal(comm, V, sample_hdm, sample_r, dim_V_old);
+    }
+  }
 }
 
 void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
@@ -816,10 +914,27 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     Ar += std::complex<double>(kn, 0.0) * Mp_r;
   }
 
-  if (has_RHS2)
+  // Wave-port (or any other RHS2) excitation: interpolate the cached projected
+  // RHS2_r(ω⋆) samples in ω rather than re-assembling and re-projecting RHS2 from the
+  // full HDM at each online frequency. The samples were captured during the offline
+  // greedy SolveHDM calls and rolled forward in UpdatePROM. Empty cache means RHS2 was
+  // zero at every offline sample, so it's zero here too.
+  auto rhs2_it = RHS2_r_samples.find(excitation_idx);
+  if (rhs2_it != RHS2_r_samples.end() && !rhs2_it->second.empty())
   {
-    space_op.GetExcitationVector2(excitation_idx, omega, RHS2);
-    ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);
+    auto rhs2_interp = BarycentricInterpolate(rhs2_it->second, omega);
+    if (rhs2_interp.size() == static_cast<long>(V.size()))
+    {
+      RHSr = rhs2_interp;
+    }
+    else
+    {
+      // Stale (basis grew since this excitation was last touched in UpdatePROM and the
+      // cached projection wasn't extended). This shouldn't happen in normal flow but
+      // fall back to a safe direct compute.
+      space_op.GetExcitationVector2(excitation_idx, omega, RHS2);
+      ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);
+    }
   }
   else
   {

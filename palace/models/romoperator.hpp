@@ -187,6 +187,17 @@ protected:
   bool has_RHS1 = true;
   bool has_RHS2 = true;
 
+  // Per-excitation RHS2 sample cache. The wave-port excitation vector RHS2(ω) =
+  // Σ_p∈excited 2ω·(n×Hₙ,p(ω)) does not factor cleanly in ω because the modal field
+  // Hₙ,p(ω) deforms with ω. Cache the HDM RHS2 at every offline sample frequency,
+  // project it into the basis (with rolling extensions in UpdatePROM), and interpolate
+  // the small projected vector RHS2_r(ω) ∈ ℂⁿ in the online phase using barycentric
+  // Lagrange. Samples accumulate across all greedy excitations and persist for the
+  // online sweep over excitations.
+  // Map<excitation_idx, Map<ω⋆, …>>.
+  std::map<int, std::map<double, ComplexVector>> RHS2_hdm_samples;
+  std::map<int, std::map<double, Eigen::VectorXcd>> RHS2_r_samples;
+
   // HDM linear system solver and preconditioner.
   std::unique_ptr<ComplexKspSolver> ksp;
 
