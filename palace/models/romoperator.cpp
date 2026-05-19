@@ -444,6 +444,29 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   MFEM_VERIFY(K && M, "Invalid empty HDM matrices when constructing PROM!");
 
+  // Per-port boundary masses for wave ports (ω-independent). The wave-port contribution
+  // to A(ω) is then assembled at each ω as Σ_p kₙ,p(ω)·M^(p)_{μ⁻¹,r}, where M^(p)_r is
+  // projected onto the basis only when the basis grows. This avoids HDM-scale work in
+  // the online phase. See WavePortOperator::AddBoundaryMassBdrCoefficients and
+  // SpaceOperator::GetWavePortBoundaryMassMatrix.
+  for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
+  {
+    auto Mp = space_op.GetWavePortBoundaryMassMatrix<ComplexOperator>(port_idx,
+                                                                      Operator::DIAG_ZERO);
+    if (Mp)
+    {
+      Mwp_p.emplace(port_idx, std::move(Mp));
+    }
+  }
+  // Detect whether GetExtraSystemMatrix has any non-wave-port contributions (e.g.
+  // second-order farfield, surface conductivity). The probe frequency does not matter
+  // since these BCs are nonzero whenever configured.
+  {
+    auto A2_other_probe = space_op.GetExtraSystemMatrix<ComplexOperator>(
+        1.0, Operator::DIAG_ZERO, /*include_wave_ports=*/false);
+    has_other_A2 = (A2_other_probe != nullptr);
+  }
+
   // Initialize working vector storage.
   r.SetSize(K->Height());
   r.UseDevice(true);
@@ -715,6 +738,14 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   }
   Mr.conservativeResize(dim_V_new, dim_V_new);
   ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old);
+  // Per-port wave-port masses. M^(p)_r is initialized lazily so the map only contains
+  // entries when the per-port HDM operator was non-null on this rank.
+  for (auto &[port_idx, Mp_hdm] : Mwp_p)
+  {
+    auto &Mp_r = Mwp_p_r[port_idx];
+    Mp_r.conservativeResize(dim_V_new, dim_V_new);
+    ProjectMatInternal(comm, V, *Mp_hdm, Mp_r, r, dim_V_old);
+  }
   if (RHS1.Size())
   {
     RHS1r.conservativeResize(dim_V_new);
@@ -747,10 +778,22 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   Ar.resize(V.size(), V.size());
   RHSr.resize(V.size());
 
-  if (has_A2)
+  // Slow path: any remaining ω-nonlinear A2 contributors that we have not factored out.
+  // Currently this is second-order farfield boundaries and surface conductivity. The
+  // wave-port contribution is excluded here and applied below via the per-port factored
+  // form.
+  if (has_other_A2)
   {
-    A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
-    ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0);
+    A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO,
+                                                        /*include_wave_ports=*/false);
+    if (A2)
+    {
+      ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0);
+    }
+    else
+    {
+      Ar.setZero();
+    }
   }
   else
   {
@@ -762,6 +805,16 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     Ar += (1i * omega) * Cr;
   }
   Ar += (-omega * omega) * Mr;
+  // Wave-port contribution: A_wp(ω) = i·Σ_p kₙ,p(ω)·M^(p)_{μ⁻¹}. The Mwp_p HDM
+  // operators are purely imaginary (constructed with the boundary mass in the imaginary
+  // slot), so multiplying their projection by the real scalar kₙ recovers the i·kₙ·M
+  // contribution to the system matrix. The cross-section EVP for kₙ,p(ω) is small
+  // relative to a full HDM solve and is the only ω-dependent work here.
+  for (const auto &[port_idx, Mp_r] : Mwp_p_r)
+  {
+    double kn = space_op.GetWavePortOp().GetWavePortKn(port_idx, omega);
+    Ar += std::complex<double>(kn, 0.0) * Mp_r;
+  }
 
   if (has_RHS2)
   {
