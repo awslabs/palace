@@ -756,6 +756,15 @@ public:
   // mostly as a guard against runaway fit attempts during diagnostics.
   std::size_t waveport_synthesis_order_max = 4;
 
+  // Numerical-rank cutoff applied to the projected wave-port boundary mass M_proj when
+  // building the regime-2 augmented L⁻¹/R⁻¹/C realisation. Singular vectors with
+  // σⱼ / σ_max ≤ this value are dropped; smaller values keep more aux states (and
+  // tighter representation of the M_proj contribution) at the cost of larger
+  // synthesised matrices. Default 1e-6 is conservative — typically caps aux dim at
+  // a few times the basis dim while preserving 6+ digits of accuracy on the augmented
+  // pencil eigenvalues.
+  double waveport_synthesis_rank_tol = 1.0e-6;
+
   // Force a particular fit regime. AUTO selects polynomial when its residual meets
   // waveport_synthesis_tol (regime 1), otherwise augmented state space (regime 2,
   // future). POLYNOMIAL forces the polynomial fit even if the tolerance is not met
