@@ -1015,6 +1015,8 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   waveport_synthesis_tol = driven.value("WavePortSynthesisTol", waveport_synthesis_tol);
   waveport_synthesis_order_max =
       driven.value("WavePortSynthesisOrderMax", waveport_synthesis_order_max);
+  waveport_synthesis_rank_tol =
+      driven.value("WavePortSynthesisRankTol", waveport_synthesis_rank_tol);
   waveport_synthesis_force =
       driven.value("WavePortSynthesisForce", waveport_synthesis_force);
 

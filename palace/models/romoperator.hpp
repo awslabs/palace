@@ -190,6 +190,8 @@ protected:
   // Synthesis-side polynomial-fit configuration captured from iodata.
   double waveport_synthesis_tol = 0.0;
   std::size_t waveport_synthesis_order_max = 4;
+  // Numerical-rank cutoff for the SVD of M_proj when augmenting in regime 2.
+  double waveport_synthesis_rank_tol = 1.0e-6;
   // Force regime (auto/polynomial/augmented), see utils/labels.hpp.
   WavePortSynthesisRegime waveport_synthesis_force = WavePortSynthesisRegime::AUTO;
 
@@ -254,9 +256,21 @@ protected:
   // admittance matrices on the ports. Also does unit conversion to physical (input) units.
   // Define so that 1.0 on port i corresponds to full (un-normalized solution), so you can
   // use Linv, Rinv, C directly.
-  std::tuple<std::unique_ptr<Eigen::MatrixXcd>, std::unique_ptr<Eigen::MatrixXcd>,
-             std::unique_ptr<Eigen::MatrixXcd>>
-  CalculateNormalizedPROMMatrices(const Units &units) const;
+  //
+  // For wave ports whose order-2 polynomial fit residual exceeds the user-set tolerance
+  // (regime 2), the synthesised matrices are enlarged by one auxiliary row/column per
+  // AAA pole used to fit δkₙ(ω). Each aux row carries a synthetic node label of the
+  // form `waveport_<idx>_aux_<k>`. The returned `aux_labels` is the (possibly empty)
+  // list of those new labels in the same order as the rows/columns appended to the
+  // matrices (i.e. each matrix has size (V.size() + aux_labels.size())).
+  struct NormalizedMatrices
+  {
+    std::unique_ptr<Eigen::MatrixXcd> L_inv;
+    std::unique_ptr<Eigen::MatrixXcd> R_inv;  // null if no dissipative contribution
+    std::unique_ptr<Eigen::MatrixXcd> C;
+    std::vector<std::string> aux_labels;
+  };
+  NormalizedMatrices CalculateNormalizedPROMMatrices(const Units &units) const;
 
 public:
   RomOperator(const config::LinearSolverData &linear, int verbose, SpaceOperator &space_op,
