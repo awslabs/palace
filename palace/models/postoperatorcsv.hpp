@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include "fem/errorindicator.hpp"
 #include "models/boundarymodeoperator.hpp"
 #include "models/curlcurloperator.hpp"
@@ -275,18 +276,29 @@ protected:
   void PrintSurfaceQ();
 
   std::optional<TableWithCSVFile> probe_E;
+  std::optional<TableWithCSVFile> probe_En;
+  std::optional<TableWithCSVFile> probe_Bt;
+  std::optional<TableWithCSVFile> probe_B;
+
+  // Shared table init/print for interpolated probe fields. `col_prefix` is the CSV
+  // column-key prefix (e.g. "E"); `label_base` is the base symbol in headers (e.g.
+  // "E" -> "E_x[idx]"). v_dim == 1 drops the dim index from keys and labels, which
+  // is used for scalar probes like En.
+  void InitializeProbeField(std::optional<TableWithCSVFile> &probe_tbl,
+                            const InterpolationOperator &interp_op,
+                            std::string_view file_name, std::string_view col_prefix,
+                            std::string_view label_base, std::string_view unit, int v_dim);
+  void PrintProbeField(std::optional<TableWithCSVFile> &probe_tbl,
+                       const InterpolationOperator &interp_op,
+                       const std::vector<std::complex<double>> &field,
+                       std::string_view col_prefix, int v_dim);
+
   void InitializeProbeE(const InterpolationOperator &interp_op, int v_dim);
   void PrintProbeE(const InterpolationOperator &interp_op, int v_dim);
-
-  std::optional<TableWithCSVFile> probe_En;
   void InitializeProbeEn(const InterpolationOperator &interp_op);
   void PrintProbeEn(const InterpolationOperator &interp_op);
-
-  std::optional<TableWithCSVFile> probe_Bt;
   void InitializeProbeBt(const InterpolationOperator &interp_op, int v_dim);
   void PrintProbeBt(const InterpolationOperator &interp_op, int v_dim);
-
-  std::optional<TableWithCSVFile> probe_B;
   void InitializeProbeB(const InterpolationOperator &interp_op, int v_dim);
   void PrintProbeB(const InterpolationOperator &interp_op, int v_dim);
 

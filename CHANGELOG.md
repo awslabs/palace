@@ -23,11 +23,37 @@ The format of this changelog is based on
   - Enabled voltage and impedance postprocessing for waveport and BoundaryMode by specifying a line
     from ground to conductor, either through mesh coordinates or boundary attribute
     in `config["Boundaries"]["Postprocessing"]["Impedance"]` [PR 657](https://github.com/awslabs/palace/pull/657).
+  - Adaptive mesh refinement is now supported for `BoundaryMode` simulations on a
+    2D submesh extracted from a 3D input mesh.
+    [PR 727](https://github.com/awslabs/palace/pull/727).
+
+#### Interface Changes
+
+  - Box and sphere region refinement (specified under
+    `config["Model"]["Refinement"]["Boxes"]` and
+    `config["Model"]["Refinement"]["Spheres"]`) is now applied to the mesh
+    before partitioning rather than after, and is no longer reflected as a
+    distinct level of the geometric multigrid mesh hierarchy used when
+    `config["Solver"]["Linear"]["MGUseMesh"]` is enabled. The finest solve
+    mesh is unchanged.
+    [PR 727](https://github.com/awslabs/palace/pull/727).
 
 #### Bug Fixes
 
+  - Revert change of adaptive PROM from interpolation back to projection.
   - Fixed a bug where nonconformal AMR would lead to erroneous results when waveports are present.
     Part of [PR 657](https://github.com/awslabs/palace/pull/657).
+  - For `BoundaryMode` simulations on a 3D mesh, the non-dimensionalization
+    reference length `Lc` is now computed from the extracted 2D solve mesh
+    rather than the loaded 3D mesh, so reported scales match the geometry
+    actually being solved.
+    [PR 727](https://github.com/awslabs/palace/pull/727).
+  - Fixed a bug where `BoundaryMode` simulations on a 3D mesh could abort
+    during non-dimensionalization in parallel runs. The 2D submesh extraction
+    was computing its tangent-plane normal against a stale attribute list,
+    collapsing the normal and the reference length `Lc` to zero. Pre-existing
+    from [PR 657](https://github.com/awslabs/palace/pull/657).
+    [PR 727](https://github.com/awslabs/palace/pull/727).
 
 ## [0.16.1] - 2026-04-24
 

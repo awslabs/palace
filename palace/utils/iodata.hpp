@@ -53,8 +53,11 @@ public:
   // Parse command line arguments and override options defaults.
   explicit IoData(const char *filename, bool print);
 
-  // Nondimensionalize input values for use in the solver, including the mesh coordinates.
-  void NondimensionalizeInputs(mfem::ParMesh &mesh);
+  // Nondimensionalize input values and mesh coordinates. Requires model.Lc > 0 (caller
+  // populates it from the config or via mesh::ComputeReferenceLength). `mesh` may be
+  // null on ranks that don't hold the serial mesh; iodata is scaled on every rank. No
+  // MPI.
+  void NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh);
 };
 
 }  // namespace palace

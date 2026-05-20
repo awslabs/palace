@@ -6,14 +6,13 @@
 
 #include <complex>
 #include <memory>
+#include <tuple>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
-#include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
-#include "models/waveportoperator.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -25,73 +24,89 @@ class SurfaceImpedanceOperator;
 
 //
 // Top-level operator for 2D boundary mode analysis, analogous to SpaceOperator for 3D
-// driven/eigenmode problems. Owns the mesh, FE spaces, material operator, boundary
-// operators, and the eigenvalue solver. Constructed from IoData and a mesh (2D directly
-// or 3D with boundary attributes for submesh extraction).
+// problems. Owns FE spaces and boundary operators. The driver is expected to fold any
+// 3D-parent frame information into mesh + iodata before construction.
 //
 class BoundaryModeOperator
 {
 public:
-  // Result of an eigenvalue solve.
-  struct SolveResult
-  {
-    int num_converged;
-    double sigma;
-  };
-
-  BoundaryModeOperator(const IoData &iodata,
-                       const std::vector<std::unique_ptr<Mesh>> &mesh);
-
-  // Solve the eigenvalue problem at the given frequency.
-  SolveResult Solve(double omega, double kn_target);
-
-  // Access converged eigenvalues and eigenvectors.
-  std::complex<double> GetEigenvalue(int i) const;
-  void GetEigenvector(int i, ComplexVector &x) const;
-  double GetError(int i, EigenvalueSolver::ErrorType type) const;
+  // Caller owns mat_op; it must outlive this operator.
+  BoundaryModeOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh,
+                       const MaterialOperator &mat_op);
 
   // Access FE spaces.
   FiniteElementSpace &GetNDSpace() { return nd_fespaces.GetFinestFESpace(); }
   FiniteElementSpace &GetH1Space() { return h1_fespaces.GetFinestFESpace(); }
+  FiniteElementSpace &GetRTSpace() { return rt_fespaces.GetFinestFESpace(); }
   FiniteElementSpace &GetCurlSpace() { return *l2_curl_fespace; }
   const FiniteElementSpace &GetNDSpace() const { return nd_fespaces.GetFinestFESpace(); }
   const FiniteElementSpace &GetH1Space() const { return h1_fespaces.GetFinestFESpace(); }
+  const FiniteElementSpace &GetRTSpace() const { return rt_fespaces.GetFinestFESpace(); }
   const FiniteElementSpace &GetCurlSpace() const { return *l2_curl_fespace; }
 
-  // Access space hierarchies (for error estimation).
+  // Access space hierarchies (for error estimation and multigrid).
+  FiniteElementSpaceHierarchy &GetNDSpaceHierarchy() { return nd_fespaces; }
+  FiniteElementSpaceHierarchy &GetH1SpaceHierarchy() { return h1_fespaces; }
+  FiniteElementSpaceHierarchy &GetH1AuxSpaceHierarchy() { return h1_aux_fespaces; }
+  FiniteElementSpaceHierarchy &GetRTSpaceHierarchy() { return rt_fespaces; }
   const FiniteElementSpaceHierarchy &GetNDSpaceHierarchy() const { return nd_fespaces; }
   const FiniteElementSpaceHierarchy &GetH1SpaceHierarchy() const { return h1_fespaces; }
+  const FiniteElementSpaceHierarchy &GetH1AuxSpaceHierarchy() const
+  {
+    return h1_aux_fespaces;
+  }
+  const FiniteElementSpaceHierarchy &GetRTSpaceHierarchy() const { return rt_fespaces; }
 
-  // Access FE collections.
-  const mfem::FiniteElementCollection *GetNDFEColl() const { return nd_fecs.back().get(); }
-  const mfem::FiniteElementCollection *GetH1FEColl() const { return h1_fecs.back().get(); }
+  // Access per-level essential BC true DOF lists for the block system.
+  std::vector<mfem::Array<int>> &GetNDDbcTDofLists() { return nd_dbc_tdof_lists; }
+  std::vector<mfem::Array<int>> &GetH1DbcTDofLists() { return h1_dbc_tdof_lists; }
+  std::vector<mfem::Array<int>> &GetH1AuxDbcTDofLists() { return h1_aux_dbc_tdof_lists; }
 
-  // Error estimation: add error indicator for a converged mode.
-  void AddErrorIndicator(const ComplexVector &et, const ComplexVector &bz,
-                         double total_domain_energy, ErrorIndicator &indicator);
+  // Access material and boundary operators.
+  const MaterialOperator &GetMaterialOp() const { return mat_op; }
+  SurfaceImpedanceOperator &GetSurfZOp() { return *surf_z_op; }
+  FarfieldBoundaryOperator &GetFarfieldOp() { return *farfield_op; }
+  SurfaceConductivityOperator &GetSurfSigmaOp() { return *surf_sigma_op; }
 
-  // Access material and mesh.
-  const MaterialOperator &GetMaterialOp() const { return *mat_op; }
+  // Frequency-independent block matrices, assembled in the constructor.
+  //   Atn = -(mu^{-1} grad_t u, v)           (ND / H1 gradient coupling)
+  //   Btn = -Atn^T                            (negative transpose coupling)
+  //   Btt = (mu^{-1} u, v)                    (ND mass, positive)
+  const mfem::HypreParMatrix *GetAtnr() const { return Atnr.get(); }
+  const mfem::HypreParMatrix *GetAtni() const { return Atni.get(); }
+  const mfem::HypreParMatrix *GetBtnr() const { return Btnr.get(); }
+  const mfem::HypreParMatrix *GetBtni() const { return Btni.get(); }
+  const mfem::HypreParMatrix *GetBtt() const { return Bttr.get(); }
+
+  using ComplexHypreParMatrix = std::tuple<std::unique_ptr<mfem::HypreParMatrix>,
+                                           std::unique_ptr<mfem::HypreParMatrix>>;
+
+  // Frequency-dependent block assembly on the finest FE spaces, rebuilt each solve.
+  //   Att = mu_cc^{-1}(curl_t u, curl_t v) - omega^2 (eps u, v) - sigma (mu^{-1} u, v)
+  //         + BC-t (impedance, absorbing, conductivity)
+  //   Ann = -(mu^{-1} grad u, grad v) + omega^2 (eps u, v) + BC-n
+  ComplexHypreParMatrix AssembleAtt(double omega, double sigma) const;
+  ComplexHypreParMatrix AssembleAnn(double omega) const;
+
+  // Alias the ND and H1 halves of a pre-loaded eigenvector e0 = [e_t_tilde; e_n_tilde]
+  // as et / en, then apply the Vardapetyan–Demkowicz back-transform en := ẽn / (i·kn)
+  // so en holds the physical En.
+  void ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn, ComplexVector &et,
+                            ComplexVector &en) const;
+
+  // Poynting power P = (1/2) conj(kn)/omega · etᴴ Btt et + i/(2·omega) · etᴴ Atn En for
+  // physical (et, En). Used for mode power normalization and impedance postprocessing.
+  std::complex<double> ComputePoyntingPower(double omega, std::complex<double> kn,
+                                            const ComplexVector &et,
+                                            const ComplexVector &en) const;
+
+  // Access mesh.
   Mesh &GetMesh() { return *solve_mesh; }
   const Mesh &GetMesh() const { return *solve_mesh; }
   MPI_Comm GetComm() const { return solve_mesh->GetComm(); }
 
-  // Access the assembled Btt and Atn matrices (for power normalization).
-  const mfem::HypreParMatrix *GetBtt() const;
-  const mfem::HypreParMatrix *GetAtnr() const;
-  const mfem::HypreParMatrix *GetAtni() const;
-
   // Access solver order.
   int GetSolverOrder() const { return solver_order; }
-
-  // Get submesh projection data (for coordinate transforms).
-  bool IsFromSubmesh() const { return use_submesh; }
-  const mfem::Vector &GetSubmeshCentroid() const { return submesh_centroid; }
-  const mfem::Vector &GetSubmeshE1() const { return submesh_e1; }
-  const mfem::Vector &GetSubmeshE2() const { return submesh_e2; }
-
-  // Access the linear solver (for metadata reporting).
-  const ComplexKspSolver *GetLinearSolver() const;
 
   // True vector sizes.
   int GetNDTrueVSize() const { return nd_fespaces.GetFinestFESpace().GetTrueVSize(); }
@@ -100,51 +115,37 @@ public:
 private:
   const IoData &iodata;
   int solver_order;
-  bool use_submesh;
 
-  // Mesh (owned for submesh case, non-owning pointer for direct 2D).
-  std::unique_ptr<Mesh> owned_mesh;
+  // Non-owning pointer to the caller-owned solve mesh.
   Mesh *solve_mesh;
-
-  // Submesh projection geometry.
-  mfem::Vector submesh_centroid, submesh_e1, submesh_e2, submesh_normal;
 
   // FE collections and space hierarchies.
   std::vector<std::unique_ptr<mfem::ND_FECollection>> nd_fecs;
   std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_fecs;
   std::vector<std::unique_ptr<mfem::H1_FECollection>> h1_aux_fecs;
-  FiniteElementSpaceHierarchy nd_fespaces, h1_fespaces, h1_aux_fespaces;
+  std::vector<std::unique_ptr<mfem::RT_FECollection>> rt_fecs;
+  FiniteElementSpaceHierarchy nd_fespaces, h1_fespaces, h1_aux_fespaces, rt_fespaces;
   std::vector<mfem::Array<int>> nd_dbc_tdof_lists, h1_dbc_tdof_lists, h1_aux_dbc_tdof_lists;
 
   // L2 curl space for B-field in 2D.
   std::unique_ptr<mfem::L2_FECollection> l2_curl_fec;
   std::unique_ptr<FiniteElementSpace> l2_curl_fespace;
 
-  // Material and boundary operators.
-  std::unique_ptr<MaterialOperator> mat_op;
+  // Material and boundary operators. mat_op is caller-owned; the rest are constructed
+  // from mat_op + the solve mesh at construction time.
+  const MaterialOperator &mat_op;
   std::unique_ptr<SurfaceImpedanceOperator> surf_z_op;
   std::unique_ptr<FarfieldBoundaryOperator> farfield_op;
   std::unique_ptr<SurfaceConductivityOperator> surf_sigma_op;
 
+  // Frequency-independent block matrices (assembled in the constructor).
+  std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Btnr, Btni, Bttr;
+
   // DBC attributes.
   mfem::Array<int> dbc_bcs;
 
-  // Multigrid configuration for the eigenvalue solver (must outlive port_data).
-  std::unique_ptr<ModeEigenSolverMultigridConfig> mg_config;
-
-  // Wave port data (owns the eigenvalue solver internally).
-  std::unique_ptr<WavePortData> port_data;
-
-  // Error estimator (owns its FE spaces for flux recovery).
-  std::unique_ptr<mfem::RT_FECollection> rt_fec_est;
-  std::unique_ptr<FiniteElementSpaceHierarchy> nd_fespaces_est, rt_fespaces_est,
-      h1_fespaces_est;
-  std::unique_ptr<BoundaryModeFluxErrorEstimator<ComplexVector>> estimator;
-
-  // Setup helpers.
-  void SetUpMesh(const std::vector<std::unique_ptr<Mesh>> &mesh);
+  // Setup helper.
   void SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>> &mesh);
-  void SetUpEigenSolver();
 };
 
 }  // namespace palace
