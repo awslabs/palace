@@ -2499,6 +2499,12 @@
           "description": "Maximum rational-fit order (number of poles) for the wave-port dispersion fit used by adaptive driven circuit synthesis.",
           "x-palace-advanced": true
         },
+        "WavePortSynthesisRankTol": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Relative singular-value cutoff for the per-pole rank truncation of the auxiliary-state coupling in the Augmented wave-port synthesis regime.",
+          "x-palace-advanced": true
+        },
         "WavePortSynthesisForce": {
           "type": "string",
           "enum": [

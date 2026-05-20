@@ -328,8 +328,10 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-Port-Cube1
   // Test actually adding port primary vectors to PROM.
   prom_op.AddLumpedPortModesForSynthesis();
   CHECK(prom_op.GetReducedDimension() == 1);
-  const auto [inductance_L_inv, resistance_R_inv, capacitance_C] =
-      prom_op.CalculateNormalizedPROMMatrices(iodata.units);
+  const auto _norm = prom_op.CalculateNormalizedPROMMatrices(iodata.units);
+  const auto &inductance_L_inv = _norm.L_inv;
+  const auto &resistance_R_inv = _norm.R_inv;
+  const auto &capacitance_C = _norm.C;
   const auto orth_R = prom_op.GetOrthR();
 
   CHECK(((inductance_L_inv->rows() == 1) && (inductance_L_inv->cols() == 1)));
@@ -512,8 +514,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-Port-Cube32
   prom_op.AddLumpedPortModesForSynthesis();
   auto rom_dim = prom_op.GetReducedDimension();
   REQUIRE(rom_dim == 2);
-  const auto [inductance_L_inv, resistance_R_inv, capacitance_C] =
-      prom_op.CalculateNormalizedPROMMatrices(iodata.units);
+  const auto _norm = prom_op.CalculateNormalizedPROMMatrices(iodata.units);
+  const auto &inductance_L_inv = _norm.L_inv;
+  const auto &resistance_R_inv = _norm.R_inv;
+  const auto &capacitance_C = _norm.C;
   const auto orth_R = prom_op.GetOrthR();
 
   CHECK(((inductance_L_inv->rows() == rom_dim) && (inductance_L_inv->cols() == rom_dim)));
@@ -825,7 +829,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // Only port 2 contributed a basis vector.
   REQUIRE(prom_op.GetReducedDimension() == 1);
 
-  const auto [inductance_L_inv, resistance_R_inv, capacitance_C] =
+  const auto [inductance_L_inv, resistance_R_inv, capacitance_C, aux_labels] =
       prom_op.CalculateNormalizedPROMMatrices(iodata.units);
   REQUIRE(inductance_L_inv->rows() == 1);
   REQUIRE(resistance_R_inv->rows() == 1);
