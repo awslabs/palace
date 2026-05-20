@@ -58,7 +58,7 @@ ConfigureKrylovSolver(const config::LinearSolverData &linear, int verbose, MPI_C
   }
   ksp->SetInitialGuess(linear.initial_guess);
   ksp->SetRelTol(linear.tol);
-  ksp->SetAbsTol(iodata.solver.linear.abs_tol);
+  ksp->SetAbsTol(linear.abs_tol);
   ksp->SetMaxIter(linear.max_it);
 
   // Configure preconditioning side (only for GMRES).
