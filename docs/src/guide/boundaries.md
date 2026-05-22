@@ -50,8 +50,8 @@ boundary conditions, can be applied using the `"Absorbing"` boundary keyword und
 [`config["Boundaries"]`](../config/boundaries.md#boundaries%5B%22Absorbing%22%5D). The
 first-order absorbing boundary condition is a special case of the above impedance boundary
 and is available for eigenmode or frequency or time domain driven simulation types. The
-second-order absorbing boundary condition is only available for frequency domain driven
-and eigenmode simulations.
+second-order absorbing boundary condition is only available for frequency domain
+simulations.
 
 [Perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer)
 boundaries for frequency and time domain electromagnetic formulations are not yet

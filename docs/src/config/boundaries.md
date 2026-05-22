@@ -215,7 +215,7 @@ farfield absorbing boundary conditions.
 
 `"Order" [1]` :  Specify a first- or second-order approximation for the farfield absorbing
 boundary condition. Second-order absorbing boundary conditions are only available for the
-frequency domain driven simulation type.
+frequency domain simulations.
 
 ## `boundaries["Conductivity"]`
 
