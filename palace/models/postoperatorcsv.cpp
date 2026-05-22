@@ -1099,8 +1099,7 @@ template <ProblemType U>
 auto PostOperatorCSV<solver_t>::InitializePortS(const SpaceOperator &fem_op)
     -> std::enable_if_t<U == ProblemType::DRIVEN, void>
 {
-  if (!fem_op.GetPortExcitations().IsMultipleSimple() ||
-      !((fem_op.GetLumpedPortOp().Size() > 0) xor (fem_op.GetWavePortOp().Size() > 0)))
+  if (!fem_op.GetPortExcitations().IsMultipleSimple())
   {
     return;
   }

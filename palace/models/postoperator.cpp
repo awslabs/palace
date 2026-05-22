@@ -1256,71 +1256,68 @@ void PostOperator<solver_t>::MeasureSParameter() const
       return;
     }
 
-    // TODO: Fix Conventions with "generalized S-Paramters" in the Wave port case Deal with
-    // potentially complex power Z_R coming out of the wave-port solve Write up decisions &
-    // conventions in notes.
+    // S-parameter computation supporting mixed lumped and wave port configurations.
+    //
+    // Both port types use unit-power excitation normalization, so raw S-parameters from
+    // GetSParameter() represent power-wave amplitudes and are directly comparable across
+    // port types without additional scaling.
+    //
+    // Same-type scaling (generalized S-parameters):
+    //   Lumped-to-lumped: S_ij = S_raw × √(R_src / R_obs) — accounts for differing port
+    //     impedances (Marks & Williams, "A general waveguide circuit theory," 1992).
+    //   Wave-to-wave: S_ij = S_raw × exp(ikₙ_src d_src) × exp(ikₙ_obs d_obs) — de-embeds
+    //     the propagation phase from the port offset distances.
+    //
+    // Cross-type (lumped-to-wave or wave-to-lumped): no additional scaling is applied. The
+    // raw power-wave S-parameter is reported directly. Wave port modes are power-
+    // normalized without a defined characteristic impedance, so a per-port Z_PV needed
+    // for the full generalized formula S_ij = S_raw × √(Z_src) / √(Z_obs) is not
+    // available. Computing Z_PV from the mode would also require a fine mesh near the
+    // port to be accurate, and using a poorly-resolved Z_PV in the S-parameter
+    // normalization would degrade rather than improve the result.
 
-    // Get information about excited port
+    // Get information about excited port.
     auto [drive_is_simple, drive_port_type, drive_port_idx] =
         fem_op->GetPortExcitations().excitations.at(measurement_cache.ex_idx).IsSimple();
 
-    // Source Port Scale Factor
-    std::complex<double> scale_src_i = 1.0;
-
-    // Is drive a lumped-port or wave-port?
-    if (drive_port_type == PortType::LumpedPort)
+    if (drive_port_type != PortType::LumpedPort && drive_port_type != PortType::WavePort)
     {
-      const LumpedPortData &src_data = fem_op->GetLumpedPortOp().GetPort(drive_port_idx);
-      scale_src_i = std::sqrt(src_data.R);
-    }
-    else if (drive_port_type == PortType::WavePort)
-    {
-      const WavePortData &src_data = fem_op->GetWavePortOp().GetPort(drive_port_idx);
-      // Waveport: de-embedding exp(ikₙᵢ dᵢ)
-      scale_src_i = std::exp(1i * src_data.kn0 * src_data.d_offset);
-    }
-    else
-    {
-      // Scattering Matrix does note makes sense for CurrentPort or CurrentDipole. TODO:
-      // Should this abort? Do excitation verification with better interface?
       return;
     }
 
-    // Iterate over output lumped and wave ports.
+    // Iterate over observation lumped ports.
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
-      // Get previously computed data: should never fail as defined by MeasureLumpedPorts.
       auto &vi = measurement_cache.lumped_port_vi.at(idx);
-      if (idx == drive_port_idx)
+      if (drive_port_type == PortType::LumpedPort && idx == drive_port_idx)
       {
         vi.S.real(vi.S.real() - 1.0);
       }
-      // Generalized S-parameters if the ports are resistive (avoids divide-by-zero).
-      if (std::abs(data.R) > 0.0)
+      if (drive_port_type == PortType::LumpedPort && std::abs(data.R) > 0.0)
       {
-        vi.S *= scale_src_i / std::sqrt(data.R);
+        const LumpedPortData &src_data = fem_op->GetLumpedPortOp().GetPort(drive_port_idx);
+        vi.S *= std::sqrt(src_data.R / data.R);
       }
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
                  fmt::format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
                  Measurement::Magnitude(vi.S), Measurement::Phase(vi.S));
     }
+
+    // Iterate over observation wave ports.
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
     {
-      // Get previously computed data: should never fail as defined by MeasureWavePorts.
       auto &vi = measurement_cache.wave_port_vi.at(idx);
-      if (idx == drive_port_idx)
+      if (drive_port_type == PortType::WavePort && idx == drive_port_idx)
       {
         vi.S.real(vi.S.real() - 1.0);
       }
-
-      // Wave port modes are not normalized to a characteristic impedance so no generalized
-      // S-parameters are available.
-      // TODO: FIX CONVENTIONS HERE.
-
-      // Port de-embedding: S_demb = S exp(ikₙᵢ dᵢ) exp(ikₙⱼ dⱼ) (distance offset is default
-      // 0 unless specified).
-      vi.S *= scale_src_i * std::exp(1i * data.kn0 * data.d_offset);
+      if (drive_port_type == PortType::WavePort)
+      {
+        const WavePortData &src_data = fem_op->GetWavePortOp().GetPort(drive_port_idx);
+        vi.S *= std::exp(1i * src_data.kn0 * src_data.d_offset);
+        vi.S *= std::exp(1i * data.kn0 * data.d_offset);
+      }
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
                  fmt::format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
