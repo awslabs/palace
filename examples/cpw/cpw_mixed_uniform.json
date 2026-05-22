@@ -1,0 +1,128 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/mixed_uniform"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cpw_mixed_0.msh",
+    "L0": 1.0e-6,  // μm
+    "Refinement": {}
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],  // Air
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      },
+      {
+        "Attributes": [2],  // Sapphire
+        "Permeability": [0.99999975, 0.99999975, 0.99999979],
+        "Permittivity": [9.3, 9.3, 11.5],
+        "LossTan": [3.0e-5, 3.0e-5, 8.6e-5],
+        "MaterialAxes": [[0.8, 0.6, 0.0], [-0.6, 0.8, 0.0], [0.0, 0.0, 1.0]]
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [6, 12]  // End boundary at x=0 (PEC around wave ports) + metal trace
+    },
+    "Absorbing":
+    {
+      "Attributes": [11],
+      "Order": 1
+    },
+    "WavePort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [4],
+        "Mode": 1,
+        "Excitation": 1,
+        "Offset": 0.0,
+        "MaxIts": 30,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6
+      },
+      {
+        "Index": 3,
+        "Attributes": [5],
+        "Mode": 1,
+        "Excitation": 3,
+        "Offset": 0.0,
+        "MaxIts": 30,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6,
+        "Verbose": 0
+      }
+    ],
+    "LumpedPort":
+    [
+      {
+        "Index": 2,
+        "R": 56.02,  // Ω, matches CPW characteristic impedance
+        "Excitation": 2,
+        "Elements":
+        [
+          {
+            "Attributes": [7],
+            "Direction": "+Y"
+          },
+          {
+            "Attributes": [8],
+            "Direction": "-Y"
+          }
+        ]
+      },
+      {
+        "Index": 4,
+        "R": 56.02,
+        "Excitation": 4,
+        "Elements":
+        [
+          {
+            "Attributes": [9],
+            "Direction": "+Y"
+          },
+          {
+            "Attributes": [10],
+            "Direction": "-Y"
+          }
+        ]
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven":
+    {
+      "Samples":
+      [
+        {
+          "Type": "Linear",
+          "MinFreq": 2.0,  // GHz
+          "MaxFreq": 32.0,  // GHz
+          "FreqStep": 6.0  // GHz
+        }
+      ]
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 200
+    }
+  }
+}
