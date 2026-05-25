@@ -373,6 +373,21 @@ void IoData::CheckConfiguration()
                    "with order > 1!\n");
     }
   }
+  else if (problem.type == ProblemType::BOUNDARYMODE)
+  {
+    MFEM_VERIFY(solver.boundary_mode.n >= 1,
+                "BoundaryMode solver requires at least one mode (n >= 1)!");
+    if (!boundaries.lumpedport.empty())
+    {
+      Mpi::Warning("BoundaryMode problem type does not support lumped port boundary "
+                   "conditions!\n");
+    }
+    if (!boundaries.current.empty())
+    {
+      Mpi::Warning(
+          "BoundaryMode problem type does not support surface current excitation!\n");
+    }
+  }
 
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
@@ -441,11 +456,28 @@ void IoData::CheckConfiguration()
       solver.linear.initial_guess = 0;
     }
   }
+  if (solver.linear.mg_max_levels < 0)
+  {
+    if (problem.type == ProblemType::BOUNDARYMODE)
+    {
+      // Default off for 2D boundary mode analysis (user can enable with MGMaxLevels > 1).
+      solver.linear.mg_max_levels = 1;
+    }
+    else
+    {
+      solver.linear.mg_max_levels = 100;
+    }
+  }
   if (solver.linear.pc_mat_shifted < 0)
   {
     if (problem.type == ProblemType::DRIVEN && solver.linear.type == LinearSolver::AMS)
     {
-      // Default true only driven simulations using AMS (false for most cases).
+      // Default true for driven simulations using AMS.
+      solver.linear.pc_mat_shifted = 1;
+    }
+    else if (problem.type == ProblemType::BOUNDARYMODE && solver.linear.mg_max_levels > 1)
+    {
+      // Default true for 2D boundary mode with multigrid (shift-and-invert near-zero mass).
       solver.linear.pc_mat_shifted = 1;
     }
     else
@@ -533,24 +565,18 @@ void IoData::CheckConfiguration()
   fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;
 }
 
-void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
+void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
 {
-  // Nondimensionalization of the equations is based on a given length Lc in [m], typically
-  // the largest domain dimension. Configuration file lengths and the mesh coordinates are
-  // provided with units of model.L0 x [m].
+  // Lc is the reference length in [m], typically the largest domain dimension. Mesh
+  // coordinates and iodata lengths are both in units of model.L0 [m]. No MPI — Lc must
+  // already be set on all ranks (caller uses mesh::ComputeReferenceLength when needed).
   MFEM_VERIFY(!init, "NondimensionalizeInputs should only be called once!");
+  MFEM_VERIFY(model.Lc > 0.0,
+              "NondimensionalizeInputs requires model.Lc > 0.0; set it from the config "
+              "or call mesh::ComputeReferenceLength before this hook.");
   init = true;
 
-  // Calculate the reference length and time. A user specified model.Lc is in mesh length
-  // units.
-  if (model.Lc <= 0.0)
-  {
-    mfem::Vector bbmin, bbmax;
-    mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
-    bbmax -= bbmin;
-    model.Lc = *std::max_element(bbmax.begin(), bbmax.end());
-  }
-  // Define units now mesh length set. Note: In model field Lc is measured in units of L0.
+  // In the model field Lc is measured in units of L0.
   units = Units(model.L0, model.Lc * model.L0);
 
   // Mesh refinement parameters.
@@ -593,7 +619,7 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   // Floquet periodic boundaries.
   config::Nondimensionalize(units, boundaries.periodic);
 
-  // Wave port offset distance.
+  // Wave port offset distance and voltage path coordinates.
   for (auto &[idx, data] : boundaries.waveport)
   {
     config::Nondimensionalize(units, data);
@@ -603,6 +629,37 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   for (auto &[idx, data] : boundaries.postpro.flux)
   {
     config::Nondimensionalize(units, data);
+  }
+
+  // Mode impedance voltage and current path coordinates.
+  for (auto &[idx, data] : boundaries.postpro.impedance)
+  {
+    for (auto &pt : data.voltage_path)
+    {
+      for (auto &v : pt)
+      {
+        v /= units.GetMeshLengthRelativeScale();
+      }
+    }
+    for (auto &pt : data.current_path)
+    {
+      for (auto &v : pt)
+      {
+        v /= units.GetMeshLengthRelativeScale();
+      }
+    }
+  }
+
+  // Mode voltage path coordinates.
+  for (auto &[idx, data] : boundaries.postpro.voltage)
+  {
+    for (auto &pt : data.voltage_path)
+    {
+      for (auto &v : pt)
+      {
+        v /= units.GetMeshLengthRelativeScale();
+      }
+    }
   }
 
   // Dielectric interface thickness.
@@ -617,12 +674,15 @@ void IoData::NondimensionalizeInputs(mfem::ParMesh &mesh)
   config::Nondimensionalize(units, solver.driven);
   config::Nondimensionalize(units, solver.transient);
 
-  // Scale mesh vertices for correct nondimensionalization.
-  mesh::NondimensionalizeMesh(mesh, units.GetMeshLengthRelativeScale());
+  // Scale the serial mesh vertices on ranks that hold one. The ParMesh constructed later
+  // by mesh::Partition inherits the scaled coordinates.
+  if (mesh)
+  {
+    mesh::NondimensionalizeMesh(*mesh, units.GetMeshLengthRelativeScale());
+  }
 
   // Print some information.
-  Mpi::Print(mesh.GetComm(),
-             "\nCharacteristic length and time scales:\n Lc = {:.3e} m, tc = {:.3e} ns\n",
+  Mpi::Print("\nCharacteristic length and time scales:\n Lc = {:.3e} m, tc = {:.3e} ns\n",
              units.GetScaleFactor<Units::ValueType::LENGTH>(),
              units.GetScaleFactor<Units::ValueType::TIME>());
 }

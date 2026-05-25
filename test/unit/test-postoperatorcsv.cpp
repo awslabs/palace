@@ -42,8 +42,13 @@ std::vector<std::unique_ptr<Mesh>> load_mesh(MPI_Comm &world_comm_, IoData &ioda
   std::vector<std::unique_ptr<Mesh>> mesh_;
   {
     std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
-    mfem_mesh.push_back(mesh::ReadMesh(iodata_, world_comm_));
-    iodata_.NondimensionalizeInputs(*mfem_mesh[0]);
+    auto smesh = mesh::Load(iodata_, world_comm_);
+    if (iodata_.model.Lc <= 0.0)
+    {
+      iodata_.model.Lc = mesh::ComputeReferenceLength(smesh, world_comm_);
+    }
+    iodata_.NondimensionalizeInputs(smesh);
+    mfem_mesh.push_back(mesh::Partition(iodata_, std::move(smesh), world_comm_));
     mesh::RefineMesh(iodata_, mfem_mesh);
     for (auto &m : mfem_mesh)
     {

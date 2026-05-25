@@ -24,7 +24,9 @@
 PalacePragmaDiagnosticPush
 PalacePragmaDiagnosticDisableUnused
 
+#include "fem/qfunctions/22/hcurlhdiv_error_22_qf.h"
 #include "fem/qfunctions/hcurlhdiv_error_qf.h"
+#include "fem/qfunctions/l2h1_error_qf.h"
 
 PalacePragmaDiagnosticPop
 
@@ -111,10 +113,22 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
 {
   BlockTimer bt(Timer::CONSTRUCT_ESTIMATOR);
   const auto &smooth_fespace = smooth_fespaces.GetFinestFESpace();
+  // Detect scalar FE spaces (H1, L2) vs vector FE spaces (ND, RT) based on map type.
+  const int dim = smooth_fespace.Dimension();
+  const auto map_type = smooth_fespace.GetFEColl().GetMapType(dim);
+  const bool scalar_flux =
+      (map_type == mfem::FiniteElement::VALUE || map_type == mfem::FiniteElement::INTEGRAL);
   {
     constexpr bool skip_zeros = false;
     BilinearForm m(smooth_fespace);
-    m.AddDomainIntegrator<VectorFEMassIntegrator>();
+    if (scalar_flux)
+    {
+      m.AddDomainIntegrator<MassIntegrator>();
+    }
+    else
+    {
+      m.AddDomainIntegrator<VectorFEMassIntegrator>();
+    }
     if (!use_mg)
     {
       M = BuildLevelParOperator<OperType>(m.Assemble(skip_zeros), smooth_fespace);
@@ -135,7 +149,14 @@ FluxProjector<VecType>::FluxProjector(const MaterialPropertyCoefficient &coeff,
   {
     // Flux operator is always partially assembled.
     BilinearForm flux(rhs_fespace, smooth_fespace);
-    flux.AddDomainIntegrator<VectorFEMassIntegrator>(coeff);
+    if (scalar_flux)
+    {
+      flux.AddDomainIntegrator<MassIntegrator>(coeff);
+    }
+    else
+    {
+      flux.AddDomainIntegrator<VectorFEMassIntegrator>(coeff);
+    }
     Flux = BuildLevelParOperator<OperType>(flux.PartialAssemble(), rhs_fespace,
                                            smooth_fespace);
   }
@@ -373,7 +394,7 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
     bool use_mg)
   : rt_fespace(rt_fespace), nd_fespace(nd_fespaces.GetFinestFESpace()),
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
-                                          mat_op.GetInvPermeability()),
+                                          mat_op.GetCurlCurlInvPermeability()),
               nd_fespaces, rt_fespace, tol, max_it, print, use_mg),
     integ_op(nd_fespace.GetMesh().GetNE(), rt_fespace.GetVSize()),
     B_gf(rt_fespace.GetVSize()), H(nd_fespace.GetTrueVSize()), H_gf(nd_fespace.GetVSize())
@@ -425,20 +446,30 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
       CeedBasis nd_basis = nd_fespace.GetCeedBasis(ceed, geom);
 
       // Construct coefficient for discontinuous flux, then smooth flux.
-      auto mat_invsqrtmu = linalg::MatrixSqrt(mat_op.GetInvPermeability());
-      auto mat_sqrtmu = linalg::MatrixPow(mat_op.GetInvPermeability(), -0.5);
+      // In 2D, the curl is scalar so we use scalar (1x1) √μ⁻¹ and √μ coefficients.
+      const bool scalar_curl = (mesh.Dimension() == 2);
+      const auto &muinv_tensor =
+          scalar_curl ? mat_op.GetCurlCurlInvPermeability() : mat_op.GetInvPermeability();
+      auto mat_invsqrtmu = linalg::MatrixSqrt(muinv_tensor);
+      auto mat_sqrtmu = linalg::MatrixPow(muinv_tensor, -0.5);
       MaterialPropertyCoefficient invsqrtmu_func(mat_op.GetAttributeToMaterial(),
                                                  mat_invsqrtmu);
       MaterialPropertyCoefficient sqrtmu_func(mat_op.GetAttributeToMaterial(), mat_sqrtmu);
-      auto ctx = ceed::PopulateCoefficientContext(mesh.SpaceDimension(), &invsqrtmu_func,
-                                                  mesh.SpaceDimension(), &sqrtmu_func);
+      const int coeff_dim = scalar_curl ? 1 : mesh.SpaceDimension();
+      auto ctx = ceed::PopulateCoefficientContext(coeff_dim, &invsqrtmu_func, coeff_dim,
+                                                  &sqrtmu_func);
 
       // Assemble the libCEED operator. Inputs: B (for discontinuous flux), then smooth
-      // flux. Currently only supports 3D, since curl in 2D requires special treatment.
+      // flux.
       ceed::CeedQFunctionInfo info;
       info.assemble_q_data = false;
       switch (10 * mesh.SpaceDimension() + mesh.Dimension())
       {
+        case 22:
+          // 2D scalar curl: L2 (B) × H1 (smooth H) error
+          info.apply_qf = f_apply_l2h1_error;
+          info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_l2h1_error_loc);
+          break;
         case 33:
           info.apply_qf = f_apply_hdivhcurl_error_33;
           info.apply_qf_path = PalaceQFunctionRelativePath(f_apply_hdivhcurl_error_33_loc);
@@ -502,9 +533,38 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
       ComputeErrorEstimates(B, curl_estimator.B_gf, curl_estimator.H, curl_estimator.H_gf,
                             curl_estimator.rt_fespace, curl_estimator.nd_fespace,
                             curl_estimator.projector, curl_estimator.integ_op);
-  grad_estimates += curl_estimates;  // Sum of squares
+  grad_estimates += curl_estimates;
   linalg::Sqrt(grad_estimates,
                (Et > 0.0) ? 0.5 / Et : 1.0);  // Correct factor of 1/2 in energy
+  indicator.AddIndicator(grad_estimates);
+}
+
+template <typename VecType>
+BoundaryModeFluxErrorEstimator<VecType>::BoundaryModeFluxErrorEstimator(
+    const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
+    FiniteElementSpaceHierarchy &rt_fespaces, FiniteElementSpace &curl_fespace,
+    FiniteElementSpaceHierarchy &h1_fespaces, double tol, int max_it, int print,
+    bool use_mg)
+  : grad_estimator(mat_op, nd_fespaces.GetFinestFESpace(), rt_fespaces, tol, max_it, print,
+                   use_mg),
+    curl_estimator(mat_op, curl_fespace, h1_fespaces, tol, max_it, print, use_mg)
+{
+}
+
+template <typename VecType>
+void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
+    const VecType &E, const VecType &B, double Et, ErrorIndicator &indicator) const
+{
+  auto grad_estimates =
+      ComputeErrorEstimates(E, grad_estimator.E_gf, grad_estimator.D, grad_estimator.D_gf,
+                            grad_estimator.nd_fespace, grad_estimator.rt_fespace,
+                            grad_estimator.projector, grad_estimator.integ_op);
+  auto curl_estimates =
+      ComputeErrorEstimates(B, curl_estimator.B_gf, curl_estimator.H, curl_estimator.H_gf,
+                            curl_estimator.rt_fespace, curl_estimator.nd_fespace,
+                            curl_estimator.projector, curl_estimator.integ_op);
+  grad_estimates += curl_estimates;
+  linalg::Sqrt(grad_estimates, (Et > 0.0) ? 0.5 / Et : 1.0);
   indicator.AddIndicator(grad_estimates);
 }
 
@@ -516,5 +576,7 @@ template class CurlFluxErrorEstimator<Vector>;
 template class CurlFluxErrorEstimator<ComplexVector>;
 template class TimeDependentFluxErrorEstimator<Vector>;
 template class TimeDependentFluxErrorEstimator<ComplexVector>;
+template class BoundaryModeFluxErrorEstimator<Vector>;
+template class BoundaryModeFluxErrorEstimator<ComplexVector>;
 
 }  // namespace palace

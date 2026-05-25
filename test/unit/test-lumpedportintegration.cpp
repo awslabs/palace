@@ -38,8 +38,13 @@ auto LoadScaleParMesh(IoData &iodata, MPI_Comm world_comm)
   std::vector<std::unique_ptr<Mesh>> mesh_;
   {
     std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
-    mfem_mesh.push_back(mesh::ReadMesh(iodata, world_comm));
-    iodata.NondimensionalizeInputs(*mfem_mesh[0]);
+    auto smesh = mesh::Load(iodata, world_comm);
+    if (iodata.model.Lc <= 0.0)
+    {
+      iodata.model.Lc = mesh::ComputeReferenceLength(smesh, world_comm);
+    }
+    iodata.NondimensionalizeInputs(smesh);
+    mfem_mesh.push_back(mesh::Partition(iodata, std::move(smesh), world_comm));
     mesh::RefineMesh(iodata, mfem_mesh);
     for (auto &m : mfem_mesh)
     {
@@ -174,9 +179,11 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
     // Can do exact equals below as axis alignment of port means that there should be
     // strictly no double rounding.
 
-    CHECK(bbox.Lengths().size() == 3);
-    std::array<double, 3> bbox_lengths_out = {length_dx_m, length_dx_m, 0.0};
-    CHECK(bbox.Lengths() == bbox_lengths_out);
+    auto bbox_lengths = bbox.Lengths();
+    CHECK(bbox_lengths.Size() == 3);
+    CHECK(bbox_lengths(0) == length_dx_m);
+    CHECK(bbox_lengths(1) == length_dx_m);
+    CHECK(bbox_lengths(2) == 0.0);
   }
 
   mfem::Array<int> attr_marker_loc;

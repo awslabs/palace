@@ -140,12 +140,22 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
   }
 }
 
+void BaseSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
+                            MPI_Comm comm) const
+{
+  if (!(iodata.model.Lc > 0.0))
+  {
+    iodata.model.Lc = mesh::ComputeReferenceLength(smesh, comm);
+  }
+  iodata.NondimensionalizeInputs(smesh);
+}
+
 void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   const auto &refinement = iodata.model.refinement;
   const bool use_amr = [&]()
   {
-    if (refinement.max_it > 0 && dynamic_cast<const TransientSolver *>(this) != nullptr)
+    if (refinement.max_it > 0 && iodata.problem.type == ProblemType::TRANSIENT)
     {
       Mpi::Warning("AMR is not currently supported for transient simulations!\n");
       return false;
@@ -177,7 +187,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
   // Main AMR loop.
   int it = 0;
-  while (!ExhaustedResources(it, ntdof) && err >= refinement.tol)
+  while (use_amr && !ExhaustedResources(it, ntdof) && err >= refinement.tol)
   {
     // Print timing summary.
     Mpi::Print(comm, "\nCumulative timing statistics:\n");

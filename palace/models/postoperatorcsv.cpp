@@ -10,6 +10,8 @@
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
+#include "models/waveportoperator.hpp"
+#include "utils/constants.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -89,6 +91,10 @@ Measurement Measurement::Dimensionalize(const Units &units,
 
   measurement_cache.probe_E_field = units.Dimensionalize<Units::ValueType::FIELD_E>(
       nondim_measurement_cache.probe_E_field);
+  measurement_cache.probe_En_field = units.Dimensionalize<Units::ValueType::FIELD_E>(
+      nondim_measurement_cache.probe_En_field);
+  measurement_cache.probe_Bt_field = units.Dimensionalize<Units::ValueType::FIELD_B>(
+      nondim_measurement_cache.probe_Bt_field);
   measurement_cache.probe_B_field = units.Dimensionalize<Units::ValueType::FIELD_B>(
       nondim_measurement_cache.probe_B_field);
 
@@ -121,6 +127,33 @@ Measurement Measurement::Dimensionalize(const Units &units,
       nondim_measurement_cache.farfield.thetaphis;  // NONE
   measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
       nondim_measurement_cache.farfield.E_field);
+
+  // Mode analysis data: stored nondimensional, dimensionalize here.
+  measurement_cache.mode_data = nondim_measurement_cache.mode_data;
+  {
+    const double kc = 1.0 / units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+    measurement_cache.mode_data.kn *= kc;  // nondim → 1/m
+    // n_eff is dimensionless, no conversion needed.
+
+    const double V_scale = units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
+    for (auto &[idx, vr] : measurement_cache.mode_data.voltage)
+    {
+      vr.V *= V_scale;  // nondim → V
+    }
+
+    for (auto &[idx, result] : measurement_cache.mode_data.impedance)
+    {
+      const double n_eff_re = measurement_cache.mode_data.n_eff.real();
+      if (result.has_impedance)
+      {
+        result.Z0 *= electromagnetics::Z0_;  // nondim → Ohm
+      }
+      if (result.has_vi_impedance)
+      {
+        result.Z_VI *= electromagnetics::Z0_;  // nondim → Ohm
+      }
+    }
+  }
 
   return measurement_cache;
 }
@@ -199,6 +232,10 @@ Measurement Measurement::Nondimensionalize(const Units &units,
 
   measurement_cache.probe_E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
       dim_measurement_cache.probe_E_field);
+  measurement_cache.probe_En_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
+      dim_measurement_cache.probe_En_field);
+  measurement_cache.probe_Bt_field = units.Nondimensionalize<Units::ValueType::FIELD_B>(
+      dim_measurement_cache.probe_Bt_field);
   measurement_cache.probe_B_field = units.Nondimensionalize<Units::ValueType::FIELD_B>(
       dim_measurement_cache.probe_B_field);
 
@@ -231,6 +268,9 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   measurement_cache.farfield.E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
       dim_measurement_cache.farfield.E_field);
 
+  // Mode analysis data is already in SI units (computed dimensional).
+  measurement_cache.mode_data = dim_measurement_cache.mode_data;  // NONE
+
   return measurement_cache;
 }
 
@@ -262,6 +302,7 @@ std::string LabelIndexCol(const ProblemType solver_t)
     case ProblemType::DRIVEN:
       return "f (GHz)";
     case ProblemType::EIGENMODE:
+    case ProblemType::BOUNDARYMODE:
       return "m";
     case ProblemType::ELECTROSTATIC:
     case ProblemType::MAGNETOSTATIC:
@@ -282,6 +323,7 @@ int PrecIndexCol(const ProblemType solver_t)
     case ProblemType::EIGENMODE:
     case ProblemType::ELECTROSTATIC:
     case ProblemType::MAGNETOSTATIC:
+    case ProblemType::BOUNDARYMODE:
       return 2;
     default:
       return 8;
@@ -680,22 +722,23 @@ auto PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_p
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::InitializeProbeE(const InterpolationOperator &interp_op)
+void PostOperatorCSV<solver_t>::InitializeProbeField(
+    std::optional<TableWithCSVFile> &probe_tbl, const InterpolationOperator &interp_op,
+    std::string_view file_name, std::string_view col_prefix, std::string_view label_base,
+    std::string_view unit, int v_dim)
 {
-  if (!(interp_op.GetProbes().size() > 0) || !HasEGridFunction<solver_t>())
+  if (!(interp_op.GetProbes().size() > 0) || v_dim <= 0)
   {
     return;
   }
-
-  probe_E = TableWithCSVFile(post_dir / "probe-E.csv", reload_table);
-
-  Table t;  // Define table locally first due to potential reload.
-  auto v_dim = interp_op.GetVDim();
-  int scale_col = (HasComplexGridFunction<solver_t>() ? 2 : 1) * v_dim;
-  auto nr_expected_measurement_cols =
+  probe_tbl = TableWithCSVFile(post_dir / std::string(file_name), reload_table);
+  Table t;
+  const int scale_col = (HasComplexGridFunction<solver_t>() ? 2 : 1) * v_dim;
+  const auto nr_expected_measurement_cols =
       1 + ex_idx_v_all.size() * scale_col * interp_op.GetProbes().size();
   t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   t.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
+  const bool scalar = (v_dim == 1);
   for (const auto ex_idx : ex_idx_v_all)
   {
     std::string ex_label = HasSingleExIdx() ? "" : fmt::format("[{}]", ex_idx);
@@ -703,136 +746,125 @@ void PostOperatorCSV<solver_t>::InitializeProbeE(const InterpolationOperator &in
     {
       for (int i_dim = 0; i_dim < v_dim; i_dim++)
       {
+        auto col_key = scalar ? fmt::format("{}_{}_{}", col_prefix, idx, ex_idx)
+                              : fmt::format("{}{}_{}_{}", col_prefix, i_dim, idx, ex_idx);
+        auto label = scalar ? std::string(label_base)
+                            : fmt::format("{}_{}", label_base, DimLabel(i_dim));
         if constexpr (HasComplexGridFunction<solver_t>())
         {
-          t.insert(fmt::format("E{}_{}_{}_re", i_dim, idx, ex_idx),
-                   fmt::format("Re{{E_{}[{}]{}}} (V/m)", DimLabel(i_dim), idx, ex_label),
-                   ex_idx);
-          t.insert(fmt::format("E{}_{}_{}_im", i_dim, idx, ex_idx),
-                   fmt::format("Im{{E_{}[{}]{}}} (V/m)", DimLabel(i_dim), idx, ex_label),
-                   ex_idx);
+          t.insert(col_key + "_re",
+                   fmt::format("Re{{{}[{}]{}}} ({})", label, idx, ex_label, unit), ex_idx);
+          t.insert(col_key + "_im",
+                   fmt::format("Im{{{}[{}]{}}} ({})", label, idx, ex_label, unit), ex_idx);
         }
         else
         {
-          t.insert(fmt::format("E{}_{}_{}_re", i_dim, idx, ex_idx),
-                   fmt::format("E_{}[{}]{} (V/m)", DimLabel(i_dim), idx, ex_label), ex_idx);
+          t.insert(col_key + "_re",
+                   fmt::format("{}[{}]{} ({})", label, idx, ex_label, unit), ex_idx);
         }
       }
     }
   }
-  MoveTableValidateReload(*probe_E, std::move(t));
+  MoveTableValidateReload(*probe_tbl, std::move(t));
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::PrintProbeE(const InterpolationOperator &interp_op)
+void PostOperatorCSV<solver_t>::PrintProbeField(
+    std::optional<TableWithCSVFile> &probe_tbl, const InterpolationOperator &interp_op,
+    const std::vector<std::complex<double>> &field, std::string_view col_prefix, int v_dim)
 {
-  if (!probe_E)
+  if (!probe_tbl)
   {
     return;
   }
-  auto v_dim = interp_op.GetVDim();
-  auto probe_field = measurement_cache.probe_E_field;
-  MFEM_VERIFY(
-      probe_field.size() == v_dim * interp_op.GetProbes().size(),
-      fmt::format("Size mismatch: expect vector field to have size {} * {} = {}; got {}",
-                  v_dim, interp_op.GetProbes().size(), v_dim * interp_op.GetProbes().size(),
-                  probe_field.size()))
-
-  CheckAppendIndex(probe_E->table["idx"], row_idx_v, row_i);
-
+  MFEM_VERIFY(field.size() ==
+                  static_cast<std::size_t>(v_dim) * interp_op.GetProbes().size(),
+              fmt::format("Size mismatch: '{}' probe expected {} * {} = {} entries, got {}",
+                          col_prefix, v_dim, interp_op.GetProbes().size(),
+                          v_dim * interp_op.GetProbes().size(), field.size()));
+  CheckAppendIndex(probe_tbl->table["idx"], row_idx_v, row_i);
+  const bool scalar = (v_dim == 1);
   std::size_t i = 0;
   for (const auto &idx : interp_op.GetProbes())
   {
     for (int i_dim = 0; i_dim < v_dim; i_dim++)
     {
-      auto val = probe_field[i * v_dim + i_dim];
-      probe_E->table[fmt::format("E{}_{}_{}_re", i_dim, idx, m_ex_idx)] << val.real();
-      if (HasComplexGridFunction<solver_t>())
+      const auto val = field[i * v_dim + i_dim];
+      const auto col_key =
+          scalar ? fmt::format("{}_{}_{}", col_prefix, idx, m_ex_idx)
+                 : fmt::format("{}{}_{}_{}", col_prefix, i_dim, idx, m_ex_idx);
+      probe_tbl->table[col_key + "_re"] << val.real();
+      if constexpr (HasComplexGridFunction<solver_t>())
       {
-        probe_E->table[fmt::format("E{}_{}_{}_im", i_dim, idx, m_ex_idx)] << val.imag();
+        probe_tbl->table[col_key + "_im"] << val.imag();
       }
     }
     i++;
   }
-  probe_E->WriteFullTableTrunc();
+  probe_tbl->WriteFullTableTrunc();
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::InitializeProbeB(const InterpolationOperator &interp_op)
+void PostOperatorCSV<solver_t>::InitializeProbeE(const InterpolationOperator &interp_op,
+                                                 int v_dim)
 {
-  if (!(interp_op.GetProbes().size() > 0) || !HasBGridFunction<solver_t>())
+  if constexpr (HasEGridFunction<solver_t>())
   {
-    return;
+    InitializeProbeField(probe_E, interp_op, "probe-E.csv", "E", "E", "V/m", v_dim);
   }
-  probe_B = TableWithCSVFile(post_dir / "probe-B.csv", reload_table);
-  Table t;  // Define table locally first due to potential reload.
-  auto v_dim = interp_op.GetVDim();
-  int scale_col = (HasComplexGridFunction<solver_t>() ? 2 : 1) * v_dim;
-  auto nr_expected_measurement_cols =
-      1 + ex_idx_v_all.size() * scale_col * interp_op.GetProbes().size();
-  t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
-  t.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
-  for (const auto ex_idx : ex_idx_v_all)
-  {
-    std::string ex_label = HasSingleExIdx() ? "" : fmt::format("[{}]", ex_idx);
-    for (const auto &idx : interp_op.GetProbes())
-    {
-      for (int i_dim = 0; i_dim < v_dim; i_dim++)
-      {
-        if (HasComplexGridFunction<solver_t>())
-        {
-          t.insert(fmt::format("B{}_{}_{}_re", i_dim, idx, ex_idx),
-                   fmt::format("Re{{B_{}[{}]{}}} (Wb/m²)", DimLabel(i_dim), idx, ex_label),
-                   ex_idx);
-          t.insert(fmt::format("B{}_{}_{}_im", i_dim, idx, ex_idx),
-                   fmt::format("Im{{B_{}[{}]{}}} (Wb/m²)", DimLabel(i_dim), idx, ex_label),
-                   ex_idx);
-        }
-        else
-        {
-          t.insert(fmt::format("B{}_{}_{}_re", i_dim, idx, ex_idx),
-                   fmt::format("B_{}[{}]{} (Wb/m²)", DimLabel(i_dim), idx, ex_label),
-                   ex_idx);
-        }
-      }
-    }
-  }
-  MoveTableValidateReload(*probe_B, std::move(t));
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::PrintProbeB(const InterpolationOperator &interp_op)
+void PostOperatorCSV<solver_t>::PrintProbeE(const InterpolationOperator &interp_op,
+                                            int v_dim)
 {
-  if (!probe_B)
+  PrintProbeField(probe_E, interp_op, measurement_cache.probe_E_field, "E", v_dim);
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::InitializeProbeEn(const InterpolationOperator &interp_op)
+{
+  if constexpr (solver_t == ProblemType::BOUNDARYMODE)
   {
-    return;
+    InitializeProbeField(probe_En, interp_op, "probe-En.csv", "En", "E_n", "V/m", 1);
   }
+}
 
-  auto v_dim = interp_op.GetVDim();
-  auto probe_field = measurement_cache.probe_B_field;
-  MFEM_VERIFY(
-      probe_field.size() == v_dim * interp_op.GetProbes().size(),
-      fmt::format("Size mismatch: expect vector field to have size {} * {} = {}; got {}",
-                  v_dim, interp_op.GetProbes().size(), v_dim * interp_op.GetProbes().size(),
-                  probe_field.size()))
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::PrintProbeEn(const InterpolationOperator &interp_op)
+{
+  PrintProbeField(probe_En, interp_op, measurement_cache.probe_En_field, "En", 1);
+}
 
-  CheckAppendIndex(probe_B->table["idx"], row_idx_v, row_i);
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::InitializeProbeBt(const InterpolationOperator &interp_op,
+                                                  int v_dim)
+{
+  InitializeProbeField(probe_Bt, interp_op, "probe-Bt.csv", "Bt", "Bt", "T", v_dim);
+}
 
-  std::size_t i = 0;
-  for (const auto &idx : interp_op.GetProbes())
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::PrintProbeBt(const InterpolationOperator &interp_op,
+                                             int v_dim)
+{
+  PrintProbeField(probe_Bt, interp_op, measurement_cache.probe_Bt_field, "Bt", v_dim);
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::InitializeProbeB(const InterpolationOperator &interp_op,
+                                                 int v_dim)
+{
+  if constexpr (HasBGridFunction<solver_t>())
   {
-    for (int i_dim = 0; i_dim < v_dim; i_dim++)
-    {
-      auto val = probe_field[i * v_dim + i_dim];
-      probe_B->table[fmt::format("B{}_{}_{}_re", i_dim, idx, m_ex_idx)] << val.real();
-      if (HasComplexGridFunction<solver_t>())
-      {
-        probe_B->table[fmt::format("B{}_{}_{}_im", i_dim, idx, m_ex_idx)] << val.imag();
-      }
-    }
-    i++;
+    InitializeProbeField(probe_B, interp_op, "probe-B.csv", "B", "B", "Wb/m²", v_dim);
   }
-  probe_B->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::PrintProbeB(const InterpolationOperator &interp_op,
+                                            int v_dim)
+{
+  PrintProbeField(probe_B, interp_op, measurement_cache.probe_B_field, "B", v_dim);
 }
 
 template <ProblemType solver_t>
@@ -889,12 +921,25 @@ auto PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
                             U == ProblemType::TRANSIENT,
                         void>
 {
-  if (!(fem_op.GetLumpedPortOp().Size() > 0))
+  const auto &lumped_port_op = fem_op.GetLumpedPortOp();
+  // Check if any wave ports have voltage coordinates configured.
+  bool has_wave_port_voltage = false;
+  if constexpr (std::is_same_v<fem_op_t<solver_t>, SpaceOperator>)
+  {
+    for (const auto &[idx, data] : fem_op.GetWavePortOp())
+    {
+      if (data.HasVoltageCoords())
+      {
+        has_wave_port_voltage = true;
+        break;
+      }
+    }
+  }
+  if (lumped_port_op.Size() == 0 && !has_wave_port_voltage)
   {
     return;
   }
   // Currently only works for lumped ports.
-  const auto &lumped_port_op = fem_op.GetLumpedPortOp();
   port_V = TableWithCSVFile(post_dir / "port-V.csv", reload_table);
   port_I = TableWithCSVFile(post_dir / "port-I.csv", reload_table);
 
@@ -942,6 +987,34 @@ auto PostOperatorCSV<solver_t>::InitializePortVI(const SpaceOperator &fem_op)
                   fmt::format("V[{}]{} (V)", idx, ex_label), ex_idx);
         tI.insert(fmt::format("re{}_{}", idx, ex_idx),
                   fmt::format("I[{}]{} (A)", idx, ex_label), ex_idx);
+      }
+    }
+    // Wave port voltage (when voltage coordinates are configured).
+    if constexpr (std::is_same_v<fem_op_t<solver_t>, SpaceOperator>)
+    {
+      for (const auto &[idx, data] : fem_op.GetWavePortOp())
+      {
+        if (data.HasVoltageCoords())
+        {
+          tV.insert(fmt::format("re_w{}_{}", idx, ex_idx),
+                    fmt::format("Re{{V_wp[{}]{}}} (V)", idx, ex_label), ex_idx);
+          tV.insert(fmt::format("im_w{}_{}", idx, ex_idx),
+                    fmt::format("Im{{V_wp[{}]{}}} (V)", idx, ex_label), ex_idx);
+        }
+      }
+    }
+    // Wave port voltage (when voltage coordinates are configured).
+    if constexpr (std::is_same_v<fem_op_t<solver_t>, SpaceOperator>)
+    {
+      for (const auto &[idx, data] : fem_op.GetWavePortOp())
+      {
+        if (data.HasVoltageCoords())
+        {
+          tV.insert(fmt::format("re_w{}_{}", idx, ex_idx),
+                    fmt::format("Re{{V_wp[{}]{}}} (V)", idx, ex_label), ex_idx);
+          tV.insert(fmt::format("im_w{}_{}", idx, ex_idx),
+                    fmt::format("Im{{V_wp[{}]{}}} (V)", idx, ex_label), ex_idx);
+        }
       }
     }
   }
@@ -998,6 +1071,16 @@ auto PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
     {
       port_V->table[fmt::format("im{}_{}", idx, m_ex_idx)] << data.V.imag();
       port_I->table[fmt::format("im{}_{}", idx, m_ex_idx)] << data.I.imag();
+    }
+  }
+  // Wave port voltage (for ports with voltage coordinates configured).
+  for (const auto &[idx, data] : measurement_cache.wave_port_vi)
+  {
+    auto key_re = fmt::format("re_w{}_{}", idx, m_ex_idx);
+    if (port_V->table.has(key_re))
+    {
+      port_V->table[key_re] << data.V.real();
+      port_V->table[fmt::format("im_w{}_{}", idx, m_ex_idx)] << data.V.imag();
     }
   }
   port_V->WriteFullTableTrunc();
@@ -1068,6 +1151,88 @@ auto PostOperatorCSV<solver_t>::PrintPortS()
     port_S->table[fmt::format("arg_{}_{}", idx, m_ex_idx)] << Measurement::Phase(data.S);
   }
   port_S->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::InitializePortZ(const SpaceOperator &fem_op)
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  // Only create port-Z.csv when wave ports have voltage coordinates configured.
+  bool has_wave_port_voltage = false;
+  for (const auto &[idx, data] : fem_op.GetWavePortOp())
+  {
+    if (data.HasVoltageCoords())
+    {
+      has_wave_port_voltage = true;
+      break;
+    }
+  }
+  if (!has_wave_port_voltage)
+  {
+    return;
+  }
+  using fmt::format;
+  port_Z = TableWithCSVFile(post_dir / "port-Z.csv", reload_table);
+
+  Table t;
+  t.reserve(nr_expected_measurement_rows, 10);
+  t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
+
+  for (const auto ex_idx : ex_idx_v_all)
+  {
+    std::string ex_label = HasSingleExIdx() ? "" : format("[{}]", ex_idx);
+    for (const auto &[idx, data] : fem_op.GetWavePortOp())
+    {
+      if (data.HasVoltageCoords())
+      {
+        t.insert(format("re_z_{}_{}", idx, ex_idx),
+                 format("Re{{Z[{}]{}}} (Ohm)", idx, ex_label), ex_idx);
+        t.insert(format("im_z_{}_{}", idx, ex_idx),
+                 format("Im{{Z[{}]{}}} (Ohm)", idx, ex_label), ex_idx);
+      }
+    }
+  }
+  MoveTableValidateReload(*port_Z, std::move(t));
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::PrintPortZ()
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  if (!port_Z)
+  {
+    return;
+  }
+  using fmt::format;
+  CheckAppendIndex(port_Z->table["idx"], row_idx_v, row_i);
+  for (const auto &[idx, data] : measurement_cache.wave_port_vi)
+  {
+    // Only write Z for ports that have voltage coordinates (columns in the table).
+    auto key = format("re_Z_w{}", idx);
+    if (!port_Z->table.has(key))
+    {
+      continue;
+    }
+    if (std::abs(data.P) > 0.0)
+    {
+      // Z = |V|^2 / |P| — power-voltage impedance magnitude.
+      // GetPower returns the full Poynting integral ∫ (E × H*) · n dS (without the
+      // 1/2 time-averaging factor), so Z_PV = |V|^2 / (2 * P_avg) = |V|^2 / |P|.
+      // Use |P| since the sign depends on the port normal convention.
+      double Z_real = std::norm(data.V) / std::abs(data.P);
+      auto Z = std::complex<double>(Z_real, 0.0);
+      port_Z->table[format("re_z_{}_{}", idx, m_ex_idx)] << Z.real();
+      port_Z->table[format("im_z_{}_{}", idx, m_ex_idx)] << Z.imag();
+    }
+    else
+    {
+      port_Z->table[format("re_z_{}_{}", idx, m_ex_idx)] << 0.0;
+      port_Z->table[format("im_z_{}_{}", idx, m_ex_idx)] << 0.0;
+    }
+  }
+  port_Z->WriteFullTableTrunc();
 }
 
 template <ProblemType solver_t>
@@ -1198,6 +1363,132 @@ auto PostOperatorCSV<solver_t>::PrintEigPortQ()
 }
 
 template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::InitializeModeKn()
+    -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>
+{
+  mode_kn = TableWithCSVFile(post_dir / "mode-kn.csv");
+  mode_kn->table.reserve(nr_expected_measurement_rows, 7);
+  mode_kn->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
+  mode_kn->table.insert("kn_re", "Re{kn} (1/m)");
+  mode_kn->table.insert("kn_im", "Im{kn} (1/m)");
+  mode_kn->table.insert("neff_re", "Re{n_eff}");
+  mode_kn->table.insert("neff_im", "Im{n_eff}");
+  mode_kn->table.insert("err_back", "Error (Bkwd.)");
+  mode_kn->table.insert("err_abs", "Error (Abs.)");
+  mode_kn->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::PrintModeKn()
+    -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>
+{
+  if (!mode_kn)
+  {
+    return;
+  }
+  mode_kn->table["idx"] << row_idx_v;
+  mode_kn->table["kn_re"] << measurement_cache.mode_data.kn.real();
+  mode_kn->table["kn_im"] << measurement_cache.mode_data.kn.imag();
+  mode_kn->table["neff_re"] << measurement_cache.mode_data.n_eff.real();
+  mode_kn->table["neff_im"] << measurement_cache.mode_data.n_eff.imag();
+  mode_kn->table["err_back"] << measurement_cache.error_bkwd;
+  mode_kn->table["err_abs"] << measurement_cache.error_abs;
+  mode_kn->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::InitializeModeZ(const std::vector<int> &indices,
+                                                bool has_current)
+    -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>
+{
+  mode_Z = TableWithCSVFile(post_dir / "mode-Z.csv");
+  mode_Z->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
+  for (const auto &idx : indices)
+  {
+    auto key = [&](auto &&name) { return fmt::format("{}[{}]", name, idx); };
+    auto hdr = [&](auto &&name, auto &&unit)
+    { return fmt::format("{}[{}] ({})", name, idx, unit); };
+    mode_Z->table.insert(key("Z_PV"), hdr("Z_PV", "Ohm"));
+    mode_Z->table.insert(key("L_PV"), hdr("L_PV", "H/m"));
+    mode_Z->table.insert(key("C_PV"), hdr("C_PV", "F/m"));
+    if (has_current)
+    {
+      mode_Z->table.insert(key("Z_VI"), hdr("Z_VI", "Ohm"));
+      mode_Z->table.insert(key("L_VI"), hdr("L_VI", "H/m"));
+      mode_Z->table.insert(key("C_VI"), hdr("C_VI", "F/m"));
+    }
+  }
+  mode_Z->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::PrintModeZ()
+    -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>
+{
+  if (!mode_Z || measurement_cache.mode_data.impedance.empty())
+  {
+    return;
+  }
+  mode_Z->table["idx"] << row_idx_v;
+  const double n_eff_re = measurement_cache.mode_data.n_eff.real();
+  for (const auto &[idx, result] : measurement_cache.mode_data.impedance)
+  {
+    const auto port_idx = idx;
+    auto s = [&](auto &&name) { return fmt::format("{}[{}]", name, port_idx); };
+    if (result.has_impedance)
+    {
+      mode_Z->table[s("Z_PV")] << result.Z0;
+      mode_Z->table[s("L_PV")] << result.Z0 * n_eff_re / electromagnetics::c0_;
+      mode_Z->table[s("C_PV")] << n_eff_re / (result.Z0 * electromagnetics::c0_);
+    }
+    if (result.has_vi_impedance)
+    {
+      mode_Z->table[s("Z_VI")] << result.Z_VI;
+      mode_Z->table[s("L_VI")] << result.Z_VI * n_eff_re / electromagnetics::c0_;
+      mode_Z->table[s("C_VI")] << n_eff_re / (result.Z_VI * electromagnetics::c0_);
+    }
+  }
+  mode_Z->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::InitializeModeV(const std::vector<int> &indices)
+    -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>
+{
+  mode_V = TableWithCSVFile(post_dir / "mode-V.csv");
+  mode_V->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
+  for (const auto &idx : indices)
+  {
+    mode_V->table.insert(fmt::format("V_re[{}]", idx), fmt::format("Re{{V[{}]}} (V)", idx));
+    mode_V->table.insert(fmt::format("V_im[{}]", idx), fmt::format("Im{{V[{}]}} (V)", idx));
+  }
+  mode_V->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::PrintModeV()
+    -> std::enable_if_t<U == ProblemType::BOUNDARYMODE, void>
+{
+  if (!mode_V || measurement_cache.mode_data.voltage.empty())
+  {
+    return;
+  }
+  mode_V->table["idx"] << row_idx_v;
+  for (const auto &[idx, result] : measurement_cache.mode_data.voltage)
+  {
+    mode_V->table[fmt::format("V_re[{}]", idx)] << result.V.real();
+    mode_V->table[fmt::format("V_im[{}]", idx)] << result.V.imag();
+  }
+  mode_V->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::PrintErrorIndicator(
     bool is_root, const ErrorIndicator::SummaryStatistics &indicator_stats)
 {
@@ -1230,8 +1521,15 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   InitializeSurfaceQ(post_op.surf_post_op);
 
 #if defined(MFEM_USE_GSLIB)
-  InitializeProbeE(post_op.interp_op);
-  InitializeProbeB(post_op.interp_op);
+  {
+    int e_vdim = post_op.E ? post_op.E->Real().VectorDim() : 0;
+    int bt_vdim = post_op.Bt_inplane ? post_op.Bt_inplane->Real().VectorDim() : 0;
+    int b_vdim = post_op.B ? post_op.B->Real().VectorDim() : 0;
+    InitializeProbeE(post_op.interp_op, e_vdim);
+    InitializeProbeEn(post_op.interp_op);
+    InitializeProbeBt(post_op.interp_op, bt_vdim);
+    InitializeProbeB(post_op.interp_op, b_vdim);
+  }
 #endif
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
   {
@@ -1245,6 +1543,7 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
     InitializePortS(*post_op.fem_op);
+    InitializePortZ(*post_op.fem_op);
   }
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
   {
@@ -1255,6 +1554,28 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
     InitializeEig();
     InitializeEigPortEPR(post_op.fem_op->GetLumpedPortOp());
     InitializeEigPortQ(post_op.fem_op->GetLumpedPortOp());
+  }
+  if constexpr (solver_t == ProblemType::BOUNDARYMODE)
+  {
+    InitializeModeKn();
+    if (post_op.HasImpedancePostprocessing())
+    {
+      std::vector<int> imp_indices;
+      for (const auto &[idx, _] : post_op.impedance_postpro)
+      {
+        imp_indices.push_back(idx);
+      }
+      InitializeModeZ(imp_indices, post_op.HasCurrent());
+    }
+    if (post_op.HasVoltagePostprocessing())
+    {
+      std::vector<int> vol_indices;
+      for (const auto &[idx, _] : post_op.voltage_postpro)
+      {
+        vol_indices.push_back(idx);
+      }
+      InitializeModeV(vol_indices);
+    }
   }
 }
 
@@ -1278,8 +1599,15 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   PrintSurfaceQ();
 
 #if defined(MFEM_USE_GSLIB)
-  PrintProbeE(post_op.interp_op);
-  PrintProbeB(post_op.interp_op);
+  {
+    int e_vdim = post_op.E ? post_op.E->Real().VectorDim() : 0;
+    int bt_vdim = post_op.Bt_inplane ? post_op.Bt_inplane->Real().VectorDim() : 0;
+    int b_vdim = post_op.B ? post_op.B->Real().VectorDim() : 0;
+    PrintProbeE(post_op.interp_op, e_vdim);
+    PrintProbeEn(post_op.interp_op);
+    PrintProbeBt(post_op.interp_op, bt_vdim);
+    PrintProbeB(post_op.interp_op, b_vdim);
+  }
 #endif
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
   {
@@ -1294,6 +1622,7 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
     PrintPortS();
+    PrintPortZ();
   }
   if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
   {
@@ -1304,6 +1633,12 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
     PrintEig();
     PrintEigPortEPR();
     PrintEigPortQ();
+  }
+  if constexpr (solver_t == ProblemType::BOUNDARYMODE)
+  {
+    PrintModeKn();
+    PrintModeZ();
+    PrintModeV();
   }
 }
 
@@ -1352,6 +1687,10 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const config::ProblemData &problem,
   {
     nr_expected_measurement_rows = solver.eigenmode.n;
   }
+  else if (solver_t == ProblemType::BOUNDARYMODE)
+  {
+    nr_expected_measurement_rows = solver.boundary_mode.n;
+  }
   else if (solver_t == ProblemType::ELECTROSTATIC)
   {
     nr_expected_measurement_rows = solver.electrostatic.n_post;
@@ -1381,11 +1720,30 @@ template class PostOperatorCSV<ProblemType::EIGENMODE>;
 template class PostOperatorCSV<ProblemType::ELECTROSTATIC>;
 template class PostOperatorCSV<ProblemType::MAGNETOSTATIC>;
 template class PostOperatorCSV<ProblemType::TRANSIENT>;
+template class PostOperatorCSV<ProblemType::BOUNDARYMODE>;
 
 // Function explicit needed testing since everywhere it's through PostOperator.
 // TODO(C++20): with requires, we won't need a second template.
 
 template auto PostOperatorCSV<ProblemType::DRIVEN>::InitializePortVI<ProblemType::DRIVEN>(
     const SpaceOperator &fem_op) -> void;
+
+// Mode analysis CSV explicit instantiations.
+template auto
+PostOperatorCSV<ProblemType::BOUNDARYMODE>::InitializeModeKn<ProblemType::BOUNDARYMODE>()
+    -> void;
+template auto
+PostOperatorCSV<ProblemType::BOUNDARYMODE>::PrintModeKn<ProblemType::BOUNDARYMODE>()
+    -> void;
+template auto
+PostOperatorCSV<ProblemType::BOUNDARYMODE>::InitializeModeZ<ProblemType::BOUNDARYMODE>(
+    const std::vector<int> &, bool) -> void;
+template auto
+PostOperatorCSV<ProblemType::BOUNDARYMODE>::PrintModeZ<ProblemType::BOUNDARYMODE>() -> void;
+template auto
+PostOperatorCSV<ProblemType::BOUNDARYMODE>::InitializeModeV<ProblemType::BOUNDARYMODE>(
+    const std::vector<int> &) -> void;
+template auto
+PostOperatorCSV<ProblemType::BOUNDARYMODE>::PrintModeV<ProblemType::BOUNDARYMODE>() -> void;
 
 }  // namespace palace

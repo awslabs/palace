@@ -118,6 +118,10 @@ public:
   // Configure whether or not to drop small entries in the system matrix.
   void SetDropSmallEntries(bool drop) { drop_small_entries = drop; }
 
+  // Configure whether or not to use the exact complex-valued system matrix
+  // or the real-valued approximation.
+  void SetComplexMatrix(bool use_complex) { complex_matrix = use_complex; }
+
   void SetInitialGuess(bool guess) override
   {
     Solver<OperType>::SetInitialGuess(guess);

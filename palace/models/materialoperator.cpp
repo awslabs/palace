@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <limits>
+#include <unordered_set>
 #include "linalg/densematrix.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -88,6 +89,27 @@ mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data)
   return M;
 }
 
+// Extract the leading sdim x sdim submatrix from a SymmetricMatrixData<N> matrix.
+template <std::size_t N>
+mfem::DenseMatrix ToDenseMatrixTruncated(const config::SymmetricMatrixData<N> &data,
+                                         int sdim)
+{
+  auto M = ToDenseMatrix(data);
+  if (sdim >= static_cast<int>(N))
+  {
+    return M;
+  }
+  mfem::DenseMatrix Msub(sdim, sdim);
+  for (int i = 0; i < sdim; i++)
+  {
+    for (int j = 0; j < sdim; j++)
+    {
+      Msub(i, j) = M(i, j);
+    }
+  }
+  return Msub;
+}
+
 }  // namespace internal::mat
 
 MaterialOperator::MaterialOperator(const std::vector<config::MaterialData> &materials,
@@ -109,28 +131,15 @@ void MaterialOperator::SetUpMaterialProperties(
     const config::PeriodicBoundaryData &periodic, ProblemType problem_type,
     const mfem::ParMesh &mesh)
 {
-  // Check that material attributes have been specified correctly. The mesh attributes may
-  // be non-contiguous and when no material attribute is specified the elements are deleted
-  // from the mesh so as to not cause problems.
+  // Check material attributes. Only verify positivity here — the per-material local
+  // presence check happens below via mat_marker (some ranks may not have all attributes
+  // in their partition).
   MFEM_VERIFY(!materials.empty(), "Materials must be non-empty!");
+  for (const auto &data : materials)
   {
-    int attr_max = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
-    mfem::Array<int> attr_marker(attr_max);
-    attr_marker = 0;
-    for (auto attr : mesh.attributes)
+    for (auto attr : data.attributes)
     {
-      attr_marker[attr - 1] = 1;
-    }
-    for (const auto &data : materials)
-    {
-      for (auto attr : data.attributes)
-      {
-        MFEM_VERIFY(
-            attr > 0 && attr <= attr_max,
-            "Material attribute tags must be non-negative and correspond to attributes "
-            "in the mesh!");
-        MFEM_VERIFY(attr_marker[attr - 1], "Unknown material attribute " << attr << "!");
-      }
+      MFEM_VERIFY(attr > 0, "Material attribute tags must be positive!");
     }
   }
 
@@ -161,6 +170,13 @@ void MaterialOperator::SetUpMaterialProperties(
 
   const int sdim = mesh.SpaceDimension();
   mat_muinv.SetSize(sdim, sdim, nmats);
+  if (sdim == 2)
+  {
+    mat_muinv_scalar.SetSize(1, 1, nmats);
+    mat_epsilon_scalar.SetSize(1, 1, nmats);
+    mat_epsilon_imag_scalar.SetSize(1, 1, nmats);
+    mat_invLondon_scalar.SetSize(1, 1, nmats);
+  }
   mat_epsilon.SetSize(sdim, sdim, nmats);
   mat_epsilon_imag.SetSize(sdim, sdim, nmats);
   mat_epsilon_abs.SetSize(sdim, sdim, nmats);
@@ -250,14 +266,39 @@ void MaterialOperator::SetUpMaterialProperties(
       }
     }
 
-    // Compute the inverse of the input permeability matrix.
-    mfem::DenseMatrix mat_mu = internal::mat::ToDenseMatrix(data.mu_r);
+    // Compute the inverse of the input permeability matrix. Use truncated versions
+    // of the config 3x3 matrices for 2D meshes.
+    mfem::DenseMatrix mat_mu = internal::mat::ToDenseMatrixTruncated(data.mu_r, sdim);
     mfem::DenseMatrixInverse(mat_mu, true).GetInverseMatrix(mat_muinv(count));
+    if (sdim == 2)
+    {
+      // In 2D, compute out-of-plane scalar components using n^T M_3x3 n projection.
+      // For axis-aligned meshes n = [0, 0, 1], giving the (2, 2) entry; this remains
+      // correct for non-axis-aligned cross-sections once the driver has pre-rotated
+      // the config materials into the local frame via RotateMaterialDefinitions.
+      const mfem::Vector normal({0.0, 0.0, 1.0});
+      auto ProjectNormal = [&normal](const mfem::DenseMatrix &M3) -> double
+      { return M3.InnerProduct(normal, normal); };
+
+      mfem::DenseMatrix mat_mu_3d = internal::mat::ToDenseMatrix(data.mu_r);
+      mfem::DenseMatrix mat_muinv_3d(3, 3);
+      mfem::DenseMatrixInverse(mat_mu_3d, true).GetInverseMatrix(mat_muinv_3d);
+      mat_muinv_scalar(count)(0, 0) = ProjectNormal(mat_muinv_3d);
+
+      mfem::DenseMatrix mat_eps_3d = internal::mat::ToDenseMatrix(data.epsilon_r);
+      mat_epsilon_scalar(count)(0, 0) = ProjectNormal(mat_eps_3d);
+
+      mfem::DenseMatrix mat_td_3d = internal::mat::ToDenseMatrix(data.tandelta);
+      mfem::DenseMatrix epstd_3d(3, 3);
+      Mult(mat_eps_3d, mat_td_3d, epstd_3d);
+      mat_epsilon_imag_scalar(count)(0, 0) = -ProjectNormal(epstd_3d);
+    }
 
     // Material permittivity: Re{ε} = ε, Im{ε} = -ε * tan(δ)
     mfem::DenseMatrix T(sdim, sdim);
-    mat_epsilon(count).Set(1.0, internal::mat::ToDenseMatrix(data.epsilon_r));
-    Mult(mat_epsilon(count), internal::mat::ToDenseMatrix(data.tandelta), T);
+    mat_epsilon(count).Set(1.0,
+                           internal::mat::ToDenseMatrixTruncated(data.epsilon_r, sdim));
+    Mult(mat_epsilon(count), internal::mat::ToDenseMatrixTruncated(data.tandelta, sdim), T);
     T *= -1.0;
     mat_epsilon_imag(count).Set(1.0, T);
     if (mat_epsilon_imag(count).MaxMaxNorm() > 0.0)
@@ -266,7 +307,7 @@ void MaterialOperator::SetUpMaterialProperties(
     }
 
     // ε * √(I + tan(δ) * tan(δ)ᵀ)
-    MultAAt(internal::mat::ToDenseMatrix(data.tandelta), T);
+    MultAAt(internal::mat::ToDenseMatrixTruncated(data.tandelta, sdim), T);
     for (int d = 0; d < T.Height(); d++)
     {
       T(d, d) += 1.0;
@@ -284,19 +325,26 @@ void MaterialOperator::SetUpMaterialProperties(
     mat_c0_max[count] = linalg::SingularValueMax(mat_c0(count));
 
     // Electrical conductivity, σ
-    mat_sigma(count).Set(1.0, internal::mat::ToDenseMatrix(data.sigma));
+    mat_sigma(count).Set(1.0, internal::mat::ToDenseMatrixTruncated(data.sigma, sdim));
     if (mat_sigma(count).MaxMaxNorm() > 0.0)
     {
       has_conductivity_attr = true;
     }
 
     // λ⁻² * μ⁻¹
-    mat_invLondon(count).Set(1.0, mat_muinv(count));
-    mat_invLondon(count) *=
-        std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
-    if (mat_invLondon(count).MaxMaxNorm() > 0.0)
     {
-      has_london_attr = true;
+      double invL2 = std::abs(data.lambda_L) > 0.0 ? std::pow(data.lambda_L, -2.0) : 0.0;
+      mat_invLondon(count).Set(1.0, mat_muinv(count));
+      mat_invLondon(count) *= invL2;
+      if (sdim == 2)
+      {
+        // Scalar out-of-plane London depth: λ⁻² * n^T μ⁻¹ n.
+        mat_invLondon_scalar(count)(0, 0) = mat_muinv_scalar(count)(0, 0) * invL2;
+      }
+      if (mat_invLondon(count).MaxMaxNorm() > 0.0)
+      {
+        has_london_attr = true;
+      }
     }
 
     // μ⁻¹ [k x]
@@ -330,10 +378,9 @@ void MaterialOperator::SetUpFloquetWaveVector(const config::PeriodicBoundaryData
   // Get Floquet wave vector.
   mfem::Vector wave_vector(sdim);
   wave_vector = 0.0;
-  MFEM_VERIFY(static_cast<int>(periodic.wave_vector.size()) == sdim,
-              "Floquet wave vector size must equal the spatial dimension.");
-  std::copy(periodic.wave_vector.begin(), periodic.wave_vector.end(),
-            wave_vector.GetData());
+  MFEM_VERIFY(static_cast<int>(periodic.wave_vector.size()) >= sdim,
+              "Floquet wave vector size must be at least the spatial dimension.");
+  std::copy_n(periodic.wave_vector.begin(), sdim, wave_vector.GetData());
   has_wave_attr = (wave_vector.Norml2() > tol);
 
   MFEM_VERIFY(!has_wave_attr || problem_type == ProblemType::DRIVEN ||
@@ -364,18 +411,23 @@ void MaterialOperator::SetUpFloquetWaveVector(const config::PeriodicBoundaryData
     }
   }
 
-  // Matrix representation of cross product with wave vector
+  // Matrix representation of cross product with wave vector (3D only).
   // [k x] = | 0  -k3  k2|
   //         | k3  0  -k1|
   //         |-k2  k1  0 |
-  wave_vector_cross.SetSize(3);
+  // For 2D, the cross product is not defined; set to sdim x sdim zeros so that
+  // subsequent Mult operations have matching dimensions.
+  wave_vector_cross.SetSize(sdim);
   wave_vector_cross = 0.0;
-  wave_vector_cross(0, 1) = -wave_vector[2];
-  wave_vector_cross(0, 2) = wave_vector[1];
-  wave_vector_cross(1, 0) = wave_vector[2];
-  wave_vector_cross(1, 2) = -wave_vector[0];
-  wave_vector_cross(2, 0) = -wave_vector[1];
-  wave_vector_cross(2, 1) = wave_vector[0];
+  if (sdim == 3)
+  {
+    wave_vector_cross(0, 1) = -wave_vector[2];
+    wave_vector_cross(0, 2) = wave_vector[1];
+    wave_vector_cross(1, 0) = wave_vector[2];
+    wave_vector_cross(1, 2) = -wave_vector[0];
+    wave_vector_cross(2, 0) = -wave_vector[1];
+    wave_vector_cross(2, 1) = wave_vector[0];
+  }
 }
 
 mfem::Array<int> MaterialOperator::GetBdrAttributeToMaterial() const
@@ -394,6 +446,74 @@ mfem::Array<int> MaterialOperator::GetBdrAttributeToMaterial() const
     }
   }
   return bdr_attr_mat;
+}
+
+void RotateMaterialDefinitions(std::vector<config::MaterialData> &materials,
+                               const mfem::Vector &e1, const mfem::Vector &e2,
+                               const mfem::Vector &normal)
+{
+  // Build the 3x2 rotation R = [e1 | e2] mapping local 2D → global 3D.
+  mfem::DenseMatrix R(3, 2);
+  for (int d = 0; d < 3; d++)
+  {
+    R(d, 0) = e1(d);
+    R(d, 1) = e2(d);
+  }
+
+  // Rotate a 3x3 symmetric M into the local frame and encode the result as a
+  // SymmetricMatrixData<3>. The rotated tensor is block-diagonal in the local frame:
+  //   leading 2x2 = R^T M R   (in-plane)
+  //   (2, 2)     = n^T M n    (out-of-plane)
+  //   cross terms 0.
+  // We represent the 2x2 block via its 2x2 eigendecomposition (two unit eigenvectors
+  // lifted to 3D with a trailing 0) and the scalar out-of-plane via (0, 0, 1).
+  auto Rotated = [&](const mfem::DenseMatrix &M3)
+  {
+    mfem::DenseMatrix temp(3, 2), A(2, 2);
+    Mult(M3, R, temp);
+    MultAtB(R, temp, A);
+    const double a = A(0, 0), b = 0.5 * (A(0, 1) + A(1, 0)), d = A(1, 1);
+    const double tr = a + d;
+    const double disc = std::sqrt(std::max(0.25 * (a - d) * (a - d) + b * b, 0.0));
+    double s1 = 0.5 * tr + disc, s2 = 0.5 * tr - disc;
+    std::array<double, 2> w1, w2;
+    const double scale = std::abs(a) + std::abs(d) + 1.0;
+    if (std::abs(b) > 1.0e-14 * scale)
+    {
+      // Eigenvector for s1: proportional to (b, s1 - a) (or (s1 - d, b)).
+      double nx = s1 - d, ny = b;
+      const double nrm = std::sqrt(nx * nx + ny * ny);
+      w1 = {nx / nrm, ny / nrm};
+      w2 = {-w1[1], w1[0]};
+    }
+    else
+    {
+      // Already diagonal; eigenvalues are a and d themselves.
+      s1 = a;
+      s2 = d;
+      w1 = {1.0, 0.0};
+      w2 = {0.0, 1.0};
+    }
+    const double sn = M3.InnerProduct(normal, normal);
+    config::SymmetricMatrixData<3> out(0.0);
+    out.s = {s1, s2, sn};
+    out.v = {{{w1[0], w1[1], 0.0}, {w2[0], w2[1], 0.0}, {0.0, 0.0, 1.0}}};
+    return out;
+  };
+
+  for (auto &data : materials)
+  {
+    const mfem::DenseMatrix mu_3d = internal::mat::ToDenseMatrix(data.mu_r);
+    const mfem::DenseMatrix eps_3d = internal::mat::ToDenseMatrix(data.epsilon_r);
+    const mfem::DenseMatrix tandelta_3d = internal::mat::ToDenseMatrix(data.tandelta);
+    const mfem::DenseMatrix sigma_3d = internal::mat::ToDenseMatrix(data.sigma);
+
+    data.mu_r = Rotated(mu_3d);
+    data.epsilon_r = Rotated(eps_3d);
+    data.tandelta = Rotated(tandelta_3d);
+    data.sigma = Rotated(sigma_3d);
+    // `lambda_L` is a scalar length; unchanged by rotation.
+  }
 }
 
 MaterialPropertyCoefficient::MaterialPropertyCoefficient(int attr_max)

@@ -383,6 +383,16 @@ inline double Normalize(MPI_Comm comm, VecType &x, const Operator &B, VecType &B
   return norm;
 }
 
+// Compute the bilinear form inner product yᴴ A x for a real operator A and complex
+// vectors. Allocates workspace internally.
+std::complex<double> Dot(MPI_Comm comm, const ComplexVector &x, const Operator &A,
+                         const ComplexVector &y);
+
+// Compute the bilinear form inner product yᴴ A x for a complex operator A and complex
+// vectors. Allocates workspace internally.
+std::complex<double> Dot(MPI_Comm comm, const ComplexVector &x, const ComplexOperator &A,
+                         const ComplexVector &y);
+
 // Estimate operator 2-norm (spectral norm) using power iteration. Assumes the operator is
 // not symmetric or Hermitian unless specified.
 double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym = false, double tol = 1.0e-4,

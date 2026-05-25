@@ -5,6 +5,19 @@
 ARG GITHUB_USER=""
 ARG GITHUB_TOKEN=""
 
+# FIXME(awslabs/palace#731): workaround for a Spack spec-groups bug that
+# prevents the gcc compiler from being installed. Build-stage only, so the
+# runtime image is unaffected. Remove with the spack.yaml `compilers` group
+# fix.
+#
+# noble's default archive does not carry gcc-15 yet; pull it from the
+# ubuntu-toolchain-r/test PPA.
+RUN apt-get -yqq update && \
+    apt-get -yqq install --no-install-recommends software-properties-common && \
+    add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
+    apt-get -yqq install --no-install-recommends gcc-15 g++-15 gfortran-15 && \
+    rm -rf /var/lib/apt/lists/*
+
 # Copy the Palace source tree
 COPY . /opt/palace
 
@@ -41,6 +54,10 @@ RUN mkdir -p {{ paths.environment }} && \
 set -o noclobber \
 {{ manifest }} > {{ paths.environment }}/spack.yaml
 
+# FIXME(awslabs/palace#731): remove with the apt step above.
+RUN cd {{ paths.environment }} && spack env activate . && \
+    spack compiler find
+
 # Check if the binary cache is reachable
 RUN cd {{ paths.environment }} && spack env activate . && \
     if spack buildcache list -L 2>/dev/null; then \
@@ -49,12 +66,15 @@ RUN cd {{ paths.environment }} && spack env activate . && \
       echo "WARNING: Binary cache is not reachable, all packages will be built from source"; \
     fi
 
-# Install the software
-RUN cd {{ paths.environment }} && spack env activate . && spack install -j$(nproc) --fail-fast
-
-# Push installed packages to the binary cache
+# palace@develop is pinned to branch="main", so every branch shares a spec
+# hash with different source. Build Palace --no-cache and push only deps.
 RUN cd {{ paths.environment }} && spack env activate . && \
-    spack buildcache push --unsigned local-buildcache
+    spack install --include-build-deps --only dependencies -j$(nproc) --fail-fast && \
+    spack install --only package --no-cache -j$(nproc) --fail-fast
+
+# Push deps only; Palace itself is branch-specific (see above).
+RUN cd {{ paths.environment }} && spack env activate . && \
+    spack buildcache push --only dependencies --unsigned local-buildcache
 
 # Remove unnecessary deps
 # TODO: Remove gcc and build-only dependencies to reduce image size.
@@ -91,4 +111,16 @@ RUN find -L {{ paths.view }}/* -type f -exec readlink -f '{}' \; | \
 RUN cd {{ paths.environment }} && \
     spack env activate --sh -d . > activate.sh
 
+{% endblock %}
+
+{% block final_stage %}
+# FIXME(awslabs/palace#731): mirror the build-stage PPA install in the final
+# image so libstdc++6 there is gcc-15's, matching what palace was built
+# against. Remove with the spack.yaml `compilers` group fix.
+RUN apt-get -yqq update && \
+    apt-get -yqq install --no-install-recommends software-properties-common && \
+    add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
+    apt-get -yqq install --no-install-recommends libstdc++6 && \
+    apt-get -yqq purge --auto-remove -y software-properties-common && \
+    rm -rf /var/lib/apt/lists/*
 {% endblock %}
