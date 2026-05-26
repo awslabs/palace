@@ -70,17 +70,9 @@ function generate_cpw_lumped_driven_data(; palace_exec="palace", num_processors:
 
     cpw_dir = @__DIR__
 
-    # # Run uniform sweep
-    # println("Running uniform sweep...")
-    # run(
-    #     Cmd(
-    #         `$palace_exec -np $num_processors cpw_tutorial_lumped_uniform.json`;
-    #         dir=cpw_dir
-    #     )
-    # )
-
-    # Run adaptive sweeps
-    adaptive_tols = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5]
+    # AdaptiveTol values to run; 0.0 triggers Palace's uniform driven solver and is
+    # written to the `driven_uniform_reference` output directory used by the plot script.
+    adaptive_tols = [0.0, 1e-1, 1e-2, 1e-3, 1e-4, 1e-5]
 
     # Read the base adaptive config once (strip // comments, unsupported by JSON.jl)
     adaptive_config = open(joinpath(cpw_dir, "cpw_tutorial_lumped_adaptive.json")) do f
@@ -89,15 +81,21 @@ function generate_cpw_lumped_driven_data(; palace_exec="palace", num_processors:
     end
 
     for tol in adaptive_tols
-        exp_val = round(Int, log10(tol))
-        tol_label = "1e$(exp_val)"
-        println("Running adaptive sweep with AdaptiveTol = $(tol_label)...")
+        if tol == 0.0
+            tol_label = "uniform_reference"
+            outdir_rel = "postpro/tutorial_driven_rom/driven_uniform_reference"
+        else
+            exp_val = round(Int, log10(tol))
+            tol_label = "1e$(exp_val)"
+            outdir_rel = "postpro/tutorial_driven_rom/driven_adaptive_$(tol_label)"
+        end
+        println("Running driven sweep with AdaptiveTol = $(tol)...")
 
         tmp_file = "cpw_tutorial_lumped_adaptive_tmp_$(tol_label).json"
         tmp_path = joinpath(cpw_dir, tmp_file)
 
         config = deepcopy(adaptive_config)
-        config["Problem"]["Output"] = "postpro/tutorial_driven_rom/driven_adaptive_$(tol_label)"
+        config["Problem"]["Output"] = outdir_rel
         config["Solver"]["Driven"]["AdaptiveTol"] = tol
 
         open(tmp_path, "w") do f
