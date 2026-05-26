@@ -16,6 +16,11 @@ The format of this changelog is based on
 
 #### New Features
 
+  - Added a new tutorial "Driven Solver: Uniform vs Adaptive" that walks through the
+    uniform and adaptive driven solvers on the CPW lumped-port and transmon examples,
+    explaining the adaptive (PROM/MRI) algorithm in detail and giving practical user
+    guidance on tolerances, convergence, and validation
+    [PR 702](https://github.com/awslabs/palace/pull/702).
   - Added `"IncludeInSynthesis"` boolean flag to lumped port configuration (default `true`).
     When adaptive driven circuit synthesis is enabled
     (`config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]`), this flag controls whether
