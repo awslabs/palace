@@ -1256,25 +1256,23 @@ void PostOperator<solver_t>::MeasureSParameter() const
       return;
     }
 
-    // S-parameter computation supporting mixed lumped and wave port configurations.
+    // S-parameter computation with per-port reference impedances (Kurokawa power-wave
+    // generalized S-parameters), matching the convention of COMSOL Numeric ports + Lumped
+    // ports, HFSS's generalized S-matrix, and CST's default port-impedance normalization.
     //
-    // Both port types use unit-power excitation normalization, so raw S-parameters from
-    // GetSParameter() represent power-wave amplitudes and are directly comparable across
-    // port types without additional scaling.
+    // Each port type uses its natural reference impedance: lumped ports use the user-
+    // specified R; wave ports implicitly use the line's characteristic impedance encoded
+    // in the unit-power normalization of the boundary mode (∫|E_mode×H_mode⋆|·n dS = 1).
     //
-    // Same-type scaling (generalized S-parameters):
-    //   Lumped-to-lumped: S_ij = S_raw × √(R_src / R_obs) — accounts for differing port
-    //     impedances (Marks & Williams, "A general waveguide circuit theory," 1992).
-    //   Wave-to-wave: S_ij = S_raw × exp(ikₙ_src d_src) × exp(ikₙ_obs d_obs) — de-embeds
-    //     the propagation phase from the port offset distances.
+    // GetSParameter() returns the b-amplitude in Kurokawa convention for both port types:
+    //   - Lumped: ∫E·(E_inc/Z_s) dS = V/V_inc, where V_inc encodes the port's R
+    //   - Wave:   ∫(E×H_mode⋆)·n dS, the modal power-overlap with unit-power normalization
+    // Both are directly the Kurokawa b/a ratio, so no impedance scaling is needed.
     //
-    // Cross-type (lumped-to-wave or wave-to-lumped): no additional scaling is applied. The
-    // raw power-wave S-parameter is reported directly. Wave port modes are power-
-    // normalized without a defined characteristic impedance, so a per-port Z_PV needed
-    // for the full generalized formula S_ij = S_raw × √(Z_src) / √(Z_obs) is not
-    // available. Computing Z_PV from the mode would also require a fine mesh near the
-    // port to be accurate, and using a poorly-resolved Z_PV in the S-parameter
-    // normalization would degrade rather than improve the result.
+    // Wave-to-wave additionally applies port-offset de-embedding:
+    //   S_ij = S_raw × exp(ikₙ_src d_src) × exp(ikₙ_obs d_obs)
+    // This removes the propagation phase between the port boundary and a user-specified
+    // reference plane offset.
 
     // Get information about excited port.
     auto [drive_is_simple, drive_port_type, drive_port_idx] =
@@ -1292,11 +1290,6 @@ void PostOperator<solver_t>::MeasureSParameter() const
       if (drive_port_type == PortType::LumpedPort && idx == drive_port_idx)
       {
         vi.S.real(vi.S.real() - 1.0);
-      }
-      if (drive_port_type == PortType::LumpedPort && std::abs(data.R) > 0.0)
-      {
-        const LumpedPortData &src_data = fem_op->GetLumpedPortOp().GetPort(drive_port_idx);
-        vi.S *= std::sqrt(src_data.R / data.R);
       }
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
