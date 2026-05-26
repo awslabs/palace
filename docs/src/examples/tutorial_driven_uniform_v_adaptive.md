@@ -2,6 +2,26 @@
 <!---
 Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
+
+MAINTAINER NOTE
+
+The SVGs referenced from this page (docs/src/assets/examples/driven_ua_*.svg)
+are committed snapshots, not auto-generated artifacts. The underlying Palace
+runs take several hours and are not feasible to re-run in CI or at docs build
+time. The plots will drift relative to the current solver behaviour over time,
+which is acceptable for a tutorial; if you make a change that meaningfully
+alters the qualitative shape of these curves, please refresh them by hand.
+
+To regenerate, from the repository root:
+
+  julia --project=examples -e 'include("examples/cpw/cpw_tutorial_lumped_driven.jl"); \
+      generate_cpw_lumped_driven_data(num_processors=4)'
+  julia --project=examples -e 'include("examples/transmon/transmon_tutorial_driven.jl"); \
+      generate_transmon_driven_data(num_processors=4)'
+  uv run --script examples/cpw/cpw_tutorial_lumped_driven_plots.py
+  uv run --script examples/transmon/transmon_tutorial_driven_plots.py
+
+then commit the updated docs/src/assets/examples/driven_ua_*.svg.
 --->
 ```
 
@@ -23,7 +43,7 @@ eigenmode simulations.
 
 !!! note
 
-    For the CPW example, the data can be generated with the script `examples/cpw/cpw_tutorial_lumped_driven.jl` and the result plots generated with `examples/cpw/cpw_tutorial_lumped_driven_plots.py`.
+    For the CPW example, the data can be generated with the script `examples/cpw/cpw_tutorial_lumped_driven.jl` and the result plots generated with `examples/cpw/cpw_tutorial_lumped_driven_plots.jl`.
 
     For the transmon example, the data can be generated with the script `examples/transmon/transmon_tutorial_driven.jl` and the result plots generated with `examples/transmon/transmon_tutorial_driven_plots.py`.
 
@@ -32,8 +52,8 @@ eigenmode simulations.
 *Palace* has two modes for frequency-domain driven simulations: uniform and adaptive. The uniform
 solver runs one independent FEM solve per output frequency, which is reliable but slow. The adaptive
 solver runs a small number of FEM solves and constructs a reduced-order model (ROM) that
-interpolates the response at all other output frequencies. This is fast, but requires more careful
-set-up and validation.
+interpolates the response at all other output frequencies. This is fast, but introduces a source of
+error compared to the full model evaluation, which has to be controlled.
 
 The only configuration difference between uniform and adaptive is the value of
 [`"AdaptiveTol"`](../config/solver.md#solver%5B%22Driven%22%5D). This defaults to `0.0`, which calls
@@ -60,8 +80,8 @@ The following are important tuning configurations:
   - [`"AdaptiveTol"`](../config/solver.md#solver%5B%22Driven%22%5D): start with `1e-3` on a coarse
     grid for S-parameter sweeps. Tighten this tolerance as needed during the validation against the
     uniform solver or in production runs.
-  - `"Linear"/"Tol"`: set the linear solver tolerance to be substantially smaller than
-    `"AdaptiveTol"`. The adaptive solver is based on an interpolation and can be unusually sensitive
+  - `["Solver"]["Linear"]["Tol"]`: set the linear solver tolerance to be substantially smaller than
+    `"AdaptiveTol"`. The adaptive solver is based on an interpolation and can be very sensitive
     to errors in the linear solver. Increase this tolerance in your validation runs and ensure the
     output is no different. Should *Palace* log warnings like `Minimal rational interpolation encountered rank-deficient matrix` try tightening this tolerance substantially.
   - [`"AdaptiveMaxSamples"`](../config/solver.md#solver%5B%22Driven%22%5D): cap on full linear
@@ -74,7 +94,7 @@ The following are important tuning configurations:
     without convergence.
 
 The rest of this tutorial will illustrate the driven solvers on two different examples (CPWs and
-transmon), explain the adaptive algorithm in detail, and give more detailed user guidance.
+the single transmon), explain the adaptive algorithm in detail, and give more detailed user guidance.
 
 ## Revisiting the Two Coplanar Waveguide Example (Part I)
 
@@ -85,7 +105,7 @@ that places lumped ports at the end of the CPWs.
 ### Uniform Solver
 
 First, we set up a uniform driven simulation using the configuration file
-[`cpw_lumped_uniform_convergence.json`](https://github.com/awslabs/palace/blob/main/examples/cpw/cpw_lumped_uniform_convergence.json).
+[`cpw_tutorial_lumped_uniform.json`](https://github.com/awslabs/palace/blob/main/examples/cpw/cpw_tutorial_lumped_uniform.json).
 In this example, we will only be driving the single lumped port with `"Index": 1`. The `Solver`
 section of the configuration is
 
@@ -105,13 +125,13 @@ specified. The uniform solver will iterate over all sample points specified in
 sample frequency point ``f``. We will also refer to these solves as "full" or "High-Dimensional
 Solves" (HDM) since they solve the full linear problem on the finite element space. Here we are
 sampling a linear grid between ``2~\mathrm{GHz}`` and ``32~\mathrm{GHz}`` in steps of ``\Delta f = 0.1~\mathrm{GHz}``, but [users can provide more complicated sample
-specification](../config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D).
+specifications](../config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D).
 
 The linear solver tolerance `"Tol": 1.0e-12` is chosen to be very small. Such a small tolerance is
 near the limit of what *Palace*'s solvers can reach using double precision. The error of the uniform
 linear solve ``\bm{A}(\omega) \bm{x} = \bm{b}(\omega)`` also depends on the condition number of the
 system matrix ``\bm{A}(\omega)`` at each frequency ``\omega = 2 \pi f``. Importantly, if the system
-has resonances (poles) near the real axis, the linear solve may become very poorly conditioned. This
+has resonances (poles) near the real axis, the linear solve may become poorly conditioned. This
 leads to a loss of numerical accuracy.
 
 The total electric energy ``E_{\mathrm{elec}}`` is printed out as one of the columns in
@@ -146,7 +166,7 @@ To perform a driven simulation with the adaptive driven solver, we set
 will define this quantity more precisely later. Simulation output, like `domain-E.csv`, has the same
 structure as the uniform solver — they are evaluated on the same frequency grid specified by
 `"Samples"` in the configuration file. However, the adaptive solver constructs a different
-"internal" frequency grid on which it does HDM solves. This internal grid is automatically chosen by
+*internal* frequency grid on which it does HDM solves. This internal grid is automatically chosen by
 the solver and generally contains far fewer points. From this small internal grid, *Palace*
 constructs a reduced order model (ROM) that interpolates the solution at the output grid. We
 emphasize that the number of HDM solves done is controlled by the
@@ -249,8 +269,8 @@ the literature for an introduction [1,2]. *Palace* finds a set of ``n`` real ort
 particularly simple.
 
 The set of basis vectors ``\bm{Q}`` that *Palace* uses are the orthogonalized components of the HDM
-solutions ``\bm{x}^*`` at the "internal" sampling frequencies ``f_\mathrm{sample} \in [f_\mathrm{min}, f_\mathrm{max}]``. In fact, *Palace* uses ``\mathrm{Re}\bm{x}^*``,
-``\mathrm{Im}\bm{x}^*`` as separate vectors so that the basis ``\bm{Q}`` is real. As we add more
+solutions ``\bm{x}^*`` at the *internal* sampling frequencies ``f_\mathrm{sample} \in [f_\mathrm{min}, f_\mathrm{max}]``. In fact, *Palace* uses ``\mathrm{Re}(\bm{x}^*)``,
+``\mathrm{Im}(\bm{x}^*)`` as separate vectors so that the basis ``\bm{Q}`` is real. As we add more
 sampling frequencies, the basis of the reduced order model grows and increases the accuracy of the
 projection, until we satisfy a convergence criterion. This construction is essentially a type of
 rational interpolation on the whole domain. It is also related to the mathematics of rational Krylov
@@ -264,7 +284,7 @@ reorthogonalization which is a good high-precision option.
 
 ### Choosing Internal Sample Frequencies and Convergence
 
-The above construction does not tell us how to efficiently choose the location of internal sample
+The above construction does not explain how to efficiently choose the location of internal sample
 frequencies ``f_\mathrm{sample}``. For this we use the greedy sampling algorithm developed by
 Pradovera in [3]. This is based on a type of rational (barycentric) interpolation for the solution
 ``\bm{u}`` of linear systems in frequency
@@ -277,7 +297,7 @@ Pradovera in [3]. This is based on a type of rational (barycentric) interpolatio
 where the ``\omega_i`` are sample frequencies, ``\bm{u}(\omega_i)`` solutions at those frequencies,
 and ``w_i`` some weight coefficients fitted. To use this interpolation for our driven
 electromagnetic solver, we linearize the quadratic ``KCM`` operator as a linear operator and
-identify ``\bm{u}^T = (\bm{x}^T, i \omega \bm{x}^T)``. This type of linearization is familiar to
+identify ``\bm{u}^T = (\bm{x}^T, i \omega \bm{x}^T)``. This type of linearization may be familiar to
 physicists as going from Newton's equations (second order in time) to Hamilton's equations (first
 order in time) and doubling the state dimension from ``N`` to ``2N``.
 
@@ -320,29 +340,29 @@ The rational interpolation approach above is extremely efficient at building a b
 very small number of HDM solves. However, there are two challenges that we encounter in practical
 use.
 
-**Early termination** due to accidental convergence. As discussed above, the convergence criterion
-is that the error from the HDM solve at the next suggested sample point ``f^*`` is below the
-threshold ``\varepsilon_\mathrm{tol}``. Although the algorithm picks ``f^*`` to be the position
-where the error indicator is largest, the error evaluated there can sometimes be smaller than the
-error expected from the interpolation. This means that the solution looks more converged than it is
-and the algorithm terminates early. This is discussed in the paper by Pradovera [3].
+1. **Early termination** due to accidental convergence. As discussed above, the convergence criterion
+   is that the error from the HDM solve at the next suggested sample point ``f^*`` is below the
+   threshold ``\varepsilon_\mathrm{tol}``. Although the algorithm picks ``f^*`` to be the position
+   where the error indicator is largest, the error evaluated there can sometimes be smaller than the
+   error expected from the interpolation. This means that the solution looks more converged than it is
+   and the algorithm terminates early. This is discussed in the paper by Pradovera [3].
 
-To avoid this, we introduce a memory. The algorithm only terminates once a certain number of
-consecutive samples in a row are below tolerance. This number is defined by the
-[`"AdaptiveConvergenceMemory"`](../config/solver.md#solver%5B%22Driven%22%5D) configuration. The
-default is `2`, which is small. Increasing this number to say `3` or `4`, especially in models where
-the user does not understand the convergence properties, can be helpful. However, each HDM sample
-adds a substantial computational cost to the training phase.
+   To avoid this, we introduce a memory. The algorithm only terminates once a certain number of
+   consecutive samples in a row are below tolerance. This number is defined by the
+   [`"AdaptiveConvergenceMemory"`](../config/solver.md#solver%5B%22Driven%22%5D) configuration. The
+   default is `2`, which is small. Increasing this number to say `3` or `4`, especially in models where
+   the user does not understand the convergence properties, can be helpful. However, each HDM sample
+   adds a substantial computational cost to the training phase.
 
-**Numerical problems** due to finite precision. The mathematical formulation of the rational
-interpolation for the error indicator assumes that the solution at the sample points is exact.
-However, in reality there is the linear solver tolerance
-[`"Linear"/"Tol"`](../config/solver.md#solver%5B%22Linear%22%5D) that sets the error on this and can
-propagate that error to the prediction of the samples. A detailed discussion of this error
-propagation is beyond the scope of this tutorial. In practice this is not a problem, provided that
-your value of [`"AdaptiveTol"`](../config/solver.md#solver%5B%22Driven%22%5D) is much larger than
-the linear solver [`"Tol"`](../config/solver.md#solver%5B%22Linear%22%5D). What “much larger” means
-is a model-dependent quantity, although we have found that a factor ``10^4`` or larger works well.
+2. **Numerical problems** due to finite precision. The mathematical formulation of the rational
+   interpolation for the error indicator assumes that the solution at the sample points is exact.
+   However, in reality there is the linear solver tolerance
+   [`["Solver"]["Linear"]["Tol"]`](../config/solver.md#solver%5B%22Linear%22%5D) that sets the error on this and can
+   propagate that error to the prediction of the samples. A detailed discussion of this error
+   propagation is beyond the scope of this tutorial. In practice this is not a problem, provided that
+   your value of [`"AdaptiveTol"`](../config/solver.md#solver%5B%22Driven%22%5D) is much larger than
+   the linear solver [`"Tol"`](../config/solver.md#solver%5B%22Linear%22%5D). What “much larger” means
+   is a model-dependent quantity, although we have found that a factor ``10^4`` or larger works well.
 
 What happens if the [`"AdaptiveTol"`](../config/solver.md#solver%5B%22Driven%22%5D) is too close to
 the linear solver [`"Tol"`](../config/solver.md#solver%5B%22Linear%22%5D)? In practice, we have
@@ -362,10 +382,10 @@ accuracy.
 As discussed above, a user can also force certain frequency points to be added to the PROM before
 the adaptive sampling starts by using [`"AddToPROM": true`](../config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D). This is primarily a
 debugging tool. Routine usage is not recommended — adding sample by hand negates the major benefit
-of the adaptive solver to “choose the best” samples for a given accuracy. However, this option might
+of the adaptive solver to efficiently choose samples based on the observed approximation error. However, this option might
 help investigate convergence issues. If adding points, the user should be careful not to
 accidentally set [`"AddToPROM": true`](../config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D) on a dense grid, since this
-will perform a very large number of HDM solves and keep them in computer memory for the duration of
+will perform a very large number of HDM solves and keep them in memory for the duration of
 the computation.
 
 ### Multi-excitations
@@ -451,7 +471,7 @@ A detailed discussion of error estimates and error propagation from the electric
 quantities is beyond the scope of this tutorial. From a practical perspective, we encourage users to
 validate some of the adaptive driven simulations against uniform driven simulations in order to get
 a practical sense of the error for different quantities, to help identify an appropriate adaptive
-tolerance and to diagnose convergence errors.
+tolerance, linear solver tolerance, and to diagnose convergence errors.
 
 A useful and cheap visualization may also be to plot the absolute error normalized by an
 ”appropriate” scale factor. For example, below we plot the ``\vert S_{\mathrm{adaptive}} - S_{\mathrm{uniform}}\vert / \vert\vert S_{\mathrm{uniform}}\vert\vert_{\mathrm{RMS}}``. Here
@@ -493,18 +513,18 @@ Let us now apply the driven and adaptive solver to a model of a transmon qubit, 
 discussed in the [eigenmode tutorial](transmon.md). We assume familiarity with that tutorial. As
 discussed there, the model consists of a transmon qubit and a quarter-wave coplanar waveguide
 readout resonator coupled to a feedline. There are three lumped ports in this model: ports 1 and 2
-are the ``50~\Omega`` resistive feedline terminations and port 3 is a passive LC element (``L = 14.86\,\textrm{nH}``, ``C = 5.5\,\textrm{fF}``) representing the linearised Josephson junction.
+are the ``50~\Omega`` resistive feedline terminations and port 3 is a passive LC element (``L = 14.86\,\mathrm{nH}``, ``C = 5.5\,\mathrm{fF}``) representing the linearised Josephson junction.
 
 There are two eigenmodes of particular interest that we discovered in the previous tutorial:
 
-  - A “transmon” mode near ``4.10~\textrm{GHz}`` with ``Q = 1.8 \cdot 10^4``,
-  - A “resonator” mode near ``5.60~\textrm{GHz}`` with ``Q = 7.9 \cdot 10^3``.
+  - A “transmon” mode near ``4.10~\mathrm{GHz}`` with ``Q = 1.8 \cdot 10^4``,
+  - A “resonator” mode near ``5.60~\mathrm{GHz}`` with ``Q = 7.9 \cdot 10^3``.
 
 The eigenmode visualization shows that even the transmon mode has appreciable weight on the readout
 resonator and in the feedline.
 
 We will now perform uniform and adaptive driven simulations on this model, by exciting the
-``50~\Ohm`` resistive ports. We will use the same mesh `examples/transmon/mesh/transmon.msh2` as the
+``50~\Omega`` resistive ports. We will use the same mesh `examples/transmon/mesh/transmon.msh2` as the
 eigenmode example. We use the eigenmode set-up file in `examples/transmon/transmon_coarse.json` and
 adapt it to a driven solver (`examples/transmon/transmon_tutorial_driven.json`):
 
@@ -622,7 +642,7 @@ The error drop is even more dramatic for the error in the S-parameters:
 
 In both plots above, the error is more structured than it was in the CPW example. It is worse near
 the eigenmode locations and better far away. The adaptive solver also adds HDM solves in a more
-structured manner to “shadow” the eigenmodes. This behaviour is simple to interpret — the response
+structured manner to “shadow” the eigenmodes. This behavior is simple to interpret — the response
 of the system in the real interval ``[f_\mathrm{min}, f_\mathrm{max}]`` is dominated by the singular
 response of the eigenmodes (poles). The rational interpolation of the adaptive solver can
 reconstruct the existence and approximate location of these poles. Then it tries to capture the
@@ -651,14 +671,14 @@ need to connect the abstract ROM matrix to real electrical signals.
 [1] P. Benner, D. C. Sorensen, and V. Mehrmann, Eds., Dimension Reduction of Large-Scale Systems:
 Proceedings of a Workshop held in Oberwolfach, Germany, October 19–25, 2003. in Lecture Notes in
 Computational Science and Engineering, no. 45. Berlin, Heidelberg: Springer Berlin Heidelberg, 2005.
-doi: 10.1007/3-540-27909-1.
+doi: [10.1007/3-540-27909-1](https://doi.org/10.1007/3-540-27909-1).
 
 [2] A. C. Antoulas, Approximation of Large-Scale Dynamical Systems. Society for Industrial and
-Applied Mathematics, 2005. doi: 10.1137/1.9780898718713.
+Applied Mathematics, 2005. doi: [10.1137/1.9780898718713](https://doi.org/10.1137/1.9780898718713).
 
 [3] D. Pradovera, “Toward a certified greedy Loewner framework with minimal sampling,” Adv Comput
-Math, vol. 49, no. 6, p. 92, Dec. 2023, doi: 10.1007/s10444-023-10091-7.
+Math, vol. 49, no. 6, p. 92, Dec. 2023, doi: [10.1007/s10444-023-10091-7](https://doi.org/10.1007/s10444-023-10091-7).
 
 [4] D. Pradovera, “Interpolatory rational model order reduction of parametric problems lacking
 uniform inf-sup stability,” SIAM J. Numer. Anal., vol. 58, no. 4, pp. 2265–2293, Jan. 2020, doi:
-10.1137/19M1269695.
+[10.1137/19M1269695](https://doi.org/10.1137/19M1269695).
