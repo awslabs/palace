@@ -588,6 +588,14 @@ WavePortData::WavePortData(const config::WavePortData &data,
       voltage_path.push_back(std::move(p));
     }
     voltage_n_samples = data.n_samples;
+
+    // Set up reverse transfer map (port submesh → parent mesh) and a parent-mesh
+    // GridFunction to receive the transferred mode field. This enables computing line
+    // integrals of the port mode E-field via GSLIB on the 3D parent mesh, since GSLIB
+    // requires SpaceDim == Dim and cannot work directly on the 2D-embedded port submesh.
+    parent_E0t = std::make_unique<GridFunction>(nd_fespace, true);
+    port_nd_transfer_reverse = std::make_unique<mfem::ParTransferMap>(
+        mfem::ParSubMesh::CreateTransferMap(port_E0t->Real(), parent_E0t->Real()));
   }
 }
 
@@ -815,20 +823,40 @@ std::complex<double> WavePortData::GetVoltage(GridFunction &E) const
 
 std::complex<double> WavePortData::GetExcitationVoltage() const
 {
-  // TODO: The port mode field (port_E0t) lives on the 2D port submesh, and GSLIB cannot
-  // find 3D points on a 2D submesh. To implement this, the port mode field must first be
-  // transferred back to the 3D parent mesh before calling ComputeLineIntegral.
-  Mpi::Warning("GetExcitationVoltage is not yet implemented for wave port boundaries!\n");
-  return 0.0;
+  if (!has_voltage_coords)
+  {
+    return 0.0;
+  }
+  // Transfer the port mode tangential E-field from the 2D port submesh back to the 3D
+  // parent mesh, then compute the line integral along the voltage path using GSLIB
+  // interpolation. Zero the parent field first since SubMeshToParent only writes the
+  // mapped DOFs (boundary face DOFs corresponding to the port submesh).
+  *parent_E0t = 0.0;
+  port_nd_transfer_reverse->Transfer(port_E0t->Real(), parent_E0t->Real());
+  port_nd_transfer_reverse->Transfer(port_E0t->Imag(), parent_E0t->Imag());
+  std::complex<double> V(0.0, 0.0);
+  for (std::size_t k = 0; k + 1 < voltage_path.size(); k++)
+  {
+    V.real(V.real() + fem::ComputeLineIntegral(voltage_path[k], voltage_path[k + 1],
+                                               parent_E0t->Real(), voltage_n_samples));
+    V.imag(V.imag() + fem::ComputeLineIntegral(voltage_path[k], voltage_path[k + 1],
+                                               parent_E0t->Imag(), voltage_n_samples));
+  }
+  return V;
 }
 
 std::complex<double> WavePortData::GetCharacteristicImpedance() const
 {
-  // TODO: Same limitation as GetExcitationVoltage — the port mode field lives on the 2D
-  // submesh. Requires transfer to parent mesh before GSLIB interpolation can work.
-  Mpi::Warning(
-      "GetCharacteristicImpedance is not yet implemented for wave port boundaries!\n");
-  return 0.0;
+  // Z_PV = |V|² / (2 P_avg). The driven solver's Normalize() function normalizes to
+  // |∫(E×H⋆)·n dS| = 1, which equals 2·P_avg for a propagating mode (the full complex
+  // Poynting integral, not time-averaged). Hence P_avg = 1/2 in the driven solver's
+  // convention, so Z_PV = |V|² / (2 × 1/2) = |V|².
+  auto V = GetExcitationVoltage();
+  if (std::abs(V) == 0.0)
+  {
+    return 0.0;
+  }
+  return std::norm(V);
 }
 
 WavePortOperator::WavePortOperator(const config::BoundaryData &boundaries,
@@ -1055,8 +1083,17 @@ void WavePortOperator::Initialize(double omega)
                    "  H1: {:d}, ND: {:d}\n",
                    idx, data.GlobalTrueH1Size(), data.GlobalTrueNDSize());
       }
-      Mpi::Print(" Port {:d}, mode {:d}: kₙ = {:.3e}{:+.3e}i m⁻¹\n", idx, data.mode_idx,
-                 data.kn0.real() * kc, data.kn0.imag() * kc);
+      if (data.HasVoltageCoords())
+      {
+        auto Z_pv = data.GetCharacteristicImpedance().real() * electromagnetics::Z0_;
+        Mpi::Print(" Port {:d}, mode {:d}: kₙ = {:.3e}{:+.3e}i m⁻¹, Z_PV = {:.3e} Ω\n", idx,
+                   data.mode_idx, data.kn0.real() * kc, data.kn0.imag() * kc, Z_pv);
+      }
+      else
+      {
+        Mpi::Print(" Port {:d}, mode {:d}: kₙ = {:.3e}{:+.3e}i m⁻¹\n", idx, data.mode_idx,
+                   data.kn0.real() * kc, data.kn0.imag() * kc);
+      }
     }
   }
 }

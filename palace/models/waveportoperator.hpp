@@ -105,6 +105,12 @@ private:
   int voltage_n_samples;
   bool has_voltage_coords = false;
 
+  // Reverse transfer map (port submesh → parent mesh) and parent-mesh GridFunction
+  // used to evaluate line integrals of the port mode field via GSLIB on the 3D parent
+  // mesh. Only allocated if the user configured a voltage path.
+  std::unique_ptr<mfem::ParTransferMap> port_nd_transfer_reverse;
+  std::unique_ptr<GridFunction> parent_E0t;
+
 public:
   // 3D submesh constructor: extracts submesh from parent mesh.
   WavePortData(const config::WavePortData &data, const config::BoundaryData &boundaries,
