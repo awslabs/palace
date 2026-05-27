@@ -1238,6 +1238,7 @@ void PostOperator<solver_t>::MeasureWavePorts() const
       vi.P = data.GetPower(*E, *B);
       vi.S = data.GetSParameter(*E);
       vi.V = data.GetVoltage(*E);
+      vi.Z_PV = data.GetCharacteristicImpedance();
     }
   }
 }

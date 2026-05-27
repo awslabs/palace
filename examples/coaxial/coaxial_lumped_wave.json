@@ -1,0 +1,86 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/lumped_wave"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/coaxial.msh",
+    "L0": 1.0e-3  // mm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08,
+        "LossTan": 4.0e-4
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2]
+    },
+    "LumpedPort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [3],
+        "R": 50.0,  // Ω, matched
+        "Direction": "+R",  // Coaxial lumped port: E points outward
+        "Excitation": 1
+      }
+    ],
+    "WavePort":
+    [
+      {
+        "Index": 2,
+        "Attributes": [4],
+        "Mode": 1,
+        "Excitation": 2,
+        "Offset": 0.0,
+        "MaxIts": 30,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6,
+        // VoltagePath from inner conductor (inner_radius=0.8192 mm) to outer conductor
+        // (outer_radius=2.7305 mm) at the port face z=L=40 mm. The path direction matches
+        // the lumped port "+R" Direction (E points radially outward, from inner to outer)
+        // so that S-parameters between the lumped and wave port have consistent signs.
+        "VoltagePath": [[0.8192, 0.0, 40.0], [2.7305, 0.0, 40.0]],
+        "NSamples": 100
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Driven":
+    {
+      "Samples":
+      [
+        {
+          "Type": "Linear",
+          "MinFreq": 5.0,  // GHz
+          "MaxFreq": 15.0,  // GHz
+          "FreqStep": 5.0  // GHz
+        }
+      ],
+      "Save": [10.0]  // GHz
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 200
+    }
+  }
+}
