@@ -526,7 +526,9 @@ WavePortData::WavePortData(const config::WavePortData &data,
   }
 
   // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"
-  // of the wave port boundary, in order to deal with symmetry effectively.
+  // of the wave port boundary, in order to deal with symmetry effectively. The user can
+  // override this convention by providing a VoltagePath; see the post-Normalize step in
+  // Initialize() which flips the mode sign such that ∫ E · dl > 0 along the path.
   {
     Vector bbmin, bbmax;
     mesh::GetAxisAlignedBoundingBox(*port_mesh, bbmin, bbmax);
@@ -699,6 +701,27 @@ void WavePortData::Initialize(double omega)
       port_si->UseDevice(true);
     }
     Normalize(*port_S0t, *port_E0t, *port_E0n, *port_sr, *port_si);
+
+    // If the user provided a VoltagePath, use it to fix the mode polarity such that
+    // V_exc = ∫ E_mode · dl is real-positive along the path. This ties the wave port
+    // mode polarity to a physically meaningful direction (the path direction, like a
+    // lumped port's Direction), enabling consistent S-parameter signs in mixed lumped
+    // + wave port simulations.
+    if (has_voltage_coords)
+    {
+      auto V_exc = GetExcitationVoltage();
+      if (V_exc.real() < 0.0)
+      {
+        ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), port_E0t->Real(),
+                             port_E0t->Imag(), 0.0, port_E0t->Real(),
+                             port_E0t->Imag());
+        ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), port_E0n->Real(),
+                             port_E0n->Imag(), 0.0, port_E0n->Real(),
+                             port_E0n->Imag());
+        ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), *port_sr, *port_si, 0.0,
+                             *port_sr, *port_si);
+      }
+    }
   }
 }
 

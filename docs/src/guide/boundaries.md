@@ -132,6 +132,18 @@ for implementation details.
     (they are to be "one-sided" in the sense that mesh elements only exist on one side of
     the boundary).
 
+    The overall sign of the wave port mode E-field is internally fixed by an arbitrary
+    convention that does not necessarily match the polarity convention of lumped ports
+    in the same simulation. As a result, when mixing lumped and wave ports in a driven
+    simulation, the cross-type S-parameters (e.g. `S_{ij}` where one port is lumped and
+    the other is a wave port) may appear 180° out of phase relative to what would be
+    obtained with all-lumped or all-wave ports. To ensure consistent S-parameter signs,
+    specify the
+    [`"VoltagePath"`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D) option on
+    each wave port; the path direction acts as a polarity reference (analogous to the
+    `"Direction"` field on a lumped port) and the wave port mode is normalized so that
+    `\int E_{\text{mode}} \cdot dl > 0` along this path.
+
 For each port, the excitation is normalized to have unit incident power over the port boundary
 surface.
 

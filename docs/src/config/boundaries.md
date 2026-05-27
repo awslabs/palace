@@ -437,8 +437,16 @@ for the wave port problem.
 
 `"VoltagePath" [None]` :  Array of coordinate points defining an open path for computing a
 voltage line integral on the port face. Each element is a floating point array of length
-equal to the spatial dimension. When specified, enables voltage and characteristic impedance
-postprocessing for the wave port. Specified in mesh length units.
+equal to the spatial dimension. When specified, this serves two purposes: (1) it enables
+voltage and characteristic impedance ``Z_{PV}`` postprocessing for the wave port, and (2) it
+fixes the wave port mode polarity so that the integrated voltage ``\int E_{\text{mode}}
+\cdot dl`` along the path is real-positive. The path direction should be chosen so that it
+points from the high-potential to the low-potential terminal of the port (i.e., in the
+direction of the incident E-field), matching the convention used for lumped port `Direction`
+fields. This is required for consistent S-parameter signs when mixing wave and lumped ports
+in a driven simulation; without `VoltagePath`, the wave port mode polarity is set by an
+internal arbitrary convention which may leave cross-type S-parameters 180° out of phase.
+Specified in mesh length units.
 
 `"NSamples" [100]` :  Number of uniformly spaced sample points for the
 coordinate-based voltage line integral (using GSLIB interpolation).
