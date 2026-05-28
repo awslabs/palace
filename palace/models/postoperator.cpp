@@ -1284,6 +1284,16 @@ void PostOperator<solver_t>::MeasureSParameter() const
       return;
     }
 
+    // Per-side wave-port de-embedding factor: exp(i·kₙ·d_offset) when the port is a
+    // wave port with a non-zero offset; 1 otherwise (lumped ports have no offset).
+    // Applied independently on the source and observation sides, so cross-type S
+    // (lumped↔wave) gets the correct single-sided phase.
+    const std::complex<double> src_deembed =
+        (drive_port_type == PortType::WavePort)
+            ? std::exp(1i * fem_op->GetWavePortOp().GetPort(drive_port_idx).kn0 *
+                       fem_op->GetWavePortOp().GetPort(drive_port_idx).d_offset)
+            : std::complex<double>{1.0, 0.0};
+
     // Iterate over observation lumped ports.
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
@@ -1292,6 +1302,8 @@ void PostOperator<solver_t>::MeasureSParameter() const
       {
         vi.S.real(vi.S.real() - 1.0);
       }
+      // Lumped observation has no d_offset — only the source-side factor applies.
+      vi.S *= src_deembed;
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
                  fmt::format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
@@ -1306,12 +1318,9 @@ void PostOperator<solver_t>::MeasureSParameter() const
       {
         vi.S.real(vi.S.real() - 1.0);
       }
-      if (drive_port_type == PortType::WavePort)
-      {
-        const WavePortData &src_data = fem_op->GetWavePortOp().GetPort(drive_port_idx);
-        vi.S *= std::exp(1i * src_data.kn0 * src_data.d_offset);
-        vi.S *= std::exp(1i * data.kn0 * data.d_offset);
-      }
+      // Apply both source and observation de-embedding factors.
+      vi.S *= src_deembed;
+      vi.S *= std::exp(1i * data.kn0 * data.d_offset);
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
                  fmt::format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),

@@ -1245,13 +1245,16 @@ auto PostOperatorCSV<solver_t>::PrintPortZ()
       port_Z->table[format("im_z_pv_{}", idx)] << data.Z_PV.imag();
     }
 
-    // Per-excitation total-field impedance Z[i][j] = |V|² / |2 P_avg|.
+    // Per-excitation total-field impedance Z[i][j] = (V · conj(V)) / (2 P_avg).
     // GetPower returns the full Poynting integral ∫(E × H*)·n dS (without the
-    // 1/2 time-averaging factor), so Z_PV = |V|² / (2 P_avg) = |V|² / |P|.
+    // 1/2 time-averaging factor), so Z = (V · conj(V)) / P. This is direction-
+    // specific (sign of P depends on whether the field at port i is incoming or
+    // outgoing): Re{Z[i][i]} > 0 at the driven port, but Re{Z[i][j]} for i ≠ j
+    // can be negative when port i is a passive receiver of power leaving the
+    // domain.
     if (std::abs(data.P) > 0.0)
     {
-      double Z_real = std::norm(data.V) / std::abs(data.P);
-      auto Z = std::complex<double>(Z_real, 0.0);
+      auto Z = (data.V * std::conj(data.V)) / data.P;
       port_Z->table[format("re_z_{}_{}", idx, m_ex_idx)] << Z.real();
       port_Z->table[format("im_z_{}_{}", idx, m_ex_idx)] << Z.imag();
     }

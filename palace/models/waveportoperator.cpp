@@ -870,16 +870,17 @@ std::complex<double> WavePortData::GetExcitationVoltage() const
 
 std::complex<double> WavePortData::GetCharacteristicImpedance() const
 {
-  // Z_PV = |V|² / (2 P_avg). The driven solver's Normalize() function normalizes to
-  // |∫(E×H⋆)·n dS| = 1, which equals 2·P_avg for a propagating mode (the full complex
-  // Poynting integral, not time-averaged). Hence P_avg = 1/2 in the driven solver's
-  // convention, so Z_PV = |V|² / (2 × 1/2) = |V|².
+  // Z_PV = (V·V*) / P_mode, where P_mode = ∫(E_mode × H_mode*)·n dS is the full
+  // complex Poynting integral of the mode field over the port boundary. The driven
+  // solver's Normalize() function normalizes the mode so that |P_mode| = 1, with the
+  // mode polarity fixed (via VoltagePath when configured) so that P_mode is real-
+  // positive for a propagating mode. Therefore P_mode = 1 and Z_PV reduces to V·V*.
   auto V = GetExcitationVoltage();
   if (std::abs(V) == 0.0)
   {
     return 0.0;
   }
-  return std::norm(V);
+  return V * std::conj(V);
 }
 
 WavePortOperator::WavePortOperator(const config::BoundaryData &boundaries,
