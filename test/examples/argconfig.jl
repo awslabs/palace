@@ -5,16 +5,26 @@
 # experts, this struct is not concrete, but we do not care about performance
 # here.)
 struct ArgConfig
-    "Name of the command-line argument"
+    """
+    Name of the command-line argument
+    """
     name::String
-    "Corresponding environment variable"
+    """
+    Corresponding environment variable
+    """
     env_var::String
-    "Default value if there is not environment variable"
+    """
+    Default value if there is not environment variable
+    """
     default::Any
-    "Description for -h"
+    """
+    Description for -h
+    """
     description::String
-    """Function that parses the string to whatever is needed for the rest of
-    the execution of the script"""
+    """
+    Function that parses the string to whatever is needed for the rest of
+    the execution of the script
+    """
     parser::Function
 
     # Keyword argument based constructor.

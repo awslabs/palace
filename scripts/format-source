@@ -26,6 +26,12 @@ FORMAT_CPP="false"
 FORMAT_JL="false"
 CLANG_FORMAT="clang-format"
 JULIA="julia"
+# Pin JuliaFormatter to an exact version so formatting is deterministic across local runs
+# and CI. JuliaFormatter is not bug-for-bug stable across releases: an unpinned install
+# pulls the latest version each run, which silently reformats unrelated files and breaks
+# the style check whenever upstream publishes a new version. Bump this deliberately (and
+# re-run ./scripts/format-source) to adopt a newer formatter.
+JULIA_FORMATTER_VERSION="2.5.0"
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
     key="$1"
@@ -107,13 +113,12 @@ if $FORMAT_JL; then
                            -type f -iname \*.md -exec echo -n '"{}", ' \;)$FORMAT_JL_FILES"
     JULIA_CMD=$(
         cat << EOF
-try
-    @eval using JuliaFormatter
-catch
-    using Pkg; Pkg.UPDATED_REGISTRY_THIS_SESSION[] = true
-    Pkg.activate(; temp=true); Pkg.add("JuliaFormatter")
-    @eval using JuliaFormatter
-end
+using Pkg
+# Always resolve the pinned JuliaFormatter into a temporary environment so the result is
+# independent of whatever version may be installed in the user's global environment.
+Pkg.activate(; temp=true)
+Pkg.add(name="JuliaFormatter", version="$JULIA_FORMATTER_VERSION")
+@eval using JuliaFormatter
 try
     format([$FORMAT_JL_FILES], $FORMAT_JL_ARGS)
 catch e
