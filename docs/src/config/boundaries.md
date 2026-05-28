@@ -439,8 +439,7 @@ for the wave port problem.
 voltage line integral on the port face. Each element is a floating point array of length
 equal to the spatial dimension. When specified, this serves two purposes: (1) it enables
 voltage and characteristic impedance ``Z_{PV}`` postprocessing for the wave port, and (2) it
-fixes the wave port mode polarity so that the integrated voltage ``\int E_{\text{mode}}
-\cdot dl`` along the path is real-positive. The path direction should be chosen so that it
+fixes the wave port mode polarity so that the integrated voltage ``\int E_{\text{mode}} \cdot dl`` along the path is real-positive. The path direction should be chosen so that it
 points from the high-potential to the low-potential terminal of the port (i.e., in the
 direction of the incident E-field), matching the convention used for lumped port `Direction`
 fields. This is required for consistent S-parameter signs when mixing wave and lumped ports

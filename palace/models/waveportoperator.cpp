@@ -713,11 +713,9 @@ void WavePortData::Initialize(double omega)
       if (V_exc.real() < 0.0)
       {
         ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), port_E0t->Real(),
-                             port_E0t->Imag(), 0.0, port_E0t->Real(),
-                             port_E0t->Imag());
+                             port_E0t->Imag(), 0.0, port_E0t->Real(), port_E0t->Imag());
         ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), port_E0n->Real(),
-                             port_E0n->Imag(), 0.0, port_E0n->Real(),
-                             port_E0n->Imag());
+                             port_E0n->Imag(), 0.0, port_E0n->Real(), port_E0n->Imag());
         ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), *port_sr, *port_si, 0.0,
                              *port_sr, *port_si);
       }

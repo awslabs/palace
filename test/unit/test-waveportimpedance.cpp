@@ -50,8 +50,8 @@ TEST_CASE("WavePortData TE10 Z_PV matches analytical formula",
   //   4 = back (y=ly),  5 = left (x=0),  6 = top (z=lz).
   // We place the wave port on face 5 (x=0); PEC on the other five faces.
   // Use a moderately fine mesh so the line integral converges within ~1%.
-  auto serial_mesh = std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
-      8, 8, 4, mfem::Element::TETRAHEDRON, L_m, a_m, b_m));
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(8, 8, 4, mfem::Element::TETRAHEDRON, L_m, a_m, b_m));
 
   Units units(1.0, 1.0);
   IoData iodata(units);
