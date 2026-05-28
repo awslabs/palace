@@ -207,6 +207,15 @@ protected:
   // MRIs: one for each excitation index. Only used to pick new frequency sample point.
   std::map<int, MinimalRationalInterpolation> mri;
 
+  // Number of leading PROM basis rows occupied by lumped port modes. Each lumped port
+  // flagged with IncludeInSynthesis contributes exactly one real basis vector, added
+  // port-first and in order by AddLumpedPortModesForSynthesis. Ports excluded via
+  // IncludeInSynthesis = false contribute nothing. This count is the invariant that the
+  // port-port block scaling in CalculateNormalizedPROMMatrices and the basis reservation
+  // in the constructor both rely on; iterating to the total port count instead would
+  // over-run the per-port scaling vector whenever a port is excluded.
+  std::size_t NumSynthesisPortModes() const;
+
   // Helper function that normalizes PROM matrices so that they correspond to proper
   // admittance matrices on the ports. Also does unit conversion to physical (input) units.
   // Define so that 1.0 on port i corresponds to full (un-normalized solution), so you can

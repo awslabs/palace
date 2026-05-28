@@ -548,6 +548,12 @@ LumpedPortData::LumpedPortData(const json &port)
 
   excitation = ParsePortExcitation(port, index);
   active = port.value("Active", active);
+  include_in_synthesis = port.value("IncludeInSynthesis", include_in_synthesis);
+  MFEM_VERIFY(!(excitation != 0 && !include_in_synthesis),
+              fmt::format("\"IncludeInSynthesis\" cannot be false on lumped port index "
+                          "{:d} because it is excited; the excitation vector is always "
+                          "added to the synthesis basis.",
+                          index));
   if (port.find("Attributes") != port.end())
   {
     auto &elem = elements.emplace_back();

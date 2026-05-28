@@ -16,6 +16,14 @@ The format of this changelog is based on
 
 #### New Features
 
+  - Added `"IncludeInSynthesis"` boolean flag to lumped port configuration (default `true`).
+    When adaptive driven circuit synthesis is enabled
+    (`config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]`), this flag controls whether
+    the port contributes a port-mode basis vector to the reduced-order model. The boundary
+    condition is still enforced for `"IncludeInSynthesis": false` ports — only the row/column
+    in the synthesized circuit matrices is omitted. Useful for keeping passive terminations
+    in the simulation for correct physics without paying their basis-vector cost. Excited
+    ports must always be included; the parser rejects configurations otherwise.
   - Added `BoundaryMode` solver for mode analysis on 2D meshes, supporting both standalone 2D meshes
     and 2D boundary submesh extracted from a 3D mesh [PR 657](https://github.com/awslabs/palace/pull/657).
   - Added support for 2D meshes in all simulation types [PR 657](https://github.com/awslabs/palace/pull/657).

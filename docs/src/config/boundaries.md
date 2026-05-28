@@ -271,6 +271,7 @@ accounts for nonzero metal thickness.
         "CoordinateSystem": <string>,
         "Excitation": <bool>,
         "Active": <bool>,
+        "IncludeInSynthesis": <bool>,
         "R": <float>,
         "L": <float>,
         "C": <float>,
@@ -319,6 +320,19 @@ or transient simulation types. Can be specified either as a bool or as a non-neg
 
 `"Active" [true]` :  Turns on or off damping boundary condition for this lumped port
 boundary for driven or transient simulation types.
+
+`"IncludeInSynthesis" [true]` :  Controls whether this lumped port contributes a port-mode
+basis vector to the reduced-order model when adaptive driven circuit synthesis is enabled
+([`config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]`](../config/solver.md#solver%5B%22Driven%22%5D)).
+The boundary condition itself (the `R`/`L`/`C` or `Rs`/`Ls`/`Cs` termination) is always
+enforced; only the inclusion of the port mode in the synthesized circuit matrices is
+affected. Set to `false` on passive terminations whose row/column in the synthesized
+``L^{-1}``, ``C``, ``R^{-1}`` matrices is not needed — for example, peripheral 50 Ohm
+launcher pads kept in the simulation for correct physics but not measured. Setting this to
+`false` reduces the size of the PROM basis (and the corresponding storage and
+orthogonalization cost) by one vector per excluded port. Excited ports must always be
+included; the configuration parser will reject a port with `"Excitation" > 0` and
+`"IncludeInSynthesis": false`.
 
 `"R" [0.0]` :  Circuit resistance used for computing this lumped port boundary's impedance,
 ``\Omega``. This option should only be used along with the corresponding `"L"` and `"C"`
