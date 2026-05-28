@@ -18,8 +18,8 @@ To regenerate, from the repository root:
       generate_cpw_lumped_driven_data(num_processors=4)'
   julia --project=examples -e 'include("examples/transmon/transmon_tutorial_driven.jl"); \
       generate_transmon_driven_data(num_processors=4)'
-  uv run --script examples/cpw/cpw_tutorial_lumped_driven_plots.py
-  uv run --script examples/transmon/transmon_tutorial_driven_plots.py
+  julia --project=examples examples/cpw/cpw_tutorial_lumped_driven_plots.jl
+  julia --project=examples examples/transmon/transmon_tutorial_driven_plots.jl
 
 then commit the updated docs/src/assets/examples/driven_ua_*.svg.
 --->
@@ -45,7 +45,7 @@ eigenmode simulations.
 
     For the CPW example, the data can be generated with the script `examples/cpw/cpw_tutorial_lumped_driven.jl` and the result plots generated with `examples/cpw/cpw_tutorial_lumped_driven_plots.jl`.
 
-    For the transmon example, the data can be generated with the script `examples/transmon/transmon_tutorial_driven.jl` and the result plots generated with `examples/transmon/transmon_tutorial_driven_plots.py`.
+    For the transmon example, the data can be generated with the script `examples/transmon/transmon_tutorial_driven.jl` and the result plots generated with `examples/transmon/transmon_tutorial_driven_plots.jl`.
 
 ## Driven Solver Quick-Start
 
