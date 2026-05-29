@@ -61,7 +61,13 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        spack -e . install --only-concrete --no-check-signature
+        # --test root builds and installs the palace-unit-tests binary
+        # (and its example/ref data). The target is EXCLUDE_FROM_ALL, so
+        # without --test root the regression harness binary is never
+        # built and `spack load palace` can't expose it. The lock was
+        # already concretized with --test root by the build job, so the
+        # test deps (catch2) are present in the concrete environment.
+        spack -e . install --only-concrete --no-check-signature --test root
         end_timer "Install from cache"
 
     - name: Run Integration Tests
