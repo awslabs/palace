@@ -102,10 +102,10 @@ runs:
         # Translate the action's `test-cases` input to a list of Catch2
         # case names. "default" / empty -> the [Regression] tag (the
         # always-on suite, enumerated dynamically); "long" -> the
-        # [Long] tag (transmon eigenmodes, ~10 min each);
-        # anything else is treated as a Julia-style "<dir>/<sub>" list
-        # and converted to the underscored TEST_CASE names
-        # palace-unit-tests registers.
+        # [Long] tag (transmon eigenmodes, ~10 min each); anything else
+        # is taken as a space-separated list of Catch2 TEST_CASE names
+        # (e.g. "transmon_coarse cylinder_cavity_pec"), passed through
+        # verbatim.
         translate_cases() {
           local raw="$1"
           if [[ -z "$raw" || "$raw" == "default" ]]; then
@@ -116,9 +116,7 @@ runs:
             palace-unit-tests "[Long]" --list-tests | awk '/^  [a-z]/ {print $1}'
             return
           fi
-          # "cylinder/cavity_pec antenna/antenna_short_dipole" ->
-          # "cylinder_cavity_pec\nantenna_short_dipole".
-          echo "$raw" | tr '/' '_' | tr ' ' '\n'
+          echo "$raw" | tr ' ' '\n'
         }
 
         # One mpirun per case. Each case runs in a fresh process so
