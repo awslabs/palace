@@ -1258,8 +1258,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
     }
 
     // S-parameter computation with per-port reference impedances (Kurokawa power-wave
-    // generalized S-parameters), matching the convention of COMSOL Numeric ports + Lumped
-    // ports, HFSS's generalized S-matrix, and CST's default port-impedance normalization.
+    // generalized S-parameters).
     //
     // Each port type uses its natural reference impedance: lumped ports use the user-
     // specified R; wave ports implicitly use the line's characteristic impedance encoded
@@ -1269,11 +1268,6 @@ void PostOperator<solver_t>::MeasureSParameter() const
     //   - Lumped: ∫E·(E_inc/Z_s) dS = V/V_inc, where V_inc encodes the port's R
     //   - Wave:   ∫(E×H_mode⋆)·n dS, the modal power-overlap with unit-power normalization
     // Both are directly the Kurokawa b/a ratio, so no impedance scaling is needed.
-    //
-    // Wave-to-wave additionally applies port-offset de-embedding:
-    //   S_ij = S_raw × exp(ikₙ_src d_src) × exp(ikₙ_obs d_obs)
-    // This removes the propagation phase between the port boundary and a user-specified
-    // reference plane offset.
 
     // Get information about excited port.
     auto [drive_is_simple, drive_port_type, drive_port_idx] =

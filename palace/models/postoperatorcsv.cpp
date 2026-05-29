@@ -1198,7 +1198,7 @@ auto PostOperatorCSV<solver_t>::InitializePortZ(const SpaceOperator &fem_op)
     }
   }
 
-  // Per-excitation total-field impedance Z[i][j] = |V_i|² / |2 P_i| at port i during
+  // Per-excitation total-field impedance Z[i][j] at port i during
   // excitation j (i.e., the input impedance the excitation source sees looking into the
   // port, after standing-wave transformation by the rest of the structure).
   for (const auto ex_idx : ex_idx_v_all)
