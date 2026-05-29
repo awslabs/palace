@@ -174,7 +174,11 @@ protected:
   // wave-port contribution to A(ω) factors as i·Σ_p kₙ,p(ω)·M^(p)_{μ⁻¹}; storing the
   // ω-independent operator once and the per-port reduced projection separately lets the
   // PROM online phase apply the wave-port term without touching any HDM-size object.
-  // Keys are wave-port indices.
+  // Keys are wave-port indices. Mwp_p carries the boundary mass in its imaginary slot
+  // only (the i in i·Σ_p kₙ,p(ω)·M is baked in at assembly time), so Mwp_p_r is purely
+  // imaginary; SolvePROM multiplies by the real scalar kₙ,p(ω) to get the i·kₙ·M
+  // contribution to Aᵣ(ω) without an extra factor of i. The synthesis path inspects
+  // Mp_r.imag() to recover the real symmetric M_proj used for SVD-based augmentation.
   std::map<int, std::unique_ptr<ComplexOperator>> Mwp_p;
   std::map<int, Eigen::MatrixXcd> Mwp_p_r;
   // True iff GetExtraSystemMatrix has any non-wave-port contributors (currently
@@ -271,6 +275,80 @@ protected:
     std::vector<std::string> aux_labels;
   };
   NormalizedMatrices CalculateNormalizedPROMMatrices(const Units &units) const;
+
+  // Wave-port dispersion synthesis helpers used by CalculateNormalizedPROMMatrices.
+  //
+  // The chosen regime determines whether kₙ,ₚ(ω) is approximated by an order-2
+  // polynomial (Polynomial: clean absorption into Kr/Cr/Mr) or augmented with AAA-fit
+  // residual poles (Augmented: extra aux states extend the pencil).
+  enum class WavePortRegime
+  {
+    Polynomial,
+    Augmented
+  };
+
+  // Per-pole singular-vector aux block for a single wave port in regime 2. One aux
+  // state per (pole, kept singular direction); the augmented pencil stores them as
+  // appended rows/columns to Kr/Cr/Mr.
+  struct WavePortAuxBlock
+  {
+    int port_idx = 0;
+    std::vector<double> sigmas;           // singular values kept above tolerance
+    std::vector<Eigen::VectorXd> u_dirs;  // matching left singular vectors
+    std::vector<std::complex<double>> poles;
+    std::vector<std::complex<double>> residues;
+  };
+
+  // Result of fitting kₙ,ₚ(ω) on the sweep band for a single port. Polynomial regime
+  // populates {alpha0, alpha1, alpha2}; Augmented regime additionally populates `aux`
+  // and folds the AAA constant `d` into `alpha0`.
+  struct WavePortDispersionFit
+  {
+    int port_idx = 0;
+    WavePortRegime regime = WavePortRegime::Polynomial;
+    double alpha0 = 0.0;
+    double alpha1 = 0.0;
+    double alpha2 = 0.0;
+    std::optional<WavePortAuxBlock> aux;
+    double rel_err_polynomial = 0.0;  // residual of α-only fit on dense grid
+    double rel_err_augmented = 0.0;   // residual after AAA augmentation (Augmented only)
+  };
+
+  // Choose a synthesis regime given the polynomial-fit residual. `meets_tol` is the
+  // outcome of comparing rel_err against waveport_synthesis_tol; `force_setting`
+  // overrides AUTO when set. Emits a Mpi::Warning if the chosen regime is incompatible
+  // with the residual (e.g. forced Polynomial with rel_err > tol).
+  WavePortRegime SelectWavePortRegime(int port_idx, double rel_err, bool meets_tol) const;
+
+  // Sample kₙ,ₚ(ω) on the sweep band, fit a quadratic, run AAA on the residual when
+  // augmenting, and pack the result. The dense-grid residual is captured for both
+  // regimes for diagnostic logging.
+  WavePortDispersionFit FitWavePortDispersion(int port_idx,
+                                              const Eigen::MatrixXcd &Mp_r) const;
+
+  // Accumulate the polynomial-fit corrections from one port into the running Kr_corr,
+  // Cr_corr, Mr_corr buffers. Folds α₀+d into Im(Kr), -α₁ into Re(Cr), -α₂ into Im(Mr).
+  static void ApplyPolynomialFitCorrections(const WavePortDispersionFit &fit,
+                                            const Eigen::MatrixXcd &Mp_r,
+                                            Eigen::MatrixXcd &Kr_corr,
+                                            Eigen::MatrixXcd &Cr_corr,
+                                            Eigen::MatrixXcd &Mr_corr);
+
+  // Append aux-state rows/columns for regime-2 wave ports onto an n×n base pencil
+  // (Kr_total, Cr_total, Mr_total). Returns the (n+aux)×(n+aux) augmented matrices and
+  // appends labels to `aux_labels`. The base matrices are left at size n×n if no aux
+  // states are present (no copy).
+  struct AugmentedPencil
+  {
+    Eigen::MatrixXcd Kr;
+    Eigen::MatrixXcd Cr;
+    Eigen::MatrixXcd Mr;
+  };
+  static AugmentedPencil BuildAugmentedPencil(
+      const Eigen::MatrixXcd &Kr_total, const Eigen::MatrixXcd &Cr_total,
+      const Eigen::MatrixXcd &Mr_total,
+      const std::vector<WavePortAuxBlock> &aux_blocks,
+      std::vector<std::string> &aux_labels);
 
 public:
   RomOperator(const config::LinearSolverData &linear, int verbose, SpaceOperator &space_op,

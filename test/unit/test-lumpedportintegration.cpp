@@ -241,7 +241,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
   // reference impedance is 1.0 in internal units, so that it is Z_0 in physical units.
   ComplexVector port_primary_ht_cn;
   port_primary_ht_cn.UseDevice(true);
-  space_op.GetLumpedPortExcitationVectorPrimaryHtcn(1, port_primary_ht_cn, true);
+  space_op.GetLumpedPortExcitationVectorPrimaryHtcn(1, port_primary_ht_cn);
   // As palace GridFunction: Undo restriction
   GridFunction port_primary_gf_ht_cn(space_op.GetNDSpace());
   port_primary_gf_ht_cn = 0.0;
@@ -249,7 +249,7 @@ TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][P
 
   ComplexVector port_primary_et;
   port_primary_et.UseDevice(true);
-  space_op.GetLumpedPortExcitationVectorPrimaryEt(1, port_primary_et, true);
+  space_op.GetLumpedPortExcitationVectorPrimaryEt(1, port_primary_et);
   GridFunction port_primary_gf_et(space_op.GetNDSpace());
   port_primary_gf_et = 0.0;
   port_primary_gf_et.Real().SetFromTrueDofs(port_primary_et.Real());
@@ -592,13 +592,13 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
   // tangential. Field normalization in GetLumpedPortExcitationVectorPrimaryHt is such that
   // reference impedance is 1.0 in internal units, so that it is Z_0 in physical units.
   ComplexVector port_primary_ht_cn;
-  space_op.GetLumpedPortExcitationVectorPrimaryHtcn(1, port_primary_ht_cn, true);
+  space_op.GetLumpedPortExcitationVectorPrimaryHtcn(1, port_primary_ht_cn);
   GridFunction port_primary_gf_ht_cn(space_op.GetNDSpace());  // As palace GridFunction
   port_primary_gf_ht_cn = 0.0;
   port_primary_gf_ht_cn.Real().SetFromTrueDofs(port_primary_ht_cn.Real());
 
   ComplexVector port_primary_et;
-  space_op.GetLumpedPortExcitationVectorPrimaryEt(1, port_primary_et, true);
+  space_op.GetLumpedPortExcitationVectorPrimaryEt(1, port_primary_et);
   GridFunction port_primary_gf_et(space_op.GetNDSpace());  // As palace GridFunction
   port_primary_gf_et = 0.0;
   port_primary_gf_et.Real().SetFromTrueDofs(port_primary_et.Real());
