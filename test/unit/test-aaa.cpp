@@ -86,6 +86,72 @@ TEST_CASE("AAA: rational function recovered exactly", "[aaa][Serial]")
   }
 }
 
+TEST_CASE("AAA: pole-residue accuracy with complex poles + asymptote", "[aaa][Serial]")
+{
+  // Known partial-fraction r(z) = d + Σₖ rₖ/(z − pₖ) with non-zero asymptote and
+  // complex poles (off the real axis). Sample, fit with AAA, extract pole-residue
+  // form, and verify EvaluatePoleResidue matches the input function on a fresh test
+  // grid. This exercises the residue formula at aaa.hpp:279 — sign error there shows
+  // up as factor-of-(-1) mismatch and the asymptote handling at the same site.
+  const std::complex<double> d = std::complex<double>(0.4, -0.1);
+  const std::vector<std::complex<double>> poles = {std::complex<double>(2.0, 0.3),
+                                                   std::complex<double>(-1.5, -0.2),
+                                                   std::complex<double>(5.0, 0.8)};
+  const std::vector<std::complex<double>> residues = {
+      std::complex<double>(0.7, 0.4), std::complex<double>(-1.1, 0.2),
+      std::complex<double>(0.5, -0.3)};
+  auto truth_fn = [&](std::complex<double> z)
+  {
+    std::complex<double> sum = d;
+    for (std::size_t k = 0; k < poles.size(); k++)
+    {
+      sum += residues[k] / (z - poles[k]);
+    }
+    return sum;
+  };
+  // Sample on a real grid that avoids the real parts of all poles by margins larger
+  // than the imaginary offsets, so the function is well-defined and not singular.
+  auto z = LinSpace(-5.0, 8.0, 50);
+  Eigen::VectorXcd F(z.size());
+  for (long i = 0; i < z.size(); i++)
+  {
+    F(i) = truth_fn(z(i));
+  }
+  auto r = RunAAA(z, F, 1e-12, 10);
+  REQUIRE(r.converged);
+
+  auto pr = AAAToPoleResidue(r);
+  // Should recover all three poles. AAA can introduce extra spurious poles for
+  // numerical reasons, so check that each input pole has a near match in the output.
+  REQUIRE(pr.poles.size() >= static_cast<long>(poles.size()));
+  for (const auto &p_in : poles)
+  {
+    double min_dist = std::numeric_limits<double>::infinity();
+    for (long k = 0; k < pr.poles.size(); k++)
+    {
+      min_dist = std::min(min_dist, std::abs(pr.poles(k) - p_in));
+    }
+    REQUIRE_THAT(min_dist, WithinAbs(0.0, 1e-9));
+  }
+  // The asymptote d should match. AAAToPoleResidue computes d as a row sum of
+  // (alpha[k]/beta[k]) at infinity (see aaa.hpp); a sign error on the residue formula
+  // typically leaves d intact but shifts the residue magnitudes.
+  REQUIRE_THAT(std::abs(pr.d - d), WithinAbs(0.0, 1e-9));
+
+  // Spot-check pole-residue evaluation at fresh test points (away from sample grid).
+  const std::vector<std::complex<double>> z_test = {
+      std::complex<double>(0.3, 0.0), std::complex<double>(3.7, 0.0),
+      std::complex<double>(-3.0, 0.0), std::complex<double>(7.5, 0.0),
+      std::complex<double>(1.0, 0.5)  // off-axis
+  };
+  for (auto z_t : z_test)
+  {
+    auto truth = truth_fn(z_t);
+    auto v = EvaluatePoleResidue(pr, z_t);
+    REQUIRE_THAT(std::abs(v - truth) / std::abs(truth), WithinAbs(0.0, 1e-9));
+  }
+}
+
 TEST_CASE("AAA: textbook waveguide dispersion residual converges", "[aaa][Serial]")
 {
   // The polynomial-residual case from prom-waveport-validation: kₙ(ω) = √(γω² + α)

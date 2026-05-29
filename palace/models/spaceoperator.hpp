@@ -285,16 +285,15 @@ public:
   // Fill vector corresponding to the tangential electric field E_t on a lumped port, with
   // overall normalization such that the reference impedance \vert Z_R \vert = 1 in internal
   // units.
-  void GetLumpedPortExcitationVectorPrimaryEt(int port_idx, ComplexVector &Et_primary,
-                                              bool zero_metal);
+  void GetLumpedPortExcitationVectorPrimaryEt(int port_idx, ComplexVector &Et_primary);
 
   // Fill vector corresponding to the tangential field H_t x n on a lumped port, with
   // overall normalization such that the reference impedance \vert Z_R \vert = 1 in internal
   // units. This is locally in the same direction as E_t, but because of lumped ports can
   // have multiple attributes ports with different surface impedances, they are not just
   // proportional to each other.
-  void GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx, ComplexVector &Htcn_primary,
-                                                bool zero_metal);
+  void GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
+                                                ComplexVector &Htcn_primary);
 
   // Fill vector corresponding to the tangential modal electric field E_t at a wave port,
   // evaluated at the reference frequency `omega_ref`. Used by the synthesis code path to
@@ -302,7 +301,7 @@ public:
   // for lumped ports). Triggers the cross-section EVP for this port if it has not
   // already been initialised at the requested frequency.
   void GetWavePortFieldVectorPrimaryEt(int port_idx, double omega_ref,
-                                       ComplexVector &Et_primary, bool zero_metal);
+                                       ComplexVector &Et_primary);
 
   // Construct a constant or randomly initialized vector which satisfies the PEC essential
   // boundary conditions.

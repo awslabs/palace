@@ -1008,8 +1008,7 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
 }
 
 void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
-                                                           ComplexVector &Et_primary,
-                                                           bool zero_metal)
+                                                           ComplexVector &Et_primary)
 {
   const auto &data = GetLumpedPortOp().GetPort(port_idx);
 
@@ -1031,15 +1030,11 @@ void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
   ProjectBdrCoefficientViaMassSolve(fb, data, mat_op, GetNDSpace(), GetComm(),
                                     Et_primary.Real());
 
-  if (zero_metal)
-  {
-    linalg::SetSubVector(Et_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
-  }
+  linalg::SetSubVector(Et_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
 }
 
 void SpaceOperator::GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
-                                                             ComplexVector &Htcn_primary,
-                                                             bool zero_metal)
+                                                             ComplexVector &Htcn_primary)
 {
   const auto &data = lumped_port_op.GetPort(port_idx);
 
@@ -1061,15 +1056,11 @@ void SpaceOperator::GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
   ProjectBdrCoefficientViaMassSolve(fb, data, mat_op, GetNDSpace(), GetComm(),
                                     Htcn_primary.Real());
 
-  if (zero_metal)
-  {
-    linalg::SetSubVector(Htcn_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
-  }
+  linalg::SetSubVector(Htcn_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
 }
 
 void SpaceOperator::GetWavePortFieldVectorPrimaryEt(int port_idx, double omega_ref,
-                                                    ComplexVector &Et_primary,
-                                                    bool zero_metal)
+                                                    ComplexVector &Et_primary)
 {
   // Trigger (or refresh) the cross-section EVP at omega_ref. WavePortData::Initialize
   // caches by omega so calling this is cheap if already initialised.
@@ -1103,11 +1094,8 @@ void SpaceOperator::GetWavePortFieldVectorPrimaryEt(int port_idx, double omega_r
   GetNDSpace().GetRestrictionMatrix()->Mult(rhs_re.Real(), Et_primary.Real());
   GetNDSpace().GetRestrictionMatrix()->Mult(rhs_im.Real(), Et_primary.Imag());
 
-  if (zero_metal)
-  {
-    linalg::SetSubVector(Et_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
-    linalg::SetSubVector(Et_primary.Imag(), GetNDDbcTDofLists().back(), 0.0);
-  }
+  linalg::SetSubVector(Et_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
+  linalg::SetSubVector(Et_primary.Imag(), GetNDDbcTDofLists().back(), 0.0);
 }
 
 bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1)

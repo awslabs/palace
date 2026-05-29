@@ -51,6 +51,9 @@ class RomOperatorTest : public RomOperator
 public:
   using RomOperator::CalculateNormalizedPROMMatrices;
   using RomOperator::RomOperator;
+  using RomOperator::AugmentedPencil;
+  using RomOperator::BuildAugmentedPencil;
+  using RomOperator::WavePortAuxBlock;
   auto &GetWeightOp() const { return weight_op_W; }
   auto &GetOrthR() const { return orth_R; }
   auto &GetVectors() const { return V; }
@@ -297,7 +300,7 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-Port-Cube1
   // L_e / W_e but with Z_R = 1.0. In this case this = 1.0. See normalization tests of
   // LumpedPort_BasicTests_1ElementPort_Cube321 in test-lumpedportintegration.cpp.
   ComplexVector port_primary_et;
-  space_op.GetLumpedPortExcitationVectorPrimaryEt(1, port_primary_et, true);
+  space_op.GetLumpedPortExcitationVectorPrimaryEt(1, port_primary_et);
   Vector port_primary_ht_cn_tmp = port_primary_et.Real();
 
   W_port->Mult(port_primary_et.Real(), port_primary_ht_cn_tmp);
@@ -491,7 +494,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-Port-Cube32
        std::vector<std::pair<int, double>>{{1, 1.0}, {2, 1.}})
   {
     ComplexVector port_primary_et;
-    space_op.GetLumpedPortExcitationVectorPrimaryEt(port_i, port_primary_et, true);
+    space_op.GetLumpedPortExcitationVectorPrimaryEt(port_i, port_primary_et);
     Vector port_primary_et_tmp = port_primary_et.Real();
 
     W_port->Mult(port_primary_et.Real(), port_primary_et_tmp);
@@ -869,4 +872,100 @@ TEST_CASE("RomOperator-Synthesis-ExcludedExcitedRejected", "[romoperator][Serial
 
   CHECK_THROWS_WITH((IoData{setup_json, false}),
                     Catch::Matchers::ContainsSubstring("IncludeInSynthesis"));
+}
+
+// Verify that the regime-2 augmented pencil produced by BuildAugmentedPencil has the
+// same eigenvalues as the unaugmented pencil with the rational kₙ-correction applied
+// directly. The augmentation is supposed to be exact: eliminating each aux state sₖⱼ
+// from the linear pencil reproduces (i·rₖ·σⱼ·uⱼuⱼᵀ)/(ω − pₖ) in the v-row, so the
+// eigenvalues of the augmented pencil are exactly the roots of det(K + iωC − ω²M +
+// i·Σₖ rₖ/(ω − pₖ)·M_proj) = 0. This test catches sign errors in the coupling formula
+// √(−i·rₖ·σⱼ), wrong K_aa/C_aa diagonal entries, and any off-by-one in the aux row
+// layout.
+TEST_CASE("RomOperator-AugmentedPencil-Eigenvalues", "[romoperator][Serial]")
+{
+  // 1×1 base pencil. Treat the basis-row entries as the "v" block: K=1, C=0, M=0, and
+  // M_proj = 1·u·uᵀ with u=[1], σ=1. Two poles with hand-picked complex residues so the
+  // analytical eigenvalue equation is non-trivial in both real and imaginary parts.
+  Eigen::MatrixXcd Kr(1, 1), Cr(1, 1), Mr(1, 1);
+  Kr(0, 0) = std::complex<double>(1.0, 0.0);
+  Cr(0, 0) = std::complex<double>(0.0, 0.0);
+  Mr(0, 0) = std::complex<double>(0.0, 0.0);
+
+  RomOperatorTest::WavePortAuxBlock blk;
+  blk.port_idx = 1;
+  blk.sigmas = {1.0};
+  Eigen::VectorXd u_dir(1);
+  u_dir(0) = 1.0;
+  blk.u_dirs = {u_dir};
+  blk.poles = {std::complex<double>(2.0, 0.1), std::complex<double>(-1.5, 0.05)};
+  blk.residues = {std::complex<double>(0.5, 0.2), std::complex<double>(-0.3, 0.1)};
+
+  std::vector<RomOperatorTest::WavePortAuxBlock> aux_blocks = {blk};
+  std::vector<std::string> aux_labels;
+  auto aug = RomOperatorTest::BuildAugmentedPencil(Kr, Cr, Mr, aux_blocks, aux_labels);
+
+  REQUIRE(aug.Kr.rows() == 3);
+  REQUIRE(aug.Kr.cols() == 3);
+  REQUIRE(aux_labels.size() == 2);
+
+  // Linearize the QEP into a 6×6 generalized eigenvalue problem and solve.
+  // (K + iωC − ω²M)·x = 0  ⇔  [iC, K; -I, 0]·[ωx; x] = ω·[M, 0; 0, -I]·[ωx; x].
+  const long n = aug.Kr.rows();
+  Eigen::MatrixXcd A_lin = Eigen::MatrixXcd::Zero(2 * n, 2 * n);
+  Eigen::MatrixXcd B_lin = Eigen::MatrixXcd::Zero(2 * n, 2 * n);
+  A_lin.topLeftCorner(n, n) = std::complex<double>(0.0, 1.0) * aug.Cr;
+  A_lin.topRightCorner(n, n) = aug.Kr;
+  A_lin.bottomLeftCorner(n, n) = -Eigen::MatrixXcd::Identity(n, n);
+  B_lin.topLeftCorner(n, n) = aug.Mr;
+  B_lin.bottomRightCorner(n, n) = -Eigen::MatrixXcd::Identity(n, n);
+
+  // Eigen's GeneralizedEigenSolver works on real matrices only, so we use a dense
+  // generalized Schur via ComplexEigenSolver on B⁻¹·A. With M=0 in the v-block, B is
+  // singular, so we instead build the explicit polynomial whose roots are the
+  // augmented eigenvalues (closed form) and verify the augmented pencil annihilates
+  // each.
+  //
+  // The unaugmented effective pencil is (K + iωC − ω²M) + i·Σₖ rₖ/(ω − pₖ)·M_proj
+  // applied at the "v" block (size 1 here). Multiplying by Πₖ(ω − pₖ) gives:
+  //   p(ω) = (K + iωC − ω²M)·(ω − p₀)·(ω − p₁) + i·M_proj·[r₀·(ω − p₁) + r₁·(ω − p₀)]
+  // For this 1×1 case with K=1, C=0, M=0, M_proj=1:
+  //   p(ω) = (ω − p₀)·(ω − p₁) + i·[r₀·(ω − p₁) + r₁·(ω − p₀)]
+  // a quadratic in ω. The two roots must equal two of the three augmented-pencil
+  // eigenvalues (one extra eigenvalue at infinity from the rank-deficient M-block).
+  const auto p0 = blk.poles[0];
+  const auto p1 = blk.poles[1];
+  const auto r0 = blk.residues[0];
+  const auto r1 = blk.residues[1];
+  // p(ω) = ω² + b·ω + c with
+  //   b = -(p₀ + p₁) + i·(r₀ + r₁)
+  //   c =  p₀·p₁ - i·(r₀·p₁ + r₁·p₀)
+  const std::complex<double> b = -(p0 + p1) + std::complex<double>(0.0, 1.0) * (r0 + r1);
+  const std::complex<double> c =
+      p0 * p1 - std::complex<double>(0.0, 1.0) * (r0 * p1 + r1 * p0);
+  const std::complex<double> disc = std::sqrt(b * b - 4.0 * c);
+  const std::complex<double> root_plus = 0.5 * (-b + disc);
+  const std::complex<double> root_minus = 0.5 * (-b - disc);
+
+  // Verify each analytical root annihilates the augmented pencil A_aug(ω) = K + iωC −
+  // ω²M when treated as a 3×3 complex matrix (det should vanish).
+  auto eval_pencil_det = [&](std::complex<double> w)
+  {
+    Eigen::MatrixXcd A = aug.Kr + std::complex<double>(0.0, 1.0) * w * aug.Cr -
+                        w * w * aug.Mr;
+    return A.determinant();
+  };
+  CHECK(std::abs(eval_pencil_det(root_plus)) < 1.0e-10);
+  CHECK(std::abs(eval_pencil_det(root_minus)) < 1.0e-10);
+
+  // Also verify the unaugmented effective pencil at the same roots gives the same
+  // determinant (= 0) — sanity check on the algebraic equivalence.
+  auto eval_unaug = [&](std::complex<double> w)
+  {
+    std::complex<double> kn = r0 / (w - p0) + r1 / (w - p1);
+    return Kr(0, 0) + std::complex<double>(0.0, 1.0) * w * Cr(0, 0) -
+           w * w * Mr(0, 0) + std::complex<double>(0.0, 1.0) * kn;
+  };
+  CHECK(std::abs(eval_unaug(root_plus)) < 1.0e-10);
+  CHECK(std::abs(eval_unaug(root_minus)) < 1.0e-10);
 }

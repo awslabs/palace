@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <cstdlib>
 #include <memory>
 #include <string_view>
 #include <tuple>
@@ -754,7 +753,7 @@ void RomOperator::AddLumpedPortModesForSynthesis()
       // parser) so the excitation vector is never silently dropped here.
       continue;
     }
-    space_op.GetLumpedPortExcitationVectorPrimaryEt(port_idx, vec, true);
+    space_op.GetLumpedPortExcitationVectorPrimaryEt(port_idx, vec);
     UpdatePROM(vec, fmt::format("port_{:d}", port_idx));
   }
 
@@ -787,7 +786,7 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
 
   for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
   {
-    space_op.GetWavePortFieldVectorPrimaryEt(port_idx, omega_ref, vec, true);
+    space_op.GetWavePortFieldVectorPrimaryEt(port_idx, omega_ref, vec);
     UpdatePROM(vec, fmt::format("waveport_{:d}", port_idx));
   }
 }
@@ -984,18 +983,11 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   if (rhs2_it != RHS2_r_samples.end() && !rhs2_it->second.empty())
   {
     auto rhs2_interp = BarycentricInterpolate(rhs2_it->second, omega);
-    if (rhs2_interp.size() == static_cast<long>(V.size()))
-    {
-      RHSr = rhs2_interp;
-    }
-    else
-    {
-      // Stale (basis grew since this excitation was last touched in UpdatePROM and the
-      // cached projection wasn't extended). This shouldn't happen in normal flow but
-      // fall back to a safe direct compute.
-      space_op.GetExcitationVector2(excitation_idx, omega, RHS2);
-      ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);
-    }
+    MFEM_VERIFY(rhs2_interp.size() == static_cast<long>(V.size()),
+                "Cached RHS2 projection size does not match the current PROM basis "
+                "size. UpdatePROM is responsible for extending all cached samples "
+                "whenever the basis grows; this indicates a bookkeeping bug.");
+    RHSr = rhs2_interp;
   }
   else
   {
@@ -1207,28 +1199,270 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
   return refined;
 }
 
+RomOperator::WavePortRegime
+RomOperator::SelectWavePortRegime(int port_idx, double rel_err, bool meets_tol) const
+{
+  // AUTO: polynomial if residual meets tolerance, else augmented. Force settings
+  // override but emit a warning when the user-requested regime is incompatible with
+  // the computed residual.
+  switch (waveport_synthesis_force)
+  {
+    case WavePortSynthesisRegime::POLYNOMIAL:
+      if (!meets_tol)
+      {
+        Mpi::Warning(
+            "Wave port {:d}: WavePortSynthesisForce=Polynomial, but the order-2 fit "
+            "residual {:.3e} exceeds WavePortSynthesisTol={:.3e}. Proceeding with "
+            "the larger error per user request.\n",
+            port_idx, rel_err, waveport_synthesis_tol);
+      }
+      return WavePortRegime::Polynomial;
+    case WavePortSynthesisRegime::AUGMENTED:
+      return WavePortRegime::Augmented;
+    case WavePortSynthesisRegime::AUTO:
+    default:
+      return meets_tol ? WavePortRegime::Polynomial : WavePortRegime::Augmented;
+  }
+}
+
+RomOperator::WavePortDispersionFit
+RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) const
+{
+  // Sample kₙ,p on the sweep band, fit a quadratic, optionally augment with AAA on the
+  // residual. Returns a packed result describing the chosen regime and the fit data.
+  WavePortDispersionFit fit;
+  fit.port_idx = port_idx;
+
+  constexpr int n_fit = 30;
+  constexpr int n_dense = 1000;
+  const double w_lo = sweep_omega_min;
+  const double w_hi = sweep_omega_max;
+  auto sample_omega = [w_lo, w_hi](int n)
+  {
+    std::vector<double> ws(n);
+    for (int i = 0; i < n; i++)
+    {
+      ws[i] = w_lo + (w_hi - w_lo) * i / std::max(n - 1, 1);
+    }
+    return ws;
+  };
+  auto fit_omegas = sample_omega(n_fit);
+  auto dense_omegas = sample_omega(n_dense);
+
+  // Sample kₙ,p on the fit grid. Each call triggers (or hits the cache of)
+  // WavePortData::Initialize. Cheap because the cross-section EVP is small.
+  Eigen::VectorXd y_fit(n_fit);
+  for (int i = 0; i < n_fit; i++)
+  {
+    y_fit(i) = space_op.GetWavePortOp().GetWavePortKn(port_idx, fit_omegas[i]);
+  }
+  // LSQ polynomial fit at order 2 in ω. Higher orders cannot be absorbed into the
+  // K + iωC − ω²M synthesis structure (cf. design notes).
+  Eigen::MatrixXd vandermonde(n_fit, 3);
+  for (int i = 0; i < n_fit; i++)
+  {
+    const double w = fit_omegas[i];
+    vandermonde(i, 0) = 1.0;
+    vandermonde(i, 1) = w;
+    vandermonde(i, 2) = w * w;
+  }
+  Eigen::Vector3d coeffs = vandermonde.colPivHouseholderQr().solve(y_fit);
+  fit.alpha0 = coeffs(0);
+  fit.alpha1 = coeffs(1);
+  fit.alpha2 = coeffs(2);
+
+  // Residual on the dense grid: relative error on kₙ. The 1/(ωμ) factor in the
+  // wave-port admittance Y_p(ω) = kₙ,p(ω)/(iωμ) cancels in the ratio, so kₙ is the
+  // right proxy for the user-visible synthesis accuracy (no HDM data required).
+  double max_rel = 0.0, max_abs_truth = 0.0;
+  for (int i = 0; i < n_dense; i++)
+  {
+    const double w = dense_omegas[i];
+    const double truth = space_op.GetWavePortOp().GetWavePortKn(port_idx, w);
+    const double poly = fit.alpha0 + fit.alpha1 * w + fit.alpha2 * w * w;
+    max_abs_truth = std::max(max_abs_truth, std::abs(truth));
+    max_rel = std::max(max_rel, std::abs(poly - truth));
+  }
+  fit.rel_err_polynomial = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
+  fit.rel_err_augmented = fit.rel_err_polynomial;
+  const bool meets_tol = (fit.rel_err_polynomial <= waveport_synthesis_tol);
+
+  fit.regime = SelectWavePortRegime(port_idx, fit.rel_err_polynomial, meets_tol);
+
+  if (fit.regime == WavePortRegime::Polynomial)
+  {
+    if (meets_tol)
+    {
+      Mpi::Print(
+          " Wave port {:d}: polynomial synthesis residual {:.3e} (tol {:.3e}, α₀={:.3e}, "
+          "α₁={:.3e}, α₂={:.3e})\n",
+          port_idx, fit.rel_err_polynomial, waveport_synthesis_tol, fit.alpha0,
+          fit.alpha1, fit.alpha2);
+    }
+    return fit;
+  }
+
+  // Augmented regime: AAA rational fit on the polynomial residual δkₙ(ω). Cap the
+  // pole count at waveport_synthesis_order_max.
+  Eigen::VectorXcd z_aaa(n_fit), F_aaa(n_fit);
+  for (int i = 0; i < n_fit; i++)
+  {
+    const double w = fit_omegas[i];
+    z_aaa(i) = w;
+    F_aaa(i) = y_fit(i) - (fit.alpha0 + fit.alpha1 * w + fit.alpha2 * w * w);
+  }
+  const double aaa_tol_rel = (max_abs_truth > 0.0)
+                                 ? waveport_synthesis_tol * max_abs_truth /
+                                       std::max(F_aaa.cwiseAbs().maxCoeff(), 1.0e-300)
+                                 : waveport_synthesis_tol;
+  auto aaa = utils::RunAAA(z_aaa, F_aaa, aaa_tol_rel,
+                           std::max<std::size_t>(waveport_synthesis_order_max, 1));
+  auto pr = utils::AAAToPoleResidue(aaa);
+
+  // Fold the asymptote d into α₀ — equivalent and avoids carrying a separate constant
+  // offset through the augmented block.
+  const double aaa_d = pr.d.real();
+  fit.alpha0 += aaa_d;
+
+  // Re-evaluate residual on the dense grid using the augmented model.
+  max_rel = 0.0;
+  for (int i = 0; i < n_dense; i++)
+  {
+    const double w = dense_omegas[i];
+    const double truth = space_op.GetWavePortOp().GetWavePortKn(port_idx, w);
+    double aug = fit.alpha0 + fit.alpha1 * w + fit.alpha2 * w * w;
+    for (long k = 0; k < pr.poles.size(); k++)
+    {
+      std::complex<double> wc = w;
+      aug += (pr.residues(k) / (wc - pr.poles(k))).real();
+    }
+    max_rel = std::max(max_rel, std::abs(aug - truth));
+  }
+  fit.rel_err_augmented = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
+
+  // SVD of M_proj — keep every singular vector with σⱼ / σ_max above the rank
+  // tolerance as a coupling direction. Rank is typically 1 (real-only mode field) or
+  // 2 (complex mode field split into real+imag basis vectors).
+  WavePortAuxBlock blk;
+  blk.port_idx = port_idx;
+  Eigen::MatrixXd M_proj = Mp_r.imag().eval();
+  Eigen::JacobiSVD<Eigen::MatrixXd> svd(M_proj, Eigen::ComputeThinU);
+  const double sigma_max = svd.singularValues()(0);
+  for (long j = 0; j < svd.singularValues().size(); j++)
+  {
+    double s = svd.singularValues()(j);
+    if (sigma_max > 0.0 && s / sigma_max > waveport_synthesis_rank_tol)
+    {
+      blk.sigmas.push_back(s);
+      blk.u_dirs.push_back(svd.matrixU().col(j));
+    }
+  }
+  for (long k = 0; k < pr.poles.size(); k++)
+  {
+    blk.poles.push_back(pr.poles(k));
+    blk.residues.push_back(pr.residues(k));
+  }
+  std::size_t aux_per_port = pr.poles.size() * blk.sigmas.size();
+  std::size_t rank_used = blk.sigmas.size();
+  Mpi::Print(" Wave port {:d}: augmented synthesis residual {:.3e} → {:.3e} "
+             "(tol {:.3e}, {:d} pole{} × rank-{:d} mass = +{:d} aux state{}, "
+             "α₀={:.3e}, α₁={:.3e}, α₂={:.3e}, d={:.3e})\n",
+             port_idx, fit.rel_err_polynomial, fit.rel_err_augmented,
+             waveport_synthesis_tol, pr.poles.size(), pr.poles.size() == 1 ? "" : "s",
+             rank_used, aux_per_port, aux_per_port == 1 ? "" : "s", fit.alpha0,
+             fit.alpha1, fit.alpha2, aaa_d);
+  fit.aux = std::move(blk);
+  return fit;
+}
+
+void RomOperator::ApplyPolynomialFitCorrections(const WavePortDispersionFit &fit,
+                                                const Eigen::MatrixXcd &Mp_r,
+                                                Eigen::MatrixXcd &Kr_corr,
+                                                Eigen::MatrixXcd &Cr_corr,
+                                                Eigen::MatrixXcd &Mr_corr)
+{
+  // Mp_r is purely imaginary (= i·M_proj). Multiplying by α₀ folds α₀·M_proj into the
+  // imaginary part of Kr (which becomes Im(L⁻¹)); the i·α₁·M_proj term lives in the
+  // real part of Cr (Re(R⁻¹)) and -α₂·M_proj·v adds to the imaginary part of Mr
+  // (Im(C)). Signs are set so the sum recovers i·(α₀+α₁ω+α₂ω²)·M_proj·v in Aᵣ(ω).
+  Kr_corr += std::complex<double>(fit.alpha0, 0.0) * Mp_r;
+  Cr_corr += std::complex<double>(0.0, -fit.alpha1) * Mp_r;
+  Mr_corr += std::complex<double>(-fit.alpha2, 0.0) * Mp_r;
+}
+
+RomOperator::AugmentedPencil RomOperator::BuildAugmentedPencil(
+    const Eigen::MatrixXcd &Kr_total, const Eigen::MatrixXcd &Cr_total,
+    const Eigen::MatrixXcd &Mr_total, const std::vector<WavePortAuxBlock> &aux_blocks,
+    std::vector<std::string> &aux_labels)
+{
+  // Per pole–residue (pₖ, rₖ) at port p, with projected mass M_proj = Σⱼ σⱼ uⱼuⱼᵀ:
+  // For each kept singular vector j, allocate one aux state sₖⱼ. The augmented pencil
+  //   ⎡ K  K_va ⎤   ⎡ 0  0  ⎤    ⎡ 0  0 ⎤
+  //   ⎢       ⎥+iω⎢      ⎥−ω²⎢     ⎥
+  //   ⎣ K_avᵀ K_aa⎦   ⎣ 0 C_aa⎦    ⎣ 0  0 ⎦
+  // with Kr_aa = -pₖ, Cr_aa = -i, K_va = a·uⱼ, K_avᵀ = a·uⱼᵀ symmetric. Eliminating
+  // sₖⱼ gives the pencil contribution -a²·uⱼuⱼᵀ·v/(ω - pₖ). Choosing a² = -i·rₖ·σⱼ
+  // makes the sum over j equal +i·rₖ·M_proj·v/(ω - pₖ), the desired rₖ-residue
+  // contribution to the unaugmented wave-port pencil i·kₙ(ω)·Mp_r·v. Both K_va and
+  // K_avᵀ get the same coupling so the augmented pencil is complex-symmetric (not
+  // Hermitian — downstream eigensolvers handle this fine).
+  std::size_t n_aux_total = 0;
+  for (const auto &blk : aux_blocks)
+  {
+    n_aux_total += blk.poles.size() * blk.sigmas.size();
+  }
+  const long n_v = Kr_total.rows();
+  const long n_aug = n_v + static_cast<long>(n_aux_total);
+  AugmentedPencil aug;
+  aug.Kr = Eigen::MatrixXcd::Zero(n_aug, n_aug);
+  aug.Cr = Eigen::MatrixXcd::Zero(n_aug, n_aug);
+  aug.Mr = Eigen::MatrixXcd::Zero(n_aug, n_aug);
+  aug.Kr.topLeftCorner(n_v, n_v) = Kr_total;
+  aug.Cr.topLeftCorner(n_v, n_v) = Cr_total;
+  aug.Mr.topLeftCorner(n_v, n_v) = Mr_total;
+  long aux_row = n_v;
+  for (const auto &blk : aux_blocks)
+  {
+    for (std::size_t k = 0; k < blk.poles.size(); k++)
+    {
+      auto pk = blk.poles[k];
+      auto rk = blk.residues[k];
+      for (std::size_t j = 0; j < blk.sigmas.size(); j++)
+      {
+        std::complex<double> coupling =
+            std::sqrt(std::complex<double>(0.0, -1.0) * rk * blk.sigmas[j]);
+        aug.Kr(aux_row, aux_row) = -pk;
+        aug.Cr(aux_row, aux_row) = std::complex<double>(0.0, -1.0);
+        for (long i = 0; i < n_v; i++)
+        {
+          aug.Kr(i, aux_row) = coupling * blk.u_dirs[j](i);
+          aug.Kr(aux_row, i) = coupling * blk.u_dirs[j](i);
+        }
+        aux_labels.push_back(
+            fmt::format("waveport_{:d}_p{:d}d{:d}", blk.port_idx, k, j));
+        aux_row++;
+      }
+    }
+  }
+  return aug;
+}
+
 RomOperator::NormalizedMatrices
 RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
 {
   using mat_t = Eigen::MatrixXcd;
   NormalizedMatrices out;
 
+  // Port-row/column scaling. The port block of the synthesised admittance matrices is
+  // independent of HDM solutions; for HDM rows we leave v_conc = 1 (orth_R(j,j) can be
+  // tiny for nearly degenerate vectors and would make the matrices ill-conditioned).
+  // Lumped ports come first in the basis (real-valued, in order); wave-port basis
+  // vectors follow (real and imag parts each count separately, see
+  // AddWavePortModesForSynthesis → UpdatePROM).
   Eigen::VectorXd v_conc = Eigen::VectorXd::Ones(GetReducedDimension());
 
-  // We will only scale the rows and columns corresponding to ports by orth_R(j,j). This
-  // will correctly give back the port-port block of the circuit matrices, which is
-  // independent of the HDM solutions. The normalization of the rows and columns of the HDM
-  // solutions (synthesized nodes) are not relevant for port quantities. We choose v_conc =
-  // 1.0, since for nearly degenerate vectors orth_R(j,j) could be tiny, which may lead to
-  // poor condition of the circuit matrices.
-  //
-  // Lumped ports are real, at the beginning and in order. Only ports with
-  // include_in_synthesis contribute a basis row, so the number of leading lumped-port
-  // rows is NumSynthesisPortModes(), NOT the total number of lumped ports. Wave-port
-  // modes follow the lumped ports in the basis (added by AddWavePortModesForSynthesis);
-  // they may have both real and imaginary parts. The synthesised matrices are scaled
-  // symmetrically by orth_R for those rows as well so the port-block diagonal entries
-  // take their physical port-impedance value.
+  // Only ports with include_in_synthesis contribute a basis row, so the number of leading
+  // lumped-port rows is NumSynthesisPortModes(), NOT the total number of lumped ports.
   const long n_port_modes = static_cast<long>(NumSynthesisPortModes());
   MFEM_ASSERT(n_port_modes <= GetReducedDimension(),
               "More lumped port modes than PROM basis vectors; basis is inconsistent!");
@@ -1255,226 +1489,33 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
     v_conc[j] = orth_R(j, j);
   }
 
-  // Lazy diagonal representation
-  auto v_d = v_conc.asDiagonal();
-
-  // Wave-port dispersion corrections.
-  //
-  // Online, SolvePROM assembles
+  // Wave-port dispersion handling. Online, SolvePROM assembles
   //   Ar(ω) = Kr + iω Cr − ω² Mr + Σₚ kₙ,ₚ(ω)·Mp_r,
-  // where Mp_r is purely imaginary (= i·M_proj). For circuit synthesis we replace the
-  // exact dispersion kₙ,ₚ(ω) by an approximation that fits inside a quadratic-in-ω
-  // pencil:
+  // where Mp_r is purely imaginary. For circuit synthesis we replace kₙ,ₚ(ω) with an
+  // approximation that fits inside a quadratic-in-ω pencil:
   //
-  //  Regime 1 — polynomial: kₙ,ₚ(ω) ≈ α₀ + α₁ω + α₂ω²; the three terms fold cleanly
-  //  into Kr/Cr/Mr (i α₀·Mp_r → Im(Kr)→Im(L⁻¹), −i α₁·Mp_r → Re(Cr)→Re(R⁻¹),
-  //  −i α₂·Mp_r → Im(Mr)→Im(C)). Used when the order-2 fit residual ≤ tol.
+  //   • Polynomial regime: kₙ,ₚ(ω) ≈ α₀ + α₁ω + α₂ω², absorbed into Kr/Cr/Mr.
+  //   • Augmented regime: residual δkₙ(ω) = kₙ(ω) − (α₀+α₁ω+α₂ω²) fit by an AAA
+  //     rational expansion d + Σₖ rₖ/(ω − pₖ); d folds into α₀, each pole–residue pair
+  //     becomes auxiliary scalar states appended as new rows/columns to L⁻¹/R⁻¹/C.
   //
-  //  Regime 2 — augmented LC ladder: when the polynomial residual exceeds tol
-  //  (typically: closed-waveguide port spanning a modal cutoff), we additionally fit
-  //  the residual δkₙ(ω) = kₙ(ω) − (α₀+α₁ω+α₂ω²) with an AAA rational expansion
-  //  d + Σₖ rₖ/(ω − pₖ). The constant d folds into α₀; each pole–residue pair becomes
-  //  auxiliary scalar states per port, appended as new rows/columns to L⁻¹/R⁻¹/C.
-  //  The augmented pencil is exact (modulo AAA tolerance) and remains quadratic in ω.
-  //
-  // Augmentation algebra (per pole pₖ with residue rₖ, port mass M_proj = Σⱼ σⱼ uⱼuⱼᵀ):
-  // For each kept singular vector j, allocate one aux state sₖⱼ; the augmented pencil
-  //   ⎡ K  K_va ⎤   ⎡ 0  0  ⎤    ⎡ 0  0 ⎤
-  //   ⎢       ⎥+iω⎢      ⎥−ω²⎢     ⎥
-  //   ⎣ K_avᵀ K_aa⎦   ⎣ 0 C_aa⎦    ⎣ 0  0 ⎦
-  // with Kr_aa = -pₖ, Cr_aa = -i, K_va = (a) uⱼ, K_avᵀ = (a) uⱼᵀ symmetric. Eliminating
-  // sₖⱼ gives the pencil contribution -a²·uⱼuⱼᵀ·v/(ω - pₖ). Choosing a² = -i·rₖ·σⱼ (so
-  // a = √(-i·rₖ·σⱼ)) makes the sum over j equal +i·rₖ·M_proj·v/(ω - pₖ), the desired
-  // rₖ-residue contribution to the unaugmented wave-port pencil i·kₙ(ω)·Mp_r·v.
-  //
-  // M_proj is real symmetric so its eigendecomposition U·diag(σⱼ)·Uᵀ gives the kept
-  // directions. Rank depends on how the port mode was projected onto the real PROM
-  // basis: a real-only modal field gives rank 1, a complex modal field split into
-  // re+im basis vectors gives rank 2, and basis content with significant port-boundary
-  // overlap (open / radiative ports) raises the rank further. The
-  // waveport_synthesis_rank_tol member sets the σⱼ/σ_max cutoff for which directions
-  // are kept; aux dim grows as (number of poles) × (kept directions per port).
-  struct AuxBlock
-  {
-    int port_idx = 0;
-    std::vector<double> sigmas;           // singular values (kept above tolerance)
-    std::vector<Eigen::VectorXd> u_dirs;  // matching left singular vectors
-    std::vector<std::complex<double>> poles;
-    std::vector<std::complex<double>> residues;
-  };
-  std::vector<AuxBlock> aux_blocks;
-
+  // FitWavePortDispersion does the per-port sampling, fitting and regime selection;
+  // ApplyPolynomialFitCorrections accumulates the α-contributions; BuildAugmentedPencil
+  // extends the pencil with the aux states from collected fit results.
   Eigen::MatrixXcd Kr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
   Eigen::MatrixXcd Cr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
   Eigen::MatrixXcd Mr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
+  std::vector<WavePortAuxBlock> aux_blocks;
   if (!Mwp_p_r.empty() && sweep_omega_max > sweep_omega_min)
   {
-    constexpr int n_fit = 30;
-    constexpr int n_dense = 1000;
-    const double w_lo = sweep_omega_min;
-    const double w_hi = sweep_omega_max;
-    auto sample_omega = [w_lo, w_hi](int n)
-    {
-      std::vector<double> ws(n);
-      for (int i = 0; i < n; i++)
-      {
-        ws[i] = w_lo + (w_hi - w_lo) * i / std::max(n - 1, 1);
-      }
-      return ws;
-    };
-    auto fit_omegas = sample_omega(n_fit);
-    auto dense_omegas = sample_omega(n_dense);
-
-    const bool force_polynomial =
-        (waveport_synthesis_force == WavePortSynthesisRegime::POLYNOMIAL);
-    const bool force_augmented =
-        (waveport_synthesis_force == WavePortSynthesisRegime::AUGMENTED);
-
     for (auto &[port_idx, Mp_r] : Mwp_p_r)
     {
-      // Sample kₙ,p at fit and dense grids. Each call triggers (or hits the cache of)
-      // WavePortData::Initialize. Cheap because the cross-section EVP is small.
-      Eigen::VectorXd y_fit(n_fit);
-      for (int i = 0; i < n_fit; i++)
+      auto fit = FitWavePortDispersion(port_idx, Mp_r);
+      ApplyPolynomialFitCorrections(fit, Mp_r, Kr_corr, Cr_corr, Mr_corr);
+      if (fit.aux)
       {
-        y_fit(i) = space_op.GetWavePortOp().GetWavePortKn(port_idx, fit_omegas[i]);
+        aux_blocks.push_back(std::move(*fit.aux));
       }
-      // LSQ polynomial fit at order 2 in ω. Higher orders cannot be absorbed into the
-      // K + iωC − ω²M synthesis structure (cf. design notes).
-      Eigen::MatrixXd vandermonde(n_fit, 3);
-      for (int i = 0; i < n_fit; i++)
-      {
-        const double w = fit_omegas[i];
-        vandermonde(i, 0) = 1.0;
-        vandermonde(i, 1) = w;
-        vandermonde(i, 2) = w * w;
-      }
-      Eigen::Vector3d coeffs = vandermonde.colPivHouseholderQr().solve(y_fit);
-      const double alpha0 = coeffs(0);
-      const double alpha1 = coeffs(1);
-      const double alpha2 = coeffs(2);
-
-      // Evaluate residual on the dense grid: relative error on the per-port wave
-      // admittance Y_p(ω) = kₙ,p(ω)/(iωμ). The 1/(ωμ) factor cancels in the ratio, so
-      // we use kₙ directly. This is the cheap proxy for the user-visible synthesis
-      // accuracy (no HDM data required).
-      double max_rel = 0.0, max_abs_truth = 0.0;
-      for (int i = 0; i < n_dense; i++)
-      {
-        const double w = dense_omegas[i];
-        const double truth = space_op.GetWavePortOp().GetWavePortKn(port_idx, w);
-        const double fit = alpha0 + alpha1 * w + alpha2 * w * w;
-        max_abs_truth = std::max(max_abs_truth, std::abs(truth));
-        max_rel = std::max(max_rel, std::abs(fit - truth));
-      }
-      const double rel_err = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
-      const bool meets_tol = (rel_err <= waveport_synthesis_tol);
-
-      // Regime dispatch. AUTO: use polynomial if residual ≤ tol, else augment.
-      // FORCE Polynomial: skip augmentation regardless. FORCE Augmented: augment
-      // unconditionally (useful for testing — even a meeting-tol port gets aux states).
-      bool augment = false;
-      if (force_polynomial)
-      {
-        if (!meets_tol)
-        {
-          Mpi::Warning(
-              "Wave port {:d}: WavePortSynthesisForce=Polynomial, but the order-2 fit "
-              "residual {:.3e} exceeds WavePortSynthesisTol={:.3e}. Proceeding with "
-              "the larger error per user request.\n",
-              port_idx, rel_err, waveport_synthesis_tol);
-        }
-      }
-      else if (force_augmented || !meets_tol)
-      {
-        augment = true;
-      }
-
-      // Augment with AAA rational fit on the polynomial residual δkₙ(ω). Cap the
-      // number of poles by waveport_synthesis_order_max.
-      double aaa_d = 0.0;
-      double rel_err_after = rel_err;
-      if (augment)
-      {
-        // δkₙ values on the fit grid. Reuse fit_omegas (size n_fit).
-        Eigen::VectorXcd z_aaa(n_fit), F_aaa(n_fit);
-        for (int i = 0; i < n_fit; i++)
-        {
-          const double w = fit_omegas[i];
-          z_aaa(i) = w;
-          F_aaa(i) = y_fit(i) - (alpha0 + alpha1 * w + alpha2 * w * w);
-        }
-        const double aaa_tol_rel = (max_abs_truth > 0.0)
-                                       ? waveport_synthesis_tol * max_abs_truth /
-                                             std::max(F_aaa.cwiseAbs().maxCoeff(), 1.0e-300)
-                                       : waveport_synthesis_tol;
-        auto aaa = utils::RunAAA(z_aaa, F_aaa, aaa_tol_rel,
-                                 std::max<std::size_t>(waveport_synthesis_order_max, 1));
-        auto pr = utils::AAAToPoleResidue(aaa);
-        // Fold the asymptote d into α₀ — equivalent and avoids carrying a separate
-        // constant offset through the augmented block.
-        aaa_d = pr.d.real();
-        // Re-evaluate residual on the dense grid using the augmented model.
-        max_rel = 0.0;
-        for (int i = 0; i < n_dense; i++)
-        {
-          const double w = dense_omegas[i];
-          const double truth = space_op.GetWavePortOp().GetWavePortKn(port_idx, w);
-          double aug = alpha0 + aaa_d + alpha1 * w + alpha2 * w * w;
-          for (long k = 0; k < pr.poles.size(); k++)
-          {
-            std::complex<double> wc = w;
-            aug += (pr.residues(k) / (wc - pr.poles(k))).real();
-          }
-          max_rel = std::max(max_rel, std::abs(aug - truth));
-        }
-        rel_err_after = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
-
-        // Stash aux block data for matrix assembly below. SVD of M_proj — keep
-        // every singular vector with σⱼ / σ_max > 1e-10 as a coupling direction.
-        // Rank is typically 1 (real-only mode field, lumped) or 2 (complex mode
-        // field split into real+imag basis vectors).
-        AuxBlock blk;
-        blk.port_idx = port_idx;
-        Eigen::MatrixXd M_proj = Mp_r.imag().eval();
-        Eigen::JacobiSVD<Eigen::MatrixXd> svd(M_proj, Eigen::ComputeThinU);
-        const double sigma_max = svd.singularValues()(0);
-        for (long j = 0; j < svd.singularValues().size(); j++)
-        {
-          double s = svd.singularValues()(j);
-          if (sigma_max > 0.0 && s / sigma_max > waveport_synthesis_rank_tol)
-          {
-            blk.sigmas.push_back(s);
-            blk.u_dirs.push_back(svd.matrixU().col(j));
-          }
-        }
-        for (long k = 0; k < pr.poles.size(); k++)
-        {
-          blk.poles.push_back(pr.poles(k));
-          blk.residues.push_back(pr.residues(k));
-        }
-        std::size_t aux_per_port = pr.poles.size() * blk.sigmas.size();
-        std::size_t rank_used = blk.sigmas.size();
-        Mpi::Print(" Wave port {:d}: augmented synthesis residual {:.3e} → {:.3e} "
-                   "(tol {:.3e}, {:d} pole{} × rank-{:d} mass = +{:d} aux state{}, "
-                   "α₀={:.3e}, α₁={:.3e}, α₂={:.3e}, d={:.3e})\n",
-                   port_idx, rel_err, rel_err_after, waveport_synthesis_tol,
-                   pr.poles.size(), pr.poles.size() == 1 ? "" : "s", rank_used,
-                   aux_per_port, aux_per_port == 1 ? "" : "s", alpha0 + aaa_d, alpha1,
-                   alpha2, aaa_d);
-        aux_blocks.push_back(std::move(blk));
-      }
-      else if (meets_tol)
-      {
-        Mpi::Print(" Wave port {:d}: polynomial synthesis residual {:.3e} (tol {:.3e}, "
-                   "α₀={:.3e}, α₁={:.3e}, α₂={:.3e})\n",
-                   port_idx, rel_err, waveport_synthesis_tol, alpha0, alpha1, alpha2);
-      }
-
-      // Polynomial absorption into Kr/Cr/Mr (with the AAA constant d folded into α₀).
-      Kr_corr += std::complex<double>(alpha0 + aaa_d, 0.0) * Mp_r;
-      Cr_corr += std::complex<double>(0.0, -alpha1) * Mp_r;
-      Mr_corr += std::complex<double>(-alpha2, 0.0) * Mp_r;
     }
   }
 
@@ -1487,69 +1528,13 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
     Cr_total += Cr;
   }
 
-  // Augment with aux states for regime-2 wave ports.
-  //
-  // Per pole–residue (pₖ, rₖ) at port p (single mode, projected mass M_proj = σ·m·mᵀ
-  // by construction), the augmented pencil row sₖ encodes
-  //   (ω − pₖ) sₖ = rₖ · σ · (mᵀ v).
-  // Matching ω-powers in Aᵣ(ω) = K + iωC − ω²M:
-  //   K(sₖ, sₖ) = −pₖ;          K(v, sₖ) = −rₖ·σ·m;       K(sₖ, v) = −rₖ·σ·mᵀ;
-  //   C(sₖ, sₖ) = −i;            (no v–s coupling on C/M)
-  //   M(sₖ, sₖ) = 0.
-  // Both K(v,sₖ) and K(sₖ,v) are filled symmetrically; complex pₖ, rₖ produce
-  // complex-symmetric blocks (downstream circuit eigensolvers handle this fine —
-  // the synthesised pencil is always complex-symmetric, not Hermitian).
-  std::size_t n_aux_total = 0;
-  for (const auto &blk : aux_blocks)
-  {
-    n_aux_total += blk.poles.size() * blk.sigmas.size();
-  }
-  const long n_v = Kr_total.rows();
-  const long n_aug = n_v + static_cast<long>(n_aux_total);
-  Eigen::MatrixXcd Kr_aug = Eigen::MatrixXcd::Zero(n_aug, n_aug);
-  Eigen::MatrixXcd Cr_aug = Eigen::MatrixXcd::Zero(n_aug, n_aug);
-  Eigen::MatrixXcd Mr_aug = Eigen::MatrixXcd::Zero(n_aug, n_aug);
-  Kr_aug.topLeftCorner(n_v, n_v) = Kr_total;
-  Cr_aug.topLeftCorner(n_v, n_v) = Cr_total;
-  Mr_aug.topLeftCorner(n_v, n_v) = Mr_total;
-  long aux_row = n_v;
-  for (const auto &blk : aux_blocks)
-  {
-    for (std::size_t k = 0; k < blk.poles.size(); k++)
-    {
-      auto pk = blk.poles[k];
-      auto rk = blk.residues[k];
-      for (std::size_t j = 0; j < blk.sigmas.size(); j++)
-      {
-        // Goal: aux row sₖⱼ contributes i·rₖ·σⱼ·uⱼuⱼᵀv/(ω−pₖ) to the v-row of the
-        // pencil (one term in Σⱼ i·rₖ·σⱼ·uⱼuⱼᵀv/(ω−pₖ) = i·rₖ·M_proj·v/(ω−pₖ),
-        // matching i·rₖ/(ω−pₖ)·Mp_r·v in the unaugmented form). With Kr_aug
-        // complex-symmetric, the cleanest realisation uses a coupling √(i·rₖ·σⱼ)
-        // on both Kr_aug(v, aux) and Kr_aug(aux, v) (note: it is a *complex* sqrt
-        // in general — for real positive rₖ, σⱼ it has phase π/4). The aux
-        // diagonal is the standard ω·sₖⱼ − pₖ·sₖⱼ giving Kr=-pk, Cr=-i.
-        // Coupling = √(−i·rₖ·σⱼ): with K_aa = −pₖ, C_aa = −i, the aux row equation
-        // gives s = K_av·v/(pₖ−ω). Substituted into v-row, the aux contribution is
-        // −K_va·K_av·v/(ω−pₖ) = −coupling²·uⱼuⱼᵀ·v/(ω−pₖ). Setting coupling² = −i·rₖ·σⱼ
-        // makes the sum over j equal +i·rₖ·M_proj·v/(ω−pₖ), the desired residue.
-        std::complex<double> coupling =
-            std::sqrt(std::complex<double>(0.0, -1.0) * rk * blk.sigmas[j]);
-        Kr_aug(aux_row, aux_row) = -pk;
-        Cr_aug(aux_row, aux_row) = std::complex<double>(0.0, -1.0);
-        for (long i = 0; i < n_v; i++)
-        {
-          Kr_aug(i, aux_row) = coupling * blk.u_dirs[j](i);
-          Kr_aug(aux_row, i) = coupling * blk.u_dirs[j](i);
-        }
-        out.aux_labels.push_back(
-            fmt::format("waveport_{:d}_p{:d}d{:d}", blk.port_idx, k, j));
-        aux_row++;
-      }
-    }
-  }
+  auto aug = BuildAugmentedPencil(Kr_total, Cr_total, Mr_total, aux_blocks,
+                                  out.aux_labels);
 
   // v_d port-row scaling: extend with 1's for aux rows (no port-impedance scaling on
   // aux states — they're internal circuit nodes).
+  const long n_v = Kr_total.rows();
+  const long n_aug = aug.Kr.rows();
   Eigen::VectorXcd v_conc_aug = Eigen::VectorXcd::Ones(n_aug);
   for (long j = 0; j < n_v; j++)
   {
@@ -1558,18 +1543,20 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   auto v_d_aug = v_conc_aug.asDiagonal();
 
   auto unit_henry_inv = 1.0 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
-  out.L_inv = std::make_unique<mat_t>((unit_henry_inv * v_d_aug * Kr_aug * v_d_aug).eval());
+  out.L_inv =
+      std::make_unique<mat_t>((unit_henry_inv * v_d_aug * aug.Kr * v_d_aug).eval());
 
   auto unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
-  out.C = std::make_unique<mat_t>((unit_farad * v_d_aug * Mr_aug * v_d_aug).eval());
+  out.C = std::make_unique<mat_t>((unit_farad * v_d_aug * aug.Mr * v_d_aug).eval());
 
-  // Emit R⁻¹ whenever there's any dissipative contribution: lumped resistance,
-  // surface conductivity, wave-port α₁, or the aux state diagonal (regime 2).
-  const bool has_R_inv = (Cr_aug.cwiseAbs().maxCoeff() > 0.0);
+  // Emit R⁻¹ whenever there's any dissipative contribution: lumped resistance, surface
+  // conductivity, wave-port α₁, or the aux state diagonal (regime 2).
+  const bool has_R_inv = (aug.Cr.cwiseAbs().maxCoeff() > 0.0);
   if (has_R_inv)
   {
     auto unit_ohm_inv = 1.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
-    out.R_inv = std::make_unique<mat_t>((unit_ohm_inv * v_d_aug * Cr_aug * v_d_aug).eval());
+    out.R_inv =
+        std::make_unique<mat_t>((unit_ohm_inv * v_d_aug * aug.Cr * v_d_aug).eval());
   }
 
   return out;
@@ -1588,19 +1575,6 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   const auto &inductance_L_inv = matrices.L_inv;
   const auto &resistance_R_inv = matrices.R_inv;
   const auto &capacitance_C = matrices.C;
-
-  // Self-test eigenvalues: Newton fixed-point on the unaugmented projected pencil
-  // with exact kₙ. For a regime-2 augmented synthesis whose AAA fit residual is at
-  // tolerance, the eigenvalues of the *augmented* L⁻¹/R⁻¹/C (which a downstream user
-  // sees) should match these to AAA tolerance. Off by default because the Newton
-  // fixed-point is expensive (per-iteration 2n×2n ZGGEV); enable explicitly for
-  // validation runs by setting PALACE_WAVEPORT_SELFTEST=1 in the environment.
-  std::vector<std::complex<double>> self_test_eigs;
-  if (const char *e = std::getenv("PALACE_WAVEPORT_SELFTEST");
-      e && std::string_view{e} != "0")
-  {
-    self_test_eigs = ComputeEigenvalueEstimates();
-  }
 
   if (!Mpi::Root(space_op.GetComm()))
   {
@@ -1664,27 +1638,6 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   Eigen::MatrixXd orth_R_padded = Eigen::MatrixXd::Identity(labels.size(), labels.size());
   orth_R_padded.topLeftCorner(orth_R.rows(), orth_R.cols()) = orth_R;
   print_table(orth_R_padded, "rom-orthogonalization-matrix-R.csv");
-
-  // Self-test eigenvalues (Newton on exact dispersion). One row per refined
-  // eigenvalue; ω in physical rad/s and corresponding f in GHz. Compare offline
-  // against eigenvalues of the printed L⁻¹/R⁻¹/C — the regime-2 augmentation is
-  // valid iff they match to the AAA tolerance.
-  if (!self_test_eigs.empty())
-  {
-    auto out_eig = TableWithCSVFile(post_dir / "rom-eigenvalues-selftest.csv");
-    out_eig.table.col_options.float_precision = 17;
-    out_eig.table.insert("re_GHz", "Re(f) (GHz)");
-    out_eig.table.insert("im_GHz", "Im(f) (GHz)");
-    const double tc_s_eig = 1.0e-9 * units.GetScaleFactor<Units::ValueType::TIME>();
-    const double omega_to_phys = (tc_s_eig > 0.0) ? 1.0 / tc_s_eig : 1.0;
-    for (auto &w_internal : self_test_eigs)
-    {
-      auto w_phys = w_internal * omega_to_phys;
-      out_eig.table["re_GHz"] << w_phys.real() / (2.0 * M_PI * 1.0e9);
-      out_eig.table["im_GHz"] << w_phys.imag() / (2.0 * M_PI * 1.0e9);
-    }
-    out_eig.WriteFullTableTrunc();
-  }
 }
 
 }  // namespace palace
