@@ -564,7 +564,7 @@ jobs:
         # the test/unit/run_regression_test.sh wrapper at run time);
         # ctest -j N controls how many cases run concurrently. Total
         # ranks in flight = NUM_PROC_TEST * N, kept <= NUM_PROC_TEST_MAX.
-        timeout-minutes: 90
+        timeout-minutes: 60
         env:
           NUM_PROC_TEST_MAX: '8'
         run: |
@@ -583,7 +583,6 @@ jobs:
             export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
           fi
           export NUM_PROC_TEST=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
-          CORES=$NUM_PROC_TEST
           if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
             NUM_PROC_TEST=$NUM_PROC_TEST_MAX
           fi
@@ -595,16 +594,12 @@ jobs:
           fi
           export PATH=$(pwd)/palace-install/bin:$PATH
 
-          # Ranks per case (consumed by run_regression_test.sh):
+          # Match the old Julia harness: run the regression cases
+          # sequentially, each on NUM_PROC_TEST ranks (consumed by
+          # run_regression_test.sh). No cross-case ctest fan-out.
           export PALACE_REGRESSION_NUMPROC=$NUM_PROC_TEST
-          # Concurrent cases, bounded by real cores (each rank uses
-          # OMP_NUM_THREADS threads) so we never oversubscribe.
-          # Oversubscription on small runners (e.g. 4-core arm) inflates
-          # per-case wall time past the ctest TIMEOUT.
-          JOBS=$(( CORES / (NUM_PROC_TEST * OMP_NUM_THREADS) ))
-          [[ "$JOBS" -lt 1 ]] && JOBS=1
           cd palace-build/palace-build/test/unit
-          ctest --output-on-failure -L "^regression$" -j $JOBS
+          ctest --output-on-failure -L "^regression$"
 
       - name: Check antenna postprocessing example
         # The Julia plot script that ships with the antenna example is
