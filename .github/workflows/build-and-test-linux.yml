@@ -607,13 +607,15 @@ jobs:
           ctest --output-on-failure -L "^regression$" -j $JOBS
 
       - name: Check antenna postprocessing example
-        if: needs.filter.outputs.test == 'true' && !matrix.with-sanitizers
         # The Julia plot script that ships with the antenna example is
-        # exercised here so it doesn't bit-rot. The regression step
-        # above already ran antenna_short_dipole and left its output in
-        # the staging tree under $TMPDIR/palace-regression/antenna/...
-        # (PALACE_REGRESSION_RUN_DIR override would let us pick a
-        # different root; we use the default here).
+        # exercised here so it doesn't bit-rot. It's independent of the
+        # build configuration, so gate it to a single matrix entry
+        # rather than paying the ~7 min Julia precompile on every job.
+        # The regression step above already ran antenna_short_dipole and
+        # left its output in the staging tree under
+        # $TMPDIR/palace-regression/antenna/... (PALACE_REGRESSION_RUN_DIR
+        # override would let us pick a different root; we use the default).
+        if: needs.filter.outputs.test == 'true' && matrix.arch == 'x86' && matrix.compiler == 'gcc' && matrix.math-libs == 'aocl'
         run: |
           STAGE_ROOT="${TMPDIR:-/tmp}/palace-regression"
           FARFIELD="$STAGE_ROOT/antenna/antenna_short_dipole/postpro/antenna_short_dipole/farfield-rE.csv"
