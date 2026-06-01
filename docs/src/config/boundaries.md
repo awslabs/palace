@@ -435,20 +435,34 @@ than 1, the solver uses a default subspace dimension.
 `"Verbose" [0]` :  Specifies the verbosity level to be used in the linear and eigensolver
 for the wave port problem.
 
-`"VoltagePath" [None]` :  Array of coordinate points defining an open path for computing a
-voltage line integral on the port face. Each element is a floating point array of length
-equal to the spatial dimension. When specified, this serves two purposes: (1) it enables
-voltage and characteristic impedance ``Z_{PV}`` postprocessing for the wave port, and (2) it
-fixes the wave port mode polarity so that the integrated voltage ``\int E_{\text{mode}} \cdot dl`` along the path is real-positive. The path direction should be chosen so that it
-points from the high-potential to the low-potential terminal of the port (i.e., in the
-direction of the incident E-field), matching the convention used for lumped port `Direction`
-fields. This is required for consistent S-parameter signs when mixing wave and lumped ports
-in a driven simulation; without `VoltagePath`, the wave port mode polarity is set by an
-internal arbitrary convention which may leave cross-type S-parameters 180° out of phase.
-Specified in mesh length units.
+`"VoltagePath" [None]` :  Open path of coordinate points across the port face,
+specified in mesh length units. Each entry is a floating point array of length equal
+to the spatial dimension. The path is **directed from the signal (high-potential)
+terminal to the ground (low-potential) terminal**, matching the lumped-port `"Direction"`
+convention. When specified, this:
+1. Pins the wave-port mode polarity so that ``\int E_{\text{mode}} \cdot dl`` along the
+   path is real-positive (required for consistent S-parameter signs when mixing wave
+   and lumped ports in a driven simulation; without it, cross-type S-parameters may be
+   ``180^\circ`` out of phase).
+2. Enables voltage and characteristic impedance ``Z_{PV}`` postprocessing for the wave
+   port.
 
-`"NSamples" [100]` :  Number of uniformly spaced sample points for the
-coordinate-based voltage line integral (using GSLIB interpolation).
+For example, in a coaxial wave port the first point is on the inner conductor (signal)
+and the last point is on the outer conductor (ground); for a CPW port, the first point
+is on the center trace and the last point in the gap. Uses GSLIB interpolation.
+
+`"NSamples" [100]` :  Number of uniformly spaced sample points for the coordinate-based
+voltage line integral.
+
+`"PolarityAttributes" [None]` :  Pair of parent-mesh boundary attributes
+``[\text{signal}, \text{ground}]`` (signal/high-potential terminal first, ground/low-
+potential terminal second). Same role as the polarity component of `"VoltagePath"`:
+the mode is flipped so that the modal E-field points from the signal attribute toward
+the ground attribute. Ignored if `"VoltagePath"` is also specified.
+
+Lightweight alternative to `"VoltagePath"` when only polarity is needed (no
+``Z_{PV}``, no GSLIB). Both attributes must be present as distinct boundary attributes
+in the input mesh, with edges that lie on the port face.
 
 ## `boundaries["WavePortPEC"]`
 

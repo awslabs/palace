@@ -19,6 +19,14 @@ namespace palace
 {
 using namespace Catch::Matchers;
 
+// Expose private WavePortOperator::Initialize so tests can drive a single port without
+// needing the full simulation harness (and without const_cast around GetPort()).
+struct ExposedWavePortOperator : public WavePortOperator
+{
+  using WavePortOperator::Initialize;
+  using WavePortOperator::WavePortOperator;
+};
+
 // Validate WavePortData::GetCharacteristicImpedance against the analytical TE10
 // rectangular-waveguide power-voltage impedance.
 //
@@ -102,19 +110,17 @@ TEST_CASE("WavePortData TE10 Z_PV matches analytical formula",
   MaterialOperator mat_op(iodata, palace_mesh);
 
   // Construct the WavePortOperator (which builds the WavePortData internally).
-  WavePortOperator wave_port_op(iodata, mat_op, nd_fespace_palace.Get(),
-                                h1_fespace_palace.Get());
+  ExposedWavePortOperator wave_port_op(iodata, mat_op, nd_fespace_palace.Get(),
+                                       h1_fespace_palace.Get());
   wave_port_op.SetSuppressOutput(true);
 
-  // Initialize the modes at the test frequency. Internal units: ω·tc. Initialize
-  // is per-port; const_cast around the GetPort() const is safe here because we
-  // know the wave_port_op is non-const in this scope.
+  // Initialize the modes at the test frequency. Internal units: ω·tc.
   const double omega_nondim =
       2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
-  auto &port = const_cast<WavePortData &>(wave_port_op.GetPort(1));
-  port.Initialize(omega_nondim);
+  wave_port_op.Initialize(omega_nondim);
 
-  std::complex<double> Z_PV_nondim = port.GetCharacteristicImpedance();
+  std::complex<double> Z_PV_nondim =
+      wave_port_op.GetPort(1).GetCharacteristicImpedance();
   // Dimensionalize: Z_PV in physical Ω = Z_PV_nondim · Z₀ (Z₀ = 376.73 Ω is the
   // internal-to-physical impedance scale factor).
   const double Z_PV_ohm = Z_PV_nondim.real() * electromagnetics::Z0_;
@@ -129,6 +135,84 @@ TEST_CASE("WavePortData TE10 Z_PV matches analytical formula",
   CAPTURE(Z_PV_ohm, Z_PV_analytical);
 
   CHECK_THAT(Z_PV_ohm, WithinRel(Z_PV_analytical, 1.0e-3));
+}
+
+// Validate WavePortData::GetModePolaritySign returns the expected sign for the TE10
+// mode in a rectangular waveguide. We use distinct PEC attributes for the y=0 and
+// y=a broadside walls. The convention is (high, low) = (signal terminal, ground
+// terminal) — E should point from high to low. TE10 has E = E_0·sin(πy/a)·ŷ which
+// is +y-aligned, so naming y=0 as "signal" (high) and y=a as "ground" (low) gives a
+// (high → low) direction of +y, matching the field, sign = +1. Swapping the two
+// attribute roles flips the expected sign to -1.
+TEST_CASE("WavePortData GetModePolaritySign for TE10",
+          "[waveportimpedance][Serial]")
+{
+  MPI_Comm comm = Mpi::World();
+
+  const double a_m = 22.86e-3, b_m = 10.16e-3, L_m = 10.0e-3;
+  const double f_GHz = 10.0;
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(8, 8, 4, mfem::Element::TETRAHEDRON, L_m, a_m, b_m));
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.model.L0 = 1.0;
+  iodata.model.Lc = 1.0;
+
+  auto &material = iodata.domains.materials.emplace_back();
+  material.attributes = {1};
+  material.epsilon_r.s = {1.0, 1.0, 1.0};
+  material.mu_r.s = {1.0, 1.0, 1.0};
+
+  // PEC walls (everything except port at face 5). Same as the Z_PV test; we don't
+  // need separate physical attributes here because GetModePolaritySign matches
+  // against the parent boundary attribute, which is already distinct for each face
+  // of MakeCartesian3D.
+  iodata.boundaries.pec.attributes = {1, 2, 3, 4, 6};
+
+  auto &wave = iodata.boundaries.waveport.try_emplace(1).first->second;
+  wave.attributes = {5};
+  wave.mode_idx = 1;
+  wave.excitation = 0;
+  wave.active = true;
+  wave.eig_tol = 1.0e-8;
+  wave.ksp_tol = 1.0e-8;
+  wave.ksp_max_its = 100;
+
+  iodata.solver.order = 2;
+  iodata.solver.linear.tol = 1.0e-8;
+  iodata.solver.linear.max_it = 200;
+  iodata.problem.type = ProblemType::DRIVEN;
+
+  iodata.NondimensionalizeInputs(serial_mesh);
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  iodata.CheckConfiguration();
+  Mesh palace_mesh(std::move(par_mesh));
+
+  auto nd_fec =
+      std::make_unique<mfem::ND_FECollection>(iodata.solver.order, palace_mesh.Dimension());
+  auto h1_fec =
+      std::make_unique<mfem::H1_FECollection>(iodata.solver.order, palace_mesh.Dimension());
+  FiniteElementSpace nd_fespace_palace(palace_mesh, nd_fec.get());
+  FiniteElementSpace h1_fespace_palace(palace_mesh, h1_fec.get());
+  MaterialOperator mat_op(iodata, palace_mesh);
+
+  ExposedWavePortOperator wave_port_op(iodata, mat_op, nd_fespace_palace.Get(),
+                                       h1_fespace_palace.Get());
+  wave_port_op.SetSuppressOutput(true);
+
+  const double omega_nondim =
+      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+  wave_port_op.Initialize(omega_nondim);
+
+  // MakeCartesian3D face attributes: 2 = y=0 (broadside), 4 = y=a (broadside). TE10
+  // has E = E_0·sin(πy/a)·ŷ pointing in +y. With (high, low) = (y=0, y=a) the
+  // expected (high → low) direction is +y, matching the field → sign = +1. Swapping
+  // gives (high → low) = -y, opposite the field → sign = -1.
+  const auto &port = wave_port_op.GetPort(1);
+  CHECK(port.GetModePolaritySign(/*high_attr=*/2, /*low_attr=*/4) == +1);
+  CHECK(port.GetModePolaritySign(/*high_attr=*/4, /*low_attr=*/2) == -1);
 }
 
 }  // namespace palace

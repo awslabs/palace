@@ -160,7 +160,8 @@
           "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
           "Verbose": { "type": "integer", "minimum": 0.0 },
           "VoltagePath": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 } },
-          "NSamples": { "type": "integer", "minimum": 1 }
+          "NSamples": { "type": "integer", "minimum": 1 },
+          "PolarityAttributes": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 }
         }
       }
     },

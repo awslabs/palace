@@ -49,10 +49,11 @@
         "MaxIts": 30,
         "KSPTol": 1e-8,
         "EigenTol": 1e-6,
-        // VoltagePath from inner conductor (inner_radius=0.8192 mm) to outer conductor
-        // (outer_radius=2.7305 mm) at the port face z=L=40 mm. The path direction matches
-        // the lumped port "+R" Direction (E points radially outward, from inner to outer)
-        // so that S-parameters between the lumped and wave port have consistent signs.
+        // VoltagePath: signal-terminal first, ground-terminal second. Here that's the
+        // inner conductor (inner_radius=0.8192 mm, signal) → outer conductor (outer_radius
+        // =2.7305 mm, ground), at the port face z=L=40 mm. This matches the lumped port
+        // "+R" Direction (E radially outward, signal → ground), so cross-type S-parameters
+        // between the two ports have consistent signs.
         "VoltagePath": [[0.8192, 0.0, 40.0], [2.7305, 0.0, 40.0]],
         "NSamples": 100
       }

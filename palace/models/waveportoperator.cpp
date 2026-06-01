@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "waveportoperator.hpp"
+#include <limits>
 #include "fem/bilinearform.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
@@ -599,6 +600,15 @@ WavePortData::WavePortData(const config::WavePortData &data,
     port_nd_transfer_reverse = std::make_unique<mfem::ParTransferMap>(
         mfem::ParSubMesh::CreateTransferMap(port_E0t->Real(), parent_E0t->Real()));
   }
+
+  // Store polarity attributes (low, high) if provided. Used only when no VoltagePath is
+  // configured — VoltagePath already pins polarity unambiguously.
+  if (!has_voltage_coords && data.polarity_attributes[0] != 0 &&
+      data.polarity_attributes[1] != 0)
+  {
+    has_polarity_attributes = true;
+    polarity_attributes = data.polarity_attributes;
+  }
 }
 
 WavePortData::~WavePortData()
@@ -706,19 +716,26 @@ void WavePortData::Initialize(double omega)
     // V_exc = ∫ E_mode · dl is real-positive along the path. This ties the wave port
     // mode polarity to a physically meaningful direction (the path direction, like a
     // lumped port's Direction), enabling consistent S-parameter signs in mixed lumped
-    // + wave port simulations.
+    // + wave port simulations. PolarityAttributes provides a lightweight (no-GSLIB)
+    // alternative when only polarity is needed.
+    int sign = 0;
     if (has_voltage_coords)
     {
       auto V_exc = GetExcitationVoltage();
-      if (V_exc.real() < 0.0)
-      {
-        ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), port_E0t->Real(),
-                             port_E0t->Imag(), 0.0, port_E0t->Real(), port_E0t->Imag());
-        ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), port_E0n->Real(),
-                             port_E0n->Imag(), 0.0, port_E0n->Real(), port_E0n->Imag());
-        ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), *port_sr, *port_si, 0.0,
-                             *port_sr, *port_si);
-      }
+      sign = (V_exc.real() < 0.0) ? -1 : (V_exc.real() > 0.0 ? +1 : 0);
+    }
+    else if (has_polarity_attributes)
+    {
+      sign = GetModePolaritySign(polarity_attributes[0], polarity_attributes[1]);
+    }
+    if (sign < 0)
+    {
+      ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), port_E0t->Real(),
+                           port_E0t->Imag(), 0.0, port_E0t->Real(), port_E0t->Imag());
+      ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), port_E0n->Real(),
+                           port_E0n->Imag(), 0.0, port_E0n->Real(), port_E0n->Imag());
+      ComplexVector::AXPBY(std::complex<double>(-1.0, 0.0), *port_sr, *port_si, 0.0,
+                           *port_sr, *port_si);
     }
   }
 }
@@ -819,6 +836,102 @@ std::complex<double> WavePortData::GetSParameter(GridFunction &E) const
                            -((*port_sr) * port_E->Imag()) + ((*port_si) * port_E->Real()));
   Mpi::GlobalSum(1, &dot, port_nd_fespace->GetComm());
   return dot;
+}
+
+int WavePortData::GetModePolaritySign(int high_attr, int low_attr) const
+{
+  // Without GSLIB, evaluate the modal E-field at the centroids of two port-submesh
+  // boundary elements — one with parent attribute high_attr (signal terminal) and one
+  // with low_attr (ground terminal) — and return the sign of
+  //   Re( E_avg · (c_low - c_high) ),
+  // i.e. positive when E points from the signal (high) terminal toward the ground (low)
+  // terminal, matching the lumped-port `+R Direction` convention and VoltagePath
+  // ordering. After RemapSubMeshBdrAttributes the submesh boundary element's attribute
+  // is the parent boundary attribute, so we can match directly against the user ints.
+  const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
+  const int sdim = port_submesh.SpaceDimension();
+
+  // Local search: for each target attribute, record the first matching boundary
+  // element (lowest local index) and compute its centroid and the modal E vector at
+  // that centroid (evaluated through the adjacent 2D submesh element).
+  auto LocalFind = [&](int target_attr, mfem::Vector &face_centroid, mfem::Vector &E_re,
+                       mfem::Vector &E_im, int &found_rank)
+  {
+    found_rank = std::numeric_limits<int>::max();
+    face_centroid.SetSize(sdim);
+    E_re.SetSize(sdim);
+    E_im.SetSize(sdim);
+    face_centroid = 0.0;
+    E_re = 0.0;
+    E_im = 0.0;
+    for (int b = 0; b < port_submesh.GetNBE(); b++)
+    {
+      if (port_submesh.GetBdrAttribute(b) != target_attr)
+      {
+        continue;
+      }
+      mfem::FaceElementTransformations *FT =
+          const_cast<mfem::ParSubMesh &>(port_submesh).GetBdrFaceTransformations(b);
+      if (FT == nullptr)
+      {
+        continue;
+      }
+      // Use the boundary-face centroid (a physical point ON the terminal) as the
+      // direction reference, but evaluate E in the interior of the adjacent element
+      // since the modal tangential E vanishes on PEC boundaries.
+      mfem::IntegrationPoint ip_face;
+      ip_face.x = ip_face.y = ip_face.z = 0.5;
+      FT->SetAllIntPoints(&ip_face);
+      FT->Transform(ip_face, face_centroid);
+      mfem::ElementTransformation *T_elem = FT->Elem1;
+      mfem::Geometry::Type geom = T_elem->GetGeometryType();
+      const mfem::IntegrationPoint &ip_center = mfem::Geometries.GetCenter(geom);
+      T_elem->SetIntPoint(&ip_center);
+      port_E0t->Real().GetVectorValue(*T_elem, ip_center, E_re);
+      port_E0t->Imag().GetVectorValue(*T_elem, ip_center, E_im);
+      found_rank = Mpi::Rank(port_submesh.GetComm());
+      return;
+    }
+  };
+
+  mfem::Vector c_high(sdim), c_low(sdim), E_re_high(sdim), E_im_high(sdim);
+  mfem::Vector E_re_low(sdim), E_im_low(sdim);
+  int rank_high = 0, rank_low = 0;
+  LocalFind(high_attr, c_high, E_re_high, E_im_high, rank_high);
+  LocalFind(low_attr, c_low, E_re_low, E_im_low, rank_low);
+
+  // Pick the lowest-rank winner for each attribute deterministically, then broadcast
+  // its centroid + E values to all ranks.
+  MPI_Comm comm = port_submesh.GetComm();
+  Mpi::GlobalMin(1, &rank_high, comm);
+  Mpi::GlobalMin(1, &rank_low, comm);
+  if (rank_high >= Mpi::Size(comm) || rank_low >= Mpi::Size(comm))
+  {
+    Mpi::Warning(comm,
+                 "WavePort PolarityAttributes [{}, {}] not found on the port boundary; "
+                 "skipping polarity fix!\n",
+                 high_attr, low_attr);
+    return 0;
+  }
+  Mpi::Broadcast(sdim, c_high.GetData(), rank_high, comm);
+  Mpi::Broadcast(sdim, E_re_high.GetData(), rank_high, comm);
+  Mpi::Broadcast(sdim, E_im_high.GetData(), rank_high, comm);
+  Mpi::Broadcast(sdim, c_low.GetData(), rank_low, comm);
+  Mpi::Broadcast(sdim, E_re_low.GetData(), rank_low, comm);
+  Mpi::Broadcast(sdim, E_im_low.GetData(), rank_low, comm);
+
+  mfem::Vector dir(sdim);
+  for (int d = 0; d < sdim; d++)
+  {
+    dir(d) = c_low(d) - c_high(d);
+  }
+  // Sign of Re( ((E_high + E_low)/2) · dir ).
+  double dot_re = 0.0;
+  for (int d = 0; d < sdim; d++)
+  {
+    dot_re += 0.5 * (E_re_high(d) + E_re_low(d)) * dir(d);
+  }
+  return (dot_re < 0.0) ? -1 : (dot_re > 0.0 ? +1 : 0);
 }
 
 std::complex<double> WavePortData::GetVoltage(GridFunction &E) const
