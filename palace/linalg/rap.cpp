@@ -911,6 +911,85 @@ BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
   return O;
 }
 
+std::unique_ptr<ComplexParOperator>
+BuildParSumOperator(const std::vector<std::complex<double>> &coeff,
+                    const std::vector<const ComplexParOperator *> &ops, bool set_essential)
+{
+  MFEM_VERIFY(coeff.size() == ops.size(),
+              "BuildParSumOperator vector overload requires coeff and ops to have the "
+              "same size!");
+  auto it = std::find_if(ops.begin(), ops.end(), [](auto p) { return p != nullptr; });
+  MFEM_VERIFY(it != ops.end(),
+              "BuildParSumOperator requires at least one valid ComplexParOperator!");
+  const auto first_op = *it;
+  const auto &fespace = first_op->TrialFiniteElementSpace();
+  MFEM_VERIFY(
+      std::all_of(ops.begin(), ops.end(), [&fespace](auto p)
+                  { return p == nullptr || &p->TrialFiniteElementSpace() == &fespace; }),
+      "All ComplexParOperators must have the same FiniteElementSpace!");
+
+  auto sumr = std::make_unique<SumOperator>(first_op->LocalOperator().Height(),
+                                            first_op->LocalOperator().Width());
+  auto sumi = std::make_unique<SumOperator>(first_op->LocalOperator().Height(),
+                                            first_op->LocalOperator().Width());
+  for (std::size_t i = 0; i < coeff.size(); i++)
+  {
+    if (ops[i] && coeff[i].real() != 0)
+    {
+      if (ops[i]->LocalOperator().Real())
+      {
+        sumr->AddOperator(*ops[i]->LocalOperator().Real(), coeff[i].real());
+      }
+      if (ops[i]->LocalOperator().Imag())
+      {
+        sumi->AddOperator(*ops[i]->LocalOperator().Imag(), coeff[i].real());
+      }
+    }
+    if (ops[i] && coeff[i].imag() != 0)
+    {
+      if (ops[i]->LocalOperator().Imag())
+      {
+        sumr->AddOperator(*ops[i]->LocalOperator().Imag(), -coeff[i].imag());
+      }
+      if (ops[i]->LocalOperator().Real())
+      {
+        sumi->AddOperator(*ops[i]->LocalOperator().Real(), coeff[i].imag());
+      }
+    }
+  }
+  auto O = std::make_unique<ComplexParOperator>(std::move(sumr), std::move(sumi), fespace);
+  if (set_essential)
+  {
+    auto it_ess = std::find_if(ops.begin(), ops.end(), [](auto p)
+                               { return p != nullptr && p->GetEssentialTrueDofs(); });
+    if (it_ess == ops.end())
+    {
+      return O;
+    }
+    const auto *ess_dofs = (*it_ess)->GetEssentialTrueDofs();
+    MFEM_VERIFY(std::all_of(ops.begin(), ops.end(),
+                            [&](auto p)
+                            {
+                              if (p == nullptr)
+                              {
+                                return true;
+                              }
+                              auto p_ess_dofs = p->GetEssentialTrueDofs();
+                              return p_ess_dofs == nullptr ||
+                                     ReferencesSameMemory(*ess_dofs, *p_ess_dofs);
+                            }),
+                "If essential dofs are set, all suboperators must agree on them!");
+    Operator::DiagonalPolicy policy = Operator::DiagonalPolicy::DIAG_ZERO;
+    for (auto p : ops)
+    {
+      policy = (p && p->GetEssentialTrueDofs()) ? std::max(policy, p->GetDiagonalPolicy())
+                                                : policy;
+    }
+    O->SetEssentialTrueDofs(*ess_dofs, policy);
+  }
+  return O;
+}
+
 // TODO: replace with std::to_array in c++20.
 namespace detail
 {

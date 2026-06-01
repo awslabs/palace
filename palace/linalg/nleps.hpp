@@ -157,6 +157,13 @@ private:
   // Function to compute the A2 operator.
   std::optional<std::function<std::unique_ptr<ComplexOperator>(double)>> funcA2;
 
+  // Optional analytical derivative dA2/dω evaluated at the given ω. When set, the Newton
+  // refinement uses it in place of a finite-difference Jacobian (which costs an extra
+  // funcA2 reassembly per iterate and loses precision to subtraction noise). Caller is
+  // responsible for ensuring the derivative is consistent with funcA2 (typically by
+  // having both share the same factored representation, e.g. WavePortFactor).
+  std::optional<std::function<std::unique_ptr<ComplexOperator>(double)>> funcDA2DOmega;
+
   // Function to compute the preconditioner matrix.
   std::optional<std::function<std::unique_ptr<ComplexOperator>(
       std::complex<double>, std::complex<double>, std::complex<double>, double)>>
@@ -206,6 +213,13 @@ public:
 
   // Set the frequency-dependent A2 matrix function.
   void SetExtraSystemMatrix(
+      std::function<std::unique_ptr<ComplexOperator>(double)>) override;
+
+  // Set an optional analytical derivative dA2/dω. When provided, the Newton refinement
+  // uses it directly instead of a finite-difference approximation built from two funcA2
+  // evaluations. Halves the per-iterate A2 assembly cost and removes FD subtraction
+  // noise.
+  void SetExtraSystemMatrixDerivative(
       std::function<std::unique_ptr<ComplexOperator>(double)>) override;
 
   // Set the preconditioner update function.

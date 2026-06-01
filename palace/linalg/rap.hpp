@@ -6,6 +6,7 @@
 
 #include <array>
 #include <memory>
+#include <vector>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
@@ -245,6 +246,14 @@ template <std::size_t N, typename ScalarType, typename OperType>
 std::unique_ptr<std::conditional_t<std::is_base_of_v<ComplexOperator, OperType>,
                                    ComplexParOperator, ParOperator>>
 BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperType *(&&ops_in)[N],
+                    bool set_essential = true);
+
+// Runtime-sized overload taking std::vector. Same semantics as the std::array overload but
+// usable when the number of operators is not a compile-time constant (e.g. one term per
+// wave port at the eigenvalue solver's per-ω A2 build).
+std::unique_ptr<ComplexParOperator>
+BuildParSumOperator(const std::vector<std::complex<double>> &coeff,
+                    const std::vector<const ComplexParOperator *> &ops,
                     bool set_essential = true);
 
 }  // namespace palace

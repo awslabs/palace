@@ -78,6 +78,13 @@ public:
     MFEM_ABORT("SetExtraSystemMatrix not defined!");
   }
 
+  // Optional analytical dA2/dω. Default no-op: solvers that don't override it fall back
+  // to a finite-difference Jacobian on funcA2.
+  virtual void SetExtraSystemMatrixDerivative(
+      std::function<std::unique_ptr<ComplexOperator>(double)>)
+  {
+  }
+
   virtual void SetPreconditionerUpdate(
       std::function<std::unique_ptr<ComplexOperator>(
           std::complex<double>, std::complex<double>, std::complex<double>, double)>)

@@ -180,6 +180,12 @@ void QuasiNewtonSolver::SetExtraSystemMatrix(
   funcA2 = A2;
 }
 
+void QuasiNewtonSolver::SetExtraSystemMatrixDerivative(
+    std::function<std::unique_ptr<ComplexOperator>(double)> dA2)
+{
+  funcDA2DOmega = dA2;
+}
+
 void QuasiNewtonSolver::SetPreconditionerUpdate(
     std::function<std::unique_ptr<ComplexOperator>(
         std::complex<double>, std::complex<double>, std::complex<double>, double)>
@@ -646,12 +652,25 @@ int QuasiNewtonSolver::Solve()
         break;
       }
 
-      // Compute w = J * v.
-      auto opA2p = (*funcA2)(std::abs(eig.imag()) * (1.0 + delta));
-      const std::complex<double> denom =
-          std::complex<double>(0.0, delta * std::abs(eig.imag()));
-      std::unique_ptr<ComplexOperator> opAJ =
-          BuildParSumOperator({1.0 / denom, -1.0 / denom}, {opA2p.get(), A2n.get()}, true);
+      // Compute w = J * v. Use analytical dA2/dλ when available (cheaper than two
+      // funcA2 reassemblies, no FD subtraction noise); otherwise FD on funcA2.
+      // funcDA2DOmega returns dA2/dλ directly (caller is responsible for the
+      // -i·dA2/dω → dA2/dλ conversion); FD form computes the same quantity from
+      // ((A2(ω(1+δ)) − A2(ω))/(iδω) which expands to (1/i)·dA2/dω = -i·dA2/dω.
+      std::unique_ptr<ComplexOperator> opAJ;
+      std::unique_ptr<ComplexOperator> opA2p;
+      if (funcDA2DOmega)
+      {
+        opAJ = (*funcDA2DOmega)(std::abs(eig.imag()));
+      }
+      else
+      {
+        opA2p = (*funcA2)(std::abs(eig.imag()) * (1.0 + delta));
+        const std::complex<double> denom =
+            std::complex<double>(0.0, delta * std::abs(eig.imag()));
+        opAJ = BuildParSumOperator({1.0 / denom, -1.0 / denom},
+                                   {opA2p.get(), A2n.get()}, true);
+      }
       auto opJ = BuildParSumOperator({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * eig, 1.0 + 0.0i},
                                      {opK, opC, opM, opAJ.get()}, true);
       opJ->Mult(v, w);
