@@ -164,6 +164,16 @@ private:
   // having both share the same factored representation, e.g. WavePortFactor).
   std::optional<std::function<std::unique_ptr<ComplexOperator>(double)>> funcDA2DOmega;
 
+  // Optional A2(λ) evaluated at complex λ via the analytical kₙ² fit (the analytic
+  // continuation of the wave-port term off the imaginary λ axis). Diagnostic only:
+  // compared against funcA2(|Im λ|) to expose the structural difference between
+  // T_nonlinear-as-Palace-defines-it (kₙ on real ω axis, so A2 is `Re(λ)`-independent)
+  // and T_analytic (full analytic continuation). When set, SetInitialGuess prints both
+  // residuals so the user can see how much of the seed–truth gap is purely "kₙ on real
+  // axis vs. complex λ" vs. genuine fit error.
+  std::optional<std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>>
+      funcA2Complex;
+
   // Function to compute the preconditioner matrix.
   std::optional<std::function<std::unique_ptr<ComplexOperator>(
       std::complex<double>, std::complex<double>, std::complex<double>, double)>>
@@ -221,6 +231,13 @@ public:
   // noise.
   void SetExtraSystemMatrixDerivative(
       std::function<std::unique_ptr<ComplexOperator>(double)>) override;
+
+  // Set an optional A2(λ) builder evaluated at complex λ. Diagnostic only — compared
+  // in SetInitialGuess against funcA2(|Im λ|) so the user can see whether the seed–truth
+  // residual gap comes from "kₙ on real axis vs. analytic continuation" structural
+  // mismatch.
+  void SetExtraSystemMatrixComplex(
+      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>);
 
   // Set the preconditioner update function.
   void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(

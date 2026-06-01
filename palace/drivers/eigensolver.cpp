@@ -74,6 +74,27 @@ public:
     return BuildScaled(MakeKnCoefficients(omega));
   }
 
+  // Build Σ_p kₙ,p(λ) · Mwp_p at COMPLEX λ using the analytical kₙ² fit (so kₙ
+  // is evaluated as the analytic continuation √(α − γλ²) rather than the real-ω
+  // restriction kₙ(|Im λ|)). Diagnostic only — used to compare T_nonlinear (with
+  // funcA2 on real ω axis) against T_analytic (with kₙ extended into the complex
+  // plane). Caller must have called FitKnSq() first.
+  std::unique_ptr<ComplexOperator> BuildComplex(std::complex<double> lam) const
+  {
+    if (Mwp_p_.empty())
+    {
+      return {};
+    }
+    MFEM_VERIFY(kn2_alpha_.size() == Mwp_p_.size(),
+                "WavePortFactor::BuildComplex requires FitKnSq() first.");
+    std::vector<std::complex<double>> coeffs(Mwp_p_.size());
+    for (std::size_t k = 0; k < Mwp_p_.size(); k++)
+    {
+      coeffs[k] = KnComplex(static_cast<int>(k), lam);
+    }
+    return BuildScaled(coeffs);
+  }
+
   // Build the Newton-Jacobian wave-port term, dA2/dλ = -i·dA2/dω, evaluated at
   // λ = i·ω for real positive ω. With Mwp_p purely imaginary (= i·M_real_p), this is
   //   -i · i · Σ (dkₙ_p/dω) · M_real_p = Σ (dkₙ_p/dω) · M_real_p
@@ -728,6 +749,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         qn->SetExtraSystemMatrixDerivative(
             [&wp_factor](double omega) -> std::unique_ptr<ComplexOperator>
             { return wp_factor.BuildJacobianTerm(omega); });
+        // Diagnostic: provide the analytic-continuation A2(λ) so SetInitialGuess
+        // can compare T_re (kₙ on real axis) vs T_analytic (full complex λ). The
+        // off-axis seed path above already calls FitKnSq(); call here too in case
+        // wave_port_only branch above wasn't taken.
+        wp_factor.FitKnSq(target, iodata.solver.eigenmode.target_upper);
+        qn->SetExtraSystemMatrixComplex(
+            [&wp_factor](std::complex<double> lam) -> std::unique_ptr<ComplexOperator>
+            { return wp_factor.BuildComplex(lam); });
       }
     }
     qn->SetPreconditionerUpdate(funcP);

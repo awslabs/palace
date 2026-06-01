@@ -186,6 +186,12 @@ void QuasiNewtonSolver::SetExtraSystemMatrixDerivative(
   funcDA2DOmega = dA2;
 }
 
+void QuasiNewtonSolver::SetExtraSystemMatrixComplex(
+    std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> A2c)
+{
+  funcA2Complex = A2c;
+}
+
 void QuasiNewtonSolver::SetPreconditionerUpdate(
     std::function<std::unique_ptr<ComplexOperator>(
         std::complex<double>, std::complex<double>, std::complex<double>, double)>
@@ -275,8 +281,66 @@ void QuasiNewtonSolver::SetInitialGuess()
     eigenvectors[i] = x1;
   }
 
-  // Compute errors.
+  // Diagnostic: report each seed's residual on the LINEAR pencil T_poly (as the
+  // PEP solver sees it, computed before we overwrite res[] with the T_nonlinear
+  // residual below) alongside its residual on the NONLINEAR pencil T(λ). Large
+  // gap between the two = the seed is a true eigenvalue of T_poly but not of T
+  // (i.e., polynomial fit error matters for that mode). Tight gap = the seed is
+  // close to a true T eigenvalue and Newton refinement should converge fast.
+  std::vector<double> err_linear_abs(nev_linear);
+  std::vector<double> err_linear_bkwd(nev_linear);
+  for (int i = 0; i < nev_linear; i++)
+  {
+    err_linear_abs[i] =
+        linear_eigensolver_->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
+    err_linear_bkwd[i] =
+        linear_eigensolver_->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
+  }
+
+  // Compute errors on T_nonlinear (overwrites res[]).
   RescaleEigenvectors(nev_linear);
+
+  if (print > 0)
+  {
+    Mpi::Print(
+        GetComm(),
+        "\n NLEPS HYBRID seed quality:\n"
+        "   abs(T_poly):      ||(K + λC + λ²M + i·kₙ_poly(λ)·M_p) v|| (linear PEP truth)\n"
+        "   abs(T_re):        Palace T_nonlinear, kₙ on real ω axis at ω=|Im λ|\n"
+        "   abs(T_analytic):  T with analytic continuation kₙ(λ) = √(α − γλ²)\n"
+        "  {:>4}  {:>22}  {:>14}  {:>14}  {:>14}\n",
+        "i", "eigenvalue", "abs(T_poly)", "abs(T_re)", "abs(T_analytic)");
+    for (int i = 0; i < nev_linear; i++)
+    {
+      const auto &lam = eigenvalues[i];
+      // T_analytic residual using funcA2Complex(λ) (the analytic continuation):
+      double abs_t_analytic = -1.0;
+      if (funcA2Complex)
+      {
+        const auto &xi = eigenvectors[i];
+        x1 = xi;
+        opK->Mult(x1, y1);
+        if (opC)
+        {
+          opC->AddMult(x1, y1, lam);
+        }
+        opM->AddMult(x1, y1, lam * lam);
+        auto A2c = (*funcA2Complex)(lam);
+        if (A2c)
+        {
+          A2c->AddMult(x1, y1, 1.0);
+        }
+        const double normx = linalg::Norml2(comm, x1);
+        abs_t_analytic =
+            (normx > 0.0) ? linalg::Norml2(comm, y1) / normx : 0.0;
+      }
+      Mpi::Print(GetComm(),
+                 "  {:>4d}  {:+11.4e}{:+11.4e}i  {:>14.3e}  {:>14.3e}  {:>14.3e}\n",
+                 i, lam.real(), lam.imag(), err_linear_abs[i], res.get()[i],
+                 abs_t_analytic);
+    }
+    Mpi::Print(GetComm(), "\n");
+  }
 
   // Initialize eigenpairs ordering.
   perm = std::make_unique<int[]>(nev_linear);
