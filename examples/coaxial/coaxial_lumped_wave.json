@@ -33,7 +33,7 @@
       {
         "Index": 1,
         "Attributes": [3],
-        "R": 50.0,  // Ω, matched
+        "R": 100.0,  // Ω, mismatched vs ~50 Ω coaxial line so S11/S22 are non-trivial
         "Direction": "+R",  // Coaxial lumped port: E points outward
         "Excitation": 1
       }
