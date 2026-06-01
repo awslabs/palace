@@ -1101,15 +1101,14 @@ template <ProblemType U>
 auto PostOperatorCSV<solver_t>::InitializePortS(const SpaceOperator &fem_op)
     -> std::enable_if_t<U == ProblemType::DRIVEN, void>
 {
-  if (!fem_op.GetPortExcitations().IsMultipleSimple())
+  auto nr_ports = fem_op.GetLumpedPortOp().Size() + fem_op.GetWavePortOp().Size();
+  if (nr_ports == 0 || !fem_op.GetPortExcitations().IsMultipleSimple())
   {
     return;
   }
   port_S = TableWithCSVFile(post_dir / "port-S.csv", reload_table);
 
   Table t;  // Define table locally first due to potential reload.
-
-  auto nr_ports = fem_op.GetLumpedPortOp().Size() + fem_op.GetWavePortOp().Size();
 
   auto nr_expected_measurement_cols = 1 + ex_idx_v_all.size() * nr_ports;
   t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
