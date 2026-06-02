@@ -4,7 +4,9 @@
 #include "eigensolver.hpp"
 
 #include <complex>
+#include <cstdlib>
 #include <map>
+#include <string_view>
 #include <vector>
 #include <Eigen/Dense>
 #include <mfem.hpp>
@@ -310,26 +312,50 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     const double target_max = iodata.solver.eigenmode.target_upper;
 
-    // Detect wave-port-only A2: when there are no farfield / surface-σ contributors,
-    // we can fit kₙ_p(λ) analytically (kₙ²(ω) = γω² + α exact for textbook waveguides)
-    // and seed the pencil from samples that are NOT confined to the imaginary λ axis.
-    // The default 3-point Newton interpolation samples A2 only on Re(λ) = 0, so its
-    // off-axis extrapolation degrades polynomially — fine for low-loss bands but a poor
-    // seed when target eigenvalues have appreciable Im(f). Wave-port-only mode samples
-    // 3 points on the imaginary axis + 3 mirror points displaced into the half-plane
-    // and least-squares fits the same degree-2 polynomial in λ. Same downstream pencil
-    // structure (K' + λC' + λ²M'); just better-conditioned coefficients off-axis.
+    // Seed-pencil strategies for HYBRID. Three options selectable via env var:
+    //   PALACE_NLEPS_SEED unset / "polynomial":
+    //     3-point Newton interpolation of A2(ω) in λ — current default. Polynomial
+    //     extrapolation off the imaginary λ axis can introduce spurious eigenvalues
+    //     (eigenvalues of T_polynomial that don't correspond to T_nonlinear modes).
+    //   PALACE_NLEPS_SEED = "off-axis":
+    //     6-point LSQ fit (3 on imag axis + 3 mirror points) in λ. Same polynomial
+    //     pencil structure; better conditioning for typical Q ~ 5 modes.
+    //   PALACE_NLEPS_SEED = "fixed-omega":
+    //     Constant A2(ω*=target) ("frozen-frequency" QEP). T_re(λ; ω*) = K + λC +
+    //     λ²M + i·kₙ(ω*)·M_p is a strict QEP with no λ-dependence in A2 — matches
+    //     the wave-port BC definition exactly at ω* = |Im λ*|. Specialization of
+    //     Ruhe's Method of Successive Linear Problems (SIAM JNA 1973); see also
+    //     COMSOL "linearization point" iteration (Wu et al., CPC 284, 2023) and
+    //     SLAC Omega3P self-consistent iteration (Liao-Bai-Lee-Ko 2010).
+    enum class SeedStrategy { Polynomial, OffAxis, FixedOmega };
+    SeedStrategy seed_strategy = SeedStrategy::Polynomial;
+    if (const char *env = std::getenv("PALACE_NLEPS_SEED"))
+    {
+      std::string_view sv{env};
+      if (sv == "off-axis") seed_strategy = SeedStrategy::OffAxis;
+      else if (sv == "fixed-omega") seed_strategy = SeedStrategy::FixedOmega;
+    }
+    Mpi::Print(
+        "\n NLEPS HYBRID seed strategy: {}\n",
+        seed_strategy == SeedStrategy::Polynomial   ? "polynomial (3-pt on-axis)"
+        : seed_strategy == SeedStrategy::OffAxis    ? "off-axis (6-pt LSQ)"
+                                                    : "fixed-omega (constant A2)");
+
+    // Detect wave-port-only A2 (used by both off-axis and fixed-omega paths).
     auto bulk_probe = space_op.GetExtraSystemMatrix<ComplexOperator>(
         target, Operator::DIAG_ZERO, /*include_wave_ports=*/false);
     const bool wave_port_only = !bulk_probe && !wp_factor.empty();
-    if (wave_port_only)
+
+    if (seed_strategy == SeedStrategy::FixedOmega)
+    {
+      // T_re(λ; ω*) = K + λC + λ²M + i·kₙ(ω*)·M_p with kₙ frozen at ω* = target.
+      // The wave-port term is constant in λ — put it in the K block (α₀ = full
+      // value, α₁ = α₂ = 0).
+      A2_0 = funcA2(target);
+    }
+    else if (seed_strategy == SeedStrategy::OffAxis && wave_port_only)
     {
       wp_factor.FitKnSq(target, target_max);
-      // 6 sample points: 3 on imaginary λ axis at [target, midpoint, target_max], plus
-      // 3 displaced into the half-plane by Re(λ) = -displacement (Im(f) > 0). The
-      // displacement is a heuristic for typical mode lossiness in driven simulations:
-      // 0.1·target ~ Q≈5, on the conservative side. A larger displacement worsens the
-      // on-axis fit; smaller does little.
       const double displacement = 0.1 * target;
       std::vector<std::complex<double>> pts;
       pts.reserve(6);
@@ -350,15 +376,41 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     else
     {
+      // Polynomial 3-point Newton interpolation (default).
       interp_op = std::make_unique<NewtonInterpolationOperator>(funcA2, A2->Width());
       interp_op->Interpolate(1i * target, 1i * target_max);
       A2_0 = interp_op->GetInterpolationOperator(0);
       A2_1 = interp_op->GetInterpolationOperator(1);
       A2_2 = interp_op->GetInterpolationOperator(2);
     }
+    // Assemble the seed pencil. Polynomial paths distribute the wave-port
+    // contribution through K, C, M (A2_1 and A2_2 always non-null). Fixed-ω
+    // puts everything in K (A2_1 = A2_2 = nullptr); Cp and Mp wrap C and M.
+    // When fixed-ω is used and input C is null (no damping), Cp is a 0·K
+    // wrapper to give the downstream PEP solver a valid (zero) damping
+    // operator with the right FE space, since SetOperators(K,C,M) is the
+    // only QEP path supported.
     Kp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {K.get(), A2_0.get()});
-    Cp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {C.get(), A2_1.get()});
-    Mp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {M.get(), A2_2.get()});
+    if (A2_1)
+    {
+      Cp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {C.get(), A2_1.get()});
+    }
+    else if (C)
+    {
+      Cp = BuildParSumOperator({1.0 + 0i}, {C.get()});
+    }
+    else
+    {
+      Cp = BuildParSumOperator({0.0 + 0i}, {K.get()});
+    }
+    if (A2_2)
+    {
+      Mp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {M.get(), A2_2.get()});
+    }
+    else
+    {
+      Mp = BuildParSumOperator({1.0 + 0i}, {M.get()});
+    }
 
     // Per-port kₙ fit-residual diagnostic. The HYBRID seed pencil is built from a 3-point
     // monomial-basis Newton interpolation of A2(ω) on [target, target_max]; for wave-port
