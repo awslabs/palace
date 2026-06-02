@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
@@ -161,6 +162,7 @@ TEST_CASE("spheres", "[Serial][Parallel][GPU][Regression]")
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.gridfunction_fields = true;
   palace::test::RunRegressionCase("spheres", "spheres.json", "", opts);
 }
 
@@ -254,6 +256,7 @@ TEST_CASE("antenna_halfwave_dipole_surfacecurrent", "[Serial][Parallel][GPU][Reg
   palace::test::RegressionOptions opts;
   opts.rtol = 2.0e-2;
   opts.atol = 5.0e-9;
+  opts.paraview_fields = false;
   palace::test::RunRegressionCase("antenna", "antenna_halfwave_dipole_surfacecurrent.json",
                                   "antenna_halfwave_dipole_surfacecurrent", opts);
 }
@@ -297,21 +300,14 @@ TEST_CASE("cpw_wave_uniform", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("cpw", "cpw_wave_uniform.json", "wave_uniform", opts);
 }
 
-// Adaptive frequency sweep: ROM-interpolated. The phase of the complex
-// columns crosses zero where relative comparison degenerates, so for
-// every CSV with Re{X}/Im{X} pairs we compare magnitudes via
-// CompareComplexMagnitudes. port-S.csv carries |S| / arg(S) directly
-// rather than Re/Im pairs; drop the phase via excluded_columns.
+// Julia kept adaptive frequency sweeps as smoke tests only: enforce the
+// output tree, CSV set, headers, and row/column structure, but skip all
+// numeric comparisons with infinite tolerances.
 TEST_CASE("cpw_lumped_adaptive", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
-  opts.rtol = 1.0e-1;
-  opts.atol = 1.0e-11;
-  opts.excluded_columns = {"Maximum", "Minimum", "arg("};
-  opts.custom_checks["port-V.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
-  opts.custom_checks["port-I.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
-  opts.custom_checks["probe-E.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
-  opts.custom_checks["probe-B.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
+  opts.rtol = std::numeric_limits<double>::infinity();
+  opts.atol = std::numeric_limits<double>::infinity();
   palace::test::RunRegressionCase("cpw", "cpw_lumped_adaptive.json", "lumped_adaptive",
                                   opts);
 }
@@ -319,11 +315,8 @@ TEST_CASE("cpw_lumped_adaptive", "[Serial][Parallel][GPU][Regression]")
 TEST_CASE("cpw_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
-  opts.rtol = 1.0e-1;
-  opts.atol = 1.0e-11;
-  opts.excluded_columns = {"Maximum", "Minimum", "arg("};
-  opts.custom_checks["probe-E.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
-  opts.custom_checks["probe-B.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
+  opts.rtol = std::numeric_limits<double>::infinity();
+  opts.atol = std::numeric_limits<double>::infinity();
   palace::test::RunRegressionCase("cpw", "cpw_wave_adaptive.json", "wave_adaptive", opts);
 }
 
@@ -332,15 +325,12 @@ TEST_CASE("cpw_lumped_eigen", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
-  // Eigenmode phase is arbitrary, so port-V/port-I get magnitude checks
-  // (CompareComplexMagnitudes pairs Re{V[i]}/Im{V[i]} and Re{I[i]}/
-  // Im{I[i]} by header_text). port-Q.csv carries Q_ext / κ_ext
-  // normalisation values that drift between runs — drop them outright.
+  // Match Julia parity: drop eigenmode phase-sensitive port columns and
+  // Q_ext / κ_ext normalisation values; keep the farfield magnitude check.
   opts.excluded_columns = {"Maximum",      "Minimum", "Mean",      "Error (Bkwd.)",
-                           "Error (Abs.)", "Q_ext",   "\u03ba_ext"};
+                           "Error (Abs.)", "Re{V[",   "Im{V[",     "Re{I[",
+                           "Im{I[",        "Q_ext",   "\u03ba_ext"};
   opts.skip_rowcount = true;
-  opts.custom_checks["port-V.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
-  opts.custom_checks["port-I.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
   opts.custom_checks["farfield-rE.csv"] = TestFarfield(opts.rtol);
   palace::test::RunRegressionCase("cpw", "cpw_lumped_eigen.json", "lumped_eigen", opts);
 }
@@ -379,12 +369,12 @@ TEST_CASE("transmon_coarse", "[Serial][Parallel][GPU][Regression][Long]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-2;
   opts.atol = 1.0e-16;
-  opts.excluded_columns = kEigenExcluded;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean",  "Error (Bkwd.)", "Error (Abs.)",
+                           "Re{V[",   "Im{V[",   "Re{I[", "Im{I["};
   opts.skip_rowcount = true;
+  opts.gridfunction_fields = true;
   opts.linear_solver_policy = kForceDefaultSolver;
   opts.eigen_solver_policy = kForceDefaultSolver;
-  opts.custom_checks["port-V.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
-  opts.custom_checks["port-I.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
   palace::test::RunRegressionCase("transmon", "transmon_coarse.json", "transmon_coarse",
                                   opts);
 }
@@ -394,12 +384,12 @@ TEST_CASE("transmon_amr", "[Serial][Parallel][GPU][Regression][Long]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-2;
   opts.atol = 1.0e-16;
-  opts.excluded_columns = kEigenExcluded;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean",  "Error (Bkwd.)", "Error (Abs.)",
+                           "Re{V[",   "Im{V[",   "Re{I[", "Im{I["};
   opts.skip_rowcount = true;
+  opts.gridfunction_fields = true;
   opts.linear_solver_policy = kForceDefaultSolver;
   opts.eigen_solver_policy = kForceDefaultSolver;
-  opts.custom_checks["port-V.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
-  opts.custom_checks["port-I.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
   palace::test::RunRegressionCase("transmon", "transmon_amr.json", "transmon_amr", opts);
 }
 

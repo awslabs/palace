@@ -4,6 +4,7 @@
 #include "regression_helpers.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <set>
 #include <sstream>
@@ -48,6 +49,7 @@ std::string g_device_override;
 // diff). Returns two sorted sets so per-case file lists are stable.
 struct FileListing
 {
+  std::set<std::string> dirs;
   std::set<std::string> csv_files;
   std::set<std::string> meta_files;
 };
@@ -65,6 +67,7 @@ FileListing ListRegressionFiles(const std::filesystem::path &root,
   {
     if (it->is_directory())
     {
+      out.dirs.insert(std::filesystem::relative(it->path(), root).generic_string());
       if (skip_dirs.count(it->path().filename().string()))
       {
         it.disable_recursion_pending();
@@ -104,6 +107,90 @@ bool HeaderExcluded(const std::string &header, const std::vector<std::string> &e
   return false;
 }
 
+std::string FormatSet(const std::set<std::string> &values)
+{
+  if (values.empty())
+  {
+    return "  <none>";
+  }
+  std::stringstream ss;
+  for (const auto &value : values)
+  {
+    ss << "  " << value << '\n';
+  }
+  return ss.str();
+}
+
+void CheckSetEqual(const char *label, const std::set<std::string> &actual,
+                   const std::set<std::string> &expected)
+{
+  INFO(label << "\nactual:\n" << FormatSet(actual) << "expected:\n" << FormatSet(expected));
+  CHECK(actual == expected);
+}
+
+std::set<std::string> ExpectedDirectories(int max_its, const RegressionOptions &opts)
+{
+  std::set<std::string> expected;
+  if (opts.gridfunction_fields)
+  {
+    expected.insert("gridfunction");
+  }
+  for (int i = 1; i <= max_its; ++i)
+  {
+    const std::string iteration = "iteration" + std::to_string(i);
+    expected.insert(iteration);
+    if (opts.gridfunction_fields)
+    {
+      expected.insert(iteration + "/gridfunction");
+    }
+    if (opts.paraview_fields)
+    {
+      expected.insert(iteration + "/paraview");
+    }
+  }
+  if (opts.paraview_fields)
+  {
+    expected.insert("paraview");
+  }
+  return expected;
+}
+
+std::set<std::string> ExpectedMetadataFiles(int max_its)
+{
+  std::set<std::string> expected{"palace.json"};
+  for (int i = 1; i <= max_its; ++i)
+  {
+    expected.insert("iteration" + std::to_string(i) + "/palace.json");
+  }
+  return expected;
+}
+
+nlohmann::json LoadConfigJson(const std::filesystem::path &config_path)
+{
+  std::stringstream buffer = PreprocessFile(config_path.string().c_str());
+  return nlohmann::json::parse(buffer);
+}
+
+int GetMaxRefinementIterations(const nlohmann::json &config)
+{
+  const auto model_it = config.find("Model");
+  if (model_it == config.end() || !model_it->is_object())
+  {
+    return 0;
+  }
+  const auto refinement_it = model_it->find("Refinement");
+  if (refinement_it == model_it->end() || !refinement_it->is_object())
+  {
+    return 0;
+  }
+  const auto max_its_it = refinement_it->find("MaxIts");
+  if (max_its_it == refinement_it->end())
+  {
+    return 0;
+  }
+  return max_its_it->get<int>();
+}
+
 // Load `path` via palace::TableWithCSVFile (load_existing_file=true),
 // which reads the whole file and parses it through Table's string
 // constructor.
@@ -113,27 +200,52 @@ Table LoadTable(const std::filesystem::path &path)
   return std::move(wrapped.table);
 }
 
-// Column-wise diff of two CSV files using Catch2's WithinRel + WithinAbs
-// matchers. Julia's isapprox (|a-b| <= max(atol, rtol*max(|a|,|b|))) is
-// the "either condition" form, which is exactly
-//   WithinRel(ref, rtol) || WithinAbs(ref, atol).
-void CompareCSVFiles(const std::filesystem::path &actual_path,
-                     const std::filesystem::path &reference_path,
-                     const RegressionOptions &opts)
+// Shared structural CSV checks. Julia first asserted raw column count,
+// optionally asserted row count, dropped excluded columns, then asserted
+// names before either custom_tests or the default isapprox broadcast.
+// We keep the raw table intact for custom callbacks, but run the same
+// shape/header validation for every CSV first so custom checks cannot
+// silently bypass malformed output.
+bool ValidateCSVTables(Table &actual, Table &reference, const RegressionOptions &opts)
 {
-  INFO("actual:    " << actual_path << "\nreference: " << reference_path);
-
-  // Non-const locally: palace::Table's operator[] takes non-const this
-  // so we need mutable references. The CSV data is never mutated
-  // through them.
-  Table actual = LoadTable(actual_path);
-  Table reference = LoadTable(reference_path);
-
-  // Raw shape checks mirror Julia's pre-exclusion guards.
   CHECK(actual.n_cols() == reference.n_cols());
   if (!opts.skip_rowcount)
   {
     CHECK(actual.n_rows() == reference.n_rows());
+  }
+
+  const bool comparable_columns = actual.n_cols() == reference.n_cols();
+  const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
+  for (std::size_t c = 0; c < n_cols; ++c)
+  {
+    const Column &a_col = actual[c];
+    const Column &r_col = reference[c];
+    if (HeaderExcluded(r_col.header_text, opts.excluded_columns))
+    {
+      continue;
+    }
+
+    INFO("column " << c << ": actual='" << a_col.header_text << "' reference='"
+                   << r_col.header_text << "'");
+    CHECK(a_col.header_text == r_col.header_text);
+  }
+  return comparable_columns;
+}
+
+bool SkipNumericComparison(const RegressionOptions &opts)
+{
+  return std::isinf(opts.rtol) && std::isinf(opts.atol);
+}
+
+// Column-wise diff of two CSV files using Catch2's WithinRel + WithinAbs
+// matchers. Julia's isapprox (|a-b| <= max(atol, rtol*max(|a|,|b|))) is
+// the "either condition" form, which is exactly
+//   WithinRel(ref, rtol) || WithinAbs(ref, atol).
+void CompareCSVFiles(Table &actual, Table &reference, const RegressionOptions &opts)
+{
+  if (!ValidateCSVTables(actual, reference, opts) || SkipNumericComparison(opts))
+  {
+    return;
   }
 
   const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
@@ -142,11 +254,6 @@ void CompareCSVFiles(const std::filesystem::path &actual_path,
   {
     const Column &a_col = actual[c];
     const Column &r_col = reference[c];
-
-    INFO("column " << c << ": actual='" << a_col.header_text << "' reference='"
-                   << r_col.header_text << "'");
-    CHECK(a_col.header_text == r_col.header_text);
-
     if (HeaderExcluded(r_col.header_text, opts.excluded_columns))
     {
       continue;
@@ -234,15 +341,11 @@ std::string ResolveSolverOverride(SolverOverridePolicy policy,
   return (policy == SolverOverridePolicy::ForceDefault) ? "Default" : global_override;
 }
 
-// Load the configured JSON, inject any override knobs, and return a
-// fully constructed IoData. Matches the pre-processing Julia's
-// testcase.jl did on the temp config before launching Palace.
-IoData LoadCaseIoData(const std::filesystem::path &config_path,
-                      const RegressionOptions &opts)
+// Inject any override knobs and return a fully constructed IoData.
+// Matches the pre-processing Julia's testcase.jl did on the temp config
+// before launching Palace.
+IoData LoadCaseIoData(nlohmann::json config, const RegressionOptions &opts)
 {
-  std::stringstream buffer = PreprocessFile(config_path.string().c_str());
-  nlohmann::json config = nlohmann::json::parse(buffer);
-
   auto &solver = config["Solver"];  // creates if missing
   if (!g_device_override.empty())
   {
@@ -358,7 +461,10 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   ScopedExampleStage stage(example_path, run_root, postpro_subdir, comm);
   const std::filesystem::path postpro_path = stage.path() / "postpro" / postpro_subdir;
 
-  IoData iodata = LoadCaseIoData(config_path, opts);
+  nlohmann::json config = LoadConfigJson(config_path);
+  const int max_refinement_iterations = GetMaxRefinementIterations(config);
+
+  IoData iodata = LoadCaseIoData(std::move(config), opts);
   const int omp_threads = palace::utils::ConfigureOmp();
   palace::Run(iodata, comm, omp_threads, /*git_tag=*/nullptr);
 
@@ -376,30 +482,43 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   if (Mpi::Root(comm))
   {
     const std::set<std::string> skip_dirs{"paraview", "gridfunction"};
+    const FileListing got = ListRegressionFiles(postpro_path, skip_dirs);
     const FileListing want = ListRegressionFiles(ref_postpro, skip_dirs);
+
+    CheckSetEqual("regression output directories", got.dirs,
+                  ExpectedDirectories(max_refinement_iterations, opts));
+    CheckSetEqual("regression CSV files", got.csv_files, want.csv_files);
+    CheckSetEqual("regression metadata files", got.meta_files,
+                  ExpectedMetadataFiles(max_refinement_iterations));
+
     for (const auto &rel : want.csv_files)
     {
       const auto actual = postpro_path / rel;
       const auto reference = ref_postpro / rel;
       const std::string basename = std::filesystem::path(rel).filename().string();
-      INFO("CSV: " << rel);
+      INFO("CSV: " << rel << "\nactual:    " << actual << "\nreference: " << reference);
+      if (!std::filesystem::is_regular_file(actual) ||
+          !std::filesystem::is_regular_file(reference))
+      {
+        CHECK(std::filesystem::is_regular_file(actual));
+        CHECK(std::filesystem::is_regular_file(reference));
+        continue;
+      }
+
+      Table a = LoadTable(actual);
+      Table r = LoadTable(reference);
 
       auto custom_it = opts.custom_checks.find(basename);
       if (custom_it != opts.custom_checks.end())
       {
-        Table a = LoadTable(actual);
-        Table r = LoadTable(reference);
-        custom_it->second(a, r);
+        if (ValidateCSVTables(a, r, opts) && !SkipNumericComparison(opts))
+        {
+          custom_it->second(a, r);
+        }
         continue;
       }
 
-      CompareCSVFiles(actual, reference, opts);
-    }
-    for (const auto &rel : want.meta_files)
-    {
-      const auto actual = postpro_path / rel;
-      INFO("expected metadata: " << actual);
-      CHECK(std::filesystem::is_regular_file(actual));
+      CompareCSVFiles(a, r, opts);
     }
   }
 }

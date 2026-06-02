@@ -17,10 +17,10 @@ It serves two roles:
 
  2. **Regression cases** — full-mesh, full-solve runs against the
     `examples/` directory, with outputs diffed against
-    `test/examples/ref/`. Tagged `[Regression]` (exclusively — no
-    `[Serial]` / `[Parallel]` / `[GPU]` tag; the rank count is
-    chosen at invocation time rather than baked into the case). These
-    replace the Julia suite that used to live in `test/examples/`.
+    `test/examples/ref/`. Each case carries `[Regression]` plus the
+    usual capability tags (`[Serial]`, `[Parallel]`, `[GPU]`); the rank
+    count is chosen at invocation time rather than baked into the case.
+    These replace the Julia suite that used to live in `test/examples/`.
 
 ## Running
 
@@ -37,11 +37,10 @@ opt-out needed.
 
 ### Regression cases
 
-Regression cases are not registered with CTest. Invoke them
-explicitly:
+For a direct run, invoke them explicitly:
 
 ```
-mpirun -n $NUM_PROC_TEST ./palace-unit-tests "[Regression]"
+mpirun -n $NUM_PROC_TEST ./palace-unit-tests "[Regression]~[Long]"
 ```
 
 `NUM_PROC_TEST` is the same rank count the old Julia harness used
@@ -52,36 +51,34 @@ different one will produce spurious mismatches on cases sensitive to
 partition layout.
 
 The regression cases are also registered as individual `regression-*`
-CTest entries with a `regression` label, so they can be fanned out via
-ctest. Each ctest entry launches one fresh `palace-unit-tests` process
-through the `run_regression_test.sh` wrapper generated in the build
-directory; the wrapper reads `$PALACE_REGRESSION_NUMPROC` for the rank
-count (default 2) and `ctest -j N` controls how many cases run
-concurrently. Total ranks in flight = `PALACE_REGRESSION_NUMPROC * N`.
+CTest entries with a `regression` label. Each ctest entry launches one
+fresh `palace-unit-tests` process through the generated
+`run_regression_test.sh` wrapper; the wrapper reads
+`$PALACE_REGRESSION_NUMPROC` for the rank count (default 2). CI runs
+one case at a time, matching the old Julia harness and avoiding
+OpenMP/MPI oversubscription.
 
 ```
-# 8 cases at 2 ranks each, in parallel:
-PALACE_REGRESSION_NUMPROC=2 ctest -L "^regression$" -j 8 --output-on-failure
-
-# 1 case at 8 ranks at a time:
+# CI-style: one case at 8 ranks at a time:
 PALACE_REGRESSION_NUMPROC=8 ctest -L "^regression$" -j 1 --output-on-failure
 
-# Just the cpw eigen cases:
-PALACE_REGRESSION_NUMPROC=4 ctest -L "^regression$" -R cpw_.*_eigen
+# Just the cpw eigen cases, still one case at a time:
+PALACE_REGRESSION_NUMPROC=4 ctest -L "^regression$" -R cpw_.*_eigen -j 1
 
 # Long regression cases (transmon eigenmodes, ~10 min each):
 PALACE_REGRESSION_NUMPROC=2 ctest -L "^long$" -j 1 --output-on-failure
 ```
 
-Tag combinations work as you'd expect. Because regression cases are
-tagged `[Regression]` only, you filter them with the test name or a
-wildcard spec rather than a secondary tag:
+Tag combinations work as you'd expect:
 
 ```
 mpirun -n 4 ./palace-unit-tests "[Regression]"         # every regression
 mpirun -n 2 ./palace-unit-tests "[Regression]~*cpw*"   # skip cpw cases
 ./palace-unit-tests rings                              # single case, 1 rank
 ```
+
+`ctest -j N` can still be used locally, but total ranks in flight are
+`PALACE_REGRESSION_NUMPROC * N`; use it deliberately.
 
 ## Where the cases live
 
@@ -131,9 +128,10 @@ Omitting `--palace-linear-solver` / `--palace-eigensolver` uses the old Julia ha
     tree under `test/examples/ref/<name>/<subdir>/`.
  2. Add a `TEST_CASE("<name>", "[Serial][Parallel][GPU][Regression]")`
     to `test/unit/regression/cases.cpp`. Tack on `[Long]` if the case
-    runs longer than the default `regression-` ctest TIMEOUT.
-    to set `rtol`, `atol`, `excluded_columns`, `skip_rowcount`, and
-    any `custom_checks` callbacks.
+    runs longer than the default `regression-` ctest TIMEOUT. Set
+    `rtol`, `atol`, `excluded_columns`, `skip_rowcount`, expected
+    output-directory flags, solver policies, and any `custom_checks`
+    callbacks to mirror the old Julia case.
  3. Build `unit-tests`, then run
     `mpirun -n $NUM_PROC_TEST ./palace-unit-tests "<name>"`
     to validate.

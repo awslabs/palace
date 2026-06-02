@@ -55,6 +55,11 @@ struct RegressionOptions
   std::vector<std::string> excluded_columns;
   // Allow row-count mismatch (eigen / adaptive cases).
   bool skip_rowcount = false;
+  // Expected volumetric-output directories. These mirror Julia's
+  // `paraview_fields` / `gridfunction_fields` testcase keywords and
+  // are checked against the generated postpro tree on rank 0.
+  bool paraview_fields = true;
+  bool gridfunction_fields = false;
   // Match Julia's per-case choice of `linear_solver=solver` vs
   // `linear_solver="Default"` (and the same for eigen_solver).
   SolverOverridePolicy linear_solver_policy = SolverOverridePolicy::UseGlobalOverride;

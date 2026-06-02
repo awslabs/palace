@@ -107,7 +107,7 @@ set_property(
   APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_INSTALL_PREFIX}/include/palace/\""
 )
 
-# Add path for test data files. 
+# Add path for test data files.
 target_compile_definitions(
   unit-tests
   PRIVATE "PALACE_TEST_DATA_DIR=\"${CMAKE_INSTALL_PREFIX}/share/palace/test/data\""
@@ -193,7 +193,6 @@ catch_discover_tests(unit-tests
     ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
 )
 
-# Regression tests: full-mesh Palace solves diffed against test/examples/ref/.
 # Regression tests: full-mesh Palace solves diffed against
 # test/examples/ref/. Slow enough to deserve their own ctest prefix
 # (`ctest -L "^regression$"` to select, `-LE "^(regression|long)$"` to
@@ -202,9 +201,8 @@ catch_discover_tests(unit-tests
 # Rank count is a *runtime* knob, not a build option: each ctest entry
 # launches via the generated `run_regression_test.sh` wrapper, which
 # reads `$PALACE_REGRESSION_NUMPROC` (default below) and exec's mpirun.
-# Use `PALACE_REGRESSION_NUMPROC=8 ctest -L "^regression$" -j 1` to fan
-# out at 8 ranks per case; `PALACE_REGRESSION_NUMPROC=4 ctest -L
-# "^regression$" -j 2` to run two 4-rank cases in parallel; etc.
+# CI runs regression cases serially (`-j 1` or an equivalent direct
+# per-case loop) at NUM_PROC_TEST ranks, matching the old Julia harness.
 set(PALACE_REGRESSION_NUMPROC_DEFAULT 2 CACHE STRING
     "Default MPI rank count for the [Regression] ctest registration. Overridden at run time by the PALACE_REGRESSION_NUMPROC environment variable.")
 
