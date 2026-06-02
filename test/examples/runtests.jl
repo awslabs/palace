@@ -8,17 +8,23 @@ include("argconfig.jl")
 include("testcase.jl")
 
 # Helper function to test farfield data by comparing E field magnitudes
-# (phase is not stable across architectures)
+# (phase is not stable across architectures). Column layout differs between driven
+# (idx, excitation, theta, phi, rE0_re, rE0_im, ...) and eigenmode
+# (idx, f_re, f_im, excitation, theta, phi, rE0_re, rE0_im, ...), so locate the
+# real-part of rE0 by counting from the right.
 function test_farfield(new_data, ref_data)
-    # Compute E field magnitudes.
-    Ex_new = new_data[:, 4] + 1im * new_data[:, 5]
-    Ey_new = new_data[:, 6] + 1im * new_data[:, 7]
-    Ez_new = new_data[:, 8] + 1im * new_data[:, 9]
+    n_components = 3  # Ex, Ey, Ez each contributing (re, im)
+    n_complex_cols = 2 * n_components
+    rE0_re_col = size(new_data, 2) - n_complex_cols + 1
+
+    Ex_new = new_data[:, rE0_re_col + 0] + 1im * new_data[:, rE0_re_col + 1]
+    Ey_new = new_data[:, rE0_re_col + 2] + 1im * new_data[:, rE0_re_col + 3]
+    Ez_new = new_data[:, rE0_re_col + 4] + 1im * new_data[:, rE0_re_col + 5]
     E_mag_new = sqrt.(abs.(Ex_new) .^ 2 + abs.(Ey_new) .^ 2 + abs.(Ez_new) .^ 2)
 
-    Ex_ref = ref_data[:, 4] + 1im * ref_data[:, 5]
-    Ey_ref = ref_data[:, 6] + 1im * ref_data[:, 7]
-    Ez_ref = ref_data[:, 8] + 1im * ref_data[:, 9]
+    Ex_ref = ref_data[:, rE0_re_col + 0] + 1im * ref_data[:, rE0_re_col + 1]
+    Ey_ref = ref_data[:, rE0_re_col + 2] + 1im * ref_data[:, rE0_re_col + 3]
+    Ez_ref = ref_data[:, rE0_re_col + 4] + 1im * ref_data[:, rE0_re_col + 5]
     E_mag_ref = sqrt.(abs.(Ex_ref) .^ 2 + abs.(Ey_ref) .^ 2 + abs.(Ez_ref) .^ 2)
 
     # Test magnitudes with relative tolerance.
@@ -422,6 +428,7 @@ if "cpw/lumped_uniform" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
+        custom_tests=Dict("farfield-rE.csv" => test_farfield),
         device=device,
         linear_solver=solver,
         eigen_solver=eigensolver
