@@ -43,8 +43,8 @@ int main(int argc, char *argv[])
   std::string examples_dir;        // --examples-dir
   std::string regression_ref_dir;  // --regression-ref-dir
   std::string regression_run_dir;  // --regression-run-dir
-  std::string palace_solver;       // --palace-solver
-  std::string palace_eigensolver;  // --palace-eigensolver
+  std::string palace_solver;       // --palace-solver (empty => "Default")
+  std::string palace_eigensolver;  // --palace-eigensolver (empty => "Default")
   std::string palace_device;       // --palace-device
 
   // Build a new parser on top of Catch2's.
@@ -176,8 +176,9 @@ int main(int argc, char *argv[])
   }
   session.useConfigData(cfg);
 
-  // Forward regression-harness overrides into the helpers. Empty strings
-  // leave the chain intact (env var, then compile-time default).
+  // Forward regression-harness overrides into the helpers. Empty solver
+  // strings use the old Julia ArgConfig default ("Default"); directory
+  // strings use the compile-time path defaults.
   palace::test::SetExamplesDirOverride(examples_dir);
   palace::test::SetRegressionRefDirOverride(regression_ref_dir);
   palace::test::SetRegressionRunDirOverride(regression_run_dir);

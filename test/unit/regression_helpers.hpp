@@ -28,10 +28,24 @@ namespace palace::test
 // non-const; the data itself is never mutated through them.
 using CustomCheck = std::function<void(Table &actual, Table &reference)>;
 
+// How a regression case consumes a command-line solver override.
+// The old Julia harness intentionally mixed `linear_solver=solver`
+// with `linear_solver="Default"`; preserve that per-case policy here
+// rather than applying one global override to every config.
+enum class SolverOverridePolicy
+{
+  // Use the global Catch2 CLI value (`--palace-solver` /
+  // `--palace-eigensolver`), defaulting to "Default" like the Julia
+  // ArgConfig did.
+  UseGlobalOverride,
+  // Ignore the global CLI value and inject "Default" for this case.
+  ForceDefault
+};
+
 // Options controlling a single regression case. Mirrors the Julia
 // testcase(...) keyword args: numeric tolerance, optional excluded
-// column substrings, skip_rowcount (eigen/adaptive cases), and per-
-// file custom checks.
+// column substrings, skip_rowcount (eigen/adaptive cases), per-case
+// solver override policy, and per-file custom checks.
 struct RegressionOptions
 {
   double rtol = 1e-6;
@@ -41,6 +55,10 @@ struct RegressionOptions
   std::vector<std::string> excluded_columns;
   // Allow row-count mismatch (eigen / adaptive cases).
   bool skip_rowcount = false;
+  // Match Julia's per-case choice of `linear_solver=solver` vs
+  // `linear_solver="Default"` (and the same for eigen_solver).
+  SolverOverridePolicy linear_solver_policy = SolverOverridePolicy::UseGlobalOverride;
+  SolverOverridePolicy eigen_solver_policy = SolverOverridePolicy::UseGlobalOverride;
   // Custom per-file checks keyed by CSV basename (e.g. "farfield-rE.csv").
   std::unordered_map<std::string, CustomCheck> custom_checks;
 };

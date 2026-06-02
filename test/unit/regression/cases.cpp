@@ -147,6 +147,7 @@ palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
 // Standard "drop per-element extrema + eigenmode error columns" list.
 const std::vector<std::string> kEigenExcluded = {"Maximum", "Minimum", "Mean",
                                                  "Error (Bkwd.)", "Error (Abs.)"};
+constexpr auto kForceDefaultSolver = palace::test::SolverOverridePolicy::ForceDefault;
 
 }  // namespace
 
@@ -169,6 +170,7 @@ TEST_CASE("rings", "[Serial][Parallel][GPU][Regression]")
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.linear_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("rings", "rings.json", "", opts);
 }
 
@@ -181,6 +183,7 @@ TEST_CASE("cylinder_cavity_pec", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-16;
   opts.excluded_columns = kEigenExcluded;
   opts.skip_rowcount = true;
+  opts.linear_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("cylinder", "cavity_pec.json", "cavity_pec", opts);
 }
 
@@ -378,6 +381,8 @@ TEST_CASE("transmon_coarse", "[Serial][Parallel][GPU][Regression][Long]")
   opts.atol = 1.0e-16;
   opts.excluded_columns = kEigenExcluded;
   opts.skip_rowcount = true;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.eigen_solver_policy = kForceDefaultSolver;
   opts.custom_checks["port-V.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
   opts.custom_checks["port-I.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
   palace::test::RunRegressionCase("transmon", "transmon_coarse.json", "transmon_coarse",
@@ -391,6 +396,8 @@ TEST_CASE("transmon_amr", "[Serial][Parallel][GPU][Regression][Long]")
   opts.atol = 1.0e-16;
   opts.excluded_columns = kEigenExcluded;
   opts.skip_rowcount = true;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.eigen_solver_policy = kForceDefaultSolver;
   opts.custom_checks["port-V.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
   opts.custom_checks["port-I.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
   palace::test::RunRegressionCase("transmon", "transmon_amr.json", "transmon_amr", opts);
@@ -413,6 +420,7 @@ TEST_CASE("cavity2d_eigenmode", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-16;
   opts.excluded_columns = kEigenExcluded;
   opts.skip_rowcount = true;
+  opts.linear_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("cavity2d", "cavity2d.json", "eigenmode", opts);
 }
 
@@ -423,6 +431,7 @@ TEST_CASE("cavity2d_driven", "[Serial][Parallel][GPU][Regression]")
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-8;
   opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.linear_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("cavity2d", "cavity2d_driven.json", "driven", opts);
 }
 
@@ -444,6 +453,7 @@ TEST_CASE("cavity2d_magnetostatic", "[Serial][Parallel][GPU][Regression]")
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-10;
   opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.linear_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("cavity2d", "cavity2d_magnetostatic.json",
                                   "magnetostatic", opts);
 }
@@ -454,6 +464,7 @@ TEST_CASE("cavity2d_transient", "[Serial][Parallel][GPU][Regression]")
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-10;
   opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.linear_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("cavity2d", "cavity2d_transient.json", "transient", opts);
 }
 
@@ -467,6 +478,7 @@ TEST_CASE("cpw2d_thin", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = {"Maximum",      "Minimum",      "Mean",     "Error (Bkwd.)",
                            "Error (Abs.)", "Im{kn} (1/m)", "Im{n_eff}"};
   opts.skip_rowcount = true;
+  opts.linear_solver_policy = kForceDefaultSolver;
   opts.custom_checks["mode-V.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
   palace::test::RunRegressionCase("cpw2d", "cpw2d_thin.json", "thin", opts);
 }
@@ -479,6 +491,7 @@ TEST_CASE("cpw2d_thick_impedance", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = {"Maximum",      "Minimum",      "Mean",     "Error (Bkwd.)",
                            "Error (Abs.)", "Im{kn} (1/m)", "Im{n_eff}"};
   opts.skip_rowcount = true;
+  opts.linear_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("cpw2d", "cpw2d_thick_impedance.json", "thick_impedance",
                                   opts);
 }
@@ -491,5 +504,6 @@ TEST_CASE("cpw_wave_2dmode", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-10;
   opts.excluded_columns = kEigenExcluded;
   opts.skip_rowcount = true;
+  opts.linear_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("cpw", "cpw_wave_2dmode.json", "wave_2dmode", opts);
 }

@@ -35,8 +35,11 @@ namespace
 std::string g_examples_dir_override;
 std::string g_regression_ref_dir_override;
 std::string g_regression_run_dir_override;
-std::string g_solver_override;
-std::string g_eigensolver_override;
+// These two default to the old Julia ArgConfig defaults. An omitted
+// Catch2 flag should still inject "Default" for cases whose Julia port
+// used `linear_solver=solver` / `eigen_solver=eigensolver`.
+std::string g_solver_override = "Default";
+std::string g_eigensolver_override = "Default";
 std::string g_device_override;
 
 // Recursively collect CSV and non-CSV metadata filenames relative to
@@ -225,10 +228,17 @@ private:
   std::filesystem::path stage_;
 };
 
+std::string ResolveSolverOverride(SolverOverridePolicy policy,
+                                  const std::string &global_override)
+{
+  return (policy == SolverOverridePolicy::ForceDefault) ? "Default" : global_override;
+}
+
 // Load the configured JSON, inject any override knobs, and return a
 // fully constructed IoData. Matches the pre-processing Julia's
 // testcase.jl did on the temp config before launching Palace.
-IoData LoadCaseIoData(const std::filesystem::path &config_path)
+IoData LoadCaseIoData(const std::filesystem::path &config_path,
+                      const RegressionOptions &opts)
 {
   std::stringstream buffer = PreprocessFile(config_path.string().c_str());
   nlohmann::json config = nlohmann::json::parse(buffer);
@@ -238,17 +248,23 @@ IoData LoadCaseIoData(const std::filesystem::path &config_path)
   {
     solver["Device"] = g_device_override;
   }
-  if (!g_solver_override.empty())
+
+  const std::string linear_solver =
+      ResolveSolverOverride(opts.linear_solver_policy, g_solver_override);
+  if (!linear_solver.empty())
   {
     if (!solver.contains("Linear"))
     {
       solver["Linear"] = nlohmann::json::object();
     }
-    solver["Linear"]["Type"] = g_solver_override;
+    solver["Linear"]["Type"] = linear_solver;
   }
-  if (!g_eigensolver_override.empty() && solver.contains("Eigenmode"))
+
+  const std::string eigen_solver =
+      ResolveSolverOverride(opts.eigen_solver_policy, g_eigensolver_override);
+  if (!eigen_solver.empty() && solver.contains("Eigenmode"))
   {
-    solver["Eigenmode"]["Type"] = g_eigensolver_override;
+    solver["Eigenmode"]["Type"] = eigen_solver;
   }
   return IoData(std::move(config), /*print=*/false);
 }
@@ -269,11 +285,11 @@ void SetRegressionRunDirOverride(std::string value)
 }
 void SetSolverOverride(std::string value)
 {
-  g_solver_override = std::move(value);
+  g_solver_override = value.empty() ? "Default" : std::move(value);
 }
 void SetEigenSolverOverride(std::string value)
 {
-  g_eigensolver_override = std::move(value);
+  g_eigensolver_override = value.empty() ? "Default" : std::move(value);
 }
 void SetDeviceOverride(std::string value)
 {
@@ -342,7 +358,7 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   ScopedExampleStage stage(example_path, run_root, postpro_subdir, comm);
   const std::filesystem::path postpro_path = stage.path() / "postpro" / postpro_subdir;
 
-  IoData iodata = LoadCaseIoData(config_path);
+  IoData iodata = LoadCaseIoData(config_path, opts);
   const int omp_threads = palace::utils::ConfigureOmp();
   palace::Run(iodata, comm, omp_threads, /*git_tag=*/nullptr);
 

@@ -95,10 +95,11 @@ runs:
 
         # Catch2 CLI knobs match the old Julia harness flags one-for-one;
         # palace-unit-tests --help lists them in full.
-        SOLVER_OVERRIDE=()
-        if [[ -n "${{ inputs.solver }}" && "${{ inputs.solver }}" != "Default" ]]; then
-          SOLVER_OVERRIDE=(--palace-solver "${{ inputs.solver }}")
+        SOLVER="${{ inputs.solver }}"
+        if [[ -z "$SOLVER" ]]; then
+          SOLVER="Default"
         fi
+        SOLVER_OVERRIDE=(--palace-solver "$SOLVER")
 
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
           SOLVER_OVERRIDE+=(--palace-device GPU)

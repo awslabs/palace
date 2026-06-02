@@ -123,7 +123,7 @@ Solver knobs mirroring the old Julia flags:
 | `--palace-eigensolver` | Overrides `Solver.Eigenmode.Type` per case |
 | `--palace-device`      | Overrides `Solver.Device` per case         |
 
-Empty string = no override; the value from the config JSON is used.
+Omitting `--palace-solver` / `--palace-eigensolver` uses the old Julia harness default of `Default`. Individual cases preserve the Julia harness policy: most consume the global solver knob, while cases that used `linear_solver="Default"` continue to force `Default` even in solver-matrix CI jobs.
 
 ## Adding a new regression case
 
