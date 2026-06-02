@@ -530,6 +530,9 @@ WavePortData::WavePortData(const json &port)
     MFEM_VERIFY(pa.size() == 2,
                 "WavePort \"PolarityAttributes\" must be exactly two attributes "
                 "[high, low] (signal terminal first, ground terminal second)!");
+    MFEM_VERIFY(voltage_path.empty(),
+                "WavePort \"VoltagePath\" and \"PolarityAttributes\" are mutually "
+                "exclusive — \"VoltagePath\" already pins polarity!");
     polarity_attributes = {pa[0], pa[1]};
   }
 

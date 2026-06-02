@@ -601,14 +601,9 @@ WavePortData::WavePortData(const config::WavePortData &data,
         mfem::ParSubMesh::CreateTransferMap(port_E0t->Real(), parent_E0t->Real()));
   }
 
-  // Store polarity attributes (low, high) if provided. Used only when no VoltagePath is
-  // configured — VoltagePath already pins polarity unambiguously.
-  if (!has_voltage_coords && data.polarity_attributes[0] != 0 &&
-      data.polarity_attributes[1] != 0)
-  {
-    has_polarity_attributes = true;
-    polarity_attributes = data.polarity_attributes;
-  }
+  // Store polarity attributes [high, low]. The config parser enforces that this is
+  // mutually exclusive with VoltagePath, and zero means "not set".
+  polarity_attributes = data.polarity_attributes;
 }
 
 WavePortData::~WavePortData()
@@ -724,7 +719,7 @@ void WavePortData::Initialize(double omega)
       auto V_exc = GetExcitationVoltage();
       sign = (V_exc.real() < 0.0) ? -1 : (V_exc.real() > 0.0 ? +1 : 0);
     }
-    else if (has_polarity_attributes)
+    else if (polarity_attributes[0] != 0 && polarity_attributes[1] != 0)
     {
       sign = GetModePolaritySign(polarity_attributes[0], polarity_attributes[1]);
     }
