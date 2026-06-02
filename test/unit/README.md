@@ -117,13 +117,13 @@ The regression machinery reads the source-tree `examples/` and
 
 Solver knobs mirroring the old Julia flags:
 
-| CLI flag               | Effect                                     |
-|:---------------------- |:------------------------------------------ |
-| `--palace-solver`      | Overrides `Solver.Linear.Type` per case    |
-| `--palace-eigensolver` | Overrides `Solver.Eigenmode.Type` per case |
-| `--palace-device`      | Overrides `Solver.Device` per case         |
+| CLI flag                 | Effect                                     |
+|:------------------------ |:------------------------------------------ |
+| `--palace-linear-solver` | Overrides `Solver.Linear.Type` per case    |
+| `--palace-eigensolver`   | Overrides `Solver.Eigenmode.Type` per case |
+| `--palace-device`        | Overrides `Solver.Device` per case         |
 
-Omitting `--palace-solver` / `--palace-eigensolver` uses the old Julia harness default of `Default`. Individual cases preserve the Julia harness policy: most consume the global solver knob, while cases that used `linear_solver="Default"` continue to force `Default` even in solver-matrix CI jobs.
+Omitting `--palace-linear-solver` / `--palace-eigensolver` uses the old Julia harness default of `Default`. Individual cases preserve the Julia harness policy: most consume the global linear-solver knob, while cases that used `linear_solver="Default"` continue to force `Default` even in solver-matrix CI jobs.
 
 ## Adding a new regression case
 

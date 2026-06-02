@@ -21,8 +21,8 @@ inputs:
     description: 'Math libraries'
     required: false
     default: ''
-  solver:
-    description: 'Solver to test'
+  linear-solver:
+    description: 'Linear solver to test'
     required: false
     default: 'Default'
   test-cases:
@@ -93,13 +93,13 @@ runs:
 
         eval $(spack -e . load --sh palace)
 
-        # Catch2 CLI knobs match the old Julia harness flags one-for-one;
+        # Catch2 CLI knobs mirror the old Julia harness behavior;
         # palace-unit-tests --help lists them in full.
-        SOLVER="${{ inputs.solver }}"
-        if [[ -z "$SOLVER" ]]; then
-          SOLVER="Default"
+        LINEAR_SOLVER="${{ inputs.linear-solver }}"
+        if [[ -z "$LINEAR_SOLVER" ]]; then
+          LINEAR_SOLVER="Default"
         fi
-        SOLVER_OVERRIDE=(--palace-solver "$SOLVER")
+        SOLVER_OVERRIDE=(--palace-linear-solver "$LINEAR_SOLVER")
 
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
           SOLVER_OVERRIDE+=(--palace-device GPU)

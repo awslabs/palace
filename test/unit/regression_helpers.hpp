@@ -34,7 +34,7 @@ using CustomCheck = std::function<void(Table &actual, Table &reference)>;
 // rather than applying one global override to every config.
 enum class SolverOverridePolicy
 {
-  // Use the global Catch2 CLI value (`--palace-solver` /
+  // Use the global Catch2 CLI value (`--palace-linear-solver` /
   // `--palace-eigensolver`), defaulting to "Default" like the Julia
   // ArgConfig did.
   UseGlobalOverride,

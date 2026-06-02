@@ -164,7 +164,7 @@ jobs:
       - uses: ./.github/actions/run-regression-tests
         with:
           toolchain: gcc
-          solver: ${{ matrix.solver }}
+          linear-solver: ${{ matrix.solver }}
 
   test-gpu-gcc:
     needs: [filter, build-gpu-gcc]
@@ -184,7 +184,7 @@ jobs:
         with:
           toolchain: gcc
           variant: +cuda
-          solver: ${{ matrix.solver }}
+          linear-solver: ${{ matrix.solver }}
 
   test-x64-gcc-openmp:
     needs: [filter, build-x64-gcc-openmp]
@@ -204,4 +204,4 @@ jobs:
         with:
           toolchain: gcc
           variant: "+openmp+int64"
-          solver: ${{ matrix.solver }}
+          linear-solver: ${{ matrix.solver }}

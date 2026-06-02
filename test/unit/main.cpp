@@ -40,12 +40,12 @@ int main(int argc, char *argv[])
   // PALACE_REGRESSION_REF_DIR_DEFAULT wired in via
   // test/unit/CMakeLists.txt) when not overridden. Empty = "no
   // override".
-  std::string examples_dir;        // --examples-dir
-  std::string regression_ref_dir;  // --regression-ref-dir
-  std::string regression_run_dir;  // --regression-run-dir
-  std::string palace_solver;       // --palace-solver (empty => "Default")
-  std::string palace_eigensolver;  // --palace-eigensolver (empty => "Default")
-  std::string palace_device;       // --palace-device
+  std::string examples_dir;          // --examples-dir
+  std::string regression_ref_dir;    // --regression-ref-dir
+  std::string regression_run_dir;    // --regression-run-dir
+  std::string palace_linear_solver;  // --palace-linear-solver (empty => "Default")
+  std::string palace_eigensolver;    // --palace-eigensolver (empty => "Default")
+  std::string palace_device;         // --palace-device
 
   // Build a new parser on top of Catch2's.
   using namespace Catch::Clara;
@@ -65,7 +65,7 @@ int main(int argc, char *argv[])
                  "subdirectory (inputs symlinked from examples/, outputs written "
                  "there). Default: std::filesystem::temp_directory_path() / "
                  "\"palace-regression\"") |
-             Opt(palace_solver, "type")["--palace-solver"](
+             Opt(palace_linear_solver, "type")["--palace-linear-solver"](
                  "Override Solver.Linear.Type for [Regression] cases (e.g. "
                  "SuperLU, STRUMPACK)") |
              Opt(palace_eigensolver, "type")["--palace-eigensolver"](
@@ -182,7 +182,7 @@ int main(int argc, char *argv[])
   palace::test::SetExamplesDirOverride(examples_dir);
   palace::test::SetRegressionRefDirOverride(regression_ref_dir);
   palace::test::SetRegressionRunDirOverride(regression_run_dir);
-  palace::test::SetSolverOverride(palace_solver);
+  palace::test::SetSolverOverride(palace_linear_solver);
   palace::test::SetEigenSolverOverride(palace_eigensolver);
   palace::test::SetDeviceOverride(palace_device);
 
