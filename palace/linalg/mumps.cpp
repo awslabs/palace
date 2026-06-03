@@ -69,16 +69,6 @@ MumpsSolver::MumpsSolver(MPI_Comm comm, MatrixSymmetry sym, SymbolicFactorizatio
   }
 }
 
-MumpsSolver::MumpsSolver(const IoData &iodata, MPI_Comm comm, int print)
-  : MumpsSolver(comm, iodata.solver.linear.pc_mat_sym,
-                iodata.solver.linear.sym_factorization,
-                (iodata.solver.linear.strumpack_compression_type == SparseCompression::BLR)
-                    ? iodata.solver.linear.strumpack_lr_tol
-                    : 0.0,
-                iodata.solver.linear.reorder_reuse, print)
-{
-}
-
 void MumpsSolver::SetReorderReuse(bool reorder_reuse)
 {
   SetReorderingReuse(reorder_reuse);  // If true repeated calls use same sparsity pattern

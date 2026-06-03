@@ -124,8 +124,9 @@ auto MakeWrapperSolver(const config::LinearSolverData &linear, U &&...args)
 
 template <typename OperType>
 std::unique_ptr<Solver<OperType>>
-ConfigurePreconditionerSolver(const config::LinearSolverData &linear, int verbose,
-                              MPI_Comm comm, FiniteElementSpaceHierarchy &fespaces,
+ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
+                              MatrixSymmetry pc_mat_sym, int verbose, MPI_Comm comm,
+                              FiniteElementSpaceHierarchy &fespaces,
                               FiniteElementSpaceHierarchy *aux_fespaces)
 {
   // Create the real-valued solver first.
@@ -176,7 +177,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear, int verbos
     case LinearSolver::MUMPS:
 #if defined(MFEM_USE_MUMPS)
       pc = MakeWrapperSolver<OperType, MumpsSolver>(
-          linear, comm, linear.pc_mat_sym, linear.sym_factorization,
+          linear, comm, pc_mat_sym, linear.sym_factorization,
           (linear.strumpack_compression_type == SparseCompression::BLR)
               ? linear.strumpack_lr_tol
               : 0.0,
@@ -229,15 +230,33 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear, int verbos
 
 }  // namespace
 
+MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata)
+{
+  // Mirrors the prior derivation that used to be stored on LinearSolverData::pc_mat_sym.
+  const auto &linear = iodata.solver.linear;
+  if (linear.pc_mat_shifted || iodata.problem.type == ProblemType::TRANSIENT ||
+      iodata.problem.type == ProblemType::ELECTROSTATIC ||
+      iodata.problem.type == ProblemType::MAGNETOSTATIC)
+  {
+    return MatrixSymmetry::SPD;
+  }
+  if (iodata.boundaries.periodic.wave_vector == std::array<double, 3>{0.0, 0.0, 0.0})
+  {
+    return MatrixSymmetry::SYMMETRIC;
+  }
+  return MatrixSymmetry::UNSYMMETRIC;
+}
+
 template <typename OperType>
-BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear, int verbose,
+BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear,
+                                       MatrixSymmetry pc_mat_sym, int verbose,
                                        FiniteElementSpaceHierarchy &fespaces,
                                        FiniteElementSpaceHierarchy *aux_fespaces)
-  : BaseKspSolver(
-        ConfigureKrylovSolver<OperType>(linear, verbose,
-                                        fespaces.GetFinestFESpace().GetComm()),
-        ConfigurePreconditionerSolver<OperType>(
-            linear, verbose, fespaces.GetFinestFESpace().GetComm(), fespaces, aux_fespaces))
+  : BaseKspSolver(ConfigureKrylovSolver<OperType>(linear, verbose,
+                                                  fespaces.GetFinestFESpace().GetComm()),
+                  ConfigurePreconditionerSolver<OperType>(
+                      linear, pc_mat_sym, verbose, fespaces.GetFinestFESpace().GetComm(),
+                      fespaces, aux_fespaces))
 {
   use_timer = true;
 }
@@ -246,7 +265,8 @@ template <typename OperType>
 BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
                                        FiniteElementSpaceHierarchy &fespaces,
                                        FiniteElementSpaceHierarchy *aux_fespaces)
-  : BaseKspSolver(iodata.solver.linear, iodata.problem.verbose, fespaces, aux_fespaces)
+  : BaseKspSolver(iodata.solver.linear, GetPreconditionerMatrixSymmetry(iodata),
+                  iodata.problem.verbose, fespaces, aux_fespaces)
 {
 }
 
