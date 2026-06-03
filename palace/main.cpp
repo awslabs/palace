@@ -222,6 +222,10 @@ int main(int argc, char *argv[])
       {
         MFEM_ABORT("Unable to open mesh file \"" << iodata.model.mesh << "\"!");
       }
+      // Echo the fully-resolved configuration so users can inspect every filled-in
+      // default without running the simulation.
+      Mpi::Print(world_comm, "\nResolved configuration:\n{}\n",
+                 IoData::ConcretizeDefaults(iodata, config).dump(2));
     }
     Mpi::Print(world_comm, "Dry-run: No errors detected in configuration file \"{}\"\n\n",
                argv[argc - 1]);
@@ -238,7 +242,7 @@ int main(int argc, char *argv[])
   // record of every Palace decision (all defaults filled in).
   if (world_root)
   {
-    iodata.WriteResolvedConfig(config);
+    iodata.WriteResolvedConfig(config, argv[1]);
   }
 
   BlockTimer bt1(Timer::INIT);

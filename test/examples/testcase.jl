@@ -176,7 +176,14 @@ function testcase(
         @test alldirs == expected_dirs || (@show alldirs, expected_dirs; false)
         @test sort(csvfiles) == sort(csvfilesref) || (@show csvfiles, csvfilesref; false)
 
-        expected_metafiles = ["palace.json", "config.json"]
+        # The resolved config is written once at the top level as "<input>_resolved.json"
+        # (dynamic name — the harness feeds a temp config). Verify exactly one exists at
+        # the top level, then exclude it from the fixed metafile comparison.
+        resolved = filter(f -> endswith(f, "_resolved.json"), metafiles)
+        @test length(resolved) == 1 && !occursin('/', resolved[1]) ||
+              (@show resolved; false)
+        metafiles = filter(f -> !endswith(f, "_resolved.json"), metafiles)
+        expected_metafiles = ["palace.json"]
         for i = 1:max_its
             push!(expected_metafiles, "iteration$(i)/palace.json")
         end

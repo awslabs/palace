@@ -184,6 +184,13 @@ namespace palace::config
 namespace
 {
 
+// Standardize the subspace default on SLEPc's max(2*nev, nev+15) (resolved at parse time);
+// previously ARPACK and SLEPc resolved an unset MaxSize differently.
+inline int DefaultEigenSubspaceSize(int num_modes)
+{
+  return std::max(2 * num_modes, num_modes + 15);
+}
+
 int AtIndex(json::const_iterator port_it, std::string_view errmsg_parent)
 {
   return port_it->at("Index").get<int>();
@@ -642,7 +649,7 @@ WavePortData::WavePortData(const json &port)
   // Resolve subspace sentinel: fed directly into ModeEigenSolver → SLEPc/ARPACK.
   if (max_size <= 0)
   {
-    max_size = std::max(2 * mode_idx, mode_idx + 15);
+    max_size = DefaultEigenSubspaceSize(mode_idx);
   }
 }
 
@@ -1282,16 +1289,15 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   max_restart = eigenmode.value("MaxRestart", max_restart);
 
   // Resolve iteration / subspace sentinels to concrete values at parse time so nothing
-  // downstream sees -1. max_size follows SLEPc's Krylov-Schur formula (applies to both
-  // ARPACK and SLEPc wrappers); max_it is a single large cap because it only bounds
-  // iteration count, with no buffers scaling with it.
+  // downstream sees -1. max_it is a single large cap because it only bounds iteration
+  // count, with no buffers scaling with it.
   if (max_it <= 0)
   {
     max_it = 1'000'000;
   }
   if (max_size <= 0)
   {
-    max_size = std::max(2 * n, n + 15);
+    max_size = DefaultEigenSubspaceSize(n);
   }
 
   target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
@@ -1357,7 +1363,7 @@ BoundaryModeSolverData::BoundaryModeSolverData(const json &ma)
   // treat negative sizes as memory corruption, not as "use default".
   if (max_size <= 0)
   {
-    max_size = std::max(2 * n, n + 15);
+    max_size = DefaultEigenSubspaceSize(n);
   }
 }
 

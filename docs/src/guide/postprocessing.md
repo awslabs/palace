@@ -20,6 +20,21 @@ Models containing lumped or wave port boundaries or surface current excitations 
 automatically postprocess quantities related to those boundaries. This is described in
 [Ports and surface currents](#Ports-and-surface-currents).
 
+## Resolved configuration record
+
+At startup *Palace* writes a fully-resolved copy of the run configuration to the output
+directory specified by
+[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D), named after
+the input file with a `_resolved.json` suffix (for example, `cavity.json` produces
+`cavity_resolved.json`). Every implicit default and `"Default"` sentinel is replaced with the
+concrete value *Palace* actually used, so the file is a complete, self-contained record of
+the run. It passes schema validation and can be supplied directly to *Palace* to reproduce
+the same simulation deterministically. A small number of options whose default is delegated
+to an external library (for example the sparse direct solver `"ColumnOrdering"` and the GMRES
+`"PCSide"`) remain `"Default"`, since *Palace* does not select a concrete value for them. The
+same resolved configuration can be printed without running a simulation by passing
+`--dry-run`.
+
 The participation ratios for bulk dielectrics and interface dielectric layers can be
 computed for simulations involving the electric field. For model boundaries, the integrated
 surface charge or magnetic flux can also be postprocessed. These features are described

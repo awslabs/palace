@@ -62,10 +62,13 @@ public:
   static nlohmann::json ConcretizeDefaults(const IoData &iodata, nlohmann::json config);
 
   // Concretize defaults from `raw_config` and write the result to
-  // `<problem.output>/config.json` so users have a self-contained record of every
-  // Palace decision. The caller is responsible for ensuring this is invoked on a
-  // single process (e.g. MPI rank 0). Aborts on filesystem failure.
-  void WriteResolvedConfig(const nlohmann::json &raw_config) const;
+  // `<problem.output>/<input_stem>_resolved.json` so users have a self-contained record
+  // of every Palace decision. The `_resolved` suffix (derived from `input_config_path`)
+  // ensures the sidecar never overwrites the user's input config, even when `"Output"`
+  // resolves to the input's own directory. The caller is responsible for ensuring this is
+  // invoked on a single process (e.g. MPI rank 0). Aborts on filesystem failure.
+  void WriteResolvedConfig(const nlohmann::json &raw_config,
+                           const std::string &input_config_path) const;
 
   // Nondimensionalize input values and mesh coordinates. Requires model.Lc > 0 (caller
   // populates it from the config or via mesh::ComputeReferenceLength). `mesh` may be

@@ -35,9 +35,11 @@ The format of this changelog is based on
     2D submesh extracted from a 3D input mesh.
     [PR 727](https://github.com/awslabs/palace/pull/727).
   - Palace now writes a fully-resolved copy of the run configuration to
-    `<output_dir>/config.json` at startup, with every implicit default and `"Default"`
-    sentinel filled in. The sidecar passes schema validation and can be used to re-run
-    the same simulation deterministically [PR 719](https://github.com/awslabs/palace/pull/719).
+    `<output_dir>/<input>_resolved.json` at startup, with every implicit default and
+    `"Default"` sentinel filled in (options delegated to an external library, such as
+    `"ColumnOrdering"` and `"PCSide"`, remain `"Default"`). The sidecar passes schema
+    validation and can be used to re-run the same simulation deterministically; it can also
+    be printed without running via `--dry-run` [PR 719](https://github.com/awslabs/palace/pull/719).
 
 #### Interface Changes
 
@@ -55,8 +57,9 @@ The format of this changelog is based on
     is uniquely identifiable. Existing single-excitation output gains the
     column too (a constant value), shifting downstream column indices by one.
     [PR 746](https://github.com/awslabs/palace/pull/746).
-  - `Solver.Eigenmode.MaxSize` now defaults to `max(2 * N, N + 15)` for both SLEPc and
-    ARPACK. `Solver.Eigenmode.MaxIts` now defaults to `1'000'000`
+  - `Solver.Eigenmode.MaxSize` now resolves to a concrete value at parse time, using
+    SLEPc's default `max(2 * N, N + 15)` for both SLEPc and ARPACK (previously the unset
+    default was backend-dependent). `Solver.Eigenmode.MaxIts` now defaults to `1'000'000`
     [PR 719](https://github.com/awslabs/palace/pull/719).
 
 #### Bug Fixes

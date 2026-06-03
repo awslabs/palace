@@ -515,10 +515,15 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
   return config;
 }
 
-void IoData::WriteResolvedConfig(const json &raw_config) const
+void IoData::WriteResolvedConfig(const json &raw_config,
+                                 const std::string &input_config_path) const
 {
   std::filesystem::path post_dir(problem.output);
-  const std::string path = post_dir / "config.json";
+  // Name the resolved config after the input file with a "_resolved" suffix so it never
+  // collides with the user's input (even when "Output" is the input's own directory).
+  const std::filesystem::path input_path(input_config_path);
+  const std::filesystem::path path =
+      post_dir / (input_path.stem().string() + "_resolved.json");
   std::ofstream fo(path);
   MFEM_VERIFY(fo.is_open(), "Unable to open resolved config file \"" << path << "\"!");
   fo << ConcretizeDefaults(*this, raw_config).dump(2) << '\n';
