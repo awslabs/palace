@@ -10,7 +10,9 @@ SPDX-License-Identifier: Apache-2.0
 *Palace* comes with two types of tests:
 
   - Unit tests in `test/unit/` test individual components in isolation
-  - Regression tests in `test/examples/` compare code output against saved references
+  - Regression tests, registered in `test/unit/regression/cases.cpp`, run
+    full Palace solves on the cases under `examples/` and compare the
+    generated CSVs against the reference data in `test/examples/ref/`
 
 Both types of tests are run automatically as part of the project's continuous
 integration (CI) workflows.
@@ -406,7 +408,7 @@ In addition to unit tests, *Palace* comes with a series of regression tests.
 Regression tests are based on the provided example applications in the
 [`examples/`](https://github.com/awslabs/palace/blob/main/examples/) directory
 and verify that the code reproduces results in reference files stored in
-[`test/examples/`](https://github.com/awslabs/palace/blob/main/test/examples/ref).
+[`test/examples/ref/`](https://github.com/awslabs/palace/blob/main/test/examples/ref).
 
 ## Tests in CI
 
@@ -441,76 +443,94 @@ Two special cases bypass the long test requirement:
   - `no-long-tests` label: Adding this label bypasses the long test requirement
     entirely.
 
-### Building and running example tests
+### Building and running regression tests
 
-#### Prerequisites
+Regression cases live in `test/unit/regression/cases.cpp` and are
+exercised by the same `palace-unit-tests` binary as the unit tests. They
+carry the `[Regression]` category tag (orthogonal to `[Serial]`,
+`[Parallel]`, `[GPU]`), and they are excluded from the default
+`palace-unit-tests` invocation and the default `ctest` sweep.
 
-  - Julia
-  - Palace executable in PATH or specified via environment variable/command-line argument
+#### Direct invocation
 
-#### Setup
-
-First, instantiate the Julia environment:
-
-```bash
-julia --project -e "using Pkg; Pkg.instantiate()"
-```
-
-You need to do this step only the very first time.
-
-#### Command Line Arguments
-
-The test runner supports command line arguments for configuration. Each argument can also be set via environment variables as fallbacks.
-
-**Key Options:**
-
-  - `--palace-test`: Path to *Palace* executable and optional arguments (default: "`palace`")
-  - `--num-proc-test`: Number of MPI processes (default: number of physical cores)
-  - `--test-cases`: Space-separated list of test cases to run (default: all examples)
-
-Run `julia --project runtests.jl --help` to see all available options with descriptions and defaults.
-
-#### Execution
-
-Run all tests:
+For a one-shot run, invoke the binary explicitly:
 
 ```bash
-julia --project runtests.jl
+mpirun -n $NUM_PROC_TEST ./palace-unit-tests "[Regression]~[Long]"
 ```
 
-Run specific test cases:
+Reference CSVs were generated at the CI rank count, so running at a
+different one will produce spurious mismatches on cases that are
+sensitive to partition layout.
+
+#### CTest invocation
+
+Each regression case is also registered as an individual `regression-*`
+CTest entry with label `regression`. The wrapper script
+`run_regression_test.sh` reads `$PALACE_REGRESSION_NUMPROC` (default 2)
+and launches one `palace-unit-tests` process per case at that rank
+count.
 
 ```bash
-julia --project runtests.jl --test-cases "spheres rings"
+# CI-style: one case at 8 ranks at a time
+PALACE_REGRESSION_NUMPROC=8 ctest -L "^regression$" -j 1 --output-on-failure
+
+# Just the cpw eigen cases
+PALACE_REGRESSION_NUMPROC=4 ctest -L "^regression$" -R cpw_.*_eigen -j 1
+
+# Long regression cases (transmon eigenmodes, ~10 min each)
+PALACE_REGRESSION_NUMPROC=2 ctest -L "^long$" -j 1 --output-on-failure
 ```
 
-Run with custom *Palace* executable:
+Catch2 tag combinations work as you'd expect:
 
 ```bash
-julia --project runtests.jl --palace-test "../../build/bin/palace"
+mpirun -n 4 ./palace-unit-tests "[Regression]"         # every regression
+mpirun -n 2 ./palace-unit-tests "[Regression]~*cpw*"   # skip cpw cases
+./palace-unit-tests rings                              # single case, 1 rank
 ```
 
-Run with custom number of processes:
+`ctest -j N` can still be used locally, but total ranks in flight are
+`PALACE_REGRESSION_NUMPROC * N`; use it deliberately.
+
+#### Overrides
+
+The regression machinery reads the source-tree `examples/` and
+`test/examples/ref/` roots via a two-level override chain:
+
+| Precedence | Mechanism                                                                                                                                                                                 |
+|:---------- |:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 (high)   | `--examples-dir` / `--regression-ref-dir` / `--regression-run-dir` CLI flags                                                                                                              |
+| 2 (low)    | Compile-time `PALACE_EXAMPLES_DIR_DEFAULT` / `PALACE_REGRESSION_REF_DIR_DEFAULT` (wired from CMake); run-dir falls back to `std::filesystem::temp_directory_path() / "palace-regression"` |
+
+Per-case solver knobs:
+
+| CLI flag                 | Effect                                     |
+|:------------------------ |:------------------------------------------ |
+| `--palace-linear-solver` | Overrides `Solver.Linear.Type` per case    |
+| `--palace-eigensolver`   | Overrides `Solver.Eigenmode.Type` per case |
+| `--palace-device`        | Overrides `Solver.Device` per case         |
+
+#### Re-baselining
+
+When Palace behaviour changes legitimately (algorithm improvements,
+schema changes), regenerate the reference CSVs by running the case at
+the CI rank count and copying the output into the reference tree:
 
 ```bash
-julia --project runtests.jl --num-proc-test 4
+mpirun -n $NUM_PROC_TEST palace examples/<case>/<config>.json
+cp -r examples/<case>/postpro/* test/examples/ref/<case>/<subdir>/
 ```
 
-You can also use environment variables as fallbacks:
+#### Adding a new regression case
 
-```bash
-TEST_CASES="spheres rings" julia --project runtests.jl
-PALACE_TEST="../../build/bin/palace" julia --project runtests.jl
-```
-
-Each test case runs Palace simulations and compares generated CSV files against
-reference data using configurable tolerances. When Palace behavior changes
-legitimately (e.g., algorithm improvements), reference data can be updated using
-the baseline script:
-
-```bash
-./baseline                    # Update all reference data
-./baseline -e spheres         # Update specific example
-./baseline --dry-run          # Test without updating files
-./baseline -np 4              # Use 4 MPI processes
-```
+ 1. Drop the config under `examples/<name>/` and the reference postpro
+    tree under `test/examples/ref/<name>/<subdir>/`.
+ 2. Add a `TEST_CASE("<name>", "[Serial][Parallel][GPU][Regression]")`
+    to `test/unit/regression/cases.cpp`. Tack on `[Long]` if the case
+    runs longer than the default `regression-` ctest TIMEOUT. Set
+    `rtol`, `atol`, `excluded_columns`, `skip_rowcount`, expected
+    output-directory flags, solver policies, and any `custom_checks`
+    callbacks.
+ 3. Build `unit-tests`, then run
+    `mpirun -n $NUM_PROC_TEST ./palace-unit-tests "<name>"` to validate.
