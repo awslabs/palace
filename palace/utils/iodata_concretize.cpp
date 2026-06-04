@@ -22,14 +22,6 @@ namespace
 using json = nlohmann::json;
 using Entry = std::pair<std::string, json>;
 
-template <typename E>
-std::string EnumString(E e)
-{
-  std::ostringstream oss;
-  oss << e;
-  return oss.str();
-}
-
 // Fill the key if absent, or if the user wrote the explicit "Default" sentinel.
 void Concretize(json &j, const std::string &key, const json &value)
 {
@@ -55,7 +47,7 @@ void ApplyEntries(json &j, const std::vector<Entry> &entries)
 
 void ConcretizeProblem(const config::ProblemData &problem, json &j_problem)
 {
-  ApplyEntries(j_problem, {{"Type", EnumString(problem.type)},
+  ApplyEntries(j_problem, {{"Type", ToString(problem.type)},
                            {"Verbose", problem.verbose},
                            {"Output", problem.output}});
   if (!j_problem.contains("OutputFormats"))
@@ -70,14 +62,14 @@ void ConcretizeProblem(const config::ProblemData &problem, json &j_problem)
 void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
 {
   ApplyEntries(j_linear,
-               {{"Type", EnumString(linear.type)},
-                {"KSPType", EnumString(linear.krylov_solver)},
+               {{"Type", ToString(linear.type)},
+                {"KSPType", ToString(linear.krylov_solver)},
                 {"Tol", linear.tol},
                 {"MaxIts", linear.max_it},
                 {"MaxSize", linear.max_size},
                 {"InitialGuess", static_cast<bool>(linear.initial_guess)},
                 {"MGMaxLevels", linear.mg_max_levels},
-                {"MGCoarsenType", EnumString(linear.mg_coarsening)},
+                {"MGCoarsenType", ToString(linear.mg_coarsening)},
                 {"MGUseMesh", linear.mg_use_mesh},
                 {"MGCycleIts", linear.mg_cycle_it},
                 {"MGSmoothIts", linear.mg_smooth_it},
@@ -91,9 +83,9 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"ComplexCoarseSolve", linear.complex_coarse_solve},
                 {"DropSmallEntries", linear.drop_small_entries},
                 {"ReorderingReuse", linear.reorder_reuse},
-                {"PCSide", EnumString(linear.pc_side)},
-                {"ColumnOrdering", EnumString(linear.sym_factorization)},
-                {"STRUMPACKCompressionType", EnumString(linear.strumpack_compression_type)},
+                {"PCSide", ToString(linear.pc_side)},
+                {"ColumnOrdering", ToString(linear.sym_factorization)},
+                {"STRUMPACKCompressionType", ToString(linear.strumpack_compression_type)},
                 {"STRUMPACKCompressionTol", linear.strumpack_lr_tol},
                 {"STRUMPACKLossyPrecision", linear.strumpack_lossy_precision},
                 {"STRUMPACKButterflyLevels", linear.strumpack_butterfly_l},
@@ -107,7 +99,7 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"EstimatorTol", linear.estimator_tol},
                 {"EstimatorMaxIts", linear.estimator_max_it},
                 {"EstimatorMG", linear.estimator_mg},
-                {"GSOrthogonalization", EnumString(linear.gs_orthog)}});
+                {"GSOrthogonalization", ToString(linear.gs_orthog)}});
 }
 
 void ConcretizeEigenmode(const config::EigenSolverData &eigenmode, json &j_eigen)
@@ -118,13 +110,13 @@ void ConcretizeEigenmode(const config::EigenSolverData &eigenmode, json &j_eigen
                          {"MaxSize", eigenmode.max_size},
                          {"N", eigenmode.n},
                          {"Save", eigenmode.n_post},
-                         {"Type", EnumString(eigenmode.type)},
+                         {"Type", ToString(eigenmode.type)},
                          {"PEPLinear", eigenmode.pep_linear},
                          {"Scaling", eigenmode.scale},
                          {"StartVector", eigenmode.init_v0},
                          {"StartVectorConstant", eigenmode.init_v0_const},
                          {"MassOrthogonal", eigenmode.mass_orthog},
-                         {"NonlinearType", EnumString(eigenmode.nonlinear_type)},
+                         {"NonlinearType", ToString(eigenmode.nonlinear_type)},
                          {"RefineNonlinear", eigenmode.refine_nonlinear},
                          {"LinearTol", eigenmode.linear_tol},
                          {"TargetUpper", eigenmode.target_upper},
@@ -135,8 +127,8 @@ void ConcretizeEigenmode(const config::EigenSolverData &eigenmode, json &j_eigen
 
 void ConcretizeTransient(const config::TransientSolverData &transient, json &j_transient)
 {
-  ApplyEntries(j_transient, {{"Type", EnumString(transient.type)},
-                             {"Excitation", EnumString(transient.excitation)},
+  ApplyEntries(j_transient, {{"Type", ToString(transient.type)},
+                             {"Excitation", ToString(transient.excitation)},
                              {"ExcitationFreq", transient.pulse_f},
                              {"ExcitationWidth", transient.pulse_tau},
                              {"MaxTime", transient.max_t},
@@ -162,10 +154,10 @@ void ConcretizeDriven(const config::DrivenSolverData &driven, json &j_driven)
                           {"AdaptiveMaxSamples", driven.adaptive_max_size},
                           {"AdaptiveConvergenceMemory", driven.adaptive_memory},
                           {"AdaptiveGSOrthogonalization",
-                           EnumString(driven.adaptive_solver_gs_orthog_type)},
+                           ToString(driven.adaptive_solver_gs_orthog_type)},
                           {"AdaptiveCircuitSynthesis", driven.adaptive_circuit_synthesis},
                           {"AdaptiveCircuitSynthesisDomainOrthogonalization",
-                           EnumString(driven.adaptive_circuit_synthesis_domain_orthog)}});
+                           ToString(driven.adaptive_circuit_synthesis_domain_orthog)}});
 }
 
 void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostatic,
@@ -188,7 +180,7 @@ void ConcretizeBoundaryMode(const config::BoundaryModeSolverData &bm, json &j_bm
                       {"Target", bm.target},
                       {"Tol", bm.tol},
                       {"MaxSize", bm.max_size},
-                      {"Type", EnumString(bm.type)}});
+                      {"Type", ToString(bm.type)}});
 }
 
 void ConcretizeModel(const config::ModelData &model, json &j_model)
@@ -332,7 +324,7 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
       const auto &wp = it->second;
       ApplyEntries(j_port, {{"Mode", wp.mode_idx},
                             {"Offset", wp.d_offset},
-                            {"SolverType", EnumString(wp.eigen_solver)},
+                            {"SolverType", ToString(wp.eigen_solver)},
                             {"Excitation", wp.excitation},
                             {"Active", wp.active},
                             {"MaxIts", wp.ksp_max_its},
@@ -383,7 +375,7 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                    auto it = pp.flux.find(idx);
                    if (it != pp.flux.end())
                    {
-                     ApplyEntries(j_entry, {{"Type", EnumString(it->second.type)},
+                     ApplyEntries(j_entry, {{"Type", ToString(it->second.type)},
                                             {"TwoSided", it->second.two_sided}});
                    }
                  });
@@ -394,7 +386,7 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                    auto it = pp.dielectric.find(idx);
                    if (it != pp.dielectric.end())
                    {
-                     ApplyEntries(j_entry, {{"Type", EnumString(it->second.type)},
+                     ApplyEntries(j_entry, {{"Type", ToString(it->second.type)},
                                             {"LossTan", it->second.tandelta}});
                    }
                  });
@@ -447,7 +439,7 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
                           {"PartialAssemblyOrder", iodata.solver.pa_order_threshold},
                           {"QuadratureOrderJacobian", iodata.solver.q_order_jac},
                           {"QuadratureOrderExtra", iodata.solver.q_order_extra},
-                          {"Device", EnumString(iodata.solver.device)},
+                          {"Device", ToString(iodata.solver.device)},
                           {"Backend", iodata.solver.ceed_backend}});
 
   if (!j_solver.contains("Linear"))
