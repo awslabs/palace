@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -161,9 +162,6 @@ int main(int argc, char *argv[])
   int world_size = Mpi::Size(world_comm);
   Mpi::Print(world_comm, "\n");
 
-  // Initialize the timer.
-  BlockTimer bt(Timer::INIT);
-
   // Parse command-line options.
   std::vector<std::string_view> argv_sv(argv, argv + argc);
   bool dryrun = false;
@@ -238,32 +236,38 @@ int main(int argc, char *argv[])
     iodata.WriteResolvedConfig(config, argv[1]);
   }
 
-  BlockTimer bt1(Timer::INIT);
-  // Initialize the MFEM device and configure libCEED backend.
-  int omp_threads = utils::ConfigureOmp(), ngpu = utils::GetDeviceCount();
-  mfem::Device device(ConfigureDevice(iodata.solver.device),
-                      utils::GetDeviceId(world_comm, ngpu));
-  ConfigureCeedBackend(iodata.solver.ceed_backend);
+  // Initialise device + numerics. The BlockTimer is scoped to this block so it
+  // credits the INIT phase before palace::Run starts its own timing.
+  int omp_threads, ngpu;
+  std::optional<mfem::Device> device;
+  {
+    BlockTimer bt(Timer::INIT);
+    omp_threads = utils::ConfigureOmp();
+    ngpu = utils::GetDeviceCount();
+    device.emplace(ConfigureDevice(iodata.solver.device),
+                   utils::GetDeviceId(world_comm, ngpu));
+    ConfigureCeedBackend(iodata.solver.ceed_backend);
 #if defined(PALACE_WITH_GPU_AWARE_MPI)
-  device.SetGPUAwareMPI(true);
+    device->SetGPUAwareMPI(true);
 #endif
 
-  // Initialize Hypre and, optionally, SLEPc/PETSc.
-  hypre::Initialize();
+    // Initialize Hypre and, optionally, SLEPc/PETSc.
+    hypre::Initialize();
 #if defined(PALACE_WITH_SLEPC)
-  slepc::Initialize(argc, argv, nullptr, nullptr);
-  if (PETSC_COMM_WORLD != world_comm)
-  {
-    Mpi::Print(world_comm, "Error: Problem during MPI initialization!\n\n");
-    return 1;
-  }
+    slepc::Initialize(argc, argv, nullptr, nullptr);
+    if (PETSC_COMM_WORLD != world_comm)
+    {
+      Mpi::Print(world_comm, "Error: Problem during MPI initialization!\n\n");
+      return 1;
+    }
 #endif
+  }
 
   // Hand off to the driver library entry point. Keeping the lifted block out of
   // main keeps the executable body thin and lets the Catch2 regression harness
   // reuse the exact same code path on an in-process IoData. See palace/driver.hpp
   // for the preconditions it expects.
-  PrintPalaceInfo(world_comm, world_size, omp_threads, ngpu, device);
+  PrintPalaceInfo(world_comm, world_size, omp_threads, ngpu, *device);
   palace::Run(iodata, world_comm, omp_threads, GetPalaceGitTag());
 
   // Finalize libCEED.
