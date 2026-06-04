@@ -31,13 +31,30 @@
         "StartVector": { "type": "boolean" },
         "StartVectorConstant": { "type": "boolean" },
         "MassOrthogonal": { "type": "boolean" },
-        "NonlinearType": { "type": "string" },
+        "NonlinearType": { "type": "string", "enum": ["Hybrid", "SLP", "NLEIGS"] },
         "RefineNonlinear": { "type": "boolean" },
         "LinearTol": { "type": "number", "minimum": 0.0 },
         "TargetUpper": { "type": "number" },
         "PreconditionerLag": { "type" : "integer", "minimum": 0 },
         "PreconditionerLagTol": { "type": "number", "minimum": 0.0 },
-        "MaxRestart": { "type" : "integer", "minimum": 0 }
+        "MaxRestart": { "type" : "integer", "minimum": 0 },
+        "WavePortBCEvaluation": { "type": "string", "enum": ["Real", "Complex"] },
+        "WavePortFitOrder": { "type": "integer", "minimum": 1 },
+        "WavePortComplexExact": { "type": "boolean" },
+        "NLEIGSFullBasis": { "type": "boolean" },
+        "NLEIGSInterpolationTol": { "type": "number", "exclusiveMinimum": 0.0 },
+        "NLEIGSInterpolationDegree": { "type": "integer", "minimum": 1 },
+        "NLEIGSSingularitiesPerCut": { "type": "integer", "minimum": 1 },
+        "NLEIGSRegion": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "NLEIGSSingularities": {
+          "type": "array",
+          "items": { "type": "number" }
+        }
       }
     },
     "Driven":

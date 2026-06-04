@@ -53,14 +53,14 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
 }
 
 BoundaryModeOperator::ComplexHypreParMatrix
-BoundaryModeOperator::AssembleAtt(double omega, double sigma) const
+BoundaryModeOperator::AssembleAtt(std::complex<double> omega, double sigma) const
 {
   return mode_assembly::AssembleAtt(GetNDSpace(), mat_op, nullptr, *surf_z_op, *farfield_op,
                                     *surf_sigma_op, omega, sigma);
 }
 
 BoundaryModeOperator::ComplexHypreParMatrix
-BoundaryModeOperator::AssembleAnn(double omega) const
+BoundaryModeOperator::AssembleAnn(std::complex<double> omega) const
 {
   return mode_assembly::AssembleAnn(GetH1Space(), mat_op, nullptr, *surf_z_op, *farfield_op,
                                     *surf_sigma_op, omega);

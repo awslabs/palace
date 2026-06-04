@@ -49,12 +49,16 @@ auto LoadScaleParMesh(IoData &iodata, MPI_Comm world_comm)
 }  // namespace
 
 // Verify the factorisation invariant
-//   Im{A2(ω) v}  ==  Σ_p kₙ,p(ω) · M^(p)_{μ⁻¹} v   (as ND-vector actions),
-// where A2(ω) is the imaginary part of `GetExtraSystemMatrix(ω)` (the wave-port
-// contribution; cf. waveportoperator.cpp:1080-1088) and M^(p)_{μ⁻¹} is the new per-port
-// boundary mass returned by `GetWavePortBoundaryMassMatrix(p)`. The identity must hold
-// at every ω since both sides assemble the same bilinear form, with the only ω-dependent
-// factor being the scalar kₙ,p(ω).
+//   A2(ω) v  ==  Σ_p i·kₙ,p(ω) · M^(p)_{μ⁻¹} v   (as complex ND-vector actions),
+// where A2(ω) = `GetExtraSystemMatrix(ω)` (the wave-port contribution) and M^(p)_{μ⁻¹}
+// is the per-port boundary mass returned by `GetWavePortBoundaryMassMatrix(p)`. The
+// wave-port system stamp is i·kₙ·M with the FULL complex propagation constant
+// kₙ = β + iα; for a lossy cross-section (loss-tan / conductivity) the real part −α·M
+// lands on the real slot and β·M on the imaginary slot, so the identity must use the
+// complex kₙ (GetWavePortKnComplex), not just its real part — the cpw_wave_uniform ports
+// sit on a slightly lossy substrate (LossTan ~1e-5) so α ≠ 0. The identity holds at every
+// ω since both sides assemble the same bilinear form, the only ω-dependent factor being
+// the scalar kₙ,p(ω).
 TEST_CASE("WavePortOperator-BoundaryMassFactorisation",
           "[waveportoperator][Serial][Parallel]")
 {
@@ -115,27 +119,27 @@ TEST_CASE("WavePortOperator-BoundaryMassFactorisation",
 
   for (double omega : omega_nd)
   {
-    // LHS: imaginary part of A2(ω) acting on v. A2 currently encodes the wave-port term
-    // as fbi (imaginary part of the bilinear form), so Im{A2 v} carries the kₙ-scaled
-    // boundary mass action.
+    // LHS: the full complex A2(ω) acting on v. A2 encodes the wave-port term as
+    // i·kₙ·M = (−α·M) + i·(β·M), so its real slot carries the line-attenuation term and
+    // its imaginary slot the propagating term; A2·v carries both.
     auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
     REQUIRE(A2);
     y_lhs = 0.0;
     A2->Mult(v, y_lhs);
 
-    // RHS: Σ_p kₙ,p(ω) · M^(p)_{μ⁻¹} v. The M^(p) we built lives in the imaginary part,
-    // so we want Im{Mwp_p · v} multiplied by the real scalar kₙ.
+    // RHS: Σ_p i·kₙ,p(ω) · M^(p)_{μ⁻¹} v, using the FULL complex kₙ = β + iα. The M^(p)
+    // we built lives in the imaginary slot, so Mwp_p·v already equals i·(M·v). Scaling
+    // that by the complex kₙ gives i·kₙ·(M·v), exactly the per-port system stamp — the
+    // attenuation (real-slot −α·M) and propagation (imag-slot β·M) terms both reproduced.
     y_rhs = 0.0;
     for (std::size_t i = 0; i < port_idxs.size(); i++)
     {
-      double kn = space_op.GetWavePortOp().GetWavePortKn(port_idxs[i], omega);
+      std::complex<double> kn =
+          space_op.GetWavePortOp().GetWavePortKnComplex(port_idxs[i], omega);
       tmp = 0.0;
       Mwp_p[i]->Mult(v, tmp);
-      // tmp is a ComplexOperator action on a complex v; Mwp_p is purely imaginary, so its
-      // action multiplies the input by i times the real boundary-mass action. Adding the
-      // ports together and scaling by kn gives the Σ form above.
-      // y_rhs += kn * tmp
-      linalg::AXPY(std::complex<double>(kn, 0.0), tmp, y_rhs);
+      // tmp = i·(M·v); y_rhs += kn · tmp = i·kₙ·(M·v).
+      linalg::AXPY(kn, tmp, y_rhs);
     }
 
     // Compare actions. Tolerance accounts for finite-precision matrix assembly &

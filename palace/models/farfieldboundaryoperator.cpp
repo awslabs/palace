@@ -114,6 +114,29 @@ void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
   // is purely imaginary. Multiplying through by μ⁻¹ we get the material coefficient to ω
   // as 1 / (μ √(με)). Also, this implementation ignores the divergence term ∇⋅Eₜ, as
   // COMSOL does as well.
+  AddExtraSystemBoundaryCurlCurlBdrCoefficients(0.5 / omega, dfbi);
+}
+
+void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
+    std::complex<double> omega, MaterialPropertyCoefficient &dfbr,
+    MaterialPropertyCoefficient &dfbi)
+{
+  // Complex-ω overload (matching preconditioner). The 2nd-order ABC coefficient is
+  // 0.5/(iω)·(curl-curl) stamped via i·(0.5/ω); under analytic continuation ω complex,
+  // 0.5/ω = (0.5/ω) is complex and i·(0.5/ω) splits its (real, imag) parts across
+  // (dfbr, dfbi). The real-ω overload puts the whole term on dfbi (since 0.5/ω is real
+  // there); here Re(0.5/ω) → dfbr, Im(0.5/ω) → dfbi to match the i·(0.5/ω) stamping.
+  const std::complex<double> s = 0.5 / omega;
+  AddExtraSystemBoundaryCurlCurlBdrCoefficients(s.real(), dfbi);
+  if (s.imag() != 0.0)
+  {
+    AddExtraSystemBoundaryCurlCurlBdrCoefficients(-s.imag(), dfbr);
+  }
+}
+
+void FarfieldBoundaryOperator::AddExtraSystemBoundaryCurlCurlBdrCoefficients(
+    double coeff, MaterialPropertyCoefficient &df) const
+{
   if (farfield_attr.Size() && order > 1)
   {
     mfem::DenseTensor muinvc0 =
@@ -129,8 +152,8 @@ void FarfieldBoundaryOperator::AddExtraSystemBdrCoefficients(
     normal(0) = 1.0;
     muinvc0_func.NormalProjectedCoefficient(normal);
 
-    dfbi.AddCoefficient(muinvc0_func.GetAttributeToMaterial(),
-                        muinvc0_func.GetMaterialProperties(), 0.5 / omega);
+    df.AddCoefficient(muinvc0_func.GetAttributeToMaterial(),
+                      muinvc0_func.GetMaterialProperties(), coeff);
   }
 }
 

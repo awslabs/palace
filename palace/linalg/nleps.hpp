@@ -165,18 +165,50 @@ private:
   std::optional<std::function<std::unique_ptr<ComplexOperator>(double)>> funcDA2DOmega;
 
   // Optional A2(λ) evaluated at complex λ via the analytical kₙ² fit (the analytic
-  // continuation of the wave-port term off the imaginary λ axis). Diagnostic only:
-  // compared against funcA2(|Im λ|) to expose the structural difference between
-  // T_nonlinear-as-Palace-defines-it (kₙ on real ω axis, so A2 is `Re(λ)`-independent)
-  // and T_analytic (full analytic continuation). When set, SetInitialGuess prints both
-  // residuals so the user can see how much of the seed–truth gap is purely "kₙ on real
-  // axis vs. complex λ" vs. genuine fit error.
+  // continuation of the wave-port term off the imaginary λ axis), and the matching
+  // analytic dA2/dλ. When funcA2Complex is set the Newton iteration uses A2(λ)
+  // directly (the holomorphic operator) — the helper BuildA2 below prefers it over
+  // the real-ω fallback funcA2(|Im λ|). When funcDA2DLambdaComplex is also set, the
+  // analytic derivative is used in place of finite differences.
+  //
+  // Both fields stay optional so the existing real-ω path still works when the
+  // configured BC evaluation mode is REAL or when no factor exposes a complex
+  // overload. When funcA2Complex is unset, BuildA2 falls back to funcA2(|Im λ|).
   std::optional<std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>>
       funcA2Complex;
 
-  // Function to compute the preconditioner matrix.
+  std::optional<std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>>
+      funcDA2DLambdaComplex;
+
+  // Toggle the production residual / Jacobian path between A2(λ) (when true) and
+  // A2(|Im λ|) (when false). The complex callbacks may still be installed (used by
+  // SetInitialGuess for the diagnostic) regardless of this flag.
+  bool use_complex_a2 = false;
+
+  // Helper: prefer funcA2Complex(λ) when set AND use_complex_a2 is true, else fall
+  // back to funcA2(|Im λ|).
+  std::unique_ptr<ComplexOperator> BuildA2(std::complex<double> lambda) const;
+
+  // BC frequency ω passed to funcP (the preconditioner builder's 4th arg) for a given
+  // eigenvalue estimate λ. The preconditioner's frequency-dependent boundary terms
+  // (wave port, 2nd-order ABC, surf-σ) must match those baked into the system matrix
+  // opA = K + λC + λ²M + A2(λ). When the complex-λ A2 path is active (use_complex_a2),
+  // A2 is built at the complex λ, so the preconditioner must use the matching complex
+  // frequency ω = -i·λ = λ/i. Otherwise A2 uses the real-ω restriction at |Im λ|, so
+  // the preconditioner uses the real frequency |Im λ| (as a real-valued complex). This
+  // is what restores single-iteration GMRES for an exact (P = A) preconditioner.
+  std::complex<double> PreconditionerBCFreq(std::complex<double> lambda) const
+  {
+    return use_complex_a2 ? lambda / std::complex<double>(0.0, 1.0)
+                          : std::complex<double>(std::abs(lambda.imag()), 0.0);
+  }
+
+  // Function to compute the preconditioner matrix. 4th arg (a3) is the complex BC
+  // frequency ω; for the complex-λ exact wave-port path we pass ω = -i·λ so the
+  // preconditioner's wave-port term matches the exact complex system matrix.
   std::optional<std::function<std::unique_ptr<ComplexOperator>(
-      std::complex<double>, std::complex<double>, std::complex<double>, double)>>
+      std::complex<double>, std::complex<double>, std::complex<double>,
+      std::complex<double>)>>
       funcP;
 
   // Linear eigenvalue solver used to set initial guess.
@@ -232,17 +264,29 @@ public:
   void SetExtraSystemMatrixDerivative(
       std::function<std::unique_ptr<ComplexOperator>(double)>) override;
 
-  // Set an optional A2(λ) builder evaluated at complex λ. Diagnostic only — compared
-  // in SetInitialGuess against funcA2(|Im λ|) so the user can see whether the seed–truth
-  // residual gap comes from "kₙ on real axis vs. analytic continuation" structural
-  // mismatch.
+  // Set an optional A2(λ) builder evaluated at complex λ. When set, the Newton
+  // refinement uses this directly: the operator T(λ) = K + λC + λ²M + A2(λ) becomes
+  // holomorphic. When unset, the solver falls back to funcA2(|Im λ|), the
+  // non-holomorphic Palace-original "real-ω" stamping. Always installed for the
+  // diagnostic comparison printed at SetInitialGuess.
   void SetExtraSystemMatrixComplex(
       std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>);
+
+  // Set an optional analytic dA2/dλ at complex λ. Used when funcA2Complex is also set
+  // and the caller wants to skip finite differences on the Jacobian. Returns dA2/dλ
+  // directly — same convention as funcDA2DOmega for the real-ω path.
+  void SetExtraSystemMatrixDerivativeComplex(
+      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>);
+
+  // Toggle the production residual / Jacobian path between A2(λ) and A2(|Im λ|).
+  // The diagnostic at SetInitialGuess uses the complex builder regardless, as long
+  // as one is installed.
+  void SetUseComplexA2(bool b) override { use_complex_a2 = b; }
 
   // Set the preconditioner update function.
   void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
                                    std::complex<double>, std::complex<double>,
-                                   std::complex<double>, double)>) override;
+                                   std::complex<double>, std::complex<double>)>) override;
 
   // Set the update frequency of the preconditioner.
   void SetPreconditionerLag(int preconditioner_update_freq,

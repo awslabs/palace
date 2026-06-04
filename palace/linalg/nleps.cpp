@@ -192,9 +192,26 @@ void QuasiNewtonSolver::SetExtraSystemMatrixComplex(
   funcA2Complex = A2c;
 }
 
+void QuasiNewtonSolver::SetExtraSystemMatrixDerivativeComplex(
+    std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> dA2c)
+{
+  funcDA2DLambdaComplex = dA2c;
+}
+
+std::unique_ptr<ComplexOperator>
+QuasiNewtonSolver::BuildA2(std::complex<double> lambda) const
+{
+  if (use_complex_a2 && funcA2Complex)
+  {
+    return (*funcA2Complex)(lambda);
+  }
+  return (*funcA2)(std::abs(lambda.imag()));
+}
+
 void QuasiNewtonSolver::SetPreconditionerUpdate(
     std::function<std::unique_ptr<ComplexOperator>(
-        std::complex<double>, std::complex<double>, std::complex<double>, double)>
+        std::complex<double>, std::complex<double>, std::complex<double>,
+        std::complex<double>)>
         P)
 {
   funcP = P;
@@ -331,13 +348,11 @@ void QuasiNewtonSolver::SetInitialGuess()
           A2c->AddMult(x1, y1, 1.0);
         }
         const double normx = linalg::Norml2(comm, x1);
-        abs_t_analytic =
-            (normx > 0.0) ? linalg::Norml2(comm, y1) / normx : 0.0;
+        abs_t_analytic = (normx > 0.0) ? linalg::Norml2(comm, y1) / normx : 0.0;
       }
       Mpi::Print(GetComm(),
-                 "  {:>4d}  {:+11.4e}{:+11.4e}i  {:>14.3e}  {:>14.3e}  {:>14.3e}\n",
-                 i, lam.real(), lam.imag(), err_linear_abs[i], res.get()[i],
-                 abs_t_analytic);
+                 "  {:>4d}  {:+11.4e}{:+11.4e}i  {:>14.3e}  {:>14.3e}  {:>14.3e}\n", i,
+                 lam.real(), lam.imag(), err_linear_abs[i], res.get()[i], abs_t_analytic);
     }
     Mpi::Print(GetComm(), "\n");
   }
@@ -564,10 +579,10 @@ int QuasiNewtonSolver::Solve()
     v2 *= 1.0 / norm_v;
 
     // Set the linear solver operators.
-    opA2 = (*funcA2)(std::abs(eig.imag()));
+    opA2 = BuildA2(eig);
     opA = BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
                               {opK, opC, opM, opA2.get()}, true);
-    opP = (*funcP)(1.0 + 0.0i, eig, eig * eig, eig.imag());
+    opP = (*funcP)(1.0 + 0.0i, eig, eig * eig, PreconditionerBCFreq(eig));
     opInv->SetOperators(*opA, *opP);
     opInv->SetAbsTol(1.0e-12);
 
@@ -623,7 +638,7 @@ int QuasiNewtonSolver::Solve()
                                  Eigen::VectorXcd &rr2,
                                  std::unique_ptr<ComplexOperator> &A2_out) -> double
     {
-      A2_out = (*funcA2)(std::abs(lam.imag()));
+      A2_out = BuildA2(lam);
       auto A = BuildParSumOperator({1.0 + 0.0i, lam, lam * lam, 1.0 + 0.0i},
                                    {opK, opC, opM, A2_out.get()}, true);
       A->Mult(vv, rr);
@@ -718,22 +733,40 @@ int QuasiNewtonSolver::Solve()
 
       // Compute w = J * v. Use analytical dA2/dλ when available (cheaper than two
       // funcA2 reassemblies, no FD subtraction noise); otherwise FD on funcA2.
-      // funcDA2DOmega returns dA2/dλ directly (caller is responsible for the
-      // -i·dA2/dω → dA2/dλ conversion); FD form computes the same quantity from
-      // ((A2(ω(1+δ)) − A2(ω))/(iδω) which expands to (1/i)·dA2/dω = -i·dA2/dω.
+      // Preference order:
+      //   1) funcDA2DLambdaComplex(λ) — analytic dA2/dλ at complex λ (holomorphic
+      //      operator, set when WavePortBCEvaluation = COMPLEX),
+      //   2) funcDA2DOmega(|Im λ|) — analytic d/dω on the real axis (legacy real-ω
+      //      path; the FD form below produces -i·dA2/dω which this matches),
+      //   3) finite-difference fallback on funcA2.
       std::unique_ptr<ComplexOperator> opAJ;
       std::unique_ptr<ComplexOperator> opA2p;
-      if (funcDA2DOmega)
+      if (use_complex_a2 && funcDA2DLambdaComplex)
+      {
+        opAJ = (*funcDA2DLambdaComplex)(eig);
+      }
+      else if (!use_complex_a2 && funcDA2DOmega)
       {
         opAJ = (*funcDA2DOmega)(std::abs(eig.imag()));
       }
+      else if (use_complex_a2 && funcA2Complex)
+      {
+        // FD on the holomorphic A2(λ) along the imaginary λ axis: the perturbation
+        // lands on a different λ point but the same Riemann sheet, giving a
+        // well-conditioned approximation to dA2/dλ.
+        const std::complex<double> step{0.0, delta * std::abs(eig.imag())};
+        opA2p = (*funcA2Complex)(eig + step);
+        opAJ =
+            BuildParSumOperator({1.0 / step, -1.0 / step}, {opA2p.get(), A2n.get()}, true);
+      }
       else
       {
+        // Legacy FD on real-ω axis: (A2(ω(1+δ)) − A2(ω)) / (iδω) = -i·dA2/dω.
         opA2p = (*funcA2)(std::abs(eig.imag()) * (1.0 + delta));
         const std::complex<double> denom =
             std::complex<double>(0.0, delta * std::abs(eig.imag()));
-        opAJ = BuildParSumOperator({1.0 / denom, -1.0 / denom},
-                                   {opA2p.get(), A2n.get()}, true);
+        opAJ = BuildParSumOperator({1.0 / denom, -1.0 / denom}, {opA2p.get(), A2n.get()},
+                                   true);
       }
       auto opJ = BuildParSumOperator({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * eig, 1.0 + 0.0i},
                                      {opK, opC, opM, opAJ.get()}, true);
@@ -807,11 +840,12 @@ int QuasiNewtonSolver::Solve()
       if (it > 0 && it % preconditioner_lag == 0 && res > preconditioner_tol)
       {
         eig_opInv = eig;
-        opA2 = (*funcA2)(std::abs(eig_opInv.imag()));
+        opA2 = BuildA2(eig_opInv);
         opA =
             BuildParSumOperator({1.0 + 0.0i, eig_opInv, eig_opInv * eig_opInv, 1.0 + 0.0i},
                                 {opK, opC, opM, opA2.get()}, true);
-        opP = (*funcP)(1.0 + 0.0i, eig_opInv, eig_opInv * eig_opInv, eig_opInv.imag());
+        opP = (*funcP)(1.0 + 0.0i, eig_opInv, eig_opInv * eig_opInv,
+                       PreconditionerBCFreq(eig_opInv));
         opInv->SetOperators(*opA, *opP);
         // Recompute w0 and normalize.
         opInv->SetRelTol(std::max(ksp_rel_tol, inexact_tol));
@@ -898,7 +932,7 @@ double QuasiNewtonSolver::GetResidualNorm(std::complex<double> l, const ComplexV
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
-  auto A2 = (*funcA2)(std::abs(l.imag()));
+  auto A2 = BuildA2(l);
   A2->AddMult(x, r, 1.0);
   return linalg::Norml2(comm, r);
 }

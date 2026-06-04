@@ -59,6 +59,19 @@ public:
   void AddDampingBdrCoefficients(double coeff, MaterialPropertyCoefficient &fb);
   void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &dfbr,
                                      MaterialPropertyCoefficient &dfbi);
+  // Complex-ω overload (matching preconditioner for the nonlinear eigensolver); for
+  // real ω equals the double overload.
+  void AddExtraSystemBdrCoefficients(std::complex<double> omega,
+                                     MaterialPropertyCoefficient &dfbr,
+                                     MaterialPropertyCoefficient &dfbi);
+
+  // Add the ω-independent boundary curl-curl coefficient associated with the 2nd-order
+  // absorbing BC, scaled by `coeff` (default 1.0). This is the constant matrix M_ff
+  // that, in the real-ω stamping, gets scaled by 0.5/ω and placed in the imaginary
+  // slot. The complex-λ analytic-continuation path uses this to assemble M_ff once
+  // and apply the complex scalar -0.5/λ at runtime. No-op when order < 2.
+  void AddExtraSystemBoundaryCurlCurlBdrCoefficients(double coeff,
+                                                     MaterialPropertyCoefficient &df) const;
 };
 
 }  // namespace palace

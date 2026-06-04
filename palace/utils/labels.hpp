@@ -42,7 +42,19 @@ enum class EigenSolverBackend : char
 enum class NonlinearEigenSolver : char
 {
   HYBRID,
-  SLP
+  SLP,
+  NLEIGS
+};
+
+// Wave-port BC evaluation mode for the nonlinear eigensolver. REAL evaluates kₙ on
+// the real ω axis at ω = |Im λ| (current behavior; physically faithful for ports
+// modeling real lossless transmission lines, e.g. CPW). COMPLEX evaluates kₙ at the
+// complex eigenparameter λ via analytic continuation — required for NLEIGS, and
+// recommended for low-Q solver stress tests and fictitious-port (PML-style) usage.
+enum class WavePortBCEvaluation : char
+{
+  REAL,
+  COMPLEX
 };
 
 // Surface fluxes.

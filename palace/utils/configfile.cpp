@@ -41,6 +41,7 @@ PALACE_JSON_SERIALIZE_ENUM(CoordinateSystem)
 PALACE_JSON_SERIALIZE_ENUM(ProblemType)
 PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend)
 PALACE_JSON_SERIALIZE_ENUM(NonlinearEigenSolver)
+PALACE_JSON_SERIALIZE_ENUM(WavePortBCEvaluation)
 PALACE_JSON_SERIALIZE_ENUM(SurfaceFlux)
 PALACE_JSON_SERIALIZE_ENUM(InterfaceDielectric)
 PALACE_JSON_SERIALIZE_ENUM(FrequencySampling)
@@ -1191,6 +1192,30 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   preconditioner_lag = eigenmode.value("PreconditionerLag", preconditioner_lag);
   preconditioner_lag_tol = eigenmode.value("PreconditionerLagTol", preconditioner_lag_tol);
   max_restart = eigenmode.value("MaxRestart", max_restart);
+  waveport_bc_evaluation = eigenmode.value("WavePortBCEvaluation", waveport_bc_evaluation);
+  waveport_fit_order = eigenmode.value("WavePortFitOrder", waveport_fit_order);
+  MFEM_VERIFY(waveport_fit_order >= 1,
+              "config[\"Eigenmode\"][\"WavePortFitOrder\"] must be >= 1.");
+  waveport_complex_exact = eigenmode.value("WavePortComplexExact", waveport_complex_exact);
+  nleigs_full_basis = eigenmode.value("NLEIGSFullBasis", nleigs_full_basis);
+  nleigs_interp_tol = eigenmode.value("NLEIGSInterpolationTol", nleigs_interp_tol);
+  nleigs_interp_deg = eigenmode.value("NLEIGSInterpolationDegree", nleigs_interp_deg);
+  if (eigenmode.contains("NLEIGSRegion"))
+  {
+    nleigs_region = eigenmode.at("NLEIGSRegion").get<std::vector<double>>();
+    MFEM_VERIFY(nleigs_region.size() == 4,
+                "config[\"Eigenmode\"][\"NLEIGSRegion\"] must be a 4-tuple "
+                "[Re_min, Re_max, Im_min, Im_max].");
+  }
+  if (eigenmode.contains("NLEIGSSingularities"))
+  {
+    nleigs_singularities = eigenmode.at("NLEIGSSingularities").get<std::vector<double>>();
+    MFEM_VERIFY(nleigs_singularities.size() % 2 == 0,
+                "config[\"Eigenmode\"][\"NLEIGSSingularities\"] must be a flat array "
+                "of complex pairs [Re_0, Im_0, Re_1, Im_1, ...].");
+  }
+  nleigs_singularities_per_cut =
+      eigenmode.value("NLEIGSSingularitiesPerCut", nleigs_singularities_per_cut);
 
   // Resolve iteration / subspace sentinels to concrete values at parse time so nothing
   // downstream sees -1. max_it is a single large cap because it only bounds iteration
@@ -1574,6 +1599,22 @@ void Nondimensionalize(const Units &units, EigenSolverData &data)
       2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.target);
   data.target_upper =
       2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.target_upper);
+
+  // NLEIGS region and singularities are λ-plane quantities (λ = i·ω). Both the real
+  // (damping rate) and imaginary (frequency) components are frequencies, so every
+  // entry is nondimensionalized by the same scalar factor used for the target. Users
+  // therefore specify NLEIGSRegion / NLEIGSSingularities in GHz, consistent with
+  // Target / TargetUpper — they never see Palace's internal nondimensionalization.
+  const auto scale_freq = [&units](double f)
+  { return 2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f); };
+  for (auto &v : data.nleigs_region)
+  {
+    v = scale_freq(v);
+  }
+  for (auto &v : data.nleigs_singularities)
+  {
+    v = scale_freq(v);
+  }
 }
 
 void Nondimensionalize(const Units &units, DrivenSolverData &data)

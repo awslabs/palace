@@ -80,14 +80,43 @@ public:
 
   // Optional analytical dA2/dω. Default no-op: solvers that don't override it fall back
   // to a finite-difference Jacobian on funcA2.
-  virtual void SetExtraSystemMatrixDerivative(
-      std::function<std::unique_ptr<ComplexOperator>(double)>)
+  virtual void
+  SetExtraSystemMatrixDerivative(std::function<std::unique_ptr<ComplexOperator>(double)>)
   {
   }
 
+  // Optional A2(λ) builder evaluated at complex λ (analytic continuation). When set,
+  // the solver uses the holomorphic operator T(λ) = K + λC + λ²M + A2(λ) directly;
+  // when unset, the solver falls back to A2(|Im λ|), the legacy real-ω stamping.
+  // Default no-op: solvers that don't support complex-λ A2 ignore this.
+  virtual void SetExtraSystemMatrixComplex(
+      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>)
+  {
+  }
+
+  // Optional analytical dA2/dλ at complex λ. Used together with the complex A2
+  // builder above. Default no-op.
+  virtual void SetExtraSystemMatrixDerivativeComplex(
+      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>)
+  {
+  }
+
+  // Toggle whether the production residual / Jacobian path uses A2(λ) at complex λ
+  // (holomorphic operator) or the legacy A2(|Im λ|). Diagnostic prints (e.g.,
+  // SetInitialGuess) compare both regardless of this flag, as long as the complex A2
+  // builder has been installed via SetExtraSystemMatrixComplex. Default false →
+  // legacy real-ω stamping.
+  virtual void SetUseComplexA2(bool) {}
+
+  // The 4th argument (a3) is the boundary-term frequency ω, passed COMPLEX so the
+  // nonlinear eigensolver can build a preconditioner whose wave-port / ABC / surf-σ
+  // terms match its exact complex system matrix (ω = -i·λ). Callers that only need the
+  // real-ω preconditioner pass a real-valued complex (imag = 0).
   virtual void SetPreconditionerUpdate(
-      std::function<std::unique_ptr<ComplexOperator>(
-          std::complex<double>, std::complex<double>, std::complex<double>, double)>)
+      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>,
+                                                     std::complex<double>,
+                                                     std::complex<double>,
+                                                     std::complex<double>)>)
   {
     MFEM_ABORT("SetPreconditionerUpdate not defined!");
   }

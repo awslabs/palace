@@ -560,6 +560,74 @@ SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
   }
 }
 
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy diag_policy)
+{
+  // ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield ABC.
+  // Stored on the REAL slot of the resulting ComplexParOperator so that downstream
+  // BuildParSumOperator can scale it by an arbitrary complex coefficient (the real-ω
+  // path uses i·(0.5/ω); the complex-λ path uses -0.5/λ).
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient df(mat_op.MaxCeedBdrAttribute());
+  farfield_op.AddExtraSystemBoundaryCurlCurlBdrCoefficients(1.0, df);
+  int empty = df.empty();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto m =
+      AssembleOperator(GetNDSpace(), nullptr, nullptr, &df, nullptr, nullptr, skip_zeros);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto M_op = std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+  else
+  {
+    auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+}
+
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetSurfSigmaBoundaryMassMatrix(std::size_t group_idx,
+                                              Operator::DiagonalPolicy diag_policy)
+{
+  // ω-independent boundary ND-mass matrix A_σ_g for a single surface-conductivity
+  // attribute group. As with the farfield matrix, stored on the REAL slot so the
+  // runtime complex coefficient i·ω/Z(ω) can be applied via BuildParSumOperator.
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
+  surf_sigma_op.AddBoundaryMassBdrCoefficients(group_idx, fb, 1.0);
+  int empty = fb.empty();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto m =
+      AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto M_op = std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+  else
+  {
+    auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+}
+
 template <typename OperType, typename ScalarType>
 std::unique_ptr<OperType>
 SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
@@ -693,8 +761,8 @@ void ProjectBdrCoefficientViaMassSolve(SumVectorCoefficient &fb, const LumpedPor
 }  // namespace
 
 void SpaceOperator::AssemblePreconditioner(
-    std::complex<double> a0, std::complex<double> a1, std::complex<double> a2, double a3,
-    std::vector<std::unique_ptr<Operator>> &br_vec,
+    std::complex<double> a0, std::complex<double> a1, std::complex<double> a2,
+    std::complex<double> a3, std::vector<std::unique_ptr<Operator>> &br_vec,
     std::vector<std::unique_ptr<Operator>> &br_aux_vec,
     std::vector<std::unique_ptr<Operator>> &bi_vec,
     std::vector<std::unique_ptr<Operator>> &bi_aux_vec)
@@ -720,6 +788,9 @@ void SpaceOperator::AssemblePreconditioner(
   AddRealMassBdrCoefficients(a2.imag(), fbi);
   AddImagMassCoefficients(a2.real(), fi);
   AddImagMassCoefficients(-a2.imag(), fr);
+  // Boundary terms at the (possibly complex) frequency a3. For a real a3 this is the
+  // legacy stamping; for complex a3 the wave-port / ABC / surf-σ terms are evaluated at
+  // ω = a3 so they match the nonlinear eigensolver's exact complex system matrix.
   AddExtraSystemBdrCoefficients(a3, dfbr, dfbi, fbr, fbi);
   AddRealPeriodicCoefficients(a0.real(), fr);
   AddRealPeriodicCoefficients(a0.imag(), fi);
@@ -746,8 +817,8 @@ void SpaceOperator::AssemblePreconditioner(
 }
 
 void SpaceOperator::AssemblePreconditioner(
-    std::complex<double> a0, std::complex<double> a1, std::complex<double> a2, double a3,
-    std::vector<std::unique_ptr<Operator>> &br_vec,
+    std::complex<double> a0, std::complex<double> a1, std::complex<double> a2,
+    std::complex<double> a3, std::vector<std::unique_ptr<Operator>> &br_vec,
     std::vector<std::unique_ptr<Operator>> &br_aux_vec)
 {
   constexpr bool skip_zeros = false, assemble_q_data = false;
@@ -802,7 +873,8 @@ void SpaceOperator::AssemblePreconditioner(
 template <typename OperType, typename ScalarType>
 std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
                                                                  ScalarType a1,
-                                                                 ScalarType a2, double a3)
+                                                                 ScalarType a2,
+                                                                 ScalarType a3)
 {
   // When partially assembled, the coarse operators can reuse the fine operator quadrature
   // data if the spaces correspond to the same mesh. When appropriate, we build the
@@ -956,6 +1028,25 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
 
   // Contribution for numeric wave ports. Skipped when the caller will apply the wave-port
   // contribution separately via per-port operators (see GetWavePortBoundaryMassMatrix).
+  if (include_wave_ports)
+  {
+    wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+  }
+}
+
+void SpaceOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
+                                                  MaterialPropertyCoefficient &dfbr,
+                                                  MaterialPropertyCoefficient &dfbi,
+                                                  MaterialPropertyCoefficient &fbr,
+                                                  MaterialPropertyCoefficient &fbi,
+                                                  bool include_wave_ports)
+{
+  // Complex-ω dispatcher for the matching preconditioner of the nonlinear eigensolver.
+  // Each boundary operator evaluates its frequency-dependent term at the genuinely
+  // complex ω = -i·λ so the assembled preconditioner matches the system matrix's exact
+  // complex BC contributions. For real ω this reproduces the double overload.
+  farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi);
+  surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   if (include_wave_ports)
   {
     wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
@@ -1248,6 +1339,16 @@ template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetWavePortBoundaryMassMatrix(int, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
+    SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy);
+template std::unique_ptr<ComplexOperator>
+    SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy);
+
+template std::unique_ptr<Operator>
+SpaceOperator::GetSurfSigmaBoundaryMassMatrix(std::size_t, Operator::DiagonalPolicy);
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetSurfSigmaBoundaryMassMatrix(std::size_t, Operator::DiagonalPolicy);
+
+template std::unique_ptr<Operator>
 SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, const Operator *,
                                                  const Operator *, const Operator *,
                                                  const Operator *);
@@ -1261,6 +1362,6 @@ template std::unique_ptr<Operator>
 SpaceOperator::GetPreconditionerMatrix<Operator, double>(double, double, double, double);
 template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetPreconditionerMatrix<ComplexOperator, std::complex<double>>(
-    std::complex<double>, std::complex<double>, std::complex<double>, double);
+    std::complex<double>, std::complex<double>, std::complex<double>, std::complex<double>);
 
 }  // namespace palace

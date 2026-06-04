@@ -32,6 +32,12 @@ static PetscErrorCode __mat_apply_NEP_A(Mat, Vec, Vec);
 static PetscErrorCode __mat_apply_NEP_J(Mat, Vec, Vec);
 static PetscErrorCode __mat_apply_NEP_B(Mat, Vec, Vec);
 static PetscErrorCode __pc_apply_NEP(PC, Vec, Vec);
+static PetscErrorCode __mat_apply_NLEIGS_term(Mat, Vec, Vec);
+static PetscErrorCode __mat_duplicate_NLEIGS_term(Mat, MatDuplicateOption, Mat *);
+static PetscErrorCode __mat_destroy_NLEIGS_term(Mat);
+static PetscErrorCode __nleigs_singularities_callback(NEP, PetscInt *, PetscScalar *,
+                                                      void *);
+static PetscErrorCode __pc_apply_NLEIGS(PC, Vec, Vec);
 static PetscErrorCode __form_NEP_function(NEP, PetscScalar, Mat, Mat, void *);
 static PetscErrorCode __form_NEP_jacobian(NEP, PetscScalar, Mat, void *);
 
@@ -1465,6 +1471,8 @@ void SlepcNEPSolverBase::SetType(SlepcEigenvalueSolver::Type type)
       PalacePetscCall(NEPSetType(nep, NEPSLP));
       break;
     case Type::NLEIGS:
+      PalacePetscCall(NEPSetType(nep, NEPNLEIGS));
+      break;
     case Type::KRYLOVSCHUR:
     case Type::POWER:
     case Type::SUBSPACE:
@@ -1601,9 +1609,25 @@ void SlepcNEPSolver::SetExtraSystemMatrix(
   funcA2 = A2;
 }
 
+std::unique_ptr<ComplexOperator> SlepcNEPSolver::BuildA2(std::complex<double> lambda) const
+{
+  if (use_complex_a2 && funcA2Complex)
+  {
+    return (*funcA2Complex)(lambda);
+  }
+  return (*funcA2)(std::abs(lambda.imag()));
+}
+
+void SlepcNEPSolver::SetExtraSystemMatrixComplex(
+    std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> A2c)
+{
+  funcA2Complex = A2c;
+}
+
 void SlepcNEPSolver::SetPreconditionerUpdate(
     std::function<std::unique_ptr<ComplexOperator>(
-        std::complex<double>, std::complex<double>, std::complex<double>, double)>
+        std::complex<double>, std::complex<double>, std::complex<double>,
+        std::complex<double>)>
         P)
 {
   funcP = P;
@@ -1762,9 +1786,9 @@ PetscReal SlepcNEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
-  if (funcA2)
+  if (funcA2 || funcA2Complex)
   {
-    auto A2 = (*funcA2)(std::abs(l.imag()));
+    auto A2 = BuildA2(l);
     A2->AddMult(x, r, 1.0 + 0.0i);
   }
   return linalg::Norml2(GetComm(), r);
@@ -1790,7 +1814,530 @@ PetscReal SlepcNEPSolver::GetBackwardScaling(PetscScalar l) const
   return normK + t * normC + t * t * normM;
 }
 
+// SLEPc NEP NLEIGS split-form solver implementation. See header for design notes.
+
+struct SingularityCtx
+{
+  std::vector<PetscScalar> values;
+};
+
+SlepcNEPNLEIGSSolver::SlepcNEPNLEIGSSolver(MPI_Comm comm, int print,
+                                           const std::string &prefix)
+  : SlepcNEPSolverBase(comm, print, prefix)
+{
+}
+
+SlepcNEPNLEIGSSolver::~SlepcNEPNLEIGSSolver()
+{
+  // Order matters: tear down NEP first so it releases its references to the Mats and
+  // FNs, then destroy the local Mats / FNs / contexts. The base destructor will
+  // double-call NEPDestroy harmlessly (sets to nullptr).
+  if (nep)
+  {
+    PalacePetscCall(NEPDestroy(&nep));
+  }
+  for (auto &m : term_mats_)
+  {
+    PalacePetscCall(MatDestroy(&m));
+  }
+  term_mats_.clear();
+  for (auto &f : term_fns_)
+  {
+    PalacePetscCall(FNDestroy(&f));
+  }
+  term_fns_.clear();
+  // term_ctxs_ destructed automatically.
+}
+
+void SlepcNEPNLEIGSSolver::SetOperators(const ComplexOperator &K, const ComplexOperator &C,
+                                        const ComplexOperator &M, ScaleType type)
+{
+  // Reserve the first three split-form slots for the polynomial pencil:
+  //   K · 1, C · λ, M · λ². Extra A2(λ) terms (wave-port, farfield, surface
+  // conductivity) are appended via AddSplitFormTerm before Solve.
+  opK_ref = &K;
+  opC_ref = &C;
+  opM_ref = &M;
+  problem_size_ = K.Height();
+  x1.SetSize(problem_size_);
+  y1.SetSize(problem_size_);
+  x1.UseDevice(true);
+  y1.UseDevice(true);
+
+  if (type != ScaleType::NONE)
+  {
+    normK = linalg::SpectralNorm(GetComm(), K, K.IsReal());
+    normC = linalg::SpectralNorm(GetComm(), C, C.IsReal());
+    normM = linalg::SpectralNorm(GetComm(), M, M.IsReal());
+    if (normK > 0.0 && normM > 0.0)
+    {
+      gamma = std::sqrt(normK / normM);
+      delta = 2.0 / (normK + gamma * normC);
+    }
+  }
+
+  // Build FNs for the polynomial pencil: f₀(λ) = 1, f₁(λ) = λ, f₂(λ) = λ². FN_RATIONAL
+  // stores polynomial coefficients in *highest-degree-first* order: [c_n,...,c_1,c_0]
+  // (verified from SLEPc fnrational.c Horner loop).
+  AddSplitFormTerm(opK_ref,
+                   [&]()
+                   {
+                     FN fn;
+                     PalacePetscCall(FNCreate(GetComm(), &fn));
+                     PalacePetscCall(FNSetType(fn, FNRATIONAL));
+                     PetscScalar p[1] = {1.0 + 0.0i};
+                     PalacePetscCall(FNRationalSetNumerator(fn, 1, p));
+                     return fn;
+                   }());
+  AddSplitFormTerm(opC_ref,
+                   [&]()
+                   {
+                     FN fn;
+                     PalacePetscCall(FNCreate(GetComm(), &fn));
+                     PalacePetscCall(FNSetType(fn, FNRATIONAL));
+                     PetscScalar p[2] = {1.0 + 0.0i, 0.0 + 0.0i};  // 1·λ + 0
+                     PalacePetscCall(FNRationalSetNumerator(fn, 2, p));
+                     return fn;
+                   }());
+  AddSplitFormTerm(opM_ref,
+                   [&]()
+                   {
+                     FN fn;
+                     PalacePetscCall(FNCreate(GetComm(), &fn));
+                     PalacePetscCall(FNSetType(fn, FNRATIONAL));
+                     PetscScalar p[3] = {1.0 + 0.0i, 0.0 + 0.0i,
+                                         0.0 + 0.0i};  // 1·λ² + 0·λ + 0
+                     PalacePetscCall(FNRationalSetNumerator(fn, 3, p));
+                     return fn;
+                   }());
+}
+
+void SlepcNEPNLEIGSSolver::SetBMat(const Operator &B)
+{
+  opB = &B;
+}
+
+void SlepcNEPNLEIGSSolver::AddSplitFormTerm(const ComplexOperator *op, FN fn)
+{
+  MFEM_VERIFY(op, "SlepcNEPNLEIGSSolver::AddSplitFormTerm: null operator!");
+  MFEM_VERIFY(problem_size_ > 0, "Must call SetOperators before AddSplitFormTerm.");
+
+  // Heap-allocate the per-term context so MatShellGetContext returns a stable pointer
+  // throughout the NEP solve.
+  auto ctx = std::make_unique<TermCtx>();
+  ctx->op = op;
+  ctx->x.SetSize(problem_size_);
+  ctx->y.SetSize(problem_size_);
+  ctx->x.UseDevice(true);
+  ctx->y.UseDevice(true);
+
+  Mat shell;
+  PalacePetscCall(MatCreateShell(GetComm(), problem_size_, problem_size_, PETSC_DECIDE,
+                                 PETSC_DECIDE, ctx.get(), &shell));
+  PalacePetscCall(
+      MatShellSetOperation(shell, MATOP_MULT, (void (*)(void))__mat_apply_NLEIGS_term));
+  PalacePetscCall(MatShellSetOperation(shell, MATOP_DUPLICATE,
+                                       (void (*)(void))__mat_duplicate_NLEIGS_term));
+  PalacePetscCall(MatShellSetOperation(shell, MATOP_DESTROY,
+                                       (void (*)(void))__mat_destroy_NLEIGS_term));
+  PalacePetscCall(MatShellSetVecType(shell, PetscVecType()));
+
+  term_ctxs_.push_back(std::move(ctx));
+  term_mats_.push_back(shell);
+  term_fns_.push_back(fn);
+}
+
+void SlepcNEPNLEIGSSolver::Customize()
+{
+  MFEM_VERIFY(!term_mats_.empty(), "SlepcNEPNLEIGSSolver: no split-form terms registered!");
+
+  // Register the split-form operator with NLEIGS. The MatStructure flag is
+  // DIFFERENT_NONZERO_PATTERN because shell matrices have no nonzero pattern; SLEPc
+  // would conservatively assume this anyway.
+  PalacePetscCall(NEPSetSplitOperator(nep, static_cast<PetscInt>(term_mats_.size()),
+                                      term_mats_.data(), term_fns_.data(),
+                                      DIFFERENT_NONZERO_PATTERN));
+
+  // NLEIGS-specific tuning.
+  PalacePetscCall(NEPNLEIGSSetFullBasis(nep, full_basis_ ? PETSC_TRUE : PETSC_FALSE));
+  PalacePetscCall(NEPNLEIGSSetInterpolation(nep, interp_tol_, interp_deg_));
+
+  // Singularity set Ξ. SLEPc has two paths: (a) AAA auto-discovery if no callback
+  // is installed — empirically slow / non-converging on Palace's split-form shells;
+  // (b) explicit list via NEPNLEIGSSetSingularitiesFunction. We always install the
+  // callback. SLEPc rejects singularities exactly at the origin (Leja–Bagby divides
+  // by them), so the farfield 1/(2λ) pole and TEM kₙ branch at λ=0 cannot be passed
+  // verbatim. The default sentinel at i·100·target_upper places a "fake" singularity
+  // far above the eigenvalue band so Leja–Bagby produces well-spaced rational poles
+  // around the target. Users supplying NLEIGSSingularities override the default
+  // (e.g., to pass non-TEM port cutoff frequencies).
+  static SingularityCtx ctx;  // file-scope singleton — only one NLEIGS solver runs
+                              // at a time per Palace invocation.
+  if (!singularities_.empty())
+  {
+    ctx.values.assign(singularities_.begin(), singularities_.end());
+  }
+  else
+  {
+    const PetscReal target_im = sigma.imag();
+    const PetscReal upper_im = (target_upper_ > 0.0) ? target_upper_ : 3.0 * target_im;
+    ctx.values = {std::complex<double>{0.0, 100.0 * upper_im}};
+  }
+  PalacePetscCall(
+      NEPNLEIGSSetSingularitiesFunction(nep, __nleigs_singularities_callback, &ctx));
+
+  // Target region Σ. If user supplied a 4-tuple, build RGINTERVAL with those bounds;
+  // otherwise auto-derive from sigma at solve time. We require sigma to have been
+  // set via SetShiftInvert before Customize is called.
+  RG rg;
+  PalacePetscCall(NEPGetRG(nep, &rg));
+  PalacePetscCall(RGSetType(rg, RGINTERVAL));
+  if (region_.size() == 4)
+  {
+    PalacePetscCall(
+        RGIntervalSetEndpoints(rg, region_[0], region_[1], region_[2], region_[3]));
+  }
+  else
+  {
+    // NLEIGS places Leja-Bagby interpolation nodes ON the RG boundary, and the
+    // rational interpolant's eigenvalues at the boundary appear as "converged"
+    // spurious modes. We bracket the band [target, target_upper] tightly along
+    // the imaginary axis: the lower bound is the target itself (NO padding below).
+    // For non-TEM wave ports, the cutoff frequency lies just below the band of
+    // interest; extending the RG below the user's target risks placing
+    // interpolation nodes near or below cutoff, where kₙ(λ) becomes purely real
+    // (evanescent) and the rational fit struggles. The user is responsible for
+    // selecting Target above the relevant cutoff frequency.
+    //
+    // Real-axis bandwidth ±target_upper allows substantial damping for low-Q
+    // modes. Users override via NLEIGSRegion.
+    const PetscReal target_im = sigma.imag();
+    const PetscReal upper_im = (target_upper_ > 0.0) ? target_upper_ : 3.0 * target_im;
+    MFEM_VERIFY(upper_im > target_im,
+                "SlepcNEPNLEIGSSolver: NLEIGS region requires target_upper > target. "
+                "Set TargetUpper in config or NLEIGSRegion explicitly.");
+    const PetscReal lower_im = target_im;
+    const PetscReal damp = upper_im;
+    PalacePetscCall(RGIntervalSetEndpoints(rg, -damp, damp, lower_im, upper_im));
+  }
+
+  // Set target.
+  PalacePetscCall(NEPSetTarget(nep, sigma));
+
+  // NLEIGS' inner KSPs default to KSPGMRES + PCLU which requires a sparse direct
+  // factor (MatGetFactor) — Palace builds PETSc without MUMPS/SuperLU. Override
+  // each inner KSP to use KSPPREONLY + PCSHELL routed through Palace's own
+  // ComplexKspSolver (opInv). NLEIGSGetKSPs LAZILY ALLOCATES the inner KSPs on
+  // first call; doing so here BEFORE NEPSetUp lets NLEIGS see our configured KSPs
+  // when its divided-differences routine subsequently calls KSPSetUp.
+  PetscInt nshifts = 0;
+  KSP *ksps = nullptr;
+  PalacePetscCall(NEPNLEIGSGetKSPs(nep, &nshifts, &ksps));
+  ksp_ctxs_.clear();
+  ksp_ctxs_.reserve(nshifts);
+  for (PetscInt i = 0; i < nshifts; i++)
+  {
+    auto ctx = std::make_unique<KSPCtx>();
+    ctx->solver = this;
+    // The actual rational interpolation shift for this inner KSP is set by NLEIGS
+    // after divided differences completes. Defer the shift extraction to the first
+    // PC apply by reading KSPGetOperators(ksp, &T, &P) — T is the assembled
+    // T(σ_i) at that point. For the simpler approach taken here, we use the NEP
+    // target as a single-shift approximation; NLEIGS' Krylov method will then
+    // iterate to convergence regardless.
+    ctx->sigma_shift = sigma;
+    PalacePetscCall(KSPSetType(ksps[i], KSPPREONLY));
+    PC pc;
+    PalacePetscCall(KSPGetPC(ksps[i], &pc));
+    PalacePetscCall(PCSetType(pc, PCSHELL));
+    PalacePetscCall(PCShellSetContext(pc, (void *)ctx.get()));
+    PalacePetscCall(PCShellSetApply(pc, __pc_apply_NLEIGS));
+    ksp_ctxs_.push_back(std::move(ctx));
+  }
+  if (print > 0)
+  {
+    Mpi::Print(GetComm(), " NLEIGS inner KSPs: {} shifts, PCSHELL → opInv\n", nshifts);
+  }
+  // Convergence test. NEP_CONV_NORM (= ||r|| / Σ|f_j(λ)|·||A_j||) normalizes by the
+  // actual operator scale at λ and converges in few divided-difference terms, which is
+  // what keeps NLEIGS fast on the split-form pencil. NEP_CONV_ABS (= ||r|| < tol on the
+  // raw residual) is far stricter and, combined with a loose NLEIGSInterpolationTol,
+  // forces many extra interpolation terms / restarts to hit an absolute residual the
+  // rational fit can't deliver. NEP_CONV_REL (= ||r||/|λ|) sits in between. The
+  // reported Error (Abs.) column uses the true ||T(λ)x|| regardless, so spurious modes
+  // remain visible to the user even under NORM/REL.
+  PalacePetscCall(NEPSetConvergenceTest(nep, NEP_CONV_NORM));
+  // Skip NEPSetFromOptions for NLEIGS — it would touch the inner-KSP options and
+  // interfere with our explicit PCSHELL configuration above. The user can still set
+  // -nep_* options via the command-line interface; those that don't conflict will
+  // apply via NEPSolve's internal setup paths.
+  cl_custom = true;
+}
+
+std::unique_ptr<ComplexOperator>
+SlepcNEPNLEIGSSolver::BuildTAtShift(std::complex<double> sigma_i) const
+{
+  // T(σ_i) = K + σ·C + σ²·M + Σ_{j≥3} f_j(σ_i)·A_j. Assembled via BuildParSumOperator
+  // over the same constant matrices that NLEIGS uses internally.
+  std::vector<std::complex<double>> coeffs;
+  std::vector<const ComplexParOperator *> ops;
+  for (std::size_t k = 0; k < term_ctxs_.size(); k++)
+  {
+    PetscScalar f_val;
+    PalacePetscCall(FNEvaluateFunction(term_fns_[k], sigma_i, &f_val));
+    coeffs.push_back(f_val);
+    ops.push_back(static_cast<const ComplexParOperator *>(term_ctxs_[k]->op));
+  }
+  return BuildParSumOperator(coeffs, ops);
+}
+
+std::unique_ptr<ComplexOperator>
+SlepcNEPNLEIGSSolver::BuildPAtShift(std::complex<double> sigma_i) const
+{
+  // The funcP signature is funcP(a0, a1, a2, ω) building Palace's preconditioner for
+  // the operator a0·K + a1·C + a2·M + (extra at frequency ω). Match the polynomial
+  // coefficients to T(σ_i) = K + σ·C + σ²·M + ...; pass ω = |Im σ_i| so the bulk
+  // contribution is evaluated at the right frequency.
+  MFEM_VERIFY(funcP_, "NLEIGS BuildPAtShift: no preconditioner builder set!");
+  // NLEIGS uses the closed-form (fit) wave-port BC, evaluated on the real-ω axis, so the
+  // preconditioner BC frequency is the real |Im σ_i| (passed as a real-valued complex).
+  return (*funcP_)(std::complex<double>(1.0, 0.0), sigma_i, sigma_i * sigma_i,
+                   std::complex<double>(std::abs(sigma_i.imag()), 0.0));
+}
+
+PetscReal SlepcNEPNLEIGSSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
+                                                ComplexVector &r) const
+{
+  // T(l) x = (K + l·C + l²·M + Σ extra A2 terms) x. We evaluate the full split-form
+  // residual by re-applying the per-term shells; SLEPc could provide this via
+  // NEPComputeFunction but going through term_ctxs_ keeps the path explicit.
+  MFEM_VERIFY(opK_ref && opM_ref, "Operators not set!");
+  opK_ref->Mult(x, r);
+  if (opC_ref)
+  {
+    opC_ref->AddMult(x, r, l);
+  }
+  opM_ref->AddMult(x, r, l * l);
+  // Extra A2(λ) terms: indices 3..end of term_mats_ (slots 0,1,2 are K,C,M handled
+  // above; the FN values for those are 1, λ, λ²).
+  for (std::size_t k = 3; k < term_ctxs_.size(); k++)
+  {
+    PetscScalar f_val;
+    PalacePetscCall(FNEvaluateFunction(term_fns_[k], l, &f_val));
+    term_ctxs_[k]->op->AddMult(x, r, f_val);
+  }
+  return linalg::Norml2(GetComm(), r);
+}
+
+PetscReal SlepcNEPNLEIGSSolver::GetBackwardScaling(PetscScalar l) const
+{
+  // Backward scaling for split-form NLEIGS:
+  //   denom = ||K|| + |λ|·||C|| + |λ|²·||M|| + Σ_{j>2} |f_j(λ)| · ||A_j||
+  // The Σ over BC terms (wave-port, farfield) is critical because those operators
+  // can dominate near the eigenvalue band — without them backward error is
+  // artificially small (or undefined when polynomial part is small).
+  if (normK <= 0.0 && opK_ref)
+  {
+    normK = linalg::SpectralNorm(GetComm(), *opK_ref, opK_ref->IsReal());
+  }
+  if (normC <= 0.0 && opC_ref)
+  {
+    normC = linalg::SpectralNorm(GetComm(), *opC_ref, opC_ref->IsReal());
+  }
+  if (normM <= 0.0 && opM_ref)
+  {
+    normM = linalg::SpectralNorm(GetComm(), *opM_ref, opM_ref->IsReal());
+  }
+  if (term_norms_.size() != term_ctxs_.size())
+  {
+    term_norms_.assign(term_ctxs_.size(), -1.0);
+  }
+  const PetscReal t = PetscAbsScalar(l);
+  PetscReal denom = normK + t * normC + t * t * normM;
+  // Add per-term A2 contributions (slots 3..end of term_ctxs_; slots 0,1,2 are K,C,M
+  // already counted in normK/C/M above).
+  for (std::size_t k = 3; k < term_ctxs_.size(); k++)
+  {
+    if (term_norms_[k] < 0.0)
+    {
+      term_norms_[k] =
+          linalg::SpectralNorm(GetComm(), *term_ctxs_[k]->op, term_ctxs_[k]->op->IsReal());
+    }
+    PetscScalar f_val;
+    PalacePetscCall(FNEvaluateFunction(term_fns_[k], l, &f_val));
+    denom += PetscAbsScalar(f_val) * term_norms_[k];
+  }
+  return denom;
+}
+
+void SlepcNEPNLEIGSSolver::SetInitialSpace(const ComplexVector &v)
+{
+  MFEM_VERIFY(!term_mats_.empty(),
+              "SlepcNEPNLEIGSSolver::SetInitialSpace: must register split-form terms "
+              "first via SetOperators!");
+  if (!v0)
+  {
+    // Use MatCreateVecs on one of our shell mats so the resulting Vec layout
+    // matches what NEP/NLEIGS expects internally (size, distribution, type).
+    PalacePetscCall(MatCreateVecs(term_mats_.front(), nullptr, &v0));
+  }
+  PalacePetscCall(ToPetscVec(v, v0));
+  Vec is[1] = {v0};
+  PalacePetscCall(NEPSetInitialSpace(nep, 1, is));
+}
+
+int SlepcNEPNLEIGSSolver::Solve()
+{
+  MFEM_VERIFY(opInv, "Linear solver not set for SlepcNEPNLEIGSSolver!");
+  MFEM_VERIFY(!term_mats_.empty(),
+              "SlepcNEPNLEIGSSolver::Solve: no split-form terms registered!");
+
+  // SLEPc 3.21+ requires NEPSetSplitOperator to be called before NEPSetFromOptions
+  // touches NLEIGS-specific options. Customize handles both in the right order.
+  perm.reset();
+  PetscInt num_conv;
+  Customize();
+  PalacePetscCall(NEPSolve(nep));
+  PalacePetscCall(NEPGetConverged(nep, &num_conv));
+  if (print > 0)
+  {
+    Mpi::Print(GetComm(), "\n");
+    PalacePetscCall(NEPConvergedReasonView(nep, PETSC_VIEWER_STDOUT_(GetComm())));
+    Mpi::Print(GetComm(),
+               " Total number of linear systems solved: {:d}\n"
+               " Total number of linear solver iterations: {:d}\n",
+               opInv->NumTotalMult(), opInv->NumTotalMultIterations());
+  }
+
+  // Sort by ascending imaginary component, mirroring SlepcNEPSolverBase::Solve.
+  const int nev = static_cast<int>(num_conv);
+  perm = std::make_unique<int[]>(nev);
+  std::vector<std::complex<double>> eig(nev);
+  for (int i = 0; i < nev; i++)
+  {
+    PetscScalar l;
+    PalacePetscCall(NEPGetEigenpair(nep, i, &l, nullptr, nullptr, nullptr));
+    eig[i] = l;
+    perm[i] = i;
+  }
+  std::sort(perm.get(), perm.get() + nev,
+            [&eig](auto l, auto r) { return eig[l].imag() < eig[r].imag(); });
+  RescaleEigenvectors(nev);
+  return nev;
+}
+
 }  // namespace palace::slepc
+
+PetscErrorCode __mat_apply_NLEIGS_term(Mat A, Vec x, Vec y)
+{
+  PetscFunctionBeginUser;
+  palace::slepc::SlepcNEPNLEIGSSolver::TermCtx *ctx;
+  PetscCall(MatShellGetContext(A, (void **)&ctx));
+  MFEM_VERIFY(ctx && ctx->op, "Invalid PETSc shell matrix context for NLEIGS term!");
+  PetscCall(FromPetscVec(x, ctx->x));
+  ctx->op->Mult(ctx->x, ctx->y);
+  PetscCall(ToPetscVec(ctx->y, y));
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __mat_duplicate_NLEIGS_term(Mat A, MatDuplicateOption /*op*/, Mat *B)
+{
+  // Shallow duplicate for SLEPc NLEIGS' internal NEP_NLEIGS_MATSHELL wrapper. The
+  // underlying ComplexOperator is immutable during the NLEIGS solve, so the
+  // duplicate can point at the same TermCtx. The caller never modifies values; the
+  // duplicate is used as one entry in a (matrix, scalar) sum tracked by SLEPc's
+  // own shell wrapper. The Destroy operation is a no-op (the original TermCtx is
+  // owned by SlepcNEPNLEIGSSolver and outlives any duplicate).
+  PetscFunctionBeginUser;
+  palace::slepc::SlepcNEPNLEIGSSolver::TermCtx *ctx;
+  PetscCall(MatShellGetContext(A, (void **)&ctx));
+  PetscInt m, n, M, N;
+  PetscCall(MatGetLocalSize(A, &m, &n));
+  PetscCall(MatGetSize(A, &M, &N));
+  PetscCall(MatCreateShell(PetscObjectComm((PetscObject)A), m, n, M, N, (void *)ctx, B));
+  PetscCall(MatShellSetOperation(*B, MATOP_MULT, (void (*)(void))__mat_apply_NLEIGS_term));
+  PetscCall(MatShellSetOperation(*B, MATOP_DUPLICATE,
+                                 (void (*)(void))__mat_duplicate_NLEIGS_term));
+  PetscCall(
+      MatShellSetOperation(*B, MATOP_DESTROY, (void (*)(void))__mat_destroy_NLEIGS_term));
+  PetscCall(MatShellSetVecType(*B, palace::slepc::PetscVecType()));
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __mat_destroy_NLEIGS_term(Mat /*A*/)
+{
+  // No-op destroy: the TermCtx pointed to by MatShellGetContext is owned by the
+  // SlepcNEPNLEIGSSolver (heap-allocated unique_ptr in term_ctxs_). Both the
+  // original split-form mats AND any duplicates SLEPc creates inside its NEP_NLEIGS
+  // wrapper share the same TermCtx via shallow duplication, so we must NOT free it
+  // here. The shell Mat itself is freed by the caller (PETSc) via the standard
+  // PetscObject destruction path.
+  PetscFunctionBeginUser;
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __pc_apply_NLEIGS(PC pc, Vec x, Vec y)
+{
+  // NLEIGS inner KSPs apply T(σ_i)⁻¹ approximately at each rational interpolation
+  // shift σ_i. Palace builds opInv ONCE upstream (eigensolver driver) with the
+  // assembled A = K + iσ·C − σ²·M + A2(σ) at the eigenmode target σ; reusing that
+  // single opInv as the preconditioner for ALL shifts is a tractable approximation
+  // — NLEIGS' Krylov iteration tolerates an inexact PC. Reconfiguring opInv per
+  // shift would require rebuilding the multigrid preconditioner with shift-σ_i
+  // coarse-grid factorizations, which Palace's MfemWrapperSolver→SuperLU coarse
+  // path doesn't support for shell-based operators.
+  //
+  // Net effect: the inner KSPs are PREONLY → PCSHELL → opInv->Mult(x, y). Krylov
+  // dimension grows with NLEIGS' rational basis size, so even a fixed-σ PC
+  // converges the outer problem.
+  PetscFunctionBeginUser;
+  palace::slepc::SlepcNEPNLEIGSSolver::KSPCtx *ctx;
+  PetscCall(PCShellGetContext(pc, (void **)&ctx));
+  MFEM_VERIFY(ctx && ctx->solver, "Invalid PETSc shell PC context for NLEIGS!");
+  auto *solver = ctx->solver;
+  auto *opInv = solver->GetOpInv();
+  MFEM_VERIFY(opInv, "NLEIGS PC apply: solver-level KSP not set!");
+  PetscInt vlen;
+  PetscCall(VecGetLocalSize(x, &vlen));
+  palace::ComplexVector xv, yv;
+  xv.SetSize(vlen);
+  yv.SetSize(vlen);
+  xv.UseDevice(true);
+  yv.UseDevice(true);
+  PetscCall(FromPetscVec(x, xv));
+  opInv->Mult(xv, yv);
+  if (auto *opProj = solver->GetOpProj())
+  {
+    opProj->Mult(yv);
+  }
+  PetscCall(ToPetscVec(yv, y));
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
+PetscErrorCode __nleigs_singularities_callback(NEP, PetscInt *maxnp, PetscScalar *xi,
+                                               void *vctx)
+{
+  PetscFunctionBeginUser;
+  auto *ctx = static_cast<palace::slepc::SingularityCtx *>(vctx);
+  // SLEPc passes *maxnp as the buffer capacity on input; write min(values.size(),
+  // capacity) and update *maxnp. Truncation emits a warning; Leja-Bagby still picks
+  // interpolation nodes in that case.
+  PetscInt cap = *maxnp;
+  PetscInt n = std::min<PetscInt>(static_cast<PetscInt>(ctx->values.size()), cap);
+  for (PetscInt i = 0; i < n; i++)
+  {
+    xi[i] = ctx->values[i];
+  }
+  if (static_cast<PetscInt>(ctx->values.size()) > cap)
+  {
+    palace::Mpi::Warning(
+        " NLEIGS singularity callback: {} singularities provided but SLEPc buffer "
+        "capacity is {} — truncating\n",
+        ctx->values.size(), cap);
+  }
+  *maxnp = n;
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
 
 PetscErrorCode __mat_apply_EPS_A0(Mat A, Vec x, Vec y)
 {
@@ -2136,12 +2683,13 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
   {
     if (ctx->lambda.imag() == 0.0)
       ctx->lambda = ctx->sigma;
-    ctx->opA2_pc = (*ctx->funcA2)(std::abs(ctx->lambda.imag()));
+    ctx->opA2_pc = ctx->BuildA2(ctx->lambda);
     ctx->opA_pc = palace::BuildParSumOperator(
         {1.0 + 0.0i, ctx->lambda, ctx->lambda * ctx->lambda, 1.0 + 0.0i},
         {ctx->opK, ctx->opC, ctx->opM, ctx->opA2_pc.get()}, true);
     ctx->opP_pc = (*ctx->funcP)(std::complex<double>(1.0, 0.0), ctx->lambda,
-                                ctx->lambda * ctx->lambda, ctx->lambda.imag());
+                                ctx->lambda * ctx->lambda,
+                                ctx->PreconditionerBCFreq(ctx->lambda));
     ctx->opInv->SetOperators(*ctx->opA_pc, *ctx->opP_pc);
     ctx->new_lambda = false;
   }
@@ -2166,8 +2714,10 @@ PetscErrorCode __form_NEP_function(NEP nep, PetscScalar lambda, Mat fun, Mat B, 
   PetscFunctionBeginUser;
   palace::slepc::SlepcNEPSolver *ctxF;
   PetscCall(MatShellGetContext(fun, (void **)&ctxF));
-  // A(λ) = K + λ C + λ² M + A2(Im{λ}).
-  ctxF->opA2 = (*ctxF->funcA2)(std::abs(lambda.imag()));
+  // A(λ) = K + λ C + λ² M + A2(λ). Routes through BuildA2 so the holomorphic A2(λ)
+  // overload is preferred when funcA2Complex is set; otherwise falls back to the
+  // legacy A2(|Im λ|) form.
+  ctxF->opA2 = ctxF->BuildA2(lambda);
   ctxF->opA = palace::BuildParSumOperator(
       {1.0 + 0.0i, lambda, lambda * lambda, 1.0 + 0.0i},
       {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opA2.get()}, true);
@@ -2181,14 +2731,27 @@ PetscErrorCode __form_NEP_jacobian(NEP nep, PetscScalar lambda, Mat fun, void *c
   PetscFunctionBeginUser;
   palace::slepc::SlepcNEPSolver *ctxF;
   PetscCall(MatShellGetContext(fun, (void **)&ctxF));
-  // A(λ) = K + λ C + λ² M + A2(Im{λ}).
-  // J(λ) = C + 2 λ M + A2'(Im{λ}).
-  ctxF->opA2 = (*ctxF->funcA2)(std::abs(lambda.imag()));
+  // A(λ) = K + λ C + λ² M + A2(λ).
+  // J(λ) = C + 2 λ M + A2'(λ).
+  // FD perturbation direction matches the A2 evaluation path: when funcA2Complex is
+  // set the perturbation is a complex λ-step (imaginary axis); otherwise it's a
+  // real-ω step on |Im λ| (legacy form, equivalent on the imag axis).
+  ctxF->opA2 = ctxF->BuildA2(lambda);
   const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
-  ctxF->opA2p = (*ctxF->funcA2)(std::abs(lambda.imag()) * (1.0 + eps));
-  std::complex<double> denom = std::complex<double>(0.0, eps * std::abs(lambda.imag()));
-  ctxF->opAJ = palace::BuildParSumOperator({1.0 / denom, -1.0 / denom},
-                                           {ctxF->opA2p.get(), ctxF->opA2.get()}, true);
+  if (ctxF->use_complex_a2 && ctxF->funcA2Complex)
+  {
+    const std::complex<double> step{0.0, eps * std::abs(lambda.imag())};
+    ctxF->opA2p = (*ctxF->funcA2Complex)(lambda + step);
+    ctxF->opAJ = palace::BuildParSumOperator({1.0 / step, -1.0 / step},
+                                             {ctxF->opA2p.get(), ctxF->opA2.get()}, true);
+  }
+  else
+  {
+    ctxF->opA2p = (*ctxF->funcA2)(std::abs(lambda.imag()) * (1.0 + eps));
+    const std::complex<double> denom{0.0, eps * std::abs(lambda.imag())};
+    ctxF->opAJ = palace::BuildParSumOperator({1.0 / denom, -1.0 / denom},
+                                             {ctxF->opA2p.get(), ctxF->opA2.get()}, true);
+  }
   ctxF->opJ = palace::BuildParSumOperator(
       {0.0 + 0.0i, 1.0 + 0.0i, 2.0 * lambda, 1.0 + 0.0i},
       {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opAJ.get()}, true);

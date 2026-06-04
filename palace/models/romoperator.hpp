@@ -351,11 +351,11 @@ protected:
     Eigen::MatrixXcd Cr;
     Eigen::MatrixXcd Mr;
   };
-  static AugmentedPencil BuildAugmentedPencil(
-      const Eigen::MatrixXcd &Kr_total, const Eigen::MatrixXcd &Cr_total,
-      const Eigen::MatrixXcd &Mr_total,
-      const std::vector<WavePortAuxBlock> &aux_blocks,
-      std::vector<std::string> &aux_labels);
+  static AugmentedPencil
+  BuildAugmentedPencil(const Eigen::MatrixXcd &Kr_total, const Eigen::MatrixXcd &Cr_total,
+                       const Eigen::MatrixXcd &Mr_total,
+                       const std::vector<WavePortAuxBlock> &aux_blocks,
+                       std::vector<std::string> &aux_labels);
 
 public:
   RomOperator(const config::LinearSolverData &linear, int verbose, SpaceOperator &space_op,

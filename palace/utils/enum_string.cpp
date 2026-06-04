@@ -58,7 +58,12 @@ PALACE_ENUM_STRING_DEFINE(EigenSolverBackend, {{EigenSolverBackend::SLEPC, "SLEP
                                                {EigenSolverBackend::DEFAULT, "Default"}})
 
 PALACE_ENUM_STRING_DEFINE(NonlinearEigenSolver, {{NonlinearEigenSolver::HYBRID, "Hybrid"},
-                                                 {NonlinearEigenSolver::SLP, "SLP"}})
+                                                 {NonlinearEigenSolver::SLP, "SLP"},
+                                                 {NonlinearEigenSolver::NLEIGS, "NLEIGS"}})
+
+PALACE_ENUM_STRING_DEFINE(WavePortBCEvaluation,
+                          {{WavePortBCEvaluation::REAL, "Real"},
+                           {WavePortBCEvaluation::COMPLEX, "Complex"}})
 
 PALACE_ENUM_STRING_DEFINE(SurfaceFlux, {{SurfaceFlux::ELECTRIC, "Electric"},
                                         {SurfaceFlux::MAGNETIC, "Magnetic"},

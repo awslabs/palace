@@ -850,6 +850,74 @@ public:
   // nonlinear eigenvalue solver.
   int max_restart = 2;
 
+  // Wave-port BC evaluation mode for nonlinear eigensolves. REAL (default) preserves
+  // the existing behavior — wave-port (and other A2(λ)) terms evaluated at ω = |Im λ|.
+  // COMPLEX activates the analytic-continuation path: kₙ(λ), 0.5/λ for the 2nd-order
+  // ABC, and i·ω/Z(ω) for the surface-conductivity BC are all evaluated as scalar
+  // holomorphic functions of the complex eigenparameter λ. Required for NLEIGS;
+  // recommended for low-Q solver stress tests.
+  WavePortBCEvaluation waveport_bc_evaluation = WavePortBCEvaluation::REAL;
+
+  // Polynomial degree (in ω²) of the kₙ²(ω) fit used for the analytic continuation
+  // kₙ(λ) = √P(-λ²) where P is a polynomial in ω². Must be ≥ 1.
+  //   1 = "α + γ·ω²" — current default. Exact for textbook lossless waveguides
+  //       (constant material, uniform cross-section); 2 cross-section samples used.
+  //   2 = "c₀ + c₁·ω² + c₂·ω⁴" — captures sub-quadratic deviation; 3+ samples used.
+  //   3+ = higher-order; useful when the cross-section EVP near cutoff or with
+  //       dispersive material/wall-loss makes kₙ²(ω) deviate from quadratic.
+  // Number of cross-section solves equals waveport_fit_order + 1 (one per anchor +
+  // one for the midpoint validator). Cost grows linearly; the cross-section EVP is
+  // already cached by WavePortData so the cost is one cached solve per anchor.
+  int waveport_fit_order = 1;
+
+  // When true (default) AND WavePortBCEvaluation == Complex AND the nonlinear solver is
+  // HYBRID or SLP, the wave-port BC evaluates kₙ(λ) by re-solving the 2D cross-section
+  // modal EVP at the EXACT complex frequency ω = -i·λ, rather than the closed-form
+  // kₙ²(ω) polynomial fit. This is the physically exact analytic continuation: it has
+  // no fit error and lets Newton converge to the eigensolver tolerance even for
+  // near-cutoff non-TEM ports. Each evaluation runs one (cheap, 2D) EVP per port; the
+  // Jacobian adds two more per port via finite difference in λ. NLEIGS cannot use this
+  // (its split form needs a closed-form scalar) and always uses the fit. Set false to
+  // force the fit on the HYBRID/SLP path (faster, but fit-error-limited accuracy).
+  bool waveport_complex_exact = true;
+
+  // SLEPc NEP NLEIGS tuning knobs. Only consulted when NonlinearType == NLEIGS.
+  // FullBasis: maps to NEPNLEIGSSetFullBasis. SLEPc default is FALSE; PR #467
+  // testing AND on-tree split-form testing both confirm TRUE is decisive for
+  // recovering true eigenvalues — without it NLEIGS finds spurious cluster modes
+  // at the RG boundary. Default TRUE; users may set FALSE to experiment.
+  bool nleigs_full_basis = true;
+  // InterpolationTol / InterpolationDegree: maps to NEPNLEIGSSetInterpolation(tol, deg).
+  // tol drives the Leja–Bagby adaptive node selection; deg caps the rational degree.
+  // For Palace's split-form FNs (kₙ(λ) = √(α−γλ²) and farfield −1/(2λ)) the rational
+  // interpolation converges in 4–10 terms even at tol=1e-2; the linearized pencil
+  // has size O(d·n) so EXTRA degrees beyond what's needed for fit accuracy add
+  // spurious eigenvalues near the RG boundary (Leja-Bagby node artifacts) without
+  // improving real eigenvalue accuracy. Empirically tol=1e-2 yields zero spurious
+  // modes on cpw_wave_eigen-type problems while still resolving true eigenvalues
+  // to abs err ~1e-6. Users may tighten via NLEIGSInterpolationTol if a non-smooth
+  // FN (e.g., near-cutoff non-TEM port) needs higher rational degree.
+  double nleigs_interp_tol = 1.0e-2;
+  int nleigs_interp_deg = 1000;
+  // Optional explicit RG region bounds [Re_min, Re_max, Im_min, Im_max] on the λ-plane
+  // (λ = i·ω). Specified in GHz, like Target/TargetUpper — both components are
+  // frequencies (Im = oscillation frequency, Re = damping rate) and are
+  // nondimensionalized together in Nondimensionalize(EigenSolverData). Default = empty
+  // (auto-derived from target / target_upper as a padded RGINTERVAL).
+  std::vector<double> nleigs_region;
+  // Optional explicit singularities list (complex pairs serialized as flat
+  // {Re_0, Im_0, Re_1, Im_1, ...}), in GHz on the λ-plane like NLEIGSRegion. Default =
+  // empty (auto-derived: ±√(α_p/γ_p) per port — the wave-port kₙ branch points).
+  std::vector<double> nleigs_singularities;
+  // Number of auto-derived branch-cut singularities per wave-port kₙ factor (used only
+  // when NLEIGSSingularities is not given explicitly). Each port's √(α−γλ²) factor is
+  // non-analytic on the imaginary-axis branch cut up to i·ω_cutoff; this many poles are
+  // placed on the upper cut, clustered geometrically toward the branch point. Small is
+  // better: too many poles just below the RG lower bound (= target) pull spurious modes
+  // onto the boundary. Default 1 = the branch point itself. Set 0 to disable
+  // auto-derivation (fall back to the far sentinel).
+  int nleigs_singularities_per_cut = 1;
+
   EigenSolverData() = default;
   EigenSolverData(const json &eigenmode);
 };

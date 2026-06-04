@@ -85,8 +85,8 @@ public:
   //   Att = mu_cc^{-1}(curl_t u, curl_t v) - omega^2 (eps u, v) - sigma (mu^{-1} u, v)
   //         + BC-t (impedance, absorbing, conductivity)
   //   Ann = -(mu^{-1} grad u, grad v) + omega^2 (eps u, v) + BC-n
-  ComplexHypreParMatrix AssembleAtt(double omega, double sigma) const;
-  ComplexHypreParMatrix AssembleAnn(double omega) const;
+  ComplexHypreParMatrix AssembleAtt(std::complex<double> omega, double sigma) const;
+  ComplexHypreParMatrix AssembleAnn(std::complex<double> omega) const;
 
   // Alias the ND and H1 halves of a pre-loaded eigenvector e0 = [e_t_tilde; e_n_tilde]
   // as et / en, then apply the Vardapetyan–Demkowicz back-transform en := ẽn / (i·kn)

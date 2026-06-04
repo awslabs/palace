@@ -22,9 +22,11 @@
 #include "linalg/rap.hpp"
 #include "linalg/slepc.hpp"
 #include "linalg/vector.hpp"
+#include "models/farfieldboundaryoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
+#include "models/surfaceconductivityoperator.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -42,6 +44,20 @@ namespace
 // SpaceOperator::GetWavePortBoundaryMassMatrix), and exposes builders for
 //   A2_wp(ω)   = Σ_p kₙ,p(ω) · Mwp_p   (ω-dependent only via scalar kₙ,p)
 //   dA2_wp/dω = Σ_p (dkₙ,p/dω)(ω) · Mwp_p
+// kₙ,p(ω) is sampled from real-ω 2D port EVPs as a *complex* scalar (β + iα where α
+// captures wall-loss attenuation from impedance / loss-tan in the port cross-section)
+// and stored verbatim — both real and imaginary parts feed the BC stamping and the kₙ²
+// fit. The closed-form analytic continuation kₙ²(λ) = α₂ − γ_c·λ² uses *complex*
+// coefficients so the imaginary part of kₙ at the fit endpoints is preserved off the
+// imaginary axis.
+//
+// Regime of validity (closed-form continuation): exact for ports whose kₙ²(ω) is
+// quadratic in ω with constant complex coefficients — covers PEC and impedance-walled
+// lossless / quasi-lossless ports where the wall loss enters as a frequency-independent
+// imaginary surface impedance. NOT valid for skin-depth (finite-conductivity wall)
+// ports where Z_s ∝ √ω introduces non-quadratic structure, or for strongly dispersive
+// media. The midpoint validator inside FitKnSq compares the complex fit to a third
+// real-ω probe and warns if the relative error exceeds 1%.
 // Pre-assembling Mwp_p once and re-summing scalar coefficients each call avoids
 // re-running the bilinear form assembly on every NLEPS Newton iterate. The
 // derivative uses central FD on the cheap (cross-section EVP) kₙ,p evaluation.
@@ -65,6 +81,16 @@ public:
 
   bool empty() const { return Mwp_p_.empty(); }
 
+  // Enable the EXACT complex-frequency cross-section solve for the complex-λ build path
+  // (BuildComplex / BuildDComplex). When set, kₙ(λ) is obtained by re-solving the 2D
+  // modal EVP at the genuinely complex frequency ω = -i·λ (WavePortData::SolveKnExact)
+  // instead of evaluating the closed-form kₙ²(ω) polynomial fit. This is the physically
+  // exact analytic continuation and eliminates the fit error that otherwise floors
+  // Newton convergence for near-cutoff non-TEM ports. NLEIGS (split form) cannot use
+  // this — it needs the closed-form FN scalar — so it keeps the fit via Alpha/Gamma.
+  void SetUseExactSolve(bool exact) { use_exact_ = exact; }
+  bool UsesExactSolve() const { return use_exact_; }
+
   // Build Σ_p kₙ,p(ω) · Mwp_p as a fresh sum operator. Each call evaluates kₙ at the
   // requested ω (per-port cross-section EVP, cached internally by WavePortData).
   std::unique_ptr<ComplexOperator> Build(double omega) const
@@ -76,34 +102,121 @@ public:
     return BuildScaled(MakeKnCoefficients(omega));
   }
 
+  // Exact complex-ω kₙ for the local port `k`, via the cross-section modal EVP solved
+  // at ω = -i·λ. The Jacobian path needs a derivative too: dkₙ/dλ is approximated by a
+  // central finite difference of SolveKnExact in λ (two extra EVP solves), which is
+  // cheap (2D cross-section) and avoids assuming any closed form.
+  std::complex<double> KnExact(int local_port, std::complex<double> lambda) const
+  {
+    // λ = i·ω  ⇒  ω = -i·λ = λ / i.
+    const std::complex<double> omega = lambda / std::complex<double>(0.0, 1.0);
+    return space_op_.GetWavePortOp().GetWavePortKnExact(port_indices_[local_port], omega);
+  }
+
   // Build Σ_p kₙ,p(λ) · Mwp_p at COMPLEX λ using the analytical kₙ² fit (so kₙ
   // is evaluated as the analytic continuation √(α − γλ²) rather than the real-ω
-  // restriction kₙ(|Im λ|)). Diagnostic only — used to compare T_nonlinear (with
-  // funcA2 on real ω axis) against T_analytic (with kₙ extended into the complex
-  // plane). Caller must have called FitKnSq() first.
-  std::unique_ptr<ComplexOperator> BuildComplex(std::complex<double> lam) const
+  // restriction kₙ(|Im λ|)). Used in production by the complex-λ analytic-continuation
+  // path (WavePortBCEvaluation = Complex). Caller must have called FitKnSq() first.
+  // Optional kn_anchors[k] (one per port) keeps the propagating-sheet sign across
+  // line search: if Re(kn · conj(anchor_k)) < 0 the sign of kn is flipped.
+  std::unique_ptr<ComplexOperator>
+  BuildComplex(std::complex<double> lam,
+               const std::vector<std::complex<double>> *kn_anchors = nullptr) const
   {
     if (Mwp_p_.empty())
     {
       return {};
     }
-    MFEM_VERIFY(kn2_alpha_.size() == Mwp_p_.size(),
-                "WavePortFactor::BuildComplex requires FitKnSq() first.");
     std::vector<std::complex<double>> coeffs(Mwp_p_.size());
+    if (use_exact_)
+    {
+      // Exact analytic continuation: solve the cross-section EVP at ω = -i·λ per port.
+      for (std::size_t k = 0; k < Mwp_p_.size(); k++)
+      {
+        coeffs[k] = KnExact(static_cast<int>(k), lam);
+      }
+      return BuildScaled(coeffs);
+    }
+    MFEM_VERIFY(kn2_coeffs_.size() == Mwp_p_.size(),
+                "WavePortFactor::BuildComplex requires FitKnSq() first.");
     for (std::size_t k = 0; k < Mwp_p_.size(); k++)
     {
-      coeffs[k] = KnComplex(static_cast<int>(k), lam);
+      const std::complex<double> anchor =
+          (kn_anchors && kn_anchors->size() == Mwp_p_.size())
+              ? (*kn_anchors)[k]
+              : std::complex<double>{0.0, 0.0};
+      coeffs[k] = KnComplex(static_cast<int>(k), lam, anchor);
+    }
+    return BuildScaled(coeffs);
+  }
+
+  // Build the analytic Newton-Jacobian wave-port term dA2/dλ at COMPLEX λ via the
+  // closed-form derivative of kₙ(λ) = √P(-λ²) where P(s) = Σ_{j=0..D} c_j·s^j is
+  // a polynomial in s = ω² fit to kₙ²(ω). The chain rule gives
+  //     d kₙ / d λ = -λ · P'(-λ²) / kₙ(λ),  P'(s) = Σ_{j=1..D} j·c_j·s^{j-1}.
+  // For the default D=1 case (kₙ² = c₀ + c₁·ω²) this reduces to -c₁·λ/kₙ, the
+  // existing low-order formula. Used in production when WavePortBCEvaluation =
+  // Complex; the polynomial-pencil path uses BuildJacobianTerm(double ω) instead.
+  std::unique_ptr<ComplexOperator>
+  BuildDComplex(std::complex<double> lam,
+                const std::vector<std::complex<double>> *kn_anchors = nullptr) const
+  {
+    if (Mwp_p_.empty())
+    {
+      return {};
+    }
+    std::vector<std::complex<double>> coeffs(Mwp_p_.size());
+    if (use_exact_)
+    {
+      // Exact path: dkₙ/dλ via central finite difference of the cross-section EVP solve
+      // in λ. Two extra (cheap 2D) EVP solves per port. Step scales with |λ| for
+      // conditioning; the recovered kₙ is smooth in λ away from cutoff so a modest
+      // relative step is accurate.
+      for (std::size_t k = 0; k < Mwp_p_.size(); k++)
+      {
+        const std::complex<double> h =
+            fd_rel_ * std::max(std::abs(lam), 1.0) * std::complex<double>(0.0, 1.0);
+        const std::complex<double> knp = KnExact(static_cast<int>(k), lam + h);
+        const std::complex<double> knm = KnExact(static_cast<int>(k), lam - h);
+        coeffs[k] = (knp - knm) / (2.0 * h);
+      }
+      return BuildScaled(coeffs);
+    }
+    MFEM_VERIFY(kn2_coeffs_.size() == Mwp_p_.size(),
+                "WavePortFactor::BuildDComplex requires FitKnSq() first.");
+    for (std::size_t k = 0; k < Mwp_p_.size(); k++)
+    {
+      const std::complex<double> anchor =
+          (kn_anchors && kn_anchors->size() == Mwp_p_.size())
+              ? (*kn_anchors)[k]
+              : std::complex<double>{0.0, 0.0};
+      const std::complex<double> kn = KnComplex(static_cast<int>(k), lam, anchor);
+      // P'(s) at s = -λ² evaluated via Horner: dP_ds = Σ_{j≥1} j·c_j·s^{j-1}.
+      const std::complex<double> s = -lam * lam;
+      const auto &c = kn2_coeffs_[k];
+      const std::size_t D = c.size() - 1;
+      std::complex<double> dP_ds{0.0, 0.0};
+      // Horner of dP/ds: dP/ds = c_1 + 2·c_2·s + 3·c_3·s² + ...
+      for (std::size_t j = D; j >= 1; j--)
+      {
+        dP_ds = dP_ds * s + static_cast<double>(j) * c[j];
+        if (j == 1)
+        {
+          break;  // unsigned underflow guard
+        }
+      }
+      coeffs[k] = -lam * dP_ds / kn;
     }
     return BuildScaled(coeffs);
   }
 
   // Build the Newton-Jacobian wave-port term, dA2/dλ = -i·dA2/dω, evaluated at
-  // λ = i·ω for real positive ω. With Mwp_p purely imaginary (= i·M_real_p), this is
-  //   -i · i · Σ (dkₙ_p/dω) · M_real_p = Σ (dkₙ_p/dω) · M_real_p
-  // i.e. the imaginary part of Mwp_p with a real scalar coefficient (no extra i wrap).
-  // We assemble it as a sum on the i*M_real ports with coefficient -i*(dkₙ/dω) so the
-  // final operator stores the right combination in real/imag slots. Central FD on the
-  // cheap (cross-section EVP) kₙ; step is fd_rel_·max(|ω|,1).
+  // λ = i·ω for real positive ω. With Mwp_p stored as i·M_real_p, BuildScaled
+  // multiplying by a complex coefficient c = β + iα places (-α, β)·M_real on the
+  // (real, imag) slots — so the chain dkₙ/dω·(-i factor) needs to live in c. We
+  // therefore set coeffs[k] = -i · dkₙ/dω with kₙ a complex scalar (preserves wall
+  // loss). Central FD on the cross-section EVP via the complex kₙ accessor; step is
+  // fd_rel_·max(|ω|, 1).
   std::unique_ptr<ComplexOperator> BuildJacobianTerm(double omega) const
   {
     if (Mwp_p_.empty())
@@ -114,19 +227,21 @@ public:
     std::vector<std::complex<double>> coeffs(Mwp_p_.size());
     for (std::size_t k = 0; k < port_indices_.size(); k++)
     {
-      const double kp = space_op_.GetWavePortOp().GetWavePortKn(port_indices_[k],
-                                                                omega + h);
-      const double km = space_op_.GetWavePortOp().GetWavePortKn(port_indices_[k],
-                                                                omega - h);
-      const double dkn_domega = (kp - km) / (2.0 * h);
-      // -i scale on a (i·M_real)-shaped operator gives M_real with real coefficient.
-      coeffs[k] = std::complex<double>(0.0, -dkn_domega);
+      const std::complex<double> kp =
+          space_op_.GetWavePortOp().GetWavePortKnComplex(port_indices_[k], omega + h);
+      const std::complex<double> km =
+          space_op_.GetWavePortOp().GetWavePortKnComplex(port_indices_[k], omega - h);
+      const std::complex<double> dkn_domega = (kp - km) / (2.0 * h);
+      // -i scale on a (i·M_real)-shaped operator gives M_real with the conjugated
+      // factor (matching the kₙ → -i·dkₙ/dω convention used elsewhere).
+      coeffs[k] = std::complex<double>{0.0, -1.0} * dkn_domega;
     }
     return BuildScaled(coeffs);
   }
 
-  // Per-port kₙ,p(ω) (real positive for a propagating mode). Exposed so callers can
-  // diagnose the seed-pencil fit residual against the truth.
+  // Per-port kₙ,p(ω) (real propagating part). Backward-compat scalar accessor used
+  // only by the per-port fit-residual diagnostic; production paths prefer
+  // KnComplex / GetWavePortKnComplex which preserve wall-loss attenuation.
   double Kn(int local_port, double omega) const
   {
     return space_op_.GetWavePortOp().GetWavePortKn(port_indices_[local_port], omega);
@@ -134,40 +249,150 @@ public:
 
   std::size_t NumPorts() const { return port_indices_.size(); }
 
-  // Fit kₙ²(ω) = γ_p ω² + α_p per port (exact for textbook closed/open waveguides:
-  // kₙ² = ω²/c² − ωc²/c²). Two-point fit on real-axis kₙ samples is enough since the
-  // model is two-coefficient. Used to evaluate kₙ analytically at complex λ for the
-  // 6-point off-axis seed sampling, where the cross-section EVP can't be re-run at
-  // complex frequency. After fit, kₙ_p(λ) = √(α_p − γ_p λ²) (where λ = i·ω so
-  // λ² = −ω²).
-  void FitKnSq(double omega_min, double omega_max)
+  // Per-port accessors used by the SLEPc NLEIGS split-form path: expose the
+  // ω-independent boundary mass M_wp_p (constant matrix) and the kₙ² polynomial fit
+  // coefficients (c_0, c_1, ..., c_D ∈ ℂ where kₙ²(ω) = Σ c_j·ω^{2j}) so the solver
+  // can build per-port FN_SQRT(FN_RATIONAL) scalars without re-deriving them.
+  // FitKnSq() must have been called first.
+  const ComplexOperator *GetMatrix(std::size_t local_port) const
   {
-    kn2_alpha_.clear();
-    kn2_gamma_.clear();
-    kn2_alpha_.reserve(Mwp_p_.size());
-    kn2_gamma_.reserve(Mwp_p_.size());
-    const double w1 = omega_min;
-    const double w2 = omega_max;
+    return Mwp_p_[local_port].get();
+  }
+  // Returns the per-port kₙ² polynomial coefficients in ω², lowest-degree first
+  // (c_0 + c_1·ω² + c_2·ω⁴ + ...). Length is fit_order_ + 1.
+  const std::vector<std::complex<double>> &Kn2Coeffs(std::size_t local_port) const
+  {
+    return kn2_coeffs_[local_port];
+  }
+  // Backward-compat scalar accessors. Alpha = c_0, Gamma = c_1. Only valid when
+  // fit_order_ == 1 (the default); higher-order callers must use Kn2Coeffs.
+  std::complex<double> Alpha(std::size_t local_port) const
+  {
+    return kn2_coeffs_[local_port][0];
+  }
+  std::complex<double> Gamma(std::size_t local_port) const
+  {
+    MFEM_VERIFY(kn2_coeffs_[local_port].size() >= 2,
+                "WavePortFactor::Gamma: fit order must be >= 1.");
+    return kn2_coeffs_[local_port][1];
+  }
+  std::size_t FitOrder() const
+  {
+    return kn2_coeffs_.empty() ? 0 : kn2_coeffs_[0].size() - 1;
+  }
+
+  // Fit kₙ²(ω) = Σ_{j=0..D} c_j·ω^{2j} per port with COMPLEX coefficients c_j ∈ ℂ.
+  // D = order argument (default 1 = the historical "α + γ·ω²" two-coefficient fit,
+  // exact for textbook closed/open waveguides and impedance-walled ports). Higher D
+  // captures sub-quadratic deviations that arise near non-TEM port cutoffs, where
+  // modal coupling and edge effects make kₙ²(ω) deviate from quadratic by several
+  // percent — sufficient to keep Newton refinement of HYBRID-Complex stuck at the
+  // fit error and prevent rational-interpolation NLEIGS from converging.
+  //
+  // Sampling: D + 1 equally-spaced real-ω anchors on [omega_min, omega_max], each
+  // evaluated via GetWavePortKnComplex (re-running the cross-section EVP, cached
+  // by WavePortData). Solve a (D+1)·(D+1) Vandermonde system in ω² for c_0..c_D.
+  //
+  // Midpoint validator: a halfway probe at ω_mid compares the truth kₙ²(ω_mid)
+  // (complex) to the polynomial fit. If the relative error in complex magnitude
+  // exceeds 1%, the model is inadequate for this port — typically a skin-depth
+  // wall whose Z_s ∝ √ω makes kₙ²(ω) non-polynomial, or a dispersive ε(ω). The
+  // analytic continuation is still USED in that case — the warning tells the user
+  // the result may be less accurate than expected and suggests bumping fit_order.
+  void FitKnSq(double omega_min, double omega_max, int order = 1)
+  {
+    MFEM_VERIFY(order >= 1, "WavePortFactor::FitKnSq: order must be >= 1.");
+    kn2_coeffs_.clear();
+    kn2_coeffs_.reserve(Mwp_p_.size());
+    const std::size_t N = static_cast<std::size_t>(order) + 1;
+    // (D+1) anchor points evenly spaced on [ω_min, ω_max]. ω_mid is reserved for
+    // the midpoint validator (out-of-sample probe).
+    std::vector<double> w_fit(N);
+    for (std::size_t j = 0; j < N; j++)
+    {
+      w_fit[j] = omega_min + (omega_max - omega_min) * static_cast<double>(j) /
+                                 static_cast<double>(N - 1);
+    }
+    const double w_mid = 0.5 * (omega_min + omega_max);
+    // Vandermonde V_{j,k} = (w_fit[j])^{2k}, k = 0..D. Solve V·c = kn² per port.
+    Eigen::MatrixXd V(N, N);
+    for (std::size_t j = 0; j < N; j++)
+    {
+      double pw = 1.0;
+      const double w2 = w_fit[j] * w_fit[j];
+      for (std::size_t k = 0; k < N; k++)
+      {
+        V(static_cast<Eigen::Index>(j), static_cast<Eigen::Index>(k)) = pw;
+        pw *= w2;
+      }
+    }
+    auto lu = V.partialPivLu();
     for (std::size_t k = 0; k < port_indices_.size(); k++)
     {
-      const double kn1 = space_op_.GetWavePortOp().GetWavePortKn(port_indices_[k], w1);
-      const double kn2 = space_op_.GetWavePortOp().GetWavePortKn(port_indices_[k], w2);
-      const double kn1_sq = kn1 * kn1;
-      const double kn2_sq = kn2 * kn2;
-      // Solve [1, w1²; 1, w2²] [α; γ] = [kn1²; kn2²]
-      const double det = w2 * w2 - w1 * w1;
-      const double gamma = (kn2_sq - kn1_sq) / det;
-      const double alpha = kn1_sq - gamma * w1 * w1;
-      kn2_alpha_.push_back(alpha);
-      kn2_gamma_.push_back(gamma);
+      Eigen::VectorXcd kn2(N);
+      for (std::size_t j = 0; j < N; j++)
+      {
+        const std::complex<double> kn =
+            space_op_.GetWavePortOp().GetWavePortKnComplex(port_indices_[k], w_fit[j]);
+        kn2(static_cast<Eigen::Index>(j)) = kn * kn;
+      }
+      Eigen::VectorXcd c = lu.solve(kn2);
+      std::vector<std::complex<double>> cvec(N);
+      for (std::size_t j = 0; j < N; j++)
+      {
+        cvec[j] = c(static_cast<Eigen::Index>(j));
+      }
+      kn2_coeffs_.push_back(std::move(cvec));
+
+      // Midpoint validator on the complex truth.
+      const std::complex<double> kn_mid_truth =
+          space_op_.GetWavePortOp().GetWavePortKnComplex(port_indices_[k], w_mid);
+      const std::complex<double> kn_mid_truth_sq = kn_mid_truth * kn_mid_truth;
+      // Horner evaluation of the polynomial at ω_mid² (highest degree first).
+      const double s_mid = w_mid * w_mid;
+      std::complex<double> kn_mid_fit_sq = kn2_coeffs_.back()[N - 1];
+      for (std::size_t j = N - 1; j > 0; j--)
+      {
+        kn_mid_fit_sq = kn_mid_fit_sq * s_mid + kn2_coeffs_.back()[j - 1];
+      }
+      const double rel_err = std::abs(kn_mid_fit_sq - kn_mid_truth_sq) /
+                             std::max(std::abs(kn_mid_truth_sq), 1.0e-30);
+      if (rel_err > 0.01)
+      {
+        Mpi::Print(" Warning: wave port {:d} kₙ²(ω) order-{:d} polynomial fit error "
+                   "{:.2e} at midpoint ω={:.3e} (truth kₙ²={:+.3e}{:+.3e}i, fit "
+                   "kₙ²={:+.3e}{:+.3e}i) — analytic-continuation BC may be "
+                   "inaccurate; raise WavePortFitOrder above {:d} or switch to "
+                   "WavePortBCEvaluation=Real\n",
+                   port_indices_[k], order, rel_err, w_mid, kn_mid_truth_sq.real(),
+                   kn_mid_truth_sq.imag(), kn_mid_fit_sq.real(), kn_mid_fit_sq.imag(),
+                   order);
+      }
     }
   }
 
-  // Evaluate kₙ_p analytically at complex λ from the kₙ² fit. λ = i·ω convention;
-  // kₙ²(ω) = γω² + α gives kₙ²(λ) = α − γλ² (since ω² = −λ²).
-  std::complex<double> KnComplex(int local_port, std::complex<double> lambda) const
+  // Evaluate kₙ_p analytically at complex λ from the kₙ² polynomial fit. λ = i·ω
+  // convention; kₙ²(ω) = Σ c_j·ω^{2j} gives kₙ²(λ) = Σ c_j·(-λ²)^j (since ω² = −λ²).
+  // Horner evaluation in s = -λ². Optional anchor argument applies a sign flip when
+  // Re(kn · conj(anchor)) < 0, keeping the propagating-sheet branch across line
+  // search. With a zero anchor the principal sqrt is returned unchanged.
+  std::complex<double> KnComplex(int local_port, std::complex<double> lambda,
+                                 std::complex<double> anchor = {0.0, 0.0}) const
   {
-    return std::sqrt(kn2_alpha_[local_port] - kn2_gamma_[local_port] * lambda * lambda);
+    const auto &c = kn2_coeffs_[local_port];
+    const std::complex<double> s = -lambda * lambda;
+    // Horner: P(s) = (((c_D·s + c_{D-1})·s + ...)·s + c_0).
+    std::complex<double> kn2 = c.back();
+    for (std::size_t j = c.size() - 1; j > 0; j--)
+    {
+      kn2 = kn2 * s + c[j - 1];
+    }
+    std::complex<double> kn = std::sqrt(kn2);
+    if (anchor != std::complex<double>{0.0, 0.0} && std::real(kn * std::conj(anchor)) < 0.0)
+    {
+      kn = -kn;
+    }
+    return kn;
   }
 
   // Build the three monomial-basis coefficient operators of the seed pencil
@@ -189,7 +414,7 @@ public:
     {
       return out;
     }
-    MFEM_VERIFY(kn2_alpha_.size() == Mwp_p_.size(),
+    MFEM_VERIFY(kn2_coeffs_.size() == Mwp_p_.size(),
                 "BuildSeedPencilOffAxis requires FitKnSq to have been called first.");
     MFEM_VERIFY(points.size() >= 3,
                 "BuildSeedPencilOffAxis requires at least 3 sample points.");
@@ -232,8 +457,7 @@ private:
     std::vector<std::complex<double>> coeffs(Mwp_p_.size());
     for (std::size_t k = 0; k < port_indices_.size(); k++)
     {
-      coeffs[k] = std::complex<double>(
-          space_op_.GetWavePortOp().GetWavePortKn(port_indices_[k], omega), 0.0);
+      coeffs[k] = space_op_.GetWavePortOp().GetWavePortKnComplex(port_indices_[k], omega);
     }
     return coeffs;
   }
@@ -253,8 +477,216 @@ private:
   SpaceOperator &space_op_;
   std::vector<int> port_indices_;
   std::vector<std::unique_ptr<ComplexOperator>> Mwp_p_;
-  std::vector<double> kn2_alpha_, kn2_gamma_;
+  // Complex-valued kₙ² polynomial fit coefficients in ω², lowest-degree first:
+  // kₙ²(ω) = Σ_{j=0..D} kn2_coeffs_[port][j]·ω^{2j}. Capturing complex coefficients
+  // is what lets impedance-walled ports preserve wall-loss attenuation through the
+  // closed-form analytic continuation; allowing D > 1 fits sub-quadratic deviation
+  // typical of non-TEM ports near cutoff.
+  std::vector<std::vector<std::complex<double>>> kn2_coeffs_;
   double fd_rel_;
+  // When true, BuildComplex / BuildDComplex re-solve the cross-section EVP at the exact
+  // complex frequency ω = -i·λ instead of using the kₙ²(ω) polynomial fit. Set for the
+  // HYBRID / SLP complex-λ path; NLEIGS keeps the fit (closed-form FN required).
+  bool use_exact_ = false;
+};
+
+// Caches the ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield
+// ABC. The full A2 contribution at a complex eigenparameter λ is
+//   A2_ff(λ) = -1/(2λ) · M_ff   (analytic continuation of i·(0.5/ω)·M_ff under ω = -i·λ)
+// with derivative dA2_ff/dλ = +1/(2λ²) · M_ff. M_ff is stored on the REAL slot of a
+// ComplexOperator wrapper so a single complex coefficient applied via
+// BuildParSumOperator splits into the (fbr, fbi) halves naturally.
+class FarfieldFactor
+{
+public:
+  FarfieldFactor(SpaceOperator &space_op) : space_op_(space_op)
+  {
+    M_ff_ = space_op_.GetFarfieldExtraBoundaryMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  }
+
+  bool empty() const { return M_ff_ == nullptr; }
+
+  // Real-ω stamping (legacy). +i·(0.5/ω)·M_ff so the contribution lives on the
+  // imaginary slot, matching the original FarfieldBoundaryOperator behavior.
+  std::unique_ptr<ComplexOperator> Build(double omega) const
+  {
+    if (!M_ff_)
+    {
+      return {};
+    }
+    return BuildScaled(std::complex<double>{0.0, 0.5 / omega});
+  }
+
+  // Complex-λ stamping: A2_ff(λ) = -1/(2λ)·M_ff.
+  std::unique_ptr<ComplexOperator> BuildComplex(std::complex<double> lambda) const
+  {
+    if (!M_ff_)
+    {
+      return {};
+    }
+    return BuildScaled(-0.5 / lambda);
+  }
+
+  // Real-ω derivative: dA2_ff/dω = -i·(0.5/ω²)·M_ff.
+  std::unique_ptr<ComplexOperator> BuildJacobianTerm(double omega) const
+  {
+    if (!M_ff_)
+    {
+      return {};
+    }
+    return BuildScaled(std::complex<double>{0.0, -0.5 / (omega * omega)});
+  }
+
+  // Complex-λ derivative: dA2_ff/dλ = +1/(2λ²)·M_ff.
+  std::unique_ptr<ComplexOperator> BuildDComplex(std::complex<double> lambda) const
+  {
+    if (!M_ff_)
+    {
+      return {};
+    }
+    return BuildScaled(0.5 / (lambda * lambda));
+  }
+
+  const ComplexOperator *GetMatrix() const { return M_ff_.get(); }
+
+private:
+  std::unique_ptr<ComplexOperator> BuildScaled(std::complex<double> coeff) const
+  {
+    // Use the runtime std::vector overload (the size-1 array overload would require
+    // an explicit-instantiation of BuildParSumOperator<1, ...> that does not exist).
+    std::vector<std::complex<double>> coeffs{coeff};
+    std::vector<const ComplexParOperator *> ops{
+        static_cast<const ComplexParOperator *>(M_ff_.get())};
+    return BuildParSumOperator(coeffs, ops, /*set_essential=*/true);
+  }
+
+  SpaceOperator &space_op_;
+  std::unique_ptr<ComplexOperator> M_ff_;
+};
+
+// Caches the ω-independent boundary mass matrices A_σ_g per surface-conductivity
+// attribute group. A2_σ(λ) = Σ_g f_g(λ) · A_σ_g where f_g(λ) = i·ω/Z(ω) at ω = -i·λ
+// is supplied by SurfaceConductivityOperator::EvaluateScalar. Real-ω stamping evaluates
+// f_g at real ω = |Im λ|; complex-λ stamping evaluates at complex λ directly.
+class SurfSigmaFactor
+{
+public:
+  SurfSigmaFactor(SpaceOperator &space_op) : space_op_(space_op)
+  {
+    const auto &sigma_op = space_op_.GetSurfaceConductivityOp();
+    for (std::size_t g = 0; g < sigma_op.NumGroups(); g++)
+    {
+      auto Ag =
+          space_op_.GetSurfSigmaBoundaryMassMatrix<ComplexOperator>(g, Operator::DIAG_ZERO);
+      if (Ag)
+      {
+        group_indices_.push_back(g);
+        A_sigma_g_.push_back(std::move(Ag));
+      }
+    }
+  }
+
+  bool empty() const { return A_sigma_g_.empty(); }
+
+  std::unique_ptr<ComplexOperator> Build(double omega) const
+  {
+    if (A_sigma_g_.empty())
+    {
+      return {};
+    }
+    return BuildScaled(MakeScalars(std::complex<double>{omega, 0.0}));
+  }
+
+  std::unique_ptr<ComplexOperator> BuildComplex(std::complex<double> lambda) const
+  {
+    if (A_sigma_g_.empty())
+    {
+      return {};
+    }
+    // ω = -i·λ
+    const std::complex<double> omega = std::complex<double>{0.0, -1.0} * lambda;
+    return BuildScaled(MakeScalars(omega));
+  }
+
+  // Finite-difference Jacobian on real-ω axis (analytical d/dλ of
+  // i·ω/Z(ω) = i·ω·(σ·δ)/(1+i)·F is moderately involved with the finite-thickness
+  // F factor; the FD form is correct for either h=0 or h>0 and cheap since EvaluateScalar
+  // is closed-form). Step uses fd_rel_·max(|ω|, 1).
+  std::unique_ptr<ComplexOperator> BuildJacobianTerm(double omega) const
+  {
+    if (A_sigma_g_.empty())
+    {
+      return {};
+    }
+    const double h = 1.0e-4 * std::max(std::abs(omega), 1.0);
+    auto plus = MakeScalars(std::complex<double>{omega + h, 0.0});
+    auto minus = MakeScalars(std::complex<double>{omega - h, 0.0});
+    std::vector<std::complex<double>> dcoeffs(plus.size());
+    for (std::size_t k = 0; k < plus.size(); k++)
+    {
+      // dA2/dω; A2 was built with i·ω/Z(ω) per group → BuildJacobianTerm is the central
+      // FD of that scalar. Multiply by -i to convert to dA2/dλ via dω/dλ = -i, since
+      // λ = i·ω and the upstream NLEPS expects d/dλ but the real-ω path stores it as
+      // d/dω; conversion happens at the caller for HYBRID's funcDA2DOmega.
+      dcoeffs[k] = (plus[k] - minus[k]) / (2.0 * h);
+    }
+    return BuildScaled(dcoeffs);
+  }
+
+  // Analytic complex-λ derivative via central FD on the analytic continuation
+  // EvaluateScalar(complex ω). f(λ) = i·ω/Z(ω) at ω = -i·λ has chain-rule factor
+  // dω/dλ = -i. Step in λ uses fd_rel_·max(|λ|, 1); EvaluateScalar at the perturbed
+  // complex ω is closed-form so the FD is well-conditioned.
+  std::unique_ptr<ComplexOperator> BuildDComplex(std::complex<double> lambda) const
+  {
+    if (A_sigma_g_.empty())
+    {
+      return {};
+    }
+    const double h = 1.0e-4 * std::max(std::abs(lambda), 1.0);
+    const std::complex<double> lam_plus = lambda + h;
+    const std::complex<double> lam_minus = lambda - h;
+    auto plus = MakeScalars(std::complex<double>{0.0, -1.0} * lam_plus);
+    auto minus = MakeScalars(std::complex<double>{0.0, -1.0} * lam_minus);
+    std::vector<std::complex<double>> dcoeffs(plus.size());
+    for (std::size_t k = 0; k < plus.size(); k++)
+    {
+      dcoeffs[k] = (plus[k] - minus[k]) / (2.0 * h);
+    }
+    return BuildScaled(dcoeffs);
+  }
+
+  std::size_t NumGroups() const { return group_indices_.size(); }
+  std::size_t GroupIndex(std::size_t k) const { return group_indices_[k]; }
+  const ComplexOperator *GetMatrix(std::size_t k) const { return A_sigma_g_[k].get(); }
+
+private:
+  std::vector<std::complex<double>> MakeScalars(std::complex<double> omega) const
+  {
+    const auto &sigma_op = space_op_.GetSurfaceConductivityOp();
+    std::vector<std::complex<double>> scalars(group_indices_.size());
+    for (std::size_t k = 0; k < group_indices_.size(); k++)
+    {
+      scalars[k] = sigma_op.EvaluateScalar(group_indices_[k], omega);
+    }
+    return scalars;
+  }
+
+  std::unique_ptr<ComplexOperator>
+  BuildScaled(const std::vector<std::complex<double>> &coeffs) const
+  {
+    std::vector<const ComplexParOperator *> ops;
+    ops.reserve(A_sigma_g_.size());
+    for (const auto &Ag : A_sigma_g_)
+    {
+      ops.push_back(static_cast<const ComplexParOperator *>(Ag.get()));
+    }
+    return BuildParSumOperator(coeffs, ops, /*set_essential=*/true);
+  }
+
+  SpaceOperator &space_op_;
+  std::vector<std::size_t> group_indices_;
+  std::vector<std::unique_ptr<ComplexOperator>> A_sigma_g_;
 };
 
 }  // namespace
@@ -271,34 +703,133 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
 
-  // Wave-port factor: pre-assembled per-port boundary mass operators. The wave-port
-  // contribution to A2(ω) is Σ_p kₙ,p(ω)·Mwp_p — only the scalar kₙ depends on ω, so we
-  // skip rebuilding the boundary mass on every funcA2 call (a hot path for HYBRID
-  // Newton refinement). Empty if there are no wave ports.
+  // Per-BC factors: pre-assemble the ω-independent boundary matrices for each
+  // nonlinear BC (wave port, 2nd-order farfield ABC, surface conductivity), so the
+  // funcA2 hot-path (NLEPS Newton iterates, SLEPc NEP residual evaluations) only
+  // re-evaluates the scalar coefficients per λ — never re-runs an FE assembly.
+  // Empty when the corresponding BC isn't present in the model.
   WavePortFactor wp_factor(space_op);
-  // Check if there are nonlinear terms and, if so, setup interpolation operator.
-  auto funcA2 = [&space_op, &wp_factor](double omega) -> std::unique_ptr<ComplexOperator>
+  FarfieldFactor ff_factor(space_op);
+  SurfSigmaFactor sg_factor(space_op);
+
+  const bool waveport_complex_bc =
+      (iodata.solver.eigenmode.waveport_bc_evaluation == WavePortBCEvaluation::COMPLEX);
+
+  // Exact complex-frequency wave-port solve: when the Complex BC is active, the user
+  // requested the exact path, and the solver is NOT NLEIGS (which needs a closed-form
+  // FN scalar), drive BuildComplex/BuildDComplex to re-solve the cross-section EVP at
+  // ω = -i·λ instead of using the kₙ²(ω) polynomial fit. This eliminates the fit error
+  // that floors Newton convergence on near-cutoff non-TEM ports.
+  const bool use_exact_complex_kn =
+      waveport_complex_bc && iodata.solver.eigenmode.waveport_complex_exact &&
+      iodata.solver.eigenmode.nonlinear_type != NonlinearEigenSolver::NLEIGS;
+  wp_factor.SetUseExactSolve(use_exact_complex_kn);
+
+  // Real-ω stamping (legacy). For each BC, evaluate at real ω = |Im λ|. Wave-port
+  // term is added via the factor's cache; bulk farfield/conductivity could go either
+  // through SpaceOperator::GetExtraSystemMatrix (legacy assembly) or through the new
+  // factors. Routing through the factors when they are non-empty avoids re-running the
+  // boundary assembly on every funcA2 invocation; falls back to the legacy bulk
+  // assembly otherwise (e.g. for any BC not yet factored).
+  auto funcA2_real = [&space_op, &wp_factor, &ff_factor,
+                      &sg_factor](double omega) -> std::unique_ptr<ComplexOperator>
   {
-    // Bulk contributions (farfield, surface conductivity). Wave-port is excluded — it
-    // is added via the factored wp_factor below using the cached Mwp_p.
+    std::vector<std::complex<double>> coeffs;
+    std::vector<const ComplexParOperator *> ops;
     auto bulk = space_op.GetExtraSystemMatrix<ComplexOperator>(
         omega, Operator::DIAG_ZERO, /*include_wave_ports=*/false);
-    auto wp = wp_factor.Build(omega);
-    if (bulk && wp)
-    {
-      return BuildParSumOperator({1.0 + 0.0i, 1.0 + 0.0i}, {bulk.get(), wp.get()});
-    }
     if (bulk)
     {
-      return bulk;
+      coeffs.push_back(1.0 + 0.0i);
+      ops.push_back(static_cast<const ComplexParOperator *>(bulk.get()));
     }
-    return wp;
+    auto wp = wp_factor.Build(omega);
+    if (wp)
+    {
+      coeffs.push_back(1.0 + 0.0i);
+      ops.push_back(static_cast<const ComplexParOperator *>(wp.get()));
+    }
+    if (ops.empty())
+    {
+      return {};
+    }
+    if (ops.size() == 1)
+    {
+      // Single contribution — return it directly to preserve the existing pointer
+      // path (BuildParSumOperator with one operand allocates an unnecessary wrapper).
+      return bulk ? std::move(bulk) : std::move(wp);
+    }
+    return BuildParSumOperator(coeffs, ops);
+  };
+
+  // Complex-λ stamping (analytic continuation). Always installed for the diagnostic
+  // comparison printed at SetInitialGuess; promoted to the production residual /
+  // Jacobian path when WavePortBCEvaluation = COMPLEX. Each factor exposes
+  // BuildComplex(λ) returning Σ (constant matrix) · (scalar holomorphic f_j(λ))
+  // contribution for its BC family. Empty contributions are skipped so the result
+  // is null when no nonlinear BC is present.
+  auto funcA2_complex = [&wp_factor, &ff_factor, &sg_factor](
+                            std::complex<double> lambda) -> std::unique_ptr<ComplexOperator>
+  {
+    std::vector<std::complex<double>> coeffs;
+    std::vector<const ComplexParOperator *> ops;
+    auto wp = wp_factor.BuildComplex(lambda);
+    auto ff = ff_factor.BuildComplex(lambda);
+    auto sg = sg_factor.BuildComplex(lambda);
+    if (wp)
+    {
+      coeffs.push_back(1.0 + 0.0i);
+      ops.push_back(static_cast<const ComplexParOperator *>(wp.get()));
+    }
+    if (ff)
+    {
+      coeffs.push_back(1.0 + 0.0i);
+      ops.push_back(static_cast<const ComplexParOperator *>(ff.get()));
+    }
+    if (sg)
+    {
+      coeffs.push_back(1.0 + 0.0i);
+      ops.push_back(static_cast<const ComplexParOperator *>(sg.get()));
+    }
+    if (ops.empty())
+    {
+      return {};
+    }
+    if (ops.size() == 1)
+    {
+      return wp ? std::move(wp) : (ff ? std::move(ff) : std::move(sg));
+    }
+    return BuildParSumOperator(coeffs, ops);
+  };
+
+  // Top-level funcA2 used for the seed pencil and the legacy callers below. Chooses
+  // the real-ω or complex-λ path based on the config knob, with a uniform double-ω
+  // signature: the complex path interprets the real ω as λ = i·ω (the imaginary λ
+  // axis), which is exactly the trace of the complex-λ operator on real frequencies.
+  auto funcA2 = [&waveport_complex_bc, &funcA2_real,
+                 &funcA2_complex](double omega) -> std::unique_ptr<ComplexOperator>
+  {
+    if (waveport_complex_bc)
+    {
+      return funcA2_complex(std::complex<double>{0.0, omega});
+    }
+    return funcA2_real(omega);
   };
   auto funcP = [&space_op](std::complex<double> a0, std::complex<double> a1,
                            std::complex<double> a2,
-                           double omega) -> std::unique_ptr<ComplexOperator>
+                           std::complex<double> omega) -> std::unique_ptr<ComplexOperator>
   { return space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, omega); };
   const double target = iodata.solver.eigenmode.target;
+  // Populate the wave-port kₙ² fit ahead of any funcA2(target) call. Required when
+  // funcA2 routes to funcA2_complex (WavePortBCEvaluation = COMPLEX) since
+  // BuildComplex relies on kn2_coeffs_; harmless in REAL mode. Order is the
+  // user-configurable polynomial degree in ω² (default 1 = original 2-coefficient
+  // fit; raise to capture sub-quadratic kₙ²(ω) deviation near non-TEM cutoffs).
+  if (!wp_factor.empty())
+  {
+    wp_factor.FitKnSq(target, iodata.solver.eigenmode.target_upper,
+                      iodata.solver.eigenmode.waveport_fit_order);
+  }
   auto A2 = funcA2(target);
   bool has_A2 = (A2 != nullptr);
 
@@ -327,19 +858,25 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     //     Ruhe's Method of Successive Linear Problems (SIAM JNA 1973); see also
     //     COMSOL "linearization point" iteration (Wu et al., CPC 284, 2023) and
     //     SLAC Omega3P self-consistent iteration (Liao-Bai-Lee-Ko 2010).
-    enum class SeedStrategy { Polynomial, OffAxis, FixedOmega };
+    enum class SeedStrategy
+    {
+      Polynomial,
+      OffAxis,
+      FixedOmega
+    };
     SeedStrategy seed_strategy = SeedStrategy::Polynomial;
     if (const char *env = std::getenv("PALACE_NLEPS_SEED"))
     {
       std::string_view sv{env};
-      if (sv == "off-axis") seed_strategy = SeedStrategy::OffAxis;
-      else if (sv == "fixed-omega") seed_strategy = SeedStrategy::FixedOmega;
+      if (sv == "off-axis")
+        seed_strategy = SeedStrategy::OffAxis;
+      else if (sv == "fixed-omega")
+        seed_strategy = SeedStrategy::FixedOmega;
     }
-    Mpi::Print(
-        "\n NLEPS HYBRID seed strategy: {}\n",
-        seed_strategy == SeedStrategy::Polynomial   ? "polynomial (3-pt on-axis)"
-        : seed_strategy == SeedStrategy::OffAxis    ? "off-axis (6-pt LSQ)"
-                                                    : "fixed-omega (constant A2)");
+    Mpi::Print("\n NLEPS HYBRID seed strategy: {}\n",
+               seed_strategy == SeedStrategy::Polynomial ? "polynomial (3-pt on-axis)"
+               : seed_strategy == SeedStrategy::OffAxis  ? "off-axis (6-pt LSQ)"
+                                                         : "fixed-omega (constant A2)");
 
     // Detect wave-port-only A2 (used by both off-axis and fixed-omega paths).
     auto bulk_probe = space_op.GetExtraSystemMatrix<ComplexOperator>(
@@ -355,7 +892,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     else if (seed_strategy == SeedStrategy::OffAxis && wave_port_only)
     {
-      wp_factor.FitKnSq(target, target_max);
+      wp_factor.FitKnSq(target, target_max, iodata.solver.eigenmode.waveport_fit_order);
       const double displacement = 0.1 * target;
       std::vector<std::complex<double>> pts;
       pts.reserve(6);
@@ -459,25 +996,22 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         }
         const double rel_err = (max_abs > 0.0) ? max_rel_num / max_abs : 0.0;
         const double f_target =
-            iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) /
-            (2.0 * M_PI);
+            iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) / (2.0 * M_PI);
         const double f_target_max =
             iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target_max) /
             (2.0 * M_PI);
         if (rel_err > 1.0e-2)
         {
-          Mpi::Warning(
-              "Wave port {:d}: HYBRID linear seed will be poor (order-2 kₙ fit "
-              "residual {:.3e} on [{:.3e}, {:.3e}] GHz exceeds 1%). Quasi-Newton "
-              "refinement may take many iterations or fail to converge.\n",
-              p, rel_err, f_target, f_target_max);
+          Mpi::Warning("Wave port {:d}: HYBRID linear seed will be poor (order-2 kₙ fit "
+                       "residual {:.3e} on [{:.3e}, {:.3e}] GHz exceeds 1%). Quasi-Newton "
+                       "refinement may take many iterations or fail to converge.\n",
+                       p, rel_err, f_target, f_target_max);
         }
         else
         {
-          Mpi::Print(
-              " Wave port {:d} (NLEPS HYBRID seed): order-2 kₙ fit residual {:.3e} "
-              "on [{:.3e}, {:.3e}] GHz\n",
-              p, rel_err, f_target, f_target_max);
+          Mpi::Print(" Wave port {:d} (NLEPS HYBRID seed): order-2 kₙ fit residual {:.3e} "
+                     "on [{:.3e}, {:.3e}] GHz\n",
+                     p, rel_err, f_target, f_target_max);
         }
       }
     }
@@ -504,6 +1038,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (nonlinear_type == NonlinearEigenSolver::SLP)
   {
     Mpi::Warning("SLP nonlinear eigensolver not available without SLEPc, using Hybrid!\n");
+  }
+  if (nonlinear_type == NonlinearEigenSolver::NLEIGS)
+  {
+    Mpi::Warning("NLEIGS nonlinear eigensolver not available with ARPACK, using Hybrid!\n");
   }
   nonlinear_type = NonlinearEigenSolver::HYBRID;
 #endif
@@ -534,6 +1072,93 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                                       iodata.problem.verbose);
       slepc->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);
       slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GENERAL);
+    }
+    else if (nonlinear_type == NonlinearEigenSolver::NLEIGS)
+    {
+      MFEM_VERIFY(waveport_complex_bc,
+                  "NLEIGS requires WavePortBCEvaluation = \"Complex\": the nonlinear "
+                  "operator T(λ) must be holomorphic for rational interpolation. "
+                  "Either set the BC to Complex or pick a different NonlinearType.");
+      MFEM_VERIFY(sg_factor.empty(),
+                  "NLEIGS split-form does not yet support surface-conductivity BCs "
+                  "(skin-depth Z(ω) ∝ √ω is not natively expressible as a SLEPc FN). "
+                  "Use HYBRID or SLP for surf-σ models, or remove the conductivity "
+                  "boundaries to use NLEIGS.");
+      auto nleigs = std::make_unique<slepc::SlepcNEPNLEIGSSolver>(space_op.GetComm(),
+                                                                  iodata.problem.verbose);
+      nleigs->SetType(slepc::SlepcEigenvalueSolver::Type::NLEIGS);
+      nleigs->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GENERAL);
+      nleigs->SetNLEIGSFullBasis(iodata.solver.eigenmode.nleigs_full_basis);
+      nleigs->SetNLEIGSInterpolation(iodata.solver.eigenmode.nleigs_interp_tol,
+                                     iodata.solver.eigenmode.nleigs_interp_deg);
+      nleigs->SetTargetUpper(iodata.solver.eigenmode.target_upper);
+      if (!iodata.solver.eigenmode.nleigs_region.empty())
+      {
+        nleigs->SetNLEIGSRegion(iodata.solver.eigenmode.nleigs_region);
+      }
+      if (!iodata.solver.eigenmode.nleigs_singularities.empty())
+      {
+        // Flat array of (Re, Im) pairs → vector<complex>.
+        const auto &flat = iodata.solver.eigenmode.nleigs_singularities;
+        std::vector<std::complex<double>> xi(flat.size() / 2);
+        for (std::size_t i = 0; i < xi.size(); i++)
+        {
+          xi[i] = {flat[2 * i], flat[2 * i + 1]};
+        }
+        nleigs->SetNLEIGSSingularities(xi);
+      }
+      else if (!wp_factor.empty() &&
+               iodata.solver.eigenmode.nleigs_singularities_per_cut > 0)
+      {
+        // Auto-derive ξ from the per-port wave-port kₙ branch cuts. The split-form
+        // term kₙ_p(λ) = √(α_p − γ_p·λ²) is non-analytic on the branch cut connecting
+        // its branch points λ = ±√(α_p/γ_p). For a propagating (above-cutoff) port
+        // α_p/γ_p < 0, so the branch points are pure-imaginary at ±i·t_bp with
+        // t_bp = √(−α_p/γ_p) = ω_cutoff (nondim); the cut is the imaginary-axis
+        // segment λ = i·t, |t| < t_bp. SLEPc NLEIGS approximates T(λ) with a rational
+        // interpolant whose POLES are chosen (Leja–Bagby) from this ξ set; placing
+        // poles on the cut, clustered toward the branch point (the singularity
+        // nearest the eigenvalue band), lets the interpolant resolve the √. Units are
+        // raw λ = i·ω_nd (NEP runs unscaled, γ = δ = 1) — same as the FN coefficients
+        // and the target. Only the upper-half branch point matters (eigenvalues sit
+        // just above i·t_bp). Keep the count small (default 1 = the branch point
+        // itself): too many poles just below the RG lower bound (= target) pull
+        // spurious "converged" modes onto the boundary.
+        const int n_per_cut = iodata.solver.eigenmode.nleigs_singularities_per_cut;
+        std::vector<std::complex<double>> xi;
+        for (std::size_t p = 0; p < wp_factor.NumPorts(); p++)
+        {
+          const std::complex<double> bp =
+              std::sqrt(wp_factor.Alpha(p) / wp_factor.Gamma(p));  // branch point ±bp
+          const double t_bp = std::abs(bp.imag());
+          if (t_bp < 1.0e-3)
+          {
+            continue;  // TEM-like port: branch at origin, no usable imaginary cut
+          }
+          // Geometric clustering toward t_bp on the upper cut, excluding the origin.
+          // j = 0 → branch point itself (strongest singularity).
+          for (int j = 0; j < n_per_cut; j++)
+          {
+            const double t = t_bp * std::pow(0.5, j);
+            if (t < 0.5)
+            {
+              break;  // stay clear of the SLEPc near-zero singularity guard
+            }
+            xi.emplace_back(0.0, t);
+          }
+        }
+        if (!xi.empty())
+        {
+          nleigs->SetNLEIGSSingularities(xi);
+          Mpi::Print(" NLEIGS: auto-derived {:d} branch-cut singularit{} from {:d} "
+                     "wave-port kₙ factor(s)\n",
+                     xi.size(), xi.size() == 1 ? "y" : "ies", wp_factor.NumPorts());
+        }
+      }
+      // Install the same preconditioner builder SLP uses; NLEIGS' inner KSPs
+      // (one per rational interpolation shift) wrap it in a PCSHELL.
+      nleigs->SetPreconditionerBuilder(funcP);
+      slepc = std::move(nleigs);
     }
     else
     {
@@ -568,11 +1193,100 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   EigenvalueSolver::ScaleType scale = iodata.solver.eigenmode.scale
                                           ? EigenvalueSolver::ScaleType::NORM_2
                                           : EigenvalueSolver::ScaleType::NONE;
+  // Lifetime extension for NLEIGS' zero-C placeholder. Declared at function scope so
+  // it outlives the eigen->Solve() call below (the solver holds a non-owning pointer
+  // into it via SlepcNEPNLEIGSSolver::opC_ref).
+  std::unique_ptr<ComplexOperator> C_zero_for_nleigs;
   if (nonlinear_type == NonlinearEigenSolver::SLP)
   {
     eigen->SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);
     eigen->SetExtraSystemMatrix(funcA2);
+    eigen->SetExtraSystemMatrixComplex(funcA2_complex);
+    eigen->SetUseComplexA2(waveport_complex_bc);
     eigen->SetPreconditionerUpdate(funcP);
+  }
+  else if (nonlinear_type == NonlinearEigenSolver::NLEIGS)
+  {
+#if defined(PALACE_WITH_SLEPC)
+    auto *nleigs = dynamic_cast<slepc::SlepcNEPNLEIGSSolver *>(eigen.get());
+    MFEM_VERIFY(nleigs, "NLEIGS path requires SLEPc backend.");
+    // NLEIGS split form requires a non-null C. If Palace has no damping (no
+    // 1st-order farfield, no surface conductivity, no surface impedance, no lumped
+    // resistive port — typical for the adapter test case), C is a null unique_ptr.
+    // Build a 0·K placeholder so the polynomial λC slot has a valid operator.
+    // Mirrors the approach used by the HYBRID seed-pencil path when C is null.
+    const ComplexOperator *C_for_split = C.get();
+    if (!C_for_split)
+    {
+      std::vector<std::complex<double>> coeffs{0.0 + 0.0i};
+      std::vector<const ComplexParOperator *> ops{
+          static_cast<const ComplexParOperator *>(K.get())};
+      C_zero_for_nleigs = BuildParSumOperator(coeffs, ops);
+      C_for_split = C_zero_for_nleigs.get();
+    }
+    // SetOperators registers the polynomial pencil terms (K, λC, λ²M) via
+    // AddSplitFormTerm. Subsequent AddSplitFormTerm calls append the BC factor terms
+    // for wave ports and (optionally) the 2nd-order ABC.
+    nleigs->SetOperators(*K, *C_for_split, *M, EigenvalueSolver::ScaleType::NONE);
+    // Per-port wave-port term: T_wp_p(λ) = M_wp_p · kn_p(λ) with
+    // kn_p(λ) = √(Σ_{j=0..D} c_j · (-λ²)^j). Build the FN as
+    // FN_COMBINE_COMPOSE(FN_RATIONAL([a_{2D}, 0, a_{2D-2}, ..., 0, a_0]), FN_SQRT)
+    // with a_{2j} = c_j · (-1)^j. SLEPc stores coefficients highest-degree-first.
+    // Default fit order D=1 reduces to the textbook two-term [-γ, 0, α].
+    for (std::size_t p = 0; p < wp_factor.NumPorts(); p++)
+    {
+      const auto &c = wp_factor.Kn2Coeffs(p);
+      const std::size_t D = c.size() - 1;      // poly degree in ω²
+      const std::size_t poly_len = 2 * D + 1;  // poly degree in λ is 2D
+      std::vector<PetscScalar> pcoeff(poly_len, 0.0 + 0.0i);
+      // kn²(λ) = Σ_{k=0..D} c_k·(-λ²)^k = Σ_k c_k·(-1)^k·λ^{2k}, so the coefficient of
+      // λ^{2k} is a_{2k} = (-1)^k·c_k. SLEPc FNRationalSetNumerator stores coefficients
+      // HIGHEST-degree-first, so a_{2k} (degree 2k) goes at index (2D − 2k). Odd-power
+      // slots stay zero. Default D=1 ⇒ pcoeff = [-c_1, 0, c_0] = [-γ, 0, α], the
+      // textbook kn² = α − γλ².
+      for (std::size_t k = 0; k <= D; k++)
+      {
+        const std::size_t idx = 2 * (D - k);  // highest-degree-first index of λ^{2k}
+        const double sign = (k % 2 == 0) ? 1.0 : -1.0;
+        pcoeff[idx] = sign * c[k];
+      }
+      FN h, sq, fn_kn;
+      PalacePetscCall(FNCreate(space_op.GetComm(), &h));
+      PalacePetscCall(FNSetType(h, FNRATIONAL));
+      PalacePetscCall(
+          FNRationalSetNumerator(h, static_cast<PetscInt>(poly_len), pcoeff.data()));
+      PalacePetscCall(FNCreate(space_op.GetComm(), &sq));
+      PalacePetscCall(FNSetType(sq, FNSQRT));
+      PalacePetscCall(FNCreate(space_op.GetComm(), &fn_kn));
+      PalacePetscCall(FNSetType(fn_kn, FNCOMBINE));
+      PalacePetscCall(FNCombineSetChildren(fn_kn, FN_COMBINE_COMPOSE, h, sq));
+      // The constant matrix Mwp_p_ is stored with the curl-curl coefficient on the
+      // imag slot of its ComplexOperator (i·M_real). Multiplying by the bare scalar
+      // kn(λ) reproduces the BC stamping +i·kn·M_real.
+      nleigs->AddSplitFormTerm(wp_factor.GetMatrix(p), fn_kn);
+      // h and sq are children of fn_kn — SLEPc takes references; release our
+      // explicit references so destruction follows the parent FN.
+      PalacePetscCall(FNDestroy(&h));
+      PalacePetscCall(FNDestroy(&sq));
+    }
+    // Farfield 2nd-order ABC term: f_ff(λ) = -0.5/λ. Constant matrix M_ff is on the
+    // real slot of its ComplexOperator wrapper, so the FN scalar carries the full
+    // complex coefficient. Build as FN_RATIONAL with numerator [-0.5] and
+    // denominator [1, 0] (Horner convention: λ).
+    if (!ff_factor.empty())
+    {
+      FN fn_ff;
+      PalacePetscCall(FNCreate(space_op.GetComm(), &fn_ff));
+      PalacePetscCall(FNSetType(fn_ff, FNRATIONAL));
+      PetscScalar num_ff[1] = {-0.5 + 0.0i};
+      PetscScalar den_ff[2] = {1.0 + 0.0i, 0.0 + 0.0i};
+      PalacePetscCall(FNRationalSetNumerator(fn_ff, 1, num_ff));
+      PalacePetscCall(FNRationalSetDenominator(fn_ff, 2, den_ff));
+      nleigs->AddSplitFormTerm(ff_factor.GetMatrix(), fn_ff);
+    }
+#else
+    MFEM_ABORT("NLEIGS requires SLEPc.");
+#endif
   }
   else
   {
@@ -675,7 +1389,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) / (2 * M_PI);
     Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
   }
-  if (C || has_A2 || nonlinear_type == NonlinearEigenSolver::SLP)
+  if (C || has_A2 || nonlinear_type == NonlinearEigenSolver::SLP ||
+      nonlinear_type == NonlinearEigenSolver::NLEIGS)
   {
     // Search for eigenvalues closest to λ = iσ.
     eigen->SetShiftInvert(1i * target);
@@ -689,6 +1404,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     else if (nonlinear_type == NonlinearEigenSolver::SLP)
     {
       eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE);
+    }
+    else if (nonlinear_type == NonlinearEigenSolver::NLEIGS)
+    {
+      // NLEIGS works on a region (RG), not a target ordering — TARGET_IMAGINARY is
+      // the natural choice for eigenvalues clustered near the imaginary λ axis.
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
     }
     else
     {
@@ -719,7 +1440,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i,
                                     K.get(), C.get(), M.get(), A2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
-      1.0 + 0.0i, 1i * target, -target * target + 0.0i, target);
+      1.0 + 0.0i, 1i * target, -target * target + 0.0i, target + 0.0i);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                 &space_op.GetH1Spaces());
   ksp->SetOperators(*A, *P);
@@ -786,30 +1507,88 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       qn->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
     }
+    // Install the residual builder. funcA2 is the top-level switch (real-ω vs
+    // complex-λ) that returns the SAME operator either way when called on the
+    // imaginary λ axis — so we install funcA2 (the switched form) as the legacy
+    // double-ω callback.
     qn->SetExtraSystemMatrix(funcA2);
-    if (!wp_factor.empty())
+    // Install the complex-λ A2 builder unconditionally so the diagnostic at
+    // SetInitialGuess can always print abs(T_analytic) for comparison. The flag
+    // SetUseComplexA2 (set just below) toggles whether the production residual /
+    // Jacobian path uses it; in REAL mode it does not, preserving baselines.
+    qn->SetExtraSystemMatrixComplex(funcA2_complex);
+    qn->SetUseComplexA2(waveport_complex_bc);
+
+    // Analytic Jacobians. The complex-λ Jacobian is the sum of per-factor
+    // BuildDComplex terms; the real-ω Jacobian uses BuildJacobianTerm(double ω).
+    auto funcDA2DOmega = [&wp_factor, &ff_factor,
+                          &sg_factor](double omega) -> std::unique_ptr<ComplexOperator>
     {
-      // Analytical wave-port Jacobian via Σ_p (dkₙ,p/dω)·Mwp_p. Bulk farfield/surface-σ
-      // contributions to dA2/dω are not yet exposed analytically — when present, the
-      // wave-port-only derivative is incomplete and the solver falls back to FD instead
-      // (handled by NOT installing the derivative callback). For most of the wave-port
-      // dispersion benchmarks the bulk part is absent and the analytical path applies.
-      auto bulk_probe = space_op.GetExtraSystemMatrix<ComplexOperator>(
-          target, Operator::DIAG_ZERO, /*include_wave_ports=*/false);
-      if (!bulk_probe)
+      std::vector<std::complex<double>> coeffs;
+      std::vector<const ComplexParOperator *> ops;
+      auto wp = wp_factor.BuildJacobianTerm(omega);
+      auto ff = ff_factor.BuildJacobianTerm(omega);
+      auto sg = sg_factor.BuildJacobianTerm(omega);
+      if (wp)
       {
-        qn->SetExtraSystemMatrixDerivative(
-            [&wp_factor](double omega) -> std::unique_ptr<ComplexOperator>
-            { return wp_factor.BuildJacobianTerm(omega); });
-        // Diagnostic: provide the analytic-continuation A2(λ) so SetInitialGuess
-        // can compare T_re (kₙ on real axis) vs T_analytic (full complex λ). The
-        // off-axis seed path above already calls FitKnSq(); call here too in case
-        // wave_port_only branch above wasn't taken.
-        wp_factor.FitKnSq(target, iodata.solver.eigenmode.target_upper);
-        qn->SetExtraSystemMatrixComplex(
-            [&wp_factor](std::complex<double> lam) -> std::unique_ptr<ComplexOperator>
-            { return wp_factor.BuildComplex(lam); });
+        coeffs.push_back(1.0 + 0.0i);
+        ops.push_back(static_cast<const ComplexParOperator *>(wp.get()));
       }
+      if (ff)
+      {
+        coeffs.push_back(1.0 + 0.0i);
+        ops.push_back(static_cast<const ComplexParOperator *>(ff.get()));
+      }
+      if (sg)
+      {
+        coeffs.push_back(1.0 + 0.0i);
+        ops.push_back(static_cast<const ComplexParOperator *>(sg.get()));
+      }
+      if (ops.empty())
+        return {};
+      if (ops.size() == 1)
+        return wp ? std::move(wp) : (ff ? std::move(ff) : std::move(sg));
+      return BuildParSumOperator(coeffs, ops);
+    };
+    auto funcDA2DLambdaComplex =
+        [&wp_factor, &ff_factor,
+         &sg_factor](std::complex<double> lambda) -> std::unique_ptr<ComplexOperator>
+    {
+      std::vector<std::complex<double>> coeffs;
+      std::vector<const ComplexParOperator *> ops;
+      auto wp = wp_factor.BuildDComplex(lambda);
+      auto ff = ff_factor.BuildDComplex(lambda);
+      auto sg = sg_factor.BuildDComplex(lambda);
+      if (wp)
+      {
+        coeffs.push_back(1.0 + 0.0i);
+        ops.push_back(static_cast<const ComplexParOperator *>(wp.get()));
+      }
+      if (ff)
+      {
+        coeffs.push_back(1.0 + 0.0i);
+        ops.push_back(static_cast<const ComplexParOperator *>(ff.get()));
+      }
+      if (sg)
+      {
+        coeffs.push_back(1.0 + 0.0i);
+        ops.push_back(static_cast<const ComplexParOperator *>(sg.get()));
+      }
+      if (ops.empty())
+        return {};
+      if (ops.size() == 1)
+        return wp ? std::move(wp) : (ff ? std::move(ff) : std::move(sg));
+      return BuildParSumOperator(coeffs, ops);
+    };
+    const bool any_factor_active =
+        !wp_factor.empty() || !ff_factor.empty() || !sg_factor.empty();
+    if (any_factor_active)
+    {
+      qn->SetExtraSystemMatrixDerivative(funcDA2DOmega);
+      // Install the complex-λ Jacobian unconditionally; it's only consulted by the
+      // solver when use_complex_a2 is true, and being installed lets us swap
+      // between modes without re-installing.
+      qn->SetExtraSystemMatrixDerivativeComplex(funcDA2DLambdaComplex);
     }
     qn->SetPreconditionerUpdate(funcP);
     qn->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);

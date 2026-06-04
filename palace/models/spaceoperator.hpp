@@ -100,6 +100,16 @@ private:
                                      MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi,
                                      bool include_wave_ports = true);
+  // Complex-ω overload: stamps frequency-dependent boundary terms (wave port, 2nd-order
+  // ABC, surface conductivity) at a genuinely complex ω = -i·λ, so the assembled
+  // preconditioner matches the nonlinear eigensolver's exact complex system matrix. For
+  // real ω it reproduces the double overload.
+  void AddExtraSystemBdrCoefficients(std::complex<double> omega,
+                                     MaterialPropertyCoefficient &dfbr,
+                                     MaterialPropertyCoefficient &dfbi,
+                                     MaterialPropertyCoefficient &fbr,
+                                     MaterialPropertyCoefficient &fbi,
+                                     bool include_wave_ports = true);
   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
 
@@ -107,15 +117,18 @@ private:
   bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS);
   bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &RHS);
 
-  // Helper functions to build the preconditioner matrix.
+  // Helper functions to build the preconditioner matrix. `a3` is the boundary-term
+  // frequency: complex for the complex-arithmetic overloads (so the wave-port / ABC /
+  // surf-σ terms can match the nonlinear eigensolver's complex system matrix), real for
+  // the real-arithmetic fallback.
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
-                              std::complex<double> a2, double a3,
+                              std::complex<double> a2, std::complex<double> a3,
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec,
                               std::vector<std::unique_ptr<Operator>> &bi_vec,
                               std::vector<std::unique_ptr<Operator>> &bi_aux_vec);
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
-                              std::complex<double> a2, double a3,
+                              std::complex<double> a2, std::complex<double> a3,
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec);
   void AssemblePreconditioner(double a0, double a1, double a2, double a3,
@@ -153,9 +166,13 @@ public:
   auto &GetLumpedPortOp() { return lumped_port_op; }
   auto &GetWavePortOp() { return wave_port_op; }
   auto &GetSurfaceCurrentOp() { return surf_j_op; }
+  auto &GetFarfieldOp() { return farfield_op; }
+  auto &GetSurfaceConductivityOp() { return surf_sigma_op; }
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
+  const auto &GetFarfieldOp() const { return farfield_op; }
+  const auto &GetSurfaceConductivityOp() const { return surf_sigma_op; }
 
   const auto &GetPortExcitations() const { return port_excitation_helper; }
 
@@ -211,6 +228,26 @@ public:
   std::unique_ptr<OperType>
   GetWavePortBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
 
+  // Construct the ω-independent boundary curl-curl matrix M_ff for the 2nd-order
+  // farfield ABC, with unit coefficient. The full A2 contribution at frequency ω is
+  // `i·(0.5/ω)·M_ff` (real-ω stamping) or `(-0.5/λ)·M_ff` (complex-λ analytic
+  // continuation under λ = i·ω). Returns a null pointer if the absorbing BC has
+  // order < 2 or contributes no DoFs.
+  template <typename OperType>
+  std::unique_ptr<OperType>
+  GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy diag_policy);
+
+  // Construct the ω-independent per-attribute-group boundary mass matrix A_σ_g for the
+  // surface conductivity BC, with unit coefficient. The per-group complex scalar
+  // i·ω/Z(ω) is applied at runtime by SurfSigmaFactor (real-ω stamping) or its
+  // analytic continuation in λ (complex-λ stamping). The `boundary_idx` selects which
+  // ConductivityData entry in the SurfaceConductivityOperator's list this matrix
+  // corresponds to. Returns null when that entry contributes no DoFs.
+  template <typename OperType>
+  std::unique_ptr<OperType>
+  GetSurfSigmaBoundaryMassMatrix(std::size_t boundary_idx,
+                                 Operator::DiagonalPolicy diag_policy);
+
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:
   //                     A = a0 K + a1 C + a2 (Mr + i Mi) + A2.
@@ -235,9 +272,13 @@ public:
   // is real-valued (Mr > 0, Mi < 0, |Mr + Mi| is done on the material property coefficient,
   // not the matrix entries themselves):
   //             B = a0 K + a1 C -/+ a2 |Mr + Mi| + A2r(a3) + A2i(a3).
+  // `a3` (the boundary-term frequency) follows ScalarType: a genuinely complex ω for the
+  // ComplexOperator instantiation lets the wave-port / ABC / surf-σ terms match the
+  // nonlinear eigensolver's exact complex system matrix; the real Operator instantiation
+  // keeps a real a3.
   template <typename OperType, typename ScalarType>
   std::unique_ptr<OperType> GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
-                                                    ScalarType a2, double a3);
+                                                    ScalarType a2, ScalarType a3);
 
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const
@@ -292,8 +333,7 @@ public:
   // units. This is locally in the same direction as E_t, but because of lumped ports can
   // have multiple attributes ports with different surface impedances, they are not just
   // proportional to each other.
-  void GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
-                                                ComplexVector &Htcn_primary);
+  void GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx, ComplexVector &Htcn_primary);
 
   // Fill vector corresponding to the tangential modal electric field E_t at a wave port,
   // evaluated at the reference frequency `omega_ref`. Used by the synthesis code path to

@@ -656,8 +656,8 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
                                     std::complex<double>(-omega * omega, 0.0), K.get(),
                                     C.get(), M.get(), A2.get());
-  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
-                                                             -omega * omega + 0.0i, omega);
+  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
+      1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega + 0.0i);
   ksp->SetOperators(*A, *P);
 
   // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω). When RHS2 is
@@ -1225,8 +1225,8 @@ std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() cons
   return refined;
 }
 
-RomOperator::WavePortRegime
-RomOperator::SelectWavePortRegime(int port_idx, double rel_err, bool meets_tol) const
+RomOperator::WavePortRegime RomOperator::SelectWavePortRegime(int port_idx, double rel_err,
+                                                              bool meets_tol) const
 {
   // AUTO: polynomial if residual meets tolerance, else augmented. Force settings
   // override but emit a warning when the user-requested regime is incompatible with
@@ -1322,8 +1322,8 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
       Mpi::Print(
           " Wave port {:d}: polynomial synthesis residual {:.3e} (tol {:.3e}, α₀={:.3e}, "
           "α₁={:.3e}, α₂={:.3e})\n",
-          port_idx, fit.rel_err_polynomial, waveport_synthesis_tol, fit.alpha0,
-          fit.alpha1, fit.alpha2);
+          port_idx, fit.rel_err_polynomial, waveport_synthesis_tol, fit.alpha0, fit.alpha1,
+          fit.alpha2);
     }
     return fit;
   }
@@ -1395,8 +1395,8 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
              "α₀={:.3e}, α₁={:.3e}, α₂={:.3e}, d={:.3e})\n",
              port_idx, fit.rel_err_polynomial, fit.rel_err_augmented,
              waveport_synthesis_tol, pr.poles.size(), pr.poles.size() == 1 ? "" : "s",
-             rank_used, aux_per_port, aux_per_port == 1 ? "" : "s", fit.alpha0,
-             fit.alpha1, fit.alpha2, aaa_d);
+             rank_used, aux_per_port, aux_per_port == 1 ? "" : "s", fit.alpha0, fit.alpha1,
+             fit.alpha2, aaa_d);
   fit.aux = std::move(blk);
   return fit;
 }
@@ -1464,8 +1464,7 @@ RomOperator::AugmentedPencil RomOperator::BuildAugmentedPencil(
           aug.Kr(i, aux_row) = coupling * blk.u_dirs[j](i);
           aug.Kr(aux_row, i) = coupling * blk.u_dirs[j](i);
         }
-        aux_labels.push_back(
-            fmt::format("waveport_{:d}_p{:d}d{:d}", blk.port_idx, k, j));
+        aux_labels.push_back(fmt::format("waveport_{:d}_p{:d}d{:d}", blk.port_idx, k, j));
         aux_row++;
       }
     }
@@ -1554,8 +1553,7 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
     Cr_total += Cr;
   }
 
-  auto aug = BuildAugmentedPencil(Kr_total, Cr_total, Mr_total, aux_blocks,
-                                  out.aux_labels);
+  auto aug = BuildAugmentedPencil(Kr_total, Cr_total, Mr_total, aux_blocks, out.aux_labels);
 
   // v_d port-row scaling: extend with 1's for aux rows (no port-impedance scaling on
   // aux states — they're internal circuit nodes).
@@ -1569,8 +1567,7 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   auto v_d_aug = v_conc_aug.asDiagonal();
 
   auto unit_henry_inv = 1.0 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
-  out.L_inv =
-      std::make_unique<mat_t>((unit_henry_inv * v_d_aug * aug.Kr * v_d_aug).eval());
+  out.L_inv = std::make_unique<mat_t>((unit_henry_inv * v_d_aug * aug.Kr * v_d_aug).eval());
 
   auto unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
   out.C = std::make_unique<mat_t>((unit_farad * v_d_aug * aug.Mr * v_d_aug).eval());
@@ -1581,8 +1578,7 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   if (has_R_inv)
   {
     auto unit_ohm_inv = 1.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
-    out.R_inv =
-        std::make_unique<mat_t>((unit_ohm_inv * v_d_aug * aug.Cr * v_d_aug).eval());
+    out.R_inv = std::make_unique<mat_t>((unit_ohm_inv * v_d_aug * aug.Cr * v_d_aug).eval());
   }
 
   return out;
