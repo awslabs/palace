@@ -1,18 +1,12 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Catch2 ports of the Julia regression cases in test/examples/runtests.jl.
-// Each case is tagged [Serial][Parallel][GPU][Regression] (regression
-// is a category, orthogonal to the [Serial]/[Parallel]/[GPU] execution
-// styles; the same case is valid at any rank count and on either CPU
-// or GPU). The two transmon eigen cases additionally carry [Long] —
-// the default regression sweep is registered with TEST_SPEC
-// `[Regression]~[Long]` so they run only under the long-tests CI
-// workflow.
-//
-// Per-case rtol / atol / excluded_columns / skip_rowcount track the
-// Julia values verbatim, with variable names from the original file
-// preserved in comments where they change between cases.
+// Regression cases: full Palace solves diffed against test/examples/ref/.
+// Each case carries [Serial][Parallel][GPU][Regression] (the category
+// tag is orthogonal to execution style — every case is valid at any
+// rank count and on either CPU or GPU). [Long] modifies a regression
+// case to be skipped from the default sweep and run only under the
+// long-tests CI workflow.
 
 #include <algorithm>
 #include <cmath>
@@ -220,7 +214,7 @@ TEST_CASE("cylinder_floquet", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("cylinder", "floquet.json", "floquet", opts);
 }
 
-// cylinder/driven_wave bumps reltol to 1e-3 in Julia.
+// Looser rtol than the cylinder eigen cases above (partition-sensitive).
 TEST_CASE("cylinder_driven_wave", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -300,9 +294,9 @@ TEST_CASE("cpw_wave_uniform", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("cpw", "cpw_wave_uniform.json", "wave_uniform", opts);
 }
 
-// Julia kept adaptive frequency sweeps as smoke tests only: enforce the
-// output tree, CSV set, headers, and row/column structure, but skip all
-// numeric comparisons with infinite tolerances.
+// Adaptive frequency sweeps run as smoke tests: structure (output tree,
+// CSV set, headers, row/column counts) is enforced, numeric comparison
+// is disabled via infinite tolerances.
 TEST_CASE("cpw_lumped_adaptive", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -325,8 +319,8 @@ TEST_CASE("cpw_lumped_eigen", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
-  // Match Julia parity: drop eigenmode phase-sensitive port columns and
-  // Q_ext / κ_ext normalisation values; keep the farfield magnitude check.
+  // Drop phase-sensitive port columns and Q_ext / κ_ext normalisations;
+  // keep the farfield magnitude check.
   opts.excluded_columns = {"Maximum",      "Minimum", "Mean",      "Error (Bkwd.)",
                            "Error (Abs.)", "Re{V[",   "Im{V[",     "Re{I[",
                            "Im{I[",        "Q_ext",   "\u03ba_ext"};
@@ -425,8 +419,6 @@ TEST_CASE("cavity2d_driven", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("cavity2d", "cavity2d_driven.json", "driven", opts);
 }
 
-// Julia switches back to reltol=1e-4, abstol=1e-10 for the remaining
-// cavity2d cases.
 TEST_CASE("cavity2d_electrostatic", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
