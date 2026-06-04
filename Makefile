@@ -25,6 +25,10 @@ docs-generate-config:
 	$(JULIA) --project=docs --color=yes docs/generate_config_docs.jl
 
 # Tests
+#
+# Runs the [Regression] cases against an existing CMake build tree.
+# Override BUILD_DIR if your build lives elsewhere; PALACE_REGRESSION_NUMPROC
+# (default 2, set in test/unit/CMakeLists.txt) controls per-case rank count.
+BUILD_DIR ?= build
 tests:
-	$(JULIA) --project=test/examples -e 'using Pkg; Pkg.instantiate()'
-	$(JULIA) --project=test/examples --color=yes test/examples/runtests.jl
+	cd $(BUILD_DIR)/palace-build/test/unit && ctest -L "^regression$$" --output-on-failure
