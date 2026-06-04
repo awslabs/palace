@@ -19,33 +19,22 @@ class Table;
 namespace palace::test
 {
 
-// Callback signature for per-file custom checks. Both Tables are loaded
-// raw from disk (no row truncation, no column pruning) so lambdas can
-// index by column name or position without surprises. Used for Julia's
-// `custom_tests` entries like `test_farfield` that compare magnitudes
-// only (phase is not reproducible across partitions). Tables are passed
-// by non-const reference because palace::Table's indexing operators are
+// Callback signature for per-file custom checks. Tables are passed by
+// non-const reference because palace::Table's indexing operators are
 // non-const; the data itself is never mutated through them.
 using CustomCheck = std::function<void(Table &actual, Table &reference)>;
 
-// How a regression case consumes a command-line solver override.
-// The old Julia harness intentionally mixed `linear_solver=solver`
-// with `linear_solver="Default"`; preserve that per-case policy here
-// rather than applying one global override to every config.
+// How a regression case consumes the global CLI solver override.
 enum class SolverOverridePolicy
 {
-  // Use the global Catch2 CLI value (`--palace-linear-solver` /
-  // `--palace-eigensolver`), defaulting to "Default" like the Julia
-  // ArgConfig did.
+  // Use the global value (`--palace-linear-solver` / `--palace-eigensolver`).
+  // Empty global means "no override; honour the case JSON".
   UseGlobalOverride,
-  // Ignore the global CLI value and inject "Default" for this case.
+  // Ignore the global and inject "Default" for this case.
   ForceDefault
 };
 
-// Options controlling a single regression case. Mirrors the Julia
-// testcase(...) keyword args: numeric tolerance, optional excluded
-// column substrings, skip_rowcount (eigen/adaptive cases), per-case
-// solver override policy, and per-file custom checks.
+// Options controlling a single regression case.
 struct RegressionOptions
 {
   double rtol = 1e-6;
@@ -55,16 +44,13 @@ struct RegressionOptions
   std::vector<std::string> excluded_columns;
   // Allow row-count mismatch (eigen / adaptive cases).
   bool skip_rowcount = false;
-  // Expected volumetric-output directories. These mirror Julia's
-  // `paraview_fields` / `gridfunction_fields` testcase keywords and
-  // are checked against the generated postpro tree on rank 0.
+  // Expected volumetric-output directories.
   bool paraview_fields = true;
   bool gridfunction_fields = false;
-  // Match Julia's per-case choice of `linear_solver=solver` vs
-  // `linear_solver="Default"` (and the same for eigen_solver).
   SolverOverridePolicy linear_solver_policy = SolverOverridePolicy::UseGlobalOverride;
   SolverOverridePolicy eigen_solver_policy = SolverOverridePolicy::UseGlobalOverride;
-  // Custom per-file checks keyed by CSV basename (e.g. "farfield-rE.csv").
+  // Custom per-file checks keyed by relative path under postpro/ (e.g.
+  // "farfield-rE.csv", "iteration1/port-S.csv").
   std::unordered_map<std::string, CustomCheck> custom_checks;
 };
 
@@ -86,8 +72,8 @@ std::filesystem::path GetExamplesDir();
 std::filesystem::path GetRegressionRefDir();
 std::filesystem::path GetRegressionRunDir();
 
-// Solver / device overrides mirroring the old Julia flags. Empty =
-// no override; the config JSON value is used.
+// Solver / device overrides. Empty = no override; the config JSON value
+// is used.
 void SetSolverOverride(std::string value);
 void SetEigenSolverOverride(std::string value);
 void SetDeviceOverride(std::string value);

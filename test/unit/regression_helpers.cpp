@@ -24,6 +24,7 @@
 #include "utils/iodata.hpp"
 #include "utils/omp.hpp"
 #include "utils/tablecsv.hpp"
+#include "utils/timer.hpp"
 
 namespace palace::test
 {
@@ -36,11 +37,8 @@ namespace
 std::string g_examples_dir_override;
 std::string g_regression_ref_dir_override;
 std::string g_regression_run_dir_override;
-// These two default to the old Julia ArgConfig defaults. An omitted
-// Catch2 flag should still inject "Default" for cases whose Julia port
-// used `linear_solver=solver` / `eigen_solver=eigensolver`.
-std::string g_solver_override = "Default";
-std::string g_eigensolver_override = "Default";
+std::string g_solver_override;
+std::string g_eigensolver_override;
 std::string g_device_override;
 
 // Recursively collect CSV and non-CSV metadata filenames relative to
@@ -91,10 +89,8 @@ FileListing ListRegressionFiles(const std::filesystem::path &root,
   return out;
 }
 
-// Does `header` partial-match any excluded-column substring? Mirrors
-// Julia's `Not(Cols(contains(col)))` behaviour. The match is on the
-// column's human-readable `header_text`; Table::has() keys off the
-// opaque "col_N" name assigned at parse time, which isn't what we want.
+// Substring match on the human-readable `header_text` (not Table's
+// opaque "col_N" key). Empty patterns are ignored.
 bool HeaderExcluded(const std::string &header, const std::vector<std::string> &excl)
 {
   for (const auto &e : excl)
@@ -200,12 +196,9 @@ Table LoadTable(const std::filesystem::path &path)
   return std::move(wrapped.table);
 }
 
-// Shared structural CSV checks. Julia first asserted raw column count,
-// optionally asserted row count, dropped excluded columns, then asserted
-// names before either custom_tests or the default isapprox broadcast.
-// We keep the raw table intact for custom callbacks, but run the same
-// shape/header validation for every CSV first so custom checks cannot
-// silently bypass malformed output.
+// Shape and header validation: column count, optional row count, then
+// header names. Run for every CSV before either the default comparator
+// or a custom callback so malformed output can't slip past.
 bool ValidateCSVTables(Table &actual, Table &reference, const RegressionOptions &opts)
 {
   CHECK(actual.n_cols() == reference.n_cols());
@@ -237,10 +230,9 @@ bool SkipNumericComparison(const RegressionOptions &opts)
   return std::isinf(opts.rtol) && std::isinf(opts.atol);
 }
 
-// Column-wise diff of two CSV files using Catch2's WithinRel + WithinAbs
-// matchers. Julia's isapprox (|a-b| <= max(atol, rtol*max(|a|,|b|))) is
-// the "either condition" form, which is exactly
-//   WithinRel(ref, rtol) || WithinAbs(ref, atol).
+// Column-wise diff using Catch2's WithinRel + WithinAbs matchers.
+//   |a - b| <= max(atol, rtol * max(|a|, |b|))
+// is the "either condition" form: WithinRel(ref, rtol) || WithinAbs(ref, atol).
 void CompareCSVFiles(Table &actual, Table &reference, const RegressionOptions &opts)
 {
   if (!ValidateCSVTables(actual, reference, opts) || SkipNumericComparison(opts))
@@ -270,26 +262,11 @@ void CompareCSVFiles(Table &actual, Table &reference, const RegressionOptions &o
   }
 }
 
-// RAII: per-case staging directory. Creates a fresh run directory
-// under `stage_root / example_dir.basename() / case_label` (where
-// `case_label` is the postpro subdirectory name, or just
-// `example_dir.basename()` again if empty), symlinks each entry of
-// the example directory (other than `postpro` / `log`) into it, then
-// chdirs into the stage so palace::Run writes postpro/ + log/ there
-// and not into the source tree. cwd is restored on destruction.
-//
-// The label suffix is what makes the stage path unique per TEST_CASE
-// rather than per example directory. Without it, sibling cases that
+// RAII: per-case staging directory. Symlinks the example inputs into
+// `stage_root / <example>/ <label>` and chdirs in so palace::Run writes
+// postpro/ and log/ there. The label suffix keeps sibling cases that
 // share an example directory (e.g. cylinder/cavity_pec and
-// cylinder/cavity_impedance) would race for the same
-// `<stage_root>/cylinder` path under `ctest -j` and the second
-// starter's `remove_all` would pull the first's CWD out from under
-// it (PETSc reports this as "Error in getcwd()").
-//
-// Rank 0 does the filesystem setup; a barrier before the chdir makes
-// sure every rank sees a consistent stage. Rank 0 is also responsible
-// for wiping a prior attempt, so each case runs against a clean
-// layout regardless of what a previous invocation left behind.
+// cylinder/cavity_impedance) on disjoint paths under ctest -j.
 class ScopedExampleStage
 {
 public:
@@ -342,8 +319,6 @@ std::string ResolveSolverOverride(SolverOverridePolicy policy,
 }
 
 // Inject any override knobs and return a fully constructed IoData.
-// Matches the pre-processing Julia's testcase.jl did on the temp config
-// before launching Palace.
 IoData LoadCaseIoData(nlohmann::json config, const RegressionOptions &opts)
 {
   auto &solver = config["Solver"];  // creates if missing
@@ -352,9 +327,9 @@ IoData LoadCaseIoData(nlohmann::json config, const RegressionOptions &opts)
     solver["Device"] = g_device_override;
   }
 
-  const std::string linear_solver =
-      ResolveSolverOverride(opts.linear_solver_policy, g_solver_override);
-  if (!linear_solver.empty())
+  if (const std::string linear_solver =
+          ResolveSolverOverride(opts.linear_solver_policy, g_solver_override);
+      !linear_solver.empty())
   {
     if (!solver.contains("Linear"))
     {
@@ -363,9 +338,9 @@ IoData LoadCaseIoData(nlohmann::json config, const RegressionOptions &opts)
     solver["Linear"]["Type"] = linear_solver;
   }
 
-  const std::string eigen_solver =
-      ResolveSolverOverride(opts.eigen_solver_policy, g_eigensolver_override);
-  if (!eigen_solver.empty() && solver.contains("Eigenmode"))
+  if (const std::string eigen_solver =
+          ResolveSolverOverride(opts.eigen_solver_policy, g_eigensolver_override);
+      !eigen_solver.empty() && solver.contains("Eigenmode"))
   {
     solver["Eigenmode"]["Type"] = eigen_solver;
   }
@@ -388,11 +363,11 @@ void SetRegressionRunDirOverride(std::string value)
 }
 void SetSolverOverride(std::string value)
 {
-  g_solver_override = value.empty() ? "Default" : std::move(value);
+  g_solver_override = std::move(value);
 }
 void SetEigenSolverOverride(std::string value)
 {
-  g_eigensolver_override = value.empty() ? "Default" : std::move(value);
+  g_eigensolver_override = std::move(value);
 }
 void SetDeviceOverride(std::string value)
 {
@@ -454,10 +429,6 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   REQUIRE(std::filesystem::exists(config_path));
   REQUIRE(std::filesystem::is_directory(ref_postpro));
 
-  // Stage the example inputs under run_root / <case_dir> and chdir into
-  // it. Palace writes postpro/ and log/ there instead of into the source
-  // tree. The stage is torn down and recreated per invocation by
-  // ScopedExampleStage.
   ScopedExampleStage stage(example_path, run_root, postpro_subdir, comm);
   const std::filesystem::path postpro_path = stage.path() / "postpro" / postpro_subdir;
 
@@ -466,19 +437,13 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
 
   IoData iodata = LoadCaseIoData(std::move(config), opts);
   const int omp_threads = palace::utils::ConfigureOmp();
+  // Wipe BlockTimer state so timings/peak-memory don't accumulate across cases.
+  BlockTimer::Reset();
   palace::Run(iodata, comm, omp_threads, /*git_tag=*/nullptr);
 
-  // Post-Run comparisons run on rank 0 only. Invariants that keep this
-  // safe:
-  //   * palace::Run is collective and its last action (BlockTimer
-  //     reductions + metadata write) synchronises every rank, so
-  //     rank 0 can start reading without a barrier.
-  //   * Every assertion below is CHECK (non-throwing). A mismatch
-  //     records against the TEST_CASE and keeps going; nothing
-  //     unwinds out of the rank-0 block to leave other ranks
-  //     stranded.
-  //   * Non-root ranks exit RunRegressionCase and move to the next
-  //     TEST_CASE (or to session shutdown) at their own pace.
+  // palace::Run ends with a collective metadata write, so rank 0 can read
+  // without a barrier. Use CHECK (non-throwing) so a mismatch on rank 0
+  // doesn't strand the other ranks.
   if (Mpi::Root(comm))
   {
     const std::set<std::string> skip_dirs{"paraview", "gridfunction"};
@@ -495,7 +460,6 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
     {
       const auto actual = postpro_path / rel;
       const auto reference = ref_postpro / rel;
-      const std::string basename = std::filesystem::path(rel).filename().string();
       INFO("CSV: " << rel << "\nactual:    " << actual << "\nreference: " << reference);
       if (!std::filesystem::is_regular_file(actual) ||
           !std::filesystem::is_regular_file(reference))
@@ -508,7 +472,7 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
       Table a = LoadTable(actual);
       Table r = LoadTable(reference);
 
-      auto custom_it = opts.custom_checks.find(basename);
+      auto custom_it = opts.custom_checks.find(rel);
       if (custom_it != opts.custom_checks.end())
       {
         if (ValidateCSVTables(a, r, opts) && !SkipNumericComparison(opts))

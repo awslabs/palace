@@ -40,12 +40,12 @@ int main(int argc, char *argv[])
   // PALACE_REGRESSION_REF_DIR_DEFAULT wired in via
   // test/unit/CMakeLists.txt) when not overridden. Empty = "no
   // override".
-  std::string examples_dir;          // --examples-dir
-  std::string regression_ref_dir;    // --regression-ref-dir
-  std::string regression_run_dir;    // --regression-run-dir
-  std::string palace_linear_solver;  // --palace-linear-solver (empty => "Default")
-  std::string palace_eigensolver;    // --palace-eigensolver (empty => "Default")
-  std::string palace_device;         // --palace-device
+  std::string examples_dir;                     // --examples-dir
+  std::string regression_ref_dir;               // --regression-ref-dir
+  std::string regression_run_dir;               // --regression-run-dir
+  std::string palace_linear_solver{"Default"};  // --palace-linear-solver
+  std::string palace_eigensolver{"Default"};    // --palace-eigensolver
+  std::string palace_device;                    // --palace-device
 
   // Build a new parser on top of Catch2's.
   using namespace Catch::Clara;
@@ -176,9 +176,9 @@ int main(int argc, char *argv[])
   }
   session.useConfigData(cfg);
 
-  // Forward regression-harness overrides into the helpers. Empty solver
-  // strings use the old Julia ArgConfig default ("Default"); directory
-  // strings use the compile-time path defaults.
+  // Forward regression-harness overrides into the helpers. Solver
+  // strings default to "Default"; directory strings use the
+  // compile-time path defaults when empty.
   palace::test::SetExamplesDirOverride(examples_dir);
   palace::test::SetRegressionRefDirOverride(regression_ref_dir);
   palace::test::SetRegressionRunDirOverride(regression_run_dir);
