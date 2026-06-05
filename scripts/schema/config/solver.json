@@ -44,7 +44,8 @@
         "NLEIGSFullBasis": { "type": "boolean" },
         "NLEIGSInterpolationTol": { "type": "number", "exclusiveMinimum": 0.0 },
         "NLEIGSInterpolationDegree": { "type": "integer", "minimum": 1 },
-        "NLEIGSSingularitiesPerCut": { "type": "integer", "minimum": 1 },
+        "NLEIGSSingularitiesPerCut": { "type": "integer", "minimum": 0 },
+        "NLEIGSRKShifts": { "type": "integer", "minimum": 1 },
         "NLEIGSRegion": {
           "type": "array",
           "items": { "type": "number" },

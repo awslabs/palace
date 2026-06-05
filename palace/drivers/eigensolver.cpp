@@ -759,7 +759,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       // path (BuildParSumOperator with one operand allocates an unnecessary wrapper).
       return bulk ? std::move(bulk) : std::move(wp);
     }
-    return BuildParSumOperator(coeffs, ops);
+    // Multiple contributions: the sum references the operands' local matrices, so the
+    // operands must outlive it. Transfer their ownership into the returned operator.
+    auto sum = BuildParSumOperator(coeffs, ops);
+    std::vector<std::unique_ptr<ComplexOperator>> operands;
+    operands.push_back(std::move(bulk));
+    operands.push_back(std::move(wp));
+    sum->TakeOwnership(std::move(operands));
+    return sum;
   };
 
   // Complex-λ stamping (analytic continuation). Always installed for the diagnostic
@@ -799,7 +806,24 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       return wp ? std::move(wp) : (ff ? std::move(ff) : std::move(sg));
     }
-    return BuildParSumOperator(coeffs, ops);
+    // Multiple BC contributions (e.g. wave port + 2nd-order ABC): the sum references
+    // the operands' local matrices, so keep the operands alive alongside it.
+    auto sum = BuildParSumOperator(coeffs, ops);
+    std::vector<std::unique_ptr<ComplexOperator>> operands;
+    if (wp)
+    {
+      operands.push_back(std::move(wp));
+    }
+    if (ff)
+    {
+      operands.push_back(std::move(ff));
+    }
+    if (sg)
+    {
+      operands.push_back(std::move(sg));
+    }
+    sum->TakeOwnership(std::move(operands));
+    return sum;
   };
 
   // Top-level funcA2 used for the seed pencil and the legacy callers below. Chooses
@@ -959,16 +983,24 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       // Reproduce the 3-point Newton interpolation: the seed pencil's kₙ,p is the
       // unique quadratic in ω matching the true kₙ,p at three evenly spaced points.
-      constexpr int n_dense = 500;
-      std::vector<double> w_fit(3), w_dense(n_dense);
+      // The fit is exact at those three anchors, so the fit error is only observable
+      // OFF the anchors. A few off-anchor probes (the two anchor-midpoints, plus a
+      // point just beyond the band) capture the residual just as well as a dense grid
+      // — and each probe is a full cross-section EVP solve (GetWavePortKn →
+      // WavePortData::Initialize), so a dense grid (formerly 500 points × NumPorts) was
+      // a large, pure-diagnostic cost. Keep this cheap.
+      std::vector<double> w_fit(3);
       for (int j = 0; j < 3; j++)
       {
         w_fit[j] = target + j * (target_max - target) / 2.0;
       }
-      for (int i = 0; i < n_dense; i++)
-      {
-        w_dense[i] = target + (target_max - target) * i / (n_dense - 1.0);
-      }
+      // Off-anchor probe points for the residual estimate. The fit is exact at the
+      // anchors (fractions 0, 0.5, 1.0), so probes must avoid those. Use the two
+      // anchor-midpoints (0.25, 0.75) where interpolation error peaks.
+      const std::vector<double> w_probe = {
+          target + 0.25 * (target_max - target),  // between anchors 0 and 1
+          target + 0.75 * (target_max - target)   // between anchors 1 and 2
+      };
       Eigen::Matrix3d V_fit;
       for (int j = 0; j < 3; j++)
       {
@@ -986,9 +1018,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         }
         const Eigen::Vector3d c = qr.solve(kn_fit);
         double max_abs = 0.0, max_rel_num = 0.0;
-        for (int i = 0; i < n_dense; i++)
+        for (double w : w_probe)
         {
-          const double w = w_dense[i];
           const double truth = wp_factor.Kn(static_cast<int>(p), w);
           const double poly = c(0) + c(1) * w + c(2) * w * w;
           max_abs = std::max(max_abs, std::abs(truth));
@@ -1092,6 +1123,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       nleigs->SetNLEIGSInterpolation(iodata.solver.eigenmode.nleigs_interp_tol,
                                      iodata.solver.eigenmode.nleigs_interp_deg);
       nleigs->SetTargetUpper(iodata.solver.eigenmode.target_upper);
+      nleigs->SetNLEIGSRKShifts(iodata.solver.eigenmode.nleigs_rk_shifts);
       if (!iodata.solver.eigenmode.nleigs_region.empty())
       {
         nleigs->SetNLEIGSRegion(iodata.solver.eigenmode.nleigs_region);
@@ -1147,12 +1179,28 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             xi.emplace_back(0.0, t);
           }
         }
+        // If no branch-cut singularities were derived (e.g. quasi-TEM ports whose
+        // cutoff ≈ 0, so the branch point sits at the origin and is unusable), we must
+        // still install SOMETHING when a farfield 2nd-order ABC is active: that BC
+        // contributes a genuine pole of T(λ) at λ = 0, and SLEPc's AAA auto-discovery
+        // would find it and then abort in Leja–Bagby ("singularity nearly zero"). A far
+        // sentinel singularity above the band gives Leja–Bagby a valid pole set and
+        // keeps it from sampling the origin pole. The λ=0 pole itself is harmless to
+        // the interpolant because the eigenvalue band is bounded away from 0.
+        if (xi.empty() && !ff_factor.empty())
+        {
+          const double target_im = target;  // nondim Im(λ) of the target (λ = i·ω)
+          const double upper_im = (iodata.solver.eigenmode.target_upper > 0.0)
+                                      ? iodata.solver.eigenmode.target_upper
+                                      : 3.0 * target_im;
+          xi.emplace_back(0.0, 100.0 * upper_im);
+        }
         if (!xi.empty())
         {
           nleigs->SetNLEIGSSingularities(xi);
-          Mpi::Print(" NLEIGS: auto-derived {:d} branch-cut singularit{} from {:d} "
-                     "wave-port kₙ factor(s)\n",
-                     xi.size(), xi.size() == 1 ? "y" : "ies", wp_factor.NumPorts());
+          Mpi::Print(" NLEIGS: auto-derived {:d} singularit{} (wave-port branch cuts / "
+                     "farfield-pole sentinel)\n",
+                     xi.size(), xi.size() == 1 ? "y" : "ies");
         }
       }
       // Install the same preconditioner builder SLP uses; NLEIGS' inner KSPs

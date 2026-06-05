@@ -871,10 +871,9 @@ void SpaceOperator::AssemblePreconditioner(
 }
 
 template <typename OperType, typename ScalarType>
-std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
-                                                                 ScalarType a1,
-                                                                 ScalarType a2,
-                                                                 ScalarType a3)
+std::unique_ptr<OperType>
+SpaceOperator::GetPreconditionerMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
+                                       ScalarType a3)
 {
   // When partially assembled, the coarse operators can reuse the fine operator quadrature
   // data if the spaces correspond to the same mesh. When appropriate, we build the
@@ -1361,7 +1360,8 @@ SpaceOperator::GetSystemMatrix<ComplexOperator, std::complex<double>>(
 template std::unique_ptr<Operator>
 SpaceOperator::GetPreconditionerMatrix<Operator, double>(double, double, double, double);
 template std::unique_ptr<ComplexOperator>
-SpaceOperator::GetPreconditionerMatrix<ComplexOperator, std::complex<double>>(
-    std::complex<double>, std::complex<double>, std::complex<double>, std::complex<double>);
+    SpaceOperator::GetPreconditionerMatrix<ComplexOperator, std::complex<double>>(
+        std::complex<double>, std::complex<double>, std::complex<double>,
+        std::complex<double>);
 
 }  // namespace palace

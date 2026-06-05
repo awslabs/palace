@@ -917,6 +917,11 @@ public:
   // onto the boundary. Default 1 = the branch point itself. Set 0 to disable
   // auto-derivation (fall back to the far sentinel).
   int nleigs_singularities_per_cut = 1;
+  // Number of rational-Krylov shifts for NLEIGS. 1 (default) = shift-and-invert
+  // Krylov-Schur at the target; >1 spreads shifts across the imaginary band
+  // [Target, TargetUpper] to run the rational-Krylov variant, which can suppress the
+  // spurious near-target cluster for near-cutoff non-TEM wave ports.
+  int nleigs_rk_shifts = 1;
 
   EigenSolverData() = default;
   EigenSolverData(const json &eigenmode);

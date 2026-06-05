@@ -1216,6 +1216,7 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   }
   nleigs_singularities_per_cut =
       eigenmode.value("NLEIGSSingularitiesPerCut", nleigs_singularities_per_cut);
+  nleigs_rk_shifts = eigenmode.value("NLEIGSRKShifts", nleigs_rk_shifts);
 
   // Resolve iteration / subspace sentinels to concrete values at parse time so nothing
   // downstream sees -1. max_it is a single large cap because it only bounds iteration

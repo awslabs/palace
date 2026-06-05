@@ -628,6 +628,13 @@ public:
     singularities_ = xi;
   }
   void SetNLEIGSRegion(const std::vector<double> &region) { region_ = region; }
+  // Number of rational-Krylov shifts (NEPNLEIGSSetRKShifts). 1 (default) ⇒ shift-and-
+  // invert Krylov-Schur at the target. >1 ⇒ rational-Krylov with shifts spread across
+  // the imaginary-axis band [target, target_upper], which avoids the converged Ritz
+  // values collapsing onto a single boundary point. All inner KSPs are still routed
+  // through the single target preconditioner (opInv); the rational-Krylov iteration
+  // tolerates the inexact per-shift PC.
+  void SetNLEIGSRKShifts(int n) { rk_shifts_ = n; }
   // Communicate the eigensolver's TargetUpper so the auto-derived RG bracket
   // matches [target, target_upper] on the imaginary axis. If unset (≤ 0), defaults
   // to 3·target at solve time.
@@ -638,12 +645,10 @@ public:
   // multiple rational interpolation shifts σ_i; for each shift we need a PC that
   // approximates (T(σ_i))⁻¹. This setter installs the same builder as the SLP path
   // uses; the PCSHELL constructed inside Customize() invokes it lazily per shift.
-  void SetPreconditionerBuilder(
-      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>,
-                                                     std::complex<double>,
-                                                     std::complex<double>,
-                                                     std::complex<double>)>
-          P)
+  void SetPreconditionerBuilder(std::function<std::unique_ptr<ComplexOperator>(
+                                    std::complex<double>, std::complex<double>,
+                                    std::complex<double>, std::complex<double>)>
+                                    P)
   {
     funcP_ = std::move(P);
   }
@@ -710,6 +715,7 @@ private:
   double interp_tol_ = 1.0e-7;
   int interp_deg_ = 80;
   double target_upper_ = -1.0;
+  int rk_shifts_ = 1;
   std::vector<std::complex<double>> singularities_;
   std::vector<double> region_;
 

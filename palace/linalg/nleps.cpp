@@ -209,9 +209,9 @@ QuasiNewtonSolver::BuildA2(std::complex<double> lambda) const
 }
 
 void QuasiNewtonSolver::SetPreconditionerUpdate(
-    std::function<std::unique_ptr<ComplexOperator>(
-        std::complex<double>, std::complex<double>, std::complex<double>,
-        std::complex<double>)>
+    std::function<
+        std::unique_ptr<ComplexOperator>(std::complex<double>, std::complex<double>,
+                                         std::complex<double>, std::complex<double>)>
         P)
 {
   funcP = P;

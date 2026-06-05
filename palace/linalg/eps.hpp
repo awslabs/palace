@@ -112,11 +112,9 @@ public:
   // nonlinear eigensolver can build a preconditioner whose wave-port / ABC / surf-σ
   // terms match its exact complex system matrix (ω = -i·λ). Callers that only need the
   // real-ω preconditioner pass a real-valued complex (imag = 0).
-  virtual void SetPreconditionerUpdate(
-      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>,
-                                                     std::complex<double>,
-                                                     std::complex<double>,
-                                                     std::complex<double>)>)
+  virtual void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
+                                           std::complex<double>, std::complex<double>,
+                                           std::complex<double>, std::complex<double>)>)
   {
     MFEM_ABORT("SetPreconditionerUpdate not defined!");
   }

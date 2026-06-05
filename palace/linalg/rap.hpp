@@ -142,6 +142,12 @@ private:
   // Real and imaginary parts of the operator as non-owning ParOperator objects.
   std::unique_ptr<ParOperator> RAPr, RAPi;
 
+  // Optional keepalive for operand operators that the local SumOperators reference but
+  // do not own (e.g. BuildParSumOperator over caller-owned temporaries). Holding them
+  // here ties their lifetime to this operator, preventing use-after-free when the
+  // caller's unique_ptrs would otherwise be destroyed. Empty for the common case.
+  std::vector<std::unique_ptr<ComplexOperator>> owned_operands;
+
   // Helper methods for operator application.
   void RestrictionMatrixMult(const ComplexVector &ly, ComplexVector &ty) const;
   void RestrictionMatrixMultTranspose(const ComplexVector &ty, ComplexVector &ly) const;
@@ -179,6 +185,17 @@ public:
 
   // Get access to the underlying local (L-vector) operator.
   const ComplexOperator &LocalOperator() const { return *A; }
+
+  // Transfer ownership of operand operators that this operator's local SumOperators
+  // reference but do not own, tying their lifetime to this one. Used by
+  // BuildParSumOperator when summing caller-owned temporaries.
+  void TakeOwnership(std::vector<std::unique_ptr<ComplexOperator>> operands)
+  {
+    for (auto &op : operands)
+    {
+      owned_operands.push_back(std::move(op));
+    }
+  }
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return trial_fespace.GetComm(); }

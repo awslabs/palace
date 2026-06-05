@@ -1625,9 +1625,9 @@ void SlepcNEPSolver::SetExtraSystemMatrixComplex(
 }
 
 void SlepcNEPSolver::SetPreconditionerUpdate(
-    std::function<std::unique_ptr<ComplexOperator>(
-        std::complex<double>, std::complex<double>, std::complex<double>,
-        std::complex<double>)>
+    std::function<
+        std::unique_ptr<ComplexOperator>(std::complex<double>, std::complex<double>,
+                                         std::complex<double>, std::complex<double>)>
         P)
 {
   funcP = P;
@@ -1958,33 +1958,45 @@ void SlepcNEPNLEIGSSolver::Customize()
                                       term_mats_.data(), term_fns_.data(),
                                       DIFFERENT_NONZERO_PATTERN));
 
-  // NLEIGS-specific tuning.
-  PalacePetscCall(NEPNLEIGSSetFullBasis(nep, full_basis_ ? PETSC_TRUE : PETSC_FALSE));
+  // NLEIGS-specific tuning. SLEPc forbids full basis together with rational-Krylov
+  // shifts (NEPNLEIGSSetRKShifts), so multiple shifts force full basis off. Note: on
+  // Palace's split-form pencil full_basis = false is known to give poor / non-
+  // converging results, so rk_shifts_ > 1 is effectively unusable — kept only for
+  // experimentation.
+  const bool full_basis = full_basis_ && (rk_shifts_ <= 1);
+  if (full_basis_ && rk_shifts_ > 1)
+  {
+    Mpi::Warning(GetComm(), "NLEIGS: NLEIGSRKShifts > 1 is incompatible with full basis; "
+                            "disabling full basis (expect degraded convergence).\n");
+  }
+  PalacePetscCall(NEPNLEIGSSetFullBasis(nep, full_basis ? PETSC_TRUE : PETSC_FALSE));
   PalacePetscCall(NEPNLEIGSSetInterpolation(nep, interp_tol_, interp_deg_));
 
-  // Singularity set Ξ. SLEPc has two paths: (a) AAA auto-discovery if no callback
-  // is installed — empirically slow / non-converging on Palace's split-form shells;
-  // (b) explicit list via NEPNLEIGSSetSingularitiesFunction. We always install the
-  // callback. SLEPc rejects singularities exactly at the origin (Leja–Bagby divides
-  // by them), so the farfield 1/(2λ) pole and TEM kₙ branch at λ=0 cannot be passed
-  // verbatim. The default sentinel at i·100·target_upper places a "fake" singularity
-  // far above the eigenvalue band so Leja–Bagby produces well-spaced rational poles
-  // around the target. Users supplying NLEIGSSingularities override the default
-  // (e.g., to pass non-TEM port cutoff frequencies).
+  // Singularity set Ξ. SLEPc has two paths: (a) if NO singularities callback is
+  // installed and the problem type is NEP_GENERAL, SLEPc runs its AAA algorithm to
+  // discover the singularities automatically by sampling T(λ) on the target contour;
+  // (b) explicit list via NEPNLEIGSSetSingularitiesFunction. When the caller provides
+  // a singularity set (singularities_ non-empty — e.g. the wave-port branch points),
+  // we install the callback to pass it; otherwise we install NOTHING and let SLEPc's
+  // AAA auto-discovery run. (Leentvaar/Leja–Bagby rejects singularities at the origin,
+  // so the farfield 1/(2λ) pole and TEM kₙ branch at λ=0 must not be passed verbatim.)
   static SingularityCtx ctx;  // file-scope singleton — only one NLEIGS solver runs
                               // at a time per Palace invocation.
   if (!singularities_.empty())
   {
     ctx.values.assign(singularities_.begin(), singularities_.end());
+    PalacePetscCall(
+        NEPNLEIGSSetSingularitiesFunction(nep, __nleigs_singularities_callback, &ctx));
+    if (print > 0)
+    {
+      Mpi::Print(GetComm(), " NLEIGS: {} explicit singularit{} installed\n",
+                 ctx.values.size(), ctx.values.size() == 1 ? "y" : "ies");
+    }
   }
-  else
+  else if (print > 0)
   {
-    const PetscReal target_im = sigma.imag();
-    const PetscReal upper_im = (target_upper_ > 0.0) ? target_upper_ : 3.0 * target_im;
-    ctx.values = {std::complex<double>{0.0, 100.0 * upper_im}};
+    Mpi::Print(GetComm(), " NLEIGS: no singularities set — SLEPc AAA auto-discovery\n");
   }
-  PalacePetscCall(
-      NEPNLEIGSSetSingularitiesFunction(nep, __nleigs_singularities_callback, &ctx));
 
   // Target region Σ. If user supplied a 4-tuple, build RGINTERVAL with those bounds;
   // otherwise auto-derive from sigma at solve time. We require sigma to have been
@@ -2024,6 +2036,35 @@ void SlepcNEPNLEIGSSolver::Customize()
   // Set target.
   PalacePetscCall(NEPSetTarget(nep, sigma));
 
+  // Rational-Krylov shifts. With a single shift (default) NLEIGS reduces to
+  // shift-and-invert Krylov-Schur at the target, which tends to pile converged Ritz
+  // values onto one boundary point of the RG (the source of the spurious near-target
+  // cluster for near-cutoff non-TEM ports). Spreading rk_shifts_ shifts across the
+  // imaginary-axis band [target, target_upper] runs the rational-Krylov variant, which
+  // resolves the interior modes instead of collapsing onto the target. Shifts are pure
+  // imaginary (λ = i·ω), matching the physical mode axis; all inner KSPs remain routed
+  // through the single target preconditioner (opInv) — the RK iteration tolerates the
+  // inexact per-shift PC.
+  if (rk_shifts_ > 1)
+  {
+    const PetscReal target_im = sigma.imag();
+    const PetscReal upper_im = (target_upper_ > 0.0) ? target_upper_ : 3.0 * target_im;
+    std::vector<PetscScalar> shifts(rk_shifts_);
+    for (int i = 0; i < rk_shifts_; i++)
+    {
+      const double frac =
+          (rk_shifts_ == 1) ? 0.0 : static_cast<double>(i) / (rk_shifts_ - 1);
+      shifts[i] = std::complex<double>(0.0, target_im + frac * (upper_im - target_im));
+    }
+    PalacePetscCall(
+        NEPNLEIGSSetRKShifts(nep, static_cast<PetscInt>(shifts.size()), shifts.data()));
+    if (print > 0)
+    {
+      Mpi::Print(GetComm(), " NLEIGS rational-Krylov shifts: {} on Im[{:.3e}, {:.3e}]\n",
+                 rk_shifts_, target_im, upper_im);
+    }
+  }
+
   // NLEIGS' inner KSPs default to KSPGMRES + PCLU which requires a sparse direct
   // factor (MatGetFactor) — Palace builds PETSc without MUMPS/SuperLU. Override
   // each inner KSP to use KSPPREONLY + PCSHELL routed through Palace's own
@@ -2058,15 +2099,11 @@ void SlepcNEPNLEIGSSolver::Customize()
   {
     Mpi::Print(GetComm(), " NLEIGS inner KSPs: {} shifts, PCSHELL → opInv\n", nshifts);
   }
-  // Convergence test. NEP_CONV_NORM (= ||r|| / Σ|f_j(λ)|·||A_j||) normalizes by the
-  // actual operator scale at λ and converges in few divided-difference terms, which is
-  // what keeps NLEIGS fast on the split-form pencil. NEP_CONV_ABS (= ||r|| < tol on the
-  // raw residual) is far stricter and, combined with a loose NLEIGSInterpolationTol,
-  // forces many extra interpolation terms / restarts to hit an absolute residual the
-  // rational fit can't deliver. NEP_CONV_REL (= ||r||/|λ|) sits in between. The
-  // reported Error (Abs.) column uses the true ||T(λ)x|| regardless, so spurious modes
-  // remain visible to the user even under NORM/REL.
-  PalacePetscCall(NEPSetConvergenceTest(nep, NEP_CONV_NORM));
+  // Convergence test: NEP_CONV_REL (= ||r||/|λ|). NEP_CONV_NORM requires a matrix-norm
+  // operation our split-form shell matrices do not provide. Spurious RG-boundary modes
+  // (Leja–Bagby interpolation-node artifacts) can pass this test with large true
+  // ||T(λ)x||; the reported Error (Abs.) column exposes them so they can be filtered.
+  PalacePetscCall(NEPSetConvergenceTest(nep, NEP_CONV_REL));
   // Skip NEPSetFromOptions for NLEIGS — it would touch the inner-KSP options and
   // interfere with our explicit PCSHELL configuration above. The user can still set
   // -nep_* options via the command-line interface; those that don't conflict will
@@ -2687,9 +2724,9 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
     ctx->opA_pc = palace::BuildParSumOperator(
         {1.0 + 0.0i, ctx->lambda, ctx->lambda * ctx->lambda, 1.0 + 0.0i},
         {ctx->opK, ctx->opC, ctx->opM, ctx->opA2_pc.get()}, true);
-    ctx->opP_pc = (*ctx->funcP)(std::complex<double>(1.0, 0.0), ctx->lambda,
-                                ctx->lambda * ctx->lambda,
-                                ctx->PreconditionerBCFreq(ctx->lambda));
+    ctx->opP_pc =
+        (*ctx->funcP)(std::complex<double>(1.0, 0.0), ctx->lambda,
+                      ctx->lambda * ctx->lambda, ctx->PreconditionerBCFreq(ctx->lambda));
     ctx->opInv->SetOperators(*ctx->opA_pc, *ctx->opP_pc);
     ctx->new_lambda = false;
   }
