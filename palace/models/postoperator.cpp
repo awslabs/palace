@@ -1435,7 +1435,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
     auto ind = 1 + std::distance(output_save_indices.begin(),
                                  std::lower_bound(output_save_indices.begin(),
                                                   output_save_indices.end(), step));
-    WriteParaviewFields(omega.real(), ind);
+    WriteParaviewFields(freq.real(), ind);
     Mpi::Print(" Wrote fields to disk (Paraview) at step {:d}\n", step + 1);
   }
   if (ShouldWriteGridFunctionFields(step))
