@@ -597,6 +597,9 @@ machine epsilon are dropped from the system matrix used in the sparse direct sol
 
 `"PCSide" ["Default"]` :  Side for preconditioning. Not all options are available for all
 iterative solver choices, and the default choice depends on the iterative solver used.
+When left as `"Default"`, the concrete side is selected by the iterative solver (GMRES uses
+left, FGMRES uses right preconditioning), so this option remains `"Default"` in the resolved
+configuration sidecar.
 
   - `"Left"`
   - `"Right"`
@@ -650,7 +653,10 @@ to the solution order given in [`config["Solver"]["Order"]`](problem.md#config%5
   - `"MGSmoothChebyshev4th" [true]`
   - `"ReorderingReuse" [true]`
   - `"ColumnOrdering" ["Default"]` :  `"METIS"`, `"ParMETIS"`,`"Scotch"`, `"PTScotch"`,
-    `"PORD"`, `"AMD"`, `"RCM"`, `"Default"`
+    `"PORD"`, `"AMD"`, `"RCM"`, `"Default"`. When left as `"Default"`, the fill-reducing
+    ordering is chosen internally by the sparse direct solver (SuperLU/STRUMPACK/MUMPS);
+    *Palace* does not pick a concrete value, so this remains `"Default"` in the resolved
+    configuration sidecar.
   - `"STRUMPACKCompressionType" ["None"]` :  `"None"`, `"BLR"`, `"HSS"`, `"HODLR"`, `"ZFP"`,
     `"BLR-HODLR"`, `"ZFP-BLR-HODLR"`
   - `"STRUMPACKCompressionTol" [1.0e-3]`

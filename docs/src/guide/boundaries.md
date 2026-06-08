@@ -154,8 +154,10 @@ For frequency domain driven simulations only, it is possible to specify multiple
 same simulation using different positive integers ("multi-excitation"). These excitations are
 simulated consecutively during the Palace run. The results are printed to shared csv files. When
 there are multiple excitations, the columns of the csv files are post-indexed by the excitation
-index (e.g. `Φ_elec[1][5] (C)` denoting the flux through surface 1 of excitation 5). Note that a
-port can only be part of one excitation.
+index (e.g. `Φ_elec[1][5] (C)` denoting the flux through surface 1 of excitation 5). The far-field
+file (`farfield-rE.csv`) is the exception: it has one row per (frequency, angle) pair so the
+excitation index is encoded as a row column (`exc`) rather than a column suffix. Note that a port
+can only be part of one excitation.
 
 !!! warning "Indexing"
 

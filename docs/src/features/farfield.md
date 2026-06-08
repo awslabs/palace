@@ -92,9 +92,14 @@ in the folder specified by the
 configuration.
 
 The CSV contains a header line that describes the columns, and one row for each
-``(\theta, \phi)`` pair. The columns are:
+``(\theta, \phi)`` pair (per excitation, for driven simulations with multiple
+port excitations). The columns are:
 
-  - `f (GHz)` : Frequency
+  - `f (GHz)` : Frequency (driven). For eigenmode simulations this is replaced
+    by `m` (mode index) followed by `f_re (GHz)` and `f_im (GHz)`.
+  - `exc` : Excitation index. Constant for single-excitation simulations; varies
+    across rows in multi-port driven port sweeps so each row uniquely identifies
+    a `(frequency, angle, excitation)` triple.
   - `theta (deg.)` : Polar angle in degrees
   - `phi (deg.)` : Azimuthal angle in degrees
   - `r*Re{E_x} (V)`, `r*Im{E_x} (V)` : Real and imaginary parts of ``r E_x`` component

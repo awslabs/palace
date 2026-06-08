@@ -84,32 +84,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   //         (K + λ C + λ² M) u = 0    or    K u = -λ² M u
   // with λ = iω. In general, the system matrices are complex and symmetric.
   std::unique_ptr<EigenvalueSolver> eigen;
-  EigenSolverBackend type = iodata.solver.eigenmode.type;
-
-#if defined(PALACE_WITH_ARPACK) && defined(PALACE_WITH_SLEPC)
-  if (type == EigenSolverBackend::DEFAULT)
-  {
-    type = EigenSolverBackend::SLEPC;
-  }
-#elif defined(PALACE_WITH_ARPACK)
-  if (type == EigenSolverBackend::SLEPC)
-  {
-    Mpi::Warning("SLEPc eigensolver not available, using ARPACK!\n");
-  }
-  type = EigenSolverBackend::ARPACK;
+  const EigenSolverBackend type = iodata.solver.eigenmode.type;
+#if !defined(PALACE_WITH_ARPACK) && !defined(PALACE_WITH_SLEPC)
+#error "Eigenmode solver requires building with ARPACK or SLEPc!"
+#endif
+#if !defined(PALACE_WITH_SLEPC)
   if (nonlinear_type == NonlinearEigenSolver::SLP)
   {
-    Mpi::Warning("SLP nonlinear eigensolver not available, using Hybrid!\n");
+    Mpi::Warning("SLP nonlinear eigensolver not available without SLEPc, using Hybrid!\n");
   }
   nonlinear_type = NonlinearEigenSolver::HYBRID;
-#elif defined(PALACE_WITH_SLEPC)
-  if (type == EigenSolverBackend::ARPACK)
-  {
-    Mpi::Warning("ARPACK eigensolver not available, using SLEPc!\n");
-  }
-  type = EigenSolverBackend::SLEPC;
-#else
-#error "Eigenmode solver requires building with ARPACK or SLEPc!"
 #endif
   if (type == EigenSolverBackend::ARPACK)
   {

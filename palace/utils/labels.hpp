@@ -28,9 +28,14 @@ enum class ProblemType : char
 // Eigenvalue solver type.
 enum class EigenSolverBackend : char
 {
-  DEFAULT,
   SLEPC,
-  ARPACK
+  ARPACK,
+  DEFAULT =
+#if defined(PALACE_WITH_SLEPC)
+      SLEPC
+#elif defined(PALACE_WITH_ARPACK)
+      ARPACK
+#endif
 };
 
 // Nonlinear eigenvalue solver type.

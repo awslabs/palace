@@ -10,9 +10,11 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/configfile.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/device.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/dorfler.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/enum_string.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/geodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/geodata_impl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/iodata.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/iodata_concretize.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/jsonschema.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/memoryreporting.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/meshio.cpp
