@@ -49,6 +49,9 @@ The format of this changelog is based on
 #### Bug Fixes
 
   - Revert change of adaptive PROM from interpolation back to projection.
+  - Fixed nondeterministic current-dipole assembly when the source lies on a
+    shared mesh entity by distributing the underlying MFEM delta source over all
+    containing elements.
   - Fixed a bug where nonconformal AMR would lead to erroneous results when waveports are present.
     Part of [PR 657](https://github.com/awslabs/palace/pull/657).
   - For `BoundaryMode` simulations on a 3D mesh, the non-dimensionalization

@@ -179,6 +179,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "patch_par_tet_mesh_fix_dev.diff",
                 patch("patch_gmsh_parser_performance.diff", when="@:4.9"),
                 patch("mfem_pr5246.diff", when="@:4.9"),
+                # mfem PR #5353; remove once merged upstream and mfem is bumped.
+                "mfem_pr5353.diff",
             ],
         )
         depends_on("mfem+shared", when="+shared")

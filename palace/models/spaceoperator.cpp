@@ -1066,7 +1066,7 @@ bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS
     return false;
   }
 
-  mfem::LinearForm rhs1(&GetNDSpace().Get());
+  mfem::ParLinearForm rhs1(&GetNDSpace().Get());
 
   // Add boundary integrators
   if (!empty[0])
