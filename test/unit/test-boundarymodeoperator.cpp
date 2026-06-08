@@ -103,9 +103,12 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   Mpi::GlobalMin(1, &c_min, nd_fespace.GetComm());
   double kn_target = omega / c_min * std::sqrt(1.1);
 
+  // ModeEigenSolver requires a positive Krylov subspace size (num_vec). Mirror the
+  // formula used by IoData::CheckConfiguration for eigenmode.max_size.
+  const int num_vec = std::max(2 * num_modes, num_modes + 15);
   ModeEigenSolver mode_solver(
       mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op, nd_fespace, h1_fespace,
-      dbc_tdof_list, num_modes, -1, 1.0e-8, EigenvalueSolver::WhichType::LARGEST_REAL,
+      dbc_tdof_list, num_modes, num_vec, 1.0e-8, EigenvalueSolver::WhichType::LARGEST_REAL,
       iodata.solver.linear, iodata.solver.boundary_mode.type, 0, nd_fespace.GetComm());
 
   double sigma = -kn_target * kn_target;

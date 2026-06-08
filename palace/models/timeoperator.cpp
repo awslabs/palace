@@ -100,8 +100,9 @@ public:
         // Configure the solver.
         if (!kspA)
         {
-          kspA = std::make_unique<KspSolver>(linear, verbose, space_op.GetNDSpaces(),
-                                             &space_op.GetH1Spaces());
+          kspA =
+              std::make_unique<KspSolver>(linear, MatrixSymmetry::SPD, verbose,
+                                          space_op.GetNDSpaces(), &space_op.GetH1Spaces());
         }
         kspA->SetOperators(*A, *B);
       };

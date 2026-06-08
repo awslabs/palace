@@ -8,6 +8,7 @@
 #include <vector>
 #include <mpi.h>
 #include <mfem.hpp>
+#include <nlohmann/json.hpp>
 #include "drivers/boundarymodesolver.hpp"
 #include "drivers/drivensolver.hpp"
 #include "drivers/eigensolver.hpp"
@@ -215,11 +216,16 @@ int main(int argc, char *argv[])
   {
     if (Mpi::Root(world_comm))
     {
-      IoData iodata(argv[argc - 1], false);
+      auto config = IoData::ParseAndValidate(argv[argc - 1]);
+      IoData iodata(config, false);
       if (!std::filesystem::exists(iodata.model.mesh))
       {
         MFEM_ABORT("Unable to open mesh file \"" << iodata.model.mesh << "\"!");
       }
+      // Echo the fully-resolved configuration so users can inspect every filled-in
+      // default without running the simulation.
+      Mpi::Print(world_comm, "\nResolved configuration:\n{}\n",
+                 IoData::ConcretizeDefaults(iodata, config).dump(2));
     }
     Mpi::Print(world_comm, "Dry-run: No errors detected in configuration file \"{}\"\n\n",
                argv[argc - 1]);
@@ -228,8 +234,16 @@ int main(int argc, char *argv[])
 
   // Parse configuration file.
   PrintPalaceBanner(world_comm);
-  IoData iodata(argv[1], false);
+  auto config = IoData::ParseAndValidate(argv[1]);
+  IoData iodata(config, false);
   MakeOutputFolder(iodata, world_comm);
+
+  // Write the resolved configuration to the output directory so users have a complete
+  // record of every Palace decision (all defaults filled in).
+  if (world_root)
+  {
+    iodata.WriteResolvedConfig(config, argv[1]);
+  }
 
   BlockTimer bt1(Timer::INIT);
   // Initialize the MFEM device and configure libCEED backend.
