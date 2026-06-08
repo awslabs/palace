@@ -140,15 +140,16 @@ for implementation details.
     obtained with all-lumped or all-wave ports. To pin the wave-port polarity, specify
     one of the following on each wave port — both list the **signal** (high-potential)
     terminal first and the **ground** (low-potential) terminal second:
-    - [`"VoltagePath"`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D): an
-      ordered list of coordinate points across the port face, directed signal → ground.
-      The mode is flipped so that `\int E_{\text{mode}} \cdot dl > 0` along this path.
-      Also enables ``Z_{PV}`` postprocessing. Requires GSLIB.
-    - [`"PolarityAttributes"`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D):
-      a pair of parent-mesh boundary attributes `[signal, ground]` (e.g. distinct PEC
-      attributes for the two terminals). The mode is flipped so that the modal E-field
-      points from the signal attribute toward the ground attribute. Lightweight
-      polarity-only alternative to `"VoltagePath"` (no GSLIB).
+
+      + [`"VoltagePath"`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D): an
+        ordered list of coordinate points across the port face, directed signal → ground.
+        The mode is flipped so that `\int E_{\text{mode}} \cdot dl > 0` along this path.
+        Also enables ``Z_{PV}`` postprocessing. Requires GSLIB.
+      + [`"PolarityAttributes"`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D):
+        a pair of parent-mesh boundary attributes `[signal, ground]` (e.g. distinct PEC
+        attributes for the two terminals). The mode is flipped so that the modal E-field
+        points from the signal attribute toward the ground attribute. Lightweight
+        polarity-only alternative to `"VoltagePath"` (no GSLIB).
 
 For each port, the excitation is normalized to have unit incident power over the port boundary
 surface.

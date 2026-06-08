@@ -440,12 +440,13 @@ specified in mesh length units. Each entry is a floating point array of length e
 to the spatial dimension. The path is **directed from the signal (high-potential)
 terminal to the ground (low-potential) terminal**, matching the lumped-port `"Direction"`
 convention. When specified, this:
-1. Pins the wave-port mode polarity so that ``\int E_{\text{mode}} \cdot dl`` along the
-   path is real-positive (required for consistent S-parameter signs when mixing wave
-   and lumped ports in a driven simulation; without it, cross-type S-parameters may be
-   ``180^\circ`` out of phase).
-2. Enables voltage and characteristic impedance ``Z_{PV}`` postprocessing for the wave
-   port.
+
+ 1. Pins the wave-port mode polarity so that ``\int E_{\text{mode}} \cdot dl`` along the
+    path is real-positive (required for consistent S-parameter signs when mixing wave
+    and lumped ports in a driven simulation; without it, cross-type S-parameters may be
+    ``180^\circ`` out of phase).
+ 2. Enables voltage and characteristic impedance ``Z_{PV}`` postprocessing for the wave
+    port.
 
 For example, in a coaxial wave port the first point is on the inner conductor (signal)
 and the last point is on the outer conductor (ground); for a CPW port, the first point

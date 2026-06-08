@@ -39,8 +39,7 @@ struct ExposedWavePortOperator : public WavePortOperator
 //
 // Reference: Pozar, "Microwave Engineering" (4th ed.), Sec. 3.3 / Table 3.1
 // (equivalent voltage / current / impedance for waveguide modes).
-TEST_CASE("WavePortData TE10 Z_PV matches analytical formula",
-          "[waveportimpedance][Serial]")
+TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial]")
 {
   MPI_Comm comm = Mpi::World();
 
@@ -119,8 +118,7 @@ TEST_CASE("WavePortData TE10 Z_PV matches analytical formula",
       2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
   wave_port_op.Initialize(omega_nondim);
 
-  std::complex<double> Z_PV_nondim =
-      wave_port_op.GetPort(1).GetCharacteristicImpedance();
+  std::complex<double> Z_PV_nondim = wave_port_op.GetPort(1).GetCharacteristicImpedance();
   // Dimensionalize: Z_PV in physical Ω = Z_PV_nondim · Z₀ (Z₀ = 376.73 Ω is the
   // internal-to-physical impedance scale factor).
   const double Z_PV_ohm = Z_PV_nondim.real() * electromagnetics::Z0_;
@@ -144,8 +142,7 @@ TEST_CASE("WavePortData TE10 Z_PV matches analytical formula",
 // is +y-aligned, so naming y=0 as "signal" (high) and y=a as "ground" (low) gives a
 // (high → low) direction of +y, matching the field, sign = +1. Swapping the two
 // attribute roles flips the expected sign to -1.
-TEST_CASE("WavePortData GetModePolaritySign for TE10",
-          "[waveportimpedance][Serial]")
+TEST_CASE("WavePort TE10 mode polarity sign", "[waveportimpedance][Serial]")
 {
   MPI_Comm comm = Mpi::World();
 
