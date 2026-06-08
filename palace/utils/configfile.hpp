@@ -436,6 +436,15 @@ public:
   // Flag for boundary damping term in driven and transient simulations.
   bool active = true;
 
+  // Whether this port contributes a port-mode basis vector when adaptive driven circuit
+  // synthesis is enabled (config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]).
+  // Defaults to true so that, by default, every lumped port appears as a row/column of the
+  // synthesized circuit matrices. Set to false on passive 50 Ohm terminations whose
+  // boundary condition you still want enforced but whose port-port block you do not need
+  // in the output. Excited ports must always be included; the parser will reject
+  // configurations where an excited port has IncludeInSynthesis = false.
+  bool include_in_synthesis = true;
+
   // For each lumped port index, each element contains a list of attributes making up a
   // single element of a potentially multielement lumped port.
   std::vector<internal::ElementData> elements = {};

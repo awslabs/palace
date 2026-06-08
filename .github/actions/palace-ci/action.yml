@@ -202,7 +202,7 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        spack -e . buildcache keys --install --trust
+        spack -e . buildcache keys -y --install --trust
         end_timer "Configure Binary Mirror Keys"
 
     - name: Bootstrap

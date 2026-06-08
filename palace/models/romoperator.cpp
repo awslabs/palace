@@ -460,7 +460,11 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   auto max_prom_size = 2 * max_size_per_excitation * space_op.GetPortExcitations().Size();
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
-    max_prom_size += space_op.GetLumpedPortOp().Size();  // Lumped ports are real fields
+    // Each lumped port included in synthesis contributes one real basis vector; ports
+    // flagged out via IncludeInSynthesis = false add nothing. Reserve against the
+    // included count, not the total port count, to avoid over-reserving basis storage
+    // (one full-FE-space vector per excluded port would otherwise be reserved).
+    max_prom_size += NumSynthesisPortModes();
 
     // Build inner-product weight matrix.
     weight_op_W = HybridBulkBoundaryOperator{
@@ -549,6 +553,23 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
   ksp->Mult(r, u);
 }
 
+std::size_t RomOperator::NumSynthesisPortModes() const
+{
+  // Each lumped port included in synthesis contributes exactly one real basis vector
+  // (lumped port fields are real). Ports flagged out via IncludeInSynthesis = false
+  // contribute nothing. Keep this the single source of truth for the port-mode count so
+  // the reservation and the port-port block scaling cannot drift apart.
+  std::size_t n = 0;
+  for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
+  {
+    if (port_data.include_in_synthesis)
+    {
+      n++;
+    }
+  }
+  return n;
+}
+
 void RomOperator::AddLumpedPortModesForSynthesis()
 {
   // Add modes for lumped port to use them a circuit matrices.
@@ -579,6 +600,14 @@ void RomOperator::AddLumpedPortModesForSynthesis()
 
   for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
   {
+    if (!port_data.include_in_synthesis)
+    {
+      // The boundary condition for this port is still applied (see
+      // LumpedPortOperator), but no port-mode vector is added to the PROM basis.
+      // Excited ports always have include_in_synthesis = true (enforced by the config
+      // parser) so the excitation vector is never silently dropped here.
+      continue;
+    }
     space_op.GetLumpedPortExcitationVectorPrimaryEt(port_idx, vec, true);
     UpdatePROM(vec, fmt::format("port_{:d}", port_idx));
   }
@@ -792,8 +821,14 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   // 1.0, since for nearly degenerate vectors orth_R(j,j) could be tiny, which may lead to
   // poor condition of the circuit matrices.
   //
-  // Lumped ports are real, at the beginning and in order
-  for (long j = 0; j < space_op.GetLumpedPortOp().Size(); j++)
+  // Lumped ports are real, at the beginning and in order. Only ports with
+  // include_in_synthesis contribute a basis row, so the number of leading port-mode rows
+  // is NumSynthesisPortModes(), NOT the total number of lumped ports. Iterating to the
+  // total port count here would over-run v_conc whenever a port is excluded.
+  const long n_port_modes = static_cast<long>(NumSynthesisPortModes());
+  MFEM_ASSERT(n_port_modes <= GetReducedDimension(),
+              "More lumped port modes than PROM basis vectors; basis is inconsistent!");
+  for (long j = 0; j < n_port_modes; j++)
   {
     // For the ideal port defined in LumpedPortOp, this should be: sqrt(\vert e_t \vert^2)
     // = sqrt(port.GetExcitationFieldEtNormSqWithUnityZR()).

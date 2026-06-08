@@ -110,6 +110,7 @@
             ]
           },
           "Active": { "type": "boolean" },
+          "IncludeInSynthesis": { "type": "boolean" },
           "Elements":
           {
             "type": "array",
