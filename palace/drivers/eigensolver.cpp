@@ -1596,7 +1596,24 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         return {};
       if (ops.size() == 1)
         return wp ? std::move(wp) : (ff ? std::move(ff) : std::move(sg));
-      return BuildParSumOperator(coeffs, ops);
+      // Multiple Jacobian-term contributions (e.g. wave port + 2nd-order ABC): the sum
+      // references the operands' local matrices, so the operands must outlive it.
+      auto sum = BuildParSumOperator(coeffs, ops);
+      std::vector<std::unique_ptr<ComplexOperator>> operands;
+      if (wp)
+      {
+        operands.push_back(std::move(wp));
+      }
+      if (ff)
+      {
+        operands.push_back(std::move(ff));
+      }
+      if (sg)
+      {
+        operands.push_back(std::move(sg));
+      }
+      sum->TakeOwnership(std::move(operands));
+      return sum;
     };
     auto funcDA2DLambdaComplex =
         [&wp_factor, &ff_factor,
@@ -1626,7 +1643,24 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         return {};
       if (ops.size() == 1)
         return wp ? std::move(wp) : (ff ? std::move(ff) : std::move(sg));
-      return BuildParSumOperator(coeffs, ops);
+      // Multiple Jacobian-term contributions (e.g. wave port + 2nd-order ABC): the sum
+      // references the operands' local matrices, so the operands must outlive it.
+      auto sum = BuildParSumOperator(coeffs, ops);
+      std::vector<std::unique_ptr<ComplexOperator>> operands;
+      if (wp)
+      {
+        operands.push_back(std::move(wp));
+      }
+      if (ff)
+      {
+        operands.push_back(std::move(ff));
+      }
+      if (sg)
+      {
+        operands.push_back(std::move(sg));
+      }
+      sum->TakeOwnership(std::move(operands));
+      return sum;
     };
     const bool any_factor_active =
         !wp_factor.empty() || !ff_factor.empty() || !sg_factor.empty();
