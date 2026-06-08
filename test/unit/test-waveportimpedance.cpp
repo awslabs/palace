@@ -219,4 +219,148 @@ TEST_CASE("WavePort TE10 mode polarity sign", "[waveportimpedance][Serial]")
   CHECK(port.GetModePolaritySign(/*high_attr=*/4, /*low_attr=*/2) == -1);
 }
 
+// Validate the COMPLEX-frequency wave-port cross-section solve (WavePortData::SolveKnExact)
+// against the closed-form TE10 propagation constant, evaluated at a genuinely complex
+// frequency ω. This is the cross-section analog of the paper's eigenmode-slice dispersion
+// relation (Rahmeier–Tiukuvaara–Gupta, arXiv:2005.05491, Eq. 18):
+//
+//     β² = k_c² − εμ Ω²        ⟺        kₙ(ω) = √(εμ ω² − k_c²),   k_c = π/a,
+//
+// which for a lossless homogeneous guide is an EXACT analytic function of ω. The whole
+// "WavePortBCEvaluation = Complex" path rests on SolveKnExact reproducing this analytic
+// continuation off the real axis — i.e. kₙ(ω) for complex ω must equal √(εμ ω² − k_c²) to
+// discretization error, NOT the real-ω value kₙ(Re ω). This test pins that down directly,
+// independent of any cavity/eigenmode/Q considerations: it is the decisive, closed-form-
+// backed check of the complex-frequency wave-port solve.
+TEST_CASE("WavePortData SolveKnExact matches analytical TE10 dispersion at complex ω",
+          "[waveportimpedance][Serial]")
+{
+  MPI_Comm comm = Mpi::World();
+
+  // Same WR-90 vacuum guide as the Z_PV test. TE10 cutoff fc = c/(2a) ≈ 6.56 GHz.
+  const double a_m = 22.86e-3;  // broadside (along y) — sets k_c = π/a
+  const double b_m = 10.16e-3;  // narrow side (along z)
+  const double L_m = 10.0e-3;   // propagation length (along x)
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(8, 8, 4, mfem::Element::TETRAHEDRON, L_m, a_m, b_m));
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.model.L0 = 1.0;  // Mesh coordinates are in raw meters → kₙ_nondim is in rad/m.
+  iodata.model.Lc = 1.0;
+
+  auto &material = iodata.domains.materials.emplace_back();
+  material.attributes = {1};
+  material.epsilon_r.s = {1.0, 1.0, 1.0};
+  material.mu_r.s = {1.0, 1.0, 1.0};
+
+  iodata.boundaries.pec.attributes = {1, 2, 3, 4, 6};
+
+  auto &wave = iodata.boundaries.waveport.try_emplace(1).first->second;
+  wave.attributes = {5};
+  wave.mode_idx = 1;
+  wave.excitation = 0;
+  wave.active = true;
+  wave.n_samples = 200;
+  wave.eig_tol = 1.0e-10;
+  wave.ksp_tol = 1.0e-10;
+  wave.ksp_max_its = 200;
+
+  iodata.solver.order = 2;
+  iodata.solver.linear.tol = 1.0e-10;
+  iodata.solver.linear.max_it = 200;
+  iodata.problem.type = ProblemType::DRIVEN;
+
+  iodata.NondimensionalizeInputs(serial_mesh);
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  iodata.CheckConfiguration();
+  Mesh palace_mesh(std::move(par_mesh));
+
+  auto nd_fec =
+      std::make_unique<mfem::ND_FECollection>(iodata.solver.order, palace_mesh.Dimension());
+  auto h1_fec =
+      std::make_unique<mfem::H1_FECollection>(iodata.solver.order, palace_mesh.Dimension());
+  FiniteElementSpace nd_fespace_palace(palace_mesh, nd_fec.get());
+  FiniteElementSpace h1_fespace_palace(palace_mesh, h1_fec.get());
+  MaterialOperator mat_op(iodata, palace_mesh);
+
+  WavePortOperator wave_port_op(iodata, mat_op, nd_fespace_palace.Get(),
+                                h1_fespace_palace.Get());
+  wave_port_op.SetSuppressOutput(true);
+  auto &port = const_cast<WavePortData &>(wave_port_op.GetPort(1));
+
+  // Closed-form TE10 propagation constant kₙ(ω) = √(εμ ω² − k_c²). In this Units(1,1)
+  // / Lc = 1 m setup the internal angular frequency is ω·tc with tc = Lc/c0, and kₙ comes
+  // back in rad/m. Build the analytic reference directly in physical (rad/m) units and
+  // compare against the dimensionalized SolveKnExact result kₙ_phys = kₙ_nondim · (1/Lc).
+  const double c0 = electromagnetics::c0_;
+  const double kc = M_PI / a_m;  // TE10 transverse cutoff wavenumber [rad/m]
+  auto kn_closed_form = [&](std::complex<double> omega_rad_s) -> std::complex<double>
+  {
+    // kₙ = √((ω/c)² − k_c²); principal branch gives Re(kₙ) ≥ 0 (forward sheet).
+    const std::complex<double> k0 = omega_rad_s / c0;
+    return std::sqrt(k0 * k0 - kc * kc);
+  };
+
+  // Helper: nondimensional ω for a physical frequency f [GHz].
+  auto omega_nd = [&](double f_GHz)
+  {
+    return 2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+  };
+  // kₙ scale factor (nondim → rad/m): kc_len = 1/Lc(meters).
+  const double kn_scale = 1.0 / iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+
+  SECTION("real ω above cutoff reproduces the propagating branch")
+  {
+    const double f_GHz = 10.0;
+    std::complex<double> kn_nd = port.SolveKnExact(std::complex<double>(omega_nd(f_GHz), 0.0));
+    const std::complex<double> kn_phys = kn_nd * kn_scale;
+    const std::complex<double> kn_ref =
+        kn_closed_form(2.0 * M_PI * f_GHz * 1.0e9);  // ≈ 158.24 rad/m, ~0 imag
+    CAPTURE(kn_phys, kn_ref);
+    CHECK_THAT(kn_phys.real(), WithinRel(kn_ref.real(), 1.0e-2));
+    CHECK_THAT(kn_phys.imag(), WithinAbs(0.0, 1.0e-2 * kn_ref.real()));
+  }
+
+  SECTION("complex ω matches the analytic continuation √(εμω²−k_c²)")
+  {
+    // Probe a genuinely complex frequency: f = 10 GHz with a 5% imaginary part (a Q≈10
+    // quasinormal-mode-like point, ω = ω_r(1 + i/20)). The exact solve MUST track the
+    // analytic continuation here — this is precisely where the "Real" path (kₙ at Re ω)
+    // would differ by O(Im ω / Re ω) ~ 1/(2Q).
+    const double f_r_GHz = 10.0;
+    const std::complex<double> scale_c(1.0, 0.05);
+    std::complex<double> kn_nd = port.SolveKnExact(omega_nd(f_r_GHz) * scale_c);
+    const std::complex<double> kn_phys = kn_nd * kn_scale;
+    const std::complex<double> omega_rad_s =
+        2.0 * M_PI * f_r_GHz * 1.0e9 * scale_c;
+    const std::complex<double> kn_ref = kn_closed_form(omega_rad_s);
+    CAPTURE(kn_phys, kn_ref);
+    // Both real and imaginary parts must match the closed-form analytic continuation.
+    CHECK_THAT(kn_phys.real(), WithinRel(kn_ref.real(), 1.0e-2));
+    CHECK_THAT(kn_phys.imag(), WithinRel(kn_ref.imag(), 2.0e-2));
+    // And the imaginary part must be genuinely nonzero (this is the whole point — the
+    // complex-ω solve sees the off-axis dispersion that real-ω evaluation cannot).
+    CHECK(std::abs(kn_ref.imag()) > 1.0);
+  }
+
+  SECTION("complex ω near cutoff stays on the correct (decaying) branch")
+  {
+    // f_r just above cutoff (≈6.56 GHz) with loss: this is the branch-sensitive regime.
+    // The principal-branch √ must give Re(kₙ) ≥ 0 (forward / decaying sheet), matching the
+    // closed form — guards against the wrong-Riemann-sheet hazard the analysis flagged.
+    const double f_r_GHz = 7.0;
+    const std::complex<double> scale_c(1.0, 0.08);
+    std::complex<double> kn_nd = port.SolveKnExact(omega_nd(f_r_GHz) * scale_c);
+    const std::complex<double> kn_phys = kn_nd * kn_scale;
+    const std::complex<double> kn_ref =
+        kn_closed_form(2.0 * M_PI * f_r_GHz * 1.0e9 * scale_c);
+    CAPTURE(kn_phys, kn_ref);
+    CHECK(kn_phys.real() >= 0.0);  // forward / decaying sheet
+    CHECK_THAT(kn_phys.real(), WithinRel(kn_ref.real(), 3.0e-2));
+    CHECK_THAT(kn_phys.imag(), WithinRel(kn_ref.imag(), 3.0e-2));
+  }
+}
+
 }  // namespace palace
