@@ -24,6 +24,7 @@ The format of this changelog is based on
     in the synthesized circuit matrices is omitted. Useful for keeping passive terminations
     in the simulation for correct physics without paying their basis-vector cost. Excited
     ports must always be included; the parser rejects configurations otherwise.
+    [PR 741](https://github.com/awslabs/palace/pull/741).
   - Added `BoundaryMode` solver for mode analysis on 2D meshes, supporting both standalone 2D meshes
     and 2D boundary submesh extracted from a 3D mesh [PR 657](https://github.com/awslabs/palace/pull/657).
   - Added support for 2D meshes in all simulation types [PR 657](https://github.com/awslabs/palace/pull/657).
@@ -64,7 +65,11 @@ The format of this changelog is based on
 
 #### Bug Fixes
 
+  - Fixed the driven solver ParaView output writing the nondimensional angular
+    frequency to the `Time` field instead of the physical frequency in GHz.
+    [PR 754](https://github.com/awslabs/palace/pull/754).
   - Revert change of adaptive PROM from interpolation back to projection.
+    [PR 733](https://github.com/awslabs/palace/pull/733).
   - Fixed nondeterministic current-dipole assembly when the source lies on a
     shared mesh entity by distributing the underlying MFEM delta source over all
     containing elements.
