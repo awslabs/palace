@@ -839,6 +839,38 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     return funcA2_real(omega);
   };
+  // Seed-pencil source with the 2nd-order farfield ABC term removed. The ABC
+  // contributes −1/(2λ)·M_ff (a simple pole at λ=0). A polynomial seed cannot fit that
+  // pole, so the misfit leaks a fictitious, imaginary, rank-deficient a₂·M_ff into the
+  // seed's leading (M) coefficient, which displaces the linearization's spurious roots
+  // into the +Re(λ) (growing/unphysical) half-plane. We instead remove the ABC from the
+  // interpolated source here and re-add it to the seed as a frozen constant in the
+  // K-block (see the HYBRID seed assembly below). On the imaginary λ axis (where the
+  // interpolation samples) ff_factor.Build(ω) is bit-identical to the farfield part of
+  // funcA2(ω), so the subtraction cancels it cleanly in both REAL and COMPLEX modes.
+  auto funcA2_seed = [&funcA2, &ff_factor](double omega) -> std::unique_ptr<ComplexOperator>
+  {
+    auto full = funcA2(omega);
+    if (ff_factor.empty() || !full)
+    {
+      return full;
+    }
+    auto ff = ff_factor.Build(omega);  // i·(0.5/ω)·M_ff — the farfield part of funcA2(ω)
+    if (!ff)
+    {
+      return full;
+    }
+    std::vector<std::complex<double>> coeffs{1.0 + 0.0i, -1.0 + 0.0i};
+    std::vector<const ComplexParOperator *> ops{
+        static_cast<const ComplexParOperator *>(full.get()),
+        static_cast<const ComplexParOperator *>(ff.get())};
+    auto sum = BuildParSumOperator(coeffs, ops);
+    std::vector<std::unique_ptr<ComplexOperator>> operands;
+    operands.push_back(std::move(full));
+    operands.push_back(std::move(ff));
+    sum->TakeOwnership(std::move(operands));
+    return sum;
+  };
   auto funcP = [&space_op](std::complex<double> a0, std::complex<double> a1,
                            std::complex<double> a2,
                            std::complex<double> omega) -> std::unique_ptr<ComplexOperator>
@@ -867,11 +899,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     const double target_max = iodata.solver.eigenmode.target_upper;
 
-    // Seed-pencil strategies for HYBRID. Three options selectable via env var:
+    // Seed-pencil strategies for HYBRID. Options selectable via env var:
     //   PALACE_NLEPS_SEED unset / "polynomial":
-    //     3-point Newton interpolation of A2(ω) in λ — current default. Polynomial
-    //     extrapolation off the imaginary λ axis can introduce spurious eigenvalues
-    //     (eigenvalues of T_polynomial that don't correspond to T_nonlinear modes).
+    //     3-point Newton interpolation of A2(ω) in λ. Polynomial extrapolation off the
+    //     imaginary λ axis can introduce spurious eigenvalues (eigenvalues of
+    //     T_polynomial that don't correspond to T_nonlinear modes).
     //   PALACE_NLEPS_SEED = "off-axis":
     //     6-point LSQ fit (3 on imag axis + 3 mirror points) in λ. Same polynomial
     //     pencil structure; better conditioning for typical Q ~ 5 modes.
@@ -882,25 +914,49 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     //     Ruhe's Method of Successive Linear Problems (SIAM JNA 1973); see also
     //     COMSOL "linearization point" iteration (Wu et al., CPC 284, 2023) and
     //     SLAC Omega3P self-consistent iteration (Liao-Bai-Lee-Ko 2010).
+    //   PALACE_NLEPS_SEED = "frozen-abc" (DEFAULT when a 2nd-order farfield ABC is
+    //   present):
+    //     Per-term freeze of ONLY the farfield ABC term. The ABC contributes
+    //     −1/(2λ)·M_ff (a simple pole at λ=0); a polynomial seed cannot fit it, and the
+    //     misfit injects a fictitious, imaginary, rank-deficient a₂·M_ff into the seed's
+    //     leading (M) coefficient — which is what displaces the linearization's spurious
+    //     roots into the +Re(λ) half-plane (confirmed empirically: no-ABC and 1st-order
+    //     ABC seeds are clean, 2nd-order ABC seeds are not). Freezing the ABC at λ*=i·target
+    //     turns it into the bounded constant +i/(2·target)·M_ff, which we place in the
+    //     K-block (A2_0) only. The leading coefficient stays the clean bulk mass M, so the
+    //     displacement mechanism is removed; the wave-port quadratic fit (the dominant,
+    //     well-conditioned part) is untouched in A2_1/A2_2. First-order accurate across
+    //     [target, target_upper] — same regime as fixed-omega — but only a seed; the
+    //     Quasi-Newton step refines against the exact T(λ) regardless.
     enum class SeedStrategy
     {
       Polynomial,
       OffAxis,
-      FixedOmega
+      FixedOmega,
+      FrozenABC
     };
-    SeedStrategy seed_strategy = SeedStrategy::Polynomial;
+    // Default to FrozenABC when a 2nd-order farfield ABC is present (the case the freeze
+    // is designed for); otherwise the polynomial seed (with no ABC term) is already clean.
+    SeedStrategy seed_strategy =
+        ff_factor.empty() ? SeedStrategy::Polynomial : SeedStrategy::FrozenABC;
     if (const char *env = std::getenv("PALACE_NLEPS_SEED"))
     {
       std::string_view sv{env};
-      if (sv == "off-axis")
+      if (sv == "polynomial")
+        seed_strategy = SeedStrategy::Polynomial;
+      else if (sv == "off-axis")
         seed_strategy = SeedStrategy::OffAxis;
       else if (sv == "fixed-omega")
         seed_strategy = SeedStrategy::FixedOmega;
+      else if (sv == "frozen-abc")
+        seed_strategy = SeedStrategy::FrozenABC;
     }
     Mpi::Print("\n NLEPS HYBRID seed strategy: {}\n",
                seed_strategy == SeedStrategy::Polynomial ? "polynomial (3-pt on-axis)"
                : seed_strategy == SeedStrategy::OffAxis  ? "off-axis (6-pt LSQ)"
-                                                         : "fixed-omega (constant A2)");
+               : seed_strategy == SeedStrategy::FixedOmega
+                   ? "fixed-omega (constant A2)"
+                   : "frozen-abc (frozen 2nd-order ABC, quadratic wave-port fit)");
 
     // Detect wave-port-only A2 (used by both off-axis and fixed-omega paths).
     auto bulk_probe = space_op.GetExtraSystemMatrix<ComplexOperator>(
@@ -935,9 +991,45 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       A2_1 = std::move(seed.A2_1);
       A2_2 = std::move(seed.A2_2);
     }
+    else if (seed_strategy == SeedStrategy::FrozenABC)
+    {
+      // Per-term frozen ABC. Interpolate the seed source WITHOUT the farfield term
+      // (funcA2_seed = funcA2 − ff_factor.Build), so the wave-port √ keeps its clean
+      // quadratic fit distributed through A2_0/A2_1/A2_2 and no fictitious M_ff leaks
+      // into A2_2. Then add the ABC back as a frozen constant in the K-block only.
+      interp_op = std::make_unique<NewtonInterpolationOperator>(funcA2_seed, A2->Width());
+      interp_op->Interpolate(1i * target, 1i * target_max);
+      auto A2_0_wp = interp_op->GetInterpolationOperator(0);
+      A2_1 = interp_op->GetInterpolationOperator(1);
+      A2_2 = interp_op->GetInterpolationOperator(2);
+      // Frozen ABC constant: ff_factor.BuildComplex(i·target) = −1/(2·i·target)·M_ff
+      //                                                       = +i/(2·target)·M_ff.
+      auto A2_0_ff = ff_factor.BuildComplex(1i * target);
+      if (A2_0_ff)
+      {
+        // A2_0 = (wave-port λ⁰ term) + (frozen ABC constant). Both are ComplexParOperator;
+        // keep them alive alongside the sum (BuildParSumOperator holds non-owning refs).
+        std::vector<std::complex<double>> coeffs{1.0 + 0.0i, 1.0 + 0.0i};
+        std::vector<const ComplexParOperator *> ops{
+            static_cast<const ComplexParOperator *>(A2_0_wp.get()),
+            static_cast<const ComplexParOperator *>(A2_0_ff.get())};
+        auto sum = BuildParSumOperator(coeffs, ops);
+        std::vector<std::unique_ptr<ComplexOperator>> operands;
+        operands.push_back(std::move(A2_0_wp));
+        operands.push_back(std::move(A2_0_ff));
+        sum->TakeOwnership(std::move(operands));
+        A2_0 = std::move(sum);
+      }
+      else
+      {
+        A2_0 = std::move(A2_0_wp);
+      }
+    }
     else
     {
-      // Polynomial 3-point Newton interpolation (default).
+      // Polynomial 3-point Newton interpolation. Distributes the FULL A2(λ) — including
+      // any farfield ABC — through K, C, M. Clean when no ABC is present; for the ABC
+      // case prefer FrozenABC (the default when ff_factor is non-empty).
       interp_op = std::make_unique<NewtonInterpolationOperator>(funcA2, A2->Width());
       interp_op->Interpolate(1i * target, 1i * target_max);
       A2_0 = interp_op->GetInterpolationOperator(0);
