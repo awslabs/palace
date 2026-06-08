@@ -1,6 +1,9 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <cmath>
+#include <complex>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -88,6 +91,8 @@ TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial]")
   wave.eig_tol = 1.0e-8;
   wave.ksp_tol = 1.0e-8;
   wave.ksp_max_its = 100;
+  // Mirror the formula used by IoData::CheckConfiguration for eigenmode.max_size.
+  wave.max_size = std::max(2 * wave.mode_idx, wave.mode_idx + 15);
 
   iodata.solver.order = 2;
   iodata.solver.linear.tol = 1.0e-8;
@@ -176,6 +181,8 @@ TEST_CASE("WavePort TE10 mode polarity sign", "[waveportimpedance][Serial]")
   wave.eig_tol = 1.0e-8;
   wave.ksp_tol = 1.0e-8;
   wave.ksp_max_its = 100;
+  // Mirror the formula used by IoData::CheckConfiguration for eigenmode.max_size.
+  wave.max_size = std::max(2 * wave.mode_idx, wave.mode_idx + 15);
 
   iodata.solver.order = 2;
   iodata.solver.linear.tol = 1.0e-8;
