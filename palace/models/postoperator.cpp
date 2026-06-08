@@ -687,10 +687,15 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
     paraview->RegisterCoeffField("Sn", Sn.get());
     sn_registered = true;
   }
+  double paraview_time = time;
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    paraview_time = units.Dimensionalize<Units::ValueType::FREQUENCY>(time) / (2.0 * M_PI);
+  }
   paraview->SetCycle(step);
-  paraview->SetTime(time);
+  paraview->SetTime(paraview_time);
   paraview_bdr->SetCycle(step);
-  paraview_bdr->SetTime(time);
+  paraview_bdr->SetTime(paraview_time);
   paraview->Save();
   paraview_bdr->Save();
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
