@@ -40,7 +40,9 @@
         "Index": 1,
         "Attributes": [2],
         "Mode": 1,
-        "Excitation": true
+        "Excitation": true,
+        "KSPTol": 1e-8,
+        "EigenTol": 1e-6
       }
     ],
     "PEC":

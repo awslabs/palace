@@ -18,6 +18,8 @@
 #include "21/hcurlmass_build_21_qf.h"
 #include "22/hcurlmass_22_qf.h"
 #include "22/hcurlmass_build_22_qf.h"
+#include "31/hcurlmass_31_qf.h"
+#include "31/hcurlmass_build_31_qf.h"
 #include "32/hcurlmass_32_qf.h"
 #include "32/hcurlmass_build_32_qf.h"
 #include "33/hcurlmass_33_qf.h"

@@ -16,20 +16,28 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/modeeigensolver.hpp"
+#include "utils/configfile.hpp"
+#include "utils/labels.hpp"
 
 namespace palace
 {
 
+class FarfieldBoundaryOperator;
 class IoData;
 class MaterialOperator;
 class MaterialPropertyCoefficient;
 class SumVectorCoefficient;
+class SurfaceConductivityOperator;
+class SurfaceImpedanceOperator;
 class Units;
 
 namespace config
 {
 
 struct BoundaryData;
+struct DomainData;
+struct LinearSolverData;
 struct SolverData;
 struct WavePortData;
 
@@ -37,8 +45,10 @@ struct WavePortData;
 
 enum class ProblemType : char;
 
+class FiniteElementSpace;
+
 //
-// Helper class for wave port boundaries in a model.
+// Wave port data for a single port boundary.
 //
 class WavePortData
 {
@@ -69,16 +79,20 @@ private:
   mfem::Array<int> port_dbc_tdof_list;
   double mu_eps_max;
 
-  // Operator storage for repeated boundary mode eigenvalue problem solves.
-  std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Antr, Anti, Annr, Anni;
-  std::unique_ptr<ComplexOperator> opB;
+  // Submesh-specific material operator and boundary condition operators. Constructed on
+  // the remapped submesh with rebuilt CEED data for correct attribute mapping.
+  std::unique_ptr<MaterialOperator> port_mat_op;
+  std::unique_ptr<SurfaceImpedanceOperator> port_surf_z_op;
+  std::unique_ptr<FarfieldBoundaryOperator> port_farfield_op;
+  std::unique_ptr<SurfaceConductivityOperator> port_surf_sigma_op;
+
+  // Boundary mode eigenvalue problem solver.
+  std::unique_ptr<ModeEigenSolver> mode_solver;
   ComplexVector v0, e0;
 
-  // Eigenvalue solver for boundary modes.
-  MPI_Comm port_comm;
-  int port_root;
-  std::unique_ptr<EigenvalueSolver> eigen;
-  std::unique_ptr<ComplexKspSolver> ksp;
+  // Communicator for processes which have elements for this port.
+  MPI_Comm port_comm = MPI_COMM_NULL;
+  int port_root = 0;
 
   // Grid functions storing the last computed electric field mode on the port, and stored
   // objects for computing functions of the port modes for use as an excitation or in
@@ -86,13 +100,23 @@ private:
   std::unique_ptr<GridFunction> port_E0t, port_E0n, port_S0t, port_E;
   std::unique_ptr<mfem::LinearForm> port_sr, port_si;
 
+  // Voltage path for line integral (optional, for impedance postprocessing).
+  std::vector<mfem::Vector> voltage_path;
+  int voltage_n_samples;
+  bool has_voltage_coords = false;
+
 public:
-  WavePortData(const config::WavePortData &data, const config::SolverData &solver,
+  // 3D submesh constructor: extracts submesh from parent mesh.
+  WavePortData(const config::WavePortData &data, const config::BoundaryData &boundaries,
+               const config::DomainData &domains, ProblemType problem_type,
+               const config::LinearSolverData &linear, const Units &units,
                const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
                mfem::ParFiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_attr);
+
   ~WavePortData();
 
   [[nodiscard]] constexpr bool HasExcitation() const { return excitation != 0; }
+  [[nodiscard]] bool HasVoltageCoords() const { return has_voltage_coords; }
 
   const auto &GetAttrList() const { return attr_list; }
 
@@ -109,26 +133,21 @@ public:
   std::unique_ptr<mfem::VectorCoefficient>
   GetModeFieldCoefficientImag(double scaling = 1.0) const;
 
-  std::complex<double> GetCharacteristicImpedance() const
-  {
-    MFEM_ABORT("GetImpedance is not yet implemented for wave port boundaries!");
-    return 0.0;
-  }
+  // Characteristic impedance Z = |V|^2 / (2P) from the port mode voltage and unit power.
+  // Requires voltage coordinates to be configured.
+  std::complex<double> GetCharacteristicImpedance() const;
 
   double GetExcitationPower() const;
-  std::complex<double> GetExcitationVoltage() const
-  {
-    MFEM_ABORT("GetExcitationVoltage is not yet implemented for wave port boundaries!");
-    return 0.0;
-  }
+
+  // Excitation voltage from the normalized port mode field.
+  std::complex<double> GetExcitationVoltage() const;
 
   std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
   std::complex<double> GetSParameter(GridFunction &E) const;
-  std::complex<double> GetVoltage(GridFunction &E) const
-  {
-    MFEM_ABORT("GetVoltage is not yet implemented for wave port boundaries!");
-    return 0.0;
-  }
+
+  // Voltage line integral V = integral of E . dl on the port, using the 3D E field.
+  // Requires voltage coordinates to be configured.
+  std::complex<double> GetVoltage(GridFunction &E) const;
 };
 
 //
@@ -145,8 +164,9 @@ private:
   double fc, kc;
 
   void SetUpBoundaryProperties(const config::BoundaryData &boundaries,
+                               const config::DomainData &domains,
                                const config::SolverData &solver, ProblemType problem_type,
-                               const MaterialOperator &mat_op,
+                               const Units &units, const MaterialOperator &mat_op,
                                mfem::ParFiniteElementSpace &nd_fespace,
                                mfem::ParFiniteElementSpace &h1_fespace);
   void PrintBoundaryInfo(const Units &units, const mfem::ParMesh &mesh);
@@ -155,7 +175,8 @@ private:
   void Initialize(double omega);
 
 public:
-  WavePortOperator(const config::BoundaryData &boundaries, const config::SolverData &solver,
+  WavePortOperator(const config::BoundaryData &boundaries,
+                   const config::DomainData &domains, const config::SolverData &solver,
                    ProblemType problem_type, const Units &units,
                    const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &nd_fespace,
                    mfem::ParFiniteElementSpace &h1_fespace);

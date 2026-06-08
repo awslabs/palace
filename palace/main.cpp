@@ -8,6 +8,7 @@
 #include <vector>
 #include <mpi.h>
 #include <mfem.hpp>
+#include "drivers/boundarymodesolver.hpp"
 #include "drivers/drivensolver.hpp"
 #include "drivers/eigensolver.hpp"
 #include "drivers/electrostaticsolver.hpp"
@@ -272,17 +273,21 @@ int main(int argc, char *argv[])
       case ProblemType::TRANSIENT:
         return std::make_unique<TransientSolver>(iodata, world_root, world_size,
                                                  omp_threads, GetPalaceGitTag());
+      case ProblemType::BOUNDARYMODE:
+        return std::make_unique<BoundaryModeSolver>(iodata, world_root, world_size,
+                                                    omp_threads, GetPalaceGitTag());
     }
     return nullptr;
   }();
 
-  // Read the mesh from file, refine, partition, and distribute it. Then nondimensionalize
-  // it and the input parameters.
+  // Load the serial mesh, apply problem-type-specific serial-stage preprocessing,
+  // nondimensionalize, then partition, distribute, and refine.
   std::vector<std::unique_ptr<Mesh>> mesh;
   {
+    auto smesh = mesh::Load(iodata, world_comm);
+    solver->Preprocess(iodata, smesh, world_comm);
     std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
-    mfem_mesh.push_back(mesh::ReadMesh(iodata, world_comm));
-    iodata.NondimensionalizeInputs(*mfem_mesh[0]);
+    mfem_mesh.push_back(mesh::Partition(iodata, std::move(smesh), world_comm));
     mesh::RefineMesh(iodata, mfem_mesh);
     Mpi::Print(world_comm, "\n");
     memory_reporting::PrintMemoryUsage(world_comm,
@@ -304,6 +309,7 @@ int main(int argc, char *argv[])
   Mpi::Print(world_comm, "\n");
   memory_reporting::PrintMemoryUsage(world_comm, peak_mem);
   memory_reporting::PrintMemoryUsage(world_comm, peak_node_mem);
+  BlockTimer::Finalize(world_comm);
   BlockTimer::Print(world_comm);
   solver->SaveMetadata(BlockTimer::GlobalTimer());
   solver->SaveMetadata(peak_mem);

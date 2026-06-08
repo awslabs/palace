@@ -217,6 +217,60 @@ Disk IO                         // < Disk read/write time for loading the mesh f
 Total                           // < Total simulation time
 ```
 
+## Memory Reporting
+
+Memory reporting in *Palace* tracks **peak** RSS (Resident Set Size) at two granularities:
+per-process snapshots and per-phase growth. The goal of this reporting is to understand the
+maximum memory required by a *Palace* simulation. We do not track how much memory *Palace*
+uses at any given time, instead, we measure how much various phases of the simulation
+increase the high-water mark. This is useful to understand and reduce the total memory
+required by *Palace*. Note, this tool is not enough to comprehensively track the memory
+lifecycle because it does not see allocations/deallocations that do not increase the peak
+RSS.
+
+### Per-process snapshots
+
+The `memory_reporting` utilities (`memoryreporting.hpp`) provide functions for querying the
+current and peak RSS of a process. These are aggregated across MPI ranks (min/max/avg) and
+across nodes (by splitting the communicator with `MPI_Comm_split_type`). Two snapshots are
+printed during each simulation: current memory after mesh loading, and peak memory after the
+solve.
+
+### Per-phase memory growth
+
+The `Timer`/`BlockTimer` system tracks not only elapsed time but also **peak** RSS growth per
+phase. Every `BlockTimer` scope automatically records how much the peak RSS increased during
+that phase, using the same stack-based interruption mechanism as timing: entering a nested
+scope attributes the memory growth so far to the outer scope, then starts tracking the inner
+scope.
+
+The per-phase memory table is printed alongside the timing table at the end of each
+simulation. It has three columns:
+
+  - Per-Node: maximum growth on any single node for this phase.
+  - Total: sum of growth across all nodes for this phase.
+  - Total HWM (High Water Mark): high-water mark growth at the end of this phase summed across all the nodes.
+
+The `BlockTimer` constructor accepts a `count` parameter (default `true`). When `count` is
+`false`, both timing and memory tracking are disabled for that scope. This can be used to
+exclude certain sections of code from a `BlockTimer`.
+
+Per-phase memory data is also saved to `palace.json` under the `PeakMemoryGrowthMegabytes`
+and `PeakNodeMemoryGrowthMegabytes` keys, alongside the existing `ElapsedTime` data.
+
+### Interpreting memory data
+
+Peak RSS is monotonically non-decreasing (the OS high-water mark), so per-phase deltas are
+always non-negative. A phase that allocates memory temporarily and then frees it will still
+show the growth if the allocation pushed the peak. A phase showing zero growth means it did
+not exceed the previously established peak. Note that this does not mean that no allocations
+were performed.
+
+Per-phase deltas may not sum exactly to the total because memory growth can occur between
+timed phases (e.g., during scope transitions or in code not wrapped by a `BlockTimer`).
+
+You should read each row as "this phase increases the peak memory by this amount".
+
 ## Profiling *Palace* on CPUs
 
 A typical *Palace* simulation spends most of its time in libCEED kernels, which, in turn, executed `libsxmm` code on CPUs. Libsxmm generates code just-in-time to ensure it is the most performant on the given architecture and for the given problem. This code generation confuses most profilers. Luckily, [libsxmm](https://libxsmm.readthedocs.io/en/latest/libxsmm_prof/) can integrate with the VTune APIs to enable profiling of jitted functions as well.

@@ -398,7 +398,8 @@ message(STATUS "MFEM_OPTIONS: ${MFEM_OPTIONS_PRINT}")
 set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_par_tet_mesh_fix_dev.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_gmsh_parser_performance.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5280.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5246.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5353.diff"
 )
 
 include(ExternalProject)

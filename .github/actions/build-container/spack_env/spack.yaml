@@ -36,7 +36,7 @@ spack:
       spack: develop
   # Find pre-compiled packages in binary caches. Requires GITHUB_USER and
   # GITHUB_TOKEN (or a personal access token).
-  # 
+  #
   # Remove this if you do not want to use binary mirrors
   mirrors:
     spack:
@@ -50,23 +50,27 @@ spack:
         id_variable: GITHUB_USER
         secret_variable: GITHUB_TOKEN
   specs:
-    # Compile gcc@15, then use it to compile everything else
-  - group: compilers
-    # explicit false means that we do not want to include this in the container,
-    # unless something depends on it
-    explicit: false
-    specs:
-      # If you change this, you might need to change PalaceDockerfile so that we
-      # remove the compiler from the container
-      - gcc@15
-    override:
-      concretizer:
-        # Do not force the target to be specific, let it generic, so that we can
-        # reuse compilers across different machines.
-        targets:
-          granularity: generic
+    # FIXME(awslabs/palace#731): re-enable the `compilers` spec group when the
+    # underlying Spack spec-groups bug is fixed; gcc-15 is currently apt-
+    # installed in PalaceDockerfile.
+    #
+    # - group: compilers
+    #   # explicit false means that we do not want to include this in the
+    #   # container, unless something depends on it
+    #   explicit: false
+    #   specs:
+    #     # If you change this, you might need to change PalaceDockerfile so
+    #     # that we remove the compiler from the container
+    #     - gcc@15
+    #   override:
+    #     concretizer:
+    #       # Do not force the target to be specific, let it generic, so that
+    #       # we can reuse compilers across different machines.
+    #       targets:
+    #         granularity: generic
   - group: palace
-    needs: [compilers]
+    # FIXME(awslabs/palace#731): re-enable with `compilers` group above.
+    # needs: [compilers]
     specs:
     - palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64 %gcc@15 ^openblas@0.3.29 ^openmpi schedulers=none fabrics=ofi
     override:
@@ -74,6 +78,9 @@ spack:
         # Enable AWS EFA
         libfabric:
           require: fabrics=efa,lnx,mrail,rxm,shm,sockets,tcp,udp
+        # We do not want to include the full Python stack in the container
+        rdma-core:
+          require: ~pyverbs
       develop:
         palace:
           spec: palace@=develop

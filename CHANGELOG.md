@@ -16,6 +16,63 @@ The format of this changelog is based on
 
 #### New Features
 
+  - Added `"IncludeInSynthesis"` boolean flag to lumped port configuration (default `true`).
+    When adaptive driven circuit synthesis is enabled
+    (`config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]`), this flag controls whether
+    the port contributes a port-mode basis vector to the reduced-order model. The boundary
+    condition is still enforced for `"IncludeInSynthesis": false` ports — only the row/column
+    in the synthesized circuit matrices is omitted. Useful for keeping passive terminations
+    in the simulation for correct physics without paying their basis-vector cost. Excited
+    ports must always be included; the parser rejects configurations otherwise.
+  - Added `BoundaryMode` solver for mode analysis on 2D meshes, supporting both standalone 2D meshes
+    and 2D boundary submesh extracted from a 3D mesh [PR 657](https://github.com/awslabs/palace/pull/657).
+  - Added support for 2D meshes in all simulation types [PR 657](https://github.com/awslabs/palace/pull/657).
+  - Changed waveport formulation to enable support for impedance boundary conditions [PR 657](https://github.com/awslabs/palace/pull/657).
+  - Enabled voltage and impedance postprocessing for waveport and BoundaryMode by specifying a line
+    from ground to conductor, either through mesh coordinates or boundary attribute
+    in `config["Boundaries"]["Postprocessing"]["Impedance"]` [PR 657](https://github.com/awslabs/palace/pull/657).
+  - Adaptive mesh refinement is now supported for `BoundaryMode` simulations on a
+    2D submesh extracted from a 3D input mesh.
+    [PR 727](https://github.com/awslabs/palace/pull/727).
+
+#### Interface Changes
+
+  - Box and sphere region refinement (specified under
+    `config["Model"]["Refinement"]["Boxes"]` and
+    `config["Model"]["Refinement"]["Spheres"]`) is now applied to the mesh
+    before partitioning rather than after, and is no longer reflected as a
+    distinct level of the geometric multigrid mesh hierarchy used when
+    `config["Solver"]["Linear"]["MGUseMesh"]` is enabled. The finest solve
+    mesh is unchanged.
+    [PR 727](https://github.com/awslabs/palace/pull/727).
+
+#### Bug Fixes
+
+  - Revert change of adaptive PROM from interpolation back to projection.
+  - Fixed nondeterministic current-dipole assembly when the source lies on a
+    shared mesh entity by distributing the underlying MFEM delta source over all
+    containing elements.
+  - Fixed a bug where nonconformal AMR would lead to erroneous results when waveports are present.
+    Part of [PR 657](https://github.com/awslabs/palace/pull/657).
+  - For `BoundaryMode` simulations on a 3D mesh, the non-dimensionalization
+    reference length `Lc` is now computed from the extracted 2D solve mesh
+    rather than the loaded 3D mesh, so reported scales match the geometry
+    actually being solved.
+    [PR 727](https://github.com/awslabs/palace/pull/727).
+  - Fixed a bug where `BoundaryMode` simulations on a 3D mesh could abort
+    during non-dimensionalization in parallel runs. The 2D submesh extraction
+    was computing its tangent-plane normal against a stale attribute list,
+    collapsing the normal and the reference length `Lc` to zero. Pre-existing
+    from [PR 657](https://github.com/awslabs/palace/pull/657).
+    [PR 727](https://github.com/awslabs/palace/pull/727).
+
+## [0.16.1] - 2026-04-24
+
+#### New Features
+
+  - Added a new table reporting memory consumption for various stages in the
+    simulation. [PR 708](https://github.com/awslabs/palace/pull/708)
+
   - Expanded JSON schema validation to cover required fields, mutual exclusion constraints
     (e.g., `PEC`/`Ground`, `PMC`/`ZeroCharge`), array type validation, and numeric bounds.
     Many runtime checks are now caught earlier at configuration parsing time with clearer
@@ -23,6 +80,8 @@ The format of this changelog is based on
 
 #### Bug Fixes
 
+  - Reduced memory usage when `MaxIts` for GMRES is larger than the number of
+    required iterations. [PR 715](https://github.com/awslabs/palace/pull/715)
   - Improved IO performance for simulations with Adaptive Mesh Refinement. Now,
     files from previous iterations are moved instead of being copied. The latest
     output is always available at the top level of the output directory (as
@@ -33,6 +92,9 @@ The format of this changelog is based on
   - Fixed linear solver stalling in the nonlinear eigenvalue solver by adding an absolute
     tolerance and adapting the relative tolerance to the outer residual
     [PR 694](https://github.com/awslabs/palace/pull/694).
+  - Fixed divergence of the Quasi-Newton nonlinear eigensolver by adding an
+    Armijo line search to damp overshooting Newton steps
+    [PR 713](https://github.com/awslabs/palace/pull/713).
   - Replaced boundary mass matrix CG solve workaround for lumped port excitation
     projection with direct interpolation via MFEM's
     `ProjectBdrCoefficientTangent`. An MFEM patch fixes the underlying face DOF
@@ -47,6 +109,9 @@ The format of this changelog is based on
   - Embedded JSON schemas are now regenerated at build time instead of configure time,
     so schema edits no longer require a full CMake reconfigure
     [PR 679](https://github.com/awslabs/palace/pull/679).
+  - Backport positive-weight simplex quadrature rules from MFEM
+    ([mfem/mfem#5246](https://github.com/mfem/mfem/pull/5246))
+    [PR 706](https://github.com/awslabs/palace/pull/706).
 
 ## [0.16.0] - 2026-03-05
 

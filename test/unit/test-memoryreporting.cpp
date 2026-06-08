@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "utils/communication.hpp"
 #include "utils/memoryreporting.hpp"
+#include "utils/timer.hpp"
 
 using namespace palace;
 using namespace palace::memory_reporting;
@@ -79,4 +80,27 @@ TEST_CASE("Node Memory Stats Multi Process", "[memoryreporting][Parallel]")
   CHECK(peak_stats.min > 0);
   CHECK(peak_stats.min <= peak_stats.max);
   CHECK(peak_stats.sum >= peak_stats.min);
+}
+
+TEST_CASE("Timer Memory Data Invariants", "[memoryreporting][Serial]")
+{
+  Timer timer;
+
+  // MemoryLap returns a non-negative delta (peak RSS is non-decreasing).
+  auto delta = timer.MemoryLap();
+  CHECK(delta >= 0);
+
+  // MarkMemory accumulates into the correct index and leaves others at zero.
+  timer.MarkMemory(Timer::CONSTRUCT, 100);
+  timer.MarkMemory(Timer::CONSTRUCT, 200);
+  CHECK(timer.MemoryData(Timer::CONSTRUCT) == 300);
+  CHECK(timer.MemoryData(Timer::KSP) == 0);
+
+  // TOTAL index assigns rather than accumulates.
+  timer.MarkMemory(Timer::TOTAL, 500);
+  timer.MarkMemory(Timer::TOTAL, 700);
+  CHECK(timer.MemoryData(Timer::TOTAL) == 700);
+
+  // MemoryFromStart is non-negative (peak can only grow).
+  CHECK(timer.MemoryFromStart() >= 0);
 }

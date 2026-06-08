@@ -140,12 +140,22 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
   }
 }
 
+void BaseSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
+                            MPI_Comm comm) const
+{
+  if (!(iodata.model.Lc > 0.0))
+  {
+    iodata.model.Lc = mesh::ComputeReferenceLength(smesh, comm);
+  }
+  iodata.NondimensionalizeInputs(smesh);
+}
+
 void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   const auto &refinement = iodata.model.refinement;
   const bool use_amr = [&]()
   {
-    if (refinement.max_it > 0 && dynamic_cast<const TransientSolver *>(this) != nullptr)
+    if (refinement.max_it > 0 && iodata.problem.type == ProblemType::TRANSIENT)
     {
       Mpi::Warning("AMR is not currently supported for transient simulations!\n");
       return false;
@@ -177,10 +187,11 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
   // Main AMR loop.
   int it = 0;
-  while (!ExhaustedResources(it, ntdof) && err >= refinement.tol)
+  while (use_amr && !ExhaustedResources(it, ntdof) && err >= refinement.tol)
   {
     // Print timing summary.
     Mpi::Print(comm, "\nCumulative timing statistics:\n");
+    BlockTimer::Finalize(comm);
     BlockTimer::Print(comm);
     auto peak_mem = memory_reporting::GetPeakMemoryStats(comm);
     auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(comm);
@@ -300,6 +311,9 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
 {
   if (root)
   {
+    constexpr double to_mb = 1.0 / (1024.0 * 1024.0);
+    auto red = BlockTimer::GetReductions();
+
     json meta = LoadMetadata(post_dir);
     for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
     {
@@ -307,6 +321,12 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
       key.erase(std::remove_if(key.begin(), key.end(), isspace), key.end());
       meta["ElapsedTime"]["Durations"][key] = timer.Data((Timer::Index)i);
       meta["ElapsedTime"]["Counts"][key] = timer.Counts((Timer::Index)i);
+      meta["PeakMemoryGrowthMegabytes"]["Min"][key] = red.rank_mem.min[i] * to_mb;
+      meta["PeakMemoryGrowthMegabytes"]["Max"][key] = red.rank_mem.max[i] * to_mb;
+      meta["PeakMemoryGrowthMegabytes"]["Sum"][key] = red.rank_mem.sum[i] * to_mb;
+      meta["PeakNodeMemoryGrowthMegabytes"]["Min"][key] = red.node_mem.min[i] * to_mb;
+      meta["PeakNodeMemoryGrowthMegabytes"]["Max"][key] = red.node_mem.max[i] * to_mb;
+      meta["PeakNodeMemoryGrowthMegabytes"]["Sum"][key] = red.node_mem.sum[i] * to_mb;
     }
     WriteMetadata(post_dir, meta);
   }

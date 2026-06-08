@@ -73,9 +73,7 @@ runs:
           C_CXX_COMPILER="intel-oneapi-compilers"
           FORTRAN_COMPILER="intel-oneapi-compilers"
         else
-          # OpenBlas 0.3.30 has issues on arm
-          # https://github.com/OpenMathLib/OpenBLAS/issues/5459
-          MATH_LIBS="${{ inputs.math-libs || 'openblas@0.3.29' }}"
+          MATH_LIBS="${{ inputs.math-libs || 'openblas' }}"
           MPI_IMPL="openmpi"
           C_CXX_COMPILER="${{ inputs.toolchain }}"
         fi
@@ -121,10 +119,16 @@ runs:
 
         # The Intel compiler has problems with C/C++/Fortran interop in MUMPS.
         # Fixes: for_main.c:(.text+0x19): undefined reference to `MAIN__'
+        # libffi 3.5.2's configure trips icx on a gcc-only option.
         if [[ "${{ inputs.toolchain }}" == "intel-oneapi" ]]; then
           cat << INTELEOF >> spack.yaml
             mumps:
               require: fflags=-nofor-main
+            libffi:
+              require: "@:3.4.8"
+            # CurrentDipole numerics shift with MKL 2026+ (see awslabs/palace#710).
+            intel-oneapi-mkl:
+              require: "@:2025"
         INTELEOF
         fi
 
@@ -196,7 +200,7 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        spack -e . buildcache keys --install --trust
+        spack -e . buildcache keys -y --install --trust
         end_timer "Configure Binary Mirror Keys"
 
     - name: Bootstrap
@@ -224,7 +228,7 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --only dependencies --test root -j $(nproc)
+        spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --include-build-deps --only dependencies --test root -j $(nproc)
         end_timer "Build Dependencies"
 
     - name: Print @develop commit hashes
@@ -313,7 +317,8 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache || true
+        # Push deps only; Palace itself is branch-specific (same reason as the container build).
+        spack -e . buildcache push --force --with-build-dependencies --only dependencies --unsigned --update-index local-buildcache || true
         end_timer "Push to GHCR cache"
 
     - name: Run Regression Tests

@@ -34,6 +34,13 @@ MemoryStats GetPeakMemoryStats(MPI_Comm comm);
 MemoryStats GetCurrentNodeMemoryStats(MPI_Comm comm);
 MemoryStats GetPeakNodeMemoryStats(MPI_Comm comm);
 
+// Compute per-node statistics for an arbitrary per-rank value (bytes). Sums across
+// processes sharing a node and reports min/max/avg across nodes.
+MemoryStats ComputeNodeMemoryStats(std::string label, long local_value, MPI_Comm comm);
+
+// Format a byte count as a human-readable string (e.g., "1.5G", "228.0M").
+std::string FormatBytes(double bytes);
+
 // Print memory usage summary.
 void PrintMemoryUsage(MPI_Comm comm, const MemoryStats &stats);
 

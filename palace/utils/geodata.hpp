@@ -4,7 +4,6 @@
 #ifndef PALACE_UTILS_GEODATA_HPP
 #define PALACE_UTILS_GEODATA_HPP
 
-#include <array>
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -23,14 +22,31 @@ namespace mesh
 // Functions for mesh related functionality.
 //
 
-// Read and partition a serial mesh from file, returning a pointer to the new parallel mesh
-// object, which should be destroyed by the user.
+// Load a serial mesh from disk and perform all serial-stage preparation: AMR compat
+// checks, cleanup, simplex/hex conversion, element reordering, serial uniform refinement,
+// region-based (box/sphere) refinement, boundary cracking, and finalization. Returns a
+// null pointer on ranks that do not hold a copy of the serial mesh. Called by main.cpp
+// before Preprocess hooks on the solver mutate the serial mesh (e.g. BoundaryMode
+// submesh extraction).
+std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm);
+
+// Partition and distribute a serial mesh prepared by Load, producing a parallel mesh.
+// `smesh` is non-null only on loading ranks (see Load's contract).
+std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::Mesh> smesh,
+                                         MPI_Comm comm);
+
+// Convenience wrapper: Load followed by Partition with no Preprocess hook.
 std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);
 
-// Refine the provided mesh according to the data in the input file. If levels of refinement
-// are requested, the refined meshes are stored in order of increased refinement. Ownership
-// of the initial coarse mesh is inherited by the fine meshes and it should not be deleted.
-// The fine mesh hierarchy is owned by the user.
+// Maximum axis-aligned bbox extent of the pre-partition serial mesh, reduced over
+// `comm` so every rank sees the same value. Returns 0 when no rank holds a mesh.
+double ComputeReferenceLength(const std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm comm);
+
+// Refine the provided mesh according to the data in the input file (parallel uniform
+// refinement only; box / sphere region refinement happens in Load on the serial mesh).
+// If levels of refinement are requested, the refined meshes are stored in order of
+// increased refinement. Ownership of the initial coarse mesh is inherited by the fine
+// meshes and it should not be deleted. The fine mesh hierarchy is owned by the user.
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
 
 // Dimensionalize a mesh for use in exporting a mesh. Scales vertices and nodes by L.
@@ -47,7 +63,7 @@ struct ElementTypeInfo
   bool has_hexahedra;
   bool has_prisms;
   bool has_pyramids;
-  std::vector<mfem::Geometry::Type> GetGeomTypes() const;
+  std::vector<mfem::Geometry::Type> GetGeomTypes(int dim = 3) const;
 };
 
 // Simplified helper for describing the element types in a (Par)Mesh.
@@ -103,33 +119,41 @@ inline void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, mfem::Vector &m
 }
 
 // Struct describing a bounding box in terms of the center and face normals. The normals
-// specify the direction from the center of the box.
+// specify the direction from the center of the box. Supports both 2D and 3D: in 2D,
+// center has 2 entries and axes is 2x2; in 3D, center has 3 entries and axes is 3x3.
 struct BoundingBox
 {
-  // The central point of the bounding box.
-  std::array<double, 3> center;
+  // The central point of the bounding box (size 2 or 3).
+  mfem::Vector center;
 
-  // Vectors from center to the midpoint of each face.
-  std::array<std::array<double, 3>, 3> axes;
+  // Vectors from center to the midpoint of each face, stored as columns of a dense matrix.
+  // In 3D this is 3x3, in 2D this is 2x2. Column i is the i-th axis vector.
+  mfem::DenseMatrix axes;
 
-  // Whether or not this bounding box is two dimensional.
+  // Whether or not this bounding box is two dimensional (i.e. planar in the highest
+  // dimension). In 2D meshes this is always true. In 3D meshes this indicates a planar
+  // surface.
   bool planar;
+
+  // Return the spatial dimension (number of axes).
+  int Dim() const { return axes.Width(); }
 
   // Compute the area of the bounding box spanned by the first two normals.
   double Area() const;
 
-  // Compute the volume of the 3D bounding box. Returns zero if planar.
+  // Compute the volume of the 3D bounding box. Returns zero if planar or 2D.
   double Volume() const;
 
-  // Compute the normalized axes of the bounding box.
-  std::array<std::array<double, 3>, 3> Normals() const;
+  // Compute the normalized axes of the bounding box, returned as columns of a dense
+  // matrix.
+  mfem::DenseMatrix Normals() const;
 
   // Compute the lengths along each axis.
-  std::array<double, 3> Lengths() const;
+  mfem::Vector Lengths() const;
 
   // Compute the deviations in degrees of a vector from each of the axis directions. Angles
   // are returned in the interval [0, 180].
-  std::array<double, 3> Deviations(const std::array<double, 3> &direction) const;
+  mfem::Vector Deviations(const mfem::Vector &direction) const;
 };
 
 // Helper functions for computing bounding boxes from a mesh and markers. These do not need
@@ -165,10 +189,10 @@ inline BoundingBox GetBoundingBall(const mfem::ParMesh &mesh, int attr, bool bdr
 
 // Helper function for computing the direction aligned length of a marked group.
 double GetProjectedLength(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                          bool bdr, const std::array<double, 3> &dir);
+                          bool bdr, const mfem::Vector &dir);
 
 inline double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
-                                 const std::array<double, 3> &dir)
+                                 const mfem::Vector &dir)
 {
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;
@@ -180,11 +204,10 @@ inline double GetProjectedLength(const mfem::ParMesh &mesh, int attr, bool bdr,
 // by brute force searching over the entire point set. Optionally compute the furthest
 // distance instead of the closest.
 double GetDistanceFromPoint(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
-                            bool bdr, const std::array<double, 3> &origin,
-                            bool max = false);
+                            bool bdr, const mfem::Vector &origin, bool max = false);
 
 inline double GetDistanceFromPoint(const mfem::ParMesh &mesh, int attr, bool bdr,
-                                   const std::array<double, 3> &dir, bool max = false)
+                                   const mfem::Vector &dir, bool max = false)
 {
   mfem::Array<int> marker(bdr ? mesh.bdr_attributes.Max() : mesh.attributes.Max());
   marker = 0;
@@ -214,6 +237,62 @@ inline mfem::Vector GetSurfaceNormal(const mfem::ParMesh &mesh, bool average = t
   return GetSurfaceNormal(mesh, AttrToMarker(attributes.Max(), attributes), average);
 }
 
+// Serial overload of GetSurfaceNormal for use during pre-partition extraction.
+mfem::Vector GetSurfaceNormal(const mfem::Mesh &mesh, const mfem::Array<int> &marker,
+                              bool average = true);
+
+inline mfem::Vector GetSurfaceNormal(const mfem::Mesh &mesh, bool average = true)
+{
+  const bool bdr = (mesh.Dimension() == mesh.SpaceDimension());
+  const auto &attributes = bdr ? mesh.bdr_attributes : mesh.attributes;
+  return GetSurfaceNormal(mesh, AttrToMarker(attributes.Max(), attributes), average);
+}
+
+// Submesh post-extraction helpers. Templated over SubMeshT (mfem::SubMesh for the serial
+// BoundaryMode path, mfem::ParSubMesh for the parallel WavePort path). MPI reductions
+// degenerate to no-ops on the serial (MPI_COMM_SELF) instantiation.
+
+// Remap domain element attributes to match the parent's neighboring 3D element's
+// attribute (so material definitions apply directly to the submesh).
+template <class SubMeshT>
+void RemapSubMeshAttributes(SubMeshT &submesh);
+
+// Trace each submesh boundary edge back to its parent boundary face and assign that
+// face's attribute. For edges shared by multiple parent faces, the non-surface face
+// wins. The parallel instantiation resolves cross-rank contributions via MPI_Allgather.
+template <class SubMeshT>
+void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surface_attrs);
+
+// Add boundary elements at edges where the selected surface meets a parent boundary
+// face whose attribute is in internal_bdr_attrs. CreateFromBoundary only emits boundary
+// elements at the geometric boundary of the selected region, so these internal
+// intersections have to be added explicitly.
+template <class SubMeshT>
+void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
+                                        const mfem::Array<int> &surface_attrs,
+                                        const std::vector<int> &internal_bdr_attrs);
+
+// Project a planar 2D submesh (3D ambient coords) to true 2D coordinates. Replaces node
+// coordinates with their projection onto the tangent plane so SpaceDimension() == 2 and
+// all 2D infrastructure works as for a native 2D mesh. Returns the surface normal (3D)
+// and fills `centroid`, `e1`, `e2` with the tangent frame used for the projection
+// (needed by the caller for projecting additional 3D coordinates into the same 2D
+// frame). Serial only — extraction runs before partitioning.
+mfem::Vector ProjectSubmeshTo2D(mfem::Mesh &submesh, mfem::Vector &centroid,
+                                mfem::Vector &e1, mfem::Vector &e2);
+
+// Project a 3D point to 2D local coordinates using a previously computed tangent frame.
+inline mfem::Vector Project3Dto2D(const mfem::Vector &p3d, const mfem::Vector &centroid,
+                                  const mfem::Vector &e1, const mfem::Vector &e2)
+{
+  mfem::Vector p2d(2);
+  p2d(0) = (p3d(0) - centroid(0)) * e1(0) + (p3d(1) - centroid(1)) * e1(1) +
+           (p3d(2) - centroid(2)) * e1(2);
+  p2d(1) = (p3d(0) - centroid(0)) * e2(0) + (p3d(1) - centroid(1)) * e2(1) +
+           (p3d(2) - centroid(2)) * e2(2);
+  return p2d;
+}
+
 // Helper functions to compute the volume or area for all domain or boundary elements with
 // the given attributes.
 double GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker);
@@ -235,6 +314,13 @@ inline double GetVolume(const mfem::ParMesh &mesh, int attr)
   marker[attr - 1] = 1;
   return GetVolume(mesh, marker);
 }
+
+// Distribute a serial mesh from the root processor across all MPI ranks using METIS
+// partitioning and the MeshPartitioner-based distribution pipeline. The serial mesh need
+// only be valid on the root rank (non-root ranks may pass an empty unique_ptr). The serial
+// mesh is consumed (released) during distribution.
+std::unique_ptr<mfem::ParMesh> DistributeSerialMesh(MPI_Comm comm,
+                                                    std::unique_ptr<mfem::Mesh> &smesh);
 
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
 // the intermediate stages to disk. Returns the imbalance ratio before rebalancing.

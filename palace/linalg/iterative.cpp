@@ -507,21 +507,36 @@ void GmresSolver<OperType>::Initialize() const
     V[j].SetSize(A->Height());
     V[j].UseDevice(true);
   }
-  H.resize((max_dim + 1) * max_dim);
-  s.resize(max_dim + 1);
-  cs.resize(max_dim + 1);
-  sn.resize(max_dim + 1);
+  // H, s, cs, sn are allocated incrementally in Update() to avoid O(max_dim^2) upfront
+  // cost when max_dim is large (e.g., defaulting to max_it).
+  s.resize(std::min(init_size + 1, max_dim + 1));
+  cs.resize(std::min(init_size + 1, max_dim + 1));
+  sn.resize(std::min(init_size + 1, max_dim + 1));
+  H.resize(static_cast<std::size_t>(max_dim + 1) * std::min(init_size, max_dim));
 }
 
 template <typename OperType>
 void GmresSolver<OperType>::Update(int j) const
 {
-  // Add storage for basis vectors in increments.
+  // Add storage for basis vectors, Hessenberg columns, and rotations in increments.
   constexpr int add_size = 10;
   for (int k = j + 1; k < std::min(j + 1 + add_size, max_dim + 1); k++)
   {
     V[k].SetSize(A->Height());
     V[k].UseDevice(true);
+  }
+  int needed_cols = std::min(j + 1 + add_size, max_dim);
+  int current_cols = static_cast<int>(H.size()) / (max_dim + 1);
+  if (needed_cols > current_cols)
+  {
+    H.resize(static_cast<std::size_t>(max_dim + 1) * needed_cols);
+  }
+  auto needed_size = static_cast<std::size_t>(std::min(j + 2 + add_size, max_dim + 1));
+  if (needed_size > s.size())
+  {
+    s.resize(needed_size);
+    cs.resize(needed_size);
+    sn.resize(needed_size);
   }
 }
 

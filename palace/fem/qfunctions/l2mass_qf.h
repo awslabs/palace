@@ -20,6 +20,8 @@
 #include "21/l2mass_build_21_qf.h"
 #include "22/l2mass_22_qf.h"
 #include "22/l2mass_build_22_qf.h"
+#include "31/l2mass_31_qf.h"
+#include "31/l2mass_build_31_qf.h"
 #include "32/l2mass_32_qf.h"
 #include "32/l2mass_build_32_qf.h"
 #include "33/l2mass_33_qf.h"
