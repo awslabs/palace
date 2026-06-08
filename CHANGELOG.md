@@ -64,6 +64,10 @@ The format of this changelog is based on
 
 #### Bug Fixes
 
+  - Fixed a contradiction between the configuration schema and runtime behavior where omitting
+    `config["Problem"]["Output"]` (allowed by the schema) aborted at startup with "Invalid output
+    directory, got empty string". `Output` now defaults to `"postpro"` when omitted
+    [PR 753](https://github.com/awslabs/palace/pull/753).
   - Revert change of adaptive PROM from interpolation back to projection.
   - Fixed nondeterministic current-dipole assembly when the source lies on a
     shared mesh entity by distributing the underlying MFEM delta source over all

@@ -736,6 +736,24 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_linear["MGCycleIts"].get<int>() == 1);
   }
 
+  SECTION("Omitted Output resolves to default and concretizes (issue #745)")
+  {
+    // The schema marks Problem.Output optional, so a config without it must parse
+    // without aborting and fall back to the documented "postpro" default.
+    json config = {{"Problem", {{"Type", "Electrostatic"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
+
+    IoData iodata(config, false);
+    CHECK(iodata.problem.output == "postpro");
+
+    // ConcretizeDefaults must emit the resolved, non-empty value back to JSON.
+    config = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(config["Problem"]["Output"].get<std::string>() == "postpro");
+  }
+
   SECTION("Magnetostatic resolves to AMS with singular operator")
   {
     json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
