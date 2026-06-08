@@ -807,7 +807,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   setup_json["Solver"]["Linear"] = {
       {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
 
-  IoData iodata(std::move(setup_json));
+  IoData iodata(setup_json, false);
 
   // The flag is parsed onto the config struct.
   const auto &cfg_ports = iodata.boundaries.lumpedport;
@@ -863,6 +863,6 @@ TEST_CASE("RomOperator-Synthesis-ExcludedExcitedRejected", "[romoperator][Serial
                             {"MaxFreq", 32.0},
                             {"FreqStep", 1.0}}}};
 
-  CHECK_THROWS_WITH(IoData{std::move(setup_json)},
+  CHECK_THROWS_WITH((IoData{setup_json, false}),
                     Catch::Matchers::ContainsSubstring("IncludeInSynthesis"));
 }

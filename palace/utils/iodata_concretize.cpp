@@ -302,7 +302,8 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                             {"Ls", lp.Ls},
                             {"Cs", lp.Cs},
                             {"Excitation", lp.excitation},
-                            {"Active", lp.active}});
+                            {"Active", lp.active},
+                            {"IncludeInSynthesis", lp.include_in_synthesis}});
     }
   }
 
