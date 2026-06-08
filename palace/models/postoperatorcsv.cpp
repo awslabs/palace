@@ -661,9 +661,10 @@ auto PostOperatorCSV<solver_t>::InitializeFarFieldE(const SurfacePostOperator &s
   Table t;  // Define table locally first due to potential reload.
 
   int v_dim = surf_post_op.GetVDim();
-  int scale_col = 2 * v_dim;                         // Real + Imag components
-  int nr_expected_measurement_cols = 3 + scale_col;  // freq, theta, phi
-  int nr_expected_measurement_rows = surf_post_op.farfield.size();
+  int scale_col = 2 * v_dim;  // Real + Imag components
+  int nr_expected_measurement_cols = 4 + scale_col;
+  int nr_expected_measurement_rows =
+      static_cast<int>(surf_post_op.farfield.size() * ex_idx_v_all.size());
   t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   if constexpr (U == ProblemType::EIGENMODE)
   {
@@ -674,6 +675,11 @@ auto PostOperatorCSV<solver_t>::InitializeFarFieldE(const SurfacePostOperator &s
   else
   {
     t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
+  }
+  {
+    Column ex_col("exc", "exc", 0, PrecIndexCol(solver_t), {}, "");
+    ex_col.print_as_int = true;
+    t.insert(std::move(ex_col));
   }
   t.insert(Column("theta", "theta (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
   t.insert(Column("phi", "phi (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
@@ -706,6 +712,7 @@ auto PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_p
       farfield_E->table["f_re"] << measurement_cache.freq.real();
       farfield_E->table["f_im"] << measurement_cache.freq.imag();
     }
+    farfield_E->table["exc"] << static_cast<double>(m_ex_idx);
     const auto &[theta, phi] = measurement_cache.farfield.thetaphis[i];
     const auto &E_field = measurement_cache.farfield.E_field[i];
 

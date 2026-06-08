@@ -45,6 +45,12 @@ The format of this changelog is based on
     `config["Solver"]["Linear"]["MGUseMesh"]` is enabled. The finest solve
     mesh is unchanged.
     [PR 727](https://github.com/awslabs/palace/pull/727).
+  - Fixed a bug where `farfield-rE.csv` did not distinguish per-excitation
+    rows in driven simulations with multiple lumped-port excitations. The file
+    now includes an `exc` column so each (frequency, angle, excitation) row
+    is uniquely identifiable. Existing single-excitation output gains the
+    column too (a constant value), shifting downstream column indices by one.
+    [PR 746](https://github.com/awslabs/palace/pull/746).
 
 #### Bug Fixes
 
