@@ -1,7 +1,9 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <cmath>
 #include <complex>
+#include <fstream>
 #include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -475,6 +477,17 @@ TEST_CASE_METHOD(test::SharedTempDir, "GridFunction export",
     post_op.MeasureAndPrintAll(1, 0, E, B, 1.0);
     check_files("driven", 1, post_op.GetPadDigitsDefault(),
                 {"E_real", "E_imag", "B_real", "B_imag", "S", "U_e", "U_m"});
+
+    // The ParaView "Time" field for a driven solve is the physical frequency in
+    // GHz, not the nondimensional angular frequency omega passed above.
+    std::ifstream pvd(fs::path(iodata.problem.output) / "paraview" / "driven" /
+                      "driven.pvd");
+    std::string contents(std::istreambuf_iterator<char>(pvd), {});
+    auto pos = contents.find("timestep=\"") + std::string("timestep=\"").size();
+    double pvd_time = std::stod(contents.substr(pos, contents.find('"', pos) - pos));
+    const double expected_freq =
+        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * M_PI);
+    CHECK_THAT(pvd_time, Catch::Matchers::WithinRel(expected_freq, 1.0e-5));
   }
 
   SECTION("Eigenmode")
