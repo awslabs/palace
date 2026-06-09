@@ -175,14 +175,15 @@ void QuasiNewtonSolver::SetMaxRestart(int max_num_restart)
 }
 
 void QuasiNewtonSolver::SetExtraSystemMatrix(
-    std::function<std::unique_ptr<ComplexOperator>(double)> A2)
+    std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> A2)
 {
   funcA2 = A2;
 }
 
 void QuasiNewtonSolver::SetPreconditionerUpdate(
-    std::function<std::unique_ptr<ComplexOperator>(
-        std::complex<double>, std::complex<double>, std::complex<double>, double)>
+    std::function<
+        std::unique_ptr<ComplexOperator>(std::complex<double>, std::complex<double>,
+                                         std::complex<double>, std::complex<double>)>
         P)
 {
   funcP = P;
@@ -494,10 +495,11 @@ int QuasiNewtonSolver::Solve()
     v2 *= 1.0 / norm_v;
 
     // Set the linear solver operators.
-    opA2 = (*funcA2)(std::abs(eig.imag()));
+    opA2 = (*funcA2)(eig);
     opA = BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
                               {opK, opC, opM, opA2.get()}, true);
-    opP = (*funcP)(1.0 + 0.0i, eig, eig * eig, eig.imag());
+    // BC frequency ω = -i·λ = λ/i so the preconditioner matches the exact complex A2.
+    opP = (*funcP)(1.0 + 0.0i, eig, eig * eig, eig / std::complex<double>(0.0, 1.0));
     opInv->SetOperators(*opA, *opP);
     opInv->SetAbsTol(1.0e-12);
 
@@ -553,7 +555,7 @@ int QuasiNewtonSolver::Solve()
                                  Eigen::VectorXcd &rr2,
                                  std::unique_ptr<ComplexOperator> &A2_out) -> double
     {
-      A2_out = (*funcA2)(std::abs(lam.imag()));
+      A2_out = (*funcA2)(lam);
       auto A = BuildParSumOperator({1.0 + 0.0i, lam, lam * lam, 1.0 + 0.0i},
                                    {opK, opC, opM, A2_out.get()}, true);
       A->Mult(vv, rr);
@@ -646,10 +648,11 @@ int QuasiNewtonSolver::Solve()
         break;
       }
 
-      // Compute w = J * v.
-      auto opA2p = (*funcA2)(std::abs(eig.imag()) * (1.0 + delta));
-      const std::complex<double> denom =
-          std::complex<double>(0.0, delta * std::abs(eig.imag()));
+      // Compute w = J * v. The dA2/dλ term is approximated by a forward finite difference.
+      // A2(λ) is holomorphic, so we perturb λ directly: opA2p = A2(λ(1+δ)), denom = δλ
+      // (matching A2n = A2(λ) carried over from the residual evaluation).
+      auto opA2p = (*funcA2)(eig * (1.0 + delta));
+      const std::complex<double> denom = delta * eig;
       std::unique_ptr<ComplexOperator> opAJ =
           BuildParSumOperator({1.0 / denom, -1.0 / denom}, {opA2p.get(), A2n.get()}, true);
       auto opJ = BuildParSumOperator({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * eig, 1.0 + 0.0i},
@@ -724,11 +727,12 @@ int QuasiNewtonSolver::Solve()
       if (it > 0 && it % preconditioner_lag == 0 && res > preconditioner_tol)
       {
         eig_opInv = eig;
-        opA2 = (*funcA2)(std::abs(eig_opInv.imag()));
+        opA2 = (*funcA2)(eig_opInv);
         opA =
             BuildParSumOperator({1.0 + 0.0i, eig_opInv, eig_opInv * eig_opInv, 1.0 + 0.0i},
                                 {opK, opC, opM, opA2.get()}, true);
-        opP = (*funcP)(1.0 + 0.0i, eig_opInv, eig_opInv * eig_opInv, eig_opInv.imag());
+        opP = (*funcP)(1.0 + 0.0i, eig_opInv, eig_opInv * eig_opInv,
+                       eig_opInv / std::complex<double>(0.0, 1.0));
         opInv->SetOperators(*opA, *opP);
         // Recompute w0 and normalize.
         opInv->SetRelTol(std::max(ksp_rel_tol, inexact_tol));
@@ -815,7 +819,7 @@ double QuasiNewtonSolver::GetResidualNorm(std::complex<double> l, const ComplexV
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
-  auto A2 = (*funcA2)(std::abs(l.imag()));
+  auto A2 = (*funcA2)(l);
   A2->AddMult(x, r, 1.0);
   return linalg::Norml2(comm, r);
 }

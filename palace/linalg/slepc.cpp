@@ -1596,14 +1596,15 @@ SlepcNEPSolver::SlepcNEPSolver(MPI_Comm comm, int print, const std::string &pref
 }
 
 void SlepcNEPSolver::SetExtraSystemMatrix(
-    std::function<std::unique_ptr<ComplexOperator>(double)> A2)
+    std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> A2)
 {
   funcA2 = A2;
 }
 
 void SlepcNEPSolver::SetPreconditionerUpdate(
-    std::function<std::unique_ptr<ComplexOperator>(
-        std::complex<double>, std::complex<double>, std::complex<double>, double)>
+    std::function<
+        std::unique_ptr<ComplexOperator>(std::complex<double>, std::complex<double>,
+                                         std::complex<double>, std::complex<double>)>
         P)
 {
   funcP = P;
@@ -1764,7 +1765,7 @@ PetscReal SlepcNEPSolver::GetResidualNorm(PetscScalar l, const ComplexVector &x,
   opM->AddMult(x, r, l * l);
   if (funcA2)
   {
-    auto A2 = (*funcA2)(std::abs(l.imag()));
+    auto A2 = (*funcA2)(l);
     A2->AddMult(x, r, 1.0 + 0.0i);
   }
   return linalg::Norml2(GetComm(), r);
@@ -2136,12 +2137,14 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
   {
     if (ctx->lambda.imag() == 0.0)
       ctx->lambda = ctx->sigma;
-    ctx->opA2_pc = (*ctx->funcA2)(std::abs(ctx->lambda.imag()));
+    ctx->opA2_pc = (*ctx->funcA2)(ctx->lambda);
     ctx->opA_pc = palace::BuildParSumOperator(
         {1.0 + 0.0i, ctx->lambda, ctx->lambda * ctx->lambda, 1.0 + 0.0i},
         {ctx->opK, ctx->opC, ctx->opM, ctx->opA2_pc.get()}, true);
+    // BC frequency ω = -i·λ = λ/i so the preconditioner matches the exact complex A2.
     ctx->opP_pc = (*ctx->funcP)(std::complex<double>(1.0, 0.0), ctx->lambda,
-                                ctx->lambda * ctx->lambda, ctx->lambda.imag());
+                                ctx->lambda * ctx->lambda,
+                                ctx->lambda / std::complex<double>(0.0, 1.0));
     ctx->opInv->SetOperators(*ctx->opA_pc, *ctx->opP_pc);
     ctx->new_lambda = false;
   }
@@ -2166,8 +2169,9 @@ PetscErrorCode __form_NEP_function(NEP nep, PetscScalar lambda, Mat fun, Mat B, 
   PetscFunctionBeginUser;
   palace::slepc::SlepcNEPSolver *ctxF;
   PetscCall(MatShellGetContext(fun, (void **)&ctxF));
-  // A(λ) = K + λ C + λ² M + A2(Im{λ}).
-  ctxF->opA2 = (*ctxF->funcA2)(std::abs(lambda.imag()));
+  // A(λ) = K + λ C + λ² M + A2(λ), with A2 evaluated at the genuinely complex eigenvalue
+  // (wave-port / ABC / surf-σ BCs at ω = -i·λ).
+  ctxF->opA2 = (*ctxF->funcA2)(lambda);
   ctxF->opA = palace::BuildParSumOperator(
       {1.0 + 0.0i, lambda, lambda * lambda, 1.0 + 0.0i},
       {ctxF->opK, ctxF->opC, ctxF->opM, ctxF->opA2.get()}, true);
@@ -2181,12 +2185,13 @@ PetscErrorCode __form_NEP_jacobian(NEP nep, PetscScalar lambda, Mat fun, void *c
   PetscFunctionBeginUser;
   palace::slepc::SlepcNEPSolver *ctxF;
   PetscCall(MatShellGetContext(fun, (void **)&ctxF));
-  // A(λ) = K + λ C + λ² M + A2(Im{λ}).
-  // J(λ) = C + 2 λ M + A2'(Im{λ}).
-  ctxF->opA2 = (*ctxF->funcA2)(std::abs(lambda.imag()));
+  // A(λ) = K + λ C + λ² M + A2(λ).
+  // J(λ) = C + 2 λ M + A2'(λ), with A2(λ) holomorphic so dA2/dλ is a forward finite
+  // difference perturbing λ directly: opA2p = A2(λ(1+ε)), denom = ελ.
+  ctxF->opA2 = (*ctxF->funcA2)(lambda);
   const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
-  ctxF->opA2p = (*ctxF->funcA2)(std::abs(lambda.imag()) * (1.0 + eps));
-  std::complex<double> denom = std::complex<double>(0.0, eps * std::abs(lambda.imag()));
+  ctxF->opA2p = (*ctxF->funcA2)(lambda * (1.0 + eps));
+  std::complex<double> denom = eps * lambda;
   ctxF->opAJ = palace::BuildParSumOperator({1.0 / denom, -1.0 / denom},
                                            {ctxF->opA2p.get(), ctxF->opA2.get()}, true);
   ctxF->opJ = palace::BuildParSumOperator(
