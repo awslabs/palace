@@ -91,6 +91,7 @@ arg_configs = [
             "cylinder/driven_wave",
             "coaxial/open",
             "coaxial/matched",
+            "coaxial/lumped_wave",
             "cpw/lumped_uniform",
             "cpw/wave_uniform",
             "cpw/lumped_adaptive",
@@ -406,6 +407,23 @@ if "coaxial/matched" in cases
         "coaxial",
         "coaxial_matched.json",
         "matched";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum"],
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
+    )
+end
+
+if "coaxial/lumped_wave" in cases
+    @info "Testing coaxial (lumped + wave port mix)..."
+    @time testcase(
+        "coaxial",
+        "coaxial_lumped_wave.json",
+        "lumped_wave";
         palace=palace,
         np=numprocs,
         rtol=reltol,

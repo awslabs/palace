@@ -70,6 +70,7 @@ Measurement Measurement::Dimensionalize(const Units &units,
                       units.Dimensionalize<Units::ValueType::CURRENT>(data.I_RLC[1]),
                       units.Dimensionalize<Units::ValueType::CURRENT>(data.I_RLC[2])};
       dim[k].S = data.S;  // NONE
+      dim[k].Z_PV = units.Dimensionalize<Units::ValueType::IMPEDANCE>(data.Z_PV);
 
       dim[k].inductor_energy =
           units.Dimensionalize<Units::ValueType::ENERGY>(data.inductor_energy);
@@ -211,6 +212,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
                       units.Nondimensionalize<Units::ValueType::CURRENT>(data.I_RLC[1]),
                       units.Nondimensionalize<Units::ValueType::CURRENT>(data.I_RLC[2])};
       dim[k].S = data.S;  // NONE
+      dim[k].Z_PV = units.Nondimensionalize<Units::ValueType::IMPEDANCE>(data.Z_PV);
 
       dim[k].inductor_energy =
           units.Nondimensionalize<Units::ValueType::ENERGY>(data.inductor_energy);
@@ -1099,16 +1101,14 @@ template <ProblemType U>
 auto PostOperatorCSV<solver_t>::InitializePortS(const SpaceOperator &fem_op)
     -> std::enable_if_t<U == ProblemType::DRIVEN, void>
 {
-  if (!fem_op.GetPortExcitations().IsMultipleSimple() ||
-      !((fem_op.GetLumpedPortOp().Size() > 0) xor (fem_op.GetWavePortOp().Size() > 0)))
+  auto nr_ports = fem_op.GetLumpedPortOp().Size() + fem_op.GetWavePortOp().Size();
+  if (nr_ports == 0 || !fem_op.GetPortExcitations().IsMultipleSimple())
   {
     return;
   }
   port_S = TableWithCSVFile(post_dir / "port-S.csv", reload_table);
 
   Table t;  // Define table locally first due to potential reload.
-
-  auto nr_ports = fem_op.GetLumpedPortOp().Size() + fem_op.GetWavePortOp().Size();
 
   auto nr_expected_measurement_cols = 1 + ex_idx_v_all.size() * nr_ports;
   t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
@@ -1186,6 +1186,20 @@ auto PostOperatorCSV<solver_t>::InitializePortZ(const SpaceOperator &fem_op)
   t.reserve(nr_expected_measurement_rows, 10);
   t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
 
+  // Mode characteristic impedance Z_PV[i] for each wave port with a VoltagePath
+  // (excitation-independent, computed from the boundary mode field).
+  for (const auto &[idx, data] : fem_op.GetWavePortOp())
+  {
+    if (data.HasVoltageCoords())
+    {
+      t.insert(format("re_z_pv_{}", idx), format("Re{{Z_PV[{}]}} (Ohm)", idx), -1);
+      t.insert(format("im_z_pv_{}", idx), format("Im{{Z_PV[{}]}} (Ohm)", idx), -1);
+    }
+  }
+
+  // Per-excitation total-field impedance Z[i][j] at port i during
+  // excitation j (i.e., the input impedance the excitation source sees looking into the
+  // port, after standing-wave transformation by the rest of the structure).
   for (const auto ex_idx : ex_idx_v_all)
   {
     std::string ex_label = HasSingleExIdx() ? "" : format("[{}]", ex_idx);
@@ -1217,19 +1231,29 @@ auto PostOperatorCSV<solver_t>::PrintPortZ()
   for (const auto &[idx, data] : measurement_cache.wave_port_vi)
   {
     // Only write Z for ports that have voltage coordinates (columns in the table).
-    auto key = format("re_Z_w{}", idx);
-    if (!port_Z->table.has(key))
+    if (!port_Z->table.has(format("re_z_{}_{}", idx, m_ex_idx)))
     {
       continue;
     }
+
+    // Mode characteristic impedance Z_PV[i] (excitation-independent, written only
+    // once on the first excitation per frequency to avoid duplicate rows).
+    if (m_ex_idx == ex_idx_v_all.front() && port_Z->table.has(format("re_z_pv_{}", idx)))
+    {
+      port_Z->table[format("re_z_pv_{}", idx)] << data.Z_PV.real();
+      port_Z->table[format("im_z_pv_{}", idx)] << data.Z_PV.imag();
+    }
+
+    // Per-excitation total-field impedance Z[i][j] = (V · conj(V)) / (2 P_avg).
+    // GetPower returns the full Poynting integral ∫(E × H*)·n dS (without the
+    // 1/2 time-averaging factor), so Z = (V · conj(V)) / P. This is direction-
+    // specific (sign of P depends on whether the field at port i is incoming or
+    // outgoing): Re{Z[i][i]} > 0 at the driven port, but Re{Z[i][j]} for i ≠ j
+    // can be negative when port i is a passive receiver of power leaving the
+    // domain.
     if (std::abs(data.P) > 0.0)
     {
-      // Z = |V|^2 / |P| — power-voltage impedance magnitude.
-      // GetPower returns the full Poynting integral ∫ (E × H*) · n dS (without the
-      // 1/2 time-averaging factor), so Z_PV = |V|^2 / (2 * P_avg) = |V|^2 / |P|.
-      // Use |P| since the sign depends on the port normal convention.
-      double Z_real = std::norm(data.V) / std::abs(data.P);
-      auto Z = std::complex<double>(Z_real, 0.0);
+      auto Z = (data.V * std::conj(data.V)) / data.P;
       port_Z->table[format("re_z_{}_{}", idx, m_ex_idx)] << Z.real();
       port_Z->table[format("im_z_{}_{}", idx, m_ex_idx)] << Z.imag();
     }

@@ -40,6 +40,7 @@ The format of this changelog is based on
     `"ColumnOrdering"` and `"PCSide"`, remain `"Default"`). The sidecar passes schema
     validation and can be used to re-run the same simulation deterministically; it can also
     be printed without running via `--dry-run` [PR 719](https://github.com/awslabs/palace/pull/719).
+  - Enable S-parameters calculations when both lumped and wave ports are present [PR 743](https://github.com/awslabs/palace/pull/743).
 
 #### Interface Changes
 
@@ -85,6 +86,8 @@ The format of this changelog is based on
     collapsing the normal and the reference length `Lc` to zero. Pre-existing
     from [PR 657](https://github.com/awslabs/palace/pull/657).
     [PR 727](https://github.com/awslabs/palace/pull/727).
+  - Fixed a bug causing incorrect S-parameters when lumped port pairs have different R values
+    [PR 743](https://github.com/awslabs/palace/pull/743).
 
 ## [0.16.1] - 2026-04-24
 

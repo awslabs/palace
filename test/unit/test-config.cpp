@@ -1328,12 +1328,16 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(w2.verbose == w1.verbose);
     CHECK(w2.n_samples == w1.n_samples);
 
-    // Coverage gate. VoltagePath is opt-in coordinate path for line integral
+    // Coverage gate. VoltagePath is an opt-in coordinate path for line integral
     // postprocessing on the port face; absence means no voltage line integral.
+    // PolarityAttributes is an opt-in [high, low] terminal pair for fixing the mode
+    // polarity; absence means the internal polarity convention is used. Both are
+    // opt-in features with no meaningful default value to emit (mutually exclusive),
+    // so they are deliberately not concretized.
     auto wp_gaps =
         SchemaCoverageGaps("config/boundaries.json", "/properties/WavePort/items",
                            config["Boundaries"]["WavePort"][0],
-                           /*skip=*/{"VoltagePath"});
+                           /*skip=*/{"VoltagePath", "PolarityAttributes"});
     INFO("Boundaries.WavePort[] missing keys: " << json(wp_gaps).dump());
     CHECK(wp_gaps.empty());
   }
