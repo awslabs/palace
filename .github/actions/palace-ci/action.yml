@@ -172,6 +172,11 @@ runs:
               binary: true
               url: oci://ghcr.io/awslabs/palace-develop-testing
               signed: false
+              # Push each source-built dependency to the cache as soon as it is
+              # installed, so a later index update finds them even if a subsequent
+              # dependency build fails. Only on push events: PR tokens lack
+              # packages:write, and autopush failures abort the install.
+              autopush: ${{ github.event_name == 'push' }}
               access_pair:
                 id_variable: GITHUB_USER
                 secret_variable: GITHUB_TOKEN
@@ -235,7 +240,11 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --include-build-deps --only dependencies --test root -j $(nproc)
+        # No --fail-fast: build every dependency we can in one pass. This fills the
+        # buildcache for future runs and surfaces all dependency failures at once
+        # instead of stopping at the first. Source-built deps are pushed as they
+        # complete via the mirror's autopush (push events only).
+        spack -e . install --only-concrete --no-check-signature --show-log-on-error --include-build-deps --only dependencies --test root -j $(nproc)
         end_timer "Build Dependencies"
 
     - name: Print @develop commit hashes
@@ -318,15 +327,6 @@ runs:
           spack.yaml
           spack.lock
         retention-days: 7
-
-    - name: Push to GHCR cache
-      shell: bash
-      run: |
-        source /tmp/timing_functions.sh
-        start_timer
-        # Push deps only; Palace itself is branch-specific (same reason as the container build).
-        spack -e . buildcache push --force --with-build-dependencies --only dependencies --unsigned local-buildcache || true
-        end_timer "Push to GHCR cache"
 
     - name: Run Regression Tests
       if: inputs.run-regression-tests == 'true'
