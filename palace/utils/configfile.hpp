@@ -63,8 +63,9 @@ public:
   // Level of printing.
   int verbose = 1;
 
-  // Output path for storing results.
-  std::string output = "";
+  // Output path for storing results. Defaults to "postpro" (relative to the working
+  // directory) when omitted, matching the convention used by the in-tree examples.
+  std::string output = "postpro";
 
   // Output formats configuration.
   OutputFormatsData output_formats = {};

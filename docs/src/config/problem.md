@@ -36,7 +36,8 @@ with
 
 `"Verbose" [1]` :  Controls the level of log file printing.
 
-`"Output" [None]` :  Directory path for saving postprocessing outputs.
+`"Output" ["postpro"]` :  Directory path for saving postprocessing outputs. When omitted,
+results are written to a `postpro` directory relative to the working directory.
 
 `"OutputFormats"` :  Top-level object for configuring the field output formats.
 
