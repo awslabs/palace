@@ -186,6 +186,13 @@ runs:
           . /opt/intel/oneapi/setvars.sh
         fi
         spack -e . compiler find && spack -e . compiler list
+        # Register the apt-installed oneAPI MPI and MKL as externals so spack uses
+        # them instead of building/caching them, mirroring how the compiler itself
+        # is externalized via `compiler find`. This runs after spack and oneAPI are
+        # installed by setup-runner and after setvars has populated the oneAPI paths.
+        if [[ "${{ inputs.toolchain }}" == "intel-oneapi" ]]; then
+          spack -e . external find --not-buildable intel-oneapi-mpi intel-oneapi-mkl
+        fi
         end_timer "Configure Compilers"
 
     - name: Display spack.yaml
