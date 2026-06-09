@@ -1243,6 +1243,7 @@ void PostOperator<solver_t>::MeasureWavePorts() const
       vi.P = data.GetPower(*E, *B);
       vi.S = data.GetSParameter(*E);
       vi.V = data.GetVoltage(*E);
+      vi.Z_PV = data.GetCharacteristicImpedance();
     }
   }
 }
@@ -1255,55 +1256,69 @@ void PostOperator<solver_t>::MeasureSParameter() const
   {
     using std::complex_literals::operator""i;
 
-    // Don't measure S-Matrix unless there is only one excitation per port. Also, we current
-    // don't support mixing wave and lumped ports, because we need to fix consistent
-    // conventions / de-embedding.
-    if (!fem_op->GetPortExcitations().IsMultipleSimple() ||
-        !((fem_op->GetLumpedPortOp().Size() > 0) xor (fem_op->GetWavePortOp().Size() > 0)))
+    // Don't measure S-Matrix unless there is only one excitation per port.
+    if (!fem_op->GetPortExcitations().IsMultipleSimple())
     {
       return;
     }
 
-    // Assumes that for single driving port the excitation index is equal to the port index.
-    auto drive_port_idx = measurement_cache.ex_idx;
+    // S-parameter computation with per-port reference impedances (Kurokawa power-wave
+    // generalized S-parameters).
+    //
+    // Each port type uses its natural reference impedance: lumped ports use the user-
+    // specified R; wave ports implicitly use the line's characteristic impedance encoded
+    // in the unit-power normalization of the boundary mode (∫|E_mode×H_mode⋆|·n dS = 1).
+    //
+    // GetSParameter() returns the b-amplitude in Kurokawa convention for both port types:
+    //   - Lumped: ∫E·(E_inc/Z_s) dS = V/V_inc, where V_inc encodes the port's R
+    //   - Wave:   ∫(E×H_mode⋆)·n dS, the modal power-overlap with unit-power normalization
+    // Both are directly the Kurokawa b/a ratio, so no impedance scaling is needed.
 
-    // Currently S-Parameters are not calculated for mixed lumped & wave ports, so don't
-    // combine output iterators.
+    // Get information about excited port.
+    auto [drive_is_simple, drive_port_type, drive_port_idx] =
+        fem_op->GetPortExcitations().excitations.at(measurement_cache.ex_idx).IsSimple();
+
+    if (drive_port_type != PortType::LumpedPort && drive_port_type != PortType::WavePort)
+    {
+      return;
+    }
+
+    // Per-side wave-port de-embedding factor: exp(i·kₙ·d_offset) when the port is a
+    // wave port with a non-zero offset; 1 otherwise (lumped ports have no offset).
+    // Applied independently on the source and observation sides, so cross-type S
+    // (lumped↔wave) gets the correct single-sided phase.
+    const std::complex<double> src_deembed =
+        (drive_port_type == PortType::WavePort)
+            ? std::exp(1i * fem_op->GetWavePortOp().GetPort(drive_port_idx).kn0 *
+                       fem_op->GetWavePortOp().GetPort(drive_port_idx).d_offset)
+            : std::complex<double>{1.0, 0.0};
+
+    // Iterate over observation lumped ports.
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
-      // Get previously computed data: should never fail as defined by MeasureLumpedPorts.
       auto &vi = measurement_cache.lumped_port_vi.at(idx);
-
-      const LumpedPortData &src_data = fem_op->GetLumpedPortOp().GetPort(drive_port_idx);
-      if (idx == drive_port_idx)
+      if (drive_port_type == PortType::LumpedPort && idx == drive_port_idx)
       {
         vi.S.real(vi.S.real() - 1.0);
       }
-      // Generalized S-parameters if the ports are resistive (avoids divide-by-zero).
-      if (std::abs(data.R) > 0.0)
-      {
-        vi.S *= std::sqrt(src_data.R / data.R);
-      }
+      // Lumped observation has no d_offset — only the source-side factor applies.
+      vi.S *= src_deembed;
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
                  fmt::format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
                  Measurement::Magnitude(vi.S), Measurement::Phase(vi.S));
     }
+
+    // Iterate over observation wave ports.
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
     {
-      // Get previously computed data: should never fail as defined by MeasureWavePorts.
       auto &vi = measurement_cache.wave_port_vi.at(idx);
-
-      // Wave port modes are not normalized to a characteristic impedance so no generalized
-      // S-parameters are available.
-      const WavePortData &src_data = fem_op->GetWavePortOp().GetPort(drive_port_idx);
-      if (idx == drive_port_idx)
+      if (drive_port_type == PortType::WavePort && idx == drive_port_idx)
       {
         vi.S.real(vi.S.real() - 1.0);
       }
-      // Port de-embedding: S_demb = S exp(ikₙᵢ dᵢ) exp(ikₙⱼ dⱼ) (distance offset is default
-      // 0 unless specified).
-      vi.S *= std::exp(1i * src_data.kn0 * src_data.d_offset);
+      // Apply both source and observation de-embedding factors.
+      vi.S *= src_deembed;
       vi.S *= std::exp(1i * data.kn0 * data.d_offset);
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",

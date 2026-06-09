@@ -41,6 +41,7 @@ The format of this changelog is based on
     `"ColumnOrdering"` and `"PCSide"`, remain `"Default"`). The sidecar passes schema
     validation and can be used to re-run the same simulation deterministically; it can also
     be printed without running via `--dry-run` [PR 719](https://github.com/awslabs/palace/pull/719).
+  - Enable S-parameters calculations when both lumped and wave ports are present [PR 743](https://github.com/awslabs/palace/pull/743).
 
 #### Interface Changes
 
@@ -68,6 +69,10 @@ The format of this changelog is based on
   - Fixed the driven solver ParaView output writing the nondimensional angular
     frequency to the `Time` field instead of the physical frequency in GHz.
     [PR 754](https://github.com/awslabs/palace/pull/754).
+  - Fixed a contradiction between the configuration schema and runtime behavior where omitting
+    `config["Problem"]["Output"]` (allowed by the schema) aborted at startup with "Invalid output
+    directory, got empty string". `Output` now defaults to `"postpro"` when omitted
+    [PR 753](https://github.com/awslabs/palace/pull/753).
   - Revert change of adaptive PROM from interpolation back to projection.
     [PR 733](https://github.com/awslabs/palace/pull/733).
   - Fixed nondeterministic current-dipole assembly when the source lies on a
@@ -86,6 +91,8 @@ The format of this changelog is based on
     collapsing the normal and the reference length `Lc` to zero. Pre-existing
     from [PR 657](https://github.com/awslabs/palace/pull/657).
     [PR 727](https://github.com/awslabs/palace/pull/727).
+  - Fixed a bug causing incorrect S-parameters when lumped port pairs have different R values
+    [PR 743](https://github.com/awslabs/palace/pull/743).
 
 ## [0.16.1] - 2026-04-24
 

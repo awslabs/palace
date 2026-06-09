@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_WAVE_PORT_OPERATOR_HPP
 #define PALACE_MODELS_WAVE_PORT_OPERATOR_HPP
 
+#include <array>
 #include <complex>
 #include <map>
 #include <memory>
@@ -105,6 +106,19 @@ private:
   int voltage_n_samples;
   bool has_voltage_coords = false;
 
+  // Reverse transfer map (port submesh → parent mesh) and parent-mesh GridFunction
+  // used to evaluate line integrals of the port mode field via GSLIB on the 3D parent
+  // mesh. Only allocated if the user configured a voltage path.
+  std::unique_ptr<mfem::ParTransferMap> port_nd_transfer_reverse;
+  std::unique_ptr<GridFunction> parent_E0t;
+
+  // Optional polarity attributes (parent-mesh boundary attrs [high, low], signal
+  // first, ground second). When non-zero (i.e. set by the user) the mode is flipped
+  // so that E points from high to low, matching the lumped-port `+R Direction`
+  // convention. Computed without GSLIB by evaluating the mode at port-submesh
+  // boundary element centroids adjacent to each attribute.
+  std::array<int, 2> polarity_attributes = {0, 0};
+
 public:
   // 3D submesh constructor: extracts submesh from parent mesh.
   WavePortData(const config::WavePortData &data, const config::BoundaryData &boundaries,
@@ -121,6 +135,13 @@ public:
   const auto &GetAttrList() const { return attr_list; }
 
   void Initialize(double omega);
+
+  // Compute the sign of the modal E-field projected on the (high → low) direction
+  // implied by the given pair of parent-mesh boundary attributes (signal terminal
+  // first, ground terminal second). Returns +1, -1, or 0 if attributes were not
+  // resolvable on this mesh partition. Used by Initialize() to flip the mode polarity
+  // without requiring GSLIB.
+  [[nodiscard]] int GetModePolaritySign(int high_attr, int low_attr) const;
 
   HYPRE_BigInt GlobalTrueNDSize() const { return port_nd_fespace->GlobalTrueVSize(); }
   HYPRE_BigInt GlobalTrueH1Size() const { return port_h1_fespace->GlobalTrueVSize(); }
@@ -171,7 +192,9 @@ private:
                                mfem::ParFiniteElementSpace &h1_fespace);
   void PrintBoundaryInfo(const Units &units, const mfem::ParMesh &mesh);
 
+protected:
   // Compute boundary modes for all wave port boundaries at the specified frequency.
+  // Protected so test fixtures can drive this directly via a thin subclass.
   void Initialize(double omega);
 
 public:

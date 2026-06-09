@@ -116,6 +116,12 @@ struct Measurement
     // S-Parameter.
     std::complex<double> S = 0.0;
 
+    // Wave port mode characteristic impedance Z_PV = |V_exc|² / |P_exc| computed from
+    // the boundary-mode-solved E-field along the user-specified VoltagePath. Independent
+    // of which port is excited (property of the mode, not the simulation result). Only
+    // populated for wave ports with VoltagePath configured; left as 0 otherwise.
+    std::complex<double> Z_PV = 0.0;
+
     // Energies (currently only for lumped port).
     double inductor_energy = 0.0;   // E_ind = ∑_j 1/2 L_j I_mj².
     double capacitor_energy = 0.0;  // E_cap = ∑_j 1/2 C_j V_mj².

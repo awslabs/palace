@@ -524,6 +524,17 @@ WavePortData::WavePortData(const json &port)
     }
   }
   n_samples = port.value("NSamples", n_samples);
+  if (auto it = port.find("PolarityAttributes"); it != port.end())
+  {
+    auto pa = it->get<std::vector<int>>();
+    MFEM_VERIFY(pa.size() == 2,
+                "WavePort \"PolarityAttributes\" must be exactly two attributes "
+                "[high, low] (signal terminal first, ground terminal second)!");
+    MFEM_VERIFY(voltage_path.empty(),
+                "WavePort \"VoltagePath\" and \"PolarityAttributes\" are mutually "
+                "exclusive — \"VoltagePath\" already pins polarity!");
+    polarity_attributes = {pa[0], pa[1]};
+  }
 
   // Resolve subspace sentinel: fed directly into ModeEigenSolver → SLEPc/ARPACK.
   if (max_size <= 0)
