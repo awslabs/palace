@@ -143,6 +143,15 @@ public:
   // without requiring GSLIB.
   [[nodiscard]] int GetModePolaritySign(int high_attr, int low_attr) const;
 
+  // Solve the cross-section modal EVP at a COMPLEX frequency and return the exact complex
+  // propagation constant kₙ(ω), WITHOUT reconstructing the mode field or disturbing the
+  // cached real-ω state (omega0 / kn0 / port_E0t). This is the exact analytic continuation
+  // of the wave-port BC onto the complex-λ plane (λ = i·ω), used by the eigenmode nonlinear
+  // eigensolver to evaluate the wave-port BC at the genuinely complex eigenvalue. MPI-
+  // collective on the FE space communicator (matrix assembly), with the eigenvalue
+  // broadcast from the port root. For real ω this returns the same kₙ as Initialize(ω).
+  std::complex<double> SolveKnExact(std::complex<double> omega);
+
   HYPRE_BigInt GlobalTrueNDSize() const { return port_nd_fespace->GlobalTrueVSize(); }
   HYPRE_BigInt GlobalTrueH1Size() const { return port_h1_fespace->GlobalTrueVSize(); }
 
@@ -238,12 +247,28 @@ public:
   void AddBoundaryMassBdrCoefficients(int port_idx, MaterialPropertyCoefficient &fb,
                                       double scale) const;
 
+  // Complex-frequency wave-port BC overload for the eigenmode nonlinear solve. Stamps the
+  // full complex wave-port term i·kₙ(ω)·M^(p) with kₙ(ω) from the exact cross-section EVP
+  // solved at the genuinely complex frequency ω = -i·λ (WavePortData::SolveKnExact): the
+  // line-attenuation −Im(kₙ)·M goes on fbr and the propagating Re(kₙ)·M on fbi. Does not
+  // disturb the cached real-ω modal state. For real ω this matches the double overload's
+  // physics with the attenuation additionally carried on fbr.
+  void AddExtraSystemBdrCoefficients(std::complex<double> omega,
+                                     MaterialPropertyCoefficient &fbr,
+                                     MaterialPropertyCoefficient &fbi);
+
   // Compute and return the (real part of the) modal propagation constant kₙ for the
   // specified port at the given operating frequency. Triggers the per-port cross-section
   // EVP via WavePortData::Initialize; result is cached per port (per ω). Used by the
   // reduced-order model to assemble the wave-port contribution online without touching
   // any HDM-size object.
   double GetWavePortKn(int port_idx, double omega);
+
+  // Exact complex-frequency propagation constant kₙ(ω) for the eigenmode nonlinear solve's
+  // complex-λ wave-port BC (λ = i·ω). Runs the cross-section modal EVP with a genuinely
+  // complex ω (no real-axis sampling, no polynomial fit) and returns the recovered complex
+  // kₙ without disturbing the cached real-ω modal field. See WavePortData::SolveKnExact.
+  std::complex<double> GetWavePortKnExact(int port_idx, std::complex<double> omega);
 
   // Add contributions to the right-hand side source term vector for an incident field at
   // excited port boundaries.

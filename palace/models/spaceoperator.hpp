@@ -100,6 +100,14 @@ private:
                                      MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi,
                                      bool include_wave_ports = true);
+  // Complex-ω overload: dispatches to the farfield / surf-σ / wave-port complex
+  // AddExtraSystemBdrCoefficients overloads for the eigenmode nonlinear solve and its
+  // matching preconditioner. Reduces to the double overload for real ω.
+  void AddExtraSystemBdrCoefficients(std::complex<double> omega,
+                                     MaterialPropertyCoefficient &dfbr,
+                                     MaterialPropertyCoefficient &dfbi,
+                                     MaterialPropertyCoefficient &fbr,
+                                     MaterialPropertyCoefficient &fbi);
   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
 
@@ -109,13 +117,13 @@ private:
 
   // Helper functions to build the preconditioner matrix.
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
-                              std::complex<double> a2, double a3,
+                              std::complex<double> a2, std::complex<double> a3,
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec,
                               std::vector<std::unique_ptr<Operator>> &bi_vec,
                               std::vector<std::unique_ptr<Operator>> &bi_aux_vec);
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
-                              std::complex<double> a2, double a3,
+                              std::complex<double> a2, std::complex<double> a3,
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec);
   void AssemblePreconditioner(double a0, double a1, double a2, double a3,
@@ -202,6 +210,14 @@ public:
                                                  Operator::DiagonalPolicy diag_policy,
                                                  bool include_wave_ports);
 
+  // Complex-ω overload for the eigenmode nonlinear solve: assembles A2(λ) with all three
+  // frequency-dependent boundary terms evaluated at the genuinely complex frequency
+  // (ω = -i·λ). Always a ComplexOperator (the wave-port / ABC / surf-σ terms acquire a
+  // real-slot contribution at complex ω). For real ω this matches GetExtraSystemMatrix<
+  // ComplexOperator>(double).
+  std::unique_ptr<ComplexOperator>
+  GetExtraSystemMatrix(std::complex<double> omega, Operator::DiagonalPolicy diag_policy);
+
   // Construct the ω-independent boundary mass matrix M^(p)_{μ⁻¹} for a single wave port,
   // returned with PEC essential DoF rows handled by `diag_policy`. The full wave-port
   // contribution to the system matrix at frequency ω is `i·kₙ,p(ω)·M^(p)_{μ⁻¹}` with
@@ -237,7 +253,7 @@ public:
   //             B = a0 K + a1 C -/+ a2 |Mr + Mi| + A2r(a3) + A2i(a3).
   template <typename OperType, typename ScalarType>
   std::unique_ptr<OperType> GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
-                                                    ScalarType a2, double a3);
+                                                    ScalarType a2, ScalarType a3);
 
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const
