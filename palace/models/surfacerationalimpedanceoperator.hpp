@@ -77,6 +77,15 @@ public:
   // iω·Ys to K + iωC - ω²M.
   void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi);
+
+  // Complex-ω overload: evaluates the Robin coefficient s·D(s)/N(s) at genuinely complex
+  // s = iω (analytic continuation; rational functions continue trivially off the real-ω
+  // axis). Used by the 2D mode assembly when the wave-port cross-section EVP is solved at
+  // a complex frequency. For real ω this reduces bit-for-bit to the double overload. The
+  // passivity warning applies only on the real-ω axis and is skipped for Im(ω) != 0.
+  void AddExtraSystemBdrCoefficients(std::complex<double> omega,
+                                     MaterialPropertyCoefficient &fbr,
+                                     MaterialPropertyCoefficient &fbi);
 };
 
 }  // namespace palace

@@ -73,14 +73,21 @@ public:
     MFEM_ABORT("SetOperators not defined!");
   }
 
-  virtual void SetExtraSystemMatrix(std::function<std::unique_ptr<ComplexOperator>(double)>)
+  // Set the frequency-dependent A2 matrix function A2(λ) for the nonlinear eigensolvers.
+  // The argument is the genuinely complex eigenvalue λ: the wave-port / 2nd-order ABC /
+  // surface-conductivity BCs are evaluated at ω = -i·λ, so A2 is the exact analytic
+  // continuation, not a real-axis projection. (The HYBRID seed pencil samples a separate
+  // real-ω A2 directly in the driver; this interface is only the Newton / NEP iteration's
+  // production A2.) Default no-op so linear solvers can ignore it.
+  virtual void SetExtraSystemMatrix(
+      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>)
   {
     MFEM_ABORT("SetExtraSystemMatrix not defined!");
   }
 
-  virtual void SetPreconditionerUpdate(
-      std::function<std::unique_ptr<ComplexOperator>(
-          std::complex<double>, std::complex<double>, std::complex<double>, double)>)
+  virtual void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
+                                           std::complex<double>, std::complex<double>,
+                                           std::complex<double>, std::complex<double>)>)
   {
     MFEM_ABORT("SetPreconditionerUpdate not defined!");
   }

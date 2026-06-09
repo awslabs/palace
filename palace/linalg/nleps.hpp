@@ -154,12 +154,21 @@ private:
   // Operators used in the iterative linear solver.
   std::unique_ptr<ComplexOperator> opA2, opA, opP;
 
-  // Function to compute the A2 operator.
-  std::optional<std::function<std::unique_ptr<ComplexOperator>(double)>> funcA2;
+  // Function to compute the A2 operator at the (complex) eigenvalue λ. The wave-port /
+  // 2nd-order ABC / surface-conductivity BCs are evaluated at ω = -i·λ, so this is the
+  // exact analytic continuation of A2 onto the complex-λ plane — the Newton iteration's
+  // production system matrix, residual, and finite-difference Jacobian all use it. The
+  // HYBRID seed pencil (NewtonInterpolationOperator) samples a separate real-ω A2 in the
+  // driver; it does not go through this member.
+  std::optional<std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>>
+      funcA2;
 
-  // Function to compute the preconditioner matrix.
+  // Function to compute the preconditioner matrix. The 4th argument is the complex BC
+  // frequency ω = -i·λ, so the preconditioner's BC terms match the exact complex system
+  // matrix (recovering single-iteration GMRES).
   std::optional<std::function<std::unique_ptr<ComplexOperator>(
-      std::complex<double>, std::complex<double>, std::complex<double>, double)>>
+      std::complex<double>, std::complex<double>, std::complex<double>,
+      std::complex<double>)>>
       funcP;
 
   // Linear eigenvalue solver used to set initial guess.
@@ -204,14 +213,15 @@ public:
   void SetOperators(const ComplexOperator &K, const ComplexOperator &C,
                     const ComplexOperator &M, ScaleType type) override;
 
-  // Set the frequency-dependent A2 matrix function.
+  // Set the frequency-dependent A2 matrix function A2(λ) (evaluated at the complex
+  // eigenvalue λ; BCs at ω = -i·λ).
   void SetExtraSystemMatrix(
-      std::function<std::unique_ptr<ComplexOperator>(double)>) override;
+      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>) override;
 
-  // Set the preconditioner update function.
+  // Set the preconditioner update function. The 4th argument is the complex BC frequency.
   void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
                                    std::complex<double>, std::complex<double>,
-                                   std::complex<double>, double)>) override;
+                                   std::complex<double>, std::complex<double>)>) override;
 
   // Set the update frequency of the preconditioner.
   void SetPreconditionerLag(int preconditioner_update_freq,

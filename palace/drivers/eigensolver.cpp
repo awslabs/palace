@@ -41,13 +41,26 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
 
-  // Check if there are nonlinear terms and, if so, setup interpolation operator.
+  // Check if there are nonlinear terms and, if so, setup interpolation operator. funcA2 is
+  // the real-ω A2 used by the linear seed (the HYBRID polynomial pencil samples it on the
+  // imaginary-λ axis = real ω, and the has_A2 probe below evaluates it once at the target).
   auto funcA2 = [&space_op](double omega) -> std::unique_ptr<ComplexOperator>
   { return space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO); };
+  // Complex-frequency A2(λ) for the nonlinear eigensolvers: the wave-port / farfield /
+  // surf-σ BCs are evaluated at the genuinely complex eigenvalue (ω = -i·λ) so the
+  // operator is the exact analytic continuation, not a real-axis projection. This is the
+  // A2 the Newton / NEP iteration uses for its production system matrix, residual, and
+  // Jacobian (driven / boundary-mode keep the real-ω path; there is no config knob).
+  auto funcA2_complex =
+      [&space_op](std::complex<double> lambda) -> std::unique_ptr<ComplexOperator>
+  {
+    const std::complex<double> omega = lambda / std::complex<double>(0.0, 1.0);  // ω = -iλ
+    return space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+  };
   auto funcP = [&space_op](std::complex<double> a0, std::complex<double> a1,
                            std::complex<double> a2,
-                           double omega) -> std::unique_ptr<ComplexOperator>
-  { return space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, omega); };
+                           std::complex<double> a3) -> std::unique_ptr<ComplexOperator>
+  { return space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, a3); };
   const double target = iodata.solver.eigenmode.target;
   auto A2 = funcA2(target);
   bool has_A2 = (A2 != nullptr);
@@ -159,7 +172,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (nonlinear_type == NonlinearEigenSolver::SLP)
   {
     eigen->SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);
-    eigen->SetExtraSystemMatrix(funcA2);
+    eigen->SetExtraSystemMatrix(funcA2_complex);
     eigen->SetPreconditionerUpdate(funcP);
   }
   else
@@ -307,7 +320,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i,
                                     K.get(), C.get(), M.get(), A2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
-      1.0 + 0.0i, 1i * target, -target * target + 0.0i, target);
+      1.0 + 0.0i, 1i * target, -target * target + 0.0i, target + 0.0i);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                 &space_op.GetH1Spaces());
   ksp->SetOperators(*A, *P);
@@ -374,7 +387,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       qn->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
     }
-    qn->SetExtraSystemMatrix(funcA2);
+    qn->SetExtraSystemMatrix(funcA2_complex);
     qn->SetPreconditionerUpdate(funcP);
     qn->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
     qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag,
