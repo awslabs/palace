@@ -240,4 +240,4 @@ jobs:
           needs.filter.outputs.should_build == 'true' &&
           !cancelled() &&
           (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache || true
+        run: spack -e . buildcache push --force --with-build-dependencies --unsigned local-buildcache || true

@@ -318,7 +318,7 @@ runs:
         source /tmp/timing_functions.sh
         start_timer
         # Push deps only; Palace itself is branch-specific (same reason as the container build).
-        spack -e . buildcache push --force --with-build-dependencies --only dependencies --unsigned --update-index local-buildcache || true
+        spack -e . buildcache push --force --with-build-dependencies --only dependencies --unsigned local-buildcache || true
         end_timer "Push to GHCR cache"
 
     - name: Run Regression Tests

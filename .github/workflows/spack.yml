@@ -42,113 +42,73 @@ jobs:
               - '.github/actions/**'
               - '.github/workflows/spack.yml'
 
-  # Build jobs
-  build-x64-gcc:
+  # Build jobs. All toolchain/arch combinations are one matrix "family" so that
+  # downstream jobs (and the buildcache index update) can depend on the single
+  # `build` handle instead of enumerating every leg.
+  build:
     needs: filter
     if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, x64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
+    strategy:
+      # One leg failing must not cancel the others: each still needs to push its
+      # dependencies to the buildcache.
+      fail-fast: false
+      matrix:
+        include:
+        - id: x64-gcc
+          runner: [self-hosted, x64]
           toolchain: gcc
           run-regression-tests: 'false'
-
-  build-gpu-gcc:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, gpu]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
+        - id: gpu-gcc
+          runner: [self-hosted, gpu]
           toolchain: gcc
-          variant: +cuda
+          variant: '+cuda'
           run-regression-tests: 'false'
-
-  build-x64-gcc-openmp:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, x64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
+        - id: x64-gcc-openmp
+          runner: [self-hosted, x64]
           toolchain: gcc
-          variant: "+openmp+int64"
+          variant: '+openmp+int64'
           run-regression-tests: 'false'
-
-  build-x64-gcc-cxx20:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, x64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
+        - id: x64-gcc-cxx20
+          runner: [self-hosted, x64]
           toolchain: gcc
-          variant: " cxxstd=20"
+          variant: ' cxxstd=20'
           run-regression-tests: 'false'
-
-  build-test-x64-llvm:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, x64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
+        - id: x64-llvm
+          runner: [self-hosted, x64]
           toolchain: llvm
           additional-test-cases: transmon/transmon_coarse
-
-  build-test-x64-intel:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, x64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
+        - id: x64-intel
+          runner: [self-hosted, x64]
           toolchain: intel-oneapi
           additional-test-cases: transmon/transmon_coarse
-
-  build-test-arm64-gcc:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, arm64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
+        - id: arm64-gcc
+          runner: [self-hosted, arm64]
           toolchain: gcc
           additional-test-cases: transmon/transmon_coarse
-
-  build-test-arm64-llvm:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, arm64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
+        - id: arm64-llvm
+          runner: [self-hosted, arm64]
           toolchain: llvm
           additional-test-cases: transmon/transmon_coarse
-
-  build-test-arm64-gcc-armpl:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, arm64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
+        - id: arm64-gcc-armpl
+          runner: [self-hosted, arm64]
           toolchain: gcc
           math-libs: armpl-gcc
           additional-test-cases: transmon/transmon_coarse
+    name: build-${{ matrix.id }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/palace-ci
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          variant: ${{ matrix.variant }}
+          math-libs: ${{ matrix.math-libs }}
+          run-regression-tests: ${{ matrix.run-regression-tests || 'true' }}
+          additional-test-cases: ${{ matrix.additional-test-cases }}
 
   # Test jobs
   test-x64-gcc:
-    needs: [filter, build-x64-gcc]
+    needs: [filter, build]
     if: success()
     strategy:
       fail-fast: false
@@ -167,7 +127,7 @@ jobs:
           solver: ${{ matrix.solver }}
 
   test-gpu-gcc:
-    needs: [filter, build-gpu-gcc]
+    needs: [filter, build]
     if: success()
     strategy:
       fail-fast: false
@@ -187,7 +147,7 @@ jobs:
           solver: ${{ matrix.solver }}
 
   test-x64-gcc-openmp:
-    needs: [filter, build-x64-gcc-openmp]
+    needs: [filter, build]
     if: success()
     strategy:
       fail-fast: false
@@ -205,3 +165,40 @@ jobs:
           toolchain: gcc
           variant: "+openmp+int64"
           solver: ${{ matrix.solver }}
+
+  # Update the shared buildcache index exactly once, after every build leg has
+  # finished pushing its dependencies. The per-leg pushes intentionally do NOT
+  # pass --update-index: concurrent index rewrites on a single OCI tag race and
+  # orphan specs (https://github.com/awslabs/palace/issues/755). `always()` runs
+  # this even if some legs failed, so the deps that did build are still indexed.
+  # Gated to push events because the index write needs `packages: write`, which
+  # PR tokens lack.
+  update-buildcache-index:
+    needs: [filter, build]
+    if: ${{ always() && github.event_name == 'push' && needs.filter.outputs.test == 'true' }}
+    runs-on: [self-hosted, x64]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup environment
+        uses: ./.github/actions/setup-runner
+        with:
+          julia-version: 'dont-install'
+          spack-version: 'develop'
+          llvm-version: 'dont-install'
+          setup-intel: 'false'
+      - name: Update shared buildcache index
+        shell: bash
+        run: |
+          mkdir -p ci-index && cd ci-index
+          cat << 'EOF' > spack.yaml
+          spack:
+            mirrors:
+              local-buildcache:
+                binary: true
+                url: oci://ghcr.io/awslabs/palace-develop-testing
+                signed: false
+                access_pair:
+                  id_variable: GITHUB_USER
+                  secret_variable: GITHUB_TOKEN
+          EOF
+          spack -e . buildcache update-index local-buildcache
