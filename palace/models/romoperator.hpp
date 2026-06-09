@@ -256,6 +256,13 @@ protected:
   // over-run the per-port scaling vector whenever a port is excluded.
   std::size_t NumSynthesisPortModes() const;
 
+  // Number of wave ports included in synthesis (IncludeInSynthesis = true). Each
+  // contributes one port mode at the reference frequency; that mode is generally complex,
+  // so AddWavePortModesForSynthesis adds up to two real basis vectors (real + imaginary
+  // parts) per included port. Excluded ports add nothing. Used to size the basis
+  // reservation so it never exceeds the count actually added.
+  std::size_t NumSynthesisWavePortModes() const;
+
   // Helper function that normalizes PROM matrices so that they correspond to proper
   // admittance matrices on the ports. Also does unit conversion to physical (input) units.
   // Define so that 1.0 on port i corresponds to full (un-normalized solution), so you can

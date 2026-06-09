@@ -364,7 +364,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
                            mfem::ParFiniteElementSpace &nd_fespace,
                            mfem::ParFiniteElementSpace &h1_fespace,
                            const mfem::Array<int> &dbc_attr)
-  : mat_op(mat_op), excitation(data.excitation), active(data.active)
+  : mat_op(mat_op), excitation(data.excitation), active(data.active),
+    include_in_synthesis(data.include_in_synthesis)
 {
   mode_idx = data.mode_idx;
   d_offset = data.d_offset;

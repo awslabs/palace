@@ -874,6 +874,36 @@ TEST_CASE("RomOperator-Synthesis-ExcludedExcitedRejected", "[romoperator][Serial
                     Catch::Matchers::ContainsSubstring("IncludeInSynthesis"));
 }
 
+// Same rule for wave ports: an excited wave port carrying "IncludeInSynthesis": false is
+// rejected by the configuration parser, because the excitation vector is unconditionally
+// added to the synthesis basis (mirrors the lumped-port case above).
+TEST_CASE("RomOperator-Synthesis-WavePortExcludedExcitedRejected", "[romoperator][Serial]")
+{
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
+  setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = {
+      {"WavePort", json::array({json::object({{"Index", 1},
+                                              {"Mode", 1},
+                                              {"Excitation", uint(1)},
+                                              {"IncludeInSynthesis", false},
+                                              {"Attributes", json::array({100})}})})}};
+  setup_json["Solver"] = {{"Order", 1UL},
+                          {"Driven",
+                           {{"AdaptiveTol", 1e-3},
+                            {"AdaptiveCircuitSynthesis", true},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", 32.0},
+                            {"FreqStep", 1.0}}}};
+
+  CHECK_THROWS_WITH((IoData{setup_json, false}),
+                    Catch::Matchers::ContainsSubstring("IncludeInSynthesis"));
+}
+
 // Verify that the regime-2 augmented pencil produced by BuildAugmentedPencil has the
 // same eigenvalues as the unaugmented pencil with the rational kₙ-correction applied
 // directly. The augmentation is supposed to be exact: eliminating each aux state sₖⱼ
