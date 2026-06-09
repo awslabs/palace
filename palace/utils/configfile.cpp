@@ -512,6 +512,12 @@ WavePortData::WavePortData(const json &port)
   eigen_solver = port.value("SolverType", eigen_solver);
   excitation = ParsePortExcitation(port, index);
   active = port.value("Active", active);
+  include_in_synthesis = port.value("IncludeInSynthesis", include_in_synthesis);
+  MFEM_VERIFY(!(excitation != 0 && !include_in_synthesis),
+              fmt::format("\"IncludeInSynthesis\" cannot be false on wave port index "
+                          "{:d} because it is excited; the excitation vector is always "
+                          "added to the synthesis basis.",
+                          index));
   ksp_max_its = port.value("MaxIts", ksp_max_its);
   ksp_tol = port.value("KSPTol", ksp_tol);
   eig_tol = port.value("EigenTol", eig_tol);

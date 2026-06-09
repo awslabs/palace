@@ -154,6 +154,7 @@
             ]
           },
           "Active": { "type": "boolean" },
+          "IncludeInSynthesis": { "type": "boolean" },
           "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
           "KSPTol": { "type": "number", "exclusiveMinimum": 0.0 },
           "EigenTol": { "type": "number", "exclusiveMinimum": 0.0 },

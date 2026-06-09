@@ -328,6 +328,7 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                             {"SolverType", ToString(wp.eigen_solver)},
                             {"Excitation", wp.excitation},
                             {"Active", wp.active},
+                            {"IncludeInSynthesis", wp.include_in_synthesis},
                             {"MaxIts", wp.ksp_max_its},
                             {"KSPTol", wp.ksp_tol},
                             {"EigenTol", wp.eig_tol},

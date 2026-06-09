@@ -62,6 +62,7 @@ public:
   double d_offset;
   int excitation;
   bool active;
+  bool include_in_synthesis;
   std::complex<double> kn0;
   double omega0;
   mfem::Vector port_normal;

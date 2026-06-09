@@ -586,10 +586,11 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     // included count, not the total port count, to avoid over-reserving basis storage
     // (one full-FE-space vector per excluded port would otherwise be reserved).
     max_prom_size += NumSynthesisPortModes();
-    // Wave-port modes are added once per port (one mode per port today). The seeded
-    // basis vector at the reference frequency is generally complex (mode field has both
-    // real and imaginary parts), so reserve up to two slots per port.
-    max_prom_size += 2 * space_op.GetWavePortOp().Size();
+    // Wave-port modes are added once per INCLUDED port (ports with IncludeInSynthesis =
+    // false add nothing). The seeded basis vector at the reference frequency is generally
+    // complex (mode field has both real and imaginary parts), so reserve up to two slots
+    // per included port.
+    max_prom_size += 2 * NumSynthesisWavePortModes();
 
     // Build inner-product weight matrix.
     weight_op_W = HybridBulkBoundaryOperator{
@@ -715,6 +716,23 @@ std::size_t RomOperator::NumSynthesisPortModes() const
   return n;
 }
 
+std::size_t RomOperator::NumSynthesisWavePortModes() const
+{
+  // Each wave port included in synthesis contributes one port mode (the modal field at the
+  // reference frequency). Ports flagged out via IncludeInSynthesis = false contribute
+  // nothing. The mode is generally complex, so the caller reserves up to two basis vectors
+  // (real + imaginary) per included port; see AddWavePortModesForSynthesis.
+  std::size_t n = 0;
+  for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
+  {
+    if (port_data.include_in_synthesis)
+    {
+      n++;
+    }
+  }
+  return n;
+}
+
 void RomOperator::AddLumpedPortModesForSynthesis()
 {
   // Add modes for lumped port to use them a circuit matrices.
@@ -786,6 +804,14 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
 
   for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
   {
+    if (!port_data.include_in_synthesis)
+    {
+      // The boundary condition for this port is still applied (see WavePortOperator),
+      // but no port-mode vector is added to the PROM basis. Excited ports always have
+      // include_in_synthesis = true (enforced by the config parser) so the excitation
+      // vector is never silently dropped here.
+      continue;
+    }
     space_op.GetWavePortFieldVectorPrimaryEt(port_idx, omega_ref, vec);
     UpdatePROM(vec, fmt::format("waveport_{:d}", port_idx));
   }
