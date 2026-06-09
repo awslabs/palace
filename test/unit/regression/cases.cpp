@@ -276,6 +276,18 @@ TEST_CASE("coaxial_matched", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("coaxial", "coaxial_matched.json", "matched", opts);
 }
 
+// Mixed lumped + wave port S-parameters (added in PR #743). Same tolerances as the
+// other coaxial cases; port-Z.csv / port-S.csv are diffed like any other CSV.
+TEST_CASE("coaxial_lumped_wave", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  palace::test::RunRegressionCase("coaxial", "coaxial_lumped_wave.json", "lumped_wave",
+                                  opts);
+}
+
 TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
