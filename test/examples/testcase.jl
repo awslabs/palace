@@ -17,6 +17,7 @@ function testcase(
     rtol=1.0e-6,
     atol=1.0e-18,
     excluded_columns=[],
+    abs_columns=[],
     custom_tests=Dict(),
     paraview_fields=true,
     gridfunction_fields=false,
@@ -226,6 +227,14 @@ function testcase(
             rename!(dataref, strip.(names(dataref)))
 
             @test names(data) == names(dataref) || logdump(names(data), names(dataref))
+
+            # Compare gauge-dependent signed columns by magnitude only.
+            for col ∈ abs_columns
+                for c ∈ names(data, Cols(contains(col)))
+                    data[!, c] = abs.(data[!, c])
+                    dataref[!, c] = abs.(dataref[!, c])
+                end
+            end
 
             if file in keys(custom_tests)
                 custom_tests[file](data, dataref)
