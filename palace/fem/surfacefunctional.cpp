@@ -830,4 +830,32 @@ std::complex<double> SurfaceFunctional::EvalFlux(const GridFunction *E,
   return dot;
 }
 
+std::complex<double> SurfaceFunctional::EvalComplexPower(const GridFunction &E,
+                                                         const GridFunction &B) const
+{
+  MFEM_VERIFY(kind == Kind::SURFACE_FLUX && flux_type == SurfaceFlux::POWER &&
+                  flux_two_sided,
+              "SurfaceFunctional::EvalComplexPower is only valid for two-sided POWER "
+              "flux functionals!");
+  MFEM_VERIFY(E.HasImag() == B.HasImag(),
+              "Mismatch between real- and complex-valued E and B fields in port power "
+              "calculation!");
+
+  // Following LumpedPortData::GetPower: P = ∫ E ⋅ (n x H) dS with H = μ⁻¹ B and n the
+  // normal oriented into element 1 (contributions from both sides of an interior
+  // boundary add). With S(e, b) = ∫ (e x μ⁻¹ b) ⋅ n dS (the two-sided POWER flux
+  // functional), E ⋅ (n x H) = -(E x H) ⋅ n gives
+  //   Re{P} = S(E_re, B_re) + S(E_im, B_im)
+  //   Im{P} = S(E_im, B_re) - S(E_re, B_im) .
+  const bool has_imag = E.HasImag();
+  std::complex<double> dot(EvalLocal({&E.Real(), &B.Real()}), 0.0);
+  if (has_imag)
+  {
+    dot += EvalLocal({&E.Imag(), &B.Imag()});
+    dot.imag(EvalLocal({&E.Imag(), &B.Real()}) - EvalLocal({&E.Real(), &B.Imag()}));
+  }
+  Mpi::GlobalSum(1, &dot, comm);
+  return dot;
+}
+
 }  // namespace palace

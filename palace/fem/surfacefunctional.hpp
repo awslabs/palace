@@ -140,6 +140,11 @@ public:
   // real and imaginary parts of the flux (ELECTRIC, MAGNETIC), or the stationary real
   // power (POWER). Collective on the mesh communicator.
   std::complex<double> EvalFlux(const GridFunction *E, const GridFunction *B) const;
+
+  // Evaluate the complex power P = ∫ E ⋅ (n x H) dS following the conventions of
+  // LumpedPortData::GetPower (two-sided POWER flux functionals only). Collective on the
+  // mesh communicator.
+  std::complex<double> EvalComplexPower(const GridFunction &E, const GridFunction &B) const;
 };
 
 }  // namespace palace

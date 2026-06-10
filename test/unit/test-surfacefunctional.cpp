@@ -552,4 +552,140 @@ TEST_CASE("SurfaceFunctional Surface Flux", "[surfacefunctional][Serial][GPU]")
   }
 }
 
+TEST_CASE("SurfaceFunctional Complex Power", "[surfacefunctional][Serial][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto order = GENERATE(1, 2);
+  auto complex = GENERATE(false, true);
+  CAPTURE(elem_type, order, complex);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s[0] = 11.7;
+  dielectric.epsilon_r.s[1] = 11.7;
+  dielectric.epsilon_r.s[2] = 11.7;
+  dielectric.mu_r.s[0] = 1.4;
+  dielectric.mu_r.s[1] = 1.4;
+  dielectric.mu_r.s[2] = 1.4;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::ND_FECollection nd_fec(order, pmesh.Dimension());
+  mfem::RT_FECollection rt_fec(order - 1, pmesh.Dimension());
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+
+  GridFunction E(nd_fespace, complex), B(rt_fespace, complex);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + x(2) * x(2);
+                                        v(1) = std::cos(x(2)) + x(0);
+                                        v(2) = x(0) * x(1) + 1.0;
+                                      });
+  mfem::VectorFunctionCoefficient fbr(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) - 0.3 * x(2);
+                                        v(1) = std::sin(x(2)) + 0.5;
+                                        v(2) = std::cos(x(0)) - x(1) * x(2);
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  B.Real().ProjectCoefficient(fbr);
+  if (complex)
+  {
+    mfem::VectorFunctionCoefficient fei(3,
+                                        [](const mfem::Vector &x, mfem::Vector &v)
+                                        {
+                                          v(0) = x(1) * x(2) - 0.5;
+                                          v(1) = std::sin(x(0)) - x(2);
+                                          v(2) = std::cos(x(1)) + x(0) * x(0);
+                                        });
+    mfem::VectorFunctionCoefficient fbi(3,
+                                        [](const mfem::Vector &x, mfem::Vector &v)
+                                        {
+                                          v(0) = std::cos(x(2)) - 0.2;
+                                          v(1) = x(0) * x(2) + 0.1;
+                                          v(2) = std::sin(x(1)) - x(0);
+                                        });
+    E.Imag().ProjectCoefficient(fei);
+    B.Imag().ProjectCoefficient(fbi);
+  }
+
+  // Legacy reference: replicate LumpedPortData::GetPower exactly (linear form from
+  // BdrSurfaceCurrentVectorCoefficient dotted with the E field expansion).
+  auto LegacyPower = [&](int attr, const mfem::Array<int> &attr_marker)
+  {
+    mfem::Array<int> attr_list(1);
+    attr_list[0] = attr;
+    std::complex<double> dot;
+    {
+      RestrictedVectorCoefficient<BdrSurfaceCurrentVectorCoefficient> fbr_c(
+          attr_list, B.Real(), mat_op);
+      mfem::LinearForm pr(&nd_fespace.Get());
+      pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr_c),
+                               const_cast<mfem::Array<int> &>(attr_marker));
+      pr.UseFastAssembly(false);
+      pr.UseDevice(false);
+      pr.Assemble();
+      pr.UseDevice(true);
+      dot =
+          -(pr * E.Real()) + (complex ? std::complex<double>(0.0, -(pr * E.Imag())) : 0.0);
+    }
+    if (complex)
+    {
+      RestrictedVectorCoefficient<BdrSurfaceCurrentVectorCoefficient> fbi_c(
+          attr_list, B.Imag(), mat_op);
+      mfem::LinearForm pi(&nd_fespace.Get());
+      pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbi_c),
+                               const_cast<mfem::Array<int> &>(attr_marker));
+      pi.UseFastAssembly(false);
+      pi.UseDevice(false);
+      pi.Assemble();
+      pi.UseDevice(true);
+      dot += std::complex<double>(-(pi * E.Imag()), pi * E.Real());
+    }
+    Mpi::GlobalSum(1, &dot, comm);
+    return dot;
+  };
+
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  mfem::Vector x0(3);
+  x0 = 0.0;
+
+  for (int attr : {1, 6, 7})  // Exterior (vacuum side), exterior (dielectric), interior
+  {
+    CAPTURE(attr);
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 0;
+    marker[attr - 1] = 1;
+    SurfaceFunctional power(*mesh, marker, &nd_fespace, &rt_fespace, mat_op,
+                            SurfaceFlux::POWER, /*two_sided*/ true, x0);
+    const std::complex<double> ref = LegacyPower(attr, marker);
+    const std::complex<double> val = power.EvalComplexPower(E, B);
+    CAPTURE(ref.real(), ref.imag(), val.real(), val.imag());
+    auto CheckPart = [](double v, double r)
+    {
+      if (std::abs(r) > 1.0e-12)
+      {
+        CHECK(v == Catch::Approx(r).epsilon(1.0e-10));
+      }
+      else
+      {
+        CHECK(std::abs(v) < 1.0e-10);
+      }
+    };
+    CheckPart(val.real(), ref.real());
+    CheckPart(val.imag(), ref.imag());
+  }
+}
+
 }  // namespace palace
