@@ -239,6 +239,29 @@ bool SurfaceFunctional::Enabled()
 
 void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker)
 {
+  AssembleLocal(mesh, bdr_attr_marker);
+
+  // The validity decision must be globally consistent: a rank may locally require an
+  // unsupported configuration (e.g. two-sided evaluation across a process boundary)
+  // while others do not. All ranks must agree on whether the libCEED path or the
+  // legacy fallback is used so that the collective evaluation calls match.
+  bool global_valid = valid;
+  Mpi::GlobalAnd(1, &global_valid, comm);
+  if (!global_valid && valid)
+  {
+    // Discard the locally assembled operators; the legacy path will be used.
+    for (auto &group : groups)
+    {
+      PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
+    }
+    groups.clear();
+    valid = false;
+  }
+}
+
+void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
+                                      const mfem::Array<int> &bdr_attr_marker)
+{
   if (mesh.Dimension() != 3 || mesh.SpaceDimension() != 3)
   {
     // Not yet supported (2D solver meshes): callers fall back to the legacy paths.

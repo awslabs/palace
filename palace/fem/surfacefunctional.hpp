@@ -95,6 +95,7 @@ private:
   mutable Vector local_out;
 
   void Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
+  void AssembleLocal(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
 
   // Apply all group operators with the field inputs pointed at the given source
   // vectors, accumulating into the local output vector.

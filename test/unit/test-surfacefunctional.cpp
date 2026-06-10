@@ -1150,4 +1150,115 @@ TEST_CASE("SurfaceFunctional Nonconformal Mesh", "[surfacefunctional][Serial][GP
   }
 }
 
+TEST_CASE("SurfaceFunctional Nonconformal Parallel", "[surfacefunctional][Parallel][GPU]")
+{
+  // On parallel (possibly nonconformal) meshes, two-sided evaluation across process
+  // boundaries is not yet supported: the functional must fall back to the legacy path
+  // *consistently across all ranks* (the evaluation calls are collective). Exterior
+  // surfaces are always supported. This test verifies the global consistency of the
+  // validity decision and the results of whichever path is reported valid.
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const int order = 2;
+  CAPTURE(elem_type);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = MakeNCInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s[0] = 11.7;
+  dielectric.epsilon_r.s[1] = 11.7;
+  dielectric.epsilon_r.s[2] = 11.7;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec);
+
+  GridFunction E(nd_fespace, true);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + x(2) * x(2);
+                                        v(1) = std::cos(x(2)) + x(0);
+                                        v(2) = x(0) * x(1) + 1.0;
+                                      });
+  mfem::VectorFunctionCoefficient fei(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) * x(2) - 0.5;
+                                        v(1) = std::sin(x(0)) - x(2);
+                                        v(2) = std::cos(x(1)) + x(0) * x(0);
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  E.Imag().ProjectCoefficient(fei);
+
+  // The legacy reference evaluates fields on remote sides of shared faces via face
+  // neighbor data.
+  E.Real().ExchangeFaceNbrData();
+  E.Imag().ExchangeFaceNbrData();
+
+  const double t_i = 2.0e-3, epsilon_i = 10.0;
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+
+  for (int attr : {1, 6, 7})
+  {
+    CAPTURE(attr);
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 0;
+    marker[attr - 1] = 1;
+    for (auto type : {InterfaceDielectric::DEFAULT, InterfaceDielectric::MA})
+    {
+      CAPTURE(static_cast<int>(type));
+      SurfaceFunctional epr(*mesh, marker, nd_fespace, mat_op, type, t_i, epsilon_i);
+
+      // The validity decision must be identical on all ranks.
+      bool valid = epr.IsValid();
+      bool valid_and = valid, valid_or = valid;
+      Mpi::GlobalAnd(1, &valid_and, comm);
+      Mpi::GlobalOr(1, &valid_or, comm);
+      REQUIRE(valid_and == valid_or);
+
+      // Exterior boundaries must always be supported.
+      if (attr != 7)
+      {
+        REQUIRE(valid);
+      }
+
+      if (valid)
+      {
+        auto MakeLegacy = [&]() -> std::unique_ptr<mfem::Coefficient>
+        {
+          if (type == InterfaceDielectric::DEFAULT)
+          {
+            return std::make_unique<
+                InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>>(
+                E, mat_op, t_i, epsilon_i);
+          }
+          return std::make_unique<InterfaceDielectricCoefficient<InterfaceDielectric::MA>>(
+              E, mat_op, t_i, epsilon_i);
+        };
+        auto legacy = MakeLegacy();
+        const double ref = RefSurfaceCoefficientIntegral(pmesh, *legacy, marker);
+        const double val = epr.Eval(E);
+        CAPTURE(ref, val);
+        if (std::abs(ref) > 1.0e-12)
+        {
+          CHECK(val == Catch::Approx(ref).epsilon(1.0e-10));
+        }
+        else
+        {
+          CHECK(std::abs(val) < 1.0e-10);
+        }
+      }
+    }
+  }
+}
+
 }  // namespace palace
