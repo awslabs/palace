@@ -51,10 +51,22 @@ public:
 };
 
 // Search for a schema property by key name, collecting all matches.
-// Helper for FindSchemaByKey - populates results vector.
+// Helper for FindSchemaByKey - populates results vector. The depth parameter
+// guards against pathological self-referential $defs cycles.
 void FindAllSchemasByKey(const json &schema, const std::string &key, const json &root_defs,
-                         std::vector<json> &results)
+                         std::vector<json> &results, int depth = 0)
 {
+  constexpr int kMaxDepth = 32;
+  if (depth > kMaxDepth)
+  {
+    // Hitting the cap means a self-referential $defs cycle in the schema, which
+    // is a developer error rather than bad user input. Warn so it surfaces
+    // instead of silently truncating the search.
+    Mpi::Warning("Schema search for key '{}' exceeded max depth {}; check for a "
+                 "self-referential $defs cycle\n",
+                 key, kMaxDepth);
+    return;
+  }
   if (!schema.is_object())
   {
     return;
@@ -90,16 +102,22 @@ void FindAllSchemasByKey(const json &schema, const std::string &key, const json 
       if (v.contains("$ref"))
       {
         std::string ref_raw = v["$ref"].get<std::string>();
-        // Skip internal $defs references (handled elsewhere).
+        // Internal $defs reference: resolve and recurse so nested-via-$ref
+        // schemas (e.g. BoundaryPostprocessing.FarField) are still findable.
         if (ref_raw.find("#/$defs/") == 0)
         {
+          std::string def_name = ref_raw.substr(8);
+          if (!defs.is_null() && defs.contains(def_name))
+          {
+            FindAllSchemasByKey(defs[def_name], key, defs, results, depth + 1);
+          }
           continue;
         }
         std::string ref = StripPathPrefix(ref_raw);
         const auto &schema_map = schema::GetSchemaMap();
         if (auto it = schema_map.find(ref); it != schema_map.end())
         {
-          FindAllSchemasByKey(json::parse(it->second), key, defs, results);
+          FindAllSchemasByKey(json::parse(it->second), key, defs, results, depth + 1);
         }
         else
         {
@@ -108,7 +126,7 @@ void FindAllSchemasByKey(const json &schema, const std::string &key, const json 
       }
       else
       {
-        FindAllSchemasByKey(v, key, defs, results);
+        FindAllSchemasByKey(v, key, defs, results, depth + 1);
       }
     }
   }
@@ -116,7 +134,7 @@ void FindAllSchemasByKey(const json &schema, const std::string &key, const json 
   // Check items for arrays.
   if (auto items_it = schema.find("items"); items_it != schema.end())
   {
-    FindAllSchemasByKey(*items_it, key, defs, results);
+    FindAllSchemasByKey(*items_it, key, defs, results, depth + 1);
   }
 }
 
@@ -321,12 +339,15 @@ public:
     errors << "At " << FormatPath(ptr.to_string()) << ": " << message;
     // Enhance type mismatch errors with actual type. These message strings are
     // implementation details of json-schema-validator 2.4.0; update if upgrading.
-    if (message == "unexpected instance type")
+    // Use find() so the enhancement also fires for oneOf/anyOf-wrapped messages
+    // like "[combination: oneOf / case#0] unexpected instance type".
+    if (message.find("unexpected instance type") != std::string::npos)
     {
       errors << " (got " << instance.type_name() << ")";
     }
     // Enhance enum errors with valid values.
-    else if (schema && message == "instance not found in required enum")
+    else if (schema &&
+             message.find("instance not found in required enum") != std::string::npos)
     {
       json enum_values = FindEnumInSchema(*schema, ptr.to_string());
       if (!enum_values.is_null() && enum_values.is_array() && !enum_values.empty())

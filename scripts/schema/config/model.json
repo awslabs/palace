@@ -21,6 +21,10 @@
     "ExportPrerefinedMesh": { "type": "boolean" },
     "ReorientTetMesh": { "type": "boolean" },
     "Partitioning": { "type": "string" },
+    "Refinement": { "$ref": "#/$defs/Refinement" }
+  },
+  "$defs":
+  {
     "Refinement":
     {
       "type": "object",
@@ -43,58 +47,47 @@
         {
           "type": "array",
           "additionalItems": false,
-          "items":
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["Levels", "BoundingBoxMin", "BoundingBoxMax"],
-            "properties":
-            {
-              "Levels": { "type": "integer", "minimum": 0 },
-              "BoundingBoxMin":
-              {
-                "type": "array",
-                "additionalItems": false,
-                "items": { "type": "number" },
-                "minItems": 3,
-                "maxItems": 3
-              },
-              "BoundingBoxMax":
-              {
-                "type": "array",
-                "additionalItems": false,
-                "items": { "type": "number" },
-                "minItems": 3,
-                "maxItems": 3
-              }
-            }
-          }
+          "items": { "$ref": "#/$defs/Box" }
         },
         "Spheres":
         {
           "type": "array",
           "additionalItems": false,
-          "items":
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["Levels", "Radius", "Center"],
-            "properties":
-            {
-              "Levels": { "type": "integer", "minimum": 0 },
-              "Radius": { "type": "number", "exclusiveMinimum": 0.0 },
-              "Center":
-              {
-                "type": "array",
-                "additionalItems": false,
-                "items": { "type": "number" },
-                "minItems": 3,
-                "maxItems": 3
-              }
-            }
-          }
+          "items": { "$ref": "#/$defs/Sphere" }
         }
       }
+    },
+    "Box":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Levels", "BoundingBoxMin", "BoundingBoxMax"],
+      "properties":
+      {
+        "Levels": { "type": "integer", "minimum": 0 },
+        "BoundingBoxMin": { "$ref": "#/$defs/Point3D" },
+        "BoundingBoxMax": { "$ref": "#/$defs/Point3D" }
+      }
+    },
+    "Sphere":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Levels", "Radius", "Center"],
+      "properties":
+      {
+        "Levels": { "type": "integer", "minimum": 0 },
+        "Radius": { "type": "number", "exclusiveMinimum": 0.0 },
+        "Center": { "$ref": "#/$defs/Point3D" }
+      }
+    },
+    "Point3D":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
     }
   }
 }

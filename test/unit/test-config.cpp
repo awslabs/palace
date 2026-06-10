@@ -1,6 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <iterator>
 #include <set>
 #include <string>
 #include <vector>
@@ -44,18 +46,87 @@ std::vector<std::string> SchemaCoverageGaps(const std::string &schema_filename,
   auto it = schema_map.find(schema_filename);
   REQUIRE(it != schema_map.end());
   const json schema = json::parse(it->second);
-  const json scope = schema.at(json::json_pointer(pointer));
-  REQUIRE(scope.contains("properties"));
-  std::set<std::string> required_set;
-  if (auto rit = scope.find("required"); rit != scope.end())
+
+  // Resolve an in-document `#/$defs/...` reference against the root schema. After the
+  // hoist, named shapes live under `$defs` and are reached via `$ref`, so a raw JSON
+  // Pointer lands on the ref node rather than the inline object. Mirrors the production
+  // resolver in jsonschema.cpp.
+  auto resolve_ref = [&schema](const json &node) -> const json &
   {
-    for (const auto &r : *rit)
+    auto rit = node.find("$ref");
+    if (rit == node.end())
     {
-      required_set.insert(r.get<std::string>());
+      return node;
+    }
+    const std::string ref = rit->get<std::string>();
+    const std::string defs_prefix = "#/$defs/";
+    REQUIRE(ref.rfind(defs_prefix, 0) == 0);
+    const std::string def_name = ref.substr(defs_prefix.size());
+    REQUIRE(schema.contains("$defs"));
+    REQUIRE(schema.at("$defs").contains(def_name));
+    return schema.at("$defs").at(def_name);
+  };
+
+  // Gather the arms to inspect. A `oneOf`/`anyOf` of `$ref`s (e.g. LumpedPort, split by
+  // the hoist into Attributes/Elements variants) is treated as the union of its arms'
+  // properties, with `required` the *intersection* across arms — a field required in
+  // only one arm is optional overall, matching the pre-hoist single-object schema.
+  const json &resolved = resolve_ref(schema.at(json::json_pointer(pointer)));
+  std::vector<json> arms;
+  if (auto cit = resolved.find("oneOf"); cit != resolved.end())
+  {
+    for (const auto &arm : *cit)
+    {
+      arms.push_back(resolve_ref(arm));
     }
   }
+  else if (auto ait = resolved.find("anyOf"); ait != resolved.end())
+  {
+    for (const auto &arm : *ait)
+    {
+      arms.push_back(resolve_ref(arm));
+    }
+  }
+  else
+  {
+    arms.push_back(resolved);
+  }
+  REQUIRE(!arms.empty());
+
+  std::set<std::string> property_names;
+  std::set<std::string> required_set;
+  for (std::size_t i = 0; i < arms.size(); ++i)
+  {
+    const json &arm = arms[i];
+    REQUIRE(arm.contains("properties"));
+    for (const auto &[name, _sub] : arm.at("properties").items())
+    {
+      property_names.insert(name);
+    }
+    std::set<std::string> arm_required;
+    if (auto rit = arm.find("required"); rit != arm.end())
+    {
+      for (const auto &r : *rit)
+      {
+        arm_required.insert(r.get<std::string>());
+      }
+    }
+    if (i == 0)
+    {
+      required_set = std::move(arm_required);
+    }
+    else
+    {
+      std::set<std::string> intersection;
+      std::set_intersection(required_set.begin(), required_set.end(), arm_required.begin(),
+                            arm_required.end(),
+                            std::inserter(intersection, intersection.begin()));
+      required_set = std::move(intersection);
+    }
+  }
+
   std::vector<std::string> gaps;
-  for (const auto &[name, _sub] : scope.at("properties").items())
+  for (const auto &name : property_names)
   {
     if (required_set.count(name) || skip.count(name))
     {

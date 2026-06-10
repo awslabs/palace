@@ -10,8 +10,33 @@
     "PartialAssemblyOrder": { "type": "integer", "minimum": 1 },
     "QuadratureOrderJacobian": { "type": "boolean" },
     "QuadratureOrderExtra": { "type": "integer" },
-    "Device": { "type": "string", "enum": ["CPU", "GPU", "Debug"] },
+    "Device": { "$ref": "#/$defs/Device" },
     "Backend": { "type": "string" },
+    "Eigenmode": { "$ref": "#/$defs/Eigenmode" },
+    "Driven": { "$ref": "#/$defs/Driven" },
+    "Transient": { "$ref": "#/$defs/Transient" },
+    "Electrostatic": { "$ref": "#/$defs/Electrostatic" },
+    "Magnetostatic": { "$ref": "#/$defs/Magnetostatic" },
+    "BoundaryMode": { "$ref": "#/$defs/BoundaryMode" },
+    "Linear": { "$ref": "#/$defs/Linear" }
+  },
+  "$defs":
+  {
+    "Device":
+    {
+      "type": "string",
+      "enum": ["CPU", "GPU", "Debug"]
+    },
+    "Orthogonalization":
+    {
+      "type": "string",
+      "enum": ["MGS", "CGS", "CGS2"]
+    },
+    "AdaptiveCircuitSynthesisDomainOrthogonalization":
+    {
+      "type": "string",
+      "enum": ["Energy", "FEBasisIdentity", "SpaceOverlap"]
+    },
     "Eigenmode":
     {
       "type": "object",
@@ -35,9 +60,9 @@
         "RefineNonlinear": { "type": "boolean" },
         "LinearTol": { "type": "number", "minimum": 0.0 },
         "TargetUpper": { "type": "number" },
-        "PreconditionerLag": { "type" : "integer", "minimum": 0 },
+        "PreconditionerLag": { "type": "integer", "minimum": 0 },
         "PreconditionerLagTol": { "type": "number", "minimum": 0.0 },
-        "MaxRestart": { "type" : "integer", "minimum": 0 }
+        "MaxRestart": { "type": "integer", "minimum": 0 }
       }
     },
     "Driven":
@@ -50,59 +75,74 @@
         "MaxFreq": { "type": "number" },
         "FreqStep": { "type": "number" },
         "SaveStep": { "type": "integer" },
-        "Samples": {
+        "Samples":
+        {
           "type": "array",
-          "items": {
-            "oneOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "Type": { "const": "Point" },
-                  "Freq": { "type": "array", "items": { "type": "number" } },
-                  "SaveStep": { "type": "integer" },
-                  "AddToPROM": { "type": "boolean" }
-                },
-                "required": ["Freq"],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "Type": { "const": "Linear" },
-                  "MinFreq": { "type": "number", "minimum": 0.0 },
-                  "MaxFreq": { "type": "number", "minimum": 0.0 },
-                  "FreqStep": { "type": "number", "minimum": 0.0 },
-                  "NSample": { "type": "integer", "minimum": 0 },
-                  "SaveStep": { "type": "integer" },
-                  "AddToPROM": { "type": "boolean" }
-                },
-                "required": ["MinFreq", "MaxFreq"],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "Type": { "const": "Log" },
-                  "MinFreq": { "type": "number", "exclusiveMinimum": 0.0 },
-                  "MaxFreq": { "type": "number", "exclusiveMinimum": 0.0 },
-                  "NSample": { "type": "integer", "minimum": 1 },
-                  "SaveStep": { "type": "integer" },
-                  "AddToPROM": { "type": "boolean" }
-                },
-                "required": ["Type", "MinFreq", "MaxFreq", "NSample"],
-                "additionalProperties": false
-              }
+          "items":
+          {
+            "oneOf":
+            [
+              { "$ref": "#/$defs/SamplesPoint" },
+              { "$ref": "#/$defs/SamplesLinear" },
+              { "$ref": "#/$defs/SamplesLog" }
             ]
           }
         },
-        "Save": { "type": "array", "additionalItems": false, "items": { "type": "number" }},
+        "Save": { "type": "array", "additionalItems": false, "items": { "type": "number" } },
         "Restart": { "type": "integer", "exclusiveMinimum": 0 },
         "AdaptiveTol": { "type": "number", "minimum": 0.0 },
         "AdaptiveMaxSamples": { "type": "number", "exclusiveMinimum": 0 },
         "AdaptiveConvergenceMemory": { "type": "integer", "exclusiveMinimum": 0 },
-        "AdaptiveGSOrthogonalization": { "type": "string", "enum": ["MGS", "CGS", "CGS2"] },
+        "AdaptiveGSOrthogonalization": { "$ref": "#/$defs/Orthogonalization" },
         "AdaptiveCircuitSynthesis": { "type": "boolean" },
-        "AdaptiveCircuitSynthesisDomainOrthogonalization": { "type": "string", "enum": ["Energy", "FEBasisIdentity", "SpaceOverlap"] }
+        "AdaptiveCircuitSynthesisDomainOrthogonalization":
+        {
+          "$ref": "#/$defs/AdaptiveCircuitSynthesisDomainOrthogonalization"
+        }
+      }
+    },
+    "SamplesPoint":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Freq"],
+      "properties":
+      {
+        "Type": { "const": "Point" },
+        "Freq": { "type": "array", "items": { "type": "number" } },
+        "SaveStep": { "type": "integer" },
+        "AddToPROM": { "type": "boolean" }
+      }
+    },
+    "SamplesLinear":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["MinFreq", "MaxFreq"],
+      "properties":
+      {
+        "Type": { "const": "Linear" },
+        "MinFreq": { "type": "number", "minimum": 0.0 },
+        "MaxFreq": { "type": "number", "minimum": 0.0 },
+        "FreqStep": { "type": "number", "minimum": 0.0 },
+        "NSample": { "type": "integer", "minimum": 0 },
+        "SaveStep": { "type": "integer" },
+        "AddToPROM": { "type": "boolean" }
+      }
+    },
+    "SamplesLog":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Type", "MinFreq", "MaxFreq", "NSample"],
+      "properties":
+      {
+        "Type": { "const": "Log" },
+        "MinFreq": { "type": "number", "exclusiveMinimum": 0.0 },
+        "MaxFreq": { "type": "number", "exclusiveMinimum": 0.0 },
+        "NSample": { "type": "integer", "minimum": 1 },
+        "SaveStep": { "type": "integer" },
+        "AddToPROM": { "type": "boolean" }
       }
     },
     "Transient":
@@ -119,9 +159,9 @@
         "MaxTime": { "type": "number", "exclusiveMinimum": 0.0 },
         "TimeStep": { "type": "number", "exclusiveMinimum": 0.0 },
         "SaveStep": { "type": "integer" },
-        "Order": {"type": "integer", "minimum": 2, "maximum": 5},
-        "RelTol": {"type": "number", "exclusiveMinimum": 0.0},
-        "AbsTol": {"type": "number", "exclusiveMinimum": 0.0}
+        "Order": { "type": "integer", "minimum": 2, "maximum": 5 },
+        "RelTol": { "type": "number", "exclusiveMinimum": 0.0 },
+        "AbsTol": { "type": "number", "exclusiveMinimum": 0.0 }
       }
     },
     "BoundaryMode":
@@ -192,9 +232,9 @@
         "MGSmoothChebyshev4th": { "type": "boolean" },
         "PCMatReal": { "type": "boolean" },
         "PCMatShifted": { "type": "boolean" },
-        "ComplexCoarseSolve": {"type": "boolean"},
-        "DropSmallEntries": {"type": "boolean"},
-        "ReorderingReuse": {"type": "boolean"},
+        "ComplexCoarseSolve": { "type": "boolean" },
+        "DropSmallEntries": { "type": "boolean" },
+        "ReorderingReuse": { "type": "boolean" },
         "PCSide": { "type": "string" },
         "ColumnOrdering": { "type": "string" },
         "STRUMPACKCompressionType": { "type": "string" },
@@ -211,7 +251,7 @@
         "EstimatorTol": { "type": "number", "minimum": 0.0 },
         "EstimatorMaxIts": { "type": "integer", "minimum": 0 },
         "EstimatorMG": { "type": "boolean" },
-        "GSOrthogonalization": { "type": "string", "enum": ["MGS", "CGS", "CGS2"] }
+        "GSOrthogonalization": { "$ref": "#/$defs/Orthogonalization" }
       }
     }
   }
