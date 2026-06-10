@@ -102,6 +102,11 @@ The format of this changelog is based on
     SLEPc's default `max(2 * N, N + 15)` for both SLEPc and ARPACK (previously the unset
     default was backend-dependent). `Solver.Eigenmode.MaxIts` now defaults to
     `1'000'000` [PR 719](https://github.com/awslabs/palace/pull/719).
+  - Eigenmode simulations with frequency-dependent boundary conditions (e.g. waveports,
+    second-order absorbing, surface conductivity) now evaluate the boundary conditions at
+    the true complex frequency/eigenmode. Previously, the boundary conditions were
+    evaluated using only the real component of the eigenmode.
+    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
 
 #### Performance Improvements
 
@@ -146,6 +151,9 @@ The format of this changelog is based on
   - Fixed a bug where the magnetic energy field calculation in 2D simulations used the
     incorrect permeability vector components [PR
     782](https://github.com/awslabs/palace/pull/782).
+  - Fixed a bug in the 2D mode eigensolver that sometimes led to crashes when waveports
+    were used in conjunction with non-zero conductivity materials.
+    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
 
 #### Documentation
 

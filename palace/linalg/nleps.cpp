@@ -498,7 +498,8 @@ int QuasiNewtonSolver::Solve()
     opA2 = (*funcA2)(eig);
     opA = BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
                               {opK, opC, opM, opA2.get()}, true);
-    opP = (*funcP)(1.0 + 0.0i, eig, eig * eig, eig / std::complex<double>(0.0, 1.0)); // ω = λ/i
+    opP = (*funcP)(1.0 + 0.0i, eig, eig * eig,
+                   eig / std::complex<double>(0.0, 1.0));  // ω = λ/i
     opInv->SetOperators(*opA, *opP);
     opInv->SetAbsTol(1.0e-12);
 

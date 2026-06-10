@@ -1312,10 +1312,11 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
   // A2_wp = i·kₙ(ω)·M^(p)_{μ⁻¹} with the EXACT complex kₙ(ω) from the cross-section EVP
   // solved at the genuinely complex eigenvalue (ω = -i·λ). For kₙ = β + iα, expanding
   // i·(β + iα) = −α + iβ puts the line-attenuation term −α·M on the real slot (fbr) and
-  // the propagating term β·M on the imaginary slot (fbi). SolveKnComplex is side-effect-free
-  // (does NOT cache, leaving omega0/kn0/port_E0t untouched), so the real-ω driven/postpro
-  // state is preserved. For real ω (imag = 0, α from cross-section loss) this matches the
-  // physics of the double overload but additionally carries the attenuation on fbr.
+  // the propagating term β·M on the imaginary slot (fbi). SolveKnComplex is
+  // side-effect-free (does NOT cache, leaving omega0/kn0/port_E0t untouched), so the real-ω
+  // driven/postpro state is preserved. For real ω (imag = 0, α from cross-section loss)
+  // this matches the physics of the double overload but additionally carries the
+  // attenuation on fbr.
   for (auto &[idx, data] : ports)
   {
     if (!data.active)
@@ -1365,7 +1366,7 @@ double WavePortOperator::GetWavePortKn(int port_idx, double omega)
 }
 
 std::complex<double> WavePortOperator::GetWavePortKnComplex(int port_idx,
-                                                          std::complex<double> omega)
+                                                            std::complex<double> omega)
 {
   auto it = ports.find(port_idx);
   MFEM_VERIFY(it != ports.end(),
