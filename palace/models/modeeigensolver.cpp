@@ -609,26 +609,36 @@ ModeEigenSolver::ComplexHypreParMatrix ModeEigenSolver::BuildSystemMatrixA(
     // HypreParMatrixFromBlocks requires at least one non-null block per row and column
     // to determine sizes. Since (1,0) is always null (shifted Btn is real-only), add
     // zero diagonal placeholders when an entire block row or column would be null.
+    //
+    // The 4-arg HypreParMatrix(comm, glob, row_starts, &diag) constructor does NOT
+    // deep-copy `diag`: it aliases the SparseMatrix's CSR arrays (CopyCSR with
+    // mem_owner=false). The backing Vector + SparseMatrix must therefore outlive both
+    // the placeholder HypreParMatrix AND the HypreParMatrixFromBlocks call below (which
+    // reads each block's diag via hypre_MergeDiagAndOffd). Keep them in this outer scope
+    // — declaring them inside the `if` blocks would free them before FromBlocks runs,
+    // leaving the placeholder pointing at freed memory (use-after-free → segfault).
     std::unique_ptr<mfem::HypreParMatrix> Dtt_zero, Dnn_zero;
+    Vector dtt, dnn;
+    std::unique_ptr<mfem::SparseMatrix> diag_tt, diag_nn;
     if (!Atti && !Atni)
     {
-      Vector d(nd_size);
-      d.UseDevice(false);
-      d = 0.0;
-      mfem::SparseMatrix diag(d);
+      dtt.SetSize(nd_size);
+      dtt.UseDevice(false);
+      dtt = 0.0;
+      diag_tt = std::make_unique<mfem::SparseMatrix>(dtt);
       Dtt_zero = std::make_unique<mfem::HypreParMatrix>(
           nd_fespace.Get().GetComm(), nd_fespace.Get().GlobalTrueVSize(),
-          nd_fespace.Get().GetTrueDofOffsets(), &diag);
+          nd_fespace.Get().GetTrueDofOffsets(), diag_tt.get());
     }
     if (!Anni)
     {
-      Vector d(h1_size);
-      d.UseDevice(false);
-      d = 0.0;
-      mfem::SparseMatrix diag(d);
+      dnn.SetSize(h1_size);
+      dnn.UseDevice(false);
+      dnn = 0.0;
+      diag_nn = std::make_unique<mfem::SparseMatrix>(dnn);
       Dnn_zero = std::make_unique<mfem::HypreParMatrix>(
           h1_fespace.Get().GetComm(), h1_fespace.Get().GlobalTrueVSize(),
-          h1_fespace.Get().GetTrueDofOffsets(), &diag);
+          h1_fespace.Get().GetTrueDofOffsets(), diag_nn.get());
     }
     blocks(0, 0) = Atti ? Atti : Dtt_zero.get();
     blocks(0, 1) = Atni;
