@@ -181,6 +181,57 @@ void AppendPoints(FaceConfigKey &key, const std::vector<mfem::IntegrationPoint> 
   }
 }
 
+// Re-point the passive field inputs of each group operator at the given source vectors
+// and accumulate into the output vector with CeedOperatorApplyAdd.
+void ApplyAddGroups(const std::vector<fem::CeedGroupOperator> &groups,
+                    const std::array<const Vector *, 2> &srcs, const Vector &out)
+{
+  for (const auto &[ceed, op, field_sources] : groups)
+  {
+    for (const auto &[name, source] : field_sources)
+    {
+      MFEM_ASSERT(srcs[source], "Missing source vector for libCEED field input!");
+      CeedOperatorField field;
+      CeedVector field_vec;
+      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(op, name.c_str(), &field));
+      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &field_vec));
+      ceed::InitCeedVector(*srcs[source], ceed, &field_vec, false);
+    }
+    CeedVector out_vec;
+    ceed::InitCeedVector(out, ceed, &out_vec);
+    PalaceCeedCall(
+        ceed, CeedOperatorApplyAdd(op, CEED_VECTOR_NONE, out_vec, CEED_REQUEST_IMMEDIATE));
+    PalaceCeedCall(ceed, CeedVectorDestroy(&out_vec));
+  }
+}
+
+// Holds libCEED object references created during operator assembly for destruction once
+// the assembled operator owns them.
+struct CeedAssemblyScratch
+{
+  Ceed ceed;
+  std::vector<CeedVector> vecs;
+  std::vector<CeedElemRestriction> restrs;
+  std::vector<CeedBasis> bases;
+
+  CeedAssemblyScratch(Ceed ceed) : ceed(ceed) {}
+  ~CeedAssemblyScratch()
+  {
+    for (auto &v : vecs)
+    {
+      PalaceCeedCall(ceed, CeedVectorDestroy(&v));
+    }
+    for (auto &r : restrs)
+    {
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&r));
+    }
+    for (auto &b : bases)
+    {
+      PalaceCeedCall(ceed, CeedBasisDestroy(&b));
+    }
+  }
+};
+
 }  // namespace
 
 SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
@@ -532,10 +583,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     const mfem::IntegrationRule &face_ir = mfem::IntRules.Get(
         group.bdr_geom, fem::DefaultIntegrationOrder::Get(pmesh, group.bdr_geom));
 
-    // Handles to destroy after operator assembly (the operator holds references).
-    std::vector<CeedVector> tmp_vecs;
-    std::vector<CeedElemRestriction> tmp_restrs;
-    std::vector<CeedBasis> tmp_bases;
+    // Objects are owned by the assembled operator; scratch destroys our references.
+    CeedAssemblyScratch scratch(ceed);
 
     // Face geometry data (boundary element Jacobians at the face quadrature points).
     CeedVector face_geom_data;
@@ -548,8 +597,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
       BuildGeometryData(ceed, mesh_fespace, group.bdr_geom, group.bdr_indices, face_ir,
                         elem_attr, &face_geom_data, &face_geom_data_restr);
-      tmp_vecs.push_back(face_geom_data);
-      tmp_restrs.push_back(face_geom_data_restr);
+      scratch.vecs.push_back(face_geom_data);
+      scratch.restrs.push_back(face_geom_data_restr);
     }
 
     // Volume geometry data evaluated at the mapped face quadrature points (for the
@@ -573,8 +622,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       BuildGeometryData(ceed, mesh_fespace, group.vol_geom_a, group.vol_indices_a,
                         *group.mapped_ir_a, elem_attr, &vol_geom_data,
                         &vol_geom_data_restr);
-      tmp_vecs.push_back(vol_geom_data);
-      tmp_restrs.push_back(vol_geom_data_restr);
+      scratch.vecs.push_back(vol_geom_data);
+      scratch.restrs.push_back(vol_geom_data_restr);
     }
     if (has_b)
     {
@@ -582,8 +631,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       BuildGeometryData(ceed, mesh_fespace, group.vol_geom_b, group.vol_indices_b,
                         *group.mapped_ir_b, elem_attr, &vol_geom_data_b,
                         &vol_geom_data_b_restr);
-      tmp_vecs.push_back(vol_geom_data_b);
-      tmp_restrs.push_back(vol_geom_data_b_restr);
+      scratch.vecs.push_back(vol_geom_data_b);
+      scratch.restrs.push_back(vol_geom_data_b_restr);
     }
 
     // Assemble the inputs in the order expected by the QFunctions: side b volume
@@ -613,9 +662,9 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       CeedVector x_vec;
       ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &x_vec);
       inputs.push_back({"x", x_vec, x_restr, x_basis, ceed::EvalMode::Interp});
-      tmp_vecs.push_back(x_vec);
-      tmp_restrs.push_back(x_restr);
-      tmp_bases.push_back(x_basis);
+      scratch.vecs.push_back(x_vec);
+      scratch.restrs.push_back(x_restr);
+      scratch.bases.push_back(x_basis);
     }
     auto AddFieldInput = [&](const std::string &name, int source,
                              const mfem::ParFiniteElementSpace &fespace,
@@ -633,9 +682,9 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       ceed::InitCeedVector(field_staging, ceed, &vec);
       inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
       field_sources.emplace_back(name, source);
-      tmp_vecs.push_back(vec);
-      tmp_restrs.push_back(restr);
-      tmp_bases.push_back(basis);
+      scratch.vecs.push_back(vec);
+      scratch.restrs.push_back(restr);
+      scratch.bases.push_back(basis);
     };
     if (kind == Kind::HCURL_NORM2 || kind == Kind::INTERFACE_EPR)
     {
@@ -675,7 +724,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                                    1, num_marked, num_marked, CEED_MEM_HOST,
                                                    CEED_COPY_VALUES, group.out_slots.data(),
                                                    &out_restr));
-    tmp_restrs.push_back(out_restr);
+    scratch.restrs.push_back(out_restr);
 
     // Select the QFunction and finalize the (group dependent) context.
     std::vector<CeedIntScalar> ctx = base_ctx;
@@ -744,48 +793,12 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         info, ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, inputs, face_geom_data,
         face_geom_data_restr, vol_geom_data, vol_geom_data_restr, 1, out_restr, &op);
     groups.push_back({ceed, op, std::move(field_sources)});
-
-    // Cleanup (objects are now owned through the operator's references).
-    for (auto &v : tmp_vecs)
-    {
-      PalaceCeedCall(ceed, CeedVectorDestroy(&v));
-    }
-    for (auto &r : tmp_restrs)
-    {
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&r));
-    }
-    for (auto &b : tmp_bases)
-    {
-      PalaceCeedCall(ceed, CeedBasisDestroy(&b));
-    }
   }
 }
 
 void SurfaceFunctional::ApplyAdd(const std::array<const Vector *, 2> &srcs) const
 {
-  for (const auto &group : groups)
-  {
-    Ceed ceed = group.ceed;
-
-    // Re-point the passive field inputs at the caller's data (the data or its location
-    // may have changed since the last call).
-    for (const auto &[name, source] : group.field_sources)
-    {
-      MFEM_ASSERT(srcs[source], "Missing source vector for SurfaceFunctional field input!");
-      CeedOperatorField field;
-      CeedVector field_vec;
-      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(group.op, name.c_str(), &field));
-      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &field_vec));
-      ceed::InitCeedVector(*srcs[source], ceed, &field_vec, false);
-    }
-
-    // Accumulate the per-element integrals into the local output vector.
-    CeedVector out_vec;
-    ceed::InitCeedVector(local_out, ceed, &out_vec);
-    PalaceCeedCall(ceed, CeedOperatorApplyAdd(group.op, CEED_VECTOR_NONE, out_vec,
-                                              CEED_REQUEST_IMMEDIATE));
-    PalaceCeedCall(ceed, CeedVectorDestroy(&out_vec));
-  }
+  ApplyAddGroups(groups, srcs, local_out);
 }
 
 double SurfaceFunctional::EvalLocal(const std::array<const Vector *, 2> &srcs) const
@@ -952,9 +965,7 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
   Ceed ceed = ceed::internal::GetCeedObjects()[0];
   for (const auto &[geom, indices] : geom_elems)
   {
-    std::vector<CeedVector> tmp_vecs;
-    std::vector<CeedElemRestriction> tmp_restrs;
-    std::vector<CeedBasis> tmp_bases;
+    CeedAssemblyScratch scratch(ceed);
 
     // Evaluation points are the nodal points of the (interpolatory) target space.
     const mfem::FiniteElement *target_fe =
@@ -974,8 +985,8 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
       }
       BuildGeometryData(ceed, mesh_fespace, geom, indices, nodes_ir, elem_attr, &geom_data,
                         &geom_data_restr);
-      tmp_vecs.push_back(geom_data);
-      tmp_restrs.push_back(geom_data_restr);
+      scratch.vecs.push_back(geom_data);
+      scratch.restrs.push_back(geom_data_restr);
     }
 
     // Field inputs evaluated at the nodal points.
@@ -994,9 +1005,9 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
       ceed::InitCeedVector(field_staging, ceed, &vec);
       inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
       field_sources.emplace_back(name, source);
-      tmp_vecs.push_back(vec);
-      tmp_restrs.push_back(restr);
-      tmp_bases.push_back(basis);
+      scratch.vecs.push_back(vec);
+      scratch.restrs.push_back(restr);
+      scratch.bases.push_back(basis);
     };
     if (kind == Kind::ENERGY_E || kind == Kind::POYNTING)
     {
@@ -1011,7 +1022,7 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
     CeedElemRestriction out_restr;
     ceed::InitRestriction(target_fespace, indices, false, /*is_interp*/ true, false, ceed,
                           &out_restr);
-    tmp_restrs.push_back(out_restr);
+    scratch.restrs.push_back(out_restr);
 
     ceed::CeedQFunctionInfo info;
     switch (kind)
@@ -1035,19 +1046,6 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
                                      ceed, inputs, geom_data, geom_data_restr,
                                      target_fespace.GetVDim(), out_restr, &op);
     groups.push_back({ceed, op, std::move(field_sources)});
-
-    for (auto &v : tmp_vecs)
-    {
-      PalaceCeedCall(ceed, CeedVectorDestroy(&v));
-    }
-    for (auto &r : tmp_restrs)
-    {
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&r));
-    }
-    for (auto &b : tmp_bases)
-    {
-      PalaceCeedCall(ceed, CeedBasisDestroy(&b));
-    }
   }
 }
 
@@ -1058,32 +1056,10 @@ void DomainFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B,
   MFEM_VERIFY((E || kind == Kind::ENERGY_M) && (B || kind == Kind::ENERGY_E),
               "Missing field grid function for domain field evaluator!");
   out = 0.0;
-  const bool has_imag = E ? E->HasImag() : B->HasImag();
-  auto Apply = [&](const Vector *src_e, const Vector *src_b)
+  ApplyAddGroups(groups, {E ? &E->Real() : nullptr, B ? &B->Real() : nullptr}, out);
+  if (E ? E->HasImag() : B->HasImag())
   {
-    const std::array<const Vector *, 2> srcs = {src_e, src_b};
-    for (const auto &group : groups)
-    {
-      Ceed ceed = group.ceed;
-      for (const auto &[name, source] : group.field_sources)
-      {
-        CeedOperatorField field;
-        CeedVector field_vec;
-        PalaceCeedCall(ceed, CeedOperatorGetFieldByName(group.op, name.c_str(), &field));
-        PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &field_vec));
-        ceed::InitCeedVector(*srcs[source], ceed, &field_vec, false);
-      }
-      CeedVector out_vec;
-      ceed::InitCeedVector(out, ceed, &out_vec);
-      PalaceCeedCall(ceed, CeedOperatorApplyAdd(group.op, CEED_VECTOR_NONE, out_vec,
-                                                CEED_REQUEST_IMMEDIATE));
-      PalaceCeedCall(ceed, CeedVectorDestroy(&out_vec));
-    }
-  };
-  Apply(E ? &E->Real() : nullptr, B ? &B->Real() : nullptr);
-  if (has_imag)
-  {
-    Apply(E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr);
+    ApplyAddGroups(groups, {E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr}, out);
   }
 }
 

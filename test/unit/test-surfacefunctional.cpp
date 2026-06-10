@@ -1340,11 +1340,14 @@ TEST_CASE("DomainFieldEvaluator", "[surfacefunctional][Serial][Parallel][GPU]")
   const double scaling = 2.5;
   auto CheckField = [](const mfem::ParGridFunction &val, const mfem::ParGridFunction &ref)
   {
+    // HostRead to sync from device (the evaluator fills on device).
+    const double *v = val.HostRead();
+    const double *r = ref.HostRead();
     double max_diff = 0.0, max_ref = 0.0;
     for (int i = 0; i < ref.Size(); i++)
     {
-      max_diff = std::max(max_diff, std::abs(val(i) - ref(i)));
-      max_ref = std::max(max_ref, std::abs(ref(i)));
+      max_diff = std::max(max_diff, std::abs(v[i] - r[i]));
+      max_ref = std::max(max_ref, std::abs(r[i]));
     }
     CAPTURE(max_diff, max_ref);
     CHECK(max_diff <= 1.0e-11 * std::max(max_ref, 1.0));

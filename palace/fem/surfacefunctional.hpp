@@ -20,6 +20,21 @@ class GridFunction;
 class MaterialOperator;
 class Mesh;
 
+namespace fem
+{
+
+// An assembled libCEED operator over one group of (boundary) elements, with the named
+// passive field inputs re-pointed at caller data (by source vector index) on each
+// evaluation.
+struct CeedGroupOperator
+{
+  Ceed ceed;
+  CeedOperator op;
+  std::vector<std::pair<std::string, int>> field_sources;
+};
+
+}  // namespace fem
+
 //
 // Class to compute output functionals (integrals of functions of solution fields) over
 // surfaces (sets of boundary elements) of a 3D mesh using libCEED, supporting full
@@ -74,18 +89,9 @@ private:
   // MPI communicator from the mesh.
   MPI_Comm comm;
 
-  // Per-group assembled libCEED operators. Each operator integrates over one group of
-  // boundary elements and accumulates per-element integrals into the local output
-  // vector (CeedOperatorApplyAdd with all field inputs passive). The field inputs
-  // (QFunction input name, source vector index) are re-pointed at the caller's data on
-  // each evaluation.
-  struct GroupOp
-  {
-    Ceed ceed;
-    CeedOperator op;
-    std::vector<std::pair<std::string, int>> field_sources;
-  };
-  std::vector<GroupOp> groups;
+  // Per-group assembled libCEED operators, accumulating per-element integrals into the
+  // local output vector.
+  std::vector<fem::CeedGroupOperator> groups;
 
   // Staging vector used to initialize the field input CeedVectors at construction. The
   // field CeedVectors are re-pointed at the caller's data on each Eval() call.
@@ -192,13 +198,7 @@ private:
 
   // Per-geometry assembled libCEED operators, evaluating at the target space nodal
   // points and scattering directly into the output grid function.
-  struct GroupOp
-  {
-    Ceed ceed;
-    CeedOperator op;
-    std::vector<std::pair<std::string, int>> field_sources;
-  };
-  std::vector<GroupOp> groups;
+  std::vector<fem::CeedGroupOperator> groups;
 
   // Staging vector used to initialize the field input CeedVectors at construction.
   mutable Vector field_staging;

@@ -302,6 +302,28 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     viz_vector_fespace = std::make_unique<mfem::ParFiniteElementSpace>(
         pmesh, viz_fec.get(), pmesh->SpaceDimension());
   };
+  auto MakeFieldEvaluator = [&](DomainFieldEvaluator::Kind kind,
+                                mfem::ParFiniteElementSpace *e_fespace,
+                                mfem::ParFiniteElementSpace *b_fespace, double scaling,
+                                std::unique_ptr<DomainFieldEvaluator> &eval,
+                                std::unique_ptr<mfem::ParGridFunction> &gf)
+  {
+    InitializeVizSpaces(e_fespace ? *e_fespace : *b_fespace);
+    auto &target = (kind == DomainFieldEvaluator::Kind::POYNTING) ? *viz_vector_fespace
+                                                                  : *viz_scalar_fespace;
+    eval = std::make_unique<DomainFieldEvaluator>(kind, fem_op->GetMaterialOp().GetMesh(),
+                                                  fem_op->GetMaterialOp(), e_fespace,
+                                                  b_fespace, target, scaling);
+    if (eval->IsValid())
+    {
+      gf = std::make_unique<mfem::ParGridFunction>(&target);
+      gf->UseDevice(true);
+    }
+    else
+    {
+      eval.reset();
+    }
+  };
 
   // Set-up grid-functions for the paraview output / measurement.
   if constexpr (HasVGridFunction<solver_t>())
@@ -331,19 +353,8 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         *E, fem_op->GetMaterialOp(), scaling);
     if (SurfaceFunctional::Enabled())
     {
-      InitializeVizSpaces(*E->ParFESpace());
-      U_e_eval = std::make_unique<DomainFieldEvaluator>(
-          DomainFieldEvaluator::Kind::ENERGY_E, fem_op->GetMaterialOp().GetMesh(),
-          fem_op->GetMaterialOp(), E->ParFESpace(), nullptr, *viz_scalar_fespace, scaling);
-      if (U_e_eval->IsValid())
-      {
-        U_e_gf = std::make_unique<mfem::ParGridFunction>(viz_scalar_fespace.get());
-        U_e_gf->UseDevice(true);
-      }
-      else
-      {
-        U_e_eval.reset();
-      }
+      MakeFieldEvaluator(DomainFieldEvaluator::Kind::ENERGY_E, E->ParFESpace(), nullptr,
+                         scaling, U_e_eval, U_e_gf);
     }
 
     // Electric Boundary Field & Surface Charge.
@@ -376,19 +387,8 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         *B, fem_op->GetMaterialOp(), scaling);
     if (SurfaceFunctional::Enabled() && B->Real().VectorDim() > 1)
     {
-      InitializeVizSpaces(*B->ParFESpace());
-      U_m_eval = std::make_unique<DomainFieldEvaluator>(
-          DomainFieldEvaluator::Kind::ENERGY_M, fem_op->GetMaterialOp().GetMesh(),
-          fem_op->GetMaterialOp(), nullptr, B->ParFESpace(), *viz_scalar_fespace, scaling);
-      if (U_m_eval->IsValid())
-      {
-        U_m_gf = std::make_unique<mfem::ParGridFunction>(viz_scalar_fespace.get());
-        U_m_gf->UseDevice(true);
-      }
-      else
-      {
-        U_m_eval.reset();
-      }
+      MakeFieldEvaluator(DomainFieldEvaluator::Kind::ENERGY_M, nullptr, B->ParFESpace(),
+                         scaling, U_m_eval, U_m_gf);
     }
 
     // Magnetic Boundary Field & Surface Current.
@@ -427,20 +427,8 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
                                                       scaling);
       if (SurfaceFunctional::Enabled())
       {
-        InitializeVizSpaces(*E->ParFESpace());
-        S_eval = std::make_unique<DomainFieldEvaluator>(
-            DomainFieldEvaluator::Kind::POYNTING, fem_op->GetMaterialOp().GetMesh(),
-            fem_op->GetMaterialOp(), E->ParFESpace(), B->ParFESpace(), *viz_vector_fespace,
-            scaling);
-        if (S_eval->IsValid())
-        {
-          S_gf = std::make_unique<mfem::ParGridFunction>(viz_vector_fespace.get());
-          S_gf->UseDevice(true);
-        }
-        else
-        {
-          S_eval.reset();
-        }
+        MakeFieldEvaluator(DomainFieldEvaluator::Kind::POYNTING, E->ParFESpace(),
+                           B->ParFESpace(), scaling, S_eval, S_gf);
       }
     }
     // For boundary mode, Sn = Re{Et · (ẑ × Ht*)} is computed after Bt_inplane is
