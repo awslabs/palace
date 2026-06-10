@@ -45,32 +45,25 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   //
   // Complex-frequency A2(λ) for the eigenmode nonlinear solve: the wave-port / farfield /
   // surf-σ BCs are evaluated at the genuinely complex eigenvalue (ω = -i·λ) so the
-  // operator is the exact analytic continuation, not a real-axis projection. This is the
-  // A2 the Newton / NEP iteration uses for its production system matrix, residual, and
-  // Jacobian (driven / boundary-mode keep the real-ω path; there is no config knob).
-  auto funcA2_complex =
+  // operator is the exact analytic continuation, not a real-axis projection. This single
+  // A2 callback feeds the whole eigenmode path — the has_A2 probe, the HYBRID polynomial
+  // seed pencil (NewtonInterpolationOperator, which samples it directly at its complex
+  // interpolation nodes), the seed PEP linear-system matrix, and the Newton / NEP
+  // production system matrix, residual, and Jacobian — so the seed, its matching
+  // preconditioner (funcP at a3 = ω), and the refinement all use identical wave-port
+  // stamping (driven / boundary-mode keep the real-ω path; there is no config knob).
+  auto funcA2 =
       [&space_op](std::complex<double> lambda) -> std::unique_ptr<ComplexOperator>
   {
     const std::complex<double> omega = lambda / std::complex<double>(0.0, 1.0);  // ω = -iλ
     return space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
   };
-  // Real-ω-signature shim used by the linear seed stage: the has_A2 probe, the HYBRID
-  // polynomial pencil (NewtonInterpolationOperator samples it on the imaginary-λ axis,
-  // i.e. real ω), and the seed PEP linear-system matrix. It must evaluate the SAME exact
-  // complex operator as funcA2_complex — evaluating at λ = i·ω — so that the seed system
-  // matrix and its preconditioner (built via funcP at a3 = ω) are assembled from identical
-  // wave-port stamping. Routing the seed through the real GetExtraSystemMatrix<double>
-  // path instead would drop the line-attenuation term (-Im(kₙ)·M), making the seed
-  // operator inconsistent with the preconditioner (extra GMRES iterations) and with the
-  // Newton stage (slightly shifted seed eigenvalues).
-  auto funcA2 = [&funcA2_complex](double omega) -> std::unique_ptr<ComplexOperator>
-  { return funcA2_complex(std::complex<double>{0.0, omega}); };
   auto funcP = [&space_op](std::complex<double> a0, std::complex<double> a1,
                            std::complex<double> a2,
                            std::complex<double> a3) -> std::unique_ptr<ComplexOperator>
   { return space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, a3); };
   const double target = iodata.solver.eigenmode.target;
-  auto A2 = funcA2(target);
+  auto A2 = funcA2(1i * target);
   bool has_A2 = (A2 != nullptr);
 
   // Extend K, C, M operators with interpolated A2 operator.
@@ -180,7 +173,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (nonlinear_type == NonlinearEigenSolver::SLP)
   {
     eigen->SetOperators(*K, *C, *M, EigenvalueSolver::ScaleType::NONE);
-    eigen->SetExtraSystemMatrix(funcA2_complex);
+    eigen->SetExtraSystemMatrix(funcA2);
     eigen->SetPreconditionerUpdate(funcP);
   }
   else
@@ -395,7 +388,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       qn->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
     }
-    qn->SetExtraSystemMatrix(funcA2_complex);
+    qn->SetExtraSystemMatrix(funcA2);
     qn->SetPreconditionerUpdate(funcP);
     qn->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
     qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag,
