@@ -735,16 +735,15 @@ void WavePortData::Initialize(double omega)
   }
 }
 
-std::complex<double> WavePortData::SolveKnExact(std::complex<double> omega)
+std::complex<double> WavePortData::SolveKnComplex(std::complex<double> omega)
 {
-  // Exact complex-frequency propagation constant. Mirrors the EVP solve + recovery in
+  // Complex-frequency propagation constant. Mirrors the EVP solve + recovery in
   // Initialize() but skips all field reconstruction / normalization and does NOT touch
   // the cached real-ω state (omega0, kn0, port_E0t/E0n). The spectral shift sigma stays
   // REAL — it is a pure algebraic centering of the linearization (exact for any real
   // sigma), so we derive it from the real part of the requested frequency. The
-  // cross-section EVP carries the full complex ω (ω² and BC multipliers), so the
-  // returned kₙ is the exact analytic continuation, not a fit. Used by the eigenmode
-  // nonlinear solver to evaluate the wave-port BC at the genuinely complex eigenvalue.
+  // cross-section EVP carries the full complex ω. Used by the eigenmode nonlinear
+  // solver to evaluate the wave-port BC at the genuinely complex eigenvalue.
   const double omega_ref = omega.real();
   const double sigma = -omega_ref * omega_ref * mu_eps_max;
   std::complex<double> lambda;
@@ -754,7 +753,7 @@ std::complex<double> WavePortData::SolveKnExact(std::complex<double> omega)
     if (has_solver)
     {
       MFEM_VERIFY(result.num_converged >= mode_idx,
-                  "Wave port eigensolver did not converge in SolveKnExact!");
+                  "Wave port eigensolver did not converge in SolveKnComplex!");
       lambda = mode_solver->GetEigenvalue(mode_idx - 1);
     }
   }
@@ -1286,7 +1285,7 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
   // A2_wp = i·kₙ(ω)·M^(p)_{μ⁻¹} with the EXACT complex kₙ(ω) from the cross-section EVP
   // solved at the genuinely complex eigenvalue (ω = -i·λ). For kₙ = β + iα, expanding
   // i·(β + iα) = −α + iβ puts the line-attenuation term −α·M on the real slot (fbr) and
-  // the propagating term β·M on the imaginary slot (fbi). SolveKnExact is side-effect-free
+  // the propagating term β·M on the imaginary slot (fbi). SolveKnComplex is side-effect-free
   // (does NOT cache, leaving omega0/kn0/port_E0t untouched), so the real-ω driven/postpro
   // state is preserved. For real ω (imag = 0, α from cross-section loss) this matches the
   // physics of the double overload but additionally carries the attenuation on fbr.
@@ -1296,7 +1295,7 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
     {
       continue;
     }
-    const std::complex<double> kn = data.SolveKnExact(omega);
+    const std::complex<double> kn = data.SolveKnComplex(omega);
     AddBoundaryMassBdrCoefficients(idx, fbr, -kn.imag());
     AddBoundaryMassBdrCoefficients(idx, fbi, kn.real());
   }
@@ -1338,13 +1337,13 @@ double WavePortOperator::GetWavePortKn(int port_idx, double omega)
   return it->second.kn0.real();
 }
 
-std::complex<double> WavePortOperator::GetWavePortKnExact(int port_idx,
+std::complex<double> WavePortOperator::GetWavePortKnComplex(int port_idx,
                                                           std::complex<double> omega)
 {
   auto it = ports.find(port_idx);
   MFEM_VERIFY(it != ports.end(),
-              "GetWavePortKnExact called with unknown port index " << port_idx << "!");
-  return it->second.SolveKnExact(omega);
+              "GetWavePortKnComplex called with unknown port index " << port_idx << "!");
+  return it->second.SolveKnComplex(omega);
 }
 
 void WavePortOperator::AddExcitationBdrCoefficients(int excitation_idx, double omega,
