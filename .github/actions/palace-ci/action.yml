@@ -126,9 +126,6 @@ runs:
               require: fflags=-nofor-main
             libffi:
               require: "@:3.4.8"
-            # CurrentDipole numerics shift with MKL 2026+ (see awslabs/palace#710).
-            intel-oneapi-mkl:
-              require: "@:2025"
         INTELEOF
         fi
 
