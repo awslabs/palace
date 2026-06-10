@@ -227,8 +227,7 @@ TEST_CASE("WavePort TE10 mode polarity sign", "[waveportimpedance][Serial]")
 // off the real axis — i.e. kₙ(ω) for complex ω must equal √(εμ ω² − k_c²) to discretization
 // error, NOT the real-ω value kₙ(Re ω). This pins that down directly, independent of any
 // cavity / eigenmode / Q considerations.
-TEST_CASE("WavePortData SolveKnComplex matches analytical TE10 dispersion at complex ω",
-          "[waveportimpedance][Serial]")
+TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
 {
   MPI_Comm comm = Mpi::World();
 
@@ -308,7 +307,7 @@ TEST_CASE("WavePortData SolveKnComplex matches analytical TE10 dispersion at com
   // kₙ scale factor (nondim → rad/m): kc_len = 1/Lc(meters).
   const double kn_scale = 1.0 / iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
 
-  SECTION("real ω above cutoff reproduces the propagating branch")
+  SECTION("real ω above cutoff")
   {
     const double f_GHz = 10.0;
     std::complex<double> kn_nd =
@@ -321,7 +320,7 @@ TEST_CASE("WavePortData SolveKnComplex matches analytical TE10 dispersion at com
     CHECK_THAT(kn_phys.imag(), WithinAbs(0.0, 1.0e-4 * kn_ref.real()));
   }
 
-  SECTION("complex ω matches the analytic continuation √(εμω²−k_c²)")
+  SECTION("complex ω")
   {
     // Probe a genuinely complex frequency: f = 10 GHz with a 5% imaginary part (a Q≈10
     // quasinormal-mode-like point, ω = ω_r(1 + i/20)). The exact solve MUST track the
@@ -342,7 +341,7 @@ TEST_CASE("WavePortData SolveKnComplex matches analytical TE10 dispersion at com
     CHECK(std::abs(kn_ref.imag()) > 1.0);
   }
 
-  SECTION("complex ω near cutoff stays on the correct (decaying) branch")
+  SECTION("complex ω near cutoff")
   {
     // f_r just above cutoff (≈6.56 GHz) with loss: this is the branch-sensitive regime.
     // The principal-branch √ must give Re(kₙ) ≥ 0 (forward / decaying sheet), matching the
