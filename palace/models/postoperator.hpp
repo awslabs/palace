@@ -14,6 +14,7 @@
 #include <mfem.hpp>
 #include "fem/gridfunction.hpp"
 #include "fem/interpolator.hpp"
+#include "fem/surfacefunctional.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/domainpostoperator.hpp"
@@ -198,6 +199,14 @@ protected:
   // Electric Energy Density, Magnetic Energy Density, Scalar Potential Boundary Field,
   // Surface Charge (re+im).
   std::unique_ptr<mfem::Coefficient> U_e, U_m, V_s, Q_sr, Q_si;
+
+  // libCEED evaluators and output grid functions for the domain coefficient fields
+  // (U_e, U_m, S), replacing per-point host coefficient evaluation at ParaView save
+  // time when supported.
+  std::unique_ptr<mfem::L2_FECollection> viz_fec;
+  std::unique_ptr<mfem::ParFiniteElementSpace> viz_scalar_fespace, viz_vector_fespace;
+  std::unique_ptr<mfem::ParGridFunction> U_e_gf, U_m_gf, S_gf;
+  std::unique_ptr<DomainFieldEvaluator> U_e_eval, U_m_eval, S_eval;
 
   // Wave port boundary mode field postprocessing.
   struct WavePortFieldData

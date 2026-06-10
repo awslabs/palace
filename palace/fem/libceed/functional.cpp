@@ -174,4 +174,59 @@ void AssembleCeedSurfaceFunctional(
   PalaceCeedCall(ceed, CeedBasisDestroy(&sum_basis));
 }
 
+void AssembleCeedPointEvaluator(const CeedQFunctionInfo &info, void *ctx,
+                                std::size_t ctx_size, Ceed ceed,
+                                const std::vector<CeedFunctionalFieldInput> &inputs,
+                                CeedVector geom_data, CeedElemRestriction geom_data_restr,
+                                CeedInt num_out_comp, CeedElemRestriction out_restr,
+                                CeedOperator *op)
+{
+  MFEM_VERIFY(!info.assemble_q_data,
+              "Point evaluator does not support quadrature data assembly!");
+
+  // Create the QFunction that defines the action of the operator.
+  CeedQFunction apply_qf;
+  PalaceCeedCall(ceed, CeedQFunctionCreateInterior(ceed, 1, info.apply_qf,
+                                                   info.apply_qf_path.c_str(), &apply_qf));
+
+  if (ctx && ctx_size > 0)
+  {
+    CeedQFunctionContext apply_ctx;
+    PalaceCeedCall(ceed, CeedQFunctionContextCreate(ceed, &apply_ctx));
+    PalaceCeedCall(ceed, CeedQFunctionContextSetData(apply_ctx, CEED_MEM_HOST,
+                                                     CEED_COPY_VALUES, ctx_size, ctx));
+    PalaceCeedCall(ceed, CeedQFunctionSetContext(apply_qf, apply_ctx));
+    PalaceCeedCall(ceed, CeedQFunctionContextDestroy(&apply_ctx));
+  }
+
+  // Inputs/outputs.
+  {
+    CeedInt geom_data_size;
+    PalaceCeedCall(ceed,
+                   CeedElemRestrictionGetNumComponents(geom_data_restr, &geom_data_size));
+    PalaceCeedCall(
+        ceed, CeedQFunctionAddInput(apply_qf, "geom_data", geom_data_size, CEED_EVAL_NONE));
+  }
+  for (const auto &input : inputs)
+  {
+    AddQFunctionFieldInput(input, ceed, apply_qf);
+  }
+  PalaceCeedCall(ceed, CeedQFunctionAddOutput(apply_qf, "v", num_out_comp, CEED_EVAL_NONE));
+
+  // Create the operator.
+  PalaceCeedCall(ceed, CeedOperatorCreate(ceed, apply_qf, nullptr, nullptr, op));
+  PalaceCeedCall(ceed, CeedQFunctionDestroy(&apply_qf));
+
+  PalaceCeedCall(ceed, CeedOperatorSetField(*op, "geom_data", geom_data_restr,
+                                            CEED_BASIS_NONE, geom_data));
+  for (const auto &input : inputs)
+  {
+    AddOperatorFieldInput(input, ceed, *op);
+  }
+  PalaceCeedCall(
+      ceed, CeedOperatorSetField(*op, "v", out_restr, CEED_BASIS_NONE, CEED_VECTOR_ACTIVE));
+
+  PalaceCeedCall(ceed, CeedOperatorCheckReady(*op));
+}
+
 }  // namespace palace::ceed

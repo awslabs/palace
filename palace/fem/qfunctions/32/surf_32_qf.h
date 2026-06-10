@@ -34,15 +34,6 @@
 // over quadrature points by the all-ones output element basis, yielding one (or more)
 // value(s) per boundary element.
 
-// Compute y = A x for a 3x3 matrix A stored column-major.
-CEED_QFUNCTION_HELPER void MultAx33(const CeedScalar A[9], const CeedScalar x[3],
-                                    CeedScalar y[3])
-{
-  y[0] = A[0] * x[0] + A[3] * x[1] + A[6] * x[2];
-  y[1] = A[1] * x[0] + A[4] * x[1] + A[7] * x[2];
-  y[2] = A[2] * x[0] + A[5] * x[1] + A[8] * x[2];
-}
-
 // Compute the (non-unit) surface normal as the cross product of the columns of the
 // stored adj(J_face)^T / detJ_face (3x2, column-major), and normalize it.
 CEED_QFUNCTION_HELPER void SurfaceNormal32(const CeedScalar adjJt_face[6], CeedScalar n[3])

@@ -26,6 +26,7 @@ PalacePragmaDiagnosticPush
 PalacePragmaDiagnosticDisableUnused
 
 #include "fem/qfunctions/32/surf_32_qf.h"
+#include "fem/qfunctions/33/eval_33_qf.h"
 
 PalacePragmaDiagnosticPop
 
@@ -889,6 +890,201 @@ std::complex<double> SurfaceFunctional::EvalComplexPower(const GridFunction &E,
   }
   Mpi::GlobalSum(1, &dot, comm);
   return dot;
+}
+
+DomainFieldEvaluator::DomainFieldEvaluator(
+    Kind kind, const Mesh &mesh, const MaterialOperator &mat_op,
+    const mfem::ParFiniteElementSpace *nd_fespace,
+    const mfem::ParFiniteElementSpace *rt_fespace,
+    const mfem::ParFiniteElementSpace &target_fespace, double scaling)
+  : kind(kind), fespace_e(nd_fespace), fespace_b(rt_fespace)
+{
+  MFEM_VERIFY((nd_fespace || kind == Kind::ENERGY_M) &&
+                  (rt_fespace || kind == Kind::ENERGY_E),
+              "Missing finite element space for domain field evaluator!");
+  Assemble(mesh, mat_op, target_fespace, scaling);
+}
+
+DomainFieldEvaluator::~DomainFieldEvaluator()
+{
+  for (auto &group : groups)
+  {
+    PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
+  }
+}
+
+void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &mat_op,
+                                    const mfem::ParFiniteElementSpace &target_fespace,
+                                    double scaling)
+{
+  if (mesh.Dimension() != 3 || mesh.SpaceDimension() != 3)
+  {
+    valid = false;
+    return;
+  }
+  const mfem::ParMesh &pmesh = mesh.Get();
+  const mfem::FiniteElementSpace &mesh_fespace = *pmesh.GetNodes()->FESpace();
+
+  // Group the elements by geometry type.
+  std::map<mfem::Geometry::Type, std::vector<int>> geom_elems;
+  for (int e = 0; e < pmesh.GetNE(); e++)
+  {
+    geom_elems[pmesh.GetElementGeometry(e)].push_back(e);
+  }
+
+  // QFunction context: scaling factor followed by the material property table.
+  std::vector<CeedIntScalar> ctx(1);
+  ctx[0].second = scaling;
+  {
+    MaterialPropertyCoefficient coeff_func(mat_op.GetAttributeToMaterial(),
+                                           kind == Kind::ENERGY_E
+                                               ? mat_op.GetPermittivityReal()
+                                               : mat_op.GetInvPermeability());
+    auto mat_ctx = ceed::PopulateCoefficientContext(3, &coeff_func);
+    ctx.insert(ctx.end(), mat_ctx.begin(), mat_ctx.end());
+  }
+
+  field_staging.SetSize(std::max(fespace_e ? fespace_e->GetVSize() : 0,
+                                 fespace_b ? fespace_b->GetVSize() : 0));
+  field_staging.UseDevice(true);
+  field_staging = 0.0;
+
+  Ceed ceed = ceed::internal::GetCeedObjects()[0];
+  for (const auto &[geom, indices] : geom_elems)
+  {
+    std::vector<CeedVector> tmp_vecs;
+    std::vector<CeedElemRestriction> tmp_restrs;
+    std::vector<CeedBasis> tmp_bases;
+
+    // Evaluation points are the nodal points of the (interpolatory) target space.
+    const mfem::FiniteElement *target_fe =
+        target_fespace.FEColl()->FiniteElementForGeometry(geom);
+    MFEM_VERIFY(target_fe, "Unable to get target finite element for field evaluator!");
+    const mfem::IntegrationRule &nodes_ir = target_fe->GetNodes();
+
+    // Geometry data at the nodal points (Piola transformations and material lookup).
+    CeedVector geom_data;
+    CeedElemRestriction geom_data_restr;
+    {
+      Vector elem_attr(indices.size());
+      const auto &loc_attr = mesh.GetCeedAttributes();
+      for (std::size_t k = 0; k < indices.size(); k++)
+      {
+        elem_attr[k] = loc_attr.at(pmesh.GetAttribute(indices[k]));
+      }
+      BuildGeometryData(ceed, mesh_fespace, geom, indices, nodes_ir, elem_attr, &geom_data,
+                        &geom_data_restr);
+      tmp_vecs.push_back(geom_data);
+      tmp_restrs.push_back(geom_data_restr);
+    }
+
+    // Field inputs evaluated at the nodal points.
+    std::vector<ceed::CeedFunctionalFieldInput> inputs;
+    std::vector<std::pair<std::string, int>> field_sources;
+    auto AddFieldInput =
+        [&](const std::string &name, int source, const mfem::ParFiniteElementSpace &fespace)
+    {
+      CeedElemRestriction restr;
+      CeedBasis basis;
+      CeedVector vec;
+      ceed::InitRestriction(fespace, indices, false, /*is_interp*/ true, false, ceed,
+                            &restr);
+      const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
+      ceed::InitBasisAtPoints(*fe, nodes_ir, fespace.GetVDim(), ceed, &basis);
+      ceed::InitCeedVector(field_staging, ceed, &vec);
+      inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
+      field_sources.emplace_back(name, source);
+      tmp_vecs.push_back(vec);
+      tmp_restrs.push_back(restr);
+      tmp_bases.push_back(basis);
+    };
+    if (kind == Kind::ENERGY_E || kind == Kind::POYNTING)
+    {
+      AddFieldInput("u_1", 0, *fespace_e);
+    }
+    if (kind == Kind::ENERGY_M || kind == Kind::POYNTING)
+    {
+      AddFieldInput(kind == Kind::POYNTING ? "u_2" : "u_1", 1, *fespace_b);
+    }
+
+    // Output restriction scattering nodal values into the target grid function.
+    CeedElemRestriction out_restr;
+    ceed::InitRestriction(target_fespace, indices, false, /*is_interp*/ true, false, ceed,
+                          &out_restr);
+    tmp_restrs.push_back(out_restr);
+
+    ceed::CeedQFunctionInfo info;
+    switch (kind)
+    {
+      case Kind::ENERGY_E:
+        info.apply_qf = f_eval_energy_e_33;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_energy_e_33_loc);
+        break;
+      case Kind::ENERGY_M:
+        info.apply_qf = f_eval_energy_m_33;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_energy_m_33_loc);
+        break;
+      case Kind::POYNTING:
+        info.apply_qf = f_eval_poynting_33;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_poynting_33_loc);
+        break;
+    }
+
+    CeedOperator op;
+    ceed::AssembleCeedPointEvaluator(info, ctx.data(), ctx.size() * sizeof(CeedIntScalar),
+                                     ceed, inputs, geom_data, geom_data_restr,
+                                     target_fespace.GetVDim(), out_restr, &op);
+    groups.push_back({ceed, op, std::move(field_sources)});
+
+    for (auto &v : tmp_vecs)
+    {
+      PalaceCeedCall(ceed, CeedVectorDestroy(&v));
+    }
+    for (auto &r : tmp_restrs)
+    {
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&r));
+    }
+    for (auto &b : tmp_bases)
+    {
+      PalaceCeedCall(ceed, CeedBasisDestroy(&b));
+    }
+  }
+}
+
+void DomainFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B,
+                                Vector &out) const
+{
+  MFEM_VERIFY(valid, "Eval called on an invalid (unassembled) DomainFieldEvaluator!");
+  MFEM_VERIFY((E || kind == Kind::ENERGY_M) && (B || kind == Kind::ENERGY_E),
+              "Missing field grid function for domain field evaluator!");
+  out = 0.0;
+  const bool has_imag = E ? E->HasImag() : B->HasImag();
+  auto Apply = [&](const Vector *src_e, const Vector *src_b)
+  {
+    const std::array<const Vector *, 2> srcs = {src_e, src_b};
+    for (const auto &group : groups)
+    {
+      Ceed ceed = group.ceed;
+      for (const auto &[name, source] : group.field_sources)
+      {
+        CeedOperatorField field;
+        CeedVector field_vec;
+        PalaceCeedCall(ceed, CeedOperatorGetFieldByName(group.op, name.c_str(), &field));
+        PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &field_vec));
+        ceed::InitCeedVector(*srcs[source], ceed, &field_vec, false);
+      }
+      CeedVector out_vec;
+      ceed::InitCeedVector(out, ceed, &out_vec);
+      PalaceCeedCall(ceed, CeedOperatorApplyAdd(group.op, CEED_VECTOR_NONE, out_vec,
+                                                CEED_REQUEST_IMMEDIATE));
+      PalaceCeedCall(ceed, CeedVectorDestroy(&out_vec));
+    }
+  };
+  Apply(E ? &E->Real() : nullptr, B ? &B->Real() : nullptr);
+  if (has_imag)
+  {
+    Apply(E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr);
+  }
 }
 
 }  // namespace palace

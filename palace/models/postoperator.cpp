@@ -285,6 +285,24 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     return;
   }
 
+  // Initialize the (interpolatory L2) output spaces for the libCEED-evaluated
+  // visualization fields. Order 2p represents the quadratic field quantities exactly on
+  // affine elements.
+  auto InitializeVizSpaces = [&](mfem::ParFiniteElementSpace &src_fespace)
+  {
+    if (viz_fec)
+    {
+      return;
+    }
+    auto *pmesh = src_fespace.GetParMesh();
+    viz_fec = std::make_unique<mfem::L2_FECollection>(2 * src_fespace.GetMaxElementOrder(),
+                                                      pmesh->Dimension());
+    viz_scalar_fespace =
+        std::make_unique<mfem::ParFiniteElementSpace>(pmesh, viz_fec.get());
+    viz_vector_fespace = std::make_unique<mfem::ParFiniteElementSpace>(
+        pmesh, viz_fec.get(), pmesh->SpaceDimension());
+  };
+
   // Set-up grid-functions for the paraview output / measurement.
   if constexpr (HasVGridFunction<solver_t>())
   {
@@ -311,6 +329,22 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     // U_e = 1/2 Dᴴ E = 1/2 ε_0 Eᴴ E.
     U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(
         *E, fem_op->GetMaterialOp(), scaling);
+    if (SurfaceFunctional::Enabled())
+    {
+      InitializeVizSpaces(*E->ParFESpace());
+      U_e_eval = std::make_unique<DomainFieldEvaluator>(
+          DomainFieldEvaluator::Kind::ENERGY_E, fem_op->GetMaterialOp().GetMesh(),
+          fem_op->GetMaterialOp(), E->ParFESpace(), nullptr, *viz_scalar_fespace, scaling);
+      if (U_e_eval->IsValid())
+      {
+        U_e_gf = std::make_unique<mfem::ParGridFunction>(viz_scalar_fespace.get());
+        U_e_gf->UseDevice(true);
+      }
+      else
+      {
+        U_e_eval.reset();
+      }
+    }
 
     // Electric Boundary Field & Surface Charge.
     E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
@@ -340,6 +374,22 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     // U_m = 1/2 Hᴴ B = 1/2 μ⁻¹ Bᴴ B.
     U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
         *B, fem_op->GetMaterialOp(), scaling);
+    if (SurfaceFunctional::Enabled() && B->Real().VectorDim() > 1)
+    {
+      InitializeVizSpaces(*B->ParFESpace());
+      U_m_eval = std::make_unique<DomainFieldEvaluator>(
+          DomainFieldEvaluator::Kind::ENERGY_M, fem_op->GetMaterialOp().GetMesh(),
+          fem_op->GetMaterialOp(), nullptr, B->ParFESpace(), *viz_scalar_fespace, scaling);
+      if (U_m_eval->IsValid())
+      {
+        U_m_gf = std::make_unique<mfem::ParGridFunction>(viz_scalar_fespace.get());
+        U_m_gf->UseDevice(true);
+      }
+      else
+      {
+        U_m_eval.reset();
+      }
+    }
 
     // Magnetic Boundary Field & Surface Current.
     // In 2D, B is scalar (L2), so boundary vector coefficients are not applicable.
@@ -375,6 +425,23 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
                              units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
       S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, fem_op->GetMaterialOp(),
                                                       scaling);
+      if (SurfaceFunctional::Enabled())
+      {
+        InitializeVizSpaces(*E->ParFESpace());
+        S_eval = std::make_unique<DomainFieldEvaluator>(
+            DomainFieldEvaluator::Kind::POYNTING, fem_op->GetMaterialOp().GetMesh(),
+            fem_op->GetMaterialOp(), E->ParFESpace(), B->ParFESpace(), *viz_vector_fespace,
+            scaling);
+        if (S_eval->IsValid())
+        {
+          S_gf = std::make_unique<mfem::ParGridFunction>(viz_vector_fespace.get());
+          S_gf->UseDevice(true);
+        }
+        else
+        {
+          S_eval.reset();
+        }
+      }
     }
     // For boundary mode, Sn = Re{Et · (ẑ × Ht*)} is computed after Bt_inplane is
     // available (in MeasureAndPrintAll), as it requires the in-plane B field.
@@ -518,17 +585,20 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   // energy 1/2 Hᴴ B. Also Poynting vector S = E x H⋆.
   if (U_e)
   {
-    paraview->RegisterCoeffField("U_e", U_e.get());
+    U_e_eval ? paraview->RegisterField("U_e", U_e_gf.get())
+             : paraview->RegisterCoeffField("U_e", U_e.get());
     paraview_bdr->RegisterCoeffField("U_e", U_e.get());
   }
   if (U_m)
   {
-    paraview->RegisterCoeffField("U_m", U_m.get());
+    U_m_eval ? paraview->RegisterField("U_m", U_m_gf.get())
+             : paraview->RegisterCoeffField("U_m", U_m.get());
     paraview_bdr->RegisterCoeffField("U_m", U_m.get());
   }
   if (S)
   {
-    paraview->RegisterVCoeffField("S", S.get());
+    S_eval ? paraview->RegisterField("S", S_gf.get())
+           : paraview->RegisterVCoeffField("S", S.get());
     paraview_bdr->RegisterVCoeffField("S", S.get());
   }
 
@@ -691,6 +761,20 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   {
     paraview->RegisterCoeffField("Sn", Sn.get());
     sn_registered = true;
+  }
+  // Fill the libCEED-evaluated output fields (the fields are dimensionalized at this
+  // point, matching the legacy coefficient evaluation in ParaViewDataCollection::Save).
+  if (U_e_eval)
+  {
+    U_e_eval->Eval(E.get(), nullptr, *U_e_gf);
+  }
+  if (U_m_eval)
+  {
+    U_m_eval->Eval(nullptr, B.get(), *U_m_gf);
+  }
+  if (S_eval)
+  {
+    S_eval->Eval(E.get(), B.get(), *S_gf);
   }
   double paraview_time = time;
   if constexpr (solver_t == ProblemType::DRIVEN)
