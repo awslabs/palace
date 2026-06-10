@@ -98,6 +98,14 @@ if(PALACE_WITH_CUDA)
     "-DCMAKE_CUDA_COMPILER=${CMAKE_CUDA_COMPILER}"
     "-DCMAKE_CUDA_FLAGS=${CMAKE_CUDA_FLAGS}"
   )
+  if(NOT "${CMAKE_CUDA_HOST_COMPILER}" STREQUAL "")
+    # Forward the CUDA host compiler: BLT (via the umpire/camp CMake configs from
+    # MAGMA's dependencies) errors out if CMAKE_CUDA_HOST_COMPILER is not set before
+    # CUDA language enablement in the inner Palace configure.
+    list(APPEND PALACE_OPTIONS
+      "-DCMAKE_CUDA_HOST_COMPILER=${CMAKE_CUDA_HOST_COMPILER}"
+    )
+  endif()
   if(NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
     list(APPEND PALACE_OPTIONS
       "-DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}"
