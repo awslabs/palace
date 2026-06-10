@@ -1,0 +1,25 @@
+title="tecplot refine surface self intersections"
+variables = "x" "y" "z"
+zone t="intersect", i=11, datapacking=point
+# intersection 1 face id
+0.000000 0.814761 3.549029
+# intersection 3 face id
+0.454264 0.000000 3.542214
+# intersection 2 face id
+2.000000 0.359657 3.636718
+# intersection 6 face id
+2.000000 1.018678 4.000000
+# intersection 1 face id
+0.000000 0.527075 1.021274
+# intersection 5 face id
+0.420807 0.675628 0.000000
+# intersection 3 face id
+0.999580 0.000000 0.000000
+# intersection 3 face id
+0.999580 0.000000 0.000000
+# intersection 1 face id
+0.000000 2.640297 0.358699
+# intersection 1 face id
+0.000000 2.640297 0.358699
+# intersection 4 face id
+1.577784 3.000000 1.711233

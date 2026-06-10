@@ -101,7 +101,7 @@ function sol_ncomp(field_type::Int, dimension::Int)
     field_type == SOL_SCALAR && return 1
     field_type == SOL_VECTOR && return dimension
     field_type == SOL_SYMMAT && return dimension * (dimension + 1) ÷ 2
-    error("Unknown field type: $field_type")
+    return error("Unknown field type: $field_type")
 end
 
 function read_solb(filename::AbstractString)
@@ -118,26 +118,30 @@ function read_solb(filename::AbstractString)
         keyword = tokens[1]
 
         if keyword == "MeshVersionFormatted"
-            version = length(tokens) > 1 ? parse(Int, tokens[2]) : parse(Int, strip(lines[i += 1]))
+            version =
+                length(tokens) > 1 ? parse(Int, tokens[2]) :
+                parse(Int, strip(lines[i += 1]))
             i += 1
         elseif keyword == "Dimension"
-            dimension = length(tokens) > 1 ? parse(Int, tokens[2]) : parse(Int, strip(lines[i += 1]))
+            dimension =
+                length(tokens) > 1 ? parse(Int, tokens[2]) :
+                parse(Int, strip(lines[i += 1]))
             i += 1
         elseif keyword == "SolAtVertices"
             i += 1
             header = split(strip(lines[i]))
             npts = parse(Int, header[1])
             nfields = parse(Int, header[2])
-            ftypes = [parse(Int, header[2 + f]) for f in 1:nfields]
+            ftypes = [parse(Int, header[2 + f]) for f = 1:nfields]
             ncomps = [sol_ncomp(ft, dimension) for ft in ftypes]
             field_data = [zeros(Float64, npts, nc) for nc in ncomps]
 
             i += 1
-            for p in 1:npts
+            for p = 1:npts
                 row_tokens = split(strip(lines[i]))
                 col = 1
                 for (fi, nc) in enumerate(ncomps)
-                    for c in 1:nc
+                    for c = 1:nc
                         field_data[fi][p, c] = parse(Float64, row_tokens[col])
                         col += 1
                     end
@@ -171,16 +175,18 @@ function read_meshb_vertices(filename::AbstractString)
         keyword = tokens[1]
 
         if keyword == "Dimension"
-            dimension = length(tokens) > 1 ? parse(Int, tokens[2]) : parse(Int, strip(lines[i += 1]))
+            dimension =
+                length(tokens) > 1 ? parse(Int, tokens[2]) :
+                parse(Int, strip(lines[i += 1]))
             i += 1
         elseif keyword == "Vertices"
             i += 1
             n = parse(Int, strip(lines[i]))
             i += 1
             vertices = zeros(Float64, n, dimension)
-            for j in 1:n
+            for j = 1:n
                 row = split(strip(lines[i]))
-                for d in 1:dimension
+                for d = 1:dimension
                     vertices[j, d] = parse(Float64, row[d])
                 end
                 i += 1
@@ -212,12 +218,12 @@ function nearest_neighbor_mapping(src::Matrix{Float64}, dst::Matrix{Float64})
     mapping = Vector{Int}(undef, n_src)
     max_dist = 0.0
 
-    for i in 1:n_src
+    for i = 1:n_src
         best_j = 1
         best_d2 = Inf
-        for j in 1:n_dst
+        for j = 1:n_dst
             d2 = 0.0
-            for d in 1:dim
+            for d = 1:dim
                 diff = src[i, d] - dst[j, d]
                 d2 += diff * diff
             end
@@ -247,9 +253,8 @@ Compute dJ/dp = sum(dJ/dx .* dx/dp) via dot product.
 Both matrices must be Nx3 (same vertex count and dimension).
 """
 function contract(dJdx::Matrix{Float64}, dxdp::Matrix{Float64})
-    size(dJdx) == size(dxdp) || error(
-        "Shape mismatch: dJ/dx is $(size(dJdx)), dx/dp is $(size(dxdp))"
-    )
+    size(dJdx) == size(dxdp) ||
+        error("Shape mismatch: dJ/dx is $(size(dJdx)), dx/dp is $(size(dxdp))")
     return dot(vec(dJdx), vec(dxdp))
 end
 
@@ -259,14 +264,15 @@ end
 Run the full sensitivity chain and print results.
 
 # Arguments
-- `palace_dir`: Palace output directory (contains mesh_sensitivity.solb)
-- `geom_sens_dir`: Directory with dxdp_*.solb files from DeviceLayout
-- `mapping_type`: "identity" or "nearest"
+
+  - `palace_dir`: Palace output directory (contains mesh_sensitivity.solb)
+  - `geom_sens_dir`: Directory with dxdp_*.solb files from DeviceLayout
+  - `mapping_type`: "identity" or "nearest"
 """
 function run_sensitivity_chain(
     palace_dir::AbstractString,
     geom_sens_dir::AbstractString;
-    mapping_type::AbstractString = "identity",
+    mapping_type::AbstractString="identity"
 )
     # Read Palace's dJ/dx
     dJdx_file = joinpath(palace_dir, "mesh_sensitivity.solb")
@@ -292,19 +298,22 @@ function run_sensitivity_chain(
             palace_meshb = joinpath(palace_dir, "mesh.meshb")
         end
         isfile(palace_meshb) || error("No Palace .meshb file found for node mapping")
-        isfile(egads_meshb) || error("No EGADS .meshb file found at $egads_meshb for node mapping")
+        isfile(egads_meshb) ||
+            error("No EGADS .meshb file found at $egads_meshb for node mapping")
 
         palace_verts = read_meshb_vertices(palace_meshb)
         egads_verts = read_meshb_vertices(egads_meshb)
         node_map = nearest_neighbor_mapping(palace_verts, egads_verts)
-        println("Node mapping: nearest-neighbor, $(length(node_map)) Palace -> $(size(egads_verts, 1)) EGADS vertices")
+        println(
+            "Node mapping: nearest-neighbor, $(length(node_map)) Palace -> $(size(egads_verts, 1)) EGADS vertices"
+        )
     else
         println("Node mapping: identity (same mesh source)")
     end
 
     # Find all dx/dp files
     param_files = filter(readdir(geom_sens_dir; join=true)) do f
-        endswith(f, ".solb") && startswith(basename(f), "dxdp_")
+        return endswith(f, ".solb") && startswith(basename(f), "dxdp_")
     end
 
     if isempty(param_files)
@@ -329,10 +338,10 @@ function run_sensitivity_chain(
             npts_geom = size(dxdp, 1)
             dim = size(dJdx, 2)
             dJdx_mapped = zeros(Float64, npts_geom, dim)
-            for i in 1:npts_palace
+            for i = 1:npts_palace
                 j = node_map[i]
                 if 1 <= j <= npts_geom
-                    for d in 1:dim
+                    for d = 1:dim
                         dJdx_mapped[j, d] += dJdx[i, d]
                     end
                 end
@@ -400,7 +409,7 @@ function main()
         end
     end
 
-    run_sensitivity_chain(palace_dir, geom_sens_dir; mapping_type=mapping_type)
+    return run_sensitivity_chain(palace_dir, geom_sens_dir; mapping_type=mapping_type)
 end
 
 # Run if executed as a script

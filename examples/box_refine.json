@@ -1,0 +1,41 @@
+{
+  "Problem": {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/box_refine"
+  },
+  "Model": {
+    "Mesh": "box-vol.msh",
+    "L0": 1.0
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [1, 2, 3, 4, 5, 6]
+    }
+  },
+  "Solver": {
+    "Order": 1,
+    "Device": "CPU",
+    "Eigenmode": {
+      "N": 2,
+      "Tol": 1.0e-8,
+      "Target": 0.05,
+      "Sensitivity": true,
+      "MeshSensitivity": true
+    },
+    "Linear": {
+      "Type": "Default",
+      "Tol": 1.0e-8,
+      "MaxIts": 200
+    }
+  }
+}

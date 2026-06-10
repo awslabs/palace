@@ -91,9 +91,9 @@ void MeshSensitivityIntegrator::Apply(Mesh &mesh, const FiniteElementSpace &nd_f
 
       CeedElemRestriction attr_restr;
       CeedBasis attr_basis;
-      PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
-                               ceed, num_elem, 1, 1, num_elem, CEED_STRIDES_BACKEND,
-                               &attr_restr));
+      PalaceCeedCall(ceed,
+                     CeedElemRestrictionCreateStrided(ceed, num_elem, 1, 1, num_elem,
+                                                      CEED_STRIDES_BACKEND, &attr_restr));
       {
         mfem::Vector Bt(num_qpts), Gt(num_qpts), qX(num_qpts), qW(num_qpts);
         Bt = 1.0;
@@ -124,8 +124,7 @@ void MeshSensitivityIntegrator::Apply(Mesh &mesh, const FiniteElementSpace &nd_f
       CeedQFunction qf;
       PalaceCeedCall(ceed, CeedQFunctionCreateInterior(
                                ceed, 1, f_apply_meshsens_33,
-                               PalaceQFunctionRelativePath(f_apply_meshsens_33_loc),
-                               &qf));
+                               PalaceQFunctionRelativePath(f_apply_meshsens_33_loc), &qf));
 
       // Set coefficient context.
       CeedQFunctionContext qf_ctx;
@@ -144,15 +143,15 @@ void MeshSensitivityIntegrator::Apply(Mesh &mesh, const FiniteElementSpace &nd_f
       //   [4] curl_u      : 3 components, CEED_EVAL_CURL    (passive)
       PalaceCeedCall(ceed, CeedQFunctionAddInput(qf, "attr", 1, CEED_EVAL_INTERP));
       PalaceCeedCall(ceed, CeedQFunctionAddInput(qf, "q_w", 1, CEED_EVAL_WEIGHT));
-      PalaceCeedCall(ceed, CeedQFunctionAddInput(qf, "grad_x", space_dim * dim,
-                                                 CEED_EVAL_GRAD));
+      PalaceCeedCall(ceed,
+                     CeedQFunctionAddInput(qf, "grad_x", space_dim * dim, CEED_EVAL_GRAD));
       PalaceCeedCall(ceed, CeedQFunctionAddInput(qf, "u", space_dim, CEED_EVAL_INTERP));
       PalaceCeedCall(ceed, CeedQFunctionAddInput(qf, "curl_u", dim, CEED_EVAL_CURL));
 
       // QFunction output:
       //   [0] df_dJ : 9 components, CEED_EVAL_GRAD (active output)
-      PalaceCeedCall(ceed, CeedQFunctionAddOutput(qf, "df_dJ", space_dim * dim,
-                                                  CEED_EVAL_GRAD));
+      PalaceCeedCall(ceed,
+                     CeedQFunctionAddOutput(qf, "df_dJ", space_dim * dim, CEED_EVAL_GRAD));
 
       // Create operator.
       CeedOperator op;
@@ -160,30 +159,29 @@ void MeshSensitivityIntegrator::Apply(Mesh &mesh, const FiniteElementSpace &nd_f
       PalaceCeedCall(ceed, CeedQFunctionDestroy(&qf));
 
       // Set operator fields.
-      PalaceCeedCall(ceed, CeedOperatorSetField(op, "attr", attr_restr, attr_basis,
-                                                elem_attr_vec));
+      PalaceCeedCall(
+          ceed, CeedOperatorSetField(op, "attr", attr_restr, attr_basis, elem_attr_vec));
       PalaceCeedCall(ceed, CeedOperatorSetField(op, "q_w", CEED_ELEMRESTRICTION_NONE,
                                                 mesh_basis, CEED_VECTOR_NONE));
       PalaceCeedCall(ceed, CeedOperatorSetField(op, "grad_x", mesh_restr, mesh_basis,
                                                 CEED_VECTOR_ACTIVE));
       PalaceCeedCall(ceed, CeedOperatorSetField(op, "u", soln_restr, soln_basis, eig_vec));
-      PalaceCeedCall(ceed, CeedOperatorSetField(op, "curl_u", soln_restr, soln_basis,
-                                                eig_vec));
+      PalaceCeedCall(ceed,
+                     CeedOperatorSetField(op, "curl_u", soln_restr, soln_basis, eig_vec));
       PalaceCeedCall(ceed, CeedOperatorSetField(op, "df_dJ", mesh_restr, mesh_basis,
                                                 CEED_VECTOR_ACTIVE));
 
       PalaceCeedCall(ceed, CeedOperatorCheckReady(op));
 
       // Apply: mesh_nodes → sensitivity.
-      PalaceCeedCall(ceed,
-                     CeedOperatorApply(op, mesh_nodes_vec, sens_vec, CEED_REQUEST_IMMEDIATE));
+      PalaceCeedCall(
+          ceed, CeedOperatorApply(op, mesh_nodes_vec, sens_vec, CEED_REQUEST_IMMEDIATE));
 
       // Accumulate into the output sensitivity vector. In OpenMP builds, multiple threads
       // may contribute to shared DOFs, so synchronize the accumulation.
       {
         const CeedScalar *sens_data;
-        PalaceCeedCall(ceed,
-                       CeedVectorGetArrayRead(sens_vec, CEED_MEM_HOST, &sens_data));
+        PalaceCeedCall(ceed, CeedVectorGetArrayRead(sens_vec, CEED_MEM_HOST, &sens_data));
         PalacePragmaOmp(critical(meshsens_accum))
         for (int i = 0; i < mesh_nodes.Size(); i++)
         {

@@ -227,10 +227,10 @@ constexpr const int *ElemNodesNastran[] = {SkipElem, Msh3,     Msh4,     Msh4,  
 // libMeshb supports P1 and P2 elements. P1 ordering matches Gmsh exactly. P2 requires
 // permutation. SkipElem for element types not produced by standard libMeshb tools.
 // Edges (type 1) are skipped: they carry curve/ridge data only, not needed by MFEM FEM.
-constexpr const int *ElemNodesMeshb[] = {SkipElem, Msh3,     Msh4,     Msh4,     Msh8,
-                                         Msh6,     Msh5,     SkipElem, MshbTri6, SkipElem,
+constexpr const int *ElemNodesMeshb[] = {SkipElem,  Msh3,     Msh4,     Msh4,     Msh8,
+                                         Msh6,      Msh5,     SkipElem, MshbTri6, SkipElem,
                                          MshbTet10, SkipElem, SkipElem, SkipElem, SkipElem,
-                                         SkipElem, SkipElem, SkipElem, SkipElem};
+                                         SkipElem,  SkipElem, SkipElem, SkipElem};
 
 // Get line, strip comments, leading/trailing whitespace. Should not be called if end of
 // file is expected.
@@ -1212,24 +1212,50 @@ void ConvertMeshMeshb(const std::string &filename, std::ostream &buffer,
         !kw.compare("VerticesOnGeometricEdges") ||
         !kw.compare("VerticesOnGeometricTriangles") ||
         !kw.compare("EdgesOnGeometricEdges") ||
-        !kw.compare("TrianglesOnGeometricTriangles") ||
-        !kw.compare("EdgesP2Ordering") || !kw.compare("TrianglesP2Ordering") ||
-        !kw.compare("TetrahedraP2Ordering") ||
+        !kw.compare("TrianglesOnGeometricTriangles") || !kw.compare("EdgesP2Ordering") ||
+        !kw.compare("TrianglesP2Ordering") || !kw.compare("TetrahedraP2Ordering") ||
         !kw.compare("Normals") || !kw.compare("NormalAtVertices") ||
         !kw.compare("Tangents") || !kw.compare("TangentAtEdges"))
     {
       return -1;  // Has a count block; read and discard.
     }
     // Elements that produce mesh topology, mapped to Gmsh type IDs.
-    if (!kw.compare("Edges"))          { return 1;  }  // 2-node line (skipped, see below)
-    if (!kw.compare("Triangles"))      { return 2;  }  // 3-node triangle
-    if (!kw.compare("Quadrilaterals")) { return 3;  }  // 4-node quadrilateral
-    if (!kw.compare("Tetrahedra"))     { return 4;  }  // 4-node tetrahedron
-    if (!kw.compare("Hexahedra"))      { return 5;  }  // 8-node hexahedron
-    if (!kw.compare("Prisms"))         { return 6;  }  // 6-node prism
-    if (!kw.compare("Pyramids"))       { return 7;  }  // 5-node pyramid
-    if (!kw.compare("TrianglesP2"))    { return 9;  }  // 6-node triangle
-    if (!kw.compare("TetrahedraP2"))   { return 11; }  // 10-node tetrahedron
+    if (!kw.compare("Edges"))
+    {
+      return 1;
+    }  // 2-node line (skipped, see below)
+    if (!kw.compare("Triangles"))
+    {
+      return 2;
+    }  // 3-node triangle
+    if (!kw.compare("Quadrilaterals"))
+    {
+      return 3;
+    }  // 4-node quadrilateral
+    if (!kw.compare("Tetrahedra"))
+    {
+      return 4;
+    }  // 4-node tetrahedron
+    if (!kw.compare("Hexahedra"))
+    {
+      return 5;
+    }  // 8-node hexahedron
+    if (!kw.compare("Prisms"))
+    {
+      return 6;
+    }  // 6-node prism
+    if (!kw.compare("Pyramids"))
+    {
+      return 7;
+    }  // 5-node pyramid
+    if (!kw.compare("TrianglesP2"))
+    {
+      return 9;
+    }  // 6-node triangle
+    if (!kw.compare("TetrahedraP2"))
+    {
+      return 11;
+    }  // 10-node tetrahedron
     return 0;  // Unknown keyword, no data block (e.g. MeshVersionFormatted, End).
   };
 
@@ -1284,8 +1310,7 @@ void ConvertMeshMeshb(const std::string &filename, std::ostream &buffer,
           vs >> z;
         }
         vs >> ref;
-        MFEM_VERIFY(!vs.fail(),
-                    "Failed to parse vertex " << i + 1 << " in libMeshb file!");
+        MFEM_VERIFY(!vs.fail(), "Failed to parse vertex " << i + 1 << " in libMeshb file!");
         // Always store 3D coordinates (Gmsh v2.2 requires it).
         node_coords.insert(node_coords.end(), {x, y, z});
       }
@@ -1355,8 +1380,7 @@ void ConvertMeshMeshb(const std::string &filename, std::ostream &buffer,
       }
       int geom_tag = 0;
       es >> geom_tag;
-      MFEM_VERIFY(!es.fail(),
-                  "Failed to parse element row for type " << gmsh_type << "!");
+      MFEM_VERIFY(!es.fail(), "Failed to parse element row for type " << gmsh_type << "!");
       const int base = prev_size + i * (num_elem_nodes + 1);
       data[base] = geom_tag;
       for (int j = 0; j < num_elem_nodes; j++)
@@ -1367,8 +1391,8 @@ void ConvertMeshMeshb(const std::string &filename, std::ostream &buffer,
     }
   }
 
-  MFEM_VERIFY(!node_coords.empty(), "No vertices found in libMeshb file \"" << filename
-                                                                             << "\"!");
+  MFEM_VERIFY(!node_coords.empty(),
+              "No vertices found in libMeshb file \"" << filename << "\"!");
 
   // Finalize input, write the Gmsh mesh.
   input.close();

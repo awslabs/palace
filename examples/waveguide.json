@@ -1,0 +1,11 @@
+{
+  "Problem": { "Type": "Eigenmode", "Verbose": 2, "Output": "postpro/waveguide" },
+  "Model": { "Mesh": "mesh/waveguide.mesh", "L0": 0.01 },
+  "Domains": { "Materials": [{ "Attributes": [1], "Permeability": 1.0, "Permittivity": 1.0 }] },
+  "Boundaries": { "PEC": { "Attributes": [1, 2, 3, 4, 5, 6] } },
+  "Solver": {
+    "Order": 1, "Device": "CPU",
+    "Eigenmode": { "N": 3, "Tol": 1.0e-8, "Target": 2.0, "Sensitivity": true, "MeshSensitivity": true },
+    "Linear": { "Type": "Default", "Tol": 1.0e-8, "MaxIts": 200 }
+  }
+}

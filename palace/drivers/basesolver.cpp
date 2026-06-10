@@ -263,11 +263,10 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
         const auto marked_elements = MarkedElements(indicators.Local(), threshold);
         const auto [glob_marked_elements, glob_elements] =
             linalg::GlobalSize2(comm, marked_elements, indicators.Local());
-        Mpi::Print(
-            " Marked {:d}/{:d} elements for refinement"
-            " ({:.2f}% of the error, \xce\xb8 = {:.2f})\n",
-            glob_marked_elements, glob_elements, 100 * marked_error,
-            refinement.update_fraction);
+        Mpi::Print(" Marked {:d}/{:d} elements for refinement"
+                   " ({:.2f}% of the error, \xce\xb8 = {:.2f})\n",
+                   glob_marked_elements, glob_elements, 100 * marked_error,
+                   refinement.update_fraction);
         return marked_elements;
       }(indicators);
 

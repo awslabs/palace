@@ -79,10 +79,8 @@ EigenSensitivity::Compute(const IoData &iodata, SpaceOperator &space_op,
     const int attr = result.domain_attrs[d];
     dK_vec[d] =
         space_op.GetStiffnessMatrixDomain<ComplexOperator>(attr, Operator::DIAG_ZERO);
-    dM_vec[d] =
-        space_op.GetMassMatrixDomain<ComplexOperator>(attr, Operator::DIAG_ZERO);
-    dC_vec[d] =
-        space_op.GetDampingMatrixDomain<ComplexOperator>(attr, Operator::DIAG_ZERO);
+    dM_vec[d] = space_op.GetMassMatrixDomain<ComplexOperator>(attr, Operator::DIAG_ZERO);
+    dC_vec[d] = space_op.GetDampingMatrixDomain<ComplexOperator>(attr, Operator::DIAG_ZERO);
   }
 
   for (int i = 0; i < num_conv; i++)
@@ -204,8 +202,7 @@ EigenSensitivity::Compute(const IoData &iodata, SpaceOperator &space_op,
       }
     }
 
-    Mpi::Print(" Mode {:d}: sensitivities computed for {:d} domains\n", i + 1,
-               num_domains);
+    Mpi::Print(" Mode {:d}: sensitivities computed for {:d} domains\n", i + 1, num_domains);
   }
 
   return result;

@@ -19,7 +19,7 @@ class Mesh;
 namespace ceed
 {
 class Operator;
-}
+}  // namespace ceed
 
 // Assembles a CeedOperator that computes the mesh sensitivity df/dx_nodes for the combined
 // CurlCurlMass eigenvalue integrand (f_K - lambda * f_M) in a single pass.

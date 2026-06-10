@@ -1434,8 +1434,7 @@ template <ProblemType solver_t>
 template <ProblemType U>
 auto PostOperatorCSV<solver_t>::PrintDrivenSensitivity(
     const DrivenSensitivity::SensitivityResult &sens, int excitation_idx, double omega,
-    const Units &units)
-    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+    const Units &units) -> std::enable_if_t<U == ProblemType::DRIVEN, void>
 {
   const int num_ports = static_cast<int>(sens.port_indices.size());
   const int num_domains = static_cast<int>(sens.domain_attrs.size());

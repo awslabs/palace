@@ -1198,8 +1198,7 @@ SpaceOperator::GetStiffnessMatrixDomain(int attr, Operator::DiagonalPolicy diag_
       AssembleOperator(GetNDSpace(), &df, nullptr, nullptr, nullptr, nullptr, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
-    auto K =
-        std::make_unique<ComplexParOperator>(std::move(kr), nullptr, GetNDSpace());
+    auto K = std::make_unique<ComplexParOperator>(std::move(kr), nullptr, GetNDSpace());
     K->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     return K;
   }
@@ -1296,8 +1295,7 @@ SpaceOperator::GetMassMatrixDomain(int attr, Operator::DiagonalPolicy diag_polic
       AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, nullptr, nullptr, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
-    auto M =
-        std::make_unique<ComplexParOperator>(std::move(mr), nullptr, GetNDSpace());
+    auto M = std::make_unique<ComplexParOperator>(std::move(mr), nullptr, GetNDSpace());
     M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     return M;
   }
@@ -1345,18 +1343,18 @@ SpaceOperator::GetPreconditionerMatrix<ComplexOperator, std::complex<double>>(
     std::complex<double>, std::complex<double>, std::complex<double>, double);
 
 template std::unique_ptr<Operator>
-    SpaceOperator::GetStiffnessMatrixDomain(int, Operator::DiagonalPolicy);
+SpaceOperator::GetStiffnessMatrixDomain(int, Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
-    SpaceOperator::GetStiffnessMatrixDomain(int, Operator::DiagonalPolicy);
+SpaceOperator::GetStiffnessMatrixDomain(int, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
-    SpaceOperator::GetDampingMatrixDomain(int, Operator::DiagonalPolicy);
+SpaceOperator::GetDampingMatrixDomain(int, Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
-    SpaceOperator::GetDampingMatrixDomain(int, Operator::DiagonalPolicy);
+SpaceOperator::GetDampingMatrixDomain(int, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
-    SpaceOperator::GetMassMatrixDomain(int, Operator::DiagonalPolicy);
+SpaceOperator::GetMassMatrixDomain(int, Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
-    SpaceOperator::GetMassMatrixDomain(int, Operator::DiagonalPolicy);
+SpaceOperator::GetMassMatrixDomain(int, Operator::DiagonalPolicy);
 
 }  // namespace palace

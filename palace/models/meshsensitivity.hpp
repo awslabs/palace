@@ -61,9 +61,8 @@ public:
   //   has_damping - whether the problem is quadratic (C present)
   //   perturbation - FD step size; if <= 0, a default is computed from the mesh
   static SensitivityResult ComputeEigen(const IoData &iodata, SpaceOperator &space_op,
-                                        const ComplexVector &u,
-                                        std::complex<double> omega, bool has_damping,
-                                        double perturbation);
+                                        const ComplexVector &u, std::complex<double> omega,
+                                        bool has_damping, double perturbation);
 
   // Compute mesh sensitivities via finite differences for the driven (S-parameter) problem.
   //
@@ -88,10 +87,9 @@ public:
   // Compute the sesquilinear form v^H * A(x) * u for the current mesh configuration.
   // Resets geometry cache and reassembles K, C, M from scratch using SpaceOperator.
   static std::complex<double> EvalSystemForm(SpaceOperator &space_op,
-                                             const ComplexVector &u,
-                                             const ComplexVector &v,
-                                             std::complex<double> omega,
-                                             bool has_damping, MPI_Comm comm);
+                                             const ComplexVector &u, const ComplexVector &v,
+                                             std::complex<double> omega, bool has_damping,
+                                             MPI_Comm comm);
 
   // Compute a default FD step size from the mesh bounding box diagonal.
   static double DefaultPerturbation(const mfem::ParMesh &mesh, MPI_Comm comm);
@@ -115,8 +113,8 @@ public:
   //   mesh     - the parallel mesh (used to determine total vertex count and gather)
   //   comm     - MPI communicator
   static void WriteSensitivitySolb(const std::string &filename,
-                                   const SensitivityResult &result,
-                                   mfem::ParMesh &mesh, MPI_Comm comm);
+                                   const SensitivityResult &result, mfem::ParMesh &mesh,
+                                   MPI_Comm comm);
 };
 
 }  // namespace palace

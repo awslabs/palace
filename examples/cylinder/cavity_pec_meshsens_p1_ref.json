@@ -1,0 +1,52 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/cavity_pec_sens_p1_ref"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cylinder_hex_p1_ref1.msh",
+    "L0": 1.0e-2
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08,
+        "LossTan": 0.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2,3,4]
+    }
+  },
+  "Solver":
+  {
+    "Order": 1,
+    "Device": "CPU",
+    "Eigenmode":
+    {
+      "N": 2,
+      "Tol": 1.0e-8,
+      "Target": 2.0,
+      "Sensitivity": true,
+      "MeshSensitivity": true
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 200
+    }
+  }
+}

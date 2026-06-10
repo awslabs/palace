@@ -92,10 +92,9 @@ mfem::Vector ComputeIsotropicMetric(mfem::ParMesh &mesh, const ErrorIndicator &i
 
   const int nv = smesh.GetNV();
   const int ne = smesh.GetNE();
-  MFEM_VERIFY(ne == global_ne,
-              "Mismatch between gathered error indicators (" << global_ne
-                                                             << ") and serial mesh elements ("
-                                                             << ne << ")!");
+  MFEM_VERIFY(ne == global_ne, "Mismatch between gathered error indicators ("
+                                   << global_ne << ") and serial mesh elements (" << ne
+                                   << ")!");
 
   // Step 1: Average element errors to vertices, weighted by element volume.
   // Also compute per-element volumes and per-element characteristic sizes.
@@ -264,17 +263,40 @@ void WriteMeshMeshb(const std::string &filename, mfem::ParMesh &mesh)
   fo << "MeshVersionFormatted 2\n";
   fo << "Dimension " << sdim << "\n\n";
 
-  // Write vertices.
+  // Write vertices. For curved meshes (order > 1), MFEM stores coordinates in the
+  // Nodes GridFunction rather than the vertex array, so GetVertex(i) may return zeros.
+  // Extract vertex positions from Nodes when available.
   fo << "Vertices\n";
   fo << nv << '\n';
   fo << std::scientific;
   fo.precision(15);
+  const mfem::GridFunction *nodes = smesh.GetNodes();
+  if (nodes)
+  {
+    // Vertex DOFs are indices 0..nv-1 in MFEM's default H1 DOF ordering.
+    MFEM_VERIFY(nodes->FESpace()->GetNDofs() >= nv,
+                "Nodes FE space has fewer DOFs (" << nodes->FESpace()->GetNDofs()
+                                                  << ") than vertices (" << nv << ")!");
+  }
   for (int i = 0; i < nv; i++)
   {
-    const double *coord = smesh.GetVertex(i);
-    for (int j = 0; j < sdim; j++)
+    if (nodes)
     {
-      fo << coord[j] << ' ';
+      // Vertex i corresponds to scalar DOF i in the default H1 ordering.
+      const mfem::FiniteElementSpace *fes = nodes->FESpace();
+      for (int j = 0; j < sdim; j++)
+      {
+        int dof = fes->DofToVDof(i, j);
+        fo << (*nodes)(dof) << ' ';
+      }
+    }
+    else
+    {
+      const double *coord = smesh.GetVertex(i);
+      for (int j = 0; j < sdim; j++)
+      {
+        fo << coord[j] << ' ';
+      }
     }
     // Reference ID (0 for all vertices).
     fo << "0\n";
@@ -333,8 +355,8 @@ void WriteMeshMeshb(const std::string &filename, mfem::ParMesh &mesh)
   }
 
   // Write element sections.
-  auto WriteSection = [&fo](const std::string &name,
-                            const std::vector<std::vector<int>> &elems)
+  auto WriteSection =
+      [&fo](const std::string &name, const std::vector<std::vector<int>> &elems)
   {
     if (elems.empty())
     {

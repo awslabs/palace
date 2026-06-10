@@ -17,13 +17,13 @@ namespace palace
 std::string ExternalAdaptationDriver::Adapt(const std::string &mesh_file,
                                             const std::string &metric_file,
                                             const std::string &geometry_file,
-                                            const IoData &iodata,
-                                            MPI_Comm comm)
+                                            const IoData &iodata, MPI_Comm comm)
 {
   const auto &refinement = iodata.model.refinement;
   const auto &adapter = refinement.external_adapter;
-  MFEM_VERIFY(!adapter.empty(),
-              "ExternalAdaptationDriver::Adapt called with no external adapter configured!");
+  MFEM_VERIFY(
+      !adapter.empty(),
+      "ExternalAdaptationDriver::Adapt called with no external adapter configured!");
 
   // Derive the output path from the input mesh path by replacing the extension.
   const fs::path input_path(mesh_file);
@@ -36,8 +36,8 @@ std::string ExternalAdaptationDriver::Adapt(const std::string &mesh_file,
   if (Mpi::Root(comm))
   {
     std::string cmd;
-    const std::string &binary = refinement.adapter_path.empty() ? adapter
-                                                                : refinement.adapter_path;
+    const std::string &binary =
+        refinement.adapter_path.empty() ? adapter : refinement.adapter_path;
 
     if (adapter == "metris")
     {
@@ -48,9 +48,8 @@ std::string ExternalAdaptationDriver::Adapt(const std::string &mesh_file,
       {
         cmd += fmt::format(" --cad {}", geometry_file);
       }
-      cmd += fmt::format(" --adapt {} --tardeg {} --out {}",
-                          refinement.adapt_iterations, refinement.target_degree,
-                          output_file);
+      cmd += fmt::format(" --adapt {} --tardeg {} --out {}", refinement.adapt_iterations,
+                         refinement.target_degree, output_file);
     }
     else if (adapter == "refine")
     {
@@ -65,7 +64,7 @@ std::string ExternalAdaptationDriver::Adapt(const std::string &mesh_file,
     else
     {
       MFEM_ABORT("Unknown external adapter \"" << adapter
-                                                << "\": expected \"metris\" or \"refine\"!");
+                                               << "\": expected \"metris\" or \"refine\"!");
     }
 
     Mpi::Print(" Running external adaptation: {}\n", cmd);

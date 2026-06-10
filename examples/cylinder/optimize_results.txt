@@ -1,0 +1,113 @@
+═══ Cylinder Optimizer: L-BFGS vs Nelder-Mead ═══
+  Baseline: f₀ = 2.968201936675e+00 GHz at R₀ = 2.74 cm, H₀ = 5.48 cm
+  Target:   f_target = 2.819791839841e+00 GHz (95% of baseline)
+
+═══ L-BFGS (gradient-based) ═══
+┌ Warning: f_tol is deprecated. Use f_abstol or f_reltol instead. The provided value (1.0e-20) will be used as f_reltol.
+└ @ Optim ~/.julia/packages/Optim/DtV5C/src/types.jl:133
+Fminbox
+-------
+Initial mu = 0.0
+
+Fminbox iteration 1
+-------------------
+Calling inner optimizer with mu = 0.0
+
+(numbers below include barrier contribution)
+Iter     Function value   Gradient norm 
+     0     2.208544e-02     3.215410e-01
+ * time: 0.16807985305786133
+     1     1.385061e-04     1.868357e-02
+ * time: 9.25055480003357
+     2     6.410184e-05     1.075536e-05
+ * time: 14.247285842895508
+     3     6.410178e-05     6.617712e-12
+ * time: 18.271183967590332
+     4     6.410178e-05     4.215654e-12
+ * time: 21.431903839111328
+     5     6.410178e-05     2.048790e-12
+ * time: 46.84454083442688
+     6     6.410178e-05     1.095116e-11
+ * time: 72.28862190246582
+     7     6.410178e-05     1.172577e-13
+ * time: 93.30530381202698
+
+Exiting inner optimizer with x = [2.8841819199195013, 5.48]
+Current distance to box: 0.403818
+Decreasing barrier term μ.
+
+Fminbox iteration 2
+-------------------
+Calling inner optimizer with mu = 5.87348e-5
+
+(numbers below include barrier contribution)
+Iter     Function value   Gradient norm 
+     0     6.488320e-08     6.053352e-05
+ * time: 0.00016307830810546875
+     1     6.410273e-08     6.486042e-10
+ * time: 11.753345012664795
+     2     6.410273e-08     1.220008e-11
+ * time: 33.5898540019989
+     3     6.410273e-08     7.995433e-13
+ * time: 49.8387770652771
+
+Exiting inner optimizer with x = [2.8842104977049963, 5.48]
+Current distance to box: 0.40379
+Decreasing barrier term μ.
+
+Fminbox iteration 3
+-------------------
+Calling inner optimizer with mu = 5.87348e-8
+
+(numbers below include barrier contribution)
+Iter     Function value   Gradient norm 
+     0     6.410352e-11     6.054650e-08
+ * time: 5.507469177246094e-5
+     1     6.410273e-11     1.565143e-11
+ * time: 19.826759099960327
+     2     6.410273e-11     1.681714e-12
+ * time: 38.261171102523804
+     3     6.410273e-11     4.850494e-13
+ * time: 56.50930118560791
+
+Exiting inner optimizer with x = [2.8842105262871813, 5.48]
+Current distance to box: 0.403789
+Decreasing barrier term μ.
+
+
+  Result: R = 2.884211 cm, H = 5.480000 cm
+  f_opt = 2.819791839869e+00 GHz (target: 2.819791839841e+00)
+  |f - f_target| = 2.775025e-11 GHz
+  Palace evaluations: 69
+
+═══ Nelder-Mead (derivative-free) ═══
+┌ Warning: f_tol is deprecated. Use f_abstol or f_reltol instead. The provided value (1.0e-24) will be used as f_reltol.
+└ @ Optim ~/.julia/packages/Optim/DtV5C/src/types.jl:133
+Iter     Function value    √(Σ(yᵢ-ȳ)²)/n 
+------   --------------    --------------
+     0     1.631364e-03     5.162914e-02
+ * time: 0.0004220008850097656
+     5     4.562976e-04     5.153663e-04
+ * time: 35.54203391075134
+    10     1.098224e-05     1.223678e-05
+ * time: 67.66491889953613
+    15     4.636597e-07     4.208807e-07
+ * time: 88.3324019908905
+    20     3.366640e-09     4.402921e-09
+ * time: 120.49726295471191
+
+  Result: R = 2.682156 cm, H = 8.030958 cm
+  f_opt = 2.667918377807e+00 GHz (target: 2.819791839841e+00)
+  |f - f_target| = 1.518735e-01 GHz
+  Palace evaluations: 43
+
+═══ Comparison ═══
+                        L-BFGS        Nelder-Mead 
+  Palace evaluations    69            43          
+  |f - f_target| GHz    2.775025e-11  1.518735e-01
+  R_opt (cm)            2.884211      2.682156    
+  H_opt (cm)            5.480000      8.030958    
+
+  Speedup: L-BFGS uses 0.6x fewer evaluations than Nelder-Mead
+
+  Done.

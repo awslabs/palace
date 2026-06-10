@@ -1,0 +1,127 @@
+Opening /Users/hughcars/AWS/palace-derivative-propagation/examples/box-tetgen.poly.
+  Initializing memorypools.
+  tetrahedron per block: 8188.
+  Size of a point: 128 bytes.
+  Size of a tetrahedron: 96 (96) bytes.
+  Size of a shellface: 192 (192) bytes.
+  Initializing robust predicates.
+  sizeof(double) =  8
+  machine epsilon =   2.22045e-16 [IEEE 754 64-bit macheps]
+Delaunizing vertices...
+  Permuting vertices.
+  Sorting vertices.
+  Incrementally inserting vertices.
+Delaunay seconds:  0.002034
+  Point sorting seconds:  1.8e-05
+Creating surface mesh ...
+  496 (744) subfaces (segments).
+Surface mesh seconds:  0.000562
+Recovering boundaries...
+  Recovering segments.
+  744 (0) segments are recovered (missing).
+  Recovering facets.
+  496 (0) subfaces are recovered (missing).
+Boundary recovery seconds:  0.000882
+  Segment recovery seconds:  0.000562
+  Facet recovery seconds:  0.00032
+Removing exterior tetrahedra ...
+Warning:  The 1-th hole point lies outside the convex hull.
+Warning:  The 2-th hole point lies outside the convex hull.
+Warning:  The 3-th hole point lies outside the convex hull.
+Warning:  The 4-th hole point lies outside the convex hull.
+Warning:  The 5-th hole point lies outside the convex hull.
+Warning:  The 6-th hole point lies outside the convex hull.
+Exterior tets removal seconds:  6.5e-05
+Recovering Delaunayness...
+  Initial obj = 5832.7365933698202
+Delaunay recovery seconds:  0.000228
+Refining mesh...
+  Min radius-edge ratio = 20.
+  Min dihedral   angle  = 10.
+  Splitting bad quality tets.
+  Added 32 (0,0,32) Steiner points.
+Refinement seconds:  0.000797
+Optimizing mesh...
+  Optimization level  = 7.
+  Optimization scheme = 7.
+  Number of iteration = 127.
+  Min_Max dihed angle = 165.
+  Removed 1 edges.
+Optimization seconds:  0.000122
+
+Writing /Users/hughcars/AWS/palace-derivative-propagation/examples/box-tetgen.1.node.
+Writing /Users/hughcars/AWS/palace-derivative-propagation/examples/box-tetgen.1.ele.
+Writing /Users/hughcars/AWS/palace-derivative-propagation/examples/box-tetgen.1.face.
+Writing /Users/hughcars/AWS/palace-derivative-propagation/examples/box-tetgen.1.edge.
+
+Output seconds:  0.001737
+Total running seconds:  0.006497
+
+Statistics:
+
+  Input points: 250
+  Input facets: 496
+  Input segments: 744
+  Input holes: 6
+  Input regions: 0
+
+  Mesh points: 282
+  Mesh tetrahedra: 851
+  Mesh faces: 1950
+  Mesh faces on exterior boundary: 496
+  Mesh faces on input facets: 496
+  Mesh edges on input segments: 744
+  Steiner points inside domain: 32
+
+Mesh quality statistics:
+
+  Smallest volume:        0.0041553   |  Largest volume:           0.2323
+  Shortest edge:            0.38079   |  Longest edge:               1.43
+  Smallest asp.ratio:        1.2774   |  Largest asp.ratio:        9.8126
+  Smallest facangle:         18.366   |  Largest facangle:       125.3592
+  Smallest dihedral:         10.743   |  Largest dihedral:       160.7179
+
+  Aspect ratio histogram:
+         < 1.5       :         7      |      6 - 10         :        17
+     1.5 - 2         :       172      |     10 - 15         :         0
+       2 - 2.5       :       288      |     15 - 25         :         0
+     2.5 - 3         :       182      |     25 - 50         :         0
+       3 - 4         :       140      |     50 - 100        :         0
+       4 - 6         :        45      |    100 -            :         0
+  (A tetrahedron's aspect ratio is its longest edge length divided by its
+    smallest side height)
+
+  Face angle histogram:
+      0 -  10 degrees:         0      |     90 - 100 degrees:       239
+     10 -  20 degrees:         5      |    100 - 110 degrees:       115
+     20 -  30 degrees:       205      |    110 - 120 degrees:        42
+     30 -  40 degrees:       554      |    120 - 130 degrees:         8
+     40 -  50 degrees:      1024      |    130 - 140 degrees:         0
+     50 -  60 degrees:      1404      |    140 - 150 degrees:         0
+     60 -  70 degrees:      1108      |    150 - 160 degrees:         0
+     70 -  80 degrees:       702      |    160 - 170 degrees:         0
+     80 -  90 degrees:       444      |    170 - 180 degrees:         0
+
+  Dihedral angle histogram:
+       0 -  5 degrees:         0      |     80 - 110 degrees:      1145
+       5 - 10 degrees:         0      |    110 - 120 degrees:       225
+      10 - 20 degrees:        67      |    120 - 130 degrees:        90
+      20 - 30 degrees:       148      |    130 - 140 degrees:        49
+      30 - 40 degrees:       314      |    140 - 150 degrees:        50
+      40 - 50 degrees:       658      |    150 - 160 degrees:        20
+      50 - 60 degrees:       837      |    160 - 170 degrees:         1
+      60 - 70 degrees:       906      |    170 - 175 degrees:         0
+      70 - 80 degrees:       596      |    175 - 180 degrees:         0
+  Minimum input dihedral angle is 90 (degree).
+
+
+Memory usage statistics:
+
+  Maximum number of tetrahedra:  1370
+  Maximum number of tet blocks (blocksize = 8188):  1
+  Approximate memory for tetrahedral mesh (bytes):  548,544
+  Approximate memory for extra pointers (bytes):  93,744
+  Approximate memory for algorithms (bytes):  329,808
+  Approximate memory for working arrays (bytes):  16,928
+  Approximate total used memory (bytes):  989,024
+

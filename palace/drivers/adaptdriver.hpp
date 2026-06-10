@@ -34,10 +34,8 @@ public:
   //   comm          - MPI communicator.
   //
   // Returns the path to the adapted mesh file (.meshb).
-  static std::string Adapt(const std::string &mesh_file,
-                           const std::string &metric_file,
-                           const std::string &geometry_file,
-                           const IoData &iodata,
+  static std::string Adapt(const std::string &mesh_file, const std::string &metric_file,
+                           const std::string &geometry_file, const IoData &iodata,
                            MPI_Comm comm);
 };
 

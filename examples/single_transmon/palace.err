@@ -1,0 +1,16 @@
+
+
+Verification failed: (size <= mesh.GetNE()) is false:
+ --> Mesh partitioning must have parts <= mesh elements (1 vs. 0)!
+ ... in function: std::unique_ptr<int[]> palace::(anonymous namespace)::GetMeshPartitioning(const mfem::Mesh &, int, const std::string &, bool)
+ ... in file: /Users/hughcars/AWS/palace-derivative-propagation/palace/utils/geodata.cpp:2668
+
+--------------------------------------------------------------------------
+MPI_ABORT was invoked on rank 0 in communicator MPI_COMM_WORLD
+  Proc: [[51181,0],0]
+  Errorcode: 1
+
+NOTE: invoking MPI_ABORT causes Open MPI to kill all MPI processes.
+You may or may not see output from other processes, depending on
+exactly when Open MPI kills them.
+--------------------------------------------------------------------------

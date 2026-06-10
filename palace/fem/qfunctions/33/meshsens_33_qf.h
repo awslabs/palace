@@ -130,7 +130,7 @@ CEED_QFUNCTION_HELPER T MeshSensAdjJt33(const T J[9], T adjJt[9])
 // B is a CeedScalar matrix (material coefficient, not differentiated).
 template <typename T>
 CEED_QFUNCTION_HELPER void MeshSensMultAtBCx33(const T A[9], const CeedScalar B[9],
-                                                const T C[9], const CeedScalar x[3], T y[3])
+                                               const T C[9], const CeedScalar x[3], T y[3])
 {
   // Step 1: z = C * x
   T z[3];
@@ -163,7 +163,7 @@ CEED_QFUNCTION_HELPER void MeshSensMultAtBCx33(const T A[9], const CeedScalar B[
 // MultAtBCx33(J_loc, coeff, J_loc, curlu, curlv) scaled by wdetJ.
 template <typename T>
 CEED_QFUNCTION_HELPER T MeshSensStiffnessIntegrand(const T *J, const CeedScalar *curl_u,
-                                                    const CeedScalar *mu_inv, CeedScalar w)
+                                                   const CeedScalar *mu_inv, CeedScalar w)
 {
   T adjJt[9];
   const T detJ = MeshSensAdjJt33(J, adjJt);
@@ -195,7 +195,7 @@ CEED_QFUNCTION_HELPER T MeshSensStiffnessIntegrand(const T *J, const CeedScalar 
 // scaled by wdetJ.
 template <typename T>
 CEED_QFUNCTION_HELPER T MeshSensMassIntegrand(const T *J, const CeedScalar *u,
-                                               const CeedScalar *eps, CeedScalar w)
+                                              const CeedScalar *eps, CeedScalar w)
 {
   T adjJt[9];
   const T detJ = MeshSensAdjJt33(J, adjJt);
@@ -229,7 +229,7 @@ extern double __enzyme_autodiff(void *, ...);
 
 // Enzyme wrappers: thin shims calling the CeedScalar-specialized integrands.
 static double MeshSensStiffnessForEnzyme(double *J, const double *curl_u,
-                                          const double *mu_inv, double w)
+                                         const double *mu_inv, double w)
 {
   return MeshSensStiffnessIntegrand<CeedScalar>(J, curl_u, mu_inv, w);
 }
@@ -239,12 +239,10 @@ static double MeshSensMassForEnzyme(double *J, const double *u, const double *ep
   return MeshSensMassIntegrand<CeedScalar>(J, u, eps, w);
 }
 
-CEED_QFUNCTION_HELPER void MeshSensDifferentiate(const CeedScalar J_in[9],
-                                                  const CeedScalar *curl_u,
-                                                  const CeedScalar *mu_inv,
-                                                  const CeedScalar *u,
-                                                  const CeedScalar *eps, CeedScalar w,
-                                                  CeedScalar lambda, CeedScalar df_dJ[9])
+CEED_QFUNCTION_HELPER void
+MeshSensDifferentiate(const CeedScalar J_in[9], const CeedScalar *curl_u,
+                      const CeedScalar *mu_inv, const CeedScalar *u, const CeedScalar *eps,
+                      CeedScalar w, CeedScalar lambda, CeedScalar df_dJ[9])
 {
   CeedScalar J[9], dK[9] = {0}, dM[9] = {0};
   for (int k = 0; k < 9; k++)
@@ -272,12 +270,10 @@ CEED_QFUNCTION_HELPER void MeshSensDifferentiate(const CeedScalar J_in[9],
 #else  // !PALACE_WITH_ENZYME
 
 // Forward-mode AD via dual numbers: 9 passes, seeding one J component per pass.
-CEED_QFUNCTION_HELPER void MeshSensDifferentiate(const CeedScalar J_in[9],
-                                                  const CeedScalar *curl_u,
-                                                  const CeedScalar *mu_inv,
-                                                  const CeedScalar *u,
-                                                  const CeedScalar *eps, CeedScalar w,
-                                                  CeedScalar lambda, CeedScalar df_dJ[9])
+CEED_QFUNCTION_HELPER void
+MeshSensDifferentiate(const CeedScalar J_in[9], const CeedScalar *curl_u,
+                      const CeedScalar *mu_inv, const CeedScalar *u, const CeedScalar *eps,
+                      CeedScalar w, CeedScalar lambda, CeedScalar df_dJ[9])
 {
   for (int k = 0; k < 9; k++)
   {

@@ -1,0 +1,9 @@
+{
+  "Problem": { "Type": "Eigenmode", "Verbose": 2, "Output": "postpro/reson_native" },
+  "Model": { "Mesh": "mesh/reson_native.mesh", "L0": 1.0e-4 },
+  "Domains": { "Materials": [{ "Attributes": [1], "Permeability": 1.0, "Permittivity": 1.0 }] },
+  "Boundaries": { "PEC": { "Attributes": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44] } },
+  "Solver": { "Order": 1, "Device": "CPU",
+    "Eigenmode": { "N": 2, "Tol": 1.0e-8, "Target": 30.0, "Sensitivity": true, "MeshSensitivity": true },
+    "Linear": { "Type": "Default", "Tol": 1.0e-8, "MaxIts": 200 } }
+}

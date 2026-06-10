@@ -91,10 +91,8 @@ DrivenSensitivity::Compute(const IoData &iodata, SpaceOperator &space_op,
   // Allocate result arrays: [num_ports][num_domains].
   result.dS_d_epsilon.resize(num_ports,
                              std::vector<std::complex<double>>(num_domains, 0.0));
-  result.dS_d_muinv.resize(num_ports,
-                            std::vector<std::complex<double>>(num_domains, 0.0));
-  result.dS_d_sigma.resize(num_ports,
-                            std::vector<std::complex<double>>(num_domains, 0.0));
+  result.dS_d_muinv.resize(num_ports, std::vector<std::complex<double>>(num_domains, 0.0));
+  result.dS_d_sigma.resize(num_ports, std::vector<std::complex<double>>(num_domains, 0.0));
 
   // Working vectors sized to the local ND true dof count.
   const int n = space_op.GetNDSpace().GetTrueVSize();
@@ -124,10 +122,8 @@ DrivenSensitivity::Compute(const IoData &iodata, SpaceOperator &space_op,
     const int attr = result.domain_attrs[d];
     dK_vec[d] =
         space_op.GetStiffnessMatrixDomain<ComplexOperator>(attr, Operator::DIAG_ZERO);
-    dM_vec[d] =
-        space_op.GetMassMatrixDomain<ComplexOperator>(attr, Operator::DIAG_ZERO);
-    dC_vec[d] =
-        space_op.GetDampingMatrixDomain<ComplexOperator>(attr, Operator::DIAG_ZERO);
+    dM_vec[d] = space_op.GetMassMatrixDomain<ComplexOperator>(attr, Operator::DIAG_ZERO);
+    dC_vec[d] = space_op.GetDampingMatrixDomain<ComplexOperator>(attr, Operator::DIAG_ZERO);
   }
 
   // For each observation port j, solve the adjoint system and accumulate sensitivities.

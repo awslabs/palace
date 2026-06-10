@@ -1,0 +1,19 @@
+
+_____________     _______
+_____   __   \____ __   /____ ____________
+____   /_/  /  __ ` /  /  __ ` /  ___/  _ \
+___   _____/  /_/  /  /  /_/  /  /__/  ___/
+  /__/     \___,__/__/\___,__/\_____\_____/
+
+Running with 1 MPI process
+Device configuration: cpu
+Memory configuration: host-std
+libCEED backend: /cpu/self/xsmm/blocked
+
+
+Gmsh reader: all element attributes were zero.
+MFEM only supports positive element attributes.
+Setting element attributes to 1.
+
+Removed 36824 unmarked domain elements from the mesh
+Removed 11122 unattached boundary elements from the mesh
