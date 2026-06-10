@@ -1,6 +1,9 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <chrono>
+#include <cstdlib>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <mfem.hpp>
@@ -685,6 +688,227 @@ TEST_CASE("SurfaceFunctional Complex Power", "[surfacefunctional][Serial][GPU]")
     };
     CheckPart(val.real(), ref.real());
     CheckPart(val.imag(), ref.imag());
+  }
+}
+
+// Benchmark comparing the legacy mfem::Coefficient-based measurement paths against the
+// libCEED surface functionals. Hidden by default; run explicitly with:
+//   ./palace-unit-tests "[surfacefunctional-bench]" [--device cuda]
+// Mesh size can be controlled with the PALACE_BENCH_N environment variable (default
+// 20, i.e. a 20x20x20 hex mesh).
+TEST_CASE("SurfaceFunctional Benchmark", "[.][surfacefunctional-bench][Serial][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  const int order = 2;
+  const int N =
+      std::getenv("PALACE_BENCH_N") ? std::atoi(std::getenv("PALACE_BENCH_N")) : 20;
+  const int n_reps = 10;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  // Two-material N x N x N hex mesh with an interior interface (attribute 7).
+  auto mesh = [&]()
+  {
+    mfem::Mesh smesh = mfem::Mesh::MakeCartesian3D(N, N, N, mfem::Element::HEXAHEDRON);
+    for (int e = 0; e < smesh.GetNE(); e++)
+    {
+      mfem::Vector center(3);
+      smesh.GetElementCenter(e, center);
+      smesh.SetAttribute(e, (center(2) < 0.5) ? 1 : 2);
+    }
+    for (int f = 0; f < smesh.GetNumFaces(); f++)
+    {
+      int e1, e2;
+      smesh.GetFaceElements(f, &e1, &e2);
+      if (e1 >= 0 && e2 >= 0 && smesh.GetAttribute(e1) != smesh.GetAttribute(e2))
+      {
+        auto *face_elem = smesh.GetFace(f)->Duplicate(&smesh);
+        face_elem->SetAttribute(7);
+        smesh.AddBdrElement(face_elem);
+      }
+    }
+    smesh.FinalizeTopology();
+    smesh.Finalize();
+    smesh.SetAttributes();
+    smesh.EnsureNodes();
+    auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
+    return std::make_unique<Mesh>(std::move(pmesh));
+  }();
+  auto &pmesh = mesh->Get();
+
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s[0] = 11.7;
+  dielectric.epsilon_r.s[1] = 11.7;
+  dielectric.epsilon_r.s[2] = 11.7;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  mfem::H1_FECollection h1_fec(order, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec),
+      h1_fespace(*mesh, &h1_fec);
+
+  GridFunction E(nd_fespace, true), B(rt_fespace, true);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + x(2) * x(2);
+                                        v(1) = std::cos(x(2)) + x(0);
+                                        v(2) = x(0) * x(1) + 1.0;
+                                      });
+  mfem::VectorFunctionCoefficient fei(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) * x(2) - 0.5;
+                                        v(1) = std::sin(x(0)) - x(2);
+                                        v(2) = std::cos(x(1)) + x(0) * x(0);
+                                      });
+  mfem::VectorFunctionCoefficient fbr(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) - 0.3 * x(2);
+                                        v(1) = std::sin(x(2)) + 0.5;
+                                        v(2) = std::cos(x(0)) - x(1) * x(2);
+                                      });
+  mfem::VectorFunctionCoefficient fbi(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::cos(x(2)) - 0.2;
+                                        v(1) = x(0) * x(2) + 0.1;
+                                        v(2) = std::sin(x(1)) - x(0);
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  E.Imag().ProjectCoefficient(fei);
+  B.Real().ProjectCoefficient(fbr);
+  B.Imag().ProjectCoefficient(fbi);
+
+  const int bdr_attr_max = pmesh.bdr_attributes.Max();
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 0;
+  marker[7 - 1] = 1;
+  const double t_i = 2.0e-3, epsilon_i = 10.0;
+
+  auto TimeIt = [&](auto &&f, int reps)
+  {
+    // Warm up (also triggers any JIT compilation on GPU backends).
+    f();
+    double t_min = 1.0e30, t_sum = 0.0;
+    for (int r = 0; r < reps; r++)
+    {
+      auto t0 = std::chrono::steady_clock::now();
+      f();
+      auto t1 = std::chrono::steady_clock::now();
+      const double t = std::chrono::duration<double, std::milli>(t1 - t0).count();
+      t_min = std::min(t_min, t);
+      t_sum += t;
+    }
+    return std::make_pair(t_min, t_sum / reps);
+  };
+
+  std::cout << "\n=== SurfaceFunctional benchmark: N = " << N << " (" << pmesh.GetNE()
+            << " elements, " << N * N << " interface boundary elements, ND order " << order
+            << ", " << nd_fespace.GlobalTrueVSize() << " ND dofs) ===\n";
+
+  // 1. Interface dielectric EPR (MA type) over the interior interface.
+  {
+    volatile double sink;
+    auto legacy = [&]()
+    {
+      // Replicates SurfacePostOperator::GetInterfaceElectricFieldEnergy +
+      // GetLocalSurfaceIntegral.
+      InterfaceDielectricCoefficient<InterfaceDielectric::MA> f(E, mat_op, t_i, epsilon_i);
+      mfem::LinearForm s(&h1_fespace.Get());
+      s.AddBoundaryIntegrator(new BoundaryLFIntegrator(f),
+                              const_cast<mfem::Array<int> &>(marker));
+      s.UseFastAssembly(false);
+      s.UseDevice(false);
+      s.Assemble();
+      s.UseDevice(true);
+      double dot = linalg::LocalSum(s);
+      Mpi::GlobalSum(1, &dot, comm);
+      sink = dot;
+    };
+    auto t0 = std::chrono::steady_clock::now();
+    SurfaceFunctional epr(*mesh, marker, nd_fespace, mat_op, InterfaceDielectric::MA, t_i,
+                          epsilon_i);
+    auto t1 = std::chrono::steady_clock::now();
+    const double t_constr = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    auto ceed_path = [&]() { sink = epr.Eval(E); };
+
+    // Verify agreement before timing.
+    InterfaceDielectricCoefficient<InterfaceDielectric::MA> f(E, mat_op, t_i, epsilon_i);
+    const double ref = RefSurfaceCoefficientIntegral(pmesh, f, marker);
+    const double val = epr.Eval(E);
+    REQUIRE(val == Catch::Approx(ref).epsilon(1.0e-10));
+
+    auto [legacy_min, legacy_avg] = TimeIt(legacy, n_reps);
+    auto [ceed_min, ceed_avg] = TimeIt(ceed_path, n_reps);
+    std::cout << "Interface EPR (MA), complex E, per measurement:\n"
+              << "  legacy coefficient path: min " << legacy_min << " ms, avg "
+              << legacy_avg << " ms\n"
+              << "  libCEED functional:      min " << ceed_min << " ms, avg " << ceed_avg
+              << " ms  (construction, once: " << t_constr << " ms)\n"
+              << "  speedup (avg): " << legacy_avg / ceed_avg << "x\n";
+  }
+
+  // 2. Port power over the interior interface (driven solver inner loop quantity).
+  {
+    volatile double sink;
+    mfem::Array<int> attr_list(1);
+    attr_list[0] = 7;
+    auto legacy = [&]()
+    {
+      // Replicates LumpedPortData::GetPower.
+      std::complex<double> dot;
+      {
+        RestrictedVectorCoefficient<BdrSurfaceCurrentVectorCoefficient> fbr_c(
+            attr_list, B.Real(), mat_op);
+        mfem::LinearForm pr(&nd_fespace.Get());
+        pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbr_c),
+                                 const_cast<mfem::Array<int> &>(marker));
+        pr.UseFastAssembly(false);
+        pr.UseDevice(false);
+        pr.Assemble();
+        pr.UseDevice(true);
+        dot = std::complex<double>(-(pr * E.Real()), -(pr * E.Imag()));
+      }
+      {
+        RestrictedVectorCoefficient<BdrSurfaceCurrentVectorCoefficient> fbi_c(
+            attr_list, B.Imag(), mat_op);
+        mfem::LinearForm pi(&nd_fespace.Get());
+        pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fbi_c),
+                                 const_cast<mfem::Array<int> &>(marker));
+        pi.UseFastAssembly(false);
+        pi.UseDevice(false);
+        pi.Assemble();
+        pi.UseDevice(true);
+        dot += std::complex<double>(-(pi * E.Imag()), pi * E.Real());
+      }
+      Mpi::GlobalSum(1, &dot, comm);
+      sink = dot.real();
+    };
+    mfem::Vector x0(3);
+    x0 = 0.0;
+    auto t0 = std::chrono::steady_clock::now();
+    SurfaceFunctional power(*mesh, marker, &nd_fespace, &rt_fespace, mat_op,
+                            SurfaceFlux::POWER, /*two_sided*/ true, x0);
+    auto t1 = std::chrono::steady_clock::now();
+    const double t_constr = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    auto ceed_path = [&]() { sink = power.EvalComplexPower(E, B).real(); };
+
+    auto [legacy_min, legacy_avg] = TimeIt(legacy, n_reps);
+    auto [ceed_min, ceed_avg] = TimeIt(ceed_path, n_reps);
+    std::cout << "Port power, complex E and B, per measurement:\n"
+              << "  legacy linear form path: min " << legacy_min << " ms, avg "
+              << legacy_avg << " ms\n"
+              << "  libCEED functional:      min " << ceed_min << " ms, avg " << ceed_avg
+              << " ms  (construction, once: " << t_constr << " ms)\n"
+              << "  speedup (avg): " << legacy_avg / ceed_avg << "x\n";
   }
 }
 
