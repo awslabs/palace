@@ -73,6 +73,9 @@ The format of this changelog is based on
     `config["Problem"]["Output"]` (allowed by the schema) aborted at startup with "Invalid output
     directory, got empty string". `Output` now defaults to `"postpro"` when omitted
     [PR 753](https://github.com/awslabs/palace/pull/753).
+  - Fixed impedance boundary mesh-cracking scaling to apply per-attribute rather than per-block,
+    allowing mixed cracked and uncracked attributes within a single impedance boundary definition.
+    [PR 748](https://github.com/awslabs/palace/pull/748).
   - Revert change of adaptive PROM from interpolation back to projection.
     [PR 733](https://github.com/awslabs/palace/pull/733).
   - Fixed nondeterministic current-dipole assembly when the source lies on a
