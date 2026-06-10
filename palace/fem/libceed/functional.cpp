@@ -15,16 +15,19 @@ namespace
 void AddQFunctionFieldInput(const CeedFunctionalFieldInput &input, Ceed ceed,
                             CeedQFunction qf)
 {
-  CeedInt num_comp;
-  PalaceCeedCall(ceed, CeedBasisGetNumComponents(input.basis, &num_comp));
   if (input.ops & EvalMode::None)
   {
+    // EvalMode::None inputs may have no basis (e.g. quadrature point data passed
+    // through directly), so get the component count from the restriction.
+    CeedInt num_comp;
+    PalaceCeedCall(ceed, CeedElemRestrictionGetNumComponents(input.restr, &num_comp));
     PalaceCeedCall(ceed,
                    CeedQFunctionAddInput(qf, input.name.c_str(), num_comp, CEED_EVAL_NONE));
   }
   if (input.ops & EvalMode::Interp)
   {
-    CeedInt q_comp;
+    CeedInt num_comp, q_comp;
+    PalaceCeedCall(ceed, CeedBasisGetNumComponents(input.basis, &num_comp));
     PalaceCeedCall(
         ceed, CeedBasisGetNumQuadratureComponents(input.basis, CEED_EVAL_INTERP, &q_comp));
     PalaceCeedCall(ceed, CeedQFunctionAddInput(qf, input.name.c_str(), num_comp * q_comp,
@@ -70,21 +73,32 @@ void AssembleCeedSurfaceFunctional(
   CeedInt num_qpts;
   CeedBasis sum_basis;
   {
-    CeedElemRestriction r = inputs.empty() ? face_geom_data_restr : nullptr;
-    if (!inputs.empty())
+    CeedBasis qpts_basis = nullptr;
+    for (const auto &input : inputs)
     {
-      PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(inputs[0].basis, &num_qpts));
+      if (input.basis)
+      {
+        qpts_basis = input.basis;
+        break;
+      }
+    }
+    if (qpts_basis)
+    {
+      PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(qpts_basis, &num_qpts));
     }
     else
     {
-      // No field inputs: deduce the number of quadrature points from the face geometry
-      // data restriction (one set of geometry data per quadrature point).
+      // No field inputs with a basis: deduce the number of quadrature points from the
+      // face geometry data restriction (one set of geometry data per quadrature point).
       CeedInt num_elem;
       CeedSize l_size;
       CeedInt num_geom_comp;
-      PalaceCeedCall(ceed, CeedElemRestrictionGetNumElements(r, &num_elem));
-      PalaceCeedCall(ceed, CeedElemRestrictionGetNumComponents(r, &num_geom_comp));
-      PalaceCeedCall(ceed, CeedElemRestrictionGetLVectorSize(r, &l_size));
+      PalaceCeedCall(ceed,
+                     CeedElemRestrictionGetNumElements(face_geom_data_restr, &num_elem));
+      PalaceCeedCall(
+          ceed, CeedElemRestrictionGetNumComponents(face_geom_data_restr, &num_geom_comp));
+      PalaceCeedCall(ceed,
+                     CeedElemRestrictionGetLVectorSize(face_geom_data_restr, &l_size));
       num_qpts = static_cast<CeedInt>(l_size / (num_elem * num_geom_comp));
     }
     mfem::Vector Bt(num_qpts), Gt(num_qpts), qX(num_qpts), qW(num_qpts);
