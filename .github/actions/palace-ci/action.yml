@@ -228,7 +228,27 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        spack -e . install --only-concrete --no-check-signature --fail-fast --show-log-on-error --include-build-deps --only dependencies --test root -j $(nproc)
+        # Bank built deps even if the install later fails. The CLI push skips
+        # non-redistributable specs (the autopush hook does not, so it is not
+        # used); skip --update-index since installs probe OCI tags directly.
+        bank_progress() {
+          spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
+        }
+        # No --fail-fast: build (and bank) everything possible; retry to ride
+        # out transient source-fetch failures.
+        attempts=3
+        for attempt in $(seq 1 "$attempts"); do
+          if spack -e . install --only-concrete --no-check-signature --show-log-on-error --include-build-deps --only dependencies --test root -j $(nproc); then
+            bank_progress
+            break
+          fi
+          bank_progress
+          if [ "$attempt" -eq "$attempts" ]; then
+            echo "Dependency installation failed after ${attempts} attempts."
+            exit 1
+          fi
+          echo "Dependency installation attempt ${attempt} failed; retrying."
+        done
         end_timer "Build Dependencies"
 
     - name: Print @develop commit hashes
