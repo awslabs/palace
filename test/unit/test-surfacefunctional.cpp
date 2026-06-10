@@ -382,4 +382,174 @@ TEST_CASE("SurfaceFunctional Interface Dielectric", "[surfacefunctional][Serial]
   }
 }
 
+TEST_CASE("SurfaceFunctional Surface Flux", "[surfacefunctional][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto order = GENERATE(1, 2);
+  auto complex = GENERATE(false, true);
+  CAPTURE(elem_type, order, complex);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s[0] = 11.7;
+  dielectric.epsilon_r.s[1] = 11.7;
+  dielectric.epsilon_r.s[2] = 11.7;
+  dielectric.mu_r.s[0] = 1.4;
+  dielectric.mu_r.s[1] = 1.4;
+  dielectric.mu_r.s[2] = 1.4;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::ND_FECollection nd_fec(order, pmesh.Dimension());
+  mfem::RT_FECollection rt_fec(order - 1, pmesh.Dimension());
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+
+  // Project non-trivial smooth vector fields onto the (complex-valued) ND and RT
+  // spaces.
+  GridFunction E(nd_fespace, complex), B(rt_fespace, complex);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + x(2) * x(2);
+                                        v(1) = std::cos(x(2)) + x(0);
+                                        v(2) = x(0) * x(1) + 1.0;
+                                      });
+  mfem::VectorFunctionCoefficient fbr(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) - 0.3 * x(2);
+                                        v(1) = std::sin(x(2)) + 0.5;
+                                        v(2) = std::cos(x(0)) - x(1) * x(2);
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  B.Real().ProjectCoefficient(fbr);
+  if (complex)
+  {
+    mfem::VectorFunctionCoefficient fei(3,
+                                        [](const mfem::Vector &x, mfem::Vector &v)
+                                        {
+                                          v(0) = x(1) * x(2) - 0.5;
+                                          v(1) = std::sin(x(0)) - x(2);
+                                          v(2) = std::cos(x(1)) + x(0) * x(0);
+                                        });
+    mfem::VectorFunctionCoefficient fbi(3,
+                                        [](const mfem::Vector &x, mfem::Vector &v)
+                                        {
+                                          v(0) = std::cos(x(2)) - 0.2;
+                                          v(1) = x(0) * x(2) + 0.1;
+                                          v(2) = std::sin(x(1)) - x(0);
+                                        });
+    E.Imag().ProjectCoefficient(fei);
+    B.Imag().ProjectCoefficient(fbi);
+  }
+
+  mfem::Vector x0(3);
+  x0(0) = 0.4;
+  x0(1) = 0.6;
+  x0(2) = -0.2;  // Off-center so the orientation sign flip logic is exercised
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+
+  auto TestType = [&](SurfaceFlux type, bool two_sided, const mfem::Array<int> &marker)
+  {
+    const GridFunction *E_use =
+        (type == SurfaceFlux::ELECTRIC || type == SurfaceFlux::POWER) ? &E : nullptr;
+    const GridFunction *B_use =
+        (type == SurfaceFlux::MAGNETIC || type == SurfaceFlux::POWER) ? &B : nullptr;
+    SurfaceFunctional flux(*mesh, marker, E_use ? &nd_fespace : nullptr,
+                           B_use ? &rt_fespace : nullptr, mat_op, type, two_sided, x0);
+
+    // Legacy reference following SurfacePostOperator::GetSurfaceFlux.
+    auto MakeLegacy =
+        [&](const mfem::ParGridFunction *Er,
+            const mfem::ParGridFunction *Br) -> std::unique_ptr<mfem::Coefficient>
+    {
+      switch (type)
+      {
+        case SurfaceFlux::ELECTRIC:
+          return std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
+              Er, Br, mat_op, two_sided, x0);
+        case SurfaceFlux::MAGNETIC:
+          return std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC>>(
+              Er, Br, mat_op, two_sided, x0);
+        case SurfaceFlux::POWER:
+          return std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>>(
+              Er, Br, mat_op, two_sided, x0);
+      }
+      return {};
+    };
+    auto legacy_re = MakeLegacy(E_use ? &E.Real() : nullptr, B_use ? &B.Real() : nullptr);
+    std::complex<double> ref(RefSurfaceCoefficientIntegral(pmesh, *legacy_re, marker), 0.0);
+    if (complex)
+    {
+      auto legacy_im = MakeLegacy(E_use ? &E.Imag() : nullptr, B_use ? &B.Imag() : nullptr);
+      const double ref_im = RefSurfaceCoefficientIntegral(pmesh, *legacy_im, marker);
+      if (type == SurfaceFlux::POWER)
+      {
+        ref += ref_im;
+      }
+      else
+      {
+        ref.imag(ref_im);
+      }
+    }
+
+    const std::complex<double> val = flux.EvalFlux(E_use, B_use);
+    CAPTURE(ref.real(), ref.imag(), val.real(), val.imag());
+    auto CheckPart = [](double v, double r)
+    {
+      if (std::abs(r) > 1.0e-12)
+      {
+        CHECK(v == Catch::Approx(r).epsilon(1.0e-10));
+      }
+      else
+      {
+        CHECK(std::abs(v) < 1.0e-10);
+      }
+    };
+    CheckPart(val.real(), ref.real());
+    CheckPart(val.imag(), ref.imag());
+  };
+
+  SECTION("Exterior boundary")
+  {
+    for (auto type : {SurfaceFlux::ELECTRIC, SurfaceFlux::MAGNETIC, SurfaceFlux::POWER})
+    {
+      CAPTURE(static_cast<int>(type));
+      for (int attr : {1, 6})  // z = 0 (vacuum side), z = 1 (dielectric side)
+      {
+        CAPTURE(attr);
+        mfem::Array<int> marker(bdr_attr_max);
+        marker = 0;
+        marker[attr - 1] = 1;
+        TestType(type, false, marker);
+      }
+    }
+  }
+
+  SECTION("Interior material interface")
+  {
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 0;
+    marker[7 - 1] = 1;
+    for (auto type : {SurfaceFlux::ELECTRIC, SurfaceFlux::MAGNETIC, SurfaceFlux::POWER})
+    {
+      CAPTURE(static_cast<int>(type));
+      for (bool two_sided : {false, true})
+      {
+        CAPTURE(two_sided);
+        TestType(type, two_sided, marker);
+      }
+    }
+  }
+}
+
 }  // namespace palace

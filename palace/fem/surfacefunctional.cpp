@@ -70,8 +70,7 @@ GetRegisteredMappedIr(const FaceConfigKey &key,
 
 // Evaluation plan for a single marked boundary element: which volume element(s) the
 // field is evaluated from, and the face quadrature point positions mapped into the
-// volume element reference space(s). elem_b >= 0 indicates two-sided evaluation with
-// averaging of the fields from both sides.
+// volume element reference space(s). elem_b >= 0 indicates two-sided evaluation.
 struct ElemPlan
 {
   int bdr_elem;
@@ -185,7 +184,8 @@ void AppendPoints(FaceConfigKey &key, const std::vector<mfem::IntegrationPoint> 
 SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
                                      const mfem::Array<int> &bdr_attr_marker,
                                      const FiniteElementSpace *fespace)
-  : kind(kind), fespace(fespace), mat_op(nullptr), comm(mesh.GetComm())
+  : kind(kind), fespace_e(fespace), fespace_b(nullptr), mat_op(nullptr),
+    comm(mesh.GetComm())
 {
   MFEM_VERIFY(kind == Kind::AREA || kind == Kind::HCURL_NORM2,
               "Invalid SurfaceFunctional constructor for the requested functional kind!");
@@ -203,8 +203,26 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const MaterialOperator &mat_op,
                                      InterfaceDielectric type, double t_i, double epsilon_i)
   : kind(Kind::INTERFACE_EPR), epr_type(type), epr_t(t_i), epr_epsilon(epsilon_i),
-    fespace(&nd_fespace), mat_op(&mat_op), comm(mesh.GetComm())
+    fespace_e(&nd_fespace), fespace_b(nullptr), mat_op(&mat_op), comm(mesh.GetComm())
 {
+  MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
+              "SurfaceFunctional is only implemented for 3D meshes!");
+  Assemble(mesh, bdr_attr_marker);
+}
+
+SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
+                                     const mfem::Array<int> &bdr_attr_marker,
+                                     const FiniteElementSpace *nd_fespace,
+                                     const FiniteElementSpace *rt_fespace,
+                                     const MaterialOperator &mat_op, SurfaceFlux type,
+                                     bool two_sided, const mfem::Vector &x0)
+  : kind(Kind::SURFACE_FLUX), flux_type(type), flux_two_sided(two_sided), flux_x0(x0),
+    fespace_e(nd_fespace), fespace_b(rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
+{
+  MFEM_VERIFY(
+      (nd_fespace || (type != SurfaceFlux::ELECTRIC && type != SurfaceFlux::POWER)) &&
+          (rt_fespace || (type != SurfaceFlux::MAGNETIC && type != SurfaceFlux::POWER)),
+      "Missing finite element space for surface flux functional!");
   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
               "SurfaceFunctional is only implemented for 3D meshes!");
   Assemble(mesh, bdr_attr_marker);
@@ -253,7 +271,8 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
       const bool elem2_local = has_elem2 && (FET.Elem2No < pmesh.GetNE());
 
       // Decide which side(s) the field is evaluated from following the conventions of
-      // the legacy coefficients (see InterfaceDielectricCoefficient).
+      // the legacy coefficients (see InterfaceDielectricCoefficient and
+      // BdrSurfaceFluxCoefficient).
       ElemPlan plan;
       plan.bdr_elem = i;
       plan.flip = flip;
@@ -261,18 +280,20 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
       {
         // No field inputs (side selection does not apply).
       }
-      else if (kind == Kind::HCURL_NORM2 ||
-               (kind == Kind::INTERFACE_EPR && epr_type == InterfaceDielectric::DEFAULT &&
-                !has_elem2))
+      else if (kind == Kind::HCURL_NORM2)
       {
         plan.elem_a = FET.Elem1No;
       }
-      else if (kind == Kind::INTERFACE_EPR && epr_type == InterfaceDielectric::DEFAULT)
+      else if (kind == Kind::SURFACE_FLUX ||
+               (kind == Kind::INTERFACE_EPR && epr_type == InterfaceDielectric::DEFAULT))
       {
         plan.elem_a = FET.Elem1No;
-        plan.elem_b = FET.Elem2No;
+        if (has_elem2)
+        {
+          plan.elem_b = FET.Elem2No;
+        }
       }
-      else if (kind == Kind::INTERFACE_EPR)
+      else  // INTERFACE_EPR with MA, MS, or SA
       {
         // Single-sided evaluation on the vacuum (MA, SA) or substrate (MS) side, with
         // averaging if both sides qualify, skipping the element if neither does.
@@ -398,41 +419,74 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
   // Initialize the local output vector and field staging vector.
   local_out.SetSize(num_marked);
   local_out.UseDevice(true);
-  if (need_field && fespace)
+  if (need_field)
   {
-    field_staging.SetSize(fespace->GetVSize());
+    const int max_vsize = std::max(fespace_e ? fespace_e->GetVSize() : 0,
+                                   fespace_b ? fespace_b->GetVSize() : 0);
+    field_staging.SetSize(max_vsize);
     field_staging.UseDevice(true);
     field_staging = 0.0;
   }
 
-  // Build the QFunction context for the integrand.
-  std::vector<CeedIntScalar> ctx(2);
-  ctx[0].second = 0.0;
-  ctx[1].second = 0.0;
+  // Build the (group independent part of the) QFunction context for the integrand.
+  std::vector<CeedIntScalar> base_ctx;
   if (kind == Kind::INTERFACE_EPR)
   {
+    base_ctx.resize(2);
+    base_ctx[0].second = 0.0;
+    base_ctx[1].second = 0.0;
     switch (epr_type)
     {
       case InterfaceDielectric::DEFAULT:
-        ctx[0].second = 0.5 * epr_t * epr_epsilon;
+        base_ctx[0].second = 0.5 * epr_t * epr_epsilon;
         break;
       case InterfaceDielectric::MA:
-        ctx[0].second = 0.5 * epr_t / epr_epsilon;
+        base_ctx[0].second = 0.5 * epr_t / epr_epsilon;
         break;
       case InterfaceDielectric::MS:
         {
-          ctx[0].second = 0.5 * epr_t / epr_epsilon;
+          base_ctx[0].second = 0.5 * epr_t / epr_epsilon;
           MaterialPropertyCoefficient epsilon_func(mat_op->GetAttributeToMaterial(),
                                                    mat_op->GetPermittivityReal());
           auto mat_ctx = ceed::PopulateCoefficientContext(3, &epsilon_func);
-          ctx.insert(ctx.end(), mat_ctx.begin(), mat_ctx.end());
+          base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
         }
         break;
       case InterfaceDielectric::SA:
-        ctx[0].second = 0.5 * epr_t * epr_epsilon;
-        ctx[1].second = 0.5 * epr_t / epr_epsilon;
+        base_ctx[0].second = 0.5 * epr_t * epr_epsilon;
+        base_ctx[1].second = 0.5 * epr_t / epr_epsilon;
         break;
     }
+  }
+  else if (kind == Kind::SURFACE_FLUX)
+  {
+    base_ctx.resize(5);
+    base_ctx[0].second = 1.0;  // Normal sign, set per group
+    base_ctx[1].first = flux_two_sided;
+    for (int d = 0; d < 3; d++)
+    {
+      base_ctx[2 + d].second = (flux_x0.Size() > d) ? flux_x0(d) : 0.0;
+    }
+    if (flux_type == SurfaceFlux::ELECTRIC)
+    {
+      MaterialPropertyCoefficient epsilon_func(mat_op->GetAttributeToMaterial(),
+                                               mat_op->GetPermittivityReal());
+      auto mat_ctx = ceed::PopulateCoefficientContext(3, &epsilon_func);
+      base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+    }
+    else if (flux_type == SurfaceFlux::POWER)
+    {
+      MaterialPropertyCoefficient invmu_func(mat_op->GetAttributeToMaterial(),
+                                             mat_op->GetInvPermeability());
+      auto mat_ctx = ceed::PopulateCoefficientContext(3, &invmu_func);
+      base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+    }
+  }
+  else
+  {
+    base_ctx.resize(2);
+    base_ctx[0].second = 0.0;
+    base_ctx[1].second = 0.0;
   }
 
   // Assemble a libCEED operator for each group. For now, all operators are constructed
@@ -446,6 +500,11 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
     const mfem::IntegrationRule &face_ir = mfem::IntRules.Get(
         group.bdr_geom, fem::DefaultIntegrationOrder::Get(pmesh, group.bdr_geom));
 
+    // Handles to destroy after operator assembly (the operator holds references).
+    std::vector<CeedVector> tmp_vecs;
+    std::vector<CeedElemRestriction> tmp_restrs;
+    std::vector<CeedBasis> tmp_bases;
+
     // Face geometry data (boundary element Jacobians at the face quadrature points).
     CeedVector face_geom_data;
     CeedElemRestriction face_geom_data_restr;
@@ -457,11 +516,13 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
       }
       BuildGeometryData(ceed, mesh_fespace, group.bdr_geom, group.bdr_indices, face_ir,
                         elem_attr, &face_geom_data, &face_geom_data_restr);
+      tmp_vecs.push_back(face_geom_data);
+      tmp_restrs.push_back(face_geom_data_restr);
     }
 
     // Volume geometry data evaluated at the mapped face quadrature points (for the
-    // Piola transformations of the field inputs and, for INTERFACE_EPR MS, the material
-    // property lookup with the local libCEED attribute).
+    // Piola transformations of the field inputs and the material property lookups with
+    // the local libCEED attribute).
     auto GetCeedElemAttr = [&](const std::vector<int> &indices)
     {
       Vector elem_attr(indices.size());
@@ -480,6 +541,8 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
       BuildGeometryData(ceed, mesh_fespace, group.vol_geom_a, group.vol_indices_a,
                         *group.mapped_ir_a, elem_attr, &vol_geom_data,
                         &vol_geom_data_restr);
+      tmp_vecs.push_back(vol_geom_data);
+      tmp_restrs.push_back(vol_geom_data_restr);
     }
     if (has_b)
     {
@@ -487,42 +550,90 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
       BuildGeometryData(ceed, mesh_fespace, group.vol_geom_b, group.vol_indices_b,
                         *group.mapped_ir_b, elem_attr, &vol_geom_data_b,
                         &vol_geom_data_b_restr);
+      tmp_vecs.push_back(vol_geom_data_b);
+      tmp_restrs.push_back(vol_geom_data_b_restr);
     }
 
-    // Field input restrictions (volume element dofs) and bases (volume element basis
-    // tabulated at the mapped face quadrature points). The side b volume geometry data
-    // is passed as an additional EvalMode::None field input ahead of the fields.
+    // Assemble the inputs in the order expected by the QFunctions: side b volume
+    // geometry data (EvalMode::None), coordinates (SURFACE_FLUX only), then the field
+    // inputs (side a fields, then side b fields).
     std::vector<ceed::CeedFunctionalFieldInput> inputs;
-    int num_fields = 0;
-    CeedElemRestriction field_restr = nullptr, field_b_restr = nullptr;
-    CeedBasis field_basis = nullptr, field_b_basis = nullptr;
-    CeedVector field_vec = nullptr, field_b_vec = nullptr;
+    std::vector<std::pair<std::string, int>> field_sources;
     if (has_b)
     {
       inputs.push_back({"vol_geom_data_b", vol_geom_data_b, vol_geom_data_b_restr, nullptr,
                         ceed::EvalMode::None});
     }
-    auto AddFieldInput = [&](const std::string &name, const std::vector<int> &indices,
-                             mfem::Geometry::Type geom, const mfem::IntegrationRule &ir,
-                             CeedElemRestriction *restr, CeedBasis *basis, CeedVector *vec)
+    if (kind == Kind::SURFACE_FLUX)
     {
-      ceed::InitRestriction(fespace->Get(), indices, false, /*is_interp*/ true, false, ceed,
-                            restr);
-      const mfem::FiniteElement *fe = fespace->GetFEColl().FiniteElementForGeometry(geom);
+      // Coordinates at the face quadrature points, interpolated from the mesh nodes
+      // with the boundary element basis (constant input, never re-pointed).
+      CeedElemRestriction x_restr = FiniteElementSpace::BuildCeedElemRestriction(
+          mesh_fespace, ceed, group.bdr_geom, group.bdr_indices, /*is_interp*/ true);
+      const mfem::FiniteElement *fe =
+          mesh_fespace.FEColl()->FiniteElementForGeometry(group.bdr_geom);
+      if (!fe)
+      {
+        fe = mesh_fespace.FEColl()->TraceFiniteElementForGeometry(group.bdr_geom);
+      }
+      CeedBasis x_basis;
+      ceed::InitBasisAtPoints(*fe, face_ir, mesh_fespace.GetVDim(), ceed, &x_basis);
+      CeedVector x_vec;
+      ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &x_vec);
+      inputs.push_back({"x", x_vec, x_restr, x_basis, ceed::EvalMode::Interp});
+      tmp_vecs.push_back(x_vec);
+      tmp_restrs.push_back(x_restr);
+      tmp_bases.push_back(x_basis);
+    }
+    auto AddFieldInput = [&](const std::string &name, int source,
+                             const FiniteElementSpace &fespace,
+                             const std::vector<int> &indices, mfem::Geometry::Type geom,
+                             const mfem::IntegrationRule &ir)
+    {
+      CeedElemRestriction restr;
+      CeedBasis basis;
+      CeedVector vec;
+      ceed::InitRestriction(fespace.Get(), indices, false, /*is_interp*/ true, false, ceed,
+                            &restr);
+      const mfem::FiniteElement *fe = fespace.GetFEColl().FiniteElementForGeometry(geom);
       MFEM_VERIFY(fe, "Unable to get field finite element for surface functional!");
-      ceed::InitBasisAtPoints(*fe, ir, fespace->GetVDim(), ceed, basis);
-      ceed::InitCeedVector(field_staging, ceed, vec);
-      inputs.push_back({name, *vec, *restr, *basis, ceed::EvalMode::Interp});
-      num_fields++;
+      ceed::InitBasisAtPoints(*fe, ir, fespace.GetVDim(), ceed, &basis);
+      ceed::InitCeedVector(field_staging, ceed, &vec);
+      inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
+      field_sources.emplace_back(name, source);
+      tmp_vecs.push_back(vec);
+      tmp_restrs.push_back(restr);
+      tmp_bases.push_back(basis);
     };
-    if (need_field)
+    if (kind == Kind::HCURL_NORM2 || kind == Kind::INTERFACE_EPR)
     {
-      AddFieldInput("u_1", group.vol_indices_a, group.vol_geom_a, *group.mapped_ir_a,
-                    &field_restr, &field_basis, &field_vec);
+      AddFieldInput("u_1", 0, *fespace_e, group.vol_indices_a, group.vol_geom_a,
+                    *group.mapped_ir_a);
       if (has_b)
       {
-        AddFieldInput("u_2", group.vol_indices_b, group.vol_geom_b, *group.mapped_ir_b,
-                      &field_b_restr, &field_b_basis, &field_b_vec);
+        AddFieldInput("u_2", 0, *fespace_e, group.vol_indices_b, group.vol_geom_b,
+                      *group.mapped_ir_b);
+      }
+    }
+    else if (kind == Kind::SURFACE_FLUX)
+    {
+      int count = 0;
+      auto AddSide = [&](const std::vector<int> &indices, mfem::Geometry::Type geom,
+                         const mfem::IntegrationRule &ir)
+      {
+        if (flux_type == SurfaceFlux::ELECTRIC || flux_type == SurfaceFlux::POWER)
+        {
+          AddFieldInput("u_" + std::to_string(++count), 0, *fespace_e, indices, geom, ir);
+        }
+        if (flux_type == SurfaceFlux::MAGNETIC || flux_type == SurfaceFlux::POWER)
+        {
+          AddFieldInput("u_" + std::to_string(++count), 1, *fespace_b, indices, geom, ir);
+        }
+      };
+      AddSide(group.vol_indices_a, group.vol_geom_a, *group.mapped_ir_a);
+      if (has_b)
+      {
+        AddSide(group.vol_indices_b, group.vol_geom_b, *group.mapped_ir_b);
       }
     }
 
@@ -532,8 +643,10 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
                                                    1, num_marked, num_marked, CEED_MEM_HOST,
                                                    CEED_COPY_VALUES, group.out_slots.data(),
                                                    &out_restr));
+    tmp_restrs.push_back(out_restr);
 
-    // Select the QFunction.
+    // Select the QFunction and finalize the (group dependent) context.
+    std::vector<CeedIntScalar> ctx = base_ctx;
     ceed::CeedQFunctionInfo info;
     switch (kind)
     {
@@ -570,6 +683,27 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
             break;
         }
         break;
+      case Kind::SURFACE_FLUX:
+        ctx[0].second = group.flip_normal ? -1.0 : 1.0;
+        switch (flux_type)
+        {
+          case SurfaceFlux::ELECTRIC:
+            info.apply_qf = has_b ? f_integ_surf_flux_e_2_32 : f_integ_surf_flux_e_1_32;
+            info.apply_qf_path = PalaceQFunctionRelativePath(
+                has_b ? f_integ_surf_flux_e_2_32_loc : f_integ_surf_flux_e_1_32_loc);
+            break;
+          case SurfaceFlux::MAGNETIC:
+            info.apply_qf = has_b ? f_integ_surf_flux_m_2_32 : f_integ_surf_flux_m_1_32;
+            info.apply_qf_path = PalaceQFunctionRelativePath(
+                has_b ? f_integ_surf_flux_m_2_32_loc : f_integ_surf_flux_m_1_32_loc);
+            break;
+          case SurfaceFlux::POWER:
+            info.apply_qf = has_b ? f_integ_surf_flux_p_2_32 : f_integ_surf_flux_p_1_32;
+            info.apply_qf_path = PalaceQFunctionRelativePath(
+                has_b ? f_integ_surf_flux_p_2_32_loc : f_integ_surf_flux_p_1_32_loc);
+            break;
+        }
+        break;
     }
 
     // Assemble the operator.
@@ -577,38 +711,25 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
     ceed::AssembleCeedSurfaceFunctional(
         info, ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, inputs, face_geom_data,
         face_geom_data_restr, vol_geom_data, vol_geom_data_restr, 1, out_restr, &op);
-    groups.push_back({ceed, op, num_fields});
+    groups.push_back({ceed, op, std::move(field_sources)});
 
     // Cleanup (objects are now owned through the operator's references).
-    PalaceCeedCall(ceed, CeedVectorDestroy(&face_geom_data));
-    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&face_geom_data_restr));
-    if (vol_geom_data)
+    for (auto &v : tmp_vecs)
     {
-      PalaceCeedCall(ceed, CeedVectorDestroy(&vol_geom_data));
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&vol_geom_data_restr));
+      PalaceCeedCall(ceed, CeedVectorDestroy(&v));
     }
-    if (vol_geom_data_b)
+    for (auto &r : tmp_restrs)
     {
-      PalaceCeedCall(ceed, CeedVectorDestroy(&vol_geom_data_b));
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&vol_geom_data_b_restr));
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&r));
     }
-    if (field_restr)
+    for (auto &b : tmp_bases)
     {
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&field_restr));
-      PalaceCeedCall(ceed, CeedBasisDestroy(&field_basis));
-      PalaceCeedCall(ceed, CeedVectorDestroy(&field_vec));
+      PalaceCeedCall(ceed, CeedBasisDestroy(&b));
     }
-    if (field_b_restr)
-    {
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&field_b_restr));
-      PalaceCeedCall(ceed, CeedBasisDestroy(&field_b_basis));
-      PalaceCeedCall(ceed, CeedVectorDestroy(&field_b_vec));
-    }
-    PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&out_restr));
   }
 }
 
-void SurfaceFunctional::ApplyAdd(const Vector *u) const
+void SurfaceFunctional::ApplyAdd(const std::array<const Vector *, 2> &srcs) const
 {
   for (const auto &group : groups)
   {
@@ -616,17 +737,14 @@ void SurfaceFunctional::ApplyAdd(const Vector *u) const
 
     // Re-point the passive field inputs at the caller's data (the data or its location
     // may have changed since the last call).
-    if (u)
+    for (const auto &[name, source] : group.field_sources)
     {
-      static const char *field_names[] = {"u_1", "u_2"};
-      for (int k = 0; k < group.num_fields; k++)
-      {
-        CeedOperatorField field;
-        CeedVector field_vec;
-        PalaceCeedCall(ceed, CeedOperatorGetFieldByName(group.op, field_names[k], &field));
-        PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &field_vec));
-        ceed::InitCeedVector(*u, ceed, &field_vec, false);
-      }
+      MFEM_ASSERT(srcs[source], "Missing source vector for SurfaceFunctional field input!");
+      CeedOperatorField field;
+      CeedVector field_vec;
+      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(group.op, name.c_str(), &field));
+      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &field_vec));
+      ceed::InitCeedVector(*srcs[source], ceed, &field_vec, false);
     }
 
     // Accumulate the per-element integrals into the local output vector.
@@ -638,40 +756,75 @@ void SurfaceFunctional::ApplyAdd(const Vector *u) const
   }
 }
 
+double SurfaceFunctional::EvalLocal(const std::array<const Vector *, 2> &srcs) const
+{
+  if (local_out.Size() == 0)
+  {
+    return 0.0;
+  }
+  local_out = 0.0;
+  ApplyAdd(srcs);
+  return linalg::LocalSum(local_out);
+}
+
 double SurfaceFunctional::Eval(const Vector *u) const
 {
   MFEM_VERIFY(kind == Kind::AREA || u,
               "SurfaceFunctional::Eval requires a field vector for functionals with "
               "field inputs!");
-  MFEM_VERIFY(!u || !fespace || u->Size() == fespace->GetVSize(),
-              "Invalid field vector size for SurfaceFunctional::Eval ("
-                  << (u ? u->Size() : 0) << " vs. " << fespace->GetVSize() << ")!");
-
-  double dot = 0.0;
-  if (local_out.Size() > 0)
-  {
-    local_out = 0.0;
-    ApplyAdd(u);
-    dot = linalg::LocalSum(local_out);
-  }
+  double dot = EvalLocal({u, nullptr});
   Mpi::GlobalSum(1, &dot, comm);
   return dot;
 }
 
 double SurfaceFunctional::Eval(const GridFunction &u) const
 {
-  MFEM_VERIFY(kind != Kind::AREA, "SurfaceFunctional::Eval with a grid function is only "
-                                  "valid for functionals with field inputs!");
+  MFEM_VERIFY(kind == Kind::HCURL_NORM2 || kind == Kind::INTERFACE_EPR,
+              "SurfaceFunctional::Eval with a grid function is only valid for functionals "
+              "quadratic in a single field!");
   double dot = 0.0;
   if (local_out.Size() > 0)
   {
     local_out = 0.0;
-    ApplyAdd(&u.Real());
+    ApplyAdd({&u.Real(), nullptr});
     if (u.HasImag())
     {
-      ApplyAdd(&u.Imag());
+      ApplyAdd({&u.Imag(), nullptr});
     }
     dot = linalg::LocalSum(local_out);
+  }
+  Mpi::GlobalSum(1, &dot, comm);
+  return dot;
+}
+
+std::complex<double> SurfaceFunctional::EvalFlux(const GridFunction *E,
+                                                 const GridFunction *B) const
+{
+  MFEM_VERIFY(kind == Kind::SURFACE_FLUX,
+              "SurfaceFunctional::EvalFlux is only valid for surface flux functionals!");
+  MFEM_VERIFY(
+      (E || (flux_type != SurfaceFlux::ELECTRIC && flux_type != SurfaceFlux::POWER)) &&
+          (B || (flux_type != SurfaceFlux::MAGNETIC && flux_type != SurfaceFlux::POWER)),
+      "Missing E or B field grid function for surface flux evaluation!");
+
+  // For complex-valued fields, output the separate real and imaginary parts for the
+  // time-harmonic quantity. For power flux (Poynting vector), output only the
+  // stationary real part and not the part which has double the frequency (the real and
+  // imaginary part contributions add).
+  const bool has_imag = E ? E->HasImag() : B->HasImag();
+  std::complex<double> dot(EvalLocal({E ? &E->Real() : nullptr, B ? &B->Real() : nullptr}),
+                           0.0);
+  if (has_imag)
+  {
+    const double doti = EvalLocal({E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr});
+    if (flux_type == SurfaceFlux::POWER)
+    {
+      dot += doti;
+    }
+    else
+    {
+      dot.imag(doti);
+    }
   }
   Mpi::GlobalSum(1, &dot, comm);
   return dot;
