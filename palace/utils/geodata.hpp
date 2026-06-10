@@ -49,6 +49,14 @@ double ComputeReferenceLength(const std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm 
 // meshes and it should not be deleted. The fine mesh hierarchy is owned by the user.
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
 
+// Print parallel mesh statistics (element/vertex/edge/face counts, element size h, and
+// shape regularity kappa). When `full` is true, also prints the (refinement-invariant)
+// mesh curvature order and bounding box; pass false to print only the statistics that
+// change under refinement (used after each adaptive mesh refinement iteration). `prefix`
+// is prepended to the stats block (e.g. "Coarse "/"Refined ").
+void PrintMeshInfo(mfem::ParMesh &mesh, const IoData &iodata, bool full = true,
+                   const std::string &prefix = "");
+
 // Dimensionalize a mesh for use in exporting a mesh. Scales vertices and nodes by L.
 void DimensionalizeMesh(mfem::Mesh &mesh, double L);
 

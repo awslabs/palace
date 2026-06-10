@@ -269,6 +269,10 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       mesh.back()->Update();
     }
 
+    // Print statistics (element counts, size h, and shape regularity kappa) for the
+    // newly-refined mesh so the evolution of mesh quality under AMR is visible.
+    mesh::PrintMeshInfo(*mesh.back(), iodata, /*full=*/false);
+
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
     std::tie(indicators, ntdof) = Solve(mesh);
