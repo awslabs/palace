@@ -219,14 +219,15 @@ TEST_CASE("WavePort TE10 mode polarity sign", "[waveportimpedance][Serial]")
   CHECK(port.GetModePolaritySign(/*high_attr=*/4, /*low_attr=*/2) == -1);
 }
 
-// Validate the COMPLEX-frequency wave-port cross-section solve (WavePortData::SolveKnComplex)
-// against the closed-form TE10 propagation constant, evaluated at a genuinely complex
-// frequency ω. For a lossless homogeneous guide kₙ(ω) = √(εμ ω² − k_c²), k_c = π/a, is an
-// EXACT analytic function of ω. The whole complex-wave-port path (used by the eigenmode
-// nonlinear solve at ω = -i·λ) rests on SolveKnComplex reproducing this analytic continuation
-// off the real axis — i.e. kₙ(ω) for complex ω must equal √(εμ ω² − k_c²) to discretization
-// error, NOT the real-ω value kₙ(Re ω). This pins that down directly, independent of any
-// cavity / eigenmode / Q considerations.
+// Validate the COMPLEX-frequency wave-port cross-section solve
+// (WavePortData::SolveKnComplex) against the closed-form TE10 propagation constant,
+// evaluated at a genuinely complex frequency ω. For a lossless homogeneous guide kₙ(ω) =
+// √(εμ ω² − k_c²), k_c = π/a, is an EXACT analytic function of ω. The whole
+// complex-wave-port path (used by the eigenmode nonlinear solve at ω = -i·λ) rests on
+// SolveKnComplex reproducing this analytic continuation off the real axis — i.e. kₙ(ω) for
+// complex ω must equal √(εμ ω² − k_c²) to discretization error, NOT the real-ω value kₙ(Re
+// ω). This pins that down directly, independent of any cavity / eigenmode / Q
+// considerations.
 TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
 {
   MPI_Comm comm = Mpi::World();
