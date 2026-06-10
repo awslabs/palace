@@ -41,12 +41,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
 
-  // Check if there are nonlinear terms and, if so, setup interpolation operator. funcA2 is
-  // the real-ω A2 used by the linear seed (the HYBRID polynomial pencil samples it on the
-  // imaginary-λ axis = real ω, and the has_A2 probe below evaluates it once at the target).
-  auto funcA2 = [&space_op](double omega) -> std::unique_ptr<ComplexOperator>
-  { return space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO); };
-  // Complex-frequency A2(λ) for the nonlinear eigensolvers: the wave-port / farfield /
+  // Check if there are nonlinear terms and, if so, setup interpolation operator.
+  //
+  // Complex-frequency A2(λ) for the eigenmode nonlinear solve: the wave-port / farfield /
   // surf-σ BCs are evaluated at the genuinely complex eigenvalue (ω = -i·λ) so the
   // operator is the exact analytic continuation, not a real-axis projection. This is the
   // A2 the Newton / NEP iteration uses for its production system matrix, residual, and
@@ -57,6 +54,17 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const std::complex<double> omega = lambda / std::complex<double>(0.0, 1.0);  // ω = -iλ
     return space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
   };
+  // Real-ω-signature shim used by the linear seed stage: the has_A2 probe, the HYBRID
+  // polynomial pencil (NewtonInterpolationOperator samples it on the imaginary-λ axis,
+  // i.e. real ω), and the seed PEP linear-system matrix. It must evaluate the SAME exact
+  // complex operator as funcA2_complex — evaluating at λ = i·ω — so that the seed system
+  // matrix and its preconditioner (built via funcP at a3 = ω) are assembled from identical
+  // wave-port stamping. Routing the seed through the real GetExtraSystemMatrix<double>
+  // path instead would drop the line-attenuation term (-Im(kₙ)·M), making the seed
+  // operator inconsistent with the preconditioner (extra GMRES iterations) and with the
+  // Newton stage (slightly shifted seed eigenvalues).
+  auto funcA2 = [&funcA2_complex](double omega) -> std::unique_ptr<ComplexOperator>
+  { return funcA2_complex(std::complex<double>{0.0, omega}); };
   auto funcP = [&space_op](std::complex<double> a0, std::complex<double> a1,
                            std::complex<double> a2,
                            std::complex<double> a3) -> std::unique_ptr<ComplexOperator>
