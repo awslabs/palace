@@ -50,7 +50,7 @@
     {
       "N": 3,
       "Tol": 1.0e-6,
-      "Target": 6.6,
+      "Target": 8.0,
       "Save": 3
     },
     "Linear":
