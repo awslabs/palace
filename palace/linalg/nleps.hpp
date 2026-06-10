@@ -256,8 +256,10 @@ public:
 class NewtonInterpolationOperator : public Interpolation
 {
 private:
-  // Function to compute the A2 operator.
-  std::function<std::unique_ptr<ComplexOperator>(double)> funcA2;
+  // Function to compute the A2 operator at a (complex) sample point. Interpolate() works
+  // entirely in the complex λ plane, so the sample points are passed through as-is rather
+  // than restricted to the real axis.
+  std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> funcA2;
 
   // Number of points used in the interpolation (currently always second order).
   int num_points = 3;
@@ -276,7 +278,8 @@ private:
 
 public:
   NewtonInterpolationOperator(
-      std::function<std::unique_ptr<ComplexOperator>(double)> funcA2, const int size);
+      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> funcA2,
+      const int size);
 
   // Interpolate the A2 matrix between sigma_min and sigma_max with a Newton polynomial.
   void Interpolate(const std::complex<double> sigma_min,
