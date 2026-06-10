@@ -197,8 +197,10 @@ private:
   bool valid = true;
 
   // Per-geometry assembled libCEED operators, evaluating at the target space nodal
-  // points and scattering directly into the output grid function.
+  // points and scattering directly into the output grid function. The element attribute
+  // vectors are operator inputs and must outlive the operators.
   std::vector<fem::CeedGroupOperator> groups;
+  std::vector<Vector> elem_attrs;
 
   // Staging vector used to initialize the field input CeedVectors at construction.
   mutable Vector field_staging;

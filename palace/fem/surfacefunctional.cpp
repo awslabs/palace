@@ -972,26 +972,59 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
         target_fespace.FEColl()->FiniteElementForGeometry(geom);
     MFEM_VERIFY(target_fe, "Unable to get target finite element for field evaluator!");
     const mfem::IntegrationRule &nodes_ir = target_fe->GetNodes();
+    const int num_pts = nodes_ir.GetNPoints();
 
-    // Geometry data at the nodal points (Piola transformations and material lookup).
-    CeedVector geom_data;
-    CeedElemRestriction geom_data_restr;
+    // Element attributes (libCEED local, for material lookup) and mesh node gradients
+    // (for on the fly geometry evaluation at the points).
+    std::vector<ceed::CeedFunctionalFieldInput> inputs;
+    std::vector<std::pair<std::string, int>> field_sources;
     {
-      Vector elem_attr(indices.size());
+      auto &elem_attr = elem_attrs.emplace_back(indices.size());
       const auto &loc_attr = mesh.GetCeedAttributes();
       for (std::size_t k = 0; k < indices.size(); k++)
       {
         elem_attr[k] = loc_attr.at(pmesh.GetAttribute(indices[k]));
       }
-      BuildGeometryData(ceed, mesh_fespace, geom, indices, nodes_ir, elem_attr, &geom_data,
-                        &geom_data_restr);
-      scratch.vecs.push_back(geom_data);
-      scratch.restrs.push_back(geom_data_restr);
+      CeedElemRestriction attr_restr;
+      CeedBasis attr_basis;
+      CeedVector attr_vec;
+      PalaceCeedCall(
+          ceed, CeedElemRestrictionCreateStrided(ceed, indices.size(), 1, 1, indices.size(),
+                                                 CEED_STRIDES_BACKEND, &attr_restr));
+      {
+        // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
+        mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
+        Bt = 1.0;
+        Gt = 0.0;
+        qX = 0.0;
+        qW = 0.0;
+        PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
+                                               Bt.GetData(), Gt.GetData(), qX.GetData(),
+                                               qW.GetData(), &attr_basis));
+      }
+      ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
+      inputs.push_back({"attr", attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
+      scratch.vecs.push_back(attr_vec);
+      scratch.restrs.push_back(attr_restr);
+      scratch.bases.push_back(attr_basis);
+    }
+    {
+      CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
+          mesh_fespace, ceed, geom, indices, /*is_interp*/ true);
+      const mfem::FiniteElement *mesh_fe =
+          mesh_fespace.FEColl()->FiniteElementForGeometry(geom);
+      CeedBasis mesh_basis;
+      ceed::InitBasisAtPoints(*mesh_fe, nodes_ir, mesh_fespace.GetVDim(), ceed,
+                              &mesh_basis);
+      CeedVector mesh_nodes_vec;
+      ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
+      inputs.push_back({"x", mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
+      scratch.vecs.push_back(mesh_nodes_vec);
+      scratch.restrs.push_back(mesh_restr);
+      scratch.bases.push_back(mesh_basis);
     }
 
     // Field inputs evaluated at the nodal points.
-    std::vector<ceed::CeedFunctionalFieldInput> inputs;
-    std::vector<std::pair<std::string, int>> field_sources;
     auto AddFieldInput =
         [&](const std::string &name, int source, const mfem::ParFiniteElementSpace &fespace)
     {
@@ -1043,8 +1076,8 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
 
     CeedOperator op;
     ceed::AssembleCeedPointEvaluator(info, ctx.data(), ctx.size() * sizeof(CeedIntScalar),
-                                     ceed, inputs, geom_data, geom_data_restr,
-                                     target_fespace.GetVDim(), out_restr, &op);
+                                     ceed, inputs, target_fespace.GetVDim(), out_restr,
+                                     &op);
     groups.push_back({ceed, op, std::move(field_sources)});
   }
 }

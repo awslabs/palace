@@ -51,16 +51,14 @@ void AssembleCeedSurfaceFunctional(
 // fields at arbitrary points of each element (for example the nodal points of an
 // interpolatory output space), writing num_out_comp values per point through out_restr
 // (CEED_EVAL_NONE, so the number of "quadrature" points of the operator must match the
-// element size of the output restriction). In contrast to the surface functional
-// assembly, no quadrature weighting or sum over points is performed. The QFunction
-// inputs are, in order: the geometry data (for Piola transformations and attribute
-// based material lookup at the evaluation points), then the field inputs. Apply with
+// element size of the output restriction). No quadrature weighting or sum over points
+// is performed, and the element geometry is computed on the fly from a mesh nodes
+// gradient input rather than stored geometry factor data. Apply with
 // CeedOperatorApplyAdd(op, CEED_VECTOR_NONE, output, ...) (contributions accumulate,
 // e.g. for the real and imaginary part applications of quadratic quantities).
 void AssembleCeedPointEvaluator(const CeedQFunctionInfo &info, void *ctx,
                                 std::size_t ctx_size, Ceed ceed,
                                 const std::vector<CeedFunctionalFieldInput> &inputs,
-                                CeedVector geom_data, CeedElemRestriction geom_data_restr,
                                 CeedInt num_out_comp, CeedElemRestriction out_restr,
                                 CeedOperator *op);
 
