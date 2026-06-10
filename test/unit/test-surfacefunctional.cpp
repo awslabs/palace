@@ -154,7 +154,7 @@ std::unique_ptr<Mesh> MakeInterfaceMesh(MPI_Comm comm, mfem::Element::Type elem_
 
 }  // namespace
 
-TEST_CASE("SurfaceFunctional Area", "[surfacefunctional][Serial][Parallel]")
+TEST_CASE("SurfaceFunctional Area", "[surfacefunctional][Serial][Parallel][GPU]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
   fem::DefaultIntegrationOrder::p_trial = 1;
@@ -199,7 +199,7 @@ TEST_CASE("SurfaceFunctional Area", "[surfacefunctional][Serial][Parallel]")
   }
 }
 
-TEST_CASE("SurfaceFunctional HCurl Norm", "[surfacefunctional][Serial][Parallel]")
+TEST_CASE("SurfaceFunctional HCurl Norm", "[surfacefunctional][Serial][Parallel][GPU]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
   auto file = GENERATE(std::string("fichera-tet.mesh"), std::string("fichera-hex.mesh"),
@@ -257,7 +257,7 @@ TEST_CASE("SurfaceFunctional HCurl Norm", "[surfacefunctional][Serial][Parallel]
   }
 }
 
-TEST_CASE("SurfaceFunctional Interface Dielectric", "[surfacefunctional][Serial]")
+TEST_CASE("SurfaceFunctional Interface Dielectric", "[surfacefunctional][Serial][GPU]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
   auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
@@ -382,7 +382,7 @@ TEST_CASE("SurfaceFunctional Interface Dielectric", "[surfacefunctional][Serial]
   }
 }
 
-TEST_CASE("SurfaceFunctional Surface Flux", "[surfacefunctional][Serial]")
+TEST_CASE("SurfaceFunctional Surface Flux", "[surfacefunctional][Serial][GPU]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
   auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
