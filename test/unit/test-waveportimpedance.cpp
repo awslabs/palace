@@ -261,6 +261,8 @@ TEST_CASE("WavePortData SolveKnExact matches analytical TE10 dispersion at compl
   wave.eig_tol = 1.0e-10;
   wave.ksp_tol = 1.0e-10;
   wave.ksp_max_its = 200;
+  // Mirror the formula used by IoData::CheckConfiguration for eigenmode.max_size.
+  wave.max_size = std::max(2 * wave.mode_idx, wave.mode_idx + 15);
 
   iodata.solver.order = 2;
   iodata.solver.linear.tol = 1.0e-10;
@@ -315,8 +317,8 @@ TEST_CASE("WavePortData SolveKnExact matches analytical TE10 dispersion at compl
     const std::complex<double> kn_ref =
         kn_closed_form(2.0 * M_PI * f_GHz * 1.0e9);  // ≈ 158.24 rad/m, ~0 imag
     CAPTURE(kn_phys, kn_ref);
-    CHECK_THAT(kn_phys.real(), WithinRel(kn_ref.real(), 1.0e-2));
-    CHECK_THAT(kn_phys.imag(), WithinAbs(0.0, 1.0e-2 * kn_ref.real()));
+    CHECK_THAT(kn_phys.real(), WithinRel(kn_ref.real(), 1.0e-4));
+    CHECK_THAT(kn_phys.imag(), WithinAbs(0.0, 1.0e-4 * kn_ref.real()));
   }
 
   SECTION("complex ω matches the analytic continuation √(εμω²−k_c²)")
@@ -333,8 +335,8 @@ TEST_CASE("WavePortData SolveKnExact matches analytical TE10 dispersion at compl
     const std::complex<double> kn_ref = kn_closed_form(omega_rad_s);
     CAPTURE(kn_phys, kn_ref);
     // Both real and imaginary parts must match the closed-form analytic continuation.
-    CHECK_THAT(kn_phys.real(), WithinRel(kn_ref.real(), 1.0e-2));
-    CHECK_THAT(kn_phys.imag(), WithinRel(kn_ref.imag(), 2.0e-2));
+    CHECK_THAT(kn_phys.real(), WithinRel(kn_ref.real(), 1.0e-4));
+    CHECK_THAT(kn_phys.imag(), WithinRel(kn_ref.imag(), 1.0e-4));
     // And the imaginary part must be genuinely nonzero (this is the whole point — the
     // complex-ω solve sees the off-axis dispersion that real-ω evaluation cannot).
     CHECK(std::abs(kn_ref.imag()) > 1.0);
@@ -353,8 +355,8 @@ TEST_CASE("WavePortData SolveKnExact matches analytical TE10 dispersion at compl
         kn_closed_form(2.0 * M_PI * f_r_GHz * 1.0e9 * scale_c);
     CAPTURE(kn_phys, kn_ref);
     CHECK(kn_phys.real() >= 0.0);  // forward / decaying sheet
-    CHECK_THAT(kn_phys.real(), WithinRel(kn_ref.real(), 3.0e-2));
-    CHECK_THAT(kn_phys.imag(), WithinRel(kn_ref.imag(), 3.0e-2));
+    CHECK_THAT(kn_phys.real(), WithinRel(kn_ref.real(), 1.0e-4));
+    CHECK_THAT(kn_phys.imag(), WithinRel(kn_ref.imag(), 1.0e-4));
   }
 }
 
