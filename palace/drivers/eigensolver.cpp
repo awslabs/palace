@@ -42,18 +42,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
 
   // Check if there are nonlinear terms and, if so, setup interpolation operator.
-  //
-  // Complex-frequency A2(λ) for the eigenmode nonlinear solve: the wave-port / farfield /
-  // surf-σ BCs are evaluated at the genuinely complex eigenvalue (ω = -i·λ) so the
-  // operator is the exact analytic continuation, not a real-axis projection. This single
-  // A2 callback feeds the whole eigenmode path — the has_A2 probe, the HYBRID polynomial
-  // seed pencil (NewtonInterpolationOperator, which samples it directly at its complex
-  // interpolation nodes), the seed PEP linear-system matrix, and the Newton / NEP
-  // production system matrix, residual, and Jacobian — so the seed, its matching
-  // preconditioner (funcP at a3 = ω), and the refinement all use identical wave-port
-  // stamping (driven / boundary-mode keep the real-ω path; there is no config knob).
-  auto funcA2 =
-      [&space_op](std::complex<double> lambda) -> std::unique_ptr<ComplexOperator>
+  auto funcA2 = [&space_op](std::complex<double> lambda) -> std::unique_ptr<ComplexOperator>
   {
     const std::complex<double> omega = lambda / std::complex<double>(0.0, 1.0);  // ω = -iλ
     return space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);

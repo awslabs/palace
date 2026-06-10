@@ -488,13 +488,11 @@ public:
   // Operators for the nonlinear eigenvalue problem.
   std::unique_ptr<ComplexOperator> opA2, opA2p, opJ, opA, opAJ, opA2_pc, opA_pc, opP_pc;
 
-  // Function to compute the A2 operator at the complex eigenvalue λ (BCs at ω = -i·λ).
+  // Function to compute the A2 operator.
   std::optional<std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>>
       funcA2;
 
-  // Function to compute the preconditioner matrix. The 4th argument is the (complex) BC
-  // frequency; the SLP path evaluates it on the real axis but passes it as a complex
-  // value to match the shared EigenvalueSolver interface.
+  // Function to compute the preconditioner matrix.
   std::optional<std::function<std::unique_ptr<ComplexOperator>(
       std::complex<double>, std::complex<double>, std::complex<double>,
       std::complex<double>)>>
@@ -529,8 +527,7 @@ public:
                     const ComplexOperator &M, ScaleType type) override;
   void SetBMat(const Operator &B) override;
 
-  // Set the frequency-dependent A2 matrix function A2(λ) (evaluated at the complex
-  // eigenvalue λ; BCs at ω = -i·λ).
+  // Set the frequency-dependent A2 matrix function.
   void SetExtraSystemMatrix(
       std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>) override;
 
