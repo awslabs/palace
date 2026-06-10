@@ -2141,7 +2141,6 @@ PetscErrorCode __pc_apply_NEP(PC pc, Vec x, Vec y)
     ctx->opA_pc = palace::BuildParSumOperator(
         {1.0 + 0.0i, ctx->lambda, ctx->lambda * ctx->lambda, 1.0 + 0.0i},
         {ctx->opK, ctx->opC, ctx->opM, ctx->opA2_pc.get()}, true);
-    // BC frequency ω = -i·λ = λ/i so the preconditioner matches the exact complex A2.
     ctx->opP_pc = (*ctx->funcP)(std::complex<double>(1.0, 0.0), ctx->lambda,
                                 ctx->lambda * ctx->lambda,
                                 ctx->lambda / std::complex<double>(0.0, 1.0));
@@ -2169,8 +2168,7 @@ PetscErrorCode __form_NEP_function(NEP nep, PetscScalar lambda, Mat fun, Mat B, 
   PetscFunctionBeginUser;
   palace::slepc::SlepcNEPSolver *ctxF;
   PetscCall(MatShellGetContext(fun, (void **)&ctxF));
-  // A(λ) = K + λ C + λ² M + A2(λ), with A2 evaluated at the genuinely complex eigenvalue
-  // (wave-port / ABC / surf-σ BCs at ω = -i·λ).
+  // A(λ) = K + λ C + λ² M + A2(λ).
   ctxF->opA2 = (*ctxF->funcA2)(lambda);
   ctxF->opA = palace::BuildParSumOperator(
       {1.0 + 0.0i, lambda, lambda * lambda, 1.0 + 0.0i},
@@ -2186,8 +2184,7 @@ PetscErrorCode __form_NEP_jacobian(NEP nep, PetscScalar lambda, Mat fun, void *c
   palace::slepc::SlepcNEPSolver *ctxF;
   PetscCall(MatShellGetContext(fun, (void **)&ctxF));
   // A(λ) = K + λ C + λ² M + A2(λ).
-  // J(λ) = C + 2 λ M + A2'(λ), with A2(λ) holomorphic so dA2/dλ is a forward finite
-  // difference perturbing λ directly: opA2p = A2(λ(1+ε)), denom = ελ.
+  // J(λ) = C + 2 λ M + A2'(λ).
   ctxF->opA2 = (*ctxF->funcA2)(lambda);
   const auto eps = std::sqrt(std::numeric_limits<double>::epsilon());
   ctxF->opA2p = (*ctxF->funcA2)(lambda * (1.0 + eps));

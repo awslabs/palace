@@ -154,7 +154,7 @@ private:
   // Operators used in the iterative linear solver.
   std::unique_ptr<ComplexOperator> opA2, opA, opP;
 
-  // Function to compute the A2 operator at the (complex) eigenvalue λ.
+  // Function to compute the A2 operator.
   std::optional<std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>>
       funcA2;
 
@@ -248,7 +248,7 @@ public:
 class NewtonInterpolationOperator : public Interpolation
 {
 private:
-  // Function to compute the A2 operator at a (complex) sample point.
+  // Function to compute the A2 operator.
   std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> funcA2;
 
   // Number of points used in the interpolation (currently always second order).
