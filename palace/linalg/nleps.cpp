@@ -845,7 +845,7 @@ double QuasiNewtonSolver::GetBackwardScaling(std::complex<double> l) const
 }
 
 NewtonInterpolationOperator::NewtonInterpolationOperator(
-    std::function<std::unique_ptr<ComplexOperator>(double)> funcA2, int size)
+    std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> funcA2, int size)
   : funcA2(funcA2)
 {
   rhs.SetSize(size);
@@ -891,7 +891,7 @@ void NewtonInterpolationOperator::Interpolate(const std::complex<double> sigma_m
     {
       if (k == 0)
       {
-        auto A2j = (funcA2)(points[j].imag());
+        auto A2j = (funcA2)(points[j]);
         ops[k].push_back(std::move(A2j));
       }
       else
