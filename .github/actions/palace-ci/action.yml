@@ -121,11 +121,26 @@ runs:
         # Fixes: for_main.c:(.text+0x19): undefined reference to `MAIN__'
         # libffi 3.5.2's configure trips icx on a gcc-only option.
         if [[ "${{ inputs.toolchain }}" == "intel-oneapi" ]]; then
+          # oneAPI components are not redistributable so they can never come
+          # from the buildcache; use the apt-installed copies (see setup-runner)
+          # at whatever version apt provides, like the compiler.
+          MKL_VERSION=$(basename "$(find /opt/intel/oneapi/mkl -mindepth 1 -maxdepth 1 -name '2*' | sort -V | tail -1)")
+          MPI_VERSION=$(basename "$(find /opt/intel/oneapi/mpi -mindepth 1 -maxdepth 1 -name '2*' | sort -V | tail -1)")
           cat << INTELEOF >> spack.yaml
             mumps:
               require: fflags=-nofor-main
             libffi:
               require: "@:3.4.8"
+            intel-oneapi-mkl:
+              buildable: false
+              externals:
+              - spec: intel-oneapi-mkl@${MKL_VERSION}
+                prefix: /opt/intel/oneapi
+            intel-oneapi-mpi:
+              buildable: false
+              externals:
+              - spec: intel-oneapi-mpi@${MPI_VERSION}
+                prefix: /opt/intel/oneapi
         INTELEOF
         fi
 
