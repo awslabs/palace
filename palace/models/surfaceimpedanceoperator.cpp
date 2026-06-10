@@ -199,8 +199,7 @@ void SurfaceImpedanceOperator::AddStiffnessBdrCoefficients(double coeff,
       for (auto attr : bdr.attr_list)
       {
         const double s = bdr.attr_scaling.at(attr);
-        fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr),
-                               coeff / (bdr.Ls * s));
+        fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coeff / (bdr.Ls * s));
       }
     }
   }
@@ -217,8 +216,7 @@ void SurfaceImpedanceOperator::AddDampingBdrCoefficients(double coeff,
       for (auto attr : bdr.attr_list)
       {
         const double s = bdr.attr_scaling.at(attr);
-        fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr),
-                               coeff / (bdr.Rs * s));
+        fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coeff / (bdr.Rs * s));
       }
     }
   }
@@ -235,8 +233,7 @@ void SurfaceImpedanceOperator::AddMassBdrCoefficients(double coeff,
       for (auto attr : bdr.attr_list)
       {
         const double s = bdr.attr_scaling.at(attr);
-        fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr),
-                               coeff * bdr.Cs / s);
+        fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coeff * bdr.Cs / s);
       }
     }
   }
