@@ -70,10 +70,9 @@ ComputeFDSensitivities(const IoData &iodata, SpaceOperator &space_op,
   result.dJ_dx.SetSize(sdim * result.num_bdr_nodes);
   result.dJ_dx = 0.0;
 
-  Mpi::Print(
-      "\nComputing mesh sensitivities via finite differences ({})\n"
-      " Boundary nodes on this process: {:d}, FD step size: {:.6e}\n",
-      label, result.num_bdr_nodes, h);
+  Mpi::Print("\nComputing mesh sensitivities via finite differences ({})\n"
+             " Boundary nodes on this process: {:d}, FD step size: {:.6e}\n",
+             label, result.num_bdr_nodes, h);
 
   // Compute baseline: v^H * A(x) * u.
   std::complex<double> val_0 =
@@ -216,8 +215,8 @@ std::complex<double> MeshSensitivity::EvalSystemForm(SpaceOperator &space_op,
 
 MeshSensitivity::SensitivityResult
 MeshSensitivity::ComputeEigen(const IoData &iodata, SpaceOperator &space_op,
-                               const ComplexVector &u, std::complex<double> omega,
-                               bool has_damping, double perturbation)
+                              const ComplexVector &u, std::complex<double> omega,
+                              bool has_damping, double perturbation)
 {
   MPI_Comm comm = space_op.GetComm();
   const int n = u.Size();
@@ -340,29 +339,34 @@ MeshSensitivity::ComputeEigen(const IoData &iodata, SpaceOperator &space_op,
     // Conversion chain:
     //   raw = d(lambda_nondim)/d(x_nondim)  [from CeedOperator]
     //   d(lambda_nondim)/d(x_mesh) = raw / Lc0   [since x_nondim = x_mesh / Lc0]
-    //   d(f_GHz)/d(x_mesh) = d(lambda_nondim)/d(x_mesh) * freq_scale / (uMu * 2*omega * 2*pi)
+    //   d(f_GHz)/d(x_mesh) = d(lambda_nondim)/d(x_mesh) * freq_scale / (uMu * 2*omega *
+    //   2*pi)
     // where freq_scale = 1/tc converts nondim freq to GHz, and Lc0 = Lc/L0 converts
     // nondimensional mesh coordinates to mesh file units.
-    const double freq_scale =
-        iodata.units.GetScaleFactor<Units::ValueType::FREQUENCY>();
+    const double freq_scale = iodata.units.GetScaleFactor<Units::ValueType::FREQUENCY>();
     const double Lc0 = iodata.units.GetMeshLengthRelativeScale();
-    std::complex<double> factor =
-        freq_scale / (Lc0 * uMu * 2.0 * omega * 2.0 * M_PI);
+    std::complex<double> factor = freq_scale / (Lc0 * uMu * 2.0 * omega * 2.0 * M_PI);
     Mpi::Print(" Eigenvalue conversion: u^H M u = ({:.6e}, {:.6e}), omega = ({:.6e}, "
                "{:.6e})\n"
                " Unit scaling: freq_scale = {:.6e} GHz, Lc0 = {:.6e}\n",
                uMu.real(), uMu.imag(), omega.real(), omega.imag(), freq_scale, Lc0);
 
-    // Build result with ALL vertex sensitivities (not just boundary). The full-mesh
-    // sensitivity is needed for the chain contraction dJ/dp = (dJ/dx) · (dx/dp), where
-    // dx/dp includes interior mesh deformation that follows the boundary motion.
+    // Build result with sensitivities for ALL mesh nodes (not just boundary, and
+    // not just vertices). The full-mesh sensitivity is needed for the chain
+    // contraction dJ/dp = (dJ/dx) · (dx/dp), where dx/dp includes interior mesh
+    // deformation that follows the boundary motion. For curved (order > 1) meshes
+    // the nodal FE space contains mid-edge/face DOFs whose sensitivities dominate
+    // near curved boundaries; truncating to GetNV() vertices silently discards
+    // them and breaks any contraction on a curved mesh (observed: cylinder TM010
+    // df/dR collapses from -1 to ~0 on a P2 mesh with vertex-only export). For
+    // order-1 meshes GetNDofs() == GetNV(), so this is behavior-preserving.
     SensitivityResult result;
-    const int nv = pmesh.GetNV();
-    result.num_bdr_nodes = nv;  // All vertices, despite the field name
-    result.bdr_node_indices.resize(nv);
-    result.dJ_dx.SetSize(sdim * nv);
+    const int nnodes = mesh_fespace.GetNDofs();
+    result.num_bdr_nodes = nnodes;  // All nodes, despite the field name
+    result.bdr_node_indices.resize(nnodes);
+    result.dJ_dx.SetSize(sdim * nnodes);
 
-    for (int vi = 0; vi < nv; vi++)
+    for (int vi = 0; vi < nnodes; vi++)
     {
       result.bdr_node_indices[vi] = vi;
       for (int d = 0; d < sdim; d++)
@@ -371,8 +375,28 @@ MeshSensitivity::ComputeEigen(const IoData &iodata, SpaceOperator &space_op,
         result.dJ_dx(vi * sdim + d) = raw_sens(vdof) * factor.real();
       }
     }
-    Mpi::Print(" Full-mesh sensitivity: {:d} vertices, L2 norm = {:.6e} GHz/cm\n",
-               nv, result.dJ_dx.Norml2());
+    // Scale-invariance diagnostic: under uniform dilation x -> s*x, Maxwell
+    // eigenfrequencies obey f(s) = f(1)/s, so sum_i (df/dx_i · x_i) = -f exactly,
+    // for ANY mode on ANY mesh. A truncated or mis-scaled nodal export breaks
+    // this identity, so print it as a built-in self-check. Coordinates are
+    // nondimensional in memory; multiplying by Lc0 restores mesh-file units to
+    // match dJ_dx (GHz per mesh-file unit).
+    {
+      double dilation = 0.0;
+      for (int vi = 0; vi < nnodes; vi++)
+      {
+        for (int d = 0; d < sdim; d++)
+        {
+          dilation +=
+              result.dJ_dx(vi * sdim + d) * mesh_nodes(mesh_fespace.DofToVDof(vi, d)) * Lc0;
+        }
+      }
+      const double f_GHz = freq_scale * omega.real() / (2.0 * M_PI);
+      Mpi::Print(" Dilation identity: sum(df/dx · x) = {:.6e} GHz (expect -f = {:.6e})\n",
+                 dilation, -f_GHz);
+    }
+    Mpi::Print(" Full-mesh sensitivity: {:d} nodes, L2 norm = {:.6e} GHz/cm\n", nnodes,
+               result.dJ_dx.Norml2());
 
     return result;
   }
@@ -403,8 +427,7 @@ MeshSensitivity::ComputeEigen(const IoData &iodata, SpaceOperator &space_op,
       M->Mult(u, Au);
       denom += 2.0 * lambda * linalg::Dot(comm, Au, u);
     }
-    std::complex<double> factor =
-        std::complex<double>(0.0, 1.0) / (denom * 2.0 * M_PI);
+    std::complex<double> factor = std::complex<double>(0.0, 1.0) / (denom * 2.0 * M_PI);
     const int sdim = space_op.GetNDSpace().GetMesh().Get().SpaceDimension();
     for (int i = 0; i < result.num_bdr_nodes * sdim; i++)
     {
@@ -417,8 +440,8 @@ MeshSensitivity::ComputeEigen(const IoData &iodata, SpaceOperator &space_op,
 
 MeshSensitivity::SensitivityResult
 MeshSensitivity::ComputeDriven(const IoData &iodata, SpaceOperator &space_op,
-                                const ComplexVector &u, const ComplexVector &v,
-                                double omega, double perturbation)
+                               const ComplexVector &u, const ComplexVector &v, double omega,
+                               double perturbation)
 {
   // For the driven problem, use A = K + i*omega*C - omega^2*M with real omega.
   const std::complex<double> omega_c(omega, 0.0);
@@ -428,8 +451,8 @@ MeshSensitivity::ComputeDriven(const IoData &iodata, SpaceOperator &space_op,
 }
 
 void MeshSensitivity::WriteSensitivitySolb(const std::string &filename,
-                                            const SensitivityResult &result,
-                                            mfem::ParMesh &mesh, MPI_Comm comm)
+                                           const SensitivityResult &result,
+                                           mfem::ParMesh &mesh, MPI_Comm comm)
 {
   // Gather the full mesh to rank 0 for serial vertex count and coordinate mapping.
   // The serial mesh has a consistent global vertex ordering.
@@ -442,8 +465,12 @@ void MeshSensitivity::WriteSensitivitySolb(const std::string &filename,
 
   const int sdim = smesh.SpaceDimension();
   const int nv = smesh.GetNV();
+  // The analytic path exports ALL mesh nodes (dense indices 0..n-1), which on a
+  // curved (order > 1) mesh exceeds the vertex count; the FD path exports
+  // boundary vertices only. Size the output to cover whichever was provided.
+  const int nout = std::max(nv, result.num_bdr_nodes);
 
-  // Build the full-mesh sensitivity vector: zero everywhere, then scatter boundary values.
+  // Build the full-mesh sensitivity vector: zero everywhere, then scatter values.
   // The SensitivityResult stores boundary-only sensitivities indexed by the local boundary
   // vertex list. We expand to all nv vertices so the .solb has the same vertex count as
   // the companion .meshb file.
@@ -456,13 +483,13 @@ void MeshSensitivity::WriteSensitivitySolb(const std::string &filename,
   // sensitivities should be gathered and mapped to serial indices in a production
   // implementation. For this initial version (designed for single-process verification),
   // we use the boundary indices directly.
-  mfem::Vector full_sens(nv * sdim);
+  mfem::Vector full_sens(nout * sdim);
   full_sens = 0.0;
 
   for (int i = 0; i < result.num_bdr_nodes; i++)
   {
     const int vi = result.bdr_node_indices[i];
-    if (vi < nv)
+    if (vi < nout)
     {
       for (int d = 0; d < sdim; d++)
       {
@@ -479,13 +506,15 @@ void MeshSensitivity::WriteSensitivitySolb(const std::string &filename,
   fo << "MeshVersionFormatted 2\n";
   fo << "Dimension " << sdim << "\n\n";
   fo << "SolAtVertices\n";
-  // Header: num_vertices num_fields field_type
-  fo << nv << " 1 2\n";
+  // Header: num_entries num_fields field_type. For curved meshes num_entries is
+  // the full nodal count (vertices first, then mid-edge nodes in MFEM H1 DOF
+  // order); the companion mesh_sensitivity_nodes.txt carries their coordinates.
+  fo << nout << " 1 2\n";
 
   fo << std::scientific;
   fo.precision(15);
 
-  for (int i = 0; i < nv; i++)
+  for (int i = 0; i < nout; i++)
   {
     for (int d = 0; d < sdim; d++)
     {

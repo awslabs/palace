@@ -7,6 +7,7 @@
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
+#include "fem/metricfield.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
 #include "linalg/errorestimator.hpp"
@@ -18,11 +19,12 @@
 #include "linalg/slepc.hpp"
 #include "linalg/vector.hpp"
 #include "models/eigensensitivity.hpp"
-#include "models/meshsensitivity.hpp"
 #include "models/lumpedportoperator.hpp"
+#include "models/meshsensitivity.hpp"
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
@@ -479,11 +481,46 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       omega = lambda / std::complex<double>(0.0, 1.0);
     }
     double h = iodata.solver.eigenmode.mesh_sensitivity_h;
-    auto mesh_sens = MeshSensitivity::ComputeEigen(iodata, space_op, u, omega,
-                                                    is_quadratic, h);
-    MeshSensitivity::WriteSensitivitySolb(
-        iodata.problem.output + "/mesh_sensitivity.solb", mesh_sens,
-        space_op.GetNDSpace().GetParMesh(), space_op.GetComm());
+    auto mesh_sens =
+        MeshSensitivity::ComputeEigen(iodata, space_op, u, omega, is_quadratic, h);
+    MeshSensitivity::WriteSensitivitySolb(iodata.problem.output + "/mesh_sensitivity.solb",
+                                          mesh_sens, space_op.GetNDSpace().GetParMesh(),
+                                          space_op.GetComm());
+    // Write companion .mesh file with coordinates in mesh file units (matching the
+    // d(f)/d(x_mesh_file) sensitivity in the .solb). Dimensionalize then restore.
+    {
+      auto &pmesh = space_op.GetNDSpace().GetParMesh();
+      const double Lc0 = iodata.units.GetMeshLengthRelativeScale();
+      mesh::DimensionalizeMesh(pmesh, Lc0);
+      metric::WriteMeshMeshb(
+          iodata.problem.output + "/mesh_for_sensitivity.mesh", pmesh);
+      // For curved (order > 1) meshes the .solb covers ALL mesh nodes but the
+      // .mesh companion only lists vertices. Write every nodal coordinate (in
+      // mesh-file units, aligned with the .solb entries: vertices first, then
+      // higher-order nodes in MFEM H1 DOF order) so consumers can evaluate
+      // dx/dp at mid-edge nodes for the chain contraction.
+      const mfem::GridFunction *nodes = pmesh.GetNodes();
+      if (nodes && nodes->FESpace()->GetNDofs() > pmesh.GetNV() && Mpi::Root(space_op.GetComm()))
+      {
+        const mfem::FiniteElementSpace &nfes = *nodes->FESpace();
+        const int nnodes = nfes.GetNDofs();
+        const int sdim = pmesh.SpaceDimension();
+        std::ofstream fn(iodata.problem.output + "/mesh_sensitivity_nodes.txt");
+        MFEM_VERIFY(fn.is_open(), "Unable to open mesh_sensitivity_nodes.txt!");
+        fn << std::scientific;
+        fn.precision(15);
+        fn << nnodes << ' ' << sdim << '\n';
+        for (int i = 0; i < nnodes; i++)
+        {
+          for (int d = 0; d < sdim; d++)
+          {
+            fn << (d > 0 ? " " : "") << (*nodes)(nfes.DofToVDof(i, d));
+          }
+          fn << '\n';
+        }
+      }
+      mesh::NondimensionalizeMesh(pmesh, Lc0);
+    }
   }
 
   MFEM_VERIFY(num_conv >= iodata.solver.eigenmode.n, "Eigenmode solve only found "
