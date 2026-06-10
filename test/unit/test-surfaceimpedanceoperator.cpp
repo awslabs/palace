@@ -43,8 +43,7 @@ std::optional<double> GetBdrCoeffValue(const MaterialPropertyCoefficient &fb,
 
 }  // namespace
 
-TEST_CASE("SurfaceImpedanceOperator per-attribute scaling",
-          "[surfaceimpedanceoperator][Serial][Parallel]")
+TEST_CASE("SurfaceImpedanceOperator", "[surfaceimpedanceoperator][Serial][Parallel]")
 {
   auto serial_mesh = std::make_unique<mfem::Mesh>(
       mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
@@ -74,7 +73,7 @@ TEST_CASE("SurfaceImpedanceOperator per-attribute scaling",
     REQUIRE(flags[1]);
   };
 
-  SECTION("All uncracked")
+  SECTION("Per-attribute scaling, all uncracked")
   {
     config::ImpedanceData imp;
     imp.Rs = Rs;
@@ -101,7 +100,7 @@ TEST_CASE("SurfaceImpedanceOperator per-attribute scaling",
     require_global_coverage(v1.has_value(), v2.has_value());
   }
 
-  SECTION("All cracked")
+  SECTION("Per-attribute scaling, all cracked")
   {
     config::ImpedanceData imp;
     imp.Rs = Rs;
@@ -128,7 +127,7 @@ TEST_CASE("SurfaceImpedanceOperator per-attribute scaling",
     require_global_coverage(v1.has_value(), v2.has_value());
   }
 
-  SECTION("Mixed cracked/uncracked - stiffness")
+  SECTION("Per-attribute scaling, mixed cracked/uncracked - stiffness")
   {
     config::ImpedanceData imp;
     imp.Rs = Rs;
@@ -155,7 +154,7 @@ TEST_CASE("SurfaceImpedanceOperator per-attribute scaling",
     require_global_coverage(v1.has_value(), v2.has_value());
   }
 
-  SECTION("Mixed cracked/uncracked - damping")
+  SECTION("Per-attribute scaling, mixed cracked/uncracked - damping")
   {
     config::ImpedanceData imp;
     imp.Rs = Rs;
@@ -182,7 +181,7 @@ TEST_CASE("SurfaceImpedanceOperator per-attribute scaling",
     require_global_coverage(v1.has_value(), v2.has_value());
   }
 
-  SECTION("Mixed cracked/uncracked - mass")
+  SECTION("Per-attribute scaling, mixed cracked/uncracked - mass")
   {
     config::ImpedanceData imp;
     imp.Rs = Rs;
