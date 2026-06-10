@@ -179,6 +179,7 @@ if "transmon/transmon_coarse" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
+        abs_columns=["κ_ext"],
         excluded_columns=[
             "Maximum",
             "Minimum",
@@ -213,6 +214,7 @@ if "transmon/transmon_amr" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
+        abs_columns=["κ_ext"],
         excluded_columns=[
             "Maximum",
             "Minimum",
