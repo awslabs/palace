@@ -286,8 +286,9 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
   }
 
   // Initialize the (interpolatory L2) output spaces for the libCEED-evaluated
-  // visualization fields. Order 2p represents the quadratic field quantities exactly on
-  // affine elements.
+  // visualization fields. The order matches the ParaView output sampling lattice
+  // (SetLevelsOfDetail below), the same resolution at which the legacy coefficient
+  // fields were written.
   auto InitializeVizSpaces = [&](mfem::ParFiniteElementSpace &src_fespace)
   {
     if (viz_fec)
@@ -295,7 +296,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       return;
     }
     auto *pmesh = src_fespace.GetParMesh();
-    viz_fec = std::make_unique<mfem::L2_FECollection>(2 * src_fespace.GetMaxElementOrder(),
+    viz_fec = std::make_unique<mfem::L2_FECollection>(src_fespace.GetMaxElementOrder(),
                                                       pmesh->Dimension());
     viz_scalar_fespace =
         std::make_unique<mfem::ParFiniteElementSpace>(pmesh, viz_fec.get());

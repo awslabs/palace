@@ -1331,10 +1331,10 @@ TEST_CASE("DomainFieldEvaluator", "[surfacefunctional][Serial][Parallel][GPU]")
     B.Imag().ProjectCoefficient(fbi);
   }
 
-  // Interpolatory L2 output spaces of order 2p (legacy ProjectCoefficient on these
-  // spaces evaluates the coefficient at the nodal points, which is exactly the
-  // libCEED evaluator semantics).
-  mfem::L2_FECollection viz_fec(2 * order, 3);
+  // Interpolatory L2 output spaces (legacy ProjectCoefficient on these spaces evaluates
+  // the coefficient at the nodal points, which is exactly the libCEED evaluator
+  // semantics, at any order).
+  mfem::L2_FECollection viz_fec(order, 3);
   mfem::ParFiniteElementSpace viz_scalar(&pmesh, &viz_fec), viz_vector(&pmesh, &viz_fec, 3);
 
   const double scaling = 2.5;
