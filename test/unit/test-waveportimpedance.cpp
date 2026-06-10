@@ -219,15 +219,15 @@ TEST_CASE("WavePort TE10 mode polarity sign", "[waveportimpedance][Serial]")
   CHECK(port.GetModePolaritySign(/*high_attr=*/4, /*low_attr=*/2) == -1);
 }
 
-// Validate the COMPLEX-frequency wave-port cross-section solve (WavePortData::SolveKnExact)
+// Validate the COMPLEX-frequency wave-port cross-section solve (WavePortData::SolveKnComplex)
 // against the closed-form TE10 propagation constant, evaluated at a genuinely complex
 // frequency ω. For a lossless homogeneous guide kₙ(ω) = √(εμ ω² − k_c²), k_c = π/a, is an
 // EXACT analytic function of ω. The whole complex-wave-port path (used by the eigenmode
-// nonlinear solve at ω = -i·λ) rests on SolveKnExact reproducing this analytic continuation
+// nonlinear solve at ω = -i·λ) rests on SolveKnComplex reproducing this analytic continuation
 // off the real axis — i.e. kₙ(ω) for complex ω must equal √(εμ ω² − k_c²) to discretization
 // error, NOT the real-ω value kₙ(Re ω). This pins that down directly, independent of any
 // cavity / eigenmode / Q considerations.
-TEST_CASE("WavePortData SolveKnExact matches analytical TE10 dispersion at complex ω",
+TEST_CASE("WavePortData SolveKnComplex matches analytical TE10 dispersion at complex ω",
           "[waveportimpedance][Serial]")
 {
   MPI_Comm comm = Mpi::World();
@@ -290,7 +290,7 @@ TEST_CASE("WavePortData SolveKnExact matches analytical TE10 dispersion at compl
   // Closed-form TE10 propagation constant kₙ(ω) = √(εμ ω² − k_c²). In this Units(1,1)
   // / Lc = 1 m setup the internal angular frequency is ω·tc with tc = Lc/c0, and kₙ comes
   // back in rad/m. Build the analytic reference directly in physical (rad/m) units and
-  // compare against the dimensionalized SolveKnExact result kₙ_phys = kₙ_nondim · (1/Lc).
+  // compare against the dimensionalized SolveKnComplex result kₙ_phys = kₙ_nondim · (1/Lc).
   const double c0 = electromagnetics::c0_;
   const double kc = M_PI / a_m;  // TE10 transverse cutoff wavenumber [rad/m]
   auto kn_closed_form = [&](std::complex<double> omega_rad_s) -> std::complex<double>
@@ -312,7 +312,7 @@ TEST_CASE("WavePortData SolveKnExact matches analytical TE10 dispersion at compl
   {
     const double f_GHz = 10.0;
     std::complex<double> kn_nd =
-        port.SolveKnExact(std::complex<double>(omega_nd(f_GHz), 0.0));
+        port.SolveKnComplex(std::complex<double>(omega_nd(f_GHz), 0.0));
     const std::complex<double> kn_phys = kn_nd * kn_scale;
     const std::complex<double> kn_ref =
         kn_closed_form(2.0 * M_PI * f_GHz * 1.0e9);  // ≈ 158.24 rad/m, ~0 imag
@@ -329,7 +329,7 @@ TEST_CASE("WavePortData SolveKnExact matches analytical TE10 dispersion at compl
     // Re ω) would differ by O(Im ω / Re ω) ~ 1/(2Q).
     const double f_r_GHz = 10.0;
     const std::complex<double> scale_c(1.0, 0.05);
-    std::complex<double> kn_nd = port.SolveKnExact(omega_nd(f_r_GHz) * scale_c);
+    std::complex<double> kn_nd = port.SolveKnComplex(omega_nd(f_r_GHz) * scale_c);
     const std::complex<double> kn_phys = kn_nd * kn_scale;
     const std::complex<double> omega_rad_s = 2.0 * M_PI * f_r_GHz * 1.0e9 * scale_c;
     const std::complex<double> kn_ref = kn_closed_form(omega_rad_s);
@@ -349,7 +349,7 @@ TEST_CASE("WavePortData SolveKnExact matches analytical TE10 dispersion at compl
     // closed form — guards against the wrong-Riemann-sheet hazard.
     const double f_r_GHz = 7.0;
     const std::complex<double> scale_c(1.0, 0.08);
-    std::complex<double> kn_nd = port.SolveKnExact(omega_nd(f_r_GHz) * scale_c);
+    std::complex<double> kn_nd = port.SolveKnComplex(omega_nd(f_r_GHz) * scale_c);
     const std::complex<double> kn_phys = kn_nd * kn_scale;
     const std::complex<double> kn_ref =
         kn_closed_form(2.0 * M_PI * f_r_GHz * 1.0e9 * scale_c);
