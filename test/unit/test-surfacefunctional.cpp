@@ -155,6 +155,56 @@ std::unique_ptr<Mesh> MakeInterfaceMesh(MPI_Comm comm, mfem::Element::Type elem_
   return std::make_unique<Mesh>(std::move(pmesh));
 }
 
+// Build a 3D mesh with two material regions and interior boundary elements (attribute
+// 7) on the material interface at z = 0.5, then apply nonconformal refinement to a
+// subset of elements so that marked surfaces (exterior and interior) contain
+// nonconformal (master/slave) faces.
+std::unique_ptr<Mesh> MakeNCInterfaceMesh(MPI_Comm comm, mfem::Element::Type elem_type)
+{
+  mfem::Mesh smesh = mfem::Mesh::MakeCartesian3D(2, 2, 2, elem_type);
+  for (int e = 0; e < smesh.GetNE(); e++)
+  {
+    mfem::Vector center(3);
+    smesh.GetElementCenter(e, center);
+    smesh.SetAttribute(e, (center(2) < 0.5) ? 1 : 2);
+  }
+  for (int f = 0; f < smesh.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    smesh.GetFaceElements(f, &e1, &e2);
+    if (e1 >= 0 && e2 >= 0 && smesh.GetAttribute(e1) != smesh.GetAttribute(e2))
+    {
+      auto *face_elem = smesh.GetFace(f)->Duplicate(&smesh);
+      face_elem->SetAttribute(7);
+      smesh.AddBdrElement(face_elem);
+    }
+  }
+  smesh.FinalizeTopology();
+  smesh.Finalize();
+  smesh.SetAttributes();
+  smesh.EnsureNodes();
+  smesh.EnsureNCMesh(true);
+
+  // Nonconformally refine the elements in the x < 0.5 half (crosses both the interior
+  // interface and the exterior boundaries), creating master/slave faces on the marked
+  // surfaces.
+  mfem::Array<int> refs;
+  for (int e = 0; e < smesh.GetNE(); e++)
+  {
+    mfem::Vector center(3);
+    smesh.GetElementCenter(e, center);
+    if (center(0) < 0.5)
+    {
+      refs.Append(e);
+    }
+  }
+  smesh.GeneralRefinement(refs, 1);
+
+  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
+  return std::make_unique<Mesh>(std::move(pmesh));
+}
+
 }  // namespace
 
 TEST_CASE("SurfaceFunctional Area", "[surfacefunctional][Serial][Parallel][GPU]")
@@ -239,7 +289,7 @@ TEST_CASE("SurfaceFunctional HCurl Norm", "[surfacefunctional][Serial][Parallel]
     mfem::Array<int> marker(bdr_attr_max);
     marker = 1;
     SurfaceFunctional norm2(SurfaceFunctional::Kind::HCURL_NORM2, *mesh, marker,
-                            &nd_fespace);
+                            &nd_fespace.Get());
     const double ref = RefSurfaceHCurlNorm2(pmesh, E, marker);
     CHECK(norm2.Eval(&E) == Catch::Approx(ref).epsilon(1.0e-10));
   }
@@ -253,7 +303,7 @@ TEST_CASE("SurfaceFunctional HCurl Norm", "[surfacefunctional][Serial][Parallel]
       marker = 0;
       marker[attr - 1] = 1;
       SurfaceFunctional norm2(SurfaceFunctional::Kind::HCURL_NORM2, *mesh, marker,
-                              &nd_fespace);
+                              &nd_fespace.Get());
       const double ref = RefSurfaceHCurlNorm2(pmesh, E, marker);
       CHECK(norm2.Eval(&E) == Catch::Approx(ref).epsilon(1.0e-10));
     }
@@ -467,8 +517,9 @@ TEST_CASE("SurfaceFunctional Surface Flux", "[surfacefunctional][Serial][GPU]")
         (type == SurfaceFlux::ELECTRIC || type == SurfaceFlux::POWER) ? &E : nullptr;
     const GridFunction *B_use =
         (type == SurfaceFlux::MAGNETIC || type == SurfaceFlux::POWER) ? &B : nullptr;
-    SurfaceFunctional flux(*mesh, marker, E_use ? &nd_fespace : nullptr,
-                           B_use ? &rt_fespace : nullptr, mat_op, type, two_sided, x0);
+    SurfaceFunctional flux(*mesh, marker, E_use ? &nd_fespace.Get() : nullptr,
+                           B_use ? &rt_fespace.Get() : nullptr, mat_op, type, two_sided,
+                           x0);
 
     // Legacy reference following SurfacePostOperator::GetSurfaceFlux.
     auto MakeLegacy =
@@ -670,7 +721,7 @@ TEST_CASE("SurfaceFunctional Complex Power", "[surfacefunctional][Serial][GPU]")
     mfem::Array<int> marker(bdr_attr_max);
     marker = 0;
     marker[attr - 1] = 1;
-    SurfaceFunctional power(*mesh, marker, &nd_fespace, &rt_fespace, mat_op,
+    SurfaceFunctional power(*mesh, marker, &nd_fespace.Get(), &rt_fespace.Get(), mat_op,
                             SurfaceFlux::POWER, /*two_sided*/ true, x0);
     const std::complex<double> ref = LegacyPower(attr, marker);
     const std::complex<double> val = power.EvalComplexPower(E, B);
@@ -895,7 +946,7 @@ TEST_CASE("SurfaceFunctional Benchmark", "[.][surfacefunctional-bench][Serial][G
     mfem::Vector x0(3);
     x0 = 0.0;
     auto t0 = std::chrono::steady_clock::now();
-    SurfaceFunctional power(*mesh, marker, &nd_fespace, &rt_fespace, mat_op,
+    SurfaceFunctional power(*mesh, marker, &nd_fespace.Get(), &rt_fespace.Get(), mat_op,
                             SurfaceFlux::POWER, /*two_sided*/ true, x0);
     auto t1 = std::chrono::steady_clock::now();
     const double t_constr = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -909,6 +960,193 @@ TEST_CASE("SurfaceFunctional Benchmark", "[.][surfacefunctional-bench][Serial][G
               << "  libCEED functional:      min " << ceed_min << " ms, avg " << ceed_avg
               << " ms  (construction, once: " << t_constr << " ms)\n"
               << "  speedup (avg): " << legacy_avg / ceed_avg << "x\n";
+  }
+}
+
+TEST_CASE("SurfaceFunctional Nonconformal Mesh", "[surfacefunctional][Serial][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto order = GENERATE(1, 2);
+  CAPTURE(elem_type, order);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = MakeNCInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+  REQUIRE(pmesh.Nonconforming());
+
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s[0] = 11.7;
+  dielectric.epsilon_r.s[1] = 11.7;
+  dielectric.epsilon_r.s[2] = 11.7;
+  dielectric.mu_r.s[0] = 1.4;
+  dielectric.mu_r.s[1] = 1.4;
+  dielectric.mu_r.s[2] = 1.4;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+
+  GridFunction E(nd_fespace, true), B(rt_fespace, true);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + x(2) * x(2);
+                                        v(1) = std::cos(x(2)) + x(0);
+                                        v(2) = x(0) * x(1) + 1.0;
+                                      });
+  mfem::VectorFunctionCoefficient fei(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) * x(2) - 0.5;
+                                        v(1) = std::sin(x(0)) - x(2);
+                                        v(2) = std::cos(x(1)) + x(0) * x(0);
+                                      });
+  mfem::VectorFunctionCoefficient fbr(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) - 0.3 * x(2);
+                                        v(1) = std::sin(x(2)) + 0.5;
+                                        v(2) = std::cos(x(0)) - x(1) * x(2);
+                                      });
+  mfem::VectorFunctionCoefficient fbi(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::cos(x(2)) - 0.2;
+                                        v(1) = x(0) * x(2) + 0.1;
+                                        v(2) = std::sin(x(1)) - x(0);
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  E.Imag().ProjectCoefficient(fei);
+  B.Real().ProjectCoefficient(fbr);
+  B.Imag().ProjectCoefficient(fbi);
+
+  const double t_i = 2.0e-3, epsilon_i = 10.0;
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  mfem::Vector x0(3);
+  x0(0) = 0.4;
+  x0(1) = 0.6;
+  x0(2) = -0.2;
+
+  auto CheckPart = [](double v, double r)
+  {
+    if (std::abs(r) > 1.0e-12)
+    {
+      CHECK(v == Catch::Approx(r).epsilon(1.0e-10));
+    }
+    else
+    {
+      CHECK(std::abs(v) < 1.0e-10);
+    }
+  };
+
+  // The exterior boundary attribute 1 (z = 0 in the refined half and beyond) and the
+  // interior interface attribute 7 both contain a mix of conformal and nonconformal
+  // (slave) faces after the partial refinement.
+  for (int attr : {1, 6, 7})
+  {
+    CAPTURE(attr);
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 0;
+    marker[attr - 1] = 1;
+
+    // Interface dielectric (all variants).
+    for (auto type : {InterfaceDielectric::DEFAULT, InterfaceDielectric::MA,
+                      InterfaceDielectric::MS, InterfaceDielectric::SA})
+    {
+      CAPTURE(static_cast<int>(type));
+      SurfaceFunctional epr(*mesh, marker, nd_fespace, mat_op, type, t_i, epsilon_i);
+      REQUIRE(epr.IsValid());
+      auto MakeLegacy = [&]() -> std::unique_ptr<mfem::Coefficient>
+      {
+        switch (type)
+        {
+          case InterfaceDielectric::DEFAULT:
+            return std::make_unique<
+                InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>>(
+                E, mat_op, t_i, epsilon_i);
+          case InterfaceDielectric::MA:
+            return std::make_unique<
+                InterfaceDielectricCoefficient<InterfaceDielectric::MA>>(E, mat_op, t_i,
+                                                                         epsilon_i);
+          case InterfaceDielectric::MS:
+            return std::make_unique<
+                InterfaceDielectricCoefficient<InterfaceDielectric::MS>>(E, mat_op, t_i,
+                                                                         epsilon_i);
+          case InterfaceDielectric::SA:
+            return std::make_unique<
+                InterfaceDielectricCoefficient<InterfaceDielectric::SA>>(E, mat_op, t_i,
+                                                                         epsilon_i);
+        }
+        return {};
+      };
+      auto legacy = MakeLegacy();
+      const double ref = RefSurfaceCoefficientIntegral(pmesh, *legacy, marker);
+      const double val = epr.Eval(E);
+      CAPTURE(ref, val);
+      CheckPart(val, ref);
+    }
+
+    // Surface flux (all types, both two_sided settings).
+    for (auto type : {SurfaceFlux::ELECTRIC, SurfaceFlux::MAGNETIC, SurfaceFlux::POWER})
+    {
+      for (bool two_sided : {false, true})
+      {
+        CAPTURE(static_cast<int>(type), two_sided);
+        const GridFunction *E_use =
+            (type == SurfaceFlux::ELECTRIC || type == SurfaceFlux::POWER) ? &E : nullptr;
+        const GridFunction *B_use =
+            (type == SurfaceFlux::MAGNETIC || type == SurfaceFlux::POWER) ? &B : nullptr;
+        SurfaceFunctional flux(*mesh, marker, E_use ? &nd_fespace.Get() : nullptr,
+                               B_use ? &rt_fespace.Get() : nullptr, mat_op, type, two_sided,
+                               x0);
+        REQUIRE(flux.IsValid());
+        auto MakeLegacy =
+            [&](const mfem::ParGridFunction *Er,
+                const mfem::ParGridFunction *Br) -> std::unique_ptr<mfem::Coefficient>
+        {
+          switch (type)
+          {
+            case SurfaceFlux::ELECTRIC:
+              return std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
+                  Er, Br, mat_op, two_sided, x0);
+            case SurfaceFlux::MAGNETIC:
+              return std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC>>(
+                  Er, Br, mat_op, two_sided, x0);
+            case SurfaceFlux::POWER:
+              return std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>>(
+                  Er, Br, mat_op, two_sided, x0);
+          }
+          return {};
+        };
+        auto legacy_re =
+            MakeLegacy(E_use ? &E.Real() : nullptr, B_use ? &B.Real() : nullptr);
+        std::complex<double> ref(RefSurfaceCoefficientIntegral(pmesh, *legacy_re, marker),
+                                 0.0);
+        auto legacy_im =
+            MakeLegacy(E_use ? &E.Imag() : nullptr, B_use ? &B.Imag() : nullptr);
+        const double ref_im = RefSurfaceCoefficientIntegral(pmesh, *legacy_im, marker);
+        if (type == SurfaceFlux::POWER)
+        {
+          ref += ref_im;
+        }
+        else
+        {
+          ref.imag(ref_im);
+        }
+        const std::complex<double> val = flux.EvalFlux(E_use, B_use);
+        CAPTURE(ref.real(), ref.imag(), val.real(), val.imag());
+        CheckPart(val.real(), ref.real());
+        CheckPart(val.imag(), ref.imag());
+      }
+    }
   }
 }
 

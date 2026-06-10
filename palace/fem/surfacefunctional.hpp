@@ -16,7 +16,6 @@
 namespace palace
 {
 
-class FiniteElementSpace;
 class GridFunction;
 class MaterialOperator;
 class Mesh;
@@ -63,9 +62,14 @@ private:
   // 0), fespace_b for H(div) fields (source index 1). Either may be nullptr depending
   // on the functional kind. Material operator (not owned) for material property lookups
   // and side selection.
-  const FiniteElementSpace *fespace_e;
-  const FiniteElementSpace *fespace_b;
+  const mfem::ParFiniteElementSpace *fespace_e;
+  const mfem::ParFiniteElementSpace *fespace_b;
   const MaterialOperator *mat_op;
+
+  // Whether the functional could be assembled (false when the configuration is not yet
+  // supported, e.g. non-3D meshes or two-sided evaluation on process-boundary interior
+  // surfaces, in which case callers should fall back to the legacy evaluation paths).
+  bool valid = true;
 
   // MPI communicator from the mesh.
   MPI_Comm comm;
@@ -100,30 +104,41 @@ private:
   double EvalLocal(const std::array<const Vector *, 2> &srcs) const;
 
 public:
+  // Returns false when libCEED surface functionals have been globally disabled via the
+  // PALACE_LEGACY_SURFACE_POSTPRO environment variable (legacy mfem::Coefficient paths
+  // are used instead, for debugging and benchmarking).
+  static bool Enabled();
+
   // Construct a functional over the boundary elements with marked attributes (marker
   // over global mfem boundary attributes). For field-less functionals (AREA), fespace
   // may be nullptr but the mesh is still required.
   SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
-                    const FiniteElementSpace *fespace = nullptr);
+                    const mfem::ParFiniteElementSpace *fespace = nullptr);
 
   // Construct an interface dielectric energy participation functional with the given
   // interface type, thickness, and permittivity (see InterfaceDielectricCoefficient).
   SurfaceFunctional(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
-                    const FiniteElementSpace &nd_fespace, const MaterialOperator &mat_op,
-                    InterfaceDielectric type, double t_i, double epsilon_i);
+                    const mfem::ParFiniteElementSpace &nd_fespace,
+                    const MaterialOperator &mat_op, InterfaceDielectric type, double t_i,
+                    double epsilon_i);
 
   // Construct a surface flux functional (see BdrSurfaceFluxCoefficient). The required
   // finite element spaces depend on the flux type: ELECTRIC requires nd_fespace,
   // MAGNETIC requires rt_fespace, POWER requires both.
   SurfaceFunctional(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
-                    const FiniteElementSpace *nd_fespace,
-                    const FiniteElementSpace *rt_fespace, const MaterialOperator &mat_op,
-                    SurfaceFlux type, bool two_sided, const mfem::Vector &x0);
+                    const mfem::ParFiniteElementSpace *nd_fespace,
+                    const mfem::ParFiniteElementSpace *rt_fespace,
+                    const MaterialOperator &mat_op, SurfaceFlux type, bool two_sided,
+                    const mfem::Vector &x0);
 
   ~SurfaceFunctional();
 
   SurfaceFunctional(const SurfaceFunctional &) = delete;
   SurfaceFunctional &operator=(const SurfaceFunctional &) = delete;
+
+  // Whether the functional was successfully assembled. When false, evaluation is not
+  // possible and callers should use the legacy evaluation paths.
+  bool IsValid() const { return valid; }
 
   // Evaluate the functional for the given field (L-vector, e.g. the local vector of a
   // GridFunction on the field space). Collective on the mesh communicator. For

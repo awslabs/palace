@@ -234,6 +234,29 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
   const bool has_imag = E.HasImag();
   auto &nd_fespace = *E.ParFESpace();
   const auto &mesh = *nd_fespace.GetParMesh();
+
+  // Use the libCEED surface functional path when supported (device capable, no
+  // per-measurement reassembly).
+  if (!power_func && SurfaceFunctional::Enabled())
+  {
+    mfem::Array<int> attr_list;
+    for (const auto &elem : elems)
+    {
+      attr_list.Append(elem->GetAttrList());
+    }
+    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
+    mfem::Vector x0(mesh.SpaceDimension());
+    x0 = 0.0;
+    power_func = std::make_unique<SurfaceFunctional>(
+        mat_op.GetMesh(), attr_marker, &nd_fespace, B.ParFESpace(), mat_op,
+        SurfaceFlux::POWER, /*two_sided*/ true, x0);
+  }
+  if (power_func && power_func->IsValid())
+  {
+    return power_func->EvalComplexPower(E, B);
+  }
+
   SumVectorCoefficient fbr(mesh.SpaceDimension()), fbi(mesh.SpaceDimension());
   mfem::Array<int> attr_list;
   for (const auto &elem : elems)

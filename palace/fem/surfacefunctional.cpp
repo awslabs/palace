@@ -3,6 +3,7 @@
 
 #include "surfacefunctional.hpp"
 
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -183,7 +184,7 @@ void AppendPoints(FaceConfigKey &key, const std::vector<mfem::IntegrationPoint> 
 
 SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
                                      const mfem::Array<int> &bdr_attr_marker,
-                                     const FiniteElementSpace *fespace)
+                                     const mfem::ParFiniteElementSpace *fespace)
   : kind(kind), fespace_e(fespace), fespace_b(nullptr), mat_op(nullptr),
     comm(mesh.GetComm())
 {
@@ -192,28 +193,24 @@ SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
   MFEM_VERIFY(kind == Kind::AREA || fespace,
               "SurfaceFunctional requires a field finite element space for functionals "
               "with field inputs!");
-  MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
-              "SurfaceFunctional is only implemented for 3D meshes!");
   Assemble(mesh, bdr_attr_marker);
 }
 
 SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const mfem::Array<int> &bdr_attr_marker,
-                                     const FiniteElementSpace &nd_fespace,
+                                     const mfem::ParFiniteElementSpace &nd_fespace,
                                      const MaterialOperator &mat_op,
                                      InterfaceDielectric type, double t_i, double epsilon_i)
   : kind(Kind::INTERFACE_EPR), epr_type(type), epr_t(t_i), epr_epsilon(epsilon_i),
     fespace_e(&nd_fespace), fespace_b(nullptr), mat_op(&mat_op), comm(mesh.GetComm())
 {
-  MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
-              "SurfaceFunctional is only implemented for 3D meshes!");
   Assemble(mesh, bdr_attr_marker);
 }
 
 SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const mfem::Array<int> &bdr_attr_marker,
-                                     const FiniteElementSpace *nd_fespace,
-                                     const FiniteElementSpace *rt_fespace,
+                                     const mfem::ParFiniteElementSpace *nd_fespace,
+                                     const mfem::ParFiniteElementSpace *rt_fespace,
                                      const MaterialOperator &mat_op, SurfaceFlux type,
                                      bool two_sided, const mfem::Vector &x0)
   : kind(Kind::SURFACE_FLUX), flux_type(type), flux_two_sided(two_sided), flux_x0(x0),
@@ -223,8 +220,6 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
       (nd_fespace || (type != SurfaceFlux::ELECTRIC && type != SurfaceFlux::POWER)) &&
           (rt_fespace || (type != SurfaceFlux::MAGNETIC && type != SurfaceFlux::POWER)),
       "Missing finite element space for surface flux functional!");
-  MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
-              "SurfaceFunctional is only implemented for 3D meshes!");
   Assemble(mesh, bdr_attr_marker);
 }
 
@@ -236,8 +231,20 @@ SurfaceFunctional::~SurfaceFunctional()
   }
 }
 
+bool SurfaceFunctional::Enabled()
+{
+  static const bool enabled = !std::getenv("PALACE_LEGACY_SURFACE_POSTPRO");
+  return enabled;
+}
+
 void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker)
 {
+  if (mesh.Dimension() != 3 || mesh.SpaceDimension() != 3)
+  {
+    // Not yet supported (2D solver meshes): callers fall back to the legacy paths.
+    valid = false;
+    return;
+  }
   const mfem::ParMesh &pmesh = mesh.Get();
   MFEM_VERIFY(pmesh.GetNodes(), "The mesh has no nodal FE space!");
   const mfem::FiniteElementSpace &mesh_fespace = *pmesh.GetNodes()->FESpace();
@@ -327,12 +334,13 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
       // TODO: Support face neighbor (other process) elements for two-sided interior
       // boundaries on parallel interfaces, as handled by the legacy coefficients via
       // ParMesh::ExchangeFaceNbrData. Requires element restrictions indexing into the
-      // face neighbor data vector.
-      MFEM_VERIFY((plan.elem_a < 0 || plan.elem_a < pmesh.GetNE()) &&
-                      (plan.elem_b < 0 || elem2_local),
-                  "SurfaceFunctional does not yet support two-sided evaluation on "
-                  "process-boundary interior surfaces (boundary element "
-                      << i << ")!");
+      // face neighbor data vector. Until then, fall back to the legacy paths.
+      if ((plan.elem_a >= 0 && plan.elem_a >= pmesh.GetNE()) ||
+          (plan.elem_b >= 0 && !elem2_local))
+      {
+        valid = false;
+        return;
+      }
 
       // Map the face quadrature points to the volume element reference space(s):
       // boundary element reference coordinates -> face reference coordinates
@@ -586,16 +594,16 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
       tmp_bases.push_back(x_basis);
     }
     auto AddFieldInput = [&](const std::string &name, int source,
-                             const FiniteElementSpace &fespace,
+                             const mfem::ParFiniteElementSpace &fespace,
                              const std::vector<int> &indices, mfem::Geometry::Type geom,
                              const mfem::IntegrationRule &ir)
     {
       CeedElemRestriction restr;
       CeedBasis basis;
       CeedVector vec;
-      ceed::InitRestriction(fespace.Get(), indices, false, /*is_interp*/ true, false, ceed,
+      ceed::InitRestriction(fespace, indices, false, /*is_interp*/ true, false, ceed,
                             &restr);
-      const mfem::FiniteElement *fe = fespace.GetFEColl().FiniteElementForGeometry(geom);
+      const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
       MFEM_VERIFY(fe, "Unable to get field finite element for surface functional!");
       ceed::InitBasisAtPoints(*fe, ir, fespace.GetVDim(), ceed, &basis);
       ceed::InitCeedVector(field_staging, ceed, &vec);
@@ -758,6 +766,7 @@ void SurfaceFunctional::ApplyAdd(const std::array<const Vector *, 2> &srcs) cons
 
 double SurfaceFunctional::EvalLocal(const std::array<const Vector *, 2> &srcs) const
 {
+  MFEM_VERIFY(valid, "Eval called on an invalid (unassembled) SurfaceFunctional!");
   if (local_out.Size() == 0)
   {
     return 0.0;
@@ -779,6 +788,7 @@ double SurfaceFunctional::Eval(const Vector *u) const
 
 double SurfaceFunctional::Eval(const GridFunction &u) const
 {
+  MFEM_VERIFY(valid, "Eval called on an invalid (unassembled) SurfaceFunctional!");
   MFEM_VERIFY(kind == Kind::HCURL_NORM2 || kind == Kind::INTERFACE_EPR,
               "SurfaceFunctional::Eval with a grid function is only valid for functionals "
               "quadratic in a single field!");

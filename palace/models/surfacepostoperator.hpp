@@ -9,6 +9,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
+#include "fem/surfacefunctional.hpp"
 
 namespace palace
 {
@@ -92,6 +93,12 @@ private:
 
   double GetLocalSurfaceIntegral(mfem::Coefficient &f,
                                  const mfem::Array<int> &attr_marker) const;
+
+  // libCEED surface functionals for flux and interface dielectric postprocessing,
+  // constructed lazily per surface index (device capable, replace the per-measurement
+  // coefficient evaluation and linear form reassembly of the legacy paths when
+  // supported).
+  mutable std::map<int, std::unique_ptr<SurfaceFunctional>> flux_funcs, eps_funcs;
 
 public:
   // Data structures for postprocessing the surface with the given type.
