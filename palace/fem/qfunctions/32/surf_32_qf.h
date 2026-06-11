@@ -536,4 +536,158 @@ CEED_QFUNCTION(f_integ_surf_farfield_32)(void *__restrict__ ctx_, CeedInt Q,
 PALACE_SURF_BDR_FIELD_QF(f_eval_bdr_hcurl_1_32, f_eval_bdr_hcurl_2_32, SurfHcurlField32)
 PALACE_SURF_BDR_FIELD_QF(f_eval_bdr_hdiv_1_32, f_eval_bdr_hdiv_2_32, SurfHdivField32)
 
+// Pointwise boundary surface charge, surface current, and energy density values at the
+// visualization lattice points, following BdrSurfaceFluxCoefficient<ELECTRIC>
+// (two-sided), BdrSurfaceCurrentVectorCoefficient, and EnergyDensityCoefficient
+// (boundary branch: per-side energies averaged). Context: [0].second = normal sign,
+// [1].second = scaling, material table at +2. Inputs ("_1"): grad_x_f, attr_1,
+// grad_x_1, u_1; ("_2"): grad_x_f, attr_1, grad_x_1, attr_2, grad_x_2, u_1, u_2.
+CEED_QFUNCTION(f_eval_bdr_flux_q_1_32)(void *__restrict__ ctx_, CeedInt Q,
+                                       const CeedScalar *const *in, CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *J_f = in[0], *attr = in[1], *J_v = in[2], *u = in[3];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar J_f_loc[6], n[3], E[3], eps[9], D[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    SurfMeasure32(J_f_loc, n);
+    SurfHcurlField32(i, Q, J_v, u, E);
+    CoeffUnpack3(ctx + 2, (CeedInt)attr[i], eps);
+    MultAx33(eps, E, D);
+    v[i] = ctx[0].second * ctx[1].second * (D[0] * n[0] + D[1] * n[1] + D[2] * n[2]);
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_eval_bdr_flux_q_2_32)(void *__restrict__ ctx_, CeedInt Q,
+                                       const CeedScalar *const *in, CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *J_f = in[0], *attr_1 = in[1], *J_v1 = in[2], *attr_2 = in[3],
+                   *J_v2 = in[4], *u_1 = in[5], *u_2 = in[6];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar J_f_loc[6], n[3], E[3], eps[9], D[3], D_2[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    SurfMeasure32(J_f_loc, n);
+    SurfHcurlField32(i, Q, J_v1, u_1, E);
+    CoeffUnpack3(ctx + 2, (CeedInt)attr_1[i], eps);
+    MultAx33(eps, E, D);
+    SurfHcurlField32(i, Q, J_v2, u_2, E);
+    CoeffUnpack3(ctx + 2, (CeedInt)attr_2[i], eps);
+    MultAx33(eps, E, D_2);
+    // Two-sided: contributions from opposite sides add with opposite normals.
+    v[i] = ctx[0].second * ctx[1].second *
+           ((D[0] - D_2[0]) * n[0] + (D[1] - D_2[1]) * n[1] + (D[2] - D_2[2]) * n[2]);
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_eval_bdr_current_j_1_32)(void *__restrict__ ctx_, CeedInt Q,
+                                          const CeedScalar *const *in,
+                                          CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *J_f = in[0], *attr = in[1], *J_v = in[2], *u = in[3];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar J_f_loc[6], n[3], B[3], invmu[9], H[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    SurfMeasure32(J_f_loc, n);
+    SurfHdivField32(i, Q, J_v, u, B);
+    CoeffUnpack3(ctx + 2, (CeedInt)attr[i], invmu);
+    MultAx33(invmu, B, H);
+    const CeedScalar s = ctx[0].second * ctx[1].second;
+    v[i + Q * 0] = s * (n[1] * H[2] - n[2] * H[1]);
+    v[i + Q * 1] = s * (n[2] * H[0] - n[0] * H[2]);
+    v[i + Q * 2] = s * (n[0] * H[1] - n[1] * H[0]);
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_eval_bdr_current_j_2_32)(void *__restrict__ ctx_, CeedInt Q,
+                                          const CeedScalar *const *in,
+                                          CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *J_f = in[0], *attr_1 = in[1], *J_v1 = in[2], *attr_2 = in[3],
+                   *J_v2 = in[4], *u_1 = in[5], *u_2 = in[6];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar J_f_loc[6], n[3], B[3], invmu[9], H[3], H_2[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    SurfMeasure32(J_f_loc, n);
+    SurfHdivField32(i, Q, J_v1, u_1, B);
+    CoeffUnpack3(ctx + 2, (CeedInt)attr_1[i], invmu);
+    MultAx33(invmu, B, H);
+    SurfHdivField32(i, Q, J_v2, u_2, B);
+    CoeffUnpack3(ctx + 2, (CeedInt)attr_2[i], invmu);
+    MultAx33(invmu, B, H_2);
+    H[0] -= H_2[0];
+    H[1] -= H_2[1];
+    H[2] -= H_2[2];
+    const CeedScalar s = ctx[0].second * ctx[1].second;
+    v[i + Q * 0] = s * (n[1] * H[2] - n[2] * H[1]);
+    v[i + Q * 1] = s * (n[2] * H[0] - n[0] * H[2]);
+    v[i + Q * 2] = s * (n[0] * H[1] - n[1] * H[0]);
+  }
+  return 0;
+}
+
+// Boundary energy densities: per-side 1/2 (mat F).F with the side attribute, averaged
+// over both sides for interior boundaries.
+#define PALACE_SURF_BDR_ENERGY_QF(name1, name2, field_helper)                            \
+  CEED_QFUNCTION(name1)(void *__restrict__ ctx_, CeedInt Q, const CeedScalar *const *in, \
+                        CeedScalar *const *out)                                          \
+  {                                                                                      \
+    const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;                              \
+    const CeedScalar *attr = in[1], *J_v = in[2], *u = in[3];                            \
+    CeedScalar *v = out[0];                                                              \
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)                                       \
+    {                                                                                    \
+      CeedScalar F[3], mat[9], G[3];                                                     \
+      field_helper(i, Q, J_v, u, F);                                                     \
+      CoeffUnpack3(ctx + 2, (CeedInt)attr[i], mat);                                      \
+      MultAx33(mat, F, G);                                                               \
+      v[i] = 0.5 * ctx[1].second * (G[0] * F[0] + G[1] * F[1] + G[2] * F[2]);            \
+    }                                                                                    \
+    return 0;                                                                            \
+  }                                                                                      \
+  CEED_QFUNCTION(name2)(void *__restrict__ ctx_, CeedInt Q, const CeedScalar *const *in, \
+                        CeedScalar *const *out)                                          \
+  {                                                                                      \
+    const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;                              \
+    const CeedScalar *attr_1 = in[1], *J_v1 = in[2], *attr_2 = in[3], *J_v2 = in[4],     \
+                     *u_1 = in[5], *u_2 = in[6];                                         \
+    CeedScalar *v = out[0];                                                              \
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)                                       \
+    {                                                                                    \
+      CeedScalar F[3], mat[9], G[3];                                                     \
+      field_helper(i, Q, J_v1, u_1, F);                                                  \
+      CoeffUnpack3(ctx + 2, (CeedInt)attr_1[i], mat);                                    \
+      MultAx33(mat, F, G);                                                               \
+      CeedScalar U = G[0] * F[0] + G[1] * F[1] + G[2] * F[2];                            \
+      field_helper(i, Q, J_v2, u_2, F);                                                  \
+      CoeffUnpack3(ctx + 2, (CeedInt)attr_2[i], mat);                                    \
+      MultAx33(mat, F, G);                                                               \
+      U = 0.5 * (U + G[0] * F[0] + G[1] * F[1] + G[2] * F[2]);                           \
+      v[i] = 0.5 * ctx[1].second * U;                                                    \
+    }                                                                                    \
+    return 0;                                                                            \
+  }
+
+PALACE_SURF_BDR_ENERGY_QF(f_eval_bdr_energy_e_1_32, f_eval_bdr_energy_e_2_32,
+                          SurfHcurlField32)
+PALACE_SURF_BDR_ENERGY_QF(f_eval_bdr_energy_m_1_32, f_eval_bdr_energy_m_2_32,
+                          SurfHdivField32)
+
 #endif  // PALACE_LIBCEED_SURF_32_QF_H

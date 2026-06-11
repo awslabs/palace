@@ -54,8 +54,9 @@ private:
   }
 
 public:
-  BdrVizBufferCoefficient(const Vector &buffer, const std::vector<int> &bases, int lod)
-    : mfem::VectorCoefficient(3), buffer(buffer), bases(bases), lod(lod)
+  BdrVizBufferCoefficient(const Vector &buffer, const std::vector<int> &bases, int lod,
+                          int num_comp = 3)
+    : mfem::VectorCoefficient(num_comp), buffer(buffer), bases(bases), lod(lod)
   {
   }
 
@@ -77,11 +78,32 @@ public:
                     bases[T.ElementNo] >= 0,
                 "Unexpected evaluation point for BdrVizBufferCoefficient!");
     const double *buf = buffer.HostRead();
-    V.SetSize(3);
-    for (int c = 0; c < 3; c++)
+    V.SetSize(vdim);
+    for (int c = 0; c < vdim; c++)
     {
-      V(c) = buf[bases[T.ElementNo] + 3 * it->second + c];
+      V(c) = buf[bases[T.ElementNo] + vdim * it->second + c];
     }
+  }
+};
+
+// Scalar counterpart of BdrVizBufferCoefficient.
+class BdrVizBufferScalarCoefficient : public mfem::Coefficient
+{
+private:
+  BdrVizBufferCoefficient v;  // Reuse the point matching with a 1-component buffer
+  mutable mfem::Vector tmp;
+
+public:
+  BdrVizBufferScalarCoefficient(const Vector &buffer, const std::vector<int> &bases,
+                                int lod)
+    : v(buffer, bases, lod, 1), tmp(1)
+  {
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    v.Eval(tmp, T, ip);
+    return tmp(0);
   }
 };
 
@@ -345,6 +367,11 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
   // visualization fields. The order matches the ParaView output sampling lattice
   // (SetLevelsOfDetail below), the same resolution at which the legacy coefficient
   // fields were written.
+  // TODO: Revisit the output order choice: order p smooths the (degree 2p) energy
+  // densities slightly relative to the legacy exact-at-lattice sampling (U_e showed
+  // ~2e-3 relative on the CPW example, visualization only). Order 2p reproduces the
+  // legacy values exactly on affine elements at ~3.5x the field storage, which may be
+  // immaterial next to the solver memory high water mark.
   auto InitializeVizSpaces = [&](mfem::ParFiniteElementSpace &src_fespace)
   {
     if (viz_fec)
@@ -397,6 +424,23 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       eval.reset();
     }
   };
+  auto MakeBdrCoeffEvaluator = [&](SurfaceFunctional::Kind kind,
+                                   mfem::ParFiniteElementSpace &fespace, double scaling,
+                                   std::unique_ptr<SurfaceFunctional> &eval)
+  {
+    const auto &mesh = fem_op->GetMaterialOp().GetMesh();
+    const auto &pmesh = mesh.Get();
+    const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 1;
+    eval = std::make_unique<SurfaceFunctional>(kind, mesh, marker, fespace,
+                                               fem_op->GetMaterialOp(),
+                                               fespace.GetMaxElementOrder(), scaling);
+    if (!eval->IsValid())
+    {
+      eval.reset();
+    }
+  };
 
   // Set-up grid-functions for the paraview output / measurement.
   if constexpr (HasVGridFunction<solver_t>())
@@ -428,6 +472,15 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     {
       MakeFieldEvaluator(DomainFieldEvaluator::Kind::ENERGY_E, E->ParFESpace(), nullptr,
                          scaling, U_e_eval, U_e_gf);
+      MakeBdrCoeffEvaluator(SurfaceFunctional::Kind::BDR_ENERGY_E, *E->ParFESpace(),
+                            scaling, Ue_bdr_eval);
+      if (Ue_bdr_eval)
+      {
+        Ue_bdr_buf.SetSize(Ue_bdr_eval->BufferSize());
+        Ue_bdr_buf.UseDevice(true);
+        U_e_bdr = std::make_unique<BdrVizBufferScalarCoefficient>(
+            Ue_bdr_buf, Ue_bdr_eval->BufferBases(), E->ParFESpace()->GetMaxElementOrder());
+      }
     }
 
     // Electric Boundary Field & Surface Charge.
@@ -448,8 +501,23 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
     }
     // Q_s = D ⋅ n = ε_0 E ⋅ n.
-    Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
-        &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
+    if (SurfaceFunctional::Enabled())
+    {
+      MakeBdrCoeffEvaluator(SurfaceFunctional::Kind::BDR_FLUX_Q, *E->ParFESpace(), scaling,
+                            Q_bdr_eval);
+    }
+    if (Q_bdr_eval)
+    {
+      Q_sr_buf.SetSize(Q_bdr_eval->BufferSize());
+      Q_sr_buf.UseDevice(true);
+      Q_sr = std::make_unique<BdrVizBufferScalarCoefficient>(
+          Q_sr_buf, Q_bdr_eval->BufferBases(), E->ParFESpace()->GetMaxElementOrder());
+    }
+    else
+    {
+      Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
+          &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
+    }
     if constexpr (HasComplexGridFunction<solver_t>())
     {
       if (E_bdr_eval)
@@ -463,8 +531,18 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       {
         E_si = std::make_unique<BdrFieldVectorCoefficient>(E->Imag());
       }
-      Q_si = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
-          &E->Imag(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
+      if (Q_bdr_eval)
+      {
+        Q_si_buf.SetSize(Q_bdr_eval->BufferSize());
+        Q_si_buf.UseDevice(true);
+        Q_si = std::make_unique<BdrVizBufferScalarCoefficient>(
+            Q_si_buf, Q_bdr_eval->BufferBases(), E->ParFESpace()->GetMaxElementOrder());
+      }
+      else
+      {
+        Q_si = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
+            &E->Imag(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
+      }
     }
   }
 
@@ -487,6 +565,15 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     {
       MakeFieldEvaluator(DomainFieldEvaluator::Kind::ENERGY_M, nullptr, B->ParFESpace(),
                          scaling, U_m_eval, U_m_gf);
+      MakeBdrCoeffEvaluator(SurfaceFunctional::Kind::BDR_ENERGY_M, *B->ParFESpace(),
+                            scaling, Um_bdr_eval);
+      if (Um_bdr_eval)
+      {
+        Um_bdr_buf.SetSize(Um_bdr_eval->BufferSize());
+        Um_bdr_buf.UseDevice(true);
+        U_m_bdr = std::make_unique<BdrVizBufferScalarCoefficient>(
+            Um_bdr_buf, Um_bdr_eval->BufferBases(), B->ParFESpace()->GetMaxElementOrder());
+      }
     }
 
     // Magnetic Boundary Field & Surface Current.
@@ -510,8 +597,23 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
       }
       // J_s = n x H = n x μ⁻¹ B.
-      J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
-          B->Real(), fem_op->GetMaterialOp(), scaling);
+      if (SurfaceFunctional::Enabled())
+      {
+        MakeBdrCoeffEvaluator(SurfaceFunctional::Kind::BDR_CURRENT_J, *B->ParFESpace(),
+                              scaling, J_bdr_eval);
+      }
+      if (J_bdr_eval)
+      {
+        J_sr_buf.SetSize(J_bdr_eval->BufferSize());
+        J_sr_buf.UseDevice(true);
+        J_sr = std::make_unique<BdrVizBufferCoefficient>(
+            J_sr_buf, J_bdr_eval->BufferBases(), B->ParFESpace()->GetMaxElementOrder());
+      }
+      else
+      {
+        J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
+            B->Real(), fem_op->GetMaterialOp(), scaling);
+      }
     }
 
     if constexpr (HasComplexGridFunction<solver_t>())
@@ -529,8 +631,18 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         {
           B_si = std::make_unique<BdrFieldVectorCoefficient>(B->Imag());
         }
-        J_si = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
-            B->Imag(), fem_op->GetMaterialOp(), scaling);
+        if (J_bdr_eval)
+        {
+          J_si_buf.SetSize(J_bdr_eval->BufferSize());
+          J_si_buf.UseDevice(true);
+          J_si = std::make_unique<BdrVizBufferCoefficient>(
+              J_si_buf, J_bdr_eval->BufferBases(), B->ParFESpace()->GetMaxElementOrder());
+        }
+        else
+        {
+          J_si = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
+              B->Imag(), fem_op->GetMaterialOp(), scaling);
+        }
       }
     }
   }
@@ -698,13 +810,13 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   {
     U_e_eval ? paraview->RegisterField("U_e", U_e_gf.get())
              : paraview->RegisterCoeffField("U_e", U_e.get());
-    paraview_bdr->RegisterCoeffField("U_e", U_e.get());
+    paraview_bdr->RegisterCoeffField("U_e", U_e_bdr ? U_e_bdr.get() : U_e.get());
   }
   if (U_m)
   {
     U_m_eval ? paraview->RegisterField("U_m", U_m_gf.get())
              : paraview->RegisterCoeffField("U_m", U_m.get());
-    paraview_bdr->RegisterCoeffField("U_m", U_m.get());
+    paraview_bdr->RegisterCoeffField("U_m", U_m_bdr ? U_m_bdr.get() : U_m.get());
   }
   if (S)
   {
@@ -902,6 +1014,30 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
     {
       B_bdr_eval->EvalBuffer(B->Imag(), B_si_buf);
     }
+  }
+  if (Q_bdr_eval)
+  {
+    Q_bdr_eval->EvalBuffer(E->Real(), Q_sr_buf);
+    if (E->HasImag())
+    {
+      Q_bdr_eval->EvalBuffer(E->Imag(), Q_si_buf);
+    }
+  }
+  if (J_bdr_eval)
+  {
+    J_bdr_eval->EvalBuffer(B->Real(), J_sr_buf);
+    if (B->HasImag())
+    {
+      J_bdr_eval->EvalBuffer(B->Imag(), J_si_buf);
+    }
+  }
+  if (Ue_bdr_eval)
+  {
+    Ue_bdr_eval->EvalBuffer(*E, Ue_bdr_buf);
+  }
+  if (Um_bdr_eval)
+  {
+    Um_bdr_eval->EvalBuffer(*B, Um_bdr_buf);
   }
   double paraview_time = time;
   if constexpr (solver_t == ProblemType::DRIVEN)

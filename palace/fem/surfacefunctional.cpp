@@ -184,6 +184,24 @@ SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
   Assemble(mesh, bdr_attr_marker);
 }
 
+SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
+                                     const mfem::Array<int> &bdr_attr_marker,
+                                     const mfem::ParFiniteElementSpace &fespace,
+                                     const MaterialOperator &mat_op, int lod,
+                                     double scaling)
+  : kind(kind),
+    fespace_e((kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_ENERGY_E) ? &fespace
+                                                                       : nullptr),
+    fespace_b((kind == Kind::BDR_CURRENT_J || kind == Kind::BDR_ENERGY_M) ? &fespace
+                                                                          : nullptr),
+    mat_op(&mat_op), comm(mesh.GetComm()), viz_lod(lod), viz_scaling(scaling)
+{
+  MFEM_VERIFY(kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_CURRENT_J ||
+                  kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M,
+              "Invalid SurfaceFunctional constructor for the requested functional kind!");
+  Assemble(mesh, bdr_attr_marker);
+}
+
 SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const mfem::Array<int> &bdr_attr_marker,
                                      const mfem::ParFiniteElementSpace &nd_fespace,
@@ -326,8 +344,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         }
         plan.elem_a = FET.Elem1No;
       }
-      else if (kind == Kind::SURFACE_FLUX || kind == Kind::BDR_FIELD_E ||
-               kind == Kind::BDR_FIELD_B ||
+      else if (kind == Kind::SURFACE_FLUX || IsBufferKind(kind) ||
                (kind == Kind::INTERFACE_EPR && epr_type == InterfaceDielectric::DEFAULT))
       {
         plan.elem_a = FET.Elem1No;
@@ -383,7 +400,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       // (TransformBdrElementToFace with the boundary element to face orientation) ->
       // element 1/2 reference coordinates (FET.Loc1/Loc2).
       const auto bdr_geom = pmesh.GetBdrElementGeometry(i);
-      const bool buffer_kind = (kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B);
+      const bool buffer_kind = IsBufferKind(kind);
       const mfem::IntegrationRule &face_ir =
           buffer_kind ? mfem::GlobGeometryRefiner.Refine(bdr_geom, viz_lod, 1)->RefPts
                       : mfem::IntRules.Get(
@@ -459,7 +476,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       {
         it->second.vol_indices_b.push_back(plan.elem_b);
       }
-      if (kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B)
+      if (IsBufferKind(kind))
       {
         if (buffer_bases.empty())
         {
@@ -467,7 +484,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         }
         buffer_bases[i] = buffer_size;
         it->second.out_slots.push_back(buffer_size);
-        buffer_size += nq * 3;
+        buffer_size += nq * BufferNumComp(kind);
         num_marked++;
       }
       else
@@ -547,6 +564,20 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
     }
   }
+  else if (kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_CURRENT_J ||
+           kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M)
+  {
+    base_ctx.resize(2);
+    base_ctx[0].second = 1.0;  // Normal sign, set per group
+    base_ctx[1].second = viz_scaling;
+    MaterialPropertyCoefficient coeff_func(
+        mat_op->GetAttributeToMaterial(),
+        (kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_ENERGY_E)
+            ? mat_op->GetPermittivityReal()
+            : mat_op->GetInvPermeability());
+    auto mat_ctx = ceed::PopulateCoefficientContext(3, &coeff_func);
+    base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+  }
   else if (kind == Kind::FARFIELD)
   {
     const int N = static_cast<int>(farfield_dirs.size());
@@ -582,7 +613,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   {
     const std::size_t num_elem = group.bdr_indices.size();
     const bool has_b = !group.vol_indices_b.empty();
-    const bool buffer_kind = (kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B);
+    const bool buffer_kind = IsBufferKind(kind);
     const mfem::IntegrationRule &face_ir =
         buffer_kind
             ? mfem::GlobGeometryRefiner.Refine(group.bdr_geom, viz_lod, 1)->RefPts
@@ -606,7 +637,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     {
       face_mesh_fe = mesh_fespace.FEColl()->TraceFiniteElementForGeometry(group.bdr_geom);
     }
-    if (!buffer_kind)
+    const bool field_kind = (kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B);
+    if (!field_kind)
     {
       CeedBasis face_mesh_basis;
       ceed::InitBasisAtPoints(*face_mesh_fe, face_ir, mesh_fespace.GetVDim(), ceed,
@@ -615,7 +647,10 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           mesh_fespace, ceed, group.bdr_geom, group.bdr_indices, /*is_interp*/ true);
       CeedVector mesh_nodes_vec;
       ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
-      inputs.push_back({"qw", nullptr, nullptr, face_mesh_basis, ceed::EvalMode::Weight});
+      if (!buffer_kind)
+      {
+        inputs.push_back({"qw", nullptr, nullptr, face_mesh_basis, ceed::EvalMode::Weight});
+      }
       inputs.push_back(
           {"x_f", mesh_nodes_vec, face_mesh_restr, face_mesh_basis, ceed::EvalMode::Grad});
       scratch.vecs.push_back(mesh_nodes_vec);
@@ -713,10 +748,9 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       scratch.restrs.push_back(restr);
       scratch.bases.push_back(basis);
     };
-    if (kind == Kind::HCURL_NORM2 || kind == Kind::INTERFACE_EPR ||
-        kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B)
+    if (kind == Kind::HCURL_NORM2 || kind == Kind::INTERFACE_EPR || buffer_kind)
     {
-      const auto &field_fespace = (kind == Kind::BDR_FIELD_B) ? *fespace_b : *fespace_e;
+      const auto &field_fespace = fespace_b ? *fespace_b : *fespace_e;
       AddFieldInput("u_1", 0, field_fespace, group.vol_indices_a, group.vol_geom_a,
                     *group.mapped_ir_a);
       if (has_b)
@@ -766,16 +800,17 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     if (buffer_kind)
     {
       const int nq = face_ir.GetNPoints();
+      const int nc = BufferNumComp(kind);
       std::vector<CeedInt> offsets(num_elem * nq);
       for (std::size_t e = 0; e < num_elem; e++)
       {
         for (int j = 0; j < nq; j++)
         {
-          offsets[e * nq + j] = group.out_slots[e] + 3 * j;
+          offsets[e * nq + j] = group.out_slots[e] + nc * j;
         }
       }
       PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, static_cast<CeedInt>(num_elem),
-                                                     nq, 3, 1, (CeedSize)buffer_size,
+                                                     nq, nc, 1, (CeedSize)buffer_size,
                                                      CEED_MEM_HOST, CEED_COPY_VALUES,
                                                      offsets.data(), &out_restr));
     }
@@ -836,6 +871,28 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         info.apply_qf_path = PalaceQFunctionRelativePath(has_b ? f_eval_bdr_hdiv_2_32_loc
                                                                : f_eval_bdr_hdiv_1_32_loc);
         break;
+      case Kind::BDR_FLUX_Q:
+        ctx[0].second = group.flip_normal ? -1.0 : 1.0;
+        info.apply_qf = has_b ? f_eval_bdr_flux_q_2_32 : f_eval_bdr_flux_q_1_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            has_b ? f_eval_bdr_flux_q_2_32_loc : f_eval_bdr_flux_q_1_32_loc);
+        break;
+      case Kind::BDR_CURRENT_J:
+        ctx[0].second = group.flip_normal ? -1.0 : 1.0;
+        info.apply_qf = has_b ? f_eval_bdr_current_j_2_32 : f_eval_bdr_current_j_1_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            has_b ? f_eval_bdr_current_j_2_32_loc : f_eval_bdr_current_j_1_32_loc);
+        break;
+      case Kind::BDR_ENERGY_E:
+        info.apply_qf = has_b ? f_eval_bdr_energy_e_2_32 : f_eval_bdr_energy_e_1_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            has_b ? f_eval_bdr_energy_e_2_32_loc : f_eval_bdr_energy_e_1_32_loc);
+        break;
+      case Kind::BDR_ENERGY_M:
+        info.apply_qf = has_b ? f_eval_bdr_energy_m_2_32 : f_eval_bdr_energy_m_1_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            has_b ? f_eval_bdr_energy_m_2_32_loc : f_eval_bdr_energy_m_1_32_loc);
+        break;
       case Kind::FARFIELD:
         ctx[0].second = group.flip_normal ? -1.0 : 1.0;
         info.apply_qf = f_integ_surf_farfield_32;
@@ -869,7 +926,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     if (buffer_kind)
     {
       ceed::AssembleCeedPointEvaluator(info, ctx.data(), ctx.size() * sizeof(CeedIntScalar),
-                                       ceed, inputs, 3, out_restr, &op);
+                                       ceed, inputs, BufferNumComp(kind), out_restr, &op);
     }
     else
     {
@@ -964,11 +1021,24 @@ std::complex<double> SurfaceFunctional::EvalFlux(const GridFunction *E,
 
 void SurfaceFunctional::EvalBuffer(const Vector &u, Vector &buffer) const
 {
-  MFEM_VERIFY(valid && (kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B),
+  MFEM_VERIFY(valid && IsBufferKind(kind),
               "EvalBuffer requires a valid boundary visualization field functional!");
   MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
   buffer = 0.0;
   ApplyAddGroups(groups, {&u}, buffer);
+}
+
+void SurfaceFunctional::EvalBuffer(const GridFunction &u, Vector &buffer) const
+{
+  MFEM_VERIFY(valid && IsBufferKind(kind),
+              "EvalBuffer requires a valid boundary visualization field functional!");
+  MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
+  buffer = 0.0;
+  ApplyAddGroups(groups, {&u.Real()}, buffer);
+  if (u.HasImag())
+  {
+    ApplyAddGroups(groups, {&u.Imag()}, buffer);
+  }
 }
 
 std::vector<std::array<std::complex<double>, 3>>

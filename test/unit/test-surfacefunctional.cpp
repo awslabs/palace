@@ -1610,6 +1610,18 @@ TEST_CASE("SurfaceFunctional Boundary Viz Fields",
                            : MakeInterfaceMesh(comm, elem_type);
   auto &pmesh = mesh->Get();
 
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s[0] = 11.7;
+  dielectric.epsilon_r.s[1] = 11.7;
+  dielectric.epsilon_r.s[2] = 11.7;
+  dielectric.mu_r.s[0] = 1.4;
+  dielectric.mu_r.s[1] = 1.4;
+  dielectric.mu_r.s[2] = 1.4;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+
   mfem::ND_FECollection nd_fec(order, 3);
   mfem::RT_FECollection rt_fec(order - 1, 3);
   FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
@@ -1686,6 +1698,81 @@ TEST_CASE("SurfaceFunctional Boundary Viz Fields",
 
   TestKind(SurfaceFunctional::Kind::BDR_FIELD_E, nd_fespace, E.Real());
   TestKind(SurfaceFunctional::Kind::BDR_FIELD_B, rt_fespace, B.Real());
+
+  // Material-dependent boundary visualization kinds (surface charge, surface current,
+  // boundary energy densities) against the corresponding legacy coefficients.
+  const double scaling = 1.7;
+  auto TestKindCoeff = [&](SurfaceFunctional::Kind kind,
+                           const mfem::ParFiniteElementSpace &fes,
+                           mfem::Coefficient *legacy_s, mfem::VectorCoefficient *legacy_v)
+  {
+    const int nc = SurfaceFunctional::BufferNumComp(kind);
+    SurfaceFunctional viz(kind, *mesh, marker, fes, mat_op, lod, scaling);
+    bool valid = viz.IsValid();
+    bool valid_and = valid, valid_or = valid;
+    Mpi::GlobalAnd(1, &valid_and, comm);
+    Mpi::GlobalOr(1, &valid_or, comm);
+    REQUIRE(valid_and == valid_or);
+    if (!valid)
+    {
+      return;
+    }
+    Vector buffer(viz.BufferSize());
+    buffer.UseDevice(true);
+    viz.EvalBuffer(kind == SurfaceFunctional::Kind::BDR_CURRENT_J ||
+                           kind == SurfaceFunctional::Kind::BDR_ENERGY_M
+                       ? B.Real()
+                       : E.Real(),
+                   buffer);
+    const double *buf = buffer.HostRead();
+    const auto &bases = viz.BufferBases();
+    mfem::Vector V(3);
+    for (int i = 0; i < pmesh.GetNBE(); i++)
+    {
+      const auto &RefG =
+          *mfem::GlobGeometryRefiner.Refine(pmesh.GetBdrElementGeometry(i), lod, 1);
+      auto *T = pmesh.GetBdrElementTransformation(i);
+      for (int j = 0; j < RefG.RefPts.GetNPoints(); j++)
+      {
+        const auto &ip = RefG.RefPts.IntPoint(j);
+        T->SetIntPoint(&ip);
+        if (nc == 1)
+        {
+          const double ref = legacy_s->Eval(*T, ip);
+          const double val = buf[bases[i] + j];
+          CAPTURE(i, j, ref, val);
+          CHECK(val == Catch::Approx(ref).epsilon(1.0e-10).margin(1.0e-13));
+        }
+        else
+        {
+          legacy_v->Eval(V, *T, ip);
+          for (int c = 0; c < 3; c++)
+          {
+            const double val = buf[bases[i] + 3 * j + c];
+            CAPTURE(i, j, c, V(c), val);
+            CHECK(val == Catch::Approx(V(c)).epsilon(1.0e-10).margin(1.0e-13));
+          }
+        }
+      }
+    }
+  };
+  {
+    BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> q_legacy(
+        &E.Real(), nullptr, mat_op, true, mfem::Vector(), scaling);
+    TestKindCoeff(SurfaceFunctional::Kind::BDR_FLUX_Q, nd_fespace, &q_legacy, nullptr);
+  }
+  {
+    BdrSurfaceCurrentVectorCoefficient j_legacy(B.Real(), mat_op, scaling);
+    TestKindCoeff(SurfaceFunctional::Kind::BDR_CURRENT_J, rt_fespace, nullptr, &j_legacy);
+  }
+  {
+    EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> ue_legacy(E, mat_op, scaling);
+    TestKindCoeff(SurfaceFunctional::Kind::BDR_ENERGY_E, nd_fespace, &ue_legacy, nullptr);
+  }
+  {
+    EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> um_legacy(B, mat_op, scaling);
+    TestKindCoeff(SurfaceFunctional::Kind::BDR_ENERGY_M, rt_fespace, &um_legacy, nullptr);
+  }
 }
 
 }  // namespace palace

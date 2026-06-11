@@ -65,8 +65,29 @@ public:
     SURFACE_FLUX,   // Surface flux following BdrSurfaceFluxCoefficient
     FARFIELD,       // Stratton-Chu far-field following AddStrattonChuIntegrandAtElement
     BDR_FIELD_E,    // H(curl) field values at boundary visualization points
-    BDR_FIELD_B     // H(div) field values at boundary visualization points
+    BDR_FIELD_B,    // H(div) field values at boundary visualization points
+    BDR_FLUX_Q,     // Surface charge (eps E) . n at boundary visualization points
+    BDR_CURRENT_J,  // Surface current n x (mu^-1 B) at boundary visualization points
+    BDR_ENERGY_E,   // Electric energy density at boundary visualization points
+    BDR_ENERGY_M    // Magnetic energy density at boundary visualization points
   };
+
+  // Whether the kind fills a per-point visualization buffer (vs. computing integrals).
+  static bool IsBufferKind(Kind kind)
+  {
+    return kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B ||
+           kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_CURRENT_J ||
+           kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M;
+  }
+
+  // Number of components per visualization point for buffer kinds.
+  static int BufferNumComp(Kind kind)
+  {
+    return (kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_ENERGY_E ||
+            kind == Kind::BDR_ENERGY_M)
+               ? 1
+               : 3;
+  }
 
   // Total buffer size (all boundary elements, lattice points, components) and
   // per-element base offsets for the boundary visualization field kinds.
@@ -89,9 +110,10 @@ private:
   const Mesh *farfield_mesh = nullptr;
   mfem::Array<int> farfield_marker;
 
-  // Boundary visualization field kinds: lattice refinement level, total output buffer
-  // size, and per-boundary-element base offsets into the buffer.
+  // Boundary visualization field kinds: lattice refinement level, output scaling,
+  // total output buffer size, and per-boundary-element base offsets into the buffer.
   int viz_lod = 0;
+  double viz_scaling = 1.0;
   int buffer_size = 0;
   std::vector<int> buffer_bases;
 
@@ -151,6 +173,12 @@ public:
   // output sampling, see mfem::RefinedGeometry).
   SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
                     const mfem::ParFiniteElementSpace &fespace, int lod);
+
+  // Construct a boundary visualization field evaluator with material properties and
+  // output scaling (BDR_FLUX_Q, BDR_CURRENT_J, BDR_ENERGY_E, BDR_ENERGY_M).
+  SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
+                    const mfem::ParFiniteElementSpace &fespace,
+                    const MaterialOperator &mat_op, int lod, double scaling);
 
   // Construct an interface dielectric energy participation functional with the given
   // interface type, thickness, and permittivity (see InterfaceDielectricCoefficient).
@@ -215,8 +243,10 @@ public:
                                                                 double omega_im);
 
   // Fill the boundary visualization buffer with the pointwise field values (local
-  // operation, BDR_FIELD_E and BDR_FIELD_B only).
+  // operation, buffer kinds only). The grid function overload accumulates the real and
+  // imaginary part contributions (energy density kinds).
   void EvalBuffer(const Vector &u, Vector &buffer) const;
+  void EvalBuffer(const GridFunction &u, Vector &buffer) const;
 };
 
 //
