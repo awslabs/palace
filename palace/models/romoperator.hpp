@@ -24,7 +24,7 @@ namespace palace
 
 class IoData;
 class SpaceOperator;
-struct FloquetMode;
+struct FloquetOrder;
 
 namespace config
 {
@@ -192,7 +192,8 @@ protected:
   struct ReducedFloquetMode
   {
     int port_idx;
-    const FloquetMode *mode;  // Not owned — points into FloquetPortData::modes
+    const FloquetOrder *order;  // Not owned — points into FloquetPortData::orders
+    bool is_te;
     Eigen::VectorXcd vk_V;    // v_k^T V (row vector, size n_basis)
     Eigen::VectorXcd Vh_cvk;  // V^H conj(v_k) (column vector, size n_basis)
   };

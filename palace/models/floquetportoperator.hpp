@@ -42,17 +42,16 @@ inline bool HasFlag(FloquetModeUse u, FloquetModeUse flag)
   return (static_cast<uint8_t>(u) & static_cast<uint8_t>(flag)) != 0;
 }
 
-// Represents a single diffraction order (m, n) with a specific polarization (TE/TM).
-struct FloquetMode
+// Represents a single diffraction order (m, n) with TE/TM polarization data.
+struct FloquetOrder
 {
   int m, n;            // Lattice indices (physical convention)
-  bool is_te;          // true = TE (s-pol), false = TM (p-pol)
-  FloquetModeUse use;  // Which subsystems use this mode
+  FloquetModeUse use;  // Which subsystems use this order
   mfem::Vector B_mn;   // Transverse wavevector B_mn = m*b1 + n*b2
-  mfem::Vector e_pol;  // Polarization unit vector (3D, tangential to port)
-  ComplexVector v;     // Fourier projection: v_j = int_Gamma (nxnxN_j).e_p exp(-iB.r) dS
-  std::array<ComplexVector, 3> v_comp;  // Same projection for Cartesian unit vectors.
-  double gamma_sq;  // gamma_mn^2 = omega^2*mu*eps - |B_mn - k_F|^2 (freq-dependent)
+  double gamma_sq;     // gamma_mn^2 = omega^2*mu*eps - |B_mn - k_F|^2 (freq-dependent)
+  std::array<mfem::Vector, 2> e_pol;    // Polarization unit vector; 0 = TE, 1 = TM.
+  std::array<ComplexVector, 2> v;       // Fourier projections; 0 = TE, 1 = TM.
+  std::array<ComplexVector, 3> v_comp;  // Cartesian component projections.
 };
 
 // Low-rank complex operator: F*x = sum_k g_k conj(v_k) (v_k^T x).
@@ -97,8 +96,8 @@ public:
   [[nodiscard]] constexpr bool HasExcitation() const { return excitation != 0; }
   const auto &GetAttrList() const { return attr_list; }
 
-  // Access the enumerated modes (for CSV column setup).
-  const auto &GetModes() const { return modes; }
+  // Access the enumerated orders (for CSV column setup).
+  const auto &GetOrders() const { return orders; }
   double GetGamma0() const { return gamma0; }
 
   // Check if mode (m, n, is_te) is part of the incident excitation at this port.
@@ -143,7 +142,8 @@ public:
   // Compute the DtN correction coefficient g_correction for a single mode at the current
   // frequency. Returns 0 if the mode should be skipped (negligible or near-cutoff cap).
   // Used by both GetBoundaryOperator and the ROM projection.
-  std::complex<double> ComputeDtNCorrectionCoeff(const FloquetMode &mode) const;
+  std::complex<double> ComputeDtNCorrectionCoeff(const FloquetOrder &order,
+                                                 bool is_te) const;
 
   // S-parameter for all propagating orders at the current frequency.
   // If subtract_incident is true, subtracts the incident field contribution from the
@@ -183,8 +183,8 @@ private:
   // Diffraction order limits.
   int max_order_m, max_order_n;
 
-  // All Floquet modes with pre-assembled projection vectors.
-  std::vector<FloquetMode> modes;
+  // All Floquet orders with pre-assembled projection vectors.
+  std::vector<FloquetOrder> orders;
 
   // Frequency cache.
   double omega0 = 0.0;
@@ -220,11 +220,11 @@ private:
 
   // Compute the full DtN coefficient g_full (NOT the correction g_full - g_uniform).
   // Used internally by ComputeDtNCorrectionCoeff.
-  std::complex<double> ComputeDtNFullCoeff(const FloquetMode &mode) const;
+  std::complex<double> ComputeDtNFullCoeff(const FloquetOrder &order, bool is_te) const;
 
   void EnumerateOrders();
   void AssembleFourierProjections(mfem::ParFiniteElementSpace &nd_fespace);
-  void UpdateModeVector(FloquetMode &mode) const;
+  void UpdateModeVector(FloquetOrder &order, bool is_te) const;
 };
 
 //

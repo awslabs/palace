@@ -755,18 +755,22 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     floquet_reduced.clear();
     for (const auto &[port_idx, port] : space_op.GetFloquetPortOp())
     {
-      for (const auto &mode : port.GetModes())
+      for (const auto &order : port.GetOrders())
       {
-        if (!HasFlag(mode.use, FloquetModeUse::Dtn))
+        if (!HasFlag(order.use, FloquetModeUse::Dtn))
         {
           continue;
         }
-        ReducedFloquetMode rm;
-        rm.port_idx = port_idx;
-        rm.mode = &mode;
-        rm.vk_V.resize(dim_V_new);
-        rm.Vh_cvk.resize(dim_V_new);
-        floquet_reduced.push_back(std::move(rm));
+        for (bool is_te : {true, false})
+        {
+          ReducedFloquetMode rm;
+          rm.port_idx = port_idx;
+          rm.order = &order;
+          rm.is_te = is_te;
+          rm.vk_V.resize(dim_V_new);
+          rm.Vh_cvk.resize(dim_V_new);
+          floquet_reduced.push_back(std::move(rm));
+        }
       }
     }
   }
@@ -778,8 +782,8 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     for (int i = dim_V_old; i < dim_V_new; i++)
     {
       // V[i] is real. v_k is complex. V[i]^T v_k = (V[i] · v_k_real) + j(V[i] · v_k_imag).
-      double dr = V[i] * rm.mode->v.Real();
-      double di = V[i] * rm.mode->v.Imag();
+      double dr = V[i] * rm.order->v[rm.is_te ? 0 : 1].Real();
+      double di = V[i] * rm.order->v[rm.is_te ? 0 : 1].Imag();
       Mpi::GlobalSum(1, &dr, comm);
       Mpi::GlobalSum(1, &di, comm);
       std::complex<double> vt_vi(dr, di);
@@ -845,8 +849,8 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     {
       for (int i = 0; i < dim_V; i++)
       {
-        double dr = V[i] * rm.mode->v.Real();
-        double di = V[i] * rm.mode->v.Imag();
+        double dr = V[i] * rm.order->v[rm.is_te ? 0 : 1].Real();
+        double di = V[i] * rm.order->v[rm.is_te ? 0 : 1].Imag();
         Mpi::GlobalSum(1, &dr, comm);
         Mpi::GlobalSum(1, &di, comm);
         std::complex<double> vt_vi(dr, di);
@@ -859,7 +863,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   for (const auto &rm : floquet_reduced)
   {
     const auto &port = space_op.GetFloquetPortOp().GetPort(rm.port_idx);
-    auto g = port.ComputeDtNCorrectionCoeff(*rm.mode);
+    auto g = port.ComputeDtNCorrectionCoeff(*rm.order, rm.is_te);
     if (g != 0.0)
     {
       Ar.noalias() += g * rm.vk_V * rm.Vh_cvk.transpose();

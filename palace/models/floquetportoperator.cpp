@@ -61,6 +61,11 @@ namespace
 void ComputePolarization(const mfem::Vector &kt, const mfem::Vector &port_normal,
                          mfem::Vector &e_te, mfem::Vector &e_tm);
 
+constexpr int PolIndex(bool is_te)
+{
+  return is_te ? 0 : 1;
+}
+
 }  // namespace
 
 // =============================================================================
@@ -313,7 +318,7 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
   AssembleFourierProjections(nd_fespace);
 
   Mpi::Print(" Floquet port: {:d} modes ({:d} orders x 2 polarizations)\n",
-             static_cast<int>(modes.size()), static_cast<int>(modes.size()) / 2);
+             static_cast<int>(2 * orders.size()), static_cast<int>(orders.size()));
 }
 
 void FloquetPortData::ComputeReciprocalLattice(const mfem::Vector &a1,
@@ -375,7 +380,7 @@ int FloquetPortData::ComputeBZOffset(const mfem::Vector &kF_unwrapped,
 
 void FloquetPortData::EnumerateOrders()
 {
-  modes.clear();
+  orders.clear();
 
   // Enumerate physical mode indices. The range is the union of ±MaxOrder around the
   // specular (0,0) and the BZ-shifted range. This ensures the user always sees their
@@ -428,19 +433,15 @@ void FloquetPortData::EnumerateOrders()
           (in_user_range ? static_cast<uint8_t>(FloquetModeUse::Output) : 0) |
           (in_dtn_range ? static_cast<uint8_t>(FloquetModeUse::Dtn) : 0));
 
-      // Add TE and TM modes for this order.
-      for (bool is_te : {true, false})
-      {
-        FloquetMode mode;
-        mode.m = m;
-        mode.n = n;
-        mode.is_te = is_te;
-        mode.use = use;
-        mode.B_mn = B_mn;
-        mode.e_pol = is_te ? e_te : e_tm;
-        mode.gamma_sq = 0.0;
-        modes.push_back(std::move(mode));
-      }
+      FloquetOrder order;
+      order.m = m;
+      order.n = n;
+      order.use = use;
+      order.B_mn = B_mn;
+      order.gamma_sq = 0.0;
+      order.e_pol[PolIndex(true)] = e_te;
+      order.e_pol[PolIndex(false)] = e_tm;
+      orders.push_back(std::move(order));
     }
   }
 }
@@ -490,20 +491,23 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
 
   int tdof_size = nd_fespace.GetTrueVSize();
 
-  for (auto &mode : modes)
+  for (auto &order : orders)
   {
-    mode.v.SetSize(tdof_size);
-    mode.v.UseDevice(true);
+    for (auto &v : order.v)
+    {
+      v.SetSize(tdof_size);
+      v.UseDevice(true);
+    }
 
     for (int d = 0; d < 3; d++)
     {
-      auto &v_comp = mode.v_comp[d];
+      auto &v_comp = order.v_comp[d];
       v_comp.SetSize(tdof_size);
       v_comp = 0.0;
       v_comp.UseDevice(true);
 
-      FloquetComponentCoeff coeff_r(mode.B_mn, d, true);
-      FloquetComponentCoeff coeff_i(mode.B_mn, d, false);
+      FloquetComponentCoeff coeff_r(order.B_mn, d, true);
+      FloquetComponentCoeff coeff_i(order.B_mn, d, false);
 
       mfem::LinearForm lf_r(&nd_fespace);
       lf_r.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coeff_r), bdr_marker);
@@ -523,17 +527,19 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
       nd_fespace.GetProlongationMatrix()->MultTranspose(lf_i, v_comp.Imag());
     }
 
-    UpdateModeVector(mode);
+    UpdateModeVector(order, true);
+    UpdateModeVector(order, false);
   }
 }
 
-void FloquetPortData::UpdateModeVector(FloquetMode &mode) const
+void FloquetPortData::UpdateModeVector(FloquetOrder &order, bool is_te) const
 {
-  mode.v = 0.0;
+  auto p = PolIndex(is_te);
+  order.v[p] = 0.0;
   for (int d = 0; d < 3; d++)
   {
-    mode.v.Real().Add(mode.e_pol(d), mode.v_comp[d].Real());
-    mode.v.Imag().Add(mode.e_pol(d), mode.v_comp[d].Imag());
+    order.v[p].Real().Add(order.e_pol[p](d), order.v_comp[d].Real());
+    order.v[p].Imag().Add(order.e_pol[p](d), order.v_comp[d].Imag());
   }
 }
 
@@ -629,16 +635,16 @@ void FloquetPortData::Initialize(double omega)
   // (No runtime BZ check needed.)
 
   gamma0 = 0.0;
-  for (auto &mode : modes)
+  for (auto &order : orders)
   {
     // gamma_mn^2 = omega^2 * mu_r * eps_r - |B_mn + k_F(ω)|^2
     mfem::Vector kt(3);
     for (int i = 0; i < 3; i++)
     {
-      kt(i) = mode.B_mn(i) + kF_scale * k_F(i);
+      kt(i) = order.B_mn(i) + kF_scale * k_F(i);
     }
     double kt_sq = kt * kt;
-    mode.gamma_sq = omega * omega * mu_eps_port - kt_sq;
+    order.gamma_sq = omega * omega * mu_eps_port - kt_sq;
 
     // When k_F scales with frequency, the transverse wavevector direction changes,
     // which rotates the TE/TM polarization vectors. Recompute them.
@@ -646,22 +652,26 @@ void FloquetPortData::Initialize(double omega)
     {
       mfem::Vector e_te(3), e_tm(3);
       ComputePolarization(kt, port_normal, e_te, e_tm);
-      mfem::Vector &new_pol = mode.is_te ? e_te : e_tm;
-      // Check if polarization changed (avoid unnecessary vector updates).
-      double pol_diff = 0.0;
-      for (int d = 0; d < 3; d++)
+      for (bool is_te : {true, false})
       {
-        pol_diff += std::abs(mode.e_pol(d) - new_pol(d));
-      }
-      if (pol_diff > 1e-14)
-      {
-        mode.e_pol = new_pol;
-        UpdateModeVector(mode);
+        auto p = PolIndex(is_te);
+        mfem::Vector &new_pol = is_te ? e_te : e_tm;
+        // Check if polarization changed (avoid unnecessary vector updates).
+        double pol_diff = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          pol_diff += std::abs(order.e_pol[p](d) - new_pol(d));
+        }
+        if (pol_diff > 1e-14)
+        {
+          order.e_pol[p] = new_pol;
+          UpdateModeVector(order, is_te);
+        }
       }
     }
-    if (mode.m == 0 && mode.n == 0 && mode.is_te)
+    if (order.m == 0 && order.n == 0)
     {
-      gamma0 = std::sqrt(std::max(mode.gamma_sq, 0.0));
+      gamma0 = std::sqrt(std::max(order.gamma_sq, 0.0));
     }
   }
 }
@@ -669,23 +679,23 @@ void FloquetPortData::Initialize(double omega)
 int FloquetPortData::NumPropagatingOrders() const
 {
   int count = 0;
-  for (const auto &mode : modes)
+  for (const auto &order : orders)
   {
-    if (mode.gamma_sq > 0.0)
+    if (order.gamma_sq > 0.0)
     {
-      count++;
+      count += static_cast<int>(order.v.size());
     }
   }
   return count;
 }
 
-std::complex<double>
-FloquetPortData::ComputeDtNCorrectionCoeff(const FloquetMode &mode) const
+std::complex<double> FloquetPortData::ComputeDtNCorrectionCoeff(const FloquetOrder &order,
+                                                                bool is_te) const
 {
   // Compute g_correction = g_full - g_uniform for a single mode.
   // g_uniform uses the TE (0,0) propagation constant as the Robin reference.
   std::complex<double> g_uniform = 1i * gamma0 / (mu_r_port * port_area);
-  std::complex<double> g_full = ComputeDtNFullCoeff(mode);
+  std::complex<double> g_full = ComputeDtNFullCoeff(order, is_te);
   if (g_full == 0.0)
   {
     return 0.0;
@@ -702,44 +712,47 @@ FloquetPortData::ComputeDtNCorrectionCoeff(const FloquetMode &mode) const
   return g_correction;
 }
 
-std::complex<double> FloquetPortData::ComputeDtNFullCoeff(const FloquetMode &mode) const
+std::complex<double> FloquetPortData::ComputeDtNFullCoeff(const FloquetOrder &order,
+                                                          bool is_te) const
 {
   // Return the full DtN coefficient g_full (NOT the correction g_full - g_uniform).
-  if (mode.gamma_sq > 0.0)
+  if (order.gamma_sq > 0.0)
   {
-    double gamma = std::sqrt(mode.gamma_sq);
-    return mode.is_te
-               ? 1i * gamma / (mu_r_port * port_area)
-               : 1i * omega0 * omega0 * mu_eps_port / (gamma * mu_r_port * port_area);
+    double gamma = std::sqrt(order.gamma_sq);
+    return is_te ? 1i * gamma / (mu_r_port * port_area)
+                 : 1i * omega0 * omega0 * mu_eps_port / (gamma * mu_r_port * port_area);
   }
-  else if (mode.gamma_sq < 0.0)
+  else if (order.gamma_sq < 0.0)
   {
-    double gamma_abs = std::sqrt(-mode.gamma_sq);
-    return mode.is_te
-               ? gamma_abs / (mu_r_port * port_area)
-               : -omega0 * omega0 * mu_eps_port / (gamma_abs * mu_r_port * port_area);
+    double gamma_abs = std::sqrt(-order.gamma_sq);
+    return is_te ? gamma_abs / (mu_r_port * port_area)
+                 : -omega0 * omega0 * mu_eps_port / (gamma_abs * mu_r_port * port_area);
   }
   return 0.0;
 }
 
 std::unique_ptr<ComplexOperator> FloquetPortData::GetBoundaryOperator() const
 {
-  int n = modes.empty() ? 0 : static_cast<int>(modes[0].v.Size());
+  int n = orders.empty() ? 0 : static_cast<int>(orders[0].v[0].Size());
 
   // Robin+correction: the system matrix includes a Robin BC (iγ₀/μ × M_bdr) for the
   // (0,0) mode. This low-rank operator adds per-mode corrections g_k - g_uniform so
   // that each mode sees its correct DtN eigenvalue.
   auto op = std::make_unique<LowRankComplexOperator>(comm, n);
-  for (const auto &mode : modes)
+  for (const auto &order : orders)
   {
-    if (!HasFlag(mode.use, FloquetModeUse::Dtn))
+    if (!HasFlag(order.use, FloquetModeUse::Dtn))
     {
       continue;
     }
-    auto g = ComputeDtNCorrectionCoeff(mode);
-    if (g != 0.0)
+    for (bool is_te : {true, false})
     {
-      op->AddTerm(&mode.v, g);
+      auto p = PolIndex(is_te);
+      auto g = ComputeDtNCorrectionCoeff(order, is_te);
+      if (g != 0.0)
+      {
+        op->AddTerm(&order.v[p], g);
+      }
     }
   }
   return op;
@@ -785,7 +798,7 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
 
   // Extract E in the true DOF space. Use GetTrueDofs (extracts owned DOF values)
   // instead of P^T × E_local (which sums shared DOF copies and over-counts in parallel).
-  int tdof_size = modes.empty() ? 0 : static_cast<int>(modes[0].v.Size());
+  int tdof_size = orders.empty() ? 0 : static_cast<int>(orders[0].v[0].Size());
   Vector E_r_tdof(tdof_size), E_i_tdof(tdof_size);
   E.Real().GetTrueDofs(E_r_tdof);
   if (E.HasImag())
@@ -797,30 +810,34 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
     E_i_tdof = 0.0;
   }
 
-  for (const auto &mode : modes)
+  for (const auto &order : orders)
   {
-    if (!HasFlag(mode.use, FloquetModeUse::Output) || mode.gamma_sq <= 0.0)
+    if (!HasFlag(order.use, FloquetModeUse::Output) || order.gamma_sq <= 0.0)
     {
       continue;  // Only user-requested propagating orders carry S-parameters.
     }
 
-    double gamma_mn = std::sqrt(mode.gamma_sq);
+    double gamma_mn = std::sqrt(order.gamma_sq);
+    for (bool is_te : {true, false})
+    {
+      auto p = PolIndex(is_te);
+      const auto &v = order.v[p];
+      // Hermitian v^H E = (v_r·E_r + v_i·E_i) + i(v_r·E_i - v_i·E_r).
+      double sr =
+          linalg::Dot(comm, v.Real(), E_r_tdof) + linalg::Dot(comm, v.Imag(), E_i_tdof);
+      double si =
+          linalg::Dot(comm, v.Real(), E_i_tdof) - linalg::Dot(comm, v.Imag(), E_r_tdof);
 
-    // Hermitian v^H E = (v_r·E_r + v_i·E_i) + i(v_r·E_i - v_i·E_r).
-    double sr = linalg::Dot(comm, mode.v.Real(), E_r_tdof) +
-                linalg::Dot(comm, mode.v.Imag(), E_i_tdof);
-    double si = linalg::Dot(comm, mode.v.Real(), E_i_tdof) -
-                linalg::Dot(comm, mode.v.Imag(), E_r_tdof);
+      // Field amplitude: c = v^T E / (c_inc × |Γ|), where c_inc accounts for the
+      // unit-power normalization applied to the excitation.
+      // Power normalization: S = √(λ_mn / λ_eff) × c, where λ is the DtN eigenvalue.
+      // TE: λ = γ. TM: λ = ω²με/γ. λ_eff is the weighted incident eigenvalue.
+      double lambda_mn = is_te ? gamma_mn : omega0 * omega0 * mu_eps_port / gamma_mn;
+      double power_factor = std::sqrt(lambda_mn / lambda_eff);
 
-    // Field amplitude: c = v^T E / (c_inc × |Γ|), where c_inc accounts for the
-    // unit-power normalization applied to the excitation.
-    // Power normalization: S = √(λ_mn / λ_eff) × c, where λ is the DtN eigenvalue.
-    // TE: λ = γ. TM: λ = ω²με/γ. λ_eff is the weighted incident eigenvalue.
-    double lambda_mn = mode.is_te ? gamma_mn : omega0 * omega0 * mu_eps_port / gamma_mn;
-    double power_factor = std::sqrt(lambda_mn / lambda_eff);
-
-    auto key = std::make_tuple(mode.m, mode.n, mode.is_te);
-    result[key] = power_factor * std::complex<double>(sr, si) / (c_inc * port_area);
+      auto key = std::make_tuple(order.m, order.n, is_te);
+      result[key] = power_factor * std::complex<double>(sr, si) / (c_inc * port_area);
+    }
   }
 
   // Subtract incident field contribution for the driving port.
@@ -844,19 +861,14 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
 bool FloquetPortData::AddExcitationVector(double omega, ComplexVector &RHS) const
 {
   // Collect the (0,0) TE and TM modes for the incident excitation.
-  const FloquetMode *mode_te = nullptr, *mode_tm = nullptr;
-  for (const auto &mode : modes)
+  const ComplexVector *mode_te = nullptr, *mode_tm = nullptr;
+  for (const auto &order : orders)
   {
-    if (mode.m == 0 && mode.n == 0)
+    if (order.m == 0 && order.n == 0)
     {
-      if (mode.is_te)
-      {
-        mode_te = &mode;
-      }
-      else
-      {
-        mode_tm = &mode;
-      }
+      mode_te = &order.v[PolIndex(true)];
+      mode_tm = &order.v[PolIndex(false)];
+      break;
     }
   }
   if (!mode_te && !mode_tm)
@@ -872,7 +884,7 @@ bool FloquetPortData::AddExcitationVector(double omega, ComplexVector &RHS) cons
   // f = Σ_p c_inc × 2i × α_p × λ_p / μ_r × conj(v_p)
   // conj(v) appears because the bilinear form uses v^T (not v^H), and the incident
   // field ê exp(+iB·r) projects to conj(v).
-  auto add_pol = [&](const FloquetMode *mode, std::complex<double> alpha, double lambda)
+  auto add_pol = [&](const ComplexVector *mode, std::complex<double> alpha, double lambda)
   {
     if (!mode || std::abs(alpha) < 1e-14)
     {
@@ -881,10 +893,10 @@ bool FloquetPortData::AddExcitationVector(double omega, ComplexVector &RHS) cons
     // s = c_inc × 2i × alpha × lambda / mu_r (complex scalar)
     std::complex<double> s = c_inc * 2.0 * 1i * alpha * lambda / mu_r_port;
     // RHS += s × conj(v) = (s_r + i s_i)(v_r - i v_i)
-    RHS.Real().Add(s.real(), mode->v.Real());
-    RHS.Real().Add(s.imag(), mode->v.Imag());
-    RHS.Imag().Add(s.imag(), mode->v.Real());
-    RHS.Imag().Add(-s.real(), mode->v.Imag());
+    RHS.Real().Add(s.real(), mode->Real());
+    RHS.Real().Add(s.imag(), mode->Imag());
+    RHS.Imag().Add(s.imag(), mode->Real());
+    RHS.Imag().Add(-s.real(), mode->Imag());
   };
   add_pol(mode_te, inc_alpha_te, lambda_te);
   add_pol(mode_tm, inc_alpha_tm, lambda_tm);
