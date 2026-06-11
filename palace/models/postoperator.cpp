@@ -1056,8 +1056,7 @@ void PostOperator<solver_t>::MeasureFloquetPorts() const
     {
       if (port.excitation == measurement_cache.ex_idx)
       {
-        circular_output = (std::abs(port.GetIncidentAlpha(true)) > 1e-14 &&
-                           std::abs(port.GetIncidentAlpha(false)) > 1e-14);
+        circular_output = port.HasCircularExcitation();
         break;
       }
     }
