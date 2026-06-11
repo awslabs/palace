@@ -1324,8 +1324,10 @@ void PostOperator<solver_t>::MeasureSParameter() const
     bool has_lumped = fem_op->GetLumpedPortOp().Size() > 0;
     bool has_wave = fem_op->GetWavePortOp().Size() > 0;
     bool has_floquet = !fem_op->GetFloquetPortOp().Empty();
+    int active_port_type_count = static_cast<int>(has_lumped) + static_cast<int>(has_wave) +
+                                 static_cast<int>(has_floquet);
     if (!fem_op->GetPortExcitations().IsMultipleSimple() ||
-        (has_floquet && (has_lumped || has_wave)))
+        (has_floquet && active_port_type_count != 1))
     {
       return;
     }
