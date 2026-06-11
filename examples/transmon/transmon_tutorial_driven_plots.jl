@@ -4,8 +4,8 @@
 #=
 # Transmon Driven Solver — Julia/Makie plot generator
 
-Julia port of `transmon_tutorial_driven_plots.py`. Generates the same set of
-plots using CairoMakie. Differs from the CPW variant in:
+Generates the transmon plots for the adaptive driven solver guide using CairoMakie.
+Differs from the CPW variant in:
   * Two-port full S-matrix (PORT_PAIRS = [(1,1),(2,1),(1,2),(2,2)])
   * Two excitations indexed in domain energy (E_elec[1], E_elec[2])
   * 1×2 layout (energy plots) and 2×2 (S-mat plots)
@@ -29,15 +29,15 @@ using Printf
 
 const TRANSMON_DIR = joinpath(@__DIR__)
 const REPO_ROOT = abspath(joinpath(@__DIR__, "..", ".."))
-default_outdir() = joinpath(REPO_ROOT, "docs/src/assets/examples_jl")
+default_outdir() = joinpath(REPO_ROOT, "docs/src/assets/examples")
 
-const UNIFORM_DIR = joinpath(
-    TRANSMON_DIR, "postpro/transmon_tutorial_driven_rom/driven_uniform_reference",
-)
+const UNIFORM_DIR =
+    joinpath(TRANSMON_DIR, "postpro/transmon_tutorial_driven_rom/driven_uniform_reference")
 const ADAPTIVE_TOLS = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5]
 adaptive_dir(tol) = joinpath(
-    TRANSMON_DIR, "postpro/transmon_tutorial_driven_rom",
-    "driven_adaptive_1e$(round(Int, log10(tol)))",
+    TRANSMON_DIR,
+    "postpro/transmon_tutorial_driven_rom",
+    "driven_adaptive_1e$(round(Int, log10(tol)))"
 )
 
 const PORT_PAIRS = [(1, 1), (2, 1), (1, 2), (2, 2)]
@@ -60,21 +60,36 @@ function makie_theme()
     return Theme(
         fontsize=22,
         fonts=(
-            regular="Times", italic="Times Italic",
-            bold="Times Bold", bold_italic="Times Bold Italic",
+            regular="Times",
+            italic="Times Italic",
+            bold="Times Bold",
+            bold_italic="Times Bold Italic"
         ),
         Axis=(
-            xgridvisible=false, ygridvisible=false,
-            rightspinevisible=false, topspinevisible=false,
-            xticksize=7, yticksize=7, xtickalign=1, ytickalign=1,
-            xminorticksvisible=true, yminorticksvisible=true,
-            xminortickalign=1, yminortickalign=1,
-            xminorticksize=4, yminorticksize=4,
-            spinewidth=1.4, xtickwidth=1.4, ytickwidth=1.4,
-            xticklabelsize=20, yticklabelsize=20,
-            xlabelsize=22, ylabelsize=22, titlesize=24,
+            xgridvisible=false,
+            ygridvisible=false,
+            rightspinevisible=false,
+            topspinevisible=false,
+            xticksize=7,
+            yticksize=7,
+            xtickalign=1,
+            ytickalign=1,
+            xminorticksvisible=true,
+            yminorticksvisible=true,
+            xminortickalign=1,
+            yminortickalign=1,
+            xminorticksize=4,
+            yminorticksize=4,
+            spinewidth=1.4,
+            xtickwidth=1.4,
+            ytickwidth=1.4,
+            xticklabelsize=20,
+            yticklabelsize=20,
+            xlabelsize=22,
+            ylabelsize=22,
+            titlesize=24
         ),
-        Legend=(framevisible=false, labelsize=18, patchsize=(20, 20), rowgap=4),
+        Legend=(framevisible=false, labelsize=18, patchsize=(20, 20), rowgap=4)
     )
 end
 
@@ -86,11 +101,13 @@ const _RE_E_COL = r"E_(\w+)\[(\d+)\] \(J\)"
 
 function load_port_s(postpro_dir::AbstractString)
     df = CSV.read(
-        joinpath(postpro_dir, "port-S.csv"), DataFrame;
-        normalizenames=false, stripwhitespace=true,
+        joinpath(postpro_dir, "port-S.csv"),
+        DataFrame;
+        normalizenames=false,
+        stripwhitespace=true
     )
     freq = collect(df[!, "f (GHz)"])
-    s = Dict{Tuple{Int,Int},Vector{ComplexF64}}()
+    s = Dict{Tuple{Int, Int}, Vector{ComplexF64}}()
     for col in names(df)
         m = match(_RE_S_DB, col)
         m === nothing && continue
@@ -101,8 +118,8 @@ function load_port_s(postpro_dir::AbstractString)
         try
             db = Float64.(db_raw)
             ang = Float64.(ang_raw)
-            (any(isnan, db) || any(isnan, ang) ||
-             any(isinf, db) || any(isinf, ang)) && continue
+            (any(isnan, db) || any(isnan, ang) || any(isinf, db) || any(isinf, ang)) &&
+                continue
             s[(i, j)] = @. 10^(db / 20) * cis(deg2rad(ang))
         catch
             continue   # parsing failure (e.g. 'inf' string) → skip pair
@@ -113,11 +130,13 @@ end
 
 function load_domain_e(postpro_dir::AbstractString)
     df = CSV.read(
-        joinpath(postpro_dir, "domain-E.csv"), DataFrame;
-        normalizenames=false, stripwhitespace=true,
+        joinpath(postpro_dir, "domain-E.csv"),
+        DataFrame;
+        normalizenames=false,
+        stripwhitespace=true
     )
     freq = collect(df[!, "f (GHz)"])
-    e = Dict{Tuple{String,Int},Vector{Float64}}()
+    e = Dict{Tuple{String, Int}, Vector{Float64}}()
     for col in names(df)
         m = match(_RE_E_COL, col)
         m === nothing && continue
@@ -141,14 +160,17 @@ end
 
 # -------------------------- Helpers ------------------------------------------
 
-fmt_tol(t) = (e = round(Int, log10(t)); @sprintf("1e-%02d", -e))
+fmt_tol(t) = (e=round(Int, log10(t)); @sprintf("1e-%02d", -e))
 mean_sq(v) = sum(abs2, v) / length(v)
 collect_pivots(d, tol) = haskey(d, tol) ? reduce(vcat, d[tol]; init=Float64[]) : Float64[]
 
 function add_eigenmode_lines!(ax)
-    vlines!(
-        ax, EIGENMODE_FREQS_GHZ;
-        color=(:black, 0.25), linewidth=0.6, linestyle=:dot,
+    return vlines!(
+        ax,
+        EIGENMODE_FREQS_GHZ;
+        color=(:black, 0.25),
+        linewidth=0.6,
+        linestyle=:dot
     )
 end
 
@@ -172,7 +194,8 @@ function plot_smat_uniform(freq, sdict, outdir)
     Label(
         fig[0, 1:2],
         L"\text{S-Parameters Magnitude } |S_{ij}| \text{ (dB)}";
-        fontsize=SUPTITLE_SIZE, padding=SUPTITLE_PAD,
+        fontsize=SUPTITLE_SIZE,
+        padding=SUPTITLE_PAD
     )
     axes = Matrix{Axis}(undef, 2, 2)
     for (idx, (i, j)) in enumerate(PORT_PAIRS)
@@ -183,7 +206,7 @@ function plot_smat_uniform(freq, sdict, outdir)
             xticks=FREQ_TICKS,
             xminorticks=IntervalsBetween(5),
             xticklabelsvisible=row == 2,
-            yticklabelsvisible=col == 1,
+            yticklabelsvisible=col == 1
         )
         xlims!(ax, FREQ_LIM...)
         ylims!(ax, -25, 1)
@@ -191,16 +214,25 @@ function plot_smat_uniform(freq, sdict, outdir)
         if haskey(sdict, (i, j))
             y = 20 .* log10.(abs.(sdict[(i, j)]))
             scatterlines!(
-                ax, freq, y;
-                color=:black, linewidth=REF_LW, markersize=REF_MS,
-                marker=:circle, label="Uniform",
+                ax,
+                freq,
+                y;
+                color=:black,
+                linewidth=REF_LW,
+                markersize=REF_MS,
+                marker=:circle,
+                label="Uniform"
             )
         end
         add_eigenmode_lines!(ax)
         text!(
-            ax, 0.97, 0.93;
-            text=L"S_{%$i%$j}", space=:relative,
-            align=(:right, :top), fontsize=SLABEL_SIZE,
+            ax,
+            0.97,
+            0.93;
+            text=L"S_{%$i%$j}",
+            space=:relative,
+            align=(:right, :top),
+            fontsize=SLABEL_SIZE
         )
     end
     linkaxes!(axes...)
@@ -211,19 +243,19 @@ end
 
 # -------------------------- Plot 2: S-mat adaptive RMS -----------------------
 
-function plot_smat_adaptive_rms(
-    freq, s_unif, s_adapt, freq_adapt, sampled_freqs, outdir,
-)
+function plot_smat_adaptive_rms(freq, s_unif, s_adapt, freq_adapt, sampled_freqs, outdir)
     fig = Figure(size=(900, 720))
     Label(
         fig[0, 1:2],
         "Normalized Absolute Error in S-Parameters";
-        fontsize=SUPTITLE_SIZE, padding=(0, 0, 0, 10),
+        fontsize=SUPTITLE_SIZE,
+        padding=(0, 0, 0, 10)
     )
     Label(
         fig[1, 1:2],
         L"|S_{\mathrm{adaptive}} - S_{\mathrm{uniform}}| / \Vert S_{\mathrm{uniform}} \Vert_{\mathrm{RMS}}";
-        fontsize=SUPTITLE_SIZE, padding=(0, 0, 6, 0),
+        fontsize=SUPTITLE_SIZE,
+        padding=(0, 0, 6, 0)
     )
     rowgap!(fig.layout, 1, 0)
     axes = Matrix{Axis}(undef, 2, 2)
@@ -236,7 +268,7 @@ function plot_smat_adaptive_rms(
             xminorticks=IntervalsBetween(5),
             xticklabelsvisible=row == 2,
             yticklabelsvisible=col == 1,
-            yscale=log10,
+            yscale=log10
         )
         xlims!(ax, FREQ_LIM...)
         ylims!(ax, 5e-14, 0.9)
@@ -249,37 +281,58 @@ function plot_smat_adaptive_rms(
             haskey(s_adapt, tol) && haskey(s_adapt[tol], (i, j)) || continue
             err = abs.(s_adapt[tol][(i, j)] .- ref) ./ scale
             scatterlines!(
-                ax, freq_adapt[tol], err;
-                color=TOL_PALETTE[k], linewidth=ADAPT_LW,
-                markersize=ADAPT_MS, marker=:circle, label=fmt_tol(tol),
+                ax,
+                freq_adapt[tol],
+                err;
+                color=TOL_PALETTE[k],
+                linewidth=ADAPT_LW,
+                markersize=ADAPT_MS,
+                marker=:circle,
+                label=fmt_tol(tol)
             )
             # Tolerance band drawn from xmin..0.8*range, matching Python.
             lines!(
-                ax, [FREQ_LIM[1], tol_line_xmax], [tol, tol];
-                color=TOL_PALETTE[k], linewidth=TOL_LINE_LW, linestyle=:dash,
+                ax,
+                [FREQ_LIM[1], tol_line_xmax],
+                [tol, tol];
+                color=TOL_PALETTE[k],
+                linewidth=TOL_LINE_LW,
+                linestyle=:dash
             )
             pivots = collect_pivots(sampled_freqs, tol)
             if !isempty(pivots)
                 ys = fill(1.3e-13 * (1.7^k), length(pivots))
                 scatter!(
-                    ax, pivots, ys;
+                    ax,
+                    pivots,
+                    ys;
                     color=(TOL_PALETTE[k], 0.75),
-                    marker=:diamond, markersize=PIVOT_MS,
+                    marker=:diamond,
+                    markersize=PIVOT_MS
                 )
             end
         end
         hlines!(ax, [1e-12]; color=:black, linewidth=REF_FLOOR_LW, linestyle=:dot)
         add_eigenmode_lines!(ax)
         text!(
-            ax, 0.97, 0.55;
-            text=L"S_{%$i%$j}", space=:relative,
-            align=(:right, :top), fontsize=SLABEL_SIZE,
+            ax,
+            0.97,
+            0.55;
+            text=L"S_{%$i%$j}",
+            space=:relative,
+            align=(:right, :top),
+            fontsize=SLABEL_SIZE
         )
     end
     linkaxes!(axes...)
     axislegend(
-        axes[2, 2]; position=:rt, framevisible=false,
-        labelsize=LEGEND_SIZE, unique=true, padding=(2, 2, 2, 2), rowgap=1,
+        axes[2, 2];
+        position=:rt,
+        framevisible=false,
+        labelsize=LEGEND_SIZE,
+        unique=true,
+        padding=(2, 2, 2, 2),
+        rowgap=1
     )
     save(joinpath(outdir, "driven_ua_transmon_sparam_adaptive_rms.svg"), fig)
     return fig
@@ -292,7 +345,8 @@ function plot_energy_uniform(freq, e, outdir)
     Label(
         fig[0, 1:2],
         L"\text{Domain Energy } E_{\mathrm{elec}} \text{ (nJ)}";
-        fontsize=SUPTITLE_SIZE, padding=SUPTITLE_PAD,
+        fontsize=SUPTITLE_SIZE,
+        padding=SUPTITLE_PAD
     )
     axes = Vector{Axis}(undef, 2)
     for (idx, exc) in enumerate([1, 2])
@@ -301,23 +355,32 @@ function plot_energy_uniform(freq, e, outdir)
             xlabel="f (GHz)",
             xticks=FREQ_TICKS,
             xminorticks=IntervalsBetween(5),
-            yticklabelsvisible=idx == 1,
+            yticklabelsvisible=idx == 1
         )
         xlims!(ax, FREQ_LIM...)
         axes[idx] = ax
         key = ("elec", exc)
         if haskey(e, key)
             scatterlines!(
-                ax, freq, e[key] .* 1e9;
-                color=:black, linewidth=REF_LW, markersize=REF_MS,
-                marker=:circle, label="Uniform",
+                ax,
+                freq,
+                e[key] .* 1e9;
+                color=:black,
+                linewidth=REF_LW,
+                markersize=REF_MS,
+                marker=:circle,
+                label="Uniform"
             )
         end
         add_eigenmode_lines!(ax)
         text!(
-            ax, 0.97, 0.97;
-            text="Excitation $exc", space=:relative,
-            align=(:right, :top), fontsize=EXC_LABEL_SIZE,
+            ax,
+            0.97,
+            0.97;
+            text="Excitation $exc",
+            space=:relative,
+            align=(:right, :top),
+            fontsize=EXC_LABEL_SIZE
         )
     end
     linkaxes!(axes...)
@@ -329,18 +392,25 @@ end
 # -------------------------- Plot 4: energy adaptive sweep --------------------
 
 function plot_energy_adaptive_sweep(
-    freq, e_unif, e_adapt, freq_adapt, sampled_freqs, outdir,
+    freq,
+    e_unif,
+    e_adapt,
+    freq_adapt,
+    sampled_freqs,
+    outdir
 )
     fig = Figure(size=(900, 720))
     Label(
         fig[0, 1:2],
         "Error in Domain Energy";
-        fontsize=SUPTITLE_SIZE, padding=(0, 0, 0, 10),
+        fontsize=SUPTITLE_SIZE,
+        padding=(0, 0, 0, 10)
     )
     Label(
         fig[1, 1:2],
         L"|E_{\mathrm{elec,adaptive}} - E_{\mathrm{elec,uniform}}| / \Vert E_{\mathrm{elec,uniform}} \Vert_{\mathrm{RMS}}";
-        fontsize=SUPTITLE_SIZE, padding=(0, 0, 6, 0),
+        fontsize=SUPTITLE_SIZE,
+        padding=(0, 0, 6, 0)
     )
     rowgap!(fig.layout, 1, 0)
     axes = Vector{Axis}(undef, 2)
@@ -351,7 +421,7 @@ function plot_energy_adaptive_sweep(
             xticks=FREQ_TICKS,
             xminorticks=IntervalsBetween(5),
             yticklabelsvisible=idx == 1,
-            yscale=log10,
+            yscale=log10
         )
         xlims!(ax, FREQ_LIM...)
         ylims!(ax, 5e-15, 10)
@@ -365,36 +435,57 @@ function plot_energy_adaptive_sweep(
             haskey(e_adapt, tol) && haskey(e_adapt[tol], ref_key) || continue
             err = abs.(e_adapt[tol][ref_key] .- ref) ./ scale
             scatterlines!(
-                ax, freq_adapt[tol], err;
-                color=TOL_PALETTE[k], linewidth=ADAPT_LW,
-                markersize=ADAPT_MS, marker=:circle, label=fmt_tol(tol),
+                ax,
+                freq_adapt[tol],
+                err;
+                color=TOL_PALETTE[k],
+                linewidth=ADAPT_LW,
+                markersize=ADAPT_MS,
+                marker=:circle,
+                label=fmt_tol(tol)
             )
             lines!(
-                ax, [FREQ_LIM[1], tol_line_xmax], [tol, tol];
-                color=TOL_PALETTE[k], linewidth=TOL_LINE_LW, linestyle=:dash,
+                ax,
+                [FREQ_LIM[1], tol_line_xmax],
+                [tol, tol];
+                color=TOL_PALETTE[k],
+                linewidth=TOL_LINE_LW,
+                linestyle=:dash
             )
             pivots = collect_pivots(sampled_freqs, tol)
             if !isempty(pivots)
                 ys = fill(2e-13 * tol^0.25, length(pivots))
                 scatter!(
-                    ax, pivots, ys;
+                    ax,
+                    pivots,
+                    ys;
                     color=(TOL_PALETTE[k], 0.75),
-                    marker=:diamond, markersize=PIVOT_MS,
+                    marker=:diamond,
+                    markersize=PIVOT_MS
                 )
             end
         end
         hlines!(ax, [1e-12]; color=:black, linewidth=REF_FLOOR_LW, linestyle=:dot)
         add_eigenmode_lines!(ax)
         text!(
-            ax, 0.97, 0.97;
-            text="Excitation $exc", space=:relative,
-            align=(:right, :top), fontsize=EXC_LABEL_SIZE,
+            ax,
+            0.97,
+            0.97;
+            text="Excitation $exc",
+            space=:relative,
+            align=(:right, :top),
+            fontsize=EXC_LABEL_SIZE
         )
     end
     linkaxes!(axes...)
     axislegend(
-        axes[1]; position=:rt, framevisible=false,
-        labelsize=LEGEND_SIZE, unique=true, padding=(2, 2, 2, 2), rowgap=1,
+        axes[1];
+        position=:rt,
+        framevisible=false,
+        labelsize=LEGEND_SIZE,
+        unique=true,
+        padding=(2, 2, 2, 2),
+        rowgap=1
     )
     save(joinpath(outdir, "driven_ua_transmon_energy_adaptive_sweep.svg"), fig)
     return fig
@@ -410,10 +501,10 @@ function main(; outdir=default_outdir())
     _, e_u = load_domain_e(UNIFORM_DIR)
     println("Uniform: $(length(freq_u)) frequency points")
 
-    freq_a = Dict{Float64,Vector{Float64}}()
-    s_a = Dict{Float64,Dict{Tuple{Int,Int},Vector{ComplexF64}}}()
-    e_a = Dict{Float64,Dict{Tuple{String,Int},Vector{Float64}}}()
-    pivots = Dict{Float64,Vector{Vector{Float64}}}()
+    freq_a = Dict{Float64, Vector{Float64}}()
+    s_a = Dict{Float64, Dict{Tuple{Int, Int}, Vector{ComplexF64}}}()
+    e_a = Dict{Float64, Dict{Tuple{String, Int}, Vector{Float64}}}()
+    pivots = Dict{Float64, Vector{Vector{Float64}}}()
     for tol in ADAPTIVE_TOLS
         d = adaptive_dir(tol)
         if !isfile(joinpath(d, "port-S.csv"))

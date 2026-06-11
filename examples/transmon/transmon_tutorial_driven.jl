@@ -4,9 +4,9 @@
 #=
 # README
 
-This Julia script runs Palace driven solver simulations on the transmon example, for
-the "Driven Solver: Uniform vs Adaptive" tutorial. Use the accompanying
-`transmon_tutorial_driven_plots.py` python script to generate plots once the data is
+This Julia script runs Palace driven solver simulations on the transmon example for
+the adaptive driven solver guide. Use the accompanying
+`transmon_tutorial_driven_plots.jl` Julia script to generate plots once the data is
 generated.
 
 The script runs:
@@ -53,8 +53,8 @@ using JSON
                                    num_processors::Integer=1
                                   )
 
-Run Palace driven solver simulations for the "Driven Solver: Uniform and Adaptive" tutorial
-on the transmon model.
+Run Palace driven solver simulations for the adaptive driven solver guide on the transmon
+model.
 
 Executes a uniform frequency sweep followed by adaptive sweeps at AdaptiveTol ∈
 {1e-1, 1e-2, 1e-3, 1e-4, 1e-5}. Both use `transmon_tutorial_driven.json` as a template.

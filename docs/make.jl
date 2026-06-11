@@ -89,7 +89,7 @@ makedocs(
             "config/boundaries.md",
             "config/solver.md"
         ],
-        "Features" => Any["features/farfield.md"],
+        "Features" => Any["features/farfield.md", "features/adaptive_driven_solver.md"],
         "Examples" => Any[
             "examples/examples.md",
             "examples/spheres.md",
@@ -100,8 +100,7 @@ makedocs(
             "examples/coaxial.md",
             "examples/cpw.md",
             "examples/cpw2d.md",
-            "examples/dielectric_grating.md",
-            "examples/tutorial_driven_uniform_v_adaptive.md"
+            "examples/dielectric_grating.md"
         ],
         "faq.md",
         "For Developers" => Any[
