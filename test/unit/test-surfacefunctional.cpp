@@ -14,6 +14,7 @@
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
+#include "fem/interpolator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/surfacefunctional.hpp"
 #include "models/materialoperator.hpp"
@@ -22,6 +23,7 @@
 #include "utils/configfile.hpp"
 #include "utils/geodata.hpp"
 #include "utils/labels.hpp"
+#include "utils/units.hpp"
 
 namespace palace
 {
@@ -1509,5 +1511,86 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
   auto result2 = farfield.EvalFarField(E, B, 2.0 * omega_re, 0.0);
   CHECK(std::abs(result2[0][0] - result[0][0]) > 0.0);
 }
+
+#if defined(MFEM_USE_GSLIB)
+TEST_CASE("InterpolationOperator Ceed Probes", "[surfacefunctional][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto order = GENERATE(1, 2);
+  CAPTURE(elem_type, order);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec);
+  GridFunction E(nd_fespace, true);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + x(2) * x(2);
+                                        v(1) = std::cos(x(2)) + x(0);
+                                        v(2) = x(0) * x(1) + 1.0;
+                                      });
+  mfem::VectorFunctionCoefficient fei(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) * x(2) - 0.5;
+                                        v(1) = std::sin(x(0)) - x(2);
+                                        v(2) = std::cos(x(1)) + x(0) * x(0);
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  E.Imag().ProjectCoefficient(fei);
+
+  // Probe points (element interiors, in both material regions; points on element
+  // borders are avoided since interpolated values of H(curl) fields are multi-valued
+  // there and the GSLIB reference resolves the donor element rank-dependently).
+  std::map<int, config::ProbeData> probes;
+  const std::array<std::array<double, 3>, 3> pts = {
+      {{0.21, 0.37, 0.23}, {0.74, 0.52, 0.81}, {0.53, 0.48, 0.52}}};
+  for (std::size_t i = 0; i < pts.size(); i++)
+  {
+    config::ProbeData data;
+    data.center = pts[i];
+    probes.emplace(static_cast<int>(i + 1), data);
+  }
+  Units units(1.0, 1.0);
+  InterpolationOperator interp(probes, units, nd_fespace);
+
+  // Reference: GSLIB interpolation at the same points (byVDIM).
+  const int npts = static_cast<int>(pts.size());
+  mfem::Vector xyz(npts * 3), vals_r(npts * 3), vals_i(npts * 3);
+  for (int i = 0; i < npts; i++)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      xyz(d * npts + i) = pts[i][d];
+    }
+  }
+  fem::InterpolateFunction(xyz, E.Real(), vals_r, mfem::Ordering::byNODES);
+  fem::InterpolateFunction(xyz, E.Imag(), vals_i, mfem::Ordering::byNODES);
+
+  auto vals = interp.ProbeField(E);
+  REQUIRE(static_cast<int>(vals.size()) == npts * 3);
+  for (int i = 0; i < npts; i++)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      // ProbeField returns byVDIM; the InterpolateFunction reference returns with the
+      // requested (byNODES) ordering.
+      const auto val = vals[3 * i + d];
+      const double ref_r = vals_r(d * npts + i), ref_i = vals_i(d * npts + i);
+      CAPTURE(i, d, ref_r, ref_i);
+      CHECK(val.real() == Catch::Approx(ref_r).epsilon(1.0e-9).margin(1.0e-12));
+      CHECK(val.imag() == Catch::Approx(ref_i).epsilon(1.0e-9).margin(1.0e-12));
+    }
+  }
+}
+#endif
 
 }  // namespace palace
