@@ -227,6 +227,16 @@ public:
   std::unique_ptr<OperType>
   GetWavePortBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
 
+  // Construct the ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield
+  // (absorbing) BC, with unit coefficient, stored on the real slot. The full A2
+  // contribution at frequency ω is `i·(0.5/ω)·M_ff` (real-ω stamping) or `-0.5/λ·M_ff`
+  // (complex-λ analytic continuation); a caller scales this matrix by the appropriate
+  // complex coefficient. Returns a null pointer if the farfield BC order < 2 or it
+  // contributes no DoFs on this rank. Used by the NLEPS HYBRID frozen-ABC seed strategy.
+  template <typename OperType>
+  std::unique_ptr<OperType>
+  GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy diag_policy);
+
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:
   //                     A = a0 K + a1 C + a2 (Mr + i Mi) + A2.
