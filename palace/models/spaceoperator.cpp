@@ -612,6 +612,41 @@ SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
   }
 }
 
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy diag_policy)
+{
+  // ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield ABC, with unit
+  // coefficient. Stored on the REAL slot of the resulting ComplexParOperator so that
+  // downstream BuildParSumOperator can scale it by an arbitrary complex coefficient (the
+  // real-ω path uses i·(0.5/ω); the complex-λ path uses -0.5/λ). Returns null if the
+  // farfield ABC order < 2 or it contributes no DoFs on this rank.
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient df(mat_op.MaxCeedBdrAttribute());
+  farfield_op.AddExtraSystemBoundaryCurlCurlBdrCoefficients(1.0, df);
+  int empty = df.empty();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto m =
+      AssembleOperator(GetNDSpace(), nullptr, nullptr, &df, nullptr, nullptr, skip_zeros);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto M_op = std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+  else
+  {
+    auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+}
+
 template <typename OperType, typename ScalarType>
 std::unique_ptr<OperType>
 SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
@@ -1341,6 +1376,11 @@ template std::unique_ptr<Operator>
 SpaceOperator::GetWavePortBoundaryMassMatrix(int, Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetWavePortBoundaryMassMatrix(int, Operator::DiagonalPolicy);
+
+template std::unique_ptr<Operator>
+    SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy);
+template std::unique_ptr<ComplexOperator>
+    SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, const Operator *,
