@@ -154,14 +154,6 @@ public:
   // consistent with lumped and wave port conventions.
   bool AddExcitationVector(double omega, ComplexVector &RHS) const;
 
-  // Returns 1 W: the port mode is normalized such that ∫ (E_inc × H_inc⋆) · n̂ dS = 1.
-  double GetExcitationPower() const { return HasExcitation() ? 1.0 : 0.0; }
-
-  // Material properties at the port (nondimensional, from adjacent volume element).
-  double GetMuEpsPort() const { return mu_eps_port; }
-  double GetMuRPort() const { return mu_r_port; }
-  double GetPortArea() const { return port_area; }
-
 private:
   const MaterialOperator &mat_op;
   mfem::Array<int> attr_list;
@@ -237,7 +229,6 @@ class FloquetPortOperator
 private:
   const MaterialOperator &mat_op;
   std::map<int, FloquetPortData> ports;
-  bool suppress_output = false;
 
 public:
   FloquetPortOperator(const std::map<int, config::FloquetPortData> &floquetport,
@@ -251,8 +242,6 @@ public:
   auto end() const { return ports.end(); }
   auto Size() const { return ports.size(); }
   bool Empty() const { return ports.empty(); }
-
-  void SetSuppressOutput(bool suppress) { suppress_output = suppress; }
 
   // Initialize all ports for the given frequency.
   void Initialize(double omega);
