@@ -97,6 +97,7 @@ public:
 
   // Access the enumerated modes (for CSV column setup).
   const auto &GetModes() const { return modes; }
+  double GetGamma0() const { return gamma0; }
 
   // Check if mode (m, n, is_te) is part of the incident excitation at this port.
   // For linear polarization (TE/TM), only one matches. For circular (RHC/LHC), both do.
@@ -188,6 +189,7 @@ private:
 
   // Frequency cache.
   double omega0 = 0.0;
+  double gamma0 = 0.0;
 
   // BZ wrapping offset: when MaterialOperator wraps k_F by subtracting G = bz_m*b1+bz_n*b2,
   // the Fourier projection kernel must be shifted accordingly. Mode labels remain physical.
