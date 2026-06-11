@@ -11,12 +11,12 @@ SPDX-License-Identifier: Apache-2.0
 
 The perfect electric conductor (PEC) boundary condition (zero tangential electric field) is
 specified using the `"PEC"` boundary keyword under
-[`config["Boundaries"]`](../config/boundaries.md#boundaries%5B%22PEC%22%5D). It is a
+[`config["Boundaries"]`](../config/reference.md#config-boundaries-pec). It is a
 homogeneous Dirichlet boundary condition for the frequency or time domain finite element
 formulation, as well as the magnetostatic formulation.
 
 For electrostatic simulations, the homogeneous Dirichlet boundary condition is prescribed
-using the [`"Ground"`](../config/boundaries.md#boundaries%5B%22Ground%22%5D) boundary
+using the [`"Ground"`](../config/reference.md#config-boundaries-ground) boundary
 keyword which prescribes zero voltage at the boundary.
 
 ## Perfect magnetic conductor (PMC) boundary
@@ -26,19 +26,19 @@ a homogeneous Neumann boundary condition for the frequency or time domain finite
 formulation, as well as the magnetostatic formulation. It is the natural boundary condition
 and thus it has the same effect as not specifying any additional boundary condition on
 external boundary surfaces. It can also be explicitly specified using the `"PMC"` boundary
-keyword under [`config["Boundaries"]`](../config/boundaries.md#boundaries%5B%22PMC%22%5D).
+keyword under [`config["Boundaries"]`](../config/reference.md#config-boundaries-pmc).
 
 Likewise, for electrostatic simulations, the homogeneous Neumann boundary condition implies
 a zero-charge boundary, and thus zero gradient of the voltage in the direction normal to the
 boundary. This is specified using the `"ZeroCharge"` boundary keyword under
-[`config["Boundaries"]`](../config/boundaries.md#boundaries%5B%22ZeroCharge%22%5D).
+[`config["Boundaries"]`](../config/reference.md#config-boundaries-zerocharge).
 
 ## Impedance boundary
 
 The impedance boundary condition is a mixed (Robin) boundary condition and is available for
 the frequency or time domain finite element formulations and thus for eigenmode or frequency
 or time domain driven simulation types. It is specified using the
-[`"Impedance"`](../config/boundaries.md#boundaries%5B%22Impedance%22%5D) boundary keyword.
+[`"Impedance"`](../config/reference.md#config-boundaries-impedance) boundary keyword.
 The surface impedance relating the tangential electric and magnetic fields on the boundary
 is computed from the parallel impedances due to the specified resistance, inductance, and
 capacitance per square.
@@ -47,7 +47,7 @@ capacitance per square.
 
 Absorbing boundary conditions at farfield boundaries, also referred to as scattering
 boundary conditions, can be applied using the `"Absorbing"` boundary keyword under
-[`config["Boundaries"]`](../config/boundaries.md#boundaries%5B%22Absorbing%22%5D). The
+[`config["Boundaries"]`](../config/reference.md#config-boundaries-absorbing). The
 first-order absorbing boundary condition is a special case of the above impedance boundary
 and is available for eigenmode or frequency or time domain driven simulation types. The
 second-order absorbing boundary condition is only available for frequency domain
@@ -62,7 +62,7 @@ for computational electromagnetics and will be a useful addition.
 ## Finite conductivity boundary
 
 A finite conductivity boundary condition can be specified using the
-[`"Conductivity"`](../config/boundaries.md#boundaries%5B%22Conductivity%22%5D) boundary
+[`"Conductivity"`](../config/reference.md#config-boundaries-conductivity) boundary
 keyword. This boundary condition models the effect of a boundary with non-infinite
 conductivity (an imperfect conductor) for conductors with thickness much larger than the
 skin depth. It is available only for frequency domain driven and eigenmode simulations. For more
@@ -73,7 +73,7 @@ reference.
 ## Periodic boundary
 
 Periodic boundary conditions on an existing mesh can be specified using the
-["Periodic"](../config/boundaries.md#boundaries%5B%22Periodic%22%5D) boundary keyword. This
+["Periodic"](../config/reference.md#config-boundaries-periodic) boundary keyword. This
 boundary condition enforces that the solution on the specified boundaries be exactly equal,
 and requires that the surface meshes on the donor and receiver boundaries be identical up to
 translation or rotation. Periodicity in *Palace* is also supported through meshes generated
@@ -88,7 +88,7 @@ for implementation details.
 
 ## Lumped and wave port excitation
 
-  - [`config["Boundaries"]["LumpedPort"]`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D) :
+  - [`config["Boundaries"]["LumpedPort"]`](../config/reference.md#config-boundaries-lumpedport) :
     A lumped port applies a similar boundary condition to a
     [surface impedance](#Impedance-boundary) boundary, but takes on a special meaning for
     each simulation type.
@@ -105,9 +105,9 @@ for implementation details.
     Note that a single lumped port (given by a single integer `"Index"`) can be made up of
     multiple boundary attributes in the mesh in order to model, for example, a multielement
     lumped port. To use this functionality, use the `"Elements"` object under
-    [`"LumpedPort"`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D).
+    [`"LumpedPort"`](../config/reference.md#config-boundaries-lumpedport).
 
-  - [`config["Boundaries"]["WavePort"]`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D) :
+  - [`config["Boundaries"]["WavePort"]`](../config/reference.md#config-boundaries-waveport) :
     Numeric wave ports are available for frequency domain driven and eigenmode simulations. In this case,
     a port boundary condition is applied with an optional excitation using a modal field
     shape which is computed by solving a 2D boundary mode eigenproblem on each wave port
@@ -120,7 +120,7 @@ for implementation details.
     analysis. Impedance (`"Impedance"`), absorbing (`"Absorbing"`), and conductivity
     (`"Conductivity"`) boundaries are treated as Robin boundary conditions in the wave port
     eigenvalue problem, matching the standalone boundary mode solver.
-    [`config["Boundaries"]["WavePortPEC"`](../config/boundaries.md#boundaries%5B%22WavePortPEC%22%5D)
+    [`config["Boundaries"]["WavePortPEC"`](../config/reference.md#config-boundaries-waveportpec)
     allows forcing specific boundary attributes to act as PEC in the wave port solve,
     overriding any other boundary condition (e.g. impedance or absorbing) that may be
     assigned to the same attributes. In addition, boundaries of wave ports other than the
@@ -141,11 +141,11 @@ for implementation details.
     one of the following on each wave port — both list the **signal** (high-potential)
     terminal first and the **ground** (low-potential) terminal second:
 
-      + [`"VoltagePath"`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D): an
+      + [`"VoltagePath"`](../config/reference.md#config-boundaries-waveport-voltagepath): an
         ordered list of coordinate points across the port face, directed signal → ground.
         The mode is flipped so that `\int E_{\text{mode}} \cdot dl > 0` along this path.
         Also enables ``Z_{PV}`` postprocessing. Requires GSLIB.
-      + [`"PolarityAttributes"`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D):
+      + [`"PolarityAttributes"`](../config/reference.md#config-boundaries-waveport-polarityattributes):
         a pair of parent-mesh boundary attributes `[signal, ground]` (e.g. distinct PEC
         attributes for the two terminals). The mode is flipped so that the modal E-field
         points from the signal attribute toward the ground attribute. Lightweight
@@ -184,8 +184,8 @@ For each port, the excitation is normalized to have unit incident power over the
 surface.
 
 The presence of an incident excitation at a port is controlled by the settings
-[`config["Boundaries"]["LumpedPort"][]["Excitation"]`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D)
-and [`config["WavePort"][]["Excitation"]`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D).
+[`config["Boundaries"]["LumpedPort"][]["Excitation"]`](../config/reference.md#config-boundaries-lumpedport)
+and [`config["WavePort"][]["Excitation"]`](../config/reference.md#config-boundaries-waveport).
 The `Excitation` settings can either be specified as non-negative integers or booleans.
 
   - *Boolean setting*: `true`/`false` indicates the presence / absence of an incident excitation.
@@ -209,11 +209,11 @@ can only be part of one excitation.
 
 !!! warning "Indexing"
 
-    Any `"Index"` of [`"LumpedPort"`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D),
-    [`"WavePort"`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D),
-    [`"FloquetPort"`](../config/boundaries.md#boundaries%5B%22FloquetPort%22%5D),
-    [`"SurfaceCurrent"`](../config/boundaries.md#boundaries%5B%22SurfaceCurrent%22%5D), or
-    [`"Terminal"`](../config/boundaries.md#boundaries%5B%22Terminal%22%5D) must be unique, including between
+    Any `"Index"` of [`"LumpedPort"`](../config/reference.md#config-boundaries-lumpedport),
+    [`"WavePort"`](../config/reference.md#config-boundaries-waveport),
+    [`"FloquetPort"`](../config/reference.md#config-boundaries-floquetport),
+    [`"SurfaceCurrent"`](../config/reference.md#config-boundaries-surfacecurrent), or
+    [`"Terminal"`](../config/reference.md#config-boundaries-terminal) must be unique, including between
     different boundary conditions types (e.g. you can not have a lumped port and wave port both with
     `Index: 5`).
 
@@ -221,7 +221,7 @@ can only be part of one excitation.
 
 An alternative source excitation to lumped or wave ports for frequency and time domain
 driven simulations is a surface current excitation, specified under
-[`config["Boundaries"]["SurfaceCurrent"]`](../config/boundaries.md#boundaries%5B%22SurfaceCurrent%22%5D).
+[`config["Boundaries"]["SurfaceCurrent"]`](../config/reference.md#config-boundaries-surfacecurrent).
 This is the excitation used for magnetostatic simulation types as well. This option
 prescribes a unit source surface current excitation on the given boundary in order to
 excite the model. It does does not prescribe any boundary condition to the model and only
