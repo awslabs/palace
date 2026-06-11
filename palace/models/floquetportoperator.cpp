@@ -113,24 +113,24 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
   // The periodic mesh provides DOF identification on opposite faces, and the Floquet
   // wave vector (if nonzero) provides the Bloch phase shift.
   const auto &periodic = periodic_data;
-  MFEM_VERIFY(!periodic.boundary_pairs.empty(),
-              "FloquetPort requires periodic boundary conditions to be configured under "
-              "\"Boundaries\"/\"Periodic\"/\"BoundaryPairs\". At least two periodic "
-              "boundary pairs are needed for 3D periodicity.");
+  MFEM_VERIFY(periodic.boundary_pairs.size() == 2,
+              "FloquetPort requires exactly two periodic boundary pairs under "
+              "\"Boundaries\"/\"Periodic\"/\"BoundaryPairs\" for the two transverse "
+              "periodic directions.");
+
+  auto &mesh = *nd_fespace.GetParMesh();
+  auto bdr_marker = mesh::BdrAttrToMarker(mesh, attr_list, true);
 
   // Extract lattice vectors. If periodic boundary pairs with translations are specified,
   // use them. Otherwise, infer from the port face bounding box (works for axis-aligned
   // rectangular cells with built-in mesh periodicity).
   double mesh_scale = units.GetMeshLengthRelativeScale();
-  if (periodic.boundary_pairs.size() >= 2)
+  // The translation component of each affine transform is the lattice vector (in mesh
+  // units). Nondimensionalize by dividing by Lc/L0.
+  for (int i = 0; i < 3; i++)
   {
-    // The translation component of each affine transform is the lattice vector (in mesh
-    // units). Nondimensionalize by dividing by Lc/L0.
-    for (int i = 0; i < 3; i++)
-    {
-      a1(i) = periodic.boundary_pairs[0].affine_transform[i * 4 + 3] / mesh_scale;
-      a2(i) = periodic.boundary_pairs[1].affine_transform[i * 4 + 3] / mesh_scale;
-    }
+    a1(i) = periodic.boundary_pairs[0].affine_transform[i * 4 + 3] / mesh_scale;
+    a2(i) = periodic.boundary_pairs[1].affine_transform[i * 4 + 3] / mesh_scale;
   }
   // Fall back to port geometry if translations are missing (e.g., auto-detected periodicity
   // from Gmsh setPeriodic, or no BoundaryPairs at all).
@@ -138,10 +138,6 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
   {
     // Infer lattice vectors from the port face bounding box. This works for axis-aligned
     // rectangular periodic cells where the port face spans the full unit cell.
-    auto &mesh = *nd_fespace.GetParMesh();
-    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-    Mpi::GlobalMax(1, &bdr_attr_max, comm);
-    mfem::Array<int> bdr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list, true);
     mfem::Vector bbmin, bbmax;
     mesh::GetAxisAlignedBoundingBox(mesh, bdr_marker, true, bbmin, bbmax);
     mfem::Vector extent(3);
@@ -204,10 +200,6 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
 
   // Compute port normal and area using geodata utilities.
   {
-    auto &mesh = *nd_fespace.GetParMesh();
-    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-    Mpi::GlobalMax(1, &bdr_attr_max, comm);
-    mfem::Array<int> bdr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list, true);
     port_normal = mesh::GetSurfaceNormal(mesh, bdr_marker);
     port_area = mesh::GetSurfaceArea(mesh, bdr_marker);
   }
@@ -216,7 +208,6 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
   // element on the port face and look up its mu_r, eps_r. In parallel, not all ranks may
   // have port boundary elements — use MPI reduction to broadcast the found attribute.
   {
-    auto &mesh = *nd_fespace.GetParMesh();
     int port_vol_attr = -1;
     for (int be = 0; be < mesh.GetNBE(); be++)
     {
@@ -286,15 +277,6 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
   // Cap MaxOrder at the mesh Nyquist limit: p-th order elements can resolve Fourier
   // modes with |B|×h < p×π. Beyond this, projections alias to ~0 with default quadrature.
   {
-    auto &mesh = *nd_fespace.GetParMesh();
-    int bdr_attr_max = 0;
-    for (int be = 0; be < mesh.GetNBE(); be++)
-    {
-      bdr_attr_max = std::max(bdr_attr_max, mesh.GetBdrAttribute(be));
-    }
-    Mpi::GlobalMax(1, &bdr_attr_max, nd_fespace.GetComm());
-    auto bdr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list, true);
-
     double h_max = 0.0;
     for (int be = 0; be < mesh.GetNBE(); be++)
     {
@@ -503,16 +485,8 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
     }
   };
 
-  // Create boundary attribute marker. Scan all local boundary elements for the actual max
-  // attribute (may include internally-added interface boundary elements).
   auto &mesh = *nd_fespace.GetParMesh();
-  int bdr_attr_max = 0;
-  for (int be = 0; be < mesh.GetNBE(); be++)
-  {
-    bdr_attr_max = std::max(bdr_attr_max, mesh.GetBdrAttribute(be));
-  }
-  Mpi::GlobalMax(1, &bdr_attr_max, nd_fespace.GetComm());
-  mfem::Array<int> bdr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list, true);
+  auto bdr_marker = mesh::BdrAttrToMarker(mesh, attr_list, true);
 
   int tdof_size = nd_fespace.GetTrueVSize();
 
