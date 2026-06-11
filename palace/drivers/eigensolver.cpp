@@ -4,6 +4,7 @@
 #include "eigensolver.hpp"
 
 #include <complex>
+#include <vector>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
@@ -55,6 +56,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto A2 = funcA2(1i * target);
   bool has_A2 = (A2 != nullptr);
 
+  // Frozen-ABC seed for the NLEPS HYBRID polynomial seed pencil. The 2nd-order farfield ABC
+  // contributes a pole term f(λ)·M_ff to A2(λ), with f(λ) = -0.5/λ, that a polynomial
+  // (K' + λC' + λ²M') seed cannot fit accurately. AddFrozenPole removes the pole's
+  // interpolated contribution and re-adds it frozen at the target into the K-block.
+  auto M_ff = space_op.GetFarfieldExtraBoundaryMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+
   // Extend K, C, M operators with interpolated A2 operator.
   // K' = K + A2_0, C' = C + A2_1, M' = M + A2_2
   std::unique_ptr<ComplexOperator> Kp, Cp, Mp;
@@ -64,11 +71,18 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
     const double target_max = iodata.solver.eigenmode.target_upper;
-    interp_op = std::make_unique<NewtonInterpolationOperator>(funcA2, A2->Width());
-    interp_op->Interpolate(1i * target, 1i * target_max);
-    A2_0 = interp_op->GetInterpolationOperator(0);
-    A2_1 = interp_op->GetInterpolationOperator(1);
-    A2_2 = interp_op->GetInterpolationOperator(2);
+    auto interp = std::make_unique<NewtonInterpolationOperator>(funcA2, A2->Width());
+    interp->Interpolate(1i * target, 1i * target_max);
+    if (M_ff)
+    {
+      interp->AddFrozenPole(
+          std::move(M_ff), [](std::complex<double> lambda) { return -0.5 / lambda; },
+          1i * target);
+    }
+    A2_0 = interp->GetInterpolationOperator(0);
+    A2_1 = interp->GetInterpolationOperator(1);
+    A2_2 = interp->GetInterpolationOperator(2);
+    interp_op = std::move(interp);  // retain: A2_0/A2_1/A2_2 reference its operator DAG
     Kp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {K.get(), A2_0.get()});
     Cp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {C.get(), A2_1.get()});
     Mp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i}, {M.get(), A2_2.get()});

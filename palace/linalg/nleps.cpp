@@ -875,6 +875,8 @@ void NewtonInterpolationOperator::Interpolate(const std::complex<double> sigma_m
   ops.resize(num_points);
   points.clear();
   points.resize(num_points);
+  frozen_M.reset();
+  frozen_corr.clear();
 
   // Linearly spaced sample points.
   for (int j = 0; j < num_points; j++)
@@ -916,14 +918,69 @@ void NewtonInterpolationOperator::Interpolate(const std::complex<double> sigma_m
   }
 }
 
+void NewtonInterpolationOperator::AddFrozenPole(
+    std::unique_ptr<ComplexOperator> M,
+    const std::function<std::complex<double>(std::complex<double>)> &f,
+    std::complex<double> lambda_target)
+{
+  if (!M)
+  {
+    return;
+  }
+  MFEM_VERIFY(!points.empty() && !coeffs.empty(),
+              "AddFrozenPole requires a prior Interpolate() call!");
+
+  // Scalar divided differences of f at the interpolation nodes, mirroring the operator
+  // divided-difference DAG (same denominators points[j + k] - points[j]).
+  std::vector<std::vector<std::complex<double>>> dd(num_points);
+  for (int k = 0; k < num_points; k++)
+  {
+    for (int j = 0; j < num_points - k; j++)
+    {
+      if (k == 0)
+      {
+        dd[k].push_back(f(points[j]));
+      }
+      else
+      {
+        const std::complex<double> denom = points[j + k] - points[j];
+        dd[k].push_back((dd[k - 1][j + 1] - dd[k - 1][j]) / denom);
+      }
+    }
+  }
+
+  // Per-order multiplier of M: remove the interpolated pole at every order
+  // (q[order] = Σⱼ coeffs[order][j]·dd[j][0], using the same Newton→monomial matrix as the
+  // operator path), then re-add the pole frozen at the target into order 0. By linearity of
+  // the interpolation, this yields the smooth remainder pencil with the pole frozen in K.
+  frozen_corr.assign(num_points, 0.0);
+  for (int order = 0; order < num_points; order++)
+  {
+    for (int j = 0; j < num_points; j++)
+    {
+      frozen_corr[order] -= coeffs[order][j] * dd[j][0];
+    }
+  }
+  frozen_corr[0] += f(lambda_target);
+  frozen_M = std::move(M);
+}
+
 std::unique_ptr<ComplexOperator>
 NewtonInterpolationOperator::GetInterpolationOperator(int order) const
 {
   MFEM_VERIFY(order >= 0 && order < num_points,
               "Order must be greater than or equal to 0 and smaller than the number of "
               "interpolation points!");
-  return BuildParSumOperator({coeffs[order][0], coeffs[order][1], coeffs[order][2]},
-                             {ops[0][0].get(), ops[1][0].get(), ops[2][0].get()}, true);
+  if (!frozen_M)
+  {
+    return BuildParSumOperator({coeffs[order][0], coeffs[order][1], coeffs[order][2]},
+                               {ops[0][0].get(), ops[1][0].get(), ops[2][0].get()}, true);
+  }
+  // Frozen-pole correction: append frozen_corr[order]·M as a 4th term. frozen_M is a
+  // member, so it outlives the returned operator — no keepalive needed.
+  return BuildParSumOperator(
+      {coeffs[order][0], coeffs[order][1], coeffs[order][2], frozen_corr[order]},
+      {ops[0][0].get(), ops[1][0].get(), ops[2][0].get(), frozen_M.get()}, true);
 }
 
 void NewtonInterpolationOperator::Mult(int order, const ComplexVector &x,
