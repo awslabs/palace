@@ -114,6 +114,10 @@ public:
   {
     return is_te ? inc_alpha_te : inc_alpha_tm;
   }
+  [[nodiscard]] bool HasCircularExcitation() const
+  {
+    return std::abs(inc_alpha_te) > 1e-14 && std::abs(inc_alpha_tm) > 1e-14;
+  }
 
   FloquetPortData(const config::FloquetPortData &data,
                   const config::PeriodicBoundaryData &periodic, const Units &units,

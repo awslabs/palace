@@ -1240,8 +1240,7 @@ auto PostOperatorCSV<solver_t>::InitializeFloquetPortS(const SpaceOperator &fem_
   bool circular_output = false;
   for (const auto &[port_idx, port] : fem_op.GetFloquetPortOp())
   {
-    if (port.HasExcitation() && std::abs(port.GetIncidentAlpha(true)) > 1e-14 &&
-        std::abs(port.GetIncidentAlpha(false)) > 1e-14)
+    if (port.HasExcitation() && port.HasCircularExcitation())
     {
       circular_output = true;
       break;
