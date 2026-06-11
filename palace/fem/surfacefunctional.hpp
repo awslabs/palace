@@ -6,6 +6,7 @@
 
 #include <array>
 #include <complex>
+#include <deque>
 #include <string>
 #include <vector>
 #include <mfem.hpp>
@@ -90,8 +91,10 @@ private:
   MPI_Comm comm;
 
   // Per-group assembled libCEED operators, accumulating per-element integrals into the
-  // local output vector.
+  // local output vector. The element attribute vectors are operator inputs and must
+  // outlive the operators.
   std::vector<fem::CeedGroupOperator> groups;
+  std::deque<Vector> elem_attrs;
 
   // Staging vector used to initialize the field input CeedVectors at construction. The
   // field CeedVectors are re-pointed at the caller's data on each Eval() call.
@@ -200,7 +203,7 @@ private:
   // points and scattering directly into the output grid function. The element attribute
   // vectors are operator inputs and must outlive the operators.
   std::vector<fem::CeedGroupOperator> groups;
-  std::vector<Vector> elem_attrs;
+  std::deque<Vector> elem_attrs;
 
   // Staging vector used to initialize the field input CeedVectors at construction.
   mutable Vector field_staging;

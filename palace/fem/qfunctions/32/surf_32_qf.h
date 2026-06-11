@@ -9,117 +9,124 @@
 #include "utils_32_qf.h"
 
 // QFunctions for surface output functionals (integrals of functions of fields over
-// boundary elements of a 3D mesh).
-//
-// Inputs are ordered as follows (geometry data first, then fields):
-//  - in[0]: face geometry data for the boundary element, shape [8, Q]:
-//           {attr, w * detJ_face, adj(J_face)^T / detJ_face (3x2, column-major)}.
-//           J_face is the 3x2 Jacobian of the boundary element mapping. The surface
-//           normal is computed as the cross product of the columns of
-//           adj(J_face)^T / detJ_face, which is parallel (and identically oriented) to
-//           the cross product of the columns of J_face. This matches the orientation
-//           convention of mfem::CalcOrtho for boundary elements (outward normal for
-//           exterior boundaries, pointing out of element 1 in general).
-//  - in[1]: volume geometry data for the element attached to the boundary element,
-//           evaluated at the (mapped) face quadrature points, shape [11, Q]:
-//           {attr, w * detJ_vol (unused), adj(J_vol)^T / detJ_vol (3x3, column-major)}.
-//           Used for the Piola transformations of fields from the volume element's
-//           reference space: H(curl): E_phys = adj(J)^T/detJ * u_ref, H(div):
-//           B_phys = J/detJ * u_ref with J/detJ recovered via AdjJt33 applied to the
-//           stored adj(J)^T/detJ.
-//  - in[2], in[3], ...: field inputs evaluated at face quadrature points (reference
-//           components from the volume element basis tabulation).
-//
-// The output is the integrand value multiplied by the face quadrature weight, summed
-// over quadrature points by the all-ones output element basis, yielding one (or more)
-// value(s) per boundary element.
+// boundary elements of a 3D mesh). The element geometry is computed on the fly from
+// mesh node gradients (as in geom_qf.h) instead of stored geometry factor data:
+//  - "qw": quadrature weights (CEED_EVAL_WEIGHT).
+//  - "grad_x_f": boundary element mesh node Jacobians J_f, shape [3x2, Q]. The surface
+//    measure is qw * detJ_f and the surface normal is the normalized cross product of
+//    the columns of J_f (matching mfem::CalcOrtho orientation: outward for exterior
+//    boundaries, out of element 1 in general; the legacy boundary element orientation
+//    flip is applied via the context normal sign).
+//  - "attr_k" / "grad_x_k": attached volume element attributes (for material lookup)
+//    and mesh node Jacobians J_v at the mapped face quadrature points, for the Piola
+//    transformations H(curl): E = adj(J_v)ᵀ/detJ_v u, H(div): B = J_v/detJ_v u, for
+//    evaluation side k = 1 (and 2 for two-sided interior boundary evaluation).
+//  - "x": coordinates at the face quadrature points (surface flux only).
+//  - "u_k": field inputs (reference components at the mapped face quadrature points).
+// The output is the integrand times the surface measure, summed over quadrature points
+// by the all-ones output element basis, yielding one value per boundary element.
 
-// Compute the (non-unit) surface normal as the cross product of the columns of the
-// stored adj(J_face)^T / detJ_face (3x2, column-major), and normalize it.
-CEED_QFUNCTION_HELPER void SurfaceNormal32(const CeedScalar adjJt_face[6], CeedScalar n[3])
+// Surface measure qw * detJ_f and unit normal from the raw boundary element Jacobian.
+CEED_QFUNCTION_HELPER CeedScalar SurfMeasure32(const CeedScalar J_f[6], CeedScalar n[3])
 {
-  n[0] = adjJt_face[1] * adjJt_face[5] - adjJt_face[2] * adjJt_face[4];
-  n[1] = adjJt_face[2] * adjJt_face[3] - adjJt_face[0] * adjJt_face[5];
-  n[2] = adjJt_face[0] * adjJt_face[4] - adjJt_face[1] * adjJt_face[3];
-  const CeedScalar norm = sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
-  n[0] /= norm;
-  n[1] /= norm;
-  n[2] /= norm;
+  n[0] = J_f[1] * J_f[5] - J_f[2] * J_f[4];
+  n[1] = J_f[2] * J_f[3] - J_f[0] * J_f[5];
+  n[2] = J_f[0] * J_f[4] - J_f[1] * J_f[3];
+  const CeedScalar detJ = sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+  n[0] /= detJ;
+  n[1] /= detJ;
+  n[2] /= detJ;
+  return detJ;
 }
 
-// Surface area: v = w * detJ_face. No field inputs.
+// H(curl) field at a point from the raw volume Jacobian: E = adj(J_v)ᵀ/detJ_v u.
+CEED_QFUNCTION_HELPER void SurfHcurlField32(CeedInt i, CeedInt Q, const CeedScalar *J_v,
+                                            const CeedScalar *u, CeedScalar E[3])
+{
+  const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
+  CeedScalar J_loc[9], adjJt_loc[9];
+  MatUnpack33(J_v + i, Q, J_loc);
+  const CeedScalar detJ = AdjJt33<true>(J_loc, adjJt_loc);
+  MultAx33(adjJt_loc, u_loc, E);
+  E[0] /= detJ;
+  E[1] /= detJ;
+  E[2] /= detJ;
+}
+
+// H(div) field at a point from the raw volume Jacobian: B = J_v/detJ_v u.
+CEED_QFUNCTION_HELPER void SurfHdivField32(CeedInt i, CeedInt Q, const CeedScalar *J_v,
+                                           const CeedScalar *u, CeedScalar B[3])
+{
+  const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
+  CeedScalar J_loc[9], adjJt_loc[9];
+  MatUnpack33(J_v + i, Q, J_loc);
+  const CeedScalar detJ = AdjJt33<true>(J_loc, adjJt_loc);
+  MultAx33(J_loc, u_loc, B);
+  B[0] /= detJ;
+  B[1] /= detJ;
+  B[2] /= detJ;
+}
+
+// Two-sided H(curl) average: E = 1/2 (E_1 + E_2).
+CEED_QFUNCTION_HELPER void
+SurfHcurlField2Avg32(CeedInt i, CeedInt Q, const CeedScalar *J_v1, const CeedScalar *J_v2,
+                     const CeedScalar *u_1, const CeedScalar *u_2, CeedScalar E[3])
+{
+  CeedScalar E_2[3];
+  SurfHcurlField32(i, Q, J_v1, u_1, E);
+  SurfHcurlField32(i, Q, J_v2, u_2, E_2);
+  E[0] = 0.5 * (E[0] + E_2[0]);
+  E[1] = 0.5 * (E[1] + E_2[1]);
+  E[2] = 0.5 * (E[2] + E_2[2]);
+}
+
+// Surface area: v = qw * detJ_f. Inputs: qw, grad_x_f.
 CEED_QFUNCTION(f_integ_surf_area_32)(void *, CeedInt Q, const CeedScalar *const *in,
                                      CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0] + Q;
+  const CeedScalar *qw = in[0], *J_f = in[1];
   CeedScalar *v = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    v[i] = wdetJ[i];
+    CeedScalar J_f_loc[6], n[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    v[i] = qw[i] * SurfMeasure32(J_f_loc, n);
   }
   return 0;
 }
 
-// Squared L2 norm of an H(curl) field over the surface: v = w * detJ_face * |E|^2 with
-// E = adj(J_vol)^T / detJ_vol * u_ref.
+// Squared L2 norm of an H(curl) field: v = qw * detJ_f * |E|². Inputs: qw, grad_x_f,
+// attr_1, grad_x_1, u_1.
 CEED_QFUNCTION(f_integ_surf_hcurl_norm2_32)(void *, CeedInt Q, const CeedScalar *const *in,
                                             CeedScalar *const *out)
 {
-  const CeedScalar *wdetJ = in[0] + Q, *adjJt_vol = in[1] + 2 * Q, *u = in[2];
+  const CeedScalar *qw = in[0], *J_f = in[1], *J_v = in[3], *u = in[4];
   CeedScalar *v = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
-    CeedScalar adjJt_loc[9], E[3];
-    MatUnpack33(adjJt_vol + i, Q, adjJt_loc);
-    MultAx33(adjJt_loc, u_loc, E);
-
-    v[i] = wdetJ[i] * (E[0] * E[0] + E[1] * E[1] + E[2] * E[2]);
+    CeedScalar J_f_loc[6], n[3], E[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    SurfHcurlField32(i, Q, J_v, u, E);
+    v[i] = qw[i] * SurfMeasure32(J_f_loc, n) * (E[0] * E[0] + E[1] * E[1] + E[2] * E[2]);
   }
   return 0;
 }
 
-// Interface dielectric energy participation integrands following the conventions of
+// Interface dielectric energy participation integrands following
 // InterfaceDielectricCoefficient (fem/coefficient.hpp):
-//   DEFAULT: v = scale0 * |E|^2 * wdetJ,        scale0 = 0.5 * t * eps
-//   MA:      v = scale0 * |n.E|^2 * wdetJ,      scale0 = 0.5 * t / eps
-//   MS:      v = scale0 * |n.(eps_S E)|^2 * wdetJ, scale0 = 0.5 * t / eps, eps_S from
-//            the material property table looked up with the side a volume attribute
-//   SA:      v = (scale0 * |E_t|^2 + scale1 * |E_n|^2) * wdetJ,
-//            scale0 = 0.5 * t * eps, scale1 = 0.5 * t / eps
-// The context is a CeedIntScalar array: [0].second = scale0, [1].second = scale1,
-// followed by an (optional, MS only) material property coefficient context.
-// The "_1" variants evaluate the field from a single volume element (side a); the "_2"
-// variants average the fields from the volume elements on both sides of an interior
-// boundary before evaluating the integrand (inputs: face geometry data, side a volume
-// geometry data, side b volume geometry data, u_a, u_b). The normal direction sign is
-// irrelevant for all variants (the integrands are quadratic in n . E).
-
-CEED_QFUNCTION_HELPER void SurfHcurlField1_32(CeedInt i, CeedInt Q,
-                                              const CeedScalar *adjJt_vol,
-                                              const CeedScalar *u, CeedScalar E[3])
-{
-  const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
-  CeedScalar adjJt_loc[9];
-  MatUnpack33(adjJt_vol + i, Q, adjJt_loc);
-  MultAx33(adjJt_loc, u_loc, E);
-}
-
-CEED_QFUNCTION_HELPER void SurfHcurlField2_32(CeedInt i, CeedInt Q,
-                                              const CeedScalar *adjJt_vol_a,
-                                              const CeedScalar *adjJt_vol_b,
-                                              const CeedScalar *u_a, const CeedScalar *u_b,
-                                              CeedScalar E[3])
-{
-  CeedScalar E_b[3];
-  SurfHcurlField1_32(i, Q, adjJt_vol_a, u_a, E);
-  SurfHcurlField1_32(i, Q, adjJt_vol_b, u_b, E_b);
-  E[0] = 0.5 * (E[0] + E_b[0]);
-  E[1] = 0.5 * (E[1] + E_b[1]);
-  E[2] = 0.5 * (E[2] + E_b[2]);
-}
+//   DEFAULT: v = scale0 * |E|²,           scale0 = 0.5 * t * eps
+//   MA:      v = scale0 * |n.E|²,         scale0 = 0.5 * t / eps
+//   MS:      v = scale0 * |n.(eps_S E)|², scale0 = 0.5 * t / eps, eps_S from the
+//            material table looked up with the side 1 volume attribute
+//   SA:      v = scale0 * |E_t|² + scale1 * |E_n|², scale0 = 0.5 * t * eps,
+//            scale1 = 0.5 * t / eps
+// all times the surface measure. The context is a CeedIntScalar array: [0].second =
+// scale0, [1].second = scale1, followed by an (optional, MS only) material property
+// coefficient context. The "_1" variants evaluate the field from a single volume
+// element; the "_2" variants average the fields from both sides of an interior
+// boundary. The normal direction sign is irrelevant (quadratic in n . E).
 
 CEED_QFUNCTION_HELPER CeedScalar SurfEprDefault(const CeedIntScalar *ctx,
                                                 const CeedScalar E[3])
@@ -152,194 +159,70 @@ CEED_QFUNCTION_HELPER CeedScalar SurfEprSA(const CeedIntScalar *ctx, const CeedS
   return ctx[0].second * Et2 + ctx[1].second * En * En;
 }
 
-CEED_QFUNCTION(f_integ_surf_epr_def_1_32)(void *__restrict__ ctx, CeedInt Q,
-                                          const CeedScalar *const *in,
-                                          CeedScalar *const *out)
-{
-  const CeedScalar *wdetJ = in[0] + Q, *adjJt_vol = in[1] + 2 * Q, *u = in[2];
-  CeedScalar *v = out[0];
-
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-  {
-    CeedScalar E[3];
-    SurfHcurlField1_32(i, Q, adjJt_vol, u, E);
-    v[i] = wdetJ[i] * SurfEprDefault((const CeedIntScalar *)ctx, E);
+// Single-sided interface dielectric. Inputs: qw, grad_x_f, attr_1, grad_x_1, u_1.
+#define PALACE_SURF_EPR_1_QF(name, integrand)                                            \
+  CEED_QFUNCTION(name)(void *__restrict__ ctx_, CeedInt Q, const CeedScalar *const *in,  \
+                       CeedScalar *const *out)                                           \
+  {                                                                                      \
+    const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;                              \
+    const CeedScalar *qw = in[0], *J_f = in[1], *attr = in[2], *J_v = in[3], *u = in[4]; \
+    CeedScalar *v = out[0];                                                              \
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)                                       \
+    {                                                                                    \
+      CeedScalar J_f_loc[6], n[3], E[3];                                                 \
+      MatUnpack32(J_f + i, Q, J_f_loc);                                                  \
+      const CeedScalar wdetJ = qw[i] * SurfMeasure32(J_f_loc, n);                        \
+      SurfHcurlField32(i, Q, J_v, u, E);                                                 \
+      v[i] = wdetJ * (integrand);                                                        \
+    }                                                                                    \
+    return 0;                                                                            \
   }
-  return 0;
-}
 
-CEED_QFUNCTION(f_integ_surf_epr_def_2_32)(void *__restrict__ ctx, CeedInt Q,
-                                          const CeedScalar *const *in,
-                                          CeedScalar *const *out)
-{
-  const CeedScalar *wdetJ = in[0] + Q, *adjJt_vol_a = in[1] + 2 * Q,
-                   *adjJt_vol_b = in[2] + 2 * Q, *u_a = in[3], *u_b = in[4];
-  CeedScalar *v = out[0];
-
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-  {
-    CeedScalar E[3];
-    SurfHcurlField2_32(i, Q, adjJt_vol_a, adjJt_vol_b, u_a, u_b, E);
-    v[i] = wdetJ[i] * SurfEprDefault((const CeedIntScalar *)ctx, E);
+// Two-sided (averaged) interface dielectric. Inputs: qw, grad_x_f, attr_1, grad_x_1,
+// attr_2, grad_x_2, u_1, u_2.
+#define PALACE_SURF_EPR_2_QF(name, integrand)                                           \
+  CEED_QFUNCTION(name)(void *__restrict__ ctx_, CeedInt Q, const CeedScalar *const *in, \
+                       CeedScalar *const *out)                                          \
+  {                                                                                     \
+    const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;                             \
+    const CeedScalar *qw = in[0], *J_f = in[1], *attr = in[2], *J_v1 = in[3],           \
+                     *J_v2 = in[5], *u_1 = in[6], *u_2 = in[7];                         \
+    CeedScalar *v = out[0];                                                             \
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)                                      \
+    {                                                                                   \
+      CeedScalar J_f_loc[6], n[3], E[3];                                                \
+      MatUnpack32(J_f + i, Q, J_f_loc);                                                 \
+      const CeedScalar wdetJ = qw[i] * SurfMeasure32(J_f_loc, n);                       \
+      SurfHcurlField2Avg32(i, Q, J_v1, J_v2, u_1, u_2, E);                              \
+      v[i] = wdetJ * (integrand);                                                       \
+    }                                                                                   \
+    return 0;                                                                           \
   }
-  return 0;
-}
 
-CEED_QFUNCTION(f_integ_surf_epr_ma_1_32)(void *__restrict__ ctx, CeedInt Q,
-                                         const CeedScalar *const *in,
-                                         CeedScalar *const *out)
-{
-  const CeedScalar *wdetJ = in[0] + Q, *adjJt_face = in[0] + 2 * Q,
-                   *adjJt_vol = in[1] + 2 * Q, *u = in[2];
-  CeedScalar *v = out[0];
+PALACE_SURF_EPR_1_QF(f_integ_surf_epr_def_1_32, SurfEprDefault(ctx, E))
+PALACE_SURF_EPR_2_QF(f_integ_surf_epr_def_2_32, SurfEprDefault(ctx, E))
+PALACE_SURF_EPR_1_QF(f_integ_surf_epr_ma_1_32, SurfEprMA(ctx, n, E))
+PALACE_SURF_EPR_2_QF(f_integ_surf_epr_ma_2_32, SurfEprMA(ctx, n, E))
+PALACE_SURF_EPR_1_QF(f_integ_surf_epr_ms_1_32, SurfEprMS(ctx, (CeedInt)attr[i], n, E))
+PALACE_SURF_EPR_2_QF(f_integ_surf_epr_ms_2_32, SurfEprMS(ctx, (CeedInt)attr[i], n, E))
+PALACE_SURF_EPR_1_QF(f_integ_surf_epr_sa_1_32, SurfEprSA(ctx, n, E))
+PALACE_SURF_EPR_2_QF(f_integ_surf_epr_sa_2_32, SurfEprSA(ctx, n, E))
 
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-  {
-    CeedScalar adjJt_face_loc[6], n[3], E[3];
-    MatUnpack32(adjJt_face + i, Q, adjJt_face_loc);
-    SurfaceNormal32(adjJt_face_loc, n);
-    SurfHcurlField1_32(i, Q, adjJt_vol, u, E);
-    v[i] = wdetJ[i] * SurfEprMA((const CeedIntScalar *)ctx, n, E);
-  }
-  return 0;
-}
-
-CEED_QFUNCTION(f_integ_surf_epr_ma_2_32)(void *__restrict__ ctx, CeedInt Q,
-                                         const CeedScalar *const *in,
-                                         CeedScalar *const *out)
-{
-  const CeedScalar *wdetJ = in[0] + Q, *adjJt_face = in[0] + 2 * Q,
-                   *adjJt_vol_a = in[1] + 2 * Q, *adjJt_vol_b = in[2] + 2 * Q, *u_a = in[3],
-                   *u_b = in[4];
-  CeedScalar *v = out[0];
-
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-  {
-    CeedScalar adjJt_face_loc[6], n[3], E[3];
-    MatUnpack32(adjJt_face + i, Q, adjJt_face_loc);
-    SurfaceNormal32(adjJt_face_loc, n);
-    SurfHcurlField2_32(i, Q, adjJt_vol_a, adjJt_vol_b, u_a, u_b, E);
-    v[i] = wdetJ[i] * SurfEprMA((const CeedIntScalar *)ctx, n, E);
-  }
-  return 0;
-}
-
-CEED_QFUNCTION(f_integ_surf_epr_ms_1_32)(void *__restrict__ ctx, CeedInt Q,
-                                         const CeedScalar *const *in,
-                                         CeedScalar *const *out)
-{
-  const CeedScalar *wdetJ = in[0] + Q, *adjJt_face = in[0] + 2 * Q, *attr_vol = in[1],
-                   *adjJt_vol = in[1] + 2 * Q, *u = in[2];
-  CeedScalar *v = out[0];
-
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-  {
-    CeedScalar adjJt_face_loc[6], n[3], E[3];
-    MatUnpack32(adjJt_face + i, Q, adjJt_face_loc);
-    SurfaceNormal32(adjJt_face_loc, n);
-    SurfHcurlField1_32(i, Q, adjJt_vol, u, E);
-    v[i] = wdetJ[i] * SurfEprMS((const CeedIntScalar *)ctx, (CeedInt)attr_vol[i], n, E);
-  }
-  return 0;
-}
-
-CEED_QFUNCTION(f_integ_surf_epr_ms_2_32)(void *__restrict__ ctx, CeedInt Q,
-                                         const CeedScalar *const *in,
-                                         CeedScalar *const *out)
-{
-  const CeedScalar *wdetJ = in[0] + Q, *adjJt_face = in[0] + 2 * Q, *attr_vol_a = in[1],
-                   *adjJt_vol_a = in[1] + 2 * Q, *adjJt_vol_b = in[2] + 2 * Q, *u_a = in[3],
-                   *u_b = in[4];
-  CeedScalar *v = out[0];
-
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-  {
-    CeedScalar adjJt_face_loc[6], n[3], E[3];
-    MatUnpack32(adjJt_face + i, Q, adjJt_face_loc);
-    SurfaceNormal32(adjJt_face_loc, n);
-    SurfHcurlField2_32(i, Q, adjJt_vol_a, adjJt_vol_b, u_a, u_b, E);
-    v[i] = wdetJ[i] * SurfEprMS((const CeedIntScalar *)ctx, (CeedInt)attr_vol_a[i], n, E);
-  }
-  return 0;
-}
-
-CEED_QFUNCTION(f_integ_surf_epr_sa_1_32)(void *__restrict__ ctx, CeedInt Q,
-                                         const CeedScalar *const *in,
-                                         CeedScalar *const *out)
-{
-  const CeedScalar *wdetJ = in[0] + Q, *adjJt_face = in[0] + 2 * Q,
-                   *adjJt_vol = in[1] + 2 * Q, *u = in[2];
-  CeedScalar *v = out[0];
-
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-  {
-    CeedScalar adjJt_face_loc[6], n[3], E[3];
-    MatUnpack32(adjJt_face + i, Q, adjJt_face_loc);
-    SurfaceNormal32(adjJt_face_loc, n);
-    SurfHcurlField1_32(i, Q, adjJt_vol, u, E);
-    v[i] = wdetJ[i] * SurfEprSA((const CeedIntScalar *)ctx, n, E);
-  }
-  return 0;
-}
-
-CEED_QFUNCTION(f_integ_surf_epr_sa_2_32)(void *__restrict__ ctx, CeedInt Q,
-                                         const CeedScalar *const *in,
-                                         CeedScalar *const *out)
-{
-  const CeedScalar *wdetJ = in[0] + Q, *adjJt_face = in[0] + 2 * Q,
-                   *adjJt_vol_a = in[1] + 2 * Q, *adjJt_vol_b = in[2] + 2 * Q, *u_a = in[3],
-                   *u_b = in[4];
-  CeedScalar *v = out[0];
-
-  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
-  {
-    CeedScalar adjJt_face_loc[6], n[3], E[3];
-    MatUnpack32(adjJt_face + i, Q, adjJt_face_loc);
-    SurfaceNormal32(adjJt_face_loc, n);
-    SurfHcurlField2_32(i, Q, adjJt_vol_a, adjJt_vol_b, u_a, u_b, E);
-    v[i] = wdetJ[i] * SurfEprSA((const CeedIntScalar *)ctx, n, E);
-  }
-  return 0;
-}
-
-// Surface flux integrands following the conventions of BdrSurfaceFluxCoefficient
-// (fem/coefficient.hpp):
-//   ELECTRIC: v = (eps E) . n * wdetJ, with eps from the material table looked up with
-//             the per-side volume attribute
-//   MAGNETIC: v = B . n * wdetJ
-//   POWER:    v = (E x (mu^-1 B)) . n * wdetJ, with mu^-1 from the material table
-// The context is a CeedIntScalar array: [0].second = normal sign (+/-1, accounting for
-// the boundary element to face orientation flip of the legacy coefficients),
-// [1].first = two_sided flag, [2..4].second = x0 (flux center), followed by the
-// material property coefficient context (ELECTRIC: permittivity, POWER: inverse
-// permeability). For two_sided, the contributions from both sides add with opposite
-// normals (V_a - V_b); otherwise, for interior boundaries the two side values are
-// averaged, and the resulting flux sign is chosen per quadrature point so that the
-// normal points away from x0 ((x - x0) . n < 0 flips the sign).
-// The "_1" variants evaluate from a single volume element; the "_2" variants from both
-// sides. The x (coordinates) input is interpolated with the boundary element mesh
-// basis.
-
-CEED_QFUNCTION_HELPER void SurfHdivField1_32(CeedInt i, CeedInt Q,
-                                             const CeedScalar *adjJt_vol,
-                                             const CeedScalar *u, CeedScalar B[3])
-{
-  // H(div): B = J / detJ * u_ref, with J / detJ = adj(adj(J)^T / detJ)^T.
-  const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
-  CeedScalar adjJt_loc[9], J_loc[9];
-  MatUnpack33(adjJt_vol + i, Q, adjJt_loc);
-  AdjJt33(adjJt_loc, J_loc);
-  MultAx33(J_loc, u_loc, B);
-}
+// Surface flux integrands following BdrSurfaceFluxCoefficient (fem/coefficient.hpp):
+//   ELECTRIC: V = eps E, MAGNETIC: V = B, POWER: V = E x (mu⁻¹ B),
+// with v = V . n times the surface measure. The context is a CeedIntScalar array:
+// [0].second = normal sign (legacy boundary element orientation flip), [1].first =
+// two_sided flag, [2..4].second = x0, followed by the material property context
+// (ELECTRIC: permittivity, POWER: inverse permeability). Two-sided contributions add
+// with opposite normals (V_1 - V_2); otherwise interior values average and the flux
+// sign is chosen per point so the normal points away from x0. The "_2" variants take
+// both sides. Inputs: qw, grad_x_f, attr_1, grad_x_1, [attr_2, grad_x_2,] x, u_k...
 
 CEED_QFUNCTION_HELPER CeedScalar SurfFluxFinalize(const CeedIntScalar *ctx, CeedInt i,
-                                                  CeedInt Q, const CeedScalar *adjJt_face,
+                                                  CeedInt Q, CeedScalar n[3],
                                                   const CeedScalar *x,
                                                   const CeedScalar V[3])
 {
-  CeedScalar adjJt_face_loc[6], n[3];
-  MatUnpack32(adjJt_face + i, Q, adjJt_face_loc);
-  SurfaceNormal32(adjJt_face_loc, n);
   const CeedScalar s_n = ctx[0].second;
   n[0] *= s_n;
   n[1] *= s_n;
@@ -358,22 +241,66 @@ CEED_QFUNCTION_HELPER CeedScalar SurfFluxFinalize(const CeedIntScalar *ctx, Ceed
   return flux;
 }
 
+CEED_QFUNCTION_HELPER void SurfFluxCombine(const CeedIntScalar *ctx,
+                                           const CeedScalar V_2[3], CeedScalar V[3])
+{
+  if (ctx[1].first)
+  {
+    // Two-sided: add the contributions from opposite sides with opposite normals.
+    V[0] -= V_2[0];
+    V[1] -= V_2[1];
+    V[2] -= V_2[2];
+  }
+  else
+  {
+    // Average the values from both sides.
+    V[0] = 0.5 * (V[0] + V_2[0]);
+    V[1] = 0.5 * (V[1] + V_2[1]);
+    V[2] = 0.5 * (V[2] + V_2[2]);
+  }
+}
+
+CEED_QFUNCTION_HELPER void SurfFluxElectric(const CeedIntScalar *ctx, CeedInt i, CeedInt Q,
+                                            CeedInt attr, const CeedScalar *J_v,
+                                            const CeedScalar *u, CeedScalar V[3])
+{
+  CeedScalar E[3], eps[9];
+  SurfHcurlField32(i, Q, J_v, u, E);
+  CoeffUnpack3(ctx + 5, attr, eps);
+  MultAx33(eps, E, V);
+}
+
+CEED_QFUNCTION_HELPER void SurfFluxPoynting(const CeedIntScalar *ctx, CeedInt i, CeedInt Q,
+                                            CeedInt attr, const CeedScalar *J_v,
+                                            const CeedScalar *u_e, const CeedScalar *u_b,
+                                            CeedScalar V[3])
+{
+  CeedScalar E[3], B[3], invmu[9], H[3];
+  SurfHcurlField32(i, Q, J_v, u_e, E);
+  SurfHdivField32(i, Q, J_v, u_b, B);
+  CoeffUnpack3(ctx + 5, attr, invmu);
+  MultAx33(invmu, B, H);
+  V[0] = E[1] * H[2] - E[2] * H[1];
+  V[1] = E[2] * H[0] - E[0] * H[2];
+  V[2] = E[0] * H[1] - E[1] * H[0];
+}
+
 CEED_QFUNCTION(f_integ_surf_flux_e_1_32)(void *__restrict__ ctx_, CeedInt Q,
                                          const CeedScalar *const *in,
                                          CeedScalar *const *out)
 {
   const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
-  const CeedScalar *wdetJ = in[0] + Q, *adjJt_face = in[0] + 2 * Q, *attr_vol = in[1],
-                   *adjJt_vol = in[1] + 2 * Q, *x = in[2], *u = in[3];
+  const CeedScalar *qw = in[0], *J_f = in[1], *attr = in[2], *J_v = in[3], *x = in[4],
+                   *u = in[5];
   CeedScalar *v = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar E[3], eps[9], V[3];
-    SurfHcurlField1_32(i, Q, adjJt_vol, u, E);
-    CoeffUnpack3(ctx + 5, (CeedInt)attr_vol[i], eps);
-    MultAx33(eps, E, V);
-    v[i] = wdetJ[i] * SurfFluxFinalize(ctx, i, Q, adjJt_face, x, V);
+    CeedScalar J_f_loc[6], n[3], V[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    const CeedScalar wdetJ = qw[i] * SurfMeasure32(J_f_loc, n);
+    SurfFluxElectric(ctx, i, Q, (CeedInt)attr[i], J_v, u, V);
+    v[i] = wdetJ * SurfFluxFinalize(ctx, i, Q, n, x, V);
   }
   return 0;
 }
@@ -383,35 +310,19 @@ CEED_QFUNCTION(f_integ_surf_flux_e_2_32)(void *__restrict__ ctx_, CeedInt Q,
                                          CeedScalar *const *out)
 {
   const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
-  const CeedScalar *wdetJ = in[0] + Q, *adjJt_face = in[0] + 2 * Q, *attr_vol_a = in[1],
-                   *adjJt_vol_a = in[1] + 2 * Q, *attr_vol_b = in[2],
-                   *adjJt_vol_b = in[2] + 2 * Q, *x = in[3], *u_a = in[4], *u_b = in[5];
+  const CeedScalar *qw = in[0], *J_f = in[1], *attr_1 = in[2], *J_v1 = in[3],
+                   *attr_2 = in[4], *J_v2 = in[5], *x = in[6], *u_1 = in[7], *u_2 = in[8];
   CeedScalar *v = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar E[3], eps[9], V_a[3], V_b[3];
-    SurfHcurlField1_32(i, Q, adjJt_vol_a, u_a, E);
-    CoeffUnpack3(ctx + 5, (CeedInt)attr_vol_a[i], eps);
-    MultAx33(eps, E, V_a);
-    SurfHcurlField1_32(i, Q, adjJt_vol_b, u_b, E);
-    CoeffUnpack3(ctx + 5, (CeedInt)attr_vol_b[i], eps);
-    MultAx33(eps, E, V_b);
-    if (ctx[1].first)
-    {
-      // Two-sided: add the contributions from opposite sides with opposite normals.
-      V_a[0] -= V_b[0];
-      V_a[1] -= V_b[1];
-      V_a[2] -= V_b[2];
-    }
-    else
-    {
-      // Average the values from both sides.
-      V_a[0] = 0.5 * (V_a[0] + V_b[0]);
-      V_a[1] = 0.5 * (V_a[1] + V_b[1]);
-      V_a[2] = 0.5 * (V_a[2] + V_b[2]);
-    }
-    v[i] = wdetJ[i] * SurfFluxFinalize(ctx, i, Q, adjJt_face, x, V_a);
+    CeedScalar J_f_loc[6], n[3], V[3], V_2[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    const CeedScalar wdetJ = qw[i] * SurfMeasure32(J_f_loc, n);
+    SurfFluxElectric(ctx, i, Q, (CeedInt)attr_1[i], J_v1, u_1, V);
+    SurfFluxElectric(ctx, i, Q, (CeedInt)attr_2[i], J_v2, u_2, V_2);
+    SurfFluxCombine(ctx, V_2, V);
+    v[i] = wdetJ * SurfFluxFinalize(ctx, i, Q, n, x, V);
   }
   return 0;
 }
@@ -421,15 +332,16 @@ CEED_QFUNCTION(f_integ_surf_flux_m_1_32)(void *__restrict__ ctx_, CeedInt Q,
                                          CeedScalar *const *out)
 {
   const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
-  const CeedScalar *wdetJ = in[0] + Q, *adjJt_face = in[0] + 2 * Q,
-                   *adjJt_vol = in[1] + 2 * Q, *x = in[2], *u = in[3];
+  const CeedScalar *qw = in[0], *J_f = in[1], *J_v = in[3], *x = in[4], *u = in[5];
   CeedScalar *v = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar B[3];
-    SurfHdivField1_32(i, Q, adjJt_vol, u, B);
-    v[i] = wdetJ[i] * SurfFluxFinalize(ctx, i, Q, adjJt_face, x, B);
+    CeedScalar J_f_loc[6], n[3], B[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    const CeedScalar wdetJ = qw[i] * SurfMeasure32(J_f_loc, n);
+    SurfHdivField32(i, Q, J_v, u, B);
+    v[i] = wdetJ * SurfFluxFinalize(ctx, i, Q, n, x, B);
   }
   return 0;
 }
@@ -439,48 +351,21 @@ CEED_QFUNCTION(f_integ_surf_flux_m_2_32)(void *__restrict__ ctx_, CeedInt Q,
                                          CeedScalar *const *out)
 {
   const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
-  const CeedScalar *wdetJ = in[0] + Q, *adjJt_face = in[0] + 2 * Q,
-                   *adjJt_vol_a = in[1] + 2 * Q, *adjJt_vol_b = in[2] + 2 * Q, *x = in[3],
-                   *u_a = in[4], *u_b = in[5];
+  const CeedScalar *qw = in[0], *J_f = in[1], *J_v1 = in[3], *J_v2 = in[5], *x = in[6],
+                   *u_1 = in[7], *u_2 = in[8];
   CeedScalar *v = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar B_a[3], B_b[3];
-    SurfHdivField1_32(i, Q, adjJt_vol_a, u_a, B_a);
-    SurfHdivField1_32(i, Q, adjJt_vol_b, u_b, B_b);
-    if (ctx[1].first)
-    {
-      B_a[0] -= B_b[0];
-      B_a[1] -= B_b[1];
-      B_a[2] -= B_b[2];
-    }
-    else
-    {
-      B_a[0] = 0.5 * (B_a[0] + B_b[0]);
-      B_a[1] = 0.5 * (B_a[1] + B_b[1]);
-      B_a[2] = 0.5 * (B_a[2] + B_b[2]);
-    }
-    v[i] = wdetJ[i] * SurfFluxFinalize(ctx, i, Q, adjJt_face, x, B_a);
+    CeedScalar J_f_loc[6], n[3], B[3], B_2[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    const CeedScalar wdetJ = qw[i] * SurfMeasure32(J_f_loc, n);
+    SurfHdivField32(i, Q, J_v1, u_1, B);
+    SurfHdivField32(i, Q, J_v2, u_2, B_2);
+    SurfFluxCombine(ctx, B_2, B);
+    v[i] = wdetJ * SurfFluxFinalize(ctx, i, Q, n, x, B);
   }
   return 0;
-}
-
-CEED_QFUNCTION_HELPER void SurfPoynting1_32(const CeedIntScalar *ctx, CeedInt i, CeedInt Q,
-                                            const CeedScalar *attr_vol,
-                                            const CeedScalar *adjJt_vol,
-                                            const CeedScalar *u_e, const CeedScalar *u_b,
-                                            CeedScalar S[3])
-{
-  // S = E x H = E x (mu^-1 B).
-  CeedScalar E[3], B[3], invmu[9], H[3];
-  SurfHcurlField1_32(i, Q, adjJt_vol, u_e, E);
-  SurfHdivField1_32(i, Q, adjJt_vol, u_b, B);
-  CoeffUnpack3(ctx + 5, (CeedInt)attr_vol[i], invmu);
-  MultAx33(invmu, B, H);
-  S[0] = E[1] * H[2] - E[2] * H[1];
-  S[1] = E[2] * H[0] - E[0] * H[2];
-  S[2] = E[0] * H[1] - E[1] * H[0];
 }
 
 CEED_QFUNCTION(f_integ_surf_flux_p_1_32)(void *__restrict__ ctx_, CeedInt Q,
@@ -488,15 +373,17 @@ CEED_QFUNCTION(f_integ_surf_flux_p_1_32)(void *__restrict__ ctx_, CeedInt Q,
                                          CeedScalar *const *out)
 {
   const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
-  const CeedScalar *wdetJ = in[0] + Q, *adjJt_face = in[0] + 2 * Q, *attr_vol = in[1],
-                   *adjJt_vol = in[1] + 2 * Q, *x = in[2], *u_e = in[3], *u_b = in[4];
+  const CeedScalar *qw = in[0], *J_f = in[1], *attr = in[2], *J_v = in[3], *x = in[4],
+                   *u_e = in[5], *u_b = in[6];
   CeedScalar *v = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar S[3];
-    SurfPoynting1_32(ctx, i, Q, attr_vol, adjJt_vol, u_e, u_b, S);
-    v[i] = wdetJ[i] * SurfFluxFinalize(ctx, i, Q, adjJt_face, x, S);
+    CeedScalar J_f_loc[6], n[3], S[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    const CeedScalar wdetJ = qw[i] * SurfMeasure32(J_f_loc, n);
+    SurfFluxPoynting(ctx, i, Q, (CeedInt)attr[i], J_v, u_e, u_b, S);
+    v[i] = wdetJ * SurfFluxFinalize(ctx, i, Q, n, x, S);
   }
   return 0;
 }
@@ -506,30 +393,20 @@ CEED_QFUNCTION(f_integ_surf_flux_p_2_32)(void *__restrict__ ctx_, CeedInt Q,
                                          CeedScalar *const *out)
 {
   const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
-  const CeedScalar *wdetJ = in[0] + Q, *adjJt_face = in[0] + 2 * Q, *attr_vol_a = in[1],
-                   *adjJt_vol_a = in[1] + 2 * Q, *attr_vol_b = in[2],
-                   *adjJt_vol_b = in[2] + 2 * Q, *x = in[3], *u_e_a = in[4], *u_b_a = in[5],
-                   *u_e_b = in[6], *u_b_b = in[7];
+  const CeedScalar *qw = in[0], *J_f = in[1], *attr_1 = in[2], *J_v1 = in[3],
+                   *attr_2 = in[4], *J_v2 = in[5], *x = in[6], *u_e_1 = in[7],
+                   *u_b_1 = in[8], *u_e_2 = in[9], *u_b_2 = in[10];
   CeedScalar *v = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    CeedScalar S_a[3], S_b[3];
-    SurfPoynting1_32(ctx, i, Q, attr_vol_a, adjJt_vol_a, u_e_a, u_b_a, S_a);
-    SurfPoynting1_32(ctx, i, Q, attr_vol_b, adjJt_vol_b, u_e_b, u_b_b, S_b);
-    if (ctx[1].first)
-    {
-      S_a[0] -= S_b[0];
-      S_a[1] -= S_b[1];
-      S_a[2] -= S_b[2];
-    }
-    else
-    {
-      S_a[0] = 0.5 * (S_a[0] + S_b[0]);
-      S_a[1] = 0.5 * (S_a[1] + S_b[1]);
-      S_a[2] = 0.5 * (S_a[2] + S_b[2]);
-    }
-    v[i] = wdetJ[i] * SurfFluxFinalize(ctx, i, Q, adjJt_face, x, S_a);
+    CeedScalar J_f_loc[6], n[3], S[3], S_2[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    const CeedScalar wdetJ = qw[i] * SurfMeasure32(J_f_loc, n);
+    SurfFluxPoynting(ctx, i, Q, (CeedInt)attr_1[i], J_v1, u_e_1, u_b_1, S);
+    SurfFluxPoynting(ctx, i, Q, (CeedInt)attr_2[i], J_v2, u_e_2, u_b_2, S_2);
+    SurfFluxCombine(ctx, S_2, S);
+    v[i] = wdetJ * SurfFluxFinalize(ctx, i, Q, n, x, S);
   }
   return 0;
 }

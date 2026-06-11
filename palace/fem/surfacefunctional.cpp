@@ -95,82 +95,6 @@ struct FaceGroup
   std::vector<int> out_slots;  // Output vector slot for each boundary element
 };
 
-// Build the libCEED geometry factor quadrature data for the given elements with the
-// given integration rule (mirrors the geometry data assembly in fem/mesh.cpp, but with
-// caller-provided integration rules so that face and volume data are point-consistent).
-// The attribute channel is filled with the provided per-element attribute values.
-// Returns the geometry data vector and restriction (owned by the caller).
-void BuildGeometryData(Ceed ceed, const mfem::FiniteElementSpace &mesh_fespace,
-                       mfem::Geometry::Type geom, const std::vector<int> &indices,
-                       const mfem::IntegrationRule &ir, const Vector &elem_attr,
-                       CeedVector *geom_data, CeedElemRestriction *geom_data_restr)
-{
-  const std::size_t num_elem = indices.size();
-  const int dim = mfem::Geometry::Dimension[geom];
-  const int space_dim = mesh_fespace.GetMesh()->SpaceDimension();
-
-  // Construct mesh node element restriction and basis (basis tabulated at the provided
-  // integration rule points, which may lie on a face of the reference element for
-  // volume geometry data evaluated at face quadrature points). Native dof ordering is
-  // required to pair with the full (non-tensor) basis tabulation.
-  CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
-      mesh_fespace, ceed, geom, indices, /*is_interp*/ true);
-  CeedBasis mesh_basis;
-  {
-    const mfem::FiniteElement *fe = mesh_fespace.FEColl()->FiniteElementForGeometry(geom);
-    if (!fe)
-    {
-      fe = mesh_fespace.FEColl()->TraceFiniteElementForGeometry(geom);
-    }
-    MFEM_VERIFY(fe, "Unable to get mesh nodal finite element for geometry data!");
-    ceed::InitBasisAtPoints(*fe, ir, mesh_fespace.GetVDim(), ceed, &mesh_basis);
-  }
-  CeedVector mesh_nodes_vec;
-  ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
-  CeedInt num_qpts;
-  PalaceCeedCall(ceed, CeedBasisGetNumQuadraturePoints(mesh_basis, &num_qpts));
-
-  // Construct element attribute element restriction and basis (all-ones basis
-  // broadcasting the per-element attribute to quadrature points).
-  CeedElemRestriction attr_restr;
-  CeedBasis attr_basis;
-  PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, num_elem, 1, 1, num_elem,
-                                                        CEED_STRIDES_BACKEND, &attr_restr));
-  {
-    // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
-    mfem::Vector Bt(num_qpts), Gt(num_qpts), qX(num_qpts), qW(num_qpts);
-    Bt = 1.0;
-    Gt = 0.0;
-    qX = 0.0;
-    qW = 0.0;
-    PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_qpts,
-                                           Bt.GetData(), Gt.GetData(), qX.GetData(),
-                                           qW.GetData(), &attr_basis));
-  }
-  CeedVector elem_attr_vec;
-  ceed::InitCeedVector(elem_attr, ceed, &elem_attr_vec);
-
-  // Allocate storage for geometry factor data.
-  CeedInt geom_data_size = 2 + space_dim * dim;
-  PalaceCeedCall(
-      ceed,
-      CeedVectorCreate(ceed, (CeedSize)num_elem * num_qpts * geom_data_size, geom_data));
-  PalaceCeedCall(
-      ceed, CeedElemRestrictionCreateStrided(ceed, num_elem, num_qpts, geom_data_size,
-                                             (CeedSize)num_elem * num_qpts * geom_data_size,
-                                             CEED_STRIDES_BACKEND, geom_data_restr));
-
-  // Compute the required geometry factors at quadrature points.
-  ceed::AssembleCeedGeometryData(ceed, mesh_restr, mesh_basis, mesh_nodes_vec, attr_restr,
-                                 attr_basis, elem_attr_vec, *geom_data, *geom_data_restr);
-  PalaceCeedCall(ceed, CeedVectorDestroy(&mesh_nodes_vec));
-  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_restr));
-  PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_basis));
-  PalaceCeedCall(ceed, CeedVectorDestroy(&elem_attr_vec));
-  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&attr_restr));
-  PalaceCeedCall(ceed, CeedBasisDestroy(&attr_basis));
-}
-
 void AppendPoints(FaceConfigKey &key, const std::vector<mfem::IntegrationPoint> &pts)
 {
   for (const auto &ip : pts)
@@ -586,64 +510,89 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     // Objects are owned by the assembled operator; scratch destroys our references.
     CeedAssemblyScratch scratch(ceed);
 
-    // Face geometry data (boundary element Jacobians at the face quadrature points).
-    CeedVector face_geom_data;
-    CeedElemRestriction face_geom_data_restr;
+    // Assemble the inputs in the order expected by the QFunctions: quadrature weights
+    // and boundary element mesh node gradients (surface measure and normal), per-side
+    // volume element attributes (material lookup) and mesh node gradients at the mapped
+    // points (Piola transformations), coordinates (SURFACE_FLUX only), then the field
+    // inputs (side 1 fields, then side 2 fields). The geometry is computed on the fly
+    // in the QFunctions (no stored geometry factor data).
+    std::vector<ceed::CeedFunctionalFieldInput> inputs;
+    std::vector<std::pair<std::string, int>> field_sources;
+    const mfem::FiniteElement *face_mesh_fe =
+        mesh_fespace.FEColl()->FiniteElementForGeometry(group.bdr_geom);
+    if (!face_mesh_fe)
     {
-      Vector elem_attr(num_elem);
-      for (std::size_t k = 0; k < num_elem; k++)
-      {
-        elem_attr[k] = pmesh.GetBdrAttribute(group.bdr_indices[k]);
-      }
-      BuildGeometryData(ceed, mesh_fespace, group.bdr_geom, group.bdr_indices, face_ir,
-                        elem_attr, &face_geom_data, &face_geom_data_restr);
-      scratch.vecs.push_back(face_geom_data);
-      scratch.restrs.push_back(face_geom_data_restr);
+      face_mesh_fe = mesh_fespace.FEColl()->TraceFiniteElementForGeometry(group.bdr_geom);
     }
-
-    // Volume geometry data evaluated at the mapped face quadrature points (for the
-    // Piola transformations of the field inputs and the material property lookups with
-    // the local libCEED attribute).
-    auto GetCeedElemAttr = [&](const std::vector<int> &indices)
     {
-      Vector elem_attr(indices.size());
+      CeedBasis face_mesh_basis;
+      ceed::InitBasisAtPoints(*face_mesh_fe, face_ir, mesh_fespace.GetVDim(), ceed,
+                              &face_mesh_basis);
+      CeedElemRestriction face_mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
+          mesh_fespace, ceed, group.bdr_geom, group.bdr_indices, /*is_interp*/ true);
+      CeedVector mesh_nodes_vec;
+      ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
+      inputs.push_back({"qw", nullptr, nullptr, face_mesh_basis, ceed::EvalMode::Weight});
+      inputs.push_back(
+          {"x_f", mesh_nodes_vec, face_mesh_restr, face_mesh_basis, ceed::EvalMode::Grad});
+      scratch.vecs.push_back(mesh_nodes_vec);
+      scratch.restrs.push_back(face_mesh_restr);
+      scratch.bases.push_back(face_mesh_basis);
+    }
+    auto AddVolGeomInputs = [&](const std::string &suffix, const std::vector<int> &indices,
+                                mfem::Geometry::Type geom, const mfem::IntegrationRule &ir)
+    {
+      const int num_pts = ir.GetNPoints();
+      auto &elem_attr = elem_attrs.emplace_back(indices.size());
       const auto &loc_attr = mesh.GetCeedAttributes();
       for (std::size_t k = 0; k < indices.size(); k++)
       {
         elem_attr[k] = loc_attr.at(pmesh.GetAttribute(indices[k]));
       }
-      return elem_attr;
+      CeedElemRestriction attr_restr;
+      CeedBasis attr_basis;
+      CeedVector attr_vec;
+      PalaceCeedCall(
+          ceed, CeedElemRestrictionCreateStrided(ceed, indices.size(), 1, 1, indices.size(),
+                                                 CEED_STRIDES_BACKEND, &attr_restr));
+      {
+        // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
+        mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
+        Bt = 1.0;
+        Gt = 0.0;
+        qX = 0.0;
+        qW = 0.0;
+        PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
+                                               Bt.GetData(), Gt.GetData(), qX.GetData(),
+                                               qW.GetData(), &attr_basis));
+      }
+      ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
+      inputs.push_back(
+          {"attr_" + suffix, attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
+      CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
+          mesh_fespace, ceed, geom, indices, /*is_interp*/ true);
+      const mfem::FiniteElement *mesh_fe =
+          mesh_fespace.FEColl()->FiniteElementForGeometry(geom);
+      CeedBasis mesh_basis;
+      ceed::InitBasisAtPoints(*mesh_fe, ir, mesh_fespace.GetVDim(), ceed, &mesh_basis);
+      CeedVector mesh_nodes_vec;
+      ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
+      inputs.push_back(
+          {"x_" + suffix, mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
+      scratch.vecs.push_back(attr_vec);
+      scratch.vecs.push_back(mesh_nodes_vec);
+      scratch.restrs.push_back(attr_restr);
+      scratch.restrs.push_back(mesh_restr);
+      scratch.bases.push_back(attr_basis);
+      scratch.bases.push_back(mesh_basis);
     };
-    CeedVector vol_geom_data = nullptr, vol_geom_data_b = nullptr;
-    CeedElemRestriction vol_geom_data_restr = nullptr, vol_geom_data_b_restr = nullptr;
     if (!group.vol_indices_a.empty())
     {
-      Vector elem_attr = GetCeedElemAttr(group.vol_indices_a);
-      BuildGeometryData(ceed, mesh_fespace, group.vol_geom_a, group.vol_indices_a,
-                        *group.mapped_ir_a, elem_attr, &vol_geom_data,
-                        &vol_geom_data_restr);
-      scratch.vecs.push_back(vol_geom_data);
-      scratch.restrs.push_back(vol_geom_data_restr);
+      AddVolGeomInputs("1", group.vol_indices_a, group.vol_geom_a, *group.mapped_ir_a);
     }
     if (has_b)
     {
-      Vector elem_attr = GetCeedElemAttr(group.vol_indices_b);
-      BuildGeometryData(ceed, mesh_fespace, group.vol_geom_b, group.vol_indices_b,
-                        *group.mapped_ir_b, elem_attr, &vol_geom_data_b,
-                        &vol_geom_data_b_restr);
-      scratch.vecs.push_back(vol_geom_data_b);
-      scratch.restrs.push_back(vol_geom_data_b_restr);
-    }
-
-    // Assemble the inputs in the order expected by the QFunctions: side b volume
-    // geometry data (EvalMode::None), coordinates (SURFACE_FLUX only), then the field
-    // inputs (side a fields, then side b fields).
-    std::vector<ceed::CeedFunctionalFieldInput> inputs;
-    std::vector<std::pair<std::string, int>> field_sources;
-    if (has_b)
-    {
-      inputs.push_back({"vol_geom_data_b", vol_geom_data_b, vol_geom_data_b_restr, nullptr,
-                        ceed::EvalMode::None});
+      AddVolGeomInputs("2", group.vol_indices_b, group.vol_geom_b, *group.mapped_ir_b);
     }
     if (kind == Kind::SURFACE_FLUX)
     {
@@ -651,14 +600,9 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       // with the boundary element basis (constant input, never re-pointed).
       CeedElemRestriction x_restr = FiniteElementSpace::BuildCeedElemRestriction(
           mesh_fespace, ceed, group.bdr_geom, group.bdr_indices, /*is_interp*/ true);
-      const mfem::FiniteElement *fe =
-          mesh_fespace.FEColl()->FiniteElementForGeometry(group.bdr_geom);
-      if (!fe)
-      {
-        fe = mesh_fespace.FEColl()->TraceFiniteElementForGeometry(group.bdr_geom);
-      }
       CeedBasis x_basis;
-      ceed::InitBasisAtPoints(*fe, face_ir, mesh_fespace.GetVDim(), ceed, &x_basis);
+      ceed::InitBasisAtPoints(*face_mesh_fe, face_ir, mesh_fespace.GetVDim(), ceed,
+                              &x_basis);
       CeedVector x_vec;
       ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &x_vec);
       inputs.push_back({"x", x_vec, x_restr, x_basis, ceed::EvalMode::Interp});
@@ -789,9 +733,9 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
 
     // Assemble the operator.
     CeedOperator op;
-    ceed::AssembleCeedSurfaceFunctional(
-        info, ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, inputs, face_geom_data,
-        face_geom_data_restr, vol_geom_data, vol_geom_data_restr, 1, out_restr, &op);
+    ceed::AssembleCeedSurfaceFunctional(info, ctx.data(),
+                                        ctx.size() * sizeof(CeedIntScalar), ceed, inputs, 1,
+                                        out_restr, &op);
     groups.push_back({ceed, op, std::move(field_sources)});
   }
 }
