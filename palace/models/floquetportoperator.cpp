@@ -329,7 +329,6 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
   // Enumerate diffraction orders and compute mode vectors.
   EnumerateOrders();
   AssembleFourierProjections(nd_fespace);
-  nd_fespace_ptr = &nd_fespace;  // Store for re-assembly in Initialize.
 
   Mpi::Print(" Floquet port: {:d} modes ({:d} orders x 2 polarizations)\n",
              static_cast<int>(modes.size()), static_cast<int>(modes.size()) / 2);
@@ -472,11 +471,37 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
   // already computes int_Gamma (f . N_j) dS where f is a VectorCoefficient. Since ND basis
   // functions on a face are tangential, (n x [n x N_j]) . e_p = N_j . e_p_tangential.
   //
-  // So we need: v_j = int_Gamma N_j(r) . [e_p * exp(-i B_mn . r)] dS
-  //
-  // Split into real and imaginary parts:
-  //   Re: int_Gamma N_j . [e_p * cos(B_mn . r)] dS
-  //   Im: int_Gamma N_j . [e_p * (-sin(B_mn . r))] dS
+  // So we need: v_j = int_Gamma N_j(r) . [e_p * exp(-i B_mn . r)] dS.
+  // Since this is linear in e_p, assemble Cartesian component projections once and
+  // combine them whenever the TE/TM polarization changes with frequency.
+
+  class FloquetComponentCoeff : public mfem::VectorCoefficient
+  {
+  public:
+    const mfem::Vector &B_mn;
+    int component;
+    bool is_real;  // true = cos part, false = -sin part
+
+    FloquetComponentCoeff(const mfem::Vector &B, int component, bool real_part)
+      : mfem::VectorCoefficient(3), B_mn(B), component(component), is_real(real_part)
+    {
+    }
+
+    void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+              const mfem::IntegrationPoint &ip) override
+    {
+      mfem::Vector x(3);
+      T.Transform(ip, x);
+      double phase = 0.0;
+      for (int i = 0; i < 3; i++)
+      {
+        phase += B_mn(i) * x(i);
+      }
+      V.SetSize(3);
+      V = 0.0;
+      V(component) = is_real ? std::cos(phase) : -std::sin(phase);
+    }
+  };
 
   // Create boundary attribute marker. Scan all local boundary elements for the actual max
   // attribute (may include internally-added interface boundary elements).
@@ -494,65 +519,47 @@ void FloquetPortData::AssembleFourierProjections(mfem::ParFiniteElementSpace &nd
   for (auto &mode : modes)
   {
     mode.v.SetSize(tdof_size);
-    mode.v = 0.0;
     mode.v.UseDevice(true);
 
-    // Coefficient for real part: e_p * cos(B_mn . r)
-    // Coefficient for imag part: e_p * (-sin(B_mn . r))
-    // We use a lambda-based VectorCoefficient.
-
-    class FloquetModeCoeff : public mfem::VectorCoefficient
+    for (int d = 0; d < 3; d++)
     {
-    public:
-      const mfem::Vector &e_pol, &B_mn;
-      bool is_real;  // true = cos part, false = -sin part
+      auto &v_comp = mode.v_comp[d];
+      v_comp.SetSize(tdof_size);
+      v_comp = 0.0;
+      v_comp.UseDevice(true);
 
-      FloquetModeCoeff(const mfem::Vector &e, const mfem::Vector &B, bool real_part)
-        : mfem::VectorCoefficient(3), e_pol(e), B_mn(B), is_real(real_part)
-      {
-      }
+      FloquetComponentCoeff coeff_r(mode.B_mn, d, true);
+      FloquetComponentCoeff coeff_i(mode.B_mn, d, false);
 
-      void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
-                const mfem::IntegrationPoint &ip) override
-      {
-        mfem::Vector x(3);
-        T.Transform(ip, x);
-        double phase = 0.0;
-        for (int i = 0; i < 3; i++)
-        {
-          phase += B_mn(i) * x(i);
-        }
-        double scale = is_real ? std::cos(phase) : -std::sin(phase);
-        V.SetSize(3);
-        for (int i = 0; i < 3; i++)
-        {
-          V(i) = e_pol(i) * scale;
-        }
-      }
-    };
+      mfem::LinearForm lf_r(&nd_fespace);
+      lf_r.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coeff_r), bdr_marker);
+      lf_r.UseFastAssembly(false);
+      lf_r.UseDevice(false);
+      lf_r.Assemble();
+      lf_r.UseDevice(true);
 
-    FloquetModeCoeff coeff_r(mode.e_pol, mode.B_mn, true);
-    FloquetModeCoeff coeff_i(mode.e_pol, mode.B_mn, false);
+      mfem::LinearForm lf_i(&nd_fespace);
+      lf_i.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coeff_i), bdr_marker);
+      lf_i.UseFastAssembly(false);
+      lf_i.UseDevice(false);
+      lf_i.Assemble();
+      lf_i.UseDevice(true);
 
-    // Assemble real part: v_r = ∫_Γ N_j · [e_pol cos(B·r)] dS.
-    mfem::LinearForm lf_r(&nd_fespace);
-    lf_r.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coeff_r), bdr_marker);
-    lf_r.UseFastAssembly(false);
-    lf_r.UseDevice(false);
-    lf_r.Assemble();
-    lf_r.UseDevice(true);
+      nd_fespace.GetProlongationMatrix()->MultTranspose(lf_r, v_comp.Real());
+      nd_fespace.GetProlongationMatrix()->MultTranspose(lf_i, v_comp.Imag());
+    }
 
-    // Assemble imaginary part: v_i = ∫_Γ N_j · [e_pol (-sin(B·r))] dS.
-    mfem::LinearForm lf_i(&nd_fespace);
-    lf_i.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(coeff_i), bdr_marker);
-    lf_i.UseFastAssembly(false);
-    lf_i.UseDevice(false);
-    lf_i.Assemble();
-    lf_i.UseDevice(true);
+    UpdateModeVector(mode);
+  }
+}
 
-    // Project to true DOFs: v = P^T * lf.
-    nd_fespace.GetProlongationMatrix()->MultTranspose(lf_r, mode.v.Real());
-    nd_fespace.GetProlongationMatrix()->MultTranspose(lf_i, mode.v.Imag());
+void FloquetPortData::UpdateModeVector(FloquetMode &mode) const
+{
+  mode.v = 0.0;
+  for (int d = 0; d < 3; d++)
+  {
+    mode.v.Real().Add(mode.e_pol(d), mode.v_comp[d].Real());
+    mode.v.Imag().Add(mode.e_pol(d), mode.v_comp[d].Imag());
   }
 }
 
@@ -647,7 +654,6 @@ void FloquetPortData::Initialize(double omega)
   // handled at construction and stays fixed.
   // (No runtime BZ check needed.)
 
-  bool need_reassemble = false;
   gamma0 = 0.0;
   for (auto &mode : modes)
   {
@@ -667,7 +673,7 @@ void FloquetPortData::Initialize(double omega)
       mfem::Vector e_te(3), e_tm(3);
       ComputePolarization(kt, port_normal, e_te, e_tm);
       mfem::Vector &new_pol = mode.is_te ? e_te : e_tm;
-      // Check if polarization changed (avoid unnecessary reassembly).
+      // Check if polarization changed (avoid unnecessary vector updates).
       double pol_diff = 0.0;
       for (int d = 0; d < 3; d++)
       {
@@ -676,19 +682,13 @@ void FloquetPortData::Initialize(double omega)
       if (pol_diff > 1e-14)
       {
         mode.e_pol = new_pol;
-        need_reassemble = true;
+        UpdateModeVector(mode);
       }
     }
     if (mode.m == 0 && mode.n == 0 && mode.is_te)
     {
       gamma0 = std::sqrt(std::max(mode.gamma_sq, 0.0));
     }
-  }
-
-  // Re-assemble mode vectors if polarization changed.
-  if (need_reassemble && nd_fespace_ptr)
-  {
-    AssembleFourierProjections(*nd_fespace_ptr);
   }
 }
 

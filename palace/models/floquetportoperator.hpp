@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_FLOQUET_PORT_OPERATOR_HPP
 #define PALACE_MODELS_FLOQUET_PORT_OPERATOR_HPP
 
+#include <array>
 #include <complex>
 #include <map>
 #include <memory>
@@ -50,7 +51,8 @@ struct FloquetMode
   mfem::Vector B_mn;   // Transverse wavevector B_mn = m*b1 + n*b2
   mfem::Vector e_pol;  // Polarization unit vector (3D, tangential to port)
   ComplexVector v;     // Fourier projection: v_j = int_Gamma (nxnxN_j).e_p exp(-iB.r) dS
-  double gamma_sq;     // gamma_mn^2 = omega^2*mu*eps - |B_mn - k_F|^2 (freq-dependent)
+  std::array<ComplexVector, 3> v_comp;  // Same projection for Cartesian unit vectors.
+  double gamma_sq;  // gamma_mn^2 = omega^2*mu*eps - |B_mn - k_F|^2 (freq-dependent)
 };
 
 // Low-rank complex operator: F*x = sum_k g_k conj(v_k) (v_k^T x).
@@ -184,9 +186,6 @@ private:
   // All Floquet modes with pre-assembled projection vectors.
   std::vector<FloquetMode> modes;
 
-  // FE space for re-assembling mode vectors when polarization changes with frequency.
-  mfem::ParFiniteElementSpace *nd_fespace_ptr = nullptr;
-
   // Frequency cache.
   double omega0 = 0.0;
   double gamma0 = 0.0;
@@ -225,6 +224,7 @@ private:
 
   void EnumerateOrders();
   void AssembleFourierProjections(mfem::ParFiniteElementSpace &nd_fespace);
+  void UpdateModeVector(FloquetMode &mode) const;
 };
 
 //
