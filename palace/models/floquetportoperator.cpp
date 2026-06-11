@@ -648,6 +648,7 @@ void FloquetPortData::Initialize(double omega)
   // (No runtime BZ check needed.)
 
   bool need_reassemble = false;
+  gamma0 = 0.0;
   for (auto &mode : modes)
   {
     // gamma_mn^2 = omega^2 * mu_r * eps_r - |B_mn + k_F(ω)|^2
@@ -678,6 +679,10 @@ void FloquetPortData::Initialize(double omega)
         need_reassemble = true;
       }
     }
+    if (mode.m == 0 && mode.n == 0 && mode.is_te)
+    {
+      gamma0 = std::sqrt(std::max(mode.gamma_sq, 0.0));
+    }
   }
 
   // Re-assemble mode vectors if polarization changed.
@@ -705,16 +710,6 @@ FloquetPortData::ComputeDtNCorrectionCoeff(const FloquetMode &mode) const
 {
   // Compute g_correction = g_full - g_uniform for a single mode.
   // g_uniform uses the TE (0,0) propagation constant as the Robin reference.
-  double gamma0 = 0.0;
-  for (const auto &m0 : modes)
-  {
-    if (m0.m == 0 && m0.n == 0 && m0.is_te)
-    {
-      gamma0 = std::sqrt(std::max(m0.gamma_sq, 0.0));
-      break;
-    }
-  }
-
   std::complex<double> g_uniform = 1i * gamma0 / (mu_r_port * port_area);
   std::complex<double> g_full = ComputeDtNFullCoeff(mode);
   if (g_full == 0.0)
@@ -780,16 +775,7 @@ FloquetPortData::IncidentNormalization
 FloquetPortData::ComputeIncidentNormalization(double omega) const
 {
   IncidentNormalization norm{};
-  // TE and TM of the same (0,0) order share the same gamma_sq, so it doesn't matter
-  // which polarization we find first.
-  for (const auto &mode : modes)
-  {
-    if (mode.m == 0 && mode.n == 0 && mode.gamma_sq > 0.0)
-    {
-      norm.gamma_00 = std::sqrt(mode.gamma_sq);
-      break;
-    }
-  }
+  norm.gamma_00 = gamma0;
   MFEM_VERIFY(norm.gamma_00 > 0.0, "Incident Floquet mode is evanescent or not found!");
   norm.lambda_te_00 = norm.gamma_00;
   norm.lambda_tm_00 = omega * omega * mu_eps_port / norm.gamma_00;
@@ -1004,15 +990,7 @@ void FloquetPortOperator::AddExtraSystemBdrCoefficients(double omega,
   for (const auto &[idx, port] : ports)
   {
     // γ₀ = TE (0,0) mode propagation constant.
-    double gamma0 = 0.0;
-    for (const auto &mode : port.GetModes())
-    {
-      if (mode.m == 0 && mode.n == 0 && mode.is_te)
-      {
-        gamma0 = std::sqrt(std::max(mode.gamma_sq, 0.0));
-        break;
-      }
-    }
+    double gamma0 = port.GetGamma0();
     MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
                                            mat_op.GetInvPermeability());
     muinv_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(port.GetAttrList()));
