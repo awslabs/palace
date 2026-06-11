@@ -174,7 +174,8 @@ for implementation details.
     `port-floquet-S.csv` output file. Each mode is labeled as
     `S[P<port>(<m>,<n>)<pol>][<exc>]` where `<port>` is the port index, `(<m>,<n>)` is
     the diffraction order, `<pol>` is the polarization (TE/TM or RHC/LHC for circular
-    excitation), and `<exc>` is the excitation index.
+    excitation), and `<exc>` is the excitation index. Values of `nan` are given to non-propagating
+    modes.
 
     The port boundary must be planar and on the true boundary of the computational domain.
     The medium adjacent to the port must be homogeneous and isotropic.

@@ -504,7 +504,6 @@ attributes for the purpose of the 2D wave port boundary mode problem.
         "Index": <int>,
         "Attributes": [<int array>],
         "Excitation": <bool>,
-        "Active": <bool>,
         "IncidentPolarization": <string>,
         "MaxOrder": <int>
     },
