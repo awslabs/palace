@@ -34,6 +34,62 @@ using namespace std::complex_literals;
 namespace
 {
 
+// Vector coefficient reading precomputed (device-filled) values at the boundary
+// visualization lattice points, replacing per-point host evaluation of the legacy
+// boundary coefficients at ParaView save time. Points are identified by quantized
+// reference coordinates.
+class BdrVizBufferCoefficient : public mfem::VectorCoefficient
+{
+private:
+  const Vector &buffer;
+  const std::vector<int> &bases;
+  const int lod;
+  mutable std::map<mfem::Geometry::Type, std::map<std::array<long long, 3>, int>> pt_maps;
+
+  static std::array<long long, 3> Quantize(const mfem::IntegrationPoint &ip)
+  {
+    constexpr double scale = 1.0e10;
+    return {std::llround(ip.x * scale), std::llround(ip.y * scale),
+            std::llround(ip.z * scale)};
+  }
+
+public:
+  BdrVizBufferCoefficient(const Vector &buffer, const std::vector<int> &bases, int lod)
+    : mfem::VectorCoefficient(3), buffer(buffer), bases(bases), lod(lod)
+  {
+  }
+
+  using mfem::VectorCoefficient::Eval;
+  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override
+  {
+    auto &pt_map = pt_maps[T.GetGeometryType()];
+    if (pt_map.empty())
+    {
+      const auto &RefG = *mfem::GlobGeometryRefiner.Refine(T.GetGeometryType(), lod, 1);
+      for (int j = 0; j < RefG.RefPts.GetNPoints(); j++)
+      {
+        pt_map[Quantize(RefG.RefPts.IntPoint(j))] = j;
+      }
+    }
+    auto it = pt_map.find(Quantize(ip));
+    MFEM_VERIFY(it != pt_map.end() && T.ElementNo < static_cast<int>(bases.size()) &&
+                    bases[T.ElementNo] >= 0,
+                "Unexpected evaluation point for BdrVizBufferCoefficient!");
+    const double *buf = buffer.HostRead();
+    V.SetSize(3);
+    for (int c = 0; c < 3; c++)
+    {
+      V(c) = buf[bases[T.ElementNo] + 3 * it->second + c];
+    }
+  }
+};
+
+}  // namespace
+
+namespace
+{
+
 std::string OutputFolderName(const ProblemType solver_t)
 {
   switch (solver_t)
@@ -325,6 +381,22 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       eval.reset();
     }
   };
+  auto MakeBdrFieldEvaluator = [&](SurfaceFunctional::Kind kind,
+                                   mfem::ParFiniteElementSpace &fespace,
+                                   std::unique_ptr<SurfaceFunctional> &eval)
+  {
+    const auto &mesh = fem_op->GetMaterialOp().GetMesh();
+    const auto &pmesh = mesh.Get();
+    const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 1;
+    eval = std::make_unique<SurfaceFunctional>(kind, mesh, marker, fespace,
+                                               fespace.GetMaxElementOrder());
+    if (!eval->IsValid())
+    {
+      eval.reset();
+    }
+  };
 
   // Set-up grid-functions for the paraview output / measurement.
   if constexpr (HasVGridFunction<solver_t>())
@@ -359,13 +431,38 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     }
 
     // Electric Boundary Field & Surface Charge.
-    E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
+    if (SurfaceFunctional::Enabled())
+    {
+      MakeBdrFieldEvaluator(SurfaceFunctional::Kind::BDR_FIELD_E, *E->ParFESpace(),
+                            E_bdr_eval);
+    }
+    if (E_bdr_eval)
+    {
+      E_sr_buf.SetSize(E_bdr_eval->BufferSize());
+      E_sr_buf.UseDevice(true);
+      E_sr = std::make_unique<BdrVizBufferCoefficient>(
+          E_sr_buf, E_bdr_eval->BufferBases(), E->ParFESpace()->GetMaxElementOrder());
+    }
+    else
+    {
+      E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
+    }
     // Q_s = D ⋅ n = ε_0 E ⋅ n.
     Q_sr = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
         &E->Real(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
     if constexpr (HasComplexGridFunction<solver_t>())
     {
-      E_si = std::make_unique<BdrFieldVectorCoefficient>(E->Imag());
+      if (E_bdr_eval)
+      {
+        E_si_buf.SetSize(E_bdr_eval->BufferSize());
+        E_si_buf.UseDevice(true);
+        E_si = std::make_unique<BdrVizBufferCoefficient>(
+            E_si_buf, E_bdr_eval->BufferBases(), E->ParFESpace()->GetMaxElementOrder());
+      }
+      else
+      {
+        E_si = std::make_unique<BdrFieldVectorCoefficient>(E->Imag());
+      }
       Q_si = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>(
           &E->Imag(), nullptr, fem_op->GetMaterialOp(), true, mfem::Vector(), scaling);
     }
@@ -396,7 +493,22 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     // In 2D, B is scalar (L2), so boundary vector coefficients are not applicable.
     if (B->Real().VectorDim() > 1)
     {
-      B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
+      if (SurfaceFunctional::Enabled())
+      {
+        MakeBdrFieldEvaluator(SurfaceFunctional::Kind::BDR_FIELD_B, *B->ParFESpace(),
+                              B_bdr_eval);
+      }
+      if (B_bdr_eval)
+      {
+        B_sr_buf.SetSize(B_bdr_eval->BufferSize());
+        B_sr_buf.UseDevice(true);
+        B_sr = std::make_unique<BdrVizBufferCoefficient>(
+            B_sr_buf, B_bdr_eval->BufferBases(), B->ParFESpace()->GetMaxElementOrder());
+      }
+      else
+      {
+        B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
+      }
       // J_s = n x H = n x μ⁻¹ B.
       J_sr = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
           B->Real(), fem_op->GetMaterialOp(), scaling);
@@ -406,7 +518,17 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     {
       if (B->Imag().VectorDim() > 1)
       {
-        B_si = std::make_unique<BdrFieldVectorCoefficient>(B->Imag());
+        if (B_bdr_eval)
+        {
+          B_si_buf.SetSize(B_bdr_eval->BufferSize());
+          B_si_buf.UseDevice(true);
+          B_si = std::make_unique<BdrVizBufferCoefficient>(
+              B_si_buf, B_bdr_eval->BufferBases(), B->ParFESpace()->GetMaxElementOrder());
+        }
+        else
+        {
+          B_si = std::make_unique<BdrFieldVectorCoefficient>(B->Imag());
+        }
         J_si = std::make_unique<BdrSurfaceCurrentVectorCoefficient>(
             B->Imag(), fem_op->GetMaterialOp(), scaling);
       }
@@ -764,6 +886,22 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   if (S_eval)
   {
     S_eval->Eval(E.get(), B.get(), *S_gf);
+  }
+  if (E_bdr_eval)
+  {
+    E_bdr_eval->EvalBuffer(E->Real(), E_sr_buf);
+    if (E->HasImag())
+    {
+      E_bdr_eval->EvalBuffer(E->Imag(), E_si_buf);
+    }
+  }
+  if (B_bdr_eval)
+  {
+    B_bdr_eval->EvalBuffer(B->Real(), B_sr_buf);
+    if (B->HasImag())
+    {
+      B_bdr_eval->EvalBuffer(B->Imag(), B_si_buf);
+    }
   }
   double paraview_time = time;
   if constexpr (solver_t == ProblemType::DRIVEN)

@@ -1593,4 +1593,99 @@ TEST_CASE("InterpolationOperator Ceed Probes", "[surfacefunctional][Serial][Para
 }
 #endif
 
+TEST_CASE("SurfaceFunctional Boundary Viz Fields",
+          "[surfacefunctional][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto order = GENERATE(1, 2);
+  auto nonconformal = GENERATE(false, true);
+  CAPTURE(elem_type, order, nonconformal);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = nonconformal ? MakeNCInterfaceMesh(comm, elem_type)
+                           : MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+
+  GridFunction E(nd_fespace, false), B(rt_fespace, false);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + x(2) * x(2);
+                                        v(1) = std::cos(x(2)) + x(0);
+                                        v(2) = x(0) * x(1) + 1.0;
+                                      });
+  mfem::VectorFunctionCoefficient fbr(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) - 0.3 * x(2);
+                                        v(1) = std::sin(x(2)) + 0.5;
+                                        v(2) = std::cos(x(0)) - x(1) * x(2);
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  B.Real().ProjectCoefficient(fbr);
+  E.Real().ExchangeFaceNbrData();
+  B.Real().ExchangeFaceNbrData();
+
+  const int lod = order;
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 1;
+
+  auto TestKind = [&](SurfaceFunctional::Kind kind, const mfem::ParFiniteElementSpace &fes,
+                      const mfem::ParGridFunction &U)
+  {
+    SurfaceFunctional viz(kind, *mesh, marker, fes, lod);
+
+    // The validity decision must be identical on all ranks; interior surfaces split
+    // across processes fall back (consistently).
+    bool valid = viz.IsValid();
+    bool valid_and = valid, valid_or = valid;
+    Mpi::GlobalAnd(1, &valid_and, comm);
+    Mpi::GlobalOr(1, &valid_or, comm);
+    REQUIRE(valid_and == valid_or);
+    if (!valid)
+    {
+      return;
+    }
+
+    Vector buffer(viz.BufferSize());
+    buffer.UseDevice(true);
+    viz.EvalBuffer(U, buffer);
+    const double *buf = buffer.HostRead();
+    const auto &bases = viz.BufferBases();
+
+    BdrFieldVectorCoefficient legacy(U);
+    mfem::Vector V(3);
+    for (int i = 0; i < pmesh.GetNBE(); i++)
+    {
+      const auto &RefG =
+          *mfem::GlobGeometryRefiner.Refine(pmesh.GetBdrElementGeometry(i), lod, 1);
+      auto *T = pmesh.GetBdrElementTransformation(i);
+      for (int j = 0; j < RefG.RefPts.GetNPoints(); j++)
+      {
+        const auto &ip = RefG.RefPts.IntPoint(j);
+        T->SetIntPoint(&ip);
+        legacy.Eval(V, *T, ip);
+        for (int c = 0; c < 3; c++)
+        {
+          const double val = buf[bases[i] + 3 * j + c];
+          CAPTURE(i, j, c, V(c), val);
+          CHECK(val == Catch::Approx(V(c)).epsilon(1.0e-10).margin(1.0e-13));
+        }
+      }
+    }
+  };
+
+  TestKind(SurfaceFunctional::Kind::BDR_FIELD_E, nd_fespace, E.Real());
+  TestKind(SurfaceFunctional::Kind::BDR_FIELD_B, rt_fespace, B.Real());
+}
+
 }  // namespace palace

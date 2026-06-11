@@ -63,8 +63,15 @@ public:
     HCURL_NORM2,    // ∫ |u|² dS for an H(curl) field u (single-sided, for validation)
     INTERFACE_EPR,  // Interface dielectric energy following InterfaceDielectricCoefficient
     SURFACE_FLUX,   // Surface flux following BdrSurfaceFluxCoefficient
-    FARFIELD        // Stratton-Chu far-field following AddStrattonChuIntegrandAtElement
+    FARFIELD,       // Stratton-Chu far-field following AddStrattonChuIntegrandAtElement
+    BDR_FIELD_E,    // H(curl) field values at boundary visualization points
+    BDR_FIELD_B     // H(div) field values at boundary visualization points
   };
+
+  // Total buffer size (all boundary elements, lattice points, components) and
+  // per-element base offsets for the boundary visualization field kinds.
+  int BufferSize() const { return buffer_size; }
+  const std::vector<int> &BufferBases() const { return buffer_bases; }
 
 private:
   // Computation kind and integrand parameters.
@@ -81,6 +88,12 @@ private:
   // enters the QFunction context).
   const Mesh *farfield_mesh = nullptr;
   mfem::Array<int> farfield_marker;
+
+  // Boundary visualization field kinds: lattice refinement level, total output buffer
+  // size, and per-boundary-element base offsets into the buffer.
+  int viz_lod = 0;
+  int buffer_size = 0;
+  std::vector<int> buffer_bases;
 
   // Field finite element spaces (not owned): fespace_e for H(curl) fields (source index
   // 0), fespace_b for H(div) fields (source index 1). Either may be nullptr depending
@@ -132,6 +145,12 @@ public:
   // may be nullptr but the mesh is still required.
   SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
                     const mfem::ParFiniteElementSpace *fespace = nullptr);
+
+  // Construct a boundary visualization field evaluator (BDR_FIELD_E or BDR_FIELD_B),
+  // evaluating at the order-lod lattice points of each boundary element (the ParaView
+  // output sampling, see mfem::RefinedGeometry).
+  SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
+                    const mfem::ParFiniteElementSpace &fespace, int lod);
 
   // Construct an interface dielectric energy participation functional with the given
   // interface type, thickness, and permittivity (see InterfaceDielectricCoefficient).
@@ -194,6 +213,10 @@ public:
                                                                 const GridFunction &B,
                                                                 double omega_re,
                                                                 double omega_im);
+
+  // Fill the boundary visualization buffer with the pointwise field values (local
+  // operation, BDR_FIELD_E and BDR_FIELD_B only).
+  void EvalBuffer(const Vector &u, Vector &buffer) const;
 };
 
 //

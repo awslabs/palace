@@ -208,6 +208,11 @@ protected:
   std::unique_ptr<mfem::ParGridFunction> U_e_gf, U_m_gf, S_gf;
   std::unique_ptr<DomainFieldEvaluator> U_e_eval, U_m_eval, S_eval;
 
+  // libCEED evaluators and buffers for the boundary collection vector field
+  // coefficients (E_s, B_s, A_s), read by buffer-backed coefficients at save time.
+  std::unique_ptr<SurfaceFunctional> E_bdr_eval, B_bdr_eval;
+  Vector E_sr_buf, E_si_buf, B_sr_buf, B_si_buf, A_s_buf;
+
   // Wave port boundary mode field postprocessing.
   struct WavePortFieldData
   {

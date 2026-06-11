@@ -495,4 +495,45 @@ CEED_QFUNCTION(f_integ_surf_farfield_32)(void *__restrict__ ctx_, CeedInt Q,
   return 0;
 }
 
+// Pointwise boundary field values (no quadrature weighting; for visualization output at
+// the boundary element lattice points), following BdrFieldVectorCoefficient: the field
+// from the attached volume element, averaged over both sides for interior boundaries.
+// Inputs ("_1"): attr_1, grad_x_1, u_1; ("_2"): attr_1, grad_x_1, attr_2, grad_x_2,
+// u_1, u_2. Output: 3 components per point.
+#define PALACE_SURF_BDR_FIELD_QF(name1, name2, field_helper)                   \
+  CEED_QFUNCTION(name1)(void *, CeedInt Q, const CeedScalar *const *in,        \
+                        CeedScalar *const *out)                                \
+  {                                                                            \
+    const CeedScalar *J_v = in[1], *u = in[2];                                 \
+    CeedScalar *v = out[0];                                                    \
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)                             \
+    {                                                                          \
+      CeedScalar V[3];                                                         \
+      field_helper(i, Q, J_v, u, V);                                           \
+      v[i + Q * 0] = V[0];                                                     \
+      v[i + Q * 1] = V[1];                                                     \
+      v[i + Q * 2] = V[2];                                                     \
+    }                                                                          \
+    return 0;                                                                  \
+  }                                                                            \
+  CEED_QFUNCTION(name2)(void *, CeedInt Q, const CeedScalar *const *in,        \
+                        CeedScalar *const *out)                                \
+  {                                                                            \
+    const CeedScalar *J_v1 = in[1], *J_v2 = in[3], *u_1 = in[4], *u_2 = in[5]; \
+    CeedScalar *v = out[0];                                                    \
+    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)                             \
+    {                                                                          \
+      CeedScalar V[3], V_2[3];                                                 \
+      field_helper(i, Q, J_v1, u_1, V);                                        \
+      field_helper(i, Q, J_v2, u_2, V_2);                                      \
+      v[i + Q * 0] = 0.5 * (V[0] + V_2[0]);                                    \
+      v[i + Q * 1] = 0.5 * (V[1] + V_2[1]);                                    \
+      v[i + Q * 2] = 0.5 * (V[2] + V_2[2]);                                    \
+    }                                                                          \
+    return 0;                                                                  \
+  }
+
+PALACE_SURF_BDR_FIELD_QF(f_eval_bdr_hcurl_1_32, f_eval_bdr_hcurl_2_32, SurfHcurlField32)
+PALACE_SURF_BDR_FIELD_QF(f_eval_bdr_hdiv_1_32, f_eval_bdr_hdiv_2_32, SurfHdivField32)
+
 #endif  // PALACE_LIBCEED_SURF_32_QF_H
