@@ -1103,20 +1103,23 @@ auto PostOperatorCSV<solver_t>::InitializeFloquetPortS(const SpaceOperator &fem_
   {
     for (const auto &[port_idx, port] : fem_op.GetFloquetPortOp())
     {
-      for (const auto &mode : port.GetModes())
+      for (const auto &order : port.GetOrders())
       {
-        if (!HasFlag(mode.use, FloquetModeUse::Output))
+        if (!HasFlag(order.use, FloquetModeUse::Output))
           continue;
-        auto pol =
-            circular_output ? (mode.is_te ? "RHC" : "LHC") : (mode.is_te ? "TE" : "TM");
-        t.insert(
-            format("abs_P{}_{}_{}_{}_exc{}", port_idx, mode.m, mode.n, pol, ex_idx),
-            format("|S[P{}({};{}){}][{}]| (dB)", port_idx, mode.m, mode.n, pol, ex_idx),
-            ex_idx);
-        t.insert(format("arg_P{}_{}_{}_{}_exc{}", port_idx, mode.m, mode.n, pol, ex_idx),
-                 format("arg(S[P{}({};{}){}][{}]) (deg.)", port_idx, mode.m, mode.n, pol,
-                        ex_idx),
-                 ex_idx);
+        for (bool is_te : {true, false})
+        {
+          auto pol = circular_output ? (is_te ? "RHC" : "LHC") : (is_te ? "TE" : "TM");
+          t.insert(
+              format("abs_P{}_{}_{}_{}_exc{}", port_idx, order.m, order.n, pol, ex_idx),
+              format("|S[P{}({};{}){}][{}]| (dB)", port_idx, order.m, order.n, pol, ex_idx),
+              ex_idx);
+          t.insert(
+              format("arg_P{}_{}_{}_{}_exc{}", port_idx, order.m, order.n, pol, ex_idx),
+              format("arg(S[P{}({};{}){}][{}]) (deg.)", port_idx, order.m, order.n, pol,
+                     ex_idx),
+              ex_idx);
+        }
       }
     }
   }
