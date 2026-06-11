@@ -108,7 +108,7 @@ void AppendPoints(FaceConfigKey &key, const std::vector<mfem::IntegrationPoint> 
 // Re-point the passive field inputs of each group operator at the given source vectors
 // and accumulate into the output vector with CeedOperatorApplyAdd.
 void ApplyAddGroups(const std::vector<fem::CeedGroupOperator> &groups,
-                    const std::array<const Vector *, 2> &srcs, const Vector &out)
+                    const std::array<const Vector *, 4> &srcs, const Vector &out)
 {
   for (const auto &[ceed, op, field_sources] : groups)
   {
@@ -196,6 +196,19 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
       (nd_fespace || (type != SurfaceFlux::ELECTRIC && type != SurfaceFlux::POWER)) &&
           (rt_fespace || (type != SurfaceFlux::MAGNETIC && type != SurfaceFlux::POWER)),
       "Missing finite element space for surface flux functional!");
+  Assemble(mesh, bdr_attr_marker);
+}
+
+SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
+                                     const mfem::Array<int> &bdr_attr_marker,
+                                     const mfem::ParFiniteElementSpace &nd_fespace,
+                                     const mfem::ParFiniteElementSpace &rt_fespace,
+                                     const MaterialOperator &mat_op,
+                                     const std::vector<std::array<double, 3>> &r_naughts)
+  : kind(Kind::FARFIELD), farfield_dirs(r_naughts), farfield_mesh(&mesh),
+    fespace_e(&nd_fespace), fespace_b(&rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
+{
+  farfield_marker = bdr_attr_marker;
   Assemble(mesh, bdr_attr_marker);
 }
 
@@ -288,6 +301,17 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
       else if (kind == Kind::HCURL_NORM2)
       {
+        plan.elem_a = FET.Elem1No;
+      }
+      else if (kind == Kind::FARFIELD)
+      {
+        if (has_elem2)
+        {
+          // Far-field computations are only supported on external boundaries (the
+          // legacy path errors in this case as well).
+          valid = false;
+          return;
+        }
         plan.elem_a = FET.Elem1No;
       }
       else if (kind == Kind::SURFACE_FLUX ||
@@ -423,8 +447,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     }
   }
 
-  // Initialize the local output vector and field staging vector.
-  local_out.SetSize(num_marked);
+  // Initialize the local output vector and field staging vector. Far-field operators
+  // produce 6 values (Re/Im of a 3-vector) per direction per element.
+  const int num_out =
+      (kind == Kind::FARFIELD) ? 6 * static_cast<int>(farfield_dirs.size()) : 1;
+  local_out.SetSize(num_marked * num_out);
   local_out.UseDevice(true);
   if (need_field)
   {
@@ -488,6 +515,26 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       auto mat_ctx = ceed::PopulateCoefficientContext(3, &invmu_func);
       base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
     }
+  }
+  else if (kind == Kind::FARFIELD)
+  {
+    const int N = static_cast<int>(farfield_dirs.size());
+    base_ctx.resize(4 + 3 * N);
+    base_ctx[0].second = 1.0;  // Normal sign, set per group
+    base_ctx[1].second = farfield_omega_re;
+    base_ctx[2].second = farfield_omega_im;
+    base_ctx[3].first = N;
+    for (int d = 0; d < N; d++)
+    {
+      for (int c = 0; c < 3; c++)
+      {
+        base_ctx[4 + 3 * d + c].second = farfield_dirs[d][c];
+      }
+    }
+    MaterialPropertyCoefficient c0_func(mat_op->GetAttributeToMaterial(),
+                                        mat_op->GetLightSpeed());
+    auto mat_ctx = ceed::PopulateCoefficientContext(3, &c0_func);
+    base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
   }
   else
   {
@@ -594,7 +641,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     {
       AddVolGeomInputs("2", group.vol_indices_b, group.vol_geom_b, *group.mapped_ir_b);
     }
-    if (kind == Kind::SURFACE_FLUX)
+    if (kind == Kind::SURFACE_FLUX || kind == Kind::FARFIELD)
     {
       // Coordinates at the face quadrature points, interpolated from the mesh nodes
       // with the boundary element basis (constant input, never re-pointed).
@@ -640,6 +687,17 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                       *group.mapped_ir_b);
       }
     }
+    else if (kind == Kind::FARFIELD)
+    {
+      AddFieldInput("u_1", 0, *fespace_e, group.vol_indices_a, group.vol_geom_a,
+                    *group.mapped_ir_a);
+      AddFieldInput("u_2", 1, *fespace_e, group.vol_indices_a, group.vol_geom_a,
+                    *group.mapped_ir_a);
+      AddFieldInput("u_3", 2, *fespace_b, group.vol_indices_a, group.vol_geom_a,
+                    *group.mapped_ir_a);
+      AddFieldInput("u_4", 3, *fespace_b, group.vol_indices_a, group.vol_geom_a,
+                    *group.mapped_ir_a);
+    }
     else if (kind == Kind::SURFACE_FLUX)
     {
       int count = 0;
@@ -662,12 +720,13 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
     }
 
-    // Output restriction: one slot per boundary element in the local output vector.
+    // Output restriction: num_out slots per boundary element in the local output
+    // vector (component stride num_marked).
     CeedElemRestriction out_restr;
-    PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, static_cast<CeedInt>(num_elem), 1,
-                                                   1, num_marked, num_marked, CEED_MEM_HOST,
-                                                   CEED_COPY_VALUES, group.out_slots.data(),
-                                                   &out_restr));
+    PalaceCeedCall(ceed, CeedElemRestrictionCreate(
+                             ceed, static_cast<CeedInt>(num_elem), 1, num_out, num_marked,
+                             (CeedSize)num_marked * num_out, CEED_MEM_HOST,
+                             CEED_COPY_VALUES, group.out_slots.data(), &out_restr));
     scratch.restrs.push_back(out_restr);
 
     // Select the QFunction and finalize the (group dependent) context.
@@ -708,6 +767,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
             break;
         }
         break;
+      case Kind::FARFIELD:
+        ctx[0].second = group.flip_normal ? -1.0 : 1.0;
+        info.apply_qf = f_integ_surf_farfield_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_integ_surf_farfield_32_loc);
+        break;
       case Kind::SURFACE_FLUX:
         ctx[0].second = group.flip_normal ? -1.0 : 1.0;
         switch (flux_type)
@@ -734,18 +798,18 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     // Assemble the operator.
     CeedOperator op;
     ceed::AssembleCeedSurfaceFunctional(info, ctx.data(),
-                                        ctx.size() * sizeof(CeedIntScalar), ceed, inputs, 1,
-                                        out_restr, &op);
+                                        ctx.size() * sizeof(CeedIntScalar), ceed, inputs,
+                                        num_out, out_restr, &op);
     groups.push_back({ceed, op, std::move(field_sources)});
   }
 }
 
-void SurfaceFunctional::ApplyAdd(const std::array<const Vector *, 2> &srcs) const
+void SurfaceFunctional::ApplyAdd(const std::array<const Vector *, 4> &srcs) const
 {
   ApplyAddGroups(groups, srcs, local_out);
 }
 
-double SurfaceFunctional::EvalLocal(const std::array<const Vector *, 2> &srcs) const
+double SurfaceFunctional::EvalLocal(const std::array<const Vector *, 4> &srcs) const
 {
   MFEM_VERIFY(valid, "Eval called on an invalid (unassembled) SurfaceFunctional!");
   if (local_out.Size() == 0)
@@ -819,6 +883,65 @@ std::complex<double> SurfaceFunctional::EvalFlux(const GridFunction *E,
   }
   Mpi::GlobalSum(1, &dot, comm);
   return dot;
+}
+
+std::vector<std::array<std::complex<double>, 3>>
+SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
+                                double omega_re, double omega_im)
+{
+  MFEM_VERIFY(kind == Kind::FARFIELD && E.HasImag() && B.HasImag(),
+              "SurfaceFunctional::EvalFarField requires a far-field functional and "
+              "complex-valued fields!");
+  MFEM_VERIFY(valid, "EvalFarField called on an invalid (unassembled) SurfaceFunctional!");
+
+  // The frequency enters the QFunction context: reassemble when it changes.
+  if (omega_re != farfield_omega_re || omega_im != farfield_omega_im)
+  {
+    for (auto &group : groups)
+    {
+      PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
+    }
+    groups.clear();
+    elem_attrs.clear();
+    farfield_omega_re = omega_re;
+    farfield_omega_im = omega_im;
+    Assemble(*farfield_mesh, farfield_marker);
+  }
+
+  // Integrate, reduce each component over the local elements and all processes, and
+  // apply the final cross products (following GetFarFieldrE).
+  const int N = static_cast<int>(farfield_dirs.size());
+  const int num_marked = local_out.Size() / std::max(6 * N, 1);
+  std::vector<double> integrals(6 * N, 0.0);
+  if (local_out.Size() > 0)
+  {
+    local_out = 0.0;
+    ApplyAddGroups(groups, {&E.Real(), &E.Imag(), &B.Real(), &B.Imag()}, local_out);
+    Vector slice;
+    slice.UseDevice(true);
+    for (int c = 0; c < 6 * N; c++)
+    {
+      slice.MakeRef(local_out, c * num_marked, num_marked);
+      integrals[c] = linalg::LocalSum(slice);
+    }
+  }
+  Mpi::GlobalSum(6 * N, integrals.data(), comm);
+
+  std::vector<std::array<std::complex<double>, 3>> result(N);
+  for (int d = 0; d < N; d++)
+  {
+    const auto &r = farfield_dirs[d];
+    const double *Ir = integrals.data() + 6 * d, *Ii = integrals.data() + 6 * d + 3;
+    const double cr[3] = {r[1] * Ir[2] - r[2] * Ir[1], r[2] * Ir[0] - r[0] * Ir[2],
+                          r[0] * Ir[1] - r[1] * Ir[0]};
+    const double ci[3] = {r[1] * Ii[2] - r[2] * Ii[1], r[2] * Ii[0] - r[0] * Ii[2],
+                          r[0] * Ii[1] - r[1] * Ii[0]};
+    for (int c = 0; c < 3; c++)
+    {
+      result[d][c] = {cr[c], ci[c]};
+    }
+  }
+  return result;
 }
 
 std::complex<double> SurfaceFunctional::EvalComplexPower(const GridFunction &E,

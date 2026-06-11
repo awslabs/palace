@@ -411,4 +411,88 @@ CEED_QFUNCTION(f_integ_surf_flux_p_2_32)(void *__restrict__ ctx_, CeedInt Q,
   return 0;
 }
 
+// Stratton-Chu far-field integrand following AddStrattonChuIntegrandAtElement
+// (models/strattonchu.cpp): for each observation direction r0,
+//   I = (ik/4pi) [n x E - r0 x (n x ZH)] e^{ik r0.r'} dS,  ZH = c0 B, k = omega/c0,
+// with complex omega and fields. The context is a CeedIntScalar array: [0].second =
+// normal sign, [1].second = omega_re, [2].second = omega_im, [3].first = number of
+// directions N, [4..4+3N).second = directions, followed by the (isotropic) light speed
+// material property context. Output: 6N components per element (Re I, Im I per
+// direction, 3 each). Inputs: qw, grad_x_f, attr_1, grad_x_1, x, u_1..u_4 =
+// E_re, E_im, B_re, B_im (external boundaries only).
+CEED_QFUNCTION(f_integ_surf_farfield_32)(void *__restrict__ ctx_, CeedInt Q,
+                                         const CeedScalar *const *in,
+                                         CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *qw = in[0], *J_f = in[1], *attr = in[2], *J_v = in[3], *x = in[4],
+                   *u_er = in[5], *u_ei = in[6], *u_br = in[7], *u_bi = in[8];
+  CeedScalar *v = out[0];
+  const CeedScalar s_n = ctx[0].second, omega_re = ctx[1].second, omega_im = ctx[2].second;
+  const CeedInt N = ctx[3].first;
+  const CeedIntScalar *dirs = ctx + 4, *mat = ctx + 4 + 3 * N;
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar J_f_loc[6], n[3], E_r[3], E_i[3], B_r[3], B_i[3], c0_mat[9], ZH_r[3],
+        ZH_i[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    const CeedScalar wdetJ = qw[i] * SurfMeasure32(J_f_loc, n);
+    n[0] *= s_n;
+    n[1] *= s_n;
+    n[2] *= s_n;
+    SurfHcurlField32(i, Q, J_v, u_er, E_r);
+    SurfHcurlField32(i, Q, J_v, u_ei, E_i);
+    SurfHdivField32(i, Q, J_v, u_br, B_r);
+    SurfHdivField32(i, Q, J_v, u_bi, B_i);
+    CoeffUnpack3(mat, (CeedInt)attr[i], c0_mat);
+    MultAx33(c0_mat, B_r, ZH_r);
+    MultAx33(c0_mat, B_i, ZH_i);
+    const CeedScalar c0 = c0_mat[0];  // Isotropic (verified at setup)
+    const CeedScalar k_re = omega_re / c0, k_im = omega_im / c0;
+    const CeedScalar pre_re = -wdetJ * k_im / 12.566370614359172;
+    const CeedScalar pre_im = wdetJ * k_re / 12.566370614359172;
+
+    // n x E and n x ZH (real and imaginary parts).
+    const CeedScalar nxEr[3] = {n[1] * E_r[2] - n[2] * E_r[1],
+                                n[2] * E_r[0] - n[0] * E_r[2],
+                                n[0] * E_r[1] - n[1] * E_r[0]};
+    const CeedScalar nxEi[3] = {n[1] * E_i[2] - n[2] * E_i[1],
+                                n[2] * E_i[0] - n[0] * E_i[2],
+                                n[0] * E_i[1] - n[1] * E_i[0]};
+    const CeedScalar nxZHr[3] = {n[1] * ZH_r[2] - n[2] * ZH_r[1],
+                                 n[2] * ZH_r[0] - n[0] * ZH_r[2],
+                                 n[0] * ZH_r[1] - n[1] * ZH_r[0]};
+    const CeedScalar nxZHi[3] = {n[1] * ZH_i[2] - n[2] * ZH_i[1],
+                                 n[2] * ZH_i[0] - n[0] * ZH_i[2],
+                                 n[0] * ZH_i[1] - n[1] * ZH_i[0]};
+    const CeedScalar xp[3] = {x[i + Q * 0], x[i + Q * 1], x[i + Q * 2]};
+
+    for (CeedInt d = 0; d < N; d++)
+    {
+      const CeedScalar r0 = dirs[3 * d].second, r1 = dirs[3 * d + 1].second,
+                       r2 = dirs[3 * d + 2].second;
+      const CeedScalar dot = r0 * xp[0] + r1 * xp[1] + r2 * xp[2];
+      const CeedScalar amp = exp(-k_im * dot);
+      const CeedScalar cph = cos(k_re * dot), sph = sin(k_re * dot);
+      const CeedScalar w_re = amp * (pre_re * cph - pre_im * sph);
+      const CeedScalar w_im = amp * (pre_re * sph + pre_im * cph);
+
+      // A + iB = n x E - r0 x (n x ZH).
+      const CeedScalar A[3] = {nxEr[0] - (r1 * nxZHr[2] - r2 * nxZHr[1]),
+                               nxEr[1] - (r2 * nxZHr[0] - r0 * nxZHr[2]),
+                               nxEr[2] - (r0 * nxZHr[1] - r1 * nxZHr[0])};
+      const CeedScalar Bv[3] = {nxEi[0] - (r1 * nxZHi[2] - r2 * nxZHi[1]),
+                                nxEi[1] - (r2 * nxZHi[0] - r0 * nxZHi[2]),
+                                nxEi[2] - (r0 * nxZHi[1] - r1 * nxZHi[0])};
+      for (CeedInt c = 0; c < 3; c++)
+      {
+        v[i + Q * (6 * d + c)] = A[c] * w_re - Bv[c] * w_im;
+        v[i + Q * (6 * d + 3 + c)] = A[c] * w_im + Bv[c] * w_re;
+      }
+    }
+  }
+  return 0;
+}
+
 #endif  // PALACE_LIBCEED_SURF_32_QF_H

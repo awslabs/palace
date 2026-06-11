@@ -62,7 +62,8 @@ public:
     AREA,           // ∫ dS (no field input, for validation)
     HCURL_NORM2,    // ∫ |u|² dS for an H(curl) field u (single-sided, for validation)
     INTERFACE_EPR,  // Interface dielectric energy following InterfaceDielectricCoefficient
-    SURFACE_FLUX    // Surface flux following BdrSurfaceFluxCoefficient
+    SURFACE_FLUX,   // Surface flux following BdrSurfaceFluxCoefficient
+    FARFIELD        // Stratton-Chu far-field following AddStrattonChuIntegrandAtElement
   };
 
 private:
@@ -73,6 +74,13 @@ private:
   SurfaceFlux flux_type = SurfaceFlux::ELECTRIC;
   bool flux_two_sided = false;
   mfem::Vector flux_x0;
+  std::vector<std::array<double, 3>> farfield_dirs;
+  double farfield_omega_re = 0.0, farfield_omega_im = 0.0;
+
+  // Mesh and marker for reassembly when the far-field frequency changes (the frequency
+  // enters the QFunction context).
+  const Mesh *farfield_mesh = nullptr;
+  mfem::Array<int> farfield_marker;
 
   // Field finite element spaces (not owned): fespace_e for H(curl) fields (source index
   // 0), fespace_b for H(div) fields (source index 1). Either may be nullptr depending
@@ -108,10 +116,10 @@ private:
 
   // Apply all group operators with the field inputs pointed at the given source
   // vectors, accumulating into the local output vector.
-  void ApplyAdd(const std::array<const Vector *, 2> &srcs) const;
+  void ApplyAdd(const std::array<const Vector *, 4> &srcs) const;
 
   // Zero the local output vector, apply, and return the local sum (no MPI reduction).
-  double EvalLocal(const std::array<const Vector *, 2> &srcs) const;
+  double EvalLocal(const std::array<const Vector *, 4> &srcs) const;
 
 public:
   // Returns false when libCEED surface functionals have been globally disabled via the
@@ -140,6 +148,14 @@ public:
                     const mfem::ParFiniteElementSpace *rt_fespace,
                     const MaterialOperator &mat_op, SurfaceFlux type, bool two_sided,
                     const mfem::Vector &x0);
+
+  // Construct a Stratton-Chu far-field functional for the given observation directions
+  // (see AddStrattonChuIntegrandAtElement; external boundaries only).
+  SurfaceFunctional(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
+                    const mfem::ParFiniteElementSpace &nd_fespace,
+                    const mfem::ParFiniteElementSpace &rt_fespace,
+                    const MaterialOperator &mat_op,
+                    const std::vector<std::array<double, 3>> &r_naughts);
 
   ~SurfaceFunctional();
 
@@ -170,6 +186,14 @@ public:
   // LumpedPortData::GetPower (two-sided POWER flux functionals only). Collective on the
   // mesh communicator.
   std::complex<double> EvalComplexPower(const GridFunction &E, const GridFunction &B) const;
+
+  // Evaluate the far-field rE integrals for all observation directions at the given
+  // (complex) frequency, following SurfacePostOperator::GetFarFieldrE. Reassembles when
+  // the frequency changes. Collective on the mesh communicator.
+  std::vector<std::array<std::complex<double>, 3>> EvalFarField(const GridFunction &E,
+                                                                const GridFunction &B,
+                                                                double omega_re,
+                                                                double omega_im);
 };
 
 //

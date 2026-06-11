@@ -17,6 +17,7 @@
 #include "fem/mesh.hpp"
 #include "fem/surfacefunctional.hpp"
 #include "models/materialoperator.hpp"
+#include "models/strattonchu.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/geodata.hpp"
@@ -1388,6 +1389,125 @@ TEST_CASE("DomainFieldEvaluator", "[surfacefunctional][Serial][Parallel][GPU]")
     ref.ProjectCoefficient(legacy);
     CheckField(val, ref);
   }
+}
+
+TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto order = GENERATE(1, 2);
+  CAPTURE(elem_type, order);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};  // Isotropic (far-field requirement)
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+
+  GridFunction E(nd_fespace, true), B(rt_fespace, true);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + x(2) * x(2);
+                                        v(1) = std::cos(x(2)) + x(0);
+                                        v(2) = x(0) * x(1) + 1.0;
+                                      });
+  mfem::VectorFunctionCoefficient fei(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) * x(2) - 0.5;
+                                        v(1) = std::sin(x(0)) - x(2);
+                                        v(2) = std::cos(x(1)) + x(0) * x(0);
+                                      });
+  mfem::VectorFunctionCoefficient fbr(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) - 0.3 * x(2);
+                                        v(1) = std::sin(x(2)) + 0.5;
+                                        v(2) = std::cos(x(0)) - x(1) * x(2);
+                                      });
+  mfem::VectorFunctionCoefficient fbi(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::cos(x(2)) - 0.2;
+                                        v(1) = x(0) * x(2) + 0.1;
+                                        v(2) = std::sin(x(1)) - x(0);
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  E.Imag().ProjectCoefficient(fei);
+  B.Real().ProjectCoefficient(fbr);
+  B.Imag().ProjectCoefficient(fbi);
+
+  // Observation directions and (complex) frequency.
+  std::vector<std::array<double, 3>> r_naughts;
+  for (auto [theta, phi] : {std::pair{0.3, 0.7}, {1.2, 2.1}, {2.4, 4.5}})
+  {
+    r_naughts.push_back({std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi),
+                         std::cos(theta)});
+  }
+  const double omega_re = 2.7, omega_im = 0.15;
+
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 0;
+  marker[1 - 1] = 1;  // Exterior boundary (z = 0)
+
+  // Legacy reference following GetFarFieldrE.
+  std::vector<std::array<double, 3>> integrals_r(r_naughts.size()),
+      integrals_i(r_naughts.size());
+  for (int i = 0; i < pmesh.GetNBE(); i++)
+  {
+    if (!marker[pmesh.GetBdrAttribute(i) - 1])
+    {
+      continue;
+    }
+    auto *T = const_cast<mfem::ParMesh &>(pmesh).GetBdrElementTransformation(i);
+    const auto *fe = nd_fespace.Get().GetBE(i);
+    const auto *ir =
+        &mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
+    AddStrattonChuIntegrandAtElement(E, B, mat_op, omega_re, omega_im, r_naughts, *T, *ir,
+                                     integrals_r, integrals_i);
+  }
+  Mpi::GlobalSum(3 * r_naughts.size(), integrals_r.data()->data(), comm);
+  Mpi::GlobalSum(3 * r_naughts.size(), integrals_i.data()->data(), comm);
+
+  SurfaceFunctional farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts);
+  REQUIRE(farfield.IsValid());
+  auto result = farfield.EvalFarField(E, B, omega_re, omega_im);
+  REQUIRE(result.size() == r_naughts.size());
+  for (std::size_t d = 0; d < r_naughts.size(); d++)
+  {
+    const auto &r = r_naughts[d];
+    const auto &Ir = integrals_r[d];
+    const auto &Ii = integrals_i[d];
+    const std::array<double, 3> cr = {r[1] * Ir[2] - r[2] * Ir[1],
+                                      r[2] * Ir[0] - r[0] * Ir[2],
+                                      r[0] * Ir[1] - r[1] * Ir[0]};
+    const std::array<double, 3> ci = {r[1] * Ii[2] - r[2] * Ii[1],
+                                      r[2] * Ii[0] - r[0] * Ii[2],
+                                      r[0] * Ii[1] - r[1] * Ii[0]};
+    for (int c = 0; c < 3; c++)
+    {
+      CAPTURE(d, c, cr[c], ci[c], result[d][c].real(), result[d][c].imag());
+      CHECK(result[d][c].real() == Catch::Approx(cr[c]).epsilon(1.0e-10).margin(1.0e-14));
+      CHECK(result[d][c].imag() == Catch::Approx(ci[c]).epsilon(1.0e-10).margin(1.0e-14));
+    }
+  }
+
+  // Changing the frequency must reassemble and still agree (different result).
+  auto result2 = farfield.EvalFarField(E, B, 2.0 * omega_re, 0.0);
+  CHECK(std::abs(result2[0][0] - result[0][0]) > 0.0);
 }
 
 }  // namespace palace
