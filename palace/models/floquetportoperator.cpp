@@ -138,7 +138,7 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
     a2(i) = periodic.boundary_pairs[1].affine_transform[i * 4 + 3] / mesh_scale;
   }
   // Fall back to port geometry if translations are missing (e.g., auto-detected periodicity
-  // from Gmsh setPeriodic, or no BoundaryPairs at all).
+  // from Gmsh setPeriodic).
   if (a1.Norml2() < 1e-12 || a2.Norml2() < 1e-12)
   {
     // Infer lattice vectors from the port face bounding box. This works for axis-aligned
@@ -429,9 +429,19 @@ void FloquetPortData::EnumerateOrders()
       bool in_user_range = (std::abs(m) <= max_order_m && std::abs(n) <= max_order_n);
       bool in_dtn_range =
           (std::abs(m - bz_m) <= max_order_m && std::abs(n - bz_n) <= max_order_n);
-      auto use = static_cast<FloquetModeUse>(
-          (in_user_range ? static_cast<uint8_t>(FloquetModeUse::Output) : 0) |
-          (in_dtn_range ? static_cast<uint8_t>(FloquetModeUse::Dtn) : 0));
+      FloquetModeUse use = FloquetModeUse::None;
+      if (in_user_range && in_dtn_range)
+      {
+        use = FloquetModeUse::Both;
+      }
+      else if (in_user_range)
+      {
+        use = FloquetModeUse::Output;
+      }
+      else if (in_dtn_range)
+      {
+        use = FloquetModeUse::Dtn;
+      }
 
       FloquetOrder order;
       order.m = m;

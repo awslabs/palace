@@ -31,15 +31,24 @@ struct PeriodicBoundaryData;
 }  // namespace config
 
 // Flags controlling which subsystems use a given Floquet mode.
-enum class FloquetModeUse : std::uint8_t
+enum class FloquetModeUse : char
 {
+  None = 0,
   Output = 1,  // S-parameter CSV output (user-requested ±MaxOrder)
   Dtn = 2,     // DtN boundary correction (BZ-centered range)
-  Both = 3     // Output | Dtn
+  Both = 3     // Output and Dtn
 };
 inline bool HasFlag(FloquetModeUse u, FloquetModeUse flag)
 {
-  return (static_cast<uint8_t>(u) & static_cast<uint8_t>(flag)) != 0;
+  if (flag == FloquetModeUse::Output)
+  {
+    return u == FloquetModeUse::Output || u == FloquetModeUse::Both;
+  }
+  if (flag == FloquetModeUse::Dtn)
+  {
+    return u == FloquetModeUse::Dtn || u == FloquetModeUse::Both;
+  }
+  return u == flag;
 }
 
 // Represents a single diffraction order (m, n) with TE/TM polarization data.

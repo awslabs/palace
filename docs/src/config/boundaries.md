@@ -703,14 +703,27 @@ specified, the transformation between donor and receiver boundaries is automatic
 
 `"FloquetWaveVector" [None]` :  Optional floating point array defining the phase delay between the
 periodic boundaries in the X/Y/Z directions in radians per mesh unit. When used with
-`"FloquetReferenceFrequency"`, this specifies the wave vector at the reference frequency.
+`"FloquetReferenceFrequency"`, it is defined at the reference frequency.
+
+For a Floquet port, this is the tangential component of the incident wave vector. For example,
+for a port normal to z with periodicity in x and y, the `"FloquetWaveVector"`,
+``\bm{k}_{F,\mathrm{ref}}``, can be from the indicidence and azimuthal directions as
+
+```math
+k_{F,\mathrm{ref},x} = k_\mathrm{ref}\sin\theta\cos\phi,\qquad
+k_{F,\mathrm{ref},y} = k_\mathrm{ref}\sin\theta\sin\phi,
+```
+
+where ``k_\mathrm{ref} = \frac{2\pi f_\mathrm{ref}}{c_0}\sqrt{\mu_r\varepsilon_r},``, where
+``f_\mathrm{ref}`` is the `"FloquetReferenceFrequency"`, ``\theta`` is the incidence angle away
+from the port normal, and ``\phi`` is the azimuthal direction in the periodic plane.
 
 `"FloquetReferenceFrequency" [None]` :  Optional frequency in GHz at which the
 `"FloquetWaveVector"` is defined. When specified, the Bloch wave vector scales linearly with
-frequency during a driven simulation frequency sweep: k_F(f) = FloquetWaveVector × (f /
-FloquetReferenceFrequency). This is the physically correct behavior for oblique plane wave
-incidence at a fixed angle, where k_F = (2πf/c) sin(θ). When not specified (default), the wave
-vector is held constant across all frequencies. Only supported for driven simulations.
+frequency during a driven simulation frequency sweep,
+``\bm{k}_F(f) = \bm{k}_{F,\mathrm{ref}} f / f_\mathrm{ref}``, preserving the incidence
+angles across the sweep. When not specified (default), the wave vector is held constant
+across all frequencies. Only supported for driven simulations.
 
 ## `boundaries["Postprocessing"]["SurfaceFlux"]`
 
