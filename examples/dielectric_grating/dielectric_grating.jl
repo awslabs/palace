@@ -39,12 +39,7 @@ function plot_geometry(output_path::String="postpro")
     )
 
     mesh!(ax, bar; color=(:orange, 0.90))
-    mesh!(
-        ax,
-        cell;
-        color=(:lightskyblue, 0.05),
-        transparency=true
-    )
+    mesh!(ax, cell; color=(:lightskyblue, 0.05), transparency=true)
     wireframe!(ax, cell; color=:black, linewidth=2)
     wireframe!(ax, bar; color=:darkorange, linewidth=1.5)
 

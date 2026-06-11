@@ -235,8 +235,8 @@ public:
     AddMultTranspose(x, y);
   }
 
-  void AddMult(const VecType &x, VecType &y, const ScalarType a = ScalarType{1.0})
-      const override
+  void AddMult(const VecType &x, VecType &y,
+               const ScalarType a = ScalarType{1.0}) const override
   {
     z.SetSize(y.Size());
     for (const auto &[op, c] : ops)
