@@ -4,9 +4,9 @@
 #=
 # README
 
-This Julia script runs Palace driven solver simulations on the CPW lumped-port example, for
-the "Driven Solver: Uniform vs Adaptive" tutorial. Use the accompanying
-`cpw_tutorial_lumped_driven_plots.py` python script to generate plots once the data is
+This Julia script runs Palace driven solver simulations on the CPW lumped-port example for
+the adaptive driven solver guide. Use the accompanying
+`cpw_tutorial_lumped_driven_plots.jl` Julia script to generate plots once the data is
 generated.
 
 The script runs:
@@ -15,7 +15,7 @@ The script runs:
    cpw_tutorial_lumped_adaptive.json as a template)
 
 Results are written to:
-  - postpro/tutorial_driven_rom/lumped_uniform/ 
+  - postpro/tutorial_driven_rom/driven_uniform_reference/
   - postpro/tutorial_driven_rom/driven_adaptive_1e-1/       (adaptive, tol = 0.1)
   - postpro/tutorial_driven_rom/driven_adaptive_1e-2/       (adaptive, tol = 1e-2)
   - postpro/tutorial_driven_rom/driven_adaptive_1e-3/       (adaptive, tol = 1e-3)
@@ -51,7 +51,7 @@ using JSON
                                      num_processors::Integer=1
                                     )
 
-Run Palace driven solver simulations for the "Driven Solver: Uniform and Adaptive" tutorial.
+Run Palace driven solver simulations for the adaptive driven solver guide.
 
   - Uniform reference just runs cpw_tutorial_lumped_uniform.json.
   - Adaptive solvers uses cpw_tutorial_lumped_adaptive.json but modifies AdaptiveTol and

@@ -137,8 +137,12 @@ inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
   auto m = S - 1;
   while (m > 0 && sigma[m] < ORTHOG_TOL * sigma[0])
   {
-    Mpi::Warning("Minimal rational interpolation encountered rank-deficient matrix: "
-                 "σ[{:d}] = {:.3e} (σ[0] = {:.3e})!\n",
+    Mpi::Warning("Minimal rational interpolation encountered a rank-deficient matrix: "
+                 "σ[{:d}] = {:.3e} (σ[0] = {:.3e}). This can indicate that the "
+                 "adaptive interpolation is near the accuracy limit of the HDM solves; "
+                 "if adaptive convergence is poor, try tightening "
+                 "config[\"Solver\"][\"Linear\"][\"Tol\"] or using a looser "
+                 "config[\"Solver\"][\"Driven\"][\"AdaptiveTol\"].\n",
                  m, sigma[m], sigma[0]);
     m--;
   }

@@ -4,9 +4,9 @@
 #=
 # CPW Lumped-Port Driven Solver — Julia/Makie plot generator
 
-Julia port of `cpw_tutorial_lumped_driven_plots.py`. Generates the same set of plots
-using CairoMakie, with matching colour palette (matplotlib `plasma`, sampled at
-0.1..0.9), serif typography, multi-line titles, and tolerance/pivot annotations.
+Generates the CPW plots for the adaptive driven solver guide using CairoMakie, with
+matching colour palette (matplotlib `plasma`, sampled at 0.1..0.9), serif typography,
+multi-line titles, and tolerance/pivot annotations.
 
 Run from the repository root:
 
@@ -14,8 +14,7 @@ Run from the repository root:
 julia --project=examples examples/cpw/cpw_tutorial_lumped_driven_plots.jl
 ```
 
-Output SVGs go to `docs/src/assets/examples_jl/` so they don't clobber the Python ones;
-pass `--out <dir>` to override.
+Output SVGs go to `docs/src/assets/examples/`; pass `--out <dir>` to override.
 =#
 
 using CSV
@@ -28,14 +27,15 @@ using Printf
 
 const CPW_DIR = joinpath(@__DIR__)
 const REPO_ROOT = abspath(joinpath(@__DIR__, "..", ".."))
-default_outdir() = joinpath(REPO_ROOT, "docs/src/assets/examples_jl")
+default_outdir() = joinpath(REPO_ROOT, "docs/src/assets/examples")
 
-const UNIFORM_DIR = joinpath(CPW_DIR, "postpro/tutorial_driven_rom/driven_uniform_reference")
+const UNIFORM_DIR =
+    joinpath(CPW_DIR, "postpro/tutorial_driven_rom/driven_uniform_reference")
 const ADAPTIVE_TOLS = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5]
 adaptive_dir(tol) = joinpath(
     CPW_DIR,
     "postpro/tutorial_driven_rom",
-    "driven_adaptive_1e$(round(Int, log10(tol)))",
+    "driven_adaptive_1e$(round(Int, log10(tol)))"
 )
 
 # (out_idx, src_idx) port pairs in row-major order matching Python's PORT_PAIRS
@@ -60,7 +60,7 @@ function makie_theme()
             regular="Times",
             italic="Times Italic",
             bold="Times Bold",
-            bold_italic="Times Bold Italic",
+            bold_italic="Times Bold Italic"
         ),
         Axis=(
             xgridvisible=false,
@@ -84,14 +84,9 @@ function makie_theme()
             yticklabelsize=20,
             xlabelsize=22,
             ylabelsize=22,
-            titlesize=24,
+            titlesize=24
         ),
-        Legend=(
-            framevisible=false,
-            labelsize=18,
-            patchsize=(20, 20),
-            rowgap=4,
-        ),
+        Legend=(framevisible=false, labelsize=18, patchsize=(20, 20), rowgap=4)
     )
 end
 
@@ -100,14 +95,18 @@ end
 const _RE_S_DB = r"\|S\[(\d+)\]\[(\d+)\]\| \(dB\)"
 const _RE_E_COL = r"E_(\w+) \(J\)"
 
-"Load port-S.csv → (freq_GHz, Dict{(Int,Int), Vector{ComplexF64}})."
+"""
+Load port-S.csv → (freq_GHz, Dict{(Int,Int), Vector{ComplexF64}}).
+"""
 function load_port_s(postpro_dir::AbstractString)
     df = CSV.read(
-        joinpath(postpro_dir, "port-S.csv"), DataFrame;
-        normalizenames=false, stripwhitespace=true,
+        joinpath(postpro_dir, "port-S.csv"),
+        DataFrame;
+        normalizenames=false,
+        stripwhitespace=true
     )
     freq = collect(df[!, "f (GHz)"])
-    s = Dict{Tuple{Int,Int},Vector{ComplexF64}}()
+    s = Dict{Tuple{Int, Int}, Vector{ComplexF64}}()
     for col in names(df)
         m = match(_RE_S_DB, col)
         if m !== nothing
@@ -120,14 +119,18 @@ function load_port_s(postpro_dir::AbstractString)
     return freq, s
 end
 
-"Load domain-E.csv → (freq_GHz, Dict{String, Vector{Float64}})."
+"""
+Load domain-E.csv → (freq_GHz, Dict{String, Vector{Float64}}).
+"""
 function load_domain_e(postpro_dir::AbstractString)
     df = CSV.read(
-        joinpath(postpro_dir, "domain-E.csv"), DataFrame;
-        normalizenames=false, stripwhitespace=true,
+        joinpath(postpro_dir, "domain-E.csv"),
+        DataFrame;
+        normalizenames=false,
+        stripwhitespace=true
     )
     freq = collect(df[!, "f (GHz)"])
-    e = Dict{String,Vector{Float64}}()
+    e = Dict{String, Vector{Float64}}()
     for col in names(df)
         m = match(_RE_E_COL, col)
         if m !== nothing
@@ -138,7 +141,7 @@ function load_domain_e(postpro_dir::AbstractString)
 end
 
 """
-Parse the log block ``Sampled frequencies (GHz): … (until next ``Sample errors``).
+Parse the log block ``Sampled frequencies (GHz): … (until next``Sample errors``).
 The block can span multiple lines with whitespace continuations. Returns a vector
 of arrays, one per excitation occurrence.
 """
@@ -155,7 +158,9 @@ function parse_log_pivots(log_path::AbstractString)
     return out
 end
 
-"Parse `Sample errors: …` blocks (multi-line, terminated by `Total offline phase`)."
+"""
+Parse `Sample errors: …` blocks (multi-line, terminated by `Total offline phase`).
+"""
 function parse_log_errors(log_path::AbstractString)
     isfile(log_path) || return Vector{Vector{Float64}}()
     content = read(log_path, String)
@@ -176,8 +181,10 @@ end
 
 # -------------------------- Helpers -------------------------------------------
 
-"Format scientific tolerance like Python's `f\"{tol:.0e}\"` → `1e-01`."
-fmt_tol(t) = (e = round(Int, log10(t)); @sprintf("1e-%02d", -e))
+"""
+Format scientific tolerance like Python's `f\"{tol:.0e}\"` → `1e-01`.
+"""
+fmt_tol(t) = (e=round(Int, log10(t)); @sprintf("1e-%02d", -e))
 
 # Style constants matching the Python script
 const REF_COLOR = :black
@@ -200,7 +207,8 @@ function plot_smat_uniform(freq, sdict, outdir)
     Label(
         fig[0, 1:2],
         L"\text{S-Parameters Magnitude } |S_{ij}| \text{ (dB)}";
-        fontsize=SUPTITLE_SIZE, padding=SUPTITLE_PAD,
+        fontsize=SUPTITLE_SIZE,
+        padding=SUPTITLE_PAD
     )
     axes = Matrix{Axis}(undef, 2, 2)
     for (idx, (i, j)) in enumerate(PORT_PAIRS)
@@ -211,29 +219,40 @@ function plot_smat_uniform(freq, sdict, outdir)
             xticks=collect(range(2, 32; step=2)),
             xminorticks=IntervalsBetween(2),
             xticklabelsvisible=row == 2,
-            yticklabelsvisible=col == 1,
+            yticklabelsvisible=col == 1
         )
         ylims!(ax, -105, 5)
         axes[row, col] = ax
         if haskey(sdict, (i, j))
             y = 20 .* log10.(abs.(sdict[(i, j)]))
             scatterlines!(
-                ax, freq, y;
-                color=REF_COLOR, linewidth=REF_LW, markersize=REF_MS,
-                marker=:circle, label="Uniform Driven Solver",
+                ax,
+                freq,
+                y;
+                color=REF_COLOR,
+                linewidth=REF_LW,
+                markersize=REF_MS,
+                marker=:circle,
+                label="Uniform Driven Solver"
             )
         end
         text!(
-            ax, 0.97, 0.93;
+            ax,
+            0.97,
+            0.93;
             text=L"S_{%$i%$j}",
-            space=:relative, align=(:right, :top), fontsize=SLABEL_SIZE,
+            space=:relative,
+            align=(:right, :top),
+            fontsize=SLABEL_SIZE
         )
     end
     linkaxes!(axes...)
     axislegend(
         axes[1, 2];
-        position=:rb, framevisible=false, labelsize=LEGEND_SIZE,
-        padding=(0, 0, 0, 0),
+        position=:rb,
+        framevisible=false,
+        labelsize=LEGEND_SIZE,
+        padding=(0, 0, 0, 0)
     )
     save(joinpath(outdir, "driven_ua_cpw_domain_sparam_uniform.svg"), fig)
     return fig
@@ -246,12 +265,14 @@ function plot_smat_adaptive_pointwise(freq, s_unif, s_adapt, freq_adapt, outdir)
     Label(
         fig[0, 1:2],
         "Magnitude of Pointwise Relative Error in S-Parameters";
-        fontsize=SUPTITLE_SIZE, padding=(0, 0, 0, 10),
+        fontsize=SUPTITLE_SIZE,
+        padding=(0, 0, 0, 10)
     )
     Label(
         fig[1, 1:2],
         L"|S_{\mathrm{adaptive}} - S_{\mathrm{uniform}}| / |S_{\mathrm{uniform}}|";
-        fontsize=SUPTITLE_SIZE, padding=(0, 0, 6, 0),
+        fontsize=SUPTITLE_SIZE,
+        padding=(0, 0, 6, 0)
     )
     rowgap!(fig.layout, 1, 0)
     axes = Matrix{Axis}(undef, 2, 2)
@@ -264,7 +285,7 @@ function plot_smat_adaptive_pointwise(freq, s_unif, s_adapt, freq_adapt, outdir)
             xminorticks=IntervalsBetween(2),
             xticklabelsvisible=row == 2,
             yticklabelsvisible=col == 1,
-            yscale=log10,
+            yscale=log10
         )
         xlims!(ax, 1, 33)
         ylims!(ax, 1.1e-13, 900)
@@ -275,28 +296,39 @@ function plot_smat_adaptive_pointwise(freq, s_unif, s_adapt, freq_adapt, outdir)
             haskey(s_adapt, tol) && haskey(s_adapt[tol], (i, j)) || continue
             err = abs.(s_adapt[tol][(i, j)] .- ref) ./ abs.(ref)
             scatterlines!(
-                ax, freq_adapt[tol], err;
-                color=TOL_PALETTE[k], linewidth=ADAPT_LW,
-                markersize=ADAPT_MS, marker=:circle,
-                label=fmt_tol(tol),
+                ax,
+                freq_adapt[tol],
+                err;
+                color=TOL_PALETTE[k],
+                linewidth=ADAPT_LW,
+                markersize=ADAPT_MS,
+                marker=:circle,
+                label=fmt_tol(tol)
             )
-            hlines!(
-                ax, [tol]; color=TOL_PALETTE[k], linewidth=TOL_LINE_LW,
-                linestyle=:dash,
-            )
+            hlines!(ax, [tol]; color=TOL_PALETTE[k], linewidth=TOL_LINE_LW, linestyle=:dash)
         end
         hlines!(ax, [1e-12]; color=:black, linewidth=REF_FLOOR_LW, linestyle=:dot)
         text!(
-            ax, 0.97, 0.97;
+            ax,
+            0.97,
+            0.97;
             text=L"S_{%$i%$j}",
-            space=:relative, align=(:right, :top), fontsize=SLABEL_SIZE,
+            space=:relative,
+            align=(:right, :top),
+            fontsize=SLABEL_SIZE
         )
     end
     linkaxes!(axes...)
     axislegend(
-        axes[2, 2]; position=:cb, framevisible=false,
-        labelsize=LEGEND_SIZE, nbanks=3, unique=true, padding=(2, 2, 2, 2),
-        rowgap=2, colgap=10,
+        axes[2, 2];
+        position=:cb,
+        framevisible=false,
+        labelsize=LEGEND_SIZE,
+        nbanks=3,
+        unique=true,
+        padding=(2, 2, 2, 2),
+        rowgap=2,
+        colgap=10
     )
     save(joinpath(outdir, "driven_ua_cpw_domain_sparam_adaptive_pointwise.svg"), fig)
     return fig
@@ -304,19 +336,19 @@ end
 
 # -------------------------- Plot 3: S-mat adaptive RMS -----------------------
 
-function plot_smat_adaptive_rms(
-    freq, s_unif, s_adapt, freq_adapt, sampled_freqs, outdir,
-)
+function plot_smat_adaptive_rms(freq, s_unif, s_adapt, freq_adapt, sampled_freqs, outdir)
     fig = Figure(size=(900, 720))
     Label(
         fig[0, 1:2],
         "Normalized Absolute Error in S-Parameters";
-        fontsize=SUPTITLE_SIZE, padding=(0, 0, 0, 10),
+        fontsize=SUPTITLE_SIZE,
+        padding=(0, 0, 0, 10)
     )
     Label(
         fig[1, 1:2],
         L"|S_{\mathrm{adaptive}} - S_{\mathrm{uniform}}| / \Vert S_{\mathrm{uniform}} \Vert_{\mathrm{RMS}}";
-        fontsize=SUPTITLE_SIZE, padding=(0, 0, 6, 0),
+        fontsize=SUPTITLE_SIZE,
+        padding=(0, 0, 6, 0)
     )
     rowgap!(fig.layout, 1, 0)
     axes = Matrix{Axis}(undef, 2, 2)
@@ -329,7 +361,7 @@ function plot_smat_adaptive_rms(
             xminorticks=IntervalsBetween(2),
             xticklabelsvisible=row == 2,
             yticklabelsvisible=col == 1,
-            yscale=log10,
+            yscale=log10
         )
         xlims!(ax, 1, 33)
         ylims!(ax, 1.1e-16, 50)
@@ -341,36 +373,51 @@ function plot_smat_adaptive_rms(
             haskey(s_adapt, tol) && haskey(s_adapt[tol], (i, j)) || continue
             err = abs.(s_adapt[tol][(i, j)] .- ref) ./ scale
             scatterlines!(
-                ax, freq_adapt[tol], err;
-                color=TOL_PALETTE[k], linewidth=ADAPT_LW,
-                markersize=ADAPT_MS, marker=:circle, label=fmt_tol(tol),
+                ax,
+                freq_adapt[tol],
+                err;
+                color=TOL_PALETTE[k],
+                linewidth=ADAPT_LW,
+                markersize=ADAPT_MS,
+                marker=:circle,
+                label=fmt_tol(tol)
             )
-            hlines!(
-                ax, [tol]; color=TOL_PALETTE[k], linewidth=TOL_LINE_LW,
-                linestyle=:dash,
-            )
+            hlines!(ax, [tol]; color=TOL_PALETTE[k], linewidth=TOL_LINE_LW, linestyle=:dash)
             pivots = collect_pivots(sampled_freqs, tol)
             if !isempty(pivots)
                 ys = fill(2e-14 * tol^0.25, length(pivots))
                 scatter!(
-                    ax, pivots, ys;
+                    ax,
+                    pivots,
+                    ys;
                     color=(TOL_PALETTE[k], 0.75),
-                    marker=:diamond, markersize=PIVOT_MS,
+                    marker=:diamond,
+                    markersize=PIVOT_MS
                 )
             end
         end
         hlines!(ax, [1e-12]; color=:black, linewidth=REF_FLOOR_LW, linestyle=:dot)
         text!(
-            ax, 0.97, 0.97;
+            ax,
+            0.97,
+            0.97;
             text=L"S_{%$i%$j}",
-            space=:relative, align=(:right, :top), fontsize=SLABEL_SIZE,
+            space=:relative,
+            align=(:right, :top),
+            fontsize=SLABEL_SIZE
         )
     end
     linkaxes!(axes...)
     axislegend(
-        axes[2, 2]; position=:cb, framevisible=false,
-        labelsize=LEGEND_SIZE, nbanks=3, unique=true, padding=(0, 0, 0, 0),
-        rowgap=2, colgap=8,
+        axes[2, 2];
+        position=:cb,
+        framevisible=false,
+        labelsize=LEGEND_SIZE,
+        nbanks=3,
+        unique=true,
+        padding=(0, 0, 0, 0),
+        rowgap=2,
+        colgap=8
     )
     save(joinpath(outdir, "driven_ua_cpw_domain_sparam_adaptive_rms.svg"), fig)
     return fig
@@ -389,13 +436,18 @@ function plot_energy_uniform(freq, e, outdir)
         titlesize=SUPTITLE_SIZE,
         xlabel="f (GHz)",
         xticks=collect(range(2, 32; step=2)),
-        xminorticks=IntervalsBetween(2),
+        xminorticks=IntervalsBetween(2)
     )
     xlims!(ax, 1, 33)
     scatterlines!(
-        ax, freq, e["elec"] .* 1e12;
-        color=REF_COLOR, linewidth=REF_LW, markersize=REF_MS,
-        marker=:circle, label="Uniform Driven Solver",
+        ax,
+        freq,
+        e["elec"] .* 1e12;
+        color=REF_COLOR,
+        linewidth=REF_LW,
+        markersize=REF_MS,
+        marker=:circle,
+        label="Uniform Driven Solver"
     )
     axislegend(ax; position=:rt, framevisible=false, labelsize=LEGEND_SIZE)
     save(joinpath(outdir, "driven_ua_cpw_domain_energy_uniform.svg"), fig)
@@ -405,9 +457,17 @@ end
 # -------------------------- Plots 5/6: energy adaptive single & sweep ---------
 
 function _plot_energy_adaptive(
-    freq, e_unif, e_adapt, freq_adapt, sampled_freqs, outdir, fname;
-    tols=ADAPTIVE_TOLS, ylim=(2e-14, 3),
-    legend_position=:rt, legend_horizontal=false,
+    freq,
+    e_unif,
+    e_adapt,
+    freq_adapt,
+    sampled_freqs,
+    outdir,
+    fname;
+    tols=ADAPTIVE_TOLS,
+    ylim=(2e-14, 3),
+    legend_position=:rt,
+    legend_horizontal=false
 )
     fig = Figure(size=(900, 600))
     ax = Axis(
@@ -420,7 +480,7 @@ function _plot_energy_adaptive(
         xlabel="f (GHz)",
         xticks=collect(range(2, 32; step=2)),
         xminorticks=IntervalsBetween(2),
-        yscale=log10,
+        yscale=log10
     )
     xlims!(ax, 1, 33)
     ylims!(ax, ylim...)
@@ -429,33 +489,48 @@ function _plot_energy_adaptive(
         haskey(e_adapt, tol) || continue
         err = abs.(e_adapt[tol]["elec"] .- ref) ./ abs.(ref)
         scatterlines!(
-            ax, freq_adapt[tol], err;
-            color=TOL_PALETTE[k], linewidth=ADAPT_LW,
-            markersize=ADAPT_MS, marker=:circle,
-            label="tol=$(fmt_tol(tol))",
+            ax,
+            freq_adapt[tol],
+            err;
+            color=TOL_PALETTE[k],
+            linewidth=ADAPT_LW,
+            markersize=ADAPT_MS,
+            marker=:circle,
+            label="tol=$(fmt_tol(tol))"
         )
         hlines!(ax, [tol]; color=TOL_PALETTE[k], linestyle=:dash, linewidth=TOL_LINE_LW)
         pivots = collect_pivots(sampled_freqs, tol)
         if !isempty(pivots)
             ys = fill(2e-13 * tol^0.25, length(pivots))
             scatter!(
-                ax, pivots, ys;
+                ax,
+                pivots,
+                ys;
                 color=(TOL_PALETTE[k], 0.75),
-                marker=:diamond, markersize=PIVOT_MS,
+                marker=:diamond,
+                markersize=PIVOT_MS
             )
         end
     end
     hlines!(ax, [1e-12]; color=:black, linestyle=:dot, linewidth=REF_FLOOR_LW)
     if legend_horizontal
         axislegend(
-            ax; position=legend_position, framevisible=false,
-            labelsize=LEGEND_SIZE, orientation=:horizontal, nbanks=1,
-            colgap=8, padding=(2, 2, 2, 2),
+            ax;
+            position=legend_position,
+            framevisible=false,
+            labelsize=LEGEND_SIZE,
+            orientation=:horizontal,
+            nbanks=1,
+            colgap=8,
+            padding=(2, 2, 2, 2)
         )
     else
         axislegend(
-            ax; position=legend_position, framevisible=false,
-            labelsize=LEGEND_SIZE, padding=(2, 2, 2, 2),
+            ax;
+            position=legend_position,
+            framevisible=false,
+            labelsize=LEGEND_SIZE,
+            padding=(2, 2, 2, 2)
         )
     end
     save(joinpath(outdir, fname), fig)
@@ -464,12 +539,16 @@ end
 
 plot_energy_adaptive_single(args...) = _plot_energy_adaptive(
     args...;
-    tols=ADAPTIVE_TOLS[1:1], ylim=(2e-14, 3), legend_position=:rt,
+    tols=ADAPTIVE_TOLS[1:1],
+    ylim=(2e-14, 3),
+    legend_position=:rt
 )
 plot_energy_adaptive_sweep(args...) = _plot_energy_adaptive(
     args...;
-    tols=ADAPTIVE_TOLS, ylim=(5e-15, 3),
-    legend_position=:ct, legend_horizontal=true,
+    tols=ADAPTIVE_TOLS,
+    ylim=(5e-15, 3),
+    legend_position=:ct,
+    legend_horizontal=true
 )
 
 # -------------------------- Plot 7: convergence curve -------------------------
@@ -481,7 +560,7 @@ function plot_convergence_curve(sampled_errors, outdir)
         title="Adaptive Solver Convergence: Error Indicator",
         xlabel="Sample number",
         xticks=collect(1:13),
-        yscale=log10,
+        yscale=log10
     )
     last_errs = nothing
     # Iterate from tightest tol → loosest so that the looser tols draw on top,
@@ -494,9 +573,14 @@ function plot_convergence_curve(sampled_errors, outdir)
         any(finite) || continue
         n = collect(1:length(errs))
         scatterlines!(
-            ax, n[finite], errs[finite];
-            color=TOL_PALETTE[k], linewidth=1, markersize=PIVOT_MS,
-            marker=:circle, label="tol=$(fmt_tol(tol))",
+            ax,
+            n[finite],
+            errs[finite];
+            color=TOL_PALETTE[k],
+            linewidth=1,
+            markersize=PIVOT_MS,
+            marker=:circle,
+            label="tol=$(fmt_tol(tol))"
         )
         hlines!(ax, [tol]; color=TOL_PALETTE[k], linestyle=:dash, linewidth=TOL_LINE_LW)
         if tol == ADAPTIVE_TOLS[end]
@@ -505,9 +589,14 @@ function plot_convergence_curve(sampled_errors, outdir)
     end
     if last_errs !== nothing && length(last_errs) > 2
         scatterlines!(
-            ax, [1, 2, 3], [1.0, 1.0, last_errs[3]];
-            color=:lightgrey, marker=:star5, markersize=10,
-            linestyle=:dash, linewidth=1,
+            ax,
+            [1, 2, 3],
+            [1.0, 1.0, last_errs[3]];
+            color=:lightgrey,
+            marker=:star5,
+            markersize=10,
+            linestyle=:dash,
+            linewidth=1
         )
     end
     axislegend(ax; position=:rt, nbanks=2, framevisible=false, labelsize=LEGEND_SIZE)
@@ -525,11 +614,11 @@ function main(; outdir=default_outdir())
     _, e_u = load_domain_e(UNIFORM_DIR)
     println("Uniform: $(length(freq_u)) frequency points")
 
-    freq_a = Dict{Float64,Vector{Float64}}()
-    s_a = Dict{Float64,Dict{Tuple{Int,Int},Vector{ComplexF64}}}()
-    e_a = Dict{Float64,Dict{String,Vector{Float64}}}()
-    pivots = Dict{Float64,Vector{Vector{Float64}}}()
-    errs = Dict{Float64,Vector{Vector{Float64}}}()
+    freq_a = Dict{Float64, Vector{Float64}}()
+    s_a = Dict{Float64, Dict{Tuple{Int, Int}, Vector{ComplexF64}}}()
+    e_a = Dict{Float64, Dict{String, Vector{Float64}}}()
+    pivots = Dict{Float64, Vector{Vector{Float64}}}()
+    errs = Dict{Float64, Vector{Vector{Float64}}}()
     for tol in ADAPTIVE_TOLS
         d = adaptive_dir(tol)
         if !isfile(joinpath(d, "port-S.csv"))
@@ -549,12 +638,22 @@ function main(; outdir=default_outdir())
     plot_smat_adaptive_rms(freq_u, s_u, s_a, freq_a, pivots, outdir)
     plot_energy_uniform(freq_u, e_u, outdir)
     plot_energy_adaptive_single(
-        freq_u, e_u, e_a, freq_a, pivots, outdir,
-        "driven_ua_cpw_domain_energy_adaptive_single.svg",
+        freq_u,
+        e_u,
+        e_a,
+        freq_a,
+        pivots,
+        outdir,
+        "driven_ua_cpw_domain_energy_adaptive_single.svg"
     )
     plot_energy_adaptive_sweep(
-        freq_u, e_u, e_a, freq_a, pivots, outdir,
-        "driven_ua_cpw_domain_energy_adaptive_sweep.svg",
+        freq_u,
+        e_u,
+        e_a,
+        freq_a,
+        pivots,
+        outdir,
+        "driven_ua_cpw_domain_energy_adaptive_sweep.svg"
     )
     plot_convergence_curve(errs, outdir)
 
