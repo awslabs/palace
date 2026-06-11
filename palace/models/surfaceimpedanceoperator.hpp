@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_SURFACE_IMPEDANCE_OPERATOR_HPP
 #define PALACE_MODELS_SURFACE_IMPEDANCE_OPERATOR_HPP
 
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <mfem.hpp>
@@ -32,7 +33,7 @@ private:
   {
     double Rs, Ls, Cs;
     mfem::Array<int> attr_list;
-    double scaling = 1.0;
+    std::unordered_map<int, double> attr_scaling;
   };
   std::vector<ImpedanceData> boundaries;
 

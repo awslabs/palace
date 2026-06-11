@@ -46,6 +46,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-romoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-schema.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-waveportimpedance.cpp
