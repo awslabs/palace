@@ -70,7 +70,7 @@ inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
 
 inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
                                const ComplexOperator &A, Eigen::MatrixXcd &Ar,
-                               ComplexVector &r, int n0)
+                               ComplexVector &r, int n0, bool symmetric)
 {
   // Update Ar = Vᴴ A V for the new basis dimension n0 -> n. V is real. Ar is replicated
   // across all processes as a sequential n x n matrix.
@@ -97,6 +97,18 @@ inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
     }
   }
   Mpi::GlobalSum((n - n0) * n, Ar.data() + n0 * n, comm);
+
+  if (symmetric)
+  {
+    for (int j = 0; j < n0; j++)
+    {
+      for (int i = n0; i < n; i++)
+      {
+        Ar(i, j) = Ar(j, i);
+      }
+    }
+    return;
+  }
 
   // Compute the lower-left block directly: rows [n0, n), columns [0, n0).
   // No symmetry assumption — works for Hermitian, anti-symmetric, or general operators.
@@ -719,14 +731,15 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   // matrix and first dim0 entries of each vector and the projection uses the values
   // computed for the unchanged basis vectors.
   Kr.conservativeResize(dim_V_new, dim_V_new);
-  ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old);
+  ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old, true);
   if (C)
   {
     Cr.conservativeResize(dim_V_new, dim_V_new);
-    ProjectMatInternal(comm, V, *C, Cr, r, dim_V_old);
+    ProjectMatInternal(comm, V, *C, Cr, r, dim_V_old,
+                       !space_op.GetMaterialOp().HasFloquetFrequencyScaling());
   }
   Mr.conservativeResize(dim_V_new, dim_V_new);
-  ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old);
+  ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old, true);
   if (RHS1.Size())
   {
     RHS1r.conservativeResize(dim_V_new);
@@ -804,7 +817,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   if (has_A2)
   {
     A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
-    ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0);
+    ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0, true);
   }
   else
   {
