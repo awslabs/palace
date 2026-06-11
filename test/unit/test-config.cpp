@@ -1102,6 +1102,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
              {"L", 1.0e-9},
              {"Excitation", true},
              {"Active", false}}}},
+          {"FloquetPort", {{{"Index", 2}, {"Attributes", {12}}}}},
           {"Periodic",
            {{"FloquetWaveVector", {0.1, 0.2, 0.3}},
             {"BoundaryPairs",
@@ -1181,8 +1182,16 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(lp2.Cs == lp1.Cs);
     CHECK(lp2.excitation == lp1.excitation);
     CHECK(lp2.active == lp1.active);
+    REQUIRE(iodata2.boundaries.floquetport.count(2) == 1);
+    const auto &fp1 = iodata1.boundaries.floquetport.at(2);
+    const auto &fp2 = iodata2.boundaries.floquetport.at(2);
+    CHECK(fp2.excitation == fp1.excitation);
+    CHECK(fp2.inc_polarization == fp1.inc_polarization);
+    CHECK(fp2.max_order == fp1.max_order);
     CHECK(iodata2.boundaries.periodic.wave_vector ==
           iodata1.boundaries.periodic.wave_vector);
+    CHECK(iodata2.boundaries.periodic.floquet_reference_freq ==
+          iodata1.boundaries.periodic.floquet_reference_freq);
     REQUIRE(iodata2.boundaries.postpro.flux.count(1) == 1);
     CHECK(iodata2.boundaries.postpro.flux.at(1).two_sided ==
           iodata1.boundaries.postpro.flux.at(1).two_sided);
@@ -1232,6 +1241,12 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                            /*skip=*/{"CoordinateSystem", "Elements"});
     INFO("Boundaries.LumpedPort[] missing keys: " << json(lp_gaps).dump());
     CHECK(lp_gaps.empty());
+
+    auto fp_gaps =
+        SchemaCoverageGaps("config/boundaries.json", "/properties/FloquetPort/items",
+                           config["Boundaries"]["FloquetPort"][0]);
+    INFO("Boundaries.FloquetPort[] missing keys: " << json(fp_gaps).dump());
+    CHECK(fp_gaps.empty());
 
     auto per_gaps = SchemaCoverageGaps("config/boundaries.json", "/properties/Periodic",
                                        config["Boundaries"]["Periodic"]);

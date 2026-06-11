@@ -1,7 +1,7 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-using CSV, DataFrames, CairoMakie, ColorSchemes
+using CSV, DataFrames, CairoMakie
 
 """
     plot_geometry(output_path::String="postpro")
@@ -91,7 +91,16 @@ function plot_s_parameters(path::String="postpro"; output_path::String=path)
     p1_labels = filter(l -> startswith(l, "P1"), all_labels)
     p2_labels = filter(l -> startswith(l, "P2"), all_labels)
 
-    colors = ColorSchemes.Dark2_8
+    colors = [
+        RGBf(0.106, 0.620, 0.467),
+        RGBf(0.851, 0.373, 0.008),
+        RGBf(0.459, 0.439, 0.702),
+        RGBf(0.906, 0.161, 0.541),
+        RGBf(0.400, 0.651, 0.118),
+        RGBf(0.902, 0.671, 0.008),
+        RGBf(0.651, 0.463, 0.114),
+        RGBf(0.400, 0.400, 0.400)
+    ]
     y_min = -30.0
     critical_frequencies = [8.66]
     mkpath(output_path)

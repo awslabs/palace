@@ -377,7 +377,7 @@
       "properties":
       {
         "FloquetWaveVector": { "$ref": "#/$defs/FloquetWaveVector" },
-        "FloquetReferenceFrequency": { "type": "number", "exclusiveMinimum": 0 },
+        "FloquetReferenceFrequency": { "type": "number", "minimum": 0 },
         "BoundaryPairs":
         {
           "type": "array",
