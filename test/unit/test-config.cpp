@@ -265,6 +265,16 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     CHECK(config::Validate(boundary_data).has_value());
   }
 
+  SECTION("FloquetPort repeated index cross-array fails validation")
+  {
+    json boundaries = {
+        {"LumpedPort",
+         {{{"Attributes", {5}}, {"Index", 1}, {"R", 50}, {"Direction", "+Y"}}}},
+        {"FloquetPort", {{{"Attributes", {6}}, {"Index", 1}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(config::Validate(boundary_data).has_value());
+  }
+
   SECTION("Mislabeled excitation index fails validation")
   {
     json boundaries1 = {
@@ -288,6 +298,38 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
         {"WavePort", {{{"Attributes", {6}}, {"Index", 2}, {"Excitation", 0}}}}};
     config::BoundaryData bd2(boundaries2);
     CHECK(config::Validate(bd2).has_value());
+  }
+
+  SECTION("FloquetPort mislabeled excitation index fails validation")
+  {
+    json boundaries = {
+        {"FloquetPort", {{{"Attributes", {6}}, {"Index", 3}, {"Excitation", 2}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(config::Validate(boundary_data).has_value());
+  }
+
+  SECTION("FloquetPort bool excitation upgrades to port index")
+  {
+    json boundaries = {
+        {"FloquetPort", {{{"Attributes", {6}}, {"Index", 3}, {"Excitation", true}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(boundary_data.floquetport.at(3).excitation == 3);
+    CHECK(!config::Validate(boundary_data).has_value());
+  }
+
+  SECTION("FloquetPort excitation is not upgraded for invalid excitation maps")
+  {
+    json boundaries = {
+        {"LumpedPort",
+         {{{"Attributes", {5}},
+           {"Index", 2},
+           {"R", 50},
+           {"Direction", "+Y"},
+           {"Excitation", 3}}}},
+        {"FloquetPort", {{{"Attributes", {6}}, {"Index", 4}, {"Excitation", true}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(boundary_data.floquetport.at(4).excitation == 1);
+    CHECK(config::Validate(boundary_data).has_value());
   }
 
   SECTION("Upgrade excitation index 1")

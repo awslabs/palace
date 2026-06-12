@@ -926,12 +926,12 @@ BoundaryData::BoundaryData(const json &boundaries)
             wp.excitation = port_idx;
           }
         }
-      }
-      for (auto &[port_idx, fp] : floquetport)
-      {
-        if (fp.excitation == 1)
+        for (auto &[port_idx, fp] : floquetport)
         {
-          fp.excitation = port_idx;
+          if (fp.excitation == 1)
+          {
+            fp.excitation = port_idx;
+          }
         }
       }
     }
@@ -1402,7 +1402,8 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
 {
   std::ostringstream errors;
 
-  // Check for duplicate indices across LumpedPort, WavePort, SurfaceCurrent, Terminal.
+  // Check for duplicate indices across LumpedPort, WavePort, FloquetPort,
+  // SurfaceCurrent, Terminal.
   std::map<int, std::string> index_map;
   for (const auto &[idx, data] : boundaries.lumpedport)
   {
@@ -1430,6 +1431,15 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
              << " and SurfaceCurrent\n";
     }
   }
+  for (const auto &[idx, data] : boundaries.floquetport)
+  {
+    auto [it, inserted] = index_map.try_emplace(idx, "FloquetPort");
+    if (!inserted)
+    {
+      errors << "Duplicate \"Index\": " << idx << " in " << it->second
+             << " and FloquetPort\n";
+    }
+  }
   for (const auto &[idx, data] : boundaries.terminal)
   {
     auto [it, inserted] = index_map.try_emplace(idx, "Terminal");
@@ -1446,6 +1456,10 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
     excitation_map[data.excitation].emplace_back(idx);
   }
   for (const auto &[idx, data] : boundaries.waveport)
+  {
+    excitation_map[data.excitation].emplace_back(idx);
+  }
+  for (const auto &[idx, data] : boundaries.floquetport)
   {
     excitation_map[data.excitation].emplace_back(idx);
   }

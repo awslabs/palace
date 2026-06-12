@@ -131,7 +131,7 @@ gratings and other periodic electromagnetic devices, enabling the computation of
 diffraction efficiencies (S-parameters) for multiple propagating orders. Floquet port
 boundaries are only available for frequency domain driven simulations and **require periodic
 boundary conditions** to be configured under
-[`config["Boundaries"]["Periodic"]`](#boundaries%5B%22Periodic%22%5D) with at least two
+[`config["Boundaries"]["Periodic"]`](#boundaries%5B%22Periodic%22%5D) with exactly two
 `"BoundaryPairs"` (periodicity in two transverse directions).
 
 `"SurfaceCurrent"` :  Array of objects for configuring surface current boundary conditions.
@@ -523,7 +523,7 @@ and isotropic.
 !!! note "Periodic boundary conditions required"
 
     Floquet ports require periodic boundary conditions
-    ([`config["Boundaries"]["Periodic"]`](#boundaries%5B%22Periodic%22%5D)) with at least
+    ([`config["Boundaries"]["Periodic"]`](#boundaries%5B%22Periodic%22%5D)) with exactly
     two `"BoundaryPairs"` defining periodicity in the two transverse directions. The
     `"FloquetWaveVector"` in the periodic configuration determines the angle of incidence:
     zero for normal incidence, nonzero for oblique. The wave vector is specified in radians
@@ -706,7 +706,7 @@ periodic boundaries in the X/Y/Z directions in radians per mesh unit. When used 
 
 For a Floquet port, this is the tangential component of the incident wave vector. For example,
 for a port normal to z with periodicity in x and y, the `"FloquetWaveVector"`,
-``\bm{k}_{F,\mathrm{ref}}``, can be from the indicidence and azimuthal directions as
+``\bm{k}_{F,\mathrm{ref}}``, can be computed from the incidence and azimuthal angles as
 
 ```math
 k_{F,\mathrm{ref},x} = k_\mathrm{ref}\sin\theta\cos\phi,\qquad

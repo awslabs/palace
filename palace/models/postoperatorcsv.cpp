@@ -1237,17 +1237,20 @@ auto PostOperatorCSV<solver_t>::InitializeFloquetPortS(const SpaceOperator &fem_
   t.reserve(nr_expected_measurement_rows, 100);
   t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
 
-  bool circular_output = false;
-  for (const auto &[port_idx, port] : fem_op.GetFloquetPortOp())
+  auto floquet_uses_circular_output = [&fem_op](int ex_idx)
   {
-    if (port.HasExcitation() && port.HasCircularExcitation())
+    for (const auto &[port_idx, port] : fem_op.GetFloquetPortOp())
     {
-      circular_output = true;
-      break;
+      if (port.HasExcitation() && port.excitation == ex_idx)
+      {
+        return port.HasCircularExcitation();
+      }
     }
-  }
+    return false;
+  };
   for (const auto ex_idx : ex_idx_v_all)
   {
+    bool circular_output = floquet_uses_circular_output(ex_idx);
     for (const auto &[port_idx, port] : fem_op.GetFloquetPortOp())
     {
       for (const auto &order : port.GetOrders())
