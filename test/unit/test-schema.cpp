@@ -1,6 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <fmt/format.h>
@@ -711,4 +713,32 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
                    {"Solver", json::object()}};
     CHECK(!ValidateConfig(config).empty());
   }
+}
+
+TEST_CASE("Schema Version", "[schema][Serial]")
+{
+  // The root schema must carry a semantic version so downstream tools can reason about
+  // configuration compatibility (see issue #760).
+  const auto &schema_map = schema::GetSchemaMap();
+  auto it = schema_map.find("config-schema.json");
+  REQUIRE(it != schema_map.end());
+  const json schema = json::parse(it->second);
+  REQUIRE(schema.contains("version"));
+  REQUIRE(schema["version"].is_string());
+  const std::string version = schema["version"];
+  INFO("Schema version: " << version);
+
+  // Must be a "MAJOR.MINOR.PATCH" semantic version of non-negative integers.
+  std::array<int, 3> parts = {-1, -1, -1};
+  const int matched =
+      std::sscanf(version.c_str(), "%d.%d.%d", &parts[0], &parts[1], &parts[2]);
+  CHECK(matched == 3);
+  for (const int p : parts)
+  {
+    CHECK(p >= 0);
+  }
+
+  // The string must be exactly the three parsed components with no trailing content
+  // (e.g. reject "0.1" or "0.1.0-dev"), guarding against a malformed schema version.
+  CHECK(version == fmt::format("{}.{}.{}", parts[0], parts[1], parts[2]));
 }

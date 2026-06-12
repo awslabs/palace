@@ -191,6 +191,22 @@ The generator reads the following JSON Schema fields:
   - `"x-palace-advanced"`: Custom field; shows `advanced` badge if `true`.
   - `"x-palace-deprecated"`: Custom field; shows `deprecated` badge if `true`.
 
+### Schema versioning
+
+The root schema (`scripts/schema/config-schema.json`) carries a top-level `"version"`
+field holding a [semantic version](https://semver.org/) (e.g. `"0.1.0"`). This version
+tracks the configuration *contract* independently of the *Palace* release version, so
+downstream tooling can reason about configuration compatibility.
+
+Because the schema is versioned independently, a single schema version generally spans
+several *Palace* releases. The table below records the first *Palace* release shipping
+each schema version; a schema version applies to that release and all later ones up to
+(but not including) the next entry. Add a row whenever the schema version is bumped.
+
+| Schema version | First *Palace* release |
+|:--------------:|:----------------------:|
+| `0.1.0`        | `0.17`                 |
+
 ## Timing
 
 Timing facilities are provided by the `Timer` and `BlockTimer` classes.
