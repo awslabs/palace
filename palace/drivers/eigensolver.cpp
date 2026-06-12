@@ -465,11 +465,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (iodata.solver.eigenmode.mesh_sensitivity)
   {
     const bool is_quadratic = (C != nullptr) || has_A2;
-    // Use the first converged eigenvector for mesh sensitivity.
+    // Sensitivity mode selection: 1-based index into the converged modes. The
+    // driver tracks a physical mode by frequency continuity across tuning steps
+    // and remeshes, then selects it here (config Eigenmode/MeshSensitivityMode).
+    const int sens_mode = iodata.solver.eigenmode.mesh_sensitivity_mode - 1;
+    MFEM_VERIFY(sens_mode < num_conv,
+                "MeshSensitivityMode exceeds the number of converged eigenmodes!");
     ComplexVector u(space_op.GetNDSpace().GetTrueVSize());
     u.UseDevice(true);
-    eigen->GetEigenvector(0, u);
-    auto eig_raw = eigen->GetEigenvalue(0);
+    eigen->GetEigenvector(sens_mode, u);
+    auto eig_raw = eigen->GetEigenvalue(sens_mode);
     std::complex<double> omega;
     if (!is_quadratic)
     {

@@ -1251,6 +1251,9 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   sensitivity = eigenmode.value("Sensitivity", sensitivity);
   mesh_sensitivity = eigenmode.value("MeshSensitivity", mesh_sensitivity);
   mesh_sensitivity_h = eigenmode.value("MeshSensitivityH", mesh_sensitivity_h);
+  mesh_sensitivity_mode = eigenmode.value("MeshSensitivityMode", mesh_sensitivity_mode);
+  MFEM_VERIFY(mesh_sensitivity_mode >= 1 && mesh_sensitivity_mode <= n,
+              "config[\"Eigenmode\"][\"MeshSensitivityMode\"] must be in [1, N]!");
 
   target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
   MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "

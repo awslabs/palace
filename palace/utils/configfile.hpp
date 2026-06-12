@@ -784,6 +784,12 @@ public:
   // length). A value <= 0 uses the default.
   double mesh_sensitivity_h = -1.0;
 
+  // Which converged eigenmode (1-based) the mesh sensitivity is computed for. During
+  // gradient-based tuning the mode order returned by the shift-invert solve can swap
+  // (e.g. when a tracked mode crosses another, or after a remesh); the driver tracks the
+  // physical mode by frequency continuity and selects it here.
+  int mesh_sensitivity_mode = 1;
+
   EigenSolverData() = default;
   EigenSolverData(const json &eigenmode);
 };

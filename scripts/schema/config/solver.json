@@ -40,7 +40,8 @@
         "MaxRestart": { "type" : "integer", "minimum": 0 },
         "Sensitivity": { "type": "boolean" },
         "MeshSensitivity": { "type": "boolean" },
-        "MeshSensitivityH": { "type": "number", "exclusiveMinimum": 0.0 }
+        "MeshSensitivityH": { "type": "number", "exclusiveMinimum": 0.0 },
+        "MeshSensitivityMode": { "type": "integer", "minimum": 1 }
       }
     },
     "Driven":
