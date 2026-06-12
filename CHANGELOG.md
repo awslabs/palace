@@ -14,6 +14,11 @@ The format of this changelog is based on
 
 ## In progress
 
+#### New Features
+
+  - Improve hybrid nonlinear eigensolver convergence when using 2nd-order absorbing boundary
+    conditions. [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
+
 #### Interface Changes
 
   - Eigenmode simulations with frequency-dependent boundary conditions (e.g. waveports,
