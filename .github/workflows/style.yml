@@ -61,6 +61,20 @@ jobs:
             exit 0
           fi
 
+  check-schema-version:
+    runs-on: ubuntu-latest
+    # Only meaningful for pull requests, where there is a base branch to diff against.
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check schema version bump
+        run: |
+          git fetch --no-tags --depth=1 origin "${GITHUB_BASE_REF}"
+          ./scripts/check-schema-version "origin/${GITHUB_BASE_REF}"
+
   check-tests-tags:
     runs-on: ubuntu-latest
     steps:

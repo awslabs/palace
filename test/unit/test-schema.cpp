@@ -723,9 +723,9 @@ TEST_CASE("Schema Version", "[schema][Serial]")
   auto it = schema_map.find("config-schema.json");
   REQUIRE(it != schema_map.end());
   const json schema = json::parse(it->second);
-  REQUIRE(schema.contains("version"));
-  REQUIRE(schema["version"].is_string());
-  const std::string version = schema["version"];
+  REQUIRE(schema.contains("x-schema-version"));
+  REQUIRE(schema["x-schema-version"].is_string());
+  const std::string version = schema["x-schema-version"];
   INFO("Schema version: " << version);
 
   // Must be a "MAJOR.MINOR.PATCH" semantic version of non-negative integers.

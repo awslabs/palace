@@ -1,0 +1,89 @@
+#!/bin/bash
+
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+help()
+{
+    echo "Usage: check-schema-version [OPTIONS] [BASE_REF]
+
+Fail if any configuration schema JSON file (scripts/schema/*.json and
+scripts/schema/config/*.json) changed relative to BASE_REF without a corresponding
+change to the top-level \"x-schema-version\" field in scripts/schema/config-schema.json.
+
+This guards against editing the configuration contract while forgetting to bump the
+schema version. It does not judge whether the size of the bump (MAJOR/MINOR/PATCH)
+matches the change; that remains a code-review responsibility.
+
+Options:
+  -h, --help                       Show this help message and exit
+
+Arguments:
+  BASE_REF                         Git ref to compare against (default: origin/main)
+"
+}
+
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            help
+            exit 0
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"
+
+BASE_REF="${1:-origin/main}"
+SCHEMA_DIR="scripts/schema"
+ROOT_SCHEMA="${SCHEMA_DIR}/config-schema.json"
+VERSION_KEY="x-schema-version"
+
+if ! git rev-parse --verify --quiet "${BASE_REF}^{commit}" > /dev/null; then
+    echo "Error: base ref '${BASE_REF}' not found"
+    exit 1
+fi
+
+# Schema JSON files that changed relative to the base ref.
+CHANGED=$(git diff --name-only "${BASE_REF}" -- \
+    "${SCHEMA_DIR}/*.json" "${SCHEMA_DIR}/config/*.json")
+
+if [[ -z "${CHANGED}" ]]; then
+    echo "No schema JSON files changed; nothing to check"
+    exit 0
+fi
+
+# Extract the "x-schema-version" value at a given ref (empty if absent/missing file).
+schema_version_at()
+{
+    git show "$1:${ROOT_SCHEMA}" 2>/dev/null |
+        grep -o "\"${VERSION_KEY}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" |
+        head -1 |
+        sed -E "s/.*:[[:space:]]*\"([^\"]*)\"/\1/"
+}
+
+BASE_VERSION=$(schema_version_at "${BASE_REF}")
+HEAD_VERSION=$(grep -o "\"${VERSION_KEY}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "${ROOT_SCHEMA}" |
+    head -1 |
+    sed -E "s/.*:[[:space:]]*\"([^\"]*)\"/\1/")
+
+if [[ -z "${HEAD_VERSION}" ]]; then
+    echo "Error: '${VERSION_KEY}' not found in ${ROOT_SCHEMA}"
+    exit 1
+fi
+
+if [[ "${BASE_VERSION}" == "${HEAD_VERSION}" ]]; then
+    echo "Error: schema files changed but '${VERSION_KEY}' was not bumped (still ${HEAD_VERSION})."
+    echo "Changed files:"
+    echo "${CHANGED}" | while IFS= read -r file; do echo "  ${file}"; done
+    echo "Bump '${VERSION_KEY}' in ${ROOT_SCHEMA} and add a row to the version table in"
+    echo "docs/src/developer/notes.md. See the 'Schema versioning' section for the policy."
+    exit 1
+fi
+
+echo "Schema files changed and '${VERSION_KEY}' was bumped (${BASE_VERSION:-<none>} -> ${HEAD_VERSION})"
+exit 0

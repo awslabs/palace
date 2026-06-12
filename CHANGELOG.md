@@ -20,7 +20,7 @@ The format of this changelog is based on
     with CPW lumped-port and transmon examples, plus reference documentation for
     the adaptive PROM/MRI algorithm and practical guidance on tolerances,
     convergence, and validation [PR 702](https://github.com/awslabs/palace/pull/702).
-  - Added a semantic version to the root configuration JSON schema
+  - Added a semantic `"x-schema-version"` field to the root configuration JSON schema
     (`scripts/schema/config-schema.json`), starting at `0.1.0`. The schema contract is now
     versioned independently of the *Palace* release so downstream tools can reason about
     configuration compatibility.

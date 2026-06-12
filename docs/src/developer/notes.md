@@ -193,19 +193,56 @@ The generator reads the following JSON Schema fields:
 
 ### Schema versioning
 
-The root schema (`scripts/schema/config-schema.json`) carries a top-level `"version"`
-field holding a [semantic version](https://semver.org/) (e.g. `"0.1.0"`). This version
-tracks the configuration *contract* independently of the *Palace* release version, so
-downstream tooling can reason about configuration compatibility.
+The root schema (`scripts/schema/config-schema.json`) carries a top-level
+`"x-schema-version"` field holding a [semantic version](https://semver.org/) (e.g.
+`"0.1.0"`). This version tracks the configuration *contract* independently of the
+*Palace* release version, so downstream tooling can reason about configuration
+compatibility. The `x-` prefix marks it as a custom annotation keyword, which JSON Schema
+draft-07 validators ignore, so it does not affect validation.
+
+The schema version describes the *configuration contract* — the set of accepted fields,
+their types, and their allowed values. Bump it whenever
+[the schema files](https://github.com/awslabs/palace/blob/main/scripts/schema) under
+`scripts/schema/` change, following these rules:
+
+  - MAJOR: a backward-incompatible change, e.g. removing or renaming a field,
+    tightening validation so a previously-valid config is rejected, or changing the
+    meaning or the default of a value.
+  - MINOR: a backward-compatible addition, e.g. a new optional field, a new allowed
+    enum value, or relaxing a constraint so previously-invalid configs are now accepted.
+    Examples:
+  - PATCH: changes that do not affect which configurations are accepted, e.g. updating
+    a `description`, `title`, or other annotation.
+
+#### Relationship to the *Palace* version
+
+The two versions move independently: the schema's `MAJOR.MINOR.PATCH` is not tied
+numerically to *Palace*'s `MAJOR.MINOR.PATCH`. The coupling is one-directional:
+
+  - A minor/major schema change always bumps the *Palace* version.
+  - A *Palace* release does not imply a schema change. Most releases (bug fixes,
+    solver work, performance, docs) leave the configuration contract untouched and so do
+    not bump `"x-schema-version"`.
 
 Because the schema is versioned independently, a single schema version generally spans
 several *Palace* releases. The table below records the first *Palace* release shipping
 each schema version; a schema version applies to that release and all later ones up to
 (but not including) the next entry. Add a row whenever the schema version is bumped.
 
-| Schema version | First *Palace* release |
-|:--------------:|:----------------------:|
-| `0.1.0`        | `0.17`                 |
+| Schema version | First *Palace* release | Notes                          |
+|:--------------:|:----------------------:|:-------------------------------|
+| `0.1.0`        | `0.17`                 | First explicitly-versioned schema. |
+
+#### Enforcement
+
+A CI check (the `check-schema-version` job in
+[`.github/workflows/style.yml`](https://github.com/awslabs/palace/blob/main/.github/workflows/style.yml))
+fails a pull request that modifies any schema JSON file under `scripts/schema/` without
+also changing `"x-schema-version"`. This catches the common mistake of editing the contract but
+forgetting to bump the version; it does not (and cannot) verify that the size of the
+bump matches the change, so the MAJOR/MINOR/PATCH judgment above remains a code-review
+responsibility. When a change is genuinely annotation-only the bump is just a PATCH, so
+the rule still applies.
 
 ## Timing
 
