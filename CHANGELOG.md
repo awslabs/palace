@@ -42,6 +42,8 @@ The format of this changelog is based on
     validation and can be used to re-run the same simulation deterministically; it can also
     be printed without running via `--dry-run` [PR 719](https://github.com/awslabs/palace/pull/719).
   - Enable S-parameters calculations when both lumped and wave ports are present [PR 743](https://github.com/awslabs/palace/pull/743).
+  - Improve hybrid nonlinear eigensolver convergence when using 2nd-order absorbing boundary
+    conditions. [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
 
 #### Interface Changes
 
