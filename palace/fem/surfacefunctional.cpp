@@ -105,30 +105,6 @@ void AppendPoints(FaceConfigKey &key, const std::vector<mfem::IntegrationPoint> 
   }
 }
 
-// Re-point the passive field inputs of each group operator at the given source vectors
-// and accumulate into the output vector with CeedOperatorApplyAdd.
-void ApplyAddGroups(const std::vector<fem::CeedGroupOperator> &groups,
-                    const std::array<const Vector *, 4> &srcs, const Vector &out)
-{
-  for (const auto &[ceed, op, field_sources] : groups)
-  {
-    for (const auto &[name, source] : field_sources)
-    {
-      MFEM_ASSERT(srcs[source], "Missing source vector for libCEED field input!");
-      CeedOperatorField field;
-      CeedVector field_vec;
-      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(op, name.c_str(), &field));
-      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &field_vec));
-      ceed::InitCeedVector(*srcs[source], ceed, &field_vec, false);
-    }
-    CeedVector out_vec;
-    ceed::InitCeedVector(out, ceed, &out_vec);
-    PalaceCeedCall(
-        ceed, CeedOperatorApplyAdd(op, CEED_VECTOR_NONE, out_vec, CEED_REQUEST_IMMEDIATE));
-    PalaceCeedCall(ceed, CeedVectorDestroy(&out_vec));
-  }
-}
-
 // Holds libCEED object references created during operator assembly for destruction once
 // the assembled operator owns them.
 struct CeedAssemblyScratch
@@ -157,6 +133,29 @@ struct CeedAssemblyScratch
 };
 
 }  // namespace
+
+void fem::ApplyAddGroupOperators(const std::vector<fem::CeedGroupOperator> &groups,
+                                 const std::array<const Vector *, 4> &srcs,
+                                 const Vector &out)
+{
+  for (const auto &[ceed, op, field_sources] : groups)
+  {
+    for (const auto &[name, source] : field_sources)
+    {
+      MFEM_ASSERT(srcs[source], "Missing source vector for libCEED field input!");
+      CeedOperatorField field;
+      CeedVector field_vec;
+      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(op, name.c_str(), &field));
+      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &field_vec));
+      ceed::InitCeedVector(*srcs[source], ceed, &field_vec, false);
+    }
+    CeedVector out_vec;
+    ceed::InitCeedVector(out, ceed, &out_vec);
+    PalaceCeedCall(
+        ceed, CeedOperatorApplyAdd(op, CEED_VECTOR_NONE, out_vec, CEED_REQUEST_IMMEDIATE));
+    PalaceCeedCall(ceed, CeedVectorDestroy(&out_vec));
+  }
+}
 
 SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
                                      const mfem::Array<int> &bdr_attr_marker,
@@ -940,7 +939,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
 
 void SurfaceFunctional::ApplyAdd(const std::array<const Vector *, 4> &srcs) const
 {
-  ApplyAddGroups(groups, srcs, local_out);
+  fem::ApplyAddGroupOperators(groups, srcs, local_out);
 }
 
 double SurfaceFunctional::EvalLocal(const std::array<const Vector *, 4> &srcs) const
@@ -1025,7 +1024,7 @@ void SurfaceFunctional::EvalBuffer(const Vector &u, Vector &buffer) const
               "EvalBuffer requires a valid boundary visualization field functional!");
   MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
   buffer = 0.0;
-  ApplyAddGroups(groups, {&u}, buffer);
+  fem::ApplyAddGroupOperators(groups, {&u}, buffer);
 }
 
 void SurfaceFunctional::EvalBuffer(const GridFunction &u, Vector &buffer) const
@@ -1034,10 +1033,10 @@ void SurfaceFunctional::EvalBuffer(const GridFunction &u, Vector &buffer) const
               "EvalBuffer requires a valid boundary visualization field functional!");
   MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
   buffer = 0.0;
-  ApplyAddGroups(groups, {&u.Real()}, buffer);
+  fem::ApplyAddGroupOperators(groups, {&u.Real()}, buffer);
   if (u.HasImag())
   {
-    ApplyAddGroups(groups, {&u.Imag()}, buffer);
+    fem::ApplyAddGroupOperators(groups, {&u.Imag()}, buffer);
   }
 }
 
@@ -1072,7 +1071,8 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
   if (local_out.Size() > 0)
   {
     local_out = 0.0;
-    ApplyAddGroups(groups, {&E.Real(), &E.Imag(), &B.Real(), &B.Imag()}, local_out);
+    fem::ApplyAddGroupOperators(groups, {&E.Real(), &E.Imag(), &B.Real(), &B.Imag()},
+                                local_out);
     Vector slice;
     slice.UseDevice(true);
     for (int c = 0; c < 6 * N; c++)
@@ -1312,10 +1312,12 @@ void DomainFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B,
   MFEM_VERIFY((E || kind == Kind::ENERGY_M) && (B || kind == Kind::ENERGY_E),
               "Missing field grid function for domain field evaluator!");
   out = 0.0;
-  ApplyAddGroups(groups, {E ? &E->Real() : nullptr, B ? &B->Real() : nullptr}, out);
+  fem::ApplyAddGroupOperators(groups, {E ? &E->Real() : nullptr, B ? &B->Real() : nullptr},
+                              out);
   if (E ? E->HasImag() : B->HasImag())
   {
-    ApplyAddGroups(groups, {E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr}, out);
+    fem::ApplyAddGroupOperators(groups,
+                                {E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr}, out);
   }
 }
 

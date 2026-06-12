@@ -34,6 +34,11 @@ struct CeedGroupOperator
   std::vector<std::pair<std::string, int>> field_sources;
 };
 
+// Re-point the passive field inputs of each group operator at the given source vectors
+// and accumulate into the output vector with CeedOperatorApplyAdd.
+void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
+                            const std::array<const Vector *, 4> &srcs, const Vector &out);
+
 }  // namespace fem
 
 //

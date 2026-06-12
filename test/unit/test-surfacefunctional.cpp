@@ -11,6 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include "fem/coefficient.hpp"
+#include "fem/facenbrexchange.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
@@ -1772,6 +1773,115 @@ TEST_CASE("SurfaceFunctional Boundary Viz Fields",
   {
     EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> um_legacy(B, mat_op, scaling);
     TestKindCoeff(SurfaceFunctional::Kind::BDR_ENERGY_M, rt_fespace, &um_legacy, nullptr);
+  }
+}
+
+TEST_CASE("FaceNbrFieldExchange", "[surfacefunctional][Serial][Parallel]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto order = GENERATE(1, 2);
+  auto nonconformal = GENERATE(false, true);
+  CAPTURE(elem_type, order, nonconformal);
+
+  auto mesh = nonconformal ? MakeNCInterfaceMesh(comm, elem_type)
+                           : MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  mfem::ND_FECollection nd_fec(order, pmesh.Dimension());
+  mfem::RT_FECollection rt_fec(order - 1, pmesh.Dimension());
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+
+  // Project non-trivial smooth fields. The reference values are computed from the same
+  // projected grid functions through the legacy mfem face neighbor dof exchange, so the
+  // comparison is exact up to roundoff (not projection error).
+  mfem::ParGridFunction E(&nd_fespace.Get()), B(&rt_fespace.Get());
+  mfem::VectorFunctionCoefficient fe(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = std::sin(x(1)) + x(2) * x(2);
+                                       v(1) = std::cos(x(2)) + x(0);
+                                       v(2) = x(0) * x(1) + 1.0;
+                                     });
+  mfem::VectorFunctionCoefficient fb(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = x(1) * x(2) - 0.5;
+                                       v(1) = std::sin(x(0)) - x(2);
+                                       v(2) = std::cos(x(1)) + x(0) * x(0);
+                                     });
+  E.ProjectCoefficient(fe);
+  B.ProjectCoefficient(fb);
+
+  // Request E (slot 0) at a few reference points of every ghost element, and both E
+  // and B (slot 1) for every other ghost element (exercising the value layouts). The
+  // points are valid reference coordinates for both tetrahedra and hexahedra.
+  const int num_ghost = pmesh.GetNFaceNeighborElements();
+  std::vector<FaceNbrFieldExchange::Request> requests;
+  for (int fn = 0; fn < num_ghost; fn++)
+  {
+    auto &req = requests.emplace_back();
+    req.face_nbr_elem = fn;
+    req.source_mask = (fn % 2 == 0) ? 0b01u : 0b11u;
+    req.pts.resize(4);
+    req.pts[0].Set3(0.1, 0.2, 0.3);
+    req.pts[1].Set3(0.25, 0.25, 0.25);
+    req.pts[2].Set3(0.05, 0.1, 0.7);
+    req.pts[3].Set3(0.3, 0.05, 0.05);
+  }
+  FaceNbrFieldExchange exchange(
+      *mesh, {&nd_fespace.Get(), &rt_fespace.Get(), nullptr, nullptr}, requests);
+  exchange.Exchange({&E, &B, nullptr, nullptr});
+
+  // Reference: evaluate the ghost elements through the legacy dof exchange.
+  E.ExchangeFaceNbrData();
+  B.ExchangeFaceNbrData();
+  std::vector<double> vals(exchange.Imported().HostRead(),
+                           exchange.Imported().HostRead() + exchange.ImportSize());
+  mfem::Vector ref(3);
+  int num_checked = 0;
+  for (std::size_t r = 0; r < requests.size(); r++)
+  {
+    const auto &req = requests[r];
+    for (int s = 0; s < 2; s++)
+    {
+      const int offset = exchange.ImportOffset(static_cast<int>(r), s);
+      if (!(req.source_mask & (1u << s)))
+      {
+        CHECK(offset < 0);
+        continue;
+      }
+      const auto &U = (s == 0) ? E : B;
+      for (std::size_t j = 0; j < req.pts.size(); j++)
+      {
+        U.GetVectorValue(pmesh.GetNE() + req.face_nbr_elem, req.pts[j], ref);
+        for (int c = 0; c < 3; c++)
+        {
+          CAPTURE(r, s, j, c);
+          CHECK(vals[offset + 3 * j + c] == Catch::Approx(ref(c)).margin(1.0e-12));
+          num_checked++;
+        }
+      }
+    }
+  }
+  // With more than one process, the partition must produce at least one ghost element
+  // somewhere (the exchange is the point of the test).
+  int num_global = num_checked;
+  Mpi::GlobalSum(1, &num_global, comm);
+  CHECK((Mpi::Size(comm) == 1 || num_global > 0));
+
+  // The field inputs are re-pointed at the sources on each call: scaling the field
+  // scales the exchanged values.
+  E *= 2.0;
+  exchange.Exchange({&E, &B, nullptr, nullptr});
+  const double *vals2 = exchange.Imported().HostRead();
+  for (std::size_t r = 0; r < requests.size(); r++)
+  {
+    const int offset = exchange.ImportOffset(static_cast<int>(r), 0);
+    for (std::size_t j = 0; j < 3 * requests[r].pts.size(); j++)
+    {
+      CHECK(vals2[offset + j] == Catch::Approx(2.0 * vals[offset + j]).margin(1.0e-12));
+    }
   }
 }
 
