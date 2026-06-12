@@ -711,6 +711,16 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
   config::Nondimensionalize(units, solver.driven);
   config::Nondimensionalize(units, solver.transient);
 
+  // Nondimensionalize Floquet reference frequency (GHz -> nondimensional angular
+  // frequency).
+  if (boundaries.periodic.floquet_reference_freq > 0.0)
+  {
+    boundaries.periodic.floquet_reference_freq =
+        2 * M_PI *
+        units.Nondimensionalize<Units::ValueType::FREQUENCY>(
+            boundaries.periodic.floquet_reference_freq);
+  }
+
   // Scale the serial mesh vertices on ranks that hold one. The ParMesh constructed later
   // by mesh::Partition inherits the scaled coordinates.
   if (mesh)

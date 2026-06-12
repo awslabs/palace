@@ -6,6 +6,7 @@
 #include <mfem.hpp>
 
 #include "models/curlcurloperator.hpp"
+#include "models/floquetportoperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
@@ -89,6 +90,7 @@ Measurement Measurement::Dimensionalize(const Units &units,
       dimensionalize_port_post_data(nondim_measurement_cache.lumped_port_vi);
   measurement_cache.wave_port_vi =
       dimensionalize_port_post_data(nondim_measurement_cache.wave_port_vi);
+  measurement_cache.floquet_port_s = nondim_measurement_cache.floquet_port_s;
 
   measurement_cache.probe_E_field = units.Dimensionalize<Units::ValueType::FIELD_E>(
       nondim_measurement_cache.probe_E_field);
@@ -231,6 +233,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
       dimensionalize_port_post_data(dim_measurement_cache.lumped_port_vi);
   measurement_cache.wave_port_vi =
       dimensionalize_port_post_data(dim_measurement_cache.wave_port_vi);
+  measurement_cache.floquet_port_s = dim_measurement_cache.floquet_port_s;
 
   measurement_cache.probe_E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
       dim_measurement_cache.probe_E_field);
@@ -1219,6 +1222,62 @@ auto PostOperatorCSV<solver_t>::InitializePortZ(const SpaceOperator &fem_op)
 
 template <ProblemType solver_t>
 template <ProblemType U>
+auto PostOperatorCSV<solver_t>::InitializeFloquetPortS(const SpaceOperator &fem_op)
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  if (fem_op.GetFloquetPortOp().Empty())
+  {
+    return;
+  }
+
+  using fmt::format;
+  floquet_port_S = TableWithCSVFile(post_dir / "port-floquet-S.csv", reload_table);
+
+  Table t;
+  t.reserve(nr_expected_measurement_rows, 100);
+  t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
+
+  auto floquet_uses_circular_output = [&fem_op](int ex_idx)
+  {
+    for (const auto &[port_idx, port] : fem_op.GetFloquetPortOp())
+    {
+      if (port.HasExcitation() && port.excitation == ex_idx)
+      {
+        return port.HasCircularExcitation();
+      }
+    }
+    return false;
+  };
+  for (const auto ex_idx : ex_idx_v_all)
+  {
+    bool circular_output = floquet_uses_circular_output(ex_idx);
+    for (const auto &[port_idx, port] : fem_op.GetFloquetPortOp())
+    {
+      for (const auto &order : port.GetOrders())
+      {
+        if (!HasFlag(order.use, FloquetModeUse::Output))
+          continue;
+        for (bool is_te : {true, false})
+        {
+          auto pol = circular_output ? (is_te ? "RHC" : "LHC") : (is_te ? "TE" : "TM");
+          t.insert(
+              format("abs_P{}_{}_{}_{}_exc{}", port_idx, order.m, order.n, pol, ex_idx),
+              format("|S[P{}({};{}){}][{}]| (dB)", port_idx, order.m, order.n, pol, ex_idx),
+              ex_idx);
+          t.insert(
+              format("arg_P{}_{}_{}_{}_exc{}", port_idx, order.m, order.n, pol, ex_idx),
+              format("arg(S[P{}({};{}){}][{}]) (deg.)", port_idx, order.m, order.n, pol,
+                     ex_idx),
+              ex_idx);
+        }
+      }
+    }
+  }
+  MoveTableValidateReload(*floquet_port_S, std::move(t));
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperatorCSV<solver_t>::PrintPortZ()
     -> std::enable_if_t<U == ProblemType::DRIVEN, void>
 {
@@ -1264,6 +1323,42 @@ auto PostOperatorCSV<solver_t>::PrintPortZ()
     }
   }
   port_Z->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::PrintFloquetPortS()
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  if (!floquet_port_S)
+  {
+    return;
+  }
+  using fmt::format;
+  CheckAppendIndex(floquet_port_S->table["idx"], row_idx_v, row_i);
+  for (const auto &[port_idx, S_map] : measurement_cache.floquet_port_s)
+  {
+    for (const auto &[key, S] : S_map)
+    {
+      auto [m, n, is_te] = key;
+      auto pol = measurement_cache.floquet_circular_output ? (is_te ? "RHC" : "LHC")
+                                                           : (is_te ? "TE" : "TM");
+      auto abs_key = format("abs_P{}_{}_{}_{}_exc{}", port_idx, m, n, pol, m_ex_idx);
+      auto arg_key = format("arg_P{}_{}_{}_{}_exc{}", port_idx, m, n, pol, m_ex_idx);
+      floquet_port_S->table[abs_key] << Measurement::Magnitude(S);
+      floquet_port_S->table[arg_key] << Measurement::Phase(S);
+    }
+  }
+  std::size_t target_rows = floquet_port_S->table["idx"].n_rows();
+  for (std::size_t ci = 0; ci < floquet_port_S->table.n_cols(); ci++)
+  {
+    auto &col = floquet_port_S->table[ci];
+    while (col.n_rows() < target_rows)
+    {
+      col << std::numeric_limits<double>::quiet_NaN();
+    }
+  }
+  floquet_port_S->WriteFullTableTrunc();
 }
 
 template <ProblemType solver_t>
@@ -1575,6 +1670,7 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   {
     InitializePortS(*post_op.fem_op);
     InitializePortZ(*post_op.fem_op);
+    InitializeFloquetPortS(*post_op.fem_op);
   }
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
   {
@@ -1654,6 +1750,7 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   {
     PrintPortS();
     PrintPortZ();
+    PrintFloquetPortS();
   }
   if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
   {

@@ -412,69 +412,6 @@ void ComplexWrapperOperator::AddMultHermitianTranspose(const ComplexVector &x,
   }
 }
 
-SumOperator::SumOperator(const Operator &op, double a) : Operator(op.Height(), op.Width())
-{
-  AddOperator(op, a);
-  z.UseDevice(true);
-}
-
-void SumOperator::AddOperator(const Operator &op, double a)
-{
-  MFEM_VERIFY(op.Height() == height && op.Width() == width,
-              "Invalid Operator dimensions for SumOperator!");
-  ops.emplace_back(&op, a);
-}
-
-void SumOperator::Mult(const Vector &x, Vector &y) const
-{
-  if (ops.size() == 1)
-  {
-    ops.front().first->Mult(x, y);
-    if (ops.front().second != 1.0)
-    {
-      y *= ops.front().second;
-    }
-    return;
-  }
-  y = 0.0;
-  AddMult(x, y);
-}
-
-void SumOperator::MultTranspose(const Vector &x, Vector &y) const
-{
-  if (ops.size() == 1)
-  {
-    ops.front().first->MultTranspose(x, y);
-    if (ops.front().second != 1.0)
-    {
-      y *= ops.front().second;
-    }
-    return;
-  }
-  y = 0.0;
-  AddMultTranspose(x, y);
-}
-
-void SumOperator::AddMult(const Vector &x, Vector &y, const double a) const
-{
-  z.SetSize(y.Size());
-  for (const auto &[op, c] : ops)
-  {
-    op->Mult(x, z);
-    y.Add(a * c, z);
-  }
-}
-
-void SumOperator::AddMultTranspose(const Vector &x, Vector &y, const double a) const
-{
-  z.SetSize(y.Size());
-  for (const auto &[op, c] : ops)
-  {
-    op->MultTranspose(x, z);
-    y.Add(a * c, z);
-  }
-}
-
 template <>
 void BaseDiagonalOperator<Operator>::Mult(const Vector &x, Vector &y) const
 {

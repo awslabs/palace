@@ -337,6 +337,28 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
     }
   }
 
+  // FloquetPort: JSON array with Index, C++ map keyed by Index.
+  if (j_boundaries.contains("FloquetPort"))
+  {
+    for (auto &j_port : j_boundaries["FloquetPort"])
+    {
+      auto idx_it = j_port.find("Index");
+      if (idx_it == j_port.end())
+      {
+        continue;
+      }
+      auto it = boundaries.floquetport.find(idx_it->get<int>());
+      if (it == boundaries.floquetport.end())
+      {
+        continue;
+      }
+      const auto &fp = it->second;
+      ApplyEntries(j_port, {{"Excitation", fp.excitation},
+                            {"IncidentPolarization", fp.inc_polarization},
+                            {"MaxOrder", fp.max_order}});
+    }
+  }
+
   // Periodic: single object with a Floquet wave vector.
   if (j_boundaries.contains("Periodic"))
   {
@@ -344,6 +366,8 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
         j_boundaries["Periodic"], "FloquetWaveVector",
         json::array({boundaries.periodic.wave_vector[0], boundaries.periodic.wave_vector[1],
                      boundaries.periodic.wave_vector[2]}));
+    Concretize(j_boundaries["Periodic"], "FloquetReferenceFrequency",
+               boundaries.periodic.floquet_reference_freq);
   }
 
   // Postprocessing: per-index maps for flux/dielectric/impedance/voltage.
