@@ -176,7 +176,8 @@ jobs:
         # FindMPI that prevents it from finding MPI when compiling with GNU
         # compilers. CMake was pinned to 3.31.8 (see #470) because CMake 4.x
         # could not find some std headers with llvm@18. Test whether the latest
-        # CMake has resolved this so we can drop the pin.
+        # CMake combined with llvm@19 (instead of llvm@18) resolves this so we
+        # can drop the pin.
       - name: Setup cmake
         if: needs.filter.outputs.test == 'true'
         uses: jwlawson/actions-setup-cmake@v2
@@ -191,8 +192,8 @@ jobs:
         run: |
           # Configure environment
           if [[ "${{ matrix.compiler }}" == 'clang' ]]; then
-            export CC=$(brew --prefix llvm@18)/bin/clang
-            export CXX=$(brew --prefix llvm@18)/bin/clang++
+            export CC=$(brew --prefix llvm@19)/bin/clang
+            export CXX=$(brew --prefix llvm@19)/bin/clang++
             export FC=gfortran-15
           elif [[ "${{ matrix.compiler }}" == 'gcc' ]]; then
             export CC=gcc-15
