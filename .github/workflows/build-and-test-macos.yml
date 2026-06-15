@@ -202,6 +202,9 @@ jobs:
             export CC=$(brew --prefix llvm@21)/bin/clang
             export CXX=$(brew --prefix llvm@21)/bin/clang++
             export FC=gfortran-15
+            # Homebrew clang does not default to the macOS SDK sysroot, so
+            # system headers like pthread.h are not found. Point it at the SDK.
+            export SDKROOT=$(xcrun --show-sdk-path)
           elif [[ "${{ matrix.compiler }}" == 'gcc' ]]; then
             export CC=gcc-15
             export CXX=g++-15
