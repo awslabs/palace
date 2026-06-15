@@ -172,6 +172,13 @@ jobs:
           echo "DYLD_LIBRARY_PATH=/opt/arm/armpl_24.10_flang-new_clang_19/lib:${DYLD_LIBRARY_PATH:+${DYLD_LIBRARY_PATH}:}" >> $GITHUB_ENV
           hdiutil detach "/Volumes/armpl_24.10_flang-new_clang_19_installer" -quiet
 
+        # The macOS image ships llvm@18 but not llvm@19, so install it
+        # explicitly for the clang configurations.
+      - name: Install LLVM
+        if: needs.filter.outputs.test == 'true' && matrix.compiler == 'clang'
+        run: |
+          brew install llvm@19
+
         # We have to upgrade CMake because the bundled one has a bug with
         # FindMPI that prevents it from finding MPI when compiling with GNU
         # compilers. CMake was pinned to 3.31.8 (see #470) because CMake 4.x
