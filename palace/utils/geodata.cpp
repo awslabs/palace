@@ -896,6 +896,17 @@ bool CheckRefinementFlags(const mfem::Mesh &mesh)
   return marked;
 }
 
+int GetMaxBdrAttribute(const mfem::ParMesh &mesh)
+{
+  int bdr_attr_max = 0;
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    bdr_attr_max = std::max(bdr_attr_max, mesh.GetBdrAttribute(be));
+  }
+  Mpi::GlobalMax(1, &bdr_attr_max, mesh.GetComm());
+  return bdr_attr_max;
+}
+
 void AttrToMarker(int max_attr, const int *attr_list, int attr_list_size,
                   mfem::Array<int> &marker, bool skip_invalid)
 {

@@ -42,6 +42,9 @@ The format of this changelog is based on
     validation and can be used to re-run the same simulation deterministically; it can also
     be printed without running via `--dry-run` [PR 719](https://github.com/awslabs/palace/pull/719).
   - Enable S-parameters calculations when both lumped and wave ports are present [PR 743](https://github.com/awslabs/palace/pull/743).
+  - Added Floquet port boundary conditions for frequency-domain driven simulations on
+    periodic structures, with support for oblique incidence, multi-order diffraction,
+    TE/TM/circular polarization, and adaptive frequency sweeps. [PR 693](https://github.com/awslabs/palace/pull/693).
 
 #### Interface Changes
 

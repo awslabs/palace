@@ -104,6 +104,19 @@ inline mfem::Array<int> AttrToMarker(int max_attr, const T &attr_list,
   return marker;
 }
 
+// Maximum boundary attribute over all local boundary elements. This can differ from
+// mesh.bdr_attributes.Max() for internally-added boundary elements.
+int GetMaxBdrAttribute(const mfem::ParMesh &mesh);
+
+// Helper function to convert boundary attribute numbers to a marker array sized by the
+// maximum actual boundary element attribute.
+template <typename T>
+inline mfem::Array<int> BdrAttrToMarker(const mfem::ParMesh &mesh, const T &attr_list,
+                                        bool skip_invalid = false)
+{
+  return AttrToMarker(GetMaxBdrAttribute(mesh), attr_list, skip_invalid);
+}
+
 // Helper function to construct the axis-aligned bounding box for all elements with the
 // given attribute.
 void GetAxisAlignedBoundingBox(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
