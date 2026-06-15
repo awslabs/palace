@@ -283,7 +283,11 @@ void InterpolateFunction(const mfem::Vector &xyz, const mfem::GridFunction &U,
                          mfem::Vector &vals, mfem::Ordering::Type ordering)
 {
 #if defined(MFEM_USE_GSLIB)
-  // Set up the interpolator.
+  // Set up a single-use interpolator, then delegate to the reusable-op overload. Callers
+  // that interpolate repeatedly on a fixed mesh (e.g. wave-port voltage-path line
+  // integrals during a frequency sweep) should instead build the FindPointsGSLIB once via
+  // SetupInterpolator and call the overload below — the geometric Setup is the expensive
+  // step and depends only on the mesh, not the field values.
   auto &src_mesh = *U.FESpace()->GetMesh();
   MFEM_VERIFY(src_mesh.GetNodes(), "Source mesh has no nodal FE space!");
   const int dim = src_mesh.SpaceDimension();
@@ -292,9 +296,32 @@ void InterpolateFunction(const mfem::Vector &xyz, const mfem::GridFunction &U,
   MPI_Comm comm = (src_pmesh) ? src_pmesh->GetComm() : MPI_COMM_SELF;
   mfem::FindPointsGSLIB op(comm);
   op.Setup(src_mesh, GSLIB_BB_TOL, GSLIB_NEWTON_TOL, npts);
+  InterpolateFunction(op, xyz, U, vals, ordering);
+#else
+  MFEM_ABORT("InterpolateFunction requires MFEM_USE_GSLIB!");
+#endif
+}
 
-  // Perform the interpolation, with the ordering of the returned values matching the
-  // ordering of the source grid function.
+void SetupInterpolator(mfem::FindPointsGSLIB &op, mfem::Mesh &mesh)
+{
+#if defined(MFEM_USE_GSLIB)
+  op.Setup(mesh, GSLIB_BB_TOL, GSLIB_NEWTON_TOL);
+#else
+  MFEM_ABORT("SetupInterpolator requires MFEM_USE_GSLIB!");
+#endif
+}
+
+void InterpolateFunction(mfem::FindPointsGSLIB &op, const mfem::Vector &xyz,
+                         const mfem::GridFunction &U, mfem::Vector &vals,
+                         mfem::Ordering::Type ordering)
+{
+#if defined(MFEM_USE_GSLIB)
+  // Perform the interpolation using a pre-Setup point locator (op.Setup already called on
+  // the source mesh). Setup is geometric — it depends only on the mesh — so a fixed-mesh
+  // caller reuses op across field values without paying the O(num_elements) hash build
+  // each call. The ordering of the returned values matches the source grid function.
+  const int dim = U.FESpace()->GetMesh()->SpaceDimension();
+  const int npts = xyz.Size() / dim;
   const int vdim = U.VectorDim();
   MFEM_VERIFY(vals.Size() == npts * vdim, "Incorrect size for interpolated values vector!");
   op.SetDefaultInterpolationValue(0.0);
@@ -305,10 +332,18 @@ void InterpolateFunction(const mfem::Vector &xyz, const mfem::GridFunction &U,
 #endif
 }
 
-double ComputeLineIntegral(const mfem::Vector &p1, const mfem::Vector &p2,
-                           const mfem::ParGridFunction &field, int quad_order)
-{
 #if defined(MFEM_USE_GSLIB)
+namespace
+{
+
+// Shared quadrature + dot-product core for the line integral. `interp` fills `vals`
+// (byNODES ordering, length npts*vdim) with the field sampled at the quadrature points;
+// it is the only part that touches GSLIB, so callers can supply either a fresh single-use
+// locator or a cached pre-Setup one.
+template <typename InterpFn>
+double LineIntegralCore(const mfem::Vector &p1, const mfem::Vector &p2,
+                        const mfem::ParGridFunction &field, int quad_order, InterpFn interp)
+{
   const int dim = p1.Size();
   MFEM_VERIFY(p2.Size() == dim, "ComputeLineIntegral: p1 and p2 must have same dimension!");
 
@@ -340,7 +375,7 @@ double ComputeLineIntegral(const mfem::Vector &p1, const mfem::Vector &p2,
   // Interpolate the vector field at the quadrature points.
   const int vdim = field.VectorDim();
   mfem::Vector vals(npts * vdim);
-  InterpolateFunction(xyz, field, vals, mfem::Ordering::byNODES);
+  interp(xyz, vals);
 
   // Compute the dot product F · dl at each quadrature point and sum. Only the first
   // min(vdim, dim) components contribute; higher components (if vdim > dim) are ignored
@@ -359,6 +394,35 @@ double ComputeLineIntegral(const mfem::Vector &p1, const mfem::Vector &p2,
     result += ir.IntPoint(i).weight * dot;
   }
   return result;
+}
+
+}  // namespace
+#endif
+
+double ComputeLineIntegral(const mfem::Vector &p1, const mfem::Vector &p2,
+                           const mfem::ParGridFunction &field, int quad_order)
+{
+#if defined(MFEM_USE_GSLIB)
+  return LineIntegralCore(
+      p1, p2, field, quad_order, [&field](const mfem::Vector &xyz, mfem::Vector &vals)
+      { InterpolateFunction(xyz, field, vals, mfem::Ordering::byNODES); });
+#else
+  MFEM_ABORT("ComputeLineIntegral requires MFEM_USE_GSLIB!");
+  return 0.0;
+#endif
+}
+
+double ComputeLineIntegral(mfem::FindPointsGSLIB &op, const mfem::Vector &p1,
+                           const mfem::Vector &p2, const mfem::ParGridFunction &field,
+                           int quad_order)
+{
+#if defined(MFEM_USE_GSLIB)
+  // As ComputeLineIntegral, but reuses a pre-Setup point locator (op.Setup already called
+  // on the field's mesh). Avoids rebuilding the GSLIB spatial hash on every call — the
+  // dominant cost when integrating repeatedly on a fixed mesh.
+  return LineIntegralCore(
+      p1, p2, field, quad_order, [&op, &field](const mfem::Vector &xyz, mfem::Vector &vals)
+      { InterpolateFunction(op, xyz, field, vals, mfem::Ordering::byNODES); });
 #else
   MFEM_ABORT("ComputeLineIntegral requires MFEM_USE_GSLIB!");
   return 0.0;

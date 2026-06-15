@@ -599,6 +599,17 @@ WavePortData::WavePortData(const config::WavePortData &data,
     parent_E0t = std::make_unique<GridFunction>(nd_fespace, true);
     port_nd_transfer_reverse = std::make_unique<mfem::ParTransferMap>(
         mfem::ParSubMesh::CreateTransferMap(port_E0t->Real(), parent_E0t->Real()));
+
+#if defined(MFEM_USE_GSLIB)
+    // Build the GSLIB point locator on the (fixed) parent mesh once here.
+    // GetExcitationVoltage reuses it for every line integral instead of rebuilding the
+    // spatial hash per call — the dominant cost when the mode is evaluated at many
+    // frequencies (e.g. synthesis fit).
+    auto &parent_mesh = *parent_E0t->Real().FESpace()->GetMesh();
+    voltage_gslib_op =
+        std::make_unique<mfem::FindPointsGSLIB>(parent_E0t->Real().ParFESpace()->GetComm());
+    fem::SetupInterpolator(*voltage_gslib_op, parent_mesh);
+#endif
   }
 
   // Store polarity attributes [high, low]. The config parser enforces that this is
@@ -940,13 +951,20 @@ std::complex<double> WavePortData::GetVoltage(GridFunction &E) const
   MFEM_VERIFY(E.HasImag(),
               "Wave ports expect complex-valued E field in port voltage calculation!");
   std::complex<double> V(0.0, 0.0);
+#if defined(MFEM_USE_GSLIB)
+  // Reuse the cached point locator: E lives on the same parent mesh the op was Setup on.
   for (std::size_t k = 0; k + 1 < voltage_path.size(); k++)
   {
-    V.real(V.real() + fem::ComputeLineIntegral(voltage_path[k], voltage_path[k + 1],
-                                               E.Real(), voltage_n_samples));
-    V.imag(V.imag() + fem::ComputeLineIntegral(voltage_path[k], voltage_path[k + 1],
-                                               E.Imag(), voltage_n_samples));
+    V.real(V.real() + fem::ComputeLineIntegral(*voltage_gslib_op, voltage_path[k],
+                                               voltage_path[k + 1], E.Real(),
+                                               voltage_n_samples));
+    V.imag(V.imag() + fem::ComputeLineIntegral(*voltage_gslib_op, voltage_path[k],
+                                               voltage_path[k + 1], E.Imag(),
+                                               voltage_n_samples));
   }
+#else
+  MFEM_ABORT("Wave port VoltagePath computation requires MFEM_USE_GSLIB!");
+#endif
   return V;
 }
 
@@ -964,13 +982,22 @@ std::complex<double> WavePortData::GetExcitationVoltage() const
   port_nd_transfer_reverse->Transfer(port_E0t->Real(), parent_E0t->Real());
   port_nd_transfer_reverse->Transfer(port_E0t->Imag(), parent_E0t->Imag());
   std::complex<double> V(0.0, 0.0);
+#if defined(MFEM_USE_GSLIB)
+  // Reuse the cached point locator (Setup once at construction) — the GSLIB spatial hash
+  // depends only on the parent mesh, not the transferred field values. (Line integrals
+  // require GSLIB regardless; the cached locator just avoids rebuilding the hash per call.)
   for (std::size_t k = 0; k + 1 < voltage_path.size(); k++)
   {
-    V.real(V.real() + fem::ComputeLineIntegral(voltage_path[k], voltage_path[k + 1],
-                                               parent_E0t->Real(), voltage_n_samples));
-    V.imag(V.imag() + fem::ComputeLineIntegral(voltage_path[k], voltage_path[k + 1],
-                                               parent_E0t->Imag(), voltage_n_samples));
+    V.real(V.real() + fem::ComputeLineIntegral(*voltage_gslib_op, voltage_path[k],
+                                               voltage_path[k + 1], parent_E0t->Real(),
+                                               voltage_n_samples));
+    V.imag(V.imag() + fem::ComputeLineIntegral(*voltage_gslib_op, voltage_path[k],
+                                               voltage_path[k + 1], parent_E0t->Imag(),
+                                               voltage_n_samples));
   }
+#else
+  MFEM_ABORT("Wave port VoltagePath computation requires MFEM_USE_GSLIB!");
+#endif
   return V;
 }
 
