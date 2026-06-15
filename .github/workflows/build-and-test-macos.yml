@@ -174,12 +174,14 @@ jobs:
 
         # We have to upgrade CMake because the bundled one has a bug with
         # FindMPI that prevents it from finding MPI when compiling with GNU
-        # compilers.
+        # compilers. CMake was pinned to 3.31.8 (see #470) because CMake 4.x
+        # could not find some std headers with llvm@18. Test whether the latest
+        # CMake has resolved this so we can drop the pin.
       - name: Setup cmake
         if: needs.filter.outputs.test == 'true'
         uses: jwlawson/actions-setup-cmake@v2
         with:
-          cmake-version: '3.31.8'
+          cmake-version: '4.3.3'
 
       - name: Build Palace
         if: needs.filter.outputs.test == 'true'
