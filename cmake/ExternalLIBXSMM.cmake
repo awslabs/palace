@@ -39,6 +39,26 @@ if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
   list(APPEND LIBXSMM_OPTIONS
     "LDFLAGS=-undefined dynamic_lookup"
   )
+  # LIBXSMM's Makefile compiles with an explicit "-target" flag, which disables
+  # Clang's automatic macOS SDK detection, so system headers like pthread.h are
+  # not found. Tell the build where the SDK is via SDKROOT, which Clang uses as
+  # its sysroot. Passing it as a make variable also overrides LIBXSMM's own
+  # hardcoded SDKROOT default. Prefer CMake's resolved sysroot, falling back to
+  # xcrun when it is empty.
+  set(LIBXSMM_SDKROOT "${CMAKE_OSX_SYSROOT}")
+  if(NOT LIBXSMM_SDKROOT)
+    execute_process(
+      COMMAND xcrun --show-sdk-path
+      OUTPUT_VARIABLE LIBXSMM_SDKROOT
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET
+    )
+  endif()
+  if(LIBXSMM_SDKROOT)
+    list(APPEND LIBXSMM_OPTIONS
+      "SDKROOT=${LIBXSMM_SDKROOT}"
+    )
+  endif()
 endif()
 
 string(REPLACE ";" "; " LIBXSMM_OPTIONS_PRINT "${LIBXSMM_OPTIONS}")
