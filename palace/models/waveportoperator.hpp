@@ -112,6 +112,15 @@ private:
   std::unique_ptr<mfem::ParTransferMap> port_nd_transfer_reverse;
   std::unique_ptr<GridFunction> parent_E0t;
 
+  // Cached GSLIB point locator for the voltage-path line integrals, Setup once on the
+  // (fixed) parent mesh. The geometric Setup is the dominant cost, so reusing it across
+  // every Initialize() avoids an O(num_elements) hash rebuild per frequency — critical for
+  // the circuit-synthesis dispersion fit, which evaluates the mode at many frequencies.
+  // Only allocated if the user configured a voltage path.
+#if defined(MFEM_USE_GSLIB)
+  std::unique_ptr<mfem::FindPointsGSLIB> voltage_gslib_op;
+#endif
+
   // Optional polarity attributes (parent-mesh boundary attrs [high, low], signal
   // first, ground second). When non-zero (i.e. set by the user) the mode is flipped
   // so that E points from high to low, matching the lumped-port `+R Direction`
