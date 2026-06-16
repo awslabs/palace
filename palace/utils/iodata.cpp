@@ -286,13 +286,14 @@ void IoData::CheckConfiguration()
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
                 "at least one port (LumpedPort or WavePort) boundary condition!\n");
     MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
-                    ((boundaries.farfield.empty() || boundaries.farfield.order == 1) &&
-                     boundaries.conductivity.empty() &&
-                     boundaries.rational_impedance.empty()),
+                    boundaries.rational_impedance.empty(),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) is not "
-                "supported in systems with any of: "
-                "Absorbing (order > 1), Conductivity, or RationalImpedance "
-                "boundary conditions!\n");
+                "supported in systems with RationalImpedance boundary conditions!\n");
+    // Second-order absorbing (farfield) and surface-conductivity boundaries are now
+    // supported in circuit synthesis: their frequency-dependent contributions are folded
+    // into the synthesised pencil via the same auxiliary-state path as the wave ports (the
+    // 2nd-order ABC's 0.5/ω as an exact pole at ω=0; surface conductivity's iω/Z(ω) by a
+    // polynomial + AAA fit). See RomOperator::CalculateNormalizedPROMMatrices.
     // Wave ports are supported via polynomial fit of the modal dispersion kₙ,p(ω).
     // The fit residual is checked against waveport_synthesis_tol at the end of the
     // greedy phase. The runtime check is in RomOperator::CalculateNormalizedPROMMatrices.
