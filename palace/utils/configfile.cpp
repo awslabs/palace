@@ -428,6 +428,18 @@ int ParsePortExcitation(const json &port, int index)
   }
 }
 
+RationalImpedanceData::RationalImpedanceData(const json &boundary)
+{
+  attributes = boundary.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  num = boundary.at("Numerator").get<std::vector<double>>();      // Required
+  den = boundary.at("Denominator").get<std::vector<double>>();    // Required
+  MFEM_VERIFY(!num.empty() && !den.empty(),
+              "Rational impedance \"Numerator\" and \"Denominator\" must be nonempty!");
+  MFEM_VERIFY(std::any_of(den.begin(), den.end(), [](double c) { return c != 0.0; }),
+              "Rational impedance \"Denominator\" must have a nonzero coefficient!");
+}
+
 LumpedPortData::LumpedPortData(const json &port)
 {
   int index = port.at("Index");  // Required
@@ -873,6 +885,7 @@ BoundaryData::BoundaryData(const json &boundaries)
   farfield = ParseOptional<FarfieldBoundaryData>(boundaries, "Absorbing");
   conductivity = ParseOptionalVector<ConductivityData>(boundaries, "Conductivity");
   impedance = ParseOptionalVector<ImpedanceData>(boundaries, "Impedance");
+  rational_impedance = ParseOptionalVector<RationalImpedanceData>(boundaries, "RationalImpedance");
   lumpedport = ParseOptionalMap<LumpedPortData>(boundaries, "LumpedPort", "\"LumpedPort\"");
   terminal = ParseOptionalMap<TerminalData>(boundaries, "Terminal", "\"Terminal\"");
   periodic = ParseOptional<PeriodicBoundaryData>(boundaries, "Periodic");
@@ -1624,6 +1637,26 @@ void Nondimensionalize(const Units &units, TransientSolverData &data)
   data.pulse_tau = units.Nondimensionalize<Units::ValueType::TIME>(data.pulse_tau);
   data.max_t = units.Nondimensionalize<Units::ValueType::TIME>(data.max_t);
   data.delta_t = units.Nondimensionalize<Units::ValueType::TIME>(data.delta_t);
+}
+
+void Nondimensionalize(const Units &units, RationalImpedanceData &data)
+{
+  // Zs(s) = N(s)/D(s), s = iω. Internally ω̃ = ω·tc, Z̃ = Z/Z0; with s̃ = s·tc the
+  // numerator coefficient of sᵏ scales by 1/(Z0 tcᵏ) and the denominator by 1/tcᵏ. tc in
+  // SI seconds, coefficients highest-degree-first.
+  const double Z0 = units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+  const double tc = 1.0e-9 * units.GetScaleFactor<Units::ValueType::TIME>();  // [ns]->[s]
+  const auto rescale = [](std::vector<double> &c, double lead, double tc_s)
+  {
+    const int n = static_cast<int>(c.size());
+    for (int i = 0; i < n; i++)
+    {
+      const int deg = (n - 1) - i;  // highest-degree-first
+      c[i] /= (lead * std::pow(tc_s, deg));
+    }
+  };
+  rescale(data.num, Z0, tc);
+  rescale(data.den, 1.0, tc);
 }
 
 }  // namespace palace::config

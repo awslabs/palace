@@ -229,6 +229,7 @@ each schema version; a schema version applies to that release and all later ones
 | Schema version | First *Palace* release | Notes                              |
 |:--------------:|:----------------------:|:---------------------------------- |
 | `1-0-0`        | `0.17`                 | First explicitly-versioned schema. |
+| `1-1-0`        | `0.17.1`               | Add `RationalImpedance` boundary condition. |
 
 #### Enforcement
 
