@@ -648,6 +648,10 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
   {
     config::Nondimensionalize(units, data);
   }
+  for (auto &data : boundaries.rational_impedance)
+  {
+    config::Nondimensionalize(units, data);
+  }
   for (auto &[idx, data] : boundaries.lumpedport)
   {
     config::Nondimensionalize(units, data);

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-0-0",
+  "$id": "urn:palace:schema:1-1-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -215,6 +215,13 @@
           "items": {
             "$ref": "#/$defs/Impedance"
           }
+        },
+        "RationalImpedance": {
+          "type": "array",
+          "title": "Rational Impedance",
+          "description": "Array of rational surface impedance boundary conditions. The per-square surface impedance is an arbitrary rational function of frequency, Zs(s) = N(s)/D(s) with s = iω, specified by the numerator and denominator polynomial coefficients (its zeros and poles). This generalizes [Impedance](@ref config-boundaries-impedance) to any passive lumped-network response. Only available for frequency domain driven simulations.",
+          "additionalItems": false,
+          "items": { "$ref": "#/$defs/RationalImpedance" }
         },
         "Absorbing": {
           "$ref": "#/$defs/Absorbing",
@@ -907,6 +914,33 @@
           "type": "number",
           "description": "Surface capacitance for this impedance boundary, F/sq.",
           "default": 0.0
+        }
+      }
+    },
+    "RationalImpedance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Attributes", "Numerator", "Denominator"],
+      "properties":
+      {
+        "Attributes":
+        {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        },
+        "Numerator":
+        {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 1,
+          "description": "Real polynomial coefficients of the numerator N(s) of the rational surface impedance per square Zs(s) = N(s)/D(s), with s = iω, ordered from highest to lowest degree. The roots of N are the zeros of Zs. SI units (s in rad/s, Zs in Ω/sq); only the ratio N/D is physical."
+        },
+        "Denominator":
+        {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 1,
+          "description": "Real polynomial coefficients of the denominator D(s), ordered from highest to lowest degree. The roots of D are the poles of Zs."
         }
       }
     },

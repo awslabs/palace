@@ -416,6 +416,22 @@ public:
   ImpedanceData(const json &boundary);
 };
 
+struct RationalImpedanceData
+{
+public:
+  // Rational surface impedance Zs(s) = N(s)/D(s), s = iω, as polynomial coefficient lists
+  // in highest-degree-first order. Roots of N are zeros, roots of D are poles.
+  // SI units: s in [rad/s], Zs in [Ω/sq]; only the ratio N/D is physical.
+  std::vector<double> num = {};  // "Numerator"
+  std::vector<double> den = {};  // "Denominator"
+
+  // List of boundary attributes for this rational impedance boundary condition.
+  std::vector<int> attributes = {};
+
+  RationalImpedanceData() = default;
+  RationalImpedanceData(const json &boundary);
+};
+
 struct LumpedPortData
 {
 public:
@@ -721,6 +737,7 @@ public:
   FarfieldBoundaryData farfield = {};
   std::vector<ConductivityData> conductivity = {};
   std::vector<ImpedanceData> impedance = {};
+  std::vector<RationalImpedanceData> rational_impedance = {};
   std::map<int, LumpedPortData> lumpedport = {};
   std::map<int, TerminalData> terminal = {};
   std::map<int, WavePortData> waveport = {};
@@ -1138,6 +1155,7 @@ void Nondimensionalize(const Units &units, InterfaceDielectricData &data);
 void Nondimensionalize(const Units &units, EigenSolverData &data);
 void Nondimensionalize(const Units &units, DrivenSolverData &data);
 void Nondimensionalize(const Units &units, TransientSolverData &data);
+void Nondimensionalize(const Units &units, RationalImpedanceData &data);
 
 }  // namespace palace::config
 
