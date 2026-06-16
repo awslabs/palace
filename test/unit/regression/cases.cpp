@@ -30,26 +30,28 @@ namespace
 // Magnitude-only farfield check. Phase of the complex E components is not
 // reproducible across MPI partitions, so we compare
 //   |E|(row) = sqrt(|Ex|^2 + |Ey|^2 + |Ez|^2)
-// at the case's rtol. Column layout in farfield-rE.csv:
-//   3=r*Re{Ex}, 4=r*Im{Ex}, 5=r*Re{Ey}, 6=r*Im{Ey}, 7=r*Re{Ez}, 8=r*Im{Ez}
+// at the case's rtol. The six trailing columns are r*Re{E_x}, r*Im{E_x}, ...,
+// r*Im{E_z} for both driven and eigenmode output (the leading columns differ).
 palace::test::CustomCheck TestFarfield(double rtol)
 {
   return [rtol](palace::Table &a, palace::Table &r)
   {
-    CHECK(a.n_cols() >= 9);
-    CHECK(r.n_cols() >= 9);
-    if (a.n_cols() < 9 || r.n_cols() < 9)
+    CHECK(a.n_cols() >= 6);
+    CHECK(a.n_cols() == r.n_cols());
+    if (a.n_cols() < 6 || a.n_cols() != r.n_cols())
     {
       return;
     }
+    const std::size_t e0 = a.n_cols() - 6;
     const std::size_t n_rows = std::min(a.n_rows(), r.n_rows());
     for (std::size_t i = 0; i < n_rows; ++i)
     {
       auto mag_sq = [&](palace::Table &t)
       {
         auto sq = [](double x, double y) { return x * x + y * y; };
-        return sq(t[3].data[i], t[4].data[i]) + sq(t[5].data[i], t[6].data[i]) +
-               sq(t[7].data[i], t[8].data[i]);
+        return sq(t[e0].data[i], t[e0 + 1].data[i]) +
+               sq(t[e0 + 2].data[i], t[e0 + 3].data[i]) +
+               sq(t[e0 + 4].data[i], t[e0 + 5].data[i]);
       };
       const double m_a = std::sqrt(mag_sq(a));
       const double m_r = std::sqrt(mag_sq(r));
@@ -294,6 +296,7 @@ TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
   opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.custom_checks["farfield-rE.csv"] = TestFarfield(opts.rtol);
   palace::test::RunRegressionCase("cpw", "cpw_lumped_uniform.json", "lumped_uniform", opts);
 }
 
@@ -405,7 +408,7 @@ TEST_CASE("transmon_amr", "[Serial][Parallel][GPU][Regression][Long]")
 // fixtures are added.
 
 // ===========================================================================
-// 2D cases. Live on hughcars/boundarymode-2d; not yet on origin/main.
+// 2D cases.
 // ===========================================================================
 
 // cavity2d eigenmode uses the tight 1e-4 / 1e-16 tolerance.
