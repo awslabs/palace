@@ -596,13 +596,16 @@ SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
 
 template <typename OperType>
 std::unique_ptr<OperType>
-SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy diag_policy)
+SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy diag_policy,
+                                              bool imag_slot)
 {
   // ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield ABC, with unit
-  // coefficient. Stored on the REAL slot of the resulting ComplexParOperator so that
-  // downstream BuildParSumOperator can scale it by an arbitrary complex coefficient (the
-  // real-ω path uses i·(0.5/ω); the complex-λ path uses -0.5/λ). Returns null if the
-  // farfield ABC order < 2 or it contributes no DoFs on this rank.
+  // coefficient. By default stored on the REAL slot of the resulting ComplexParOperator so
+  // that downstream BuildParSumOperator can scale it by an arbitrary complex coefficient
+  // (the real-ω path uses i·(0.5/ω); the complex-λ path uses -0.5/λ). With imag_slot=true
+  // it is placed on the IMAGINARY slot, matching the wave-port boundary-mass convention
+  // (the i in i·f(ω)·M baked in) so circuit synthesis can fold it in uniformly. Returns
+  // null if the farfield ABC order < 2 or it contributes no DoFs on this rank.
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient df(mat_op.MaxCeedBdrAttribute());
   farfield_op.AddExtraSystemBoundaryCurlCurlBdrCoefficients(1.0, df);
@@ -617,7 +620,49 @@ SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy diag_poli
       AssembleOperator(GetNDSpace(), nullptr, nullptr, &df, nullptr, nullptr, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
-    auto M_op = std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
+    auto M_op =
+        imag_slot
+            ? std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace())
+            : std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+  else
+  {
+    MFEM_VERIFY(!imag_slot,
+                "imag_slot is only meaningful for the ComplexOperator instantiation of "
+                "GetFarfieldExtraBoundaryMatrix!");
+    auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+}
+
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,
+                                                    Operator::DiagonalPolicy diag_policy)
+{
+  // ω-independent unit-coefficient boundary mass A_σ for surface-conductivity group
+  // group_idx, on the IMAGINARY slot (matching the wave-port convention). The full A2
+  // contribution at frequency ω is (i·ω/Z_g(ω))·A_σ; circuit synthesis factors out A_σ here
+  // and applies the scalar via a dispersion fit. Returns null if the group contributes no
+  // DoFs on this rank.
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
+  surf_sigma_op.AddBoundaryMassBdrCoefficients(static_cast<std::size_t>(group_idx), fb);
+  int empty = fb.empty();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto m =
+      AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
     M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     return M_op;
   }
@@ -1333,9 +1378,14 @@ template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetWavePortBoundaryMassMatrix(int, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
-    SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy);
+SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy, bool);
 template std::unique_ptr<ComplexOperator>
-    SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy);
+SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy, bool);
+
+template std::unique_ptr<Operator>
+SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int, Operator::DiagonalPolicy);
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, const Operator *,

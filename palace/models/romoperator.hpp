@@ -183,8 +183,24 @@ protected:
   std::map<int, Eigen::MatrixXcd> Mwp_p_r;
   // True iff GetExtraSystemMatrix has any non-wave-port contributors (currently
   // second-order farfield or surface conductivity). Set in the ctor; controls the slow
-  // SolvePROM A2 fallback path.
+  // SolvePROM A2 fallback path. NOTE: these contributors are now ALSO folded into the
+  // circuit synthesis (see M_ff_, Asig_g_ below); has_other_A2 still gates the online
+  // SolvePROM fallback, which is independent of synthesis.
   bool has_other_A2 = false;
+
+  // ω-independent boundary operators for the other frequency-dependent BCs, folded into
+  // circuit synthesis the same way as the wave ports (each contributes i·f(ω)·M_proj·v to
+  // Aᵣ(ω); project M_proj once, fit/inject the scalar f(ω)). Stored with the boundary mass
+  // in the IMAGINARY slot (matching Mwp_p) so the synthesis path treats them uniformly.
+  //   - Second-order farfield ABC: f(ω) = 0.5/ω, a single exact pole at ω=0 (residue 0.5),
+  //     injected analytically (no fit). M_ff_ is the curl-curl boundary matrix.
+  //   - Surface conductivity, one entry per attribute group g: f(ω) = ω/Z_g(ω) (the i is
+  //     the implicit slot factor; surf_sigma_op.EvaluateScalar returns i·ω/Z, so the scalar
+  //     used here is EvaluateScalar/i, generally complex), fit by poly+AAA.
+  std::unique_ptr<ComplexOperator> M_ff_;
+  Eigen::MatrixXcd M_ff_r;
+  std::vector<std::unique_ptr<ComplexOperator>> Asig_g_;
+  std::vector<Eigen::MatrixXcd> Asig_g_r;
 
   // Sweep band [ω_min, ω_max] (nondimensional, rad) captured from iodata at construction
   // time. Used to (a) sample kₙ,p(ω) for the synthesis polynomial fit, and (b) define the
@@ -300,6 +316,10 @@ protected:
   struct WavePortAuxBlock
   {
     int port_idx = 0;
+    // Aux-state label prefix. Empty -> "waveport_<port_idx>" (the wave-port default). Set
+    // to e.g. "farfield" or "surfsigma_<g>" for the other frequency-dependent BCs so their
+    // aux rows are distinguishable in the emitted matrices.
+    std::string label;
     std::vector<double> sigmas;           // singular values kept above tolerance
     std::vector<Eigen::VectorXd> u_dirs;  // matching left singular vectors
     std::vector<std::complex<double>> poles;
@@ -316,6 +336,12 @@ protected:
     double alpha0 = 0.0;
     double alpha1 = 0.0;
     double alpha2 = 0.0;
+    // Complex polynomial coefficients, used by the generalized scalar-dispersion path
+    // (FitScalarDispersion, for surface conductivity) where f(ω) is complex. The wave-port
+    // path leaves these zero and uses the real alpha0/1/2 above.
+    std::complex<double> alpha0c = 0.0;
+    std::complex<double> alpha1c = 0.0;
+    std::complex<double> alpha2c = 0.0;
     std::optional<WavePortAuxBlock> aux;
     double rel_err_polynomial = 0.0;  // residual of α-only fit on dense grid
     double rel_err_augmented = 0.0;   // residual after AAA augmentation (Augmented only)
@@ -341,6 +367,34 @@ protected:
                                             Eigen::MatrixXcd &Cr_corr,
                                             Eigen::MatrixXcd &Mr_corr);
 
+  // Generalized scalar-dispersion fit for the other frequency-dependent BCs (surface
+  // conductivity). Like FitWavePortDispersion but driven by an arbitrary scalar function
+  // f(ω) (here ω/Z_g(ω), generally COMPLEX) instead of the wave-port kₙ(ω). The projected
+  // boundary mass `Mp_r` is purely imaginary (= i·M_proj) so the assembled contribution is
+  // i·f(ω)·M_proj·v. Produces complex α₀/α₁/α₂ and, when augmenting, an aux block with
+  // complex residues. `label` is used in the diagnostic print and aux-state labels.
+  WavePortDispersionFit
+  FitScalarDispersion(const std::string &label, const Eigen::MatrixXcd &Mp_r,
+                      const std::function<std::complex<double>(std::complex<double>)> &f,
+                      bool allow_augment) const;
+
+  // Complex-coefficient variant of ApplyPolynomialFitCorrections for the other BCs: folds
+  // α₀·Mp_r into Kr, -i·α₁·Mp_r into Cr, -α₂·Mp_r into Mr with COMPLEX α (the wave-port
+  // version assumes real α). With Mp_r = i·M_proj this reproduces i·(α₀+α₁ω+α₂ω²)·M_proj·v.
+  static void ApplyComplexPolynomialFitCorrections(
+      std::complex<double> alpha0, std::complex<double> alpha1, std::complex<double> alpha2,
+      const Eigen::MatrixXcd &Mp_r, Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr,
+      Eigen::MatrixXcd &Mr_corr);
+
+  // Build an aux block for one (matrix, pole-residue list) contribution, used by the ABC
+  // (analytic single pole at ω=0, residue 0.5) and surf-σ (fitted poles). `Mp_r` is the
+  // projected purely-imaginary boundary mass; the SVD of its imaginary part gives the
+  // coupling directions exactly as in the wave-port augmented path.
+  static std::optional<WavePortAuxBlock>
+  MakeAuxBlock(int label_idx, const Eigen::MatrixXcd &Mp_r,
+               const std::vector<std::complex<double>> &poles,
+               const std::vector<std::complex<double>> &residues, double rank_tol);
+
   // Append aux-state rows/columns for regime-2 wave ports onto an n×n base pencil
   // (Kr_total, Cr_total, Mr_total). Returns the (n+aux)×(n+aux) augmented matrices and
   // appends labels to `aux_labels`. The base matrices are left at size n×n if no aux
@@ -351,11 +405,11 @@ protected:
     Eigen::MatrixXcd Cr;
     Eigen::MatrixXcd Mr;
   };
-  static AugmentedPencil BuildAugmentedPencil(
-      const Eigen::MatrixXcd &Kr_total, const Eigen::MatrixXcd &Cr_total,
-      const Eigen::MatrixXcd &Mr_total,
-      const std::vector<WavePortAuxBlock> &aux_blocks,
-      std::vector<std::string> &aux_labels);
+  static AugmentedPencil
+  BuildAugmentedPencil(const Eigen::MatrixXcd &Kr_total, const Eigen::MatrixXcd &Cr_total,
+                       const Eigen::MatrixXcd &Mr_total,
+                       const std::vector<WavePortAuxBlock> &aux_blocks,
+                       std::vector<std::string> &aux_labels);
 
 public:
   RomOperator(const config::LinearSolverData &linear, int verbose, SpaceOperator &space_op,

@@ -161,9 +161,11 @@ public:
   auto &GetLumpedPortOp() { return lumped_port_op; }
   auto &GetWavePortOp() { return wave_port_op; }
   auto &GetSurfaceCurrentOp() { return surf_j_op; }
+  auto &GetSurfaceConductivityOp() { return surf_sigma_op; }
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
+  const auto &GetSurfaceConductivityOp() const { return surf_sigma_op; }
 
   const auto &GetPortExcitations() const { return port_excitation_helper; }
 
@@ -228,14 +230,29 @@ public:
   GetWavePortBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
 
   // Construct the ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield
-  // (absorbing) BC, with unit coefficient, stored on the real slot. The full A2
-  // contribution at frequency ω is `i·(0.5/ω)·M_ff` (real-ω stamping) or `-0.5/λ·M_ff`
-  // (complex-λ analytic continuation); a caller scales this matrix by the appropriate
-  // complex coefficient. Returns a null pointer if the farfield BC order < 2 or it
-  // contributes no DoFs on this rank. Used by the NLEPS HYBRID frozen-ABC seed strategy.
+  // (absorbing) BC, with unit coefficient. By default stored on the real slot (so a caller
+  // scales it by an arbitrary complex coefficient): the full A2 contribution at frequency ω
+  // is `i·(0.5/ω)·M_ff` (real-ω stamping) or `-0.5/λ·M_ff` (complex-λ analytic
+  // continuation). Used by the NLEPS HYBRID frozen-ABC seed strategy. Set `imag_slot=true`
+  // to instead place M_ff on the imaginary slot, matching the wave-port boundary-mass
+  // convention (i·f(ω)·M with the i baked in) so it can be folded into circuit synthesis
+  // uniformly with wave ports. Returns null if the farfield BC order < 2 or contributes no
+  // DoFs on this rank.
   template <typename OperType>
   std::unique_ptr<OperType>
-  GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy diag_policy);
+  GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy diag_policy,
+                                 bool imag_slot = false);
+
+  // Construct the ω-independent boundary mass matrix A_σ for surface-conductivity group
+  // `group_idx`, with unit coefficient, on the IMAGINARY slot (matching the wave-port
+  // convention). The full A2 contribution at frequency ω is `(i·ω/Z_g(ω))·A_σ` =
+  // `f_g(ω)·(i·A_σ)` with f_g(ω) = ω/Z_g(ω) the real-or-complex scalar from
+  // GetSurfaceConductivityOp().EvaluateScalar(group, ω)/i. Returns null if the group
+  // contributes no DoFs on this rank. Used to fold surface conductivity into circuit
+  // synthesis. `NumSurfaceConductivityGroups()` gives the group count.
+  template <typename OperType>
+  std::unique_ptr<OperType>
+  GetSurfaceConductivityBoundaryMatrix(int group_idx, Operator::DiagonalPolicy diag_policy);
 
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:
@@ -318,8 +335,7 @@ public:
   // units. This is locally in the same direction as E_t, but because of lumped ports can
   // have multiple attributes ports with different surface impedances, they are not just
   // proportional to each other.
-  void GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
-                                                ComplexVector &Htcn_primary);
+  void GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx, ComplexVector &Htcn_primary);
 
   // Fill vector corresponding to the tangential modal electric field E_t at a wave port,
   // evaluated at the reference frequency `omega_ref`. Used by the synthesis code path to
