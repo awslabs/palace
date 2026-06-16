@@ -146,6 +146,38 @@ const std::vector<std::string> kEigenExcluded = {"Maximum", "Minimum", "Mean",
                                                  "Error (Bkwd.)", "Error (Abs.)"};
 constexpr auto kForceDefaultSolver = palace::test::SolverOverridePolicy::ForceDefault;
 
+// Floquet-port S-parameters: compare only the |S[...]| (dB) magnitude columns
+// (phase isn't reproducible). NaN entries (evanescent modes) and signals below
+// -200 dB (negligible) count as matches. Ports the Julia test_floquet_sparams.
+palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
+{
+  return [rtol, atol](palace::Table &actual, palace::Table &reference)
+  {
+    const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
+    const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());
+    for (std::size_t c = 0; c < n_cols; ++c)
+    {
+      const std::string &hdr = reference[c].header_text;
+      if (hdr.find("|S[") == std::string::npos || hdr.find("(dB)") == std::string::npos)
+      {
+        continue;
+      }
+      for (std::size_t r = 0; r < n_rows; ++r)
+      {
+        const double v_new = actual[c].data[r];
+        const double v_ref = reference[c].data[r];
+        if ((std::isnan(v_new) && std::isnan(v_ref)) || v_ref < -200.0)
+        {
+          continue;
+        }
+        INFO("row " << r + 1 << " column '" << hdr << "'");
+        CHECK_THAT(v_new, Catch::Matchers::WithinRel(v_ref, rtol) ||
+                              Catch::Matchers::WithinAbs(v_ref, atol));
+      }
+    }
+  };
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -224,6 +256,22 @@ TEST_CASE("cylinder_driven_wave", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   palace::test::RunRegressionCase("cylinder", "driven_wave.json", "driven_wave", opts);
+}
+
+// Floquet-port dielectric grating: structure + Floquet S-parameter magnitudes
+// (phase, evanescent-NaN and negligible entries skipped). Tolerances from the
+// driven_wave block.
+TEST_CASE("dielectric_grating_uniform", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.custom_checks["port-floquet-S.csv"] = TestFloquetSParams(opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("dielectric_grating", "dielectric_grating_uniform.json",
+                                  "uniform", opts);
 }
 
 // --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all three ---
