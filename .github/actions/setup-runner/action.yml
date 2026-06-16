@@ -4,10 +4,6 @@
 name: 'Setup Runners'
 description: 'Common steps to prepare the environment to run Palace tests'
 inputs:
-  julia-version:
-    description: 'Version of Julia to use (as understood by juliaup), or "dont-install" to skip'
-    required: false
-    default: 'release'
   spack-version:
     description: 'Spack git tag to use'
     required: false
@@ -20,10 +16,6 @@ inputs:
     description: 'Install Intel OneAPI'
     required: false
     default: 'false'
-outputs:
-  julia-version:
-    description: 'Julia version that was installed'
-    value: ${{ steps.setup-julia.outputs.julia-version }}
 runs:
   using: 'composite'
   steps:
@@ -180,29 +172,4 @@ runs:
 
         # Workaround for https://github.com/spack/spack/issues/51505
         ln -s "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
-        
-    - name: Install Julia
-      if: inputs.julia-version != 'dont-install'
-      id: setup-julia
-      shell: bash
-      env:
-        JULIA_VERSION: ${{ inputs.julia-version }}
-      run: |
-        source /tmp/timing_functions.sh
-        start_timer
-        # Install juliaup (installs release by default)
-        curl -fsSL https://install.julialang.org | sh -s -- --yes
-        
-        # Add Julia to PATH
-        echo "$HOME/.juliaup/bin" >> $GITHUB_PATH
-        
-        # Install and set the specified Julia version as default
-        if [ "${JULIA_VERSION}" != "release" ]; then
-          ~/.juliaup/bin/juliaup add "${JULIA_VERSION}"
-          ~/.juliaup/bin/juliaup default "${JULIA_VERSION}"
-        fi
-        
-        # Output the installed version
-        echo "julia-version=$JULIA_VERSION" >> $GITHUB_OUTPUT
-        echo "Installed Julia version: $JULIA_VERSION"
-        end_timer "Install Julia"
+
