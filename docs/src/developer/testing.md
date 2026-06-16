@@ -516,12 +516,19 @@ Run on GPU with `--device cuda`, which also adds the `[GPU]` tag.
 
 When Palace behaviour changes legitimately (algorithm improvements,
 schema changes), regenerate the reference CSVs by running the case at
-the CI rank count and copying the output into the reference tree:
+the CI rank count and refreshing only the CSVs in the reference tree:
 
 ```bash
-mpirun -n $NUM_PROC_TEST palace examples/<case>/<config>.json
-cp -r examples/<case>/postpro/* test/examples/ref/<case>/<subdir>/
+case=cpw config=cpw_lumped_uniform.json subdir=lumped_uniform
+mpirun -n "$NUM_PROC_TEST" palace "examples/$case/$config"
+dst="test/examples/ref/$case/$subdir"
+rm -rf "$dst"
+rsync -am --include='*/' --include='*.csv' --exclude='*' \
+  "examples/$case/postpro/$subdir/" "$dst/"
 ```
+
+Repeat (or loop) over `case`/`config`/`subdir` to re-baseline several cases
+at once, as the old `baseline` script did.
 
 #### Adding a new regression case
 
