@@ -435,11 +435,9 @@ jobs:
             NUM_PROC_BUILD=$NUM_PROC_BUILD_MAX
           fi
           if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
-            export AOCLROOT="$AOCLROOT"
             export LD_LIBRARY_PATH="$AOCLROOT/lib:$LD_LIBRARY_PATH"
           fi
           if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
-            export ARMPL_DIR="$ARMPL_DIR"
             export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
           fi
 
@@ -501,7 +499,6 @@ jobs:
             export LD_LIBRARY_PATH="$AOCLROOT/lib:$LD_LIBRARY_PATH"
           fi
           if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
-            export ARMPL_DIR="$ARMPL_DIR"
             export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
           fi
 
@@ -575,11 +572,9 @@ jobs:
             source /opt/intel/oneapi/setvars.sh  # Sets PATH, MKLROOT
           fi
           if [[ "${{ matrix.math-libs }}" == 'aocl' ]]; then
-            export AOCLROOT="$AOCLROOT"
             export LD_LIBRARY_PATH="$AOCLROOT/lib:$LD_LIBRARY_PATH"
           fi
           if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
-            export ARMPL_DIR="$ARMPL_DIR"
             export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
           fi
           export NUM_PROC_TEST=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
