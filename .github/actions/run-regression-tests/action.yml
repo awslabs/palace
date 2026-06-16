@@ -93,58 +93,60 @@ runs:
 
         eval $(spack -e . load --sh palace)
 
-        # Catch2 CLI knobs mirror the old Julia harness behavior;
-        # palace-unit-tests --help lists them in full.
+        # Extra Catch2 args baked into every generated ctest command: the
+        # linear solver to exercise (varied per job without rebuilding) and,
+        # on CUDA builds, the GPU device (which also restricts to np=1).
         LINEAR_SOLVER="${{ inputs.linear-solver }}"
-        if [[ -z "$LINEAR_SOLVER" ]]; then
-          LINEAR_SOLVER="Default"
-        fi
-        SOLVER_OVERRIDE=(--palace-linear-solver "$LINEAR_SOLVER")
-
+        EXTRA_ARGS="--palace-linear-solver;${LINEAR_SOLVER:-Default}"
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
-          SOLVER_OVERRIDE+=(--device cuda)
+          EXTRA_ARGS="${EXTRA_ARGS};--device;cuda"
           export NUM_PROC_TEST=1
         fi
 
-        # Translate the action's `test-cases` input to a list of Catch2
-        # case names. "default" / empty -> the [Regression] tag (the
-        # always-on suite, enumerated dynamically); "long" -> the
-        # [Long] tag (transmon eigenmodes, ~10 min each); anything else
-        # is taken as a space-separated list of Catch2 TEST_CASE names
-        # (e.g. "transmon_coarse cylinder_cavity_pec"), passed through
-        # verbatim.
-        translate_cases() {
+        # Vend the example configs/meshes and reference data from the checkout;
+        # the binary reads these at run time (see test/unit/regression_helpers).
+        export PALACE_EXAMPLES_DIR="${GITHUB_WORKSPACE}/examples"
+        export PALACE_REGRESSION_REF_DIR="${GITHUB_WORKSPACE}/test/examples/ref"
+
+        BIN=$(command -v palace-unit-tests)
+        MPIEXEC=$(command -v mpirun)
+        GENERATOR="${GITHUB_WORKSPACE}/test/unit/regression/GenerateRegressionCTest.cmake"
+
+        # Generate a relocatable CTestTestfile for a Catch2 filter and drive it
+        # with ctest (per-case results, PROCESSORS-correct scheduling). Unlike a
+        # build-tree ctest, this works against the Spack-installed binary.
+        run_group() {
+          local spec="$1" label="$2" timeout="$3"
+          local dir
+          dir=$(mktemp -d)
+          cmake -D PALACE_UNIT_TESTS="$BIN" -D MPIEXEC="$MPIEXEC" \
+                -D NP="$NUM_PROC_TEST" -D OUTPUT_DIR="$dir" \
+                -D SPEC="$spec" -D LABEL="$label" -D TIMEOUT="$timeout" \
+                -D EXTRA_ARGS="$EXTRA_ARGS" -P "$GENERATOR"
+          ctest --test-dir "$dir" --output-on-failure
+        }
+
+        # Map the action's `test-cases` input onto a Catch2 filter. "default"
+        # is the always-on suite; "long" the heavy [Long] cases; anything else
+        # is a space-separated list of explicit case names.
+        run_cases() {
           local raw="$1"
           if [[ -z "$raw" || "$raw" == "default" ]]; then
-            palace-unit-tests "[Regression]~[Long]" --list-tests | awk '/^  [a-z]/ {print $1}'
-            return
+            run_group "[Regression]~[Long]" regression 600
+          elif [[ "$raw" == "long" ]]; then
+            run_group "[Long]" long 1800
+          else
+            for case in $raw; do
+              run_group "$case" long 1800
+            done
           fi
-          if [[ "$raw" == "long" ]]; then
-            palace-unit-tests "[Long]" --list-tests | awk '/^  [a-z]/ {print $1}'
-            return
-          fi
-          echo "$raw" | tr ' ' '\n'
         }
 
-        # One mpirun per case. Each case runs in a fresh process so
-        # long-lived library state (libCEED kernel cache, MFEM /
-        # HYPRE singletons, PETSc heap) doesn't accumulate across the
-        # whole suite.
-        run_cases() {
-          while IFS= read -r case; do
-            [[ -z "$case" ]] && continue
-            echo "=== Running $case ==="
-            mpirun -np $NUM_PROC_TEST palace-unit-tests \
-              "${SOLVER_OVERRIDE[@]}" \
-              "$case"
-          done
-        }
-
-        translate_cases "${{ inputs.test-cases }}" | run_cases
+        run_cases "${{ inputs.test-cases }}"
 
         ADDITIONAL="${{ inputs.additional-test-cases }}"
         if [[ -n "$ADDITIONAL" ]]; then
-          translate_cases "$ADDITIONAL" | run_cases
+          run_cases "$ADDITIONAL"
         fi
 
         end_timer "Run Integration Tests"
