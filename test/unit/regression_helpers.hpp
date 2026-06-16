@@ -72,11 +72,9 @@ std::filesystem::path GetExamplesDir();
 std::filesystem::path GetRegressionRefDir();
 std::filesystem::path GetRegressionRunDir();
 
-// Solver / device overrides. Empty = no override; the config JSON value
-// is used.
+// Solver overrides. Empty = no override; the config JSON value is used.
 void SetSolverOverride(std::string value);
 void SetEigenSolverOverride(std::string value);
-void SetDeviceOverride(std::string value);
 
 }  // namespace palace::test
 

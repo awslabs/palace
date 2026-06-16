@@ -45,7 +45,6 @@ int main(int argc, char *argv[])
   std::string regression_run_dir;               // --regression-run-dir
   std::string palace_linear_solver{"Default"};  // --palace-linear-solver
   std::string palace_eigensolver{"Default"};    // --palace-eigensolver
-  std::string palace_device;                    // --palace-device
 
   // Build a new parser on top of Catch2's.
   using namespace Catch::Clara;
@@ -71,8 +70,6 @@ int main(int argc, char *argv[])
              Opt(palace_eigensolver, "type")["--palace-eigensolver"](
                  "Override Solver.Eigenmode.Type for [Regression] cases (e.g. "
                  "SLEPc, ARPACK)") |
-             Opt(palace_device, "name")["--palace-device"](
-                 "Override Solver.Device for [Regression] cases (CPU or GPU)") |
              Opt(benchmark_ref_levels, "levels")["--benchmark-ref-levels"](
                  "Levels of uniform mesh refinement for benchmarks (default: 0)") |
              Opt(benchmark_order, "order")["--benchmark-order"](
@@ -184,7 +181,6 @@ int main(int argc, char *argv[])
   palace::test::SetRegressionRunDirOverride(regression_run_dir);
   palace::test::SetSolverOverride(palace_linear_solver);
   palace::test::SetEigenSolverOverride(palace_eigensolver);
-  palace::test::SetDeviceOverride(palace_device);
 
   // Only print from the root process.
   // TODO: Print errors from other processes as well.

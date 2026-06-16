@@ -102,7 +102,7 @@ runs:
         SOLVER_OVERRIDE=(--palace-linear-solver "$LINEAR_SOLVER")
 
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
-          SOLVER_OVERRIDE+=(--palace-device GPU)
+          SOLVER_OVERRIDE+=(--device cuda)
           export NUM_PROC_TEST=1
         fi
 

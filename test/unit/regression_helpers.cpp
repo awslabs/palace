@@ -40,7 +40,6 @@ std::string g_regression_ref_dir_override;
 std::string g_regression_run_dir_override;
 std::string g_solver_override;
 std::string g_eigensolver_override;
-std::string g_device_override;
 
 // Recursively collect CSV and non-CSV metadata filenames relative to
 // `root`. Folders named in `skip_dirs` are recorded at their top level
@@ -340,10 +339,6 @@ std::string ResolveSolverOverride(SolverOverridePolicy policy,
 IoData LoadCaseIoData(nlohmann::json config, const RegressionOptions &opts)
 {
   auto &solver = config["Solver"];  // creates if missing
-  if (!g_device_override.empty())
-  {
-    solver["Device"] = g_device_override;
-  }
 
   if (const std::string linear_solver =
           ResolveSolverOverride(opts.linear_solver_policy, g_solver_override);
@@ -386,10 +381,6 @@ void SetSolverOverride(std::string value)
 void SetEigenSolverOverride(std::string value)
 {
   g_eigensolver_override = std::move(value);
-}
-void SetDeviceOverride(std::string value)
-{
-  g_device_override = std::move(value);
 }
 
 std::filesystem::path GetExamplesDir()

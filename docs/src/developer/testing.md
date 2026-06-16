@@ -509,7 +509,8 @@ Per-case solver knobs:
 |:------------------------ |:------------------------------------------ |
 | `--palace-linear-solver` | Overrides `Solver.Linear.Type` per case    |
 | `--palace-eigensolver`   | Overrides `Solver.Eigenmode.Type` per case |
-| `--palace-device`        | Overrides `Solver.Device` per case         |
+
+Run on GPU with `--device cuda`, which also adds the `[GPU]` tag.
 
 #### Re-baselining
 
