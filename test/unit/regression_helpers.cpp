@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <set>
 #include <sstream>
@@ -389,6 +390,10 @@ std::filesystem::path GetExamplesDir()
   {
     return g_examples_dir_override;
   }
+  if (const char *env = std::getenv("PALACE_EXAMPLES_DIR"))
+  {
+    return env;
+  }
 #ifdef PALACE_EXAMPLES_DIR_DEFAULT
   return PALACE_EXAMPLES_DIR_DEFAULT;
 #else
@@ -401,6 +406,10 @@ std::filesystem::path GetRegressionRefDir()
   if (!g_regression_ref_dir_override.empty())
   {
     return g_regression_ref_dir_override;
+  }
+  if (const char *env = std::getenv("PALACE_REGRESSION_REF_DIR"))
+  {
+    return env;
   }
 #ifdef PALACE_REGRESSION_REF_DIR_DEFAULT
   return PALACE_REGRESSION_REF_DIR_DEFAULT;
@@ -417,6 +426,24 @@ std::filesystem::path GetRegressionRunDir()
   }
   return std::filesystem::temp_directory_path() / "palace-regression";
 }
+
+namespace
+{
+
+// Fail the case (on every rank) if a required input is missing, telling the
+// user how to point the harness at a checkout that vends the data.
+void RequireArtifact(const std::filesystem::path &path, std::string_view what)
+{
+  INFO("Missing regression "
+       << what << ": " << path
+       << "\nThe regression suite needs the example config, its mesh, and the "
+          "reference data. Vend them from a Palace checkout via the "
+          "--examples-dir / --regression-ref-dir flags or the PALACE_EXAMPLES_DIR "
+          "/ PALACE_REGRESSION_REF_DIR environment variables.");
+  REQUIRE(std::filesystem::exists(path));
+}
+
+}  // namespace
 
 void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
                        std::string_view postpro_subdir, const RegressionOptions &opts)
@@ -435,13 +462,26 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
                            << example_path << "\nconfig:   " << config_path
                            << "\nrun root: " << run_root << "\nref:      " << ref_postpro);
 
-  REQUIRE(std::filesystem::exists(config_path));
-  REQUIRE(std::filesystem::is_directory(ref_postpro));
+  // Fail clearly if the user has not vended the config, mesh, or reference data.
+  RequireArtifact(config_path, "config file");
+  RequireArtifact(ref_postpro, "reference data directory");
+  nlohmann::json config = LoadConfigJson(config_path);
+  if (auto model = config.find("Model"); model != config.end())
+  {
+    if (auto mesh = model->find("Mesh"); mesh != model->end() && mesh->is_string())
+    {
+      std::filesystem::path mesh_path = mesh->get<std::string>();
+      if (mesh_path.is_relative())
+      {
+        mesh_path = example_path / mesh_path;
+      }
+      RequireArtifact(mesh_path, "mesh file");
+    }
+  }
 
   ScopedExampleStage stage(example_path, run_root, postpro_subdir, comm);
   const std::filesystem::path postpro_path = stage.path() / "postpro" / postpro_subdir;
 
-  nlohmann::json config = LoadConfigJson(config_path);
   const int max_refinement_iterations = GetMaxRefinementIterations(config);
 
   IoData iodata = LoadCaseIoData(std::move(config), opts);
