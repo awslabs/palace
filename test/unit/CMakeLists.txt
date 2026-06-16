@@ -168,11 +168,10 @@ set(SHOULD_SET_LLVM_PROFILE_FILE "$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<
 # Serial tests
 catch_discover_tests(unit-tests
   TEST_PREFIX "serial-"
-  # Exclude [Regression] so the fast unit-test sweep stays fast; regression
-  # cases are invoked directly via `mpirun -np N palace-unit-tests
-  # "[Regression]"` from the workflow (see
-  # .github/workflows/build-and-test-*.yml).
-  TEST_SPEC "[Serial]~[Regression]"
+  # Exclude [Regression] (slow, own registration) and [Long] (run only via the
+  # long-* registration), keeping the default sweep fast. [Long] is an
+  # orthogonal modifier: it applies to unit tests too, not just regression.
+  TEST_SPEC "[Serial]~[Regression]~[Long]"
   EXTRA_ARGS --skip-benchmarks
   PROPERTIES
     SKIP_RETURN_CODE 4
@@ -183,7 +182,7 @@ catch_discover_tests(unit-tests
 # MPI tests  
 catch_discover_tests(unit-tests
   TEST_PREFIX "mpi-"
-  TEST_SPEC "[Parallel]~[Regression]"
+  TEST_SPEC "[Parallel]~[Regression]~[Long]"
   TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2 ${MPIEXEC_PREFLAGS}
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS} --skip-benchmarks
   PROPERTIES
@@ -259,11 +258,9 @@ endif()
 if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
   catch_discover_tests(unit-tests
     TEST_PREFIX "gpu-"
-    # Exclude [Regression] so the GPU sweep stays focused on unit
-    # tests; regression cases (including the [Long] transmon ones,
-    # which also carry [Regression]) have their own registration and
-    # are exercised on GPU via .github/actions/run-regression-tests.
-    TEST_SPEC "[GPU]~[Regression]"
+    # Exclude [Regression] (own registration) and [Long] (long-* only) so the
+    # GPU sweep stays focused on fast unit tests.
+    TEST_SPEC "[GPU]~[Regression]~[Long]"
     EXTRA_ARGS --device ${PALACE_GPU_DEVICE} --skip-benchmarks
     PROPERTIES
       # Don't allow more than one GPU test at a time.

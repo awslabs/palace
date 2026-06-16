@@ -133,8 +133,8 @@ int main(int argc, char *argv[])
   // Whether the user passed an explicit selector (name, wildcard, or tag
   // spec). Catch2 intersects multiple specs, so the rank/device tags appended
   // below refine the user's selection rather than widen it. A bare invocation
-  // additionally excludes the slow [Regression] cases (which have their own
-  // entry point); an explicit selector can still reach them by name or tag.
+  // additionally excludes the slow [Regression] and [Long] cases (which have
+  // their own entry points); an explicit selector can still reach them.
   const bool user_selected_tests = !cfg.testsOrTags.empty();
 
   // Restrict to the device/rank-appropriate cases. These intersect with any
@@ -163,6 +163,7 @@ int main(int argc, char *argv[])
   if (!user_selected_tests)
   {
     cfg.testsOrTags.emplace_back("~[Regression]");
+    cfg.testsOrTags.emplace_back("~[Long]");
   }
   session.useConfigData(cfg);
 
