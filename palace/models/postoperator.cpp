@@ -1272,23 +1272,49 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 
   if (U_e)
   {
-    gridfunc_scalar = 0.0;
-    gridfunc_scalar.ProjectCoefficient(*U_e.get());
-    write_grid_function(gridfunc_scalar, "U_e");
+    if (U_e_eval)
+    {
+      // Device-evaluated (libCEED) energy density into the interpolatory L2 output
+      // space, reusing the ParaView evaluator instead of a host coefficient projection.
+      U_e_eval->Eval(E.get(), nullptr, *U_e_gf);
+      write_grid_function(*U_e_gf, "U_e");
+    }
+    else
+    {
+      gridfunc_scalar = 0.0;
+      gridfunc_scalar.ProjectCoefficient(*U_e.get());
+      write_grid_function(gridfunc_scalar, "U_e");
+    }
   }
 
   if (U_m)
   {
-    gridfunc_scalar = 0.0;
-    gridfunc_scalar.ProjectCoefficient(*U_m.get());
-    write_grid_function(gridfunc_scalar, "U_m");
+    if (U_m_eval)
+    {
+      U_m_eval->Eval(nullptr, B.get(), *U_m_gf);
+      write_grid_function(*U_m_gf, "U_m");
+    }
+    else
+    {
+      gridfunc_scalar = 0.0;
+      gridfunc_scalar.ProjectCoefficient(*U_m.get());
+      write_grid_function(gridfunc_scalar, "U_m");
+    }
   }
 
   if (S)
   {
-    gridfunc_vector = 0.0;
-    gridfunc_vector.ProjectCoefficient(*S.get());
-    write_grid_function(gridfunc_vector, "S");
+    if (S_eval)
+    {
+      S_eval->Eval(E.get(), B.get(), *S_gf);
+      write_grid_function(*S_gf, "S");
+    }
+    else
+    {
+      gridfunc_vector = 0.0;
+      gridfunc_vector.ProjectCoefficient(*S.get());
+      write_grid_function(gridfunc_vector, "S");
+    }
   }
   if (Sn)
   {
