@@ -42,6 +42,9 @@ private:
   // Reference to material property data (not owned).
   const MaterialOperator &mat_op;
 
+  // Frequency scale factor [GHz], used to report physical frequencies in warnings.
+  double freq_scale = 1.0;
+
   // Rational surface impedance per boundary: Zs(s) = N(s)/D(s), s = iω, with N and D real
   // polynomial coefficients stored nondimensionalized and highest-degree-first.
   struct RationalImpedanceData
@@ -49,6 +52,7 @@ private:
     std::vector<double> num, den;
     mfem::Array<int> attr_list;
     std::unordered_map<int, double> attr_scaling;
+    bool warned_passivity = false;  // One-shot guard for the per-frequency passivity check.
   };
   std::vector<RationalImpedanceData> boundaries;
 
