@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Install more recent clang-format from LLVM (match Homebrew v16)
+      # Install clang-format-19 from LLVM (newer than the distro package)
       - name: Install clang-format
         run: |
           wget -O- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
