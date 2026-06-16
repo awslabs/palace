@@ -28,7 +28,7 @@ if(NOT TIMEOUT)
 endif()
 
 execute_process(
-  COMMAND "${PALACE_UNIT_TESTS}" "${SPEC}" --list-tests --reporter xml
+  COMMAND "${PALACE_UNIT_TESTS}" "${SPEC}" ${EXTRA_ARGS} --list-tests --reporter xml
   OUTPUT_VARIABLE xml
   RESULT_VARIABLE rc)
 if(NOT rc EQUAL 0)

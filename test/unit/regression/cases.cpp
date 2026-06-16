@@ -321,7 +321,9 @@ TEST_CASE("cpw_lumped_adaptive", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
-TEST_CASE("cpw_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
+// cpw_wave_adaptive omits [GPU]: wave-port adaptive sweeps are skipped on GPU
+// (awslabs/palace#375), matching the old harness's `device != "GPU"` guard.
+TEST_CASE("cpw_wave_adaptive", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = std::numeric_limits<double>::infinity();
