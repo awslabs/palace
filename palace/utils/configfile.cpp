@@ -438,6 +438,8 @@ RationalImpedanceData::RationalImpedanceData(const json &boundary)
               "Rational impedance \"Numerator\" and \"Denominator\" must be nonempty!");
   MFEM_VERIFY(std::any_of(den.begin(), den.end(), [](double c) { return c != 0.0; }),
               "Rational impedance \"Denominator\" must have a nonzero coefficient!");
+  MFEM_VERIFY(std::any_of(num.begin(), num.end(), [](double c) { return c != 0.0; }),
+              "Rational impedance \"Numerator\" must have a nonzero coefficient!");
 }
 
 LumpedPortData::LumpedPortData(const json &port)
@@ -961,6 +963,10 @@ BoundaryData::BoundaryData(const json &boundaries)
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
   for (const auto &data : impedance)
+  {
+    attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
+  }
+  for (const auto &data : rational_impedance)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
