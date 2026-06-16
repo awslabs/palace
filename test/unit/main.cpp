@@ -130,18 +130,16 @@ int main(int argc, char *argv[])
 
   auto cfg = session.configData();
 
-  // Whether the user passed any explicit test selector on the command
-  // line (name, wildcard, or tag spec). Bare invocation leaves this
-  // empty and triggers our convenience defaults below; anything
-  // explicit runs exactly what was asked for. This matters for
-  // regression cases in particular: they're tagged `[Regression]`
-  // only, so auto-adding `[Serial]` or `~[Regression]` would either
-  // fold in unrelated unit tests (separate positive filters are
-  // OR'd in Catch2) or silently exclude the very test the user
-  // selected by name.
+  // Whether the user passed an explicit selector (name, wildcard, or tag
+  // spec). Catch2 intersects multiple specs, so the rank/device tags appended
+  // below refine the user's selection rather than widen it. A bare invocation
+  // additionally excludes the slow [Regression] cases (which have their own
+  // entry point); an explicit selector can still reach them by name or tag.
   const bool user_selected_tests = !cfg.testsOrTags.empty();
 
-  // Check if device is GPU capable, if yes, add the [GPU] tag.
+  // Restrict to the device/rank-appropriate cases. These intersect with any
+  // user selector (e.g. "[vector]" on one rank runs [vector] AND [Serial],
+  // dropping [Parallel]-only cases).
   if (device.Allows(mfem::Backend::CUDA_MASK | mfem::Backend::HIP_MASK))
   {
     cfg.testsOrTags.emplace_back("[GPU]");
@@ -154,21 +152,16 @@ int main(int argc, char *argv[])
           device.Allows(mfem::Backend::CUDA_MASK) ? "/gpu/cuda/magma" : "/gpu/hip/magma";
     }
   }
-  // Bare invocation: auto-select by MPI world size, and defensively
-  // exclude [Regression] (which is slow and has its own explicit
-  // entry point; long regression cases are tagged [Regression][Long]
-  // so they're caught here too). With any explicit user selector,
-  // run exactly what was asked for.
+  if (Mpi::Size(Mpi::World()) > 1)
+  {
+    cfg.testsOrTags.emplace_back("[Parallel]");
+  }
+  else
+  {
+    cfg.testsOrTags.emplace_back("[Serial]");
+  }
   if (!user_selected_tests)
   {
-    if (Mpi::Size(Mpi::World()) > 1)
-    {
-      cfg.testsOrTags.emplace_back("[Parallel]");
-    }
-    else
-    {
-      cfg.testsOrTags.emplace_back("[Serial]");
-    }
     cfg.testsOrTags.emplace_back("~[Regression]");
   }
   session.useConfigData(cfg);
