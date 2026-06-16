@@ -19,7 +19,6 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
-#include "utils/outputdir.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -27,8 +26,6 @@ namespace palace
 
 void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)
 {
-  MakeOutputFolder(iodata, comm);
-
   const bool world_root = Mpi::Root(comm);
   const int world_size = Mpi::Size(comm);
 

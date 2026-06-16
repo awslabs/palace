@@ -23,6 +23,7 @@
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/omp.hpp"
+#include "utils/outputdir.hpp"
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
@@ -206,6 +207,12 @@ bool ValidateCSVTables(Table &actual, Table &reference, const RegressionOptions 
   {
     CHECK(actual.n_rows() == reference.n_rows());
   }
+  else
+  {
+    // Eigen/adaptive cases may have a different row count, but empty output
+    // against a non-empty reference is still a failure.
+    CHECK((actual.n_rows() > 0) == (reference.n_rows() > 0));
+  }
 
   const bool comparable_columns = actual.n_cols() == reference.n_cols();
   const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
@@ -277,12 +284,14 @@ public:
       stage_(label.empty() ? stage_root / example_dir.filename()
                            : stage_root / example_dir.filename() / std::string{label})
   {
+    int ok = 1;
     if (Mpi::Root(comm))
     {
       std::error_code ec;
       std::filesystem::remove_all(stage_, ec);
-      std::filesystem::create_directories(stage_);
-      for (const auto &entry : std::filesystem::directory_iterator(example_dir))
+      std::filesystem::create_directories(stage_, ec);
+      ok = ec ? 0 : 1;
+      for (const auto &entry : std::filesystem::directory_iterator(example_dir, ec))
       {
         const auto name = entry.path().filename().string();
         // postpro/ and log/ are Palace outputs; don't stage stale copies.
@@ -290,9 +299,18 @@ public:
         {
           continue;
         }
-        std::filesystem::create_symlink(entry.path(), stage_ / name);
+        std::filesystem::create_symlink(entry.path(), stage_ / name, ec);
+        if (ec)
+        {
+          ok = 0;
+          break;
+        }
       }
     }
+    // Broadcast the staging result so all ranks fail together instead of
+    // blocking at the barrier if root errored.
+    Mpi::Broadcast(1, &ok, 0, comm);
+    REQUIRE(ok);
     Mpi::Barrier(comm);
     std::filesystem::current_path(stage_);
   }
@@ -436,6 +454,7 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   const int max_refinement_iterations = GetMaxRefinementIterations(config);
 
   IoData iodata = LoadCaseIoData(std::move(config), opts);
+  MakeOutputFolder(iodata, comm);
   const int omp_threads = palace::utils::ConfigureOmp();
   // Wipe BlockTimer state so timings/peak-memory don't accumulate across cases.
   BlockTimer::Reset();

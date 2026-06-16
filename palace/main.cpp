@@ -236,7 +236,7 @@ int main(int argc, char *argv[])
     iodata.WriteResolvedConfig(config, argv[1]);
   }
 
-  // Initialise device + numerics. The BlockTimer is scoped to this block so it
+  // Initialize device + numerics. The BlockTimer is scoped to this block so it
   // credits the INIT phase before palace::Run starts its own timing.
   int omp_threads, ngpu;
   std::optional<mfem::Device> device;

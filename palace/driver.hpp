@@ -14,10 +14,11 @@ class IoData;
 // Run a Palace solve end-to-end on an already-parsed `iodata`.
 //
 // Preconditions:
-//   - MPI has been initialised.
+//   - MPI has been initialized.
 //   - `mfem::Device` has been constructed with the desired backend.
-//   - libCEED, HYPRE, and (if built in) SLEPc/PETSc are initialised.
-//   - `iodata.problem.output` is set; relative mesh paths in the config
+//   - libCEED, HYPRE, and (if built in) SLEPc/PETSc are initialized.
+//   - The output folder (`iodata.problem.output`) has been created by the
+//     caller (e.g. via MakeOutputFolder); relative mesh paths in the config
 //     are resolvable from the current working directory (or have been
 //     rewritten to absolute paths by the caller).
 void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag = nullptr);
