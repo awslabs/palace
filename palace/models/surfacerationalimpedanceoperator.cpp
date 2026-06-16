@@ -3,6 +3,7 @@
 
 #include "surfacerationalimpedanceoperator.hpp"
 
+#include <cmath>
 #include <complex>
 #include <set>
 #include "models/materialoperator.hpp"
@@ -29,13 +30,27 @@ std::complex<double> EvalPoly(const std::vector<double> &coeffs, std::complex<do
   return val;
 }
 
+// Effective polynomial degree (ignoring leading zero coefficients). Returns -1 if all zero.
+int EffectiveDegree(const std::vector<double> &coeffs)
+{
+  const int n = static_cast<int>(coeffs.size());
+  for (int i = 0; i < n; i++)
+  {
+    if (coeffs[i] != 0.0)
+    {
+      return (n - 1) - i;
+    }
+  }
+  return -1;
+}
+
 }  // namespace
 
 SurfaceRationalImpedanceOperator::SurfaceRationalImpedanceOperator(
     const std::vector<config::RationalImpedanceData> &impedance,
     const std::unordered_set<int> &cracked_attributes, ProblemType problem_type,
     const Units &units, const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
-  : mat_op(mat_op)
+  : mat_op(mat_op), freq_scale(units.GetScaleFactor<Units::ValueType::FREQUENCY>())
 {
   SetUpBoundaryProperties(impedance, cracked_attributes, problem_type, mesh);
   PrintBoundaryInfo(units, mesh);
@@ -110,6 +125,17 @@ void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(
     auto &bdr = boundaries.emplace_back();
     bdr.num = data.num;
     bdr.den = data.den;
+    // Passivity necessary condition at infinity: a positive-real (passive) impedance has
+    // numerator and denominator degrees differing by at most one.
+    const int dN = EffectiveDegree(bdr.num);
+    const int dD = EffectiveDegree(bdr.den);
+    if (dN >= 0 && dD >= 0 && std::abs(dN - dD) > 1)
+    {
+      Mpi::Warning("Rational impedance boundary (attribute {:d}) has numerator/denominator "
+                   "degree difference |{:d} - {:d}| > 1; Zs cannot be a passive "
+                   "(positive-real) impedance!\n",
+                   data.attributes.empty() ? -1 : data.attributes.front(), dN, dD);
+    }
     bdr.attr_list.Reserve(static_cast<int>(data.attributes.size()));
     for (auto attr : data.attributes)
     {
@@ -138,8 +164,7 @@ void SurfaceRationalImpedanceOperator::PrintBoundaryInfo(const Units &units,
     for (auto attr : bdr.attr_list)
     {
       Mpi::Print(" {:d}: Zs(iω) = N(iω)/D(iω), N deg = {:d}, D deg = {:d}, n = ({:+.1f})\n",
-                 attr, static_cast<int>(bdr.num.size()) - 1,
-                 static_cast<int>(bdr.den.size()) - 1,
+                 attr, EffectiveDegree(bdr.num), EffectiveDegree(bdr.den),
                  fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
     }
   }
@@ -168,7 +193,7 @@ void SurfaceRationalImpedanceOperator::AddExtraSystemBdrCoefficients(
              // evaluate A2 at ω = 0.
   }
   const std::complex<double> s(0.0, omega);  // s = iω (nondimensional)
-  for (const auto &bdr : boundaries)
+  for (auto &bdr : boundaries)
   {
     const std::complex<double> N = EvalPoly(bdr.num, s);
     const std::complex<double> D = EvalPoly(bdr.den, s);
@@ -176,6 +201,16 @@ void SurfaceRationalImpedanceOperator::AddExtraSystemBdrCoefficients(
                 "Rational impedance boundary has a transmission zero (Zs = 0) at the "
                 "evaluation frequency; the admittance iω/Zs is singular!");
     const std::complex<double> Z = N / D;
+    // Passivity necessary condition on the imaginary axis: Re{Zs(iω)} >= 0. Warn once per
+    // boundary (relative tolerance avoids false alarms on lossless reactive terminations).
+    if (!bdr.warned_passivity && Z.real() < -1.0e-9 * std::abs(Z))
+    {
+      const double f_ghz = omega * freq_scale / (2.0 * M_PI);
+      Mpi::Warning("Rational impedance boundary (attribute {:d}) is not passive at "
+                   "f = {:.4f} GHz: Re(Zs) = {:.3e} < 0!\n",
+                   bdr.attr_list.Size() ? bdr.attr_list[0] : -1, f_ghz, Z.real());
+      bdr.warned_passivity = true;
+    }
     for (auto attr : bdr.attr_list)
     {
       const double sc = bdr.attr_scaling.at(attr);
