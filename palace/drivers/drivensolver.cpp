@@ -438,6 +438,12 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
+  // Prepare the wave-port kₙ(ω) online surrogate: reuse the per-port dispersion fits from
+  // the synthesis pass (or build them lazily) so the online sweep can evaluate kₙ from the
+  // fit instead of re-solving the cross-section EVP at every frequency, with automatic
+  // fallback to the EVP for any port whose fit is not within tolerance or when the sweep is
+  // too short to amortize the fit-build cost.
+  prom_op.PrepareWavePortKnSurrogate(omega_sample.size());
   space_op.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
   excitation_counter = 0;
   for (const auto &[excitation_idx, excitation_spec] : port_excitations)

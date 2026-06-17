@@ -356,6 +356,20 @@ protected:
     double rel_err_augmented = 0.0;   // residual after AAA augmentation (Augmented only)
   };
 
+  // Online wave-port kₙ(ω) surrogate state. In the online sweep, A_wp(ω) = i·Σ_p
+  // kₙ,p(ω)·Mp_r needs kₙ,p(ω) at every sweep frequency; the default path re-solves the
+  // per-port cross-section EVP each ω (the dominant online solver cost). When a per-port
+  // dispersion fit is available and within tolerance, the online loop evaluates kₙ from the
+  // fit instead (EvaluateWavePortKnFit) — far cheaper than the EVP. The fit is the SAME
+  // WavePortDispersionFit produced by FitWavePortDispersion for circuit synthesis: when
+  // AdaptiveCircuitSynthesis is on it is retained from that pass (no extra EVPs); otherwise
+  // it is built lazily once via PrepareWavePortKnSurrogate. Ports whose fit residual exceeds
+  // tolerance are absent from the map and fall back to the EVP, so accuracy is never lost.
+  // mutable: a solve-time cache, populated lazily. Declared here (after the struct) so the
+  // map's value type is complete.
+  mutable std::map<int, WavePortDispersionFit> kn_online_fit_;
+  mutable bool kn_surrogate_prepared_ = false;
+
   // Choose a synthesis regime given the polynomial-fit residual. `meets_tol` is the
   // outcome of comparing rel_err against waveport_synthesis_tol; `force_setting`
   // overrides AUTO when set. Emits a Mpi::Warning if the chosen regime is incompatible
@@ -367,6 +381,16 @@ protected:
   // regimes for diagnostic logging.
   WavePortDispersionFit FitWavePortDispersion(int port_idx,
                                               const Eigen::MatrixXcd &Mp_r) const;
+
+  // Evaluate the fitted real wave-port dispersion model at frequency ω:
+  //   kₙ(ω) ≈ α₀ + α₁ω + α₂ω² + Σₖ Re(rₖ / (ω − pₖ))
+  // (the AAA pole–residue residual term is present only in the Augmented regime). This is
+  // the single source of truth for evaluating a WavePortDispersionFit on the real axis —
+  // shared by the dense-grid residual check in FitWavePortDispersion and the online
+  // SolvePROM surrogate path so the two never diverge. Only valid for the real-coefficient
+  // wave-port fit (alpha0/1/2 + aux poles); the complex scalar-dispersion fit
+  // (alpha0c/1c/2c, surface conductivity) is evaluated separately.
+  static double EvaluateWavePortKnFit(const WavePortDispersionFit &fit, double omega);
 
   // Accumulate the polynomial-fit corrections from one port into the running Kr_corr,
   // Cr_corr, Mr_corr buffers. Folds α₀+d into Im(Kr), -α₁ into Re(Cr), -α₂ into Im(Mr).
@@ -470,6 +494,17 @@ public:
   // Assemble and solve the PROM at the specified frequency, expanding the solution back
   // into the high-dimensional space.
   void SolvePROM(int excitation_idx, double omega, ComplexVector &u);
+
+  // Prepare the online wave-port kₙ(ω) surrogate before the fast-frequency-sweep online
+  // phase. For each wave port, obtain a dispersion fit (reused from the synthesis pass if
+  // already computed, else built lazily via FitWavePortDispersion) and retain it for use in
+  // SolvePROM when its residual is within waveport_synthesis_tol; ports that don't meet
+  // tolerance are omitted and fall back to the per-ω cross-section EVP. `n_sweep_points` is
+  // the number of online sweep frequencies, used to decide whether building the fit (which
+  // costs a fixed number of EVP solves per port) is amortized by the sweep length; if not,
+  // the surrogate is skipped entirely and the EVP path is used throughout. No-op if there
+  // are no wave ports or the sweep band is degenerate. Safe to call more than once.
+  void PrepareWavePortKnSurrogate(std::size_t n_sweep_points);
 
   // Compute the location(s) of the maximum error in the range of the previously sampled
   // parameter points.

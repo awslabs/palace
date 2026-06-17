@@ -1116,12 +1116,22 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // Wave-port contribution: A_wp(ω) = i·Σ_p kₙ,p(ω)·M^(p)_{μ⁻¹}. The Mwp_p HDM
   // operators are purely imaginary (constructed with the boundary mass in the imaginary
   // slot), so multiplying their projection by the real scalar kₙ recovers the i·kₙ·M
-  // contribution to the system matrix. The cross-section EVP for kₙ,p(ω) is small
-  // relative to a full HDM solve and is the only ω-dependent work here.
-  for (const auto &[port_idx, Mp_r] : Mwp_p_r)
+  // contribution to the system matrix. kₙ,p(ω) comes either from the online dispersion
+  // surrogate (EvaluateWavePortKnFit — a polynomial + a few AAA poles, evaluated in O(1))
+  // when a within-tolerance fit was prepared for this port, or otherwise from GetWavePortKn,
+  // which re-solves the per-port cross-section EVP at this ω. The EVP is the dominant
+  // ω-dependent online work, so it is timed under the WAVE_PORT bucket to keep its online
+  // cost visible in the report (the offline assembly already accounts to the same bucket).
   {
-    double kn = space_op.GetWavePortOp().GetWavePortKn(port_idx, omega);
-    Ar += std::complex<double>(kn, 0.0) * Mp_r;
+    BlockTimer bt(Timer::WAVE_PORT);
+    for (const auto &[port_idx, Mp_r] : Mwp_p_r)
+    {
+      auto fit_it = kn_online_fit_.find(port_idx);
+      const double kn = (fit_it != kn_online_fit_.end())
+                            ? EvaluateWavePortKnFit(fit_it->second, omega)
+                            : space_op.GetWavePortOp().GetWavePortKn(port_idx, omega);
+      Ar += std::complex<double>(kn, 0.0) * Mp_r;
+    }
   }
 
   // Wave-port (or any other RHS2) excitation: interpolate the cached projected
@@ -1166,6 +1176,84 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     RHSr = Ar.fullPivHouseholderQr().solve(RHSr);
   }
   ProlongatePROMSolution(V.size(), V, RHSr, u);
+}
+
+void RomOperator::PrepareWavePortKnSurrogate(std::size_t n_sweep_points)
+{
+  if (kn_surrogate_prepared_)
+  {
+    return;
+  }
+  kn_surrogate_prepared_ = true;
+
+  // No wave ports, or a degenerate sweep band (FitWavePortDispersion needs ω_max > ω_min
+  // to sample): nothing to do, the online loop uses the EVP path.
+  if (Mwp_p_r.empty() || !(sweep_omega_max > sweep_omega_min))
+  {
+    return;
+  }
+
+  // Amortization gate. Building one port's fit costs a fixed number of cross-section EVP
+  // solves (the n_fit fit samples + n_dense validation samples inside FitWavePortDispersion).
+  // The surrogate replaces one EVP solve per online sweep frequency per port, so it only
+  // pays off when the sweep is longer than the build cost. Skip it for short sweeps. (When
+  // synthesis is enabled the fit was already built and retained — see below — so there is no
+  // build cost and the surrogate is always worthwhile; the gate only guards the lazy-build
+  // case. We use the same threshold for both for simplicity and safety.)
+  constexpr std::size_t kFitEvpCost = 36;  // n_fit (12) + n_dense (24), keep in sync.
+  const bool already_built = !kn_online_fit_.empty();
+  if (!already_built && n_sweep_points <= kFitEvpCost)
+  {
+    Mpi::Print(" Wave-port kₙ(ω) online surrogate: sweep has {:d} points (≤ build cost "
+               "{:d} EVP/port); using direct cross-section EVP per frequency\n",
+               n_sweep_points, kFitEvpCost);
+    return;
+  }
+
+  // Build (or accept the synthesis-retained) per-port fit, and keep only those within
+  // tolerance. FitWavePortDispersion samples real kₙ(ω) — matching what the online loop
+  // consumes (Ar += i·Re{kₙ}·Mp_r) — so the surrogate reproduces the EVP path to the fit
+  // residual. Ports whose fit exceeds tolerance are erased and fall back to the EVP.
+  // The lazy build re-solves the per-port cross-section EVP on the fit/validation grids, so
+  // time it under the WAVE_PORT bucket (the same bucket the online per-ω EVP uses) to keep
+  // that cost visible in the report rather than hidden between phases.
+  BlockTimer bt(Timer::WAVE_PORT);
+  std::size_t n_fit_ports = 0, n_evp_ports = 0;
+  for (const auto &[port_idx, Mp_r] : Mwp_p_r)
+  {
+    auto it = kn_online_fit_.find(port_idx);
+    if (it == kn_online_fit_.end())
+    {
+      // Lazy build (synthesis off, or this port was not in the synthesis pass).
+      auto [ins, ok] = kn_online_fit_.emplace(port_idx, FitWavePortDispersion(port_idx, Mp_r));
+      it = ins;
+    }
+    const auto &fit = it->second;
+    const double rel_err = (fit.regime == WavePortRegime::Augmented) ? fit.rel_err_augmented
+                                                                     : fit.rel_err_polynomial;
+    if (rel_err <= waveport_synthesis_tol)
+    {
+      n_fit_ports++;
+    }
+    else
+    {
+      // Fit not accurate enough — drop it so the online loop uses the EVP for this port.
+      Mpi::Print(" Wave port {:d}: kₙ(ω) surrogate residual {:.3e} exceeds tol {:.3e}; "
+                 "using direct EVP per frequency\n",
+                 port_idx, rel_err, waveport_synthesis_tol);
+      kn_online_fit_.erase(it);
+      n_evp_ports++;
+    }
+  }
+  if (n_fit_ports > 0)
+  {
+    Mpi::Print(" Wave-port kₙ(ω) online surrogate active for {:d} port{} (residual ≤ tol "
+               "{:.3e}){}\n",
+               n_fit_ports, n_fit_ports == 1 ? "" : "s", waveport_synthesis_tol,
+               n_evp_ports > 0
+                   ? fmt::format(", {:d} port(s) on direct EVP", n_evp_ports)
+                   : std::string{});
+  }
 }
 
 std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() const
@@ -1383,21 +1471,54 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
   WavePortDispersionFit fit;
   fit.port_idx = port_idx;
 
-  constexpr int n_fit = 30;
-  constexpr int n_dense = 1000;
+  // kₙ(ω) is sampled by re-solving the per-port cross-section EVP at each ω (the
+  // dominant cost here), so the sample counts are deliberately small. The model is at most
+  // an order-2 polynomial plus a few AAA poles, so a modest fit grid suffices, and a
+  // smooth analytic kₙ(ω) needs only a handful of out-of-sample points to bound the fit
+  // residual. n_fit is AAA's candidate pool (it greedily selects support points FROM these
+  // samples — it does not sample new ω), so it must comfortably exceed the pole budget.
+  //
+  // Both grids are Chebyshev–Gauss–Lobatto nodes on [w_lo, w_hi]: they cluster at the band
+  // edges where polynomial/rational interpolation error peaks, giving a tighter max-error
+  // bound per sample than a uniform grid. The dense (validation) grid is offset to the
+  // Chebyshev interior nodes so its points are DISTINCT from the fit grid — the LSQ
+  // residual is artificially small AT the fit points, so the residual must be measured
+  // between them.
+  constexpr int n_fit = 12;
+  constexpr int n_dense = 24;
   const double w_lo = sweep_omega_min;
   const double w_hi = sweep_omega_max;
-  auto sample_omega = [w_lo, w_hi](int n)
+  const double w_mid = 0.5 * (w_lo + w_hi);
+  const double w_half = 0.5 * (w_hi - w_lo);
+  // Chebyshev–Gauss–Lobatto: ω_i = mid − half·cos(π i/(n−1)), i = 0..n−1 (endpoints incl.).
+  auto sample_cgl = [w_mid, w_half](int n)
   {
     std::vector<double> ws(n);
+    if (n == 1)
+    {
+      ws[0] = w_mid;
+      return ws;
+    }
     for (int i = 0; i < n; i++)
     {
-      ws[i] = w_lo + (w_hi - w_lo) * i / std::max(n - 1, 1);
+      ws[i] = w_mid - w_half * std::cos(M_PI * i / (n - 1));
     }
     return ws;
   };
-  auto fit_omegas = sample_omega(n_fit);
-  auto dense_omegas = sample_omega(n_dense);
+  // Chebyshev–Gauss (interior) nodes: ω_j = mid − half·cos(π(2j+1)/(2n)), strictly inside
+  // (w_lo, w_hi) and interlacing the CGL fit nodes, so validation points never coincide
+  // with fit points.
+  auto sample_cg = [w_mid, w_half](int n)
+  {
+    std::vector<double> ws(n);
+    for (int j = 0; j < n; j++)
+    {
+      ws[j] = w_mid - w_half * std::cos(M_PI * (2 * j + 1) / (2.0 * n));
+    }
+    return ws;
+  };
+  auto fit_omegas = sample_cgl(n_fit);
+  auto dense_omegas = sample_cg(n_dense);
 
   // Sample kₙ,p on the fit grid. Each call triggers (or hits the cache of)
   // WavePortData::Initialize. Cheap because the cross-section EVP is small.
@@ -1429,7 +1550,8 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
   {
     const double w = dense_omegas[i];
     const double truth = space_op.GetWavePortOp().GetWavePortKn(port_idx, w);
-    const double poly = fit.alpha0 + fit.alpha1 * w + fit.alpha2 * w * w;
+    // fit.aux is still empty here, so EvaluateWavePortKnFit returns the bare polynomial.
+    const double poly = EvaluateWavePortKnFit(fit, w);
     max_abs_truth = std::max(max_abs_truth, std::abs(truth));
     max_rel = std::max(max_rel, std::abs(poly - truth));
   }
@@ -1474,22 +1596,6 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
   const double aaa_d = pr.d.real();
   fit.alpha0 += aaa_d;
 
-  // Re-evaluate residual on the dense grid using the augmented model.
-  max_rel = 0.0;
-  for (int i = 0; i < n_dense; i++)
-  {
-    const double w = dense_omegas[i];
-    const double truth = space_op.GetWavePortOp().GetWavePortKn(port_idx, w);
-    double aug = fit.alpha0 + fit.alpha1 * w + fit.alpha2 * w * w;
-    for (long k = 0; k < pr.poles.size(); k++)
-    {
-      std::complex<double> wc = w;
-      aug += (pr.residues(k) / (wc - pr.poles(k))).real();
-    }
-    max_rel = std::max(max_rel, std::abs(aug - truth));
-  }
-  fit.rel_err_augmented = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
-
   // SVD of M_proj — keep every singular vector with σⱼ / σ_max above the rank
   // tolerance as a coupling direction. Rank is typically 1 (real-only mode field) or
   // 2 (complex mode field split into real+imag basis vectors).
@@ -1512,17 +1618,52 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
     blk.poles.push_back(pr.poles(k));
     blk.residues.push_back(pr.residues(k));
   }
-  std::size_t aux_per_port = pr.poles.size() * blk.sigmas.size();
-  std::size_t rank_used = blk.sigmas.size();
+  // Attach the aux block now so EvaluateWavePortKnFit picks up the AAA poles for the
+  // augmented-model residual check below (and so the stored fit is complete for the online
+  // surrogate).
+  fit.aux = std::move(blk);
+
+  // Re-evaluate residual on the dense grid using the augmented model, via the shared
+  // evaluator (α-polynomial + Σ Re(rₖ/(ω−pₖ))).
+  max_rel = 0.0;
+  for (int i = 0; i < n_dense; i++)
+  {
+    const double w = dense_omegas[i];
+    const double truth = space_op.GetWavePortOp().GetWavePortKn(port_idx, w);
+    max_rel = std::max(max_rel, std::abs(EvaluateWavePortKnFit(fit, w) - truth));
+  }
+  fit.rel_err_augmented = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
+
+  const std::size_t n_poles = fit.aux->poles.size();
+  const std::size_t rank_used = fit.aux->sigmas.size();
+  const std::size_t aux_per_port = n_poles * rank_used;
   Mpi::Print(" Wave port {:d}: augmented synthesis residual {:.3e} → {:.3e} "
              "(tol {:.3e}, {:d} pole{} × rank-{:d} mass = +{:d} aux state{}, "
              "α₀={:.3e}, α₁={:.3e}, α₂={:.3e}, d={:.3e})\n",
              port_idx, fit.rel_err_polynomial, fit.rel_err_augmented,
-             waveport_synthesis_tol, pr.poles.size(), pr.poles.size() == 1 ? "" : "s",
-             rank_used, aux_per_port, aux_per_port == 1 ? "" : "s", fit.alpha0, fit.alpha1,
-             fit.alpha2, aaa_d);
-  fit.aux = std::move(blk);
+             waveport_synthesis_tol, n_poles, n_poles == 1 ? "" : "s", rank_used,
+             aux_per_port, aux_per_port == 1 ? "" : "s", fit.alpha0, fit.alpha1, fit.alpha2,
+             aaa_d);
   return fit;
+}
+
+double RomOperator::EvaluateWavePortKnFit(const WavePortDispersionFit &fit, double omega)
+{
+  // Real wave-port dispersion model: kₙ(ω) ≈ α₀ + α₁ω + α₂ω² + Σₖ Re(rₖ/(ω−pₖ)). The pole
+  // sum is present only in the Augmented regime (fit.aux holds the AAA poles/residues); in
+  // the Polynomial regime fit.aux is empty and this reduces to the quadratic. This is the
+  // analytic continuation evaluated on the real axis — the same expression the synthesis
+  // pencil realizes via Kr/Cr/Mr (α-part) plus aux states (pole part).
+  double kn = fit.alpha0 + fit.alpha1 * omega + fit.alpha2 * omega * omega;
+  if (fit.aux)
+  {
+    const std::complex<double> wc(omega, 0.0);
+    for (std::size_t k = 0; k < fit.aux->poles.size(); k++)
+    {
+      kn += (fit.aux->residues[k] / (wc - fit.aux->poles[k])).real();
+    }
+  }
+  return kn;
 }
 
 void RomOperator::ApplyPolynomialFitCorrections(const WavePortDispersionFit &fit,
@@ -1835,6 +1976,10 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
     {
       auto fit = FitWavePortDispersion(port_idx, Mp_r);
       ApplyPolynomialFitCorrections(fit, Mp_r, Kr_corr, Cr_corr, Mr_corr);
+      // Retain a copy of the fit for the online kₙ(ω) surrogate (PrepareWavePortKnSurrogate
+      // reuses it, avoiding a second round of cross-section EVP solves). Copy BEFORE moving
+      // the aux block out, so the retained fit keeps its AAA poles/residues for evaluation.
+      kn_online_fit_[port_idx] = fit;
       if (fit.aux)
       {
         aux_blocks.push_back(std::move(*fit.aux));
