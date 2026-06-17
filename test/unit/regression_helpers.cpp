@@ -258,10 +258,17 @@ void CompareCSVFiles(Table &actual, Table &reference, const RegressionOptions &o
       continue;
     }
 
+    const bool by_magnitude = HeaderExcluded(r_col.header_text, opts.abs_columns);
     for (std::size_t r = 0; r < n_rows; ++r)
     {
-      const double av = a_col.data[r];
-      const double rv = r_col.data[r];
+      double av = a_col.data[r];
+      double rv = r_col.data[r];
+      if (by_magnitude)
+      {
+        // Gauge-dependent signed column: compare magnitude only.
+        av = std::abs(av);
+        rv = std::abs(rv);
+      }
       INFO("row " << r + 1 << " column '" << r_col.header_text << "'");
       CHECK_THAT(av, Catch::Matchers::WithinRel(rv, opts.rtol) ||
                          Catch::Matchers::WithinAbs(rv, opts.atol));

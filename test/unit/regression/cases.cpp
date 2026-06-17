@@ -430,6 +430,7 @@ TEST_CASE("transmon_coarse", "[Serial][Parallel][GPU][Regression][Long]")
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean",  "Error (Bkwd.)", "Error (Abs.)",
                            "Re{V[",   "Im{V[",   "Re{I[", "Im{I["};
+  opts.abs_columns = {"\u03ba_ext"};
   opts.skip_rowcount = true;
   opts.gridfunction_fields = true;
   opts.linear_solver_policy = kForceDefaultSolver;
@@ -445,6 +446,7 @@ TEST_CASE("transmon_amr", "[Serial][Parallel][GPU][Regression][Long]")
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean",  "Error (Bkwd.)", "Error (Abs.)",
                            "Re{V[",   "Im{V[",   "Re{I[", "Im{I["};
+  opts.abs_columns = {"\u03ba_ext"};
   opts.skip_rowcount = true;
   opts.gridfunction_fields = true;
   opts.linear_solver_policy = kForceDefaultSolver;

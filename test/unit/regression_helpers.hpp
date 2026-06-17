@@ -42,6 +42,11 @@ struct RegressionOptions
   // Partial-match substrings on header_text; columns whose header
   // contains any of these are dropped from both tables before diffing.
   std::vector<std::string> excluded_columns;
+  // Partial-match substrings on header_text; columns whose header contains
+  // any of these are compared by magnitude only (|a| vs |b|). Used for
+  // gauge-dependent signed quantities whose sign is not reproducible
+  // (e.g. near-zero κ_ext for high-Q eigenmodes).
+  std::vector<std::string> abs_columns;
   // Allow row-count mismatch (eigen / adaptive cases).
   bool skip_rowcount = false;
   // Expected volumetric-output directories.
