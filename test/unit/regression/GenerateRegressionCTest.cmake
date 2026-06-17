@@ -10,7 +10,7 @@
 # Invoke in script mode:
 #   cmake -D PALACE_UNIT_TESTS=<path> -D MPIEXEC=<path> -D NP=<ranks>
 #         -D OUTPUT_DIR=<dir> [-D SPEC=<catch-filter>] [-D LABEL=<label>]
-#         [-D TIMEOUT=<seconds>] [-D EXTRA_ARGS=<;-list>]
+#         [-D EXTRA_ARGS=<;-list>]
 #         -P GenerateRegressionCTest.cmake
 # then: ctest --test-dir <dir> --output-on-failure
 
@@ -22,9 +22,6 @@ if(NOT SPEC)
 endif()
 if(NOT LABEL)
   set(LABEL "regression")
-endif()
-if(NOT TIMEOUT)
-  set(TIMEOUT 600)
 endif()
 
 execute_process(
@@ -53,5 +50,5 @@ foreach(tag IN LISTS names)
   file(APPEND "${out}" "add_test(\"${LABEL}-${case}\" ${cmd})\n")
   file(APPEND "${out}"
        "set_tests_properties(\"${LABEL}-${case}\" PROPERTIES "
-       "PROCESSORS ${NP} LABELS \"${LABEL}\" SKIP_RETURN_CODE 4 TIMEOUT ${TIMEOUT})\n")
+       "PROCESSORS ${NP} LABELS \"${LABEL}\" SKIP_RETURN_CODE 4)\n")
 endforeach()

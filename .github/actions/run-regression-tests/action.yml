@@ -115,12 +115,12 @@ runs:
         # with ctest (per-case results, PROCESSORS-correct scheduling). Unlike a
         # build-tree ctest, this works against the Spack-installed binary.
         run_group() {
-          local spec="$1" label="$2" timeout="$3"
+          local spec="$1" label="$2"
           local dir
           dir=$(mktemp -d)
           cmake -D PALACE_UNIT_TESTS="$BIN" -D MPIEXEC="$MPIEXEC" \
                 -D NP="$NUM_PROC_TEST" -D OUTPUT_DIR="$dir" \
-                -D SPEC="$spec" -D LABEL="$label" -D TIMEOUT="$timeout" \
+                -D SPEC="$spec" -D LABEL="$label" \
                 -D EXTRA_ARGS="$EXTRA_ARGS" -P "$GENERATOR"
           ctest --test-dir "$dir" --output-on-failure
         }
@@ -131,12 +131,12 @@ runs:
         run_cases() {
           local raw="$1"
           if [[ -z "$raw" || "$raw" == "default" ]]; then
-            run_group "[Regression]~[Long]" regression 600
+            run_group "[Regression]~[Long]" regression
           elif [[ "$raw" == "long" ]]; then
-            run_group "[Long]" long 1800
+            run_group "[Long]" long
           else
             for case in $raw; do
-              run_group "$case" long 1800
+              run_group "$case" long
             done
           fi
         }
