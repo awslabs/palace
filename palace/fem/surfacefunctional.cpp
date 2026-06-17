@@ -579,17 +579,29 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
     }
   }
-  else if (kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_CURRENT_J ||
-           kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M)
+  else if (kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_CURRENT_J)
   {
     base_ctx.resize(2);
     base_ctx[0].second = 1.0;  // Normal sign, set per group
     base_ctx[1].second = viz_scaling;
-    MaterialPropertyCoefficient coeff_func(
-        mat_op->GetAttributeToMaterial(),
-        (kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_ENERGY_E)
-            ? mat_op->GetPermittivityReal()
-            : mat_op->GetInvPermeability());
+    MaterialPropertyCoefficient coeff_func(mat_op->GetAttributeToMaterial(),
+                                           (kind == Kind::BDR_FLUX_Q)
+                                               ? mat_op->GetPermittivityReal()
+                                               : mat_op->GetInvPermeability());
+    auto mat_ctx = ceed::PopulateCoefficientContext(3, &coeff_func);
+    base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+  }
+  else if (kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M)
+  {
+    // Shared energy kernel: [0].first = piola (0 = ND/E, 1 = RT/B), [1].second = scaling,
+    // material table at +2.
+    base_ctx.resize(2);
+    base_ctx[0].first = (kind == Kind::BDR_ENERGY_M) ? 1 : 0;
+    base_ctx[1].second = viz_scaling;
+    MaterialPropertyCoefficient coeff_func(mat_op->GetAttributeToMaterial(),
+                                           (kind == Kind::BDR_ENERGY_E)
+                                               ? mat_op->GetPermittivityReal()
+                                               : mat_op->GetInvPermeability());
     auto mat_ctx = ceed::PopulateCoefficientContext(3, &coeff_func);
     base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
   }
@@ -618,6 +630,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     base_ctx.resize(2);
     base_ctx[0].second = 0.0;
     base_ctx[1].second = 0.0;
+    if (kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B)
+    {
+      // Shared field kernel: [0].first = piola (0 = ND/E, 1 = RT/B).
+      base_ctx[0].first = (kind == Kind::BDR_FIELD_B) ? 1 : 0;
+    }
   }
 
   // Assemble a libCEED operator for each group. For now, all operators are constructed
@@ -859,14 +876,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         break;
         break;
       case Kind::BDR_FIELD_E:
-        info.apply_qf = has_b ? f_eval_bdr_hcurl_2_32 : f_eval_bdr_hcurl_1_32;
-        info.apply_qf_path = PalaceQFunctionRelativePath(has_b ? f_eval_bdr_hcurl_2_32_loc
-                                                               : f_eval_bdr_hcurl_1_32_loc);
-        break;
       case Kind::BDR_FIELD_B:
-        info.apply_qf = has_b ? f_eval_bdr_hdiv_2_32 : f_eval_bdr_hdiv_1_32;
-        info.apply_qf_path = PalaceQFunctionRelativePath(has_b ? f_eval_bdr_hdiv_2_32_loc
-                                                               : f_eval_bdr_hdiv_1_32_loc);
+        // Shared kernel; the ND/RT Piola is set in base_ctx[0].first.
+        info.apply_qf = has_b ? f_eval_bdr_field_2_32 : f_eval_bdr_field_1_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(has_b ? f_eval_bdr_field_2_32_loc
+                                                               : f_eval_bdr_field_1_32_loc);
         break;
       case Kind::BDR_FLUX_Q:
         ctx[0].second = group.flip_normal ? -1.0 : 1.0;
@@ -881,14 +895,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
             has_b ? f_eval_bdr_current_j_2_32_loc : f_eval_bdr_current_j_1_32_loc);
         break;
       case Kind::BDR_ENERGY_E:
-        info.apply_qf = has_b ? f_eval_bdr_energy_e_2_32 : f_eval_bdr_energy_e_1_32;
-        info.apply_qf_path = PalaceQFunctionRelativePath(
-            has_b ? f_eval_bdr_energy_e_2_32_loc : f_eval_bdr_energy_e_1_32_loc);
-        break;
       case Kind::BDR_ENERGY_M:
-        info.apply_qf = has_b ? f_eval_bdr_energy_m_2_32 : f_eval_bdr_energy_m_1_32;
+        // Shared kernel; the ND/RT Piola is set in base_ctx[0].first.
+        info.apply_qf = has_b ? f_eval_bdr_energy_2_32 : f_eval_bdr_energy_1_32;
         info.apply_qf_path = PalaceQFunctionRelativePath(
-            has_b ? f_eval_bdr_energy_m_2_32_loc : f_eval_bdr_energy_m_1_32_loc);
+            has_b ? f_eval_bdr_energy_2_32_loc : f_eval_bdr_energy_1_32_loc);
         break;
       case Kind::FARFIELD:
         ctx[0].second = group.flip_normal ? -1.0 : 1.0;
