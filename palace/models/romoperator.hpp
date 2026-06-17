@@ -187,6 +187,15 @@ protected:
   // circuit synthesis (see M_ff_, Asig_g_ below); has_other_A2 still gates the online
   // SolvePROM fallback, which is independent of synthesis.
   bool has_other_A2 = false;
+  // One-time self-check state for the factored online A2_other path (SolvePROM). On the
+  // first factored online solve we verify that the factored sum (0.5/ω·M_ff_r +
+  // Σ_g EvaluateScalar(g,ω)/i·Asig_g_r) reproduces the full HDM projection of A2_other(ω)
+  // to round-off. This guards against a future ω-dependent non-wave-port BC being added to
+  // GetExtraSystemMatrix without a matching factored operator (which would otherwise be
+  // silently dropped). On failure we set other_A2_factored_ok = false and permanently use
+  // the slow per-ω HDM fallback.
+  mutable bool other_A2_self_checked = false;
+  mutable bool other_A2_factored_ok = true;
 
   // ω-independent boundary operators for the other frequency-dependent BCs, folded into
   // circuit synthesis the same way as the wave ports (each contributes i·f(ω)·M_proj·v to

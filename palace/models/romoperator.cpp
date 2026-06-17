@@ -1000,26 +1000,112 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   Ar.resize(V.size(), V.size());
   RHSr.resize(V.size());
 
-  // Slow path: any remaining ω-nonlinear A2 contributors that we have not factored out.
-  // Currently this is second-order farfield boundaries and surface conductivity. The
-  // wave-port contribution is excluded here and applied below via the per-port factored
-  // form.
-  if (has_other_A2)
+  // Other ω-nonlinear A2 contributors (second-order farfield ABC and surface conductivity).
+  // These are applied in factored form: their ω-independent boundary masses (M_ff_r,
+  // Asig_g_r) were projected onto the basis once in UpdatePROM, exactly like the wave-port
+  // masses, so the online cost is a per-ω scalar times an n×n matrix add — no per-ω HDM-
+  // scale assembly or reprojection. This is algebraically identical to projecting the full
+  // A2(ω) here (the scalar is uniform per boundary group, so it commutes with the
+  // projection) and matches the HDM stamping to round-off.
+  //
+  // Robustness: the structural check below requires every factored operator we hold to be
+  // sized to the current basis, but it cannot know whether the factored set is COMPLETE
+  // (a future ω-dependent non-wave-port BC added to GetExtraSystemMatrix would have no
+  // factored operator and would be silently dropped). So on the first factored online solve
+  // we additionally verify the factored Aᵣ contribution against the full HDM projection; on
+  // any mismatch we latch other_A2_factored_ok = false and use the slow fallback for the
+  // rest of the sweep.
+  auto apply_factored_other_A2 = [&]()
   {
+    // Factored 2nd-order farfield ABC: A2_ff(ω) = i·(0.5/ω)·M_ff. M_ff_r carries the
+    // boundary mass on the imaginary slot (the i), so scaling by the real scalar 0.5/ω
+    // reproduces the full contribution.
+    if (M_ff_ && M_ff_r.rows() == static_cast<long>(V.size()))
+    {
+      Ar += std::complex<double>(0.5 / omega, 0.0) * M_ff_r;
+    }
+    // Factored surface conductivity, per active group: A2_σ,g(ω) = (i·ω/Z_g(ω))·A_σ,g =
+    // EvaluateScalar(g,ω)·A_σ,g. Asig_g_r[g] carries A_σ,g on the imaginary slot, so the
+    // scalar here is EvaluateScalar/i to avoid double-counting the i (matching the synthesis
+    // convention in CalculateNormalizedPROMMatrices). EvaluateScalar is closed form (skin
+    // depth + optional finite-thickness correction) — a few transcendental ops per group,
+    // negligible versus the reduced solve. No AAA needed online.
+    const auto &surf_op = space_op.GetSurfaceConductivityOp();
+    for (std::size_t g = 0; g < Asig_g_.size(); g++)
+    {
+      if (Asig_g_[g] && Asig_g_r[g].rows() == static_cast<long>(V.size()))
+      {
+        const std::complex<double> s =
+            surf_op.EvaluateScalar(g, std::complex<double>(omega, 0.0)) /
+            std::complex<double>(0.0, 1.0);
+        Ar += s * Asig_g_r[g];
+      }
+    }
+  };
+
+  // Structural precondition for the factored path: every factored operator we hold must be
+  // sized to the current basis, and we must hold at least one (else has_other_A2 came from a
+  // BC we don't factor).
+  bool other_A2_factored = false;
+  if (has_other_A2 && other_A2_factored_ok)
+  {
+    const long n = static_cast<long>(V.size());
+    bool any_factored = false, all_present = true;
+    if (M_ff_)
+    {
+      (M_ff_r.rows() == n) ? (any_factored = true) : (all_present = false);
+    }
+    for (std::size_t g = 0; g < Asig_g_.size(); g++)
+    {
+      if (Asig_g_[g])
+      {
+        (Asig_g_r[g].rows() == n) ? (any_factored = true) : (all_present = false);
+      }
+    }
+    other_A2_factored = any_factored && all_present;
+  }
+
+  Ar.setZero();
+  if (has_other_A2 && other_A2_factored)
+  {
+    apply_factored_other_A2();
+    if (!other_A2_self_checked)
+    {
+      // One-time correctness self-check: compare the factored contribution to the full HDM
+      // projection of A2_other(ω) at this frequency. Cheap (runs once per RomOperator).
+      other_A2_self_checked = true;
+      Eigen::MatrixXcd Ar_factored = Ar;
+      Eigen::MatrixXcd Ar_hdm = Eigen::MatrixXcd::Zero(V.size(), V.size());
+      A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO,
+                                                          /*include_wave_ports=*/false);
+      if (A2)
+      {
+        ProjectMatInternal(space_op.GetComm(), V, *A2, Ar_hdm, r, 0);
+      }
+      const double err = (Ar_factored - Ar_hdm).cwiseAbs().maxCoeff();
+      const double ref = std::max(Ar_hdm.cwiseAbs().maxCoeff(), 1.0e-300);
+      if (err / ref > 1.0e-9)
+      {
+        other_A2_factored_ok = false;
+        Ar = Ar_hdm;  // Use the trusted HDM projection for this solve.
+        Mpi::Warning("Factored online A2 (farfield ABC / surface conductivity) disagrees "
+                     "with the full operator (rel. err {:.3e})!\n"
+                     "Reverting to the per-frequency assembled A2 for the remaining sweep. "
+                     "This indicates an ω-dependent boundary condition not covered by the "
+                     "factored path.\n",
+                     err / ref);
+      }
+    }
+  }
+  else if (has_other_A2)
+  {
+    // Slow fallback: reassemble and reproject the full non-wave-port A2(ω) per ω.
     A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO,
                                                         /*include_wave_ports=*/false);
     if (A2)
     {
       ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0);
     }
-    else
-    {
-      Ar.setZero();
-    }
-  }
-  else
-  {
-    Ar.setZero();
   }
   Ar += Kr;
   if (C)
