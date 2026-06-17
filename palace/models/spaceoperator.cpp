@@ -184,8 +184,7 @@ void SpaceOperator::CheckBoundaryProperties()
       mesh::AttrToMarker(bdr_attr_max, surf_sigma_op.GetAttrList());
   const auto surf_z_Rs_marker = mesh::AttrToMarker(bdr_attr_max, surf_z_op.GetRsAttrList());
   const auto surf_z_Ls_marker = mesh::AttrToMarker(bdr_attr_max, surf_z_op.GetLsAttrList());
-  const auto surf_rz_marker =
-      mesh::AttrToMarker(bdr_attr_max, surf_rz_op.GetAttrList());
+  const auto surf_rz_marker = mesh::AttrToMarker(bdr_attr_max, surf_rz_op.GetAttrList());
   const auto lumped_port_Rs_marker =
       mesh::AttrToMarker(bdr_attr_max, lumped_port_op.GetRsAttrList());
   const auto lumped_port_Ls_marker =
@@ -199,8 +198,9 @@ void SpaceOperator::CheckBoundaryProperties()
   {
     aux_bdr_marker[i] =
         (dbc_marker[i] || farfield_marker[i] || surf_sigma_marker[i] ||
-         surf_z_Rs_marker[i] || surf_z_Rs_marker[i] || surf_z_Ls_marker[i] || lumped_port_Rs_marker[i] ||
-         lumped_port_Ls_marker[i] || wave_port_marker[i] || floquet_port_marker[i]);
+         surf_z_Rs_marker[i] || surf_z_Rs_marker[i] || surf_z_Ls_marker[i] ||
+         lumped_port_Rs_marker[i] || lumped_port_Ls_marker[i] || wave_port_marker[i] ||
+         floquet_port_marker[i]);
     if (aux_bdr_marker[i])
     {
       aux_bdr_attr.Append(i + 1);
@@ -223,8 +223,8 @@ void SpaceOperator::CheckBoundaryProperties()
   for (int i = 0; i < dbc_marker.Size(); i++)
   {
     MFEM_VERIFY(dbc_marker[i] + farfield_marker[i] + surf_sigma_marker[i] +
-                        surf_z_marker[i] + surf_rz_marker[i] + lumped_port_marker[i] + wave_port_marker[i] +
-                        floquet_port_marker[i] + surf_j_marker[i] <=
+                        surf_z_marker[i] + surf_rz_marker[i] + lumped_port_marker[i] +
+                        wave_port_marker[i] + floquet_port_marker[i] + surf_j_marker[i] <=
                     1,
                 "Boundary attributes should not be specified with multiple BC!");
   }

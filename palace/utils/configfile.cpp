@@ -432,8 +432,8 @@ RationalImpedanceData::RationalImpedanceData(const json &boundary)
 {
   attributes = boundary.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
-  num = boundary.at("Numerator").get<std::vector<double>>();      // Required
-  den = boundary.at("Denominator").get<std::vector<double>>();    // Required
+  num = boundary.at("Numerator").get<std::vector<double>>();    // Required
+  den = boundary.at("Denominator").get<std::vector<double>>();  // Required
   MFEM_VERIFY(!num.empty() && !den.empty(),
               "Rational impedance \"Numerator\" and \"Denominator\" must be nonempty!");
   MFEM_VERIFY(std::any_of(den.begin(), den.end(), [](double c) { return c != 0.0; }),
@@ -887,7 +887,8 @@ BoundaryData::BoundaryData(const json &boundaries)
   farfield = ParseOptional<FarfieldBoundaryData>(boundaries, "Absorbing");
   conductivity = ParseOptionalVector<ConductivityData>(boundaries, "Conductivity");
   impedance = ParseOptionalVector<ImpedanceData>(boundaries, "Impedance");
-  rational_impedance = ParseOptionalVector<RationalImpedanceData>(boundaries, "RationalImpedance");
+  rational_impedance =
+      ParseOptionalVector<RationalImpedanceData>(boundaries, "RationalImpedance");
   lumpedport = ParseOptionalMap<LumpedPortData>(boundaries, "LumpedPort", "\"LumpedPort\"");
   terminal = ParseOptionalMap<TerminalData>(boundaries, "Terminal", "\"Terminal\"");
   periodic = ParseOptional<PeriodicBoundaryData>(boundaries, "Periodic");

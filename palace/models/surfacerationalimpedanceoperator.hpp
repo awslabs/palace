@@ -30,8 +30,8 @@ enum class ProblemType : char;
 // with N and D real polynomials given as coefficient lists (highest-degree-first). The
 // roots of N are the zeros and the roots of D are the poles of Zs, so any passive lumped
 // (RLC / network) response can be represented. Unlike the parallel-RLC impedance handled by
-// SurfaceImpedanceOperator (which maps onto the constant stiffness/damping/mass matrices), a
-// general Zs(ω) is an arbitrary function of frequency and therefore contributes to the
+// SurfaceImpedanceOperator (which maps onto the constant stiffness/damping/mass matrices),
+// a general Zs(ω) is an arbitrary function of frequency and therefore contributes to the
 // frequency-dependent "extra" system matrix A2(ω), exactly like the finite-conductivity
 // Robin BC (SurfaceConductivityOperator). It is consequently available only for
 // frequency-domain problem types (driven, eigenmode, boundary mode).
