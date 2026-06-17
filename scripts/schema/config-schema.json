@@ -2515,7 +2515,9 @@
           "enum": [
             "Auto",
             "Polynomial",
-            "Augmented"
+            "Augmented",
+            "PassiveRational",
+            "DtnRational"
           ],
           "description": "Force the wave-port dispersion synthesis regime instead of the automatic dispatch based on the polynomial fit residual.",
           "default": "Auto",

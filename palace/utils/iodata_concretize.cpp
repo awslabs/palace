@@ -149,15 +149,20 @@ void ConcretizeTransient(const config::TransientSolverData &transient, json &j_t
 
 void ConcretizeDriven(const config::DrivenSolverData &driven, json &j_driven)
 {
-  ApplyEntries(j_driven, {{"Restart", driven.restart},
-                          {"AdaptiveTol", driven.adaptive_tol},
-                          {"AdaptiveMaxSamples", driven.adaptive_max_size},
-                          {"AdaptiveConvergenceMemory", driven.adaptive_memory},
-                          {"AdaptiveGSOrthogonalization",
-                           ToString(driven.adaptive_solver_gs_orthog_type)},
-                          {"AdaptiveCircuitSynthesis", driven.adaptive_circuit_synthesis},
-                          {"AdaptiveCircuitSynthesisDomainOrthogonalization",
-                           ToString(driven.adaptive_circuit_synthesis_domain_orthog)}});
+  ApplyEntries(
+      j_driven,
+      {{"Restart", driven.restart},
+       {"AdaptiveTol", driven.adaptive_tol},
+       {"AdaptiveMaxSamples", driven.adaptive_max_size},
+       {"AdaptiveConvergenceMemory", driven.adaptive_memory},
+       {"AdaptiveGSOrthogonalization", ToString(driven.adaptive_solver_gs_orthog_type)},
+       {"AdaptiveCircuitSynthesis", driven.adaptive_circuit_synthesis},
+       {"AdaptiveCircuitSynthesisDomainOrthogonalization",
+        ToString(driven.adaptive_circuit_synthesis_domain_orthog)},
+       {"WavePortSynthesisTol", driven.waveport_synthesis_tol},
+       {"WavePortSynthesisOrderMax", driven.waveport_synthesis_order_max},
+       {"WavePortSynthesisRankTol", driven.waveport_synthesis_rank_tol},
+       {"WavePortSynthesisForce", ToString(driven.waveport_synthesis_force)}});
 }
 
 void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostatic,
