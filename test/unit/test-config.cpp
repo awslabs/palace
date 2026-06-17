@@ -377,6 +377,24 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});
   }
 
+  SECTION("Wave port synthesis controls")
+  {
+    json driven = {{"MinFreq", 0.1},
+                   {"MaxFreq", 1.1},
+                   {"FreqStep", 0.1},
+                   {"WavePortSynthesisTol", 2.0e-4},
+                   {"WavePortSynthesisOrderMax", 7},
+                   {"WavePortSynthesisRankTol", 3.0e-8},
+                   {"WavePortSynthesisForce", "PassiveRational"}};
+    config::DrivenSolverData driven_solver(driven);
+
+    CHECK(driven_solver.waveport_synthesis_tol == 2.0e-4);
+    CHECK(driven_solver.waveport_synthesis_order_max == 7);
+    CHECK(driven_solver.waveport_synthesis_rank_tol == 3.0e-8);
+    CHECK(driven_solver.waveport_synthesis_force ==
+          WavePortSynthesisRegime::PASSIVE_RATIONAL);
+  }
+
   SECTION("Uniform freq step with Samples")
   {
     json driven = {

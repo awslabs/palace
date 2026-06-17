@@ -293,12 +293,11 @@ protected:
   // Define so that 1.0 on port i corresponds to full (un-normalized solution), so you can
   // use Linv, Rinv, C directly.
   //
-  // For wave ports whose order-2 polynomial fit residual exceeds the user-set tolerance
-  // (regime 2), the synthesised matrices are enlarged by one auxiliary row/column per
-  // AAA pole used to fit δkₙ(ω). Each aux row carries a synthetic node label of the
-  // form `waveport_<idx>_aux_<k>`. The returned `aux_labels` is the (possibly empty)
-  // list of those new labels in the same order as the rows/columns appended to the
-  // matrices (i.e. each matrix has size (V.size() + aux_labels.size())).
+  // For wave ports whose order-2 polynomial fit residual exceeds the user-set tolerance,
+  // the synthesised matrices can be enlarged by auxiliary rows/columns for the selected
+  // rational realization. The returned `aux_labels` is the (possibly empty) list of those
+  // new labels in the same order as the rows/columns appended to the matrices (i.e. each
+  // matrix has size (V.size() + aux_labels.size())).
   struct NormalizedMatrices
   {
     std::unique_ptr<Eigen::MatrixXcd> L_inv;
@@ -310,13 +309,16 @@ protected:
 
   // Wave-port dispersion synthesis helpers used by CalculateNormalizedPROMMatrices.
   //
-  // The chosen regime determines whether kₙ,ₚ(ω) is approximated by an order-2
-  // polynomial (Polynomial: clean absorption into Kr/Cr/Mr) or augmented with AAA-fit
-  // residual poles (Augmented: extra aux states extend the pencil).
+  // The chosen regime determines whether k_n,p(omega) is approximated by an order-2
+  // polynomial (Polynomial: clean absorption into Kr/Cr/Mr), augmented with the legacy
+  // AAA-fit residual poles (Augmented), or replaced by a passive rational admittance
+  // model (PassiveRational: extra aux states extend the pencil).
   enum class WavePortRegime
   {
     Polynomial,
-    Augmented
+    Augmented,
+    PassiveRational,
+    DtnRational
   };
 
   // Per-pole singular-vector aux block for a single wave port in regime 2. One aux
@@ -335,9 +337,25 @@ protected:
     std::vector<std::complex<double>> residues;
   };
 
-  // Result of fitting kₙ,ₚ(ω) on the sweep band for a single port. Polynomial regime
+  // Passive fixed-pole admittance realization for one wave port. The scalar modal
+  // admittance is approximated as
+  //   y(s) = d + Σ_k r_k / (s + a_k),  a_k > 0, r_k >= 0, d >= 0,
+  // and the boundary contribution is s*y(s)*M_proj. Eliminating the aux states realizes
+  // each term r_k*s/(s+a_k) = r_k - a_k*r_k/(s+a_k) with stable dissipative poles.
+  struct PassiveWavePortAuxBlock
+  {
+    int port_idx = 0;
+    std::string label;
+    std::vector<double> sigmas;
+    std::vector<Eigen::VectorXd> u_dirs;
+    std::vector<double> poles;     // Positive a_k in s+a_k.
+    std::vector<double> residues;  // Nonnegative r_k.
+  };
+
+  // Result of fitting k_n,p(omega) on the sweep band for a single port. Polynomial regime
   // populates {alpha0, alpha1, alpha2}; Augmented regime additionally populates `aux`
-  // and folds the AAA constant `d` into `alpha0`.
+  // and folds the AAA constant `d` into `alpha0`. PassiveRational populates `passive_aux`
+  // and `passive_d` instead; the polynomial coefficients are retained only for diagnostics.
   struct WavePortDispersionFit
   {
     int port_idx = 0;
@@ -352,23 +370,22 @@ protected:
     std::complex<double> alpha1c = 0.0;
     std::complex<double> alpha2c = 0.0;
     std::optional<WavePortAuxBlock> aux;
+    std::optional<PassiveWavePortAuxBlock> passive_aux;
+    double passive_d = 0.0;
+    // DtnRational regime: structured √ fit of q(s)=i·kₙ via q²=c₀+c₁s+c₂s², realized as
+    // q(s)=dtn_poly0 + dtn_poly1·s + Σ R_k/(s−p_k). The complex s-domain pole/residue list is
+    // stored in `dtn_aux` (poles p_k, residues R_k, with the per-direction σ_j/u_j SVD data),
+    // and dtn_poly0/dtn_poly1 carry the proper-part polynomial. The contribution to Aᵣ(ω) is
+    // q(iω)·M_proj. Handles lossless (jω-axis poles, Re(q(iω))=0 by construction) and lossy
+    // (LHP poles) uniformly; no spurious loss on a lossless port.
+    std::optional<WavePortAuxBlock> dtn_aux;
+    std::complex<double> dtn_poly0 = 0.0;
+    std::complex<double> dtn_poly1 = 0.0;
     double rel_err_polynomial = 0.0;  // residual of α-only fit on dense grid
     double rel_err_augmented = 0.0;   // residual after AAA augmentation (Augmented only)
+    double rel_err_passive = 0.0;     // residual after passive rational fit
+    double rel_err_dtn = 0.0;         // residual after DtN structured-√ fit
   };
-
-  // Online wave-port kₙ(ω) surrogate state. In the online sweep, A_wp(ω) = i·Σ_p
-  // kₙ,p(ω)·Mp_r needs kₙ,p(ω) at every sweep frequency; the default path re-solves the
-  // per-port cross-section EVP each ω (the dominant online solver cost). When a per-port
-  // dispersion fit is available and within tolerance, the online loop evaluates kₙ from the
-  // fit instead (EvaluateWavePortKnFit) — far cheaper than the EVP. The fit is the SAME
-  // WavePortDispersionFit produced by FitWavePortDispersion for circuit synthesis: when
-  // AdaptiveCircuitSynthesis is on it is retained from that pass (no extra EVPs); otherwise
-  // it is built lazily once via PrepareWavePortKnSurrogate. Ports whose fit residual exceeds
-  // tolerance are absent from the map and fall back to the EVP, so accuracy is never lost.
-  // mutable: a solve-time cache, populated lazily. Declared here (after the struct) so the
-  // map's value type is complete.
-  mutable std::map<int, WavePortDispersionFit> kn_online_fit_;
-  mutable bool kn_surrogate_prepared_ = false;
 
   // Choose a synthesis regime given the polynomial-fit residual. `meets_tol` is the
   // outcome of comparing rel_err against waveport_synthesis_tol; `force_setting`
@@ -392,6 +409,13 @@ protected:
   // (alpha0c/1c/2c, surface conductivity) is evaluated separately.
   static double EvaluateWavePortKnFit(const WavePortDispersionFit &fit, double omega);
 
+  // Evaluate the scalar multiplying Mp_r in the online reduced system. For the polynomial
+  // and legacy augmented regimes this is real-valued k_n(omega). For PassiveRational it is
+  // omega*y(i omega), generally complex, so scalar*Mp_r realizes s*y(s)*M_proj on the real
+  // frequency axis just like the synthesized augmented pencil.
+  static std::complex<double>
+  EvaluateWavePortMultiplierFit(const WavePortDispersionFit &fit, double omega);
+
   // Accumulate the polynomial-fit corrections from one port into the running Kr_corr,
   // Cr_corr, Mr_corr buffers. Folds α₀+d into Im(Kr), -α₁ into Re(Cr), -α₂ into Im(Mr).
   static void ApplyPolynomialFitCorrections(const WavePortDispersionFit &fit,
@@ -399,6 +423,36 @@ protected:
                                             Eigen::MatrixXcd &Kr_corr,
                                             Eigen::MatrixXcd &Cr_corr,
                                             Eigen::MatrixXcd &Mr_corr);
+
+  // Accumulate a passive modal admittance fit y(s)=d+Σr/(s+a) as
+  // s*y(s)*M_proj = s*d*M_proj + Σ r*M_proj - Σ a*r*M_proj/(s+a). The pole terms are
+  // realized by PassiveWavePortAuxBlock in BuildAugmentedPencil.
+  static void ApplyPassiveRationalFitCorrections(const WavePortDispersionFit &fit,
+                                                 const Eigen::MatrixXcd &Mp_r,
+                                                 Eigen::MatrixXcd &Kr_corr,
+                                                 Eigen::MatrixXcd &Cr_corr);
+
+  // Fit the DtN multiplier q(s)=i·kₙ(ω) of one wave port by the structured square root:
+  // fit q²=c₀+c₁s+c₂s² (s=iω), complete the square q=√c₂·u·√(1−t) with u=s+c₁/(2c₂),
+  // t=ω_s²/u², fit √(1−t)≈P(t)/Q(t) (real coeffs, column-scaled LSQ), then convert to the
+  // s-domain pole-residue form q(s)=poly0+poly1·s+Σ R_k/(s−p_k). Populates fit.dtn_poly0,
+  // dtn_poly1 and fit.dtn_aux (complex s-poles/residues + SVD directions of M_proj), and the
+  // dense-grid residual fit.rel_err_dtn. Lossless ports give jω-axis poles (Re(q(iω))=0 by
+  // construction, no spurious loss); lossy ports give LHP poles carrying the physical loss.
+  void FitWavePortDtnRational(WavePortDispersionFit &fit, const Eigen::MatrixXcd &Mp_r,
+                              const std::vector<double> &fit_omegas,
+                              const Eigen::VectorXd &y_fit,
+                              const std::vector<double> &dense_omegas) const;
+
+  // Accumulate the DtN proper-polynomial part: q(s)=poly0+poly1·s+(pole part). The
+  // contribution to Aᵣ(ω) is q(iω)·M_proj, so poly0·M_proj folds into Kr and poly1·M_proj
+  // into Cr (the poly1·s = poly1·iω → iω·C channel). M_proj = (−i)·Mp_r. The pole part is
+  // realized by the DtN branch of BuildAugmentedPencil. (poly0/poly1 are generally complex
+  // for a lossy port; purely imaginary-on-jω structure is preserved for lossless.)
+  static void ApplyDtnRationalFitCorrections(const WavePortDispersionFit &fit,
+                                             const Eigen::MatrixXcd &Mp_r,
+                                             Eigen::MatrixXcd &Kr_corr,
+                                             Eigen::MatrixXcd &Cr_corr);
 
   // Generalized scalar-dispersion fit for the other frequency-dependent BCs (surface
   // conductivity). Like FitWavePortDispersion but driven by an arbitrary scalar function
@@ -442,6 +496,8 @@ protected:
   BuildAugmentedPencil(const Eigen::MatrixXcd &Kr_total, const Eigen::MatrixXcd &Cr_total,
                        const Eigen::MatrixXcd &Mr_total,
                        const std::vector<WavePortAuxBlock> &aux_blocks,
+                       const std::vector<PassiveWavePortAuxBlock> &passive_aux_blocks,
+                       const std::vector<WavePortAuxBlock> &dtn_aux_blocks,
                        std::vector<std::string> &aux_labels);
 
 public:
@@ -494,17 +550,6 @@ public:
   // Assemble and solve the PROM at the specified frequency, expanding the solution back
   // into the high-dimensional space.
   void SolvePROM(int excitation_idx, double omega, ComplexVector &u);
-
-  // Prepare the online wave-port kₙ(ω) surrogate before the fast-frequency-sweep online
-  // phase. For each wave port, obtain a dispersion fit (reused from the synthesis pass if
-  // already computed, else built lazily via FitWavePortDispersion) and retain it for use in
-  // SolvePROM when its residual is within waveport_synthesis_tol; ports that don't meet
-  // tolerance are omitted and fall back to the per-ω cross-section EVP. `n_sweep_points` is
-  // the number of online sweep frequencies, used to decide whether building the fit (which
-  // costs a fixed number of EVP solves per port) is amortized by the sweep length; if not,
-  // the surrogate is skipped entirely and the EVP path is used throughout. No-op if there
-  // are no wave ports or the sweep band is degenerate. Safe to call more than once.
-  void PrepareWavePortKnSurrogate(std::size_t n_sweep_points);
 
   // Compute the location(s) of the maximum error in the range of the previously sampled
   // parameter points.
