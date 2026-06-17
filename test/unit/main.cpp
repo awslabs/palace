@@ -13,6 +13,10 @@
 #include "utils/device.hpp"
 #include "utils/omp.hpp"
 
+#if defined(MFEM_USE_STRUMPACK)
+#include <StrumpackConfig.hpp>
+#endif
+
 using namespace palace;
 
 // Global test options configurable from command line.
@@ -24,7 +28,14 @@ bool benchmark_no_mfem_pa = false;
 
 int main(int argc, char *argv[])
 {
-  // Initialize MPI.
+  // Initialize MPI. Regression cases run palace::Run in-process, so request the
+  // same MPI thread level as the standalone driver -- STRUMPACK with PtScotch /
+  // SLATE-ScaLAPACK calls MPI from OpenMP threads and segfaults below
+  // MPI_THREAD_MULTIPLE.
+#if defined(MFEM_USE_STRUMPACK) && \
+    (defined(STRUMPACK_USE_PTSCOTCH) || defined(STRUMPACK_USE_SLATE_SCALAPACK))
+  Mpi::default_thread_required = MPI_THREAD_MULTIPLE;
+#endif
   Mpi::Init(argc, argv);
 
   // See https://github.com/catchorg/Catch2/blob/devel/docs/own-main.md.
