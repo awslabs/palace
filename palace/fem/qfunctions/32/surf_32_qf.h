@@ -122,9 +122,11 @@ CEED_QFUNCTION(f_integ_surf_hcurl_norm2_32)(void *, CeedInt Q, const CeedScalar 
 //            material table looked up with the side 1 volume attribute
 //   SA:      v = scale0 * |E_t|² + scale1 * |E_n|², scale0 = 0.5 * t * eps,
 //            scale1 = 0.5 * t / eps
-// all times the surface measure. The context is a CeedIntScalar array: [0].second =
-// scale0, [1].second = scale1, followed by an (optional, MS only) material property
-// coefficient context. The "_1" variants evaluate the field from a single volume
+// all times the surface measure. The context is a CeedIntScalar array: [0].first =
+// epr_type (0 = DEFAULT, 1 = MA, 2 = MS, 3 = SA; selects the integrand at runtime, in its
+// own slot since CeedIntScalar is a union), [1].second = scale0, [2].second = scale1,
+// followed by an (optional, MS only) material property coefficient context. The shared
+// kernel passes ctx + 1 to the per-type helpers. The "_1" variants evaluate from a single
 // element; the "_2" variants average the fields from both sides of an interior
 // boundary. The normal direction sign is irrelevant (quadratic in n . E).
 
@@ -159,54 +161,68 @@ CEED_QFUNCTION_HELPER CeedScalar SurfEprSA(const CeedIntScalar *ctx, const CeedS
   return ctx[0].second * Et2 + ctx[1].second * En * En;
 }
 
-// Single-sided interface dielectric. Inputs: qw, grad_x_f, attr_1, grad_x_1, u_1.
-#define PALACE_SURF_EPR_1_QF(name, integrand)                                            \
-  CEED_QFUNCTION(name)(void *__restrict__ ctx_, CeedInt Q, const CeedScalar *const *in,  \
-                       CeedScalar *const *out)                                           \
-  {                                                                                      \
-    const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;                              \
-    const CeedScalar *qw = in[0], *J_f = in[1], *attr = in[2], *J_v = in[3], *u = in[4]; \
-    CeedScalar *v = out[0];                                                              \
-    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)                                       \
-    {                                                                                    \
-      CeedScalar J_f_loc[6], n[3], E[3];                                                 \
-      MatUnpack32(J_f + i, Q, J_f_loc);                                                  \
-      const CeedScalar wdetJ = qw[i] * SurfMeasure32(J_f_loc, n);                        \
-      SurfHcurlField32(i, Q, J_v, u, E);                                                 \
-      v[i] = wdetJ * (integrand);                                                        \
-    }                                                                                    \
-    return 0;                                                                            \
+// Single-sided / two-sided interface dielectric. The four interface types (DEFAULT,
+// MA, MS, SA) share one compiled kernel: the type is selected at runtime from
+// ctx[0].first (0 = DEFAULT, 1 = MA, 2 = MS, 3 = SA). Because the type is uniform across
+// the operator this is a divergence-free branch over the existing per-type helpers, so a
+// single kernel replaces the per-type specializations at no runtime cost. The type sits
+// in its own slot (CeedIntScalar is a union, so .first and .second of one slot alias);
+// the per-type helpers see the rest of the context via ctx + 1 (scale0, scale1, ...).
+CEED_QFUNCTION_HELPER CeedScalar SurfEpr(const CeedIntScalar *ctx, CeedInt attr,
+                                         const CeedScalar n[3], const CeedScalar E[3])
+{
+  switch (ctx[0].first)
+  {
+    case 0:
+      return SurfEprDefault(ctx + 1, E);
+    case 1:
+      return SurfEprMA(ctx + 1, n, E);
+    case 2:
+      return SurfEprMS(ctx + 1, attr, n, E);
+    default:  // 3: SA
+      return SurfEprSA(ctx + 1, n, E);
   }
+}
+
+// Single-sided interface dielectric. Inputs: qw, grad_x_f, attr_1, grad_x_1, u_1.
+CEED_QFUNCTION(f_integ_surf_epr_1_32)(void *__restrict__ ctx_, CeedInt Q,
+                                      const CeedScalar *const *in, CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *qw = in[0], *J_f = in[1], *attr = in[2], *J_v = in[3], *u = in[4];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar J_f_loc[6], n[3], E[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    const CeedScalar wdetJ = qw[i] * SurfMeasure32(J_f_loc, n);
+    SurfHcurlField32(i, Q, J_v, u, E);
+    v[i] = wdetJ * SurfEpr(ctx, (CeedInt)attr[i], n, E);
+  }
+  return 0;
+}
 
 // Two-sided (averaged) interface dielectric. Inputs: qw, grad_x_f, attr_1, grad_x_1,
 // attr_2, grad_x_2, u_1, u_2.
-#define PALACE_SURF_EPR_2_QF(name, integrand)                                           \
-  CEED_QFUNCTION(name)(void *__restrict__ ctx_, CeedInt Q, const CeedScalar *const *in, \
-                       CeedScalar *const *out)                                          \
-  {                                                                                     \
-    const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;                             \
-    const CeedScalar *qw = in[0], *J_f = in[1], *attr = in[2], *J_v1 = in[3],           \
-                     *J_v2 = in[5], *u_1 = in[6], *u_2 = in[7];                         \
-    CeedScalar *v = out[0];                                                             \
-    CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)                                      \
-    {                                                                                   \
-      CeedScalar J_f_loc[6], n[3], E[3];                                                \
-      MatUnpack32(J_f + i, Q, J_f_loc);                                                 \
-      const CeedScalar wdetJ = qw[i] * SurfMeasure32(J_f_loc, n);                       \
-      SurfHcurlField2Avg32(i, Q, J_v1, J_v2, u_1, u_2, E);                              \
-      v[i] = wdetJ * (integrand);                                                       \
-    }                                                                                   \
-    return 0;                                                                           \
-  }
+CEED_QFUNCTION(f_integ_surf_epr_2_32)(void *__restrict__ ctx_, CeedInt Q,
+                                      const CeedScalar *const *in, CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *qw = in[0], *J_f = in[1], *attr = in[2], *J_v1 = in[3], *J_v2 = in[5],
+                   *u_1 = in[6], *u_2 = in[7];
+  CeedScalar *v = out[0];
 
-PALACE_SURF_EPR_1_QF(f_integ_surf_epr_def_1_32, SurfEprDefault(ctx, E))
-PALACE_SURF_EPR_2_QF(f_integ_surf_epr_def_2_32, SurfEprDefault(ctx, E))
-PALACE_SURF_EPR_1_QF(f_integ_surf_epr_ma_1_32, SurfEprMA(ctx, n, E))
-PALACE_SURF_EPR_2_QF(f_integ_surf_epr_ma_2_32, SurfEprMA(ctx, n, E))
-PALACE_SURF_EPR_1_QF(f_integ_surf_epr_ms_1_32, SurfEprMS(ctx, (CeedInt)attr[i], n, E))
-PALACE_SURF_EPR_2_QF(f_integ_surf_epr_ms_2_32, SurfEprMS(ctx, (CeedInt)attr[i], n, E))
-PALACE_SURF_EPR_1_QF(f_integ_surf_epr_sa_1_32, SurfEprSA(ctx, n, E))
-PALACE_SURF_EPR_2_QF(f_integ_surf_epr_sa_2_32, SurfEprSA(ctx, n, E))
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar J_f_loc[6], n[3], E[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    const CeedScalar wdetJ = qw[i] * SurfMeasure32(J_f_loc, n);
+    SurfHcurlField2Avg32(i, Q, J_v1, J_v2, u_1, u_2, E);
+    v[i] = wdetJ * SurfEpr(ctx, (CeedInt)attr[i], n, E);
+  }
+  return 0;
+}
 
 // Surface flux integrands following BdrSurfaceFluxCoefficient (fem/coefficient.hpp):
 //   ELECTRIC: V = eps E, MAGNETIC: V = B, POWER: V = E x (mu⁻¹ B),

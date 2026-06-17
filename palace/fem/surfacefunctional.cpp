@@ -520,20 +520,28 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   std::vector<CeedIntScalar> base_ctx;
   if (kind == Kind::INTERFACE_EPR)
   {
-    base_ctx.resize(2);
-    base_ctx[0].second = 0.0;
+    // CeedIntScalar is a union, so the runtime integrand selector (epr_type) needs its
+    // own slot: [0].first = epr_type (0 = DEFAULT, 1 = MA, 2 = MS, 3 = SA), then
+    // [1].second = scale0, [2].second = scale1, then (MS only) the material context. The
+    // shared kernel passes ctx + 1 to the per-type helpers so their relative layout
+    // (scale0, scale1, material) is unchanged.
+    base_ctx.resize(3);
     base_ctx[1].second = 0.0;
+    base_ctx[2].second = 0.0;
     switch (epr_type)
     {
       case InterfaceDielectric::DEFAULT:
-        base_ctx[0].second = 0.5 * epr_t * epr_epsilon;
+        base_ctx[0].first = 0;
+        base_ctx[1].second = 0.5 * epr_t * epr_epsilon;
         break;
       case InterfaceDielectric::MA:
-        base_ctx[0].second = 0.5 * epr_t / epr_epsilon;
+        base_ctx[0].first = 1;
+        base_ctx[1].second = 0.5 * epr_t / epr_epsilon;
         break;
       case InterfaceDielectric::MS:
         {
-          base_ctx[0].second = 0.5 * epr_t / epr_epsilon;
+          base_ctx[0].first = 2;
+          base_ctx[1].second = 0.5 * epr_t / epr_epsilon;
           MaterialPropertyCoefficient epsilon_func(mat_op->GetAttributeToMaterial(),
                                                    mat_op->GetPermittivityReal());
           auto mat_ctx = ceed::PopulateCoefficientContext(3, &epsilon_func);
@@ -541,8 +549,9 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         }
         break;
       case InterfaceDielectric::SA:
-        base_ctx[0].second = 0.5 * epr_t * epr_epsilon;
-        base_ctx[1].second = 0.5 * epr_t / epr_epsilon;
+        base_ctx[0].first = 3;
+        base_ctx[1].second = 0.5 * epr_t * epr_epsilon;
+        base_ctx[2].second = 0.5 * epr_t / epr_epsilon;
         break;
     }
   }
@@ -843,29 +852,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         info.apply_qf_path = PalaceQFunctionRelativePath(f_integ_surf_hcurl_norm2_32_loc);
         break;
       case Kind::INTERFACE_EPR:
-        switch (epr_type)
-        {
-          case InterfaceDielectric::DEFAULT:
-            info.apply_qf = has_b ? f_integ_surf_epr_def_2_32 : f_integ_surf_epr_def_1_32;
-            info.apply_qf_path = PalaceQFunctionRelativePath(
-                has_b ? f_integ_surf_epr_def_2_32_loc : f_integ_surf_epr_def_1_32_loc);
-            break;
-          case InterfaceDielectric::MA:
-            info.apply_qf = has_b ? f_integ_surf_epr_ma_2_32 : f_integ_surf_epr_ma_1_32;
-            info.apply_qf_path = PalaceQFunctionRelativePath(
-                has_b ? f_integ_surf_epr_ma_2_32_loc : f_integ_surf_epr_ma_1_32_loc);
-            break;
-          case InterfaceDielectric::MS:
-            info.apply_qf = has_b ? f_integ_surf_epr_ms_2_32 : f_integ_surf_epr_ms_1_32;
-            info.apply_qf_path = PalaceQFunctionRelativePath(
-                has_b ? f_integ_surf_epr_ms_2_32_loc : f_integ_surf_epr_ms_1_32_loc);
-            break;
-          case InterfaceDielectric::SA:
-            info.apply_qf = has_b ? f_integ_surf_epr_sa_2_32 : f_integ_surf_epr_sa_1_32;
-            info.apply_qf_path = PalaceQFunctionRelativePath(
-                has_b ? f_integ_surf_epr_sa_2_32_loc : f_integ_surf_epr_sa_1_32_loc);
-            break;
-        }
+        // All four interface types share one kernel; epr_type is set in base_ctx[0].first.
+        info.apply_qf = has_b ? f_integ_surf_epr_2_32 : f_integ_surf_epr_1_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(has_b ? f_integ_surf_epr_2_32_loc
+                                                               : f_integ_surf_epr_1_32_loc);
+        break;
         break;
       case Kind::BDR_FIELD_E:
         info.apply_qf = has_b ? f_eval_bdr_hcurl_2_32 : f_eval_bdr_hcurl_1_32;
