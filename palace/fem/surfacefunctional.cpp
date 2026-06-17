@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include "fem/coefficient.hpp"
+#include "fem/facenbrexchange.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
@@ -80,6 +81,13 @@ struct ElemPlan
   std::vector<mfem::IntegrationPoint> pts_a, pts_b;
   bool flip = false;  // Boundary element and face have the same orientation (o % 2 == 0),
                       // legacy coefficients invert the boundary element normal
+  // A side whose volume element is a face neighbor (ghost) on another process: its field
+  // is not in the local vector, so it is pulled via FaceNbrFieldExchange and fed to the
+  // operator at the mapped points (only Elem2 can be a ghost, so at most one side).
+  bool ghost_a = false, ghost_b = false;
+  int face_nbr = -1;    // Face neighbor element index (Elem2No - ParMesh::GetNE())
+  int ghost_attr = 0;   // Ghost element mesh attribute (material lookup on the requester)
+  mfem::Geometry::Type ghost_geom = mfem::Geometry::INVALID;  // Ghost element geometry
 };
 
 // Data for one group of boundary elements sharing the same face configuration.
@@ -93,6 +101,12 @@ struct FaceGroup
   const mfem::IntegrationRule *mapped_ir_b = nullptr;
   std::vector<int> bdr_indices, vol_indices_a, vol_indices_b;
   std::vector<int> out_slots;  // Output vector slot for each boundary element
+  // Ghost (face neighbor) side, if any: at most one of ghost_a/ghost_b is set (only
+  // Elem2 can be a ghost). For the ghost side, vol_indices are empty; face_nbr and
+  // ghost_attr hold the per-element face neighbor index and mesh attribute, and req_idx
+  // the FaceNbrFieldExchange request index (filled when the exchange is built).
+  bool ghost_a = false, ghost_b = false;
+  std::vector<int> face_nbr, ghost_attr, req_idx;
 };
 
 void AppendPoints(FaceConfigKey &key, const std::vector<mfem::IntegrationPoint> &pts)
@@ -136,18 +150,22 @@ struct CeedAssemblyScratch
 
 void fem::ApplyAddGroupOperators(const std::vector<fem::CeedGroupOperator> &groups,
                                  const std::array<const Vector *, 4> &srcs,
-                                 const Vector &out)
+                                 const Vector &out, const Vector *imported)
 {
   for (const auto &[ceed, op, field_sources, ctx] : groups)
   {
     for (const auto &[name, source] : field_sources)
     {
-      MFEM_ASSERT(srcs[source], "Missing source vector for libCEED field input!");
+      // Source index 4 selects the imported face neighbor field values (see
+      // SurfaceFunctional::face_nbr_exchange); the operator's restriction slices and
+      // transposes the shared vector to the per-element layout.
+      const Vector *sv = (source < 4) ? srcs[source] : imported;
+      MFEM_ASSERT(sv, "Missing source vector for libCEED field input!");
       CeedOperatorField field;
       CeedVector field_vec;
       PalaceCeedCall(ceed, CeedOperatorGetFieldByName(op, name.c_str(), &field));
       PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &field_vec));
-      ceed::InitCeedVector(*srcs[source], ceed, &field_vec, false);
+      ceed::InitCeedVector(*sv, ceed, &field_vec, false);
     }
     CeedVector out_vec;
     ceed::InitCeedVector(out, ceed, &out_vec);
@@ -390,15 +408,26 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         }
       }
 
-      // TODO: Support face neighbor (other process) elements for two-sided interior
-      // boundaries on parallel interfaces, as handled by the legacy coefficients via
-      // ParMesh::ExchangeFaceNbrData. Requires element restrictions indexing into the
-      // face neighbor data vector. Until then, fall back to the legacy paths.
-      if ((plan.elem_a >= 0 && plan.elem_a >= pmesh.GetNE()) ||
-          (plan.elem_b >= 0 && !elem2_local))
+      // A two-sided interior boundary on a parallel interface: the Elem2 side is a face
+      // neighbor (ghost) element on another process. Its field is not in the local
+      // vector; it is pulled via FaceNbrFieldExchange (built below from the mapped
+      // points) and fed to the ghost side of the operator, so the libCEED path handles
+      // it without falling back to the legacy coefficients. Only Elem2 can be a ghost.
+      if (plan.elem_a >= 0 && plan.elem_a >= pmesh.GetNE())
       {
-        valid = false;
-        return;
+        plan.ghost_a = true;
+      }
+      if (plan.elem_b >= 0 && !elem2_local)
+      {
+        plan.ghost_b = true;
+      }
+      if (plan.ghost_a || plan.ghost_b)
+      {
+        plan.face_nbr = FET.Elem2No - pmesh.GetNE();
+        plan.ghost_attr = FET.Elem2->Attribute;
+        // The ghost element index is out of range for pmesh.GetElementGeometry; capture
+        // its geometry here while the face neighbor transformation is in scope.
+        plan.ghost_geom = FET.Elem2->GetGeometryType();
       }
 
       // Map the face quadrature points to the volume element reference space(s):
@@ -437,16 +466,20 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
 
       // Build the group key from the geometries, orientation flag, and quantized
       // mapped quadrature point coordinates.
-      const auto vol_geom_a = (plan.elem_a >= 0) ? pmesh.GetElementGeometry(plan.elem_a)
-                                                 : mfem::Geometry::INVALID;
-      const auto vol_geom_b = (plan.elem_b >= 0) ? pmesh.GetElementGeometry(plan.elem_b)
-                                                 : mfem::Geometry::INVALID;
+      const auto vol_geom_a = plan.ghost_a ? plan.ghost_geom
+                              : (plan.elem_a >= 0) ? pmesh.GetElementGeometry(plan.elem_a)
+                                                   : mfem::Geometry::INVALID;
+      const auto vol_geom_b = plan.ghost_b ? plan.ghost_geom
+                              : (plan.elem_b >= 0) ? pmesh.GetElementGeometry(plan.elem_b)
+                                                   : mfem::Geometry::INVALID;
       FaceConfigKey key;
-      key.reserve(5 + 3 * (plan.pts_a.size() + plan.pts_b.size()));
+      key.reserve(7 + 3 * (plan.pts_a.size() + plan.pts_b.size()));
       key.push_back(static_cast<long long>(bdr_geom));
       key.push_back(static_cast<long long>(vol_geom_a));
       key.push_back(static_cast<long long>(vol_geom_b));
       key.push_back(static_cast<long long>(plan.flip));
+      key.push_back(static_cast<long long>(plan.ghost_a));
+      key.push_back(static_cast<long long>(plan.ghost_b));
       key.push_back(static_cast<long long>(nq));
       AppendPoints(key, plan.pts_a);
       AppendPoints(key, plan.pts_b);
@@ -459,6 +492,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         group.vol_geom_a = vol_geom_a;
         group.vol_geom_b = vol_geom_b;
         group.flip_normal = plan.flip;
+        group.ghost_a = plan.ghost_a;
+        group.ghost_b = plan.ghost_b;
         if (plan.elem_a >= 0)
         {
           FaceConfigKey key_a = key;
@@ -476,11 +511,27 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       it->second.bdr_indices.push_back(i);
       if (plan.elem_a >= 0)
       {
-        it->second.vol_indices_a.push_back(plan.elem_a);
+        if (plan.ghost_a)
+        {
+          it->second.face_nbr.push_back(plan.face_nbr);
+          it->second.ghost_attr.push_back(plan.ghost_attr);
+        }
+        else
+        {
+          it->second.vol_indices_a.push_back(plan.elem_a);
+        }
       }
       if (plan.elem_b >= 0)
       {
-        it->second.vol_indices_b.push_back(plan.elem_b);
+        if (plan.ghost_b)
+        {
+          it->second.face_nbr.push_back(plan.face_nbr);
+          it->second.ghost_attr.push_back(plan.ghost_attr);
+        }
+        else
+        {
+          it->second.vol_indices_b.push_back(plan.elem_b);
+        }
       }
       if (IsBufferKind(kind))
       {
@@ -637,6 +688,69 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     }
   }
 
+  // Build the face neighbor field exchange for any ghost (face neighbor) sides of
+  // two-sided interior boundaries on parallel interfaces. Collective: all processes
+  // participate (those without ghost faces pose no requests), so the decision is reduced
+  // globally. Each ghost face requests the neighbor's volume field at the mapped face
+  // quadrature points; the returned physical-space values feed the ghost side below.
+  {
+    int any_ghost = 0;
+    for (const auto &[k, g] : face_groups)
+    {
+      if (g.ghost_a || g.ghost_b)
+      {
+        any_ghost = 1;
+        break;
+      }
+    }
+    Mpi::GlobalSum(1, &any_ghost, comm);
+    if (any_ghost > 0)
+    {
+      // Source slots match the field inputs: SURFACE_FLUX uses slot 0 = E (fespace_e)
+      // and slot 1 = B (fespace_b); all other kinds carry a single field at slot 0.
+      std::array<const mfem::ParFiniteElementSpace *, FaceNbrFieldExchange::MaxSources>
+          ex_fes = {nullptr, nullptr, nullptr, nullptr};
+      unsigned int source_mask;
+      if (kind == Kind::SURFACE_FLUX)
+      {
+        ex_fes[0] = fespace_e;
+        ex_fes[1] = fespace_b;
+        source_mask = (flux_type == SurfaceFlux::ELECTRIC)   ? 0b01u
+                      : (flux_type == SurfaceFlux::MAGNETIC) ? 0b10u
+                                                             : 0b11u;
+      }
+      else
+      {
+        ex_fes[0] = fespace_b ? fespace_b : fespace_e;
+        source_mask = 0b01u;
+      }
+      std::vector<FaceNbrFieldExchange::Request> requests;
+      for (auto &[k, g] : face_groups)
+      {
+        if (!(g.ghost_a || g.ghost_b))
+        {
+          continue;
+        }
+        const mfem::IntegrationRule &ir = g.ghost_a ? *g.mapped_ir_a : *g.mapped_ir_b;
+        std::vector<mfem::IntegrationPoint> pts(ir.GetNPoints());
+        for (int q = 0; q < ir.GetNPoints(); q++)
+        {
+          pts[q] = ir.IntPoint(q);
+        }
+        g.req_idx.resize(g.face_nbr.size());
+        for (std::size_t e = 0; e < g.face_nbr.size(); e++)
+        {
+          g.req_idx[e] = static_cast<int>(requests.size());
+          auto &req = requests.emplace_back();
+          req.face_nbr_elem = g.face_nbr[e];
+          req.source_mask = source_mask;
+          req.pts = pts;
+        }
+      }
+      face_nbr_exchange = std::make_unique<FaceNbrFieldExchange>(mesh, ex_fes, requests);
+    }
+  }
+
   // Assemble a libCEED operator for each group. For now, all operators are constructed
   // on a single Ceed context (no OpenMP parallel assembly or application; correctness
   // first, this can be extended with the thread partitioning of fem/mesh.cpp later).
@@ -644,7 +758,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   for (auto &[key, group] : face_groups)
   {
     const std::size_t num_elem = group.bdr_indices.size();
-    const bool has_b = !group.vol_indices_b.empty();
+    const bool has_b = !group.vol_indices_b.empty() || group.ghost_b;
     const bool buffer_kind = IsBufferKind(kind);
     const mfem::IntegrationRule &face_ir =
         buffer_kind
@@ -736,11 +850,83 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       scratch.bases.push_back(attr_basis);
       scratch.bases.push_back(mesh_basis);
     };
-    if (!group.vol_indices_a.empty())
+    // Ghost (face neighbor) side variant: the volume element lives on another process,
+    // so its attributes come from group.ghost_attr and the Piola Jacobian is replaced by
+    // a constant identity. The exchanged field values are already physical (the owning
+    // process applied the Piola map), so Piola(I) = I in the shared kernels reproduces
+    // them. Same input names/positions as AddVolGeomInputs ("grad_x_<suffix>" via
+    // EVAL_NONE matches the EVAL_GRAD naming), so the kernels are unchanged.
+    auto AddVolGeomInputsGhost = [&](const std::string &suffix,
+                                     const mfem::IntegrationRule &ir)
+    {
+      const int num_pts = ir.GetNPoints();
+      auto &elem_attr = elem_attrs.emplace_back(group.ghost_attr.size());
+      const auto &loc_attr = mesh.GetCeedAttributes();
+      for (std::size_t k = 0; k < group.ghost_attr.size(); k++)
+      {
+        elem_attr[k] = loc_attr.at(group.ghost_attr[k]);
+      }
+      CeedElemRestriction attr_restr;
+      CeedBasis attr_basis;
+      CeedVector attr_vec;
+      PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
+                               ceed, group.ghost_attr.size(), 1, 1,
+                               group.ghost_attr.size(), CEED_STRIDES_BACKEND, &attr_restr));
+      {
+        mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
+        Bt = 1.0;
+        Gt = 0.0;
+        qX = 0.0;
+        qW = 0.0;
+        PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
+                                               Bt.GetData(), Gt.GetData(), qX.GetData(),
+                                               qW.GetData(), &attr_basis));
+      }
+      ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
+      inputs.push_back(
+          {"attr_" + suffix, attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
+      // Constant 3x3 identity Jacobian (9 components, component-major [elem][comp][pt]),
+      // passed directly to the kernel's grad_x_<suffix> input (EVAL_NONE).
+      auto &ident = elem_attrs.emplace_back(num_elem * 9 * num_pts);
+      ident = 0.0;
+      for (std::size_t e = 0; e < num_elem; e++)
+      {
+        for (int c : {0, 4, 8})
+        {
+          for (int i = 0; i < num_pts; i++)
+          {
+            ident[e * 9 * num_pts + c * num_pts + i] = 1.0;
+          }
+        }
+      }
+      CeedElemRestriction ident_restr;
+      const CeedInt strides[3] = {1, num_pts, 9 * num_pts};
+      PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
+                               ceed, static_cast<CeedInt>(num_elem), num_pts, 9,
+                               (CeedSize)num_elem * 9 * num_pts, strides, &ident_restr));
+      CeedVector ident_vec;
+      ceed::InitCeedVector(ident, ceed, &ident_vec);
+      inputs.push_back(
+          {"grad_x_" + suffix, ident_vec, ident_restr, nullptr, ceed::EvalMode::None});
+      scratch.vecs.push_back(attr_vec);
+      scratch.vecs.push_back(ident_vec);
+      scratch.restrs.push_back(attr_restr);
+      scratch.restrs.push_back(ident_restr);
+      scratch.bases.push_back(attr_basis);
+    };
+    if (group.ghost_a)
+    {
+      AddVolGeomInputsGhost("1", *group.mapped_ir_a);
+    }
+    else if (!group.vol_indices_a.empty())
     {
       AddVolGeomInputs("1", group.vol_indices_a, group.vol_geom_a, *group.mapped_ir_a);
     }
-    if (has_b)
+    if (group.ghost_b)
+    {
+      AddVolGeomInputsGhost("2", *group.mapped_ir_b);
+    }
+    else if (!group.vol_indices_b.empty())
     {
       AddVolGeomInputs("2", group.vol_indices_b, group.vol_geom_b, *group.mapped_ir_b);
     }
@@ -780,15 +966,60 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       scratch.restrs.push_back(restr);
       scratch.bases.push_back(basis);
     };
+    // Ghost (face neighbor) field input: the neighbor's physical field values at the
+    // mapped points, imported via FaceNbrFieldExchange. The indexed restriction slices
+    // the shared imported vector per element (base = ImportOffset) and transposes its
+    // point-major layout ([pt][comp]) to the component-major layout the kernel reads
+    // (offset base + 3*pt, comp_stride 1). Re-pointed at the imported vector on each
+    // apply via source index 4 (see fem::ApplyAddGroupOperators).
+    auto AddFieldInputGhost = [&](const std::string &name, int slot,
+                                  const mfem::IntegrationRule &ir)
+    {
+      const int nq = ir.GetNPoints();
+      std::vector<CeedInt> offsets(num_elem * nq);
+      for (std::size_t e = 0; e < num_elem; e++)
+      {
+        const int base = face_nbr_exchange->ImportOffset(group.req_idx[e], slot);
+        for (int i = 0; i < nq; i++)
+        {
+          offsets[e * nq + i] = base + 3 * i;
+        }
+      }
+      CeedElemRestriction restr;
+      PalaceCeedCall(ceed, CeedElemRestrictionCreate(
+                               ceed, static_cast<CeedInt>(num_elem), nq, 3, 1,
+                               (CeedSize)face_nbr_exchange->ImportSize(), CEED_MEM_HOST,
+                               CEED_COPY_VALUES, offsets.data(), &restr));
+      CeedVector vec;
+      ceed::InitCeedVector(face_nbr_exchange->Imported(), ceed, &vec);
+      inputs.push_back({name, vec, restr, nullptr, ceed::EvalMode::None});
+      field_sources.emplace_back(name, 4);  // 4 -> imported (see ApplyAddGroupOperators)
+      scratch.vecs.push_back(vec);
+      scratch.restrs.push_back(restr);
+    };
     if (kind == Kind::HCURL_NORM2 || kind == Kind::INTERFACE_EPR || buffer_kind)
     {
       const auto &field_fespace = fespace_b ? *fespace_b : *fespace_e;
-      AddFieldInput("u_1", 0, field_fespace, group.vol_indices_a, group.vol_geom_a,
-                    *group.mapped_ir_a);
+      if (group.ghost_a)
+      {
+        AddFieldInputGhost("u_1", 0, *group.mapped_ir_a);
+      }
+      else
+      {
+        AddFieldInput("u_1", 0, field_fespace, group.vol_indices_a, group.vol_geom_a,
+                      *group.mapped_ir_a);
+      }
       if (has_b)
       {
-        AddFieldInput("u_2", 0, field_fespace, group.vol_indices_b, group.vol_geom_b,
-                      *group.mapped_ir_b);
+        if (group.ghost_b)
+        {
+          AddFieldInputGhost("u_2", 0, *group.mapped_ir_b);
+        }
+        else
+        {
+          AddFieldInput("u_2", 0, field_fespace, group.vol_indices_b, group.vol_geom_b,
+                        *group.mapped_ir_b);
+        }
       }
     }
     else if (kind == Kind::FARFIELD)
@@ -806,21 +1037,37 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     {
       int count = 0;
       auto AddSide = [&](const std::vector<int> &indices, mfem::Geometry::Type geom,
-                         const mfem::IntegrationRule &ir)
+                         const mfem::IntegrationRule &ir, bool ghost)
       {
         if (flux_type == SurfaceFlux::ELECTRIC || flux_type == SurfaceFlux::POWER)
         {
-          AddFieldInput("u_" + std::to_string(++count), 0, *fespace_e, indices, geom, ir);
+          const std::string nm = "u_" + std::to_string(++count);
+          if (ghost)
+          {
+            AddFieldInputGhost(nm, 0, ir);
+          }
+          else
+          {
+            AddFieldInput(nm, 0, *fespace_e, indices, geom, ir);
+          }
         }
         if (flux_type == SurfaceFlux::MAGNETIC || flux_type == SurfaceFlux::POWER)
         {
-          AddFieldInput("u_" + std::to_string(++count), 1, *fespace_b, indices, geom, ir);
+          const std::string nm = "u_" + std::to_string(++count);
+          if (ghost)
+          {
+            AddFieldInputGhost(nm, 1, ir);
+          }
+          else
+          {
+            AddFieldInput(nm, 1, *fespace_b, indices, geom, ir);
+          }
         }
       };
-      AddSide(group.vol_indices_a, group.vol_geom_a, *group.mapped_ir_a);
+      AddSide(group.vol_indices_a, group.vol_geom_a, *group.mapped_ir_a, group.ghost_a);
       if (has_b)
       {
-        AddSide(group.vol_indices_b, group.vol_geom_b, *group.mapped_ir_b);
+        AddSide(group.vol_indices_b, group.vol_geom_b, *group.mapped_ir_b, group.ghost_b);
       }
     }
 
@@ -949,19 +1196,33 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
 
 void SurfaceFunctional::ApplyAdd(const std::array<const Vector *, 4> &srcs) const
 {
-  fem::ApplyAddGroupOperators(groups, srcs, local_out);
+  if (face_nbr_exchange)
+  {
+    face_nbr_exchange->Exchange(srcs);
+    fem::ApplyAddGroupOperators(groups, srcs, local_out, &face_nbr_exchange->Imported());
+  }
+  else
+  {
+    fem::ApplyAddGroupOperators(groups, srcs, local_out);
+  }
 }
 
 double SurfaceFunctional::EvalLocal(const std::array<const Vector *, 4> &srcs) const
 {
   MFEM_VERIFY(valid, "Eval called on an invalid (unassembled) SurfaceFunctional!");
-  if (local_out.Size() == 0)
+  // A process holding the face neighbor exchange must still apply (the exchange is
+  // collective: it may need to export its local field for a neighbor's ghost request
+  // even with no local marked elements). ApplyAdd is a no-op on the empty group set.
+  if (local_out.Size() == 0 && !face_nbr_exchange)
   {
     return 0.0;
   }
-  local_out = 0.0;
+  if (local_out.Size() > 0)
+  {
+    local_out = 0.0;
+  }
   ApplyAdd(srcs);
-  return linalg::LocalSum(local_out);
+  return (local_out.Size() > 0) ? linalg::LocalSum(local_out) : 0.0;
 }
 
 double SurfaceFunctional::Eval(const Vector *u) const
@@ -981,15 +1242,21 @@ double SurfaceFunctional::Eval(const GridFunction &u) const
               "SurfaceFunctional::Eval with a grid function is only valid for functionals "
               "quadratic in a single field!");
   double dot = 0.0;
-  if (local_out.Size() > 0)
+  if (local_out.Size() > 0 || face_nbr_exchange)
   {
-    local_out = 0.0;
+    if (local_out.Size() > 0)
+    {
+      local_out = 0.0;
+    }
     ApplyAdd({&u.Real(), nullptr});
     if (u.HasImag())
     {
       ApplyAdd({&u.Imag(), nullptr});
     }
-    dot = linalg::LocalSum(local_out);
+    if (local_out.Size() > 0)
+    {
+      dot = linalg::LocalSum(local_out);
+    }
   }
   Mpi::GlobalSum(1, &dot, comm);
   return dot;
@@ -1034,7 +1301,15 @@ void SurfaceFunctional::EvalBuffer(const Vector &u, Vector &buffer) const
               "EvalBuffer requires a valid boundary visualization field functional!");
   MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
   buffer = 0.0;
-  fem::ApplyAddGroupOperators(groups, {&u}, buffer);
+  if (face_nbr_exchange)
+  {
+    face_nbr_exchange->Exchange({&u});
+    fem::ApplyAddGroupOperators(groups, {&u}, buffer, &face_nbr_exchange->Imported());
+  }
+  else
+  {
+    fem::ApplyAddGroupOperators(groups, {&u}, buffer);
+  }
 }
 
 void SurfaceFunctional::EvalBuffer(const GridFunction &u, Vector &buffer) const
@@ -1043,10 +1318,22 @@ void SurfaceFunctional::EvalBuffer(const GridFunction &u, Vector &buffer) const
               "EvalBuffer requires a valid boundary visualization field functional!");
   MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
   buffer = 0.0;
-  fem::ApplyAddGroupOperators(groups, {&u.Real()}, buffer);
+  auto Apply = [&](const Vector &v)
+  {
+    if (face_nbr_exchange)
+    {
+      face_nbr_exchange->Exchange({&v});
+      fem::ApplyAddGroupOperators(groups, {&v}, buffer, &face_nbr_exchange->Imported());
+    }
+    else
+    {
+      fem::ApplyAddGroupOperators(groups, {&v}, buffer);
+    }
+  };
+  Apply(u.Real());
   if (u.HasImag())
   {
-    fem::ApplyAddGroupOperators(groups, {&u.Imag()}, buffer);
+    Apply(u.Imag());
   }
 }
 

@@ -7,6 +7,7 @@
 #include <array>
 #include <complex>
 #include <deque>
+#include <memory>
 #include <string>
 #include <vector>
 #include <mfem.hpp>
@@ -20,6 +21,7 @@ namespace palace
 class GridFunction;
 class MaterialOperator;
 class Mesh;
+class FaceNbrFieldExchange;
 
 namespace fem
 {
@@ -39,9 +41,13 @@ struct CeedGroupOperator
 };
 
 // Re-point the passive field inputs of each group operator at the given source vectors
-// and accumulate into the output vector with CeedOperatorApplyAdd.
+// and accumulate into the output vector with CeedOperatorApplyAdd. A field source index
+// of 4 (out of the srcs range) selects the optional imported vector instead, used to
+// feed face neighbor (ghost) field values exchanged for two-sided interior boundaries on
+// parallel interfaces (see FaceNbrFieldExchange).
 void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
-                            const std::array<const Vector *, 4> &srcs, const Vector &out);
+                            const std::array<const Vector *, 4> &srcs, const Vector &out,
+                            const Vector *imported = nullptr);
 
 }  // namespace fem
 
@@ -142,6 +148,12 @@ private:
   // outlive the operators.
   std::vector<fem::CeedGroupOperator> groups;
   std::deque<Vector> elem_attrs;
+
+  // Face neighbor field exchange for two-sided interior boundaries crossing parallel
+  // interfaces: the owning process pulls the neighbor (ghost) volume field values at the
+  // face quadrature points, fed to the ghost side of the two-sided operators (nullptr
+  // when no marked boundary element has a ghost neighbor). Refilled before each apply.
+  std::unique_ptr<FaceNbrFieldExchange> face_nbr_exchange;
 
   // Staging vector used to initialize the field input CeedVectors at construction. The
   // field CeedVectors are re-pointed at the caller's data on each Eval() call.
