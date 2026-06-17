@@ -25,11 +25,11 @@ parallel-plate (TEM) line. The two plates (y = 0, y = height) are PEC; the two s
 under test).
 
 Physical group tags (used as attributes in the JSON):
-  1 -> dielectric (vacuum volume)
-  2 -> conductor  (PEC plates,  y = 0 and y = height)
-  3 -> sidewall   (PMC walls,   x = 0 and x = width)
-  4 -> port1      (z = 0)
-  5 -> port2      (z = length)
+1 -> dielectric (vacuum volume)
+2 -> conductor  (PEC plates,  y = 0 and y = height)
+3 -> sidewall   (PMC walls,   x = 0 and x = width)
+4 -> port1      (z = 0)
+5 -> port2      (z = length)
 """
 function generate_parallel_plate_mesh(;
     filename::AbstractString,
@@ -68,7 +68,7 @@ function generate_parallel_plate_mesh(;
     lc = h / (2.0 * 2.0^refinement)
 
     # Identify the six faces by their center of mass.
-    tol = 1.0e-6 * max(w, h, L)
+    tol       = 1.0e-6 * max(w, h, L)
     conductor = Int[]   # y = 0, y = h  -> PEC
     sidewall  = Int[]   # x = 0, x = w  -> PMC
     port1     = Int[]   # z = 0

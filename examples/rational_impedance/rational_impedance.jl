@@ -103,8 +103,10 @@ function generate_rational_impedance_data(; palace_exec="palace", num_processors
     dang = maximum(abs.(ang_ref .- ang_rat))
     println("\nmax |Δ|S11||     = $(dmag) dB")
     println("max |Δarg(S11)|  = $(dang) deg")
-    println((dmag < 1e-4 && dang < 1e-2) ? "PASS: RationalImpedance matches LumpedPort RLC" :
-            "CHECK: discrepancy exceeds tolerance")
+    println(
+        (dmag < 1e-4 && dang < 1e-2) ? "PASS: RationalImpedance matches LumpedPort RLC" :
+        "CHECK: discrepancy exceeds tolerance"
+    )
 
     # Plot settings.
     plotsz = (800, 400)
@@ -120,11 +122,7 @@ function generate_rational_impedance_data(; palace_exec="palace", num_processors
         margin=10mm
     )
 
-    pp = plot(
-        xlabel="\$f\$  (GHz)",
-        ylabel="\$|S_{11}|\$  (dB)",
-        legend=:bottomright
-    )
+    pp = plot(xlabel="\$f\$  (GHz)", ylabel="\$|S_{11}|\$  (dB)", legend=:bottomright)
     plot!(pp, f, mag_ref, label="LumpedPort RLC (reference)", lw=2)
     plot!(pp, f, mag_rat, label="RationalImpedance (test)", ls=:dash, lw=2)
     savefig(pp, joinpath(example_dir, "postpro", "rational_impedance.png"))
