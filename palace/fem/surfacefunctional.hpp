@@ -32,6 +32,10 @@ struct CeedGroupOperator
   Ceed ceed;
   CeedOperator op;
   std::vector<std::pair<std::string, int>> field_sources;
+  // Optional retained QFunction context handle for in-place runtime updates (e.g.
+  // far-field frequency) without reassembly; nullptr if the operator has no context or
+  // the context is not updated. Owned by the group (destroyed with it).
+  CeedQFunctionContext ctx = nullptr;
 };
 
 // Re-point the passive field inputs of each group operator at the given source vectors
@@ -109,11 +113,6 @@ private:
   mfem::Vector flux_x0;
   std::vector<std::array<double, 3>> farfield_dirs;
   double farfield_omega_re = 0.0, farfield_omega_im = 0.0;
-
-  // Mesh and marker for reassembly when the far-field frequency changes (the frequency
-  // enters the QFunction context).
-  const Mesh *farfield_mesh = nullptr;
-  mfem::Array<int> farfield_marker;
 
   // Boundary visualization field kinds: lattice refinement level, output scaling,
   // total output buffer size, and per-boundary-element base offsets into the buffer.

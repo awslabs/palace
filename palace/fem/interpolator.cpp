@@ -185,7 +185,7 @@ public:
   std::vector<double> Eval(const mfem::ParGridFunction &U) const
   {
     local_out = 0.0;
-    for (const auto &[ceed, op, field_sources] : groups)
+    for (const auto &[ceed, op, field_sources, ctx] : groups)
     {
       for (const auto &[name, source] : field_sources)
       {

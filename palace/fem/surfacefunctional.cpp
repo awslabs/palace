@@ -138,7 +138,7 @@ void fem::ApplyAddGroupOperators(const std::vector<fem::CeedGroupOperator> &grou
                                  const std::array<const Vector *, 4> &srcs,
                                  const Vector &out)
 {
-  for (const auto &[ceed, op, field_sources] : groups)
+  for (const auto &[ceed, op, field_sources, ctx] : groups)
   {
     for (const auto &[name, source] : field_sources)
     {
@@ -234,10 +234,9 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const mfem::ParFiniteElementSpace &rt_fespace,
                                      const MaterialOperator &mat_op,
                                      const std::vector<std::array<double, 3>> &r_naughts)
-  : kind(Kind::FARFIELD), farfield_dirs(r_naughts), farfield_mesh(&mesh),
-    fespace_e(&nd_fespace), fespace_b(&rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
+  : kind(Kind::FARFIELD), farfield_dirs(r_naughts), fespace_e(&nd_fespace),
+    fespace_b(&rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
 {
-  farfield_marker = bdr_attr_marker;
   Assemble(mesh, bdr_attr_marker);
 }
 
@@ -246,6 +245,10 @@ SurfaceFunctional::~SurfaceFunctional()
   for (auto &group : groups)
   {
     PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
+    if (group.ctx)
+    {
+      PalaceCeedCall(group.ceed, CeedQFunctionContextDestroy(&group.ctx));
+    }
   }
 }
 
@@ -271,6 +274,10 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
     for (auto &group : groups)
     {
       PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
+      if (group.ctx)
+      {
+        PalaceCeedCall(group.ceed, CeedQFunctionContextDestroy(&group.ctx));
+      }
     }
     groups.clear();
     valid = false;
@@ -922,6 +929,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
 
     // Assemble the operator.
     CeedOperator op;
+    CeedQFunctionContext op_ctx = nullptr;
     if (buffer_kind)
     {
       ceed::AssembleCeedPointEvaluator(info, ctx.data(), ctx.size() * sizeof(CeedIntScalar),
@@ -931,9 +939,9 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     {
       ceed::AssembleCeedSurfaceFunctional(info, ctx.data(),
                                           ctx.size() * sizeof(CeedIntScalar), ceed, inputs,
-                                          num_out, out_restr, &op);
+                                          num_out, out_restr, &op, &op_ctx);
     }
-    groups.push_back({ceed, op, std::move(field_sources)});
+    groups.push_back({ceed, op, std::move(field_sources), op_ctx});
   }
 }
 
@@ -1049,18 +1057,29 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
               "complex-valued fields!");
   MFEM_VERIFY(valid, "EvalFarField called on an invalid (unassembled) SurfaceFunctional!");
 
-  // The frequency enters the QFunction context: reassemble when it changes.
+  // The frequency enters only the QFunction context (the omega slots); update it in
+  // place rather than reassembling the operators. Reassembly would rebuild the bases,
+  // restrictions, and on-the-fly geometry inputs and re-JIT the (expensive) far-field
+  // kernel on every frequency -- none of which depend on omega. FARFIELD context layout
+  // (see Assemble): [0] normal sign, [1] omega_re, [2] omega_im, [3] N, [4..] directions,
+  // then the material context.
   if (omega_re != farfield_omega_re || omega_im != farfield_omega_im)
   {
-    for (auto &group : groups)
-    {
-      PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
-    }
-    groups.clear();
-    elem_attrs.clear();
     farfield_omega_re = omega_re;
     farfield_omega_im = omega_im;
-    Assemble(*farfield_mesh, farfield_marker);
+    for (auto &group : groups)
+    {
+      if (!group.ctx)
+      {
+        continue;
+      }
+      CeedIntScalar *data;
+      PalaceCeedCall(group.ceed,
+                     CeedQFunctionContextGetData(group.ctx, CEED_MEM_HOST, &data));
+      data[1].second = omega_re;
+      data[2].second = omega_im;
+      PalaceCeedCall(group.ceed, CeedQFunctionContextRestoreData(group.ctx, &data));
+    }
   }
 
   // Integrate, reduce each component over the local elements and all processes, and
