@@ -3,7 +3,9 @@
 
 #include "surfacefunctional.hpp"
 
+#include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -106,7 +108,11 @@ struct FaceGroup
   // ghost_attr hold the per-element face neighbor index and mesh attribute, and req_idx
   // the FaceNbrFieldExchange request index (filled when the exchange is built).
   bool ghost_a = false, ghost_b = false;
+  bool at_points = false;
   std::vector<int> face_nbr, ghost_attr, req_idx;
+  // For AtPoints groups, the mapped volume reference coordinates vary by boundary
+  // element and are stored in boundary-element order, nq entries per element.
+  std::vector<mfem::IntegrationPoint> mapped_pts_a, mapped_pts_b;
 };
 
 void AppendPoints(FaceConfigKey &key, const std::vector<mfem::IntegrationPoint> &pts)
@@ -117,6 +123,109 @@ void AppendPoints(FaceConfigKey &key, const std::vector<mfem::IntegrationPoint> 
     key.push_back(std::llround(ip.y * QUANTIZE_SCALE));
     key.push_back(std::llround(ip.z * QUANTIZE_SCALE));
   }
+}
+
+const char *KindName(SurfaceFunctional::Kind kind)
+{
+  switch (kind)
+  {
+    case SurfaceFunctional::Kind::AREA:
+      return "AREA";
+    case SurfaceFunctional::Kind::HCURL_NORM2:
+      return "HCURL_NORM2";
+    case SurfaceFunctional::Kind::INTERFACE_EPR:
+      return "INTERFACE_EPR";
+    case SurfaceFunctional::Kind::SURFACE_FLUX:
+      return "SURFACE_FLUX";
+    case SurfaceFunctional::Kind::FARFIELD:
+      return "FARFIELD";
+    case SurfaceFunctional::Kind::BDR_FIELD_E:
+      return "BDR_FIELD_E";
+    case SurfaceFunctional::Kind::BDR_FIELD_B:
+      return "BDR_FIELD_B";
+    case SurfaceFunctional::Kind::BDR_FLUX_Q:
+      return "BDR_FLUX_Q";
+    case SurfaceFunctional::Kind::BDR_CURRENT_J:
+      return "BDR_CURRENT_J";
+    case SurfaceFunctional::Kind::BDR_ENERGY_E:
+      return "BDR_ENERGY_E";
+    case SurfaceFunctional::Kind::BDR_ENERGY_M:
+      return "BDR_ENERGY_M";
+  }
+  return "UNKNOWN";
+}
+
+bool CeedSupportsNonTensorAtPoints(Ceed ceed)
+{
+  // This proof path uses the non-tensor simplex AtPoints kernels added for CUDA ref
+  // and MAGMA. Other backends keep the existing mapped-point tabulation path.
+  const char *resource;
+  PalaceCeedCall(ceed, CeedGetResource(ceed, &resource));
+  return std::strstr(resource, "/gpu/cuda/ref") ||
+         std::strstr(resource, "/gpu/cuda/magma");
+}
+
+int TetNumModes(int degree)
+{
+  return (degree + 1) * (degree + 2) * (degree + 3) / 6;
+}
+
+mfem::IntegrationRule MakeTetLatticeRule(int degree)
+{
+  mfem::IntegrationRule ir(TetNumModes(degree));
+  int q = 0;
+  if (degree == 0)
+  {
+    ir.IntPoint(q).Set3(0.25, 0.25, 0.25);
+    ir.IntPoint(q++).weight = 1.0;
+  }
+  else
+  {
+    for (int total = 0; total <= degree; total++)
+    {
+      for (int i = 0; i <= total; i++)
+      {
+        for (int j = 0; j <= total - i; j++)
+        {
+          const int k = total - i - j;
+          ir.IntPoint(q).Set3(static_cast<double>(i) / degree,
+                              static_cast<double>(j) / degree,
+                              static_cast<double>(k) / degree);
+          ir.IntPoint(q++).weight = 1.0;
+        }
+      }
+    }
+  }
+  return ir;
+}
+
+void InitTetBasisForAtPoints(const mfem::FiniteElement &fe, bool grad_only,
+                             CeedInt num_comp, Ceed ceed, CeedBasis *basis)
+{
+  MFEM_VERIFY(fe.GetGeomType() == mfem::Geometry::TETRAHEDRON,
+              "AtPoints surface output proof currently supports tetrahedral volume "
+              "elements only!");
+  const int degree = std::max(0, fe.GetOrder() - (grad_only ? 1 : 0));
+  const mfem::IntegrationRule ir = MakeTetLatticeRule(degree);
+  ceed::InitBasisAtPoints(fe, ir, num_comp, ceed, basis);
+}
+
+void CreateSequentialPointRestriction(Ceed ceed, std::size_t num_elem, int nq, int num_comp,
+                                      CeedSize l_size, CeedElemRestriction *restr)
+{
+  const CeedInt total_pts = static_cast<CeedInt>(num_elem * nq);
+  std::vector<CeedInt> offsets(num_elem + 1 + total_pts);
+  for (std::size_t e = 0; e <= num_elem; e++)
+  {
+    offsets[e] = static_cast<CeedInt>(num_elem + 1 + e * nq);
+  }
+  for (CeedInt i = 0; i < total_pts; i++)
+  {
+    offsets[num_elem + 1 + i] = i;
+  }
+  PalaceCeedCall(ceed, CeedElemRestrictionCreateAtPoints(
+                           ceed, static_cast<CeedInt>(num_elem), total_pts, num_comp,
+                           l_size, CEED_MEM_HOST, CEED_COPY_VALUES, offsets.data(), restr));
 }
 
 // Holds libCEED object references created during operator assembly for destruction once
@@ -315,6 +424,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   MFEM_VERIFY(pmesh.GetNodes(), "The mesh has no nodal FE space!");
   const mfem::FiniteElementSpace &mesh_fespace = *pmesh.GetNodes()->FESpace();
   const bool need_field = (kind != Kind::AREA);
+  Ceed ceed = ceed::internal::GetCeedObjects()[0];
+  const bool use_at_points = CeedSupportsNonTensorAtPoints(ceed);
 
   // Plan the evaluation for each marked boundary element and group the elements by
   // their face configuration. All elements in a group share the tabulated bases and are
@@ -464,16 +575,20 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         MapPoints(FET.Loc2, plan.pts_b);
       }
 
-      // Build the group key from the geometries, orientation flag, and quantized
-      // mapped quadrature point coordinates.
+      // Build the group key. For AtPoints-capable boundary visualization groups, the
+      // mapped volume reference coordinates are runtime data rather than part of the
+      // basis/JIT key; older paths still key on the mapped coordinates themselves.
       const auto vol_geom_a = plan.ghost_a ? plan.ghost_geom
                               : (plan.elem_a >= 0) ? pmesh.GetElementGeometry(plan.elem_a)
                                                    : mfem::Geometry::INVALID;
       const auto vol_geom_b = plan.ghost_b ? plan.ghost_geom
                               : (plan.elem_b >= 0) ? pmesh.GetElementGeometry(plan.elem_b)
                                                    : mfem::Geometry::INVALID;
+      const bool at_points_group =
+          use_at_points && buffer_kind && plan.elem_a >= 0 && plan.elem_b < 0 &&
+          !plan.ghost_a && !plan.ghost_b && vol_geom_a == mfem::Geometry::TETRAHEDRON;
       FaceConfigKey key;
-      key.reserve(7 + 3 * (plan.pts_a.size() + plan.pts_b.size()));
+      key.reserve(8 + (at_points_group ? 0 : 3 * (plan.pts_a.size() + plan.pts_b.size())));
       key.push_back(static_cast<long long>(bdr_geom));
       key.push_back(static_cast<long long>(vol_geom_a));
       key.push_back(static_cast<long long>(vol_geom_b));
@@ -481,8 +596,12 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       key.push_back(static_cast<long long>(plan.ghost_a));
       key.push_back(static_cast<long long>(plan.ghost_b));
       key.push_back(static_cast<long long>(nq));
-      AppendPoints(key, plan.pts_a);
-      AppendPoints(key, plan.pts_b);
+      key.push_back(static_cast<long long>(at_points_group));
+      if (!at_points_group)
+      {
+        AppendPoints(key, plan.pts_a);
+        AppendPoints(key, plan.pts_b);
+      }
 
       auto it = face_groups.find(key);
       if (it == face_groups.end())
@@ -494,13 +613,14 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         group.flip_normal = plan.flip;
         group.ghost_a = plan.ghost_a;
         group.ghost_b = plan.ghost_b;
-        if (plan.elem_a >= 0)
+        group.at_points = at_points_group;
+        if (!at_points_group && plan.elem_a >= 0)
         {
           FaceConfigKey key_a = key;
           key_a.push_back(0);  // Side tag
           group.mapped_ir_a = GetRegisteredMappedIr(key_a, plan.pts_a);
         }
-        if (plan.elem_b >= 0)
+        if (!at_points_group && plan.elem_b >= 0)
         {
           FaceConfigKey key_b = key;
           key_b.push_back(1);  // Side tag
@@ -509,6 +629,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         it = face_groups.emplace(key, std::move(group)).first;
       }
       it->second.bdr_indices.push_back(i);
+      if (at_points_group)
+      {
+        it->second.mapped_pts_a.insert(it->second.mapped_pts_a.end(), plan.pts_a.begin(),
+                                       plan.pts_a.end());
+      }
       if (plan.elem_a >= 0)
       {
         if (plan.ghost_a)
@@ -754,10 +879,22 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   // Assemble a libCEED operator for each group. For now, all operators are constructed
   // on a single Ceed context (no OpenMP parallel assembly or application; correctness
   // first, this can be extended with the thread partitioning of fem/mesh.cpp later).
-  Ceed ceed = ceed::internal::GetCeedObjects()[0];
-  for (auto &[key, group] : face_groups)
+  const bool profile = (std::getenv("PALACE_SURFACE_PROFILE") != nullptr);
+  long long profile_counts[4] = {0, 0, 0, 0};  // groups, elems, AtPoints groups, AtPoints elems
+  for (auto &face_group : face_groups)
   {
+    auto &group = face_group.second;
     const std::size_t num_elem = group.bdr_indices.size();
+    if (profile)
+    {
+      profile_counts[0]++;
+      profile_counts[1] += static_cast<long long>(num_elem);
+      if (group.at_points)
+      {
+        profile_counts[2]++;
+        profile_counts[3] += static_cast<long long>(num_elem);
+      }
+    }
     const bool has_b = !group.vol_indices_b.empty() || group.ghost_b;
     const bool buffer_kind = IsBufferKind(kind);
     const mfem::IntegrationRule &face_ir =
@@ -768,6 +905,30 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
 
     // Objects are owned by the assembled operator; scratch destroys our references.
     CeedAssemblyScratch scratch(ceed);
+    CeedElemRestriction points_restr = nullptr;
+    CeedVector points_vec = nullptr;
+    if (group.at_points)
+    {
+      const int nq = face_ir.GetNPoints();
+      MFEM_VERIFY(group.mapped_pts_a.size() == num_elem * static_cast<std::size_t>(nq),
+                  "Invalid AtPoints coordinate data for surface output group!");
+      auto &points = elem_attrs.emplace_back(3 * num_elem * nq);
+      for (std::size_t e = 0; e < num_elem; e++)
+      {
+        for (int q = 0; q < nq; q++)
+        {
+          const auto &ip = group.mapped_pts_a[e * nq + q];
+          const std::size_t off = 3 * (e * nq + q);
+          points[off + 0] = ip.x;
+          points[off + 1] = ip.y;
+          points[off + 2] = ip.z;
+        }
+      }
+      CreateSequentialPointRestriction(ceed, num_elem, nq, 3, points.Size(), &points_restr);
+      ceed::InitCeedVector(points, ceed, &points_vec);
+      scratch.restrs.push_back(points_restr);
+      scratch.vecs.push_back(points_vec);
+    }
 
     // Assemble the inputs in the order expected by the QFunctions: quadrature weights
     // and boundary element mesh node gradients (surface measure and normal), per-side
@@ -783,32 +944,108 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     {
       face_mesh_fe = mesh_fespace.FEColl()->TraceFiniteElementForGeometry(group.bdr_geom);
     }
+    auto AddSequentialPointInput = [&](const std::string &name, Vector &data,
+                                       int num_comp)
+    {
+      const int nq = face_ir.GetNPoints();
+      CeedElemRestriction restr;
+      CeedVector vec;
+      CreateSequentialPointRestriction(ceed, num_elem, nq, num_comp, data.Size(), &restr);
+      ceed::InitCeedVector(data, ceed, &vec);
+      inputs.push_back({name, vec, restr, nullptr, ceed::EvalMode::None});
+      scratch.vecs.push_back(vec);
+      scratch.restrs.push_back(restr);
+    };
+    auto AddFaceGeomInputAtPoints = [&]()
+    {
+      const int nq = face_ir.GetNPoints();
+      auto &face_geom = elem_attrs.emplace_back(num_elem * nq * 6);
+      face_geom = 0.0;
+      for (std::size_t e = 0; e < num_elem; e++)
+      {
+        mfem::IsoparametricTransformation T;
+        pmesh.GetBdrElementTransformation(group.bdr_indices[e], &T);
+        for (int q = 0; q < nq; q++)
+        {
+          const mfem::IntegrationPoint &ip = face_ir.IntPoint(q);
+          T.SetIntPoint(&ip);
+          const mfem::DenseMatrix &J = T.Jacobian();
+          const std::size_t off = 6 * (e * nq + q);
+          for (int d = 0; d < 2; d++)
+          {
+            for (int c = 0; c < 3; c++)
+            {
+              face_geom[off + c + 3 * d] = J(c, d);
+            }
+          }
+        }
+      }
+      AddSequentialPointInput("grad_x_f", face_geom, 6);
+    };
     const bool field_kind = (kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B);
     if (!field_kind)
     {
-      CeedBasis face_mesh_basis;
-      ceed::InitBasisAtPoints(*face_mesh_fe, face_ir, mesh_fespace.GetVDim(), ceed,
-                              &face_mesh_basis);
-      CeedElemRestriction face_mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
-          mesh_fespace, ceed, group.bdr_geom, group.bdr_indices, /*is_interp*/ true);
-      CeedVector mesh_nodes_vec;
-      ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
-      if (!buffer_kind)
+      if (group.at_points)
       {
-        inputs.push_back({"qw", nullptr, nullptr, face_mesh_basis, ceed::EvalMode::Weight});
+        AddFaceGeomInputAtPoints();
       }
-      inputs.push_back(
-          {"x_f", mesh_nodes_vec, face_mesh_restr, face_mesh_basis, ceed::EvalMode::Grad});
-      scratch.vecs.push_back(mesh_nodes_vec);
-      scratch.restrs.push_back(face_mesh_restr);
-      scratch.bases.push_back(face_mesh_basis);
+      else
+      {
+        CeedBasis face_mesh_basis;
+        ceed::InitBasisAtPoints(*face_mesh_fe, face_ir, mesh_fespace.GetVDim(), ceed,
+                                &face_mesh_basis);
+        CeedElemRestriction face_mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
+            mesh_fespace, ceed, group.bdr_geom, group.bdr_indices, /*is_interp*/ true);
+        CeedVector mesh_nodes_vec;
+        ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
+        if (!buffer_kind)
+        {
+          inputs.push_back(
+              {"qw", nullptr, nullptr, face_mesh_basis, ceed::EvalMode::Weight});
+        }
+        inputs.push_back({"x_f", mesh_nodes_vec, face_mesh_restr, face_mesh_basis,
+                          ceed::EvalMode::Grad});
+        scratch.vecs.push_back(mesh_nodes_vec);
+        scratch.restrs.push_back(face_mesh_restr);
+        scratch.bases.push_back(face_mesh_basis);
+      }
     }
     auto AddVolGeomInputs = [&](const std::string &suffix, const std::vector<int> &indices,
                                 mfem::Geometry::Type geom, const mfem::IntegrationRule &ir)
     {
-      const int num_pts = ir.GetNPoints();
-      auto &elem_attr = elem_attrs.emplace_back(indices.size());
+      const int num_pts = group.at_points ? face_ir.GetNPoints() : ir.GetNPoints();
       const auto &loc_attr = mesh.GetCeedAttributes();
+      if (group.at_points)
+      {
+        auto &elem_attr_pts = elem_attrs.emplace_back(indices.size() * num_pts);
+        for (std::size_t k = 0; k < indices.size(); k++)
+        {
+          const double attr = loc_attr.at(pmesh.GetAttribute(indices[k]));
+          for (int q = 0; q < num_pts; q++)
+          {
+            elem_attr_pts[k * num_pts + q] = attr;
+          }
+        }
+        AddSequentialPointInput("attr_" + suffix, elem_attr_pts, 1);
+
+        CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
+            mesh_fespace, ceed, geom, indices, /*is_interp*/ true);
+        const mfem::FiniteElement *mesh_fe =
+            mesh_fespace.FEColl()->FiniteElementForGeometry(geom);
+        CeedBasis mesh_basis;
+        InitTetBasisForAtPoints(*mesh_fe, /*grad_only*/ true, mesh_fespace.GetVDim(), ceed,
+                                &mesh_basis);
+        CeedVector mesh_nodes_vec;
+        ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
+        inputs.push_back(
+            {"x_" + suffix, mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
+        scratch.vecs.push_back(mesh_nodes_vec);
+        scratch.restrs.push_back(mesh_restr);
+        scratch.bases.push_back(mesh_basis);
+        return;
+      }
+
+      auto &elem_attr = elem_attrs.emplace_back(indices.size());
       for (std::size_t k = 0; k < indices.size(); k++)
       {
         elem_attr[k] = loc_attr.at(pmesh.GetAttribute(indices[k]));
@@ -920,7 +1157,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     }
     else if (!group.vol_indices_a.empty())
     {
-      AddVolGeomInputs("1", group.vol_indices_a, group.vol_geom_a, *group.mapped_ir_a);
+      AddVolGeomInputs("1", group.vol_indices_a, group.vol_geom_a,
+                       group.at_points ? face_ir : *group.mapped_ir_a);
     }
     if (group.ghost_b)
     {
@@ -928,7 +1166,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     }
     else if (!group.vol_indices_b.empty())
     {
-      AddVolGeomInputs("2", group.vol_indices_b, group.vol_geom_b, *group.mapped_ir_b);
+      AddVolGeomInputs("2", group.vol_indices_b, group.vol_geom_b,
+                       group.at_points ? face_ir : *group.mapped_ir_b);
     }
     if (kind == Kind::SURFACE_FLUX || kind == Kind::FARFIELD)
     {
@@ -958,7 +1197,14 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                             &restr);
       const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
       MFEM_VERIFY(fe, "Unable to get field finite element for surface functional!");
-      ceed::InitBasisAtPoints(*fe, ir, fespace.GetVDim(), ceed, &basis);
+      if (group.at_points)
+      {
+        InitTetBasisForAtPoints(*fe, /*grad_only*/ false, fespace.GetVDim(), ceed, &basis);
+      }
+      else
+      {
+        ceed::InitBasisAtPoints(*fe, ir, fespace.GetVDim(), ceed, &basis);
+      }
       ceed::InitCeedVector(field_staging, ceed, &vec);
       inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
       field_sources.emplace_back(name, source);
@@ -1007,7 +1253,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       else
       {
         AddFieldInput("u_1", 0, field_fespace, group.vol_indices_a, group.vol_geom_a,
-                      *group.mapped_ir_a);
+                      group.at_points ? face_ir : *group.mapped_ir_a);
       }
       if (has_b)
       {
@@ -1018,7 +1264,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         else
         {
           AddFieldInput("u_2", 0, field_fespace, group.vol_indices_b, group.vol_geom_b,
-                        *group.mapped_ir_b);
+                        group.at_points ? face_ir : *group.mapped_ir_b);
         }
       }
     }
@@ -1080,18 +1326,41 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     {
       const int nq = face_ir.GetNPoints();
       const int nc = BufferNumComp(kind);
-      std::vector<CeedInt> offsets(num_elem * nq);
-      for (std::size_t e = 0; e < num_elem; e++)
+      if (group.at_points)
       {
-        for (int j = 0; j < nq; j++)
+        const CeedInt total_pts = static_cast<CeedInt>(num_elem * nq);
+        std::vector<CeedInt> offsets(num_elem + 1 + total_pts);
+        for (std::size_t e = 0; e <= num_elem; e++)
         {
-          offsets[e * nq + j] = group.out_slots[e] + nc * j;
+          offsets[e] = static_cast<CeedInt>(num_elem + 1 + e * nq);
         }
+        for (std::size_t e = 0; e < num_elem; e++)
+        {
+          for (int j = 0; j < nq; j++)
+          {
+            offsets[num_elem + 1 + e * nq + j] = group.out_slots[e] / nc + j;
+          }
+        }
+        PalaceCeedCall(ceed, CeedElemRestrictionCreateAtPoints(
+                                 ceed, static_cast<CeedInt>(num_elem), total_pts, nc,
+                                 (CeedSize)buffer_size, CEED_MEM_HOST, CEED_COPY_VALUES,
+                                 offsets.data(), &out_restr));
       }
-      PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, static_cast<CeedInt>(num_elem),
-                                                     nq, nc, 1, (CeedSize)buffer_size,
-                                                     CEED_MEM_HOST, CEED_COPY_VALUES,
-                                                     offsets.data(), &out_restr));
+      else
+      {
+        std::vector<CeedInt> offsets(num_elem * nq);
+        for (std::size_t e = 0; e < num_elem; e++)
+        {
+          for (int j = 0; j < nq; j++)
+          {
+            offsets[e * nq + j] = group.out_slots[e] + nc * j;
+          }
+        }
+        PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, static_cast<CeedInt>(num_elem),
+                                                       nq, nc, 1, (CeedSize)buffer_size,
+                                                       CEED_MEM_HOST, CEED_COPY_VALUES,
+                                                       offsets.data(), &out_restr));
+      }
     }
     else
     {
@@ -1181,8 +1450,18 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     CeedQFunctionContext op_ctx = nullptr;
     if (buffer_kind)
     {
-      ceed::AssembleCeedPointEvaluator(info, ctx.data(), ctx.size() * sizeof(CeedIntScalar),
-                                       ceed, inputs, BufferNumComp(kind), out_restr, &op);
+      if (group.at_points)
+      {
+        ceed::AssembleCeedPointEvaluatorAtPoints(
+            info, ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, inputs,
+            points_restr, points_vec, BufferNumComp(kind), out_restr, &op);
+      }
+      else
+      {
+        ceed::AssembleCeedPointEvaluator(info, ctx.data(),
+                                         ctx.size() * sizeof(CeedIntScalar), ceed, inputs,
+                                         BufferNumComp(kind), out_restr, &op);
+      }
     }
     else
     {
@@ -1191,6 +1470,15 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                           num_out, out_restr, &op, &op_ctx);
     }
     groups.push_back({ceed, op, std::move(field_sources), op_ctx});
+  }
+  if (profile)
+  {
+    Mpi::GlobalSum(4, profile_counts, comm);
+    Mpi::Print(comm,
+               "SurfaceFunctional profile kind={} groups={} elems={} at_points_groups={} "
+               "at_points_elems={}\n",
+               KindName(kind), profile_counts[0], profile_counts[1], profile_counts[2],
+               profile_counts[3]);
   }
 }
 

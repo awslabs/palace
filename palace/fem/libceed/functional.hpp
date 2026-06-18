@@ -64,6 +64,17 @@ void AssembleCeedPointEvaluator(const CeedQFunctionInfo &info, void *ctx,
                                 CeedInt num_out_comp, CeedElemRestriction out_restr,
                                 CeedOperator *op);
 
+// Variant of AssembleCeedPointEvaluator for libCEED AtPoints operators: basis inputs
+// are evaluated at runtime reference coordinates described by points_restr/points_vec,
+// while CEED_EVAL_NONE inputs/outputs use point restrictions compatible with
+// points_restr. This keeps arbitrary mapped face points out of the basis/JIT key.
+void AssembleCeedPointEvaluatorAtPoints(const CeedQFunctionInfo &info, void *ctx,
+                                        std::size_t ctx_size, Ceed ceed,
+                                        const std::vector<CeedFunctionalFieldInput> &inputs,
+                                        CeedElemRestriction points_restr,
+                                        CeedVector points_vec, CeedInt num_out_comp,
+                                        CeedElemRestriction out_restr, CeedOperator *op);
+
 }  // namespace palace::ceed
 
 #endif  // PALACE_LIBCEED_FUNCTIONAL_HPP
