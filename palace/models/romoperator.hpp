@@ -214,6 +214,7 @@ protected:
   // Sweep band [ω_min, ω_max] (nondimensional, rad) captured from iodata at construction
   // time. Used to (a) sample kₙ,p(ω) for the synthesis polynomial fit, and (b) define the
   // dense grid over which the fit residual is evaluated.
+  std::vector<double> sweep_omega_samples;
   double sweep_omega_min = 0.0;
   double sweep_omega_max = 0.0;
   // Synthesis-side polynomial-fit configuration captured from iodata.
@@ -287,25 +288,6 @@ protected:
   // parts) per included port. Excluded ports add nothing. Used to size the basis
   // reservation so it never exceeds the count actually added.
   std::size_t NumSynthesisWavePortModes() const;
-
-  // Helper function that normalizes PROM matrices so that they correspond to proper
-  // admittance matrices on the ports. Also does unit conversion to physical (input) units.
-  // Define so that 1.0 on port i corresponds to full (un-normalized solution), so you can
-  // use Linv, Rinv, C directly.
-  //
-  // For wave ports whose order-2 polynomial fit residual exceeds the user-set tolerance,
-  // the synthesised matrices can be enlarged by auxiliary rows/columns for the selected
-  // rational realization. The returned `aux_labels` is the (possibly empty) list of those
-  // new labels in the same order as the rows/columns appended to the matrices (i.e. each
-  // matrix has size (V.size() + aux_labels.size())).
-  struct NormalizedMatrices
-  {
-    std::unique_ptr<Eigen::MatrixXcd> L_inv;
-    std::unique_ptr<Eigen::MatrixXcd> R_inv;  // null if no dissipative contribution
-    std::unique_ptr<Eigen::MatrixXcd> C;
-    std::vector<std::string> aux_labels;
-  };
-  NormalizedMatrices CalculateNormalizedPROMMatrices(const Units &units) const;
 
   // Wave-port dispersion synthesis helpers used by CalculateNormalizedPROMMatrices.
   //
@@ -386,6 +368,44 @@ protected:
     double rel_err_passive = 0.0;     // residual after passive rational fit
     double rel_err_dtn = 0.0;         // residual after DtN structured-√ fit
   };
+
+  // Helper function that normalizes PROM matrices so that they correspond to proper
+  // admittance matrices on the ports. Also does unit conversion to physical (input) units.
+  // Define so that 1.0 on port i corresponds to full (un-normalized solution), so you can
+  // use Linv, Rinv, C directly.
+  //
+  // For wave ports whose order-2 polynomial fit residual exceeds the user-set tolerance,
+  // the synthesised matrices can be enlarged by auxiliary rows/columns for the selected
+  // rational realization. The returned `aux_labels` is the (possibly empty) list of those
+  // new labels in the same order as the rows/columns appended to the matrices (i.e. each
+  // matrix has size (V.size() + aux_labels.size())). `wave_port_fits` captures the exact
+  // per-port fit used in the emitted matrices so the port-reference table can be evaluated
+  // consistently with the L/R/C realization.
+  struct NormalizedMatrices
+  {
+    struct PortLoad
+    {
+      std::string label;
+      std::unique_ptr<Eigen::MatrixXcd> L_inv;
+      std::unique_ptr<Eigen::MatrixXcd> R_inv;  // null if no dissipative contribution
+      std::unique_ptr<Eigen::MatrixXcd> C;
+    };
+
+    std::unique_ptr<Eigen::MatrixXcd> L_inv;
+    std::unique_ptr<Eigen::MatrixXcd> R_inv;  // null if no dissipative contribution
+    std::unique_ptr<Eigen::MatrixXcd> C;
+    std::vector<std::string> aux_labels;
+    std::vector<PortLoad> port_loads;
+    std::vector<WavePortDispersionFit> wave_port_fits;
+  };
+  NormalizedMatrices CalculateNormalizedPROMMatrices(const Units &units) const;
+
+  // Print the matched reference admittance used to convert synthesized port admittances to
+  // Palace/Kurokawa S-parameters. The L/R/C matrices remain loaded; downstream cascade tools
+  // should use the per-port rom-portload-* matrices for matrix-level port-load removal and
+  // this table for frequency-domain S-parameter normalization.
+  void PrintPortReferenceData(const Units &units, const fs::path &post_dir,
+                              const NormalizedMatrices &matrices) const;
 
   // Choose a synthesis regime given the polynomial-fit residual. `meets_tol` is the
   // outcome of comparing rel_err against waveport_synthesis_tol; `force_setting`

@@ -872,6 +872,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   const auto &sample_f = iodata.solver.driven.sample_f;
   if (!sample_f.empty())
   {
+    sweep_omega_samples = sample_f;
     sweep_omega_min = *std::min_element(sample_f.begin(), sample_f.end());
     sweep_omega_max = *std::max_element(sample_f.begin(), sample_f.end());
   }
@@ -2648,41 +2649,69 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   // FitWavePortDispersion does the per-port sampling, fitting and regime selection;
   // the Apply*FitCorrections helpers accumulate the top-left contributions;
   // BuildAugmentedPencil extends the pencil with the aux states from collected fit results.
-  Eigen::MatrixXcd Kr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
-  Eigen::MatrixXcd Cr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
-  Eigen::MatrixXcd Mr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
-  std::vector<WavePortAuxBlock> aux_blocks;
-  std::vector<PassiveWavePortAuxBlock> passive_aux_blocks;
-  std::vector<WavePortAuxBlock> dtn_aux_blocks;
+  Eigen::MatrixXcd Kr_total_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
+  Eigen::MatrixXcd Cr_total_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
+  Eigen::MatrixXcd Mr_total_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
+  std::vector<WavePortAuxBlock> aux_blocks_total;
+  std::vector<PassiveWavePortAuxBlock> passive_aux_blocks_total;
+  std::vector<WavePortAuxBlock> dtn_aux_blocks_total;
+  struct PendingPortLoad
+  {
+    std::string label;
+    Eigen::MatrixXcd Kr_corr;
+    Eigen::MatrixXcd Cr_corr;
+    Eigen::MatrixXcd Mr_corr;
+    std::vector<WavePortAuxBlock> aux_blocks;
+    std::vector<PassiveWavePortAuxBlock> passive_aux_blocks;
+    std::vector<WavePortAuxBlock> dtn_aux_blocks;
+  };
+  std::vector<PendingPortLoad> pending_port_loads;
   if (!Mwp_p_r.empty() && sweep_omega_max > sweep_omega_min)
   {
     for (auto &[port_idx, Mp_r] : Mwp_p_r)
     {
       auto fit = FitWavePortDispersion(port_idx, Mp_r);
+      PendingPortLoad port_load;
+      port_load.label = fmt::format("waveport_{:d}_re", port_idx);
+      port_load.Kr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
+      port_load.Cr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
+      port_load.Mr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
+      out.wave_port_fits.push_back(fit);
       if (fit.regime == WavePortRegime::DtnRational)
       {
-        ApplyDtnRationalFitCorrections(fit, Mp_r, Kr_corr, Cr_corr);
+        ApplyDtnRationalFitCorrections(fit, Mp_r, Kr_total_corr, Cr_total_corr);
+        ApplyDtnRationalFitCorrections(fit, Mp_r, port_load.Kr_corr,
+                                       port_load.Cr_corr);
       }
       else if (fit.regime == WavePortRegime::PassiveRational)
       {
-        ApplyPassiveRationalFitCorrections(fit, Mp_r, Kr_corr, Cr_corr);
+        ApplyPassiveRationalFitCorrections(fit, Mp_r, Kr_total_corr, Cr_total_corr);
+        ApplyPassiveRationalFitCorrections(fit, Mp_r, port_load.Kr_corr,
+                                           port_load.Cr_corr);
       }
       else
       {
-        ApplyPolynomialFitCorrections(fit, Mp_r, Kr_corr, Cr_corr, Mr_corr);
+        ApplyPolynomialFitCorrections(fit, Mp_r, Kr_total_corr, Cr_total_corr,
+                                      Mr_total_corr);
+        ApplyPolynomialFitCorrections(fit, Mp_r, port_load.Kr_corr,
+                                      port_load.Cr_corr, port_load.Mr_corr);
       }
       if (fit.aux)
       {
-        aux_blocks.push_back(std::move(*fit.aux));
+        aux_blocks_total.push_back(*fit.aux);
+        port_load.aux_blocks.push_back(*fit.aux);
       }
       if (fit.passive_aux)
       {
-        passive_aux_blocks.push_back(std::move(*fit.passive_aux));
+        passive_aux_blocks_total.push_back(*fit.passive_aux);
+        port_load.passive_aux_blocks.push_back(*fit.passive_aux);
       }
       if (fit.dtn_aux)
       {
-        dtn_aux_blocks.push_back(std::move(*fit.dtn_aux));
+        dtn_aux_blocks_total.push_back(*fit.dtn_aux);
+        port_load.dtn_aux_blocks.push_back(*fit.dtn_aux);
       }
+      pending_port_loads.push_back(std::move(port_load));
     }
   }
 
@@ -2702,7 +2731,7 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       if (blk)
       {
         blk->label = "farfield";
-        aux_blocks.push_back(std::move(*blk));
+        aux_blocks_total.push_back(*blk);
         Mpi::Print(" Second-order farfield ABC: folded into synthesis as 1 pole at ω=0 "
                    "(residue 0.5)\n");
       }
@@ -2722,54 +2751,337 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       { return surf_op.EvaluateScalar(g, omega) / std::complex<double>(0.0, 1.0); };
       auto fit = FitScalarDispersion(label, Asig_g_r[g], f, /*allow_augment=*/true);
       ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c,
-                                           Asig_g_r[g], Kr_corr, Cr_corr, Mr_corr);
+                                           Asig_g_r[g], Kr_total_corr, Cr_total_corr,
+                                           Mr_total_corr);
       if (fit.aux)
       {
         fit.aux->label = label;
-        aux_blocks.push_back(std::move(*fit.aux));
+        aux_blocks_total.push_back(*fit.aux);
       }
     }
   }
 
-  // Polynomial-only matrices (basis dim n × n).
-  Eigen::MatrixXcd Kr_total = Kr + Kr_corr;
-  Eigen::MatrixXcd Mr_total = Mr + Mr_corr;
-  Eigen::MatrixXcd Cr_total = Cr_corr;
+  // Polynomial-only matrices (basis dim n × n). The legacy matrices are loaded by the
+  // matched port/reference realization. Per-port load matrices are emitted separately below
+  // so downstream tools can remove internal port loads and add back only external loads
+  // during matrix-level network assembly.
+  Eigen::MatrixXcd Kr_total = Kr + Kr_total_corr;
+  Eigen::MatrixXcd Mr_total = Mr + Mr_total_corr;
+  Eigen::MatrixXcd Cr_total = Cr_total_corr;
   if (C)
   {
     Cr_total += Cr;
   }
 
-  auto aug = BuildAugmentedPencil(Kr_total, Cr_total, Mr_total, aux_blocks,
-                                  passive_aux_blocks, dtn_aux_blocks, out.aux_labels);
+  auto aug = BuildAugmentedPencil(Kr_total, Cr_total, Mr_total, aux_blocks_total,
+                                  passive_aux_blocks_total, dtn_aux_blocks_total,
+                                  out.aux_labels);
 
   // v_d port-row scaling: extend with 1's for aux rows (no port-impedance scaling on
   // aux states — they're internal circuit nodes).
-  const long n_v = Kr_total.rows();
-  const long n_aug = aug.Kr.rows();
-  Eigen::VectorXcd v_conc_aug = Eigen::VectorXcd::Ones(n_aug);
-  for (long j = 0; j < n_v; j++)
-  {
-    v_conc_aug(j) = v_conc(j);
-  }
-  auto v_d_aug = v_conc_aug.asDiagonal();
-
   auto unit_henry_inv = 1.0 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
-  out.L_inv = std::make_unique<mat_t>((unit_henry_inv * v_d_aug * aug.Kr * v_d_aug).eval());
-
   auto unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
-  out.C = std::make_unique<mat_t>((unit_farad * v_d_aug * aug.Mr * v_d_aug).eval());
+  auto unit_ohm_inv = 1.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
 
-  // Emit R⁻¹ whenever there's any dissipative contribution: lumped resistance, surface
-  // conductivity, wave-port α₁, or the aux state diagonal (regime 2).
-  const bool has_R_inv = (aug.Cr.cwiseAbs().maxCoeff() > 0.0);
-  if (has_R_inv)
+  auto normalize_augmented = [&](const AugmentedPencil &aug_in,
+                                 std::unique_ptr<mat_t> &L_inv,
+                                 std::unique_ptr<mat_t> &R_inv,
+                                 std::unique_ptr<mat_t> &C_out)
   {
-    auto unit_ohm_inv = 1.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
-    out.R_inv = std::make_unique<mat_t>((unit_ohm_inv * v_d_aug * aug.Cr * v_d_aug).eval());
+    const long n_v = Kr.rows();
+    const long n_aug = aug_in.Kr.rows();
+    Eigen::VectorXcd v_conc_aug = Eigen::VectorXcd::Ones(n_aug);
+    for (long j = 0; j < n_v; j++)
+    {
+      v_conc_aug(j) = v_conc(j);
+    }
+    auto v_d_aug = v_conc_aug.asDiagonal();
+
+    L_inv =
+        std::make_unique<mat_t>((unit_henry_inv * v_d_aug * aug_in.Kr * v_d_aug).eval());
+    C_out =
+        std::make_unique<mat_t>((unit_farad * v_d_aug * aug_in.Mr * v_d_aug).eval());
+    // Emit R⁻¹ whenever there's any dissipative contribution: lumped resistance, surface
+    // conductivity, wave-port α₁, or aux-state damping.
+    if (aug_in.Cr.cwiseAbs().maxCoeff() > 0.0)
+    {
+      R_inv =
+          std::make_unique<mat_t>((unit_ohm_inv * v_d_aug * aug_in.Cr * v_d_aug).eval());
+    }
+  };
+
+  normalize_augmented(aug, out.L_inv, out.R_inv, out.C);
+
+  auto label_index = [](const std::vector<std::string> &labels,
+                        const std::string &target) -> long
+  {
+    auto it = std::find(labels.begin(), labels.end(), target);
+    if (it == labels.end())
+    {
+      return -1;
+    }
+    return static_cast<long>(std::distance(labels.begin(), it));
+  };
+
+  std::vector<std::string> total_labels = v_node_label;
+  for (const auto &lab : out.aux_labels)
+  {
+    total_labels.push_back(lab);
+  }
+
+  auto make_zero_augmented = [](long n) -> AugmentedPencil
+  {
+    AugmentedPencil z;
+    z.Kr = Eigen::MatrixXcd::Zero(n, n);
+    z.Cr = Eigen::MatrixXcd::Zero(n, n);
+    z.Mr = Eigen::MatrixXcd::Zero(n, n);
+    return z;
+  };
+
+  auto embed_augmented = [&](const AugmentedPencil &local_aug,
+                             const std::vector<std::string> &local_aux_labels)
+  {
+    const long n_v = Kr.rows();
+    const long n_total = aug.Kr.rows();
+    auto full_aug = make_zero_augmented(n_total);
+    auto global_index = [&](long i) -> long
+    {
+      if (i < n_v)
+      {
+        return i;
+      }
+      const long aux_i = i - n_v;
+      MFEM_VERIFY(aux_i < static_cast<long>(local_aux_labels.size()),
+                  "Malformed port-load auxiliary label list!");
+      const long gi = label_index(total_labels, local_aux_labels[aux_i]);
+      MFEM_VERIFY(gi >= 0, "Missing port-load auxiliary row in total PROM labels!");
+      return gi;
+    };
+    for (long i = 0; i < local_aug.Kr.rows(); i++)
+    {
+      const long gi = global_index(i);
+      for (long j = 0; j < local_aug.Kr.cols(); j++)
+      {
+        const long gj = global_index(j);
+        full_aug.Kr(gi, gj) += local_aug.Kr(i, j);
+        full_aug.Cr(gi, gj) += local_aug.Cr(i, j);
+        full_aug.Mr(gi, gj) += local_aug.Mr(i, j);
+      }
+    }
+    return full_aug;
+  };
+
+  for (const auto &pending : pending_port_loads)
+  {
+    std::vector<std::string> local_aux_labels;
+    auto local_aug = BuildAugmentedPencil(pending.Kr_corr, pending.Cr_corr,
+                                          pending.Mr_corr, pending.aux_blocks,
+                                          pending.passive_aux_blocks,
+                                          pending.dtn_aux_blocks, local_aux_labels);
+    auto full_aug = embed_augmented(local_aug, local_aux_labels);
+
+    NormalizedMatrices::PortLoad load;
+    load.label = pending.label;
+    normalize_augmented(full_aug, load.L_inv, load.R_inv, load.C);
+    out.port_loads.push_back(std::move(load));
+  }
+
+  // Lumped-port R/L/C boundary conditions are part of the legacy loaded pencil. Export
+  // their terminal admittance as per-port load matrices so downstream tools can form the
+  // connectable device by subtracting selected port loads from the legacy total matrices.
+  const long n_total = aug.Kr.rows();
+  for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
+  {
+    if (!port_data.active || !port_data.include_in_synthesis)
+    {
+      continue;
+    }
+    const auto label = fmt::format("port_{:d}_re", port_idx);
+    const long row = label_index(total_labels, label);
+    MFEM_VERIFY(row >= 0, "Missing synthesized lumped-port row for port-load export!");
+
+    NormalizedMatrices::PortLoad load;
+    load.label = label;
+    load.L_inv = std::make_unique<mat_t>(mat_t::Zero(n_total, n_total));
+    load.C = std::make_unique<mat_t>(mat_t::Zero(n_total, n_total));
+    if (std::abs(port_data.L) > 0.0)
+    {
+      (*load.L_inv)(row, row) += unit_henry_inv / port_data.L;
+    }
+    if (std::abs(port_data.C) > 0.0)
+    {
+      (*load.C)(row, row) += unit_farad * port_data.C;
+    }
+    if (std::abs(port_data.R) > 0.0)
+    {
+      load.R_inv = std::make_unique<mat_t>(mat_t::Zero(n_total, n_total));
+      (*load.R_inv)(row, row) += unit_ohm_inv / port_data.R;
+    }
+    out.port_loads.push_back(std::move(load));
   }
 
   return out;
+}
+
+void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &post_dir,
+                                         const NormalizedMatrices &matrices) const
+{
+  if (sweep_omega_samples.empty())
+  {
+    return;
+  }
+
+  enum class RefType
+  {
+    Lumped,
+    Wave
+  };
+  struct RefPort
+  {
+    RefType type;
+    int port_idx;
+    std::string label;
+    const WavePortDispersionFit *wave_fit = nullptr;
+  };
+
+  auto label_index = [](const std::vector<std::string> &labels,
+                        const std::string &target) -> long
+  {
+    auto it = std::find(labels.begin(), labels.end(), target);
+    if (it == labels.end())
+    {
+      return -1;
+    }
+    return static_cast<long>(std::distance(labels.begin(), it));
+  };
+
+  std::vector<RefPort> refs;
+  refs.reserve(NumSynthesisPortModes() + NumSynthesisWavePortModes());
+
+  for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
+  {
+    if (!port_data.include_in_synthesis)
+    {
+      continue;
+    }
+    const auto label = fmt::format("port_{:d}_re", port_idx);
+    if (label_index(v_node_label, label) >= 0)
+    {
+      refs.push_back({RefType::Lumped, port_idx, label, nullptr});
+    }
+  }
+  for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
+  {
+    if (!port_data.include_in_synthesis)
+    {
+      continue;
+    }
+    const int wp_idx = port_idx;
+    const auto fit_it =
+        std::find_if(matrices.wave_port_fits.begin(), matrices.wave_port_fits.end(),
+                     [wp_idx](const auto &fit) { return fit.port_idx == wp_idx; });
+    const auto label = fmt::format("waveport_{:d}_re", port_idx);
+    if (fit_it != matrices.wave_port_fits.end() && label_index(v_node_label, label) >= 0)
+    {
+      refs.push_back({RefType::Wave, port_idx, label, &(*fit_it)});
+    }
+  }
+  if (refs.empty())
+  {
+    return;
+  }
+
+  const double unit_GHz =
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * M_PI);
+  const double unit_ohm_inv = 1.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+
+  auto wave_y_ref = [&](const RefPort &ref, double omega) -> std::complex<double>
+  {
+    MFEM_VERIFY(ref.wave_fit != nullptr, "Missing wave-port fit for port reference output!");
+    const auto Mp_it = Mwp_p_r.find(ref.port_idx);
+    MFEM_VERIFY(Mp_it != Mwp_p_r.end(), "Missing wave-port boundary mass projection!");
+
+    std::vector<long> rows;
+    const long re = label_index(v_node_label, fmt::format("waveport_{:d}_re", ref.port_idx));
+    const long im = label_index(v_node_label, fmt::format("waveport_{:d}_im", ref.port_idx));
+    MFEM_VERIFY(re >= 0, "Missing wave-port real row for port reference output!");
+    rows.push_back(re);
+    if (im >= 0)
+    {
+      rows.push_back(im);
+    }
+
+    const auto scalar = EvaluateWavePortMultiplierFit(*ref.wave_fit, omega);
+    Eigen::MatrixXcd A = Eigen::MatrixXcd::Zero(rows.size(), rows.size());
+    for (std::size_t i = 0; i < rows.size(); i++)
+    {
+      for (std::size_t j = 0; j < rows.size(); j++)
+      {
+        A(static_cast<long>(i), static_cast<long>(j)) =
+            scalar * orth_R(rows[i], rows[i]) * Mp_it->second(rows[i], rows[j]) *
+            orth_R(rows[j], rows[j]);
+      }
+    }
+
+    std::complex<double> A_eff = A(0, 0);
+    if (rows.size() > 1)
+    {
+      const long ni = static_cast<long>(rows.size() - 1);
+      const Eigen::MatrixXcd Aii = A.bottomRightCorner(ni, ni);
+      Eigen::FullPivLU<Eigen::MatrixXcd> lu(Aii);
+      if (lu.rank() == ni)
+      {
+        A_eff -=
+            (A.block(0, 1, 1, ni) * lu.solve(A.block(1, 0, ni, 1)))(0, 0);
+      }
+    }
+
+    return (omega > 0.0) ? (unit_ohm_inv * A_eff / (1i * omega))
+                         : std::complex<double>{0.0, 0.0};
+  };
+
+  Mpi::Print(" Printing PROM port reference admittance to disk.\n");
+  auto out = TableWithCSVFile(post_dir / "rom-port-reference.csv");
+  out.table.col_options.float_precision = 17;
+  out.table.reserve(sweep_omega_samples.size(), 1 + 4 * refs.size());
+  out.table.insert("idx", "f (GHz)", -1, 0, std::size_t{12}, "");
+  for (const auto &ref : refs)
+  {
+    const auto key = ref.label;
+    out.table.insert(fmt::format("re_yref_{}", key),
+                     fmt::format("Re{{Y_ref[{}]}} (S)", ref.label));
+    out.table.insert(fmt::format("im_yref_{}", key),
+                     fmt::format("Im{{Y_ref[{}]}} (S)", ref.label));
+    out.table.insert(fmt::format("re_zref_{}", key),
+                     fmt::format("Re{{Z_ref[{}]}} (Ohm)", ref.label));
+    out.table.insert(fmt::format("im_zref_{}", key),
+                     fmt::format("Im{{Z_ref[{}]}} (Ohm)", ref.label));
+  }
+
+  for (const auto omega : sweep_omega_samples)
+  {
+    out.table["idx"] << omega * unit_GHz;
+    for (const auto &ref : refs)
+    {
+      std::complex<double> y_ref = 0.0;
+      if (ref.type == RefType::Lumped)
+      {
+        const auto &port_data = space_op.GetLumpedPortOp().GetPort(ref.port_idx);
+        y_ref = unit_ohm_inv / port_data.GetCharacteristicImpedance(omega);
+      }
+      else
+      {
+        y_ref = wave_y_ref(ref, omega);
+      }
+      const std::complex<double> z_ref =
+          (std::abs(y_ref) > 0.0) ? (1.0 / y_ref) : std::complex<double>{0.0, 0.0};
+      out.table[fmt::format("re_yref_{}", ref.label)] << y_ref.real();
+      out.table[fmt::format("im_yref_{}", ref.label)] << y_ref.imag();
+      out.table[fmt::format("re_zref_{}", ref.label)] << z_ref.real();
+      out.table[fmt::format("im_zref_{}", ref.label)] << z_ref.imag();
+    }
+  }
+  out.WriteFullTableTrunc();
 }
 
 void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir) const
@@ -2799,16 +3111,18 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     labels.push_back(lab);
   }
   auto print_table =
-      [post_dir, labels](const Eigen::MatrixXd &mat, std::string_view filename)
+      [post_dir](const Eigen::MatrixXd &mat, std::string_view filename,
+                 const std::vector<std::string> &table_labels)
   {
-    MFEM_VERIFY((labels.size() == mat.cols()) && (labels.size() == mat.rows()),
+    MFEM_VERIFY((table_labels.size() == mat.cols()) &&
+                    (table_labels.size() == mat.rows()),
                 "Inconsistent PROM size!");
 
     auto out = TableWithCSVFile(post_dir / filename);
     out.table.col_options.float_precision = 17;
     for (long i = 0; i < mat.cols(); i++)
     {
-      out.table.insert(labels[i], labels[i]);
+      out.table.insert(table_labels[i], table_labels[i]);
       auto &col = out.table[i];
       for (long j = 0; j < mat.rows(); j++)
       {
@@ -2824,21 +3138,41 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   // and α₂ into Im(C) even when the underlying HDM K/M have no imaginary part, and
   // wave-port dissipation fills R⁻¹ even when no Palace damping matrix exists. Gate
   // exclusively on the synthesised content so nothing is silently dropped.
-  auto print_if_nonzero = [&](const Eigen::MatrixXd &mat, std::string_view filename)
+  auto print_if_nonzero = [&](const Eigen::MatrixXd &mat, std::string_view filename,
+                              const std::vector<std::string> &table_labels)
   {
     if (mat.cwiseAbs().maxCoeff() > 0.0)
     {
-      print_table(mat, filename);
+      print_table(mat, filename, table_labels);
     }
   };
-  print_if_nonzero(inductance_L_inv->real(), "rom-Linv-re.csv");
-  print_if_nonzero(inductance_L_inv->imag(), "rom-Linv-im.csv");
-  print_if_nonzero(capacitance_C->real(), "rom-C-re.csv");
-  print_if_nonzero(capacitance_C->imag(), "rom-C-im.csv");
+  print_if_nonzero(inductance_L_inv->real(), "rom-Linv-re.csv", labels);
+  print_if_nonzero(inductance_L_inv->imag(), "rom-Linv-im.csv", labels);
+  print_if_nonzero(capacitance_C->real(), "rom-C-re.csv", labels);
+  print_if_nonzero(capacitance_C->imag(), "rom-C-im.csv", labels);
   if (resistance_R_inv)
   {
-    print_if_nonzero(resistance_R_inv->real(), "rom-Rinv-re.csv");
-    print_if_nonzero(resistance_R_inv->imag(), "rom-Rinv-im.csv");
+    print_if_nonzero(resistance_R_inv->real(), "rom-Rinv-re.csv", labels);
+    print_if_nonzero(resistance_R_inv->imag(), "rom-Rinv-im.csv", labels);
+  }
+
+  // Port-load matrices decompose the legacy loaded rom-* matrices into selectable
+  // per-port terminations. Each file has the same row/column labels and dimension as the
+  // total matrices, so downstream tools can form device matrices by subtracting any subset
+  // of these loads from rom-* and can add back only the external loads after connecting
+  // internal ports.
+  for (const auto &load : matrices.port_loads)
+  {
+    const auto prefix = fmt::format("rom-portload-{}", load.label);
+    print_if_nonzero(load.L_inv->real(), fmt::format("{}-Linv-re.csv", prefix), labels);
+    print_if_nonzero(load.L_inv->imag(), fmt::format("{}-Linv-im.csv", prefix), labels);
+    print_if_nonzero(load.C->real(), fmt::format("{}-C-re.csv", prefix), labels);
+    print_if_nonzero(load.C->imag(), fmt::format("{}-C-im.csv", prefix), labels);
+    if (load.R_inv)
+    {
+      print_if_nonzero(load.R_inv->real(), fmt::format("{}-Rinv-re.csv", prefix), labels);
+      print_if_nonzero(load.R_inv->imag(), fmt::format("{}-Rinv-im.csv", prefix), labels);
+    }
   }
 
   // Print orth-R. Don't divide by diagonal to keep state normalization info.
@@ -2847,7 +3181,9 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   // form expected by downstream consumers.
   Eigen::MatrixXd orth_R_padded = Eigen::MatrixXd::Identity(labels.size(), labels.size());
   orth_R_padded.topLeftCorner(orth_R.rows(), orth_R.cols()) = orth_R;
-  print_table(orth_R_padded, "rom-orthogonalization-matrix-R.csv");
+  print_table(orth_R_padded, "rom-orthogonalization-matrix-R.csv", labels);
+
+  PrintPortReferenceData(units, post_dir, matrices);
 }
 
 }  // namespace palace
