@@ -52,7 +52,6 @@ public:
   using RomOperator::AugmentedPencil;
   using RomOperator::BuildAugmentedPencil;
   using RomOperator::CalculateNormalizedPROMMatrices;
-  using RomOperator::PassiveWavePortAuxBlock;
   using RomOperator::RomOperator;
   using RomOperator::WavePortAuxBlock;
   auto &GetWeightOp() const { return weight_op_W; }
@@ -286,15 +285,6 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-Port-Cube1
                  WithinRel(W_bulk_eigen(i, j) + W_port_eigen(i, j)) ||
                      WithinAbs(0.0, 1e-18));
     }
-  }
-
-  // Debug Print.
-  if constexpr (false)
-  {
-    Eigen::IOFormat HeavyFmt(4, 0, ", ", ";\n", "[", "]", "[", "]");
-    std::cout << W_bulk_eigen.format(HeavyFmt) << "\n";
-    std::cout << W_port_eigen.format(HeavyFmt) << "\n";
-    std::cout << weight_op_eigen.format(HeavyFmt) << "\n";
   }
 
   // Now test against port vector. The normalization of e_t / eta is 1 / (Z_R n_el^2) \sum_e
@@ -833,8 +823,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // Only port 2 contributed a basis vector.
   REQUIRE(prom_op.GetReducedDimension() == 1);
 
-  const auto [inductance_L_inv, resistance_R_inv, capacitance_C, aux_labels] =
-      prom_op.CalculateNormalizedPROMMatrices(iodata.units);
+  const auto matrices = prom_op.CalculateNormalizedPROMMatrices(iodata.units);
+  const auto &inductance_L_inv = matrices.L_inv;
+  const auto &resistance_R_inv = matrices.R_inv;
+  const auto &capacitance_C = matrices.C;
   REQUIRE(inductance_L_inv->rows() == 1);
   REQUIRE(resistance_R_inv->rows() == 1);
   REQUIRE(capacitance_C->rows() == 1);
@@ -934,8 +926,7 @@ TEST_CASE("RomOperator-AugmentedPencil-Eigenvalues", "[romoperator][Serial]")
 
   std::vector<RomOperatorTest::WavePortAuxBlock> aux_blocks = {blk};
   std::vector<std::string> aux_labels;
-  auto aug =
-      RomOperatorTest::BuildAugmentedPencil(Kr, Cr, Mr, aux_blocks, {}, {}, aux_labels);
+  auto aug = RomOperatorTest::BuildAugmentedPencil(Kr, Cr, Mr, aux_blocks, aux_labels);
 
   REQUIRE(aug.Kr.rows() == 3);
   REQUIRE(aug.Kr.cols() == 3);
@@ -1000,50 +991,4 @@ TEST_CASE("RomOperator-AugmentedPencil-Eigenvalues", "[romoperator][Serial]")
   };
   CHECK(std::abs(eval_unaug(root_plus)) < 1.0e-10);
   CHECK(std::abs(eval_unaug(root_minus)) < 1.0e-10);
-}
-
-TEST_CASE("RomOperator-PassiveWavePortAuxBlock-SchurComplement", "[romoperator][Serial]")
-{
-  // Passive high-pass admittance y(s) = d + g*s/(s+a) (a,g,d >= 0), realized as the
-  // boundary contribution s*y(s)*M_proj. The s*y(s) expansion
-  //   s*y(s) = s*(d + g) - g*a + g*a^2/(s+a)
-  // folds s*(d+g) into Cr and -g*a into Kr (ApplyPassiveRationalFitCorrections), leaving
-  // the dissipative simple-pole part +g*a^2/(s+a) for the aux state built here. The Schur
-  // complement of the augmented pencil must reproduce s*y(s) exactly.
-  const double d = 0.3;
-  const double a = 2.5;
-  const double g = 0.7;
-
-  // Main block after the s*y(s) folding: Cr(0,0) = d + g, Kr(0,0) = -g*a.
-  Eigen::MatrixXcd Kr(1, 1), Cr(1, 1), Mr(1, 1);
-  Kr(0, 0) = -g * a;
-  Cr(0, 0) = d + g;
-  Mr(0, 0) = 0.0;
-
-  RomOperatorTest::PassiveWavePortAuxBlock blk;
-  blk.port_idx = 1;
-  blk.sigmas = {1.0};
-  Eigen::VectorXd u_dir(1);
-  u_dir(0) = 1.0;
-  blk.u_dirs = {u_dir};
-  blk.poles = {a};
-  blk.residues = {g};
-
-  std::vector<RomOperatorTest::PassiveWavePortAuxBlock> passive_blocks = {blk};
-  std::vector<std::string> aux_labels;
-  auto aug =
-      RomOperatorTest::BuildAugmentedPencil(Kr, Cr, Mr, {}, passive_blocks, {}, aux_labels);
-
-  REQUIRE(aug.Kr.rows() == 2);
-  REQUIRE(aug.Cr.rows() == 2);
-  REQUIRE(aux_labels.size() == 1);
-
-  for (const auto s : {std::complex<double>(0.1, 1.0), std::complex<double>(1.0, 3.0),
-                       std::complex<double>(2.0, -0.4)})
-  {
-    Eigen::MatrixXcd A = aug.Kr + s * aug.Cr;
-    const std::complex<double> schur = A(0, 0) - A(0, 1) * A(1, 0) / A(1, 1);
-    const std::complex<double> target = s * (d + g * s / (s + a));
-    CHECK(std::abs(schur - target) < 1.0e-12);
-  }
 }

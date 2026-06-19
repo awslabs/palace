@@ -2490,38 +2490,6 @@
           "description": "Weight matrix type for domain orthogonalization when building synthesized circuit matrices.",
           "default": "Energy",
           "x-palace-advanced": true
-        },
-        "WavePortSynthesisTol": {
-          "type": "number",
-          "minimum": 0.0,
-          "description": "Tolerance for the wave-port dispersion fit used by adaptive driven circuit synthesis. When unset (0), the fit tolerance follows `\"AdaptiveTol\"`.",
-          "default": 0.0,
-          "x-palace-advanced": true
-        },
-        "WavePortSynthesisOrderMax": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Maximum rational-fit order (number of poles) for the wave-port dispersion fit used by adaptive driven circuit synthesis.",
-          "x-palace-advanced": true
-        },
-        "WavePortSynthesisRankTol": {
-          "type": "number",
-          "minimum": 0.0,
-          "description": "Relative singular-value cutoff for the per-pole rank truncation of the auxiliary-state coupling in the Augmented wave-port synthesis regime.",
-          "x-palace-advanced": true
-        },
-        "WavePortSynthesisForce": {
-          "type": "string",
-          "enum": [
-            "Auto",
-            "Polynomial",
-            "Augmented",
-            "PassiveRational",
-            "DtnRational"
-          ],
-          "description": "Force the wave-port dispersion synthesis regime instead of the automatic dispatch based on the polynomial fit residual.",
-          "default": "Auto",
-          "x-palace-advanced": true
         }
       }
     },

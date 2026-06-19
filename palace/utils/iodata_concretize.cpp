@@ -158,11 +158,7 @@ void ConcretizeDriven(const config::DrivenSolverData &driven, json &j_driven)
        {"AdaptiveGSOrthogonalization", ToString(driven.adaptive_solver_gs_orthog_type)},
        {"AdaptiveCircuitSynthesis", driven.adaptive_circuit_synthesis},
        {"AdaptiveCircuitSynthesisDomainOrthogonalization",
-        ToString(driven.adaptive_circuit_synthesis_domain_orthog)},
-       {"WavePortSynthesisTol", driven.waveport_synthesis_tol},
-       {"WavePortSynthesisOrderMax", driven.waveport_synthesis_order_max},
-       {"WavePortSynthesisRankTol", driven.waveport_synthesis_rank_tol},
-       {"WavePortSynthesisForce", ToString(driven.waveport_synthesis_force)}});
+        ToString(driven.adaptive_circuit_synthesis_domain_orthog)}});
 }
 
 void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostatic,
