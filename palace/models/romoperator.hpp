@@ -5,6 +5,7 @@
 #define PALACE_MODELS_ROM_OPERATOR_HPP
 
 #include <complex>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -165,7 +166,7 @@ protected:
   // - System matrix is: A(ω) = K + iω C - ω² M + A2(ω).
   // - Excitation / drive: = iω RHS1 + RHS2(ω).
   // - Vector r is internal vector workspace of size RHS
-  // - The non-quadratic in ω operators A2(ω) and RHS2(ω) are built on fly in SolveHDM.
+  // - The non-quadratic in ω operators A2(ω) and RHS2(ω) are built on the fly.
   // - Need to recompute RHS1 when excitation index changes (cf excitation_idx_cache).
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   ComplexVector RHS1, RHS2, r;
@@ -230,17 +231,6 @@ protected:
   bool has_RHS1 = true;
   bool has_RHS2 = true;
 
-  // Per-excitation RHS2 sample cache. The wave-port excitation vector RHS2(ω) =
-  // Σ_p∈excited 2ω·(n×Hₙ,p(ω)) does not factor cleanly in ω because the modal field
-  // Hₙ,p(ω) deforms with ω. Cache the HDM RHS2 at every offline sample frequency,
-  // project it into the basis (with rolling extensions in UpdatePROM), and interpolate
-  // the small projected vector RHS2_r(ω) ∈ ℂⁿ in the online phase using barycentric
-  // Lagrange. Samples accumulate across all greedy excitations and persist for the
-  // online sweep over excitations.
-  // Map<excitation_idx, Map<ω⋆, …>>.
-  std::map<int, std::map<double, ComplexVector>> RHS2_hdm_samples;
-  std::map<int, std::map<double, Eigen::VectorXcd>> RHS2_r_samples;
-
   // HDM linear system solver and preconditioner.
   std::unique_ptr<ComplexKspSolver> ksp;
 
@@ -293,13 +283,11 @@ protected:
   //
   // The chosen regime determines whether k_n,p(omega) is approximated by an order-2
   // polynomial (Polynomial: clean absorption into Kr/Cr/Mr), augmented with the legacy
-  // AAA-fit residual poles (Augmented), or replaced by a passive rational admittance
-  // model (PassiveRational: extra aux states extend the pencil).
+  // AAA-fit residual poles (Augmented), or fit by the structured DtN rational model.
   enum class WavePortRegime
   {
     Polynomial,
     Augmented,
-    PassiveRational,
     DtnRational
   };
 
@@ -319,25 +307,10 @@ protected:
     std::vector<std::complex<double>> residues;
   };
 
-  // Passive fixed-pole admittance realization for one wave port. The scalar modal
-  // admittance is approximated as
-  //   y(s) = d + Σ_k r_k / (s + a_k),  a_k > 0, r_k >= 0, d >= 0,
-  // and the boundary contribution is s*y(s)*M_proj. Eliminating the aux states realizes
-  // each term r_k*s/(s+a_k) = r_k - a_k*r_k/(s+a_k) with stable dissipative poles.
-  struct PassiveWavePortAuxBlock
-  {
-    int port_idx = 0;
-    std::string label;
-    std::vector<double> sigmas;
-    std::vector<Eigen::VectorXd> u_dirs;
-    std::vector<double> poles;     // Positive a_k in s+a_k.
-    std::vector<double> residues;  // Nonnegative r_k.
-  };
-
   // Result of fitting k_n,p(omega) on the sweep band for a single port. Polynomial regime
   // populates {alpha0, alpha1, alpha2}; Augmented regime additionally populates `aux`
-  // and folds the AAA constant `d` into `alpha0`. PassiveRational populates `passive_aux`
-  // and `passive_d` instead; the polynomial coefficients are retained only for diagnostics.
+  // and folds the AAA constant `d` into `alpha0`; DtnRational populates `dtn_aux` and the
+  // s-domain polynomial part.
   struct WavePortDispersionFit
   {
     int port_idx = 0;
@@ -352,8 +325,6 @@ protected:
     std::complex<double> alpha1c = 0.0;
     std::complex<double> alpha2c = 0.0;
     std::optional<WavePortAuxBlock> aux;
-    std::optional<PassiveWavePortAuxBlock> passive_aux;
-    double passive_d = 0.0;
     // DtnRational regime: structured √ fit of q(s)=i·kₙ via q²=c₀+c₁s+c₂s², realized as
     // q(s)=dtn_poly0 + dtn_poly1·s + Σ R_k/(s−p_k). The complex s-domain pole/residue list is
     // stored in `dtn_aux` (poles p_k, residues R_k, with the per-direction σ_j/u_j SVD data),
@@ -365,7 +336,6 @@ protected:
     std::complex<double> dtn_poly1 = 0.0;
     double rel_err_polynomial = 0.0;  // residual of α-only fit on dense grid
     double rel_err_augmented = 0.0;   // residual after AAA augmentation (Augmented only)
-    double rel_err_passive = 0.0;     // residual after passive rational fit
     double rel_err_dtn = 0.0;         // residual after DtN structured-√ fit
   };
 
@@ -430,9 +400,8 @@ protected:
   static double EvaluateWavePortKnFit(const WavePortDispersionFit &fit, double omega);
 
   // Evaluate the scalar multiplying Mp_r in the online reduced system. For the polynomial
-  // and legacy augmented regimes this is real-valued k_n(omega). For PassiveRational it is
-  // omega*y(i omega), generally complex, so scalar*Mp_r realizes s*y(s)*M_proj on the real
-  // frequency axis just like the synthesized augmented pencil.
+  // and legacy augmented regimes this is real-valued k_n(omega). For DtnRational it is the
+  // s-domain DtN multiplier converted back to the Mp_r convention.
   static std::complex<double>
   EvaluateWavePortMultiplierFit(const WavePortDispersionFit &fit, double omega);
 
@@ -443,14 +412,6 @@ protected:
                                             Eigen::MatrixXcd &Kr_corr,
                                             Eigen::MatrixXcd &Cr_corr,
                                             Eigen::MatrixXcd &Mr_corr);
-
-  // Accumulate a passive modal admittance fit y(s)=d+Σr/(s+a) as
-  // s*y(s)*M_proj = s*d*M_proj + Σ r*M_proj - Σ a*r*M_proj/(s+a). The pole terms are
-  // realized by PassiveWavePortAuxBlock in BuildAugmentedPencil.
-  static void ApplyPassiveRationalFitCorrections(const WavePortDispersionFit &fit,
-                                                 const Eigen::MatrixXcd &Mp_r,
-                                                 Eigen::MatrixXcd &Kr_corr,
-                                                 Eigen::MatrixXcd &Cr_corr);
 
   // Fit the DtN multiplier q(s)=i·kₙ(ω) of one wave port by the structured square root:
   // fit q²=c₀+c₁s+c₂s² (s=iω), complete the square q=√c₂·u·√(1−t) with u=s+c₁/(2c₂),
@@ -501,6 +462,8 @@ protected:
   MakeAuxBlock(int label_idx, const Eigen::MatrixXcd &Mp_r,
                const std::vector<std::complex<double>> &poles,
                const std::vector<std::complex<double>> &residues, double rank_tol);
+  static bool AddAuxBlockDirections(WavePortAuxBlock &blk, const Eigen::MatrixXcd &Mp_r,
+                                    double rank_tol);
 
   // Append aux-state rows/columns for regime-2 wave ports onto an n×n base pencil
   // (Kr_total, Cr_total, Mr_total). Returns the (n+aux)×(n+aux) augmented matrices and
@@ -516,7 +479,6 @@ protected:
   BuildAugmentedPencil(const Eigen::MatrixXcd &Kr_total, const Eigen::MatrixXcd &Cr_total,
                        const Eigen::MatrixXcd &Mr_total,
                        const std::vector<WavePortAuxBlock> &aux_blocks,
-                       const std::vector<PassiveWavePortAuxBlock> &passive_aux_blocks,
                        const std::vector<WavePortAuxBlock> &dtn_aux_blocks,
                        std::vector<std::string> &aux_labels);
 
@@ -577,9 +539,6 @@ public:
   {
     return mri.at(excitation_idx).FindMaxError(N);
   }
-
-  // Compute eigenvalue estimates for the current PROM system.
-  std::vector<std::complex<double>> ComputeEigenvalueEstimates() const;
 
   // Print PROM matrices to file include in input (SI) units.
   void PrintPROMMatrices(const Units &units, const fs::path &post_dir) const;

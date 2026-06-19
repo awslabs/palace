@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <cstdint>
 #include <cstdlib>
 #include <limits>
 #include <memory>
@@ -30,16 +29,6 @@
 #include "utils/timer.hpp"
 #include "utils/units.hpp"
 
-// Eigen does not provide a complex-valued generalized eigenvalue solver, so we use LAPACK
-// for this.
-extern "C"
-{
-  void zggev_(char *, char *, int *, std::complex<double> *, int *, std::complex<double> *,
-              int *, std::complex<double> *, std::complex<double> *, std::complex<double> *,
-              int *, std::complex<double> *, int *, std::complex<double> *, int *, double *,
-              int *);
-}
-
 namespace palace
 {
 
@@ -50,106 +39,6 @@ namespace
 
 constexpr auto ORTHOG_TOL = 1.0e-12;
 
-Eigen::VectorXd SolveSmallNonnegativeLeastSquares(const Eigen::MatrixXd &A,
-                                                  const Eigen::VectorXd &b)
-{
-  // Exhaustive active-set search is adequate here: the passive wave-port fit uses only a
-  // handful of fixed poles, so the column count is typically <= 6. This avoids bringing in
-  // an optimization dependency while enforcing d >= 0 and r_k >= 0 exactly.
-  const int n = static_cast<int>(A.cols());
-  Eigen::VectorXd best = Eigen::VectorXd::Zero(n);
-  double best_err = std::numeric_limits<double>::infinity();
-  const std::uint64_t masks = (n >= 63) ? 0 : (std::uint64_t{1} << n);
-  MFEM_VERIFY(masks != 0, "Passive wave-port NNLS active-set search is too large!");
-  for (std::uint64_t mask = 1; mask < masks; mask++)
-  {
-    int active = 0;
-    for (int j = 0; j < n; j++)
-    {
-      active += int((mask >> j) & 1U);
-    }
-    Eigen::MatrixXd Aa(A.rows(), active);
-    std::vector<int> cols;
-    cols.reserve(active);
-    for (int j = 0, c = 0; j < n; j++)
-    {
-      if ((mask >> j) & 1U)
-      {
-        Aa.col(c++) = A.col(j);
-        cols.push_back(j);
-      }
-    }
-    Eigen::VectorXd xa = Aa.colPivHouseholderQr().solve(b);
-    if ((xa.array() < -1.0e-12).any())
-    {
-      continue;
-    }
-    Eigen::VectorXd x = Eigen::VectorXd::Zero(n);
-    for (int c = 0; c < active; c++)
-    {
-      x(cols[c]) = std::max(0.0, xa(c));
-    }
-    const double err = (A * x - b).squaredNorm();
-    if (err < best_err)
-    {
-      best_err = err;
-      best = x;
-    }
-  }
-  return best;
-}
-
-double EvaluatePassiveWavePortKn(double omega, double d, const std::vector<double> &poles,
-                                 const std::vector<double> &residues)
-{
-  // High-pass passive admittance y(s) = d + Σ_k g_k·s/(s+a_k), a_k>0, g_k>=0, d>=0.
-  // Re(y(iω)) = d + Σ_k g_k·ω²/(a_k²+ω²) is MONOTONE INCREASING 0→(d+Σg_k), matching the
-  // wave-port modal admittance kₙ/ω which rises from 0 at cutoff toward √γ. (The earlier
-  // low-pass form r_k/(s+a_k) was monotone DECREASING and could not represent this, so the
-  // nonnegativity constraint forced every residue to zero.) kₙ(ω) = ω·Re(y(iω)).
-  double y = d;
-  for (std::size_t k = 0; k < poles.size(); k++)
-  {
-    const double a = poles[k];
-    y += residues[k] * omega * omega / (a * a + omega * omega);
-  }
-  return omega * y;
-}
-
-std::complex<double> EvaluatePassiveWavePortMultiplier(double omega, double d,
-                                                       const std::vector<double> &poles,
-                                                       const std::vector<double> &residues)
-{
-  // y(s) = d + Σ_k g_k·s/(s+a_k); the boundary contribution is ω·y(iω)·Mp_r =
-  // i·ω·y(iω)·M_proj (Mp_r = i·M_proj). Returns the complex scalar ω·y(iω).
-  const std::complex<double> s(0.0, omega);
-  std::complex<double> y = d;
-  for (std::size_t k = 0; k < poles.size(); k++)
-  {
-    y += residues[k] * s / (s + poles[k]);
-  }
-  return omega * y;
-}
-
-std::vector<double> LogSpacedPositive(double lo, double hi, std::size_t n)
-{
-  MFEM_VERIFY(lo > 0.0 && hi > lo && n > 0, "Invalid passive wave-port pole range!");
-  std::vector<double> values(n);
-  if (n == 1)
-  {
-    values[0] = std::sqrt(lo * hi);
-    return values;
-  }
-  const double log_lo = std::log(lo);
-  const double log_hi = std::log(hi);
-  for (std::size_t i = 0; i < n; i++)
-  {
-    const double t = static_cast<double>(i) / static_cast<double>(n - 1);
-    values[i] = std::exp((1.0 - t) * log_lo + t * log_hi);
-  }
-  return values;
-}
-
 // ---------------------------------------------------------------------------------------
 // DtN structured-√ wave-port synthesis helpers. The target is the boundary multiplier
 // q(s) = i·kₙ(ω) (s = iω), modeled as q(s) = √c₂·u·P(t)/Q(t) with u = s + shift,
@@ -158,28 +47,6 @@ std::vector<double> LogSpacedPositive(double lo, double hi, std::size_t n)
 // See prom-waveport-validation/dtn_realization_lock.py for the validated reference; all
 // expressions below mirror it (verified to 1e-15 against the structured fit and the pencil
 // realization).
-
-// Evaluate the structured form q(s) = √c₂·u·P(t)/Q(t) at complex s.
-inline std::complex<double>
-EvalDtnStructured(std::complex<double> sqrt_c2, double shift, double omega_s2,
-                  const Eigen::VectorXd &a, const Eigen::VectorXd &b, std::complex<double> s)
-{
-  const std::complex<double> u = s + shift;
-  const std::complex<double> t = omega_s2 / (u * u);
-  std::complex<double> pa = 0.0, pb = 0.0, tk = 1.0;
-  for (long k = 0; k < a.size(); k++)
-  {
-    pa += a(k) * tk;
-    tk *= t;
-  }
-  tk = 1.0;
-  for (long k = 0; k < b.size(); k++)
-  {
-    pb += b(k) * tk;
-    tk *= t;
-  }
-  return sqrt_c2 * u * pa / pb;
-}
 
 // Roots of a polynomial given by ASCENDING complex coefficients (c[0] + c[1] x + ...), via
 // the companion-matrix eigenvalues. Leading near-zero coefficients are trimmed.
@@ -421,71 +288,6 @@ inline void ProjectVecInternal(MPI_Comm comm, const std::vector<Vector> &V,
   Mpi::GlobalSum(n - n0, br.data() + n0, comm);
 }
 
-// Evaluate the barycentric Lagrange interpolant of a vector-valued function f(ω) at the
-// given ω, given samples {(ωₖ, fₖ)}. The samples map is keyed by ω (sorted by std::map),
-// and the values are fixed-dimension Eigen::VectorXcd (the projected RHS2 in our use).
-//
-// Returns the result by value. If `omega` matches a sample point exactly to round-off,
-// returns that sample directly to avoid 0/0. Tiny sample sets (S=1) reduce to constant
-// extrapolation; S=2 to linear. Weights are recomputed at every call (S² in the number
-// of samples, negligible compared to the linear-in-n cost of the result).
-inline Eigen::VectorXcd
-BarycentricInterpolate(const std::map<double, Eigen::VectorXcd> &samples, double omega)
-{
-  MFEM_VERIFY(!samples.empty(), "BarycentricInterpolate requires at least one sample!");
-  if (samples.size() == 1)
-  {
-    return samples.begin()->second;
-  }
-  // Detect exact-match sample (within a relative tolerance proportional to the spread
-  // of the sample frequencies, since ω⋆ values are inserted from a finite list of
-  // double-precision frequencies and may compare exactly).
-  double omega_max = std::abs(samples.rbegin()->first);
-  double match_tol = 1.0e-14 * std::max(omega_max, 1.0);
-  for (const auto &[w, v] : samples)
-  {
-    if (std::abs(w - omega) <= match_tol)
-    {
-      return v;
-    }
-  }
-  // Recompute barycentric weights wₖ = 1 / Π_{j≠k} (ωₖ − ωⱼ).
-  const std::size_t S = samples.size();
-  std::vector<double> w_pts;
-  std::vector<const Eigen::VectorXcd *> v_pts;
-  w_pts.reserve(S);
-  v_pts.reserve(S);
-  for (const auto &[w, v] : samples)
-  {
-    w_pts.push_back(w);
-    v_pts.push_back(&v);
-  }
-  std::vector<double> bary(S);
-  for (std::size_t k = 0; k < S; k++)
-  {
-    double prod = 1.0;
-    for (std::size_t j = 0; j < S; j++)
-    {
-      if (j == k)
-      {
-        continue;
-      }
-      prod *= (w_pts[k] - w_pts[j]);
-    }
-    bary[k] = 1.0 / prod;
-  }
-  // f(ω) = Σ (wₖ/(ω-ωₖ)) fₖ / Σ (wₖ/(ω-ωₖ)).
-  Eigen::VectorXcd num = Eigen::VectorXcd::Zero(v_pts[0]->size());
-  std::complex<double> denom{0.0, 0.0};
-  for (std::size_t k = 0; k < S; k++)
-  {
-    double coeff = bary[k] / (omega - w_pts[k]);
-    num += coeff * (*v_pts[k]);
-    denom += coeff;
-  }
-  return num / denom;
-}
-
 inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
 {
   // Compute the coefficients of the minimal rational interpolation (MRI):
@@ -505,37 +307,6 @@ inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
     m--;
   }
   q = svd.matrixV().col(m);
-}
-
-template <typename MatType, typename VecType>
-inline void ZGGEV(MatType &A, MatType &B, VecType &D, MatType &VR)
-{
-  // Wrapper for LAPACK's (z)ggev. A and B are overwritten by their Schur decompositions.
-  MFEM_VERIFY(A.rows() == A.cols() && B.rows() == B.cols() && A.rows() == B.rows(),
-              "Generalized eigenvalue problem expects A, B matrices to be square and have "
-              "same dimensions!");
-  char jobvl = 'N', jobvr = 'V';
-  int n = static_cast<int>(A.rows()), lwork = 2 * n;
-  std::vector<std::complex<double>> alpha(n), beta(n), work(lwork);
-  std::vector<double> rwork(8 * n);
-  MatType VL(0, 0);
-  VR.resize(n, n);
-  int info = 0;
-
-  zggev_(&jobvl, &jobvr, &n, A.data(), &n, B.data(), &n, alpha.data(), beta.data(),
-         VL.data(), &n, VR.data(), &n, work.data(), &lwork, rwork.data(), &info);
-  MFEM_VERIFY(info == 0, "ZGGEV failed with info = " << info << "!");
-
-  // Postprocess the eigenvalues and eigenvectors (return unit 2-norm eigenvectors).
-  D.resize(n);
-  for (int i = 0; i < n; i++)
-  {
-    D(i) = (beta[i] == 0.0)
-               ? ((alpha[i] == 0.0) ? std::numeric_limits<std::complex<double>>::quiet_NaN()
-                                    : mfem::infinity())
-               : alpha[i] / beta[i];
-    VR.col(i) /= VR.col(i).norm();
-  }
 }
 
 template <typename VecType>
@@ -588,18 +359,13 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega, const Complex
   Q[dim_Q] *= 1.0 / R(dim_Q, dim_Q);
   dim_Q++;
   ComputeMRI(R, q);
-  if constexpr (false)
-  {
-    Mpi::Print("MRI (S = {}):\nR = {}\nq = {}", dim_Q, R, q);
-  }
   z.push_back(omega);
 }
 
 std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) const
 {
   // Return an estimate for argmax_z ||u(z) - V y(z)|| as argmin_z |Q(z)| with Q(z) =
-  // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u). The roots of
-  // Q are given analytically as the solution to an S + 1 dimensional eigenvalue problem.
+  // sum_i q_z / (z - z_i) (denominator of the barycentric interpolation of u).
   BlockTimer bt(Timer::CONSTRUCT_PROM);
   const auto S = dim_Q;
   MFEM_VERIFY(S >= 2, "Maximum error can only be found once two sample points have been "
@@ -608,55 +374,9 @@ std::vector<double> MinimalRationalInterpolation::FindMaxError(std::size_t N) co
   double end = *std::max_element(z.begin(), z.end());
   Eigen::Map<const Eigen::VectorXd> z_map(z.data(), S);
 
-  // std::vector<std::complex<double>> z_star(N, 0.0);
-  // XX TODO: For now, we explicitly minimize Q on the real line since we don't allow
-  //          samples at complex-valued points (yet).
-
-  // Eigen::MatrixXcd A = Eigen::MatrixXcd::Zero(S + 1, S + 1);
-  // A.diagonal().head(S) = z_map.array();
-  // A.row(S).head(S) = q;
-  // A.col(S).head(S) = Eigen::VectorXcd::Ones(S);
-
-  // Eigen::MatrixXcd B = Eigen::MatrixXcd::Identity(S + 1, S + 1);
-  // B(S, S) = 0.0;
-
-  // Eigen::VectorXcd D;
-  // Eigen::MatrixXcd X;
-  // ZGGEV(A, B, D, X);
-
-  // // If there are multiple roots in [start, end], pick the ones furthest from the
-  // // existing set of samples.
-  // {
-  //   std::vector<double> dist_star(N, 0.0);
-  //   for (auto d : D)
-  //   {
-  //     if (std::real(d) < start || std::real(d) > end)
-  //     {
-  //       continue;
-  //     }
-  //     const double dist = (z_map.array() - std::real(d)).abs().maxCoeff();
-  //     for (int i = 0; i < N; i++)
-  //     {
-  //       if (dist > dist_star[i])
-  //       {
-  //         for (int j = i + 1; j < N; j++)
-  //         {
-  //           z_star[j] = z_star[j - 1];
-  //           dist_star[j] = dist_star[j - 1];
-  //         }
-  //         z_star[i] = start;
-  //         dist_star[i] = dist;
-  //       }
-  //     }
-  //   }
-  // }
-
-  // Fall back to sampling Q on discrete points if no roots exist in [start, end].
-  //
-  // TODO: Currently we always use this brute for sampling and we could optimize this more.
-  // Also, the case of N>1 samples is not very useful below. It will typically give us
-  // multiple sample points right next to each other in the same local maximum, rather than
-  // N separate local maxima.
+  // Sample Q on discrete points. The case of N>1 samples is not very useful below. It will
+  // typically give us multiple sample points right next to each other in the same local
+  // maximum, rather than N separate local maxima.
 
   // We could use priority queue here to keep the N lowest values. However, we don't use
   // std::priority_queue class since we want to have access to the vector and also binary
@@ -979,31 +699,11 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
       1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega + 0.0i);
   ksp->SetOperators(*A, *P);
 
-  // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω). When RHS2 is
-  // present (excited wave port), capture an HDM-side copy at this ω⋆ for later
-  // interpolation in SolvePROM. The HDM solution u itself is added to the basis by
-  // UpdatePROM, but the projected RHS2 cannot be reconstructed from u alone, so the
-  // sample must be cached here.
+  // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
   Mpi::Print("\n");
   if (has_RHS2)
   {
     has_RHS2 = space_op.GetExcitationVector2(excitation_idx, omega, r);
-    if (has_RHS2)
-    {
-      auto &cache = RHS2_hdm_samples[excitation_idx][omega];
-      cache.SetSize(r.Size());
-      cache.UseDevice(true);
-      cache = r;
-      // Project into the current basis (lazy — may be empty if this is the first
-      // sample). Extension for newly added basis vectors happens in UpdatePROM.
-      auto dim_V = V.size();
-      auto &cache_r = RHS2_r_samples[excitation_idx][omega];
-      cache_r.resize(dim_V);
-      if (dim_V > 0)
-      {
-        ProjectVecInternal(space_op.GetComm(), V, cache, cache_r, 0);
-      }
-    }
   }
   else
   {
@@ -1257,19 +957,6 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
     RHS1r.conservativeResize(dim_V_new);
     ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V_old);
   }
-  // Extend the cached projected RHS2 samples (one per offline (excitation, ω⋆) pair) to
-  // cover the new basis vectors. The underlying HDM-side RHS2 sample is preserved so we
-  // can compute the new entries Vᴴ·RHS2_hdm only for the newly added basis vectors.
-  for (auto &[exc_idx, samples_r] : RHS2_r_samples)
-  {
-    auto &samples_hdm = RHS2_hdm_samples.at(exc_idx);
-    for (auto &[omega_star, sample_r] : samples_r)
-    {
-      auto &sample_hdm = samples_hdm.at(omega_star);
-      sample_r.conservativeResize(dim_V_new);
-      ProjectVecInternal(comm, V, sample_hdm, sample_r, dim_V_old);
-    }
-  }
 }
 
 void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVector &u)
@@ -1432,20 +1119,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     }
   }
 
-  // Wave-port (or any other RHS2) excitation: interpolate the cached projected
-  // RHS2_r(ω⋆) samples in ω rather than re-assembling and re-projecting RHS2 from the
-  // full HDM at each online frequency. The samples were captured during the offline
-  // greedy SolveHDM calls and rolled forward in UpdatePROM. Empty cache means RHS2 was
-  // zero at every offline sample, so it's zero here too.
-  auto rhs2_it = RHS2_r_samples.find(excitation_idx);
-  if (rhs2_it != RHS2_r_samples.end() && !rhs2_it->second.empty())
+  if (has_RHS2)
   {
-    auto rhs2_interp = BarycentricInterpolate(rhs2_it->second, omega);
-    MFEM_VERIFY(rhs2_interp.size() == static_cast<long>(V.size()),
-                "Cached RHS2 projection size does not match the current PROM basis "
-                "size. UpdatePROM is responsible for extending all cached samples "
-                "whenever the basis grows; this indicates a bookkeeping bug.");
-    RHSr = rhs2_interp;
+    space_op.GetExcitationVector2(excitation_idx, omega, RHS2);
+    ProjectVecInternal(space_op.GetComm(), V, RHS2, RHSr, 0);
   }
   else
   {
@@ -1460,209 +1137,18 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // The PROM is solved on every process so the matrix-vector product for vector expansion
   // does not require communication.
   BlockTimer bt(Timer::SOLVE_PROM);
-  if constexpr (false)
-  {
-    // LDLT solve.
-    RHSr = Ar.ldlt().solve(RHSr);
-    RHSr = Ar.selfadjointView<Eigen::Lower>().ldlt().solve(RHSr);
-  }
-  else
-  {
-    // QR solve, for maximal stability. The small system is cheap to compute but can be
-    // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
-    // into separate columns.
-    RHSr = Ar.fullPivHouseholderQr().solve(RHSr);
-  }
+  // QR solve, for maximal stability. The small system is cheap to compute but can be
+  // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
+  // into separate columns.
+  RHSr = Ar.fullPivHouseholderQr().solve(RHSr);
   ProlongatePROMSolution(V.size(), V, RHSr, u);
-}
-
-std::vector<std::complex<double>> RomOperator::ComputeEigenvalueEstimates() const
-{
-  // Newton fixed-point eigenvalues of the projected pencil with **exact** wave-port
-  // dispersion:
-  //
-  //   (Kr + iω Cr − ω² Mr + Σₚ kₙ,ₚ(ω) · Mp_r) v = 0,
-  //
-  // computed by seeding from the polynomial-fit pencil (companion-form QEP) and
-  // refining each seed with the dispersion correction (kₙ_exact − kₙ_poly)·Mp_r
-  // evaluated at the current iterate. Returned ω values are in Palace internal
-  // nondimensional units (rad / tc).
-  //
-  // Used as a self-test for the regime-2 augmented L⁻¹/R⁻¹/C realisation:
-  // eigenvalues of the augmented pencil (computed externally from the printed
-  // matrices) should match these to machine precision when the AAA fit residual is
-  // below tolerance. Mismatch → bug in the augmentation, not the underlying
-  // physics. For augmentation-disabled (regime 1) configurations, the seed and
-  // refined values can disagree by the polynomial fit residual — that's expected.
-  if (Kr.rows() == 0)
-  {
-    return {};
-  }
-  const long n = Kr.rows();
-
-  // Per-port polynomial fit, identical to CalculateNormalizedPROMMatrices.
-  std::map<int, Eigen::Vector3d> poly_coeffs;
-  std::map<int, std::pair<double, double>> kn2_coeffs;  // (γ, α_kn²)
-  if (sweep_omega_max > sweep_omega_min && !Mwp_p_r.empty())
-  {
-    constexpr int n_fit = 30;
-    Eigen::VectorXd ws(n_fit);
-    Eigen::MatrixXd vand(n_fit, 3), vand_kn2(n_fit, 2);
-    const double w_lo = sweep_omega_min;
-    const double w_hi = sweep_omega_max;
-    double w_max = 0.0;
-    for (int i = 0; i < n_fit; i++)
-    {
-      ws(i) = w_lo + (w_hi - w_lo) * i / (n_fit - 1.0);
-      vand(i, 0) = 1.0;
-      vand(i, 1) = ws(i);
-      vand(i, 2) = ws(i) * ws(i);
-      w_max = std::max(w_max, std::abs(ws(i)));
-    }
-    for (int i = 0; i < n_fit; i++)
-    {
-      vand_kn2(i, 0) = 1.0;
-      vand_kn2(i, 1) = (ws(i) / w_max) * (ws(i) / w_max);
-    }
-    auto qr = vand.colPivHouseholderQr();
-    auto qr_kn2 = vand_kn2.colPivHouseholderQr();
-    for (auto &[port_idx, Mp_r] : Mwp_p_r)
-    {
-      Eigen::VectorXd ys(n_fit), ys2(n_fit);
-      for (int i = 0; i < n_fit; i++)
-      {
-        ys(i) = space_op.GetWavePortOp().GetWavePortKn(port_idx, ws(i));
-        ys2(i) = ys(i) * ys(i);
-      }
-      poly_coeffs[port_idx] = qr.solve(ys);
-      Eigen::Vector2d c2 = qr_kn2.solve(ys2);
-      kn2_coeffs[port_idx] = {c2(1) / (w_max * w_max), c2(0)};
-    }
-  }
-
-  // Polynomial-pencil matrices.
-  Eigen::MatrixXcd Kr_eff = Kr;
-  Eigen::MatrixXcd Cr_eff = (Cr.rows() == n) ? Cr : Eigen::MatrixXcd::Zero(n, n);
-  Eigen::MatrixXcd Mr_eff = Mr;
-  for (auto &[port_idx, Mp_r] : Mwp_p_r)
-  {
-    const auto &c = poly_coeffs.at(port_idx);
-    Kr_eff += std::complex<double>(c(0), 0.0) * Mp_r;
-    Cr_eff += std::complex<double>(0.0, -c(1)) * Mp_r;
-    Mr_eff += std::complex<double>(-c(2), 0.0) * Mp_r;
-  }
-
-  auto solve_qep = [&](const Eigen::MatrixXcd &K_in)
-  {
-    Eigen::MatrixXcd A = Eigen::MatrixXcd::Zero(2 * n, 2 * n);
-    Eigen::MatrixXcd B = Eigen::MatrixXcd::Zero(2 * n, 2 * n);
-    A.topRightCorner(n, n) = Eigen::MatrixXcd::Identity(n, n);
-    A.bottomLeftCorner(n, n) = K_in;
-    A.bottomRightCorner(n, n) = std::complex<double>(0.0, 1.0) * Cr_eff;
-    B.topLeftCorner(n, n) = Eigen::MatrixXcd::Identity(n, n);
-    B.bottomRightCorner(n, n) = Mr_eff;
-    Eigen::VectorXcd D;
-    Eigen::MatrixXcd VR;
-    ZGGEV(A, B, D, VR);
-    return D;
-  };
-
-  Eigen::VectorXcd seeds = solve_qep(Kr_eff);
-
-  std::vector<std::complex<double>> refined;
-  if (Mwp_p_r.empty())
-  {
-    for (int i = 0; i < seeds.size(); i++)
-    {
-      if (std::isfinite(seeds(i).real()) && std::isfinite(seeds(i).imag()) &&
-          seeds(i).real() > 0.0)
-      {
-        refined.push_back(seeds(i));
-      }
-    }
-  }
-  else
-  {
-    constexpr int max_iter = 30;
-    constexpr double rel_tol = 1.0e-12;
-    for (int s = 0; s < seeds.size(); s++)
-    {
-      std::complex<double> w = seeds(s);
-      if (!(std::isfinite(w.real()) && std::isfinite(w.imag()) && w.real() > 0.0))
-      {
-        continue;
-      }
-      bool converged = false;
-      for (int it = 0; it < max_iter; it++)
-      {
-        Eigen::MatrixXcd K_corr = Kr_eff;
-        for (auto &[port_idx, Mp_r] : Mwp_p_r)
-        {
-          // kₙ from the canonical kₙ² fit, evaluated at complex ω so the iteration
-          // works above and below cutoff (where kₙ becomes imaginary).
-          const auto &[gamma, alpha_kn2] = kn2_coeffs.at(port_idx);
-          std::complex<double> kn_sq = gamma * w * w + alpha_kn2;
-          std::complex<double> kn_exact = std::sqrt(kn_sq);
-          const auto &c = poly_coeffs.at(port_idx);
-          std::complex<double> kn_poly = c(0) + c(1) * w + c(2) * w * w;
-          K_corr += (kn_exact - kn_poly) * Mp_r;
-        }
-        Eigen::VectorXcd D = solve_qep(K_corr);
-        std::complex<double> best = w;
-        double best_dist = std::numeric_limits<double>::infinity();
-        for (int i = 0; i < D.size(); i++)
-        {
-          if (!(std::isfinite(D(i).real()) && std::isfinite(D(i).imag()) &&
-                D(i).real() > 0.0))
-          {
-            continue;
-          }
-          double d = std::abs(D(i) - w);
-          if (d < best_dist)
-          {
-            best_dist = d;
-            best = D(i);
-          }
-        }
-        double rel = std::abs(best - w) / std::max(std::abs(w), 1.0);
-        w = best;
-        if (rel < rel_tol)
-        {
-          converged = true;
-          break;
-        }
-      }
-      if (converged)
-      {
-        bool duplicate = false;
-        for (const auto &existing : refined)
-        {
-          if (std::abs(existing - w) / std::max(std::abs(w), 1.0) < 1.0e-9)
-          {
-            duplicate = true;
-            break;
-          }
-        }
-        if (!duplicate)
-        {
-          refined.push_back(w);
-        }
-      }
-    }
-  }
-
-  std::sort(refined.begin(), refined.end(),
-            [](const std::complex<double> &a, const std::complex<double> &b)
-            { return a.real() < b.real(); });
-  return refined;
 }
 
 RomOperator::WavePortRegime RomOperator::SelectWavePortRegime(int port_idx, double rel_err,
                                                               bool meets_tol) const
 {
   // AUTO: polynomial if residual meets tolerance, else the structured-√ DtN rational fit
-  // (handles lossless and lossy non-TEM ports uniformly; supersedes PassiveRational, which
-  // is kept only as an explicit force option for lossy-port experiments).
+  // (handles lossless and lossy non-TEM ports uniformly).
   switch (waveport_synthesis_force)
   {
     case WavePortSynthesisRegime::POLYNOMIAL:
@@ -1677,8 +1163,6 @@ RomOperator::WavePortRegime RomOperator::SelectWavePortRegime(int port_idx, doub
       return WavePortRegime::Polynomial;
     case WavePortSynthesisRegime::AUGMENTED:
       return WavePortRegime::Augmented;
-    case WavePortSynthesisRegime::PASSIVE_RATIONAL:
-      return WavePortRegime::PassiveRational;
     case WavePortSynthesisRegime::DTN_RATIONAL:
       return WavePortRegime::DtnRational;
     case WavePortSynthesisRegime::AUTO:
@@ -1804,152 +1288,6 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
     return fit;
   }
 
-  if (fit.regime == WavePortRegime::PassiveRational)
-  {
-    // Condition the passive fit through the nearly branch-free k_n^2 relation first. The
-    // square-root knee remains in y(s), but fitting k_n^2 removes sampling noise from the
-    // cross-section EVP and gives the passive admittance fit a smooth target to sample.
-    double w_scale = 0.0;
-    for (const auto w : fit_omegas)
-    {
-      w_scale = std::max(w_scale, std::abs(w));
-    }
-    w_scale = std::max(w_scale, 1.0);
-    Eigen::MatrixXd vand_kn2(n_fit, 2);
-    Eigen::VectorXd y_fit_kn2(n_fit);
-    for (int i = 0; i < n_fit; i++)
-    {
-      const double x = fit_omegas[i] / w_scale;
-      vand_kn2(i, 0) = 1.0;
-      vand_kn2(i, 1) = x * x;
-      y_fit_kn2(i) = y_fit(i) * y_fit(i);
-    }
-    const Eigen::Vector2d c_kn2 = vand_kn2.colPivHouseholderQr().solve(y_fit_kn2);
-    const double kn2_alpha = c_kn2(0);
-    const double kn2_gamma = c_kn2(1) / (w_scale * w_scale);
-    auto eval_kn2_fit = [kn2_alpha, kn2_gamma](double w)
-    { return kn2_alpha + kn2_gamma * w * w; };
-    auto eval_kn_from_kn2_fit = [eval_kn2_fit](double w)
-    {
-      const double kn2 = eval_kn2_fit(w);
-      return (kn2 > 0.0 && std::isfinite(kn2)) ? std::sqrt(kn2) : 0.0;
-    };
-
-    double max_kn2_abs = 0.0, max_kn2_err = 0.0;
-    for (int i = 0; i < n_dense; i++)
-    {
-      const double w = dense_omegas[i];
-      const double truth = space_op.GetWavePortOp().GetWavePortKn(port_idx, w);
-      const double truth2 = truth * truth;
-      max_kn2_abs = std::max(max_kn2_abs, std::abs(truth2));
-      max_kn2_err = std::max(max_kn2_err, std::abs(eval_kn2_fit(w) - truth2));
-    }
-    const double rel_err_kn2 = (max_kn2_abs > 0.0) ? max_kn2_err / max_kn2_abs : 0.0;
-
-    const std::size_t requested_poles =
-        std::max<std::size_t>(waveport_synthesis_order_max, 1);
-    constexpr std::size_t max_passive_poles = 12;
-    const std::size_t n_poles = std::min(requested_poles, max_passive_poles);
-    if (requested_poles > max_passive_poles)
-    {
-      Mpi::Warning("Wave port {:d}: WavePortSynthesisOrderMax={:d} capped at {:d} for "
-                   "the passive fixed-pole NNLS fit.\n",
-                   port_idx, requested_poles, max_passive_poles);
-    }
-    const double pole_lo =
-        std::max(0.25 * std::max(w_lo, 1.0e-12 * w_hi), 1.0e-12 * std::max(w_hi, 1.0));
-    const double pole_hi = std::max(4.0 * w_hi, 2.0 * pole_lo);
-    auto poles = LogSpacedPositive(pole_lo, pole_hi, n_poles);
-
-    Eigen::MatrixXd A_pass(n_fit, static_cast<long>(n_poles + 1));
-    Eigen::VectorXd b_pass(n_fit);
-    for (int i = 0; i < n_fit; i++)
-    {
-      const double w = fit_omegas[i];
-      const double w_abs = std::max(std::abs(w), 1.0e-300);
-      b_pass(i) = eval_kn_from_kn2_fit(w) / w_abs;
-      A_pass(i, 0) = 1.0;
-      for (std::size_t k = 0; k < n_poles; k++)
-      {
-        const double a = poles[k];
-        // High-pass basis Re(g·s/(s+a))|_{s=iω} = ω²/(a²+ω²): increases 0→1 with ω, the
-        // correct monotonicity for a propagating wave-port modal admittance.
-        A_pass(i, static_cast<long>(k + 1)) = w * w / (a * a + w * w);
-      }
-    }
-    const Eigen::VectorXd x_pass = SolveSmallNonnegativeLeastSquares(A_pass, b_pass);
-    fit.passive_d = x_pass(0);
-
-    PassiveWavePortAuxBlock blk;
-    blk.port_idx = port_idx;
-    Eigen::MatrixXd M_proj = Mp_r.imag().eval();
-    Eigen::JacobiSVD<Eigen::MatrixXd> svd(M_proj, Eigen::ComputeThinU);
-    double sigma_max = 0.0;
-    if (svd.singularValues().size() > 0)
-    {
-      sigma_max = svd.singularValues()(0);
-    }
-    for (long j = 0; j < svd.singularValues().size(); j++)
-    {
-      const double sigma = svd.singularValues()(j);
-      if (sigma_max > 0.0 && sigma / sigma_max > waveport_synthesis_rank_tol)
-      {
-        blk.sigmas.push_back(sigma);
-        blk.u_dirs.push_back(svd.matrixU().col(j));
-      }
-    }
-    double residue_max = 0.0;
-    for (std::size_t k = 0; k < n_poles; k++)
-    {
-      residue_max = std::max(residue_max, x_pass(static_cast<long>(k + 1)));
-    }
-    const double residue_drop_tol = std::max(1.0e-14 * residue_max, 0.0);
-    for (std::size_t k = 0; k < n_poles; k++)
-    {
-      const double residue = x_pass(static_cast<long>(k + 1));
-      if (residue > residue_drop_tol)
-      {
-        blk.poles.push_back(poles[k]);
-        blk.residues.push_back(residue);
-      }
-    }
-    fit.passive_aux = std::move(blk);
-
-    max_rel = 0.0;
-    max_abs_truth = 0.0;
-    for (int i = 0; i < n_dense; i++)
-    {
-      const double w = dense_omegas[i];
-      const double truth = space_op.GetWavePortOp().GetWavePortKn(port_idx, w);
-      const std::complex<double> model = EvaluateWavePortMultiplierFit(fit, w);
-      max_abs_truth = std::max(max_abs_truth, std::abs(truth));
-      max_rel = std::max(max_rel, std::abs(model - truth));
-    }
-    fit.rel_err_passive = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
-    fit.rel_err_augmented = fit.rel_err_passive;
-
-    const std::size_t rank_used = fit.passive_aux->sigmas.size();
-    const std::size_t n_kept_poles = fit.passive_aux->poles.size();
-    const std::size_t aux_per_port = n_kept_poles * rank_used;
-    Mpi::Print(" Wave port {:d}: passive-rational synthesis residual {:.3e} -> {:.3e} "
-               "(tol {:.3e}, k_n^2 fit residual {:.3e}, {:d} pole{} x rank-{:d} mass = "
-               "+{:d} aux state{}, d={:.3e}, k_n^2={:.3e}+{:.3e}*omega^2)\n",
-               port_idx, fit.rel_err_polynomial, fit.rel_err_passive,
-               waveport_synthesis_tol, rel_err_kn2, n_kept_poles,
-               n_kept_poles == 1 ? "" : "s", rank_used, aux_per_port,
-               aux_per_port == 1 ? "" : "s", fit.passive_d, kn2_alpha, kn2_gamma);
-    if (fit.rel_err_passive > waveport_synthesis_tol)
-    {
-      Mpi::Warning("Wave port {:d}: passive-rational synthesis residual {:.3e} exceeds "
-                   "WavePortSynthesisTol={:.3e}. The emitted circuit is passive by "
-                   "construction but may not match the HDM wave-port dispersion over the "
-                   "full sweep band; increase WavePortSynthesisOrderMax or use the exact "
-                   "HDM/nonlinear solve for validation.\n",
-                   port_idx, fit.rel_err_passive, waveport_synthesis_tol);
-    }
-    return fit;
-  }
-
   // Augmented regime: AAA rational fit on the polynomial residual δkₙ(ω). Cap the
   // pole count at waveport_synthesis_order_max.
   Eigen::VectorXcd z_aaa(n_fit), F_aaa(n_fit);
@@ -1972,28 +1310,20 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
   const double aaa_d = pr.d.real();
   fit.alpha0 += aaa_d;
 
-  // SVD of M_proj — keep every singular vector with σⱼ / σ_max above the rank
-  // tolerance as a coupling direction. Rank is typically 1 (real-only mode field) or
-  // 2 (complex mode field split into real+imag basis vectors).
-  WavePortAuxBlock blk;
-  blk.port_idx = port_idx;
-  Eigen::MatrixXd M_proj = Mp_r.imag().eval();
-  Eigen::JacobiSVD<Eigen::MatrixXd> svd(M_proj, Eigen::ComputeThinU);
-  const double sigma_max = svd.singularValues()(0);
-  for (long j = 0; j < svd.singularValues().size(); j++)
-  {
-    double s = svd.singularValues()(j);
-    if (sigma_max > 0.0 && s / sigma_max > waveport_synthesis_rank_tol)
-    {
-      blk.sigmas.push_back(s);
-      blk.u_dirs.push_back(svd.matrixU().col(j));
-    }
-  }
+  std::vector<std::complex<double>> poles, residues;
+  poles.reserve(pr.poles.size());
+  residues.reserve(pr.residues.size());
   for (long k = 0; k < pr.poles.size(); k++)
   {
-    blk.poles.push_back(pr.poles(k));
-    blk.residues.push_back(pr.residues(k));
+    poles.push_back(pr.poles(k));
+    residues.push_back(pr.residues(k));
   }
+
+  WavePortAuxBlock blk;
+  blk.port_idx = port_idx;
+  AddAuxBlockDirections(blk, Mp_r, waveport_synthesis_rank_tol);
+  blk.poles = std::move(poles);
+  blk.residues = std::move(residues);
   // Attach the aux block now so EvaluateWavePortKnFit picks up the AAA poles for the
   // augmented-model residual check below (and so the stored fit is complete for the online
   // surrogate).
@@ -2124,26 +1454,11 @@ void RomOperator::FitWavePortDtnRational(WavePortDispersionFit &fit,
   fit.dtn_poly0 = poly_asc.size() > 0 ? poly_asc[0] : cplx(0.0, 0.0);
   fit.dtn_poly1 = poly_asc.size() > 1 ? poly_asc[1] : cplx(0.0, 0.0);
 
-  // 5) SVD of M_proj = Im(Mp_r) to get the coupling directions (same as the other regimes).
   WavePortAuxBlock blk;
   blk.port_idx = port_idx;
-  Eigen::MatrixXd M_proj = Mp_r.imag().eval();
-  Eigen::JacobiSVD<Eigen::MatrixXd> svd(M_proj, Eigen::ComputeThinU);
-  const double sigma_max = svd.singularValues().size() > 0 ? svd.singularValues()(0) : 0.0;
-  for (long j = 0; j < svd.singularValues().size(); j++)
-  {
-    const double sigma = svd.singularValues()(j);
-    if (sigma_max > 0.0 && sigma / sigma_max > waveport_synthesis_rank_tol)
-    {
-      blk.sigmas.push_back(sigma);
-      blk.u_dirs.push_back(svd.matrixU().col(j));
-    }
-  }
-  for (std::size_t k = 0; k < poles.size(); k++)
-  {
-    blk.poles.push_back(poles[k]);
-    blk.residues.push_back(residues[k]);
-  }
+  AddAuxBlockDirections(blk, Mp_r, waveport_synthesis_rank_tol);
+  blk.poles = std::move(poles);
+  blk.residues = std::move(residues);
   fit.dtn_aux = std::move(blk);
 
   // Dense-grid residual on the realized pole-residue model vs true kₙ (q = i·kₙ).
@@ -2189,14 +1504,6 @@ double RomOperator::EvaluateWavePortKnFit(const WavePortDispersionFit &fit, doub
   // the Polynomial regime fit.aux is empty and this reduces to the quadratic. This is the
   // analytic continuation evaluated on the real axis — the same expression the synthesis
   // pencil realizes via Kr/Cr/Mr (α-part) plus aux states (pole part).
-  if (fit.regime == WavePortRegime::PassiveRational)
-  {
-    const auto empty = std::vector<double>{};
-    const auto &poles = fit.passive_aux ? fit.passive_aux->poles : empty;
-    const auto &residues = fit.passive_aux ? fit.passive_aux->residues : empty;
-    return EvaluatePassiveWavePortKn(omega, fit.passive_d, poles, residues);
-  }
-
   double kn = fit.alpha0 + fit.alpha1 * omega + fit.alpha2 * omega * omega;
   if (fit.aux)
   {
@@ -2212,13 +1519,6 @@ double RomOperator::EvaluateWavePortKnFit(const WavePortDispersionFit &fit, doub
 std::complex<double>
 RomOperator::EvaluateWavePortMultiplierFit(const WavePortDispersionFit &fit, double omega)
 {
-  if (fit.regime == WavePortRegime::PassiveRational)
-  {
-    const auto empty = std::vector<double>{};
-    const auto &poles = fit.passive_aux ? fit.passive_aux->poles : empty;
-    const auto &residues = fit.passive_aux ? fit.passive_aux->residues : empty;
-    return EvaluatePassiveWavePortMultiplier(omega, fit.passive_d, poles, residues);
-  }
   if (fit.regime == WavePortRegime::DtnRational)
   {
     // DtN multiplier q(iω) = poly0 + poly1·(iω) + Σ R_k/(iω − p_k). The online assembly does
@@ -2248,35 +1548,6 @@ void RomOperator::ApplyPolynomialFitCorrections(const WavePortDispersionFit &fit
   Kr_corr += std::complex<double>(fit.alpha0, 0.0) * Mp_r;
   Cr_corr += std::complex<double>(0.0, -fit.alpha1) * Mp_r;
   Mr_corr += std::complex<double>(-fit.alpha2, 0.0) * Mp_r;
-}
-
-void RomOperator::ApplyPassiveRationalFitCorrections(const WavePortDispersionFit &fit,
-                                                     const Eigen::MatrixXcd &Mp_r,
-                                                     Eigen::MatrixXcd &Kr_corr,
-                                                     Eigen::MatrixXcd &Cr_corr)
-{
-  // Mp_r = i*M_proj. The passive admittance contribution is s*y(s)*M_proj with the high-pass
-  // form y(s) = d + Σ_k g_k·s/(s+a_k). Expand the per-pole term using
-  //   s · g·s/(s+a) = g·s²/(s+a) = g·(s − a) + g·a²/(s+a).
-  // So s*y(s) = s·(d + Σ g_k)  −  Σ g_k·a_k  +  Σ g_k·a_k²/(s+a_k). The first piece folds
-  // into Cr (the iω·C channel), the constant −Σ g_k·a_k folds into Kr, and the residual
-  // positive simple-pole part g_k·a_k²/(s+a_k) is realized by the aux states in
-  // BuildAugmentedPencil (stable pole at −a_k, dissipative).
-  const Eigen::MatrixXcd M_proj = (std::complex<double>(0.0, -1.0) * Mp_r).eval();
-  double sum_g = fit.passive_d;
-  double sum_g_a = 0.0;
-  if (fit.passive_aux)
-  {
-    for (std::size_t k = 0; k < fit.passive_aux->residues.size(); k++)
-    {
-      const double g = fit.passive_aux->residues[k];
-      const double a = fit.passive_aux->poles[k];
-      sum_g += g;
-      sum_g_a += g * a;
-    }
-  }
-  Cr_corr += sum_g * M_proj;
-  Kr_corr += (-sum_g_a) * M_proj;
 }
 
 void RomOperator::ApplyDtnRationalFitCorrections(const WavePortDispersionFit &fit,
@@ -2309,26 +1580,14 @@ void RomOperator::ApplyComplexPolynomialFitCorrections(
   Mr_corr += (-alpha2) * Mp_r;
 }
 
-std::optional<RomOperator::WavePortAuxBlock>
-RomOperator::MakeAuxBlock(int label_idx, const Eigen::MatrixXcd &Mp_r,
-                          const std::vector<std::complex<double>> &poles,
-                          const std::vector<std::complex<double>> &residues,
-                          double rank_tol)
+bool RomOperator::AddAuxBlockDirections(WavePortAuxBlock &blk,
+                                        const Eigen::MatrixXcd &Mp_r, double rank_tol)
 {
-  // Build an aux block from a projected boundary mass Mp_r (purely imaginary = i·M_proj)
-  // and a pole-residue list, exactly as the wave-port augmented path does: SVD the real
-  // symmetric M_proj = Mp_r.imag() to get the coupling directions, then attach the poles.
-  if (poles.empty())
-  {
-    return std::nullopt;
-  }
-  WavePortAuxBlock blk;
-  blk.port_idx = label_idx;
   Eigen::MatrixXd M_proj = Mp_r.imag().eval();
   Eigen::JacobiSVD<Eigen::MatrixXd> svd(M_proj, Eigen::ComputeThinU);
   if (svd.singularValues().size() == 0)
   {
-    return std::nullopt;
+    return false;
   }
   const double sigma_max = svd.singularValues()(0);
   for (long j = 0; j < svd.singularValues().size(); j++)
@@ -2340,6 +1599,25 @@ RomOperator::MakeAuxBlock(int label_idx, const Eigen::MatrixXcd &Mp_r,
       blk.u_dirs.push_back(svd.matrixU().col(j));
     }
   }
+  return !blk.sigmas.empty();
+}
+
+std::optional<RomOperator::WavePortAuxBlock>
+RomOperator::MakeAuxBlock(int label_idx, const Eigen::MatrixXcd &Mp_r,
+                          const std::vector<std::complex<double>> &poles,
+                          const std::vector<std::complex<double>> &residues,
+                          double rank_tol)
+{
+  // Build an aux block from a projected boundary mass Mp_r (purely imaginary = i·M_proj)
+  // and a pole-residue list: SVD the real symmetric M_proj to get coupling directions, then
+  // attach the poles.
+  if (poles.empty())
+  {
+    return std::nullopt;
+  }
+  WavePortAuxBlock blk;
+  blk.port_idx = label_idx;
+  AddAuxBlockDirections(blk, Mp_r, rank_tol);
   if (blk.sigmas.empty())
   {
     return std::nullopt;
@@ -2469,7 +1747,6 @@ RomOperator::WavePortDispersionFit RomOperator::FitScalarDispersion(
 RomOperator::AugmentedPencil RomOperator::BuildAugmentedPencil(
     const Eigen::MatrixXcd &Kr_total, const Eigen::MatrixXcd &Cr_total,
     const Eigen::MatrixXcd &Mr_total, const std::vector<WavePortAuxBlock> &aux_blocks,
-    const std::vector<PassiveWavePortAuxBlock> &passive_aux_blocks,
     const std::vector<WavePortAuxBlock> &dtn_aux_blocks,
     std::vector<std::string> &aux_labels)
 {
@@ -2486,10 +1763,6 @@ RomOperator::AugmentedPencil RomOperator::BuildAugmentedPencil(
   // Hermitian — downstream eigensolvers handle this fine).
   std::size_t n_aux_total = 0;
   for (const auto &blk : aux_blocks)
-  {
-    n_aux_total += blk.poles.size() * blk.sigmas.size();
-  }
-  for (const auto &blk : passive_aux_blocks)
   {
     n_aux_total += blk.poles.size() * blk.sigmas.size();
   }
@@ -2531,35 +1804,6 @@ RomOperator::AugmentedPencil RomOperator::BuildAugmentedPencil(
       }
     }
   }
-  for (const auto &blk : passive_aux_blocks)
-  {
-    for (std::size_t k = 0; k < blk.poles.size(); k++)
-    {
-      const double a = blk.poles[k];
-      const double g = blk.residues[k];
-      for (std::size_t j = 0; j < blk.sigmas.size(); j++)
-      {
-        // High-pass term g·s/(s+a): after the s·y(s) expansion the residual simple-pole
-        // contribution to the main block is +g·a²·σ_j·uⱼuⱼᵀ/(s+a). The aux state has
-        // Kr_aa=a, Cr_aa=1 so A_aa=s+a, and eliminating it yields −coupling²·uⱼuⱼᵀ/(s+a).
-        // Matching needs coupling² = −g·a²·σ_j, i.e. an IMAGINARY symmetric coupling
-        // i·a·√(g·σ_j) (keeps the pencil complex-symmetric / reciprocal). Contrast the
-        // legacy AAA aux above which uses coupling² = −i·r·σ_j.
-        const std::complex<double> coupling(0.0, a * std::sqrt(g * blk.sigmas[j]));
-        aug.Kr(aux_row, aux_row) = a;
-        aug.Cr(aux_row, aux_row) = 1.0;
-        for (long i = 0; i < n_v; i++)
-        {
-          aug.Kr(i, aux_row) = coupling * blk.u_dirs[j](i);
-          aug.Kr(aux_row, i) = coupling * blk.u_dirs[j](i);
-        }
-        const std::string prefix =
-            blk.label.empty() ? fmt::format("waveport_{:d}", blk.port_idx) : blk.label;
-        aux_labels.push_back(fmt::format("{}_prp{:d}d{:d}", prefix, k, j));
-        aux_row++;
-      }
-    }
-  }
   for (const auto &blk : dtn_aux_blocks)
   {
     for (std::size_t k = 0; k < blk.poles.size(); k++)
@@ -2572,8 +1816,8 @@ RomOperator::AugmentedPencil RomOperator::BuildAugmentedPencil(
         // so A_aa = −p_k + iω = s − p_k, and eliminating it gives −coupling²·uⱼuⱼᵀ/(s−p_k).
         // Matching needs coupling² = −R_k·σ_j ⇒ coupling = √(−R_k·σ_j) (complex symmetric,
         // reciprocal). Lossless ports give jω-axis p_k (undamped, pure reactance); lossy give
-        // LHP p_k (damped). Differs from the AAA aux (ω-domain, Cr_aa=−i) and the passive aux
-        // (real s-pole, Cr_aa=1) — this is the s-domain complex-pole realization.
+        // LHP p_k (damped). Differs from the AAA aux (ω-domain, Cr_aa=−i): this is the
+        // s-domain complex-pole realization.
         const std::complex<double> coupling = std::sqrt(-rk * blk.sigmas[j]);
         aug.Kr(aux_row, aux_row) = -pk;
         aug.Cr(aux_row, aux_row) = std::complex<double>(1.0, 0.0);
@@ -2643,9 +1887,6 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   //   • Augmented regime: residual δkₙ(ω) = kₙ(ω) − (α₀+α₁ω+α₂ω²) fit by an AAA
   //     rational expansion d + Σₖ rₖ/(ω − pₖ); d folds into α₀, each pole–residue pair
   //     becomes auxiliary scalar states appended as new rows/columns to L⁻¹/R⁻¹/C.
-  //   • PassiveRational regime: y(s) ≈ d + Σ rₖ/(s+aₖ), aₖ>0 and rₖ≥0, realizes
-  //     s*y(s)*M_proj through positive damping plus stable auxiliary states.
-  //
   // FitWavePortDispersion does the per-port sampling, fitting and regime selection;
   // the Apply*FitCorrections helpers accumulate the top-left contributions;
   // BuildAugmentedPencil extends the pencil with the aux states from collected fit results.
@@ -2653,7 +1894,6 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   Eigen::MatrixXcd Cr_total_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
   Eigen::MatrixXcd Mr_total_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
   std::vector<WavePortAuxBlock> aux_blocks_total;
-  std::vector<PassiveWavePortAuxBlock> passive_aux_blocks_total;
   std::vector<WavePortAuxBlock> dtn_aux_blocks_total;
   struct PendingPortLoad
   {
@@ -2662,7 +1902,6 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
     Eigen::MatrixXcd Cr_corr;
     Eigen::MatrixXcd Mr_corr;
     std::vector<WavePortAuxBlock> aux_blocks;
-    std::vector<PassiveWavePortAuxBlock> passive_aux_blocks;
     std::vector<WavePortAuxBlock> dtn_aux_blocks;
   };
   std::vector<PendingPortLoad> pending_port_loads;
@@ -2683,12 +1922,6 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
         ApplyDtnRationalFitCorrections(fit, Mp_r, port_load.Kr_corr,
                                        port_load.Cr_corr);
       }
-      else if (fit.regime == WavePortRegime::PassiveRational)
-      {
-        ApplyPassiveRationalFitCorrections(fit, Mp_r, Kr_total_corr, Cr_total_corr);
-        ApplyPassiveRationalFitCorrections(fit, Mp_r, port_load.Kr_corr,
-                                           port_load.Cr_corr);
-      }
       else
       {
         ApplyPolynomialFitCorrections(fit, Mp_r, Kr_total_corr, Cr_total_corr,
@@ -2700,11 +1933,6 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       {
         aux_blocks_total.push_back(*fit.aux);
         port_load.aux_blocks.push_back(*fit.aux);
-      }
-      if (fit.passive_aux)
-      {
-        passive_aux_blocks_total.push_back(*fit.passive_aux);
-        port_load.passive_aux_blocks.push_back(*fit.passive_aux);
       }
       if (fit.dtn_aux)
       {
@@ -2774,8 +2002,7 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   }
 
   auto aug = BuildAugmentedPencil(Kr_total, Cr_total, Mr_total, aux_blocks_total,
-                                  passive_aux_blocks_total, dtn_aux_blocks_total,
-                                  out.aux_labels);
+                                  dtn_aux_blocks_total, out.aux_labels);
 
   // v_d port-row scaling: extend with 1's for aux rows (no port-impedance scaling on
   // aux states — they're internal circuit nodes).
@@ -2876,7 +2103,6 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
     std::vector<std::string> local_aux_labels;
     auto local_aug = BuildAugmentedPencil(pending.Kr_corr, pending.Cr_corr,
                                           pending.Mr_corr, pending.aux_blocks,
-                                          pending.passive_aux_blocks,
                                           pending.dtn_aux_blocks, local_aux_labels);
     auto full_aug = embed_augmented(local_aug, local_aux_labels);
 

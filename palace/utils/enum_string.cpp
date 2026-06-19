@@ -148,7 +148,6 @@ PALACE_ENUM_STRING_DEFINE(WavePortSynthesisRegime,
                           {{WavePortSynthesisRegime::AUTO, "Auto"},
                            {WavePortSynthesisRegime::POLYNOMIAL, "Polynomial"},
                            {WavePortSynthesisRegime::AUGMENTED, "Augmented"},
-                           {WavePortSynthesisRegime::PASSIVE_RATIONAL, "PassiveRational"},
                            {WavePortSynthesisRegime::DTN_RATIONAL, "DtnRational"}})
 
 PALACE_ENUM_STRING_DEFINE(Device, {{Device::CPU, "CPU"},

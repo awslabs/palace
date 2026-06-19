@@ -773,10 +773,9 @@ public:
   double waveport_synthesis_rank_tol = 1.0e-6;
 
   // Force a particular fit regime. AUTO selects polynomial when its residual meets
-  // waveport_synthesis_tol, otherwise passive rational admittance fitting. POLYNOMIAL
-  // forces the polynomial fit even if the tolerance is not met (caller assumes
-  // responsibility for the larger error). AUGMENTED requests the legacy unconstrained AAA
-  // residual path. PASSIVE_RATIONAL requests the passive fixed-pole admittance path.
+  // waveport_synthesis_tol, otherwise DtN rational fitting. POLYNOMIAL forces the
+  // polynomial fit even if the tolerance is not met (caller assumes responsibility for the
+  // larger error). AUGMENTED requests the legacy unconstrained AAA residual path.
   // See WavePortSynthesisRegime in utils/labels.hpp.
   WavePortSynthesisRegime waveport_synthesis_force = WavePortSynthesisRegime::AUTO;
 
