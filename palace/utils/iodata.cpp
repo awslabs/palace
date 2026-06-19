@@ -290,10 +290,9 @@ void IoData::CheckConfiguration()
     // into the synthesised pencil via the same auxiliary-state path as the wave ports (the
     // 2nd-order ABC's 0.5/ω as an exact pole at ω=0; surface conductivity's iω/Z(ω) by a
     // polynomial + AAA fit). See RomOperator::CalculateNormalizedPROMMatrices.
-    // Wave ports are supported via polynomial or passive-rational fit of the modal
-    // dispersion/admittance. The fit residual is checked against waveport_synthesis_tol at
-    // the end of the greedy phase. The runtime check is in
-    // RomOperator::CalculateNormalizedPROMMatrices.
+    // Wave ports are supported via an automatic polynomial fit of the modal dispersion,
+    // augmented with AAA residual poles when the polynomial residual exceeds AdaptiveTol.
+    // The runtime check is in RomOperator::CalculateNormalizedPROMMatrices.
     // WavePortPEC (boundaries.auxpec) is also supported: it only affects the per-port
     // cross-section eigenvalue problem (forces the port submesh outer rim to PEC) and
     // does not change the parent FE system, so synthesis works correctly with it.

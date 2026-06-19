@@ -182,20 +182,6 @@ enum class DomainOrthogonalizationWeight : char
   SPACE_OVERLAP
 };
 
-// Regime selection for wave-port circuit synthesis. AUTO selects the polynomial fit
-// when its residual meets the user-supplied tolerance; otherwise falls back to the
-// structured square-root DtN rational fit (DTN_RATIONAL). POLYNOMIAL forces the polynomial
-// fit. AUGMENTED forces the legacy unconstrained AAA residual realization. DTN_RATIONAL
-// forces the structured √ fit of the DtN multiplier q(s)=i·kₙ via q²=c₀+c₁s+c₂s², handling
-// lossless (jω-axis poles, no fake loss) and lossy (LHP poles) uniformly.
-enum class WavePortSynthesisRegime : char
-{
-  AUTO,
-  POLYNOMIAL,
-  AUGMENTED,
-  DTN_RATIONAL
-};
-
 // Device used to configure MFEM.
 enum class Device : char
 {

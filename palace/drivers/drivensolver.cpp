@@ -438,12 +438,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
 
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
-  // NOTE: the online sweep evaluates the wave-port kₙ(ω) by the exact per-ω cross-section
-  // EVP (GetWavePortKn in SolvePROM), NOT a dispersion surrogate. The EVP call is also what
-  // refreshes the modal post-processing state (port_sr/port_si, E0t/E0n, Z_PV) that
-  // MeasureWavePorts needs for S-parameters; a kₙ surrogate would skip that refresh and
-  // produce wrong S for dispersive non-TEM ports. The dispersion fit is used only for the
-  // offline L⁻¹/R⁻¹/C circuit synthesis (CalculateNormalizedPROMMatrices).
+  // The online sweep evaluates wave-port modes with the per-frequency cross-section EVP
+  // so the modal post-processing state is current for S-parameters and power.
   space_op.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
   excitation_counter = 0;
   for (const auto &[excitation_idx, excitation_spec] : port_excitations)

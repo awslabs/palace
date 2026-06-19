@@ -37,7 +37,6 @@ PALACE_ENUM_STRING_DECL(SymbolicFactorization)
 PALACE_ENUM_STRING_DECL(SparseCompression)
 PALACE_ENUM_STRING_DECL(Orthogonalization)
 PALACE_ENUM_STRING_DECL(DomainOrthogonalizationWeight)
-PALACE_ENUM_STRING_DECL(WavePortSynthesisRegime)
 PALACE_ENUM_STRING_DECL(Device)
 
 #undef PALACE_ENUM_STRING_DECL

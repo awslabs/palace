@@ -753,32 +753,6 @@ public:
   DomainOrthogonalizationWeight adaptive_circuit_synthesis_domain_orthog =
       DomainOrthogonalizationWeight::ENERGY;
 
-  // Tolerance for the polynomial fit of kₙ,p(ω) when wave ports participate in
-  // circuit synthesis. The metric is the relative error on the per-port wave admittance
-  // Y_p(ω) = kₙ,p(ω)/(iωμ) over a dense ω grid in the sweep band. If the configured
-  // value is non-positive, defaults to adaptive_tol.
-  double waveport_synthesis_tol = 0.0;
-
-  // Maximum auxiliary pole count for non-polynomial wave-port synthesis fits. The order-2
-  // polynomial part is still fixed by the K + iωC − ω²M synthesis structure.
-  std::size_t waveport_synthesis_order_max = 4;
-
-  // Numerical-rank cutoff applied to the projected wave-port boundary mass M_proj when
-  // building the regime-2 augmented L⁻¹/R⁻¹/C realisation. Singular vectors with
-  // σⱼ / σ_max ≤ this value are dropped; smaller values keep more aux states (and
-  // tighter representation of the M_proj contribution) at the cost of larger
-  // synthesised matrices. Default 1e-6 is conservative — typically caps aux dim at
-  // a few times the basis dim while preserving 6+ digits of accuracy on the augmented
-  // pencil eigenvalues.
-  double waveport_synthesis_rank_tol = 1.0e-6;
-
-  // Force a particular fit regime. AUTO selects polynomial when its residual meets
-  // waveport_synthesis_tol, otherwise DtN rational fitting. POLYNOMIAL forces the
-  // polynomial fit even if the tolerance is not met (caller assumes responsibility for the
-  // larger error). AUGMENTED requests the legacy unconstrained AAA residual path.
-  // See WavePortSynthesisRegime in utils/labels.hpp.
-  WavePortSynthesisRegime waveport_synthesis_force = WavePortSynthesisRegime::AUTO;
-
   DrivenSolverData() = default;
   DrivenSolverData(const json &driven);
 };

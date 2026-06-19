@@ -102,11 +102,7 @@
         "AdaptiveConvergenceMemory": { "type": "integer", "exclusiveMinimum": 0 },
         "AdaptiveGSOrthogonalization": { "type": "string", "enum": ["MGS", "CGS", "CGS2"] },
         "AdaptiveCircuitSynthesis": { "type": "boolean" },
-        "AdaptiveCircuitSynthesisDomainOrthogonalization": { "type": "string", "enum": ["Energy", "FEBasisIdentity", "SpaceOverlap"] },
-        "WavePortSynthesisTol": { "type": "number", "minimum": 0.0 },
-        "WavePortSynthesisOrderMax": { "type": "integer", "minimum": 0 },
-        "WavePortSynthesisRankTol": { "type": "number", "minimum": 0.0 },
-        "WavePortSynthesisForce": { "type": "string", "enum": ["Auto", "Polynomial", "Augmented", "PassiveRational", "DtnRational"] }
+        "AdaptiveCircuitSynthesisDomainOrthogonalization": { "type": "string", "enum": ["Energy", "FEBasisIdentity", "SpaceOverlap"] }
       }
     },
     "Transient":

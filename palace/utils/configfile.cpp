@@ -54,7 +54,6 @@ PALACE_JSON_SERIALIZE_ENUM(SymbolicFactorization)
 PALACE_JSON_SERIALIZE_ENUM(SparseCompression)
 PALACE_JSON_SERIALIZE_ENUM(Orthogonalization)
 PALACE_JSON_SERIALIZE_ENUM(DomainOrthogonalizationWeight)
-PALACE_JSON_SERIALIZE_ENUM(WavePortSynthesisRegime)
 PALACE_JSON_SERIALIZE_ENUM(Device)
 }  // namespace palace
 
@@ -1018,14 +1017,6 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   adaptive_circuit_synthesis_domain_orthog =
       driven.value("AdaptiveCircuitSynthesisDomainOrthogonalization",
                    adaptive_circuit_synthesis_domain_orthog);
-  waveport_synthesis_tol = driven.value("WavePortSynthesisTol", waveport_synthesis_tol);
-  waveport_synthesis_order_max =
-      driven.value("WavePortSynthesisOrderMax", waveport_synthesis_order_max);
-  waveport_synthesis_rank_tol =
-      driven.value("WavePortSynthesisRankTol", waveport_synthesis_rank_tol);
-  waveport_synthesis_force =
-      driven.value("WavePortSynthesisForce", waveport_synthesis_force);
-
   MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),
               "\"Restart\" is incompatible with adaptive frequency sweep!");
 
