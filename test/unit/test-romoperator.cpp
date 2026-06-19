@@ -50,10 +50,14 @@ class RomOperatorTest : public RomOperator
 {
 public:
   using RomOperator::AugmentedPencil;
+  using RomOperator::ApplyComplexPolynomialFitCorrections;
+  using RomOperator::ApplyPolynomialFitCorrections;
   using RomOperator::BuildAugmentedPencil;
   using RomOperator::CalculateNormalizedPROMMatrices;
+  using RomOperator::NormalizedMatrices;
   using RomOperator::RomOperator;
   using RomOperator::WavePortAuxBlock;
+  using RomOperator::WavePortDispersionFit;
   auto &GetWeightOp() const { return weight_op_W; }
   auto &GetOrthR() const { return orth_R; }
   auto &GetVectors() const { return V; }
@@ -519,6 +523,74 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-Port-Cube32
   CHECK(((capacitance_C->rows() == rom_dim) && (capacitance_C->cols() == rom_dim)));
   CHECK(((orth_R.rows() == rom_dim) && (orth_R.cols() == rom_dim)));
 
+  // Per-port load matrices are exported separately from the total loaded matrices so
+  // downstream circuit assembly can remove internal terminations and keep external ones.
+  // For this two-port lumped case they should have the same shape as the total matrices
+  // and contain only the diagonal R/L/C loading terms for the corresponding port row.
+  REQUIRE(_norm.port_loads.size() == 2);
+  auto find_port_load = [&](std::string_view label)
+      -> const RomOperatorTest::NormalizedMatrices::PortLoad *
+  {
+    for (const auto &load : _norm.port_loads)
+    {
+      if (load.label == label)
+      {
+        return &load;
+      }
+    }
+    return nullptr;
+  };
+  const auto *port1_load = find_port_load("port_1_re");
+  const auto *port2_load = find_port_load("port_2_re");
+  REQUIRE(port1_load != nullptr);
+  REQUIRE(port2_load != nullptr);
+
+  auto check_load_shape = [rom_dim](const auto &load)
+  {
+    REQUIRE(load.L_inv);
+    REQUIRE(load.C);
+    CHECK(load.L_inv->rows() == rom_dim);
+    CHECK(load.L_inv->cols() == rom_dim);
+    CHECK(load.C->rows() == rom_dim);
+    CHECK(load.C->cols() == rom_dim);
+    if (load.R_inv)
+    {
+      CHECK(load.R_inv->rows() == rom_dim);
+      CHECK(load.R_inv->cols() == rom_dim);
+    }
+  };
+  check_load_shape(*port1_load);
+  check_load_shape(*port2_load);
+
+  auto check_only_diagonal = [rom_dim](const Eigen::MatrixXcd &mat, long row,
+                                       std::complex<double> expected)
+  {
+    for (long i = 0; i < rom_dim; i++)
+    {
+      for (long j = 0; j < rom_dim; j++)
+      {
+        if (i == row && j == row)
+        {
+          CHECK_THAT(mat(i, j).real(), WithinRel(expected.real(), 1e-12));
+          CHECK_THAT(mat(i, j).imag(), WithinAbs(expected.imag(), 1e-15));
+        }
+        else
+        {
+          CHECK_THAT(std::abs(mat(i, j)), WithinAbs(0.0, 1e-15));
+        }
+      }
+    }
+  };
+  check_only_diagonal(*port1_load->L_inv, 0, 1.0 / port1_ref_L);
+  check_only_diagonal(*port1_load->C, 0, port1_ref_C);
+  REQUIRE(port1_load->R_inv);
+  check_only_diagonal(*port1_load->R_inv, 0, 1.0 / port1_ref_R);
+
+  CHECK(port2_load->L_inv->cwiseAbs().maxCoeff() == 0.0);
+  CHECK(port2_load->C->cwiseAbs().maxCoeff() == 0.0);
+  REQUIRE(port2_load->R_inv);
+  check_only_diagonal(*port2_load->R_inv, 1, 1.0 / port2_ref_R);
+
   Eigen::MatrixXd inductance_L_inv_ref = Eigen::MatrixXd::Zero(rom_dim, rom_dim);
   inductance_L_inv_ref(0, 0) = 1.0 / port1_ref_L;
 
@@ -895,6 +967,116 @@ TEST_CASE("RomOperator-Synthesis-WavePortExcludedExcitedRejected", "[romoperator
 
   CHECK_THROWS_WITH((IoData{setup_json, false}),
                     Catch::Matchers::ContainsSubstring("IncludeInSynthesis"));
+}
+
+// The polynomial dispersion correction helpers are the sign bridge between a scalar
+// frequency-dependent boundary multiplier and the quadratic pencil K + iωC - ω²M. Lock
+// this down directly: evaluating the corrected pencil must reproduce
+// (α₀ + α₁ω + α₂ω²) Mp_r for real wave-port fits and complex scalar-dispersion fits.
+TEST_CASE("RomOperator-PolynomialFitCorrections", "[romoperator][Serial]")
+{
+  Eigen::MatrixXcd Mp_r(2, 2);
+  Mp_r << std::complex<double>(0.0, 2.0), std::complex<double>(0.0, -0.3),
+      std::complex<double>(0.0, -0.3), std::complex<double>(0.0, 0.7);
+
+  RomOperatorTest::WavePortDispersionFit fit;
+  fit.alpha0 = 1.2;
+  fit.alpha1 = -0.4;
+  fit.alpha2 = 0.05;
+
+  Eigen::MatrixXcd Kr = Eigen::MatrixXcd::Zero(2, 2);
+  Eigen::MatrixXcd Cr = Eigen::MatrixXcd::Zero(2, 2);
+  Eigen::MatrixXcd Mr = Eigen::MatrixXcd::Zero(2, 2);
+  RomOperatorTest::ApplyPolynomialFitCorrections(fit, Mp_r, Kr, Cr, Mr);
+
+  for (double omega : {0.2, 1.5, 3.0})
+  {
+    const Eigen::MatrixXcd got =
+        Kr + std::complex<double>(0.0, 1.0) * omega * Cr - omega * omega * Mr;
+    const Eigen::MatrixXcd want =
+        (fit.alpha0 + fit.alpha1 * omega + fit.alpha2 * omega * omega) * Mp_r;
+    CHECK(((got - want).cwiseAbs().maxCoeff() < 1.0e-13));
+  }
+
+  const std::complex<double> alpha0(0.4, -0.2);
+  const std::complex<double> alpha1(-0.1, 0.3);
+  const std::complex<double> alpha2(0.02, -0.04);
+  Kr.setZero();
+  Cr.setZero();
+  Mr.setZero();
+  RomOperatorTest::ApplyComplexPolynomialFitCorrections(alpha0, alpha1, alpha2, Mp_r,
+                                                        Kr, Cr, Mr);
+
+  for (double omega : {0.2, 1.5, 3.0})
+  {
+    const Eigen::MatrixXcd got =
+        Kr + std::complex<double>(0.0, 1.0) * omega * Cr - omega * omega * Mr;
+    const Eigen::MatrixXcd want =
+        (alpha0 + alpha1 * omega + alpha2 * omega * omega) * Mp_r;
+    CHECK(((got - want).cwiseAbs().maxCoeff() < 1.0e-13));
+  }
+}
+
+// Schur-complement test for the augmented rational realization. This exercises the real
+// BuildAugmentedPencil helper with multiple poles and multiple SVD directions, then
+// eliminates the aux rows and checks that the effective v-block exactly equals the
+// unaugmented rational pencil contribution i Σ r_k/(ω-p_k) M_proj.
+TEST_CASE("RomOperator-AugmentedPencil-SchurComplement", "[romoperator][Serial]")
+{
+  Eigen::MatrixXcd Kr(2, 2), Cr(2, 2), Mr(2, 2);
+  Kr << std::complex<double>(1.0, 0.2), std::complex<double>(0.15, -0.05),
+      std::complex<double>(0.15, -0.05), std::complex<double>(1.7, -0.1);
+  Cr << std::complex<double>(0.05, -0.02), std::complex<double>(0.01, 0.03),
+      std::complex<double>(0.01, 0.03), std::complex<double>(-0.04, 0.01);
+  Mr << std::complex<double>(0.3, 0.0), std::complex<double>(0.02, -0.01),
+      std::complex<double>(0.02, -0.01), std::complex<double>(0.6, 0.02);
+
+  const double theta = 0.37;
+  Eigen::VectorXd u0(2), u1(2);
+  u0 << std::cos(theta), std::sin(theta);
+  u1 << -std::sin(theta), std::cos(theta);
+  RomOperatorTest::WavePortAuxBlock blk;
+  blk.port_idx = 3;
+  blk.sigmas = {2.0, 0.4};
+  blk.u_dirs = {u0, u1};
+  blk.poles = {std::complex<double>(1.1, 0.2), std::complex<double>(-0.7, 0.4)};
+  blk.residues = {std::complex<double>(0.3, -0.15), std::complex<double>(-0.2, 0.05)};
+
+  std::vector<std::string> aux_labels;
+  auto aug = RomOperatorTest::BuildAugmentedPencil(Kr, Cr, Mr, {blk}, aux_labels);
+  REQUIRE(aug.Kr.rows() == 6);
+  REQUIRE(aug.Kr.cols() == 6);
+  REQUIRE(aux_labels.size() == 4);
+  CHECK(aux_labels.front() == "waveport_3_p0d0");
+  CHECK(aux_labels.back() == "waveport_3_p1d1");
+
+  Eigen::MatrixXcd M_proj =
+      blk.sigmas[0] * (u0 * u0.transpose()).cast<std::complex<double>>() +
+      blk.sigmas[1] * (u1 * u1.transpose()).cast<std::complex<double>>();
+
+  for (std::complex<double> omega :
+       {std::complex<double>(0.5, 0.1), std::complex<double>(1.6, -0.2),
+        std::complex<double>(2.4, 0.0)})
+  {
+    const Eigen::MatrixXcd A_aug =
+        aug.Kr + std::complex<double>(0.0, 1.0) * omega * aug.Cr -
+        omega * omega * aug.Mr;
+    const Eigen::MatrixXcd Avv = A_aug.topLeftCorner(2, 2);
+    const Eigen::MatrixXcd Ava = A_aug.topRightCorner(2, 4);
+    const Eigen::MatrixXcd Aav = A_aug.bottomLeftCorner(4, 2);
+    const Eigen::MatrixXcd Aaa = A_aug.bottomRightCorner(4, 4);
+    const Eigen::MatrixXcd schur = Avv - Ava * Aaa.fullPivLu().solve(Aav);
+
+    Eigen::MatrixXcd want =
+        Kr + std::complex<double>(0.0, 1.0) * omega * Cr - omega * omega * Mr;
+    std::complex<double> rational = 0.0;
+    for (std::size_t k = 0; k < blk.poles.size(); k++)
+    {
+      rational += blk.residues[k] / (omega - blk.poles[k]);
+    }
+    want += std::complex<double>(0.0, 1.0) * rational * M_proj;
+    CHECK(((schur - want).cwiseAbs().maxCoeff() < 1.0e-12));
+  }
 }
 
 // Verify that the regime-2 augmented pencil produced by BuildAugmentedPencil has the
