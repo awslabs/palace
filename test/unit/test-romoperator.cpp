@@ -192,7 +192,7 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-Port-Cube1
   setup_json["Solver"]["Linear"] = {
       {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
 
-  IoData iodata(std::move(setup_json));
+  IoData iodata(setup_json, false);
 
   auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
   SpaceOperator space_op(iodata, mesh_io);
@@ -427,7 +427,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-Port-Cube32
   setup_json["Solver"]["Linear"] = {
       {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
 
-  IoData iodata(std::move(setup_json));
+  IoData iodata(setup_json, false);
 
   auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
   SpaceOperator space_op(iodata, mesh_io);
@@ -658,7 +658,7 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-PortOrthog
   setup_json["Solver"]["Linear"] = {
       {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
 
-  IoData iodata(std::move(setup_json));
+  IoData iodata(setup_json, false);
   auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
   SpaceOperator space_op(iodata, mesh_io);
   std::size_t max_size_per_excitation = 100;
@@ -712,7 +712,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-LinearDepe
   setup_json["Solver"]["Linear"] = {
       {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
 
-  IoData iodata(std::move(setup_json));
+  IoData iodata(setup_json, false);
   auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
   SpaceOperator space_op(iodata, mesh_io);
   std::size_t max_size_per_excitation = 100;
@@ -727,4 +727,142 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-LinearDepe
 
   prom_op.UpdatePROM(u, "vec_0");
   CHECK_THROWS(prom_op.UpdatePROM(u, "vec_0_duplicate"));
+}
+
+// Tests that the per-port "IncludeInSynthesis" flag suppresses basis vector injection
+// without changing the boundary condition. We reuse the cube_3_2_1 two-port setup, but
+// flip port 1 (non-excited, RLC) to "IncludeInSynthesis": false, leaving port 2 (excited,
+// pure R) included. Expectation: AddLumpedPortModesForSynthesis adds exactly one basis
+// vector (port 2), the resulting normalized circuit matrices are 1x1, and the diagonal
+// resistance entry equals 1 / port2_ref_R.
+//
+// This also exercises CalculateNormalizedPROMMatrices in the regime where the number of
+// port-mode rows (1) is less than the total lumped port count (2): the port-scaling loop
+// must iterate over included ports only, not GetLumpedPortOp().Size(), or it writes past
+// the end of v_conc.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator-Synthesis-IncludeInSynthesis-Skip",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+
+  const double L0 = 1.0e-6;
+  const double Lc = 7.0;
+
+  const double port1_ref_R = 75.0;
+  const double port1_ref_C = 5.5e-5;
+  const double port1_ref_L = 1.486e-20;
+  const double port2_ref_R = 50.0;
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 2}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"L0", L0},
+                         {"Lc", Lc},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+
+  // Port 1 is the passive RLC port flagged out of synthesis; port 2 stays in.
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array(
+           {json::object(
+                {{"Index", 1},
+                 {"R", port1_ref_R},
+                 {"C", port1_ref_C},
+                 {"L", port1_ref_L},
+                 {"Excitation", uint(0)},
+                 {"IncludeInSynthesis", false},
+                 {"Elements",
+                  json::array({json::object(
+                                   {{"Attributes", json::array({1})}, {"Direction", "+Y"}}),
+                               json::object({{"Attributes", json::array({9, 11})},
+                                             {"Direction", "+Y"}}),
+                               json::object({{"Attributes", json::array({2, 6, 10})},
+                                             {"Direction", "+X"}})})}}),
+            json::object(
+                {{"Index", 2},
+                 {"R", port2_ref_R},
+                 {"Excitation", uint(1)},
+                 {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                         {"Direction", "+Z"}})})}})})}};
+
+  setup_json["Solver"] = json::object();
+  setup_json["Solver"]["Order"] = 1UL;
+  setup_json["Solver"]["Device"] = "CPU";
+  setup_json["Solver"]["Driven"] = {{"AdaptiveTol", 1e-3},
+                                    {"AdaptiveCircuitSynthesis", true},
+                                    {"MinFreq", 2.0},
+                                    {"MaxFreq", 32.0},
+                                    {"FreqStep", 1.0}};
+  setup_json["Solver"]["Linear"] = {
+      {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
+
+  IoData iodata(setup_json, false);
+
+  // The flag is parsed onto the config struct.
+  const auto &cfg_ports = iodata.boundaries.lumpedport;
+  REQUIRE(cfg_ports.size() == 2);
+  CHECK(cfg_ports.at(1).include_in_synthesis == false);
+  CHECK(cfg_ports.at(2).include_in_synthesis == true);
+
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+
+  std::size_t max_size_per_excitation = 100;
+  RomOperatorTest prom_op(iodata, space_op, max_size_per_excitation);
+  prom_op.AddLumpedPortModesForSynthesis();
+
+  // Only port 2 contributed a basis vector.
+  REQUIRE(prom_op.GetReducedDimension() == 1);
+
+  const auto [inductance_L_inv, resistance_R_inv, capacitance_C] =
+      prom_op.CalculateNormalizedPROMMatrices(iodata.units);
+  REQUIRE(inductance_L_inv->rows() == 1);
+  REQUIRE(resistance_R_inv->rows() == 1);
+  REQUIRE(capacitance_C->rows() == 1);
+
+  // The remaining diagonal entry corresponds to port 2 (R = 50 Ohm, no L, no C).
+  CHECK_THAT(std::real((*resistance_R_inv)(0, 0)), WithinRel(1.0 / port2_ref_R));
+  CHECK_THAT(std::imag((*resistance_R_inv)(0, 0)), WithinAbs(0.0, 1e-15));
+}
+
+// Excited ports must always be included in synthesis. The configuration parser
+// rejects a port carrying both "Excitation" > 0 and "IncludeInSynthesis": false because
+// the excitation vector is unconditionally added to the basis.
+TEST_CASE("RomOperator-Synthesis-ExcludedExcitedRejected", "[romoperator][Serial]")
+{
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
+  setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"R", 50.0},
+                                                {"Excitation", uint(1)},
+                                                {"IncludeInSynthesis", false},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {{"Order", 1UL},
+                          {"Driven",
+                           {{"AdaptiveTol", 1e-3},
+                            {"AdaptiveCircuitSynthesis", true},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", 32.0},
+                            {"FreqStep", 1.0}}}};
+
+  CHECK_THROWS_WITH((IoData{setup_json, false}),
+                    Catch::Matchers::ContainsSubstring("IncludeInSynthesis"));
 }

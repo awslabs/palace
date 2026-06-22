@@ -125,7 +125,7 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp intel-oneapi-compiler-fortran
+        sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp intel-oneapi-compiler-fortran intel-oneapi-mkl-devel intel-oneapi-mpi-devel
         end_timer "Setup Intel OneAPI"
 
     - name: Setup LLVM

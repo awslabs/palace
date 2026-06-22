@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <tuple>
 #include "fem/errorindicator.hpp"
 #include "models/boundarymodeoperator.hpp"
 #include "models/curlcurloperator.hpp"
@@ -116,6 +117,12 @@ struct Measurement
     // S-Parameter.
     std::complex<double> S = 0.0;
 
+    // Wave port mode characteristic impedance Z_PV = |V_exc|² / |P_exc| computed from
+    // the boundary-mode-solved E-field along the user-specified VoltagePath. Independent
+    // of which port is excited (property of the mode, not the simulation result). Only
+    // populated for wave ports with VoltagePath configured; left as 0 otherwise.
+    std::complex<double> Z_PV = 0.0;
+
     // Energies (currently only for lumped port).
     double inductor_energy = 0.0;   // E_ind = ∑_j 1/2 L_j I_mj².
     double capacitor_energy = 0.0;  // E_cap = ∑_j 1/2 C_j V_mj².
@@ -198,6 +205,10 @@ struct Measurement
   std::vector<FluxData> surface_flux_i;
   std::vector<InterfaceData> interface_eps_i;
   FarFieldData farfield;
+
+  // Floquet port S-parameters: port_idx -> {(m, n, is_te/is_rhc) -> S}.
+  std::map<int, std::map<std::tuple<int, int, bool>, std::complex<double>>> floquet_port_s;
+  bool floquet_circular_output = false;
 
   // Dimensionalize and nondimensionalize a set of measurements
   static Measurement Dimensionalize(const Units &units,
@@ -343,6 +354,14 @@ protected:
       -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
   template <ProblemType U = solver_t>
   auto PrintPortZ() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+
+  // Driven: Floquet port S-parameters.
+  std::optional<TableWithCSVFile> floquet_port_S;
+  template <ProblemType U = solver_t>
+  auto InitializeFloquetPortS(const SpaceOperator &fem_op)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+  template <ProblemType U = solver_t>
+  auto PrintFloquetPortS() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
 
   // Driven + Eigenmode.
   std::optional<TableWithCSVFile> farfield_E;

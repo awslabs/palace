@@ -49,6 +49,14 @@ double ComputeReferenceLength(const std::unique_ptr<mfem::Mesh> &mesh, MPI_Comm 
 // meshes and it should not be deleted. The fine mesh hierarchy is owned by the user.
 void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>> &mesh);
 
+// Print parallel mesh statistics (element/vertex/edge/face counts, element size h, and
+// shape regularity kappa). When `full` is true, also prints the (refinement-invariant)
+// mesh curvature order and bounding box; pass false to print only the statistics that
+// change under refinement (used after each adaptive mesh refinement iteration). `prefix`
+// is prepended to the stats block (e.g. "Coarse "/"Refined ").
+void PrintMeshInfo(mfem::ParMesh &mesh, const IoData &iodata, bool full = true,
+                   const std::string &prefix = "");
+
 // Dimensionalize a mesh for use in exporting a mesh. Scales vertices and nodes by L.
 void DimensionalizeMesh(mfem::Mesh &mesh, double L);
 
@@ -94,6 +102,19 @@ inline mfem::Array<int> AttrToMarker(int max_attr, const T &attr_list,
   mfem::Array<int> marker;
   AttrToMarker(max_attr, attr_list, marker, skip_invalid);
   return marker;
+}
+
+// Maximum boundary attribute over all local boundary elements. This can differ from
+// mesh.bdr_attributes.Max() for internally-added boundary elements.
+int GetMaxBdrAttribute(const mfem::ParMesh &mesh);
+
+// Helper function to convert boundary attribute numbers to a marker array sized by the
+// maximum actual boundary element attribute.
+template <typename T>
+inline mfem::Array<int> BdrAttrToMarker(const mfem::ParMesh &mesh, const T &attr_list,
+                                        bool skip_invalid = false)
+{
+  return AttrToMarker(GetMaxBdrAttribute(mesh), attr_list, skip_invalid);
 }
 
 // Helper function to construct the axis-aligned bounding box for all elements with the

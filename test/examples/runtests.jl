@@ -8,17 +8,23 @@ include("argconfig.jl")
 include("testcase.jl")
 
 # Helper function to test farfield data by comparing E field magnitudes
-# (phase is not stable across architectures)
+# (phase is not stable across architectures). Column layout differs between driven
+# (idx, excitation, theta, phi, rE0_re, rE0_im, ...) and eigenmode
+# (idx, f_re, f_im, excitation, theta, phi, rE0_re, rE0_im, ...), so locate the
+# real-part of rE0 by counting from the right.
 function test_farfield(new_data, ref_data)
-    # Compute E field magnitudes.
-    Ex_new = new_data[:, 4] + 1im * new_data[:, 5]
-    Ey_new = new_data[:, 6] + 1im * new_data[:, 7]
-    Ez_new = new_data[:, 8] + 1im * new_data[:, 9]
+    n_components = 3  # Ex, Ey, Ez each contributing (re, im)
+    n_complex_cols = 2 * n_components
+    rE0_re_col = size(new_data, 2) - n_complex_cols + 1
+
+    Ex_new = new_data[:, rE0_re_col + 0] + 1im * new_data[:, rE0_re_col + 1]
+    Ey_new = new_data[:, rE0_re_col + 2] + 1im * new_data[:, rE0_re_col + 3]
+    Ez_new = new_data[:, rE0_re_col + 4] + 1im * new_data[:, rE0_re_col + 5]
     E_mag_new = sqrt.(abs.(Ex_new) .^ 2 + abs.(Ey_new) .^ 2 + abs.(Ez_new) .^ 2)
 
-    Ex_ref = ref_data[:, 4] + 1im * ref_data[:, 5]
-    Ey_ref = ref_data[:, 6] + 1im * ref_data[:, 7]
-    Ez_ref = ref_data[:, 8] + 1im * ref_data[:, 9]
+    Ex_ref = ref_data[:, rE0_re_col + 0] + 1im * ref_data[:, rE0_re_col + 1]
+    Ey_ref = ref_data[:, rE0_re_col + 2] + 1im * ref_data[:, rE0_re_col + 3]
+    Ez_ref = ref_data[:, rE0_re_col + 4] + 1im * ref_data[:, rE0_re_col + 5]
     E_mag_ref = sqrt.(abs.(Ex_ref) .^ 2 + abs.(Ey_ref) .^ 2 + abs.(Ez_ref) .^ 2)
 
     # Test magnitudes with relative tolerance.
@@ -83,8 +89,10 @@ arg_configs = [
             "cylinder/waveguide",
             "cylinder/floquet",
             "cylinder/driven_wave",
+            "dielectric_grating/uniform",
             "coaxial/open",
             "coaxial/matched",
+            "coaxial/lumped_wave",
             "cpw/lumped_uniform",
             "cpw/wave_uniform",
             "cpw/lumped_adaptive",
@@ -172,6 +180,7 @@ if "transmon/transmon_coarse" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
+        abs_columns=["κ_ext"],
         excluded_columns=[
             "Maximum",
             "Minimum",
@@ -206,6 +215,7 @@ if "transmon/transmon_amr" in cases
         np=numprocs,
         rtol=reltol,
         atol=abstol,
+        abs_columns=["κ_ext"],
         excluded_columns=[
             "Maximum",
             "Minimum",
@@ -324,6 +334,45 @@ if "cylinder/driven_wave" in cases
     )
 end
 
+# Floquet port S-parameter test: compare only magnitude columns (|S| in dB),
+# skipping NaN entries (evanescent modes) and negligible signals (< -200 dB).
+function test_floquet_sparams(new_data, ref_data)
+    for col_name in names(new_data)
+        # Only compare magnitude columns, skip phase columns.
+        occursin("|S[", col_name) && occursin("(dB)", col_name) || continue
+        for (v_new, v_ref) in zip(new_data[!, col_name], ref_data[!, col_name])
+            if isnan(v_new) && isnan(v_ref)
+                @test true
+            elseif v_ref < -200  # negligible signal, skip
+                @test true
+            else
+                @test v_new ≈ v_ref rtol=reltol atol=abstol
+            end
+        end
+    end
+    return true
+end
+
+if "dielectric_grating/uniform" in cases
+    @info "Testing dielectric_grating/uniform..."
+    @time testcase(
+        "dielectric_grating",
+        "dielectric_grating_uniform.json",
+        "uniform";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum"],
+        custom_tests=Dict("port-floquet-S.csv" => test_floquet_sparams),
+        paraview_fields=false,
+        skip_rowcount=true,
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
+    )
+end
+
 # Coarser test tolerances for driven simulations with ports
 reltol = 2.0e-2
 abstol = 1.0e-10
@@ -411,6 +460,23 @@ if "coaxial/matched" in cases
     )
 end
 
+if "coaxial/lumped_wave" in cases
+    @info "Testing coaxial (lumped + wave port mix)..."
+    @time testcase(
+        "coaxial",
+        "coaxial_lumped_wave.json",
+        "lumped_wave";
+        palace=palace,
+        np=numprocs,
+        rtol=reltol,
+        atol=abstol,
+        excluded_columns=["Maximum", "Minimum"],
+        device=device,
+        linear_solver=solver,
+        eigen_solver=eigensolver
+    )
+end
+
 if "cpw/lumped_uniform" in cases
     @info "Testing CPW (lumped ports)..."
     @time testcase(
@@ -422,6 +488,7 @@ if "cpw/lumped_uniform" in cases
         rtol=reltol,
         atol=abstol,
         excluded_columns=["Maximum", "Minimum"],
+        custom_tests=Dict("farfield-rE.csv" => test_farfield),
         device=device,
         linear_solver=solver,
         eigen_solver=eigensolver

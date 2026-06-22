@@ -23,7 +23,6 @@ class MumpsSolver : public mfem::MUMPSSolver
 public:
   MumpsSolver(MPI_Comm comm, MatrixSymmetry sym, SymbolicFactorization reorder,
               double blr_tol, bool reorder_reuse, int print);
-  MumpsSolver(const IoData &iodata, MPI_Comm comm, int print);
 
   void SetReorderReuse(bool reorder_reuse);
 };

@@ -16,6 +16,7 @@
 #include "linalg/operator.hpp"
 #include "linalg/orthog.hpp"
 #include "linalg/rap.hpp"
+#include "models/floquetportoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
@@ -69,17 +70,16 @@ inline void OrthogonalizeColumn(Orthogonalization type, MPI_Comm comm,
 
 inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
                                const ComplexOperator &A, Eigen::MatrixXcd &Ar,
-                               ComplexVector &r, int n0)
+                               ComplexVector &r, int n0, bool symmetric)
 {
-  // Update Ar = Vᴴ A V for the new basis dimension n0 -> n. V is real and thus the result
-  // is complex symmetric if A is symmetric (which we assume is the case). Ar is replicated
+  // Update Ar = Vᴴ A V for the new basis dimension n0 -> n. V is real. Ar is replicated
   // across all processes as a sequential n x n matrix.
   const auto n = Ar.rows();
   MFEM_VERIFY(n0 < n, "Invalid dimensions in PROM matrix projection!");
+
+  // Compute the right block: columns [n0, n), all rows [0, n).
   for (int j = n0; j < n; j++)
   {
-    // Fill block of Vᴴ A V = [  | Vᴴ A vj ] . We can optimize the matrix-vector product
-    // since the columns of V are real.
     MFEM_VERIFY(A.Real() || A.Imag(),
                 "Invalid zero ComplexOperator for PROM matrix projection!");
     if (A.Real())
@@ -98,14 +98,36 @@ inline void ProjectMatInternal(MPI_Comm comm, const std::vector<Vector> &V,
   }
   Mpi::GlobalSum((n - n0) * n, Ar.data() + n0 * n, comm);
 
-  // Fill lower block of Vᴴ A V = [ ____________  |  ]
-  //                              [ vjᴴ A V[1:n0] |  ] .
+  if (symmetric)
+  {
+    for (int j = 0; j < n0; j++)
+    {
+      for (int i = n0; i < n; i++)
+      {
+        Ar(i, j) = Ar(j, i);
+      }
+    }
+    return;
+  }
+
+  // Compute the lower-left block directly: rows [n0, n), columns [0, n0).
+  // No symmetry assumption — works for Hermitian, anti-symmetric, or general operators.
   for (int j = 0; j < n0; j++)
   {
+    if (A.Real())
+    {
+      A.Real()->Mult(V[j], r.Real());
+    }
+    if (A.Imag())
+    {
+      A.Imag()->Mult(V[j], r.Imag());
+    }
     for (int i = n0; i < n; i++)
     {
-      Ar(i, j) = Ar(j, i);
+      Ar(i, j).real(A.Real() ? V[i] * r.Real() : 0.0);
+      Ar(i, j).imag(A.Imag() ? V[i] * r.Imag() : 0.0);
     }
+    Mpi::GlobalSum(n - n0, Ar.data() + j * n + n0, comm);
   }
 }
 
@@ -137,8 +159,12 @@ inline void ComputeMRI(const Eigen::MatrixXcd &R, Eigen::VectorXcd &q)
   auto m = S - 1;
   while (m > 0 && sigma[m] < ORTHOG_TOL * sigma[0])
   {
-    Mpi::Warning("Minimal rational interpolation encountered rank-deficient matrix: "
-                 "σ[{:d}] = {:.3e} (σ[0] = {:.3e})!\n",
+    Mpi::Warning("Minimal rational interpolation encountered a rank-deficient matrix: "
+                 "σ[{:d}] = {:.3e} (σ[0] = {:.3e}). This can indicate that the "
+                 "adaptive interpolation is near the accuracy limit of the HDM solves; "
+                 "if adaptive convergence is poor, try tightening "
+                 "config[\"Solver\"][\"Linear\"][\"Tol\"] or using a looser "
+                 "config[\"Solver\"][\"Driven\"][\"AdaptiveTol\"].\n",
                  m, sigma[m], sigma[0]);
     m--;
   }
@@ -452,15 +478,20 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   // be done during an HDM solve at a given parameter point). The preconditioner for the
   // complex linear system is constructed from a real approximation to the complex system
   // matrix.
-  ksp = std::make_unique<ComplexKspSolver>(iodata.solver.linear, iodata.problem.verbose,
-                                           space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  ksp = std::make_unique<ComplexKspSolver>(
+      iodata.solver.linear, GetPreconditionerMatrixSymmetry(iodata), iodata.problem.verbose,
+      space_op.GetNDSpaces(), &space_op.GetH1Spaces());
 
   MFEM_VERIFY(max_size_per_excitation > 0, "Reduced order basis must have > 0 size!");
 
   auto max_prom_size = 2 * max_size_per_excitation * space_op.GetPortExcitations().Size();
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
-    max_prom_size += space_op.GetLumpedPortOp().Size();  // Lumped ports are real fields
+    // Each lumped port included in synthesis contributes one real basis vector; ports
+    // flagged out via IncludeInSynthesis = false add nothing. Reserve against the
+    // included count, not the total port count, to avoid over-reserving basis storage
+    // (one full-FE-space vector per excluded port would otherwise be reserved).
+    max_prom_size += NumSynthesisPortModes();
 
     // Build inner-product weight matrix.
     weight_op_W = HybridBulkBoundaryOperator{
@@ -519,13 +550,15 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 {
   SetExcitationIndex(excitation_idx);
 
-  // Compute HDM solution at the given frequency. The system matrix, A = K + iω C - ω² M +
-  // A2(ω) is built by summing the underlying operator contributions.
+  // Compute HDM solution at the given frequency. The sparse A2 is stored as a member for
+  // PROM projection. The full frequency-dependent operator (A2 + low-rank Floquet DtN) is
+  // built locally for the HDM system matrix.
   A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   has_A2 = (A2 != nullptr);
+  auto A2_full = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
   auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
                                     std::complex<double>(-omega * omega, 0.0), K.get(),
-                                    C.get(), M.get(), A2.get());
+                                    C.get(), M.get(), A2_full.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
                                                              -omega * omega + 0.0i, omega);
   ksp->SetOperators(*A, *P);
@@ -547,6 +580,23 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
 
   // Solve the linear system.
   ksp->Mult(r, u);
+}
+
+std::size_t RomOperator::NumSynthesisPortModes() const
+{
+  // Each lumped port included in synthesis contributes exactly one real basis vector
+  // (lumped port fields are real). Ports flagged out via IncludeInSynthesis = false
+  // contribute nothing. Keep this the single source of truth for the port-mode count so
+  // the reservation and the port-port block scaling cannot drift apart.
+  std::size_t n = 0;
+  for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
+  {
+    if (port_data.include_in_synthesis)
+    {
+      n++;
+    }
+  }
+  return n;
 }
 
 void RomOperator::AddLumpedPortModesForSynthesis()
@@ -579,6 +629,14 @@ void RomOperator::AddLumpedPortModesForSynthesis()
 
   for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
   {
+    if (!port_data.include_in_synthesis)
+    {
+      // The boundary condition for this port is still applied (see
+      // LumpedPortOperator), but no port-mode vector is added to the PROM basis.
+      // Excited ports always have include_in_synthesis = true (enforced by the config
+      // parser) so the excitation vector is never silently dropped here.
+      continue;
+    }
     space_op.GetLumpedPortExcitationVectorPrimaryEt(port_idx, vec, true);
     UpdatePROM(vec, fmt::format("port_{:d}", port_idx));
   }
@@ -677,18 +735,65 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   // matrix and first dim0 entries of each vector and the projection uses the values
   // computed for the unchanged basis vectors.
   Kr.conservativeResize(dim_V_new, dim_V_new);
-  ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old);
+  ProjectMatInternal(comm, V, *K, Kr, r, dim_V_old, true);
   if (C)
   {
     Cr.conservativeResize(dim_V_new, dim_V_new);
-    ProjectMatInternal(comm, V, *C, Cr, r, dim_V_old);
+    ProjectMatInternal(comm, V, *C, Cr, r, dim_V_old,
+                       !space_op.GetMaterialOp().HasFloquetFrequencyScaling());
   }
   Mr.conservativeResize(dim_V_new, dim_V_new);
-  ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old);
+  ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old, true);
   if (RHS1.Size())
   {
     RHS1r.conservativeResize(dim_V_new);
     ProjectVecInternal(comm, V, RHS1, RHS1r, dim_V_old);
+  }
+
+  // Update reduced Floquet port projection vectors. For F = Σ g_k v_k v_k^H,
+  // the PROM contribution is Σ g_k (V^T v_k) (v_k^H V) = Σ g_k (V^T v_k) conj(V^T v_k)^T.
+  // Since V is real: V^T v_k is stored as vk_V, conj(V^T v_k) as Vh_cvk.
+  if (dim_V_old == 0)
+  {
+    // First time: enumerate all Floquet modes with for_dtn flag.
+    floquet_reduced.clear();
+    for (const auto &[port_idx, port] : space_op.GetFloquetPortOp())
+    {
+      for (const auto &order : port.GetOrders())
+      {
+        if (!HasFlag(order.use, FloquetModeUse::Dtn))
+        {
+          continue;
+        }
+        for (bool is_te : {true, false})
+        {
+          ReducedFloquetMode rm;
+          rm.port_idx = port_idx;
+          rm.order = &order;
+          rm.is_te = is_te;
+          rm.vk_V.resize(dim_V_new);
+          rm.Vh_cvk.resize(dim_V_new);
+          floquet_reduced.push_back(std::move(rm));
+        }
+      }
+    }
+  }
+  for (auto &rm : floquet_reduced)
+  {
+    // Compute V^T v_k for new basis vectors [dim_V_old, dim_V_new).
+    rm.vk_V.conservativeResize(dim_V_new);
+    rm.Vh_cvk.conservativeResize(dim_V_new);
+    for (int i = dim_V_old; i < dim_V_new; i++)
+    {
+      // V[i] is real. v_k is complex. V[i]^T v_k = (V[i] · v_k_real) + j(V[i] · v_k_imag).
+      double dr = V[i] * rm.order->v[rm.is_te ? 0 : 1].Real();
+      double di = V[i] * rm.order->v[rm.is_te ? 0 : 1].Imag();
+      Mpi::GlobalSum(1, &dr, comm);
+      Mpi::GlobalSum(1, &di, comm);
+      std::complex<double> vt_vi(dr, di);
+      rm.vk_V(i) = vt_vi;               // v_k^T V[i]
+      rm.Vh_cvk(i) = std::conj(vt_vi);  // V[i]^H conj(v_k) = conj(V[i]^T v_k)
+    }
   }
 }
 
@@ -720,7 +825,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   if (has_A2)
   {
     A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
-    ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0);
+    ProjectMatInternal(space_op.GetComm(), V, *A2, Ar, r, 0, true);
   }
   else
   {
@@ -732,6 +837,42 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     Ar += (1i * omega) * Cr;
   }
   Ar += (-omega * omega) * Mr;
+
+  // Add low-rank Floquet port DtN correction: Fᵣ = Σ g_k(ω) (V^T v_k) conj(V^T v_k)^T.
+  // Initialize Floquet ports for this frequency (updates gamma_sq and, when k_F scales
+  // with frequency, recomputes mode vectors with updated polarization).
+  space_op.GetFloquetPortOp().Initialize(omega);
+
+  // When k_F scales with frequency, the mode vectors v_k change (polarization rotation).
+  // Reproject onto the PROM basis V for the current frequency.
+  if (space_op.GetMaterialOp().HasFloquetFrequencyScaling())
+  {
+    MPI_Comm comm = space_op.GetComm();
+    auto dim_V = static_cast<int>(V.size());
+    for (auto &rm : floquet_reduced)
+    {
+      for (int i = 0; i < dim_V; i++)
+      {
+        double dr = V[i] * rm.order->v[rm.is_te ? 0 : 1].Real();
+        double di = V[i] * rm.order->v[rm.is_te ? 0 : 1].Imag();
+        Mpi::GlobalSum(1, &dr, comm);
+        Mpi::GlobalSum(1, &di, comm);
+        std::complex<double> vt_vi(dr, di);
+        rm.vk_V(i) = vt_vi;
+        rm.Vh_cvk(i) = std::conj(vt_vi);
+      }
+    }
+  }
+
+  for (const auto &rm : floquet_reduced)
+  {
+    const auto &port = space_op.GetFloquetPortOp().GetPort(rm.port_idx);
+    auto g = port.ComputeDtNCorrectionCoeff(*rm.order, rm.is_te);
+    if (g != 0.0)
+    {
+      Ar.noalias() += g * rm.vk_V * rm.Vh_cvk.transpose();
+    }
+  }
 
   if (has_RHS2)
   {
@@ -792,8 +933,14 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   // 1.0, since for nearly degenerate vectors orth_R(j,j) could be tiny, which may lead to
   // poor condition of the circuit matrices.
   //
-  // Lumped ports are real, at the beginning and in order
-  for (long j = 0; j < space_op.GetLumpedPortOp().Size(); j++)
+  // Lumped ports are real, at the beginning and in order. Only ports with
+  // include_in_synthesis contribute a basis row, so the number of leading port-mode rows
+  // is NumSynthesisPortModes(), NOT the total number of lumped ports. Iterating to the
+  // total port count here would over-run v_conc whenever a port is excluded.
+  const long n_port_modes = static_cast<long>(NumSynthesisPortModes());
+  MFEM_ASSERT(n_port_modes <= GetReducedDimension(),
+              "More lumped port modes than PROM basis vectors; basis is inconsistent!");
+  for (long j = 0; j < n_port_modes; j++)
   {
     // For the ideal port defined in LumpedPortOp, this should be: sqrt(\vert e_t \vert^2)
     // = sqrt(port.GetExcitationFieldEtNormSqWithUnityZR()).

@@ -481,35 +481,43 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   }
 
   // Print some mesh information.
-  mfem::Vector bbmin, bbmax;
-  GetAxisAlignedBoundingBox(*mesh[0], bbmin, bbmax);
-  const double Lc = iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
-  Mpi::Print(mesh[0]->GetComm(), "\nMesh curvature order: {}\nMesh bounding box:\n",
-             mesh[0]->GetNodes()
-                 ? std::to_string(mesh[0]->GetNodes()->FESpace()->GetMaxElementOrder())
-                 : "None");
-  if (mesh[0]->SpaceDimension() == 3)
-  {
-    Mpi::Print(mesh[0]->GetComm(),
-               " (Xmin, Ymin, Zmin) = ({:+.3e}, {:+.3e}, {:+.3e}) m\n"
-               " (Xmax, Ymax, Zmax) = ({:+.3e}, {:+.3e}, {:+.3e}) m\n",
-               bbmin[0] * Lc, bbmin[1] * Lc, bbmin[2] * Lc, bbmax[0] * Lc, bbmax[1] * Lc,
-               bbmax[2] * Lc);
-  }
-  else
-  {
-    Mpi::Print(mesh[0]->GetComm(),
-               " (Xmin, Ymin) = ({:+.3e}, {:+.3e}) m\n"
-               " (Xmax, Ymax) = ({:+.3e}, {:+.3e}) m\n",
-               bbmin[0] * Lc, bbmin[1] * Lc, bbmax[0] * Lc, bbmax[1] * Lc);
-  }
-  Mpi::Print(mesh[0]->GetComm(), "\n{}", (mesh.size() > 1) ? "Coarse " : "");
-  mesh[0]->PrintInfo();
+  PrintMeshInfo(*mesh[0], iodata, /*full=*/true, (mesh.size() > 1) ? "Coarse " : "");
   if (mesh.size() > 1)
   {
-    Mpi::Print(mesh[0]->GetComm(), "\nRefined ");
-    mesh.back()->PrintInfo();
+    PrintMeshInfo(*mesh.back(), iodata, /*full=*/false, "Refined ");
   }
+}
+
+void PrintMeshInfo(mfem::ParMesh &mesh, const IoData &iodata, bool full,
+                   const std::string &prefix)
+{
+  if (full)
+  {
+    mfem::Vector bbmin, bbmax;
+    GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
+    const double Lc = iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+    Mpi::Print(mesh.GetComm(), "\nMesh curvature order: {}\nMesh bounding box:\n",
+               mesh.GetNodes()
+                   ? std::to_string(mesh.GetNodes()->FESpace()->GetMaxElementOrder())
+                   : "None");
+    if (mesh.SpaceDimension() == 3)
+    {
+      Mpi::Print(mesh.GetComm(),
+                 " (Xmin, Ymin, Zmin) = ({:+.3e}, {:+.3e}, {:+.3e}) m\n"
+                 " (Xmax, Ymax, Zmax) = ({:+.3e}, {:+.3e}, {:+.3e}) m\n",
+                 bbmin[0] * Lc, bbmin[1] * Lc, bbmin[2] * Lc, bbmax[0] * Lc, bbmax[1] * Lc,
+                 bbmax[2] * Lc);
+    }
+    else
+    {
+      Mpi::Print(mesh.GetComm(),
+                 " (Xmin, Ymin) = ({:+.3e}, {:+.3e}) m\n"
+                 " (Xmax, Ymax) = ({:+.3e}, {:+.3e}) m\n",
+                 bbmin[0] * Lc, bbmin[1] * Lc, bbmax[0] * Lc, bbmax[1] * Lc);
+    }
+  }
+  Mpi::Print(mesh.GetComm(), "\n{}", prefix);
+  mesh.PrintInfo();
 }
 
 mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh)
@@ -886,6 +894,17 @@ bool CheckRefinementFlags(const mfem::Mesh &mesh)
     Mpi::GlobalAnd(1, &marked, pmesh->GetComm());
   }
   return marked;
+}
+
+int GetMaxBdrAttribute(const mfem::ParMesh &mesh)
+{
+  int bdr_attr_max = 0;
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    bdr_attr_max = std::max(bdr_attr_max, mesh.GetBdrAttribute(be));
+  }
+  Mpi::GlobalMax(1, &bdr_attr_max, mesh.GetComm());
+  return bdr_attr_max;
 }
 
 void AttrToMarker(int max_attr, const int *attr_list, int attr_list_size,

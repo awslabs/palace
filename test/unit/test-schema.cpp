@@ -607,14 +607,20 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
   {
     json port = {{"Index", "not a number"}, {"Attributes", {1}}};
     std::string err = ValidateConfig(port, "LumpedPort");
-    CHECK(err == "At [\"Index\"]: unexpected instance type (got string)\n");
+    // LumpedPort.items is a oneOf over named variants, so the validator
+    // reports a per-branch failure plus the oneOf wrapper. Check that the
+    // underlying message is present rather than asserting an exact string.
+    CHECK(err.find("[\"Index\"]") != std::string::npos);
+    CHECK(err.find("unexpected instance type") != std::string::npos);
+    CHECK(err.find("(got string)") != std::string::npos);
   }
 
   SECTION("Value below minimum")
   {
     json port = {{"Index", -1}, {"Attributes", {1}}};
     std::string err = ValidateConfig(port, "LumpedPort");
-    CHECK(err == "At [\"Index\"]: instance is below or equals minimum of 0\n");
+    CHECK(err.find("[\"Index\"]") != std::string::npos);
+    CHECK(err.find("below or equals minimum of 0") != std::string::npos);
   }
 
   SECTION("Missing required field shows oneOf options")

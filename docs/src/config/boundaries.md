@@ -42,6 +42,10 @@ SPDX-License-Identifier: Apache-2.0
     {
         ...
     },
+    "FloquetPort":
+    [
+        ...
+    ],
     "SurfaceCurrent":
     [
         ...
@@ -120,6 +124,15 @@ frequency domain driven and eigenmode simulation types.
 wave port boundary mode analysis, overriding any other boundary condition assigned to those
 attributes. Only relevant when wave port boundaries are specified under
 [`config["Boundaries"]["WavePort"]`](#boundaries%5B%22WavePort%22%5D).
+
+`"FloquetPort"` :  Array of objects for configuring Floquet port boundary conditions for
+periodic structures. Floquet ports provide absorbing boundary conditions for diffraction
+gratings and other periodic electromagnetic devices, enabling the computation of
+diffraction efficiencies (S-parameters) for multiple propagating orders. Floquet port
+boundaries are only available for frequency domain driven simulations and **require periodic
+boundary conditions** to be configured under
+[`config["Boundaries"]["Periodic"]`](#boundaries%5B%22Periodic%22%5D) with exactly two
+`"BoundaryPairs"` (periodicity in two transverse directions).
 
 `"SurfaceCurrent"` :  Array of objects for configuring surface current boundary conditions.
 This boundary prescribes a unit source surface current excitation on the given boundary in
@@ -228,7 +241,7 @@ farfield absorbing boundary conditions.
 
 `"Order" [1]` :  Specify a first- or second-order approximation for the farfield absorbing
 boundary condition. Second-order absorbing boundary conditions are only available for the
-frequency domain driven simulation type.
+frequency domain simulations.
 
 ## `boundaries["Conductivity"]`
 
@@ -271,6 +284,7 @@ accounts for nonzero metal thickness.
         "CoordinateSystem": <string>,
         "Excitation": <bool>,
         "Active": <bool>,
+        "IncludeInSynthesis": <bool>,
         "R": <float>,
         "L": <float>,
         "C": <float>,
@@ -319,6 +333,19 @@ or transient simulation types. Can be specified either as a bool or as a non-neg
 
 `"Active" [true]` :  Turns on or off damping boundary condition for this lumped port
 boundary for driven or transient simulation types.
+
+`"IncludeInSynthesis" [true]` :  Controls whether this lumped port contributes a port-mode
+basis vector to the reduced-order model when adaptive driven circuit synthesis is enabled
+([`config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]`](../config/solver.md#solver%5B%22Driven%22%5D)).
+The boundary condition itself (the `R`/`L`/`C` or `Rs`/`Ls`/`Cs` termination) is always
+enforced; only the inclusion of the port mode in the synthesized circuit matrices is
+affected. Set to `false` on passive terminations whose row/column in the synthesized
+``L^{-1}``, ``C``, ``R^{-1}`` matrices is not needed — for example, peripheral 50 Ohm
+launcher pads kept in the simulation for correct physics but not measured. Setting this to
+`false` reduces the size of the PROM basis (and the corresponding storage and
+orthogonalization cost) by one vector per excluded port. Excited ports must always be
+included; the configuration parser will reject a port with `"Excitation" > 0` and
+`"IncludeInSynthesis": false`.
 
 `"R" [0.0]` :  Circuit resistance used for computing this lumped port boundary's impedance,
 ``\Omega``. This option should only be used along with the corresponding `"L"` and `"C"`
@@ -421,13 +448,35 @@ than 1, the solver uses a default subspace dimension.
 `"Verbose" [0]` :  Specifies the verbosity level to be used in the linear and eigensolver
 for the wave port problem.
 
-`"VoltagePath" [None]` :  Array of coordinate points defining an open path for computing a
-voltage line integral on the port face. Each element is a floating point array of length
-equal to the spatial dimension. When specified, enables voltage and characteristic impedance
-postprocessing for the wave port. Specified in mesh length units.
+`"VoltagePath" [None]` :  Open path of coordinate points across the port face,
+specified in mesh length units. Each entry is a floating point array of length equal
+to the spatial dimension. The path is **directed from the signal (high-potential)
+terminal to the ground (low-potential) terminal**, matching the lumped-port `"Direction"`
+convention. When specified, this:
 
-`"NSamples" [100]` :  Number of uniformly spaced sample points for the
-coordinate-based voltage line integral (using GSLIB interpolation).
+ 1. Pins the wave-port mode polarity so that ``\int E_{\text{mode}} \cdot dl`` along the
+    path is real-positive (required for consistent S-parameter signs when mixing wave
+    and lumped ports in a driven simulation; without it, cross-type S-parameters may be
+    ``180^\circ`` out of phase).
+ 2. Enables voltage and characteristic impedance ``Z_{PV}`` postprocessing for the wave
+    port.
+
+For example, in a coaxial wave port the first point is on the inner conductor (signal)
+and the last point is on the outer conductor (ground); for a CPW port, the first point
+is on the center trace and the last point in the gap. Uses GSLIB interpolation.
+
+`"NSamples" [100]` :  Number of uniformly spaced sample points for the coordinate-based
+voltage line integral.
+
+`"PolarityAttributes" [None]` :  Pair of parent-mesh boundary attributes
+``[\text{signal}, \text{ground}]`` (signal/high-potential terminal first, ground/low-
+potential terminal second). Same role as the polarity component of `"VoltagePath"`:
+the mode is flipped so that the modal E-field points from the signal attribute toward
+the ground attribute. Ignored if `"VoltagePath"` is also specified.
+
+Lightweight alternative to `"VoltagePath"` when only polarity is needed (no
+``Z_{PV}``, no GSLIB). Both attributes must be present as distinct boundary attributes
+in the input mesh, with edges that lie on the port face.
 
 ## `boundaries["WavePortPEC"]`
 
@@ -445,6 +494,62 @@ with
 [`config["Boundaries"]["PEC"]["Attributes"]`](#boundaries%5B%22PEC%22%5D). This overrides any
 impedance, absorbing, or conductivity boundary condition that may be assigned to the same
 attributes for the purpose of the 2D wave port boundary mode problem.
+
+## `boundaries["FloquetPort"]`
+
+```json
+"FloquetPort":
+[
+    {
+        "Index": <int>,
+        "Attributes": [<int array>],
+        "Excitation": <bool>,
+        "IncidentPolarization": <string>,
+        "MaxOrder": <int>
+    },
+    ...
+]
+```
+
+with
+
+`"Index" [None]` :  Index of this Floquet port, used in postprocessing output files.
+
+`"Attributes" [None]` :  Integer array of mesh boundary attributes for this Floquet port
+boundary. The port face must be planar and lie on the true boundary of the computational
+domain (one-sided, like wave ports). The medium adjacent to the port must be homogeneous
+and isotropic.
+
+!!! note "Periodic boundary conditions required"
+
+    Floquet ports require periodic boundary conditions
+    ([`config["Boundaries"]["Periodic"]`](#boundaries%5B%22Periodic%22%5D)) with exactly
+    two `"BoundaryPairs"` defining periodicity in the two transverse directions. The
+    `"FloquetWaveVector"` in the periodic configuration determines the angle of incidence:
+    zero for normal incidence, nonzero for oblique. The wave vector is specified in radians
+    per mesh length unit.
+
+`"Excitation" [false]` :  Turns on or off port excitation for this Floquet port boundary.
+When excited, a plane wave in the specular (0,0) diffraction order is injected with unit
+power.
+
+`"IncidentPolarization" ["TE"]` :  Polarization of the incident plane wave. Available
+options are:
+
+  - `"TE"` :  Transverse electric (s-polarization). Electric field perpendicular to the
+    plane of incidence.
+  - `"TM"` :  Transverse magnetic (p-polarization). Electric field in the plane of
+    incidence.
+  - `"RHC"` :  Right-hand circular polarization. Equal superposition of TE and TM with
+    90° phase shift: ``\mathbf{E} = (\hat{e}_\text{TE} + j\hat{e}_\text{TM})/\sqrt{2}``.
+  - `"LHC"` :  Left-hand circular polarization. Equal superposition of TE and TM with
+    -90° phase shift: ``\mathbf{E} = (\hat{e}_\text{TE} - j\hat{e}_\text{TM})/\sqrt{2}``.
+
+`"MaxOrder" [-1]` :  Maximum diffraction order index to include. With `MaxOrder = M`, all
+orders ``(m, n)`` with ``|m| \leq M`` and ``|n| \leq M`` are included, each with both TE
+and TM polarizations. A value of `-1` (default) enables automatic selection. A value of `0`
+includes only the specular (0,0) order. Higher values are needed when the periodic cell
+supports propagating higher-order diffraction.
 
 ## `boundaries["SurfaceCurrent"]`
 
@@ -563,6 +668,7 @@ boundary.
 "Periodic":
 {
     "FloquetWaveVector": [<float array>],
+    "FloquetReferenceFrequency": <float>,
     "BoundaryPairs":
     [
         {
@@ -595,7 +701,28 @@ to the receiver attribute in mesh units. If neither `"Translation"` or `"AffineT
 specified, the transformation between donor and receiver boundaries is automatically detected.
 
 `"FloquetWaveVector" [None]` :  Optional floating point array defining the phase delay between the
-periodic boundaries in the X/Y/Z directions in radians per mesh unit.
+periodic boundaries in the X/Y/Z directions in radians per mesh unit. When used with
+`"FloquetReferenceFrequency"`, it is defined at the reference frequency.
+
+For a Floquet port, this is the tangential component of the incident wave vector. For example,
+for a port normal to z with periodicity in x and y, the `"FloquetWaveVector"`,
+``\bm{k}_{F,\mathrm{ref}}``, can be computed from the incidence and azimuthal angles as
+
+```math
+k_{F,\mathrm{ref},x} = k_\mathrm{ref}\sin\theta\cos\phi,\qquad
+k_{F,\mathrm{ref},y} = k_\mathrm{ref}\sin\theta\sin\phi,
+```
+
+where ``k_\mathrm{ref} = \frac{2\pi f_\mathrm{ref}}{c_0}\sqrt{\mu_r\varepsilon_r},``, where
+``f_\mathrm{ref}`` is the `"FloquetReferenceFrequency"`, ``\theta`` is the incidence angle away
+from the port normal, and ``\phi`` is the azimuthal direction in the periodic plane.
+
+`"FloquetReferenceFrequency" [None]` :  Optional frequency in GHz at which the
+`"FloquetWaveVector"` is defined. When specified, the Bloch wave vector scales linearly with
+frequency during a driven simulation frequency sweep,
+``\bm{k}_F(f) = \bm{k}_{F,\mathrm{ref}} f / f_\mathrm{ref}``, preserving the incidence
+angles across the sweep. When not specified (default), the wave vector is held constant
+across all frequencies. Only supported for driven simulations.
 
 ## `boundaries["Postprocessing"]["SurfaceFlux"]`
 

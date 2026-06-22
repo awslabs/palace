@@ -47,11 +47,28 @@ public:
 
   explicit IoData(const Units &units);
 
-  // Take parsed json and override options defaults.
-  explicit IoData(nlohmann::json &&config, bool print = false);
+  // Construct from a pre-parsed and validated JSON config object.
+  IoData(const nlohmann::json &config, bool print);
 
-  // Parse command line arguments and override options defaults.
-  explicit IoData(const char *filename, bool print);
+  // Parse configuration file, validate, and construct IoData.
+  IoData(const char *filename, bool print);
+
+  // Parse and validate a configuration file, returning the JSON object.
+  static nlohmann::json ParseAndValidate(const char *filename);
+
+  // Return the user's config with any entries that were absent filled in from the
+  // resolved IoData. User-provided values pass through untouched; only missing keys
+  // are added. Call after CheckConfiguration() so the filled values are concrete.
+  static nlohmann::json ConcretizeDefaults(const IoData &iodata, nlohmann::json config);
+
+  // Concretize defaults from `raw_config` and write the result to
+  // `<problem.output>/<input_stem>_resolved.json` so users have a self-contained record
+  // of every Palace decision. The `_resolved` suffix (derived from `input_config_path`)
+  // ensures the sidecar never overwrites the user's input config, even when `"Output"`
+  // resolves to the input's own directory. The caller is responsible for ensuring this is
+  // invoked on a single process (e.g. MPI rank 0). Aborts on filesystem failure.
+  void WriteResolvedConfig(const nlohmann::json &raw_config,
+                           const std::string &input_config_path) const;
 
   // Nondimensionalize input values and mesh coordinates. Requires model.Lc > 0 (caller
   // populates it from the config or via mesh::ComputeReferenceLength). `mesh` may be

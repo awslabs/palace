@@ -24,6 +24,7 @@ namespace palace
 
 class IoData;
 class SpaceOperator;
+struct FloquetOrder;
 
 namespace config
 {
@@ -162,10 +163,12 @@ protected:
   int excitation_idx_cache = 0;
 
   // HDM system matrices and excitation:
-  // - System matrix is: A(ω) = K + iω C - ω² M + A2(ω).
+  // - System matrix is: A(ω) = K + iω C - ω² M + A2(ω) + F(ω).
   // - Excitation / drive: = iω RHS1 + RHS2(ω).
   // - Vector r is internal vector workspace of size RHS
-  // - The non-quadratic in ω operators A2(ω) and RHS2(ω) are built on fly in SolveHDM.
+  // - The non-quadratic in ω operators A2(ω), F(ω), and RHS2(ω) are built on the fly.
+  // - A2 stores the sparse part only (for PROM projection); the full frequency-dependent
+  //   operator (A2 + F) is built locally in SolveHDM via GetExtraSystemOperator.
   // - Need to recompute RHS1 when excitation index changes (cf excitation_idx_cache).
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   ComplexVector RHS1, RHS2, r;
@@ -182,6 +185,19 @@ protected:
   // order basis defined below.
   Eigen::MatrixXcd Kr, Mr, Cr;  // Extend during UpdatePROM as modes are added
   Eigen::VectorXcd RHS1r;       // Need to recompute drive vector on excitation change.
+
+  // Reduced Floquet port projection vectors for F(ω) = Σ g_k(ω) conj(v_k) v_k^T.
+  // Each entry stores { v_k^T V, V^H conj(v_k) } for efficient rank-1 PROM updates.
+  // The frequency-dependent scalar g_k(ω) is computed during SolvePROM.
+  struct ReducedFloquetMode
+  {
+    int port_idx;
+    const FloquetOrder *order;  // Not owned — points into FloquetPortData::orders
+    bool is_te;
+    Eigen::VectorXcd vk_V;    // v_k^T V (row vector, size n_basis)
+    Eigen::VectorXcd Vh_cvk;  // V^H conj(v_k) (column vector, size n_basis)
+  };
+  std::vector<ReducedFloquetMode> floquet_reduced;
 
   // Frequency dependant PROM matrix Ar and RHSr are assembled and used only during
   // SolvePROM. Define them here so memory allocation can be reused in "online" evaluation.
@@ -206,6 +222,15 @@ protected:
 
   // MRIs: one for each excitation index. Only used to pick new frequency sample point.
   std::map<int, MinimalRationalInterpolation> mri;
+
+  // Number of leading PROM basis rows occupied by lumped port modes. Each lumped port
+  // flagged with IncludeInSynthesis contributes exactly one real basis vector, added
+  // port-first and in order by AddLumpedPortModesForSynthesis. Ports excluded via
+  // IncludeInSynthesis = false contribute nothing. This count is the invariant that the
+  // port-port block scaling in CalculateNormalizedPROMMatrices and the basis reservation
+  // in the constructor both rely on; iterating to the total port count instead would
+  // over-run the per-port scaling vector whenever a port is excluded.
+  std::size_t NumSynthesisPortModes() const;
 
   // Helper function that normalizes PROM matrices so that they correspond to proper
   // admittance matrices on the ports. Also does unit conversion to physical (input) units.

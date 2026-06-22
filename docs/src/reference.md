@@ -268,6 +268,126 @@ for each port:
 
 For more information on the implementation of numeric wave ports, see [[3]](#References).
 
+## Adaptive driven solver and reduced-order modeling
+
+The driven solver assembles a frequency-dependent linear system of the form
+
+```math
+\bm{A}(\omega)\bm{x} =
+\left[\bm{K} + i\omega\bm{C} - \omega^2\bm{M} + \bm{A}_2(\omega)\right]\bm{x}
+= i\omega\bm{b} + \bm{b}_2(\omega),
+```
+
+where ``\bm{x}`` contains the finite-element electric-field degrees of freedom.
+The matrices ``\bm{K}``, ``\bm{M}``, and ``\bm{C}`` represent the discretized curl-curl,
+displacement, and dissipative terms, respectively. The additional terms
+``\bm{A}_2(\omega)`` and ``\bm{b}_2(\omega)`` account for boundary conditions that are not
+quadratic in frequency, such as numeric wave ports or far-field boundaries.
+
+The adaptive driven solver constructs a projection-based reduced-order model (PROM) for this
+system. It seeks a real basis ``\bm{Q}\in\mathbb{R}^{N\times n}``, with ``n \ll N``, and
+projects the high-dimensional system onto that basis:
+
+```math
+\left[\bm{K}_r + i\omega\bm{C}_r - \omega^2\bm{M}_r\right]\bm{x}_r
+= i\omega\bm{b}_r,
+```
+
+with, for example, ``\bm{K}_r = \bm{Q}^T\bm{K}\bm{Q}`` and
+``\bm{b}_r = \bm{Q}^T\bm{b}``. Once the reduced system is solved, the high-dimensional field
+is recovered as ``\bm{x}\approx\bm{Q}\bm{x}_r``. The expensive part is the offline
+construction of ``\bm{Q}``; the online evaluation of the reduced system is cheap for many
+output frequencies. This follows the standard projection-based model-order-reduction
+framework [[7]](#References), [[8]](#References).
+
+The PROM basis is built from full high-dimensional model (HDM) solutions at selected
+internal sample frequencies. For each complex HDM solution ``\bm{x}^*``, *Palace* adds the
+orthogonalized real and imaginary components, ``\mathrm{Re}(\bm{x}^*)`` and
+``\mathrm{Im}(\bm{x}^*)``, as separate real basis vectors. The Gram-Schmidt
+orthogonalization variant is controlled by
+[`config["Solver"]["Driven"]["AdaptiveGSOrthogonalization"]`](config/solver.md#solver%5B%22Driven%22%5D),
+though most users should not need to change it.
+
+### Internal sample selection
+
+The remaining question is how to choose the internal sample frequencies. *Palace* uses a
+greedy sampling strategy based on minimal rational interpolation, following Pradovera
+[[9]](#References), [[10]](#References). For a linearized state ``\bm{u}(\omega)``, the
+interpolation has the barycentric form
+
+```math
+\bm{u}(\omega) =
+\frac{\sum_i w_i \bm{u}(\omega_i) / (\omega - \omega_i)}
+     {\sum_i w_i / (\omega - \omega_i)},
+```
+
+where ``\omega_i`` are already-sampled frequencies and ``w_i`` are fitted weights. For the
+quadratic ``KCM`` part of the driven system, *Palace* uses the linearized state
+``\bm{u}^T = (\bm{x}^T, i\omega\bm{x}^T)``. This is analogous to rewriting a second-order
+time system as a first-order system with twice as many state variables.
+
+Each excitation pattern gets its own rational interpolation for selecting future samples.
+The initial samples are the frequency-domain endpoints and any user-requested samples with
+[`"AddToPROM": true`](config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D). After
+that, the interpolation suggests the next sample from an error indicator that can be
+evaluated without another HDM solve. The selected HDM solution is then added to the shared
+PROM basis.
+
+### Convergence criterion
+
+At a proposed sample frequency ``f^*``, *Palace* compares the HDM solution against the PROM
+solution using
+
+```math
+\varepsilon =
+\frac{\|\bm{x}_\mathrm{HDM}(f^*) - \bm{x}_\mathrm{ROM}(f^*)\|}
+     {\|\bm{x}_\mathrm{HDM}(f^*)\|}.
+```
+
+Convergence is declared when this quantity is below
+[`config["Solver"]["Driven"]["AdaptiveTol"]`](config/solver.md#solver%5B%22Driven%22%5D) for
+[`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](config/solver.md#solver%5B%22Driven%22%5D)
+consecutive samples. The norm here is the finite-element coefficient-space L2 norm. It is
+related to, but not the same as, a physical energy norm such as
+``\int \bm{E}^*(\bm{r})\cdot\bm{E}(\bm{r})\,d^3r``. Consequently, the adaptive tolerance is
+not a strict relative-error bound for every derived quantity, such as S-parameters or domain
+energies.
+
+The indicator is also not a mathematical certificate of the maximum error over the entire
+frequency interval. The convergence memory mitigates accidental early termination when one
+suggested sample happens to fall below tolerance before the broader approximation has fully
+settled.
+
+### Multi-excitation simulations
+
+For multi-excitation driven simulations, *Palace* constructs a separate rational
+interpolation for each excitation, but the PROM basis ``\bm{Q}`` is shared across all
+excitations. Samples selected for earlier excitations can therefore improve the basis used
+for later excitations. `"AdaptiveMaxSamples"` is interpreted per excitation.
+
+### Non-quadratic boundary terms
+
+When non-quadratic frequency terms ``\bm{A}_2(\omega)`` are present, the HDM samples still
+include the full operator and the projected reduced problem uses the projected
+``\bm{A}_{2,r}(\omega)`` during online evaluation. This is more expensive than the purely
+quadratic case because the projected non-quadratic contribution has to be updated at output
+frequencies.
+
+The sample-selection interpolation is based on the quadratic linearization and does not
+fully represent arbitrary non-quadratic frequency dependence. If the non-quadratic
+contribution is large compared with the ``KCM`` part of the operator, the selected samples
+can be less effective and the adaptive solve may require tighter tolerances, more samples,
+or additional validation against a uniform sweep.
+
+### Finite-precision effects
+
+The rational interpolation assumes that the sampled HDM solutions are accurate. In practice,
+they inherit the error of the linear solver. If
+[`config["Solver"]["Linear"]["Tol"]`](config/solver.md#solver%5B%22Linear%22%5D) is too close
+to `"AdaptiveTol"`, the interpolation can become ill-conditioned and *Palace* may warn
+about rank-deficient minimal rational interpolation matrices. In that case, tighten the
+linear solver tolerance, loosen the adaptive tolerance, or validate with a uniform solve.
+
 ## Other boundary conditions
 
 The first-order absorbing boundary condition, also referred to as a scattering boundary
@@ -609,4 +729,16 @@ waveguide resonators, _Applied Physics Letters_ 99, 113513 (2011).\
 [5] S. Nicaise, On Zienkiewicz-Zhu error estimators for Maxwell’s equations, _Comptes Rendus
 Mathematique_ 340 (2005) 697-702.\
 [6] J. A, Stratton and L. J. Chu, Diffraction theory of Electromagnetic
-Waves, _Physical Review_, 56, 1, (1939), 99-107.
+Waves, _Physical Review_, 56, 1, (1939), 99-107.\
+[7] P. Benner, D. C. Sorensen, and V. Mehrmann, Eds., _Dimension Reduction of
+Large-Scale Systems_, Lecture Notes in Computational Science and Engineering,
+vol. 45, Springer, 2005. doi: [10.1007/3-540-27909-1](https://doi.org/10.1007/3-540-27909-1).\
+[8] A. C. Antoulas, _Approximation of Large-Scale Dynamical Systems_, SIAM,
+2005. doi: [10.1137/1.9780898718713](https://doi.org/10.1137/1.9780898718713).\
+[9] D. Pradovera, Toward a certified greedy Loewner framework with minimal
+sampling, _Advances in Computational Mathematics_ 49, 92 (2023). doi:
+[10.1007/s10444-023-10091-7](https://doi.org/10.1007/s10444-023-10091-7).\
+[10] D. Pradovera, Interpolatory rational model order reduction of parametric
+problems lacking uniform inf-sup stability, _SIAM Journal on Numerical
+Analysis_ 58 (2020) 2265-2293. doi:
+[10.1137/19M1269695](https://doi.org/10.1137/19M1269695).

@@ -13,163 +13,48 @@
 #include <nlohmann/json.hpp>
 
 #include "units.hpp"
+#include "utils/enum_string.hpp"
 
-// This is similar to NLOHMANN_JSON_SERIALIZE_ENUM, but results in an error if an enum
-// value corresponding to the string cannot be found. Also adds an overload for stream
-// printing enum values.
-#define PALACE_JSON_SERIALIZE_ENUM(ENUM_TYPE, ...)                                  \
-  template <typename BasicJsonType>                                                 \
-  inline void to_json(BasicJsonType &j, const ENUM_TYPE &e)                         \
-  {                                                                                 \
-    static_assert(std::is_enum<ENUM_TYPE>::value, #ENUM_TYPE " must be an enum!");  \
-    static const std::pair<ENUM_TYPE, BasicJsonType> m[] = __VA_ARGS__;             \
-    auto it = std::find_if(std::begin(m), std::end(m),                              \
-                           [e](const std::pair<ENUM_TYPE, BasicJsonType> &ej_pair)  \
-                           { return ej_pair.first == e; });                         \
-    MFEM_VERIFY(it != std::end(m),                                                  \
-                "Invalid value for " << #ENUM_TYPE " given when parsing to JSON!"); \
-    j = it->second;                                                                 \
-  }                                                                                 \
-  template <typename BasicJsonType>                                                 \
-  inline void from_json(const BasicJsonType &j, ENUM_TYPE &e)                       \
-  {                                                                                 \
-    static_assert(std::is_enum<ENUM_TYPE>::value, #ENUM_TYPE " must be an enum!");  \
-    static const std::pair<ENUM_TYPE, BasicJsonType> m[] = __VA_ARGS__;             \
-    auto it = std::find_if(std::begin(m), std::end(m),                              \
-                           [j](const std::pair<ENUM_TYPE, BasicJsonType> &ej_pair)  \
-                           { return ej_pair.second == j; });                        \
-    MFEM_VERIFY(it != std::end(m),                                                  \
-                "Invalid value (" << j << ") for "                                  \
-                                  << #ENUM_TYPE                                     \
-                    " given in the configuration file when parsing from JSON!");    \
-    e = it->first;                                                                  \
-  }                                                                                 \
-  std::ostream &operator<<(std::ostream &os, const ENUM_TYPE &e)                    \
-  {                                                                                 \
-    static const std::pair<ENUM_TYPE, const char *> m[] = __VA_ARGS__;              \
-    os << std::find_if(std::begin(m), std::end(m),                                  \
-                       [e](const std::pair<ENUM_TYPE, const char *> &ej_pair)       \
-                       { return ej_pair.first == e; })                              \
-              ->second;                                                             \
-    return os;                                                                      \
+// This is similar to NLOHMANN_JSON_SERIALIZE_ENUM, but delegates to the single
+// ToString/FromString mapping defined in enum_string.cpp (which also raises a descriptive
+// error if the value/string cannot be found), so the enum<->string table lives in exactly
+// one place.
+#define PALACE_JSON_SERIALIZE_ENUM(ENUM_TYPE)                 \
+  template <typename BasicJsonType>                           \
+  inline void to_json(BasicJsonType &j, const ENUM_TYPE &e)   \
+  {                                                           \
+    j = ToString(e);                                          \
+  }                                                           \
+  template <typename BasicJsonType>                           \
+  inline void from_json(const BasicJsonType &j, ENUM_TYPE &e) \
+  {                                                           \
+    FromString(j.template get<std::string>(), e);             \
   }
 
 using json = nlohmann::json;
 namespace palace
 {
-// Helpers for converting enums specified in labels.hpp. Must be done in palace scope rather
-// than palace::config scope to ensure argument-dependent-lookup succeeds in json.
-
-// Helper for converting string keys to enum for CoordinateSystem.
-PALACE_JSON_SERIALIZE_ENUM(CoordinateSystem,
-                           {{CoordinateSystem::CARTESIAN, "Cartesian"},
-                            {CoordinateSystem::CYLINDRICAL, "Cylindrical"}})
-
-// Helper for converting string keys to enum for ProblemType.
-PALACE_JSON_SERIALIZE_ENUM(ProblemType, {{ProblemType::DRIVEN, "Driven"},
-                                         {ProblemType::EIGENMODE, "Eigenmode"},
-                                         {ProblemType::ELECTROSTATIC, "Electrostatic"},
-                                         {ProblemType::MAGNETOSTATIC, "Magnetostatic"},
-                                         {ProblemType::TRANSIENT, "Transient"},
-                                         {ProblemType::BOUNDARYMODE, "BoundaryMode"}})
-
-// Helper for converting string keys to enum for EigenSolverBackend.
-PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend, {{EigenSolverBackend::DEFAULT, "Default"},
-                                                {EigenSolverBackend::SLEPC, "SLEPc"},
-                                                {EigenSolverBackend::ARPACK, "ARPACK"}})
-
-// Helper for converting string keys to enum for EigenSolverBackend.
-PALACE_JSON_SERIALIZE_ENUM(NonlinearEigenSolver, {{NonlinearEigenSolver::HYBRID, "Hybrid"},
-                                                  {NonlinearEigenSolver::SLP, "SLP"}})
-
-// Helper for converting string keys to enum for SurfaceFlux.
-PALACE_JSON_SERIALIZE_ENUM(SurfaceFlux, {{SurfaceFlux::ELECTRIC, "Electric"},
-                                         {SurfaceFlux::MAGNETIC, "Magnetic"},
-                                         {SurfaceFlux::POWER, "Power"}})
-
-// Helper for converting string keys to enum for InterfaceDielectric.
-PALACE_JSON_SERIALIZE_ENUM(InterfaceDielectric, {{InterfaceDielectric::DEFAULT, "Default"},
-                                                 {InterfaceDielectric::MA, "MA"},
-                                                 {InterfaceDielectric::MS, "MS"},
-                                                 {InterfaceDielectric::SA, "SA"}})
-
-// Helper for converting string keys to enum for FrequencySampling.
-PALACE_JSON_SERIALIZE_ENUM(FrequencySampling, {{FrequencySampling::DEFAULT, "Default"},
-                                               {FrequencySampling::LINEAR, "Linear"},
-                                               {FrequencySampling::LOG, "Log"},
-                                               {FrequencySampling::POINT, "Point"}})
-
-// Helper for converting string keys to enum for TimeSteppingScheme and Excitation.
-PALACE_JSON_SERIALIZE_ENUM(TimeSteppingScheme,
-                           {{TimeSteppingScheme::DEFAULT, "Default"},
-                            {TimeSteppingScheme::GEN_ALPHA, "GeneralizedAlpha"},
-                            {TimeSteppingScheme::RUNGE_KUTTA, "RungeKutta"},
-                            {TimeSteppingScheme::CVODE, "CVODE"},
-                            {TimeSteppingScheme::ARKODE, "ARKODE"}})
-PALACE_JSON_SERIALIZE_ENUM(Excitation,
-                           {{Excitation::SINUSOIDAL, "Sinusoidal"},
-                            {Excitation::GAUSSIAN, "Gaussian"},
-                            {Excitation::DIFF_GAUSSIAN, "DifferentiatedGaussian"},
-                            {Excitation::MOD_GAUSSIAN, "ModulatedGaussian"},
-                            {Excitation::RAMP_STEP, "Ramp"},
-                            {Excitation::SMOOTH_STEP, "SmoothStep"}})
-
-// Helper for converting string keys to enum for LinearSolver, KrylovSolver, and
-// MultigridCoarsening
-PALACE_JSON_SERIALIZE_ENUM(LinearSolver, {{LinearSolver::DEFAULT, "Default"},
-                                          {LinearSolver::AMS, "AMS"},
-                                          {LinearSolver::BOOMER_AMG, "BoomerAMG"},
-                                          {LinearSolver::MUMPS, "MUMPS"},
-                                          {LinearSolver::SUPERLU, "SuperLU"},
-                                          {LinearSolver::STRUMPACK, "STRUMPACK"},
-                                          {LinearSolver::STRUMPACK_MP, "STRUMPACK-MP"},
-                                          {LinearSolver::JACOBI, "Jacobi"}})
-PALACE_JSON_SERIALIZE_ENUM(KrylovSolver, {{KrylovSolver::DEFAULT, "Default"},
-                                          {KrylovSolver::CG, "CG"},
-                                          {KrylovSolver::MINRES, "MINRES"},
-                                          {KrylovSolver::GMRES, "GMRES"},
-                                          {KrylovSolver::FGMRES, "FGMRES"},
-                                          {KrylovSolver::BICGSTAB, "BiCGSTAB"}})
-PALACE_JSON_SERIALIZE_ENUM(MultigridCoarsening,
-                           {{MultigridCoarsening::LINEAR, "Linear"},
-                            {MultigridCoarsening::LOGARITHMIC, "Logarithmic"}})
-
-// Helpers for converting string keys to enum for PreconditionerSide, SymbolicFactorization,
-// SparseCompression, and Orthogonalization.
-PALACE_JSON_SERIALIZE_ENUM(PreconditionerSide, {{PreconditionerSide::DEFAULT, "Default"},
-                                                {PreconditionerSide::RIGHT, "Right"},
-                                                {PreconditionerSide::LEFT, "Left"}})
-PALACE_JSON_SERIALIZE_ENUM(SymbolicFactorization,
-                           {{SymbolicFactorization::DEFAULT, "Default"},
-                            {SymbolicFactorization::METIS, "METIS"},
-                            {SymbolicFactorization::PARMETIS, "ParMETIS"},
-                            {SymbolicFactorization::SCOTCH, "Scotch"},
-                            {SymbolicFactorization::PTSCOTCH, "PTScotch"},
-                            {SymbolicFactorization::PORD, "PORD"},
-                            {SymbolicFactorization::AMD, "AMD"},
-                            {SymbolicFactorization::RCM, "RCM"}})
-PALACE_JSON_SERIALIZE_ENUM(SparseCompression,
-                           {{SparseCompression::NONE, "None"},
-                            {SparseCompression::BLR, "BLR"},
-                            {SparseCompression::HSS, "HSS"},
-                            {SparseCompression::HODLR, "HODLR"},
-                            {SparseCompression::ZFP, "ZFP"},
-                            {SparseCompression::BLR_HODLR, "BLR-HODLR"},
-                            {SparseCompression::ZFP_BLR_HODLR, "ZFP-BLR-HODLR"}})
-PALACE_JSON_SERIALIZE_ENUM(Orthogonalization, {{Orthogonalization::MGS, "MGS"},
-                                               {Orthogonalization::CGS, "CGS"},
-                                               {Orthogonalization::CGS2, "CGS2"}})
-
-PALACE_JSON_SERIALIZE_ENUM(DomainOrthogonalizationWeight,
-                           {{DomainOrthogonalizationWeight::ENERGY, "Energy"},
-                            {DomainOrthogonalizationWeight::FE_BASIS_IDENTITY,
-                             "FEBasisIdentity"},
-                            {DomainOrthogonalizationWeight::SPACE_OVERLAP, "SpaceOverlap"}})
-
-// Helpers for converting string keys to enum for Device.
-PALACE_JSON_SERIALIZE_ENUM(Device, {{Device::CPU, "CPU"},
-                                    {Device::GPU, "GPU"},
-                                    {Device::DEBUG, "Debug"}})
+// to_json/from_json shims for the labels.hpp enums. These must live in palace scope (not
+// palace::config) so argument-dependent lookup succeeds in nlohmann::json, and they
+// delegate to the single ToString/FromString mapping in enum_string.cpp.
+PALACE_JSON_SERIALIZE_ENUM(CoordinateSystem)
+PALACE_JSON_SERIALIZE_ENUM(ProblemType)
+PALACE_JSON_SERIALIZE_ENUM(EigenSolverBackend)
+PALACE_JSON_SERIALIZE_ENUM(NonlinearEigenSolver)
+PALACE_JSON_SERIALIZE_ENUM(SurfaceFlux)
+PALACE_JSON_SERIALIZE_ENUM(InterfaceDielectric)
+PALACE_JSON_SERIALIZE_ENUM(FrequencySampling)
+PALACE_JSON_SERIALIZE_ENUM(TimeSteppingScheme)
+PALACE_JSON_SERIALIZE_ENUM(Excitation)
+PALACE_JSON_SERIALIZE_ENUM(LinearSolver)
+PALACE_JSON_SERIALIZE_ENUM(KrylovSolver)
+PALACE_JSON_SERIALIZE_ENUM(MultigridCoarsening)
+PALACE_JSON_SERIALIZE_ENUM(PreconditionerSide)
+PALACE_JSON_SERIALIZE_ENUM(SymbolicFactorization)
+PALACE_JSON_SERIALIZE_ENUM(SparseCompression)
+PALACE_JSON_SERIALIZE_ENUM(Orthogonalization)
+PALACE_JSON_SERIALIZE_ENUM(DomainOrthogonalizationWeight)
+PALACE_JSON_SERIALIZE_ENUM(Device)
 }  // namespace palace
 
 namespace palace::config
@@ -177,6 +62,13 @@ namespace palace::config
 
 namespace
 {
+
+// Standardize the subspace default on SLEPc's max(2*nev, nev+15) (resolved at parse time);
+// previously ARPACK and SLEPc resolved an unset MaxSize differently.
+inline int DefaultEigenSubspaceSize(int num_modes)
+{
+  return std::max(2 * num_modes, num_modes + 15);
+}
 
 int AtIndex(json::const_iterator port_it, std::string_view errmsg_parent)
 {
@@ -548,6 +440,12 @@ LumpedPortData::LumpedPortData(const json &port)
 
   excitation = ParsePortExcitation(port, index);
   active = port.value("Active", active);
+  include_in_synthesis = port.value("IncludeInSynthesis", include_in_synthesis);
+  MFEM_VERIFY(!(excitation != 0 && !include_in_synthesis),
+              fmt::format("\"IncludeInSynthesis\" cannot be false on lumped port index "
+                          "{:d} because it is excited; the excitation vector is always "
+                          "added to the synthesis basis.",
+                          index));
   if (port.find("Attributes") != port.end())
   {
     auto &elem = elements.emplace_back();
@@ -575,6 +473,12 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
   if (floquet != periodic.end())
   {
     wave_vector = floquet->get<std::array<double, 3>>();
+  }
+
+  auto fref = periodic.find("FloquetReferenceFrequency");
+  if (fref != periodic.end())
+  {
+    floquet_reference_freq = fref->get<double>();
   }
 
   const auto &pairs = periodic.at("BoundaryPairs");
@@ -626,6 +530,33 @@ WavePortData::WavePortData(const json &port)
     }
   }
   n_samples = port.value("NSamples", n_samples);
+  if (auto it = port.find("PolarityAttributes"); it != port.end())
+  {
+    auto pa = it->get<std::vector<int>>();
+    MFEM_VERIFY(pa.size() == 2,
+                "WavePort \"PolarityAttributes\" must be exactly two attributes "
+                "[high, low] (signal terminal first, ground terminal second)!");
+    MFEM_VERIFY(voltage_path.empty(),
+                "WavePort \"VoltagePath\" and \"PolarityAttributes\" are mutually "
+                "exclusive — \"VoltagePath\" already pins polarity!");
+    polarity_attributes = {pa[0], pa[1]};
+  }
+
+  // Resolve subspace sentinel: fed directly into ModeEigenSolver → SLEPc/ARPACK.
+  if (max_size <= 0)
+  {
+    max_size = DefaultEigenSubspaceSize(mode_idx);
+  }
+}
+
+FloquetPortData::FloquetPortData(const json &port)
+{
+  int index = port.at("Index");                                // Required
+  attributes = port.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  excitation = ParsePortExcitation(port, index);
+  inc_polarization = port.value("IncidentPolarization", inc_polarization);
+  max_order = port.value("MaxOrder", max_order);
 }
 
 SurfaceCurrentData::SurfaceCurrentData(const json &source)
@@ -946,6 +877,8 @@ BoundaryData::BoundaryData(const json &boundaries)
   terminal = ParseOptionalMap<TerminalData>(boundaries, "Terminal", "\"Terminal\"");
   periodic = ParseOptional<PeriodicBoundaryData>(boundaries, "Periodic");
   waveport = ParseOptionalMap<WavePortData>(boundaries, "WavePort", "\"WavePort\"");
+  floquetport =
+      ParseOptionalMap<FloquetPortData>(boundaries, "FloquetPort", "\"FloquetPort\"");
   current = ParseOptionalMap<SurfaceCurrentData>(boundaries, "SurfaceCurrent",
                                                  "\"SurfaceCurrent\"");
   postpro = ParseOptional<BoundaryPostData>(boundaries, "Postprocessing");
@@ -959,6 +892,10 @@ BoundaryData::BoundaryData(const json &boundaries)
       excitation_map[data.excitation].emplace_back(idx);
     }
     for (const auto &[idx, data] : waveport)
+    {
+      excitation_map[data.excitation].emplace_back(idx);
+    }
+    for (const auto &[idx, data] : floquetport)
     {
       excitation_map[data.excitation].emplace_back(idx);
     }
@@ -989,6 +926,13 @@ BoundaryData::BoundaryData(const json &boundaries)
             wp.excitation = port_idx;
           }
         }
+        for (auto &[port_idx, fp] : floquetport)
+        {
+          if (fp.excitation == 1)
+          {
+            fp.excitation = port_idx;
+          }
+        }
       }
     }
   }
@@ -1015,6 +959,10 @@ BoundaryData::BoundaryData(const json &boundaries)
     }
   }
   for (const auto &[idx, data] : waveport)
+  {
+    attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
+  }
+  for (const auto &[idx, data] : floquetport)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
@@ -1263,6 +1211,18 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
   preconditioner_lag_tol = eigenmode.value("PreconditionerLagTol", preconditioner_lag_tol);
   max_restart = eigenmode.value("MaxRestart", max_restart);
 
+  // Resolve iteration / subspace sentinels to concrete values at parse time so nothing
+  // downstream sees -1. max_it is a single large cap because it only bounds iteration
+  // count, with no buffers scaling with it.
+  if (max_it <= 0)
+  {
+    max_it = 1'000'000;
+  }
+  if (max_size <= 0)
+  {
+    max_size = DefaultEigenSubspaceSize(n);
+  }
+
   target_upper = (target_upper < 0) ? 3 * target : target_upper;  // default = 3 * target
   MFEM_VERIFY(target_upper > target, "config[\"Eigenmode\"][\"TargetUpper\"] must be "
                                      "greater than config[\"Eigenmode\"][\"Target\"]!");
@@ -1320,6 +1280,13 @@ BoundaryModeSolverData::BoundaryModeSolverData(const json &ma)
   {
     attributes = it->get<std::vector<int>>();
     std::sort(attributes.begin(), attributes.end());
+  }
+
+  // Resolve subspace sentinel: ModeEigenSolver forwards this to SLEPc/ARPACK, which
+  // treat negative sizes as memory corruption, not as "use default".
+  if (max_size <= 0)
+  {
+    max_size = DefaultEigenSubspaceSize(n);
   }
 }
 
@@ -1437,7 +1404,8 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
 {
   std::ostringstream errors;
 
-  // Check for duplicate indices across LumpedPort, WavePort, SurfaceCurrent, Terminal.
+  // Check for duplicate indices across LumpedPort, WavePort, FloquetPort,
+  // SurfaceCurrent, Terminal.
   std::map<int, std::string> index_map;
   for (const auto &[idx, data] : boundaries.lumpedport)
   {
@@ -1465,6 +1433,15 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
              << " and SurfaceCurrent\n";
     }
   }
+  for (const auto &[idx, data] : boundaries.floquetport)
+  {
+    auto [it, inserted] = index_map.try_emplace(idx, "FloquetPort");
+    if (!inserted)
+    {
+      errors << "Duplicate \"Index\": " << idx << " in " << it->second
+             << " and FloquetPort\n";
+    }
+  }
   for (const auto &[idx, data] : boundaries.terminal)
   {
     auto [it, inserted] = index_map.try_emplace(idx, "Terminal");
@@ -1481,6 +1458,10 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
     excitation_map[data.excitation].emplace_back(idx);
   }
   for (const auto &[idx, data] : boundaries.waveport)
+  {
+    excitation_map[data.excitation].emplace_back(idx);
+  }
+  for (const auto &[idx, data] : boundaries.floquetport)
   {
     excitation_map[data.excitation].emplace_back(idx);
   }

@@ -50,8 +50,8 @@ boundary conditions, can be applied using the `"Absorbing"` boundary keyword und
 [`config["Boundaries"]`](../config/boundaries.md#boundaries%5B%22Absorbing%22%5D). The
 first-order absorbing boundary condition is a special case of the above impedance boundary
 and is available for eigenmode or frequency or time domain driven simulation types. The
-second-order absorbing boundary condition is only available for frequency domain driven
-and eigenmode simulations.
+second-order absorbing boundary condition is only available for frequency domain
+simulations.
 
 [Perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer)
 boundaries for frequency and time domain electromagnetic formulations are not yet
@@ -132,6 +132,54 @@ for implementation details.
     (they are to be "one-sided" in the sense that mesh elements only exist on one side of
     the boundary).
 
+    The overall sign of the wave port mode E-field is internally fixed by an arbitrary
+    convention that does not necessarily match the polarity convention of lumped ports
+    in the same simulation. As a result, when mixing lumped and wave ports in a driven
+    simulation, the cross-type S-parameters (e.g. `S_{ij}` where one port is lumped and
+    the other is a wave port) may appear 180° out of phase relative to what would be
+    obtained with all-lumped or all-wave ports. To pin the wave-port polarity, specify
+    one of the following on each wave port — both list the **signal** (high-potential)
+    terminal first and the **ground** (low-potential) terminal second:
+
+      + [`"VoltagePath"`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D): an
+        ordered list of coordinate points across the port face, directed signal → ground.
+        The mode is flipped so that `\int E_{\text{mode}} \cdot dl > 0` along this path.
+        Also enables ``Z_{PV}`` postprocessing. Requires GSLIB.
+      + [`"PolarityAttributes"`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D):
+        a pair of parent-mesh boundary attributes `[signal, ground]` (e.g. distinct PEC
+        attributes for the two terminals). The mode is flipped so that the modal E-field
+        points from the signal attribute toward the ground attribute. Lightweight
+        polarity-only alternative to `"VoltagePath"` (no GSLIB).
+
+  - [`config["Boundaries"]["FloquetPort"]`](../config/boundaries.md#boundaries%5B%22FloquetPort%22%5D) :
+    Floquet ports are available for frequency domain driven simulations on periodic
+    structures (gratings, metasurfaces, photonic crystals). They provide an absorbing
+    boundary condition that decomposes the scattered field into Floquet diffraction orders
+    and extracts power-normalized S-parameters for each propagating order.
+
+    Floquet ports require periodic boundary conditions to be configured under
+    [`config["Boundaries"]["Periodic"]`](../config/boundaries.md#boundaries%5B%22Periodic%22%5D).
+    The `"FloquetWaveVector"` in the periodic configuration specifies the tangential
+    component of the incident wave vector, which determines the angle of incidence. For
+    normal incidence, set the wave vector to zero. For frequency sweeps at a fixed angle
+    of incidence, set `"FloquetReferenceFrequency"` to the frequency (in GHz) at which the
+    wave vector is defined. The wave vector then scales linearly with frequency according
+    to ``\bm{k}_F(f) = \bm{k}_{F,\mathrm{ref}} f / f_\mathrm{ref}``, where
+    ``\bm{k}_{F,\mathrm{ref}}`` is `"FloquetWaveVector"` and ``f_\mathrm{ref}`` is
+    `"FloquetReferenceFrequency"`, maintaining a constant incidence angle across the sweep.
+
+    The incident field is a plane wave in the specular (0,0) diffraction order with
+    user-specified polarization (TE, TM, or circular RHC/LHC). S-parameters are extracted
+    for all propagating diffraction orders within `"MaxOrder"` and reported in the
+    `port-floquet-S.csv` output file. Each mode is labeled as
+    `S[P<port>(<m>,<n>)<pol>][<exc>]` where `<port>` is the port index, `(<m>,<n>)` is
+    the diffraction order, `<pol>` is the polarization (TE/TM or RHC/LHC for circular
+    excitation), and `<exc>` is the excitation index. Values of `nan` are given to non-propagating
+    modes.
+
+    The port boundary must be planar and on the true boundary of the computational domain.
+    The medium adjacent to the port must be homogeneous and isotropic.
+
 For each port, the excitation is normalized to have unit incident power over the port boundary
 surface.
 
@@ -154,16 +202,19 @@ For frequency domain driven simulations only, it is possible to specify multiple
 same simulation using different positive integers ("multi-excitation"). These excitations are
 simulated consecutively during the Palace run. The results are printed to shared csv files. When
 there are multiple excitations, the columns of the csv files are post-indexed by the excitation
-index (e.g. `Φ_elec[1][5] (C)` denoting the flux through surface 1 of excitation 5). Note that a
-port can only be part of one excitation.
+index (e.g. `Φ_elec[1][5] (C)` denoting the flux through surface 1 of excitation 5). The far-field
+file (`farfield-rE.csv`) is the exception: it has one row per (frequency, angle) pair so the
+excitation index is encoded as a row column (`exc`) rather than a column suffix. Note that a port
+can only be part of one excitation.
 
 !!! warning "Indexing"
 
     Any `"Index"` of [`"LumpedPort"`](../config/boundaries.md#boundaries%5B%22LumpedPort%22%5D),
     [`"WavePort"`](../config/boundaries.md#boundaries%5B%22WavePort%22%5D),
+    [`"FloquetPort"`](../config/boundaries.md#boundaries%5B%22FloquetPort%22%5D),
     [`"SurfaceCurrent"`](../config/boundaries.md#boundaries%5B%22SurfaceCurrent%22%5D), or
     [`"Terminal"`](../config/boundaries.md#boundaries%5B%22Terminal%22%5D) must be unique, including between
-    different boundary conditions types (e.g. you can not have an lumped port and wave port both with
+    different boundary conditions types (e.g. you can not have a lumped port and wave port both with
     `Index: 5`).
 
 ## Surface current excitation

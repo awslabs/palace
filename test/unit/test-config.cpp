@@ -1,16 +1,146 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <iterator>
+#include <set>
+#include <string>
+#include <vector>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include "embedded_schema.hpp"
+#include "linalg/ksp.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
+#include "utils/jsonschema.hpp"
 
 using json = nlohmann::json;
 using namespace palace;
+
+namespace
+{
+
+// Returns the names of properties declared in the given schema scope that the
+// concretized config does NOT contain, excluding (a) properties marked `required`
+// in the schema (the user must provide those at parse time, no default applies)
+// and (b) any names in `skip` (intentional omissions — e.g. `Lc` is computed from
+// the mesh at runtime, `MaterialAxes`/`Center` carry opt-in semantics where absence
+// is meaningful).
+//
+// `schema_filename` is the key in `schema::GetSchemaMap()` (e.g. "config/model.json").
+// `pointer` is a JSON Pointer into that schema document selecting the scope to walk
+// (e.g. "" for the top of model.json, "/properties/Refinement" for the nested
+// Refinement object, or "/properties/Conductivity/items" for an array element).
+//
+// Use this in round-trip tests to catch the case where someone adds a new optional
+// schema property without wiring `ConcretizeDefaults` to emit it.
+std::vector<std::string> SchemaCoverageGaps(const std::string &schema_filename,
+                                            const std::string &pointer,
+                                            const json &concretized_subtree,
+                                            const std::set<std::string> &skip = {})
+{
+  const auto &schema_map = schema::GetSchemaMap();
+  auto it = schema_map.find(schema_filename);
+  REQUIRE(it != schema_map.end());
+  const json schema = json::parse(it->second);
+
+  // Resolve an in-document `#/$defs/...` reference against the root schema. After the
+  // hoist, named shapes live under `$defs` and are reached via `$ref`, so a raw JSON
+  // Pointer lands on the ref node rather than the inline object. Mirrors the production
+  // resolver in jsonschema.cpp.
+  auto resolve_ref = [&schema](const json &node) -> const json &
+  {
+    auto rit = node.find("$ref");
+    if (rit == node.end())
+    {
+      return node;
+    }
+    const std::string ref = rit->get<std::string>();
+    const std::string defs_prefix = "#/$defs/";
+    REQUIRE(ref.rfind(defs_prefix, 0) == 0);
+    const std::string def_name = ref.substr(defs_prefix.size());
+    REQUIRE(schema.contains("$defs"));
+    REQUIRE(schema.at("$defs").contains(def_name));
+    return schema.at("$defs").at(def_name);
+  };
+
+  // Gather the arms to inspect. A `oneOf`/`anyOf` of `$ref`s (e.g. LumpedPort, split by
+  // the hoist into Attributes/Elements variants) is treated as the union of its arms'
+  // properties, with `required` the *intersection* across arms — a field required in
+  // only one arm is optional overall, matching the pre-hoist single-object schema.
+  const json &resolved = resolve_ref(schema.at(json::json_pointer(pointer)));
+  std::vector<json> arms;
+  if (auto cit = resolved.find("oneOf"); cit != resolved.end())
+  {
+    for (const auto &arm : *cit)
+    {
+      arms.push_back(resolve_ref(arm));
+    }
+  }
+  else if (auto ait = resolved.find("anyOf"); ait != resolved.end())
+  {
+    for (const auto &arm : *ait)
+    {
+      arms.push_back(resolve_ref(arm));
+    }
+  }
+  else
+  {
+    arms.push_back(resolved);
+  }
+  REQUIRE(!arms.empty());
+
+  std::set<std::string> property_names;
+  std::set<std::string> required_set;
+  for (std::size_t i = 0; i < arms.size(); ++i)
+  {
+    const json &arm = arms[i];
+    REQUIRE(arm.contains("properties"));
+    for (const auto &[name, _sub] : arm.at("properties").items())
+    {
+      property_names.insert(name);
+    }
+    std::set<std::string> arm_required;
+    if (auto rit = arm.find("required"); rit != arm.end())
+    {
+      for (const auto &r : *rit)
+      {
+        arm_required.insert(r.get<std::string>());
+      }
+    }
+    if (i == 0)
+    {
+      required_set = std::move(arm_required);
+    }
+    else
+    {
+      std::set<std::string> intersection;
+      std::set_intersection(required_set.begin(), required_set.end(), arm_required.begin(),
+                            arm_required.end(),
+                            std::inserter(intersection, intersection.begin()));
+      required_set = std::move(intersection);
+    }
+  }
+
+  std::vector<std::string> gaps;
+  for (const auto &name : property_names)
+  {
+    if (required_set.count(name) || skip.count(name))
+    {
+      continue;
+    }
+    if (!concretized_subtree.is_object() || !concretized_subtree.contains(name))
+    {
+      gaps.push_back(name);
+    }
+  }
+  return gaps;
+}
+
+}  // namespace
 
 TEST_CASE("Config Boundary Ports", "[config][Serial]")
 {
@@ -135,6 +265,16 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     CHECK(config::Validate(boundary_data).has_value());
   }
 
+  SECTION("FloquetPort repeated index cross-array fails validation")
+  {
+    json boundaries = {
+        {"LumpedPort",
+         {{{"Attributes", {5}}, {"Index", 1}, {"R", 50}, {"Direction", "+Y"}}}},
+        {"FloquetPort", {{{"Attributes", {6}}, {"Index", 1}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(config::Validate(boundary_data).has_value());
+  }
+
   SECTION("Mislabeled excitation index fails validation")
   {
     json boundaries1 = {
@@ -158,6 +298,38 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
         {"WavePort", {{{"Attributes", {6}}, {"Index", 2}, {"Excitation", 0}}}}};
     config::BoundaryData bd2(boundaries2);
     CHECK(config::Validate(bd2).has_value());
+  }
+
+  SECTION("FloquetPort mislabeled excitation index fails validation")
+  {
+    json boundaries = {
+        {"FloquetPort", {{{"Attributes", {6}}, {"Index", 3}, {"Excitation", 2}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(config::Validate(boundary_data).has_value());
+  }
+
+  SECTION("FloquetPort bool excitation upgrades to port index")
+  {
+    json boundaries = {
+        {"FloquetPort", {{{"Attributes", {6}}, {"Index", 3}, {"Excitation", true}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(boundary_data.floquetport.at(3).excitation == 3);
+    CHECK(!config::Validate(boundary_data).has_value());
+  }
+
+  SECTION("FloquetPort excitation is not upgraded for invalid excitation maps")
+  {
+    json boundaries = {
+        {"LumpedPort",
+         {{{"Attributes", {5}},
+           {"Index", 2},
+           {"R", 50},
+           {"Direction", "+Y"},
+           {"Excitation", 3}}}},
+        {"FloquetPort", {{{"Attributes", {6}}, {"Index", 4}, {"Excitation", true}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(boundary_data.floquetport.at(4).excitation == 1);
+    CHECK(config::Validate(boundary_data).has_value());
   }
 
   SECTION("Upgrade excitation index 1")
@@ -636,4 +808,714 @@ TEST_CASE("ParseStringAsDirection", "[config][Serial]")
   }
 
   CHECK_NOTHROW(config::ParseStringAsDirection("", false));
+}
+
+TEST_CASE("ConcretizeDefaults", "[config][Serial]")
+{
+  SECTION("Electrostatic resolves linear solver sentinels")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
+
+    IoData iodata(config, false);
+
+    // CheckConfiguration should have resolved the sentinels.
+    CHECK(iodata.solver.linear.type == LinearSolver::BOOMER_AMG);
+    CHECK(iodata.solver.linear.krylov_solver == KrylovSolver::CG);
+    CHECK(iodata.solver.linear.initial_guess == 1);
+    CHECK(iodata.solver.linear.pc_mat_shifted == 0);
+    CHECK(iodata.solver.linear.mg_smooth_aux == 0);
+    CHECK(iodata.solver.linear.ams_singular_op == 0);
+    CHECK(iodata.solver.linear.amg_agg_coarsen == 1);
+    CHECK(iodata.solver.linear.ams_max_it == 1);
+    CHECK(iodata.solver.linear.mg_cycle_it == 1);
+    CHECK(GetPreconditionerMatrixSymmetry(iodata) == MatrixSymmetry::SPD);
+
+    // ConcretizeDefaults should write resolved values back to JSON.
+    config = IoData::ConcretizeDefaults(iodata, config);
+
+    auto &j_linear = config["Solver"]["Linear"];
+    CHECK(j_linear["Type"].get<std::string>() == "BoomerAMG");
+    CHECK(j_linear["KSPType"].get<std::string>() == "CG");
+    CHECK(j_linear["InitialGuess"].get<int>() == 1);
+    CHECK(j_linear["PCMatShifted"].get<int>() == 0);
+    CHECK(j_linear["MGAuxiliarySmoother"].get<int>() == 0);
+    CHECK(j_linear["AMSSingularOperator"].get<int>() == 0);
+    CHECK(j_linear["AMGAggressiveCoarsening"].get<int>() == 1);
+    CHECK(j_linear["AMSMaxIts"].get<int>() == 1);
+    CHECK(j_linear["MGCycleIts"].get<int>() == 1);
+  }
+
+  SECTION("Omitted Output resolves to default and concretizes (issue #745)")
+  {
+    // The schema marks Problem.Output optional, so a config without it must parse
+    // without aborting and fall back to the documented "postpro" default.
+    json config = {{"Problem", {{"Type", "Electrostatic"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
+
+    IoData iodata(config, false);
+    CHECK(iodata.problem.output == "postpro");
+
+    // ConcretizeDefaults must emit the resolved, non-empty value back to JSON.
+    config = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(config["Problem"]["Output"].get<std::string>() == "postpro");
+  }
+
+  SECTION("Magnetostatic resolves to AMS with singular operator")
+  {
+    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
+
+    IoData iodata(config, false);
+    CHECK(iodata.solver.linear.type == LinearSolver::AMS);
+    CHECK(iodata.solver.linear.krylov_solver == KrylovSolver::CG);
+    CHECK(iodata.solver.linear.ams_singular_op == 1);
+    CHECK(iodata.solver.linear.ams_max_it == 1);
+    CHECK(iodata.solver.linear.mg_cycle_it == 1);
+    CHECK(GetPreconditionerMatrixSymmetry(iodata) == MatrixSymmetry::SPD);
+
+    config = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(config["Solver"]["Linear"]["Type"].get<std::string>() == "AMS");
+    CHECK(config["Solver"]["Linear"]["AMSSingularOperator"].get<int>() == 1);
+    CHECK(config["Solver"]["Linear"]["AMSMaxIts"].get<int>() == 1);
+    CHECK(config["Solver"]["Linear"]["MGCycleIts"].get<int>() == 1);
+  }
+
+  SECTION("User-specified values survive concretization")
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver", {{"Order", 3}, {"Linear", {{"Type", "BoomerAMG"}, {"KSPType", "CG"}}}}}};
+
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+
+    // User-specified values should be preserved.
+    CHECK(config["Solver"]["Order"].get<int>() == 3);
+    CHECK(config["Solver"]["Linear"]["Type"].get<std::string>() == "BoomerAMG");
+    CHECK(config["Solver"]["Linear"]["KSPType"].get<std::string>() == "CG");
+  }
+
+  SECTION("EigenSolverBackend DEFAULT resolves to concrete backend")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+
+    IoData iodata(config, false);
+
+#if defined(PALACE_WITH_SLEPC)
+    CHECK(iodata.solver.eigenmode.type == EigenSolverBackend::SLEPC);
+#elif defined(PALACE_WITH_ARPACK)
+    CHECK(iodata.solver.eigenmode.type == EigenSolverBackend::ARPACK);
+#endif
+
+    config = IoData::ConcretizeDefaults(iodata, config);
+
+    // The resolved config should say the concrete backend name, not "Default".
+    auto type_str = config["Solver"]["Eigenmode"]["Type"].get<std::string>();
+#if defined(PALACE_WITH_SLEPC)
+    CHECK(type_str == "SLEPc");
+#elif defined(PALACE_WITH_ARPACK)
+    CHECK(type_str == "ARPACK");
+#endif
+  }
+
+  SECTION("WavePort eigen solver DEFAULT resolves to concrete backend")
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries",
+         {{"WavePort", {{{"Index", 1}, {"Attributes", {2}}, {"Excitation", true}}}}}},
+        {"Solver",
+         {{"Driven",
+           {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.5}}}}}}}}};
+
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+
+    auto type_str = config["Boundaries"]["WavePort"][0]["SolverType"].get<std::string>();
+#if defined(PALACE_WITH_SLEPC)
+    CHECK(type_str == "SLEPc");
+#elif defined(PALACE_WITH_ARPACK)
+    CHECK(type_str == "ARPACK");
+#endif
+  }
+
+  SECTION("mg_smooth_order resolves from solver order")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Order", 5}}}};
+
+    IoData iodata(config, false);
+    // max(2 * 5, 4) = 10
+    CHECK(iodata.solver.linear.mg_smooth_order == 10);
+    // ams_max_it defaults to solver.order = 5
+    CHECK(iodata.solver.linear.ams_max_it == 5);
+
+    config = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(config["Solver"]["Linear"]["MGSmoothOrder"].get<int>() == 10);
+    CHECK(config["Solver"]["Linear"]["AMSMaxIts"].get<int>() == 5);
+  }
+
+  SECTION("max_size defaults to max_it")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Linear", {{"MaxIts", 200}}}}}};
+
+    IoData iodata(config, false);
+    CHECK(iodata.solver.linear.max_size == 200);
+
+    config = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(config["Solver"]["Linear"]["MaxSize"].get<int>() == 200);
+  }
+
+  SECTION("Solver.Order default captured")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
+
+    IoData iodata(config, false);
+    CHECK(iodata.solver.order == 1);
+
+    config = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(config["Solver"]["Order"].get<int>() == 1);
+  }
+
+  SECTION("Linear default Tol, MaxIts, and orthogonalization captured")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", json::object()}};
+
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+    auto &j_linear = config["Solver"]["Linear"];
+
+    CHECK(j_linear["Tol"].get<double>() == Catch::Approx(1.0e-6));
+    CHECK(j_linear["MaxIts"].get<int>() == 100);
+    CHECK(j_linear["GSOrthogonalization"].get<std::string>() == "MGS");
+    // PCSide and ColumnOrdering default to the DEFAULT enum value (not a compile-time
+    // alias); the concretized name records that the user accepted Palace's internal
+    // default rather than naming a specific backend option.
+    CHECK(j_linear["PCSide"].get<std::string>() == "Default");
+    CHECK(j_linear["ColumnOrdering"].get<std::string>() == "Default");
+  }
+
+  SECTION("Transient resolves Type DEFAULT to GeneralizedAlpha")
+  {
+    json config = {
+        {"Problem", {{"Type", "Transient"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Transient",
+           {{"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}}}}}};
+
+    IoData iodata(config, false);
+    CHECK(iodata.solver.transient.type == TimeSteppingScheme::GEN_ALPHA);
+
+    config = IoData::ConcretizeDefaults(iodata, config);
+    auto &j_transient = config["Solver"]["Transient"];
+    // Must resolve to the concrete name, NOT "Default". This depends on the ordering
+    // contract in PALACE_JSON_SERIALIZE_ENUM(TimeSteppingScheme, ...).
+    CHECK(j_transient["Type"].get<std::string>() == "GeneralizedAlpha");
+    // Order is not consumed by GeneralizedAlpha/RungeKutta and triggers a warning at
+    // parse time if emitted; ConcretizeTransient must omit it for these schemes.
+    CHECK_FALSE(j_transient.contains("Order"));
+    CHECK_FALSE(j_transient.contains("RelTol"));
+    CHECK_FALSE(j_transient.contains("AbsTol"));
+  }
+
+  SECTION("Eigenmode captures additional defaults")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+    auto &j_eigen = config["Solver"]["Eigenmode"];
+
+    CHECK(j_eigen["Tol"].get<double>() == Catch::Approx(1.0e-6));
+    CHECK(j_eigen["N"].get<int>() == 1);
+    CHECK(j_eigen["Save"].get<int>() == 0);
+    CHECK(j_eigen["PEPLinear"].get<bool>() == true);
+    CHECK(j_eigen["Scaling"].get<bool>() == true);
+    CHECK(j_eigen["StartVector"].get<bool>() == true);
+    CHECK(j_eigen["StartVectorConstant"].get<bool>() == false);
+    CHECK(j_eigen["MassOrthogonal"].get<bool>() == false);
+  }
+
+  SECTION("Round-trip: resolved config validates and re-parses identically")
+  {
+    // Start from a sparse Electrostatic config with one non-default (Order=3) and one
+    // user-set Linear field (MaxIts=250). Everything else resolves from defaults.
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Order", 3}, {"Linear", {{"MaxIts", 250}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    // The resolved config must pass schema validation; otherwise a user cannot
+    // actually re-run Palace on the produced file.
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+
+    CHECK(iodata2.solver.order == iodata1.solver.order);
+    const auto &l1 = iodata1.solver.linear;
+    const auto &l2 = iodata2.solver.linear;
+    CHECK(l2.type == l1.type);
+    CHECK(l2.krylov_solver == l1.krylov_solver);
+    CHECK(l2.tol == l1.tol);
+    CHECK(l2.max_it == l1.max_it);
+    CHECK(l2.max_size == l1.max_size);
+    CHECK(l2.initial_guess == l1.initial_guess);
+    CHECK(l2.pc_mat_shifted == l1.pc_mat_shifted);
+    CHECK(l2.mg_smooth_aux == l1.mg_smooth_aux);
+    CHECK(l2.mg_smooth_order == l1.mg_smooth_order);
+    CHECK(l2.mg_cycle_it == l1.mg_cycle_it);
+    CHECK(l2.ams_singular_op == l1.ams_singular_op);
+    CHECK(l2.ams_max_it == l1.ams_max_it);
+    CHECK(l2.amg_agg_coarsen == l1.amg_agg_coarsen);
+    CHECK(l2.reorder_reuse == l1.reorder_reuse);
+    CHECK(l2.pc_side == l1.pc_side);
+    CHECK(l2.sym_factorization == l1.sym_factorization);
+    CHECK(l2.gs_orthog == l1.gs_orthog);
+  }
+
+  SECTION("Round-trip: Model, Refinement, and Boundaries are reproducible")
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model",
+         {{"Mesh", "test.msh"},
+          {"L0", 1.0e-3},
+          {"MakeSimplex", true},
+          {"Partitioning", "parts.txt"},
+          {"Refinement", {{"MaxIts", 4}, {"MaxSize", 1000}, {"UpdateFraction", 0.5}}}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries",
+         {{"Absorbing", {{"Attributes", {2}}, {"Order", 2}}},
+          {"Conductivity", {{{"Attributes", {3}}, {"Conductivity", 5.8e7}}}},
+          {"Impedance",
+           {{{"Attributes", {4}}, {"Rs", 50.0}, {"Ls", 1.0e-9}, {"Cs", 1.0e-12}}}},
+          {"LumpedPort",
+           {{{"Index", 1},
+             {"Attributes", {5}},
+             {"Direction", "+X"},
+             {"R", 50.0},
+             {"L", 1.0e-9},
+             {"Excitation", true},
+             {"Active", false}}}},
+          {"FloquetPort", {{{"Index", 2}, {"Attributes", {12}}}}},
+          {"Periodic",
+           {{"FloquetWaveVector", {0.1, 0.2, 0.3}},
+            {"BoundaryPairs",
+             {{{"DonorAttributes", {10}}, {"ReceiverAttributes", {11}}}}}}},
+          {"Postprocessing",
+           {{"SurfaceFlux",
+             {{{"Index", 1},
+               {"Attributes", {6}},
+               {"Type", "Electric"},
+               {"TwoSided", true}}}},
+            {"Dielectric",
+             {{{"Index", 1},
+               {"Attributes", {7}},
+               {"Type", "MA"},
+               {"Thickness", 1.0e-9},
+               {"Permittivity", 4.0},
+               {"LossTan", 0.002}}}}}}}},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+
+    const auto &m1 = iodata1.model;
+    const auto &m2 = iodata2.model;
+    CHECK(m2.L0 == m1.L0);
+    CHECK(m2.Lc == m1.Lc);
+    CHECK(m2.remove_curvature == m1.remove_curvature);
+    CHECK(m2.make_simplex == m1.make_simplex);
+    CHECK(m2.make_hex == m1.make_hex);
+    CHECK(m2.reorder_elements == m1.reorder_elements);
+    CHECK(m2.clean_unused_elements == m1.clean_unused_elements);
+    CHECK(m2.crack_bdr_elements == m1.crack_bdr_elements);
+    CHECK(m2.refine_crack_elements == m1.refine_crack_elements);
+    CHECK(m2.crack_displ_factor == m1.crack_displ_factor);
+    CHECK(m2.add_bdr_elements == m1.add_bdr_elements);
+    CHECK(m2.export_prerefined_mesh == m1.export_prerefined_mesh);
+    CHECK(m2.reorient_tet_mesh == m1.reorient_tet_mesh);
+    CHECK(m2.partitioning == m1.partitioning);
+    const auto &r1 = m1.refinement;
+    const auto &r2 = m2.refinement;
+    CHECK(r2.tol == r1.tol);
+    CHECK(r2.max_it == r1.max_it);
+    CHECK(r2.max_size == r1.max_size);
+    CHECK(r2.nonconformal == r1.nonconformal);
+    CHECK(r2.max_nc_levels == r1.max_nc_levels);
+    CHECK(r2.update_fraction == r1.update_fraction);
+    CHECK(r2.maximum_imbalance == r1.maximum_imbalance);
+    CHECK(r2.save_adapt_iterations == r1.save_adapt_iterations);
+    CHECK(r2.save_adapt_mesh == r1.save_adapt_mesh);
+    CHECK(r2.uniform_ref_levels == r1.uniform_ref_levels);
+    CHECK(r2.ser_uniform_ref_levels == r1.ser_uniform_ref_levels);
+    CHECK(iodata2.boundaries.farfield.order == iodata1.boundaries.farfield.order);
+    REQUIRE(iodata1.boundaries.conductivity.size() == 1);
+    REQUIRE(iodata2.boundaries.conductivity.size() == 1);
+    CHECK(iodata2.boundaries.conductivity[0].h == iodata1.boundaries.conductivity[0].h);
+    CHECK(iodata2.boundaries.conductivity[0].external ==
+          iodata1.boundaries.conductivity[0].external);
+    REQUIRE(iodata1.boundaries.impedance.size() == 1);
+    REQUIRE(iodata2.boundaries.impedance.size() == 1);
+    CHECK(iodata2.boundaries.impedance[0].Rs == iodata1.boundaries.impedance[0].Rs);
+    CHECK(iodata2.boundaries.impedance[0].Ls == iodata1.boundaries.impedance[0].Ls);
+    CHECK(iodata2.boundaries.impedance[0].Cs == iodata1.boundaries.impedance[0].Cs);
+    REQUIRE(iodata2.boundaries.lumpedport.count(1) == 1);
+    const auto &lp1 = iodata1.boundaries.lumpedport.at(1);
+    const auto &lp2 = iodata2.boundaries.lumpedport.at(1);
+    CHECK(lp2.R == lp1.R);
+    CHECK(lp2.L == lp1.L);
+    CHECK(lp2.C == lp1.C);
+    CHECK(lp2.Rs == lp1.Rs);
+    CHECK(lp2.Ls == lp1.Ls);
+    CHECK(lp2.Cs == lp1.Cs);
+    CHECK(lp2.excitation == lp1.excitation);
+    CHECK(lp2.active == lp1.active);
+    REQUIRE(iodata2.boundaries.floquetport.count(2) == 1);
+    const auto &fp1 = iodata1.boundaries.floquetport.at(2);
+    const auto &fp2 = iodata2.boundaries.floquetport.at(2);
+    CHECK(fp2.excitation == fp1.excitation);
+    CHECK(fp2.inc_polarization == fp1.inc_polarization);
+    CHECK(fp2.max_order == fp1.max_order);
+    CHECK(iodata2.boundaries.periodic.wave_vector ==
+          iodata1.boundaries.periodic.wave_vector);
+    CHECK(iodata2.boundaries.periodic.floquet_reference_freq ==
+          iodata1.boundaries.periodic.floquet_reference_freq);
+    REQUIRE(iodata2.boundaries.postpro.flux.count(1) == 1);
+    CHECK(iodata2.boundaries.postpro.flux.at(1).two_sided ==
+          iodata1.boundaries.postpro.flux.at(1).two_sided);
+    REQUIRE(iodata2.boundaries.postpro.dielectric.count(1) == 1);
+    CHECK(iodata2.boundaries.postpro.dielectric.at(1).type ==
+          iodata1.boundaries.postpro.dielectric.at(1).type);
+    CHECK(iodata2.boundaries.postpro.dielectric.at(1).tandelta ==
+          iodata1.boundaries.postpro.dielectric.at(1).tandelta);
+
+    // Coverage gates. Each schema scope this fixture exercises is checked here so a
+    // future schema addition without matching Concretize emission fails this section.
+    auto model_gaps = SchemaCoverageGaps("config/model.json", "", config["Model"],
+                                         /*skip=*/{"Lc"});
+    INFO("Model missing keys: " << json(model_gaps).dump());
+    CHECK(model_gaps.empty());
+
+    // Boxes/Spheres are opt-in arrays of explicit refinement regions; absence means
+    // no per-region refinement and there is no scalar default to emit.
+    auto ref_gaps = SchemaCoverageGaps("config/model.json", "/properties/Refinement",
+                                       config["Model"]["Refinement"],
+                                       /*skip=*/{"Boxes", "Spheres"});
+    INFO("Model.Refinement missing keys: " << json(ref_gaps).dump());
+    CHECK(ref_gaps.empty());
+
+    auto abs_gaps = SchemaCoverageGaps("config/boundaries.json", "/properties/Absorbing",
+                                       config["Boundaries"]["Absorbing"]);
+    INFO("Boundaries.Absorbing missing keys: " << json(abs_gaps).dump());
+    CHECK(abs_gaps.empty());
+
+    auto cond_gaps =
+        SchemaCoverageGaps("config/boundaries.json", "/properties/Conductivity/items",
+                           config["Boundaries"]["Conductivity"][0]);
+    INFO("Boundaries.Conductivity[] missing keys: " << json(cond_gaps).dump());
+    CHECK(cond_gaps.empty());
+
+    auto imp_gaps =
+        SchemaCoverageGaps("config/boundaries.json", "/properties/Impedance/items",
+                           config["Boundaries"]["Impedance"][0]);
+    INFO("Boundaries.Impedance[] missing keys: " << json(imp_gaps).dump());
+    CHECK(imp_gaps.empty());
+
+    // LumpedPort: Direction/CoordinateSystem/Elements are opt-in alternatives to
+    // Attributes for declaring the port geometry; concretize does not synthesize them.
+    auto lp_gaps =
+        SchemaCoverageGaps("config/boundaries.json", "/properties/LumpedPort/items",
+                           config["Boundaries"]["LumpedPort"][0],
+                           /*skip=*/{"CoordinateSystem", "Elements"});
+    INFO("Boundaries.LumpedPort[] missing keys: " << json(lp_gaps).dump());
+    CHECK(lp_gaps.empty());
+
+    auto fp_gaps =
+        SchemaCoverageGaps("config/boundaries.json", "/properties/FloquetPort/items",
+                           config["Boundaries"]["FloquetPort"][0]);
+    INFO("Boundaries.FloquetPort[] missing keys: " << json(fp_gaps).dump());
+    CHECK(fp_gaps.empty());
+
+    auto per_gaps = SchemaCoverageGaps("config/boundaries.json", "/properties/Periodic",
+                                       config["Boundaries"]["Periodic"]);
+    INFO("Boundaries.Periodic missing keys: " << json(per_gaps).dump());
+    CHECK(per_gaps.empty());
+  }
+
+  SECTION("User-written \"Default\" is replaced with the resolved concrete value")
+  {
+    // If the user explicitly writes the sentinel string, we must still concretize —
+    // otherwise the resolved config contains a default, defeating the whole feature.
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Eigenmode", {{"Target", 1.0}, {"Type", "Default"}}},
+                     {"Linear", {{"Type", "Default"}, {"KSPType", "Default"}}}}}};
+
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+
+    auto &j_eigen = config["Solver"]["Eigenmode"];
+    auto &j_linear = config["Solver"]["Linear"];
+    CHECK(j_eigen["Type"].get<std::string>() != "Default");
+    CHECK(j_linear["Type"].get<std::string>() != "Default");
+    CHECK(j_linear["KSPType"].get<std::string>() != "Default");
+  }
+
+  SECTION("Round-trip: Eigenmode DEFAULT backend resolved concretely")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+    CHECK(iodata2.solver.eigenmode.type == iodata1.solver.eigenmode.type);
+    // The emitted Type must be the concrete backend name, not the alias "Default".
+    CHECK(config["Solver"]["Eigenmode"]["Type"].get<std::string>() != "Default");
+    CHECK(iodata2.solver.eigenmode.target == iodata1.solver.eigenmode.target);
+    CHECK(iodata2.solver.eigenmode.target_upper == iodata1.solver.eigenmode.target_upper);
+    CHECK(iodata2.solver.eigenmode.max_it == iodata1.solver.eigenmode.max_it);
+    CHECK(iodata2.solver.eigenmode.max_size == iodata1.solver.eigenmode.max_size);
+
+    // Coverage gate: every optional schema property under Solver.Eigenmode must be
+    // emitted by ConcretizeDefaults. A schema addition without a Concretize update
+    // surfaces here.
+    auto eigen_gaps = SchemaCoverageGaps("config/solver.json", "/properties/Eigenmode",
+                                         config["Solver"]["Eigenmode"]);
+    INFO("Solver.Eigenmode missing keys: " << json(eigen_gaps).dump());
+    CHECK(eigen_gaps.empty());
+  }
+
+  SECTION("Round-trip: Transient DEFAULT scheme resolved concretely")
+  {
+    json config = {
+        {"Problem", {{"Type", "Transient"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Transient",
+           {{"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+    CHECK(iodata2.solver.transient.type == iodata1.solver.transient.type);
+    CHECK(config["Solver"]["Transient"]["Type"].get<std::string>() != "Default");
+    CHECK(iodata2.solver.transient.excitation == iodata1.solver.transient.excitation);
+    CHECK(iodata2.solver.transient.max_t == iodata1.solver.transient.max_t);
+    CHECK(iodata2.solver.transient.delta_t == iodata1.solver.transient.delta_t);
+
+    // Coverage gate. Order/RelTol/AbsTol are intentionally only emitted for the
+    // adaptive CVODE/ARKODE schemes (GEN_ALPHA/RUNGE_KUTTA warn if present); this
+    // test uses the default GEN_ALPHA, so we skip them here.
+    auto trans_gaps = SchemaCoverageGaps("config/solver.json", "/properties/Transient",
+                                         config["Solver"]["Transient"],
+                                         /*skip=*/{"Order", "RelTol", "AbsTol"});
+    INFO("Solver.Transient missing keys: " << json(trans_gaps).dump());
+    CHECK(trans_gaps.empty());
+  }
+
+  SECTION("Round-trip: BoundaryMode defaulted fields are reproducible")
+  {
+    // Freq is required at parse; only defaulted fields need verification.
+    json config = {{"Problem", {{"Type", "BoundaryMode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"BoundaryMode", {{"Freq", 10.0}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+    const auto &b1 = iodata1.solver.boundary_mode;
+    const auto &b2 = iodata2.solver.boundary_mode;
+    CHECK(b2.n == b1.n);
+    CHECK(b2.n_post == b1.n_post);
+    CHECK(b2.target == b1.target);
+    CHECK(b2.tol == b1.tol);
+    CHECK(b2.max_size == b1.max_size);
+    CHECK(b2.type == b1.type);
+    CHECK(config["Solver"]["BoundaryMode"]["Type"].get<std::string>() != "Default");
+
+    // Coverage gate. Attributes is opt-in (used to extract a 2D submesh from a 3D
+    // mesh); leaving it absent means "use the parent mesh as-is", so we skip it.
+    auto bm_gaps = SchemaCoverageGaps("config/solver.json", "/properties/BoundaryMode",
+                                      config["Solver"]["BoundaryMode"],
+                                      /*skip=*/{"Attributes"});
+    INFO("Solver.BoundaryMode missing keys: " << json(bm_gaps).dump());
+    CHECK(bm_gaps.empty());
+  }
+
+  SECTION("Round-trip: WavePort defaulted fields are reproducible")
+  {
+    // Index, Attributes are required at parse; only defaulted fields need verification.
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", {{"WavePort", {{{"Index", 1}, {"Attributes", {2}}}}}}},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    IoData iodata2(config, false);
+    REQUIRE(iodata2.boundaries.waveport.count(1) == 1);
+    const auto &w1 = iodata1.boundaries.waveport.at(1);
+    const auto &w2 = iodata2.boundaries.waveport.at(1);
+    CHECK(w2.mode_idx == w1.mode_idx);
+    CHECK(w2.d_offset == w1.d_offset);
+    CHECK(w2.eigen_solver == w1.eigen_solver);
+    CHECK(config["Boundaries"]["WavePort"][0]["SolverType"].get<std::string>() !=
+          "Default");
+    CHECK(w2.active == w1.active);
+    CHECK(w2.ksp_max_its == w1.ksp_max_its);
+    CHECK(w2.ksp_tol == w1.ksp_tol);
+    CHECK(w2.eig_tol == w1.eig_tol);
+    CHECK(w2.max_size == w1.max_size);
+    CHECK(w2.verbose == w1.verbose);
+    CHECK(w2.n_samples == w1.n_samples);
+
+    // Coverage gate. VoltagePath is an opt-in coordinate path for line integral
+    // postprocessing on the port face; absence means no voltage line integral.
+    // PolarityAttributes is an opt-in [high, low] terminal pair for fixing the mode
+    // polarity; absence means the internal polarity convention is used. Both are
+    // opt-in features with no meaningful default value to emit (mutually exclusive),
+    // so they are deliberately not concretized.
+    auto wp_gaps =
+        SchemaCoverageGaps("config/boundaries.json", "/properties/WavePort/items",
+                           config["Boundaries"]["WavePort"][0],
+                           /*skip=*/{"VoltagePath", "PolarityAttributes"});
+    INFO("Boundaries.WavePort[] missing keys: " << json(wp_gaps).dump());
+    CHECK(wp_gaps.empty());
+  }
+
+  SECTION("Round-trip: Material defaulted physical properties are reproducible")
+  {
+    // Attributes is required at parse; physical properties (mu_r, epsilon_r, tandelta,
+    // sigma, lambda_L) all have scalar defaults that must survive concretize → reparse.
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
+
+    IoData iodata1(config, false);
+    config = IoData::ConcretizeDefaults(iodata1, config);
+
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    // The concretized JSON must mention every defaulted physical property.
+    auto &j_mat = config["Domains"]["Materials"][0];
+    CHECK(j_mat.contains("Permeability"));
+    CHECK(j_mat.contains("Permittivity"));
+    CHECK(j_mat.contains("LossTan"));
+    CHECK(j_mat.contains("Conductivity"));
+    CHECK(j_mat.contains("LondonDepth"));
+
+    IoData iodata2(config, false);
+    REQUIRE(iodata1.domains.materials.size() == 1);
+    REQUIRE(iodata2.domains.materials.size() == 1);
+    const auto &m1 = iodata1.domains.materials[0];
+    const auto &m2 = iodata2.domains.materials[0];
+    for (int k = 0; k < 3; ++k)
+    {
+      CHECK(m2.mu_r.s[k] == m1.mu_r.s[k]);
+      CHECK(m2.epsilon_r.s[k] == m1.epsilon_r.s[k]);
+      CHECK(m2.tandelta.s[k] == m1.tandelta.s[k]);
+      CHECK(m2.sigma.s[k] == m1.sigma.s[k]);
+    }
+    CHECK(m2.lambda_L == m1.lambda_L);
+
+    // Coverage gate. MaterialAxes is opt-in: omission means "diagonal in standard
+    // basis". Concretize does not synthesize one.
+    auto mat_gaps = SchemaCoverageGaps("config/domains.json", "/properties/Materials/items",
+                                       config["Domains"]["Materials"][0],
+                                       /*skip=*/{"MaterialAxes"});
+    INFO("Domains.Materials[] missing keys: " << json(mat_gaps).dump());
+    CHECK(mat_gaps.empty());
+  }
 }

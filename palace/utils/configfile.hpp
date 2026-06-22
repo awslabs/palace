@@ -63,8 +63,9 @@ public:
   // Level of printing.
   int verbose = 1;
 
-  // Output path for storing results.
-  std::string output = "";
+  // Output path for storing results. Defaults to "postpro" (relative to the working
+  // directory) when omitted, matching the convention used by the in-tree examples.
+  std::string output = "postpro";
 
   // Output formats configuration.
   OutputFormatsData output_formats = {};
@@ -436,6 +437,15 @@ public:
   // Flag for boundary damping term in driven and transient simulations.
   bool active = true;
 
+  // Whether this port contributes a port-mode basis vector when adaptive driven circuit
+  // synthesis is enabled (config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]).
+  // Defaults to true so that, by default, every lumped port appears as a row/column of the
+  // synthesized circuit matrices. Set to false on passive 50 Ohm terminations whose
+  // boundary condition you still want enforced but whose port-port block you do not need
+  // in the output. Excited ports must always be included; the parser will reject
+  // configurations where an excited port has IncludeInSynthesis = false.
+  bool include_in_synthesis = true;
+
   // For each lumped port index, each element contains a list of attributes making up a
   // single element of a potentially multielement lumped port.
   std::vector<internal::ElementData> elements = {};
@@ -476,6 +486,11 @@ public:
 
   // Floquet/Bloch wavevector specifying the phase delay in the X/Y/Z directions.
   std::array<double, 3> wave_vector = {0.0, 0.0, 0.0};
+
+  // Reference frequency (GHz) at which wave_vector is defined. When nonzero, k_F scales
+  // linearly with frequency: k_F(f) = wave_vector * (f / reference_freq). When zero
+  // (default), k_F is held constant across all frequencies.
+  double floquet_reference_freq = 0.0;
 
   PeriodicBoundaryData() = default;
   PeriodicBoundaryData(const json &periodic);
@@ -524,8 +539,37 @@ public:
   std::vector<std::vector<double>> voltage_path = {};
   int n_samples = 100;
 
+  // Optional pair of parent-mesh boundary attributes [high, low] (signal terminal first,
+  // ground terminal second) used solely to fix the mode polarity (no GSLIB / no Z_PV).
+  // The mode is flipped if needed so that the modal E-field on the port face points from
+  // the high-attribute (signal) terminal toward the low-attribute (ground) terminal,
+  // matching the lumped-port `Direction` convention and the VoltagePath ordering. A
+  // lightweight alternative to VoltagePath when only polarity is needed.
+  std::array<int, 2> polarity_attributes = {0, 0};
+
   WavePortData() = default;
   WavePortData(const json &port);
+};
+
+struct FloquetPortData
+{
+public:
+  // Input excitation for driven solver:
+  // - 1-based index if excited; 0 if not excited.
+  int excitation = 0;
+
+  // List of boundary attributes for this Floquet port.
+  std::vector<int> attributes = {};
+
+  // Incident mode polarization: "TE", "TM", "RHC" (right-hand circular),
+  // or "LHC" (left-hand circular).
+  std::string inc_polarization = "TE";
+
+  // Maximum diffraction order index to include. -1 = auto from geometry + frequency.
+  int max_order = -1;
+
+  FloquetPortData() = default;
+  FloquetPortData(const json &port);
 };
 
 struct SurfaceCurrentData
@@ -680,6 +724,7 @@ public:
   std::map<int, LumpedPortData> lumpedport = {};
   std::map<int, TerminalData> terminal = {};
   std::map<int, WavePortData> waveport = {};
+  std::map<int, FloquetPortData> floquetport = {};
   std::map<int, SurfaceCurrentData> current = {};
   PeriodicBoundaryData periodic = {};
   BoundaryPostData postpro = {};
@@ -954,10 +999,6 @@ public:
   // For frequency domain applications, precondition linear systems with a shifted matrix
   // (makes the preconditioner matrix SPD).
   int pc_mat_shifted = -1;
-
-  // Matrix symmetry type for sparse direct solvers (computed from problem type and
-  // boundary conditions).
-  MatrixSymmetry pc_mat_sym = MatrixSymmetry::UNSYMMETRIC;
 
   // For frequency domain applications, use the complex-valued system matrix in the sparse
   // direct solver.

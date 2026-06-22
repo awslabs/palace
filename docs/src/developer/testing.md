@@ -85,10 +85,10 @@ ctest -j8 --output-on-failure
 
 CTest will schedule execution of tests trying to use all the 8 processes. In
 this, CTest handles MPI processes correctly, and ensures that only one GPU test
-is being run at the time. If you compiled *Palace*, the total number of
+is being run at a time. If you compiled *Palace*, the total number of
 processes that could end up used in this example is `8 * OMP_NUM_THREADS`.
 
-If you run specific tests categories, you can use regex matching, for example
+To run specific tests categories, you can use regex matching, for example
 
 ```bash
 ctest -R mpi-            # Run only MPI tests
@@ -379,7 +379,7 @@ The following environment variables are useful when running under sanitizers:
 ## Regression tests
 
 In addition to unit tests, *Palace* comes with a series of regression tests.
-Regression tests based on the provided example applications in the
+Regression tests are based on the provided example applications in the
 [`examples/`](https://github.com/awslabs/palace/blob/main/examples/) directory
 and verify that the code reproduces results in reference files stored in
 [`test/examples/`](https://github.com/awslabs/palace/blob/main/test/examples/ref).

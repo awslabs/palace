@@ -4,6 +4,8 @@
 #include "postoperator.hpp"
 
 #include <algorithm>
+#include <complex>
+#include <set>
 #include <string>
 #include "drivers/boundarymodesolver.hpp"
 #include "fem/coefficient.hpp"
@@ -11,6 +13,7 @@
 #include "fem/interpolator.hpp"
 #include "linalg/operator.hpp"
 #include "models/curlcurloperator.hpp"
+#include "models/floquetportoperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
@@ -25,6 +28,8 @@
 
 namespace palace
 {
+
+using namespace std::complex_literals;
 
 namespace
 {
@@ -687,10 +692,15 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
     paraview->RegisterCoeffField("Sn", Sn.get());
     sn_registered = true;
   }
+  double paraview_time = time;
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    paraview_time = units.Dimensionalize<Units::ValueType::FREQUENCY>(time) / (2.0 * M_PI);
+  }
   paraview->SetCycle(step);
-  paraview->SetTime(time);
+  paraview->SetTime(paraview_time);
   paraview_bdr->SetCycle(step);
-  paraview_bdr->SetTime(time);
+  paraview_bdr->SetTime(paraview_time);
   paraview->Save();
   paraview_bdr->Save();
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
@@ -1238,6 +1248,62 @@ void PostOperator<solver_t>::MeasureWavePorts() const
       vi.P = data.GetPower(*E, *B);
       vi.S = data.GetSParameter(*E);
       vi.V = data.GetVoltage(*E);
+      vi.Z_PV = data.GetCharacteristicImpedance();
+    }
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::MeasureFloquetPorts() const
+{
+  measurement_cache.floquet_port_s.clear();
+
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    if (fem_op->GetFloquetPortOp().Empty())
+    {
+      return;
+    }
+    // Determine if the excitation uses circular polarization (for output basis).
+    bool circular_output = false;
+    for (const auto &[idx, port] : fem_op->GetFloquetPortOp())
+    {
+      if (port.excitation == measurement_cache.ex_idx)
+      {
+        circular_output = port.HasCircularExcitation();
+        break;
+      }
+    }
+    measurement_cache.floquet_circular_output = circular_output;
+    for (const auto &[idx, data] : fem_op->GetFloquetPortOp())
+    {
+      bool is_driving = (data.excitation == measurement_cache.ex_idx);
+      auto S_all = data.GetAllSParameters(*E, is_driving);
+
+      // For circular excitation, rotate TE/TM output to RHC/LHC basis.
+      // Unitary: |S_RHC|² + |S_LHC|² = |S_TE|² + |S_TM|² (energy conserved).
+      if (circular_output)
+      {
+        const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
+        std::map<std::tuple<int, int, bool>, std::complex<double>> circ;
+        std::set<std::pair<int, int>> orders;
+        for (const auto &[key, S] : S_all)
+        {
+          orders.insert({std::get<0>(key), std::get<1>(key)});
+        }
+        for (const auto &[m, n] : orders)
+        {
+          auto it_te = S_all.find({m, n, true});
+          auto it_tm = S_all.find({m, n, false});
+          auto s_te = (it_te != S_all.end()) ? it_te->second : 0.0;
+          auto s_tm = (it_tm != S_all.end()) ? it_tm->second : 0.0;
+          circ[{m, n, true}] = (s_te + 1i * s_tm) * inv_sqrt2;   // RHC
+          circ[{m, n, false}] = (s_te - 1i * s_tm) * inv_sqrt2;  // LHC
+        }
+        S_all = std::move(circ);
+      }
+
+      measurement_cache.floquet_port_s[idx] = std::move(S_all);
     }
   }
 }
@@ -1245,65 +1311,103 @@ void PostOperator<solver_t>::MeasureWavePorts() const
 template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureSParameter() const
 {
-  // Depends on LumpedPorts, WavePorts.
+  // Depends on LumpedPorts, WavePorts, FloquetPorts.
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
+    using fmt::format;
     using std::complex_literals::operator""i;
 
-    // Don't measure S-Matrix unless there is only one excitation per port. Also, we current
-    // don't support mixing wave and lumped ports, because we need to fix consistent
-    // conventions / de-embedding.
+    // Don't measure S-Matrix unless there is only one excitation per port. Mixed
+    // lumped/wave S-parameters are supported, but Floquet ports use a different modal
+    // basis and are only handled when they are the sole port type.
+    bool has_lumped = fem_op->GetLumpedPortOp().Size() > 0;
+    bool has_wave = fem_op->GetWavePortOp().Size() > 0;
+    bool has_floquet = !fem_op->GetFloquetPortOp().Empty();
+    int active_port_type_count = static_cast<int>(has_lumped) + static_cast<int>(has_wave) +
+                                 static_cast<int>(has_floquet);
     if (!fem_op->GetPortExcitations().IsMultipleSimple() ||
-        !((fem_op->GetLumpedPortOp().Size() > 0) xor (fem_op->GetWavePortOp().Size() > 0)))
+        (has_floquet && active_port_type_count != 1))
     {
       return;
     }
 
-    // Assumes that for single driving port the excitation index is equal to the port index.
-    auto drive_port_idx = measurement_cache.ex_idx;
+    // S-parameter computation with per-port reference impedances (Kurokawa power-wave
+    // generalized S-parameters).
+    //
+    // Each port type uses its natural reference impedance: lumped ports use the user-
+    // specified R; wave ports implicitly use the line's characteristic impedance encoded
+    // in the unit-power normalization of the boundary mode (∫|E_mode×H_mode⋆|·n dS = 1).
+    //
+    // GetSParameter() returns the b-amplitude in Kurokawa convention for both port types:
+    //   - Lumped: ∫E·(E_inc/Z_s) dS = V/V_inc, where V_inc encodes the port's R
+    //   - Wave:   ∫(E×H_mode⋆)·n dS, the modal power-overlap with unit-power normalization
+    // Both are directly the Kurokawa b/a ratio, so no impedance scaling is needed.
 
-    // Currently S-Parameters are not calculated for mixed lumped & wave ports, so don't
-    // combine output iterators.
+    // Get information about excited port.
+    auto [drive_is_simple, drive_port_type, drive_port_idx] =
+        fem_op->GetPortExcitations().excitations.at(measurement_cache.ex_idx).IsSimple();
+
+    if (drive_port_type != PortType::LumpedPort && drive_port_type != PortType::WavePort &&
+        drive_port_type != PortType::FloquetPort)
+    {
+      return;
+    }
+
+    // Per-side wave-port de-embedding factor: exp(i·kₙ·d_offset) when the port is a
+    // wave port with a non-zero offset; 1 otherwise (lumped ports have no offset).
+    // Applied independently on the source and observation sides, so cross-type S
+    // (lumped↔wave) gets the correct single-sided phase.
+    const std::complex<double> src_deembed =
+        (drive_port_type == PortType::WavePort)
+            ? std::exp(1i * fem_op->GetWavePortOp().GetPort(drive_port_idx).kn0 *
+                       fem_op->GetWavePortOp().GetPort(drive_port_idx).d_offset)
+            : std::complex<double>{1.0, 0.0};
+
+    // Iterate over observation lumped ports.
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
-      // Get previously computed data: should never fail as defined by MeasureLumpedPorts.
       auto &vi = measurement_cache.lumped_port_vi.at(idx);
-
-      const LumpedPortData &src_data = fem_op->GetLumpedPortOp().GetPort(drive_port_idx);
-      if (idx == drive_port_idx)
+      if (drive_port_type == PortType::LumpedPort && idx == drive_port_idx)
       {
         vi.S.real(vi.S.real() - 1.0);
       }
-      // Generalized S-parameters if the ports are resistive (avoids divide-by-zero).
-      if (std::abs(data.R) > 0.0)
-      {
-        vi.S *= std::sqrt(src_data.R / data.R);
-      }
+      // Lumped observation has no d_offset — only the source-side factor applies.
+      vi.S *= src_deembed;
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
-                 fmt::format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
+                 format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
                  Measurement::Magnitude(vi.S), Measurement::Phase(vi.S));
     }
+
+    // Iterate over observation wave ports.
     for (const auto &[idx, data] : fem_op->GetWavePortOp())
     {
-      // Get previously computed data: should never fail as defined by MeasureWavePorts.
       auto &vi = measurement_cache.wave_port_vi.at(idx);
-
-      // Wave port modes are not normalized to a characteristic impedance so no generalized
-      // S-parameters are available.
-      const WavePortData &src_data = fem_op->GetWavePortOp().GetPort(drive_port_idx);
-      if (idx == drive_port_idx)
+      if (drive_port_type == PortType::WavePort && idx == drive_port_idx)
       {
         vi.S.real(vi.S.real() - 1.0);
       }
-      // Port de-embedding: S_demb = S exp(ikₙᵢ dᵢ) exp(ikₙⱼ dⱼ) (distance offset is default
-      // 0 unless specified).
-      vi.S *= std::exp(1i * src_data.kn0 * src_data.d_offset);
+      // Apply both source and observation de-embedding factors.
+      vi.S *= src_deembed;
       vi.S *= std::exp(1i * data.kn0 * data.d_offset);
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
-                 fmt::format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
+                 format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
                  Measurement::Magnitude(vi.S), Measurement::Phase(vi.S));
+    }
+
+    // Floquet port S-parameters (already post-processed in MeasureFloquetPorts).
+    for (const auto &[port_idx, S_map] : measurement_cache.floquet_port_s)
+    {
+      for (const auto &[key, S] : S_map)
+      {
+        auto [m, n, is_te] = key;
+        auto pol = measurement_cache.floquet_circular_output ? (is_te ? "RHC" : "LHC")
+                                                             : (is_te ? "TE" : "TM");
+        Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
+                   format("S[P{}({},{}){}][{}]", port_idx, m, n, pol, drive_port_idx),
+                   S.real(), S.imag(), Measurement::Magnitude(S), Measurement::Phase(S));
+      }
     }
   }
 }
@@ -1408,6 +1512,8 @@ void PostOperator<solver_t>::MeasureProbes() const
   }
 #endif
 }
+
+using fmt::format;
 
 template <ProblemType solver_t>
 template <ProblemType U>

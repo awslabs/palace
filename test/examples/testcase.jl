@@ -17,6 +17,7 @@ function testcase(
     rtol=1.0e-6,
     atol=1.0e-18,
     excluded_columns=[],
+    abs_columns=[],
     custom_tests=Dict(),
     paraview_fields=true,
     gridfunction_fields=false,
@@ -176,6 +177,13 @@ function testcase(
         @test alldirs == expected_dirs || (@show alldirs, expected_dirs; false)
         @test sort(csvfiles) == sort(csvfilesref) || (@show csvfiles, csvfilesref; false)
 
+        # The resolved config is written once at the top level as "<input>_resolved.json"
+        # (dynamic name — the harness feeds a temp config). Verify exactly one exists at
+        # the top level, then exclude it from the fixed metafile comparison.
+        resolved = filter(f -> endswith(f, "_resolved.json"), metafiles)
+        @test length(resolved) == 1 && !occursin('/', resolved[1]) ||
+              (@show resolved; false)
+        metafiles = filter(f -> !endswith(f, "_resolved.json"), metafiles)
         expected_metafiles = ["palace.json"]
         for i = 1:max_its
             push!(expected_metafiles, "iteration$(i)/palace.json")
@@ -219,6 +227,14 @@ function testcase(
             rename!(dataref, strip.(names(dataref)))
 
             @test names(data) == names(dataref) || logdump(names(data), names(dataref))
+
+            # Compare gauge-dependent signed columns by magnitude only.
+            for col ∈ abs_columns
+                for c ∈ names(data, Cols(contains(col)))
+                    data[!, c] = abs.(data[!, c])
+                    dataref[!, c] = abs.(dataref[!, c])
+                end
+            end
 
             if file in keys(custom_tests)
                 custom_tests[file](data, dataref)

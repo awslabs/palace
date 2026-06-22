@@ -10,6 +10,73 @@
   ],
   "properties":
   {
+    "PEC": { "$ref": "#/$defs/PEC" },
+    "PMC": { "$ref": "#/$defs/PMC" },
+    "Impedance":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "$ref": "#/$defs/Impedance" }
+    },
+    "Absorbing": { "$ref": "#/$defs/Absorbing" },
+    "Conductivity":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "$ref": "#/$defs/Conductivity" }
+    },
+    "LumpedPort":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "oneOf":
+        [
+          { "$ref": "#/$defs/LumpedPortAttributes" },
+          { "$ref": "#/$defs/LumpedPortElements" }
+        ]
+      }
+    },
+    "WavePort":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "$ref": "#/$defs/WavePort" }
+    },
+    "FloquetPort":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "$ref": "#/$defs/FloquetPort" }
+    },
+    "WavePortPEC": { "$ref": "#/$defs/WavePortPEC" },
+    "SurfaceCurrent":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items":
+      {
+        "oneOf":
+        [
+          { "$ref": "#/$defs/SurfaceCurrentAttributes" },
+          { "$ref": "#/$defs/SurfaceCurrentElements" }
+        ]
+      }
+    },
+    "Ground": { "$ref": "#/$defs/Ground" },
+    "ZeroCharge": { "$ref": "#/$defs/ZeroCharge" },
+    "Terminal":
+    {
+      "type": "array",
+      "additionalItems": false,
+      "items": { "$ref": "#/$defs/Terminal" }
+    },
+    "Periodic": { "$ref": "#/$defs/Periodic" },
+    "Postprocessing": { "$ref": "#/$defs/BoundaryPostprocessing" }
+  },
+  "$defs":
+  {
     "PEC":
     {
       "type": "object",
@@ -28,188 +95,6 @@
       "properties":
       {
         "Attributes": { "$ref": "#/$defs/Attributes" }
-      }
-    },
-    "Impedance":
-    {
-      "type": "array",
-      "additionalItems": false,
-      "items":
-      {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["Attributes"],
-        "properties":
-        {
-          "Attributes": { "$ref": "#/$defs/Attributes" },
-          "Rs": { "type": "number" },
-          "Ls": { "type": "number" },
-          "Cs": { "type": "number" }
-        }
-      }
-    },
-    "Absorbing":
-    {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["Attributes"],
-      "properties":
-      {
-        "Attributes": { "$ref": "#/$defs/Attributes" },
-        "Order": { "type": "integer", "minimum": 1, "maximum": 2 }
-      }
-    },
-    "Conductivity":
-    {
-      "type": "array",
-      "additionalItems": false,
-      "items":
-      {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["Attributes", "Conductivity"],
-        "properties":
-        {
-          "Attributes": { "$ref": "#/$defs/Attributes" },
-          "Conductivity": { "type": "number" },
-          "Permeability": { "type": "number" },
-          "Thickness": { "type": "number" },
-          "External": { "type": "boolean" }
-        }
-      }
-    },
-    "LumpedPort":
-    {
-      "type": "array",
-      "additionalItems": false,
-      "items":
-      {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["Index"],
-        "oneOf": [
-          { "required": ["Attributes"] },
-          { "required": ["Elements"] }
-        ],
-        "properties":
-        {
-          "Index": { "type": "integer", "exclusiveMinimum": 0 },
-          "Attributes": { "$ref": "#/$defs/Attributes" },
-          "Direction": { "$ref": "#/$defs/Direction" },
-          "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
-          "R": { "type": "number" },
-          "L": { "type": "number" },
-          "C": { "type": "number" },
-          "Rs": { "type": "number" },
-          "Ls": { "type": "number" },
-          "Cs": { "type": "number" },
-          "Excitation": {
-            "oneOf" : [
-              { "type": "boolean" },
-              { "type": "integer", "minimum": 0 }
-            ]
-          },
-          "Active": { "type": "boolean" },
-          "Elements":
-          {
-            "type": "array",
-            "additionalItems": false,
-            "items":
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["Attributes", "Direction"],
-              "properties":
-              {
-                "Attributes": { "$ref": "#/$defs/Attributes" },
-                "Direction": { "$ref": "#/$defs/Direction" },
-                "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] }
-              }
-            }
-          }
-        }
-      }
-    },
-    "WavePort":
-    {
-      "type": "array",
-      "additionalItems": false,
-      "items":
-      {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["Index", "Attributes"],
-        "properties":
-        {
-          "Index": { "type": "integer", "exclusiveMinimum": 0 },
-          "Attributes": { "$ref": "#/$defs/Attributes" },
-          "Mode": { "type": "integer", "exclusiveMinimum": 0 },
-          "Offset": { "type": "number", "minimum": 0.0 },
-          "SolverType": { "type": "string" },
-          "Excitation": {
-            "oneOf" : [
-              { "type": "boolean" },
-              { "type": "integer", "minimum": 0 }
-            ]
-          },
-          "Active": { "type": "boolean" },
-          "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
-          "KSPTol": { "type": "number", "exclusiveMinimum": 0.0 },
-          "EigenTol": { "type": "number", "exclusiveMinimum": 0.0 },
-          "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
-          "Verbose": { "type": "integer", "minimum": 0.0 },
-          "VoltagePath": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 } },
-          "NSamples": { "type": "integer", "minimum": 1 }
-        }
-      }
-    },
-    "WavePortPEC":
-    {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["Attributes"],
-      "properties":
-      {
-        "Attributes": { "$ref": "#/$defs/Attributes" }
-      }
-    },
-    "SurfaceCurrent":
-    {
-      "type": "array",
-      "additionalItems": false,
-      "items":
-      {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["Index"],
-        "oneOf": [
-          { "required": ["Attributes"] },
-          { "required": ["Elements"] }
-        ],
-        "properties":
-        {
-          "Index": { "type": "integer", "exclusiveMinimum": 0 },
-          "Attributes": { "$ref": "#/$defs/Attributes" },
-          "Direction": { "$ref": "#/$defs/Direction" },
-          "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] },
-          "Elements":
-          {
-            "type": "array",
-            "additionalItems": false,
-            "items":
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["Attributes", "Direction"],
-              "properties":
-              {
-                "Attributes": { "$ref": "#/$defs/Attributes" },
-                "Direction": { "$ref": "#/$defs/Direction" },
-                "CoordinateSystem": { "type": "string", "enum": ["Cartesian", "Cylindrical"] }
-              }
-            }
-          }
-        }
       }
     },
     "Ground":
@@ -232,20 +117,256 @@
         "Attributes": { "$ref": "#/$defs/Attributes" }
       }
     },
+    "WavePortPEC":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Attributes"],
+      "properties":
+      {
+        "Attributes": { "$ref": "#/$defs/Attributes" }
+      }
+    },
+    "Impedance":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Attributes"],
+      "properties":
+      {
+        "Attributes": { "$ref": "#/$defs/Attributes" },
+        "Rs": { "type": "number" },
+        "Ls": { "type": "number" },
+        "Cs": { "type": "number" }
+      }
+    },
+    "Absorbing":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Attributes"],
+      "properties":
+      {
+        "Attributes": { "$ref": "#/$defs/Attributes" },
+        "Order": { "type": "integer", "minimum": 1, "maximum": 2 }
+      }
+    },
+    "Conductivity":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Attributes", "Conductivity"],
+      "properties":
+      {
+        "Attributes": { "$ref": "#/$defs/Attributes" },
+        "Conductivity": { "type": "number" },
+        "Permeability": { "type": "number" },
+        "Thickness": { "type": "number" },
+        "External": { "type": "boolean" }
+      }
+    },
+    "LumpedPortAttributes":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Index", "Attributes"],
+      "properties":
+      {
+        "Index": { "type": "integer", "exclusiveMinimum": 0 },
+        "Attributes": { "$ref": "#/$defs/Attributes" },
+        "Direction":
+        {
+          "anyOf":
+          [
+            { "$ref": "#/$defs/PortDirection" },
+            { "$ref": "#/$defs/Vector3" }
+          ]
+        },
+        "CoordinateSystem": { "$ref": "#/$defs/CoordinateSystem" },
+        "R": { "type": "number" },
+        "L": { "type": "number" },
+        "C": { "type": "number" },
+        "Rs": { "type": "number" },
+        "Ls": { "type": "number" },
+        "Cs": { "type": "number" },
+        "Excitation":
+        {
+          "oneOf":
+          [
+            { "type": "boolean" },
+            { "$ref": "#/$defs/ExcitationIndex" }
+          ]
+        },
+        "Active": { "type": "boolean" },
+        "IncludeInSynthesis": { "type": "boolean" }
+      }
+    },
+    "LumpedPortElements":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Index", "Elements"],
+      "properties":
+      {
+        "Index": { "type": "integer", "exclusiveMinimum": 0 },
+        "Elements":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items": { "$ref": "#/$defs/Element" }
+        },
+        "Direction":
+        {
+          "anyOf":
+          [
+            { "$ref": "#/$defs/PortDirection" },
+            { "$ref": "#/$defs/Vector3" }
+          ]
+        },
+        "CoordinateSystem": { "$ref": "#/$defs/CoordinateSystem" },
+        "R": { "type": "number" },
+        "L": { "type": "number" },
+        "C": { "type": "number" },
+        "Rs": { "type": "number" },
+        "Ls": { "type": "number" },
+        "Cs": { "type": "number" },
+        "Excitation":
+        {
+          "oneOf":
+          [
+            { "type": "boolean" },
+            { "$ref": "#/$defs/ExcitationIndex" }
+          ]
+        },
+        "Active": { "type": "boolean" },
+        "IncludeInSynthesis": { "type": "boolean" }
+      }
+    },
+    "Element":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Attributes", "Direction"],
+      "properties":
+      {
+        "Attributes": { "$ref": "#/$defs/Attributes" },
+        "Direction":
+        {
+          "anyOf":
+          [
+            { "$ref": "#/$defs/PortDirection" },
+            { "$ref": "#/$defs/Vector3" }
+          ]
+        },
+        "CoordinateSystem": { "$ref": "#/$defs/CoordinateSystem" }
+      }
+    },
+    "WavePort":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Index", "Attributes"],
+      "properties":
+      {
+        "Index": { "type": "integer", "exclusiveMinimum": 0 },
+        "Attributes": { "$ref": "#/$defs/Attributes" },
+        "Mode": { "type": "integer", "exclusiveMinimum": 0 },
+        "Offset": { "type": "number", "minimum": 0.0 },
+        "SolverType": { "type": "string" },
+        "Excitation":
+        {
+          "oneOf":
+          [
+            { "type": "boolean" },
+            { "$ref": "#/$defs/ExcitationIndex" }
+          ]
+        },
+        "Active": { "type": "boolean" },
+        "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
+        "KSPTol": { "type": "number", "exclusiveMinimum": 0.0 },
+        "EigenTol": { "type": "number", "exclusiveMinimum": 0.0 },
+        "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
+        "Verbose": { "type": "integer", "minimum": 0.0 },
+        "VoltagePath": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 } },
+        "NSamples": { "type": "integer", "minimum": 1 },
+        "PolarityAttributes": { "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2 }
+      }
+    },
+    "FloquetPort":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Index", "Attributes"],
+      "properties":
+      {
+        "Index": { "type": "integer", "exclusiveMinimum": 0 },
+        "Attributes": { "$ref": "#/$defs/Attributes" },
+        "Excitation":
+        {
+          "oneOf":
+          [
+            { "type": "boolean" },
+            { "$ref": "#/$defs/ExcitationIndex" }
+          ]
+        },
+        "IncidentPolarization": { "type": "string", "enum": ["TE", "TM", "RHC", "LHC"] },
+        "MaxOrder": { "type": "integer" }
+      }
+    },
+    "SurfaceCurrentAttributes":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Index", "Attributes"],
+      "properties":
+      {
+        "Index": { "type": "integer", "exclusiveMinimum": 0 },
+        "Attributes": { "$ref": "#/$defs/Attributes" },
+        "Direction":
+        {
+          "anyOf":
+          [
+            { "$ref": "#/$defs/PortDirection" },
+            { "$ref": "#/$defs/Vector3" }
+          ]
+        },
+        "CoordinateSystem": { "$ref": "#/$defs/CoordinateSystem" }
+      }
+    },
+    "SurfaceCurrentElements":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Index", "Elements"],
+      "properties":
+      {
+        "Index": { "type": "integer", "exclusiveMinimum": 0 },
+        "Elements":
+        {
+          "type": "array",
+          "additionalItems": false,
+          "items": { "$ref": "#/$defs/Element" }
+        },
+        "Direction":
+        {
+          "anyOf":
+          [
+            { "$ref": "#/$defs/PortDirection" },
+            { "$ref": "#/$defs/Vector3" }
+          ]
+        },
+        "CoordinateSystem": { "$ref": "#/$defs/CoordinateSystem" }
+      }
+    },
     "Terminal":
     {
-      "type": "array",
-      "additionalItems": false,
-      "items":
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Index", "Attributes"],
+      "properties":
       {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["Index", "Attributes"],
-        "properties":
-        {
-          "Index": { "type": "integer", "exclusiveMinimum": 0 },
-          "Attributes": { "$ref": "#/$defs/Attributes" }
-        }
+        "Index": { "type": "integer", "exclusiveMinimum": 0 },
+        "Attributes": { "$ref": "#/$defs/Attributes" }
       }
     },
     "Periodic":
@@ -256,27 +377,29 @@
       "properties":
       {
         "FloquetWaveVector": { "$ref": "#/$defs/FloquetWaveVector" },
+        "FloquetReferenceFrequency": { "type": "number", "minimum": 0 },
         "BoundaryPairs":
         {
           "type": "array",
           "additionalItems": false,
-          "items":
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["DonorAttributes", "ReceiverAttributes"],
-            "properties":
-            {
-              "DonorAttributes": { "$ref": "#/$defs/DonorAttributes" },
-              "ReceiverAttributes": { "$ref": "#/$defs/ReceiverAttributes" },
-              "Translation": { "$ref": "#/$defs/Translation" },
-              "AffineTransformation": { "$ref": "#/$defs/AffineTransformation" }
-            }
-          }
+          "items": { "$ref": "#/$defs/BoundaryPair" }
         }
       }
     },
-    "Postprocessing":
+    "BoundaryPair":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["DonorAttributes", "ReceiverAttributes"],
+      "properties":
+      {
+        "DonorAttributes": { "$ref": "#/$defs/Attributes" },
+        "ReceiverAttributes": { "$ref": "#/$defs/Attributes" },
+        "Translation": { "$ref": "#/$defs/Vector3" },
+        "AffineTransformation": { "$ref": "#/$defs/AffineTransformation" }
+      }
+    },
+    "BoundaryPostprocessing":
     {
       "type": "object",
       "additionalProperties": false,
@@ -287,129 +410,138 @@
         {
           "type": "array",
           "additionalItems": false,
-          "items":
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["Index", "Attributes", "Type"],
-            "properties":
-            {
-              "Index": { "type": "integer", "exclusiveMinimum": 0 },
-              "Attributes": { "$ref": "#/$defs/Attributes" },
-              "Type": { "type": "string", "enum": ["Electric", "Magnetic", "Power"] },
-              "TwoSided": { "type": "boolean" },
-              "Center":
-              {
-                "type": "array",
-                "additionalItems": false,
-                "items": { "type": "number" },
-                "minItems": 3,
-                "maxItems": 3
-              }
-            }
-          }
+          "items": { "$ref": "#/$defs/SurfaceFlux" }
         },
         "Dielectric":
         {
           "type": "array",
           "additionalItems": false,
-          "items":
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["Index", "Attributes", "Thickness", "Permittivity"],
-            "properties":
-            {
-              "Index": { "type": "integer", "exclusiveMinimum": 0 },
-              "Attributes": { "$ref": "#/$defs/Attributes" },
-              "Type": { "type": "string", "enum": ["Default", "MA", "MS", "SA"] },
-              "Thickness": { "type": "number" },
-              "Permittivity": { "type": "number" },
-              "LossTan": { "type": "number" }
-            }
-          }
+          "items": { "$ref": "#/$defs/Dielectric" }
         },
         "Impedance":
         {
           "type": "array",
-          "items":
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["Index"],
-            "properties":
-            {
-              "Index": { "type": "integer" },
-              "VoltageAttributes": { "$ref": "#/$defs/Attributes" },
-              "CurrentAttributes": { "$ref": "#/$defs/Attributes" },
-              "VoltagePath": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 } },
-              "CurrentPath": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 } },
-              "NSamples": { "type": "integer", "minimum": 1 }
-            }
-          }
+          "additionalItems": false,
+          "items": { "$ref": "#/$defs/PostprocessingImpedance" }
         },
         "Voltage":
         {
           "type": "array",
-          "items":
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["Index"],
-            "properties":
-            {
-              "Index": { "type": "integer" },
-              "VoltageAttributes": { "$ref": "#/$defs/Attributes" },
-              "VoltagePath": { "type": "array", "items": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 3 } },
-              "NSamples": { "type": "integer", "minimum": 1 }
-            }
-          }
+          "additionalItems": false,
+          "items": { "$ref": "#/$defs/PostprocessingVoltage" }
         },
-        "FarField": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["Attributes"],
-          "properties": {
-            "Attributes": { "$ref": "#/$defs/Attributes" },
-            "NSample": { "type": "integer", "minimum": 0 },
-            "ThetaPhis": {
-              "type": "array",
-              "items": {
-                "type": "array",
-                "items": {"type": "number"},
-                "minItems": 2,
-                "maxItems": 2
-              }
-            }
-          }
+        "FarField": { "$ref": "#/$defs/FarField" }
+      }
+    },
+    "PostprocessingImpedance":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Index"],
+      "properties":
+      {
+        "Index": { "type": "integer" },
+        "VoltageAttributes": { "$ref": "#/$defs/Attributes" },
+        "CurrentAttributes": { "$ref": "#/$defs/Attributes" },
+        "VoltagePath": { "$ref": "#/$defs/CoordinatePath" },
+        "CurrentPath": { "$ref": "#/$defs/CoordinatePath" },
+        "NSamples": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "PostprocessingVoltage":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Index"],
+      "properties":
+      {
+        "Index": { "type": "integer" },
+        "VoltageAttributes": { "$ref": "#/$defs/Attributes" },
+        "VoltagePath": { "$ref": "#/$defs/CoordinatePath" },
+        "NSamples": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "SurfaceFlux":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Index", "Attributes", "Type"],
+      "properties":
+      {
+        "Index": { "type": "integer", "exclusiveMinimum": 0 },
+        "Attributes": { "$ref": "#/$defs/Attributes" },
+        "Type": { "$ref": "#/$defs/SurfaceFluxType" },
+        "TwoSided": { "type": "boolean" },
+        "Center": { "$ref": "#/$defs/Vector3" }
+      }
+    },
+    "Dielectric":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Index", "Attributes", "Thickness", "Permittivity"],
+      "properties":
+      {
+        "Index": { "type": "integer", "exclusiveMinimum": 0 },
+        "Attributes": { "$ref": "#/$defs/Attributes" },
+        "Type": { "$ref": "#/$defs/InterfaceDielectric" },
+        "Thickness": { "type": "number" },
+        "Permittivity": { "type": "number" },
+        "LossTan": { "type": "number" }
+      }
+    },
+    "FarField":
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Attributes"],
+      "properties":
+      {
+        "Attributes": { "$ref": "#/$defs/Attributes" },
+        "NSample": { "type": "integer", "minimum": 0 },
+        "ThetaPhis":
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ThetaPhi" }
         }
       }
-    }
-  },
-  "$defs":
-  {
+    },
+    "ExcitationIndex":
+    {
+      "type": "integer",
+      "minimum": 0
+    },
+    "CoordinateSystem":
+    {
+      "type": "string",
+      "enum": ["Cartesian", "Cylindrical"]
+    },
+    "SurfaceFluxType":
+    {
+      "type": "string",
+      "enum": ["Electric", "Magnetic", "Power"]
+    },
+    "InterfaceDielectric":
+    {
+      "type": "string",
+      "enum": ["Default", "MA", "MS", "SA"]
+    },
     "Attributes":
     {
       "type": "array",
       "additionalItems": false,
-      "items": { "type": "integer"},
+      "items": { "type": "integer" },
       "minItems": 1
     },
-    "DonorAttributes":
+    "Vector3":
     {
       "type": "array",
       "additionalItems": false,
-      "items": { "type": "integer"},
-      "minItems": 1
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
     },
-    "ReceiverAttributes":
-    {
-      "type": "array",
-      "additionalItems": false,
-      "items": { "type": "integer"},
-      "minItems": 1
-    },
-    "Translation":
+    "FloquetWaveVector":
     {
       "type": "array",
       "additionalItems": false,
@@ -425,31 +557,29 @@
       "minItems": 16,
       "maxItems": 16
     },
-    "FloquetWaveVector":
+    "ThetaPhi":
     {
       "type": "array",
-      "additionalItems": false,
       "items": { "type": "number" },
-      "minItems": 3,
-      "maxItems": 3
+      "minItems": 2,
+      "maxItems": 2
     },
-    "Direction":
+    "CoordinatePath":
     {
-      "anyOf":
-      [
-        {
-          "type": "string",
-          "enum": ["R", "X", "Y", "Z", "+R", "+X", "+Y", "+Z", "-R", "-X", "-Y", "-Z",
-                   "r", "x", "y", "z", "+r", "+x", "+y", "+z", "-r", "-x", "-y", "-z"]
-        },
-        {
-          "type": "array",
-          "additionalItems": false,
-          "items": { "type": "number" },
-          "minItems": 3,
-          "maxItems": 3
-        }
-      ]
+      "type": "array",
+      "items":
+      {
+        "type": "array",
+        "items": { "type": "number" },
+        "minItems": 2,
+        "maxItems": 3
+      }
+    },
+    "PortDirection":
+    {
+      "type": "string",
+      "enum": ["R", "X", "Y", "Z", "+R", "+X", "+Y", "+Z", "-R", "-X", "-Y", "-Z",
+               "r", "x", "y", "z", "+r", "+x", "+y", "+z", "-r", "-x", "-y", "-z"]
     }
   }
 }
