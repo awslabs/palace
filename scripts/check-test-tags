@@ -53,10 +53,14 @@ fi
 REQUIRED_TAGS='\[Serial\]|\[Parallel\]|\[GPU\]'
 
 MISSING=$(find "$TEST_DIR" -name '*.cpp' -print0 | xargs -0 awk '
+    # Reset per file: a macro never spans files, so never carry buffer state across.
+    FNR == 1 { buffering = 0; buf = "" }
+
     # Skip single-line comments so commented-out test cases are ignored.
     /^[[:space:]]*\/\// { next }
 
-    # Start buffering when a (non-buffered) line opens a test-case macro.
+    # Start buffering on a test-case macro. Match is substring (unanchored) on
+    # purpose: it also covers TEMPLATE_TEST_CASE and friends for free.
     !buffering && /(TEST_CASE|TEST_CASE_METHOD)[[:space:]]*\(/ {
         buffering = 1
         buf = ""
@@ -68,7 +72,15 @@ MISSING=$(find "$TEST_DIR" -name '*.cpp' -print0 | xargs -0 awk '
         # Allman style: the body brace sits alone on its own line, terminating the
         # (possibly multi-line) macro signature.
         if ($0 ~ /^[[:space:]]*\{[[:space:]]*$/) {
-            if (buf !~ /'"$REQUIRED_TAGS"'/) {
+            # Extract the last quoted string (the Catch2 tags argument) so that
+            # occurrences in the test name or trailing comments are not matched.
+            tmp = buf
+            tags = ""
+            while (match(tmp, /"[^"]*"/)) {
+                tags = substr(tmp, RSTART, RLENGTH)
+                tmp = substr(tmp, RSTART + RLENGTH)
+            }
+            if (tags !~ /'"$REQUIRED_TAGS"'/) {
                 print start
             }
             buffering = 0
