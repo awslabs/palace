@@ -545,9 +545,9 @@ CEED_QFUNCTION(f_eval_bdr_field_1_32)(void *__restrict__ ctx_, CeedInt Q,
   {
     CeedScalar V[3];
     SurfField32(ctx[0].first, i, Q, J_v, u, V);
-    v[i + Q * 0] = V[0];
-    v[i + Q * 1] = V[1];
-    v[i + Q * 2] = V[2];
+    v[i + Q * 0] = ctx[1].second * V[0];
+    v[i + Q * 1] = ctx[1].second * V[1];
+    v[i + Q * 2] = ctx[1].second * V[2];
   }
   return 0;
 }
@@ -564,9 +564,9 @@ CEED_QFUNCTION(f_eval_bdr_field_2_32)(void *__restrict__ ctx_, CeedInt Q,
     CeedScalar V[3], V_2[3];
     SurfField32(ctx[0].first, i, Q, J_v1, u_1, V);
     SurfField32(ctx[0].first, i, Q, J_v2, u_2, V_2);
-    v[i + Q * 0] = 0.5 * (V[0] + V_2[0]);
-    v[i + Q * 1] = 0.5 * (V[1] + V_2[1]);
-    v[i + Q * 2] = 0.5 * (V[2] + V_2[2]);
+    v[i + Q * 0] = ctx[1].second * 0.5 * (V[0] + V_2[0]);
+    v[i + Q * 1] = ctx[1].second * 0.5 * (V[1] + V_2[1]);
+    v[i + Q * 2] = ctx[1].second * 0.5 * (V[2] + V_2[2]);
   }
   return 0;
 }
@@ -674,6 +674,69 @@ CEED_QFUNCTION(f_eval_bdr_current_j_2_32)(void *__restrict__ ctx_, CeedInt Q,
     v[i + Q * 0] = s * (n[1] * H[2] - n[2] * H[1]);
     v[i + Q * 1] = s * (n[2] * H[0] - n[0] * H[2]);
     v[i + Q * 2] = s * (n[0] * H[1] - n[1] * H[0]);
+  }
+  return 0;
+}
+
+// Boundary Poynting vector: per-side S = scale * E x (mu^-1 B), averaged over both
+// sides for interior boundaries. This matches PoyntingVectorCoefficient's boundary
+// branch: full vector, no n-dot, no 1/2 time-average factor. Context: [0].second =
+// scaling, material table at +1. Inputs ("_1"): grad_x_f, attr_1, grad_x_1, u_e_1,
+// u_b_1; ("_2"): grad_x_f, attr_1, grad_x_1, attr_2, grad_x_2, u_e_1, u_b_1,
+// u_e_2, u_b_2.
+CEED_QFUNCTION_HELPER void SurfPoynting32(const CeedIntScalar *ctx, CeedInt i, CeedInt Q,
+                                          CeedInt attr, const CeedScalar *J_v,
+                                          const CeedScalar *u_e, const CeedScalar *u_b,
+                                          CeedScalar S[3])
+{
+  CeedScalar E[3], B[3], invmu[9], H[3];
+  SurfHcurlField32(i, Q, J_v, u_e, E);
+  SurfHdivField32(i, Q, J_v, u_b, B);
+  CoeffUnpack3(ctx + 1, attr, invmu);
+  MultAx33(invmu, B, H);
+  S[0] = E[1] * H[2] - E[2] * H[1];
+  S[1] = E[2] * H[0] - E[0] * H[2];
+  S[2] = E[0] * H[1] - E[1] * H[0];
+}
+
+CEED_QFUNCTION(f_eval_bdr_poynting_1_32)(void *__restrict__ ctx_, CeedInt Q,
+                                         const CeedScalar *const *in,
+                                         CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *attr = in[1], *J_v = in[2], *u_e = in[3], *u_b = in[4];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar S[3];
+    SurfPoynting32(ctx, i, Q, (CeedInt)attr[i], J_v, u_e, u_b, S);
+    const CeedScalar s = ctx[0].second;
+    v[i + Q * 0] = s * S[0];
+    v[i + Q * 1] = s * S[1];
+    v[i + Q * 2] = s * S[2];
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_eval_bdr_poynting_2_32)(void *__restrict__ ctx_, CeedInt Q,
+                                         const CeedScalar *const *in,
+                                         CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *attr_1 = in[1], *J_v1 = in[2], *attr_2 = in[3], *J_v2 = in[4],
+                   *u_e_1 = in[5], *u_b_1 = in[6], *u_e_2 = in[7], *u_b_2 = in[8];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar S[3], S_2[3];
+    SurfPoynting32(ctx, i, Q, (CeedInt)attr_1[i], J_v1, u_e_1, u_b_1, S);
+    SurfPoynting32(ctx, i, Q, (CeedInt)attr_2[i], J_v2, u_e_2, u_b_2, S_2);
+    const CeedScalar s = 0.5 * ctx[0].second;
+    v[i + Q * 0] = s * (S[0] + S_2[0]);
+    v[i + Q * 1] = s * (S[1] + S_2[1]);
+    v[i + Q * 2] = s * (S[2] + S_2[2]);
   }
   return 0;
 }

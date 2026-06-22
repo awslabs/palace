@@ -441,6 +441,24 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       eval.reset();
     }
   };
+  auto MakeBdrPoyntingEvaluator = [&](mfem::ParFiniteElementSpace &e_fespace,
+                                      mfem::ParFiniteElementSpace &b_fespace,
+                                      double scaling,
+                                      std::unique_ptr<SurfaceFunctional> &eval)
+  {
+    const auto &mesh = fem_op->GetMaterialOp().GetMesh();
+    const auto &pmesh = mesh.Get();
+    const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 1;
+    eval = std::make_unique<SurfaceFunctional>(
+        SurfaceFunctional::Kind::BDR_POYNTING, mesh, marker, e_fespace, b_fespace,
+        fem_op->GetMaterialOp(), e_fespace.GetMaxElementOrder(), scaling);
+    if (!eval->IsValid())
+    {
+      eval.reset();
+    }
+  };
 
   // Set-up grid-functions for the paraview output / measurement.
   if constexpr (HasVGridFunction<solver_t>())
@@ -664,6 +682,16 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       {
         MakeFieldEvaluator(DomainFieldEvaluator::Kind::POYNTING, E->ParFESpace(),
                            B->ParFESpace(), scaling, S_eval, S_gf);
+        MakeBdrPoyntingEvaluator(*E->ParFESpace(), *B->ParFESpace(), scaling,
+                                 S_bdr_eval);
+        if (S_bdr_eval)
+        {
+          S_bdr_buf.SetSize(S_bdr_eval->BufferSize());
+          S_bdr_buf.UseDevice(true);
+          S_bdr = std::make_unique<BdrVizBufferCoefficient>(
+              S_bdr_buf, S_bdr_eval->BufferBases(),
+              E->ParFESpace()->GetMaxElementOrder());
+        }
       }
     }
     // For boundary mode, Sn = Re{Et · (ẑ × Ht*)} is computed after Bt_inplane is
@@ -822,7 +850,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   {
     S_eval ? paraview->RegisterField("S", S_gf.get())
            : paraview->RegisterVCoeffField("S", S.get());
-    paraview_bdr->RegisterVCoeffField("S", S.get());
+    paraview_bdr->RegisterVCoeffField("S", S_bdr ? S_bdr.get() : S.get());
   }
 
   // Extract surface charge from normally discontinuous ND E-field. Also extract surface
@@ -998,6 +1026,10 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   if (S_eval)
   {
     S_eval->Eval(E.get(), B.get(), *S_gf);
+  }
+  if (S_bdr_eval)
+  {
+    S_bdr_eval->EvalBuffer(*E, *B, S_bdr_buf);
   }
   if (E_bdr_eval)
   {

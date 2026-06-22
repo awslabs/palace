@@ -109,6 +109,11 @@ struct FaceGroup
   // the FaceNbrFieldExchange request index (filled when the exchange is built).
   bool ghost_a = false, ghost_b = false;
   bool at_points = false;
+  // Split two-sided boundary-visualization groups into one-sided AtPoints operators.
+  // ApplyAdd accumulation combines the side contributions in the shared output buffer;
+  // side_scale handles averages, normal_scale handles signed jump quantities.
+  double side_scale = 1.0;
+  double normal_scale = 1.0;
   std::vector<int> face_nbr, ghost_attr, req_idx;
   // For AtPoints groups, the mapped volume reference coordinates vary by boundary
   // element and are stored in boundary-element order, nq entries per element.
@@ -151,6 +156,8 @@ const char *KindName(SurfaceFunctional::Kind kind)
       return "BDR_ENERGY_E";
     case SurfaceFunctional::Kind::BDR_ENERGY_M:
       return "BDR_ENERGY_M";
+    case SurfaceFunctional::Kind::BDR_POYNTING:
+      return "BDR_POYNTING";
   }
   return "UNKNOWN";
 }
@@ -276,8 +283,16 @@ void fem::ApplyAddGroupOperators(const std::vector<fem::CeedGroupOperator> &grou
       PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &field_vec));
       ceed::InitCeedVector(*sv, ceed, &field_vec, false);
     }
+    CeedMemType out_mem;
+    PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, &out_mem));
+    if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && out_mem == CEED_MEM_DEVICE)
+    {
+      out_mem = CEED_MEM_HOST;
+    }
+    auto *out_data = const_cast<Vector &>(out).ReadWrite(out_mem == CEED_MEM_DEVICE);
     CeedVector out_vec;
-    ceed::InitCeedVector(out, ceed, &out_vec);
+    PalaceCeedCall(ceed, CeedVectorCreate(ceed, out.Size(), &out_vec));
+    PalaceCeedCall(ceed, CeedVectorSetArray(out_vec, out_mem, CEED_USE_POINTER, out_data));
     PalaceCeedCall(
         ceed, CeedOperatorApplyAdd(op, CEED_VECTOR_NONE, out_vec, CEED_REQUEST_IMMEDIATE));
     PalaceCeedCall(ceed, CeedVectorDestroy(&out_vec));
@@ -324,6 +339,20 @@ SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
 {
   MFEM_VERIFY(kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_CURRENT_J ||
                   kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M,
+              "Invalid SurfaceFunctional constructor for the requested functional kind!");
+  Assemble(mesh, bdr_attr_marker);
+}
+
+SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
+                                     const mfem::Array<int> &bdr_attr_marker,
+                                     const mfem::ParFiniteElementSpace &nd_fespace,
+                                     const mfem::ParFiniteElementSpace &rt_fespace,
+                                     const MaterialOperator &mat_op, int lod,
+                                     double scaling)
+  : kind(kind), fespace_e(&nd_fespace), fespace_b(&rt_fespace), mat_op(&mat_op),
+    comm(mesh.GetComm()), viz_lod(lod), viz_scaling(scaling)
+{
+  MFEM_VERIFY(kind == Kind::BDR_POYNTING,
               "Invalid SurfaceFunctional constructor for the requested functional kind!");
   Assemble(mesh, bdr_attr_marker);
 }
@@ -584,94 +613,136 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       const auto vol_geom_b = plan.ghost_b ? plan.ghost_geom
                               : (plan.elem_b >= 0) ? pmesh.GetElementGeometry(plan.elem_b)
                                                    : mfem::Geometry::INVALID;
-      const bool at_points_group =
-          use_at_points && buffer_kind && plan.elem_a >= 0 && plan.elem_b < 0 &&
-          !plan.ghost_a && !plan.ghost_b && vol_geom_a == mfem::Geometry::TETRAHEDRON;
-      FaceConfigKey key;
-      key.reserve(8 + (at_points_group ? 0 : 3 * (plan.pts_a.size() + plan.pts_b.size())));
-      key.push_back(static_cast<long long>(bdr_geom));
-      key.push_back(static_cast<long long>(vol_geom_a));
-      key.push_back(static_cast<long long>(vol_geom_b));
-      key.push_back(static_cast<long long>(plan.flip));
-      key.push_back(static_cast<long long>(plan.ghost_a));
-      key.push_back(static_cast<long long>(plan.ghost_b));
-      key.push_back(static_cast<long long>(nq));
-      key.push_back(static_cast<long long>(at_points_group));
-      if (!at_points_group)
-      {
-        AppendPoints(key, plan.pts_a);
-        AppendPoints(key, plan.pts_b);
-      }
+      const bool can_at_points_a =
+          use_at_points && buffer_kind && plan.elem_a >= 0 && !plan.ghost_a &&
+          vol_geom_a == mfem::Geometry::TETRAHEDRON;
+      const bool can_at_points_b =
+          use_at_points && buffer_kind && plan.elem_b >= 0 && !plan.ghost_b &&
+          vol_geom_b == mfem::Geometry::TETRAHEDRON;
 
-      auto it = face_groups.find(key);
-      if (it == face_groups.end())
-      {
-        FaceGroup group;
-        group.bdr_geom = bdr_geom;
-        group.vol_geom_a = vol_geom_a;
-        group.vol_geom_b = vol_geom_b;
-        group.flip_normal = plan.flip;
-        group.ghost_a = plan.ghost_a;
-        group.ghost_b = plan.ghost_b;
-        group.at_points = at_points_group;
-        if (!at_points_group && plan.elem_a >= 0)
-        {
-          FaceConfigKey key_a = key;
-          key_a.push_back(0);  // Side tag
-          group.mapped_ir_a = GetRegisteredMappedIr(key_a, plan.pts_a);
-        }
-        if (!at_points_group && plan.elem_b >= 0)
-        {
-          FaceConfigKey key_b = key;
-          key_b.push_back(1);  // Side tag
-          group.mapped_ir_b = GetRegisteredMappedIr(key_b, plan.pts_b);
-        }
-        it = face_groups.emplace(key, std::move(group)).first;
-      }
-      it->second.bdr_indices.push_back(i);
-      if (at_points_group)
-      {
-        it->second.mapped_pts_a.insert(it->second.mapped_pts_a.end(), plan.pts_a.begin(),
-                                       plan.pts_a.end());
-      }
-      if (plan.elem_a >= 0)
-      {
-        if (plan.ghost_a)
-        {
-          it->second.face_nbr.push_back(plan.face_nbr);
-          it->second.ghost_attr.push_back(plan.ghost_attr);
-        }
-        else
-        {
-          it->second.vol_indices_a.push_back(plan.elem_a);
-        }
-      }
-      if (plan.elem_b >= 0)
-      {
-        if (plan.ghost_b)
-        {
-          it->second.face_nbr.push_back(plan.face_nbr);
-          it->second.ghost_attr.push_back(plan.ghost_attr);
-        }
-        else
-        {
-          it->second.vol_indices_b.push_back(plan.elem_b);
-        }
-      }
+      int out_slot;
       if (IsBufferKind(kind))
       {
         if (buffer_bases.empty())
         {
           buffer_bases.resize(pmesh.GetNBE(), -1);
         }
-        buffer_bases[i] = buffer_size;
-        it->second.out_slots.push_back(buffer_size);
+        out_slot = buffer_size;
+        buffer_bases[i] = out_slot;
         buffer_size += nq * BufferNumComp(kind);
         num_marked++;
       }
       else
       {
-        it->second.out_slots.push_back(num_marked++);
+        out_slot = num_marked++;
+      }
+
+      auto AddGroup = [&](int elem_a, bool ghost_a, mfem::Geometry::Type geom_a,
+                          const std::vector<mfem::IntegrationPoint> &pts_a, int elem_b,
+                          bool ghost_b, mfem::Geometry::Type geom_b,
+                          const std::vector<mfem::IntegrationPoint> &pts_b,
+                          bool at_points_group, double side_scale, double normal_scale)
+      {
+        FaceConfigKey key;
+        key.reserve(10 + (at_points_group ? 0 : 3 * (pts_a.size() + pts_b.size())));
+        key.push_back(static_cast<long long>(bdr_geom));
+        key.push_back(static_cast<long long>(geom_a));
+        key.push_back(static_cast<long long>(geom_b));
+        key.push_back(static_cast<long long>(plan.flip));
+        key.push_back(static_cast<long long>(ghost_a));
+        key.push_back(static_cast<long long>(ghost_b));
+        key.push_back(static_cast<long long>(nq));
+        key.push_back(static_cast<long long>(at_points_group));
+        key.push_back(static_cast<long long>(std::llround(side_scale * QUANTIZE_SCALE)));
+        key.push_back(static_cast<long long>(std::llround(normal_scale * QUANTIZE_SCALE)));
+        if (!at_points_group)
+        {
+          AppendPoints(key, pts_a);
+          AppendPoints(key, pts_b);
+        }
+
+        auto it = face_groups.find(key);
+        if (it == face_groups.end())
+        {
+          FaceGroup group;
+          group.bdr_geom = bdr_geom;
+          group.vol_geom_a = geom_a;
+          group.vol_geom_b = geom_b;
+          group.flip_normal = plan.flip;
+          group.ghost_a = ghost_a;
+          group.ghost_b = ghost_b;
+          group.at_points = at_points_group;
+          group.side_scale = side_scale;
+          group.normal_scale = normal_scale;
+          if (!at_points_group && elem_a >= 0)
+          {
+            FaceConfigKey key_a = key;
+            key_a.push_back(0);  // Side tag
+            group.mapped_ir_a = GetRegisteredMappedIr(key_a, pts_a);
+          }
+          if (!at_points_group && elem_b >= 0)
+          {
+            FaceConfigKey key_b = key;
+            key_b.push_back(1);  // Side tag
+            group.mapped_ir_b = GetRegisteredMappedIr(key_b, pts_b);
+          }
+          it = face_groups.emplace(key, std::move(group)).first;
+        }
+        it->second.bdr_indices.push_back(i);
+        if (at_points_group)
+        {
+          it->second.mapped_pts_a.insert(it->second.mapped_pts_a.end(), pts_a.begin(),
+                                         pts_a.end());
+        }
+        if (elem_a >= 0)
+        {
+          if (ghost_a)
+          {
+            it->second.face_nbr.push_back(plan.face_nbr);
+            it->second.ghost_attr.push_back(plan.ghost_attr);
+          }
+          else
+          {
+            it->second.vol_indices_a.push_back(elem_a);
+          }
+        }
+        if (elem_b >= 0)
+        {
+          if (ghost_b)
+          {
+            it->second.face_nbr.push_back(plan.face_nbr);
+            it->second.ghost_attr.push_back(plan.ghost_attr);
+          }
+          else
+          {
+            it->second.vol_indices_b.push_back(elem_b);
+          }
+        }
+        it->second.out_slots.push_back(out_slot);
+      };
+
+      if (can_at_points_a && can_at_points_b)
+      {
+        // Split two-sided boundary visualization into two one-sided AtPoints operators
+        // that accumulate into the same output slot. One AtPoints operator can only own
+        // one point-coordinate set; the two sides generally use different mapped
+        // reference coordinates, so preserving the two-sided kernels would reintroduce
+        // mapped-point specialization.
+        const bool average_quantity =
+            kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B ||
+            kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M ||
+            kind == Kind::BDR_POYNTING;
+        const double side_weight = average_quantity ? 0.5 : 1.0;
+        AddGroup(plan.elem_a, false, vol_geom_a, plan.pts_a, -1, false,
+                 mfem::Geometry::INVALID, {}, true, side_weight, 1.0);
+        AddGroup(plan.elem_b, false, vol_geom_b, plan.pts_b, -1, false,
+                 mfem::Geometry::INVALID, {}, true, side_weight, -1.0);
+      }
+      else
+      {
+        const bool at_points_group = can_at_points_a && plan.elem_b < 0;
+        AddGroup(plan.elem_a, plan.ghost_a, vol_geom_a, plan.pts_a, plan.elem_b,
+                 plan.ghost_b, vol_geom_b, plan.pts_b, at_points_group, 1.0, 1.0);
       }
     }
   }
@@ -767,6 +838,17 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     auto mat_ctx = ceed::PopulateCoefficientContext(3, &coeff_func);
     base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
   }
+  else if (kind == Kind::BDR_POYNTING)
+  {
+    // Pointwise S = scale * E x (mu^-1 B). For split two-sided AtPoints groups,
+    // group.side_scale folds in the legacy 1/2 side average.
+    base_ctx.resize(1);
+    base_ctx[0].second = viz_scaling;
+    MaterialPropertyCoefficient invmu_func(mat_op->GetAttributeToMaterial(),
+                                           mat_op->GetInvPermeability());
+    auto mat_ctx = ceed::PopulateCoefficientContext(3, &invmu_func);
+    base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+  }
   else if (kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M)
   {
     // Shared energy kernel: [0].first = piola (0 = ND/E, 1 = RT/B), [1].second = scaling,
@@ -805,10 +887,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   {
     base_ctx.resize(2);
     base_ctx[0].second = 0.0;
-    base_ctx[1].second = 0.0;
+    base_ctx[1].second = 1.0;
     if (kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B)
     {
-      // Shared field kernel: [0].first = piola (0 = ND/E, 1 = RT/B).
+      // Shared field kernel: [0].first = piola (0 = ND/E, 1 = RT/B),
+      // [1].second = output scale (used when split AtPoints sides accumulate).
       base_ctx[0].first = (kind == Kind::BDR_FIELD_B) ? 1 : 0;
     }
   }
@@ -843,6 +926,12 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         source_mask = (flux_type == SurfaceFlux::ELECTRIC)   ? 0b01u
                       : (flux_type == SurfaceFlux::MAGNETIC) ? 0b10u
                                                              : 0b11u;
+      }
+      else if (kind == Kind::BDR_POYNTING)
+      {
+        ex_fes[0] = fespace_e;
+        ex_fes[1] = fespace_b;
+        source_mask = 0b11u;
       }
       else
       {
@@ -1243,7 +1332,35 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       scratch.vecs.push_back(vec);
       scratch.restrs.push_back(restr);
     };
-    if (kind == Kind::HCURL_NORM2 || kind == Kind::INTERFACE_EPR || buffer_kind)
+    if (kind == Kind::BDR_POYNTING)
+    {
+      auto AddPoyntingSide = [&](const std::string &suffix,
+                                 const std::vector<int> &indices,
+                                 mfem::Geometry::Type geom,
+                                 const mfem::IntegrationRule &ir, bool ghost)
+      {
+        const std::string e_name = "u_e_" + suffix;
+        const std::string b_name = "u_b_" + suffix;
+        if (ghost)
+        {
+          AddFieldInputGhost(e_name, 0, ir);
+          AddFieldInputGhost(b_name, 1, ir);
+        }
+        else
+        {
+          AddFieldInput(e_name, 0, *fespace_e, indices, geom, ir);
+          AddFieldInput(b_name, 1, *fespace_b, indices, geom, ir);
+        }
+      };
+      AddPoyntingSide("1", group.vol_indices_a, group.vol_geom_a,
+                      group.at_points ? face_ir : *group.mapped_ir_a, group.ghost_a);
+      if (has_b)
+      {
+        AddPoyntingSide("2", group.vol_indices_b, group.vol_geom_b,
+                        group.at_points ? face_ir : *group.mapped_ir_b, group.ghost_b);
+      }
+    }
+    else if (kind == Kind::HCURL_NORM2 || kind == Kind::INTERFACE_EPR || buffer_kind)
     {
       const auto &field_fespace = fespace_b ? *fespace_b : *fespace_e;
       if (group.ghost_a)
@@ -1326,41 +1443,22 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     {
       const int nq = face_ir.GetNPoints();
       const int nc = BufferNumComp(kind);
-      if (group.at_points)
+      std::vector<CeedInt> offsets(num_elem * nq);
+      for (std::size_t e = 0; e < num_elem; e++)
       {
-        const CeedInt total_pts = static_cast<CeedInt>(num_elem * nq);
-        std::vector<CeedInt> offsets(num_elem + 1 + total_pts);
-        for (std::size_t e = 0; e <= num_elem; e++)
+        for (int j = 0; j < nq; j++)
         {
-          offsets[e] = static_cast<CeedInt>(num_elem + 1 + e * nq);
+          offsets[e * nq + j] = group.out_slots[e] + nc * j;
         }
-        for (std::size_t e = 0; e < num_elem; e++)
-        {
-          for (int j = 0; j < nq; j++)
-          {
-            offsets[num_elem + 1 + e * nq + j] = group.out_slots[e] / nc + j;
-          }
-        }
-        PalaceCeedCall(ceed, CeedElemRestrictionCreateAtPoints(
-                                 ceed, static_cast<CeedInt>(num_elem), total_pts, nc,
-                                 (CeedSize)buffer_size, CEED_MEM_HOST, CEED_COPY_VALUES,
-                                 offsets.data(), &out_restr));
       }
-      else
-      {
-        std::vector<CeedInt> offsets(num_elem * nq);
-        for (std::size_t e = 0; e < num_elem; e++)
-        {
-          for (int j = 0; j < nq; j++)
-          {
-            offsets[e * nq + j] = group.out_slots[e] + nc * j;
-          }
-        }
-        PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, static_cast<CeedInt>(num_elem),
-                                                       nq, nc, 1, (CeedSize)buffer_size,
-                                                       CEED_MEM_HOST, CEED_COPY_VALUES,
-                                                       offsets.data(), &out_restr));
-      }
+      // Even for AtPoints operators, keep the output as an ordinary EVAL_NONE
+      // restriction. libCEED requires all AtPoints restrictions on the same operator to
+      // use identical point-offset layouts; the output buffer is intentionally scattered
+      // by boundary-element slot and should not constrain the point-coordinate layout.
+      PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, static_cast<CeedInt>(num_elem),
+                                                     nq, nc, 1, (CeedSize)buffer_size,
+                                                     CEED_MEM_HOST, CEED_COPY_VALUES,
+                                                     offsets.data(), &out_restr));
     }
     else
     {
@@ -1394,18 +1492,19 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       case Kind::BDR_FIELD_E:
       case Kind::BDR_FIELD_B:
         // Shared kernel; the ND/RT Piola is set in base_ctx[0].first.
+        ctx[1].second *= group.side_scale;
         info.apply_qf = has_b ? f_eval_bdr_field_2_32 : f_eval_bdr_field_1_32;
         info.apply_qf_path = PalaceQFunctionRelativePath(has_b ? f_eval_bdr_field_2_32_loc
                                                                : f_eval_bdr_field_1_32_loc);
         break;
       case Kind::BDR_FLUX_Q:
-        ctx[0].second = group.flip_normal ? -1.0 : 1.0;
+        ctx[0].second = (group.flip_normal ? -1.0 : 1.0) * group.normal_scale;
         info.apply_qf = has_b ? f_eval_bdr_flux_q_2_32 : f_eval_bdr_flux_q_1_32;
         info.apply_qf_path = PalaceQFunctionRelativePath(
             has_b ? f_eval_bdr_flux_q_2_32_loc : f_eval_bdr_flux_q_1_32_loc);
         break;
       case Kind::BDR_CURRENT_J:
-        ctx[0].second = group.flip_normal ? -1.0 : 1.0;
+        ctx[0].second = (group.flip_normal ? -1.0 : 1.0) * group.normal_scale;
         info.apply_qf = has_b ? f_eval_bdr_current_j_2_32 : f_eval_bdr_current_j_1_32;
         info.apply_qf_path = PalaceQFunctionRelativePath(
             has_b ? f_eval_bdr_current_j_2_32_loc : f_eval_bdr_current_j_1_32_loc);
@@ -1413,9 +1512,16 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       case Kind::BDR_ENERGY_E:
       case Kind::BDR_ENERGY_M:
         // Shared kernel; the ND/RT Piola is set in base_ctx[0].first.
+        ctx[1].second *= group.side_scale;
         info.apply_qf = has_b ? f_eval_bdr_energy_2_32 : f_eval_bdr_energy_1_32;
         info.apply_qf_path = PalaceQFunctionRelativePath(
             has_b ? f_eval_bdr_energy_2_32_loc : f_eval_bdr_energy_1_32_loc);
+        break;
+      case Kind::BDR_POYNTING:
+        ctx[0].second *= group.side_scale;
+        info.apply_qf = has_b ? f_eval_bdr_poynting_2_32 : f_eval_bdr_poynting_1_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            has_b ? f_eval_bdr_poynting_2_32_loc : f_eval_bdr_poynting_1_32_loc);
         break;
       case Kind::FARFIELD:
         ctx[0].second = group.flip_normal ? -1.0 : 1.0;
@@ -1585,8 +1691,8 @@ std::complex<double> SurfaceFunctional::EvalFlux(const GridFunction *E,
 
 void SurfaceFunctional::EvalBuffer(const Vector &u, Vector &buffer) const
 {
-  MFEM_VERIFY(valid && IsBufferKind(kind),
-              "EvalBuffer requires a valid boundary visualization field functional!");
+  MFEM_VERIFY(valid && IsBufferKind(kind) && kind != Kind::BDR_POYNTING,
+              "EvalBuffer requires a valid single-field boundary visualization functional!");
   MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
   buffer = 0.0;
   if (face_nbr_exchange)
@@ -1602,8 +1708,8 @@ void SurfaceFunctional::EvalBuffer(const Vector &u, Vector &buffer) const
 
 void SurfaceFunctional::EvalBuffer(const GridFunction &u, Vector &buffer) const
 {
-  MFEM_VERIFY(valid && IsBufferKind(kind),
-              "EvalBuffer requires a valid boundary visualization field functional!");
+  MFEM_VERIFY(valid && IsBufferKind(kind) && kind != Kind::BDR_POYNTING,
+              "EvalBuffer requires a valid single-field boundary visualization functional!");
   MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
   buffer = 0.0;
   auto Apply = [&](const Vector &v)
@@ -1622,6 +1728,36 @@ void SurfaceFunctional::EvalBuffer(const GridFunction &u, Vector &buffer) const
   if (u.HasImag())
   {
     Apply(u.Imag());
+  }
+}
+
+void SurfaceFunctional::EvalBuffer(const GridFunction &E, const GridFunction &B,
+                                   Vector &buffer) const
+{
+  MFEM_VERIFY(valid && kind == Kind::BDR_POYNTING,
+              "EvalBuffer requires a valid boundary Poynting visualization functional!");
+  MFEM_VERIFY(E.HasImag() == B.HasImag(),
+              "Mismatch between real- and complex-valued E and B fields in boundary "
+              "Poynting visualization!");
+  MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
+  buffer = 0.0;
+  auto Apply = [&](const Vector &e, const Vector &b)
+  {
+    if (face_nbr_exchange)
+    {
+      face_nbr_exchange->Exchange({&e, &b});
+      fem::ApplyAddGroupOperators(groups, {&e, &b}, buffer,
+                                  &face_nbr_exchange->Imported());
+    }
+    else
+    {
+      fem::ApplyAddGroupOperators(groups, {&e, &b}, buffer);
+    }
+  };
+  Apply(E.Real(), B.Real());
+  if (E.HasImag())
+  {
+    Apply(E.Imag(), B.Imag());
   }
 }
 
