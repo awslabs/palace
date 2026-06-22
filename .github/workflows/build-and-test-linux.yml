@@ -550,7 +550,9 @@ jobs:
 
       - name: Run regression tests for examples/
         if: needs.filter.outputs.test == 'true' && !matrix.with-sanitizers
-        timeout-minutes: 60
+        # The arm64 OpenMP regression shard routinely runs within a few minutes of
+        # the old 60-minute limit; leave headroom for normal runner variability.
+        timeout-minutes: 75
         env:
           NUM_PROC_TEST_MAX: '8'
         run: |
