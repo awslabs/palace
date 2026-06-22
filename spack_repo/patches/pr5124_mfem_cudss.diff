@@ -1,0 +1,81 @@
+diff --git a/repos/spack_repo/builtin/packages/mfem/package.py b/repos/spack_repo/builtin/packages/mfem/package.py
+index e0e7d762..d760729d 100644
+--- a/repos/spack_repo/builtin/packages/mfem/package.py
++++ b/repos/spack_repo/builtin/packages/mfem/package.py
+@@ -188,6 +188,12 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+     variant("libceed", default=False, description="Enable libCEED backend")
+     variant("umpire", default=False, description="Enable Umpire support")
+     variant("amgx", default=False, description="Enable NVIDIA AmgX solver support")
++    variant(
++        "cudss",
++        default=False,
++        when="@4.9.0:",
++        description="Enable NVIDIA cuDSS solver support",
++    )
+ 
+     variant(
+         "threadsafe",
+@@ -261,6 +267,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+ 
+     conflicts("+cuda+rocm")
+     conflicts("+amgx", when="~cuda")
++    conflicts("+cudss", when="~cuda")
+     conflicts("+mpi~cuda ^hypre+cuda")
+     conflicts("+mpi~rocm ^hypre+rocm")
+ 
+@@ -530,6 +537,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+     depends_on("enzyme@0.0.176:", when="+enzyme")
+     requires("%cxx=llvm", when="+enzyme~rocm")
+     depends_on("cuda+allow-unsupported-compilers", when="+enzyme+cuda")
++    depends_on("cudss", when="+cudss")
+     depends_on("enzyme %libllvm=llvm-amdgpu", when="+enzyme+rocm")
+     requires("%cxx=llvm-amdgpu", when="+enzyme+rocm")
+ 
+@@ -693,6 +701,7 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+             "MFEM_MPIEXEC_NP=%s" % mfem_mpiexec_np,
+             "MFEM_USE_EXCEPTIONS=%s" % yes_no("+exceptions"),
+             "MFEM_USE_MUMPS=%s" % yes_no("+mumps"),
++            "MFEM_USE_CUDSS=%s" % yes_no("+cudss"),
+         ]
+         if spec.satisfies("@4.7.0:"):
+             options += ["MFEM_PRECISION=%s" % spec.variants["precision"].value]
+@@ -1054,6 +1063,39 @@ class Mfem(Package, CudaPackage, ROCmPackage):
+                     raise InstallError("Required CUDA libraries not found: %s" % culibs)
+                 options += ["CUDA_LIB=%s" % ld_flags_from_library_list(cuda_libs)]
+ 
++        if "+cudss" in spec:
++            cudss = spec["cudss"]
++            cudss_libs = find_libraries(
++                "libcudss", cudss.prefix.lib, shared=True, recursive=True
++            )
++            if not cudss_libs:
++                raise InstallError("Required cuDSS library not found")
++            options += [
++                "CUDSS_OPT=-I%s" % cudss.prefix.include,
++                "CUDSS_LIB=%s" % ld_flags_from_library_list(cudss_libs),
++            ]
++
++            # cuDSS loads communication/threading layers dynamically. Passing absolute
++            # paths through config.hpp avoids relying on user runtime environment vars.
++            if "+mpi" in spec:
++                comm_candidates = ["libcudss_commlayer_openmpi"]
++                if "^mpich" in spec or "^mvapich" in spec:
++                    comm_candidates = [
++                        "libcudss_commlayer_mpich",
++                        "libcudss_commlayer_openmpi",
++                    ]
++                comm_libs = find_libraries(
++                    comm_candidates, cudss.prefix.lib, shared=True, recursive=True
++                )
++                if comm_libs:
++                    options += ["MFEM_CUDSS_COMM_LIB=%s" % next(iter(comm_libs))]
++            if "+openmp" in spec:
++                thread_libs = find_libraries(
++                    "libcudss_mtlayer_gomp", cudss.prefix.lib, shared=True, recursive=True
++                )
++                if thread_libs:
++                    options += ["MFEM_CUDSS_THREADING_LIB=%s" % next(iter(thread_libs))]
++
+         if "+rocm" in spec:
+             amdgpu_target = ",".join(spec.variants["amdgpu_target"].value)
+             options += ["HIP_CXX=%s" % spec["hip"].hipcc, "HIP_ARCH=%s" % amdgpu_target]

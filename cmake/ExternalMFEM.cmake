@@ -123,7 +123,7 @@ if(PALACE_WITH_CUDA)
     "-DCMAKE_CUDA_FLAGS=${MFEM_CUDA_FLAGS}"
     "-DMFEM_USE_CUDSS=${PALACE_WITH_CUDSS}"
   )
-  if(PALACE_WITH_CUDSS)
+  if(PALACE_WITH_CUDSS AND NOT "${CUDSS_DIR}" STREQUAL "")
     list(APPEND MFEM_OPTIONS
       "-DCUDSS_DIR=${CUDSS_DIR}"
     )
@@ -406,6 +406,7 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_par_tet_mesh_fix_dev.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_gmsh_parser_performance.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5246.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5124_cudss.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5353.diff"
 )
 
