@@ -20,9 +20,7 @@
       "properties":
       {
         "Target": { "type": "number", "exclusiveMinimum": 0.0 },
-        "Tol": { "type": "number", "minimum": 0.0, "deprecated": true },
-        "RelTol": { "type": "number", "minimum": 0.0 },
-        "AbsTol": { "type": "number", "minimum": 0.0 },
+        "Tol": { "type": "number", "minimum": 0.0 },
         "AbsTol": { "type": "number", "minimum": 0.0 },
         "MaxIts": { "type": "integer", "exclusiveMinimum": 0 },
         "MaxSize": { "type": "integer", "exclusiveMinimum": 0 },
