@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <initializer_list>
 #include <set>
 #include <sstream>
 #include <string>
@@ -391,6 +392,27 @@ void SetEigenSolverOverride(std::string value)
   g_eigensolver_override = std::move(value);
 }
 
+namespace
+{
+
+std::filesystem::path LocalCheckoutPath(std::initializer_list<std::string_view> parts)
+{
+  auto path = std::filesystem::current_path();
+  for (auto part : parts)
+  {
+    path /= std::string(part);
+  }
+
+  std::error_code ec;
+  if (std::filesystem::is_directory(path, ec))
+  {
+    return path.lexically_normal();
+  }
+  return {};
+}
+
+}  // namespace
+
 std::filesystem::path GetExamplesDir()
 {
   if (!g_examples_dir_override.empty())
@@ -400,6 +422,10 @@ std::filesystem::path GetExamplesDir()
   if (const char *env = std::getenv("PALACE_EXAMPLES_DIR"))
   {
     return env;
+  }
+  if (auto path = LocalCheckoutPath({"..", "examples"}); !path.empty())
+  {
+    return path;
   }
 #ifdef PALACE_EXAMPLES_DIR_DEFAULT
   return PALACE_EXAMPLES_DIR_DEFAULT;
@@ -417,6 +443,10 @@ std::filesystem::path GetRegressionRefDir()
   if (const char *env = std::getenv("PALACE_REGRESSION_REF_DIR"))
   {
     return env;
+  }
+  if (auto path = LocalCheckoutPath({"..", "test", "examples", "ref"}); !path.empty())
+  {
+    return path;
   }
 #ifdef PALACE_REGRESSION_REF_DIR_DEFAULT
   return PALACE_REGRESSION_REF_DIR_DEFAULT;

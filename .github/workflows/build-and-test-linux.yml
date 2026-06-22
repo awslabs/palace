@@ -555,12 +555,10 @@ jobs:
 
       - name: Run regression tests for examples/
         if: needs.filter.outputs.test == 'true' && !matrix.with-sanitizers
-        # ctest fans the [Regression] cases out, one fresh
-        # palace-unit-tests process per case (label "regression"). Each
-        # process runs at $PALACE_REGRESSION_NUMPROC MPI ranks (read by
-        # the test/unit/run_regression_test.sh wrapper at run time);
-        # ctest -j N controls how many cases run concurrently. Total
-        # ranks in flight = NUM_PROC_TEST * N, kept <= NUM_PROC_TEST_MAX.
+        # CTest owns per-case scheduling for the [Regression] cases (label
+        # "regression"). Each case runs at $PALACE_REGRESSION_NUMPROC MPI
+        # ranks via test/unit/run_regression_test.sh; the PROCESSORS property
+        # reserves the matching ctest slots so -j can fan out safely.
         timeout-minutes: 60
         env:
           NUM_PROC_TEST_MAX: '8'
@@ -577,24 +575,20 @@ jobs:
           if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
             export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
           fi
-          export NUM_PROC_TEST=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
-          if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
-            NUM_PROC_TEST=$NUM_PROC_TEST_MAX
+          export CTEST_PARALLEL_LEVEL=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
+          if [[ "$CTEST_PARALLEL_LEVEL" -gt "$NUM_PROC_TEST_MAX" ]]; then
+            CTEST_PARALLEL_LEVEL=$NUM_PROC_TEST_MAX
           fi
           if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
-            NUM_PROC_TEST=$(( NUM_PROC_TEST / 2 ))
             export OMP_NUM_THREADS=2
           else
             export OMP_NUM_THREADS=1
           fi
           export PATH=$(pwd)/palace-install/bin:$PATH
 
-          # Match the old Julia harness: run the regression cases
-          # sequentially, each on NUM_PROC_TEST ranks (consumed by
-          # run_regression_test.sh). No cross-case ctest fan-out.
-          export PALACE_REGRESSION_NUMPROC=$NUM_PROC_TEST
+          export PALACE_REGRESSION_NUMPROC=2
           cd palace-build/palace-build/test/unit
-          ctest --output-on-failure -L "^regression$"
+          ctest -j "$CTEST_PARALLEL_LEVEL" --output-on-failure -L "^regression$"
 
       - name: Check antenna postprocessing example
         # The Julia plot script that ships with the antenna example is

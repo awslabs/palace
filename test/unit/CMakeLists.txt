@@ -200,10 +200,14 @@ catch_discover_tests(unit-tests
 # Rank count is a *runtime* knob, not a build option: each ctest entry
 # launches via the generated `run_regression_test.sh` wrapper, which
 # reads `$PALACE_REGRESSION_NUMPROC` (default below) and exec's mpirun.
-# CI runs regression cases serially (`-j 1` or an equivalent direct
-# per-case loop) at NUM_PROC_TEST ranks, matching the old Julia harness.
+# CTest schedules cases using the PROCESSORS property below; OpenMP builds
+# reserve twice the MPI rank count because CI runs them with OMP_NUM_THREADS=2.
 set(PALACE_REGRESSION_NUMPROC_DEFAULT 2 CACHE STRING
     "Default MPI rank count for the [Regression] ctest registration. Overridden at run time by the PALACE_REGRESSION_NUMPROC environment variable.")
+set(PALACE_REGRESSION_PROCESSORS ${PALACE_REGRESSION_NUMPROC_DEFAULT})
+if(PALACE_WITH_OPENMP)
+  math(EXPR PALACE_REGRESSION_PROCESSORS "${PALACE_REGRESSION_PROCESSORS} * 2")
+endif()
 
 list(JOIN MPIEXEC_PREFLAGS " " MPIEXEC_PREFLAGS_STR)
 configure_file(
@@ -222,9 +226,8 @@ catch_discover_tests(unit-tests
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS}
   PROPERTIES
     LABELS regression
+    PROCESSORS ${PALACE_REGRESSION_PROCESSORS}
     SKIP_RETURN_CODE 4
-    # Cylinder eigen cases can take ~50s on 2 ranks; give a generous ceiling.
-    TIMEOUT 600
     ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/regression/coverage-%p.profraw>"
 )
 
@@ -242,9 +245,8 @@ catch_discover_tests(unit-tests
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS}
   PROPERTIES
     LABELS long
+    PROCESSORS ${PALACE_REGRESSION_PROCESSORS}
     SKIP_RETURN_CODE 4
-    # Transmon eigen cases take ~10 minutes at np=2; allow 30 min headroom.
-    TIMEOUT 1800
     ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/regression/coverage-%p.profraw>"
 )
 

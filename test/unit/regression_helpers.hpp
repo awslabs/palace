@@ -67,7 +67,10 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
 // Directory overrides consulted in this order:
 //   1. Catch2 CLI flag (--examples-dir / --regression-ref-dir /
 //      --regression-run-dir).
-//   2. Compile-time defaults for examples/ref; for the run dir the
+//   2. PALACE_EXAMPLES_DIR / PALACE_REGRESSION_REF_DIR environment variables.
+//   3. Local checkout paths next to the current build directory
+//      (../examples and ../test/examples/ref), when present.
+//   4. Compile-time defaults for examples/ref; for the run dir the
 //      fallback is std::filesystem::temp_directory_path() /
 //      "palace-regression" so the source tree stays read-only.
 void SetExamplesDirOverride(std::string value);

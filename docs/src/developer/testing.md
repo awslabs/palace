@@ -459,9 +459,8 @@ For a one-shot run, invoke the binary explicitly:
 mpirun -n $NUM_PROC_TEST ./palace-unit-tests "[Regression]~[Long]"
 ```
 
-Reference CSVs were generated at the CI rank count, so running at a
-different one will produce spurious mismatches on cases that are
-sensitive to partition layout.
+Reference CSVs are rank-independent; CI rank counts are chosen only to
+keep runner occupancy reasonable.
 
 #### CTest invocation
 
@@ -469,17 +468,19 @@ Each regression case is also registered as an individual `regression-*`
 CTest entry with label `regression`. The wrapper script
 `run_regression_test.sh` reads `$PALACE_REGRESSION_NUMPROC` (default 2)
 and launches one `palace-unit-tests` process per case at that rank
-count.
+count. The CMake registration sets CTest's `PROCESSORS` property from
+that default (doubled for OpenMP builds), so `ctest -j N` can fan cases
+out without oversubscribing slots.
 
 ```bash
-# CI-style: one case at 8 ranks at a time
-PALACE_REGRESSION_NUMPROC=8 ctest -L "^regression$" -j 1 --output-on-failure
+# CI-style: let CTest schedule the regression cases
+ctest -L "^regression$" -j 8 --output-on-failure
 
 # Just the cpw eigen cases
-PALACE_REGRESSION_NUMPROC=4 ctest -L "^regression$" -R cpw_.*_eigen -j 1
+ctest -L "^regression$" -R cpw_.*_eigen -j 8 --output-on-failure
 
-# Long regression cases (transmon eigenmodes, ~10 min each)
-PALACE_REGRESSION_NUMPROC=2 ctest -L "^long$" -j 1 --output-on-failure
+# Long regression cases (transmon eigenmodes)
+ctest -L "^long$" -j 8 --output-on-failure
 ```
 
 Catch2 tag combinations work as you'd expect:
@@ -490,18 +491,21 @@ mpirun -n 2 ./palace-unit-tests "[Regression]~*cpw*"   # skip cpw cases
 ./palace-unit-tests rings                              # single case, 1 rank
 ```
 
-`ctest -j N` can still be used locally, but total ranks in flight are
-`PALACE_REGRESSION_NUMPROC * N`; use it deliberately.
+When using the CTest registrations, prefer `ctest -j N` over a manual
+loop; CTest uses each case's `PROCESSORS` property to avoid oversubscribing
+rank/thread slots.
 
 #### Overrides
 
 The regression machinery reads the source-tree `examples/` and
-`test/examples/ref/` roots via a two-level override chain:
+`test/examples/ref/` roots via the following override chain:
 
 | Precedence | Mechanism                                                                                                                                                                                 |
 |:---------- |:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1 (high)   | `--examples-dir` / `--regression-ref-dir` / `--regression-run-dir` CLI flags                                                                                                              |
-| 2 (low)    | Compile-time `PALACE_EXAMPLES_DIR_DEFAULT` / `PALACE_REGRESSION_REF_DIR_DEFAULT` (wired from CMake); run-dir falls back to `std::filesystem::temp_directory_path() / "palace-regression"` |
+| 2          | `PALACE_EXAMPLES_DIR` / `PALACE_REGRESSION_REF_DIR` environment variables                                                                                                                 |
+| 3          | Local checkout paths next to the current build directory (`../examples` and `../test/examples/ref`), when present                                                                         |
+| 4 (low)    | Compile-time `PALACE_EXAMPLES_DIR_DEFAULT` / `PALACE_REGRESSION_REF_DIR_DEFAULT` (wired from CMake); run-dir falls back to `std::filesystem::temp_directory_path() / "palace-regression"` |
 
 Per-case solver knobs:
 
@@ -515,8 +519,8 @@ Run on GPU with `--device cuda`, which also adds the `[GPU]` tag.
 #### Re-baselining
 
 When Palace behaviour changes legitimately (algorithm improvements,
-schema changes), regenerate the reference CSVs by running the case at
-the CI rank count and refreshing only the CSVs in the reference tree:
+schema changes), regenerate the reference CSVs by running the case and
+refreshing only the CSVs in the reference tree:
 
 ```bash
 case=cpw config=cpw_lumped_uniform.json subdir=lumped_uniform
@@ -536,8 +540,8 @@ at once, as the old `baseline` script did.
     tree under `test/examples/ref/<name>/<subdir>/`.
  2. Add a `TEST_CASE("<name>", "[Serial][Parallel][GPU][Regression]")`
     to `test/unit/regression/cases.cpp`. Tack on `[Long]` if the case
-    runs longer than the default `regression-` ctest TIMEOUT. Set
-    `rtol`, `atol`, `excluded_columns`, `skip_rowcount`, expected
+    is too slow for the always-on regression job. Set `rtol`, `atol`,
+    `excluded_columns`, `abs_columns`, `skip_rowcount`, expected
     output-directory flags, solver policies, and any `custom_checks`
     callbacks.
  3. Build `unit-tests`, then run
