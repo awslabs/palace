@@ -19,13 +19,13 @@ mfem::CuDSSSolver::MatType GetCuDSSMatType(MatrixSymmetry sym)
   switch (sym)
   {
     case MatrixSymmetry::SPD:
-      return mfem::CuDSSSolver::MatType::SYMMETRIC_POSITIVE_DEFINITE;
+      return mfem::CuDSSSolver::SYMMETRIC_POSITIVE_DEFINITE;
     case MatrixSymmetry::SYMMETRIC:
-      return mfem::CuDSSSolver::MatType::SYMMETRIC_INDEFINITE;
+      return mfem::CuDSSSolver::SYMMETRIC_INDEFINITE;
     case MatrixSymmetry::UNSYMMETRIC:
-      return mfem::CuDSSSolver::MatType::NONSYMMETRIC;
+      return mfem::CuDSSSolver::NONSYMMETRIC;
   }
-  return mfem::CuDSSSolver::MatType::NONSYMMETRIC;
+  return mfem::CuDSSSolver::NONSYMMETRIC;
 }
 
 }  // namespace

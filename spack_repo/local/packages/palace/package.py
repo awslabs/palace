@@ -47,6 +47,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         when="@0.14:",
     )
     variant("mumps", default=False, description="Build with MUMPS sparse direct solver")
+    variant(
+        "cudss",
+        default=False,
+        description="Build with cuDSS sparse direct solver",
+        when="@0.17:",
+    )
     variant("slepc", default=True, description="Build with SLEPc eigenvalue solver")
     variant("arpack", default=False, description="Build with ARPACK eigenvalue solver")
     variant("libxsmm", default=True, description="Build with libxsmm backend for libCEED")
@@ -89,7 +95,16 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("eigen", type="build")
     depends_on("lcov@1.15:", when="+coverage@0.16:", type="run")
 
-    conflicts("~superlu-dist~strumpack~mumps", msg="Need at least one sparse direct solver")
+    conflicts(
+        "~superlu-dist~strumpack~mumps",
+        when="@:0.16",
+        msg="Need at least one sparse direct solver",
+    )
+    conflicts(
+        "~superlu-dist~strumpack~mumps~cudss",
+        when="@0.17:",
+        msg="Need at least one sparse direct solver",
+    )
     conflicts(
         "+asan",
         when="platform=darwin %gcc",
@@ -183,6 +198,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 patch("mfem_pr5246.diff", when="@:4.9"),
                 # mfem PR #5353; remove once merged upstream and mfem is bumped.
                 "mfem_pr5353.diff",
+                patch("mfem_pr5124_cudss.diff", when="@:4.9 +cudss"),
             ],
         )
         depends_on("mfem+shared", when="+shared")
@@ -207,6 +223,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         # depends_on("mfem+exceptions", type="test")
 
         depends_on("mfem+libunwind", when="build_type=Debug")
+        depends_on("mfem+cudss", when="+cudss")
+        depends_on("cudss", when="+cudss")
         depends_on("eigen@3.5:", type="build")
 
     with when("+libxsmm"):
@@ -235,6 +253,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     conflicts("+cuda", when="@:0.13", msg="CUDA is only supported for Palace versions after 0.13")
     conflicts("+rocm", when="@:0.13", msg="ROCm is only supported for Palace versions after 0.13")
     conflicts("+cuda+rocm", msg="PALACE_WITH_CUDA is not compatible with PALACE_WITH_HIP")
+    conflicts("+cudss", when="~cuda", msg="PALACE_WITH_CUDSS requires PALACE_WITH_CUDA")
     conflicts(
         "cuda_arch=none", when="+cuda", msg="palace: Please specify a CUDA arch value / values"
     )
@@ -310,6 +329,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_WITH_HIP", "rocm"),
             self.define_from_variant("PALACE_WITH_LIBXSMM", "libxsmm"),
             self.define_from_variant("PALACE_WITH_MUMPS", "mumps"),
+            self.define_from_variant("PALACE_WITH_CUDSS", "cudss"),
             self.define_from_variant("PALACE_WITH_OPENMP", "openmp"),
             self.define_from_variant("PALACE_WITH_SLEPC", "slepc"),
             self.define_from_variant("PALACE_WITH_STRUMPACK", "strumpack"),
@@ -336,6 +356,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))
             if self.spec.satisfies("+mumps"):
                 args.append(self.define("MUMPS_DIR", self.spec["mumps"].prefix))
+            if self.spec.satisfies("+cudss"):
+                args.append(self.define("CUDSS_DIR", self.spec["cudss"].prefix))
             if self.spec.satisfies("+strumpack"):
                 args.append(self.define("STRUMPACK_DIR", self.spec["strumpack"].prefix))
             if self.spec.satisfies("+mumps") or self.spec.satisfies("+strumpack"):
