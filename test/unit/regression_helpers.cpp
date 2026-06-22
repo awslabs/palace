@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <initializer_list>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -189,6 +190,26 @@ int GetMaxRefinementIterations(const nlohmann::json &config)
   return max_its_it->get<int>();
 }
 
+std::optional<std::size_t> GetRequestedEigenmodeRows(const nlohmann::json &config)
+{
+  const auto solver_it = config.find("Solver");
+  if (solver_it == config.end() || !solver_it->is_object())
+  {
+    return std::nullopt;
+  }
+  const auto eigen_it = solver_it->find("Eigenmode");
+  if (eigen_it == solver_it->end() || !eigen_it->is_object())
+  {
+    return std::nullopt;
+  }
+  const auto n_it = eigen_it->find("N");
+  if (n_it == eigen_it->end())
+  {
+    return std::nullopt;
+  }
+  return n_it->get<std::size_t>();
+}
+
 // Load `path` via palace::TableWithCSVFile (load_existing_file=true),
 // which reads the whole file and parses it through Table's string
 // constructor.
@@ -249,7 +270,11 @@ void CompareCSVFiles(Table &actual, Table &reference, const RegressionOptions &o
   }
 
   const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
-  const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());
+  std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());
+  if (opts.max_rows)
+  {
+    n_rows = std::min(n_rows, *opts.max_rows);
+  }
   for (std::size_t c = 0; c < n_cols; ++c)
   {
     const Column &a_col = actual[c];
@@ -520,8 +545,13 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   const std::filesystem::path postpro_path = stage.path() / "postpro" / postpro_subdir;
 
   const int max_refinement_iterations = GetMaxRefinementIterations(config);
+  RegressionOptions effective_opts = opts;
+  if (!effective_opts.max_rows)
+  {
+    effective_opts.max_rows = GetRequestedEigenmodeRows(config);
+  }
 
-  IoData iodata = LoadCaseIoData(std::move(config), opts);
+  IoData iodata = LoadCaseIoData(std::move(config), effective_opts);
   MakeOutputFolder(iodata, comm);
   const int omp_threads = palace::utils::ConfigureOmp();
   // Wipe BlockTimer state so timings/peak-memory don't accumulate across cases.
@@ -538,7 +568,7 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
     const FileListing want = ListRegressionFiles(ref_postpro, skip_dirs);
 
     CheckSetEqual("regression output directories", got.dirs,
-                  ExpectedDirectories(max_refinement_iterations, opts));
+                  ExpectedDirectories(max_refinement_iterations, effective_opts));
     CheckSetEqual("regression CSV files", got.csv_files, want.csv_files);
     CheckSetEqual("regression metadata files", got.meta_files,
                   ExpectedMetadataFiles(max_refinement_iterations));
@@ -559,17 +589,18 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
       Table a = LoadTable(actual);
       Table r = LoadTable(reference);
 
-      auto custom_it = opts.custom_checks.find(rel);
-      if (custom_it != opts.custom_checks.end())
+      auto custom_it = effective_opts.custom_checks.find(rel);
+      if (custom_it != effective_opts.custom_checks.end())
       {
-        if (ValidateCSVTables(a, r, opts) && !SkipNumericComparison(opts))
+        if (ValidateCSVTables(a, r, effective_opts) &&
+            !SkipNumericComparison(effective_opts))
         {
           custom_it->second(a, r);
         }
         continue;
       }
 
-      CompareCSVFiles(a, r, opts);
+      CompareCSVFiles(a, r, effective_opts);
     }
   }
 }

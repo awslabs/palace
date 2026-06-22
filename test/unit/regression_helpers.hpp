@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -49,6 +50,10 @@ struct RegressionOptions
   std::vector<std::string> abs_columns;
   // Allow row-count mismatch (eigen / adaptive cases).
   bool skip_rowcount = false;
+  // Compare at most this many leading rows. If unset for an Eigenmode case,
+  // RunRegressionCase derives it from Solver.Eigenmode.N so extra converged
+  // modes beyond the requested count are ignored.
+  std::optional<std::size_t> max_rows;
   // Expected volumetric-output directories.
   bool paraview_fields = true;
   bool gridfunction_fields = false;
