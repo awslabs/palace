@@ -457,9 +457,17 @@ jobs:
 
           # Build and install (with unit tests)
           # Compile so that MFEM throws exceptions rather then aborts for unit-tests
+          REGRESSION_NUM_PROC=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
+          if [[ "$REGRESSION_NUM_PROC" -gt 8 ]]; then
+            REGRESSION_NUM_PROC=8
+          fi
+          if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
+            REGRESSION_NUM_PROC=$(( REGRESSION_NUM_PROC / 2 ))
+          fi
           mkdir palace-build && cd palace-build
           cmake .. \
             -DCMAKE_INSTALL_PREFIX=$(pwd)/../palace-install \
+            -DPALACE_REGRESSION_NUMPROC_DEFAULT=$REGRESSION_NUM_PROC \
             -DBUILD_SHARED_LIBS=$BUILD_SHARED \
             -DPALACE_WITH_64BIT_INT=$WITH_INT64 \
             -DPALACE_WITH_OPENMP=$WITH_OPENMP \
@@ -586,7 +594,6 @@ jobs:
           fi
           export PATH=$(pwd)/palace-install/bin:$PATH
 
-          export PALACE_REGRESSION_NUMPROC=2
           cd palace-build/palace-build/test/unit
           ctest -j "$CTEST_PARALLEL_LEVEL" --output-on-failure -L "^regression$"
 
