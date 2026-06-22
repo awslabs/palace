@@ -151,14 +151,14 @@ for implementation details.
         points from the signal attribute toward the ground attribute. Lightweight
         polarity-only alternative to `"VoltagePath"` (no GSLIB).
 
-  - [`config["Boundaries"]["FloquetPort"]`](../config/boundaries.md#boundaries%5B%22FloquetPort%22%5D) :
+  - [`config["Boundaries"]["FloquetPort"]`](../config/reference.md#config-boundaries-floquetport) :
     Floquet ports are available for frequency domain driven simulations on periodic
     structures (gratings, metasurfaces, photonic crystals). They provide an absorbing
     boundary condition that decomposes the scattered field into Floquet diffraction orders
     and extracts power-normalized S-parameters for each propagating order.
 
     Floquet ports require periodic boundary conditions to be configured under
-    [`config["Boundaries"]["Periodic"]`](../config/boundaries.md#boundaries%5B%22Periodic%22%5D).
+    [`config["Boundaries"]["Periodic"]`](../config/reference.md#config-boundaries-periodic).
     The `"FloquetWaveVector"` in the periodic configuration specifies the tangential
     component of the incident wave vector, which determines the angle of incidence. For
     normal incidence, set the wave vector to zero. For frequency sweeps at a fixed angle

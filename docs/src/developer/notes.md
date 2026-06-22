@@ -167,16 +167,20 @@ at the start of every documentation build, and `make docs-generate-config` is av
 preview while editing descriptions.
 
 Note that the `"default"` values in the Schema are documentation placeholders only and are not read
-or enforced by the C++ solver. If the parser default changes in C++, update the corresponding Schema
-default in the same change.
+or enforced by the C++ solver. For context-sensitive defaults that Palace resolves later based on the
+problem type or other options, omit `"default"` from the Schema and describe the omission-based
+behavior in `"description"` instead; the resolved config is the authoritative record of the chosen
+value. If a fixed parser default changes in C++, update the corresponding Schema default in the same
+change.
 
 The generator reads the following JSON Schema fields:
 
   - `"title"`: Human-readable section or field name. Falls back to the JSON key if absent.
   - `"description"`: Extended documentation rendered below the field name.
   - `"type"`: Shown in type badge (`integer`, `number`, etc.)
-  - `"default"`: Shown in `default` badge. Fields without a default should generally be marked as
-    `"required"`. Fields without a default (and without `required`) are shown as `—`.
+  - `"default"`: Shown in `default` badge when present. Fields with fixed defaults should encode
+    them here. Context-sensitive defaults should omit `"default"` and explain the resolution
+    behavior in `"description"`; the generated docs then omit the default badge entirely.
   - `"required"`: Fields listed here receive a `required` badge instead of a default.
   - `"enum"` / `"oneOf"` with `"const"`: Renders an inline enumeration table with per-value
     descriptions within the field's description.

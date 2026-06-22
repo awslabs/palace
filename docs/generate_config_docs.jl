@@ -208,6 +208,126 @@ end
 # --- Field collection ---
 
 """
+Collect enum-like values from a field schema, including:
+
+  - plain `enum` arrays
+  - `oneOf` + `const` documented enums
+  - enum-bearing branches nested under `anyOf` / `oneOf` (after `\$ref` resolution)
+
+Descriptions are only available for the `oneOf` + `const` form.
+"""
+function collect_enum_values!(
+    values::Vector{String},
+    descriptions::Dict{String, String},
+    root::AbstractDict,
+    schema::AbstractDict
+)
+    schema = inline_ref(root, schema)
+
+    if haskey(schema, "enum")
+        append!(values, string.(schema["enum"]))
+    end
+
+    branches = get(schema, "oneOf", Any[])
+    is_const_enum =
+        !isempty(branches) && all(
+            haskey(inline_ref(root, b), "const") &&
+            !haskey(inline_ref(root, b), "properties") for b in branches
+        )
+    if is_const_enum
+        for branch in branches
+            resolved = inline_ref(root, branch)
+            val = string(resolved["const"])
+            push!(values, val)
+            if haskey(resolved, "description")
+                descriptions[val] = string(resolved["description"])
+            end
+        end
+        return
+    end
+
+    for key in ("oneOf", "anyOf")
+        for branch in get(schema, key, Any[])
+            resolved = inline_ref(root, branch)
+            resolved isa AbstractDict || continue
+            collect_enum_values!(values, descriptions, root, resolved)
+        end
+    end
+end
+
+"""
+Return enum values with case-insensitive duplicates removed while preserving the
+first spelling/casing encountered. Used for Direction-style keywords where the
+schema accepts both uppercase and lowercase spellings.
+Returns `(canonical_values, had_casefold_duplicates)`.
+"""
+function canonicalize_enum_values(values::Vector{String})
+    seen_exact = Set{String}()
+    unique_exact = String[]
+    for v in values
+        v in seen_exact && continue
+        push!(unique_exact, v)
+        push!(seen_exact, v)
+    end
+
+    seen_fold = Set{String}()
+    canonical = String[]
+    had_casefold_dups = false
+    for v in unique_exact
+        folded = uppercase(v)
+        if folded in seen_fold
+            had_casefold_dups = true
+            continue
+        end
+        push!(canonical, folded)
+        push!(seen_fold, folded)
+        had_casefold_dups |= folded != v
+    end
+    return canonical, had_casefold_dups || (length(canonical) < length(unique_exact))
+end
+
+"""
+Render a compact HTML fragment for enum values with no per-value descriptions.
+Special-case direction-like keyword enums (`X`, `+X`, `-X`, `R`, ...) into a
+human-oriented grouped list; otherwise emit a compact comma-separated code list.
+"""
+function render_plain_enum_values(values::Vector{String})::String
+    canonical, had_casefold_dups = canonicalize_enum_values(values)
+    isempty(canonical) && return ""
+
+    is_direction_like =
+        all(occursin(r"^[+-]?[A-Z]$", v) for v in canonical) &&
+        all(last(v) in ['X', 'Y', 'Z', 'R'] for v in canonical)
+
+    buf = IOBuffer()
+    if is_direction_like
+        cart = [v for v in canonical if last(v) in ['X', 'Y', 'Z']]
+        coax = [v for v in canonical if last(v) == 'R']
+        println(buf, "    <div class=\"config-enum-inline\">")
+        println(buf, "      <p><strong>Allowed keyword values:</strong></p>")
+        println(buf, "      <ul>")
+        if !isempty(cart)
+            cart_codes = join(["<code>\"$(html_escape(v))\"</code>" for v in cart], ", ")
+            println(buf, "        <li><strong>Cartesian:</strong> $cart_codes</li>")
+        end
+        if !isempty(coax)
+            coax_codes = join(["<code>\"$(html_escape(v))\"</code>" for v in coax], ", ")
+            println(buf, "        <li><strong>Coaxial:</strong> $coax_codes</li>")
+        end
+        if had_casefold_dups
+            println(buf, "        <li>Lowercase forms are also accepted.</li>")
+        end
+        println(buf, "      </ul>")
+        println(buf, "    </div>")
+    else
+        vals = join(["<code>\"$(html_escape(v))\"</code>" for v in canonical], ", ")
+        suffix = had_casefold_dups ? " Lowercase forms are also accepted." : ""
+        println(buf, "    <p><strong>Allowed values:</strong> $vals.$suffix</p>")
+    end
+    return String(take!(buf))
+end
+
+"""
 Collect FieldDoc entries for all properties at one schema level.
 Preserves JSON key order (OrderedDict). Required fields come before optional ones
 within the preserved order.
@@ -235,20 +355,12 @@ function collect_fields(
         fenum = String[]
         fenum_desc = Dict{String, String}()
 
-        # Detect oneOf+const enum
-        oneOf_branches = get(field, "oneOf", Any[])
+        # Collect enum-like values from direct enums and from enum-bearing branches.
+        collect_enum_values!(fenum, fenum_desc, root, field)
+        oneOf_branches = [inline_ref(root, b) for b in get(field, "oneOf", Any[])]
         is_const_enum =
             !isempty(oneOf_branches) &&
             all(haskey(b, "const") && !haskey(b, "properties") for b in oneOf_branches)
-        if is_const_enum
-            for branch in oneOf_branches
-                val = string(branch["const"])
-                push!(fenum, val)
-                if haskey(branch, "description")
-                    fenum_desc[val] = string(branch["description"])
-                end
-            end
-        end
 
         # Collect child sub-schemas that become sub-sections
         sub_schemas = Pair{String, AbstractDict}[]
@@ -438,6 +550,17 @@ Render one <dt>/<dd> pair into buf (no surrounding <dl> tags).
 For fields with sub-schemas (objects/arrays of objects), only a link to the
 sub-section is rendered — no description, type badge, or default.
 """
+# Render the default badge only when the schema declares an explicit fixed default.
+# Context-sensitive defaults are documented in the description instead and intentionally
+# omit the badge.
+function render_default_badge!(buf::IOBuffer, f::FieldDoc)
+    isnothing(f.default) && return
+    return print(
+        buf,
+        " <span class=\"tag config-default\">default: <code>$(html_escape(f.default))</code></span>"
+    )
+end
+
 function render_field_entry!(buf::IOBuffer, f::FieldDoc)
     id = anchor_id(f.path)
 
@@ -458,11 +581,7 @@ function render_field_entry!(buf::IOBuffer, f::FieldDoc)
     if f.required
         print(buf, " <span class=\"tag config-required\">required</span>")
     else
-        default_val = something(f.default, "—")
-        print(
-            buf,
-            " <span class=\"tag config-default\">default: <code>$(html_escape(default_val))</code></span>"
-        )
+        render_default_badge!(buf, f)
     end
     if !isempty(f.constraints)
         print(
@@ -485,13 +604,17 @@ function render_field_entry!(buf::IOBuffer, f::FieldDoc)
             println(buf, "    <p>$(render_description(f.description))</p>")
         end
         if !isempty(f.enum_values)
-            println(buf, "    <dl class=\"config-enum\">")
-            for v in f.enum_values
-                println(buf, "      <dt><code>\"$(html_escape(v))\"</code></dt>")
-                desc = get(f.enum_descriptions, v, "")
-                println(buf, "      <dd>$(render_description(desc))</dd>")
+            if !isempty(f.enum_descriptions)
+                println(buf, "    <dl class=\"config-enum\">")
+                for v in f.enum_values
+                    println(buf, "      <dt><code>\"$(html_escape(v))\"</code></dt>")
+                    desc = get(f.enum_descriptions, v, "")
+                    println(buf, "      <dd>$(render_description(desc))</dd>")
+                end
+                println(buf, "    </dl>")
+            else
+                print(buf, render_plain_enum_values(f.enum_values))
             end
-            println(buf, "    </dl>")
         end
     else
         # Sub-section: link to the heading
@@ -597,11 +720,7 @@ function render_field_badges(f::FieldDoc)::String
     if f.required
         print(buf, " <span class=\"tag config-required\">required</span>")
     else
-        default_val = something(f.default, "—")
-        print(
-            buf,
-            " <span class=\"tag config-default\">default: <code>$(html_escape(default_val))</code></span>"
-        )
+        render_default_badge!(buf, f)
     end
     if !isempty(f.constraints)
         print(

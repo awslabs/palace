@@ -137,6 +137,183 @@
         { "description": "Use the physical-space field overlap.", "const": "SpaceOverlap" }
       ]
     },
+    "EigenSolverBackend":
+    {
+      "type": "string",
+      "default": "Default",
+      "oneOf":
+      [
+        {
+          "const": "Default",
+          "description": "Use Palace's default backend selection for the available build."
+        },
+        { "const": "SLEPc", "description": "Use the SLEPc eigensolver backend." },
+        { "const": "ARPACK", "description": "Use the ARPACK eigensolver backend." }
+      ]
+    },
+    "NonlinearEigenSolver":
+    {
+      "type": "string",
+      "default": "Hybrid",
+      "oneOf":
+      [
+        {
+          "const": "Hybrid",
+          "description": "Use the hybrid nonlinear eigensolver strategy."
+        },
+        {
+          "const": "SLP",
+          "description": "Use the successive linear problems nonlinear eigensolver."
+        }
+      ]
+    },
+    "TimeSteppingScheme":
+    {
+      "type": "string",
+      "default": "Default",
+      "oneOf":
+      [
+        {
+          "const": "Default",
+          "description": "Use Palace's default time integration scheme."
+        },
+        {
+          "const": "GeneralizedAlpha",
+          "description": "Use the generalized-α time integration scheme."
+        },
+        { "const": "RungeKutta", "description": "Use the Runge-Kutta time integrator." },
+        { "const": "CVODE", "description": "Use the CVODE time integrator." },
+        { "const": "ARKODE", "description": "Use the ARKODE time integrator." }
+      ]
+    },
+    "Excitation":
+    {
+      "type": "string",
+      "oneOf":
+      [
+        {
+          "const": "Sinusoidal",
+          "description": "Sinusoidal source excitation."
+        },
+        { "const": "Gaussian", "description": "Gaussian pulse excitation." },
+        {
+          "const": "DifferentiatedGaussian",
+          "description": "Differentiated Gaussian pulse excitation."
+        },
+        {
+          "const": "ModulatedGaussian",
+          "description": "Gaussian-modulated sinusoidal excitation."
+        },
+        { "const": "Ramp", "description": "Ramp-step excitation." },
+        { "const": "SmoothStep", "description": "Smooth step excitation." }
+      ]
+    },
+    "LinearSolverType":
+    {
+      "type": "string",
+      "default": "Default",
+      "oneOf":
+      [
+        {
+          "const": "Default",
+          "description": "Use Palace's default linear preconditioner selection."
+        },
+        { "const": "AMS", "description": "Use the Hypre AMS preconditioner." },
+        {
+          "const": "BoomerAMG",
+          "description": "Use the Hypre BoomerAMG preconditioner."
+        },
+        { "const": "MUMPS", "description": "Use the MUMPS sparse direct solver." },
+        { "const": "SuperLU", "description": "Use the SuperLU_DIST sparse direct solver." },
+        { "const": "STRUMPACK", "description": "Use the STRUMPACK sparse direct solver." },
+        {
+          "const": "STRUMPACK-MP",
+          "description": "Use the STRUMPACK-MP sparse direct solver variant."
+        },
+        { "const": "Jacobi", "description": "Use the Jacobi preconditioner." }
+      ]
+    },
+    "KrylovSolver":
+    {
+      "type": "string",
+      "default": "Default",
+      "oneOf":
+      [
+        {
+          "const": "Default",
+          "description": "Use Palace's default Krylov solver for the active problem type."
+        },
+        { "const": "CG", "description": "Use conjugate gradients." },
+        { "const": "MINRES", "description": "Use MINRES." },
+        { "const": "GMRES", "description": "Use GMRES." },
+        { "const": "FGMRES", "description": "Use flexible GMRES." },
+        { "const": "BiCGSTAB", "description": "Use BiCGSTAB." }
+      ]
+    },
+    "MultigridCoarsening":
+    {
+      "type": "string",
+      "default": "Logarithmic",
+      "oneOf":
+      [
+        {
+          "const": "Linear",
+          "description": "Use linearly decreasing polynomial order between p-multigrid levels."
+        },
+        {
+          "const": "Logarithmic",
+          "description": "Use logarithmic polynomial-order coarsening between p-multigrid levels."
+        }
+      ]
+    },
+    "PreconditionerSide":
+    {
+      "type": "string",
+      "default": "Default",
+      "oneOf":
+      [
+        {
+          "const": "Default",
+          "description": "Use Palace's default preconditioning side for the chosen Krylov solver."
+        },
+        { "const": "Right", "description": "Use right preconditioning." },
+        { "const": "Left", "description": "Use left preconditioning." }
+      ]
+    },
+    "SymbolicFactorization":
+    {
+      "type": "string",
+      "default": "Default",
+      "oneOf":
+      [
+        {
+          "const": "Default",
+          "description": "Use the sparse direct solver's default column ordering."
+        },
+        { "const": "METIS", "description": "Use METIS column ordering." },
+        { "const": "ParMETIS", "description": "Use ParMETIS column ordering." },
+        { "const": "Scotch", "description": "Use Scotch column ordering." },
+        { "const": "PTScotch", "description": "Use PT-Scotch column ordering." },
+        { "const": "PORD", "description": "Use PORD column ordering." },
+        { "const": "AMD", "description": "Use AMD column ordering." },
+        { "const": "RCM", "description": "Use reverse Cuthill-McKee ordering." }
+      ]
+    },
+    "SparseCompression":
+    {
+      "type": "string",
+      "default": "None",
+      "oneOf":
+      [
+        { "const": "None", "description": "Disable low-rank compression." },
+        { "const": "BLR", "description": "Use block low-rank compression." },
+        { "const": "HSS", "description": "Use hierarchically semi-separable compression." },
+        { "const": "HODLR", "description": "Use hierarchically off-diagonal low-rank compression." },
+        { "const": "ZFP", "description": "Use ZFP lossy compression." },
+        { "const": "BLR-HODLR", "description": "Use the BLR-HODLR hybrid compression mode." },
+        { "const": "ZFP-BLR-HODLR", "description": "Use the ZFP-BLR-HODLR hybrid compression mode." }
+      ]
+    },
     "Eigenmode":
     {
       "type": "object",
@@ -188,9 +365,8 @@
         },
         "Type":
         {
-          "type": "string",
-          "description": "Specifies the eigenvalue solver backend.",
-          "default": "Default"
+          "$ref": "#/$defs/EigenSolverBackend",
+          "description": "Specifies the eigenvalue solver backend."
         },
         "PEPLinear":
         {
@@ -229,9 +405,8 @@
         },
         "NonlinearType":
         {
-          "type": "string",
-          "description": "Specifies the nonlinear eigenvalue solver for problems with frequency-dependent boundary conditions.",
-          "default": "Hybrid"
+          "$ref": "#/$defs/NonlinearEigenSolver",
+          "description": "Specifies the nonlinear eigenvalue solver for problems with frequency-dependent boundary conditions."
         },
         "RefineNonlinear":
         {
@@ -513,13 +688,12 @@
       {
         "Type":
         {
-          "type": "string",
-          "description": "Time integration scheme for the second-order ODE system.",
-          "default": "Default"
+          "$ref": "#/$defs/TimeSteppingScheme",
+          "description": "Time integration scheme for the second-order ODE system."
         },
         "Excitation":
         {
-          "type": "string",
+          "$ref": "#/$defs/Excitation",
           "description": "Controls the time dependence of the source excitation."
         },
         "ExcitationFreq":
@@ -629,9 +803,8 @@
         },
         "Type":
         {
-          "type": "string",
-          "description": "Specifies the eigenvalue solver to be used for the mode analysis. See [Eigenmode Type](@ref config-solver-eigenmode-type).",
-          "default": "Default"
+          "$ref": "#/$defs/EigenSolverBackend",
+          "description": "Specifies the eigenvalue solver to be used for the mode analysis. See [Eigenmode Type](@ref config-solver-eigenmode-type)."
         },
         "Attributes":
         {
@@ -690,15 +863,13 @@
       {
         "Type":
         {
-          "type": "string",
-          "description": "Specifies the solver used for preconditioning the linear system.",
-          "default": "Default"
+          "$ref": "#/$defs/LinearSolverType",
+          "description": "Specifies the solver used for preconditioning the linear system."
         },
         "KSPType":
         {
-          "type": "string",
-          "description": "Specifies the iterative Krylov subspace solver.",
-          "default": "Default"
+          "$ref": "#/$defs/KrylovSolver",
+          "description": "Specifies the iterative Krylov subspace solver."
         },
         "Tol":
         {
@@ -724,8 +895,7 @@
         "InitialGuess":
         {
           "type": "boolean",
-          "description": "Use the previous solution as an initial guess for the iterative solver.",
-          "default": true,
+          "description": "Use the previous solution as an initial guess for the iterative solver. If omitted, Palace enables this for driven simulations without adaptive frequency sweep, transient simulations, electrostatics, and magnetostatics, and disables it otherwise.",
           "x-palace-advanced": true
         },
         "MGMaxLevels":
@@ -737,9 +907,8 @@
         },
         "MGCoarsenType":
         {
-          "type": "string",
-          "description": "Coarsening strategy for constructing p-multigrid levels.",
-          "default": "Logarithmic"
+          "$ref": "#/$defs/MultigridCoarsening",
+          "description": "Coarsening strategy for constructing p-multigrid levels."
         },
         "MGUseMesh":
         {
@@ -751,8 +920,7 @@
         "MGAuxiliarySmoother":
         {
           "type": "boolean",
-          "description": "Use an auxiliary space smoother on multigrid levels.",
-          "default": true,
+          "description": "Use an auxiliary space smoother on multigrid levels. If omitted, Palace disables this by default for electrostatic and magnetostatic simulations and enables it otherwise.",
           "x-palace-advanced": true
         },
         "MGCycleIts":
@@ -808,8 +976,7 @@
         "PCMatShifted":
         {
           "type": "boolean",
-          "description": "When `true`, builds the preconditioner using a positive-definite approximation by flipping the sign of the mass matrix contribution. Can improve performance at high frequencies relative to the lowest nonzero eigenfrequencies of the model.",
-          "default": false
+          "description": "When `true`, builds the preconditioner using a positive-definite approximation by flipping the sign of the mass matrix contribution. Can improve performance at high frequencies relative to the lowest nonzero eigenfrequencies of the model. If omitted, Palace enables this for driven simulations using AMS and for boundary mode simulations with multigrid enabled, and disables it otherwise."
         },
         "ComplexCoarseSolve":
         {
@@ -832,22 +999,19 @@
         },
         "PCSide":
         {
-          "type": "string",
-          "description": "Preconditioning side. Not all options are available for all iterative solver choices.",
-          "default": "Default"
+          "$ref": "#/$defs/PreconditionerSide",
+          "description": "Preconditioning side. Not all options are available for all iterative solver choices."
         },
         "ColumnOrdering":
         {
-          "type": "string",
-          "description": "Column ordering algorithm for sparse direct solvers: `\"METIS\"`, `\"ParMETIS\"`, `\"Scotch\"`, `\"PTScotch\"`, `\"PORD\"`, `\"AMD\"`, `\"RCM\"`, `\"Default\"`.",
-          "default": "Default",
+          "$ref": "#/$defs/SymbolicFactorization",
+          "description": "Column ordering algorithm for sparse direct solvers.",
           "x-palace-advanced": true
         },
         "STRUMPACKCompressionType":
         {
-          "type": "string",
-          "description": "STRUMPACK compression type: `\"None\"`, `\"BLR\"`, `\"HSS\"`, `\"HODLR\"`, `\"ZFP\"`, `\"BLR-HODLR\"`, `\"ZFP-BLR-HODLR\"`.",
-          "default": "None",
+          "$ref": "#/$defs/SparseCompression",
+          "description": "STRUMPACK compression type.",
           "x-palace-advanced": true
         },
         "STRUMPACKCompressionTol":
@@ -891,15 +1055,13 @@
         "AMSSingularOperator":
         {
           "type": "boolean",
-          "description": "Indicate to AMS that the operator is singular (e.g. magnetostatics with no essential boundary conditions).",
-          "default": false,
+          "description": "Indicate to AMS that the operator is singular (e.g. magnetostatics with no essential boundary conditions). If omitted, Palace enables this for magnetostatic simulations and disables it otherwise.",
           "x-palace-advanced": true
         },
         "AMGAggressiveCoarsening":
         {
           "type": "boolean",
-          "description": "Enable aggressive coarsening in BoomerAMG.",
-          "default": false,
+          "description": "Enable aggressive coarsening in BoomerAMG. If omitted, Palace enables this for electrostatic, magnetostatic, and transient simulations, and disables it otherwise.",
           "x-palace-advanced": true
         },
         "AMSMaxIts":
