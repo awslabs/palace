@@ -539,7 +539,11 @@ linear systems of equations arising for each simulation type. The available opti
     symmetric positive definite (SPD) and the preconditioned conjugate gradient method
     (`"CG"`) is used as the Krylov solver.
 
-`"Tol" [1.0e-6]` :  Relative residual convergence tolerance for the iterative linear solver.
+`"Tol" [1.0e-6]` :  Relative residual convergence tolerance for the iterative linear solver. **Deprecated**: Use `"RelTol"` instead. For backward compatibility, `"Tol"` is still read if `"RelTol"` is not specified.
+
+`"RelTol" [1.0e-6]` :  Relative residual convergence tolerance for the iterative linear solver. If both `"RelTol"` and `"Tol"` are specified, `"RelTol"` takes precedence.
+
+`"AbsTol" [1.0e-50]` :  Absolute residual convergence tolerance for the iterative linear solver. The solver converges when `||r|| < max(RelTol * ||b||, AbsTol)`. A value of `1.0e-50` effectively disables the absolute tolerance unless it is set larger.
 
 `"MaxIts" [100]` :  Maximum number of iterations for the iterative linear solver. Must be greater than zero.
 
