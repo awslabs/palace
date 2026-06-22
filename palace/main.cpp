@@ -47,7 +47,6 @@ static const char *GetPalaceGitTag()
 
 static void PrintPalaceVersionInfo(MPI_Comm comm)
 {
-
   if (std::strcmp(GetPalaceGitTag(), "UNKNOWN"))
   {
     Mpi::Print(comm, "Git commit: {}\n", GetPalaceGitTag());
@@ -55,39 +54,38 @@ static void PrintPalaceVersionInfo(MPI_Comm comm)
 
   Mpi::Print(comm, "\nBuild dependencies:\n");
 
-// X-macro to check if a dependency macro is defined and print the SHA
-#define X(DEP_NAME) \
-    Mpi::Print(comm, "  " #DEP_NAME ": {}\n", DEP_NAME ## _COMMIT_SHA);
+// Print the git description or version number for a dependency. CMake defines
+// PALACE_DEP_<NAME>_VERSION for every dependency; the value is empty for those
+// that were not built, in which case nothing is printed.
+#define X(DEP_NAME)                                                             \
+  if (PALACE_DEP_##DEP_NAME##_VERSION[0] != '\0')                               \
+  {                                                                             \
+    Mpi::Print(comm, "  " #DEP_NAME ": {}\n", PALACE_DEP_##DEP_NAME##_VERSION); \
+  }
 
-// List of dependencies and their corresponding macros
-#define PRINT_DEP_SHA_LIST \
-  X(STRUMPACK) \
-  X(arpack_ng) \
-  X(eigen) \
-  X(fmt) \
-  X(gslib) \
-  X(hypre) \
-  X(json) \
-  X(libCEED) \
-  X(libxsmm) \
-  X(magma) \
-  X(metis) \
-  X(mfem) \
-  X(mumps) \
-  X(parmetis) \
-  X(petsc) \
-  X(scalapack) \
-  X(scn) \
-  X(slepc) \
-  X(sundials) \
+  // List of dependencies, matching the folders in palace/CMakeLists.txt.
+  X(STRUMPACK)
+  X(arpack_ng)
+  X(eigen)
+  X(fmt)
+  X(gslib)
+  X(hypre)
+  X(json)
+  X(libCEED)
+  X(libxsmm)
+  X(magma)
+  X(metis)
+  X(mfem)
+  X(mumps)
+  X(parmetis)
+  X(petsc)
+  X(scalapack)
+  X(scn)
+  X(slepc)
+  X(sundials)
   X(superlu_dist)
 
-// Iterate over the list and print if macro is defined
-PRINT_DEP_SHA_LIST
-
 #undef X
-
-
 }
 
 static const char *GetPalaceCeedJitSourceDir()

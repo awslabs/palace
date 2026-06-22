@@ -100,16 +100,27 @@ function(git_describe _var)
 endfunction()
 
 
-# Helper to get git SHA for a dependency
+# Helper to get the git description (tag/SHA) for a dependency source tree.
+# Sets ${_var} to the empty string when the directory does not exist or is not
+# a git checkout, so callers can fall back to a version number or skip the
+# dependency entirely.
 function(get_dependency_git_sha dep_source_dir _var)
+  set(${_var} "" PARENT_SCOPE)
+
+  # A dependency that was not built has no source directory. Guard against this
+  # before calling execute_process, which errors on a missing WORKING_DIRECTORY.
+  if(NOT IS_DIRECTORY "${dep_source_dir}")
+    return()
+  endif()
+
   find_package(Git QUIET)
   if(NOT GIT_FOUND)
     message(WARNING "Git not found, cannot get SHA for ${dep_source_dir}")
     return()
   endif()
 
-  # Run git describe in the given source directory
-  # Do not consider parent directories (--git-dir .git)
+  # Run git describe in the given source directory. Restrict to this directory's
+  # own repository (--git-dir .git) so a parent repository is never picked up.
   execute_process(
     COMMAND "${GIT_EXECUTABLE}" --git-dir .git describe --tags --always --dirty
     WORKING_DIRECTORY "${dep_source_dir}"
@@ -117,11 +128,10 @@ function(get_dependency_git_sha dep_source_dir _var)
     OUTPUT_VARIABLE out
     ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE
   )
-  if(NOT res EQUAL 0)
-    message(DEBUG "Git SHA for not found in ${dep_source_dir}")
-    set(${_var} "GIT-NOTFOUND" PARENT_SCOPE)
+  if(res EQUAL 0)
+    message(DEBUG "Git description for ${dep_source_dir}: ${out}")
+    set(${_var} "${out}" PARENT_SCOPE)
   else()
-    message(DEBUG "Git SHA for ${dep_name_source_dir}: ${out}")
-    set(${_var} ${out} PARENT_SCOPE)
+    message(DEBUG "No git description found in ${dep_source_dir}")
   endif()
 endfunction()
