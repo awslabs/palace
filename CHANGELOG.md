@@ -16,6 +16,10 @@ The format of this changelog is based on
 
 #### New Features
 
+  - Added a new feature guide for adaptive frequency sweeps in driven simulations,
+    with CPW lumped-port and transmon examples, plus reference documentation for
+    the adaptive PROM/MRI algorithm and practical guidance on tolerances,
+    convergence, and validation [PR 702](https://github.com/awslabs/palace/pull/702).
   - Added `"IncludeInSynthesis"` boolean flag to lumped port configuration (default `true`).
     When adaptive driven circuit synthesis is enabled
     (`config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]`), this flag controls whether
