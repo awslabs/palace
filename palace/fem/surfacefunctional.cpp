@@ -613,16 +613,20 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       const auto vol_geom_b = plan.ghost_b ? plan.ghost_geom
                               : (plan.elem_b >= 0) ? pmesh.GetElementGeometry(plan.elem_b)
                                                    : mfem::Geometry::INVALID;
-      const bool can_surface_flux_at_points =
+      const bool can_surface_flux_at_points_a =
           use_at_points && kind == Kind::SURFACE_FLUX && plan.elem_a >= 0 &&
-          plan.elem_b < 0 && !plan.ghost_a && vol_geom_a == mfem::Geometry::TETRAHEDRON;
+          !plan.ghost_a && vol_geom_a == mfem::Geometry::TETRAHEDRON;
+      const bool can_surface_flux_at_points_b =
+          use_at_points && kind == Kind::SURFACE_FLUX && plan.elem_b >= 0 &&
+          !plan.ghost_b && vol_geom_b == mfem::Geometry::TETRAHEDRON;
       const bool can_at_points_a =
           (use_at_points && buffer_kind && plan.elem_a >= 0 && !plan.ghost_a &&
            vol_geom_a == mfem::Geometry::TETRAHEDRON) ||
-          can_surface_flux_at_points;
+          can_surface_flux_at_points_a;
       const bool can_at_points_b =
-          use_at_points && buffer_kind && plan.elem_b >= 0 && !plan.ghost_b &&
-          vol_geom_b == mfem::Geometry::TETRAHEDRON;
+          (use_at_points && buffer_kind && plan.elem_b >= 0 && !plan.ghost_b &&
+           vol_geom_b == mfem::Geometry::TETRAHEDRON) ||
+          can_surface_flux_at_points_b;
 
       int out_slot;
       if (IsBufferKind(kind))
@@ -725,7 +729,20 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         it->second.out_slots.push_back(out_slot);
       };
 
-      if (buffer_kind && can_at_points_a && can_at_points_b)
+      if (kind == Kind::SURFACE_FLUX && can_surface_flux_at_points_a &&
+          can_surface_flux_at_points_b)
+      {
+        // Split local two-sided flux into one-sided AtPoints operators so each side's
+        // mapped volume reference coordinates are runtime data. The shared output slot
+        // preserves the original two-sided difference or non-two-sided average.
+        const double scale_a = flux_two_sided ? 1.0 : 0.5;
+        const double scale_b = flux_two_sided ? -1.0 : 0.5;
+        AddGroup(plan.elem_a, false, vol_geom_a, plan.pts_a, -1, false,
+                 mfem::Geometry::INVALID, {}, true, 1.0, scale_a);
+        AddGroup(plan.elem_b, false, vol_geom_b, plan.pts_b, -1, false,
+                 mfem::Geometry::INVALID, {}, true, 1.0, scale_b);
+      }
+      else if (buffer_kind && can_at_points_a && can_at_points_b)
       {
         // Split two-sided boundary visualization into two one-sided AtPoints operators
         // that accumulate into the same output slot. One AtPoints operator can only own
@@ -1593,7 +1610,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         info.apply_qf_path = PalaceQFunctionRelativePath(f_integ_surf_farfield_32_loc);
         break;
       case Kind::SURFACE_FLUX:
-        ctx[0].second = group.flip_normal ? -1.0 : 1.0;
+        ctx[0].second = (group.flip_normal ? -1.0 : 1.0) * group.normal_scale;
         switch (flux_type)
         {
           case SurfaceFlux::ELECTRIC:
