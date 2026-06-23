@@ -61,10 +61,17 @@ void ReorderMeshElements(mfem::Mesh &, bool = true);
 // Check that mesh boundary conditions are given for external boundaries.
 std::unordered_map<int, int> CheckMesh(const mfem::Mesh &, const config::BoundaryData &);
 
+struct CrackRefinementStats
+{
+  int new_ne = 0;
+  int iterations = 0;
+};
+
 // Adding boundary elements for material interfaces and exterior boundaries, and "crack"
 // desired internal boundary elements to disconnect the elements on either side.
 int AddInterfaceBdrElements(IoData &, std::unique_ptr<mfem::Mesh> &,
-                            std::unordered_map<int, int> &, MPI_Comm comm);
+                            std::unordered_map<int, int> &, CrackRefinementStats &,
+                            MPI_Comm comm);
 
 // Generate element-based mesh partitioning, using either a provided file or METIS.
 std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
@@ -243,7 +250,9 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
     auto face_to_be = CheckMesh(*smesh, iodata.boundaries);
     if (iodata.model.crack_bdr_elements || iodata.model.add_bdr_elements)
     {
-      while (AddInterfaceBdrElements(iodata, smesh, face_to_be, comm) != 1)
+      CrackRefinementStats crack_refinement_stats;
+      while (AddInterfaceBdrElements(iodata, smesh, face_to_be, crack_refinement_stats,
+                                     comm) != 1)
       {
         // May require multiple calls due to early exit/retry approach.
       }
@@ -2744,7 +2753,8 @@ struct UnorderedPairHasher
 };
 
 int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_mesh,
-                            std::unordered_map<int, int> &face_to_be, MPI_Comm comm)
+                            std::unordered_map<int, int> &face_to_be,
+                            CrackRefinementStats &crack_refinement_stats, MPI_Comm comm)
 {
   // Exclude some internal boundary conditions for which cracking would give invalid
   // results: lumpedports in particular.
@@ -2974,9 +2984,6 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
           ++it;
         }
       }
-      // Static reporting variables so can persist across retries.
-      static int new_ne_ref = 0;
-      static int new_ref_its = 0;
       if (!coarse_crack_edge_to_be.empty())
       {
         // Locally refine the mesh to decouple the under-resolved seam edges. If necessary,
@@ -3006,9 +3013,9 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
         // an actionable message rather than splitting indefinitely (or silently producing a
         // coupled mesh).
         MFEM_VERIFY(
-            new_ref_its < 100,
+            crack_refinement_stats.iterations < 100,
             "Unable to decouple interior boundary by local refinement after "
-                << new_ref_its
+                << crack_refinement_stats.iterations
                 << " iterations. The cracked boundary likely runs along a periodic seam, "
                    "which is not supported. Set \"RefineCrackElements\": false to crack "
                    "without refinement (the seam edge will remain coupled).");
@@ -3022,17 +3029,17 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
           split_edges.emplace_back(edge.first, edge.second);
         }
         LocalEdgeSplit(orig_mesh, split_edges);
-        new_ne_ref += orig_mesh->GetNE() - ne;
-        new_ref_its++;
+        crack_refinement_stats.new_ne += orig_mesh->GetNE() - ne;
+        crack_refinement_stats.iterations++;
         face_to_be.clear();
         return 0;  // Mesh was refined (locally), start over
       }
-      else if (new_ne_ref > 0)
+      else if (crack_refinement_stats.new_ne > 0)
       {
         Mpi::Print(
             "Added {:d} elements in {:d} iterations of local bisection for under-resolved "
             "interior boundaries\n",
-            new_ne_ref, new_ref_its);
+            crack_refinement_stats.new_ne, crack_refinement_stats.iterations);
       }
     }
 
