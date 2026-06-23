@@ -270,14 +270,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     // Search for eigenvalues closest to λ = iσ.
     eigen->SetShiftInvert(1i * target);
-    if (type == EigenSolverBackend::ARPACK)
-    {
-      // ARPACK searches based on eigenvalues of the transformed problem. The eigenvalue
-      // 1 / (λ - σ) will be a large-magnitude negative imaginary number for an eigenvalue
-      // λ with frequency close to but not below the target σ.
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_IMAGINARY);
-    }
-    else if (nonlinear_type == NonlinearEigenSolver::SLP)
+    if (nonlinear_type == NonlinearEigenSolver::SLP)
     {
       eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE);
     }
