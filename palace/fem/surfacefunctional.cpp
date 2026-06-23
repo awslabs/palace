@@ -613,9 +613,13 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       const auto vol_geom_b = plan.ghost_b ? plan.ghost_geom
                               : (plan.elem_b >= 0) ? pmesh.GetElementGeometry(plan.elem_b)
                                                    : mfem::Geometry::INVALID;
+      const bool can_surface_flux_at_points =
+          use_at_points && kind == Kind::SURFACE_FLUX && plan.elem_a >= 0 &&
+          plan.elem_b < 0 && !plan.ghost_a && vol_geom_a == mfem::Geometry::TETRAHEDRON;
       const bool can_at_points_a =
-          use_at_points && buffer_kind && plan.elem_a >= 0 && !plan.ghost_a &&
-          vol_geom_a == mfem::Geometry::TETRAHEDRON;
+          (use_at_points && buffer_kind && plan.elem_a >= 0 && !plan.ghost_a &&
+           vol_geom_a == mfem::Geometry::TETRAHEDRON) ||
+          can_surface_flux_at_points;
       const bool can_at_points_b =
           use_at_points && buffer_kind && plan.elem_b >= 0 && !plan.ghost_b &&
           vol_geom_b == mfem::Geometry::TETRAHEDRON;
@@ -721,7 +725,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         it->second.out_slots.push_back(out_slot);
       };
 
-      if (can_at_points_a && can_at_points_b)
+      if (buffer_kind && can_at_points_a && can_at_points_b)
       {
         // Split two-sided boundary visualization into two one-sided AtPoints operators
         // that accumulate into the same output slot. One AtPoints operator can only own
@@ -1048,6 +1052,18 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     auto AddFaceGeomInputAtPoints = [&]()
     {
       const int nq = face_ir.GetNPoints();
+      if (!buffer_kind)
+      {
+        auto &qw = elem_attrs.emplace_back(num_elem * nq);
+        for (std::size_t e = 0; e < num_elem; e++)
+        {
+          for (int q = 0; q < nq; q++)
+          {
+            qw[e * nq + q] = face_ir.IntPoint(q).weight;
+          }
+        }
+        AddSequentialPointInput("qw", qw, 1);
+      }
       auto &face_geom = elem_attrs.emplace_back(num_elem * nq * 6);
       face_geom = 0.0;
       for (std::size_t e = 0; e < num_elem; e++)
@@ -1260,19 +1276,46 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     }
     if (kind == Kind::SURFACE_FLUX || kind == Kind::FARFIELD)
     {
-      // Coordinates at the face quadrature points, interpolated from the mesh nodes
-      // with the boundary element basis (constant input, never re-pointed).
-      CeedElemRestriction x_restr = FiniteElementSpace::BuildCeedElemRestriction(
-          mesh_fespace, ceed, group.bdr_geom, group.bdr_indices, /*is_interp*/ true);
-      CeedBasis x_basis;
-      ceed::InitBasisAtPoints(*face_mesh_fe, face_ir, mesh_fespace.GetVDim(), ceed,
-                              &x_basis);
-      CeedVector x_vec;
-      ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &x_vec);
-      inputs.push_back({"x", x_vec, x_restr, x_basis, ceed::EvalMode::Interp});
-      scratch.vecs.push_back(x_vec);
-      scratch.restrs.push_back(x_restr);
-      scratch.bases.push_back(x_basis);
+      if (group.at_points)
+      {
+        // Physical coordinates are surface-only data. Keep them on the boundary
+        // quadrature rule rather than evaluating the boundary basis at the volume
+        // reference points used by the AtPoints trace operator.
+        const int nq = face_ir.GetNPoints();
+        auto &x_pts = elem_attrs.emplace_back(num_elem * nq * 3);
+        for (std::size_t e = 0; e < num_elem; e++)
+        {
+          mfem::IsoparametricTransformation T;
+          pmesh.GetBdrElementTransformation(group.bdr_indices[e], &T);
+          for (int q = 0; q < nq; q++)
+          {
+            const mfem::IntegrationPoint &ip = face_ir.IntPoint(q);
+            mfem::Vector x_loc(3);
+            T.Transform(ip, x_loc);
+            const std::size_t off = 3 * (e * nq + q);
+            x_pts[off + 0] = x_loc(0);
+            x_pts[off + 1] = x_loc(1);
+            x_pts[off + 2] = x_loc(2);
+          }
+        }
+        AddSequentialPointInput("x", x_pts, 3);
+      }
+      else
+      {
+        // Coordinates at the face quadrature points, interpolated from the mesh nodes
+        // with the boundary element basis (constant input, never re-pointed).
+        CeedElemRestriction x_restr = FiniteElementSpace::BuildCeedElemRestriction(
+            mesh_fespace, ceed, group.bdr_geom, group.bdr_indices, /*is_interp*/ true);
+        CeedBasis x_basis;
+        ceed::InitBasisAtPoints(*face_mesh_fe, face_ir, mesh_fespace.GetVDim(), ceed,
+                                &x_basis);
+        CeedVector x_vec;
+        ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &x_vec);
+        inputs.push_back({"x", x_vec, x_restr, x_basis, ceed::EvalMode::Interp});
+        scratch.vecs.push_back(x_vec);
+        scratch.restrs.push_back(x_restr);
+        scratch.bases.push_back(x_basis);
+      }
     }
     auto AddFieldInput = [&](const std::string &name, int source,
                              const mfem::ParFiniteElementSpace &fespace,
@@ -1427,10 +1470,12 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           }
         }
       };
-      AddSide(group.vol_indices_a, group.vol_geom_a, *group.mapped_ir_a, group.ghost_a);
+      AddSide(group.vol_indices_a, group.vol_geom_a,
+              group.at_points ? face_ir : *group.mapped_ir_a, group.ghost_a);
       if (has_b)
       {
-        AddSide(group.vol_indices_b, group.vol_geom_b, *group.mapped_ir_b, group.ghost_b);
+        AddSide(group.vol_indices_b, group.vol_geom_b,
+                group.at_points ? face_ir : *group.mapped_ir_b, group.ghost_b);
       }
     }
 
@@ -1459,6 +1504,25 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                                      nq, nc, 1, (CeedSize)buffer_size,
                                                      CEED_MEM_HOST, CEED_COPY_VALUES,
                                                      offsets.data(), &out_restr));
+    }
+    else if (group.at_points)
+    {
+      const int nq = face_ir.GetNPoints();
+      std::vector<CeedInt> offsets(num_elem * nq);
+      for (std::size_t e = 0; e < num_elem; e++)
+      {
+        for (int j = 0; j < nq; j++)
+        {
+          offsets[e * nq + j] = group.out_slots[e];
+        }
+      }
+      // Each quadrature-point contribution scatters to the element's output slot;
+      // ApplyAdd performs the reduction over the duplicate offsets.
+      PalaceCeedCall(ceed, CeedElemRestrictionCreate(
+                               ceed, static_cast<CeedInt>(num_elem), nq, num_out,
+                               num_marked, (CeedSize)num_marked * num_out,
+                               CEED_MEM_HOST, CEED_COPY_VALUES, offsets.data(),
+                               &out_restr));
     }
     else
     {
@@ -1568,6 +1632,12 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                          ctx.size() * sizeof(CeedIntScalar), ceed, inputs,
                                          BufferNumComp(kind), out_restr, &op);
       }
+    }
+    else if (group.at_points)
+    {
+      ceed::AssembleCeedPointEvaluatorAtPoints(
+          info, ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, inputs,
+          points_restr, points_vec, num_out, out_restr, &op);
     }
     else
     {
