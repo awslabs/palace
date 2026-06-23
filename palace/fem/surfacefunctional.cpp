@@ -116,8 +116,11 @@ struct FaceGroup
   double normal_scale = 1.0;
   std::vector<int> face_nbr, ghost_attr, req_idx;
   // For AtPoints groups, the mapped volume reference coordinates vary by boundary
-  // element and are stored in boundary-element order, nq entries per element.
+  // element and are stored in boundary-element order, nq entries per element. Local
+  // split SURFACE_FLUX groups may also carry a per-entry normal scale folded into the
+  // precomputed face Jacobian so opposite sides can share one AtPoints operator.
   std::vector<mfem::IntegrationPoint> mapped_pts_a, mapped_pts_b;
+  std::vector<double> normal_scales;
 };
 
 void AppendPoints(FaceConfigKey &key, const std::vector<mfem::IntegrationPoint> &pts)
@@ -670,7 +673,10 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         key.push_back(static_cast<long long>(nq));
         key.push_back(static_cast<long long>(at_points_group));
         key.push_back(static_cast<long long>(std::llround(side_scale * QUANTIZE_SCALE)));
-        key.push_back(static_cast<long long>(std::llround(normal_scale * QUANTIZE_SCALE)));
+        key.push_back(static_cast<long long>(
+            (at_points_group && kind == Kind::SURFACE_FLUX)
+                ? 0
+                : std::llround(normal_scale * QUANTIZE_SCALE)));
         if (!at_points_group)
         {
           AppendPoints(key, pts_a);
@@ -709,6 +715,10 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         {
           it->second.mapped_pts_a.insert(it->second.mapped_pts_a.end(), pts_a.begin(),
                                          pts_a.end());
+          if (kind == Kind::SURFACE_FLUX)
+          {
+            it->second.normal_scales.push_back(normal_scale);
+          }
         }
         if (elem_a >= 0)
         {
@@ -1100,12 +1110,16 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           const mfem::IntegrationPoint &ip = face_ir.IntPoint(q);
           T.SetIntPoint(&ip);
           const mfem::DenseMatrix &J = T.Jacobian();
+          const double normal_scale =
+              (kind == Kind::SURFACE_FLUX && !group.normal_scales.empty())
+                  ? group.normal_scales[e]
+                  : 1.0;
           const std::size_t off = 6 * (e * nq + q);
           for (int d = 0; d < 2; d++)
           {
             for (int c = 0; c < 3; c++)
             {
-              face_geom[off + c + 3 * d] = J(c, d);
+              face_geom[off + c + 3 * d] = (d == 0 ? normal_scale : 1.0) * J(c, d);
             }
           }
         }
@@ -1615,7 +1629,10 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         info.apply_qf_path = PalaceQFunctionRelativePath(f_integ_surf_farfield_32_loc);
         break;
       case Kind::SURFACE_FLUX:
-        ctx[0].second = (group.flip_normal ? -1.0 : 1.0) * group.normal_scale;
+        ctx[0].second =
+            (group.flip_normal ? -1.0 : 1.0) *
+            ((group.at_points && !group.normal_scales.empty()) ? 1.0
+                                                               : group.normal_scale);
         switch (flux_type)
         {
           case SurfaceFlux::ELECTRIC:
