@@ -623,10 +623,14 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           use_at_points && kind == Kind::INTERFACE_EPR && plan.elem_a >= 0 &&
           plan.elem_b < 0 && !plan.ghost_a &&
           vol_geom_a == mfem::Geometry::TETRAHEDRON;
+      const bool can_farfield_at_points =
+          use_at_points && kind == Kind::FARFIELD && plan.elem_a >= 0 &&
+          plan.elem_b < 0 && !plan.ghost_a &&
+          vol_geom_a == mfem::Geometry::TETRAHEDRON;
       const bool can_at_points_a =
           (use_at_points && buffer_kind && plan.elem_a >= 0 && !plan.ghost_a &&
            vol_geom_a == mfem::Geometry::TETRAHEDRON) ||
-          can_surface_flux_at_points_a || can_epr_at_points;
+          can_surface_flux_at_points_a || can_epr_at_points || can_farfield_at_points;
       const bool can_at_points_b =
           (use_at_points && buffer_kind && plan.elem_b >= 0 && !plan.ghost_b &&
            vol_geom_b == mfem::Geometry::TETRAHEDRON) ||
@@ -1451,14 +1455,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     }
     else if (kind == Kind::FARFIELD)
     {
-      AddFieldInput("u_1", 0, *fespace_e, group.vol_indices_a, group.vol_geom_a,
-                    *group.mapped_ir_a);
-      AddFieldInput("u_2", 1, *fespace_e, group.vol_indices_a, group.vol_geom_a,
-                    *group.mapped_ir_a);
-      AddFieldInput("u_3", 2, *fespace_b, group.vol_indices_a, group.vol_geom_a,
-                    *group.mapped_ir_a);
-      AddFieldInput("u_4", 3, *fespace_b, group.vol_indices_a, group.vol_geom_a,
-                    *group.mapped_ir_a);
+      const mfem::IntegrationRule &ir = group.at_points ? face_ir : *group.mapped_ir_a;
+      AddFieldInput("u_1", 0, *fespace_e, group.vol_indices_a, group.vol_geom_a, ir);
+      AddFieldInput("u_2", 1, *fespace_e, group.vol_indices_a, group.vol_geom_a, ir);
+      AddFieldInput("u_3", 2, *fespace_b, group.vol_indices_a, group.vol_geom_a, ir);
+      AddFieldInput("u_4", 3, *fespace_b, group.vol_indices_a, group.vol_geom_a, ir);
     }
     else if (kind == Kind::SURFACE_FLUX)
     {
@@ -1658,7 +1659,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     {
       ceed::AssembleCeedPointEvaluatorAtPoints(
           info, ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, inputs,
-          points_restr, points_vec, num_out, out_restr, &op);
+          points_restr, points_vec, num_out, out_restr, &op,
+          (kind == Kind::FARFIELD) ? &op_ctx : nullptr);
     }
     else
     {

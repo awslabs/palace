@@ -173,10 +173,15 @@ namespace
 void CreatePointEvaluatorQFunction(const CeedQFunctionInfo &info, void *ctx,
                                    std::size_t ctx_size, Ceed ceed,
                                    const std::vector<CeedFunctionalFieldInput> &inputs,
-                                   CeedInt num_out_comp, CeedQFunction *apply_qf)
+                                   CeedInt num_out_comp, CeedQFunction *apply_qf,
+                                   CeedQFunctionContext *ctx_out)
 {
   MFEM_VERIFY(!info.assemble_q_data,
               "Point evaluator does not support quadrature data assembly!");
+  if (ctx_out)
+  {
+    *ctx_out = nullptr;
+  }
   PalaceCeedCall(ceed, CeedQFunctionCreateInterior(ceed, 1, info.apply_qf,
                                                    info.apply_qf_path.c_str(), apply_qf));
 
@@ -187,7 +192,14 @@ void CreatePointEvaluatorQFunction(const CeedQFunctionInfo &info, void *ctx,
     PalaceCeedCall(ceed, CeedQFunctionContextSetData(apply_ctx, CEED_MEM_HOST,
                                                      CEED_COPY_VALUES, ctx_size, ctx));
     PalaceCeedCall(ceed, CeedQFunctionSetContext(*apply_qf, apply_ctx));
-    PalaceCeedCall(ceed, CeedQFunctionContextDestroy(&apply_ctx));
+    if (ctx_out)
+    {
+      *ctx_out = apply_ctx;
+    }
+    else
+    {
+      PalaceCeedCall(ceed, CeedQFunctionContextDestroy(&apply_ctx));
+    }
   }
 
   for (const auto &input : inputs)
@@ -203,11 +215,11 @@ void AssembleCeedPointEvaluator(const CeedQFunctionInfo &info, void *ctx,
                                 std::size_t ctx_size, Ceed ceed,
                                 const std::vector<CeedFunctionalFieldInput> &inputs,
                                 CeedInt num_out_comp, CeedElemRestriction out_restr,
-                                CeedOperator *op)
+                                CeedOperator *op, CeedQFunctionContext *ctx_out)
 {
   CeedQFunction apply_qf;
   CreatePointEvaluatorQFunction(info, ctx, ctx_size, ceed, inputs, num_out_comp,
-                                &apply_qf);
+                                &apply_qf, ctx_out);
 
   PalaceCeedCall(ceed, CeedOperatorCreate(ceed, apply_qf, nullptr, nullptr, op));
   PalaceCeedCall(ceed, CeedQFunctionDestroy(&apply_qf));
@@ -227,11 +239,12 @@ void AssembleCeedPointEvaluatorAtPoints(const CeedQFunctionInfo &info, void *ctx
                                         const std::vector<CeedFunctionalFieldInput> &inputs,
                                         CeedElemRestriction points_restr,
                                         CeedVector points_vec, CeedInt num_out_comp,
-                                        CeedElemRestriction out_restr, CeedOperator *op)
+                                        CeedElemRestriction out_restr, CeedOperator *op,
+                                        CeedQFunctionContext *ctx_out)
 {
   CeedQFunction apply_qf;
   CreatePointEvaluatorQFunction(info, ctx, ctx_size, ceed, inputs, num_out_comp,
-                                &apply_qf);
+                                &apply_qf, ctx_out);
 
   PalaceCeedCall(ceed, CeedOperatorCreateAtPoints(ceed, apply_qf, nullptr, nullptr, op));
   PalaceCeedCall(ceed, CeedQFunctionDestroy(&apply_qf));
