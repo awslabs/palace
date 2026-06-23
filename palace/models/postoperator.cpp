@@ -1523,10 +1523,11 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
   if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN ||
                 solver_t == ProblemType::TRANSIENT)
   {
+    const auto port_powers = fem_op->GetLumpedPortOp().GetPowers(*E, *B);
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
       auto &vi = measurement_cache.lumped_port_vi[idx];
-      vi.P = data.GetPower(*E, *B);
+      vi.P = port_powers.at(idx);
       vi.V = data.GetVoltage(*E);
       if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
       {

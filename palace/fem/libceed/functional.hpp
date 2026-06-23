@@ -62,7 +62,8 @@ void AssembleCeedPointEvaluator(const CeedQFunctionInfo &info, void *ctx,
                                 std::size_t ctx_size, Ceed ceed,
                                 const std::vector<CeedFunctionalFieldInput> &inputs,
                                 CeedInt num_out_comp, CeedElemRestriction out_restr,
-                                CeedOperator *op);
+                                CeedOperator *op,
+                                CeedQFunctionContext *ctx_out = nullptr);
 
 // Variant of AssembleCeedPointEvaluator for libCEED AtPoints operators: basis inputs
 // are evaluated at runtime reference coordinates described by points_restr/points_vec,
@@ -73,7 +74,8 @@ void AssembleCeedPointEvaluatorAtPoints(const CeedQFunctionInfo &info, void *ctx
                                         const std::vector<CeedFunctionalFieldInput> &inputs,
                                         CeedElemRestriction points_restr,
                                         CeedVector points_vec, CeedInt num_out_comp,
-                                        CeedElemRestriction out_restr, CeedOperator *op);
+                                        CeedElemRestriction out_restr, CeedOperator *op,
+                                        CeedQFunctionContext *ctx_out = nullptr);
 
 }  // namespace palace::ceed
 

@@ -38,6 +38,11 @@ struct CeedGroupOperator
   // far-field frequency) without reassembly; nullptr if the operator has no context or
   // the context is not updated. Owned by the group (destroyed with it).
   CeedQFunctionContext ctx = nullptr;
+  // Reusable output vector wrapper. The pointed-to MFEM Vector data is supplied at
+  // apply time, but the libCEED vector object itself can be retained across repeated
+  // postprocessing evaluations instead of being created/destroyed for every group apply.
+  mutable CeedVector out_vec = nullptr;
+  mutable CeedSize out_size = 0;
 };
 
 // Re-point the passive field inputs of each group operator at the given source vectors
@@ -162,7 +167,11 @@ private:
   mutable Vector field_staging;
 
   // Local output vector with one slot per marked boundary element on this process.
+  // Integral functionals also keep the originating boundary attribute for each slot so
+  // batched model-level callers can recover several independent reductions from one
+  // assembled operator without changing the per-element libCEED kernels.
   mutable Vector local_out;
+  std::vector<int> local_out_attrs;
 
   void Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
   void AssembleLocal(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
@@ -257,6 +266,15 @@ public:
   // LumpedPortData::GetPower (two-sided POWER flux functionals only). Collective on the
   // mesh communicator.
   std::complex<double> EvalComplexPower(const GridFunction &E, const GridFunction &B) const;
+
+  // Same complex-power convention as EvalComplexPower, but return one result per
+  // boundary-attribute bin. attr_to_bin is indexed by boundary attribute - 1 and uses -1
+  // for attributes not assigned to any output bin. This enables safe batching of many
+  // disjoint port surfaces while retaining per-port scalar outputs. Collective on the
+  // mesh communicator.
+  std::vector<std::complex<double>>
+  EvalComplexPowerByAttribute(const GridFunction &E, const GridFunction &B,
+                              const mfem::Array<int> &attr_to_bin, int num_bins) const;
 
   // Evaluate the far-field rE integrals for all observation directions at the given
   // (complex) frequency, following SurfacePostOperator::GetFarFieldrE. Reassembles when
