@@ -104,6 +104,8 @@ The format of this changelog is based on
     [PR 727](https://github.com/awslabs/palace/pull/727).
   - Fixed a bug causing incorrect S-parameters when lumped port pairs have different R values
     [PR 743](https://github.com/awslabs/palace/pull/743).
+  - Fixed a bug where mesh cracking refinement (`RefineCrackElements`) would fail on periodic meshes
+    [PR 777](https://github.com/awslabs/palace/pull/777).
 
 ## [0.16.1] - 2026-04-24
 
