@@ -6,6 +6,7 @@
 
 #include <array>
 #include <memory>
+#include <utility>
 #include <vector>
 #include <Eigen/Dense>
 #include <mfem.hpp>
@@ -82,6 +83,11 @@ std::vector<int>
 DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
                                const struct palace::config::PeriodicData &data,
                                const double tol = 1e-8);
+
+// Conformally bisect the selected mesh edges by splitting each incident tetrahedron and
+// boundary triangle. Used by periodic crack refinement.
+int LocalEdgeSplit(std::unique_ptr<mfem::Mesh> &mesh,
+                   const std::vector<std::pair<int, int>> &edges);
 
 }  // namespace mesh
 

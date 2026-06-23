@@ -1,6 +1,9 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
+#include <memory>
+#include <utility>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -23,6 +26,56 @@ namespace palace
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 using namespace Catch::Matchers;
+
+namespace
+{
+
+std::unique_ptr<mfem::Mesh> TwoEdgeFanTetMesh()
+{
+  auto mesh = std::make_unique<mfem::Mesh>(3, 10, 4, 0, 3);
+
+  mesh->AddVertex(0.0, 0.0, 0.0);
+  mesh->AddVertex(1.0, 0.0, 0.0);
+  mesh->AddVertex(0.0, 1.0, 0.0);
+  mesh->AddVertex(0.0, 0.0, 1.0);
+  mesh->AddVertex(0.0, 0.0, -1.0);
+  mesh->AddVertex(10.0, 0.0, 0.0);
+  mesh->AddVertex(11.0, 0.0, 0.0);
+  mesh->AddVertex(10.0, 1.0, 0.0);
+  mesh->AddVertex(10.0, 0.0, 1.0);
+  mesh->AddVertex(10.0, 0.0, -1.0);
+
+  mesh->AddTet(0, 1, 2, 3, 1);
+  mesh->AddTet(0, 2, 1, 4, 1);
+  mesh->AddTet(5, 6, 7, 8, 1);
+  mesh->AddTet(5, 7, 6, 9, 1);
+  mesh->FinalizeTopology();
+  return mesh;
+}
+
+bool ElementContainsEdge(const mfem::Element &el, int v0, int v1)
+{
+  bool has_v0 = false, has_v1 = false;
+  const int *verts = el.GetVertices();
+  for (int i = 0; i < el.GetNVertices(); i++)
+  {
+    has_v0 = has_v0 || verts[i] == v0;
+    has_v1 = has_v1 || verts[i] == v1;
+  }
+  return has_v0 && has_v1;
+}
+
+void CheckVertex(const mfem::Mesh &mesh, int v, const std::array<double, 3> &coord)
+{
+  const double *actual = mesh.GetVertex(v);
+  for (int d = 0; d < 3; d++)
+  {
+    CAPTURE(v, d);
+    CHECK_THAT(actual[d], WithinAbs(coord[d], 1.0e-12));
+  }
+}
+
+}  // namespace
 
 // TODO: Add this test when we can access MFEM_DATA_PATH from Spack
 // This requires MFEM to move to a CMake-based build system for spack.
@@ -336,6 +389,47 @@ TEST_CASE("TetToHex", "[geodata][Serial]")
     }
   }
 #endif
+}
+
+TEST_CASE("LocalEdgeSplit", "[geodata][Serial]")
+{
+  auto mesh = TwoEdgeFanTetMesh();
+
+  REQUIRE(mesh->GetNV() == 10);
+  REQUIRE(mesh->GetNE() == 4);
+  REQUIRE(mesh->GetNBE() == 12);
+
+  const std::vector<std::pair<int, int>> split_edges{{5, 6}, {0, 1}};
+  REQUIRE(mesh::LocalEdgeSplit(mesh, split_edges) == 2);
+
+  CHECK(mesh->GetNV() == 12);
+  CHECK(mesh->GetNE() == 8);
+  CHECK(mesh->GetNBE() == 16);
+
+  CheckVertex(*mesh, 10, {0.5, 0.0, 0.0});
+  CheckVertex(*mesh, 11, {10.5, 0.0, 0.0});
+
+  for (int e = 0; e < mesh->GetNE(); e++)
+  {
+    CAPTURE(e);
+    CHECK(!ElementContainsEdge(*mesh->GetElement(e), 0, 1));
+    CHECK(!ElementContainsEdge(*mesh->GetElement(e), 5, 6));
+  }
+  for (int be = 0; be < mesh->GetNBE(); be++)
+  {
+    CAPTURE(be);
+    CHECK(!ElementContainsEdge(*mesh->GetBdrElement(be), 0, 1));
+    CHECK(!ElementContainsEdge(*mesh->GetBdrElement(be), 5, 6));
+
+    int f, o, e1, e2;
+    mesh->GetBdrElementFace(be, &f, &o);
+    mesh->GetFaceElements(f, &e1, &e2);
+    CAPTURE(f, e1, e2);
+    CHECK((e1 >= 0) != (e2 >= 0));
+  }
+
+  CHECK(mesh->CheckElementOrientation(false) == 0);
+  CHECK(mesh->CheckBdrElementOrientation(false) == 0);
 }
 
 TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
