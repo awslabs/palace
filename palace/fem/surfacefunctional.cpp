@@ -654,6 +654,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       else
       {
         out_slot = num_marked++;
+        local_out_attrs.push_back(attr);
       }
 
       auto AddGroup = [&](int elem_a, bool ghost_a, mfem::Geometry::Type geom_a,
@@ -1968,6 +1969,74 @@ std::complex<double> SurfaceFunctional::EvalComplexPower(const GridFunction &E,
   }
   Mpi::GlobalSum(1, &dot, comm);
   return dot;
+}
+
+std::vector<std::complex<double>> SurfaceFunctional::EvalComplexPowerByAttribute(
+    const GridFunction &E, const GridFunction &B, const mfem::Array<int> &attr_to_bin,
+    int num_bins) const
+{
+  MFEM_VERIFY(kind == Kind::SURFACE_FLUX && flux_type == SurfaceFlux::POWER &&
+                  flux_two_sided,
+              "SurfaceFunctional::EvalComplexPowerByAttribute is only valid for "
+              "two-sided POWER flux functionals!");
+  MFEM_VERIFY(E.HasImag() == B.HasImag(),
+              "Mismatch between real- and complex-valued E and B fields in batched "
+              "port power calculation!");
+  MFEM_VERIFY(num_bins >= 0, "Invalid number of output bins!");
+  MFEM_VERIFY(local_out_attrs.size() == static_cast<std::size_t>(local_out.Size()),
+              "SurfaceFunctional attribute bins require one output slot per element!");
+
+  auto AccumulateBins = [&](const std::array<const Vector *, 4> &srcs,
+                            std::vector<double> &bins, double scale)
+  {
+    if (local_out.Size() > 0)
+    {
+      local_out = 0.0;
+    }
+    // Keep the apply collective even on ranks with no local marked elements, since a
+    // face-neighbor exchange may need this rank to export field data for another rank's
+    // processor-boundary side.
+    ApplyAdd(srcs);
+    if (local_out.Size() == 0)
+    {
+      return;
+    }
+    const double *vals = local_out.HostRead();
+    for (int i = 0; i < local_out.Size(); i++)
+    {
+      const int attr = local_out_attrs[i];
+      const int bin = (attr > 0 && attr <= attr_to_bin.Size()) ? attr_to_bin[attr - 1] : -1;
+      if (bin >= 0)
+      {
+        MFEM_VERIFY(bin < num_bins, "SurfaceFunctional attribute bin out of range!");
+        bins[bin] += scale * vals[i];
+      }
+    }
+  };
+
+  std::vector<double> real(num_bins, 0.0), imag(num_bins, 0.0);
+  AccumulateBins({&E.Real(), &B.Real()}, real, 1.0);
+  if (E.HasImag())
+  {
+    AccumulateBins({&E.Imag(), &B.Imag()}, real, 1.0);
+    AccumulateBins({&E.Imag(), &B.Real()}, imag, 1.0);
+    AccumulateBins({&E.Real(), &B.Imag()}, imag, -1.0);
+  }
+
+  std::vector<double> packed(2 * num_bins, 0.0);
+  for (int i = 0; i < num_bins; i++)
+  {
+    packed[2 * i + 0] = real[i];
+    packed[2 * i + 1] = imag[i];
+  }
+  Mpi::GlobalSum(static_cast<int>(packed.size()), packed.data(), comm);
+
+  std::vector<std::complex<double>> result(num_bins);
+  for (int i = 0; i < num_bins; i++)
+  {
+    result[i] = {packed[2 * i + 0], packed[2 * i + 1]};
+  }
+  return result;
 }
 
 DomainFieldEvaluator::DomainFieldEvaluator(

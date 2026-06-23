@@ -125,6 +125,14 @@ private:
   // ports.
   std::map<int, LumpedPortData> ports;
 
+  // Batched libCEED surface functional for lumped-port power. The per-port
+  // LumpedPortData fallback remains authoritative when batching is unavailable (for
+  // example, overlapping boundary attributes or unsupported surface-functional cases).
+  mutable std::unique_ptr<SurfaceFunctional> batched_power_func;
+  mutable mfem::Array<int> batched_power_attr_to_port;
+  mutable std::vector<int> batched_power_port_indices;
+  mutable bool batched_power_unavailable = false;
+
   void SetUpBoundaryProperties(const std::map<int, config::LumpedPortData> &lumpedport,
                                const MaterialOperator &mat_op, const mfem::ParMesh &mesh);
   void PrintBoundaryInfo(const Units &units, const mfem::ParMesh &mesh);
@@ -143,6 +151,10 @@ public:
   auto rbegin() const { return ports.rbegin(); }
   auto rend() const { return ports.rend(); }
   auto Size() const { return ports.size(); }
+
+  // Compute port powers, batching disjoint libCEED surface-functional evaluations when
+  // possible while preserving per-port scalar outputs.
+  std::map<int, std::complex<double>> GetPowers(GridFunction &E, GridFunction &B) const;
 
   // Returns array of lumped port attributes.
   mfem::Array<int> GetAttrList() const;
