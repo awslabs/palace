@@ -717,28 +717,31 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
 
 TEST_CASE("Schema Version", "[schema][Serial]")
 {
-  // The root schema must carry a semantic version so downstream tools can reason about
-  // configuration compatibility (see issue #760).
+  // The root schema must carry a version via the standard "$id" field using a URN
+  // (see issue #760). Format: "urn:palace:schema:MODEL-REVISION-ADDITION" (SchemaVer).
   const auto &schema_map = schema::GetSchemaMap();
   auto it = schema_map.find("config-schema.json");
   REQUIRE(it != schema_map.end());
   const json schema = json::parse(it->second);
-  REQUIRE(schema.contains("x-schema-version"));
-  REQUIRE(schema["x-schema-version"].is_string());
-  const std::string version = schema["x-schema-version"];
-  INFO("Schema version: " << version);
+  REQUIRE(schema.contains("$id"));
+  REQUIRE(schema["$id"].is_string());
+  const std::string id = schema["$id"];
+  INFO("Schema $id: " << id);
 
-  // Must be a "MAJOR.MINOR.PATCH" semantic version of non-negative integers.
+  // Must start with the palace URN prefix.
+  const std::string prefix = "urn:palace:schema:";
+  REQUIRE(id.substr(0, prefix.size()) == prefix);
+  const std::string version = id.substr(prefix.size());
+
+  // Must be a "MODEL-REVISION-ADDITION" SchemaVer of non-negative integers.
   std::array<int, 3> parts = {-1, -1, -1};
   const int matched =
-      std::sscanf(version.c_str(), "%d.%d.%d", &parts[0], &parts[1], &parts[2]);
+      std::sscanf(version.c_str(), "%d-%d-%d", &parts[0], &parts[1], &parts[2]);
   CHECK(matched == 3);
   for (const int p : parts)
   {
     CHECK(p >= 0);
   }
 
-  // The string must be exactly the three parsed components with no trailing content
-  // (e.g. reject "0.1" or "0.1.0-dev"), guarding against a malformed schema version.
-  CHECK(version == fmt::format("{}.{}.{}", parts[0], parts[1], parts[2]));
+  CHECK(version == fmt::format("{}-{}-{}", parts[0], parts[1], parts[2]));
 }

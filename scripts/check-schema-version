@@ -9,10 +9,10 @@ help()
 
 Fail if any configuration schema JSON file (scripts/schema/*.json and
 scripts/schema/config/*.json) changed relative to BASE_REF without a corresponding
-change to the top-level \"x-schema-version\" field in scripts/schema/config-schema.json.
+change to the \"\$id\" field in scripts/schema/config-schema.json.
 
 This guards against editing the configuration contract while forgetting to bump the
-schema version. It does not judge whether the size of the bump (MAJOR/MINOR/PATCH)
+schema version. It does not judge whether the size of the bump (MODEL/REVISION/ADDITION)
 matches the change; that remains a code-review responsibility.
 
 Options:
@@ -41,7 +41,7 @@ set -- "${POSITIONAL[@]}"
 BASE_REF="${1:-origin/main}"
 SCHEMA_DIR="scripts/schema"
 ROOT_SCHEMA="${SCHEMA_DIR}/config-schema.json"
-VERSION_KEY="x-schema-version"
+ID_KEY='\$id'
 
 if ! git rev-parse --verify --quiet "${BASE_REF}^{commit}" > /dev/null; then
     echo "Error: base ref '${BASE_REF}' not found"
@@ -57,33 +57,33 @@ if [[ -z "${CHANGED}" ]]; then
     exit 0
 fi
 
-# Extract the "x-schema-version" value at a given ref (empty if absent/missing file).
+# Extract the version from the "$id" URN (e.g. "urn:palace:schema:1-0-0" -> "1-0-0").
 schema_version_at()
 {
     git show "$1:${ROOT_SCHEMA}" 2>/dev/null |
-        grep -o "\"${VERSION_KEY}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" |
+        grep -o "\"${ID_KEY}\"[[:space:]]*:[[:space:]]*\"urn:palace:schema:[^\"]*\"" |
         head -1 |
-        sed -E "s/.*:[[:space:]]*\"([^\"]*)\"/\1/"
+        sed -E "s/.*urn:palace:schema:([^\"]*)\"/\1/"
 }
 
 BASE_VERSION=$(schema_version_at "${BASE_REF}")
-HEAD_VERSION=$(grep -o "\"${VERSION_KEY}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "${ROOT_SCHEMA}" |
+HEAD_VERSION=$(grep -o "\"${ID_KEY}\"[[:space:]]*:[[:space:]]*\"urn:palace:schema:[^\"]*\"" "${ROOT_SCHEMA}" |
     head -1 |
-    sed -E "s/.*:[[:space:]]*\"([^\"]*)\"/\1/")
+    sed -E "s/.*urn:palace:schema:([^\"]*)\"/\1/")
 
 if [[ -z "${HEAD_VERSION}" ]]; then
-    echo "Error: '${VERSION_KEY}' not found in ${ROOT_SCHEMA}"
+    echo "Error: '\$id' URN not found in ${ROOT_SCHEMA}"
     exit 1
 fi
 
 if [[ "${BASE_VERSION}" == "${HEAD_VERSION}" ]]; then
-    echo "Error: schema files changed but '${VERSION_KEY}' was not bumped (still ${HEAD_VERSION})."
+    echo "Error: schema files changed but '\$id' version was not bumped (still ${HEAD_VERSION})."
     echo "Changed files:"
     echo "${CHANGED}" | while IFS= read -r file; do echo "  ${file}"; done
-    echo "Bump '${VERSION_KEY}' in ${ROOT_SCHEMA} and add a row to the version table in"
-    echo "docs/src/developer/notes.md. See the 'Schema versioning' section for the policy."
+    echo "Bump the version in the '\$id' URN in ${ROOT_SCHEMA} and add a row to the version"
+    echo "table in docs/src/developer/notes.md. See the 'Schema versioning' section for the policy."
     exit 1
 fi
 
-echo "Schema files changed and '${VERSION_KEY}' was bumped (${BASE_VERSION:-<none>} -> ${HEAD_VERSION})"
+echo "Schema files changed and '\$id' version was bumped (${BASE_VERSION:-<none>} -> ${HEAD_VERSION})"
 exit 0

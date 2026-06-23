@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <sstream>
+#include <string_view>
 #include <nlohmann/json-schema.hpp>
 #include "communication.hpp"
 #include "embedded_schema.hpp"
@@ -404,6 +405,26 @@ public:
   explicit operator bool() const { return has_error; }
   std::string get_errors() const { return errors.str(); }
 };
+
+std::string GetSchemaVersion()
+{
+  const auto &schema_map = schema::GetSchemaMap();
+  auto it = schema_map.find(root_schema_file);
+  if (it != schema_map.end())
+  {
+    const json schema = json::parse(it->second);
+    if (schema.contains("$id"))
+    {
+      const std::string &id = schema["$id"];
+      constexpr std::string_view prefix = "urn:palace:schema:";
+      if (id.substr(0, prefix.size()) == prefix)
+      {
+        return id.substr(prefix.size());
+      }
+    }
+  }
+  return "unknown";
+}
 
 std::string ValidateConfig(const nlohmann::json &config)
 {

@@ -10,6 +10,9 @@
 namespace palace
 {
 
+// Return the schema version extracted from the "$id" URN (e.g. "1-0-0").
+std::string GetSchemaVersion();
+
 // Validate a full JSON config against the embedded root schema.
 // Returns empty string on success, error message on failure.
 std::string ValidateConfig(const nlohmann::json &config);

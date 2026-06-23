@@ -24,6 +24,7 @@
 #include "utils/device.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/jsonschema.hpp"
 #include "utils/memoryreporting.hpp"
 #include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
@@ -195,7 +196,8 @@ int main(int argc, char *argv[])
     }
     if (argv_i == "--version")
     {
-      Mpi::Print(world_comm, "Palace version: {}\n", GetPalaceGitTag());
+      Mpi::Print(world_comm, "Palace version: {}\nSchema version: {}\n",
+                 GetPalaceGitTag(), GetSchemaVersion());
       return 0;
     }
     if ((argv_i == "-dry-run") || (argv_i == "--dry-run"))
