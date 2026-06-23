@@ -11,8 +11,8 @@ SPDX-License-Identifier: Apache-2.0
 
   - Unit tests in `test/unit/` test individual components in isolation
   - Regression tests, registered in `test/unit/regression/cases.cpp`, run
-    full Palace solves on the cases under `examples/` and compare the
-    generated CSVs against the reference data in `test/examples/ref/`
+    full Palace solves on fixtures under `test/unit/data/regression/input/`
+    and compare generated CSVs against `test/unit/data/regression/ref/`
 
 Both types of tests are run automatically as part of the project's continuous
 integration (CI) workflows.
@@ -182,7 +182,7 @@ environment.
 to group cases into separate sweeps.
 
   - `[Regression]` tests are end-to-end Palace solves diffed against the
-    reference data under `test/examples/ref/`. Slow enough to deserve
+    reference data under `test/unit/data/regression/ref/`. Slow enough to deserve
     their own ctest registration (`regression-*`, label `regression`)
     and skipped from the default unit-test sweep. Opt in with
     `ctest -L "^regression$"` or
@@ -405,10 +405,12 @@ The following environment variables are useful when running under sanitizers:
 ## Regression tests
 
 In addition to unit tests, *Palace* comes with a series of regression tests.
-Regression tests are based on the provided example applications in the
-[`examples/`](https://github.com/awslabs/palace/blob/main/examples/) directory
-and verify that the code reproduces results in reference files stored in
-[`test/examples/ref/`](https://github.com/awslabs/palace/blob/main/test/examples/ref).
+Regression tests use self-contained fixtures under
+[`test/unit/data/regression/input/`](https://github.com/awslabs/palace/blob/main/test/unit/data/regression/input)
+and verify that the code reproduces reference CSVs under
+[`test/unit/data/regression/ref/`](https://github.com/awslabs/palace/blob/main/test/unit/data/regression/ref).
+The fixtures are copied from example-style configs and meshes, but the test
+suite does not read from the source-tree `examples/` directory.
 
 ## Tests in CI
 
@@ -465,12 +467,12 @@ keep runner occupancy reasonable.
 #### CTest invocation
 
 Each regression case is also registered as an individual `regression-*`
-CTest entry with label `regression`. The wrapper script
-`run_regression_test.sh` reads `$PALACE_REGRESSION_NUMPROC` (default 2)
-and launches one `palace-unit-tests` process per case at that rank
-count. The CMake registration sets CTest's `PROCESSORS` property from
-that default (doubled for OpenMP builds), so `ctest -j N` can fan cases
-out without oversubscribing slots.
+CTest entry with label `regression`. The CMake cache variables
+`PALACE_REGRESSION_NUMPROC` (default 2) and
+`PALACE_REGRESSION_PROCESSORS` (defaulting to the same value) set the MPI rank
+count and the CTest slot reservation for each case. CI passes both explicitly;
+for OpenMP jobs, `PALACE_REGRESSION_PROCESSORS` is ranks multiplied by
+`OMP_NUM_THREADS`.
 
 ```bash
 # CI-style: let CTest schedule the regression cases
@@ -497,15 +499,10 @@ rank/thread slots.
 
 #### Overrides
 
-The regression machinery reads the source-tree `examples/` and
-`test/examples/ref/` roots via the following override chain:
-
-| Precedence | Mechanism                                                                                                                                                                                 |
-|:---------- |:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1 (high)   | `--examples-dir` / `--regression-ref-dir` / `--regression-run-dir` CLI flags                                                                                                              |
-| 2          | `PALACE_EXAMPLES_DIR` / `PALACE_REGRESSION_REF_DIR` environment variables                                                                                                                 |
-| 3          | Local checkout paths next to the current build directory (`../examples` and `../test/examples/ref`), when present                                                                         |
-| 4 (low)    | Compile-time `PALACE_EXAMPLES_DIR_DEFAULT` / `PALACE_REGRESSION_REF_DIR_DEFAULT` (wired from CMake); run-dir falls back to `std::filesystem::temp_directory_path() / "palace-regression"` |
+Regression input fixtures and references are normal unit-test data under
+`PALACE_TEST_DATA_DIR/regression` and are read-only. The only directory override
+is `--regression-run-dir`, which changes where live outputs are staged; by
+default this is `std::filesystem::temp_directory_path() / "palace-regression"`.
 
 Per-case solver knobs:
 
@@ -524,11 +521,12 @@ refreshing only the CSVs in the reference tree:
 
 ```bash
 case=cpw config=cpw_lumped_uniform.json subdir=lumped_uniform
-mpirun -n "$NUM_PROC_TEST" palace "examples/$case/$config"
-dst="test/examples/ref/$case/$subdir"
+input="test/unit/data/regression/input/$case"
+mpirun -n "$NUM_PROC_TEST" palace "$input/$config"
+dst="test/unit/data/regression/ref/$case/$subdir"
 rm -rf "$dst"
 rsync -am --include='*/' --include='*.csv' --exclude='*' \
-  "examples/$case/postpro/$subdir/" "$dst/"
+  "$input/postpro/$subdir/" "$dst/"
 ```
 
 Repeat (or loop) over `case`/`config`/`subdir` to re-baseline several cases
@@ -536,8 +534,9 @@ at once, as the old `baseline` script did.
 
 #### Adding a new regression case
 
- 1. Drop the config under `examples/<name>/` and the reference postpro
-    tree under `test/examples/ref/<name>/<subdir>/`.
+ 1. Drop the config and mesh/input files under
+    `test/unit/data/regression/input/<name>/` and the reference postpro tree
+    under `test/unit/data/regression/ref/<name>/<subdir>`.
  2. Add a `TEST_CASE("<name>", "[Serial][Parallel][GPU][Regression]")`
     to `test/unit/regression/cases.cpp`. Tack on `[Long]` if the case
     is too slow for the always-on regression job. Set `rtol`, `atol`,

@@ -61,7 +61,7 @@ runs:
         source /tmp/timing_functions.sh
         start_timer
         # --test root builds and installs the palace-unit-tests binary
-        # (and its example/ref data). The target is EXCLUDE_FROM_ALL, so
+        # (and its test data). The target is EXCLUDE_FROM_ALL, so
         # without --test root the regression harness binary is never
         # built and `spack load palace` can't expose it. The lock was
         # already concretized with --test root by the build job, so the
@@ -101,11 +101,7 @@ runs:
           EXTRA_ARGS="${EXTRA_ARGS};--device;cuda"
           export NUM_PROC_TEST=1
         fi
-
-        # Vend the example configs/meshes and reference data from the checkout;
-        # the binary reads these at run time (see test/unit/regression_helpers).
-        export PALACE_EXAMPLES_DIR="${GITHUB_WORKSPACE}/examples"
-        export PALACE_REGRESSION_REF_DIR="${GITHUB_WORKSPACE}/test/examples/ref"
+        REGRESSION_PROCESSORS=$(( NUM_PROC_TEST * OMP_NUM_THREADS ))
 
         BIN=$(command -v palace-unit-tests)
         MPIEXEC=$(command -v mpirun)
@@ -119,8 +115,8 @@ runs:
           local dir
           dir=$(mktemp -d)
           cmake -D PALACE_UNIT_TESTS="$BIN" -D MPIEXEC="$MPIEXEC" \
-                -D NP="$NUM_PROC_TEST" -D OUTPUT_DIR="$dir" \
-                -D SPEC="$spec" -D LABEL="$label" \
+                -D NP="$NUM_PROC_TEST" -D PROCESSORS="$REGRESSION_PROCESSORS" \
+                -D OUTPUT_DIR="$dir" -D SPEC="$spec" -D LABEL="$label" \
                 -D EXTRA_ARGS="$EXTRA_ARGS" -P "$GENERATOR"
           ctest --test-dir "$dir" --output-on-failure
         }

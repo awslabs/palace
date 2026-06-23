@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Regression cases: full Palace solves diffed against test/examples/ref/.
+// Regression cases: full Palace solves diffed against test data references.
 // Each case carries [Serial][Parallel][GPU][Regression] (the category
 // tag is orthogonal to execution style — every case is valid at any
 // rank count and on either CPU or GPU). [Long] modifies a regression
@@ -181,7 +181,7 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
 }  // namespace
 
 // ===========================================================================
-// 3D cases. Order follows test/examples/runtests.jl.
+// 3D cases. Order follows the retired Julia regression harness.
 // ===========================================================================
 
 TEST_CASE("spheres", "[Serial][Parallel][GPU][Regression]")
@@ -456,7 +456,7 @@ TEST_CASE("transmon_amr", "[Serial][Parallel][GPU][Regression][Long]")
 
 // adapter_slp is a dormant entry in runtests.jl: the case is listed in
 // the conditional block but neither examples/adapter/slp.json nor
-// test/examples/ref/adapter/slp/ exists on this branch. Omit until the
+// No adapter/slp reference data exists on this branch. Omit until the
 // fixtures are added.
 
 // ===========================================================================

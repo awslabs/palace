@@ -47,8 +47,9 @@ set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cp
 
 set(PALACE_BUILD_WITH_COVERAGE OFF CACHE BOOL "Compile Palace with coverage flags (source-based for LLVM; gcov for GCC)")
 set(PALACE_BUILD_WITH_SANITIZERS OFF CACHE BOOL "Compile Palace with sanitizers (AddressSanitizer + UndefinedBehaviorSanitizer)")
-set(PALACE_REGRESSION_NUMPROC_DEFAULT 2 CACHE STRING
-    "Default MPI rank count for the [Regression] ctest registration. Overridden at run time by the PALACE_REGRESSION_NUMPROC environment variable.")
+set(PALACE_REGRESSION_NUMPROC 2 CACHE STRING "MPI ranks per [Regression] ctest case")
+set(PALACE_REGRESSION_PROCESSORS ${PALACE_REGRESSION_NUMPROC} CACHE STRING
+    "CTest processor slots reserved per [Regression] case")
 
 # Enable Fortran if required
 if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS OR PALACE_WITH_ARPACK)

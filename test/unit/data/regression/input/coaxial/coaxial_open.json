@@ -1,0 +1,69 @@
+{
+  "Problem":
+  {
+    "Type": "Transient",
+    "Verbose": 2,
+    "Output": "postpro/open"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/coaxial.msh",
+    "L0": 1.0e-3  // mm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 2.08,
+        "Conductivity": 4.629e-2  // 100 x tan(δ) = 0.0004 @ 10 GHz
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2]
+    },
+    "PMC":
+    {
+      "Attributes": [4]
+    },
+    "LumpedPort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [3],
+        "R": 50.0,  // Ω
+        "Direction": "+R",  // Coaxial lumped port
+        "Excitation": true
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Transient":
+    {
+      "Type": "GeneralizedAlpha",
+      "Excitation": "ModulatedGaussian",
+      "ExcitationFreq": 10.0,  // GHz
+      "ExcitationWidth": 0.05,  // ns, BW ∼ 1/τ
+      "MaxTime": 1.0,  // ns
+      "TimeStep": 0.005,  // ns
+      "SaveStep": 10
+    },
+    "Linear":
+    {
+      "Type": "AMS",
+      "KSPType": "CG",
+      "Tol": 1.0e-8,
+      "MaxIts": 100
+    }
+  }
+}
+

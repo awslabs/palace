@@ -45,14 +45,10 @@ int main(int argc, char *argv[])
   std::string device_str("cpu");          // MFEM device
   std::string ceed_backend("/cpu/self");  // libCEED backend
 
-  // Regression-suite overrides. Each mirrors a Catch2 CLI flag;
-  // examples-dir / regression-ref-dir fall back to their compile-time
-  // defaults (PALACE_EXAMPLES_DIR_DEFAULT /
-  // PALACE_REGRESSION_REF_DIR_DEFAULT wired in via
-  // test/unit/CMakeLists.txt) when not overridden. Empty = "no
-  // override".
-  std::string examples_dir;                     // --examples-dir
-  std::string regression_ref_dir;               // --regression-ref-dir
+  // Regression-suite overrides. The input fixtures and reference CSVs are
+  // normal unit-test data rooted at PALACE_TEST_DATA_DIR; only the staging root
+  // and solver choices are configurable at run time. Empty run dir = use the
+  // temporary-directory default.
   std::string regression_run_dir;               // --regression-run-dir
   std::string palace_linear_solver{"Default"};  // --palace-linear-solver
   std::string palace_eigensolver{"Default"};    // --palace-eigensolver
@@ -63,13 +59,6 @@ int main(int argc, char *argv[])
              Opt(device_str, "device")["--device"]("MFEM device (default: \"cpu\")") |
              Opt(ceed_backend,
                  "backend")["--backend"]("libCEED backend (default: \"/cpu/self\")") |
-             Opt(examples_dir, "path")["--examples-dir"](
-                 "Override for the source-tree examples/ directory used by "
-                 "[Regression] cases (default: compile-time "
-                 "PALACE_EXAMPLES_DIR_DEFAULT)") |
-             Opt(regression_ref_dir, "path")["--regression-ref-dir"](
-                 "Override for the test/examples/ref/ directory used by [Regression] "
-                 "cases (default: compile-time PALACE_REGRESSION_REF_DIR_DEFAULT)") |
              Opt(regression_run_dir, "path")["--regression-run-dir"](
                  "Staging root under which each [Regression] case gets its own "
                  "subdirectory (inputs symlinked from examples/, outputs written "
@@ -179,10 +168,8 @@ int main(int argc, char *argv[])
   session.useConfigData(cfg);
 
   // Forward regression-harness overrides into the helpers. Solver
-  // strings default to "Default"; directory strings use the
-  // compile-time path defaults when empty.
-  palace::test::SetExamplesDirOverride(examples_dir);
-  palace::test::SetRegressionRefDirOverride(regression_ref_dir);
+  // strings default to "Default"; the run dir uses the temporary-directory
+  // default when empty.
   palace::test::SetRegressionRunDirOverride(regression_run_dir);
   palace::test::SetSolverOverride(palace_linear_solver);
   palace::test::SetEigenSolverOverride(palace_eigensolver);

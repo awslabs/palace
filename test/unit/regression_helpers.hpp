@@ -69,20 +69,12 @@ struct RegressionOptions
 void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
                        std::string_view postpro_subdir, const RegressionOptions &opts = {});
 
-// Directory overrides consulted in this order:
-//   1. Catch2 CLI flag (--examples-dir / --regression-ref-dir /
-//      --regression-run-dir).
-//   2. PALACE_EXAMPLES_DIR / PALACE_REGRESSION_REF_DIR environment variables.
-//   3. Local checkout paths next to the current build directory
-//      (../examples and ../test/examples/ref), when present.
-//   4. Compile-time defaults for examples/ref; for the run dir the
-//      fallback is std::filesystem::temp_directory_path() /
-//      "palace-regression" so the source tree stays read-only.
-void SetExamplesDirOverride(std::string value);
-void SetRegressionRefDirOverride(std::string value);
+// Regression input fixtures and reference CSVs live under
+// PALACE_TEST_DATA_DIR/regression. The run-dir override controls only where the
+// live solve writes staged outputs; empty falls back to
+// std::filesystem::temp_directory_path() / "palace-regression" so the source
+// and installed test data trees stay read-only.
 void SetRegressionRunDirOverride(std::string value);
-std::filesystem::path GetExamplesDir();
-std::filesystem::path GetRegressionRefDir();
 std::filesystem::path GetRegressionRunDir();
 
 // Solver overrides. Empty = no override; the config JSON value is used.

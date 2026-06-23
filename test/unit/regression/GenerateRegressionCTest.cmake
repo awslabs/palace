@@ -1,15 +1,16 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Emit a relocatable CTestTestfile.cmake for the [Regression] cases of an
-# installed palace-unit-tests binary, so `ctest` can drive them without a build
-# tree (e.g. from a Spack-installed target). Discovery reuses the binary's own
-# `--list-tests --reporter xml`; the example/reference data is resolved by the
-# binary at run time from PALACE_EXAMPLES_DIR / PALACE_REGRESSION_REF_DIR.
+# Emit a CTestTestfile.cmake for the [Regression] cases of an installed
+# palace-unit-tests binary, so `ctest` can drive them without a build tree
+# (e.g. from a Spack-installed target). Discovery reuses the binary's own
+# `--list-tests --reporter xml`; regression fixtures are normal installed test
+# data under PALACE_TEST_DATA_DIR/regression.
 #
 # Invoke in script mode:
 #   cmake -D PALACE_UNIT_TESTS=<path> -D MPIEXEC=<path> -D NP=<ranks>
-#         -D OUTPUT_DIR=<dir> [-D SPEC=<catch-filter>] [-D LABEL=<label>]
+#         -D OUTPUT_DIR=<dir> [-D PROCESSORS=<ctest-slots>]
+#         [-D SPEC=<catch-filter>] [-D LABEL=<label>]
 #         [-D EXTRA_ARGS=<;-list>]
 #         -P GenerateRegressionCTest.cmake
 # then: ctest --test-dir <dir> --output-on-failure
@@ -22,6 +23,9 @@ if(NOT SPEC)
 endif()
 if(NOT LABEL)
   set(LABEL "regression")
+endif()
+if(NOT PROCESSORS)
+  set(PROCESSORS "${NP}")
 endif()
 
 execute_process(
@@ -50,5 +54,5 @@ foreach(tag IN LISTS names)
   file(APPEND "${out}" "add_test(\"${LABEL}-${case}\" ${cmd})\n")
   file(APPEND "${out}"
        "set_tests_properties(\"${LABEL}-${case}\" PROPERTIES "
-       "PROCESSORS ${NP} LABELS \"${LABEL}\" SKIP_RETURN_CODE 4)\n")
+       "PROCESSORS ${PROCESSORS} LABELS \"${LABEL}\" SKIP_RETURN_CODE 4)\n")
 endforeach()

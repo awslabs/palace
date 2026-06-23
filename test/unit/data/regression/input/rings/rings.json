@@ -1,0 +1,95 @@
+{
+  "Problem":
+  {
+    "Type": "Magnetostatic",
+    "Verbose": 2,
+    "Output": "postpro"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/rings.msh",
+    "L0": 1.0e-6  // μm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0
+      }
+    ],
+    "Postprocessing":
+    {
+      "Probe":
+      [
+        {
+          "Index": 1,  // Center of rings
+          "Center": [0.0, 0.0, 0.0]
+        }
+      ],
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2, 3]
+    },
+    "SurfaceCurrent":
+    [
+      {
+        "Index": 1,
+        "Attributes": [4],  // Inner ring
+        "Direction": [-0.5, 0.8660254037844386, 0.0]  // "+Y" rotated π/6 around (0,0,1)
+      },
+      {
+        "Index": 2,
+        "Attributes": [5],  // Outer ring
+        "Direction": [-0.5, 0.8660254037844386, 0.0]  // "+Y" rotated π/6 around (0,0,1)
+      }
+    ],
+    "Postprocessing":  // Inductance from flux instead of energy
+    {
+      "SurfaceFlux":
+      [
+        {
+          "Index": 1,
+          "Attributes": [6],    // Inner hole
+          "Type": "Magnetic",
+	  "Center": [0, 0, -1]  // Positive in +Z
+        },
+        {
+          "Index": 2,
+          "Attributes": [6, 7],  // Outer (total) hole
+	  "Type": "Magnetic",
+          "Center": [0, 0, -1]   // Positive in +Z
+        }
+      ]
+    }
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Magnetostatic":
+    {
+      "Save": 2
+    },
+    "Linear":
+    {
+      "Type": "AMS",
+      "KSPType": "CG",
+      "Tol": 1.0e-8,
+      "MaxIts": 100
+    }
+  }
+}
+

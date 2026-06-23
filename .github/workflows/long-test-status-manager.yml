@@ -40,7 +40,6 @@ jobs:
               - 'cmake/**'
               - 'extern/**'
               - 'examples/**'
-              - 'test/examples/**'
               - 'test/unit/**'
               - 'spack_repo/**'
               - '.github/actions/**'

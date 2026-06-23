@@ -12,9 +12,9 @@ the [`examples/`](https://github.com/awslabs/palace/blob/main/examples) director
 source code. The following sections provide complete tutorials for each of the available
 example applications.
 
-These examples are also used by *Palace*'s regression testing suite. See the
-[`test/examples/`](https://github.com/awslabs/palace/blob/main/test/examples/) directory for
-more details.
+The regression testing suite keeps its own copied fixtures and reference data under
+[`test/unit/data/regression/`](https://github.com/awslabs/palace/blob/main/test/unit/data/regression/)
+so tests can run from installed test data without depending on the source-tree examples.
 
 ## Contents
 

@@ -5,9 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <filesystem>
-#include <initializer_list>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -38,8 +36,6 @@ namespace
 
 // In-TU override storage. Set once at test startup from the Catch2 CLI
 // flag callbacks (see test/unit/main.cpp), read per-case.
-std::string g_examples_dir_override;
-std::string g_regression_ref_dir_override;
 std::string g_regression_run_dir_override;
 std::string g_solver_override;
 std::string g_eigensolver_override;
@@ -396,14 +392,6 @@ IoData LoadCaseIoData(nlohmann::json config, const RegressionOptions &opts)
 
 }  // namespace
 
-void SetExamplesDirOverride(std::string value)
-{
-  g_examples_dir_override = std::move(value);
-}
-void SetRegressionRefDirOverride(std::string value)
-{
-  g_regression_ref_dir_override = std::move(value);
-}
 void SetRegressionRunDirOverride(std::string value)
 {
   g_regression_run_dir_override = std::move(value);
@@ -415,69 +403,6 @@ void SetSolverOverride(std::string value)
 void SetEigenSolverOverride(std::string value)
 {
   g_eigensolver_override = std::move(value);
-}
-
-namespace
-{
-
-std::filesystem::path LocalCheckoutPath(std::initializer_list<std::string_view> parts)
-{
-  auto path = std::filesystem::current_path();
-  for (auto part : parts)
-  {
-    path /= std::string(part);
-  }
-
-  std::error_code ec;
-  if (std::filesystem::is_directory(path, ec))
-  {
-    return path.lexically_normal();
-  }
-  return {};
-}
-
-}  // namespace
-
-std::filesystem::path GetExamplesDir()
-{
-  if (!g_examples_dir_override.empty())
-  {
-    return g_examples_dir_override;
-  }
-  if (const char *env = std::getenv("PALACE_EXAMPLES_DIR"))
-  {
-    return env;
-  }
-  if (auto path = LocalCheckoutPath({"..", "examples"}); !path.empty())
-  {
-    return path;
-  }
-#ifdef PALACE_EXAMPLES_DIR_DEFAULT
-  return PALACE_EXAMPLES_DIR_DEFAULT;
-#else
-  return {};
-#endif
-}
-
-std::filesystem::path GetRegressionRefDir()
-{
-  if (!g_regression_ref_dir_override.empty())
-  {
-    return g_regression_ref_dir_override;
-  }
-  if (const char *env = std::getenv("PALACE_REGRESSION_REF_DIR"))
-  {
-    return env;
-  }
-  if (auto path = LocalCheckoutPath({"..", "test", "examples", "ref"}); !path.empty())
-  {
-    return path;
-  }
-#ifdef PALACE_REGRESSION_REF_DIR_DEFAULT
-  return PALACE_REGRESSION_REF_DIR_DEFAULT;
-#else
-  return {};
-#endif
 }
 
 std::filesystem::path GetRegressionRunDir()
@@ -492,16 +417,17 @@ std::filesystem::path GetRegressionRunDir()
 namespace
 {
 
-// Fail the case (on every rank) if a required input is missing, telling the
-// user how to point the harness at a checkout that vends the data.
+std::filesystem::path RegressionDataRoot()
+{
+  return std::filesystem::path(PALACE_TEST_DATA_DIR) / "regression";
+}
+
+// Fail the case (on every rank) if a required input is missing.
 void RequireArtifact(const std::filesystem::path &path, std::string_view what)
 {
   INFO("Missing regression "
        << what << ": " << path
-       << "\nThe regression suite needs the example config, its mesh, and the "
-          "reference data. Vend them from a Palace checkout via the "
-          "--examples-dir / --regression-ref-dir flags or the PALACE_EXAMPLES_DIR "
-          "/ PALACE_REGRESSION_REF_DIR environment variables.");
+       << "\nRegression fixtures are installed under PALACE_TEST_DATA_DIR/regression.");
   REQUIRE(std::filesystem::exists(path));
 }
 
@@ -511,18 +437,17 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
                        std::string_view postpro_subdir, const RegressionOptions &opts)
 {
   MPI_Comm comm = Mpi::World();
-  const auto examples_dir = GetExamplesDir();
-  const auto ref_dir = GetRegressionRefDir();
+  const auto data_root = RegressionDataRoot();
   const auto run_root = GetRegressionRunDir();
 
-  const std::filesystem::path example_path = examples_dir / case_dir;
-  const std::filesystem::path config_path = example_path / config_json;
+  const std::filesystem::path input_path = data_root / "input" / case_dir;
+  const std::filesystem::path config_path = input_path / config_json;
   const std::filesystem::path ref_postpro =
-      ref_dir / std::filesystem::path(case_dir) / postpro_subdir;
+      data_root / "ref" / std::filesystem::path(case_dir) / postpro_subdir;
 
-  INFO("Regression case: " << case_dir << " / " << postpro_subdir << "\nexample:  "
-                           << example_path << "\nconfig:   " << config_path
-                           << "\nrun root: " << run_root << "\nref:      " << ref_postpro);
+  INFO("Regression case: " << case_dir << " / " << postpro_subdir
+                           << "\ninput:   " << input_path << "\nconfig:  " << config_path
+                           << "\nrun root: " << run_root << "\nref:     " << ref_postpro);
 
   // Fail clearly if the user has not vended the config, mesh, or reference data.
   RequireArtifact(config_path, "config file");
@@ -535,13 +460,13 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
       std::filesystem::path mesh_path = mesh->get<std::string>();
       if (mesh_path.is_relative())
       {
-        mesh_path = example_path / mesh_path;
+        mesh_path = input_path / mesh_path;
       }
       RequireArtifact(mesh_path, "mesh file");
     }
   }
 
-  ScopedExampleStage stage(example_path, run_root, postpro_subdir, comm);
+  ScopedExampleStage stage(input_path, run_root, postpro_subdir, comm);
   const std::filesystem::path postpro_path = stage.path() / "postpro" / postpro_subdir;
 
   const int max_refinement_iterations = GetMaxRefinementIterations(config);

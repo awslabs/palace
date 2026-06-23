@@ -111,13 +111,6 @@ set_property(
 target_compile_definitions(
   unit-tests
   PRIVATE "PALACE_TEST_DATA_DIR=\"${CMAKE_INSTALL_PREFIX}/share/palace/test/data\""
-  # Source-tree roots used by the regression suite. Baking these into the
-  # binary keeps the common path ("run the built binary") free of env
-  # plumbing. RunRegressionCase honours a PALACE_EXAMPLES_DIR /
-  # PALACE_REGRESSION_REF_DIR environment override and a Catch2 CLI flag
-  # for relocated installs; these are the last-resort defaults.
-  PRIVATE "PALACE_EXAMPLES_DIR_DEFAULT=\"${CMAKE_SOURCE_DIR}/../examples\""
-  PRIVATE "PALACE_REGRESSION_REF_DIR_DEFAULT=\"${CMAKE_CURRENT_SOURCE_DIR}/../examples/ref\""
   PRIVATE $<TARGET_PROPERTY:${LIB_TARGET_NAME},COMPILE_DEFINITIONS>
           $<$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:IntelLLVM>>>:PALACE_WITH_COVERAGE="LLVM">
           $<$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<CXX_COMPILER_ID:GNU>>:PALACE_WITH_COVERAGE="GCC">
@@ -192,37 +185,23 @@ catch_discover_tests(unit-tests
     ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
 )
 
-# Regression tests: full-mesh Palace solves diffed against
-# test/examples/ref/. Slow enough to deserve their own ctest prefix
-# (`ctest -L "^regression$"` to select, `-LE "^(regression|long)$"` to
+# Regression tests: full-mesh Palace solves diffed against reference CSVs under
+# PALACE_TEST_DATA_DIR/regression/ref. Slow enough to deserve their own ctest
+# prefix (`ctest -L "^regression$"` to select, `-LE "^(regression|long)$"` to
 # skip both regression flavors).
 #
-# Rank count is a *runtime* knob, not a build option: each ctest entry
-# launches via the generated `run_regression_test.sh` wrapper, which
-# reads `$PALACE_REGRESSION_NUMPROC` (default below) and exec's mpirun.
-# CTest schedules cases using the PROCESSORS property below; OpenMP builds
-# reserve twice the MPI rank count because CI runs them with OMP_NUM_THREADS=2.
-set(PALACE_REGRESSION_NUMPROC_DEFAULT 2 CACHE STRING
-    "Default MPI rank count for the [Regression] ctest registration. Overridden at run time by the PALACE_REGRESSION_NUMPROC environment variable.")
-set(PALACE_REGRESSION_PROCESSORS ${PALACE_REGRESSION_NUMPROC_DEFAULT})
-if(PALACE_WITH_OPENMP)
-  math(EXPR PALACE_REGRESSION_PROCESSORS "${PALACE_REGRESSION_PROCESSORS} * 2")
-endif()
-
-list(JOIN MPIEXEC_PREFLAGS " " MPIEXEC_PREFLAGS_STR)
-configure_file(
-  ${CMAKE_CURRENT_SOURCE_DIR}/run_regression_test.sh.in
-  ${CMAKE_CURRENT_BINARY_DIR}/run_regression_test.sh
-  @ONLY)
-file(CHMOD ${CMAKE_CURRENT_BINARY_DIR}/run_regression_test.sh
-     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
-                 GROUP_READ GROUP_EXECUTE
-                 WORLD_READ WORLD_EXECUTE)
+# Rank count is a build-time knob so CTest knows exactly how many slots each
+# case consumes. CI chooses both values explicitly; for OpenMP jobs it sets
+# PROCESSORS to ranks * OMP_NUM_THREADS.
+set(PALACE_REGRESSION_NUMPROC 2 CACHE STRING
+    "MPI ranks per [Regression] ctest case.")
+set(PALACE_REGRESSION_PROCESSORS ${PALACE_REGRESSION_NUMPROC} CACHE STRING
+    "CTest processor slots reserved per [Regression] case.")
 
 catch_discover_tests(unit-tests
   TEST_PREFIX "regression-"
   TEST_SPEC "[Regression]~[Long]"
-  TEST_EXECUTOR ${CMAKE_CURRENT_BINARY_DIR}/run_regression_test.sh
+  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_REGRESSION_NUMPROC} ${MPIEXEC_PREFLAGS}
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS}
   PROPERTIES
     LABELS regression
@@ -241,7 +220,7 @@ catch_discover_tests(unit-tests
 catch_discover_tests(unit-tests
   TEST_PREFIX "long-"
   TEST_SPEC "[Long]"
-  TEST_EXECUTOR ${CMAKE_CURRENT_BINARY_DIR}/run_regression_test.sh
+  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_REGRESSION_NUMPROC} ${MPIEXEC_PREFLAGS}
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS}
   PROPERTIES
     LABELS long

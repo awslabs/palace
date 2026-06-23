@@ -31,7 +31,6 @@ jobs:
               - 'cmake/**'
               - 'extern/**'
               - 'examples/**'
-              - 'test/examples/**'
               - 'test/unit/**'
               - '.github/workflows/build-and-test-linux.yml'
 
@@ -461,13 +460,15 @@ jobs:
           if [[ "$REGRESSION_NUM_PROC" -gt 8 ]]; then
             REGRESSION_NUM_PROC=8
           fi
+          REGRESSION_PROCESSORS=$REGRESSION_NUM_PROC
           if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
             REGRESSION_NUM_PROC=$(( REGRESSION_NUM_PROC / 2 ))
           fi
           mkdir palace-build && cd palace-build
           cmake .. \
             -DCMAKE_INSTALL_PREFIX=$(pwd)/../palace-install \
-            -DPALACE_REGRESSION_NUMPROC_DEFAULT=$REGRESSION_NUM_PROC \
+            -DPALACE_REGRESSION_NUMPROC=$REGRESSION_NUM_PROC \
+            -DPALACE_REGRESSION_PROCESSORS=$REGRESSION_PROCESSORS \
             -DBUILD_SHARED_LIBS=$BUILD_SHARED \
             -DPALACE_WITH_64BIT_INT=$WITH_INT64 \
             -DPALACE_WITH_OPENMP=$WITH_OPENMP \
@@ -561,12 +562,11 @@ jobs:
           name: coverage-${{ matrix.arch }}-${{ matrix.compiler }}-${{ matrix.mpi }}
           path: palace-build/coverage_html/
 
-      - name: Run regression tests for examples/
+      - name: Run regression tests
         if: needs.filter.outputs.test == 'true' && !matrix.with-sanitizers
         # CTest owns per-case scheduling for the [Regression] cases (label
-        # "regression"). Each case runs at $PALACE_REGRESSION_NUMPROC MPI
-        # ranks via test/unit/run_regression_test.sh; the PROCESSORS property
-        # reserves the matching ctest slots so -j can fan out safely.
+        # "regression"). The configured MPI rank count and PROCESSORS property
+        # reserve matching ctest slots so -j can fan out safely.
         timeout-minutes: 60
         env:
           NUM_PROC_TEST_MAX: '8'
