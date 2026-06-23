@@ -11,7 +11,7 @@ The first target is local `SURFACE_FLUX` reductions in `palace/fem/surfacefuncti
 Work on this branch only:
 
 ```text
-hughcars/libceed-output-functionals-dev-auto
+hughcars/libceed-output-functionals-dev-auto2
 ```
 
 It was created from the current tip of:
@@ -20,7 +20,7 @@ It was created from the current tip of:
 hughcars/libceed-output-functionals-dev
 ```
 
-Commit each kept experiment to the `-auto` branch so the improvement history is visible. The non-auto branch is the comparison baseline.
+Commit each kept experiment to the `-auto2` branch so the improvement history is visible. The original `-auto` branch is owned by another machine; do not commit to it. The non-auto branch is the comparison baseline.
 
 ## Primary metric
 - **surface_score_seconds** (seconds, lower is better):

@@ -273,9 +273,14 @@ InterpolationOperator::~InterpolationOperator() = default;
 std::vector<double> InterpolationOperator::ProbeField(const mfem::ParGridFunction &U)
 {
 #if defined(MFEM_USE_GSLIB)
-  // Use the libCEED evaluation path when supported (device capable, the probe points
-  // and their owning elements are fixed after setup).
-  if (SurfaceFunctional::Enabled() && op.GetCode().Size() > 0)
+  const int npts = op.GetCode().Size();
+
+  // Use the libCEED evaluation path when supported and enough probe points are present
+  // to amortize operator assembly/JIT. Tiny probe sets are cheaper through the existing
+  // GSLIB interpolation path, especially in driven postprocessing where only a few
+  // fixed monitor points are evaluated once or twice.
+  constexpr int ceed_probe_min_points = 8;
+  if (SurfaceFunctional::Enabled() && npts >= ceed_probe_min_points)
   {
     auto &eval = ceed_probes[U.FESpace()];
     if (!eval)
@@ -290,7 +295,6 @@ std::vector<double> InterpolationOperator::ProbeField(const mfem::ParGridFunctio
 
   // Interpolated vector values are returned from GSLIB interpolator with the same ordering
   // as the source grid function, which we transform to byVDIM for output.
-  const int npts = op.GetCode().Size();
   const int vdim = U.VectorDim();
   std::vector<double> vals(npts * vdim);
   if (U.FESpace()->GetOrdering() == mfem::Ordering::byVDIM)
