@@ -2437,7 +2437,7 @@ int LocalEdgeSplit(std::unique_ptr<mfem::Mesh> &orig_mesh,
   {
     new_mesh->AddVertex(orig_mesh->GetVertex(v));
   }
-  // Midpoint coordinates (geometric average; curved geometry is fixed up below for
+  // Midpoint coordinates (arithmetic average; curved geometry is fixed up below for
   // high-order meshes via per-parent node synthesis). The map iteration order (sorted keys)
   // matches the id assignment above, so the vertex AddVertex returns equals the stored id.
   for (const auto &[edge, mid] : edge_midpoint)
