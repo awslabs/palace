@@ -1,0 +1,99 @@
+#!/bin/bash
+
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+help()
+{
+    echo "Usage: check-test-tags [OPTIONS] [TEST_DIR]
+
+Check that every Catch2 TEST_CASE / TEST_CASE_METHOD in TEST_DIR carries at least
+one of the required execution tags ([Serial], [Parallel], or [GPU]).
+
+The tags follow a (possibly long) test description, so clang-format may wrap the
+macro invocation across several lines. This check accumulates each invocation up to
+its closing line so the tags are found regardless of line wrapping.
+
+Options:
+  -h, --help                       Show this help message and exit
+
+Arguments:
+  TEST_DIR                         Directory to scan (default: test/unit)
+"
+}
+
+# Parse arguments
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        -h|--help)
+        help
+        exit 0
+        ;;
+        *)
+        POSITIONAL+=("$1")
+        shift
+        ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"
+
+TEST_DIR="${1:-test/unit}"
+
+if [[ ! -d "$TEST_DIR" ]]; then
+    echo "Error: Test directory '$TEST_DIR' does not exist"
+    exit 1
+fi
+
+# Accumulate each TEST_CASE / TEST_CASE_METHOD invocation across however many lines
+# clang-format wrapped it onto, then check the assembled text for a required tag. The
+# Allman brace style enforced by the formatter guarantees the macro signature is fully
+# closed before the opening "{" on its own line, which we use as the terminator.
+REQUIRED_TAGS='\[Serial\]|\[Parallel\]|\[GPU\]'
+
+MISSING=$(find "$TEST_DIR" -name '*.cpp' -print0 | xargs -0 awk '
+    # Reset per file: a macro never spans files, so never carry buffer state across.
+    FNR == 1 { buffering = 0; buf = "" }
+
+    # Skip single-line comments so commented-out test cases are ignored.
+    /^[[:space:]]*\/\// { next }
+
+    # Start buffering on a test-case macro. Match is substring (unanchored) on
+    # purpose: it also covers TEMPLATE_TEST_CASE and friends for free.
+    !buffering && /(TEST_CASE|TEST_CASE_METHOD)[[:space:]]*\(/ {
+        buffering = 1
+        buf = ""
+        start = FILENAME ":" FNR
+    }
+
+    buffering {
+        buf = buf " " $0
+        # Allman style: the body brace sits alone on its own line, terminating the
+        # (possibly multi-line) macro signature.
+        if ($0 ~ /^[[:space:]]*\{[[:space:]]*$/) {
+            # Extract the last quoted string (the Catch2 tags argument) so that
+            # occurrences in the test name or trailing comments are not matched.
+            tmp = buf
+            tags = ""
+            while (match(tmp, /"[^"]*"/)) {
+                tags = substr(tmp, RSTART, RLENGTH)
+                tmp = substr(tmp, RSTART + RLENGTH)
+            }
+            if (tags !~ /'"$REQUIRED_TAGS"'/) {
+                print start
+            }
+            buffering = 0
+            buf = ""
+        }
+    }
+')
+
+if [[ -n "$MISSING" ]]; then
+    echo "Error: Found TEST_CASE without required execution tags ([Serial], [Parallel], or [GPU]):"
+    echo "$MISSING"
+    exit 1
+else
+    echo "All test cases have required execution tags"
+    exit 0
+fi
