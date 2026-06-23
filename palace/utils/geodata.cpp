@@ -2309,22 +2309,10 @@ namespace mesh
 // the ring of elements around each edge, leaving the rest of the mesh (and the periodic
 // identification) untouched. The inserted midpoints are later duplicated by the regular
 // interior-boundary cracking pass, which decouples the two sides of the crack.
-//
-// To split many edges in a single mesh rebuild (rather than one expensive rebuild per
-// edge), a maximal independent subset of the candidate edges is selected such that no
-// tetrahedron contains more than one selected edge; this keeps the per-element split simple
-// (each affected tet/triangle bisects into exactly two children) while processing many
-// edges at once. The caller re-invokes (via the AddInterfaceBdrElements retry loop) to
-// handle any candidates not selected in this pass. Returns the number of edges split (0 if
-// none).
 int LocalEdgeSplit(std::unique_ptr<mfem::Mesh> &orig_mesh,
                    const std::vector<std::pair<int, int>> &edges)
 {
-  // Only pure tetrahedral meshes are supported (matching the previous refinement path,
-  // which marked and bisected only TETRAHEDRON elements). The caller invokes
-  // SplitMeshElements(make_simplex=true) immediately before reaching here, so any
-  // hexahedral/prism mesh has already been converted to tetrahedra; this guard makes that
-  // contract explicit rather than relying on the upstream conversion.
+  // Only pure tetrahedral meshes are supported.
   MFEM_VERIFY(orig_mesh->Dimension() == 3, "LocalEdgeSplit only supports 3D meshes!");
   {
     const auto element_types = mesh::CheckElements(*orig_mesh);
@@ -2735,29 +2723,6 @@ std::unordered_map<int, int> CheckMesh(const mfem::Mesh &mesh,
 }
 
 template <typename T>
-struct UnorderedPair
-{
-  T first, second;
-  UnorderedPair(T first, T second) : first(first), second(second) {}
-  bool operator==(const UnorderedPair &v) const
-  {
-    return ((v.first == first && v.second == second) ||
-            (v.first == second && v.second == first));
-  }
-};
-
-template <typename T>
-struct UnorderedPairHasher
-{
-  std::size_t operator()(const UnorderedPair<T> &v) const
-  {
-    // Simple hash function for a pair, see https://tinyurl.com/2k4phapb.
-    return std::hash<T>()(std::min(v.first, v.second)) ^
-           std::hash<T>()(std::max(v.first, v.second)) << 1;
-  }
-};
-
-template <typename T>
 class EdgeRefinementMesh : public mfem::Mesh
 {
 private:
@@ -2817,6 +2782,29 @@ public:
   EdgeRefinementMesh(mfem::Mesh &&mesh, const T &refinement_edges)
     : mfem::Mesh(std::move(mesh)), refinement_edges(refinement_edges)
   {
+  }
+};
+
+template <typename T>
+struct UnorderedPair
+{
+  T first, second;
+  UnorderedPair(T first, T second) : first(first), second(second) {}
+  bool operator==(const UnorderedPair &v) const
+  {
+    return ((v.first == first && v.second == second) ||
+            (v.first == second && v.second == first));
+  }
+};
+
+template <typename T>
+struct UnorderedPairHasher
+{
+  std::size_t operator()(const UnorderedPair<T> &v) const
+  {
+    // Simple hash function for a pair, see https://tinyurl.com/2k4phapb.
+    return std::hash<T>()(std::min(v.first, v.second)) ^
+           std::hash<T>()(std::max(v.first, v.second)) << 1;
   }
 };
 
@@ -3059,6 +3047,11 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
         // Locally refine the mesh to decouple the under-resolved seam edges. If necessary,
         // convert the mesh to simplices first to enable conforming refinement (this will do
         // nothing if the mesh is already a simplex mesh).
+        // Note: Eventually we can implement manual conforming face refinement of pairs of
+        // elements sharing a face for all element types (insert a vertex at the boundary
+        // element center and connect it to all other element vertices). For now, this adds
+        // complexity and making use of conformal simplex refinement seems good enough for
+        // most use cases.
         int ne = orig_mesh->GetNE();
         SplitMeshElements(orig_mesh, true, false);
         if (ne != orig_mesh->GetNE())
