@@ -196,8 +196,8 @@ int main(int argc, char *argv[])
     }
     if (argv_i == "--version")
     {
-      Mpi::Print(world_comm, "Palace version: {}\nSchema version: {}\n",
-                 GetPalaceGitTag(), GetSchemaVersion());
+      Mpi::Print(world_comm, "Palace version: {}\nSchema version: {}\n", GetPalaceGitTag(),
+                 GetSchemaVersion());
       return 0;
     }
     if ((argv_i == "-dry-run") || (argv_i == "--dry-run"))
