@@ -182,6 +182,10 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
               "If there are pyramid elements, AMR must be nonconformal!");
   MFEM_VERIFY(smesh->Conforming() || !use_amr || refinement.nonconformal,
               "The provided mesh is nonconformal, only nonconformal AMR can be performed!");
+  MFEM_VERIFY(iodata.boundaries.periodic.boundary_pairs.empty() || !use_amr ||
+                  refinement.nonconformal,
+              "Conformal mesh refinement is not supported on periodic meshes; set "
+              "\"Refinement\"/\"Nonconformal\": true to refine a periodic mesh!");
 
   // Clean up unused domain elements from the mesh.
   if (iodata.model.clean_unused_elements)
@@ -2290,6 +2294,11 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
   orig_mesh->FinalizeTopology();
 }
 
+}  // namespace
+
+namespace mesh
+{
+
 // Conformally bisect a set of mesh edges by inserting a midpoint on each and splitting
 // every tetrahedron and boundary element incident on a split edge into two. Unlike
 // mfem::Mesh::GeneralRefinement, this performs a purely local edge-fan split with no
@@ -2308,8 +2317,8 @@ void SplitMeshElements(std::unique_ptr<mfem::Mesh> &orig_mesh, bool make_simplex
 // edges at once. The caller re-invokes (via the AddInterfaceBdrElements retry loop) to
 // handle any candidates not selected in this pass. Returns the number of edges split (0 if
 // none).
-template <typename EdgeContainer>
-int LocalEdgeSplit(std::unique_ptr<mfem::Mesh> &orig_mesh, const EdgeContainer &edges)
+int LocalEdgeSplit(std::unique_ptr<mfem::Mesh> &orig_mesh,
+                   const std::vector<std::pair<int, int>> &edges)
 {
   // Only pure tetrahedral meshes are supported (matching the previous refinement path,
   // which marked and bisected only TETRAHEDRON elements). The caller invokes
@@ -2600,6 +2609,11 @@ int LocalEdgeSplit(std::unique_ptr<mfem::Mesh> &orig_mesh, const EdgeContainer &
   orig_mesh = std::move(new_mesh);
   return num_split;
 }
+
+}  // namespace mesh
+
+namespace
+{
 
 void ReorderMeshElements(mfem::Mesh &mesh, bool print)
 {
@@ -3111,7 +3125,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
           {
             split_edges.emplace_back(edge.first, edge.second);
           }
-          LocalEdgeSplit(orig_mesh, split_edges);
+          mesh::LocalEdgeSplit(orig_mesh, split_edges);
         }
         new_ne_ref += orig_mesh->GetNE() - ne;
         new_ref_its++;
