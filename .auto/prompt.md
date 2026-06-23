@@ -24,7 +24,7 @@ Commit each kept experiment to the `-auto` branch so the improvement history is 
 
 ## Primary metric
 - **surface_score_seconds** (seconds, lower is better):
-  `spheres_postprocessing + rings_postprocessing + cpw_postprocessing`
+  Phase 1 default is CPW-only, so this is `cpw_postprocessing`. Later, set `PALACE_AR_CASES=all` to validate the full statics+driven score: `spheres_postprocessing + rings_postprocessing + cpw_postprocessing`.
 
 ## Secondary metrics
 Always report/consider:
@@ -38,11 +38,14 @@ Always report/consider:
 - `spheres_total`, `rings_total`, `cpw_total`
 
 ## Baseline cases
-The measurement script runs these on the remote GPU host:
+The measurement script defaults to CPW-only for fast iteration:
 
-1. `examples/spheres/spheres.json` — electrostatic `SURFACE_FLUX`
-2. `examples/rings/rings.json` — magnetostatic `SURFACE_FLUX`
-3. `examples/cpw/cpw_lumped_uniform.json` — driven rich postprocessing, one driven point at `17 GHz`, field output saved
+1. `examples/cpw/cpw_lumped_uniform.json` — driven rich postprocessing, one driven point at `17 GHz`, field output saved
+
+Full validation is available by running `PALACE_AR_CASES=all .auto/measure.sh`, which adds:
+
+2. `examples/spheres/spheres.json` — electrostatic `SURFACE_FLUX`
+3. `examples/rings/rings.json` — magnetostatic `SURFACE_FLUX`
 
 Starting reference from prior measurements:
 
@@ -107,13 +110,23 @@ Surface-only quantities should not participate in volume trace specialization:
 - still requires adjacent cell trace: H(curl) `E`, H(div) `B`, Piola transforms, material side attributes, two-sided/ghost semantics
 
 ## Suggested order
-1. Collapse local `SURFACE_FLUX` mapped-reference-coordinate grouping.
-2. Extend the same local collapsed path to `INTERFACE_EPR`.
-3. Extend the same local collapsed path to `FARFIELD`.
+1. Collapse the CPW-local `SURFACE_FLUX` mapped-reference-coordinate grouping.
+2. Extend/verify the same CPW-local collapsed path for `INTERFACE_EPR`.
+3. Extend/verify the same CPW-local collapsed path for `FARFIELD`.
+4. Run `PALACE_AR_CASES=all .auto/measure.sh` and make sure `spheres`/`rings` improve too.
 4. Then handle ghost/two-sided parallel interfaces.
 5. Then consider batching same-kind surface postprocessing requests in `models/`.
 
 Surface geometry precompute (`w`, `n`, `wN`, `x` EVAL_NONE arrays) is useful cleanup and may be folded into the grouping work if it simplifies implementation, but it is not by itself the main performance milestone.
+
+
+
+## Fast measurement mode
+Default `.auto/measure.sh` is intentionally CPW-only to keep iterations short. It still reports the primary metric name `surface_score_seconds`, but in this phase that value equals `cpw_postprocessing`. Use full mode only after a promising CPW improvement:
+
+```bash
+PALACE_AR_CASES=all .auto/measure.sh
+```
 
 ## Keep/discard policy
 Keep only if:
@@ -143,7 +156,7 @@ On every resume:
 Prior profiling showed the surface integral QFunction GPU time is tiny: rings flux kernels were ~2.3 ms while postprocessing was ~33 s; CPW EPR/flux/farfield kernels were under ~10 ms while postprocessing was ~23 s. Therefore optimize setup/JIT/operator proliferation, not arithmetic throughput.
 
 ## Manual baseline before autoresearch loop
-A manual `.auto/measure.sh` run during setup succeeded with:
+A manual all-cases `.auto/measure.sh` run during setup succeeded with:
 
 ```text
 METRIC surface_score_seconds=76.767000
