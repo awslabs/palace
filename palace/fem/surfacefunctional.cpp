@@ -1320,22 +1320,28 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       {
         // Physical coordinates are surface-only data. Keep them on the boundary
         // quadrature rule rather than evaluating the boundary basis at the volume
-        // reference points used by the AtPoints trace operator.
+        // reference points used by the AtPoints trace operator. Two-sided surface flux
+        // kernels never use x (their normal orientation is fixed by side convention), so
+        // avoid the host boundary-coordinate transform for those large trace surfaces.
         const int nq = face_ir.GetNPoints();
         auto &x_pts = elem_attrs.emplace_back(num_elem * nq * 3);
-        for (std::size_t e = 0; e < num_elem; e++)
+        x_pts = 0.0;
+        if (!(kind == Kind::SURFACE_FLUX && flux_two_sided))
         {
-          mfem::IsoparametricTransformation T;
-          pmesh.GetBdrElementTransformation(group.bdr_indices[e], &T);
-          for (int q = 0; q < nq; q++)
+          for (std::size_t e = 0; e < num_elem; e++)
           {
-            const mfem::IntegrationPoint &ip = face_ir.IntPoint(q);
-            mfem::Vector x_loc(3);
-            T.Transform(ip, x_loc);
-            const std::size_t off = 3 * (e * nq + q);
-            x_pts[off + 0] = x_loc(0);
-            x_pts[off + 1] = x_loc(1);
-            x_pts[off + 2] = x_loc(2);
+            mfem::IsoparametricTransformation T;
+            pmesh.GetBdrElementTransformation(group.bdr_indices[e], &T);
+            for (int q = 0; q < nq; q++)
+            {
+              const mfem::IntegrationPoint &ip = face_ir.IntPoint(q);
+              mfem::Vector x_loc(3);
+              T.Transform(ip, x_loc);
+              const std::size_t off = 3 * (e * nq + q);
+              x_pts[off + 0] = x_loc(0);
+              x_pts[off + 1] = x_loc(1);
+              x_pts[off + 2] = x_loc(2);
+            }
           }
         }
         AddSequentialPointInput("x", x_pts, 3);
