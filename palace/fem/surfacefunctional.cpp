@@ -619,10 +619,14 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       const bool can_surface_flux_at_points_b =
           use_at_points && kind == Kind::SURFACE_FLUX && plan.elem_b >= 0 &&
           !plan.ghost_b && vol_geom_b == mfem::Geometry::TETRAHEDRON;
+      const bool can_epr_at_points =
+          use_at_points && kind == Kind::INTERFACE_EPR && plan.elem_a >= 0 &&
+          plan.elem_b < 0 && !plan.ghost_a &&
+          vol_geom_a == mfem::Geometry::TETRAHEDRON;
       const bool can_at_points_a =
           (use_at_points && buffer_kind && plan.elem_a >= 0 && !plan.ghost_a &&
            vol_geom_a == mfem::Geometry::TETRAHEDRON) ||
-          can_surface_flux_at_points_a;
+          can_surface_flux_at_points_a || can_epr_at_points;
       const bool can_at_points_b =
           (use_at_points && buffer_kind && plan.elem_b >= 0 && !plan.ghost_b &&
            vol_geom_b == mfem::Geometry::TETRAHEDRON) ||
