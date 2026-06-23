@@ -3044,9 +3044,9 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
       static int new_ref_its = 0;
       if (!coarse_crack_edge_to_be.empty())
       {
-        // Locally refine the mesh to decouple the under-resolved seam edges. If necessary,
-        // convert the mesh to simplices first to enable conforming refinement (this will do
-        // nothing if the mesh is already a simplex mesh).
+        // Locally refine the mesh using conformal refinement. If necessary, convert the
+        // mesh to simplices first to enable conforming refinement (this will do nothing
+        // if the mesh is already a simplex mesh).
         // Note: Eventually we can implement manual conforming face refinement of pairs of
         // elements sharing a face for all element types (insert a vertex at the boundary
         // element center and connect it to all other element vertices). For now, this adds
