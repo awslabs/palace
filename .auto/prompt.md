@@ -121,6 +121,10 @@ Surface geometry precompute (`w`, `n`, `wN`, `x` EVAL_NONE arrays) is useful cle
 
 
 
+
+## Processor-boundary / MPI verification gate
+Every kept experiment must pass `.auto/checks.sh`, which now runs the CPW workload on two CPU MPI ranks after `git diff --check`. The primary optimization metric remains the one-rank GPU CPW postprocessing time, but the two-rank CPU run is a hard pass/fail gate and emits `cpw_mpi2_cpu_*` metrics for inspection. Do not disable, weaken, or bypass this gate: processor-boundary and ghost-face behavior is critical. AtPoints shortcuts are only safe for local non-ghost tetrahedral sides; multi-rank processor-boundary surfaces must continue to use a correct fallback unless explicitly implemented and verified.
+
 ## Fast measurement mode
 Default `.auto/measure.sh` is intentionally CPW-only to keep iterations short. It still reports the primary metric name `surface_score_seconds`, but in this phase that value equals `cpw_postprocessing`. Use full mode only after a promising CPW improvement:
 
