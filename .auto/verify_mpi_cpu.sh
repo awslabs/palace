@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
-RUN_ID="${PALACE_AR_CHECK_RUN_ID:-$(git rev-parse --short HEAD)-mpi2cpu-$(date +%Y%m%d%H%M%S)}"
-RANKS="${PALACE_AR_MPI_CPU_RANKS:-2}"
+RANKS="${PALACE_AR_MPI_CPU_RANKS:-16}"
+RUN_ID="${PALACE_AR_CHECK_RUN_ID:-$(git rev-parse --short HEAD)-mpi${RANKS}cpu-$(date +%Y%m%d%H%M%S)}"
 SPACK_SETUP="/home/ubuntu/spack/share/spack/setup-env.sh"
 
 if [[ ! -f "$SPACK_SETUP" ]]; then
@@ -18,7 +18,7 @@ PREFIX="$(spack -e "$ROOT" location -i local.palace 2>/dev/null || true)"
 BIN="${PREFIX:+$PREFIX/bin/palace-x86_64.bin}"
 if [[ -z "$PREFIX" || ! -x "$BIN" ]]; then
   echo "mpi_cpu_check: installed Palace binary missing; building first" >&2
-  spack -e "$ROOT" install -j4 >/tmp/palace_ar_mpi2_cpu_build_${RUN_ID}.log 2>&1
+  spack -e "$ROOT" install -j4 >/tmp/palace_ar_mpi${RANKS}_cpu_build_${RUN_ID}.log 2>&1
   PREFIX="$(spack -e "$ROOT" location -i local.palace)"
   BIN="$PREFIX/bin/palace-x86_64.bin"
 fi
@@ -32,10 +32,11 @@ if [[ -z "$MPIEXEC" ]]; then
   exit 2
 fi
 
-python3 - "$RUN_ID" <<'PY'
+python3 - "$RUN_ID" "$RANKS" <<'PY'
 import json, re, sys
 from pathlib import Path
 run_id=sys.argv[1]
+ranks=sys.argv[2]
 root=Path('/home/ubuntu/palace')
 
 def load_jsonc(path):
@@ -57,20 +58,20 @@ def load_jsonc(path):
     return json.loads(re.sub(r',\s*([}\]])', r'\1', ''.join(out)))
 
 j=load_jsonc(root/'examples/cpw/cpw_lumped_uniform.json')
-j.setdefault('Problem', {})['Output']=f'postpro/autoresearch_cpw_mpi2_cpu_{run_id}'
+j.setdefault('Problem', {})['Output']=f'postpro/autoresearch_cpw_mpi{ranks}_cpu_{run_id}'
 j['Problem'].setdefault('OutputFormats', {})['Paraview']=True
 j['Problem']['OutputFormats']['GridFunction']=True
 j.setdefault('Solver', {})['Device']='CPU'
 j['Solver'].setdefault('Driven', {})['Samples']=[{'Type':'Point','Freq':[17.0],'SaveStep':1}]
 j['Solver']['Driven']['Save']=[17.0]
-out=Path(f'/tmp/palace_ar_cpw_mpi2_cpu_{run_id}.json')
+out=Path(f'/tmp/palace_ar_cpw_mpi{ranks}_cpu_{run_id}.json')
 out.write_text(json.dumps(j, indent=2))
 print(out)
 PY
 
-CFG="/tmp/palace_ar_cpw_mpi2_cpu_${RUN_ID}.json"
-LOG="/tmp/palace_ar_cpw_mpi2_cpu_${RUN_ID}.log"
-rm -rf "$ROOT/examples/cpw/postpro/autoresearch_cpw_mpi2_cpu_${RUN_ID}"
+CFG="/tmp/palace_ar_cpw_mpi${RANKS}_cpu_${RUN_ID}.json"
+LOG="/tmp/palace_ar_cpw_mpi${RANKS}_cpu_${RUN_ID}.log"
+rm -rf "$ROOT/examples/cpw/postpro/autoresearch_cpw_mpi${RANKS}_cpu_${RUN_ID}"
 set +e
 (cd "$ROOT/examples/cpw" && env PALACE_SURFACE_PROFILE=1 "$MPIEXEC" -np "$RANKS" "$BIN" "$CFG") >"$LOG" 2>&1
 rc=$?
