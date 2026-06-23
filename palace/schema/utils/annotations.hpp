@@ -412,7 +412,7 @@ class is_description<::palace::schema::utils::DescDeprecated<text, T>>
     PAL_SCHEMA_FOR_EACH(PAL_SCHEMA_ENUM_EMIT_NAME, __VA_ARGS__)                    \
   };                                                                               \
   template <>                                                                      \
-  struct ::palace::schema::utils::enum_descriptions<EnumName>                      \
+  struct utils::enum_descriptions<EnumName>                                        \
   {                                                                                \
     static constexpr auto value =                                                  \
         ::std::array{PAL_SCHEMA_FOR_EACH(PAL_SCHEMA_ENUM_EMIT_PAIR, __VA_ARGS__)}; \
@@ -422,7 +422,7 @@ class is_description<::palace::schema::utils::DescDeprecated<text, T>>
    * `{"$ref": "#/$defs/<EnumName>"}`. Keeps the schema layout aligned             \
    * with PR-716 without a per-enum `schema_alias_name` specialization. */         \
   template <>                                                                      \
-  struct ::palace::schema::utils::schema_alias_name<EnumName>                      \
+  struct utils::schema_alias_name<EnumName>                                        \
   {                                                                                \
     static constexpr ::std::string_view value = #EnumName;                         \
   }
