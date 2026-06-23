@@ -77,6 +77,14 @@
                     },
                     "default": []
                 },
+                "FloquetPort": {
+                    "type": "array",
+                    "description": "Array of Floquet port boundary conditions for periodic structures. Floquet ports provide absorbing boundary conditions for diffraction problems and compute diffraction efficiencies (S-parameters) for the propagating orders. Requires periodic boundary conditions (see [Periodic](@ref config-boundaries-periodic)) with exactly two boundary pairs defining the transverse periodicity.",
+                    "items": {
+                        "$ref": "#/$defs/FloquetPort"
+                    },
+                    "default": []
+                },
                 "SurfaceCurrent": {
                     "type": "array",
                     "description": "Array of surface current source boundaries. Prescribes a unit source surface current excitation on the given boundary to excite a driven, transient, or magnetostatic simulation. For magnetostatic simulations, inductance matrix entries are extracted for each surface current boundary.",
@@ -101,6 +109,63 @@
                     "description": "Configuration for boundary postprocessing."
                 }
             },
+            "additionalProperties": false
+        },
+        "BoundaryMode": {
+            "type": "object",
+            "properties": {
+                "Freq": {
+                    "description": "Operating frequency for boundary mode analysis, in GHz.",
+                    "exclusiveMinimum": 0.0,
+                    "type": "number",
+                    "default": 1.0
+                },
+                "N": {
+                    "description": "Desired number of boundary modes.",
+                    "exclusiveMinimum": 0,
+                    "type": "integer",
+                    "default": 1
+                },
+                "Save": {
+                    "description": "Number of modes to write to disk.",
+                    "minimum": 0,
+                    "type": "integer",
+                    "default": 0
+                },
+                "Target": {
+                    "description": "Target effective index for the eigenvalue solver shift-and-invert spectral transformation.",
+                    "minimum": 0.0,
+                    "type": "number",
+                    "default": 0.0
+                },
+                "Tol": {
+                    "description": "Relative tolerance for the eigenvalue solver.",
+                    "exclusiveMinimum": 0.0,
+                    "type": "number",
+                    "default": 0.000001
+                },
+                "MaxSize": {
+                    "type": "integer",
+                    "description": "Eigenvalue solver subspace dimension or maximum dimension before restart. A value less than 1 uses the default.",
+                    "default": -1
+                },
+                "Type": {
+                    "$ref": "#/$defs/EigenSolverBackend",
+                    "description": "Eigenvalue solver backend for boundary mode analysis.",
+                    "default": "Default"
+                },
+                "Attributes": {
+                    "type": "array",
+                    "description": "Boundary attributes for extracting a 2D cross-section from a 3D mesh. Leave empty when solving modes directly on a 2D mesh.",
+                    "items": {
+                        "type": "integer"
+                    },
+                    "default": []
+                }
+            },
+            "required": [
+                "Freq"
+            ],
             "additionalProperties": false
         },
         "BoundaryPair": {
@@ -181,6 +246,22 @@
                     "description": "Array of interface dielectric loss postprocessing boundaries. Computes energy participation ratios (EPR) and quality factors for dielectric interfaces. See also the [reference documentation](../reference.md#Bulk-and-interface-dielectric-loss). Results are written to `surface-Q.csv` in the output directory.",
                     "items": {
                         "$ref": "#/$defs/Dielectric"
+                    },
+                    "default": []
+                },
+                "Impedance": {
+                    "type": "array",
+                    "description": "Array of impedance postprocessing entries for boundary-mode simulations.",
+                    "items": {
+                        "$ref": "#/$defs/ModeImpedance"
+                    },
+                    "default": []
+                },
+                "Voltage": {
+                    "type": "array",
+                    "description": "Array of voltage postprocessing entries for boundary-mode simulations.",
+                    "items": {
+                        "$ref": "#/$defs/ModeVoltage"
                     },
                     "default": []
                 },
@@ -760,6 +841,53 @@
             ],
             "additionalProperties": false
         },
+        "FloquetPort": {
+            "type": "object",
+            "properties": {
+                "Index": {
+                    "description": "Index of this Floquet port, used in postprocessing output files. Must be unique across all port and source types.",
+                    "exclusiveMinimum": 0,
+                    "type": "integer",
+                    "default": 1
+                },
+                "Attributes": {
+                    "type": "array",
+                    "description": "Integer array of mesh boundary attributes for this Floquet port boundary. The port face must be planar and lie on the true boundary of the computational domain (one-sided, like wave ports), with a homogeneous isotropic adjacent medium.",
+                    "items": {
+                        "type": "integer"
+                    },
+                    "default": []
+                },
+                "Excitation": {
+                    "description": "Turns on or off port excitation for this Floquet port boundary. Can be specified as a boolean or as a non-negative integer (excitation group index). When excited, a plane wave in the specular (0, 0) diffraction order is injected with unit power.",
+                    "anyOf": [
+                        {
+                            "type": "boolean"
+                        },
+                        {
+                            "minimum": 0,
+                            "type": "integer"
+                        }
+                    ],
+                    "default": false
+                },
+                "IncidentPolarization": {
+                    "$ref": "#/$defs/IncidentPolarization",
+                    "description": "Polarization of the incident plane wave.",
+                    "default": "TE"
+                },
+                "MaxOrder": {
+                    "type": "integer",
+                    "description": "Maximum diffraction order index to include: all orders `(m, n)` with `|m| ≤ MaxOrder` and `|n| ≤ MaxOrder` are included, each with both TE and TM polarizations. `-1` (default) selects the order automatically; `0` includes only the specular (0, 0) order.",
+                    "default": -1
+                }
+            },
+            "required": [
+                "Index",
+                "Attributes"
+            ],
+            "additionalProperties": false
+        },
         "Ground": {
             "type": "object",
             "properties": {
@@ -1098,12 +1226,24 @@
                 },
                 "Excitation": {
                     "description": "Turns on or off port excitation for driven or transient simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
-                    "minimum": 0,
-                    "type": "integer",
-                    "default": 0
+                    "anyOf": [
+                        {
+                            "type": "boolean"
+                        },
+                        {
+                            "minimum": 0,
+                            "type": "integer"
+                        }
+                    ],
+                    "default": false
                 },
                 "Active": {
                     "description": "Turns on or off the damping boundary condition for this port for driven or transient simulations.",
+                    "type": "boolean",
+                    "default": true
+                },
+                "IncludeInSynthesis": {
+                    "description": "When false, excludes this port from reduced-order-model synthesis unless the port is excited.",
                     "type": "boolean",
                     "default": true
                 },
@@ -1180,12 +1320,24 @@
                 },
                 "Excitation": {
                     "description": "Turns on or off port excitation for driven or transient simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
-                    "minimum": 0,
-                    "type": "integer",
-                    "default": 0
+                    "anyOf": [
+                        {
+                            "type": "boolean"
+                        },
+                        {
+                            "minimum": 0,
+                            "type": "integer"
+                        }
+                    ],
+                    "default": false
                 },
                 "Active": {
                     "description": "Turns on or off the damping boundary condition for this port for driven or transient simulations.",
+                    "type": "boolean",
+                    "default": true
+                },
+                "IncludeInSynthesis": {
+                    "description": "When false, excludes this port from reduced-order-model synthesis unless the port is excited.",
                     "type": "boolean",
                     "default": true
                 },
@@ -1228,40 +1380,52 @@
                     "default": []
                 },
                 "Permeability": {
-                    "$ref": "#/$defs/Vector3",
                     "description": "Relative permeability for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
-                    "default": [
-                        1.0,
-                        1.0,
-                        1.0
-                    ]
+                    "anyOf": [
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "$ref": "#/$defs/Vector3"
+                        }
+                    ],
+                    "default": 1.0
                 },
                 "Permittivity": {
-                    "$ref": "#/$defs/Vector3",
                     "description": "Relative permittivity for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
-                    "default": [
-                        1.0,
-                        1.0,
-                        1.0
-                    ]
+                    "anyOf": [
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "$ref": "#/$defs/Vector3"
+                        }
+                    ],
+                    "default": 1.0
                 },
                 "LossTan": {
-                    "$ref": "#/$defs/Vector3",
                     "description": "Loss tangent for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
-                    "default": [
-                        0.0,
-                        0.0,
-                        0.0
-                    ]
+                    "anyOf": [
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "$ref": "#/$defs/Vector3"
+                        }
+                    ],
+                    "default": 0.0
                 },
                 "Conductivity": {
-                    "$ref": "#/$defs/Vector3",
                     "description": "Electrical conductivity for this material, S/m. Activates the Ohmic loss model in this domain. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
-                    "default": [
-                        0.0,
-                        0.0,
-                        0.0
-                    ]
+                    "anyOf": [
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "$ref": "#/$defs/Vector3"
+                        }
+                    ],
+                    "default": 0.0
                 },
                 "LondonDepth": {
                     "type": "number",
@@ -1297,6 +1461,105 @@
             },
             "required": [
                 "Attributes"
+            ],
+            "additionalProperties": false
+        },
+        "ModeImpedance": {
+            "type": "object",
+            "properties": {
+                "Index": {
+                    "description": "Index of this impedance postprocessing entry, used in output files.",
+                    "exclusiveMinimum": 0,
+                    "type": "integer",
+                    "default": 1
+                },
+                "VoltageAttributes": {
+                    "type": "array",
+                    "description": "Boundary attributes for the voltage integration path.",
+                    "items": {
+                        "type": "integer"
+                    },
+                    "default": []
+                },
+                "CurrentAttributes": {
+                    "type": "array",
+                    "description": "Boundary attributes for the current integration loop.",
+                    "items": {
+                        "type": "integer"
+                    },
+                    "default": []
+                },
+                "VoltagePath": {
+                    "type": "array",
+                    "description": "Coordinate path for voltage line integration. Points may be specified in 2D or 3D.",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "number"
+                        }
+                    },
+                    "default": []
+                },
+                "CurrentPath": {
+                    "type": "array",
+                    "description": "Coordinate loop for current line integration. Points may be specified in 2D or 3D.",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "number"
+                        }
+                    },
+                    "default": []
+                },
+                "NSamples": {
+                    "description": "Number of quadrature samples for coordinate-path integration.",
+                    "minimum": 0,
+                    "type": "integer",
+                    "default": 100
+                }
+            },
+            "required": [
+                "Index"
+            ],
+            "additionalProperties": false
+        },
+        "ModeVoltage": {
+            "type": "object",
+            "properties": {
+                "Index": {
+                    "description": "Index of this voltage postprocessing entry, used in output files.",
+                    "exclusiveMinimum": 0,
+                    "type": "integer",
+                    "default": 1
+                },
+                "VoltageAttributes": {
+                    "type": "array",
+                    "description": "Boundary attributes for the voltage integration path.",
+                    "items": {
+                        "type": "integer"
+                    },
+                    "default": []
+                },
+                "VoltagePath": {
+                    "type": "array",
+                    "description": "Coordinate path for voltage line integration. Points may be specified in 2D or 3D.",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "number"
+                        }
+                    },
+                    "default": []
+                },
+                "NSamples": {
+                    "description": "Number of quadrature samples for coordinate-path integration.",
+                    "minimum": 0,
+                    "type": "integer",
+                    "default": 100
+                }
+            },
+            "required": [
+                "Index"
             ],
             "additionalProperties": false
         },
@@ -1483,7 +1746,11 @@
                 }
             },
             "required": [
-                "SchemaVersion"
+                "Problem",
+                "Model",
+                "Domains",
+                "Boundaries",
+                "Solver"
             ],
             "additionalProperties": false
         },
@@ -1498,6 +1765,12 @@
                         0.0,
                         0.0
                     ]
+                },
+                "FloquetReferenceFrequency": {
+                    "description": "Optional frequency in GHz at which the `\"FloquetWaveVector\"` is defined. When specified, the Bloch wave vector scales linearly with frequency across a driven sweep, preserving the incidence angle; otherwise it is held constant. Only supported for driven simulations.",
+                    "minimum": 0.0,
+                    "type": "number",
+                    "default": 0.0
                 },
                 "BoundaryPairs": {
                     "type": "array",
@@ -1838,6 +2111,10 @@
                     "$ref": "#/$defs/Transient",
                     "description": "Configuration for the time domain driven solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Transient\"`. Simulations always start from rest at *t* = 0."
                 },
+                "BoundaryMode": {
+                    "$ref": "#/$defs/BoundaryMode",
+                    "description": "Configuration for boundary mode analysis. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"BoundaryMode\"`."
+                },
                 "Linear": {
                     "$ref": "#/$defs/Linear",
                     "description": "Configuration for the linear solver used by all simulation types."
@@ -2113,9 +2390,16 @@
                 },
                 "Excitation": {
                     "description": "Turns on or off port excitation for driven simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
-                    "minimum": 0,
-                    "type": "integer",
-                    "default": 0
+                    "anyOf": [
+                        {
+                            "type": "boolean"
+                        },
+                        {
+                            "minimum": 0,
+                            "type": "integer"
+                        }
+                    ],
+                    "default": false
                 },
                 "Active": {
                     "description": "Turns on or off the damping boundary condition for this port for driven simulations.",
@@ -2143,12 +2427,48 @@
                     "default": 0.000001,
                     "x-palace-advanced": true
                 },
+                "MaxSize": {
+                    "type": "integer",
+                    "description": "Eigenvalue solver subspace dimension or maximum dimension before restart. A value less than 1 uses the default.",
+                    "default": -1,
+                    "x-palace-advanced": true
+                },
                 "Verbose": {
                     "description": "Verbosity level for the wave port linear and eigensolvers.",
                     "minimum": 0,
                     "type": "integer",
                     "default": 0,
                     "x-palace-advanced": true
+                },
+                "VoltagePath": {
+                    "type": "array",
+                    "description": "Coordinate path for voltage line integration on the port face. Points are listed from signal terminal to ground terminal and may be specified in 2D or 3D.",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "number"
+                        }
+                    },
+                    "default": []
+                },
+                "NSamples": {
+                    "description": "Number of quadrature samples for coordinate-path voltage integration.",
+                    "minimum": 0,
+                    "type": "integer",
+                    "default": 100
+                },
+                "PolarityAttributes": {
+                    "type": "array",
+                    "description": "Optional pair of parent-mesh boundary attributes `[signal, ground]` used to fix the wave-port mode polarity.",
+                    "items": {
+                        "type": "integer"
+                    },
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "default": [
+                        0,
+                        0
+                    ]
                 }
             },
             "required": [
@@ -2191,6 +2511,14 @@
             ],
             "additionalProperties": false
         },
+        "Vector3": {
+            "type": "array",
+            "items": {
+                "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3
+        },
         "DipoleDirection": {
             "type": "string",
             "enum": [
@@ -2213,14 +2541,6 @@
                 "-y",
                 "-z"
             ]
-        },
-        "Vector3": {
-            "type": "array",
-            "items": {
-                "type": "number"
-            },
-            "minItems": 3,
-            "maxItems": 3
         },
         "PortDirection": {
             "type": "string",
@@ -2272,6 +2592,10 @@
                 {
                     "const": "Magnetostatic",
                     "description": "Perform a magnetostatic analysis to compute the inductance matrix for a set of current sources."
+                },
+                {
+                    "const": "BoundaryMode",
+                    "description": "Compute waveguide or transmission-line boundary modes."
                 }
             ]
         },
@@ -2300,6 +2624,26 @@
                 {
                     "const": "ARPACK",
                     "description": "ARPACK eigensolver."
+                }
+            ]
+        },
+        "IncidentPolarization": {
+            "oneOf": [
+                {
+                    "const": "TE",
+                    "description": "Transverse electric (s-polarization): electric field perpendicular to the plane of incidence."
+                },
+                {
+                    "const": "TM",
+                    "description": "Transverse magnetic (p-polarization): electric field in the plane of incidence."
+                },
+                {
+                    "const": "RHC",
+                    "description": "Right-hand circular polarization: equal TE/TM superposition with a 90° phase shift."
+                },
+                {
+                    "const": "LHC",
+                    "description": "Left-hand circular polarization: equal TE/TM superposition with a -90° phase shift."
                 }
             ]
         },
@@ -2614,6 +2958,31 @@
                     "Solver": {
                         "required": [
                             "Transient"
+                        ]
+                    }
+                }
+            }
+        },
+        {
+            "if": {
+                "properties": {
+                    "Problem": {
+                        "properties": {
+                            "Type": {
+                                "const": "BoundaryMode"
+                            }
+                        },
+                        "required": [
+                            "Type"
+                        ]
+                    }
+                }
+            },
+            "then": {
+                "properties": {
+                    "Solver": {
+                        "required": [
+                            "BoundaryMode"
                         ]
                     }
                 }

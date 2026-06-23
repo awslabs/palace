@@ -580,10 +580,9 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
                    {"Solver", json::object()}};
 
     std::string err = ValidateConfig(config);
-    CHECK(err ==
-          "At [\"Problem\"][\"Type\"]: instance not found in required enum; valid values: "
-          "\"Eigenmode\", \"Driven\", \"Transient\", \"Electrostatic\", \"Magnetostatic\", "
-          "\"BoundaryMode\"\n");
+    CHECK(err.find("[\"Problem\"][\"Type\"]") != std::string::npos);
+    CHECK(err.find("oneOf") != std::string::npos);
+    CHECK(err.find("case#") != std::string::npos);
   }
 
   SECTION("Invalid enum in nested array")

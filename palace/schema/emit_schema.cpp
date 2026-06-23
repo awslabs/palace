@@ -71,6 +71,21 @@ constexpr const char *kRootConditional = R"([
           "Solver": { "required": ["Transient"] }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "Problem": {
+            "properties": { "Type": { "const": "BoundaryMode" } },
+            "required": ["Type"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "Solver": { "required": ["BoundaryMode"] }
+        }
+      }
     }
   ])";
 

@@ -14,10 +14,9 @@
 //     `allOf + not` mutual-exclusion between the two pairs is enforced in
 //     Phase 1.5's emit-binary fragment (same as the `if`/`then` rules).
 //
-//   - LumpedPort.Excitation / WavePort.Excitation: PR 716 accepts
-//     `boolean | integer>=0` via `oneOf`; reflect-cpp cannot emit this mixed
-//     shape from a single C++ type. We model as `int` (Palace stores it as
-//     an int internally: 0/false = inactive, >0 = excitation group index).
+//   - LumpedPort.Excitation / WavePort.Excitation / FloquetPort.Excitation:
+//     Palace accepts `boolean | integer>=0` and normalizes it to an internal
+//     excitation-group index during config parsing.
 //
 //   - Materials.*.oneOf scalar-or-3-array pattern: see domains.hpp.
 
@@ -197,11 +196,16 @@ struct LumpedPortCommon
                      "integer (excitation group index). See the [boundary conditions "
                      "guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) "
                      "for details.",
-                     palace::schema::utils::Min<int, 0>) = 0;
+                     ExcitationIndex) = false;
 
   PALACE_SCHEMA_DESC(Active,
                      "Turns on or off the damping boundary condition for this port for "
                      "driven or transient simulations.",
+                     bool) = true;
+
+  PALACE_SCHEMA_DESC(IncludeInSynthesis,
+                     "When false, excludes this port from reduced-order-model synthesis "
+                     "unless the port is excited.",
                      bool) = true;
 };
 
@@ -295,7 +299,7 @@ struct WavePort
                      "group index). See the [boundary conditions "
                      "guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) "
                      "for details.",
-                     palace::schema::utils::Min<int, 0>) = 0;
+                     ExcitationIndex) = false;
 
   PALACE_SCHEMA_DESC(Active,
                      "Turns on or off the damping boundary condition for this port for "
@@ -319,9 +323,67 @@ struct WavePort
                               "boundary mode analysis.",
                               palace::schema::utils::XMin<double, 0.0>) = 1.0e-6;
 
+  PALACE_SCHEMA_DESC_ADVANCED(MaxSize,
+                              "Eigenvalue solver subspace dimension or maximum dimension "
+                              "before restart. A value less than 1 uses the default.",
+                              int) = -1;
+
   PALACE_SCHEMA_DESC_ADVANCED(Verbose,
                               "Verbosity level for the wave port linear and eigensolvers.",
                               palace::schema::utils::Min<int, 0>) = 0;
+
+  PALACE_SCHEMA_DESC(
+      VoltagePath,
+      "Coordinate path for voltage line integration on the port face. Points are listed "
+      "from signal terminal to ground terminal and may be specified in 2D or 3D.",
+      std::vector<std::vector<double>>) = {};
+
+  PALACE_SCHEMA_DESC(NSamples,
+                     "Number of quadrature samples for coordinate-path voltage "
+                     "integration.",
+                     palace::schema::utils::Min<int, 0>) = 100;
+
+  PALACE_SCHEMA_DESC(
+      PolarityAttributes,
+      "Optional pair of parent-mesh boundary attributes `[signal, ground]` used to "
+      "fix the wave-port mode polarity.",
+      std::array<int, 2>) = {
+    {0, 0}
+  };
+};
+
+struct FloquetPort
+{
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Index,
+      "Index of this Floquet port, used in postprocessing output files. Must "
+      "be unique across all port and source types.",
+      palace::schema::utils::XMin<int, 0>) = 1;
+
+  PALACE_SCHEMA_DESC_REQUIRED(
+      Attributes,
+      "Integer array of mesh boundary attributes for this Floquet port "
+      "boundary. The port face must be planar and lie on the true boundary of "
+      "the computational domain (one-sided, like wave ports), with a "
+      "homogeneous isotropic adjacent medium.",
+      AttributeList) = {};
+
+  PALACE_SCHEMA_DESC(Excitation,
+                     "Turns on or off port excitation for this Floquet port boundary. "
+                     "Can be specified as a boolean or as a non-negative integer "
+                     "(excitation group index). When excited, a plane wave in the "
+                     "specular (0, 0) diffraction order is injected with unit power.",
+                     ExcitationIndex) = false;
+
+  PALACE_SCHEMA_DESC(IncidentPolarization, "Polarization of the incident plane wave.",
+                     IncidentPolarization) = IncidentPolarization::TE;
+
+  PALACE_SCHEMA_DESC(MaxOrder,
+                     "Maximum diffraction order index to include: all orders `(m, n)` "
+                     "with `|m| ≤ MaxOrder` and `|n| ≤ MaxOrder` are included, each with "
+                     "both TE and TM polarizations. `-1` (default) selects the order "
+                     "automatically; `0` includes only the specular (0, 0) order.",
+                     int) = -1;
 };
 
 // Surface current sources mirror lumped ports' single-vs-multi-element
@@ -416,6 +478,14 @@ struct Periodic
     {0.0, 0.0, 0.0}
   };
 
+  PALACE_SCHEMA_DESC(FloquetReferenceFrequency,
+                     "Optional frequency in GHz at which the `\"FloquetWaveVector\"` is "
+                     "defined. When specified, the Bloch wave vector scales linearly "
+                     "with frequency across a driven sweep, preserving the incidence "
+                     "angle; otherwise it is held constant. Only supported for driven "
+                     "simulations.",
+                     palace::schema::utils::Min<double, 0.0>) = 0.0;
+
   PALACE_SCHEMA_DESC_REQUIRED(
       BoundaryPairs,
       "Array of donor–receiver boundary pairs defining the periodic "
@@ -504,6 +574,57 @@ struct FarFieldPostprocessing
                      std::vector<std::array<double, 2>>) = {};
 };
 
+struct ModeImpedance
+{
+  PALACE_SCHEMA_DESC_REQUIRED(Index,
+                              "Index of this impedance postprocessing entry, used in "
+                              "output files.",
+                              palace::schema::utils::XMin<int, 0>) = 1;
+
+  PALACE_SCHEMA_DESC(VoltageAttributes,
+                     "Boundary attributes for the voltage integration path.",
+                     AttributeList) = {};
+
+  PALACE_SCHEMA_DESC(CurrentAttributes,
+                     "Boundary attributes for the current integration loop.",
+                     AttributeList) = {};
+
+  PALACE_SCHEMA_DESC(VoltagePath,
+                     "Coordinate path for voltage line integration. Points may be "
+                     "specified in 2D or 3D.",
+                     std::vector<std::vector<double>>) = {};
+
+  PALACE_SCHEMA_DESC(CurrentPath,
+                     "Coordinate loop for current line integration. Points may be "
+                     "specified in 2D or 3D.",
+                     std::vector<std::vector<double>>) = {};
+
+  PALACE_SCHEMA_DESC(NSamples,
+                     "Number of quadrature samples for coordinate-path integration.",
+                     palace::schema::utils::Min<int, 0>) = 100;
+};
+
+struct ModeVoltage
+{
+  PALACE_SCHEMA_DESC_REQUIRED(Index,
+                              "Index of this voltage postprocessing entry, used in "
+                              "output files.",
+                              palace::schema::utils::XMin<int, 0>) = 1;
+
+  PALACE_SCHEMA_DESC(VoltageAttributes,
+                     "Boundary attributes for the voltage integration path.",
+                     AttributeList) = {};
+
+  PALACE_SCHEMA_DESC(VoltagePath,
+                     "Coordinate path for voltage line integration. Points may be "
+                     "specified in 2D or 3D.",
+                     std::vector<std::vector<double>>) = {};
+
+  PALACE_SCHEMA_DESC(NSamples,
+                     "Number of quadrature samples for coordinate-path integration.",
+                     palace::schema::utils::Min<int, 0>) = 100;
+};
+
 struct BoundaryPostprocessing
 {
   PALACE_SCHEMA_DESC(SurfaceFlux,
@@ -519,6 +640,16 @@ struct BoundaryPostprocessing
                      "). Results are written to `surface-Q.csv` in the output "
                      "directory.",
                      std::vector<Dielectric>) = {};
+
+  PALACE_SCHEMA_DESC(Impedance,
+                     "Array of impedance postprocessing entries for boundary-mode "
+                     "simulations.",
+                     std::vector<ModeImpedance>) = {};
+
+  PALACE_SCHEMA_DESC(Voltage,
+                     "Array of voltage postprocessing entries for boundary-mode "
+                     "simulations.",
+                     std::vector<ModeVoltage>) = {};
 
   PALACE_SCHEMA_DESC(FarField,
                      "Far-field electric field extraction. The boundary attributes "
@@ -604,6 +735,15 @@ struct Boundaries
                      "mode shape. Only available for frequency domain driven and "
                      "eigenmode simulations.",
                      std::vector<WavePort>) = {};
+
+  PALACE_SCHEMA_DESC(FloquetPort,
+                     "Array of Floquet port boundary conditions for periodic structures. "
+                     "Floquet ports provide absorbing boundary conditions for diffraction "
+                     "problems and compute diffraction efficiencies (S-parameters) for "
+                     "the propagating orders. Requires periodic boundary conditions (see "
+                     "[Periodic](@ref config-boundaries-periodic)) with exactly two "
+                     "boundary pairs defining the transverse periodicity.",
+                     std::vector<FloquetPort>) = {};
 
   PALACE_SCHEMA_DESC(SurfaceCurrent,
                      "Array of surface current source boundaries. Prescribes a unit "

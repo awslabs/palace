@@ -567,6 +567,40 @@ struct Linear
                      Orthogonalization) = Orthogonalization::MGS;
 };
 
+struct BoundaryMode
+{
+  PALACE_SCHEMA_DESC_REQUIRED(Freq,
+                              "Operating frequency for boundary mode analysis, in GHz.",
+                              palace::schema::utils::XMin<double, 0.0>) = 1.0;
+
+  PALACE_SCHEMA_DESC(N, "Desired number of boundary modes.",
+                     palace::schema::utils::XMin<int, 0>) = 1;
+
+  PALACE_SCHEMA_DESC(Save, "Number of modes to write to disk.",
+                     palace::schema::utils::Min<int, 0>) = 0;
+
+  PALACE_SCHEMA_DESC(Target,
+                     "Target effective index for the eigenvalue solver "
+                     "shift-and-invert spectral transformation.",
+                     palace::schema::utils::Min<double, 0.0>) = 0.0;
+
+  PALACE_SCHEMA_DESC(Tol, "Relative tolerance for the eigenvalue solver.",
+                     palace::schema::utils::XMin<double, 0.0>) = 1.0e-6;
+
+  PALACE_SCHEMA_DESC(MaxSize,
+                     "Eigenvalue solver subspace dimension or maximum dimension before "
+                     "restart. A value less than 1 uses the default.",
+                     int) = -1;
+
+  PALACE_SCHEMA_DESC(Type, "Eigenvalue solver backend for boundary mode analysis.",
+                     EigenSolverBackend) = EigenSolverBackend::Default;
+
+  PALACE_SCHEMA_DESC(Attributes,
+                     "Boundary attributes for extracting a 2D cross-section from a 3D "
+                     "mesh. Leave empty when solving modes directly on a 2D mesh.",
+                     AttributeList) = {};
+};
+
 // --- Top-level Solver --------------------------------------------------
 
 struct Solver
@@ -636,6 +670,12 @@ struct Solver
                      "when [`/Problem/Type`](@ref config-problem-type) is "
                      "`\"Transient\"`. Simulations always start from rest at *t* = 0.",
                      Transient) = {};
+
+  PALACE_SCHEMA_DESC(BoundaryMode,
+                     "Configuration for boundary mode analysis. Only relevant when "
+                     "[`/Problem/Type`](@ref config-problem-type) is "
+                     "`\"BoundaryMode\"`.",
+                     BoundaryMode) = {};
 
   PALACE_SCHEMA_DESC(Linear,
                      "Configuration for the linear solver used by all simulation types.",

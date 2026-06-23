@@ -27,6 +27,8 @@ namespace palace::schema
 {
 
 using Vector3 = std::array<double, 3>;
+using ScalarOrVector3 = rfl::Variant<double, Vector3>;
+using ExcitationIndex = rfl::Variant<bool, palace::schema::utils::Min<int, 0>>;
 
 // Shared alias for "list of integer attributes." Palace's hand-written schema
 // defines `#/$defs/Attributes` with a `minItems: 1` constraint and $refs it
@@ -114,7 +116,9 @@ PALACE_SCHEMA_ENUM(ProblemType,
                    (Electrostatic, "Perform an electrostatic analysis to compute the "
                                    "capacitance matrix for a set of voltage terminals."),
                    (Magnetostatic, "Perform a magnetostatic analysis to compute the "
-                                   "inductance matrix for a set of current sources."));
+                                   "inductance matrix for a set of current sources."),
+                   (BoundaryMode,
+                    "Compute waveguide or transmission-line boundary modes."));
 
 // --- Boundary / shared ------------------------------------------------------
 
@@ -142,6 +146,17 @@ PALACE_SCHEMA_ENUM(InterfaceDielectric,
                    (MA, "Use metal-air interface boundary conditions."),
                    (MS, "Use metal-substrate interface boundary conditions."),
                    (SA, "Use substrate-air interface boundary conditions."));
+
+PALACE_SCHEMA_ENUM(
+    IncidentPolarization,
+    (TE, "Transverse electric (s-polarization): electric field perpendicular to the "
+         "plane of incidence."),
+    (TM, "Transverse magnetic (p-polarization): electric field in the plane of "
+         "incidence."),
+    (RHC, "Right-hand circular polarization: equal TE/TM superposition with a 90° phase "
+          "shift."),
+    (LHC, "Left-hand circular polarization: equal TE/TM superposition with a -90° phase "
+          "shift."));
 
 // --- Solver section --------------------------------------------------------
 

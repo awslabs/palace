@@ -72,6 +72,22 @@ void FindAllSchemasByKey(const json &schema, const std::string &key, const json 
   // Track $defs from this level (carried down so nested $ref can resolve).
   const json &defs = schema.contains("$defs") ? schema["$defs"] : root_defs;
 
+  // The generated schema root is a $ref into $defs, and nested property bodies
+  // can also be pure references. Follow local refs before looking for child
+  // properties so named-fragment validation works with the single-file schema.
+  if (auto ref_it = schema.find("$ref"); ref_it != schema.end() && ref_it->is_string())
+  {
+    const auto ref_raw = ref_it->get<std::string>();
+    if (ref_raw.rfind("#/$defs/", 0) == 0)
+    {
+      const auto def_name = ref_raw.substr(8);  // strlen("#/$defs/")
+      if (defs.is_object() && defs.contains(def_name))
+      {
+        FindAllSchemasByKey(defs[def_name], key, defs, results, depth + 1);
+      }
+    }
+  }
+
   // Check properties at this level.
   auto props_it = schema.find("properties");
   if (props_it != schema.end() && props_it->contains(key))
@@ -269,6 +285,24 @@ json FindEnumInSchema(const json &schema, const std::string &ptr)
   return json();
 }
 
+std::string ValidateBoundaryMutualExclusion(const json &boundaries)
+{
+  if (!boundaries.is_object())
+  {
+    return "";
+  }
+  if (boundaries.contains("PEC") && boundaries.contains("Ground"))
+  {
+    return "At [\"Boundaries\"]: properties 'PEC' and 'Ground' are mutually exclusive\n";
+  }
+  if (boundaries.contains("PMC") && boundaries.contains("ZeroCharge"))
+  {
+    return "At [\"Boundaries\"]: properties 'PMC' and 'ZeroCharge' are mutually "
+           "exclusive\n";
+  }
+  return "";
+}
+
 }  // namespace
 
 // Custom error handler that formats errors with documentation-style paths.
@@ -354,6 +388,15 @@ public:
 
 std::string ValidateConfig(const nlohmann::json &config)
 {
+  if (auto boundaries = config.find("Boundaries"); boundaries != config.end())
+  {
+    auto err = ValidateBoundaryMutualExclusion(*boundaries);
+    if (!err.empty())
+    {
+      return err;
+    }
+  }
+
   const auto &schema_map = schema::GetSchemaMap();
   auto it = schema_map.find(root_schema_file);
   if (it == schema_map.end())
@@ -391,6 +434,15 @@ std::string ValidateConfig(const nlohmann::json &config)
 
 std::string ValidateConfig(const nlohmann::json &config, const std::string &schema_key)
 {
+  if (schema_key == "Boundaries")
+  {
+    auto err = ValidateBoundaryMutualExclusion(config);
+    if (!err.empty())
+    {
+      return err;
+    }
+  }
+
   const auto &schema_map = schema::GetSchemaMap();
   auto it = schema_map.find(root_schema_file);
   if (it == schema_map.end())

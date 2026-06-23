@@ -130,13 +130,12 @@ int main(int argc, char *argv[])
     std::cout.rdbuf(NULL);
   }
 
-  // Run the tests.
-  ceed::Initialize(ceed_backend.c_str(), PALACE_LIBCEED_JIT_SOURCE_DIR);
-
-  // Only print device info if not listing tests (for JSON output
+  // Only initialize libCEED and print device info if not listing tests (for JSON output
   // compatibility), needed for test discovery.
   if (!cfg.listTests)
   {
+    ceed::Initialize(ceed_backend.c_str(), PALACE_LIBCEED_JIT_SOURCE_DIR);
+
     std::ostringstream resource(std::stringstream::out);
 #ifdef PALACE_WITH_COVERAGE
     resource << "Built with code coverage for " << PALACE_WITH_COVERAGE << "\n";
@@ -147,7 +146,10 @@ int main(int argc, char *argv[])
   }
 
   result = session.run();
-  ceed::Finalize();
+  if (!cfg.listTests)
+  {
+    ceed::Finalize();
+  }
 
   // Finalize SLEPc/PETSc.
 #if defined(PALACE_WITH_SLEPC)

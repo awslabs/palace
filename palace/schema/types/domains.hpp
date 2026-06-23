@@ -9,11 +9,9 @@
 //
 // Deviations from PR 716's domains.json for Phase 1:
 //
-//   - Permeability / Permittivity / LossTan / Conductivity: PR 716 accepts
-//     scalar-or-3-array via `oneOf`. reflect-cpp cannot emit a `oneOf` of
-//     unlike primitive vs array shapes from a single C++ type; we standardize
-//     on the 3-array form here. Users migrating from scalar notation must
-//     expand `2.0` to `[2.0, 2.0, 2.0]`.
+//   - Permeability / Permittivity / LossTan / Conductivity accept either a
+//     scalar or a 3-array. Palace's runtime expands scalars to isotropic
+//     material data, so the schema mirrors that wire format with a variant.
 //
 //   - `CurrentDipole.Direction` uses the `palace::schema::DipoleDirection`
 //     alias (Cartesian axis-keyword string OR 3-array) from `common.hpp` —
@@ -45,31 +43,23 @@ struct Material
   PALACE_SCHEMA_DESC(Permeability,
                      "Relative permeability for this material. Scalar or vector of 3 "
                      "coefficients corresponding to each of `\"MaterialAxes\"`.",
-                     Vector3) = {
-    {1.0, 1.0, 1.0}
-  };
+                     ScalarOrVector3) = 1.0;
 
   PALACE_SCHEMA_DESC(Permittivity,
                      "Relative permittivity for this material. Scalar or vector of 3 "
                      "coefficients corresponding to each of `\"MaterialAxes\"`.",
-                     Vector3) = {
-    {1.0, 1.0, 1.0}
-  };
+                     ScalarOrVector3) = 1.0;
 
   PALACE_SCHEMA_DESC(LossTan,
                      "Loss tangent for this material. Scalar or vector of 3 coefficients "
                      "corresponding to each of `\"MaterialAxes\"`.",
-                     Vector3) = {
-    {0.0, 0.0, 0.0}
-  };
+                     ScalarOrVector3) = 0.0;
 
   PALACE_SCHEMA_DESC(Conductivity,
                      "Electrical conductivity for this material, S/m. Activates the Ohmic "
                      "loss model in this domain. Scalar or vector of 3 coefficients "
                      "corresponding to each of `\"MaterialAxes\"`.",
-                     Vector3) = {
-    {0.0, 0.0, 0.0}
-  };
+                     ScalarOrVector3) = 0.0;
 
   PALACE_SCHEMA_DESC(LondonDepth,
                      "London penetration depth for this material, specified in mesh length "

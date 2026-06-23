@@ -30,10 +30,12 @@ namespace
 // the mesh at runtime, `MaterialAxes`/`Center` carry opt-in semantics where absence
 // is meaningful).
 //
-// `schema_filename` is the key in `schema::GetSchemaMap()` (e.g. "config/model.json").
-// `pointer` is a JSON Pointer into that schema document selecting the scope to walk
-// (e.g. "" for the top of model.json, "/properties/Refinement" for the nested
-// Refinement object, or "/properties/Conductivity/items" for an array element).
+// `schema_filename` may be an old per-section schema path (e.g. "config/model.json").
+// The generated schema is now a single config-schema.json with per-section shapes under
+// `$defs`; this helper maps the legacy section path to the corresponding `$defs` scope.
+// `pointer` is a JSON Pointer into that selected scope (e.g. "" for the top of Model,
+// "/properties/Refinement" for the nested Refinement object, or
+// "/properties/Conductivity/items" for an array element).
 //
 // Use this in round-trip tests to catch the case where someone adds a new optional
 // schema property without wiring `ConcretizeDefaults` to emit it.
@@ -43,9 +45,37 @@ std::vector<std::string> SchemaCoverageGaps(const std::string &schema_filename,
                                             const std::set<std::string> &skip = {})
 {
   const auto &schema_map = schema::GetSchemaMap();
-  auto it = schema_map.find(schema_filename);
+  auto it = schema_map.find("config-schema.json");
   REQUIRE(it != schema_map.end());
   const json schema = json::parse(it->second);
+
+  auto legacy_scope = [](const std::string &filename) -> std::string
+  {
+    if (filename == "config/model.json")
+      return "Model";
+    if (filename == "config/boundaries.json")
+      return "Boundaries";
+    if (filename == "config/solver.json")
+      return "Solver";
+    if (filename == "config/domains.json")
+      return "Domains";
+    if (filename == "config/problem.json")
+      return "Problem";
+    return "";
+  };
+
+  const json *scope = &schema;
+  const std::string def_name = legacy_scope(schema_filename);
+  if (!def_name.empty())
+  {
+    REQUIRE(schema.contains("$defs"));
+    REQUIRE(schema.at("$defs").contains(def_name));
+    scope = &schema.at("$defs").at(def_name);
+  }
+  else
+  {
+    REQUIRE(schema_filename == "config-schema.json");
+  }
 
   // Resolve an in-document `#/$defs/...` reference against the root schema. After the
   // hoist, named shapes live under `$defs` and are reached via `$ref`, so a raw JSON
@@ -71,7 +101,8 @@ std::vector<std::string> SchemaCoverageGaps(const std::string &schema_filename,
   // the hoist into Attributes/Elements variants) is treated as the union of its arms'
   // properties, with `required` the *intersection* across arms — a field required in
   // only one arm is optional overall, matching the pre-hoist single-object schema.
-  const json &resolved = resolve_ref(schema.at(json::json_pointer(pointer)));
+  const json &selected = pointer.empty() ? *scope : scope->at(json::json_pointer(pointer));
+  const json &resolved = resolve_ref(selected);
   std::vector<json> arms;
   if (auto cit = resolved.find("oneOf"); cit != resolved.end())
   {
