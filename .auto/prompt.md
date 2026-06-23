@@ -183,6 +183,16 @@ Acceptance now requires runtime validation, not just timing. `.auto/checks.sh` r
 
 - GPU regression: `PALACE_DEVICE=GPU`, `NUM_PROC_TEST=$PALACE_AR_GPU_NP` (defaults to all GPUs)
 - CPU regression: `PALACE_DEVICE=CPU`, `NUM_PROC_TEST=$PALACE_AR_CPU_NP` (defaults to `nproc`, 96 on this host)
-- Default validation cases: `spheres rings cpw/lumped_uniform`
+- Default acceptance validation cases: `spheres rings cpw/lumped_uniform cpw/wave_uniform antenna/antenna_short_dipole`. Smaller subsets are allowed during exploratory iteration, but a commit cannot be logged as `keep` unless this full acceptance set passes on both all-GPU and CPU validation.
 
 Only keep a commit if the all-GPU metric improves and both regression checks pass. If a runtime check fails, fix or revert before logging `keep`.
+
+
+## Acceptance validation coverage
+Exploratory experiments may use smaller subsets while debugging, but accepted/kept commits must pass `.auto/checks.sh` with the full default validation set:
+
+```text
+spheres rings cpw/lumped_uniform cpw/wave_uniform antenna/antenna_short_dipole
+```
+
+Coverage rationale: `spheres` covers electrostatic electric `SURFACE_FLUX`; `rings` covers magnetostatic magnetic `SURFACE_FLUX`; `cpw/lumped_uniform` covers driven lumped-port power, explicit `SURFACE_FLUX`, `Dielectric`/EPR, and `FarField`; `cpw/wave_uniform` covers wave-port power plus CPW flux/EPR; `antenna/antenna_short_dipole` gives an independent driven far-field regression.
