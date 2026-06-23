@@ -175,3 +175,14 @@ METRIC cpw_farfield_groups=8
 ```
 
 Use the next `run_experiment` baseline as the official autoresearch baseline, but these values are a sanity check for whether measurement is working.
+
+## p4d validation policy update
+This session has moved to `/home/ubuntu/palace` on p4d.24xlarge (`16.59.126.120`, 8x A100, 96 vCPUs). The primary performance metric must run on all GPUs by default: `.auto/measure.sh` uses `PALACE_AR_GPU_NP` or, if unset, `nvidia-smi -L | wc -l` (8 on this host). Do not optimize for a single-rank/single-GPU metric.
+
+Acceptance now requires runtime validation, not just timing. `.auto/checks.sh` runs `git diff --check`, then focused Palace regression tests on both GPU and CPU:
+
+- GPU regression: `PALACE_DEVICE=GPU`, `NUM_PROC_TEST=$PALACE_AR_GPU_NP` (defaults to all GPUs)
+- CPU regression: `PALACE_DEVICE=CPU`, `NUM_PROC_TEST=$PALACE_AR_CPU_NP` (defaults to `nproc`, 96 on this host)
+- Default validation cases: `spheres rings cpw/lumped_uniform`
+
+Only keep a commit if the all-GPU metric improves and both regression checks pass. If a runtime check fails, fix or revert before logging `keep`.

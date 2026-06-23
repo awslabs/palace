@@ -3,23 +3,22 @@ set -euo pipefail
 
 RUN_ID="${1:?run id required}"
 CASE_SET="${2:-cpw}"
-REMOTE_ROOT="/home/ubuntu/palace"
-SPACK_SETUP="/home/ubuntu/spack/share/spack/setup-env.sh"
-API="/tmp/libcuda_api_counter.so"
+ROOT="$(git rev-parse --show-toplevel)"
+SPACK_SETUP="${SPACK_SETUP:-/home/ubuntu/spack-development/spack/share/spack/setup-env.sh}"
+BUILD_JOBS="${PALACE_AR_BUILD_JOBS:-32}"
+GPU_NP="${PALACE_AR_GPU_NP:-$(nvidia-smi -L | wc -l)}"
+API="${PALACE_AR_CUDA_API_COUNTER:-/tmp/libcuda_api_counter.so}"
 
 source "$SPACK_SETUP"
-cd "$REMOTE_ROOT"
+cd "$ROOT"
 
-spack -e "$REMOTE_ROOT" install -j4 >/tmp/palace_ar_build_${RUN_ID}.log 2>&1
-PREFIX="$(spack -e "$REMOTE_ROOT" location -i local.palace)"
+spack -e "$ROOT" install -j"$BUILD_JOBS" >/tmp/palace_ar_build_${RUN_ID}.log 2>&1
+PREFIX="$(spack -e "$ROOT" location -i local.palace)"
+WRAPPER="$PREFIX/bin/palace"
 BIN="$PREFIX/bin/palace-x86_64.bin"
-if [[ ! -x "$BIN" ]]; then
-  echo "ERROR missing Palace binary: $BIN" >&2
+if [[ ! -x "$WRAPPER" || ! -x "$BIN" ]]; then
+  echo "ERROR missing Palace executable(s) under: $PREFIX" >&2
   tail -80 /tmp/palace_ar_build_${RUN_ID}.log >&2 || true
-  exit 2
-fi
-if [[ ! -f "$API" ]]; then
-  echo "ERROR missing CUDA API counter: $API" >&2
   exit 2
 fi
 
@@ -28,7 +27,7 @@ import json, re, sys
 from pathlib import Path
 run_id=sys.argv[1]
 case_set=sys.argv[2]
-root=Path('/home/ubuntu/palace')
+root=Path.cwd()
 
 def labels_for(case_set):
     if case_set == 'cpw':
@@ -82,10 +81,14 @@ run_case() {
   local log="/tmp/palace_ar_${label}_${RUN_ID}.log"
   rm -rf "$dir/postpro/autoresearch_${label}_${RUN_ID}"
   set +e
-  (cd "$dir" && env PALACE_SURFACE_PROFILE=1 LD_PRELOAD="$API" "$BIN" "$cfg") >"$log" 2>&1
+  if [[ -f "$API" ]]; then
+    (cd "$dir" && env PALACE_SURFACE_PROFILE=1 LD_PRELOAD="$API" "$WRAPPER" -np "$GPU_NP" "$cfg") >"$log" 2>&1
+  else
+    (cd "$dir" && env PALACE_SURFACE_PROFILE=1 "$WRAPPER" -np "$GPU_NP" "$cfg") >"$log" 2>&1
+  fi
   local rc=$?
   set -e
-  echo "CASE_LOG $label $log rc=$rc"
+  echo "CASE_LOG $label $log rc=$rc np=$GPU_NP"
   if [[ $rc -ne 0 ]]; then
     tail -120 "$log" >&2 || true
     return $rc
@@ -95,12 +98,12 @@ run_case() {
 rc=0
 case "$CASE_SET" in
   cpw)
-    run_case cpw "$REMOTE_ROOT/examples/cpw" || rc=$?
+    run_case cpw "$ROOT/examples/cpw" || rc=$?
     ;;
   all)
-    run_case spheres "$REMOTE_ROOT/examples/spheres" || rc=$?
-    run_case rings "$REMOTE_ROOT/examples/rings" || rc=$?
-    run_case cpw "$REMOTE_ROOT/examples/cpw" || rc=$?
+    run_case spheres "$ROOT/examples/spheres" || rc=$?
+    run_case rings "$ROOT/examples/rings" || rc=$?
+    run_case cpw "$ROOT/examples/cpw" || rc=$?
     ;;
   *)
     echo "ERROR unknown PALACE_AR_CASES=$CASE_SET" >&2
@@ -108,14 +111,15 @@ case "$CASE_SET" in
     ;;
 esac
 
-python3 - "$RUN_ID" "$rc" "$CASE_SET" <<'PY'
+python3 - "$RUN_ID" "$rc" "$CASE_SET" "$GPU_NP" <<'PY'
 import re, sys
 from pathlib import Path
 run_id=sys.argv[1]
 rc=int(sys.argv[2])
 case_set=sys.argv[3]
+gpu_np=int(sys.argv[4])
 labels=['cpw'] if case_set == 'cpw' else ['spheres','rings','cpw']
-metrics={}
+metrics={'gpu_np': gpu_np}
 errors=[]
 
 def last_float(pattern, lines):
@@ -148,7 +152,7 @@ for label in labels:
         errors.append(f'missing log {path}')
         continue
     lines=path.read_text(errors='replace').splitlines()
-    for needle in ['MFEM abort', 'CUDA error', 'CUDA_ERROR']:
+    for needle in ['MFEM abort', 'CUDA error', 'CUDA_ERROR', 'MPI_ABORT']:
         if any(needle in line for line in lines):
             errors.append(f'{label}: found {needle}')
     metrics[f'{label}_total']=last_float(r'^Total\s+([0-9.]+)\s', lines)
