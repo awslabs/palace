@@ -257,6 +257,21 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
   {
     return power_func->EvalComplexPower(E, B);
   }
+  return GetPowerLegacy(E, B);
+}
+
+std::complex<double> LumpedPortData::GetPowerLegacy(GridFunction &E,
+                                                    GridFunction &B) const
+{
+  // Host fallback matching the original coefficient/linear-form implementation. This is
+  // still the cheapest path for very small port surfaces before libCEED JIT costs can be
+  // amortized over many samples.
+  MFEM_VERIFY((E.HasImag() && B.HasImag()) || (!E.HasImag() && !B.HasImag()),
+              "Mismatch between real- and complex-valued E and B fields in port power "
+              "calculation!");
+  const bool has_imag = E.HasImag();
+  auto &nd_fespace = *E.ParFESpace();
+  const auto &mesh = *nd_fespace.GetParMesh();
 
   SumVectorCoefficient fbr(mesh.SpaceDimension()), fbi(mesh.SpaceDimension());
   mfem::Array<int> attr_list;
@@ -504,6 +519,15 @@ std::map<int, std::complex<double>> LumpedPortOperator::GetPowers(GridFunction &
   {
     return powers;
   }
+  auto ComputeLegacyPowers = [&]()
+  {
+    for (const auto &[idx, data] : ports)
+    {
+      powers.emplace(idx, data.GetPowerLegacy(E, B));
+    }
+    return powers;
+  };
+  const int eval_count = batched_power_eval_count++;
 
   // Assemble one union-surface POWER functional for all disjoint lumped ports. The
   // SurfaceFunctional still accumulates per-boundary-element slots; EvalComplexPowerByAttribute
@@ -558,6 +582,29 @@ std::map<int, std::complex<double>> LumpedPortOperator::GetPowers(GridFunction &
       {
         const auto &data0 = ports.begin()->second;
         mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
+
+        int num_bdr_elems = 0;
+        for (int i = 0; i < mesh.GetNBE(); i++)
+        {
+          if (attr_marker[mesh.GetBdrAttribute(i) - 1])
+          {
+            num_bdr_elems++;
+          }
+        }
+        Mpi::GlobalSum(1, &num_bdr_elems, nd_fespace.GetComm());
+
+        // For tiny port surfaces, the host coefficient path is faster than paying a
+        // fresh libCEED/NVRTC setup cost. Delay JIT until enough repeated evaluations
+        // have occurred to amortize it; long driven sweeps still switch to the batched
+        // device path automatically.
+        constexpr int tiny_port_bdr_elem_threshold = 128;
+        constexpr int legacy_eval_threshold = 2;
+        if (num_bdr_elems <= tiny_port_bdr_elem_threshold &&
+            eval_count < legacy_eval_threshold)
+        {
+          return ComputeLegacyPowers();
+        }
+
         mfem::Vector x0(mesh.SpaceDimension());
         x0 = 0.0;
         batched_power_func = std::make_unique<SurfaceFunctional>(

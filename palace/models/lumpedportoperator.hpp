@@ -110,6 +110,7 @@ public:
   double GetExcitationVoltage() const;
 
   std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
+  std::complex<double> GetPowerLegacy(GridFunction &E, GridFunction &B) const;
   std::complex<double> GetSParameter(GridFunction &E) const;
   std::complex<double> GetVoltage(GridFunction &E) const;
 };
@@ -131,6 +132,7 @@ private:
   mutable std::unique_ptr<SurfaceFunctional> batched_power_func;
   mutable mfem::Array<int> batched_power_attr_to_port;
   mutable std::vector<int> batched_power_port_indices;
+  mutable int batched_power_eval_count = 0;
   mutable bool batched_power_unavailable = false;
 
   void SetUpBoundaryProperties(const std::map<int, config::LumpedPortData> &lumpedport,
