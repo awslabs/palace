@@ -64,10 +64,10 @@ struct SamplesLinear
   PALACE_SCHEMA_TAG(Type, "Linear", "Linearly-spaced frequency samples.");
 
   PALACE_SCHEMA_DESC_REQUIRED(MinFreq, "Lower bound, GHz.",
-                              palace::schema::utils::Min<double, 0.0>) = 0.0;
+                              palace::schema::utils::Min<double, 0>) = 0.0;
 
   PALACE_SCHEMA_DESC_REQUIRED(MaxFreq, "Upper bound, GHz.",
-                              palace::schema::utils::Min<double, 0.0>) = 0.0;
+                              palace::schema::utils::Min<double, 0>) = 0.0;
 
   PALACE_SCHEMA_DESC(FreqStep, "Step size, GHz. Mutually exclusive with `\"NSample\"`.",
                      double) = 0.0;
@@ -86,10 +86,10 @@ struct SamplesLog
   PALACE_SCHEMA_TAG(Type, "Log", "Logarithmically-spaced frequency samples.");
 
   PALACE_SCHEMA_DESC_REQUIRED(MinFreq, "Lower bound, GHz.",
-                              palace::schema::utils::XMin<double, 0.0>) = 1.0;
+                              palace::schema::utils::XMin<double, 0>) = 1.0;
 
   PALACE_SCHEMA_DESC_REQUIRED(MaxFreq, "Upper bound, GHz.",
-                              palace::schema::utils::XMin<double, 0.0>) = 1.0;
+                              palace::schema::utils::XMin<double, 0>) = 1.0;
 
   PALACE_SCHEMA_DESC_REQUIRED(NSample, "Number of samples.",
                               palace::schema::utils::Min<int, 1>) = 1;
@@ -165,7 +165,7 @@ struct Driven
                      "model is solved at each frequency step. A positive value ensures "
                      "the reduced-order model is reliable relative to the full-order "
                      "model in the frequency band of interest.",
-                     palace::schema::utils::Min<double, 0.0>) = 0.0;
+                     palace::schema::utils::Min<double, 0>) = 0.0;
 
   PALACE_SCHEMA_DESC(AdaptiveMaxSamples,
                      "Maximum number of frequency samples used to construct the "
@@ -210,10 +210,10 @@ struct Eigenmode
   PALACE_SCHEMA_DESC_REQUIRED(Target,
                               "(Nonzero) frequency target above which to search for "
                               "eigenvalues, GHz.",
-                              palace::schema::utils::XMin<double, 0.0>) = 1.0;
+                              palace::schema::utils::XMin<double, 0>) = 1.0;
 
   PALACE_SCHEMA_DESC(Tol, "Relative convergence tolerance for the eigenvalue solver.",
-                     palace::schema::utils::Min<double, 0.0>) = 1.0e-6;
+                     palace::schema::utils::Min<double, 0>) = 1.0e-6;
 
   PALACE_SCHEMA_DESC(MaxIts,
                      "Maximum number of iterations for the iterative eigenvalue solver. "
@@ -277,7 +277,7 @@ struct Eigenmode
   PALACE_SCHEMA_DESC_ADVANCED(LinearTol,
                               "Tolerance for the inner linear solve within the nonlinear "
                               "eigensolver.",
-                              palace::schema::utils::Min<double, 0.0>) = 1.0e-3;
+                              palace::schema::utils::Min<double, 0>) = 1.0e-3;
 
   PALACE_SCHEMA_DESC_ADVANCED(
       PreconditionerLag, "Number of eigensolver iterations between preconditioner updates.",
@@ -286,7 +286,7 @@ struct Eigenmode
   PALACE_SCHEMA_DESC_ADVANCED(
       PreconditionerLagTol,
       "Residual tolerance below which preconditioner updates are skipped.",
-      palace::schema::utils::Min<double, 0.0>) = 1.0e-4;
+      palace::schema::utils::Min<double, 0>) = 1.0e-4;
 
   PALACE_SCHEMA_DESC_ADVANCED(MaxRestart, "Maximum number of restarts for the eigensolver.",
                               palace::schema::utils::Min<int, 0>) = 2;
@@ -318,10 +318,10 @@ struct Transient
                      double) = 0.0;
 
   PALACE_SCHEMA_DESC_REQUIRED(MaxTime, "End of simulation time interval, ns.",
-                              palace::schema::utils::XMin<double, 0.0>) = 1.0;
+                              palace::schema::utils::XMin<double, 0>) = 1.0;
 
   PALACE_SCHEMA_DESC_REQUIRED(TimeStep, "Uniform time step size, ns.",
-                              palace::schema::utils::XMin<double, 0.0>) = 1.0e-2;
+                              palace::schema::utils::XMin<double, 0>) = 1.0e-2;
 
   PALACE_SCHEMA_DESC(SaveStep,
                      "Controls how often, in number of time steps, to save computed "
@@ -340,12 +340,12 @@ struct Transient
   PALACE_SCHEMA_DESC(RelTol,
                      "Relative tolerance for adaptive time-stepping. Only relevant when "
                      "`\"Type\"` is `\"ARKODE\"` or `\"CVODE\"`.",
-                     palace::schema::utils::XMin<double, 0.0>) = 1.0e-4;
+                     palace::schema::utils::XMin<double, 0>) = 1.0e-4;
 
   PALACE_SCHEMA_DESC(AbsTol,
                      "Absolute tolerance for adaptive time-stepping. Only relevant when "
                      "`\"Type\"` is `\"ARKODE\"` or `\"CVODE\"`.",
-                     palace::schema::utils::XMin<double, 0.0>) = 1.0e-9;
+                     palace::schema::utils::XMin<double, 0>) = 1.0e-9;
 };
 
 // --- Electrostatic / Magnetostatic -----------------------------------------
@@ -388,7 +388,7 @@ struct Linear
   PALACE_SCHEMA_DESC(Tol,
                      "Relative residual convergence tolerance for the iterative linear "
                      "solver.",
-                     palace::schema::utils::Min<double, 0.0>) = 1.0e-6;
+                     palace::schema::utils::Min<double, 0>) = 1.0e-6;
 
   PALACE_SCHEMA_DESC(MaxIts,
                      "Maximum number of iterations for the iterative linear solver.",
@@ -445,11 +445,11 @@ struct Linear
 
   PALACE_SCHEMA_DESC_ADVANCED(MGSmoothEigScaleMax,
                               "Maximum eigenvalue scale for the Chebyshev smoother.",
-                              palace::schema::utils::XMin<double, 0.0>) = 1.0;
+                              palace::schema::utils::XMin<double, 0>) = 1.0;
 
   PALACE_SCHEMA_DESC_ADVANCED(MGSmoothEigScaleMin,
                               "Minimum eigenvalue scale for the Chebyshev smoother.",
-                              palace::schema::utils::Min<double, 0.0>) = 0.0;
+                              palace::schema::utils::Min<double, 0>) = 0.0;
 
   PALACE_SCHEMA_DESC_ADVANCED(MGSmoothChebyshev4th,
                               "Use 4th-kind Chebyshev polynomial smoother.", bool) = true;
@@ -502,7 +502,7 @@ struct Linear
 
   PALACE_SCHEMA_DESC_ADVANCED(STRUMPACKCompressionTol,
                               "Tolerance for STRUMPACK lossy compression.",
-                              palace::schema::utils::Min<double, 0.0>) = 1.0e-3;
+                              palace::schema::utils::Min<double, 0>) = 1.0e-3;
 
   PALACE_SCHEMA_DESC_ADVANCED(STRUMPACKLossyPrecision,
                               "Precision bits for STRUMPACK ZFP lossy compression.",
@@ -539,7 +539,7 @@ struct Linear
                      "eigenmode simulation type. Ignored when a nonzero Floquet wave "
                      "vector is specified or when a nonzero [LondonDepth]"
                      "(@ref config-domains-materials-londondepth) is used.",
-                     palace::schema::utils::Min<double, 0.0>) = 1.0e-12;
+                     palace::schema::utils::Min<double, 0>) = 1.0e-12;
 
   PALACE_SCHEMA_DESC(DivFreeMaxIts,
                      "Maximum number of iterations for divergence-free cleaning. "
@@ -549,7 +549,7 @@ struct Linear
   PALACE_SCHEMA_DESC(EstimatorTol,
                      "Relative tolerance for the flux projection solve used in the "
                      "error estimate calculation.",
-                     palace::schema::utils::Min<double, 0.0>) = 1.0e-6;
+                     palace::schema::utils::Min<double, 0>) = 1.0e-6;
 
   PALACE_SCHEMA_DESC(EstimatorMaxIts,
                      "Maximum number of iterations for the flux projection solve used "
@@ -571,7 +571,7 @@ struct BoundaryMode
 {
   PALACE_SCHEMA_DESC_REQUIRED(Freq,
                               "Operating frequency for boundary mode analysis, in GHz.",
-                              palace::schema::utils::XMin<double, 0.0>) = 1.0;
+                              palace::schema::utils::XMin<double, 0>) = 1.0;
 
   PALACE_SCHEMA_DESC(N, "Desired number of boundary modes.",
                      palace::schema::utils::XMin<int, 0>) = 1;
@@ -582,10 +582,10 @@ struct BoundaryMode
   PALACE_SCHEMA_DESC(Target,
                      "Target effective index for the eigenvalue solver "
                      "shift-and-invert spectral transformation.",
-                     palace::schema::utils::Min<double, 0.0>) = 0.0;
+                     palace::schema::utils::Min<double, 0>) = 0.0;
 
   PALACE_SCHEMA_DESC(Tol, "Relative tolerance for the eigenvalue solver.",
-                     palace::schema::utils::XMin<double, 0.0>) = 1.0e-6;
+                     palace::schema::utils::XMin<double, 0>) = 1.0e-6;
 
   PALACE_SCHEMA_DESC(MaxSize,
                      "Eigenvalue solver subspace dimension or maximum dimension before "

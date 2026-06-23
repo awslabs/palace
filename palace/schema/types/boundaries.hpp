@@ -114,15 +114,15 @@ struct Conductivity
 
   PALACE_SCHEMA_DESC_REQUIRED(Conductivity,
                               "Electrical conductivity for this boundary, S/m.",
-                              palace::schema::utils::Min<double, 0.0>) = 0.0;
+                              palace::schema::utils::Min<double, 0>) = 0.0;
 
   PALACE_SCHEMA_DESC(Permeability, "Relative permeability for this boundary.",
-                     palace::schema::utils::Min<double, 0.0>) = 1.0;
+                     palace::schema::utils::Min<double, 0>) = 1.0;
 
   PALACE_SCHEMA_DESC(Thickness,
                      "Optional conductor thickness in mesh length units. Activates a "
                      "finite-thickness boundary condition for metal.",
-                     palace::schema::utils::Min<double, 0.0>) = 0.0;
+                     palace::schema::utils::Min<double, 0>) = 0.0;
 
   PALACE_SCHEMA_DESC(External,
                      "Whether this boundary is on the exterior of the computational "
@@ -285,7 +285,7 @@ struct WavePort
   PALACE_SCHEMA_DESC(Offset,
                      "Offset distance used for S-parameter de-embedding for this wave "
                      "port, specified in mesh length units.",
-                     palace::schema::utils::Min<double, 0.0>) = 0.0;
+                     palace::schema::utils::Min<double, 0>) = 0.0;
 
   PALACE_SCHEMA_DESC(SolverType,
                      "Eigenvalue solver for computing the boundary mode. Accepts the "
@@ -316,12 +316,12 @@ struct WavePort
       KSPTol,
       "Tolerance for the linear solver used in the wave port boundary "
       "mode analysis.",
-      palace::schema::utils::XMin<double, 0.0>) = 1.0e-8;
+      palace::schema::utils::XMin<double, 0>) = 1.0e-8;
 
   PALACE_SCHEMA_DESC_ADVANCED(EigenTol,
                               "Tolerance for the eigenvalue solver used in the wave port "
                               "boundary mode analysis.",
-                              palace::schema::utils::XMin<double, 0.0>) = 1.0e-6;
+                              palace::schema::utils::XMin<double, 0>) = 1.0e-6;
 
   PALACE_SCHEMA_DESC_ADVANCED(MaxSize,
                               "Eigenvalue solver subspace dimension or maximum dimension "
@@ -484,7 +484,7 @@ struct Periodic
                      "with frequency across a driven sweep, preserving the incidence "
                      "angle; otherwise it is held constant. Only supported for driven "
                      "simulations.",
-                     palace::schema::utils::Min<double, 0.0>) = 0.0;
+                     palace::schema::utils::Min<double, 0>) = 0.0;
 
   PALACE_SCHEMA_DESC_REQUIRED(
       BoundaryPairs,
@@ -543,17 +543,17 @@ struct Dielectric
 
   PALACE_SCHEMA_DESC_REQUIRED(
       Thickness, "Thickness of this dielectric interface, in mesh length units.",
-      palace::schema::utils::Min<double, 0.0>) = 0.0;
+      palace::schema::utils::Min<double, 0>) = 0.0;
 
   PALACE_SCHEMA_DESC_REQUIRED(
       Permittivity,
       "Relative permittivity of this dielectric interface layer. This "
       "should be the interface layer permittivity for the specific "
       "\"Type\" of interface specified.",
-      palace::schema::utils::Min<double, 0.0>) = 0.0;
+      palace::schema::utils::Min<double, 0>) = 0.0;
 
   PALACE_SCHEMA_DESC(LossTan, "Loss tangent of this dielectric interface.",
-                     palace::schema::utils::Min<double, 0.0>) = 0.0;
+                     palace::schema::utils::Min<double, 0>) = 0.0;
 };
 
 struct FarFieldPostprocessing

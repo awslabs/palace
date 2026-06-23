@@ -50,7 +50,7 @@ struct Sphere
       palace::schema::utils::Min<int, 0>) = 0;
 
   PALACE_SCHEMA_DESC_REQUIRED(Radius, "Radius of the sphere, in mesh length units.",
-                              palace::schema::utils::XMin<double, 0.0>) = 1.0;
+                              palace::schema::utils::XMin<double, 0>) = 1.0;
 
   PALACE_SCHEMA_DESC_REQUIRED(
       Center, "Center coordinates `[x, y, z]` of the sphere, in mesh length units.",
@@ -65,7 +65,7 @@ struct Refinement
                      "Stop adaptive mesh refinement (AMR) when the norm of the estimated "
                      "error falls below this value. The error is reported in "
                      "`error-indicators.csv`.",
-                     palace::schema::utils::XMin<double, 0.0>) = 1.0e-2;
+                     palace::schema::utils::XMin<double, 0>) = 1.0e-2;
 
   PALACE_SCHEMA_DESC(MaxIts, "Maximum number of AMR iterations to perform.",
                      palace::schema::utils::Min<int, 0>) = 0;
@@ -75,7 +75,7 @@ struct Refinement
                      "adapted mesh exceeds this value no further adaptation will occur. A "
                      "value less than 1 means that no maximum size constraint will be "
                      "imposed.",
-                     palace::schema::utils::Min<double, 0.0>) = 0.0;
+                     palace::schema::utils::Min<double, 0>) = 0.0;
 
   PALACE_SCHEMA_DESC(UpdateFraction,
                      "Dörfler marking fraction used to specify which elements to refine. "
@@ -83,7 +83,7 @@ struct Refinement
                      "make up \"UpdateFraction\" of the total error in the mesh. A larger "
                      "value will refine more elements per iteration, at the cost of the "
                      "final mesh being less efficient.",
-                     palace::schema::utils::Open<double, 0.0, 1.0>) = 0.7;
+                     palace::schema::utils::Open<double, 0, 1>) = 0.7;
 
   PALACE_SCHEMA_DESC(Nonconformal,
                      "Use nonconformal refinement in adaptation. Required for non-simplex "
@@ -98,7 +98,7 @@ struct Refinement
       MaximumImbalance,
       "Maximum ratio of elements between the most- and least-loaded MPI "
       "ranks before repartitioning.",
-      palace::schema::utils::Min<double, 1.0>) = 1.1;
+      palace::schema::utils::Min<double, 1>) = 1.1;
 
   PALACE_SCHEMA_DESC_ADVANCED(SaveAdaptIterations,
                               "Save postprocessing results from each AMR iteration in a "
@@ -149,7 +149,7 @@ struct Model
   PALACE_SCHEMA_DESC(L0,
                      "Unit, relative to meters, for mesh vertex coordinates. For example, "
                      "a value of `1.0e-6` means the mesh coordinates are in μm.",
-                     palace::schema::utils::XMin<double, 0.0>) = 1.0e-6;
+                     palace::schema::utils::XMin<double, 0>) = 1.0e-6;
 
   PALACE_SCHEMA_DESC(Lc,
                      "Characteristic length scale used for nondimensionalization, "
@@ -194,7 +194,7 @@ struct Model
       CrackDisplacementFactor,
       "Displacement factor applied to cracked nodes as a fraction of the "
       "local element size.",
-      palace::schema::utils::Min<double, 0.0>) = 1.0e-12;
+      palace::schema::utils::Min<double, 0>) = 1.0e-12;
 
   PALACE_SCHEMA_DESC_ADVANCED(
       AddInterfaceBoundaryElements,
