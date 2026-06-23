@@ -106,7 +106,7 @@ The format of this changelog is based on
     second-order absorbing, surface conductivity) now evaluate the boundary conditions at
     the true complex frequency/eigenmode. Previously, the boundary conditions were
     evaluated using only the real component of the eigenmode.
-    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
+    [PR 778](https://github.com/awslabs/palace/pull/778).
 
 #### Performance Improvements
 
