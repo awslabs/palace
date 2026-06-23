@@ -362,6 +362,10 @@ FaceNbrFieldExchange::~FaceNbrFieldExchange()
   for (auto &group : export_groups)
   {
     PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
+    if (group.out_vec)
+    {
+      PalaceCeedCall(group.ceed, CeedVectorDestroy(&group.out_vec));
+    }
   }
 }
 

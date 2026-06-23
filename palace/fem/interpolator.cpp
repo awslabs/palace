@@ -176,6 +176,10 @@ public:
     for (auto &group : groups)
     {
       PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
+      if (group.out_vec)
+      {
+        PalaceCeedCall(group.ceed, CeedVectorDestroy(&group.out_vec));
+      }
     }
   }
 
@@ -185,22 +189,7 @@ public:
   std::vector<double> Eval(const mfem::ParGridFunction &U) const
   {
     local_out = 0.0;
-    for (const auto &[ceed, op, field_sources, ctx] : groups)
-    {
-      for (const auto &[name, source] : field_sources)
-      {
-        CeedOperatorField field;
-        CeedVector field_vec;
-        PalaceCeedCall(ceed, CeedOperatorGetFieldByName(op, name.c_str(), &field));
-        PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &field_vec));
-        ceed::InitCeedVector(U, ceed, &field_vec, false);
-      }
-      CeedVector out_vec;
-      ceed::InitCeedVector(local_out, ceed, &out_vec);
-      PalaceCeedCall(ceed, CeedOperatorApplyAdd(op, CEED_VECTOR_NONE, out_vec,
-                                                CEED_REQUEST_IMMEDIATE));
-      PalaceCeedCall(ceed, CeedVectorDestroy(&out_vec));
-    }
+    fem::ApplyAddGroupOperators(groups, {&U}, local_out);
     std::vector<double> vals(local_out.Size());
     const double *d = local_out.HostRead();
     std::copy(d, d + local_out.Size(), vals.begin());

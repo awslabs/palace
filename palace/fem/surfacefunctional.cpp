@@ -271,9 +271,9 @@ void fem::ApplyAddGroupOperators(const std::vector<fem::CeedGroupOperator> &grou
                                  const std::array<const Vector *, 4> &srcs,
                                  const Vector &out, const Vector *imported)
 {
-  for (const auto &[ceed, op, field_sources, ctx] : groups)
+  for (const auto &group : groups)
   {
-    for (const auto &[name, source] : field_sources)
+    for (const auto &[name, source] : group.field_sources)
     {
       // Source index 4 selects the imported face neighbor field values (see
       // SurfaceFunctional::face_nbr_exchange); the operator's restriction slices and
@@ -282,23 +282,34 @@ void fem::ApplyAddGroupOperators(const std::vector<fem::CeedGroupOperator> &grou
       MFEM_ASSERT(sv, "Missing source vector for libCEED field input!");
       CeedOperatorField field;
       CeedVector field_vec;
-      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(op, name.c_str(), &field));
-      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &field_vec));
-      ceed::InitCeedVector(*sv, ceed, &field_vec, false);
+      PalaceCeedCall(group.ceed,
+                     CeedOperatorGetFieldByName(group.op, name.c_str(), &field));
+      PalaceCeedCall(group.ceed, CeedOperatorFieldGetVector(field, &field_vec));
+      ceed::InitCeedVector(*sv, group.ceed, &field_vec, false);
     }
     CeedMemType out_mem;
-    PalaceCeedCall(ceed, CeedGetPreferredMemType(ceed, &out_mem));
+    PalaceCeedCall(group.ceed, CeedGetPreferredMemType(group.ceed, &out_mem));
     if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && out_mem == CEED_MEM_DEVICE)
     {
       out_mem = CEED_MEM_HOST;
     }
     auto *out_data = const_cast<Vector &>(out).ReadWrite(out_mem == CEED_MEM_DEVICE);
-    CeedVector out_vec;
-    PalaceCeedCall(ceed, CeedVectorCreate(ceed, out.Size(), &out_vec));
-    PalaceCeedCall(ceed, CeedVectorSetArray(out_vec, out_mem, CEED_USE_POINTER, out_data));
-    PalaceCeedCall(
-        ceed, CeedOperatorApplyAdd(op, CEED_VECTOR_NONE, out_vec, CEED_REQUEST_IMMEDIATE));
-    PalaceCeedCall(ceed, CeedVectorDestroy(&out_vec));
+    const CeedSize out_size = out.Size();
+    if (!group.out_vec || group.out_size != out_size)
+    {
+      if (group.out_vec)
+      {
+        PalaceCeedCall(group.ceed, CeedVectorDestroy(&group.out_vec));
+      }
+      PalaceCeedCall(group.ceed, CeedVectorCreate(group.ceed, out_size, &group.out_vec));
+      group.out_size = out_size;
+    }
+    PalaceCeedCall(group.ceed,
+                   CeedVectorSetArray(group.out_vec, out_mem, CEED_USE_POINTER, out_data));
+    PalaceCeedCall(group.ceed, CeedOperatorApplyAdd(group.op, CEED_VECTOR_NONE,
+                                                    group.out_vec,
+                                                    CEED_REQUEST_IMMEDIATE));
+    PalaceCeedCall(group.ceed, CeedVectorTakeArray(group.out_vec, out_mem, nullptr));
   }
 }
 
@@ -408,6 +419,10 @@ SurfaceFunctional::~SurfaceFunctional()
     {
       PalaceCeedCall(group.ceed, CeedQFunctionContextDestroy(&group.ctx));
     }
+    if (group.out_vec)
+    {
+      PalaceCeedCall(group.ceed, CeedVectorDestroy(&group.out_vec));
+    }
   }
 }
 
@@ -436,6 +451,10 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
       if (group.ctx)
       {
         PalaceCeedCall(group.ceed, CeedQFunctionContextDestroy(&group.ctx));
+      }
+      if (group.out_vec)
+      {
+        PalaceCeedCall(group.ceed, CeedVectorDestroy(&group.out_vec));
       }
     }
     groups.clear();
@@ -2063,6 +2082,10 @@ DomainFieldEvaluator::~DomainFieldEvaluator()
   for (auto &group : groups)
   {
     PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
+    if (group.out_vec)
+    {
+      PalaceCeedCall(group.ceed, CeedVectorDestroy(&group.out_vec));
+    }
   }
 }
 
