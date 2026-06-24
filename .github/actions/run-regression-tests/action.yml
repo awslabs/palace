@@ -92,33 +92,20 @@ runs:
 
         eval $(spack -e . load --sh palace)
 
-        # Extra Catch2 args baked into every generated ctest command: the
-        # linear solver to exercise (varied per job without rebuilding) and,
-        # on CUDA builds, the GPU device (which also restricts to np=1).
+        # The installed palace-unit-tests binary was built with
+        # PALACE_TEST_DATA_DIR pointing at the installed test data. Regression
+        # configs, meshes, and references live under that tree, so the split
+        # Spack jobs can run the installed binary directly.
         LINEAR_SOLVER="${{ inputs.linear-solver }}"
-        EXTRA_ARGS="--palace-linear-solver;${LINEAR_SOLVER:-Default}"
+        EXTRA_ARGS=(--palace-linear-solver "${LINEAR_SOLVER:-Default}")
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
-          EXTRA_ARGS="${EXTRA_ARGS};--device;cuda"
+          EXTRA_ARGS+=(--device cuda)
           export NUM_PROC_TEST=1
         fi
-        REGRESSION_PROCESSORS=$(( NUM_PROC_TEST * OMP_NUM_THREADS ))
 
-        BIN=$(command -v palace-unit-tests)
-        MPIEXEC=$(command -v mpirun)
-        GENERATOR="${GITHUB_WORKSPACE}/test/unit/regression/GenerateRegressionCTest.cmake"
-
-        # Generate a relocatable CTestTestfile for a Catch2 filter and drive it
-        # with ctest (per-case results, PROCESSORS-correct scheduling). Unlike a
-        # build-tree ctest, this works against the Spack-installed binary.
         run_group() {
-          local spec="$1" label="$2"
-          local dir
-          dir=$(mktemp -d)
-          cmake -D PALACE_UNIT_TESTS="$BIN" -D MPIEXEC="$MPIEXEC" \
-                -D NP="$NUM_PROC_TEST" -D PROCESSORS="$REGRESSION_PROCESSORS" \
-                -D OUTPUT_DIR="$dir" -D SPEC="$spec" -D LABEL="$label" \
-                -D EXTRA_ARGS="$EXTRA_ARGS" -P "$GENERATOR"
-          ctest --test-dir "$dir" --output-on-failure
+          local spec="$1"
+          mpirun -np "$NUM_PROC_TEST" palace-unit-tests "$spec" "${EXTRA_ARGS[@]}"
         }
 
         # Map the action's `test-cases` input onto a Catch2 filter. "default"
@@ -127,12 +114,12 @@ runs:
         run_cases() {
           local raw="$1"
           if [[ -z "$raw" || "$raw" == "default" ]]; then
-            run_group "[Regression]~[Long]" regression
+            run_group "[Regression]~[Long]"
           elif [[ "$raw" == "long" ]]; then
-            run_group "[Long]" long
+            run_group "[Long]"
           else
             for case in $raw; do
-              run_group "$case" long
+              run_group "$case"
             done
           fi
         }
