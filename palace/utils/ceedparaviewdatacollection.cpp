@@ -4,6 +4,7 @@
 #include "utils/ceedparaviewdatacollection.hpp"
 
 #include <regex>
+#include <utility>
 #include <vector>
 #include <mfem/mesh/vtk.hpp>
 
@@ -15,7 +16,19 @@ void CeedParaViewDataCollection::RegisterBoundaryPointField(
     int num_comp)
 {
   MFEM_VERIFY(num_comp > 0, "Boundary point field must have at least one component!");
-  boundary_point_fields[field_name] = BoundaryPointField{&values, &bases, num_comp};
+  boundary_point_fields[field_name] = BoundaryPointField{&values, {}, &bases, num_comp,
+                                                        values.Size()};
+}
+
+void CeedParaViewDataCollection::RegisterBoundaryPointEvaluator(
+    const std::string &field_name, std::function<void(Vector &)> evaluator,
+    const std::vector<int> &bases, int num_comp, int buffer_size)
+{
+  MFEM_VERIFY(evaluator, "Boundary point evaluator must be callable!");
+  MFEM_VERIFY(num_comp > 0, "Boundary point field must have at least one component!");
+  MFEM_VERIFY(buffer_size >= 0, "Boundary point evaluator buffer size is invalid!");
+  boundary_point_fields[field_name] =
+      BoundaryPointField{nullptr, std::move(evaluator), &bases, num_comp, buffer_size};
 }
 
 void CeedParaViewDataCollection::DeregisterBoundaryPointField(
@@ -28,8 +41,8 @@ void CeedParaViewDataCollection::SaveBoundaryPointFieldVTU(
     std::ostream &os, int ref, const std::string &name, const BoundaryPointField &field)
 {
   MFEM_VERIFY(bdr_output,
-              "Precomputed boundary point fields require boundary ParaView output!");
-  MFEM_VERIFY(field.values && field.bases && field.num_comp > 0,
+              "Boundary point fields require boundary ParaView output!");
+  MFEM_VERIFY((field.values || field.evaluator) && field.bases && field.num_comp > 0,
               "Invalid precomputed boundary point field registration!");
   MFEM_VERIFY(static_cast<int>(field.bases->size()) == mesh->GetNBE(),
               "Boundary point field base offsets do not match the mesh boundary!");
@@ -38,15 +51,26 @@ void CeedParaViewDataCollection::SaveBoundaryPointFieldVTU(
      << "\" NumberOfComponents=\"" << field.num_comp << "\""
      << " format=\"" << GetDataFormatString() << "\" >" << '\n';
 
+  Vector values;
+  const Vector *value_ptr = field.values;
+  if (field.evaluator)
+  {
+    values.SetSize(field.buffer_size);
+    values.UseDevice(true);
+    field.evaluator(values);
+    value_ptr = &values;
+  }
+  MFEM_VERIFY(value_ptr, "Boundary point field has no values to write!");
+
   std::vector<char> buf;
-  const double *data = field.values->HostRead();
+  const double *data = value_ptr->HostRead();
   for (int i = 0; i < mesh->GetNBE(); i++)
   {
     const auto *RefG = mfem::GlobGeometryRefiner.Refine(
         mesh->GetBdrElementBaseGeometry(i), ref, 1);
     const int base = (*field.bases)[i];
     const int npts = RefG->RefPts.GetNPoints();
-    MFEM_VERIFY(base >= 0 && base + field.num_comp * npts <= field.values->Size(),
+    MFEM_VERIFY(base >= 0 && base + field.num_comp * npts <= value_ptr->Size(),
                 "Boundary point field buffer is missing data for boundary element " << i
                                                                                      << "!");
     for (int j = 0; j < npts; j++)

@@ -5,6 +5,7 @@
 #define PALACE_UTILS_CEED_PARAVIEW_DATA_COLLECTION_HPP
 
 #include <fstream>
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -14,19 +15,21 @@
 namespace palace
 {
 
-// ParaView data collection with an extra registration path for point data that has
-// already been evaluated in the exact order used by MFEM's boundary VTU writer. This
-// avoids pretending precomputed libCEED output is an mfem::Coefficient and, more
-// importantly, avoids recovering point identity from floating-point reference
-// coordinates during Save().
+// ParaView data collection with an extra registration path for boundary point data
+// ordered exactly as MFEM's boundary VTU writer emits refined points. The data can be
+// precomputed or evaluated lazily during Save(). This avoids pretending libCEED output
+// is an mfem::Coefficient and, more importantly, avoids recovering point identity from
+// floating-point reference coordinates during Save().
 class CeedParaViewDataCollection : public mfem::ParaViewDataCollection
 {
 private:
   struct BoundaryPointField
   {
     const Vector *values = nullptr;
+    std::function<void(Vector &)> evaluator;
     const std::vector<int> *bases = nullptr;
     int num_comp = 0;
+    int buffer_size = 0;
   };
 
   std::fstream pvd_stream;
@@ -41,6 +44,10 @@ public:
 
   void RegisterBoundaryPointField(const std::string &field_name, const Vector &values,
                                   const std::vector<int> &bases, int num_comp);
+  void RegisterBoundaryPointEvaluator(const std::string &field_name,
+                                      std::function<void(Vector &)> evaluator,
+                                      const std::vector<int> &bases, int num_comp,
+                                      int buffer_size);
   void DeregisterBoundaryPointField(const std::string &field_name);
 
   void Save() override;
