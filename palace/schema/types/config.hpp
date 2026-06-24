@@ -36,17 +36,19 @@ struct PalaceConfiguration
 
   PALACE_SCHEMA_DESC_REQUIRED(Problem,
                               "Top-level configuration for the simulation type and output.",
-                              Problem) = {};
+                              ::palace::schema::Problem) = {};
 
-  PALACE_SCHEMA_DESC_REQUIRED(Model, "Mesh and model configuration.", Model) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(Model, "Mesh and model configuration.",
+                              ::palace::schema::Model) = {};
 
-  PALACE_SCHEMA_DESC_REQUIRED(Domains, "Material and domain configuration.", Domains) = {};
+  PALACE_SCHEMA_DESC_REQUIRED(Domains, "Material and domain configuration.",
+                              ::palace::schema::Domains) = {};
 
   PALACE_SCHEMA_DESC_REQUIRED(Boundaries, "Boundary condition configuration.",
-                              Boundaries) = {};
+                              ::palace::schema::Boundaries) = {};
 
   PALACE_SCHEMA_DESC_REQUIRED(Solver, "Solver configuration for all simulation types.",
-                              Solver) = {};
+                              ::palace::schema::Solver) = {};
 };
 
 }  // namespace palace::schema

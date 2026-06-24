@@ -134,14 +134,14 @@ struct DomainPostprocessing
                      "Array of objects for postprocessing domain energies. Postprocesses "
                      "the electric and magnetic field energy inside a given domain. "
                      "Results are written to `domain-E.csv` in the output directory.",
-                     std::vector<Energy>) = {};
+                     std::vector<::palace::schema::Energy>) = {};
 
   PALACE_SCHEMA_DESC(Probe,
                      "Array of probe points for evaluating field values at specified "
                      "locations in space. The electric field **E** and magnetic flux "
                      "density **B** are probed and written to `probe-E.csv` and "
                      "`probe-B.csv` in the output directory.",
-                     std::vector<Probe>) = {};
+                     std::vector<::palace::schema::Probe>) = {};
 };
 
 struct Domains
@@ -150,7 +150,7 @@ struct Domains
                               std::vector<Material>) = {};
 
   PALACE_SCHEMA_DESC(CurrentDipole, "Array of current dipole source excitations.",
-                     std::vector<CurrentDipole>) = {};
+                     std::vector<::palace::schema::CurrentDipole>) = {};
 
   PALACE_SCHEMA_DESC(Postprocessing, "Configuration for domain postprocessing.",
                      DomainPostprocessing) = {};

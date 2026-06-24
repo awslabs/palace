@@ -48,9 +48,9 @@ struct Element
       "`\"CoordinateSystem\"`.",
       PortDirection) = {};
 
-  PALACE_SCHEMA_DESC(CoordinateSystem,
-                     "Coordinate system for this element's `\"Direction\"` vector.",
-                     CoordinateSystem) = CoordinateSystem::Cartesian;
+  PALACE_SCHEMA_DESC(
+      CoordinateSystem, "Coordinate system for this element's `\"Direction\"` vector.",
+      ::palace::schema::CoordinateSystem) = ::palace::schema::CoordinateSystem::Cartesian;
 };
 
 // --- Dirichlet-like attribute-only blocks ----------------------------------
@@ -232,7 +232,8 @@ struct LumpedPortAttributes
                      "Coordinate system used to express the `\"Direction\"` vector. If "
                      "a keyword argument is used for `\"Direction\"` this value is "
                      "ignored.",
-                     CoordinateSystem) = CoordinateSystem::Cartesian;
+                     ::palace::schema::CoordinateSystem) =
+      ::palace::schema::CoordinateSystem::Cartesian;
 };
 
 // Multi-element form: the port spans multiple disjoint surfaces, each
@@ -376,7 +377,8 @@ struct FloquetPort
                      ExcitationIndex) = false;
 
   PALACE_SCHEMA_DESC(IncidentPolarization, "Polarization of the incident plane wave.",
-                     IncidentPolarization) = IncidentPolarization::TE;
+                     ::palace::schema::IncidentPolarization) =
+      ::palace::schema::IncidentPolarization::TE;
 
   PALACE_SCHEMA_DESC(MaxOrder,
                      "Maximum diffraction order index to include: all orders `(m, n)` "
@@ -416,7 +418,8 @@ struct SurfaceCurrentAttributes
                      "Coordinate system for the `\"Direction\"` vector. Same options as "
                      "[`/LumpedPort/CoordinateSystem`](@ref "
                      "config-boundaries-lumpedport-coordinatesystem).",
-                     CoordinateSystem) = CoordinateSystem::Cartesian;
+                     ::palace::schema::CoordinateSystem) =
+      ::palace::schema::CoordinateSystem::Cartesian;
 };
 
 struct SurfaceCurrentElements
@@ -630,7 +633,7 @@ struct BoundaryPostprocessing
   PALACE_SCHEMA_DESC(SurfaceFlux,
                      "Array of surface flux postprocessing boundaries. Results are "
                      "written to `surface-F.csv` in the output directory.",
-                     std::vector<SurfaceFlux>) = {};
+                     std::vector<::palace::schema::SurfaceFlux>) = {};
 
   PALACE_SCHEMA_DESC(Dielectric,
                      "Array of interface dielectric loss postprocessing boundaries. "
@@ -639,7 +642,7 @@ struct BoundaryPostprocessing
                      "documentation](../reference.md#Bulk-and-interface-dielectric-loss"
                      "). Results are written to `surface-Q.csv` in the output "
                      "directory.",
-                     std::vector<Dielectric>) = {};
+                     std::vector<::palace::schema::Dielectric>) = {};
 
   PALACE_SCHEMA_DESC(Impedance,
                      "Array of impedance postprocessing entries for boundary-mode "
@@ -666,27 +669,27 @@ struct Boundaries
                      "zero tangential electric field. This is a homogeneous Dirichlet "
                      "condition for frequency/time domain and magnetostatic "
                      "formulations.",
-                     PEC) = {};
+                     ::palace::schema::PEC) = {};
 
   PALACE_SCHEMA_DESC(PMC,
                      "Perfect magnetic conductor (PMC) boundary condition: enforces "
                      "zero tangential magnetic field. This is the natural "
                      "(homogeneous Neumann) boundary condition; it also imposes "
                      "symmetry of the electric field across the surface.",
-                     PMC) = {};
+                     ::palace::schema::PMC) = {};
 
   PALACE_SCHEMA_DESC(Ground,
                      "Zero-voltage (ground) boundary condition for electrostatic "
                      "simulations. Mutually exclusive with [PEC](@ref "
                      "config-boundaries-pec).",
-                     Ground) = {};
+                     ::palace::schema::Ground) = {};
 
   PALACE_SCHEMA_DESC(ZeroCharge,
                      "Zero surface charge (homogeneous Neumann) boundary condition "
                      "for electrostatic simulations. Also imposes symmetry of the "
                      "electric field across the surface. Mutually exclusive with "
                      "[PMC](@ref config-boundaries-pmc).",
-                     ZeroCharge) = {};
+                     ::palace::schema::ZeroCharge) = {};
 
   PALACE_SCHEMA_DESC(WavePortPEC,
                      "Additional PEC boundary conditions for the 2D eigensolve used "
@@ -694,7 +697,7 @@ struct Boundaries
                      "under [PEC](@ref config-boundaries-pec) and [Conductivity](@ref "
                      "config-boundaries-conductivity). Only relevant when [WavePort]"
                      "(@ref config-boundaries-waveport) boundaries are present.",
-                     WavePortPEC) = {};
+                     ::palace::schema::WavePortPEC) = {};
 
   PALACE_SCHEMA_DESC(Absorbing,
                      "Farfield absorbing (scattering) boundary conditions. These are "
@@ -708,24 +711,24 @@ struct Boundaries
                      "for conductors with thickness much larger than the skin depth. "
                      "Only available for frequency domain driven and eigenmode "
                      "simulations.",
-                     std::vector<Conductivity>) = {};
+                     std::vector<::palace::schema::Conductivity>) = {};
 
   PALACE_SCHEMA_DESC(Impedance,
                      "Array of surface impedance boundary conditions. The surface "
                      "impedance relates the tangential electric and magnetic fields "
                      "using the parallel combination of the specified resistance, "
                      "inductance, and capacitance per square.",
-                     std::vector<Impedance>) = {};
+                     std::vector<::palace::schema::Impedance>) = {};
 
   PALACE_SCHEMA_DESC(LumpedPort,
                      "Array of lumped port boundary conditions. Lumped ports can be "
                      "specified on boundaries internal to the computational domain.",
-                     std::vector<LumpedPort>) = {};
+                     std::vector<::palace::schema::LumpedPort>) = {};
 
   PALACE_SCHEMA_DESC(Terminal,
                      "Array of terminal boundaries for electrostatic simulations. "
                      "Capacitance matrix entries are extracted for each terminal.",
-                     std::vector<Terminal>) = {};
+                     std::vector<::palace::schema::Terminal>) = {};
 
   PALACE_SCHEMA_DESC(WavePort,
                      "Array of numeric wave port boundary conditions. Wave ports can "
@@ -734,7 +737,7 @@ struct Boundaries
                      "eigenproblem is solved on each wave port to compute the port "
                      "mode shape. Only available for frequency domain driven and "
                      "eigenmode simulations.",
-                     std::vector<WavePort>) = {};
+                     std::vector<::palace::schema::WavePort>) = {};
 
   PALACE_SCHEMA_DESC(FloquetPort,
                      "Array of Floquet port boundary conditions for periodic structures. "
@@ -743,7 +746,7 @@ struct Boundaries
                      "the propagating orders. Requires periodic boundary conditions (see "
                      "[Periodic](@ref config-boundaries-periodic)) with exactly two "
                      "boundary pairs defining the transverse periodicity.",
-                     std::vector<FloquetPort>) = {};
+                     std::vector<::palace::schema::FloquetPort>) = {};
 
   PALACE_SCHEMA_DESC(SurfaceCurrent,
                      "Array of surface current source boundaries. Prescribes a unit "
@@ -751,13 +754,13 @@ struct Boundaries
                      "excite a driven, transient, or magnetostatic simulation. For "
                      "magnetostatic simulations, inductance matrix entries are "
                      "extracted for each surface current boundary.",
-                     std::vector<SurfaceCurrent>) = {};
+                     std::vector<::palace::schema::SurfaceCurrent>) = {};
 
   PALACE_SCHEMA_DESC(Periodic,
                      "Periodic boundary conditions for surfaces whose meshes are "
                      "identical after translation and/or rotation. Floquet periodic "
                      "boundary conditions with a phase shift are also supported.",
-                     Periodic) = {};
+                     ::palace::schema::Periodic) = {};
 
   PALACE_SCHEMA_DESC(Postprocessing, "Configuration for boundary postprocessing.",
                      BoundaryPostprocessing) = {};

@@ -215,7 +215,7 @@ struct Model
       std::string) = "";
 
   PALACE_SCHEMA_DESC(Refinement, "Configuration for adaptive and uniform mesh refinement.",
-                     Refinement) = {};
+                     ::palace::schema::Refinement) = {};
 };
 
 }  // namespace palace::schema

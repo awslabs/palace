@@ -633,7 +633,7 @@ struct Solver
                      "computation backends. When *Palace* is built with OpenMP support "
                      "(`PALACE_WITH_OPENMP=ON`), `omp` is automatically added to the "
                      "MFEM device list.",
-                     Device) = Device::CPU;
+                     ::palace::schema::Device) = ::palace::schema::Device::CPU;
 
   PALACE_SCHEMA_DESC(Backend,
                      "Specifies the [libCEED backend]"
@@ -646,40 +646,40 @@ struct Solver
                      "Configuration for the frequency domain driven solver. Only "
                      "relevant when [`/Problem/Type`](@ref config-problem-type) is "
                      "`\"Driven\"`.",
-                     Driven) = {};
+                     ::palace::schema::Driven) = {};
 
   PALACE_SCHEMA_DESC(Eigenmode,
                      "Configuration for the eigenvalue solver. Only relevant when "
                      "[`/Problem/Type`](@ref config-problem-type) is `\"Eigenmode\"`.",
-                     Eigenmode) = {};
+                     ::palace::schema::Eigenmode) = {};
 
   PALACE_SCHEMA_DESC(Electrostatic,
                      "Configuration for the electrostatic solver. Only relevant when "
                      "[`/Problem/Type`](@ref config-problem-type) is "
                      "`\"Electrostatic\"`.",
-                     Electrostatic) = {};
+                     ::palace::schema::Electrostatic) = {};
 
   PALACE_SCHEMA_DESC(Magnetostatic,
                      "Configuration for the magnetostatic solver. Only relevant when "
                      "[`/Problem/Type`](@ref config-problem-type) is "
                      "`\"Magnetostatic\"`.",
-                     Magnetostatic) = {};
+                     ::palace::schema::Magnetostatic) = {};
 
   PALACE_SCHEMA_DESC(Transient,
                      "Configuration for the time domain driven solver. Only relevant "
                      "when [`/Problem/Type`](@ref config-problem-type) is "
                      "`\"Transient\"`. Simulations always start from rest at *t* = 0.",
-                     Transient) = {};
+                     ::palace::schema::Transient) = {};
 
   PALACE_SCHEMA_DESC(BoundaryMode,
                      "Configuration for boundary mode analysis. Only relevant when "
                      "[`/Problem/Type`](@ref config-problem-type) is "
                      "`\"BoundaryMode\"`.",
-                     BoundaryMode) = {};
+                     ::palace::schema::BoundaryMode) = {};
 
   PALACE_SCHEMA_DESC(Linear,
                      "Configuration for the linear solver used by all simulation types.",
-                     Linear) = {};
+                     ::palace::schema::Linear) = {};
 };
 
 }  // namespace palace::schema

@@ -43,7 +43,7 @@ struct Problem
                      std::string) = "";
 
   PALACE_SCHEMA_DESC(OutputFormats, "Configures the field output formats.",
-                     OutputFormats) = {};
+                     ::palace::schema::OutputFormats) = {};
 };
 
 }  // namespace palace::schema
