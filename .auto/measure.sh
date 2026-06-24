@@ -10,9 +10,9 @@ source "$SPACK_ROOT/share/spack/setup-env.sh"
 
 export PALACE_AR_BUILD_JOBS="${PALACE_AR_BUILD_JOBS:-32}"
 export PALACE_AR_GPU_NP="${PALACE_AR_GPU_NP:-8}"
-RUN_ROOT="${PALACE_AR_RUN_ROOT:-/tmp/palace_ar_paraview_stream}"
+RUN_ROOT="${PALACE_AR_RUN_ROOT:-/home/ubuntu/workspace/palace_ar_paraview_stream}"
 BASELINE_DIR="${PALACE_AR_BASELINE_DIR:-$RUN_ROOT/baseline_csv}"
-LAST_MEASURE="${PALACE_AR_LAST_MEASURE:-/tmp/palace_ar_paraview_stream_last_measure.env}"
+LAST_MEASURE="${PALACE_AR_LAST_MEASURE:-/home/ubuntu/workspace/palace_ar_paraview_stream_last_measure.env}"
 SHA="$(git rev-parse --short HEAD)"
 RUN_ID="${SHA}-$(date +%Y%m%dT%H%M%SZ)"
 OUT_DIR="$RUN_ROOT/runs/$RUN_ID"
@@ -56,7 +56,7 @@ PALACE_BIN="$PALACE_PREFIX/bin/palace"
 rm -rf "$POST_DIR"
 
 set +e
-spack -e "$ROOT" build-env palace -- "$PALACE_BIN" -np "$PALACE_AR_GPU_NP" "$CONFIG" \
+spack -e "$ROOT" build-env palace -- bash -lc 'cd "$1/examples/transmon" && "$2" -np "$3" "$4"' _ "$ROOT" "$PALACE_BIN" "$PALACE_AR_GPU_NP" "$CONFIG" \
   >"$LOG" 2>&1
 run_status=$?
 set -e

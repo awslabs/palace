@@ -1,0 +1,1 @@
+- Operational note: run roots must stay under /home/ubuntu/workspace, not /tmp; /tmp is on the small root volume and large AMR ParaView output filled it. The measure script now runs Palace from examples/transmon so mesh/transmon.msh2 resolves without a top-level mesh symlink.

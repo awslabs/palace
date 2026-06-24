@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 git diff --check
-LAST_MEASURE="${PALACE_AR_LAST_MEASURE:-/tmp/palace_ar_paraview_stream_last_measure.env}"
+LAST_MEASURE="${PALACE_AR_LAST_MEASURE:-/home/ubuntu/workspace/palace_ar_paraview_stream_last_measure.env}"
 if [[ ! -f "$LAST_MEASURE" ]]; then
   echo "Missing last measure status: $LAST_MEASURE" >&2
   exit 1
