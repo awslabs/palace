@@ -39,11 +39,64 @@ if [[ ! -f spack.lock ]]; then
   }
 fi
 
-spack -e "$ROOT" install --only package --overwrite -y -j"$PALACE_AR_BUILD_JOBS" \
-  >"$BUILD_LOG" 2>&1 || {
-    tail -160 "$BUILD_LOG" >&2
-    exit 1
-  }
+SPACK_STAGE_ROOT="${PALACE_AR_SPACK_STAGE_ROOT:-/home/ubuntu/workspace/spack/stage}"
+
+find_palace_build_dir() {
+  python3 - "$SPACK_STAGE_ROOT" "$ROOT" <<'PYFIND'
+import pathlib
+import sys
+
+stage_root = pathlib.Path(sys.argv[1])
+root = pathlib.Path(sys.argv[2]).resolve()
+if not stage_root.exists():
+    sys.exit(0)
+
+matches = []
+for ninja in stage_root.glob("spack-stage-palace-*/spack-build-*/palace-build/build.ninja"):
+    build_dir = ninja.parent
+    cache = build_dir / "CMakeCache.txt"
+    try:
+        cache_text = cache.read_text(errors="ignore")
+    except OSError:
+        continue
+    # Avoid accidentally reusing a Palace stage configured for another worktree.
+    if str(root) not in cache_text:
+        continue
+    matches.append((ninja.stat().st_mtime, build_dir))
+
+if matches:
+    print(max(matches)[1])
+PYFIND
+}
+
+build_palace() {
+  : >"$BUILD_LOG"
+  local build_dir=""
+  build_dir="$(find_palace_build_dir || true)"
+
+  if [[ "${PALACE_AR_INCREMENTAL_BUILD:-1}" != "0" && -n "$build_dir" ]]; then
+    echo "Using incremental Spack build dir: $build_dir" | tee -a "$BUILD_LOG"
+    if spack -e "$ROOT" build-env palace -- bash -lc '
+        set -euo pipefail
+        command -v ninja >/dev/null
+        ninja -C "$1" -j "$2" install
+      ' _ "$build_dir" "$PALACE_AR_BUILD_JOBS" >>"$BUILD_LOG" 2>&1; then
+      return 0
+    fi
+    echo "Incremental ninja install failed; falling back to spack install --keep-stage" | tee -a "$BUILD_LOG" >&2
+    tail -120 "$BUILD_LOG" >&2 || true
+  else
+    echo "No kept Palace build dir found; bootstrapping with spack install --keep-stage" | tee -a "$BUILD_LOG"
+  fi
+
+  spack -e "$ROOT" install --only package --overwrite --keep-stage -y -j"$PALACE_AR_BUILD_JOBS" \
+    >>"$BUILD_LOG" 2>&1 || {
+      tail -160 "$BUILD_LOG" >&2
+      exit 1
+    }
+}
+
+build_palace
 
 python3 - "$CONFIG" "$POST_DIR" <<'PY'
 import json

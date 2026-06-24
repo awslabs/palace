@@ -19,7 +19,7 @@ The measurement script runs:
 - `Solver.Device="GPU"`
 - `OutputFormats.Paraview=true`
 - `OutputFormats.GridFunction=true`
-- all GPUs by default: `PALACE_AR_GPU_NP=8`
+- current p4d autoresearch objective uses 2 GPUs: `PALACE_AR_GPU_NP=2` (keep fixed during the search; run all-GPU validation separately before finalizing)
 
 This is the same large nonconforming AMR case that exposed the `-auto2` ParaView regression:
 
@@ -42,6 +42,16 @@ The measure script also emits:
 - `scalar_max_rel`, `scalar_max_abs`, `scalar_compared_files`
 
 Do not trade a large GridFunction or total-runtime regression for a tiny ParaView win. The main win must be in output/postprocessing, not the solver.
+
+
+## Build loop
+`.auto/measure.sh` keeps the workflow Spack-mediated but avoids a full Spack reinstall when possible:
+
+1. Find the kept Spack Palace CMake/Ninja stage for this worktree.
+2. Run `spack -e "$ROOT" build-env palace -- ninja -C "$build_dir" -j "$PALACE_AR_BUILD_JOBS" install`.
+3. If no kept stage exists, or incremental Ninja fails, fall back to `spack install --only package --overwrite --keep-stage -j "$PALACE_AR_BUILD_JOBS"` so the next iteration has a reusable stage.
+
+Do not bypass Spack with an ad-hoc CMake build; use the measured harness path. Set `PALACE_AR_INCREMENTAL_BUILD=0` only to force the conservative fallback.
 
 ## Correctness guard
 `.auto/measure.sh` creates a scalar CSV baseline on the first unmodified run and compares later runs against it. `.auto/checks.sh` fails if scalar drift exceeds the threshold recorded by the measure script.
