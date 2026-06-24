@@ -41,6 +41,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-memoryreporting.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-nondimensionalize.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-paraview-writer-proxy.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp
@@ -151,6 +152,13 @@ install(
   FILES_MATCHING
     PATTERN "*.json"
     PATTERN "*/postpro/*" EXCLUDE     # Skip palace.json files
+)
+
+# The ParaView writer proxy benchmark uses the SingleTransmon mesh but avoids the
+# expensive eigensolve. Install just this mesh rather than every example mesh.
+install(
+  FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../examples/transmon/mesh/transmon.msh2
+  DESTINATION share/palace/test/data/examples/transmon/mesh
 )
 
 # Enable CTest for coverage support
