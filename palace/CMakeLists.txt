@@ -15,12 +15,14 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
   message(FATAL_ERROR "In-source builds are prohibited")
 endif()
 
-# C++17 required for std::filesystem, among others. Override via -DCMAKE_CXX_STANDARD=<VALUE>
+# C++20 required for reflect-cpp (pulled in via cpp-json-schema for reflection-
+# based schema emission) and std::filesystem. Override via
+# -DCMAKE_CXX_STANDARD=<VALUE>
 if(NOT DEFINED CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 17)
+  set(CMAKE_CXX_STANDARD 20)
 endif()
-if(CMAKE_CXX_STANDARD LESS 17)
-  message(FATAL_ERROR "Palace requires C++17 or later (got ${CMAKE_CXX_STANDARD})")
+if(CMAKE_CXX_STANDARD LESS 20)
+  message(FATAL_ERROR "Palace requires C++20 or later (got ${CMAKE_CXX_STANDARD})")
 endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -190,6 +192,32 @@ message(STATUS "Found nlohmann/json: ${nlohmann_json_VERSION} in ${nlohmann_json
 find_package(nlohmann_json_schema_validator REQUIRED CONFIG)
 message(STATUS "Found nlohmann_json_schema_validator: ${nlohmann_json_schema_validator_VERSION} in ${nlohmann_json_schema_validator_DIR}")
 
+# reflect-cpp: pulled in at build time only, consumed by the vendored
+# schema-emission helpers under palace/schema/cjs/ (used by the
+# palace_emit_schema helper target). Not linked into the runtime libpalace
+# in Phase 1.
+include(FetchContent)
+set(REFLECTCPP_JSON         ON  CACHE BOOL "" FORCE)
+set(REFLECTCPP_YAML         OFF CACHE BOOL "" FORCE)
+set(REFLECTCPP_TOML         OFF CACHE BOOL "" FORCE)
+set(REFLECTCPP_XML          OFF CACHE BOOL "" FORCE)
+set(REFLECTCPP_BSON         OFF CACHE BOOL "" FORCE)
+set(REFLECTCPP_CBOR         OFF CACHE BOOL "" FORCE)
+set(REFLECTCPP_MSGPACK      OFF CACHE BOOL "" FORCE)
+set(REFLECTCPP_UBJSON       OFF CACHE BOOL "" FORCE)
+set(REFLECTCPP_FLEXBUFFERS  OFF CACHE BOOL "" FORCE)
+set(REFLECTCPP_AVRO         OFF CACHE BOOL "" FORCE)
+set(REFLECTCPP_CAPNPROTO    OFF CACHE BOOL "" FORCE)
+set(REFLECTCPP_BUILD_TESTS      OFF CACHE BOOL "" FORCE)
+set(REFLECTCPP_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    reflectcpp
+    GIT_REPOSITORY https://github.com/getml/reflect-cpp.git
+    GIT_TAG        v0.24.0
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(reflectcpp)
+
 # Find fmt
 find_package(fmt REQUIRED CONFIG)
 message(STATUS "Found fmt: ${fmt_VERSION} in ${fmt_DIR}")
@@ -301,6 +329,9 @@ add_subdirectory(fem)
 add_subdirectory(linalg)
 add_subdirectory(models)
 add_subdirectory(utils)
+
+# Schema-emission helper (build-time only; see palace/schema/CMakeLists.txt).
+add_subdirectory(schema)
 
 # Add executable target
 set(TARGET_NAME palace)
@@ -663,10 +694,18 @@ install(
   PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE
               WORLD_READ WORLD_EXECUTE
 )
+# Install ValidateConfig.jl source and the generated config-schema.json
+# alongside the palace binary so scripts/validate-config can locate both
+# (joinpath($SCRIPT_DIR, "schema", "config-schema.json") in the bash wrapper).
 install(
-  DIRECTORY ${CMAKE_SOURCE_DIR}/../scripts/schema
-  DESTINATION bin
-  FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+  FILES ${CMAKE_SOURCE_DIR}/../scripts/schema/ValidateConfig.jl
+  DESTINATION bin/schema
+  PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+)
+install(
+  FILES ${SCHEMA_JSON}
+  DESTINATION bin/schema
+  PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
 )
 install(
   DIRECTORY ${CMAKE_SOURCE_DIR}/fem/qfunctions

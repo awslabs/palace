@@ -25,7 +25,7 @@ set(SCHEMA_HEADER_CONTENT
 // SPDX-License-Identifier: Apache-2.0
 
 // Auto-generated file - do not edit
-// Generated from scripts/schema/*.json
+// Generated from the palace_emit_schema binary output
 // Provides embedded JSON schema strings for runtime config validation without file dependencies.
 
 #ifndef PALACE_EMBEDDED_SCHEMA_HPP

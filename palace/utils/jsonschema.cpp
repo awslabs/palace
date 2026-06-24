@@ -16,43 +16,40 @@ using json = nlohmann::json;
 using json_validator = nlohmann::json_schema::json_validator;
 using error_handler = nlohmann::json_schema::error_handler;
 
-// Root schema entry point. Schemas use JSON Schema draft-07.
+// Root schema entry point. The schema is generated at build time by
+// palace_emit_schema (see cmake/EmbedSchema.cmake); it is a single draft
+// 2020-12 document with all sub-section shapes under `$defs`.
 constexpr const char *root_schema_file = "config-schema.json";
 
 namespace
 {
 
-// Strip leading path prefixes (/, ./) to normalize schema references.
-std::string StripPathPrefix(std::string path)
-{
-  while (!path.empty() && (path[0] == '/' || path[0] == '.'))
-  {
-    path = path.substr(1);
-  }
-  return path;
-}
-
-// Loader for resolving $ref in schemas using embedded schema strings.
+// Loader used by nlohmann_json_schema_validator's root_schema setup when it
+// encounters a `$ref`. Since the generated schema is self-contained (all refs
+// are in-document `#/$defs/...`), the loader only ever sees the root URI and
+// returns the single embedded schema.
 class EmbeddedSchemaLoader
 {
 public:
-  json operator()(const nlohmann::json_uri &uri, json &schema)
+  json operator()(const nlohmann::json_uri &, json &schema)
   {
-    std::string path = StripPathPrefix(uri.path());
     const auto &schema_map = schema::GetSchemaMap();
-    auto it = schema_map.find(path);
+    auto it = schema_map.find(root_schema_file);
     if (it == schema_map.end())
     {
-      throw std::runtime_error("Schema not found: " + path);
+      throw std::runtime_error("Root schema not found in embedded schemas");
     }
     schema = json::parse(it->second);
     return schema;
   }
 };
 
-// Search for a schema property by key name, collecting all matches.
-// Helper for FindSchemaByKey - populates results vector. The depth parameter
-// guards against pathological self-referential $defs cycles.
+// Search for a schema property by key name within the single embedded schema
+// document, collecting all matches. Recurses through `properties`, resolves
+// in-document `#/$defs/...` refs, and follows `items` for arrays. External-file
+// $ref support was removed when the schema collapsed to a single generated
+// file. The depth parameter guards against pathological self-referential $defs
+// cycles.
 void FindAllSchemasByKey(const json &schema, const std::string &key, const json &root_defs,
                          std::vector<json> &results, int depth = 0)
 {
@@ -72,8 +69,24 @@ void FindAllSchemasByKey(const json &schema, const std::string &key, const json 
     return;
   }
 
-  // Track $defs from this level.
+  // Track $defs from this level (carried down so nested $ref can resolve).
   const json &defs = schema.contains("$defs") ? schema["$defs"] : root_defs;
+
+  // The generated schema root is a $ref into $defs, and nested property bodies
+  // can also be pure references. Follow local refs before looking for child
+  // properties so named-fragment validation works with the single-file schema.
+  if (auto ref_it = schema.find("$ref"); ref_it != schema.end() && ref_it->is_string())
+  {
+    const auto ref_raw = ref_it->get<std::string>();
+    if (ref_raw.rfind("#/$defs/", 0) == 0)
+    {
+      const auto def_name = ref_raw.substr(8);  // strlen("#/$defs/")
+      if (defs.is_object() && defs.contains(def_name))
+      {
+        FindAllSchemasByKey(defs[def_name], key, defs, results, depth + 1);
+      }
+    }
+  }
 
   // Check properties at this level.
   auto props_it = schema.find("properties");
@@ -85,7 +98,7 @@ void FindAllSchemasByKey(const json &schema, const std::string &key, const json 
     {
       result = result["items"];
     }
-    // Attach $defs so $ref can resolve.
+    // Attach $defs so in-document $ref can resolve.
     if (!defs.is_null() && !defs.empty())
     {
       result["$defs"] = defs;
@@ -93,36 +106,25 @@ void FindAllSchemasByKey(const json &schema, const std::string &key, const json 
     results.push_back(result);
   }
 
-  // Recurse into properties.
+  // Recurse into properties, following in-document $ref along the way.
   if (props_it != schema.end())
   {
-    for (const auto &[k, v] : props_it->items())
+    for (const auto &[_k, v] : props_it->items())
     {
-      // Handle $ref.
       if (v.contains("$ref"))
       {
-        std::string ref_raw = v["$ref"].get<std::string>();
         // Internal $defs reference: resolve and recurse so nested-via-$ref
         // schemas (e.g. BoundaryPostprocessing.FarField) are still findable.
-        if (ref_raw.find("#/$defs/") == 0)
+        const auto ref_raw = v["$ref"].get<std::string>();
+        if (ref_raw.rfind("#/$defs/", 0) == 0)
         {
-          std::string def_name = ref_raw.substr(8);
-          if (!defs.is_null() && defs.contains(def_name))
+          const auto def_name = ref_raw.substr(8);  // strlen("#/$defs/")
+          if (defs.is_object() && defs.contains(def_name))
           {
             FindAllSchemasByKey(defs[def_name], key, defs, results, depth + 1);
           }
-          continue;
         }
-        std::string ref = StripPathPrefix(ref_raw);
-        const auto &schema_map = schema::GetSchemaMap();
-        if (auto it = schema_map.find(ref); it != schema_map.end())
-        {
-          FindAllSchemasByKey(json::parse(it->second), key, defs, results, depth + 1);
-        }
-        else
-        {
-          Mpi::Warning("Could not resolve schema $ref: {}\n", ref);
-        }
+        // Non-local $ref shapes are unreachable in the generated schema.
       }
       else
       {
@@ -173,15 +175,10 @@ json ResolveRef(const json &node, const json &defs)
   {
     return json();  // Invalid empty $ref.
   }
-  if (ref[0] == '.')
-  {
-    const auto &schema_map = schema::GetSchemaMap();
-    if (auto it = schema_map.find(StripPathPrefix(ref)); it != schema_map.end())
-    {
-      return json::parse(it->second);
-    }
-  }
-  else if (ref.substr(0, 8) == "#/$defs/")
+  // The generated schema only emits in-document `#/$defs/...` refs; external-
+  // file refs disappeared when scripts/schema/config/*.json was replaced by a
+  // single build-time-generated config-schema.json.
+  if (ref.rfind("#/$defs/", 0) == 0)
   {
     std::string def_name = ref.substr(8);
     if (defs.contains(def_name))
@@ -288,6 +285,24 @@ json FindEnumInSchema(const json &schema, const std::string &ptr)
   return json();
 }
 
+std::string ValidateBoundaryMutualExclusion(const json &boundaries)
+{
+  if (!boundaries.is_object())
+  {
+    return "";
+  }
+  if (boundaries.contains("PEC") && boundaries.contains("Ground"))
+  {
+    return "At [\"Boundaries\"]: properties 'PEC' and 'Ground' are mutually exclusive\n";
+  }
+  if (boundaries.contains("PMC") && boundaries.contains("ZeroCharge"))
+  {
+    return "At [\"Boundaries\"]: properties 'PMC' and 'ZeroCharge' are mutually "
+           "exclusive\n";
+  }
+  return "";
+}
+
 }  // namespace
 
 // Custom error handler that formats errors with documentation-style paths.
@@ -373,6 +388,15 @@ public:
 
 std::string ValidateConfig(const nlohmann::json &config)
 {
+  if (auto boundaries = config.find("Boundaries"); boundaries != config.end())
+  {
+    auto err = ValidateBoundaryMutualExclusion(*boundaries);
+    if (!err.empty())
+    {
+      return err;
+    }
+  }
+
   const auto &schema_map = schema::GetSchemaMap();
   auto it = schema_map.find(root_schema_file);
   if (it == schema_map.end())
@@ -410,6 +434,15 @@ std::string ValidateConfig(const nlohmann::json &config)
 
 std::string ValidateConfig(const nlohmann::json &config, const std::string &schema_key)
 {
+  if (schema_key == "Boundaries")
+  {
+    auto err = ValidateBoundaryMutualExclusion(config);
+    if (!err.empty())
+    {
+      return err;
+    }
+  }
+
   const auto &schema_map = schema::GetSchemaMap();
   auto it = schema_map.find(root_schema_file);
   if (it == schema_map.end())
