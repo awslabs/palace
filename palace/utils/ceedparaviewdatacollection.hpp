@@ -38,6 +38,7 @@ private:
   std::map<std::string, BoundaryPointField> boundary_point_fields;
 
   bool UseAppendedBoundaryPointFields() const;
+  int MaxBoundaryPointFieldBufferSize() const;
   std::uint64_t BoundaryPointFieldPayloadSize(int ref,
                                               const BoundaryPointField &field) const;
   void WriteBoundaryPointFieldValues(std::ostream &os, int ref,
@@ -45,13 +46,14 @@ private:
                                      const Vector &values) const;
   void SaveDataVTU(std::ostream &os, int ref);
   void SaveBoundaryPointFieldVTU(std::ostream &os, int ref, const std::string &name,
-                                 const BoundaryPointField &field);
+                                 const BoundaryPointField &field, Vector *scratch);
   void SaveBoundaryPointFieldVTUAppendedHeader(std::ostream &os, int ref,
                                                const std::string &name,
                                                const BoundaryPointField &field,
                                                std::uint64_t offset);
   void SaveBoundaryPointFieldVTUAppendedPayload(std::ostream &os, int ref,
-                                                const BoundaryPointField &field);
+                                                const BoundaryPointField &field,
+                                                Vector *scratch);
 
 public:
   using mfem::ParaViewDataCollection::ParaViewDataCollection;

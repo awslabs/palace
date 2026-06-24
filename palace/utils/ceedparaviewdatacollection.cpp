@@ -44,6 +44,16 @@ bool CeedParaViewDataCollection::UseAppendedBoundaryPointFields() const
          pv_data_format != mfem::VTKFormat::ASCII && GetCompressionLevel() == 0;
 }
 
+int CeedParaViewDataCollection::MaxBoundaryPointFieldBufferSize() const
+{
+  int size = 0;
+  for (const auto &[name, field] : boundary_point_fields)
+  {
+    size = std::max(size, field.buffer_size);
+  }
+  return size;
+}
+
 std::uint64_t CeedParaViewDataCollection::BoundaryPointFieldPayloadSize(
     int ref, const BoundaryPointField &field) const
 {
@@ -99,7 +109,8 @@ void CeedParaViewDataCollection::WriteBoundaryPointFieldValues(
 }
 
 void CeedParaViewDataCollection::SaveBoundaryPointFieldVTU(
-    std::ostream &os, int ref, const std::string &name, const BoundaryPointField &field)
+    std::ostream &os, int ref, const std::string &name, const BoundaryPointField &field,
+    Vector *scratch)
 {
   MFEM_VERIFY(bdr_output, "Boundary point fields require boundary ParaView output!");
   MFEM_VERIFY((field.values || field.evaluator) && field.bases && field.num_comp > 0,
@@ -115,8 +126,9 @@ void CeedParaViewDataCollection::SaveBoundaryPointFieldVTU(
   const Vector *value_ptr = field.values;
   if (field.evaluator)
   {
-    values.SetSize(field.buffer_size);
-    values.UseDevice(true);
+    MFEM_VERIFY(scratch && scratch->Size() >= field.buffer_size,
+                "Boundary point evaluator scratch buffer is too small!");
+    values.MakeRef(*scratch, 0, field.buffer_size);
     field.evaluator(values);
     value_ptr = &values;
   }
@@ -167,7 +179,7 @@ void CeedParaViewDataCollection::SaveBoundaryPointFieldVTUAppendedHeader(
 }
 
 void CeedParaViewDataCollection::SaveBoundaryPointFieldVTUAppendedPayload(
-    std::ostream &os, int ref, const BoundaryPointField &field)
+    std::ostream &os, int ref, const BoundaryPointField &field, Vector *scratch)
 {
   const std::uint64_t payload_size64 = BoundaryPointFieldPayloadSize(ref, field);
   MFEM_VERIFY(payload_size64 <= std::numeric_limits<std::uint32_t>::max(),
@@ -179,8 +191,9 @@ void CeedParaViewDataCollection::SaveBoundaryPointFieldVTUAppendedPayload(
   const Vector *value_ptr = field.values;
   if (field.evaluator)
   {
-    values.SetSize(field.buffer_size);
-    values.UseDevice(true);
+    MFEM_VERIFY(scratch && scratch->Size() >= field.buffer_size,
+                "Boundary point evaluator scratch buffer is too small!");
+    values.MakeRef(*scratch, 0, field.buffer_size);
     field.evaluator(values);
     value_ptr = &values;
   }
@@ -217,6 +230,12 @@ void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
     SaveVCoeffFieldVTU(os, ref, kv.first, *kv.second);
   }
   const bool appended_boundary_fields = UseAppendedBoundaryPointFields();
+  Vector boundary_point_scratch;
+  if (!boundary_point_fields.empty())
+  {
+    boundary_point_scratch.SetSize(MaxBoundaryPointFieldBufferSize());
+    boundary_point_scratch.UseDevice(true);
+  }
   std::uint64_t appended_offset = 0;
   for (const auto &kv : boundary_point_fields)
   {
@@ -229,7 +248,7 @@ void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
     }
     else
     {
-      SaveBoundaryPointFieldVTU(os, ref, kv.first, kv.second);
+      SaveBoundaryPointFieldVTU(os, ref, kv.first, kv.second, &boundary_point_scratch);
     }
   }
   os << "</PointData>\n";
@@ -240,7 +259,8 @@ void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
     os << "<AppendedData encoding=\"raw\">\n_";
     for (const auto &kv : boundary_point_fields)
     {
-      SaveBoundaryPointFieldVTUAppendedPayload(os, ref, kv.second);
+      SaveBoundaryPointFieldVTUAppendedPayload(os, ref, kv.second,
+                                               &boundary_point_scratch);
     }
     os << "\n</AppendedData>\n";
   }
