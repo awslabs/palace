@@ -36,16 +36,13 @@ private:
 
   void WritePVTUHeader(std::ostream &os, bool appended_mesh);
   void SaveMeshVTU(std::ostream &os, int ref,
-                   std::vector<std::vector<char>> *appended_blocks,
-                   std::size_t *appended_offset);
+                   std::vector<std::vector<char>> *appended_blocks);
   void SaveDataVTU(std::ostream &os, int ref);
   void SaveGFieldVTU(std::ostream &os, int ref, const FieldMapIterator &it,
-                     std::vector<std::vector<char>> *appended_blocks,
-                     std::size_t *appended_offset);
+                     std::vector<std::vector<char>> *appended_blocks);
   void SavePointFieldVTU(std::ostream &os, int ref, const std::string &name,
                          const PointField &field, bool boundary,
-                         std::vector<std::vector<char>> *appended_blocks,
-                         std::size_t *appended_offset);
+                         std::vector<std::vector<char>> *appended_blocks);
 
 public:
   using mfem::ParaViewDataCollection::ParaViewDataCollection;

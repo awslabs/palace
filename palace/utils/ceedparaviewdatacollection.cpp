@@ -5,8 +5,10 @@
 
 #include <cstdint>
 #include <cstring>
+#include <future>
 #include <limits>
 #include <regex>
+#include <sstream>
 #include <vector>
 #include <mfem/mesh/vtk.hpp>
 #ifdef MFEM_USE_ZLIB
@@ -83,13 +85,23 @@ void WriteVTKUInt8(std::ostream &os, std::vector<char> &buf, std::uint8_t value,
   }
 }
 
-std::size_t AppendVTKBlock(std::vector<std::vector<char>> &blocks,
-                           std::size_t &offset, std::vector<char> &raw,
-                           int compression_level)
+std::string OffsetToken(std::size_t id)
+{
+  return "__palace_vtu_offset_" + std::to_string(id) + "__";
+}
+
+std::size_t QueueVTKBlock(std::vector<std::vector<char>> &blocks, std::vector<char> &raw)
 {
   MFEM_VERIFY(raw.size() <= std::numeric_limits<std::uint32_t>::max(),
               "VTK XML appended block exceeds 32-bit header size!");
+  const std::size_t id = blocks.size();
+  blocks.emplace_back(std::move(raw));
+  raw.clear();
+  return id;
+}
 
+std::vector<char> EncodeVTKBlock(std::vector<char> raw, int compression_level)
+{
   std::vector<char> block;
   const auto nbytes = static_cast<std::uint32_t>(raw.size());
   if (compression_level == 0)
@@ -120,12 +132,37 @@ std::size_t AppendVTKBlock(std::vector<std::vector<char>> &blocks,
     MFEM_ABORT("MFEM must be compiled with ZLib support to output compressed VTU data.");
 #endif
   }
+  return block;
+}
 
-  const std::size_t block_offset = offset;
-  offset += block.size();
-  blocks.emplace_back(std::move(block));
-  raw.clear();
-  return block_offset;
+void ReplaceAll(std::string &text, const std::string &from, const std::string &to)
+{
+  std::size_t pos = 0;
+  while ((pos = text.find(from, pos)) != std::string::npos)
+  {
+    text.replace(pos, from.size(), to);
+    pos += to.size();
+  }
+}
+
+void EncodeQueuedVTKBlocks(std::vector<std::vector<char>> &blocks, std::string &xml,
+                           int compression_level)
+{
+  std::vector<std::future<std::vector<char>>> futures;
+  futures.reserve(blocks.size());
+  for (auto &raw : blocks)
+  {
+    futures.emplace_back(std::async(std::launch::async, EncodeVTKBlock,
+                                    std::move(raw), compression_level));
+  }
+
+  std::size_t offset = 0;
+  for (std::size_t i = 0; i < blocks.size(); i++)
+  {
+    blocks[i] = futures[i].get();
+    ReplaceAll(xml, OffsetToken(i), std::to_string(offset));
+    offset += blocks[i].size();
+  }
 }
 
 }  // namespace
@@ -161,8 +198,7 @@ void CeedParaViewDataCollection::DeregisterBoundaryPointField(const std::string 
 
 void CeedParaViewDataCollection::SavePointFieldVTU(
     std::ostream &os, int ref, const std::string &name, const PointField &field,
-    bool boundary, std::vector<std::vector<char>> *appended_blocks,
-    std::size_t *appended_offset)
+    bool boundary, std::vector<std::vector<char>> *appended_blocks)
 {
   MFEM_VERIFY(boundary == bdr_output,
               "Precomputed point field registration does not match the ParaView "
@@ -174,8 +210,7 @@ void CeedParaViewDataCollection::SavePointFieldVTU(
   MFEM_VERIFY(static_cast<int>(field.bases->size()) == ne,
               "Point field base offsets do not match the mesh!");
 
-  const bool appended = appended_blocks && appended_offset &&
-                        pv_data_format != mfem::VTKFormat::ASCII;
+  const bool appended = appended_blocks && pv_data_format != mfem::VTKFormat::ASCII;
   if (!appended)
   {
     os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << name
@@ -214,11 +249,11 @@ void CeedParaViewDataCollection::SavePointFieldVTU(
   }
   if (appended)
   {
-    const std::size_t offset =
-        AppendVTKBlock(*appended_blocks, *appended_offset, buf, GetCompressionLevel());
+    const std::size_t block_id = QueueVTKBlock(*appended_blocks, buf);
     os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << name
        << "\" NumberOfComponents=\"" << field.num_comp << "\""
-       << " format=\"appended\" offset=\"" << offset << "\"/>" << '\n';
+       << " format=\"appended\" offset=\"" << OffsetToken(block_id) << "\"/>"
+       << '\n';
   }
   else
   {
@@ -258,8 +293,7 @@ void CeedParaViewDataCollection::WritePVTUHeader(std::ostream &os, bool appended
 }
 
 void CeedParaViewDataCollection::SaveMeshVTU(
-    std::ostream &os, int ref, std::vector<std::vector<char>> *appended_blocks,
-    std::size_t *appended_offset)
+    std::ostream &os, int ref, std::vector<std::vector<char>> *appended_blocks)
 {
   // MFEM's high-order VTU mesh writer recomputes the same local VTK connectivity
   // permutation for every element. Palace ParaView output commonly uses one geometry
@@ -272,8 +306,7 @@ void CeedParaViewDataCollection::SaveMeshVTU(
     return;
   }
 
-  const bool appended = appended_blocks && appended_offset &&
-                        pv_data_format != mfem::VTKFormat::ASCII;
+  const bool appended = appended_blocks && pv_data_format != mfem::VTKFormat::ASCII;
   const char *fmt_str = (pv_data_format == mfem::VTKFormat::ASCII) ? "ascii" : "binary";
   const char *type_str = (pv_data_format != mfem::VTKFormat::BINARY32) ? "Float64"
                                                                         : "Float32";
@@ -335,11 +368,10 @@ void CeedParaViewDataCollection::SaveMeshVTU(
   }
   if (appended)
   {
-    const std::size_t offset =
-        AppendVTKBlock(*appended_blocks, *appended_offset, buf, GetCompressionLevel());
+    const std::size_t block_id = QueueVTKBlock(*appended_blocks, buf);
     os << "<DataArray type=\"" << type_str
-       << "\" NumberOfComponents=\"3\" format=\"appended\" offset=\"" << offset
-       << "\"/>\n";
+       << "\" NumberOfComponents=\"3\" format=\"appended\" offset=\""
+       << OffsetToken(block_id) << "\"/>\n";
   }
   else
   {
@@ -387,10 +419,9 @@ void CeedParaViewDataCollection::SaveMeshVTU(
   }
   if (appended)
   {
-    const std::size_t offset =
-        AppendVTKBlock(*appended_blocks, *appended_offset, buf, GetCompressionLevel());
+    const std::size_t block_id = QueueVTKBlock(*appended_blocks, buf);
     os << "<DataArray type=\"Int32\" Name=\"connectivity\" format=\"appended\""
-       << " offset=\"" << offset << "\"/>" << std::endl;
+       << " offset=\"" << OffsetToken(block_id) << "\"/>" << std::endl;
   }
   else
   {
@@ -416,10 +447,9 @@ void CeedParaViewDataCollection::SaveMeshVTU(
   }
   if (appended)
   {
-    const std::size_t block_offset =
-        AppendVTKBlock(*appended_blocks, *appended_offset, buf, GetCompressionLevel());
+    const std::size_t block_id = QueueVTKBlock(*appended_blocks, buf);
     os << "<DataArray type=\"Int32\" Name=\"offsets\" format=\"appended\""
-       << " offset=\"" << block_offset << "\"/>" << std::endl;
+       << " offset=\"" << OffsetToken(block_id) << "\"/>" << std::endl;
   }
   else
   {
@@ -447,10 +477,9 @@ void CeedParaViewDataCollection::SaveMeshVTU(
   }
   if (appended)
   {
-    const std::size_t offset =
-        AppendVTKBlock(*appended_blocks, *appended_offset, buf, GetCompressionLevel());
+    const std::size_t block_id = QueueVTKBlock(*appended_blocks, buf);
     os << "<DataArray type=\"UInt8\" Name=\"types\" format=\"appended\""
-       << " offset=\"" << offset << "\"/>" << std::endl;
+       << " offset=\"" << OffsetToken(block_id) << "\"/>" << std::endl;
   }
   else
   {
@@ -479,10 +508,9 @@ void CeedParaViewDataCollection::SaveMeshVTU(
   }
   if (appended)
   {
-    const std::size_t offset =
-        AppendVTKBlock(*appended_blocks, *appended_offset, buf, GetCompressionLevel());
+    const std::size_t block_id = QueueVTKBlock(*appended_blocks, buf);
     os << "<DataArray type=\"Int32\" Name=\"attribute\" format=\"appended\""
-       << " offset=\"" << offset << "\"/>" << std::endl;
+       << " offset=\"" << OffsetToken(block_id) << "\"/>" << std::endl;
   }
   else
   {
@@ -497,14 +525,13 @@ void CeedParaViewDataCollection::SaveMeshVTU(
 
 void CeedParaViewDataCollection::SaveGFieldVTU(
     std::ostream &os, int ref, const FieldMapIterator &it,
-    std::vector<std::vector<char>> *appended_blocks, std::size_t *appended_offset)
+    std::vector<std::vector<char>> *appended_blocks)
 {
   mfem::Vector val;
   mfem::DenseMatrix vval, pmat;
   std::vector<char> buf;
   const int vec_dim = it->second->VectorDim();
-  const bool appended = appended_blocks && appended_offset &&
-                        pv_data_format != mfem::VTKFormat::ASCII;
+  const bool appended = appended_blocks && pv_data_format != mfem::VTKFormat::ASCII;
   if (!appended)
   {
     os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << it->first
@@ -560,12 +587,11 @@ void CeedParaViewDataCollection::SaveGFieldVTU(
   }
   if (appended)
   {
-    const std::size_t offset =
-        AppendVTKBlock(*appended_blocks, *appended_offset, buf, GetCompressionLevel());
+    const std::size_t block_id = QueueVTKBlock(*appended_blocks, buf);
     os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << it->first
        << "\" NumberOfComponents=\"" << vec_dim << "\" "
        << mfem::VTKComponentLabels(vec_dim) << " "
-       << "format=\"appended\" offset=\"" << offset << "\"/>" << '\n';
+       << "format=\"appended\" offset=\"" << OffsetToken(block_id) << "\"/>" << '\n';
   }
   else
   {
@@ -579,63 +605,71 @@ void CeedParaViewDataCollection::SaveGFieldVTU(
 
 void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
 {
-  os << "<VTKFile type=\"UnstructuredGrid\"";
+  const bool appended_output = (pv_data_format != mfem::VTKFormat::ASCII);
+  std::ostringstream xml;
+  std::ostream &out = appended_output ? static_cast<std::ostream &>(xml) : os;
+
+  out << "<VTKFile type=\"UnstructuredGrid\"";
   if (GetCompressionLevel() != 0)
   {
-    os << " compressor=\"vtkZLibDataCompressor\"";
+    out << " compressor=\"vtkZLibDataCompressor\"";
   }
-  os << " version=\"2.2\" byte_order=\"" << mfem::VTKByteOrder() << "\">\n";
+  out << " version=\"2.2\" byte_order=\"" << mfem::VTKByteOrder() << "\">\n";
 
   std::vector<std::vector<char>> appended_blocks;
-  std::size_t appended_offset = 0;
-  auto *appended_ptr = (pv_data_format == mfem::VTKFormat::ASCII) ? nullptr
-                                                                   : &appended_blocks;
-  auto *appended_offset_ptr = (pv_data_format == mfem::VTKFormat::ASCII)
-                                  ? nullptr
-                                  : &appended_offset;
+  auto *appended_ptr = appended_output ? &appended_blocks : nullptr;
 
-  os << "<UnstructuredGrid>\n";
-  SaveMeshVTU(os, ref, appended_ptr, appended_offset_ptr);
+  out << "<UnstructuredGrid>\n";
+  SaveMeshVTU(out, ref, appended_ptr);
 
-  os << "<PointData >\n";
+  out << "<PointData >\n";
   for (FieldMapIterator it = field_map.begin(); it != field_map.end(); ++it)
   {
     MFEM_VERIFY(!bdr_output,
                 "GridFunction output is not supported for ParaViewDataCollection on "
                 "domain boundary!");
-    SaveGFieldVTU(os, ref, it, appended_ptr, appended_offset_ptr);
+    SaveGFieldVTU(out, ref, it, appended_ptr);
   }
   for (const auto &kv : GetCoeffFieldMap())
   {
-    SaveCoeffFieldVTU(os, ref, kv.first, *kv.second);
+    SaveCoeffFieldVTU(out, ref, kv.first, *kv.second);
   }
   for (const auto &kv : GetVCoeffFieldMap())
   {
-    SaveVCoeffFieldVTU(os, ref, kv.first, *kv.second);
+    SaveVCoeffFieldVTU(out, ref, kv.first, *kv.second);
   }
   for (const auto &kv : domain_point_fields)
   {
-    SavePointFieldVTU(os, ref, kv.first, kv.second, false, appended_ptr,
-                      appended_offset_ptr);
+    SavePointFieldVTU(out, ref, kv.first, kv.second, false, appended_ptr);
   }
   for (const auto &kv : boundary_point_fields)
   {
-    SavePointFieldVTU(os, ref, kv.first, kv.second, true, appended_ptr,
-                      appended_offset_ptr);
+    SavePointFieldVTU(out, ref, kv.first, kv.second, true, appended_ptr);
   }
-  os << "</PointData>\n";
-  os << "</Piece>\n";
-  os << "</UnstructuredGrid>\n";
-  if (!appended_blocks.empty())
+  out << "</PointData>\n";
+  out << "</Piece>\n";
+  out << "</UnstructuredGrid>\n";
+
+  if (appended_output)
   {
-    os << "<AppendedData encoding=\"raw\">\n_";
-    for (const auto &block : appended_blocks)
+    std::string xml_text = xml.str();
+    EncodeQueuedVTKBlocks(appended_blocks, xml_text, GetCompressionLevel());
+    os << xml_text;
+    if (!appended_blocks.empty())
     {
-      os.write(block.data(), static_cast<std::streamsize>(block.size()));
+      os << "<AppendedData encoding=\"raw\">\n_";
+      for (const auto &block : appended_blocks)
+      {
+        os.write(block.data(), static_cast<std::streamsize>(block.size()));
+      }
+      os << "\n</AppendedData>\n";
     }
-    os << "\n</AppendedData>\n";
+    os << "</VTKFile>" << std::endl;
   }
-  os << "</VTKFile>" << std::endl;
+  else
+  {
+    out << "</VTKFile>" << std::endl;
+  }
 }
 
 void CeedParaViewDataCollection::Save()
