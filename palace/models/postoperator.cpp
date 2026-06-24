@@ -34,84 +34,6 @@ using namespace std::complex_literals;
 namespace
 {
 
-// Vector coefficient reading precomputed (device-filled) values at the boundary
-// visualization lattice points, replacing per-point host evaluation of the legacy
-// boundary coefficients at ParaView save time. Points are identified by quantized
-// reference coordinates.
-class BdrVizBufferCoefficient : public mfem::VectorCoefficient
-{
-private:
-  const Vector &buffer;
-  const std::vector<int> &bases;
-  const int lod;
-  mutable std::map<mfem::Geometry::Type, std::map<std::array<long long, 3>, int>> pt_maps;
-
-  static std::array<long long, 3> Quantize(const mfem::IntegrationPoint &ip)
-  {
-    constexpr double scale = 1.0e10;
-    return {std::llround(ip.x * scale), std::llround(ip.y * scale),
-            std::llround(ip.z * scale)};
-  }
-
-public:
-  BdrVizBufferCoefficient(const Vector &buffer, const std::vector<int> &bases, int lod,
-                          int num_comp = 3)
-    : mfem::VectorCoefficient(num_comp), buffer(buffer), bases(bases), lod(lod)
-  {
-  }
-
-  using mfem::VectorCoefficient::Eval;
-  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
-            const mfem::IntegrationPoint &ip) override
-  {
-    auto &pt_map = pt_maps[T.GetGeometryType()];
-    if (pt_map.empty())
-    {
-      const auto &RefG = *mfem::GlobGeometryRefiner.Refine(T.GetGeometryType(), lod, 1);
-      for (int j = 0; j < RefG.RefPts.GetNPoints(); j++)
-      {
-        pt_map[Quantize(RefG.RefPts.IntPoint(j))] = j;
-      }
-    }
-    auto it = pt_map.find(Quantize(ip));
-    MFEM_VERIFY(it != pt_map.end() && T.ElementNo < static_cast<int>(bases.size()) &&
-                    bases[T.ElementNo] >= 0,
-                "Unexpected evaluation point for BdrVizBufferCoefficient!");
-    const double *buf = buffer.HostRead();
-    V.SetSize(vdim);
-    for (int c = 0; c < vdim; c++)
-    {
-      V(c) = buf[bases[T.ElementNo] + vdim * it->second + c];
-    }
-  }
-};
-
-// Scalar counterpart of BdrVizBufferCoefficient.
-class BdrVizBufferScalarCoefficient : public mfem::Coefficient
-{
-private:
-  BdrVizBufferCoefficient v;  // Reuse the point matching with a 1-component buffer
-  mutable mfem::Vector tmp;
-
-public:
-  BdrVizBufferScalarCoefficient(const Vector &buffer, const std::vector<int> &bases,
-                                int lod)
-    : v(buffer, bases, lod, 1), tmp(1)
-  {
-  }
-
-  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
-  {
-    v.Eval(tmp, T, ip);
-    return tmp(0);
-  }
-};
-
-}  // namespace
-
-namespace
-{
-
 std::string OutputFolderName(const ProblemType solver_t)
 {
   switch (solver_t)
@@ -496,8 +418,6 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       {
         Ue_bdr_buf.SetSize(Ue_bdr_eval->BufferSize());
         Ue_bdr_buf.UseDevice(true);
-        U_e_bdr = std::make_unique<BdrVizBufferScalarCoefficient>(
-            Ue_bdr_buf, Ue_bdr_eval->BufferBases(), E->ParFESpace()->GetMaxElementOrder());
       }
     }
 
@@ -511,8 +431,6 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     {
       E_sr_buf.SetSize(E_bdr_eval->BufferSize());
       E_sr_buf.UseDevice(true);
-      E_sr = std::make_unique<BdrVizBufferCoefficient>(
-          E_sr_buf, E_bdr_eval->BufferBases(), E->ParFESpace()->GetMaxElementOrder());
     }
     else
     {
@@ -528,8 +446,6 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     {
       Q_sr_buf.SetSize(Q_bdr_eval->BufferSize());
       Q_sr_buf.UseDevice(true);
-      Q_sr = std::make_unique<BdrVizBufferScalarCoefficient>(
-          Q_sr_buf, Q_bdr_eval->BufferBases(), E->ParFESpace()->GetMaxElementOrder());
     }
     else
     {
@@ -542,8 +458,6 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       {
         E_si_buf.SetSize(E_bdr_eval->BufferSize());
         E_si_buf.UseDevice(true);
-        E_si = std::make_unique<BdrVizBufferCoefficient>(
-            E_si_buf, E_bdr_eval->BufferBases(), E->ParFESpace()->GetMaxElementOrder());
       }
       else
       {
@@ -553,8 +467,6 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       {
         Q_si_buf.SetSize(Q_bdr_eval->BufferSize());
         Q_si_buf.UseDevice(true);
-        Q_si = std::make_unique<BdrVizBufferScalarCoefficient>(
-            Q_si_buf, Q_bdr_eval->BufferBases(), E->ParFESpace()->GetMaxElementOrder());
       }
       else
       {
@@ -589,8 +501,6 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       {
         Um_bdr_buf.SetSize(Um_bdr_eval->BufferSize());
         Um_bdr_buf.UseDevice(true);
-        U_m_bdr = std::make_unique<BdrVizBufferScalarCoefficient>(
-            Um_bdr_buf, Um_bdr_eval->BufferBases(), B->ParFESpace()->GetMaxElementOrder());
       }
     }
 
@@ -607,8 +517,6 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       {
         B_sr_buf.SetSize(B_bdr_eval->BufferSize());
         B_sr_buf.UseDevice(true);
-        B_sr = std::make_unique<BdrVizBufferCoefficient>(
-            B_sr_buf, B_bdr_eval->BufferBases(), B->ParFESpace()->GetMaxElementOrder());
       }
       else
       {
@@ -624,8 +532,6 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       {
         J_sr_buf.SetSize(J_bdr_eval->BufferSize());
         J_sr_buf.UseDevice(true);
-        J_sr = std::make_unique<BdrVizBufferCoefficient>(
-            J_sr_buf, J_bdr_eval->BufferBases(), B->ParFESpace()->GetMaxElementOrder());
       }
       else
       {
@@ -642,8 +548,6 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         {
           B_si_buf.SetSize(B_bdr_eval->BufferSize());
           B_si_buf.UseDevice(true);
-          B_si = std::make_unique<BdrVizBufferCoefficient>(
-              B_si_buf, B_bdr_eval->BufferBases(), B->ParFESpace()->GetMaxElementOrder());
         }
         else
         {
@@ -653,8 +557,6 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         {
           J_si_buf.SetSize(J_bdr_eval->BufferSize());
           J_si_buf.UseDevice(true);
-          J_si = std::make_unique<BdrVizBufferCoefficient>(
-              J_si_buf, J_bdr_eval->BufferBases(), B->ParFESpace()->GetMaxElementOrder());
         }
         else
         {
@@ -688,9 +590,6 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         {
           S_bdr_buf.SetSize(S_bdr_eval->BufferSize());
           S_bdr_buf.UseDevice(true);
-          S_bdr = std::make_unique<BdrVizBufferCoefficient>(
-              S_bdr_buf, S_bdr_eval->BufferBases(),
-              E->ParFESpace()->GetMaxElementOrder());
         }
       }
     }
@@ -770,13 +669,34 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     {
       paraview->RegisterField("E_real", &E->Real());
       paraview->RegisterField("E_imag", &E->Imag());
-      paraview_bdr->RegisterVCoeffField("E_real", E_sr.get());
-      paraview_bdr->RegisterVCoeffField("E_imag", E_si.get());
+      if (E_bdr_eval)
+      {
+        paraview_bdr->RegisterBoundaryPointField(
+            "E_real", E_sr_buf, E_bdr_eval->BufferBases(),
+            SurfaceFunctional::BufferNumComp(SurfaceFunctional::Kind::BDR_FIELD_E));
+        paraview_bdr->RegisterBoundaryPointField(
+            "E_imag", E_si_buf, E_bdr_eval->BufferBases(),
+            SurfaceFunctional::BufferNumComp(SurfaceFunctional::Kind::BDR_FIELD_E));
+      }
+      else
+      {
+        paraview_bdr->RegisterVCoeffField("E_real", E_sr.get());
+        paraview_bdr->RegisterVCoeffField("E_imag", E_si.get());
+      }
     }
     else
     {
       paraview->RegisterField("E", &E->Real());
-      paraview_bdr->RegisterVCoeffField("E", E_sr.get());
+      if (E_bdr_eval)
+      {
+        paraview_bdr->RegisterBoundaryPointField(
+            "E", E_sr_buf, E_bdr_eval->BufferBases(),
+            SurfaceFunctional::BufferNumComp(SurfaceFunctional::Kind::BDR_FIELD_E));
+      }
+      else
+      {
+        paraview_bdr->RegisterVCoeffField("E", E_sr.get());
+      }
     }
   }
   if (En)
@@ -797,19 +717,37 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     {
       paraview->RegisterField("B_real", &B->Real());
       paraview->RegisterField("B_imag", &B->Imag());
-      if (B_sr)
+      if (B_bdr_eval)
       {
-        paraview_bdr->RegisterVCoeffField("B_real", B_sr.get());
+        paraview_bdr->RegisterBoundaryPointField(
+            "B_real", B_sr_buf, B_bdr_eval->BufferBases(),
+            SurfaceFunctional::BufferNumComp(SurfaceFunctional::Kind::BDR_FIELD_B));
+        paraview_bdr->RegisterBoundaryPointField(
+            "B_imag", B_si_buf, B_bdr_eval->BufferBases(),
+            SurfaceFunctional::BufferNumComp(SurfaceFunctional::Kind::BDR_FIELD_B));
       }
-      if (B_si)
+      else
       {
-        paraview_bdr->RegisterVCoeffField("B_imag", B_si.get());
+        if (B_sr)
+        {
+          paraview_bdr->RegisterVCoeffField("B_real", B_sr.get());
+        }
+        if (B_si)
+        {
+          paraview_bdr->RegisterVCoeffField("B_imag", B_si.get());
+        }
       }
     }
     else
     {
       paraview->RegisterField("B", &B->Real());
-      if (B_sr)
+      if (B_bdr_eval)
+      {
+        paraview_bdr->RegisterBoundaryPointField(
+            "B", B_sr_buf, B_bdr_eval->BufferBases(),
+            SurfaceFunctional::BufferNumComp(SurfaceFunctional::Kind::BDR_FIELD_B));
+      }
+      else if (B_sr)
       {
         paraview_bdr->RegisterVCoeffField("B", B_sr.get());
       }
@@ -838,25 +776,70 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   {
     U_e_eval ? paraview->RegisterField("U_e", U_e_gf.get())
              : paraview->RegisterCoeffField("U_e", U_e.get());
-    paraview_bdr->RegisterCoeffField("U_e", U_e_bdr ? U_e_bdr.get() : U_e.get());
+    if (Ue_bdr_eval)
+    {
+      paraview_bdr->RegisterBoundaryPointField(
+          "U_e", Ue_bdr_buf, Ue_bdr_eval->BufferBases(),
+          SurfaceFunctional::BufferNumComp(SurfaceFunctional::Kind::BDR_ENERGY_E));
+    }
+    else
+    {
+      paraview_bdr->RegisterCoeffField("U_e", U_e.get());
+    }
   }
   if (U_m)
   {
     U_m_eval ? paraview->RegisterField("U_m", U_m_gf.get())
              : paraview->RegisterCoeffField("U_m", U_m.get());
-    paraview_bdr->RegisterCoeffField("U_m", U_m_bdr ? U_m_bdr.get() : U_m.get());
+    if (Um_bdr_eval)
+    {
+      paraview_bdr->RegisterBoundaryPointField(
+          "U_m", Um_bdr_buf, Um_bdr_eval->BufferBases(),
+          SurfaceFunctional::BufferNumComp(SurfaceFunctional::Kind::BDR_ENERGY_M));
+    }
+    else
+    {
+      paraview_bdr->RegisterCoeffField("U_m", U_m.get());
+    }
   }
   if (S)
   {
     S_eval ? paraview->RegisterField("S", S_gf.get())
            : paraview->RegisterVCoeffField("S", S.get());
-    paraview_bdr->RegisterVCoeffField("S", S_bdr ? S_bdr.get() : S.get());
+    if (S_bdr_eval)
+    {
+      paraview_bdr->RegisterBoundaryPointField(
+          "S", S_bdr_buf, S_bdr_eval->BufferBases(),
+          SurfaceFunctional::BufferNumComp(SurfaceFunctional::Kind::BDR_POYNTING));
+    }
+    else
+    {
+      paraview_bdr->RegisterVCoeffField("S", S.get());
+    }
   }
 
   // Extract surface charge from normally discontinuous ND E-field. Also extract surface
   // currents from tangentially discontinuous RT B-field The surface charge and surface
   // currents are single-valued at internal boundaries.
-  if (Q_sr)
+  if (Q_bdr_eval)
+  {
+    if (HasComplexGridFunction<solver_t>())
+    {
+      paraview_bdr->RegisterBoundaryPointField(
+          "Q_s_real", Q_sr_buf, Q_bdr_eval->BufferBases(),
+          SurfaceFunctional::BufferNumComp(SurfaceFunctional::Kind::BDR_FLUX_Q));
+      paraview_bdr->RegisterBoundaryPointField(
+          "Q_s_imag", Q_si_buf, Q_bdr_eval->BufferBases(),
+          SurfaceFunctional::BufferNumComp(SurfaceFunctional::Kind::BDR_FLUX_Q));
+    }
+    else
+    {
+      paraview_bdr->RegisterBoundaryPointField(
+          "Q_s", Q_sr_buf, Q_bdr_eval->BufferBases(),
+          SurfaceFunctional::BufferNumComp(SurfaceFunctional::Kind::BDR_FLUX_Q));
+    }
+  }
+  else if (Q_sr)
   {
     if (HasComplexGridFunction<solver_t>())
     {
@@ -868,7 +851,25 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
       paraview_bdr->RegisterCoeffField("Q_s", Q_sr.get());
     }
   }
-  if (J_sr)
+  if (J_bdr_eval)
+  {
+    if (HasComplexGridFunction<solver_t>())
+    {
+      paraview_bdr->RegisterBoundaryPointField(
+          "J_s_real", J_sr_buf, J_bdr_eval->BufferBases(),
+          SurfaceFunctional::BufferNumComp(SurfaceFunctional::Kind::BDR_CURRENT_J));
+      paraview_bdr->RegisterBoundaryPointField(
+          "J_s_imag", J_si_buf, J_bdr_eval->BufferBases(),
+          SurfaceFunctional::BufferNumComp(SurfaceFunctional::Kind::BDR_CURRENT_J));
+    }
+    else
+    {
+      paraview_bdr->RegisterBoundaryPointField(
+          "J_s", J_sr_buf, J_bdr_eval->BufferBases(),
+          SurfaceFunctional::BufferNumComp(SurfaceFunctional::Kind::BDR_CURRENT_J));
+    }
+  }
+  else if (J_sr)
   {
     if (HasComplexGridFunction<solver_t>())
     {

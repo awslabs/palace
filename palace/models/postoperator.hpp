@@ -21,6 +21,7 @@
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperatorcsv.hpp"
 #include "models/surfacepostoperator.hpp"
+#include "utils/ceedparaviewdatacollection.hpp"
 #include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/units.hpp"
@@ -181,7 +182,8 @@ protected:
   // ParaView data collection: writing fields to disk for visualization.
   // This is an optional, since ParaViewDataCollection has no default (empty) ctor,
   // and we only want initialize it if ShouldWriteParaviewFields() returns true.
-  std::optional<mfem::ParaViewDataCollection> paraview, paraview_bdr;
+  std::optional<mfem::ParaViewDataCollection> paraview;
+  std::optional<CeedParaViewDataCollection> paraview_bdr;
 
   // MFEM grid function output details.
   std::string gridfunction_output_dir;
@@ -192,8 +194,7 @@ protected:
   // Poynting Coefficient (vector for 3D, scalar Sn for boundary mode), Electric Boundary
   // Field (re+im), Magnetic Boundary Field (re+im), Vector Potential Boundary Field,
   // Surface Current (re+im).
-  std::unique_ptr<mfem::VectorCoefficient> S, S_bdr, E_sr, E_si, B_sr, B_si, A_s, J_sr,
-      J_si;
+  std::unique_ptr<mfem::VectorCoefficient> S, E_sr, E_si, B_sr, B_si, A_s, J_sr, J_si;
   std::unique_ptr<mfem::Coefficient> Sn;
   bool sn_registered = false;
 
@@ -209,14 +210,14 @@ protected:
   std::unique_ptr<mfem::ParGridFunction> U_e_gf, U_m_gf, S_gf;
   std::unique_ptr<DomainFieldEvaluator> U_e_eval, U_m_eval, S_eval;
 
-  // libCEED evaluators and buffers for the boundary collection field
-  // coefficients (E_s, B_s, Q_s, J_s, U_e, U_m, S), read by buffer-backed
-  // coefficients at save time.
+  // libCEED evaluators and buffers for boundary collection fields (E_s, B_s,
+  // Q_s, J_s, U_e, U_m, S). CeedParaViewDataCollection writes these buffers in
+  // the same integer boundary-element/refined-point order used to fill them,
+  // avoiding coefficient adapters or floating-point point lookup at save time.
   std::unique_ptr<SurfaceFunctional> E_bdr_eval, B_bdr_eval, Q_bdr_eval, J_bdr_eval,
       Ue_bdr_eval, Um_bdr_eval, S_bdr_eval;
   Vector E_sr_buf, E_si_buf, B_sr_buf, B_si_buf, A_s_buf, Q_sr_buf, Q_si_buf, J_sr_buf,
       J_si_buf, Ue_bdr_buf, Um_bdr_buf, S_bdr_buf;
-  std::unique_ptr<mfem::Coefficient> U_e_bdr, U_m_bdr;
 
   // Wave port boundary mode field postprocessing.
   struct WavePortFieldData
