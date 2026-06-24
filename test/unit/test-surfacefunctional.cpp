@@ -2045,6 +2045,35 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
     }
   }
 
+  // The AtPoints-specialized far-field path must agree with the mapped integration-rule
+  // path independently for every observation direction.
+  const char *old_disable = std::getenv("PALACE_SURFACE_DISABLE_ATPOINTS");
+  setenv("PALACE_SURFACE_DISABLE_ATPOINTS", "1", 1);
+  SurfaceFunctional mapped_farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op,
+                                    r_naughts);
+  REQUIRE(mapped_farfield.IsValid());
+  auto mapped_result = mapped_farfield.EvalFarField(E, B, {omega_re, omega_im});
+  if (old_disable)
+  {
+    setenv("PALACE_SURFACE_DISABLE_ATPOINTS", old_disable, 1);
+  }
+  else
+  {
+    unsetenv("PALACE_SURFACE_DISABLE_ATPOINTS");
+  }
+  for (std::size_t d = 0; d < r_naughts.size(); d++)
+  {
+    for (int c = 0; c < 3; c++)
+    {
+      CAPTURE(d, c, result[d][c].real(), result[d][c].imag(),
+              mapped_result[d][c].real(), mapped_result[d][c].imag());
+      CHECK(result[d][c].real() ==
+            Catch::Approx(mapped_result[d][c].real()).epsilon(1.0e-10).margin(1.0e-14));
+      CHECK(result[d][c].imag() ==
+            Catch::Approx(mapped_result[d][c].imag()).epsilon(1.0e-10).margin(1.0e-14));
+    }
+  }
+
   // Changing the frequency must reassemble and still agree (different result).
   auto result2 = farfield.EvalFarField(E, B, {2.0 * omega_re, 0.0});
   CHECK(std::abs(result2[0][0] - result[0][0]) > 0.0);
