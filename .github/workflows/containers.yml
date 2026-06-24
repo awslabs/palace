@@ -37,7 +37,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [arm64, x64]
+        # Backfilling ONLY neoverse_v2 (Graviton4 / c8g). The neoverse_v1 and
+        # sapphirerapids images for these versions are already published.
+        arch: [arm64-8g]
     runs-on: [self-hosted, '${{ matrix.arch }}']
     steps:
       - uses: actions/checkout@v6
