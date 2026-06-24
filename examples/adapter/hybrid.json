@@ -48,10 +48,10 @@
     "Device": "CPU",
     "Eigenmode":
     {
-      "N": 3,
+      "N": 1,
       "Tol": 1.0e-6,
       "Target": 8.5,
-      "Save": 3
+      "Save": 1
     },
     "Linear":
     {
