@@ -638,7 +638,10 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   paraview_bdr->SetBoundaryOutput(true);
   paraview_bdr->SetCycle(-1);
   paraview_bdr->SetDataFormat(format);
-  paraview_bdr->SetCompressionLevel(compress);
+  // Boundary libCEED point fields use appended raw VTU arrays so their payload can be
+  // written by the CPU without an extra full-field base64 staging buffer. Keep boundary
+  // output uncompressed; domain output still uses the normal compressed MFEM path above.
+  paraview_bdr->SetCompressionLevel(0);
   paraview_bdr->SetHighOrderOutput(use_ho);
   paraview_bdr->SetLevelsOfDetail(refine_ho);
 

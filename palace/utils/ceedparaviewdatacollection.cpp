@@ -3,6 +3,7 @@
 
 #include "utils/ceedparaviewdatacollection.hpp"
 
+#include <limits>
 #include <regex>
 #include <utility>
 #include <vector>
@@ -37,13 +38,72 @@ void CeedParaViewDataCollection::DeregisterBoundaryPointField(
   boundary_point_fields.erase(field_name);
 }
 
+bool CeedParaViewDataCollection::UseAppendedBoundaryPointFields() const
+{
+  return bdr_output && !boundary_point_fields.empty() &&
+         pv_data_format != mfem::VTKFormat::ASCII && GetCompressionLevel() == 0;
+}
+
+std::uint64_t CeedParaViewDataCollection::BoundaryPointFieldPayloadSize(
+    int ref, const BoundaryPointField &field) const
+{
+  MFEM_VERIFY((field.values || field.evaluator) && field.bases && field.num_comp > 0,
+              "Invalid boundary point field registration!");
+  MFEM_VERIFY(static_cast<int>(field.bases->size()) == mesh->GetNBE(),
+              "Boundary point field base offsets do not match the mesh boundary!");
+
+  std::uint64_t value_count = 0;
+  for (int i = 0; i < mesh->GetNBE(); i++)
+  {
+    const auto *RefG = mfem::GlobGeometryRefiner.Refine(
+        mesh->GetBdrElementBaseGeometry(i), ref, 1);
+    value_count += static_cast<std::uint64_t>(field.num_comp) *
+                   static_cast<std::uint64_t>(RefG->RefPts.GetNPoints());
+  }
+  const std::uint64_t scalar_size =
+      pv_data_format == mfem::VTKFormat::BINARY32 ? sizeof(float) : sizeof(double);
+  return value_count * scalar_size;
+}
+
+void CeedParaViewDataCollection::WriteBoundaryPointFieldValues(
+    std::ostream &os, int ref, const BoundaryPointField &field,
+    const Vector &values) const
+{
+  const double *data = values.HostRead();
+  for (int i = 0; i < mesh->GetNBE(); i++)
+  {
+    const auto *RefG = mfem::GlobGeometryRefiner.Refine(
+        mesh->GetBdrElementBaseGeometry(i), ref, 1);
+    const int base = (*field.bases)[i];
+    const int npts = RefG->RefPts.GetNPoints();
+    MFEM_VERIFY(base >= 0 && base + field.num_comp * npts <= values.Size(),
+                "Boundary point field buffer is missing data for boundary element " << i
+                                                                                     << "!");
+    for (int j = 0; j < npts; j++)
+    {
+      for (int c = 0; c < field.num_comp; c++)
+      {
+        const double value = data[base + field.num_comp * j + c];
+        if (pv_data_format == mfem::VTKFormat::BINARY32)
+        {
+          const float value32 = static_cast<float>(value);
+          os.write(reinterpret_cast<const char *>(&value32), sizeof(value32));
+        }
+        else
+        {
+          os.write(reinterpret_cast<const char *>(&value), sizeof(value));
+        }
+      }
+    }
+  }
+}
+
 void CeedParaViewDataCollection::SaveBoundaryPointFieldVTU(
     std::ostream &os, int ref, const std::string &name, const BoundaryPointField &field)
 {
-  MFEM_VERIFY(bdr_output,
-              "Boundary point fields require boundary ParaView output!");
+  MFEM_VERIFY(bdr_output, "Boundary point fields require boundary ParaView output!");
   MFEM_VERIFY((field.values || field.evaluator) && field.bases && field.num_comp > 0,
-              "Invalid precomputed boundary point field registration!");
+              "Invalid boundary point field registration!");
   MFEM_VERIFY(static_cast<int>(field.bases->size()) == mesh->GetNBE(),
               "Boundary point field base offsets do not match the mesh boundary!");
 
@@ -93,6 +153,41 @@ void CeedParaViewDataCollection::SaveBoundaryPointFieldVTU(
   os << "</DataArray>" << std::endl;
 }
 
+void CeedParaViewDataCollection::SaveBoundaryPointFieldVTUAppendedHeader(
+    std::ostream &os, int ref, const std::string &name, const BoundaryPointField &field,
+    std::uint64_t offset)
+{
+  MFEM_VERIFY(bdr_output, "Boundary point fields require boundary ParaView output!");
+  const std::uint64_t payload_size = BoundaryPointFieldPayloadSize(ref, field);
+  MFEM_VERIFY(payload_size <= std::numeric_limits<std::uint32_t>::max(),
+              "Boundary point field is too large for the current appended VTU writer!");
+  os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << name
+     << "\" NumberOfComponents=\"" << field.num_comp << "\""
+     << " format=\"appended\" offset=\"" << offset << "\" />" << '\n';
+}
+
+void CeedParaViewDataCollection::SaveBoundaryPointFieldVTUAppendedPayload(
+    std::ostream &os, int ref, const BoundaryPointField &field)
+{
+  const std::uint64_t payload_size64 = BoundaryPointFieldPayloadSize(ref, field);
+  MFEM_VERIFY(payload_size64 <= std::numeric_limits<std::uint32_t>::max(),
+              "Boundary point field is too large for the current appended VTU writer!");
+  const std::uint32_t payload_size = static_cast<std::uint32_t>(payload_size64);
+  os.write(reinterpret_cast<const char *>(&payload_size), sizeof(payload_size));
+
+  Vector values;
+  const Vector *value_ptr = field.values;
+  if (field.evaluator)
+  {
+    values.SetSize(field.buffer_size);
+    values.UseDevice(true);
+    field.evaluator(values);
+    value_ptr = &values;
+  }
+  MFEM_VERIFY(value_ptr, "Boundary point field has no values to write!");
+  WriteBoundaryPointFieldValues(os, ref, field, *value_ptr);
+}
+
 void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
 {
   os << "<VTKFile type=\"UnstructuredGrid\"";
@@ -121,13 +216,34 @@ void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
   {
     SaveVCoeffFieldVTU(os, ref, kv.first, *kv.second);
   }
+  const bool appended_boundary_fields = UseAppendedBoundaryPointFields();
+  std::uint64_t appended_offset = 0;
   for (const auto &kv : boundary_point_fields)
   {
-    SaveBoundaryPointFieldVTU(os, ref, kv.first, kv.second);
+    if (appended_boundary_fields)
+    {
+      SaveBoundaryPointFieldVTUAppendedHeader(os, ref, kv.first, kv.second,
+                                              appended_offset);
+      appended_offset += sizeof(std::uint32_t) +
+                         BoundaryPointFieldPayloadSize(ref, kv.second);
+    }
+    else
+    {
+      SaveBoundaryPointFieldVTU(os, ref, kv.first, kv.second);
+    }
   }
   os << "</PointData>\n";
   os << "</Piece>\n";
   os << "</UnstructuredGrid>\n";
+  if (appended_boundary_fields)
+  {
+    os << "<AppendedData encoding=\"raw\">\n_";
+    for (const auto &kv : boundary_point_fields)
+    {
+      SaveBoundaryPointFieldVTUAppendedPayload(os, ref, kv.second);
+    }
+    os << "\n</AppendedData>\n";
+  }
   os << "</VTKFile>" << std::endl;
 }
 
@@ -207,7 +323,7 @@ void CeedParaViewDataCollection::Save()
   const std::string vtu_prefix = col_path + "/" + GenerateVTUPath() + "/";
   {
     const std::string os_str = vtu_prefix + GenerateVTUFileName("proc", myid);
-    std::ofstream os(os_str);
+    std::ofstream os(os_str, std::ios::binary);
     MFEM_VERIFY(os.is_open(), "Failed to open ofstream " << os_str);
     os.precision(precision);
     SaveDataVTU(os, levels_of_detail);

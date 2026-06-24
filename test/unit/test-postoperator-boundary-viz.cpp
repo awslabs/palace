@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -271,7 +272,7 @@ std::vector<char> DecodeVtkBinaryPayload(std::string_view encoded, bool compress
   return uncompressed;
 }
 
-std::string_view ExtractDataArrayPayload(std::string_view xml, const std::string &name)
+std::string_view ExtractDataArrayTag(std::string_view xml, const std::string &name)
 {
   const std::string needle = "Name=\"" + name + "\"";
   const auto name_pos = xml.find(needle);
@@ -280,9 +281,48 @@ std::string_view ExtractDataArrayPayload(std::string_view xml, const std::string
   REQUIRE(tag_begin != std::string_view::npos);
   const auto tag_end = xml.find('>', name_pos);
   REQUIRE(tag_end != std::string_view::npos);
+  return xml.substr(tag_begin, tag_end - tag_begin + 1);
+}
+
+std::string_view ExtractDataArrayPayload(std::string_view xml, const std::string &name)
+{
+  const std::string needle = "Name=\"" + name + "\"";
+  const auto name_pos = xml.find(needle);
+  REQUIRE(name_pos != std::string_view::npos);
+  const auto tag_end = xml.find('>', name_pos);
+  REQUIRE(tag_end != std::string_view::npos);
   const auto close = xml.find("</DataArray>", tag_end);
   REQUIRE(close != std::string_view::npos);
   return xml.substr(tag_end + 1, close - tag_end - 1);
+}
+
+std::uint64_t ExtractUnsignedAttribute(std::string_view tag, std::string_view attr)
+{
+  const std::string needle = std::string(attr) + "=\"";
+  const auto begin = tag.find(needle);
+  REQUIRE(begin != std::string_view::npos);
+  const auto value_begin = begin + needle.size();
+  const auto value_end = tag.find('"', value_begin);
+  REQUIRE(value_end != std::string_view::npos);
+  return std::stoull(std::string(tag.substr(value_begin, value_end - value_begin)));
+}
+
+std::vector<char> ExtractAppendedDataArrayPayload(std::string_view xml,
+                                                  std::string_view tag)
+{
+  REQUIRE(tag.find("format=\"appended\"") != std::string_view::npos);
+  const auto offset = ExtractUnsignedAttribute(tag, "offset");
+  const auto appended_begin = xml.find("<AppendedData");
+  REQUIRE(appended_begin != std::string_view::npos);
+  const auto underscore = xml.find('_', appended_begin);
+  REQUIRE(underscore != std::string_view::npos);
+  const auto data_begin = underscore + 1 + offset;
+  REQUIRE(data_begin + sizeof(std::uint32_t) <= xml.size());
+  const auto nbytes = ReadLittleEndian<std::uint32_t>(xml.data() + data_begin);
+  const auto payload_begin = data_begin + sizeof(std::uint32_t);
+  REQUIRE(payload_begin + nbytes <= xml.size());
+  return {xml.begin() + static_cast<std::ptrdiff_t>(payload_begin),
+          xml.begin() + static_cast<std::ptrdiff_t>(payload_begin + nbytes)};
 }
 
 bool VtuUsesCompression(std::string_view xml)
@@ -290,15 +330,21 @@ bool VtuUsesCompression(std::string_view xml)
   return xml.find("compressor=\"vtkZLibDataCompressor\"") != std::string_view::npos;
 }
 
+std::vector<char> ReadDataArrayBytes(std::string_view xml, const std::string &name)
+{
+  const auto tag = ExtractDataArrayTag(xml, name);
+  if (tag.find("format=\"appended\"") != std::string_view::npos)
+  {
+    return ExtractAppendedDataArrayPayload(xml, tag);
+  }
+  return DecodeVtkBinaryPayload(ExtractDataArrayPayload(xml, name),
+                                VtuUsesCompression(xml));
+}
+
 std::vector<double> ReadFloatDataArray(std::string_view xml, const std::string &name)
 {
-  const auto name_pos = xml.find("Name=\"" + name + "\"");
-  REQUIRE(name_pos != std::string_view::npos);
-  const auto tag_begin = xml.rfind("<DataArray", name_pos);
-  const auto tag_end = xml.find('>', name_pos);
-  const auto tag = xml.substr(tag_begin, tag_end - tag_begin + 1);
-  const auto bytes = DecodeVtkBinaryPayload(ExtractDataArrayPayload(xml, name),
-                                            VtuUsesCompression(xml));
+  const auto tag = ExtractDataArrayTag(xml, name);
+  const auto bytes = ReadDataArrayBytes(xml, name);
 
   std::vector<double> values;
   if (tag.find("type=\"Float32\"") != std::string_view::npos)
@@ -325,8 +371,7 @@ std::vector<double> ReadFloatDataArray(std::string_view xml, const std::string &
 
 std::vector<int> ReadIntDataArray(std::string_view xml, const std::string &name)
 {
-  const auto bytes = DecodeVtkBinaryPayload(ExtractDataArrayPayload(xml, name),
-                                            VtuUsesCompression(xml));
+  const auto bytes = ReadDataArrayBytes(xml, name);
   REQUIRE(bytes.size() % sizeof(std::int32_t) == 0);
   std::vector<int> values(bytes.size() / sizeof(std::int32_t));
   for (std::size_t i = 0; i < values.size(); i++)
@@ -404,6 +449,14 @@ void RequireInteriorBoundaryWasWritten(std::string_view xml, const mfem::ParMesh
   CHECK(std::find(attributes.begin(), attributes.end(), 7) != attributes.end());
 }
 
+void RequireBoundaryPointFieldUsesAppendedData(std::string_view xml,
+                                               const std::string &name)
+{
+  const auto tag = ExtractDataArrayTag(xml, name);
+  CHECK(tag.find("format=\"appended\"") != std::string_view::npos);
+  CHECK(xml.find("<AppendedData encoding=\"raw\">") != std::string_view::npos);
+}
+
 }  // namespace
 
 TEST_CASE_METHOD(test::SharedTempDir,
@@ -464,6 +517,7 @@ TEST_CASE_METHOD(test::SharedTempDir,
   const auto vtu = ReadFile(fs::path(iodata.problem.output) / "paraview" /
                             "eigenmode_boundary" / "Cycle000001" / "proc000000.vtu");
   RequireInteriorBoundaryWasWritten(vtu, pmesh);
+  RequireBoundaryPointFieldUsesAppendedData(vtu, "E_real");
 
   const int lod = order;
   const int npts = CountBoundaryVisualizationPoints(pmesh, lod);

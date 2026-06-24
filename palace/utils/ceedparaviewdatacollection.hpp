@@ -4,6 +4,8 @@
 #ifndef PALACE_UTILS_CEED_PARAVIEW_DATA_COLLECTION_HPP
 #define PALACE_UTILS_CEED_PARAVIEW_DATA_COLLECTION_HPP
 
+#include <cstddef>
+#include <cstdint>
 #include <fstream>
 #include <functional>
 #include <map>
@@ -35,9 +37,21 @@ private:
   std::fstream pvd_stream;
   std::map<std::string, BoundaryPointField> boundary_point_fields;
 
+  bool UseAppendedBoundaryPointFields() const;
+  std::uint64_t BoundaryPointFieldPayloadSize(int ref,
+                                              const BoundaryPointField &field) const;
+  void WriteBoundaryPointFieldValues(std::ostream &os, int ref,
+                                     const BoundaryPointField &field,
+                                     const Vector &values) const;
   void SaveDataVTU(std::ostream &os, int ref);
   void SaveBoundaryPointFieldVTU(std::ostream &os, int ref, const std::string &name,
                                  const BoundaryPointField &field);
+  void SaveBoundaryPointFieldVTUAppendedHeader(std::ostream &os, int ref,
+                                               const std::string &name,
+                                               const BoundaryPointField &field,
+                                               std::uint64_t offset);
+  void SaveBoundaryPointFieldVTUAppendedPayload(std::ostream &os, int ref,
+                                                const BoundaryPointField &field);
 
 public:
   using mfem::ParaViewDataCollection::ParaViewDataCollection;
