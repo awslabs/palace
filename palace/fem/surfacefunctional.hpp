@@ -134,12 +134,12 @@ private:
   int buffer_size = 0;
   std::vector<int> buffer_bases;
 
-  // Field finite element spaces (not owned): fespace_e for H(curl) fields (source index
-  // 0), fespace_b for H(div) fields (source index 1). Either may be nullptr depending
+  // Field finite element spaces (not owned): nd_fespace for H(curl) fields (source index
+  // 0), rt_fespace for H(div) fields (source index 1). Either may be nullptr depending
   // on the functional kind. Material operator (not owned) for material property lookups
   // and side selection.
-  const mfem::ParFiniteElementSpace *fespace_e;
-  const mfem::ParFiniteElementSpace *fespace_b;
+  const mfem::ParFiniteElementSpace *nd_fespace;
+  const mfem::ParFiniteElementSpace *rt_fespace;
   const MaterialOperator *mat_op;
 
   // Whether the functional could be assembled (false when the configuration is not yet
@@ -312,10 +312,10 @@ public:
 private:
   Kind kind;
 
-  // Source field finite element spaces (not owned): fespace_e for H(curl), fespace_b
+  // Source field finite element spaces (not owned): nd_fespace for H(curl), rt_fespace
   // for H(div); either may be nullptr depending on the kind.
-  const mfem::ParFiniteElementSpace *fespace_e;
-  const mfem::ParFiniteElementSpace *fespace_b;
+  const mfem::ParFiniteElementSpace *nd_fespace;
+  const mfem::ParFiniteElementSpace *rt_fespace;
 
   // Whether the evaluator could be assembled (3D meshes only).
   bool valid = true;

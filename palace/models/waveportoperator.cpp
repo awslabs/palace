@@ -796,17 +796,15 @@ std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) co
 {
   // Compute the stationary complex power on the port, E ⋅ (-n x H⋆), integrated over the
   // port surface with +n the outward mesh normal. Use the libCEED surface functional path
-  // when supported to avoid per-measurement host linear form assembly; the legacy path is
-  // retained as a fallback.
+  // when supported to avoid per-call boundary LinearForm assembly in the legacy path.
   MFEM_VERIFY(E.HasImag() && B.HasImag(),
               "Wave ports expect complex-valued E and B fields in port power "
               "calculation!");
   auto &nd_fespace = *E.ParFESpace();
   const auto &mesh = *nd_fespace.GetParMesh();
 
-  // Use the libCEED surface functional path when supported (device capable, no
-  // per-measurement reassembly). Set two_sided = true even on the exterior port surface so
-  // the QFunction uses the fixed outward normal directly (no x0-based reorientation).
+  // Set two_sided = true even on the exterior port surface so the QFunction uses the
+  // fixed outward normal directly (no x0-based reorientation).
   if (!power_func && SurfaceFunctional::Enabled())
   {
     int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;

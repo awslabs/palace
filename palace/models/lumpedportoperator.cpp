@@ -236,8 +236,8 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
   auto &nd_fespace = *E.ParFESpace();
   const auto &mesh = *nd_fespace.GetParMesh();
 
-  // Use the libCEED surface functional path when supported (device capable, no
-  // per-measurement reassembly).
+  // Use the libCEED surface functional path when supported, avoiding per-call
+  // boundary LinearForm assembly in the legacy coefficient path.
   if (!power_func && SurfaceFunctional::Enabled())
   {
     mfem::Array<int> attr_list;

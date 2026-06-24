@@ -316,7 +316,7 @@ void fem::ApplyAddGroupOperators(const std::vector<fem::CeedGroupOperator> &grou
 SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
                                      const mfem::Array<int> &bdr_attr_marker,
                                      const mfem::ParFiniteElementSpace *fespace)
-  : kind(kind), fespace_e(fespace), fespace_b(nullptr), mat_op(nullptr),
+  : kind(kind), nd_fespace(fespace), rt_fespace(nullptr), mat_op(nullptr),
     comm(mesh.GetComm())
 {
   MFEM_VERIFY(kind == Kind::AREA || kind == Kind::HCURL_NORM2,
@@ -330,8 +330,8 @@ SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
 SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
                                      const mfem::Array<int> &bdr_attr_marker,
                                      const mfem::ParFiniteElementSpace &fespace, int lod)
-  : kind(kind), fespace_e(kind == Kind::BDR_FIELD_E ? &fespace : nullptr),
-    fespace_b(kind == Kind::BDR_FIELD_B ? &fespace : nullptr), mat_op(nullptr),
+  : kind(kind), nd_fespace(kind == Kind::BDR_FIELD_E ? &fespace : nullptr),
+    rt_fespace(kind == Kind::BDR_FIELD_B ? &fespace : nullptr), mat_op(nullptr),
     comm(mesh.GetComm()), viz_lod(lod)
 {
   MFEM_VERIFY(kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B,
@@ -345,9 +345,9 @@ SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
                                      const MaterialOperator &mat_op, int lod,
                                      double scaling)
   : kind(kind),
-    fespace_e((kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_ENERGY_E) ? &fespace
+    nd_fespace((kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_ENERGY_E) ? &fespace
                                                                        : nullptr),
-    fespace_b((kind == Kind::BDR_CURRENT_J || kind == Kind::BDR_ENERGY_M) ? &fespace
+    rt_fespace((kind == Kind::BDR_CURRENT_J || kind == Kind::BDR_ENERGY_M) ? &fespace
                                                                           : nullptr),
     mat_op(&mat_op), comm(mesh.GetComm()), viz_lod(lod), viz_scaling(scaling)
 {
@@ -363,7 +363,7 @@ SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
                                      const mfem::ParFiniteElementSpace &rt_fespace,
                                      const MaterialOperator &mat_op, int lod,
                                      double scaling)
-  : kind(kind), fespace_e(&nd_fespace), fespace_b(&rt_fespace), mat_op(&mat_op),
+  : kind(kind), nd_fespace(&nd_fespace), rt_fespace(&rt_fespace), mat_op(&mat_op),
     comm(mesh.GetComm()), viz_lod(lod), viz_scaling(scaling)
 {
   MFEM_VERIFY(kind == Kind::BDR_POYNTING,
@@ -377,7 +377,7 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const MaterialOperator &mat_op,
                                      InterfaceDielectric type, double t_i, double epsilon_i)
   : kind(Kind::INTERFACE_EPR), epr_type(type), epr_t(t_i), epr_epsilon(epsilon_i),
-    fespace_e(&nd_fespace), fespace_b(nullptr), mat_op(&mat_op), comm(mesh.GetComm())
+    nd_fespace(&nd_fespace), rt_fespace(nullptr), mat_op(&mat_op), comm(mesh.GetComm())
 {
   Assemble(mesh, bdr_attr_marker);
 }
@@ -389,7 +389,7 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const MaterialOperator &mat_op, SurfaceFlux type,
                                      bool two_sided, const mfem::Vector &x0)
   : kind(Kind::SURFACE_FLUX), flux_type(type), flux_two_sided(two_sided), flux_x0(x0),
-    fespace_e(nd_fespace), fespace_b(rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
+    nd_fespace(nd_fespace), rt_fespace(rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
 {
   MFEM_VERIFY(
       (nd_fespace || (type != SurfaceFlux::ELECTRIC && type != SurfaceFlux::POWER)) &&
@@ -404,8 +404,8 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const mfem::ParFiniteElementSpace &rt_fespace,
                                      const MaterialOperator &mat_op,
                                      const std::vector<std::array<double, 3>> &r_naughts)
-  : kind(Kind::FARFIELD), farfield_dirs(r_naughts), fespace_e(&nd_fespace),
-    fespace_b(&rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
+  : kind(Kind::FARFIELD), farfield_dirs(r_naughts), nd_fespace(&nd_fespace),
+    rt_fespace(&rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
 {
   Assemble(mesh, bdr_attr_marker);
 }
@@ -815,8 +815,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   local_out.UseDevice(true);
   if (need_field)
   {
-    const int max_vsize = std::max(fespace_e ? fespace_e->GetVSize() : 0,
-                                   fespace_b ? fespace_b->GetVSize() : 0);
+    const int max_vsize = std::max(nd_fespace ? nd_fespace->GetVSize() : 0,
+                                   rt_fespace ? rt_fespace->GetVSize() : 0);
     field_staging.SetSize(max_vsize);
     field_staging.UseDevice(true);
     field_staging = 0.0;
@@ -973,28 +973,28 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     Mpi::GlobalSum(1, &any_ghost, comm);
     if (any_ghost > 0)
     {
-      // Source slots match the field inputs: SURFACE_FLUX uses slot 0 = E (fespace_e)
-      // and slot 1 = B (fespace_b); all other kinds carry a single field at slot 0.
+      // Source slots match the field inputs: SURFACE_FLUX uses slot 0 = E (nd_fespace)
+      // and slot 1 = B (rt_fespace); all other kinds carry a single field at slot 0.
       std::array<const mfem::ParFiniteElementSpace *, FaceNbrFieldExchange::MaxSources>
           ex_fes = {nullptr, nullptr, nullptr, nullptr};
       unsigned int source_mask;
       if (kind == Kind::SURFACE_FLUX)
       {
-        ex_fes[0] = fespace_e;
-        ex_fes[1] = fespace_b;
+        ex_fes[0] = nd_fespace;
+        ex_fes[1] = rt_fespace;
         source_mask = (flux_type == SurfaceFlux::ELECTRIC)   ? 0b01u
                       : (flux_type == SurfaceFlux::MAGNETIC) ? 0b10u
                                                              : 0b11u;
       }
       else if (kind == Kind::BDR_POYNTING)
       {
-        ex_fes[0] = fespace_e;
-        ex_fes[1] = fespace_b;
+        ex_fes[0] = nd_fespace;
+        ex_fes[1] = rt_fespace;
         source_mask = 0b11u;
       }
       else
       {
-        ex_fes[0] = fespace_b ? fespace_b : fespace_e;
+        ex_fes[0] = rt_fespace ? rt_fespace : nd_fespace;
         source_mask = 0b01u;
       }
       std::vector<FaceNbrFieldExchange::Request> requests;
@@ -1456,8 +1456,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         }
         else
         {
-          AddFieldInput(e_name, 0, *fespace_e, indices, geom, ir);
-          AddFieldInput(b_name, 1, *fespace_b, indices, geom, ir);
+          AddFieldInput(e_name, 0, *nd_fespace, indices, geom, ir);
+          AddFieldInput(b_name, 1, *rt_fespace, indices, geom, ir);
         }
       };
       AddPoyntingSide("1", group.vol_indices_a, group.vol_geom_a,
@@ -1470,7 +1470,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     }
     else if (kind == Kind::HCURL_NORM2 || kind == Kind::INTERFACE_EPR || buffer_kind)
     {
-      const auto &field_fespace = fespace_b ? *fespace_b : *fespace_e;
+      const auto &field_fespace = rt_fespace ? *rt_fespace : *nd_fespace;
       if (group.ghost_a)
       {
         AddFieldInputGhost("u_1", 0, *group.mapped_ir_a);
@@ -1496,10 +1496,10 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     else if (kind == Kind::FARFIELD)
     {
       const mfem::IntegrationRule &ir = group.at_points ? face_ir : *group.mapped_ir_a;
-      AddFieldInput("u_1", 0, *fespace_e, group.vol_indices_a, group.vol_geom_a, ir);
-      AddFieldInput("u_2", 1, *fespace_e, group.vol_indices_a, group.vol_geom_a, ir);
-      AddFieldInput("u_3", 2, *fespace_b, group.vol_indices_a, group.vol_geom_a, ir);
-      AddFieldInput("u_4", 3, *fespace_b, group.vol_indices_a, group.vol_geom_a, ir);
+      AddFieldInput("u_1", 0, *nd_fespace, group.vol_indices_a, group.vol_geom_a, ir);
+      AddFieldInput("u_2", 1, *nd_fespace, group.vol_indices_a, group.vol_geom_a, ir);
+      AddFieldInput("u_3", 2, *rt_fespace, group.vol_indices_a, group.vol_geom_a, ir);
+      AddFieldInput("u_4", 3, *rt_fespace, group.vol_indices_a, group.vol_geom_a, ir);
     }
     else if (kind == Kind::SURFACE_FLUX)
     {
@@ -1516,7 +1516,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           }
           else
           {
-            AddFieldInput(nm, 0, *fespace_e, indices, geom, ir);
+            AddFieldInput(nm, 0, *nd_fespace, indices, geom, ir);
           }
         }
         if (flux_type == SurfaceFlux::MAGNETIC || flux_type == SurfaceFlux::POWER)
@@ -1528,7 +1528,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           }
           else
           {
-            AddFieldInput(nm, 1, *fespace_b, indices, geom, ir);
+            AddFieldInput(nm, 1, *rt_fespace, indices, geom, ir);
           }
         }
       };
@@ -2068,7 +2068,7 @@ DomainFieldEvaluator::DomainFieldEvaluator(
     const mfem::ParFiniteElementSpace *nd_fespace,
     const mfem::ParFiniteElementSpace *rt_fespace,
     const mfem::ParFiniteElementSpace &target_fespace, double scaling)
-  : kind(kind), fespace_e(nd_fespace), fespace_b(rt_fespace)
+  : kind(kind), nd_fespace(nd_fespace), rt_fespace(rt_fespace)
 {
   MFEM_VERIFY((nd_fespace || kind == Kind::ENERGY_M) &&
                   (rt_fespace || kind == Kind::ENERGY_E),
@@ -2119,8 +2119,8 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
     ctx.insert(ctx.end(), mat_ctx.begin(), mat_ctx.end());
   }
 
-  field_staging.SetSize(std::max(fespace_e ? fespace_e->GetVSize() : 0,
-                                 fespace_b ? fespace_b->GetVSize() : 0));
+  field_staging.SetSize(std::max(nd_fespace ? nd_fespace->GetVSize() : 0,
+                                 rt_fespace ? rt_fespace->GetVSize() : 0));
   field_staging.UseDevice(true);
   field_staging = 0.0;
 
@@ -2206,11 +2206,11 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
     };
     if (kind == Kind::ENERGY_E || kind == Kind::POYNTING)
     {
-      AddFieldInput("u_1", 0, *fespace_e);
+      AddFieldInput("u_1", 0, *nd_fespace);
     }
     if (kind == Kind::ENERGY_M || kind == Kind::POYNTING)
     {
-      AddFieldInput(kind == Kind::POYNTING ? "u_2" : "u_1", 1, *fespace_b);
+      AddFieldInput(kind == Kind::POYNTING ? "u_2" : "u_1", 1, *rt_fespace);
     }
 
     // Output restriction scattering nodal values into the target grid function.

@@ -95,9 +95,8 @@ private:
                                  const mfem::Array<int> &attr_marker) const;
 
   // libCEED surface functionals for flux and interface dielectric postprocessing,
-  // constructed lazily per surface index (device capable, replace the per-measurement
-  // coefficient evaluation and linear form reassembly of the legacy paths when
-  // supported).
+  // constructed lazily per surface index to replace per-call coefficient evaluation and
+  // boundary LinearForm assembly in the legacy paths when supported.
   mutable std::map<int, std::unique_ptr<SurfaceFunctional>> flux_funcs, eps_funcs;
   mutable std::unique_ptr<SurfaceFunctional> farfield_func;
 
