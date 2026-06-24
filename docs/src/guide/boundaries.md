@@ -245,9 +245,9 @@ flux loop boundary condition works by:
     extraction
 
 !!! note "Flux loop requirements"
-    
+
     Flux loop boundaries require:
-    
+
       - Metal surface attributes defining the conducting surface containing the holes
       - Hole attributes specifying the boundaries through which flux is prescribed
       - Flux amounts defining the magnetic flux through each hole
