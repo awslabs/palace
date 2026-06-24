@@ -3,6 +3,7 @@
 
 #include "output_functionals.hpp"
 
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -39,14 +40,13 @@ namespace palace
 namespace
 {
 
-// Key uniquely identifying the map(s) from boundary element reference coordinates to
-// attached volume element reference coordinates (and thus the tabulated bases): the
-// geometries involved, the orientation flag, and the quantized mapped quadrature point
-// coordinates themselves. Keying directly on the mapped points is robust to the
-// underlying mfem face-orientation encodings.
+// Key identifying a group of boundary elements that can share one libCEED operator. For
+// AtPoints-capable groups, mapped volume reference coordinates are runtime point data and
+// do not participate in the key. For the older mapped-integration-rule path, each call
+// gets an integer group id rather than keying by rounded point coordinates; this avoids
+// using floating-point coordinates to decide point identity while leaving room for a
+// future orientation-table grouping pass.
 using FaceConfigKey = std::vector<long long>;
-
-constexpr double QUANTIZE_SCALE = 1.0e10;
 
 // Registry of mapped face integration rules. The IntegrationRule objects must have
 // application lifetime: mfem::FiniteElement::GetDofToQuad caches tabulations keyed by
@@ -137,16 +137,6 @@ void FoldNormalScaleIntoFaceJacobian(const mfem::DenseMatrix &J, double normal_s
     {
       Jf[c + 3 * d] = (d == 0 ? normal_scale : 1.0) * J(c, d);
     }
-  }
-}
-
-void AppendPoints(FaceConfigKey &key, const std::vector<mfem::IntegrationPoint> &pts)
-{
-  for (const auto &ip : pts)
-  {
-    key.push_back(std::llround(ip.x * QUANTIZE_SCALE));
-    key.push_back(std::llround(ip.y * QUANTIZE_SCALE));
-    key.push_back(std::llround(ip.z * QUANTIZE_SCALE));
   }
 }
 
@@ -508,10 +498,14 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   const bool use_at_points = is_3d && CeedSupportsNonTensorAtPoints(ceed);
 
   // Plan the evaluation for each marked boundary element and group the elements by
-  // their face configuration. All elements in a group share the tabulated bases and are
-  // processed by a single libCEED operator.
+  // their face configuration. AtPoints groups share tabulated bases and are processed by
+  // a single libCEED operator. Non-AtPoints groups intentionally remain one group per
+  // AddGroup call for now so point identity is not inferred from rounded coordinates.
+  static std::atomic<long long> next_mapped_assembly_id{0};
+  const long long mapped_assembly_id = next_mapped_assembly_id++;
   std::map<FaceConfigKey, FaceGroup> face_groups;
   int num_marked = 0;
+  int mapped_group_id = 0;
   {
     constexpr double threshold = 1.0 - 1.0e-6;
     mfem::FaceElementTransformations FET;
@@ -663,9 +657,10 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         MapPoints(FET.Loc2, plan.pts_b);
       }
 
-      // Build the group key. For AtPoints-capable boundary visualization groups, the
-      // mapped volume reference coordinates are runtime data rather than part of the
-      // basis/JIT key; older paths still key on the mapped coordinates themselves.
+      // Build the group key. For AtPoints-capable groups, the mapped volume reference
+      // coordinates are runtime data rather than part of the basis/JIT key. For older
+      // mapped-integration-rule groups, AddGroup assigns an integer group id so each
+      // distinct point set gets its own registered rule without fuzzy coordinate keying.
       const auto vol_geom_a = plan.ghost_a ? plan.ghost_geom
                               : (plan.elem_a >= 0) ? pmesh.GetElementGeometry(plan.elem_a)
                                                    : mfem::Geometry::INVALID;
@@ -720,7 +715,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                           bool at_points_group, double side_scale, double normal_scale)
       {
         FaceConfigKey key;
-        key.reserve(10 + (at_points_group ? 0 : 3 * (pts_a.size() + pts_b.size())));
+        key.reserve(12);
+        key.push_back(mapped_assembly_id);
         key.push_back(static_cast<long long>(bdr_geom));
         key.push_back(static_cast<long long>(geom_a));
         key.push_back(static_cast<long long>(geom_b));
@@ -729,15 +725,16 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         key.push_back(static_cast<long long>(ghost_b));
         key.push_back(static_cast<long long>(nq));
         key.push_back(static_cast<long long>(at_points_group));
-        key.push_back(static_cast<long long>(std::llround(side_scale * QUANTIZE_SCALE)));
-        key.push_back(static_cast<long long>(
-            (at_points_group && kind == Kind::SURFACE_FLUX)
-                ? 0
-                : std::llround(normal_scale * QUANTIZE_SCALE)));
+        // Current side/normal scales are exact multiples of 1/2 from the split-side
+        // conventions. Encode those discrete states directly rather than carrying a
+        // floating-point grouping key.
+        key.push_back(static_cast<long long>(std::llround(2.0 * side_scale)));
+        key.push_back(static_cast<long long>((at_points_group && kind == Kind::SURFACE_FLUX)
+                                                ? 0
+                                                : std::llround(2.0 * normal_scale)));
         if (!at_points_group)
         {
-          AppendPoints(key, pts_a);
-          AppendPoints(key, pts_b);
+          key.push_back(static_cast<long long>(mapped_group_id++));
         }
 
         auto it = face_groups.find(key);
