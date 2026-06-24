@@ -199,8 +199,8 @@ struct Driven
       AdaptiveCircuitSynthesisDomainOrthogonalization,
       "Weight matrix type for domain orthogonalization when building "
       "synthesized circuit matrices.",
-      AdaptiveCircuitSynthesisDomainOrthogonalization) =
-      AdaptiveCircuitSynthesisDomainOrthogonalization::Energy;
+      ::palace::schema::AdaptiveCircuitSynthesisDomainOrthogonalization) =
+      ::palace::schema::AdaptiveCircuitSynthesisDomainOrthogonalization::Energy;
 };
 
 // --- EigenSolver -------------------------------------------------------
@@ -301,7 +301,8 @@ struct Transient
 
   PALACE_SCHEMA_DESC_REQUIRED(Excitation,
                               "Controls the time dependence of the source excitation.",
-                              Excitation) = Excitation::Sinusoidal;
+                              ::palace::schema::Excitation) =
+      ::palace::schema::Excitation::Sinusoidal;
 
   PALACE_SCHEMA_DESC(ExcitationFreq,
                      "Center frequency for harmonic source excitations, GHz. Only "
