@@ -960,16 +960,22 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   else if (kind == Kind::FARFIELD)
   {
     const int N = static_cast<int>(farfield_dirs.size());
-    base_ctx.resize(4 + 3 * N);
+    const auto b_map_type = rt_fespace->FEColl()->GetMapType(dim);
+    MFEM_VERIFY(b_map_type == mfem::FiniteElement::H_CURL ||
+                    b_map_type == mfem::FiniteElement::H_DIV,
+                "Far-field postprocessing requires an H(curl) or H(div) magnetic field "
+                "space!");
+    base_ctx.resize(5 + 3 * N);
     base_ctx[0].second = 1.0;  // Normal sign, set per group
     base_ctx[1].second = farfield_omega.real();
     base_ctx[2].second = farfield_omega.imag();
     base_ctx[3].first = N;
+    base_ctx[4].first = (b_map_type == mfem::FiniteElement::H_DIV) ? 1 : 0;
     for (int d = 0; d < N; d++)
     {
       for (int c = 0; c < 3; c++)
       {
-        base_ctx[4 + 3 * d + c].second = farfield_dirs[d][c];
+        base_ctx[5 + 3 * d + c].second = farfield_dirs[d][c];
       }
     }
     MaterialPropertyCoefficient c0_func(mat_op->GetAttributeToMaterial(),
@@ -1955,8 +1961,8 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
   // place rather than reassembling the operators. Reassembly would rebuild the bases,
   // restrictions, and on-the-fly geometry inputs and re-JIT the (expensive) far-field
   // kernel on every frequency -- none of which depend on omega. FARFIELD context layout
-  // (see Assemble): [0] normal sign, [1] omega_re, [2] omega_im, [3] N, [4..] directions,
-  // then the material context.
+  // (see Assemble): [0] normal sign, [1] omega_re, [2] omega_im, [3] N,
+  // [4] B Piola map, [5..] directions, then the material context.
   if (omega != farfield_omega)
   {
     farfield_omega = omega;
