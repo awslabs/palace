@@ -78,7 +78,9 @@ The format of this changelog is based on
     `mpirun -np $NUM_PROC_TEST palace-unit-tests "[Regression]"` or via
     CTest as `ctest -R "^regression-"`. Regression fixtures now live with
     the rest of the installed test data under `test/data/regression/`:
-    configs and meshes in `input/`, reference CSVs in `ref/`.
+    configs and meshes in `input/`, reference CSVs in `ref/`. Shared example
+    inputs may be symlinked in the source tree, but installed test data is
+    self-contained.
     Re-baselining is now `palace -np N test/data/regression/input/<case>/<config>.json`
     followed by copying the live `postpro/` CSVs into the matching
     `test/data/regression/ref/<case>/<subdir>/` directory.

@@ -409,8 +409,10 @@ Regression tests use self-contained fixtures under
 [`test/data/regression/input/`](https://github.com/awslabs/palace/blob/main/test/data/regression/input)
 and verify that the code reproduces reference CSVs under
 [`test/data/regression/ref/`](https://github.com/awslabs/palace/blob/main/test/data/regression/ref).
-The fixtures are copied from example-style configs and meshes, but the test
-suite does not read from the source-tree `examples/` directory.
+When a fixture is also a user-facing example, the source-tree regression input
+can be a symlink to `examples/` to avoid duplication. Installation dereferences
+those symlinks, so the test suite still runs from self-contained installed test
+data rather than reading from the source-tree `examples/` directory.
 
 ## Tests in CI
 
@@ -536,7 +538,10 @@ at once, as the old `baseline` script did.
 
  1. Drop the config and mesh/input files under
     `test/data/regression/input/<name>/` and the reference postpro tree
-    under `test/data/regression/ref/<name>/<subdir>`.
+    under `test/data/regression/ref/<name>/<subdir>`. If an input file is also
+    a user-facing example, make the regression input a symlink to the file under
+    `examples/`; installed test data dereferences symlinks and remains
+    self-contained.
  2. Add a `TEST_CASE("<name>", "[Serial][Parallel][GPU][Regression]")`
     to `test/unit/regression/cases.cpp`. Tack on `[Long]` if the case
     is too slow for the always-on regression job. Set `rtol`, `atol`,

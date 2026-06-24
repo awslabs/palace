@@ -12,9 +12,10 @@ the [`examples/`](https://github.com/awslabs/palace/blob/main/examples) director
 source code. The following sections provide complete tutorials for each of the available
 example applications.
 
-The regression testing suite keeps its own copied fixtures and reference data under
-[`test/data/regression/`](https://github.com/awslabs/palace/blob/main/test/data/regression/)
-so tests can run from installed test data without depending on the source-tree examples.
+The regression testing suite keeps its own fixture namespace and reference data under
+[`test/data/regression/`](https://github.com/awslabs/palace/blob/main/test/data/regression/).
+Shared example inputs may be symlinked there in the source tree to avoid duplication, but
+installed test data is self-contained and does not depend on source-tree examples.
 
 ## Contents
 

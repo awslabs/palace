@@ -134,10 +134,12 @@ install(
   RUNTIME DESTINATION bin
 )
 
-# Install test data files to share directory
-install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../data
-  DESTINATION share/palace/test/
+# Install test data files to share directory. Some source-tree regression fixtures are
+# symlinks to shared example inputs; dereference them so installed test data is
+# self-contained.
+set(PALACE_TEST_DATA_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../data")
+install(CODE
+  "file(COPY \"${PALACE_TEST_DATA_SOURCE_DIR}\" DESTINATION \"\${CMAKE_INSTALL_PREFIX}/share/palace/test\" FOLLOW_SYMLINK_CHAIN)"
 )
 
 # Install jsons from the all the examples (used in some tests)
