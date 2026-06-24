@@ -123,6 +123,23 @@ struct FaceGroup
   std::vector<double> normal_scales;
 };
 
+void FoldNormalScaleIntoFaceJacobian(const mfem::DenseMatrix &J, double normal_scale,
+                                     double *Jf)
+{
+  // Surface flux kernels recover the unnormalized physical normal from the columns of
+  // the face Jacobian. Multiplying one column by s multiplies both the surface measure
+  // and the oriented normal by s, including flipping the normal direction for s < 0.
+  // Split local two-sided SURFACE_FLUX AtPoints groups use this to carry the per-entry
+  // signed jump/average convention in geometry while sharing one operator across sides.
+  for (int d = 0; d < 2; d++)
+  {
+    for (int c = 0; c < 3; c++)
+    {
+      Jf[c + 3 * d] = (d == 0 ? normal_scale : 1.0) * J(c, d);
+    }
+  }
+}
+
 void AppendPoints(FaceConfigKey &key, const std::vector<mfem::IntegrationPoint> &pts)
 {
   for (const auto &ip : pts)
@@ -1119,6 +1136,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         }
         AddSequentialPointInput("qw", qw, 1);
       }
+      if (kind == Kind::SURFACE_FLUX && !group.normal_scales.empty())
+      {
+        MFEM_VERIFY(group.normal_scales.size() == num_elem,
+                    "SURFACE_FLUX AtPoints normal scales must be entry-indexed!");
+      }
       auto &face_geom = elem_attrs.emplace_back(num_elem * nq * 6);
       face_geom = 0.0;
       for (std::size_t e = 0; e < num_elem; e++)
@@ -1135,13 +1157,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                   ? group.normal_scales[e]
                   : 1.0;
           const std::size_t off = 6 * (e * nq + q);
-          for (int d = 0; d < 2; d++)
-          {
-            for (int c = 0; c < 3; c++)
-            {
-              face_geom[off + c + 3 * d] = (d == 0 ? normal_scale : 1.0) * J(c, d);
-            }
-          }
+          FoldNormalScaleIntoFaceJacobian(J, normal_scale,
+                                          face_geom.HostReadWrite() + off);
         }
       }
       AddSequentialPointInput("grad_x_f", face_geom, 6);
@@ -1657,8 +1674,9 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       case Kind::SURFACE_FLUX:
         ctx[0].second =
             (group.flip_normal ? -1.0 : 1.0) *
-            ((group.at_points && !group.normal_scales.empty()) ? 1.0
-                                                               : group.normal_scale);
+            ((group.at_points && !group.normal_scales.empty())
+                 ? 1.0  // Per-entry normal_scale is folded into face geometry.
+                 : group.normal_scale);
         switch (flux_type)
         {
           case SurfaceFlux::ELECTRIC:
@@ -2125,8 +2143,10 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
   field_staging = 0.0;
 
   Ceed ceed = ceed::internal::GetCeedObjects()[0];
-  for (const auto &[geom, indices] : geom_elems)
+  for (const auto &geom_indices : geom_elems)
   {
+    const mfem::Geometry::Type geom = geom_indices.first;
+    const auto &indices = geom_indices.second;
     CeedAssemblyScratch scratch(ceed);
 
     // Evaluation points are the nodal points of the (interpolatory) target space.
