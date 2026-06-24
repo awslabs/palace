@@ -12,6 +12,7 @@ export PALACE_AR_BUILD_JOBS="${PALACE_AR_BUILD_JOBS:-32}"
 export PALACE_AR_GPU_NP="${PALACE_AR_GPU_NP:-8}"
 RUN_ROOT="${PALACE_AR_RUN_ROOT:-/home/ubuntu/workspace/palace_ar_paraview_stream}"
 BASELINE_DIR="${PALACE_AR_BASELINE_DIR:-$RUN_ROOT/baseline_csv}"
+POST_ROOT="${PALACE_AR_POST_ROOT:-/home/ubuntu/workspace/palace_ar_paraview_stream_latest_postpro}"
 LAST_MEASURE="${PALACE_AR_LAST_MEASURE:-/home/ubuntu/workspace/palace_ar_paraview_stream_last_measure.env}"
 SHA="$(git rev-parse --short HEAD)"
 RUN_ID="${SHA}-$(date +%Y%m%dT%H%M%SZ)"
@@ -19,8 +20,14 @@ OUT_DIR="$RUN_ROOT/runs/$RUN_ID"
 CONFIG="$OUT_DIR/transmon_amr_gpu_paraview.json"
 LOG="$OUT_DIR/palace.log"
 BUILD_LOG="$OUT_DIR/build.log"
-POST_DIR="$OUT_DIR/postpro/transmon_amr"
-mkdir -p "$OUT_DIR" "$RUN_ROOT/runs"
+POST_DIR="$POST_ROOT/transmon_amr"
+mkdir -p "$RUN_ROOT/runs"
+# Keep only scalar reference CSVs and the most recent run artifacts. Large
+# ParaView/GridFunction output is written to POST_ROOT on the instance NVMe and
+# overwritten each run; do not accumulate one multi-GB postpro tree per trial.
+find "$RUN_ROOT/runs" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
+rm -rf "$POST_ROOT"
+mkdir -p "$OUT_DIR" "$POST_ROOT"
 
 if [[ ! -f spack.lock ]]; then
   spack -e "$ROOT" concretize -f >"$OUT_DIR/concretize.log" 2>&1 || {

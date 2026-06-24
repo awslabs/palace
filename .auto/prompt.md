@@ -101,3 +101,4 @@ This builds with Spack and runs the large transmon AMR case. It prints `METRIC` 
 3. Keep atomic commits with clear metric deltas.
 4. Discard regressions or correctness failures.
 5. Update this file or `.auto/ideas.md` when you learn something that should survive context compaction.
+Operational storage policy: keep only BASELINE_DIR scalar CSV reference values, LAST_MEASURE, .auto/log.jsonl metrics, and the most recent run/log/output. Large ParaView/GridFunction output must go to PALACE_AR_POST_ROOT on /home/ubuntu/workspace and be overwritten each run; do not preserve every ParaView run directory.
