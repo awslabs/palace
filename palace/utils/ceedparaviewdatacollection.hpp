@@ -33,7 +33,9 @@ private:
   std::map<std::string, PointField> domain_point_fields;
   std::map<std::string, PointField> boundary_point_fields;
 
+  void SaveMeshVTU(std::ostream &os, int ref);
   void SaveDataVTU(std::ostream &os, int ref);
+  void SaveGFieldVTU(std::ostream &os, int ref, const FieldMapIterator &it);
   void SavePointFieldVTU(std::ostream &os, int ref, const std::string &name,
                          const PointField &field, bool boundary);
 

@@ -3,12 +3,85 @@
 
 #include "utils/ceedparaviewdatacollection.hpp"
 
+#include <cstdint>
+#include <cstring>
+#include <limits>
 #include <regex>
 #include <vector>
 #include <mfem/mesh/vtk.hpp>
 
 namespace palace
 {
+
+namespace
+{
+
+template <typename T>
+void AppendPod(std::vector<char> &buf, const T &value)
+{
+  const auto offset = buf.size();
+  buf.resize(offset + sizeof(T));
+  std::memcpy(buf.data() + offset, &value, sizeof(T));
+}
+
+std::size_t VTKRealSize(mfem::VTKFormat format)
+{
+  return (format == mfem::VTKFormat::BINARY32) ? sizeof(float) : sizeof(double);
+}
+
+void ReserveBinary(std::vector<char> &buf, std::size_t n, std::size_t bytes_per_entry)
+{
+  if (buf.capacity() < n * bytes_per_entry)
+  {
+    buf.reserve(n * bytes_per_entry);
+  }
+}
+
+void WriteVTKReal(std::ostream &os, std::vector<char> &buf, double value,
+                  const char *suffix, mfem::VTKFormat format)
+{
+  if (format == mfem::VTKFormat::BINARY32)
+  {
+    AppendPod(buf, static_cast<float>(value));
+  }
+  else if (format == mfem::VTKFormat::BINARY)
+  {
+    AppendPod(buf, value);
+  }
+  else
+  {
+    mfem::WriteBinaryOrASCII(os, buf, value, suffix, format);
+  }
+}
+
+void WriteVTKInt32(std::ostream &os, std::vector<char> &buf, int value,
+                   const char *suffix, mfem::VTKFormat format)
+{
+  if (format == mfem::VTKFormat::ASCII)
+  {
+    mfem::WriteBinaryOrASCII(os, buf, value, suffix, format);
+  }
+  else
+  {
+    AppendPod(buf, static_cast<std::int32_t>(value));
+  }
+}
+
+void WriteVTKUInt8(std::ostream &os, std::vector<char> &buf, std::uint8_t value,
+                   const char *suffix, mfem::VTKFormat format)
+{
+  if (format == mfem::VTKFormat::ASCII)
+  {
+    mfem::WriteBinaryOrASCII(os, buf, value, suffix, format);
+  }
+  else
+  {
+    AppendPod(buf, value);
+  }
+}
+
+}  // namespace
+
 
 void CeedParaViewDataCollection::RegisterDomainPointField(const std::string &field_name,
                                                           const Vector &values,
@@ -57,6 +130,11 @@ void CeedParaViewDataCollection::SavePointFieldVTU(std::ostream &os, int ref,
      << " format=\"" << GetDataFormatString() << "\" >" << '\n';
 
   std::vector<char> buf;
+  if (pv_data_format != mfem::VTKFormat::ASCII)
+  {
+    ReserveBinary(buf, static_cast<std::size_t>(field.values->Size()),
+                  VTKRealSize(pv_data_format));
+  }
   const double *data = field.values->HostRead();
   for (int i = 0; i < ne; i++)
   {
@@ -71,12 +149,244 @@ void CeedParaViewDataCollection::SavePointFieldVTU(std::ostream &os, int ref,
     {
       for (int c = 0; c < field.num_comp; c++)
       {
-        mfem::WriteBinaryOrASCII(os, buf, data[base + field.num_comp * j + c], " ",
-                                 pv_data_format);
+        WriteVTKReal(os, buf, data[base + field.num_comp * j + c], " ",
+                     pv_data_format);
       }
       if (pv_data_format == mfem::VTKFormat::ASCII)
       {
         os << '\n';
+      }
+    }
+  }
+  if (pv_data_format != mfem::VTKFormat::ASCII)
+  {
+    mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+  }
+  os << "</DataArray>" << std::endl;
+}
+
+void CeedParaViewDataCollection::SaveMeshVTU(std::ostream &os, int ref)
+{
+  // MFEM's high-order VTU mesh writer recomputes the same local VTK connectivity
+  // permutation for every element. Palace ParaView output commonly uses one geometry
+  // and high-order cells, so cache that per-geometry pattern and pre-reserve the binary
+  // buffers before forwarding them to MFEM's base64/zlib encoder.
+  if (!high_order_output)
+  {
+    mesh->PrintVTU(os, ref, pv_data_format, high_order_output, GetCompressionLevel(),
+                   bdr_output);
+    return;
+  }
+
+  const char *fmt_str = (pv_data_format == mfem::VTKFormat::ASCII) ? "ascii" : "binary";
+  const char *type_str = (pv_data_format != mfem::VTKFormat::BINARY32) ? "Float64"
+                                                                        : "Float32";
+  const int ne = bdr_output ? mesh->GetNBE() : mesh->GetNE();
+
+  auto GetGeom = [&](int i)
+  {
+    return bdr_output ? mesh->GetBdrElementGeometry(i) : mesh->GetElementBaseGeometry(i);
+  };
+
+  std::size_t num_points = 0;
+  for (int i = 0; i < ne; i++)
+  {
+    const auto *RefG = mfem::GlobGeometryRefiner.Refine(GetGeom(i), ref, 1);
+    num_points += static_cast<std::size_t>(RefG->RefPts.GetNPoints());
+  }
+  MFEM_VERIFY(num_points <= static_cast<std::size_t>(std::numeric_limits<int>::max()),
+              "VTU output exceeds 32-bit point indexing!");
+
+  os << "<Piece NumberOfPoints=\"" << num_points << "\" NumberOfCells=\"" << ne
+     << "\">\n";
+
+  std::vector<char> buf;
+  mfem::DenseMatrix pmat;
+
+  os << "<Points>\n";
+  os << "<DataArray type=\"" << type_str
+     << "\" NumberOfComponents=\"3\" format=\"" << fmt_str << "\">\n";
+  if (pv_data_format != mfem::VTKFormat::ASCII)
+  {
+    ReserveBinary(buf, 3 * num_points, VTKRealSize(pv_data_format));
+  }
+  for (int i = 0; i < ne; i++)
+  {
+    const auto *RefG = mfem::GlobGeometryRefiner.Refine(GetGeom(i), ref, 1);
+    if (bdr_output)
+    {
+      mesh->GetBdrElementTransformation(i)->Transform(RefG->RefPts, pmat);
+    }
+    else
+    {
+      mesh->GetElementTransformation(i)->Transform(RefG->RefPts, pmat);
+    }
+    for (int j = 0; j < pmat.Width(); j++)
+    {
+      WriteVTKReal(os, buf, pmat(0, j), " ", pv_data_format);
+      WriteVTKReal(os, buf, (pmat.Height() > 1) ? pmat(1, j) : 0.0, " ",
+                   pv_data_format);
+      WriteVTKReal(os, buf, (pmat.Height() > 2) ? pmat(2, j) : 0.0, "",
+                   pv_data_format);
+      if (pv_data_format == mfem::VTKFormat::ASCII)
+      {
+        os << '\n';
+      }
+    }
+  }
+  if (pv_data_format != mfem::VTKFormat::ASCII)
+  {
+    mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+  }
+  os << "</DataArray>" << std::endl;
+  os << "</Points>" << std::endl;
+
+  os << "<Cells>" << std::endl;
+  os << "<DataArray type=\"Int32\" Name=\"connectivity\" format=\"" << fmt_str
+     << "\">" << std::endl;
+  if (pv_data_format != mfem::VTKFormat::ASCII)
+  {
+    ReserveBinary(buf, num_points, sizeof(std::int32_t));
+  }
+  std::map<mfem::Geometry::Type, mfem::Array<int>> connectivity_cache;
+  std::vector<int> offsets;
+  offsets.reserve(static_cast<std::size_t>(ne));
+  int point_offset = 0;
+  for (int i = 0; i < ne; i++)
+  {
+    const auto geom = GetGeom(i);
+    auto &local_connectivity = connectivity_cache[geom];
+    if (local_connectivity.Size() == 0)
+    {
+      mfem::CreateVTKElementConnectivity(local_connectivity, geom, ref);
+    }
+    for (int j = 0; j < local_connectivity.Size(); j++)
+    {
+      WriteVTKInt32(os, buf, point_offset + local_connectivity[j], " ",
+                    pv_data_format);
+    }
+    if (pv_data_format == mfem::VTKFormat::ASCII)
+    {
+      os << '\n';
+    }
+    point_offset += local_connectivity.Size();
+    offsets.push_back(point_offset);
+  }
+  if (pv_data_format != mfem::VTKFormat::ASCII)
+  {
+    mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+  }
+  os << "</DataArray>" << std::endl;
+
+  os << "<DataArray type=\"Int32\" Name=\"offsets\" format=\"" << fmt_str
+     << "\">" << std::endl;
+  if (pv_data_format != mfem::VTKFormat::ASCII)
+  {
+    ReserveBinary(buf, offsets.size(), sizeof(std::int32_t));
+  }
+  for (const int offset : offsets)
+  {
+    WriteVTKInt32(os, buf, offset, "\n", pv_data_format);
+  }
+  if (pv_data_format != mfem::VTKFormat::ASCII)
+  {
+    mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+  }
+  os << "</DataArray>" << std::endl;
+
+  os << "<DataArray type=\"UInt8\" Name=\"types\" format=\"" << fmt_str << "\">"
+     << std::endl;
+  if (pv_data_format != mfem::VTKFormat::ASCII)
+  {
+    ReserveBinary(buf, static_cast<std::size_t>(ne), sizeof(std::uint8_t));
+  }
+  const int *vtk_geom_map = mfem::VTKGeometry::HighOrderMap;
+  for (int i = 0; i < ne; i++)
+  {
+    WriteVTKUInt8(os, buf, static_cast<std::uint8_t>(vtk_geom_map[GetGeom(i)]), "\n",
+                  pv_data_format);
+  }
+  if (pv_data_format != mfem::VTKFormat::ASCII)
+  {
+    mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+  }
+  os << "</DataArray>" << std::endl;
+  os << "</Cells>" << std::endl;
+
+  os << "<CellData Scalars=\"attribute\">" << std::endl;
+  os << "<DataArray type=\"Int32\" Name=\"attribute\" format=\"" << fmt_str
+     << "\">" << std::endl;
+  if (pv_data_format != mfem::VTKFormat::ASCII)
+  {
+    ReserveBinary(buf, static_cast<std::size_t>(ne), sizeof(std::int32_t));
+  }
+  for (int i = 0; i < ne; i++)
+  {
+    const int attr = bdr_output ? mesh->GetBdrAttribute(i) : mesh->GetAttribute(i);
+    WriteVTKInt32(os, buf, attr, "\n", pv_data_format);
+  }
+  if (pv_data_format != mfem::VTKFormat::ASCII)
+  {
+    mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+  }
+  os << "</DataArray>" << std::endl;
+  os << "</CellData>" << std::endl;
+}
+
+void CeedParaViewDataCollection::SaveGFieldVTU(std::ostream &os, int ref,
+                                               const FieldMapIterator &it)
+{
+  mfem::Vector val;
+  mfem::DenseMatrix vval, pmat;
+  std::vector<char> buf;
+  const int vec_dim = it->second->VectorDim();
+  os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << it->first
+     << "\" NumberOfComponents=\"" << vec_dim << "\" "
+     << mfem::VTKComponentLabels(vec_dim) << " "
+     << "format=\"" << GetDataFormatString() << "\" >" << '\n';
+
+  if (pv_data_format != mfem::VTKFormat::ASCII)
+  {
+    std::size_t num_values = 0;
+    for (int i = 0; i < mesh->GetNE(); i++)
+    {
+      const auto *RefG = mfem::GlobGeometryRefiner.Refine(mesh->GetElementBaseGeometry(i),
+                                                          ref, 1);
+      num_values += static_cast<std::size_t>(RefG->RefPts.GetNPoints()) * vec_dim;
+    }
+    ReserveBinary(buf, num_values, VTKRealSize(pv_data_format));
+  }
+
+  if (vec_dim == 1)
+  {
+    for (int i = 0; i < mesh->GetNE(); i++)
+    {
+      const auto *RefG = mfem::GlobGeometryRefiner.Refine(mesh->GetElementBaseGeometry(i),
+                                                          ref, 1);
+      it->second->GetValues(i, RefG->RefPts, val, pmat);
+      for (int j = 0; j < val.Size(); j++)
+      {
+        WriteVTKReal(os, buf, val(j), "\n", pv_data_format);
+      }
+    }
+  }
+  else
+  {
+    for (int i = 0; i < mesh->GetNE(); i++)
+    {
+      const auto *RefG = mfem::GlobGeometryRefiner.Refine(mesh->GetElementBaseGeometry(i),
+                                                          ref, 1);
+      it->second->GetVectorValues(i, RefG->RefPts, vval, pmat);
+      for (int jj = 0; jj < vval.Width(); jj++)
+      {
+        for (int ii = 0; ii < vval.Height(); ii++)
+        {
+          WriteVTKReal(os, buf, vval(ii, jj), " ", pv_data_format);
+        }
+        if (pv_data_format == mfem::VTKFormat::ASCII)
+        {
+          os << '\n';
+        }
       }
     }
   }
@@ -96,8 +406,7 @@ void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
   }
   os << " version=\"2.2\" byte_order=\"" << mfem::VTKByteOrder() << "\">\n";
   os << "<UnstructuredGrid>\n";
-  mesh->PrintVTU(os, ref, pv_data_format, high_order_output, GetCompressionLevel(),
-                 bdr_output);
+  SaveMeshVTU(os, ref);
 
   os << "<PointData >\n";
   for (FieldMapIterator it = field_map.begin(); it != field_map.end(); ++it)
@@ -205,7 +514,7 @@ void CeedParaViewDataCollection::Save()
   const std::string vtu_prefix = col_path + "/" + GenerateVTUPath() + "/";
   {
     const std::string os_str = vtu_prefix + GenerateVTUFileName("proc", myid);
-    std::ofstream os(os_str);
+    std::ofstream os(os_str, std::ios::binary);
     MFEM_VERIFY(os.is_open(), "Failed to open ofstream " << os_str);
     os.precision(precision);
     SaveDataVTU(os, levels_of_detail);

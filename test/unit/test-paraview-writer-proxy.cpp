@@ -13,6 +13,7 @@
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include "fixtures.hpp"
+#include "utils/ceedparaviewdatacollection.hpp"
 
 namespace
 {
@@ -182,7 +183,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SingleTransmon NC ParaView writer
   const fs::path paraview_dir = output_root / "paraview";
   const fs::path gridfunction_dir = output_root / "gridfunction";
 
-  mfem::ParaViewDataCollection pv("transmon_nc_proxy", &mesh);
+  palace::CeedParaViewDataCollection pv("transmon_nc_proxy", &mesh);
   pv.SetPrefixPath(paraview_dir.string());
   pv.SetHighOrderOutput(true);
   pv.SetLevelsOfDetail(order);
