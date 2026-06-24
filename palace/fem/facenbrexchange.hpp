@@ -73,9 +73,8 @@ private:
   // point-major: [x0 y0 z0 x1 y1 z1 ...].
   std::vector<std::array<int, MaxSources>> import_offsets;
 
-  // Assembled libCEED point evaluators serving the requests of neighboring processes
-  // (grouped by source slot, element geometry, and quantized evaluation points so
-  // groups share tabulated bases), writing into the exported vector.
+  // Assembled libCEED point evaluators serving the requests of neighboring processes,
+  // writing into the exported vector.
   std::vector<fem::CeedGroupOperator> export_groups;
 
   // Staging vector used to initialize the field input CeedVectors at construction (the
