@@ -187,7 +187,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     782](https://github.com/awslabs/palace/pull/782).
   - Fixed a bug in the 2D mode eigensolver that sometimes led to crashes when waveports
     were used in conjunction with non-zero conductivity materials.
-    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
+    [PR 778](https://github.com/awslabs/palace/pull/778).
 
 #### Documentation
 
