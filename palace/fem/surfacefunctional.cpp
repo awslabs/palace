@@ -927,8 +927,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     const int N = static_cast<int>(farfield_dirs.size());
     base_ctx.resize(4 + 3 * N);
     base_ctx[0].second = 1.0;  // Normal sign, set per group
-    base_ctx[1].second = farfield_omega_re;
-    base_ctx[2].second = farfield_omega_im;
+    base_ctx[1].second = farfield_omega.real();
+    base_ctx[2].second = farfield_omega.imag();
     base_ctx[3].first = N;
     for (int d = 0; d < N; d++)
     {
@@ -1899,7 +1899,7 @@ void SurfaceFunctional::EvalBuffer(const GridFunction &E, const GridFunction &B,
 
 std::vector<std::array<std::complex<double>, 3>>
 SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
-                                double omega_re, double omega_im)
+                                std::complex<double> omega)
 {
   MFEM_VERIFY(kind == Kind::FARFIELD && E.HasImag() && B.HasImag(),
               "SurfaceFunctional::EvalFarField requires a far-field functional and "
@@ -1912,10 +1912,9 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
   // kernel on every frequency -- none of which depend on omega. FARFIELD context layout
   // (see Assemble): [0] normal sign, [1] omega_re, [2] omega_im, [3] N, [4..] directions,
   // then the material context.
-  if (omega_re != farfield_omega_re || omega_im != farfield_omega_im)
+  if (omega != farfield_omega)
   {
-    farfield_omega_re = omega_re;
-    farfield_omega_im = omega_im;
+    farfield_omega = omega;
     for (auto &group : groups)
     {
       if (!group.ctx)
@@ -1925,8 +1924,8 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
       CeedIntScalar *data;
       PalaceCeedCall(group.ceed,
                      CeedQFunctionContextGetData(group.ctx, CEED_MEM_HOST, &data));
-      data[1].second = omega_re;
-      data[2].second = omega_im;
+      data[1].second = omega.real();
+      data[2].second = omega.imag();
       PalaceCeedCall(group.ceed, CeedQFunctionContextRestoreData(group.ctx, &data));
     }
   }

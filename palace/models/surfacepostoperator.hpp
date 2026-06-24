@@ -122,8 +122,8 @@ public:
   // Batch version for multiple theta/phi pairs
   std::vector<std::array<std::complex<double>, 3>>
   GetFarFieldrE(const std::vector<std::pair<double, double>> &theta_phi_pairs,
-                const GridFunction &E, const GridFunction &B, double omega_re,
-                double omega_im) const;
+                const GridFunction &E, const GridFunction &B,
+                std::complex<double> omega) const;
 
   // Get surface integrals computing interface dielectric energy.
   double GetInterfaceLossTangent(int idx) const;

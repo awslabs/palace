@@ -125,7 +125,7 @@ private:
   bool flux_two_sided = false;
   mfem::Vector flux_x0;
   std::vector<std::array<double, 3>> farfield_dirs;
-  double farfield_omega_re = 0.0, farfield_omega_im = 0.0;
+  std::complex<double> farfield_omega = 0.0;
 
   // Boundary visualization field kinds: lattice refinement level, output scaling,
   // total output buffer size, and per-boundary-element base offsets into the buffer.
@@ -279,10 +279,8 @@ public:
   // Evaluate the far-field rE integrals for all observation directions at the given
   // (complex) frequency, following SurfacePostOperator::GetFarFieldrE. Reassembles when
   // the frequency changes. Collective on the mesh communicator.
-  std::vector<std::array<std::complex<double>, 3>> EvalFarField(const GridFunction &E,
-                                                                const GridFunction &B,
-                                                                double omega_re,
-                                                                double omega_im);
+  std::vector<std::array<std::complex<double>, 3>> EvalFarField(
+      const GridFunction &E, const GridFunction &B, std::complex<double> omega);
 
   // Fill the boundary visualization buffer with the pointwise field values (local
   // operation, buffer kinds only). The single-grid-function overload accumulates the

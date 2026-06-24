@@ -392,7 +392,7 @@ SurfacePostOperator::GetLocalSurfaceIntegral(mfem::Coefficient &f,
 
 std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFieldrE(
     const std::vector<std::pair<double, double>> &theta_phi_pairs, const GridFunction &E,
-    const GridFunction &B, double omega_re, double omega_im) const
+    const GridFunction &B, std::complex<double> omega) const
 {
   if (theta_phi_pairs.empty())
     return {};
@@ -424,7 +424,7 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   }
   if (farfield_func && farfield_func->IsValid())
   {
-    return farfield_func->EvalFarField(E, B, omega_re, omega_im);
+    return farfield_func->EvalFarField(E, B, omega);
   }
 
   // Integrate. Each MPI process computes its contribution and we will reduce
@@ -444,8 +444,8 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
     const auto *ir =
         &mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
 
-    AddStrattonChuIntegrandAtElement(E, B, mat_op, omega_re, omega_im, r_naughts, *T, *ir,
-                                     integrals_r, integrals_i);
+    AddStrattonChuIntegrandAtElement(E, B, mat_op, omega.real(), omega.imag(), r_naughts,
+                                     *T, *ir, integrals_r, integrals_i);
   }
 
   double *data_r_ptr = integrals_r.data()->data();
