@@ -166,12 +166,15 @@ When adding a new configuration key in C++, add a corresponding Schema entry, in
 at the start of every documentation build, and `make docs-generate-config` is available for local
 preview while editing descriptions.
 
-Note that the `"default"` values in the Schema are documentation placeholders only and are not read
-or enforced by the C++ solver. For context-sensitive defaults that Palace resolves later based on the
-problem type or other options, omit `"default"` from the Schema and describe the omission-based
-behavior in `"description"` instead; the resolved config is the authoritative record of the chosen
-value. If a fixed parser default changes in C++, update the corresponding Schema default in the same
-change.
+The `"default"` values in the Schema are documentation and validation metadata; they are not
+read by the C++ solver, but they must still be real concrete values that mirror the parser's
+fixed defaults. A Schema default must validate against its own field schema and must not be a
+sentinel or placeholder such as `0`, `-1`, `""`, or `"Default"` when that value only means
+"choose later". For context-sensitive or derived defaults that Palace resolves based on the
+problem type, build options, mesh, or other settings, omit `"default"` from the Schema and
+describe the omission-based behavior in `"description"` instead; the resolved config is the
+authoritative record of any chosen value that can be known at parse time. If a fixed parser
+default changes in C++, update the corresponding Schema default in the same change.
 
 The generator reads the following JSON Schema fields:
 

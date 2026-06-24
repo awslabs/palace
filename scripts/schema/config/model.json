@@ -22,8 +22,8 @@
     "Lc":
     {
       "type": "number",
-      "description": "Characteristic length scale used for nondimensionalization, specified in mesh length units. This keyword should typically not be specified by the user. A value less than or equal to zero uses an internally calculated length scale based on the bounding box of the computational domain. A value of `1.0` will disable nondimensionalization, so that all computations will take place in the same units as the mesh.",
-      "default": 0.0
+      "description": "Characteristic length scale used for nondimensionalization, specified in mesh length units. This keyword should typically not be specified by the user. If omitted, Palace uses the largest mesh bounding-box dimension, `max_i(bbmax_i - bbmin_i)`. A value of `1.0` will disable nondimensionalization, so that all computations will take place in the same units as the mesh.",
+      "exclusiveMinimum": 0.0
     },
     "RemoveCurvature":
     {
@@ -106,8 +106,8 @@
     "Partitioning":
     {
       "type": "string",
-      "description": "Path to a mesh partitioning file. If empty, partitioning is computed automatically.",
-      "default": "",
+      "description": "Path to a mesh partitioning file. If omitted, partitioning is computed automatically.",
+      "minLength": 1,
       "x-palace-advanced": true
     },
     "Refinement": { "$ref": "#/$defs/Refinement" }

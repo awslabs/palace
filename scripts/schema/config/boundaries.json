@@ -538,8 +538,16 @@
         "SolverType":
         {
           "type": "string",
-          "description": "Eigenvalue solver for computing the boundary mode. Accepts the same options as [`/Solver/Eigenmode/Type`](@ref config-solver-eigenmode-type).",
-          "default": "Default"
+          "description": "Eigenvalue solver for computing the boundary mode. Accepts the same options as [`/Solver/Eigenmode/Type`](@ref config-solver-eigenmode-type). If omitted, Palace selects the available eigenvalue solver backend.",
+          "oneOf":
+          [
+            {
+              "const": "Default",
+              "description": "Use Palace's default backend selection for the available build."
+            },
+            { "const": "SLEPc", "description": "Use the SLEPc eigensolver backend." },
+            { "const": "ARPACK", "description": "Use the ARPACK eigensolver backend." }
+          ]
         },
         "Excitation":
         {
@@ -580,9 +588,8 @@
         "MaxSize":
         {
           "type": "integer",
-          "description": "Maximum subspace dimension for the eigenvalue solver. For values less than 1, the solver uses a default subspace dimension.",
-          "minimum": 0,
-          "default": 0,
+          "description": "Maximum subspace dimension for the eigenvalue solver. If omitted, Palace uses `max(2 × Mode, Mode + 15)`.",
+          "exclusiveMinimum": 0,
           "x-palace-advanced": true
         },
         "Verbose":
@@ -662,8 +669,8 @@
         "MaxOrder":
         {
           "type": "integer",
-          "description": "Maximum diffraction order index to include. A value of `-1` enables automatic selection; `0` includes only the specular `(0, 0)` order.",
-          "default": -1
+          "description": "Maximum diffraction order index to include. If omitted, Palace starts from `3` and caps each lattice direction at the mesh Nyquist limit `max(1, floor(p × π / (|b_i| × h_max)))`, where `p` is the maximum element order, `b_i` is a reciprocal lattice vector, and `h_max` is the maximum port-boundary element size. `0` includes only the specular `(0, 0)` order.",
+          "minimum": 0
         }
       }
     },

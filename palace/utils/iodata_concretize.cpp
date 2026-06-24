@@ -177,10 +177,13 @@ void ConcretizeBoundaryMode(const config::BoundaryModeSolverData &bm, json &j_bm
   ApplyEntries(j_bm, {{"Freq", bm.freq},
                       {"N", bm.n},
                       {"Save", bm.n_post},
-                      {"Target", bm.target},
                       {"Tol", bm.tol},
                       {"MaxSize", bm.max_size},
                       {"Type", ToString(bm.type)}});
+  if (bm.target > 0.0)
+  {
+    Concretize(j_bm, "Target", bm.target);
+  }
 }
 
 void ConcretizeModel(const config::ModelData &model, json &j_model)
@@ -202,8 +205,11 @@ void ConcretizeModel(const config::ModelData &model, json &j_model)
                          {"CrackDisplacementFactor", model.crack_displ_factor},
                          {"AddInterfaceBoundaryElements", model.add_bdr_elements},
                          {"ExportPrerefinedMesh", model.export_prerefined_mesh},
-                         {"ReorientTetMesh", model.reorient_tet_mesh},
-                         {"Partitioning", model.partitioning}});
+                         {"ReorientTetMesh", model.reorient_tet_mesh}});
+  if (!model.partitioning.empty())
+  {
+    Concretize(j_model, "Partitioning", model.partitioning);
+  }
   if (!j_model.contains("Refinement"))
   {
     j_model["Refinement"] = json::object();
@@ -354,8 +360,11 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
       }
       const auto &fp = it->second;
       ApplyEntries(j_port, {{"Excitation", fp.excitation},
-                            {"IncidentPolarization", fp.inc_polarization},
-                            {"MaxOrder", fp.max_order}});
+                            {"IncidentPolarization", fp.inc_polarization}});
+      if (fp.max_order >= 0)
+      {
+        Concretize(j_port, "MaxOrder", fp.max_order);
+      }
     }
   }
 
@@ -464,8 +473,11 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
                           {"PartialAssemblyOrder", iodata.solver.pa_order_threshold},
                           {"QuadratureOrderJacobian", iodata.solver.q_order_jac},
                           {"QuadratureOrderExtra", iodata.solver.q_order_extra},
-                          {"Device", ToString(iodata.solver.device)},
-                          {"Backend", iodata.solver.ceed_backend}});
+                          {"Device", ToString(iodata.solver.device)}});
+  if (!iodata.solver.ceed_backend.empty())
+  {
+    Concretize(j_solver, "Backend", iodata.solver.ceed_backend);
+  }
 
   if (!j_solver.contains("Linear"))
   {
