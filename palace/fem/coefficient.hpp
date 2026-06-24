@@ -562,6 +562,20 @@ template <>
 inline double EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>::GetLocalEnergyDensity(
     mfem::ElementTransformation &T) const
 {
+  if (T.GetSpaceDim() == 2 && U.Real().VectorDim() == 1)
+  {
+    // In 2D, B is scalar-valued and represents the out-of-plane flux density B_z.
+    // Magnetic energy density is therefore 1/2 * mu^{-1}_{zz} * |B_z|^2.
+    const double invmu_zz = mat_op.GetInvPermeabilityZZ(T.Attribute);
+    double Bz = U.Real().GetValue(T, T.GetIntPoint());
+    double dot = invmu_zz * Bz * Bz;
+    if (U.HasImag())
+    {
+      Bz = U.Imag().GetValue(T, T.GetIntPoint());
+      dot += invmu_zz * Bz * Bz;
+    }
+    return 0.5 * dot * scaling;
+  }
   double V_data[3];
   mfem::Vector V(V_data, T.GetSpaceDim());
   U.Real().GetVectorValue(T, T.GetIntPoint(), V);

@@ -28,6 +28,7 @@
 PalacePragmaDiagnosticPush
 PalacePragmaDiagnosticDisableUnused
 
+#include "fem/qfunctions/22/eval_22_qf.h"
 #include "fem/qfunctions/32/surf_32_qf.h"
 #include "fem/qfunctions/33/eval_33_qf.h"
 
@@ -2110,11 +2111,14 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
                                     const mfem::ParFiniteElementSpace &target_fespace,
                                     double scaling)
 {
-  if (mesh.Dimension() != 3 || mesh.SpaceDimension() != 3)
+  const int dim = mesh.Dimension();
+  const int sdim = mesh.SpaceDimension();
+  if (!((dim == 2 && sdim == 2) || (dim == 3 && sdim == 3)))
   {
     valid = false;
     return;
   }
+  const bool scalar_magnetic_field = (dim == 2);
   const mfem::ParMesh &pmesh = mesh.Get();
   const mfem::FiniteElementSpace &mesh_fespace = *pmesh.GetNodes()->FESpace();
 
@@ -2129,11 +2133,13 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
   std::vector<CeedIntScalar> ctx(1);
   ctx[0].second = scaling;
   {
-    MaterialPropertyCoefficient coeff_func(mat_op.GetAttributeToMaterial(),
-                                           kind == Kind::ENERGY_E
-                                               ? mat_op.GetPermittivityReal()
-                                               : mat_op.GetInvPermeability());
-    auto mat_ctx = ceed::PopulateCoefficientContext(3, &coeff_func);
+    const auto &coeff = (kind == Kind::ENERGY_E)
+                            ? mat_op.GetPermittivityReal()
+                            : (scalar_magnetic_field ? mat_op.GetCurlCurlInvPermeability()
+                                                     : mat_op.GetInvPermeability());
+    MaterialPropertyCoefficient coeff_func(mat_op.GetAttributeToMaterial(), coeff);
+    auto mat_ctx = ceed::PopulateCoefficientContext(
+        (scalar_magnetic_field && kind != Kind::ENERGY_E) ? 1 : dim, &coeff_func);
     ctx.insert(ctx.end(), mat_ctx.begin(), mat_ctx.end());
   }
 
@@ -2243,16 +2249,19 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
     switch (kind)
     {
       case Kind::ENERGY_E:
-        info.apply_qf = f_eval_energy_e_33;
-        info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_energy_e_33_loc);
+        info.apply_qf = (dim == 2) ? f_eval_energy_e_22 : f_eval_energy_e_33;
+        info.apply_qf_path = (dim == 2) ? PalaceQFunctionRelativePath(f_eval_energy_e_22_loc)
+                                        : PalaceQFunctionRelativePath(f_eval_energy_e_33_loc);
         break;
       case Kind::ENERGY_M:
-        info.apply_qf = f_eval_energy_m_33;
-        info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_energy_m_33_loc);
+        info.apply_qf = (dim == 2) ? f_eval_energy_m_22 : f_eval_energy_m_33;
+        info.apply_qf_path = (dim == 2) ? PalaceQFunctionRelativePath(f_eval_energy_m_22_loc)
+                                        : PalaceQFunctionRelativePath(f_eval_energy_m_33_loc);
         break;
       case Kind::POYNTING:
-        info.apply_qf = f_eval_poynting_33;
-        info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_poynting_33_loc);
+        info.apply_qf = (dim == 2) ? f_eval_poynting_22 : f_eval_poynting_33;
+        info.apply_qf_path = (dim == 2) ? PalaceQFunctionRelativePath(f_eval_poynting_22_loc)
+                                        : PalaceQFunctionRelativePath(f_eval_poynting_33_loc);
         break;
     }
 

@@ -491,16 +491,19 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     // U_m = 1/2 Hᴴ B = 1/2 μ⁻¹ Bᴴ B.
     U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
         *B, fem_op->GetMaterialOp(), scaling);
-    if (SurfaceFunctional::Enabled() && B->Real().VectorDim() > 1)
+    if (SurfaceFunctional::Enabled())
     {
       MakeFieldEvaluator(DomainFieldEvaluator::Kind::ENERGY_M, nullptr, B->ParFESpace(),
                          scaling, U_m_eval, U_m_gf);
-      MakeBdrCoeffEvaluator(SurfaceFunctional::Kind::BDR_ENERGY_M, *B->ParFESpace(),
-                            scaling, Um_bdr_eval);
-      if (Um_bdr_eval)
+      if (B->Real().VectorDim() > 1)
       {
-        Um_bdr_buf.SetSize(Um_bdr_eval->BufferSize());
-        Um_bdr_buf.UseDevice(true);
+        MakeBdrCoeffEvaluator(SurfaceFunctional::Kind::BDR_ENERGY_M, *B->ParFESpace(),
+                              scaling, Um_bdr_eval);
+        if (Um_bdr_eval)
+        {
+          Um_bdr_buf.SetSize(Um_bdr_eval->BufferSize());
+          Um_bdr_buf.UseDevice(true);
+        }
       }
     }
 
