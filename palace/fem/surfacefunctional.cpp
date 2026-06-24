@@ -87,8 +87,8 @@ struct ElemPlan
   // is not in the local vector, so it is pulled via FaceNbrFieldExchange and fed to the
   // operator at the mapped points (only Elem2 can be a ghost, so at most one side).
   bool ghost_a = false, ghost_b = false;
-  int face_nbr = -1;    // Face neighbor element index (Elem2No - ParMesh::GetNE())
-  int ghost_attr = 0;   // Ghost element mesh attribute (material lookup on the requester)
+  int face_nbr = -1;   // Face neighbor element index (Elem2No - ParMesh::GetNE())
+  int ghost_attr = 0;  // Ghost element mesh attribute (material lookup on the requester)
   mfem::Geometry::Type ghost_geom = mfem::Geometry::INVALID;  // Ghost element geometry
 };
 
@@ -171,8 +171,7 @@ bool CeedSupportsNonTensorAtPoints(Ceed ceed)
   // and MAGMA. Other backends keep the existing mapped-point tabulation path.
   const char *resource;
   PalaceCeedCall(ceed, CeedGetResource(ceed, &resource));
-  return std::strstr(resource, "/gpu/cuda/ref") ||
-         std::strstr(resource, "/gpu/cuda/magma");
+  return std::strstr(resource, "/gpu/cuda/ref") || std::strstr(resource, "/gpu/cuda/magma");
 }
 
 int TetNumModes(int degree)
@@ -307,8 +306,7 @@ void fem::ApplyAddGroupOperators(const std::vector<fem::CeedGroupOperator> &grou
     PalaceCeedCall(group.ceed,
                    CeedVectorSetArray(group.out_vec, out_mem, CEED_USE_POINTER, out_data));
     PalaceCeedCall(group.ceed, CeedOperatorApplyAdd(group.op, CEED_VECTOR_NONE,
-                                                    group.out_vec,
-                                                    CEED_REQUEST_IMMEDIATE));
+                                                    group.out_vec, CEED_REQUEST_IMMEDIATE));
     PalaceCeedCall(group.ceed, CeedVectorTakeArray(group.out_vec, out_mem, nullptr));
   }
 }
@@ -629,10 +627,10 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       // Build the group key. For AtPoints-capable boundary visualization groups, the
       // mapped volume reference coordinates are runtime data rather than part of the
       // basis/JIT key; older paths still key on the mapped coordinates themselves.
-      const auto vol_geom_a = plan.ghost_a ? plan.ghost_geom
+      const auto vol_geom_a = plan.ghost_a         ? plan.ghost_geom
                               : (plan.elem_a >= 0) ? pmesh.GetElementGeometry(plan.elem_a)
                                                    : mfem::Geometry::INVALID;
-      const auto vol_geom_b = plan.ghost_b ? plan.ghost_geom
+      const auto vol_geom_b = plan.ghost_b         ? plan.ghost_geom
                               : (plan.elem_b >= 0) ? pmesh.GetElementGeometry(plan.elem_b)
                                                    : mfem::Geometry::INVALID;
       const bool can_surface_flux_at_points_a =
@@ -641,14 +639,12 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       const bool can_surface_flux_at_points_b =
           use_at_points && kind == Kind::SURFACE_FLUX && plan.elem_b >= 0 &&
           !plan.ghost_b && vol_geom_b == mfem::Geometry::TETRAHEDRON;
-      const bool can_epr_at_points =
-          use_at_points && kind == Kind::INTERFACE_EPR && plan.elem_a >= 0 &&
-          plan.elem_b < 0 && !plan.ghost_a &&
-          vol_geom_a == mfem::Geometry::TETRAHEDRON;
+      const bool can_epr_at_points = use_at_points && kind == Kind::INTERFACE_EPR &&
+                                     plan.elem_a >= 0 && plan.elem_b < 0 && !plan.ghost_a &&
+                                     vol_geom_a == mfem::Geometry::TETRAHEDRON;
       const bool can_farfield_at_points =
-          use_at_points && kind == Kind::FARFIELD && plan.elem_a >= 0 &&
-          plan.elem_b < 0 && !plan.ghost_a &&
-          vol_geom_a == mfem::Geometry::TETRAHEDRON;
+          use_at_points && kind == Kind::FARFIELD && plan.elem_a >= 0 && plan.elem_b < 0 &&
+          !plan.ghost_a && vol_geom_a == mfem::Geometry::TETRAHEDRON;
       const bool can_at_points_a =
           (use_at_points && buffer_kind && plan.elem_a >= 0 && !plan.ghost_a &&
            vol_geom_a == mfem::Geometry::TETRAHEDRON) ||
@@ -693,10 +689,10 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         key.push_back(static_cast<long long>(nq));
         key.push_back(static_cast<long long>(at_points_group));
         key.push_back(static_cast<long long>(std::llround(side_scale * QUANTIZE_SCALE)));
-        key.push_back(static_cast<long long>(
-            (at_points_group && kind == Kind::SURFACE_FLUX)
-                ? 0
-                : std::llround(normal_scale * QUANTIZE_SCALE)));
+        key.push_back(
+            static_cast<long long>((at_points_group && kind == Kind::SURFACE_FLUX)
+                                       ? 0
+                                       : std::llround(normal_scale * QUANTIZE_SCALE)));
         if (!at_points_group)
         {
           AppendPoints(key, pts_a);
@@ -1028,7 +1024,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   // on a single Ceed context (no OpenMP parallel assembly or application; correctness
   // first, this can be extended with the thread partitioning of fem/mesh.cpp later).
   const bool profile = (std::getenv("PALACE_SURFACE_PROFILE") != nullptr);
-  long long profile_counts[4] = {0, 0, 0, 0};  // groups, elems, AtPoints groups, AtPoints elems
+  long long profile_counts[4] = {0, 0, 0,
+                                 0};  // groups, elems, AtPoints groups, AtPoints elems
   for (auto &face_group : face_groups)
   {
     auto &group = face_group.second;
@@ -1092,8 +1089,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     {
       face_mesh_fe = mesh_fespace.FEColl()->TraceFiniteElementForGeometry(group.bdr_geom);
     }
-    auto AddSequentialPointInput = [&](const std::string &name, Vector &data,
-                                       int num_comp)
+    auto AddSequentialPointInput = [&](const std::string &name, Vector &data, int num_comp)
     {
       const int nq = face_ir.GetNPoints();
       CeedElemRestriction restr;
@@ -1257,8 +1253,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     // process applied the Piola map), so Piola(I) = I in the shared kernels reproduces
     // them. Same input names/positions as AddVolGeomInputs ("grad_x_<suffix>" via
     // EVAL_NONE matches the EVAL_GRAD naming), so the kernels are unchanged.
-    auto AddVolGeomInputsGhost = [&](const std::string &suffix,
-                                     const mfem::IntegrationRule &ir)
+    auto AddVolGeomInputsGhost =
+        [&](const std::string &suffix, const mfem::IntegrationRule &ir)
     {
       const int num_pts = ir.GetNPoints();
       auto &elem_attr = elem_attrs.emplace_back(group.ghost_attr.size());
@@ -1271,8 +1267,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       CeedBasis attr_basis;
       CeedVector attr_vec;
       PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
-                               ceed, group.ghost_attr.size(), 1, 1,
-                               group.ghost_attr.size(), CEED_STRIDES_BACKEND, &attr_restr));
+                               ceed, group.ghost_attr.size(), 1, 1, group.ghost_attr.size(),
+                               CEED_STRIDES_BACKEND, &attr_restr));
       {
         mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
         Bt = 1.0;
@@ -1415,8 +1411,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     // point-major layout ([pt][comp]) to the component-major layout the kernel reads
     // (offset base + 3*pt, comp_stride 1). Re-pointed at the imported vector on each
     // apply via source index 4 (see fem::ApplyAddGroupOperators).
-    auto AddFieldInputGhost = [&](const std::string &name, int slot,
-                                  const mfem::IntegrationRule &ir)
+    auto AddFieldInputGhost =
+        [&](const std::string &name, int slot, const mfem::IntegrationRule &ir)
     {
       const int nq = ir.GetNPoints();
       std::vector<CeedInt> offsets(num_elem * nq);
@@ -1442,10 +1438,9 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     };
     if (kind == Kind::BDR_POYNTING)
     {
-      auto AddPoyntingSide = [&](const std::string &suffix,
-                                 const std::vector<int> &indices,
-                                 mfem::Geometry::Type geom,
-                                 const mfem::IntegrationRule &ir, bool ghost)
+      auto AddPoyntingSide = [&](const std::string &suffix, const std::vector<int> &indices,
+                                 mfem::Geometry::Type geom, const mfem::IntegrationRule &ir,
+                                 bool ghost)
       {
         const std::string e_name = "u_e_" + suffix;
         const std::string b_name = "u_b_" + suffix;
@@ -1582,9 +1577,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       // ApplyAdd performs the reduction over the duplicate offsets.
       PalaceCeedCall(ceed, CeedElemRestrictionCreate(
                                ceed, static_cast<CeedInt>(num_elem), nq, num_out,
-                               num_marked, (CeedSize)num_marked * num_out,
-                               CEED_MEM_HOST, CEED_COPY_VALUES, offsets.data(),
-                               &out_restr));
+                               num_marked, (CeedSize)num_marked * num_out, CEED_MEM_HOST,
+                               CEED_COPY_VALUES, offsets.data(), &out_restr));
     }
     else
     {
@@ -1657,8 +1651,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       case Kind::SURFACE_FLUX:
         ctx[0].second =
             (group.flip_normal ? -1.0 : 1.0) *
-            ((group.at_points && !group.normal_scales.empty()) ? 1.0
-                                                               : group.normal_scale);
+            ((group.at_points && !group.normal_scales.empty()) ? 1.0 : group.normal_scale);
         switch (flux_type)
         {
           case SurfaceFlux::ELECTRIC:
@@ -1701,8 +1694,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     else if (group.at_points)
     {
       ceed::AssembleCeedPointEvaluatorAtPoints(
-          info, ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, inputs,
-          points_restr, points_vec, num_out, out_restr, &op,
+          info, ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, inputs, points_restr,
+          points_vec, num_out, out_restr, &op,
           (kind == Kind::FARFIELD) ? &op_ctx : nullptr);
     }
     else
@@ -1827,8 +1820,9 @@ std::complex<double> SurfaceFunctional::EvalFlux(const GridFunction *E,
 
 void SurfaceFunctional::EvalBuffer(const Vector &u, Vector &buffer) const
 {
-  MFEM_VERIFY(valid && IsBufferKind(kind) && kind != Kind::BDR_POYNTING,
-              "EvalBuffer requires a valid single-field boundary visualization functional!");
+  MFEM_VERIFY(
+      valid && IsBufferKind(kind) && kind != Kind::BDR_POYNTING,
+      "EvalBuffer requires a valid single-field boundary visualization functional!");
   MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
   buffer = 0.0;
   if (face_nbr_exchange)
@@ -1844,8 +1838,9 @@ void SurfaceFunctional::EvalBuffer(const Vector &u, Vector &buffer) const
 
 void SurfaceFunctional::EvalBuffer(const GridFunction &u, Vector &buffer) const
 {
-  MFEM_VERIFY(valid && IsBufferKind(kind) && kind != Kind::BDR_POYNTING,
-              "EvalBuffer requires a valid single-field boundary visualization functional!");
+  MFEM_VERIFY(
+      valid && IsBufferKind(kind) && kind != Kind::BDR_POYNTING,
+      "EvalBuffer requires a valid single-field boundary visualization functional!");
   MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
   buffer = 0.0;
   auto Apply = [&](const Vector &v)
@@ -1882,8 +1877,7 @@ void SurfaceFunctional::EvalBuffer(const GridFunction &E, const GridFunction &B,
     if (face_nbr_exchange)
     {
       face_nbr_exchange->Exchange({&e, &b});
-      fem::ApplyAddGroupOperators(groups, {&e, &b}, buffer,
-                                  &face_nbr_exchange->Imported());
+      fem::ApplyAddGroupOperators(groups, {&e, &b}, buffer, &face_nbr_exchange->Imported());
     }
     else
     {
@@ -1996,9 +1990,10 @@ std::complex<double> SurfaceFunctional::EvalComplexPower(const GridFunction &E,
   return dot;
 }
 
-std::vector<std::complex<double>> SurfaceFunctional::EvalComplexPowerByAttribute(
-    const GridFunction &E, const GridFunction &B, const mfem::Array<int> &attr_to_bin,
-    int num_bins) const
+std::vector<std::complex<double>>
+SurfaceFunctional::EvalComplexPowerByAttribute(const GridFunction &E, const GridFunction &B,
+                                               const mfem::Array<int> &attr_to_bin,
+                                               int num_bins) const
 {
   MFEM_VERIFY(kind == Kind::SURFACE_FLUX && flux_type == SurfaceFlux::POWER &&
                   flux_two_sided,
@@ -2074,7 +2069,21 @@ DomainFieldEvaluator::DomainFieldEvaluator(
   MFEM_VERIFY((nd_fespace || kind == Kind::ENERGY_M) &&
                   (rt_fespace || kind == Kind::ENERGY_E),
               "Missing finite element space for domain field evaluator!");
-  Assemble(mesh, mat_op, target_fespace, scaling);
+  Assemble(mesh, mat_op, &target_fespace, 0, scaling);
+}
+
+DomainFieldEvaluator::DomainFieldEvaluator(Kind kind, const Mesh &mesh,
+                                           const MaterialOperator &mat_op,
+                                           const mfem::ParFiniteElementSpace *nd_fespace,
+                                           const mfem::ParFiniteElementSpace *rt_fespace,
+                                           int lod, double scaling)
+  : kind(kind), fespace_e(nd_fespace), fespace_b(rt_fespace)
+{
+  MFEM_VERIFY((nd_fespace || kind == Kind::ENERGY_M) &&
+                  (rt_fespace || kind == Kind::ENERGY_E),
+              "Missing finite element space for domain field evaluator!");
+  MFEM_VERIFY(lod >= 0, "Invalid level of detail for VTU field evaluator!");
+  Assemble(mesh, mat_op, nullptr, lod, scaling);
 }
 
 DomainFieldEvaluator::~DomainFieldEvaluator()
@@ -2090,8 +2099,8 @@ DomainFieldEvaluator::~DomainFieldEvaluator()
 }
 
 void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &mat_op,
-                                    const mfem::ParFiniteElementSpace &target_fespace,
-                                    double scaling)
+                                    const mfem::ParFiniteElementSpace *target_fespace,
+                                    int lod, double scaling)
 {
   if (mesh.Dimension() != 3 || mesh.SpaceDimension() != 3)
   {
@@ -2100,12 +2109,27 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
   }
   const mfem::ParMesh &pmesh = mesh.Get();
   const mfem::FiniteElementSpace &mesh_fespace = *pmesh.GetNodes()->FESpace();
+  const bool buffer_output = (target_fespace == nullptr);
+  if (buffer_output)
+  {
+    buffer_num_comp = BufferNumComp(kind);
+    buffer_bases.resize(pmesh.GetNE(), -1);
+    buffer_size = 0;
+    for (int e = 0; e < pmesh.GetNE(); e++)
+    {
+      const auto *RefG =
+          mfem::GlobGeometryRefiner.Refine(pmesh.GetElementBaseGeometry(e), lod, 1);
+      buffer_bases[e] = buffer_size;
+      buffer_size += buffer_num_comp * RefG->RefPts.GetNPoints();
+    }
+  }
 
-  // Group the elements by geometry type.
+  // Group the elements by base geometry type, matching MFEM's VTU refined-geometry
+  // traversal and finite-element collection lookup.
   std::map<mfem::Geometry::Type, std::vector<int>> geom_elems;
   for (int e = 0; e < pmesh.GetNE(); e++)
   {
-    geom_elems[pmesh.GetElementGeometry(e)].push_back(e);
+    geom_elems[pmesh.GetElementBaseGeometry(e)].push_back(e);
   }
 
   // QFunction context: scaling factor followed by the material property table.
@@ -2130,12 +2154,23 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
   {
     CeedAssemblyScratch scratch(ceed);
 
-    // Evaluation points are the nodal points of the (interpolatory) target space.
-    const mfem::FiniteElement *target_fe =
-        target_fespace.FEColl()->FiniteElementForGeometry(geom);
-    MFEM_VERIFY(target_fe, "Unable to get target finite element for field evaluator!");
-    const mfem::IntegrationRule &nodes_ir = target_fe->GetNodes();
-    const int num_pts = nodes_ir.GetNPoints();
+    // Evaluation points are either the nodal points of the (interpolatory) target space
+    // or the refined-geometry points emitted by MFEM's VTU writer.
+    const mfem::IntegrationRule *nodes_ir = nullptr;
+    int num_out_comp = buffer_num_comp;
+    if (buffer_output)
+    {
+      nodes_ir = &mfem::GlobGeometryRefiner.Refine(geom, lod, 1)->RefPts;
+    }
+    else
+    {
+      const mfem::FiniteElement *target_fe =
+          target_fespace->FEColl()->FiniteElementForGeometry(geom);
+      MFEM_VERIFY(target_fe, "Unable to get target finite element for field evaluator!");
+      nodes_ir = &target_fe->GetNodes();
+      num_out_comp = target_fespace->GetVDim();
+    }
+    const int num_pts = nodes_ir->GetNPoints();
 
     // Element attributes (libCEED local, for material lookup) and mesh node gradients
     // (for on the fly geometry evaluation at the points).
@@ -2177,7 +2212,7 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
       const mfem::FiniteElement *mesh_fe =
           mesh_fespace.FEColl()->FiniteElementForGeometry(geom);
       CeedBasis mesh_basis;
-      ceed::InitBasisAtPoints(*mesh_fe, nodes_ir, mesh_fespace.GetVDim(), ceed,
+      ceed::InitBasisAtPoints(*mesh_fe, *nodes_ir, mesh_fespace.GetVDim(), ceed,
                               &mesh_basis);
       CeedVector mesh_nodes_vec;
       ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
@@ -2197,7 +2232,7 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
       ceed::InitRestriction(fespace, indices, false, /*is_interp*/ true, false, ceed,
                             &restr);
       const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
-      ceed::InitBasisAtPoints(*fe, nodes_ir, fespace.GetVDim(), ceed, &basis);
+      ceed::InitBasisAtPoints(*fe, *nodes_ir, fespace.GetVDim(), ceed, &basis);
       ceed::InitCeedVector(field_staging, ceed, &vec);
       inputs.push_back({name, vec, restr, basis, ceed::EvalMode::Interp});
       field_sources.emplace_back(name, source);
@@ -2214,10 +2249,30 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
       AddFieldInput(kind == Kind::POYNTING ? "u_2" : "u_1", 1, *fespace_b);
     }
 
-    // Output restriction scattering nodal values into the target grid function.
+    // Output restriction scattering values into the target grid function or directly into
+    // the VTU point-data buffer.
     CeedElemRestriction out_restr;
-    ceed::InitRestriction(target_fespace, indices, false, /*is_interp*/ true, false, ceed,
-                          &out_restr);
+    if (buffer_output)
+    {
+      std::vector<CeedInt> offsets(indices.size() * num_pts);
+      for (std::size_t k = 0; k < indices.size(); k++)
+      {
+        const int base = buffer_bases[indices[k]];
+        for (int j = 0; j < num_pts; j++)
+        {
+          offsets[k * num_pts + j] = base + buffer_num_comp * j;
+        }
+      }
+      PalaceCeedCall(ceed, CeedElemRestrictionCreate(
+                               ceed, static_cast<CeedInt>(indices.size()), num_pts,
+                               buffer_num_comp, 1, (CeedSize)buffer_size, CEED_MEM_HOST,
+                               CEED_COPY_VALUES, offsets.data(), &out_restr));
+    }
+    else
+    {
+      ceed::InitRestriction(*target_fespace, indices, false, /*is_interp*/ true, false,
+                            ceed, &out_restr);
+    }
     scratch.restrs.push_back(out_restr);
 
     ceed::CeedQFunctionInfo info;
@@ -2239,8 +2294,7 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
 
     CeedOperator op;
     ceed::AssembleCeedPointEvaluator(info, ctx.data(), ctx.size() * sizeof(CeedIntScalar),
-                                     ceed, inputs, target_fespace.GetVDim(), out_restr,
-                                     &op);
+                                     ceed, inputs, num_out_comp, out_restr, &op);
     groups.push_back({ceed, op, std::move(field_sources)});
   }
 }
@@ -2259,6 +2313,15 @@ void DomainFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B,
     fem::ApplyAddGroupOperators(groups,
                                 {E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr}, out);
   }
+}
+
+void DomainFieldEvaluator::EvalBuffer(const GridFunction *E, const GridFunction *B,
+                                      Vector &buffer) const
+{
+  MFEM_VERIFY(buffer_num_comp > 0,
+              "EvalBuffer called on a grid-function DomainFieldEvaluator!");
+  MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
+  Eval(E, B, buffer);
 }
 
 }  // namespace palace

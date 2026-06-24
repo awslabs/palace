@@ -21,6 +21,7 @@
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperatorcsv.hpp"
 #include "models/surfacepostoperator.hpp"
+#include "utils/ceedparaviewdatacollection.hpp"
 #include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/units.hpp"
@@ -181,7 +182,7 @@ protected:
   // ParaView data collection: writing fields to disk for visualization.
   // This is an optional, since ParaViewDataCollection has no default (empty) ctor,
   // and we only want initialize it if ShouldWriteParaviewFields() returns true.
-  std::optional<mfem::ParaViewDataCollection> paraview, paraview_bdr;
+  std::optional<CeedParaViewDataCollection> paraview, paraview_bdr;
 
   // MFEM grid function output details.
   std::string gridfunction_output_dir;
@@ -202,12 +203,16 @@ protected:
   std::unique_ptr<mfem::Coefficient> U_e, U_m, V_s, Q_sr, Q_si;
 
   // libCEED evaluators and output grid functions for the domain coefficient fields
-  // (U_e, U_m, S), replacing per-point host coefficient evaluation at ParaView save
-  // time when supported.
+  // (U_e, U_m, S), used by MFEM grid-function output when supported.
   std::unique_ptr<mfem::L2_FECollection> viz_fec;
   std::unique_ptr<mfem::ParFiniteElementSpace> viz_scalar_fespace, viz_vector_fespace;
   std::unique_ptr<mfem::ParGridFunction> U_e_gf, U_m_gf, S_gf;
   std::unique_ptr<DomainFieldEvaluator> U_e_eval, U_m_eval, S_eval;
+
+  // libCEED evaluators and VTU point-data buffers for the same derived domain fields,
+  // used by ParaView output to avoid materializing intermediate GridFunctions.
+  std::unique_ptr<DomainFieldEvaluator> U_e_pv_eval, U_m_pv_eval, S_pv_eval;
+  Vector U_e_pv_buf, U_m_pv_buf, S_pv_buf;
 
   // libCEED evaluators and buffers for the boundary collection field
   // coefficients (E_s, B_s, Q_s, J_s, U_e, U_m, S), read by buffer-backed

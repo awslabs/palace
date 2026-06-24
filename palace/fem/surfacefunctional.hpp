@@ -87,10 +87,10 @@ public:
     BDR_FIELD_E,    // H(curl) field values at boundary visualization points
     BDR_FIELD_B,    // H(div) field values at boundary visualization points
     BDR_FLUX_Q,     // Surface charge (eps E) . n at boundary visualization points
-    BDR_CURRENT_J,   // Surface current n x (mu^-1 B) at boundary visualization points
-    BDR_ENERGY_E,    // Electric energy density at boundary visualization points
-    BDR_ENERGY_M,    // Magnetic energy density at boundary visualization points
-    BDR_POYNTING     // Poynting vector E x (mu^-1 B) at boundary visualization points
+    BDR_CURRENT_J,  // Surface current n x (mu^-1 B) at boundary visualization points
+    BDR_ENERGY_E,   // Electric energy density at boundary visualization points
+    BDR_ENERGY_M,   // Magnetic energy density at boundary visualization points
+    BDR_POYNTING    // Poynting vector E x (mu^-1 B) at boundary visualization points
   };
 
   // Whether the kind fills a per-point visualization buffer (vs. computing integrals).
@@ -296,10 +296,11 @@ public:
 };
 
 //
-// Class to evaluate derived field quantities (energy densities, Poynting vector) at the
-// nodal points of an interpolatory output space using libCEED, filling a grid function
-// for visualization output without per-point host coefficient evaluation. Follows the
-// conventions of EnergyDensityCoefficient and PoyntingVectorCoefficient.
+// Class to evaluate derived field quantities (energy densities, Poynting vector) at
+// visualization points using libCEED. It can either fill an interpolatory output grid
+// function (for MFEM grid-function output) or a VTU point-data buffer in the exact
+// element/refined-point order used by ParaViewDataCollection. Follows the conventions of
+// EnergyDensityCoefficient and PoyntingVectorCoefficient.
 //
 class DomainFieldEvaluator
 {
@@ -322,9 +323,17 @@ private:
   // Whether the evaluator could be assembled (3D meshes only).
   bool valid = true;
 
-  // Per-geometry assembled libCEED operators, evaluating at the target space nodal
-  // points and scattering directly into the output grid function. The element attribute
-  // vectors are operator inputs and must outlive the operators.
+  // VTU point-buffer output metadata when assembled without a target finite element
+  // space. buffer_bases has one base offset per local element, matching MFEM's VTU point
+  // traversal order.
+  int buffer_num_comp = 0;
+  int buffer_size = 0;
+  std::vector<int> buffer_bases;
+
+  // Per-geometry assembled libCEED operators, evaluating at the configured visualization
+  // points and scattering directly into either the output grid function or the VTU point
+  // buffer. The element attribute vectors are operator inputs and must outlive the
+  // operators.
   std::vector<fem::CeedGroupOperator> groups;
   std::deque<Vector> elem_attrs;
 
@@ -332,15 +341,26 @@ private:
   mutable Vector field_staging;
 
   void Assemble(const Mesh &mesh, const MaterialOperator &mat_op,
-                const mfem::ParFiniteElementSpace &target_fespace, double scaling);
+                const mfem::ParFiniteElementSpace *target_fespace, int lod, double scaling);
 
 public:
+  // Number of components per visualization point for each derived field kind.
+  static int BufferNumComp(Kind kind) { return kind == Kind::POYNTING ? 3 : 1; }
+
   // Construct an evaluator filling grid functions on target_fespace (an interpolatory
   // L2 space). The scaling multiplies the output as for the legacy coefficients.
   DomainFieldEvaluator(Kind kind, const Mesh &mesh, const MaterialOperator &mat_op,
                        const mfem::ParFiniteElementSpace *nd_fespace,
                        const mfem::ParFiniteElementSpace *rt_fespace,
                        const mfem::ParFiniteElementSpace &target_fespace, double scaling);
+
+  // Construct an evaluator filling a VTU point-data buffer at MFEM's refined geometry
+  // points for the given level of detail (the same value passed to
+  // ParaViewDataCollection::SetLevelsOfDetail()).
+  DomainFieldEvaluator(Kind kind, const Mesh &mesh, const MaterialOperator &mat_op,
+                       const mfem::ParFiniteElementSpace *nd_fespace,
+                       const mfem::ParFiniteElementSpace *rt_fespace, int lod,
+                       double scaling);
   ~DomainFieldEvaluator();
 
   DomainFieldEvaluator(const DomainFieldEvaluator &) = delete;
@@ -349,10 +369,19 @@ public:
   // Whether the evaluator was successfully assembled.
   bool IsValid() const { return valid; }
 
+  // Total VTU point-buffer size and per-local-element base offsets. Only meaningful for
+  // buffer-output evaluators.
+  int BufferSize() const { return buffer_size; }
+  const std::vector<int> &BufferBases() const { return buffer_bases; }
+
   // Fill the output vector (L-vector of the target space, e.g. a GridFunction) with
   // the pointwise quantity. Real and imaginary field contributions add. Local
   // operation (no MPI communication).
   void Eval(const GridFunction *E, const GridFunction *B, Vector &out) const;
+
+  // Fill the VTU point-data buffer with the pointwise quantity. Real and imaginary field
+  // contributions add. Local operation (no MPI communication).
+  void EvalBuffer(const GridFunction *E, const GridFunction *B, Vector &buffer) const;
 };
 
 }  // namespace palace
