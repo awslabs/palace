@@ -45,7 +45,7 @@ const FREQ_LIM = (3.3, 6.7)
 const FREQ_TICKS = collect(3.5:0.5:6.5)
 const FREQ_MINOR_BETWEEN = 5
 
-# Reference eigenmode frequencies (test/examples/ref/transmon/transmon_coarse).
+# Reference eigenmode frequencies (test/data/regression/ref/transmon/transmon_coarse).
 const EIGENMODE_FREQS_GHZ = [4.099115457610e0, 5.603265962190e0]
 
 function plasma_palette(n::Int)

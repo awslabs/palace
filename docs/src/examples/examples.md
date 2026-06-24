@@ -13,7 +13,7 @@ source code. The following sections provide complete tutorials for each of the a
 example applications.
 
 The regression testing suite keeps its own copied fixtures and reference data under
-[`test/unit/data/regression/`](https://github.com/awslabs/palace/blob/main/test/unit/data/regression/)
+[`test/data/regression/`](https://github.com/awslabs/palace/blob/main/test/data/regression/)
 so tests can run from installed test data without depending on the source-tree examples.
 
 ## Contents

@@ -46,7 +46,7 @@ int main(int argc, char *argv[])
   std::string ceed_backend("/cpu/self");  // libCEED backend
 
   // Regression-suite overrides. The input fixtures and reference CSVs are
-  // normal unit-test data rooted at PALACE_TEST_DATA_DIR; only the staging root
+  // normal test data rooted at PALACE_TEST_DATA_DIR; only the staging root
   // and solver choices are configurable at run time. Empty run dir = use the
   // temporary-directory default.
   std::string regression_run_dir;               // --regression-run-dir

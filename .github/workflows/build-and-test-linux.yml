@@ -32,6 +32,7 @@ jobs:
               - 'extern/**'
               - 'examples/**'
               - 'test/unit/**'
+              - 'test/data/**'
               - '.github/workflows/build-and-test-linux.yml'
 
   build-and-test-linux:

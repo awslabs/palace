@@ -11,8 +11,8 @@ SPDX-License-Identifier: Apache-2.0
 
   - Unit tests in `test/unit/` test individual components in isolation
   - Regression tests, registered in `test/unit/regression/cases.cpp`, run
-    full Palace solves on fixtures under `test/unit/data/regression/input/`
-    and compare generated CSVs against `test/unit/data/regression/ref/`
+    full Palace solves on fixtures under `test/data/regression/input/`
+    and compare generated CSVs against `test/data/regression/ref/`
 
 Both types of tests are run automatically as part of the project's continuous
 integration (CI) workflows.
@@ -182,7 +182,7 @@ environment.
 to group cases into separate sweeps.
 
   - `[Regression]` tests are end-to-end Palace solves diffed against the
-    reference data under `test/unit/data/regression/ref/`. Slow enough to deserve
+    reference data under `test/data/regression/ref/`. Slow enough to deserve
     their own ctest registration (`regression-*`, label `regression`)
     and skipped from the default unit-test sweep. Opt in with
     `ctest -L "^regression$"` or
@@ -231,11 +231,11 @@ running unit tests](#Building-and-running-unit-tests).
 #### Accessing files
 
 Files required for tests (e.g., meshes or configurations) need to be saved
-inside the `test/unit/data` folder. This ensures that the files are accessible
+inside the `test/data` folder. This ensures that the files are accessible
 when *Palace* is installed in a folder that is not the source folder (e.g., with
-Spack). The path to the content of `test/unit/data` maps to
+Spack). The path to the content of `test/data` maps to
 `PALACE_TEST_DATA_DIR`. For example, if you want to access the `banana.txt` file
-in `test/unit/data`, refer to it as
+in `test/data`, refer to it as
 
 ```cpp
 auto path_to_banana = fs::path(PALACE_TEST_DATA_DIR) / "banana.txt"
@@ -406,9 +406,9 @@ The following environment variables are useful when running under sanitizers:
 
 In addition to unit tests, *Palace* comes with a series of regression tests.
 Regression tests use self-contained fixtures under
-[`test/unit/data/regression/input/`](https://github.com/awslabs/palace/blob/main/test/unit/data/regression/input)
+[`test/data/regression/input/`](https://github.com/awslabs/palace/blob/main/test/data/regression/input)
 and verify that the code reproduces reference CSVs under
-[`test/unit/data/regression/ref/`](https://github.com/awslabs/palace/blob/main/test/unit/data/regression/ref).
+[`test/data/regression/ref/`](https://github.com/awslabs/palace/blob/main/test/data/regression/ref).
 The fixtures are copied from example-style configs and meshes, but the test
 suite does not read from the source-tree `examples/` directory.
 
@@ -499,7 +499,7 @@ rank/thread slots.
 
 #### Overrides
 
-Regression input fixtures and references are normal unit-test data under
+Regression input fixtures and references are normal test data under
 `PALACE_TEST_DATA_DIR/regression` and are read-only. The only directory override
 is `--regression-run-dir`, which changes where live outputs are staged; by
 default this is `std::filesystem::temp_directory_path() / "palace-regression"`.
@@ -521,9 +521,9 @@ refreshing only the CSVs in the reference tree:
 
 ```bash
 case=cpw config=cpw_lumped_uniform.json subdir=lumped_uniform
-input="test/unit/data/regression/input/$case"
+input="test/data/regression/input/$case"
 mpirun -n "$NUM_PROC_TEST" palace "$input/$config"
-dst="test/unit/data/regression/ref/$case/$subdir"
+dst="test/data/regression/ref/$case/$subdir"
 rm -rf "$dst"
 rsync -am --include='*/' --include='*.csv' --exclude='*' \
   "$input/postpro/$subdir/" "$dst/"
@@ -535,8 +535,8 @@ at once, as the old `baseline` script did.
 #### Adding a new regression case
 
  1. Drop the config and mesh/input files under
-    `test/unit/data/regression/input/<name>/` and the reference postpro tree
-    under `test/unit/data/regression/ref/<name>/<subdir>`.
+    `test/data/regression/input/<name>/` and the reference postpro tree
+    under `test/data/regression/ref/<name>/<subdir>`.
  2. Add a `TEST_CASE("<name>", "[Serial][Parallel][GPU][Regression]")`
     to `test/unit/regression/cases.cpp`. Tack on `[Long]` if the case
     is too slow for the always-on regression job. Set `rtol`, `atol`,

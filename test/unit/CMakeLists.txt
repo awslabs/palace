@@ -136,7 +136,7 @@ install(
 
 # Install test data files to share directory
 install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../data
   DESTINATION share/palace/test/
 )
 

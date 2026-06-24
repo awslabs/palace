@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ```@setup include_example
 function include_example_file(example_path, filename)
-    print(read(joinpath(@__DIR__, "..", "..", "..", "test", "unit", "data", "regression", "ref", example_path, filename), String))
+    print(read(joinpath(@__DIR__, "..", "..", "..", "test", "data", "regression", "ref", example_path, filename), String))
 end
 ```
 

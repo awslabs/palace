@@ -41,6 +41,7 @@ jobs:
               - 'extern/**'
               - 'examples/**'
               - 'test/unit/**'
+              - 'test/data/**'
               - 'spack_repo/**'
               - '.github/actions/**'
               - '.github/workflows/long-test*.yml'
