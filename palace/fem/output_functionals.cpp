@@ -654,14 +654,6 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       {
         plan.ghost_b = true;
       }
-      if (is_2d && (plan.ghost_a || plan.ghost_b))
-      {
-        // The face-neighbor exchange path currently packs imported physical values as
-        // 3 components per point. Keep 2D processor-boundary line integrals on the
-        // legacy path until the exchange is generalized to space dimension.
-        valid = false;
-        return;
-      }
       if (plan.ghost_a || plan.ghost_b)
       {
         plan.face_nbr = FET.Elem2No - pmesh.GetNE();
@@ -1393,25 +1385,29 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
       inputs.push_back(
           {"attr_" + suffix, attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
-      // Constant 3x3 identity Jacobian (9 components, component-major [elem][comp][pt]),
-      // passed directly to the kernel's grad_x_<suffix> input (EVAL_NONE).
-      auto &ident = elem_attrs.emplace_back(num_elem * 9 * num_pts);
+      // Constant identity Jacobian (component-major [elem][comp][pt]), passed directly
+      // to the kernel's grad_x_<suffix> input (EVAL_NONE). It is 2x2 for 2D line
+      // integrals and 3x3 for 3D surface integrals.
+      const int geom_comp = dim * sdim;
+      auto &ident = elem_attrs.emplace_back(num_elem * geom_comp * num_pts);
       ident = 0.0;
       for (std::size_t e = 0; e < num_elem; e++)
       {
-        for (int c : {0, 4, 8})
+        for (int d = 0; d < dim; d++)
         {
+          const int c = d * (sdim + 1);
           for (int i = 0; i < num_pts; i++)
           {
-            ident[e * 9 * num_pts + c * num_pts + i] = 1.0;
+            ident[e * geom_comp * num_pts + c * num_pts + i] = 1.0;
           }
         }
       }
       CeedElemRestriction ident_restr;
-      const CeedInt strides[3] = {1, num_pts, 9 * num_pts};
+      const CeedInt strides[3] = {1, num_pts, geom_comp * num_pts};
       PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
-                               ceed, static_cast<CeedInt>(num_elem), num_pts, 9,
-                               (CeedSize)num_elem * 9 * num_pts, strides, &ident_restr));
+                               ceed, static_cast<CeedInt>(num_elem), num_pts, geom_comp,
+                               (CeedSize)num_elem * geom_comp * num_pts, strides,
+                               &ident_restr));
       CeedVector ident_vec;
       ceed::InitCeedVector(ident, ceed, &ident_vec);
       inputs.push_back(
@@ -1520,7 +1516,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     // mapped points, imported via FaceNbrFieldExchange. The indexed restriction slices
     // the shared imported vector per element (base = ImportOffset) and transposes its
     // point-major layout ([pt][comp]) to the component-major layout the kernel reads
-    // (offset base + 3*pt, comp_stride 1). Re-pointed at the imported vector on each
+    // (offset base + sdim*pt, comp_stride 1). Re-pointed at the imported vector on each
     // apply via source index 4 (see fem::ApplyAddGroupOperators).
     auto AddFieldInputGhost = [&](const std::string &name, int slot,
                                   const mfem::IntegrationRule &ir)
@@ -1532,12 +1528,12 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         const int base = face_nbr_exchange->ImportOffset(group.req_idx[e], slot);
         for (int i = 0; i < nq; i++)
         {
-          offsets[e * nq + i] = base + 3 * i;
+          offsets[e * nq + i] = base + sdim * i;
         }
       }
       CeedElemRestriction restr;
       PalaceCeedCall(ceed, CeedElemRestrictionCreate(
-                               ceed, static_cast<CeedInt>(num_elem), nq, 3, 1,
+                               ceed, static_cast<CeedInt>(num_elem), nq, sdim, 1,
                                (CeedSize)face_nbr_exchange->ImportSize(), CEED_MEM_HOST,
                                CEED_COPY_VALUES, offsets.data(), &restr));
       CeedVector vec;

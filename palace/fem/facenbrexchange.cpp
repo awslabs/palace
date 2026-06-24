@@ -20,6 +20,7 @@
 PalacePragmaDiagnosticPush
 PalacePragmaDiagnosticDisableUnused
 
+#include "fem/qfunctions/22/eval_22_qf.h"
 #include "fem/qfunctions/33/eval_33_qf.h"
 
 PalacePragmaDiagnosticPop
@@ -76,6 +77,9 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
 {
   const mfem::ParMesh &pmesh = mesh.Get();
   const int num_nbr = pmesh.GetNFaceNeighbors();
+  const int value_dim = pmesh.SpaceDimension();
+  MFEM_VERIFY(value_dim == 2 || value_dim == 3,
+              "FaceNbrFieldExchange requires 2D or 3D physical-space fields!");
   MFEM_VERIFY(requests.empty() || num_nbr > 0,
               "FaceNbrFieldExchange requires face neighbor data "
               "(ParMesh::ExchangeFaceNbrData)!");
@@ -147,7 +151,7 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
           MFEM_VERIFY(fespaces[s],
                       "Missing finite element space for requested source slot!");
           import_offsets[r][s] = import_size;
-          import_size += 3 * nq;
+          import_size += value_dim * nq;
         }
       }
     }
@@ -259,7 +263,7 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
           }
           group.elems.push_back(elem);
           group.bases.push_back(export_size);
-          export_size += 3 * nq;
+          export_size += value_dim * nq;
         }
       }
     }
@@ -281,8 +285,8 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
   }
 
   // Assemble a libCEED point evaluator for each export group, writing the
-  // physical-space field values (3 components per point, point-major) into the
-  // exported vector at the assigned offsets.
+  // physical-space field values (space-dimension components per point, point-major)
+  // into the exported vector at the assigned offsets.
   int max_vsize = 0;
   for (const auto *fespace : fespaces)
   {
@@ -327,20 +331,21 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     inputs.push_back({"u_1", field_vec, field_restr, field_basis, ceed::EvalMode::Interp});
     field_sources.emplace_back("u_1", s);
 
-    // Output restriction: 3 components per point at the assigned export offsets.
+    // Output restriction: one physical-space vector per point at the assigned export
+    // offsets.
     std::vector<CeedInt> offsets(num_elem * nq);
     for (std::size_t e = 0; e < num_elem; e++)
     {
       for (int j = 0; j < nq; j++)
       {
-        offsets[e * nq + j] = group.bases[e] + 3 * j;
+        offsets[e * nq + j] = group.bases[e] + value_dim * j;
       }
     }
     CeedElemRestriction out_restr;
-    PalaceCeedCall(ceed,
-                   CeedElemRestrictionCreate(ceed, static_cast<CeedInt>(num_elem), nq, 3, 1,
-                                             (CeedSize)export_size, CEED_MEM_HOST,
-                                             CEED_COPY_VALUES, offsets.data(), &out_restr));
+    PalaceCeedCall(ceed, CeedElemRestrictionCreate(
+                             ceed, static_cast<CeedInt>(num_elem), nq, value_dim, 1,
+                             (CeedSize)export_size, CEED_MEM_HOST, CEED_COPY_VALUES,
+                             offsets.data(), &out_restr));
 
     // The reply contains physical-space field values: the Piola transformation
     // (H(curl) or H(div) depending on the source space) is applied here so the
@@ -352,16 +357,33 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     ceed::CeedQFunctionInfo info;
     if (map_type == mfem::FiniteElement::H_CURL)
     {
-      info.apply_qf = f_eval_probe_hcurl_33;
-      info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hcurl_33_loc);
+      if (value_dim == 2)
+      {
+        info.apply_qf = f_eval_probe_hcurl_22;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hcurl_22_loc);
+      }
+      else
+      {
+        info.apply_qf = f_eval_probe_hcurl_33;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hcurl_33_loc);
+      }
     }
     else
     {
-      info.apply_qf = f_eval_probe_hdiv_33;
-      info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hdiv_33_loc);
+      if (value_dim == 2)
+      {
+        info.apply_qf = f_eval_probe_hdiv_22;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hdiv_22_loc);
+      }
+      else
+      {
+        info.apply_qf = f_eval_probe_hdiv_33;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hdiv_33_loc);
+      }
     }
     CeedOperator op;
-    ceed::AssembleCeedPointEvaluator(info, nullptr, 0, ceed, inputs, 3, out_restr, &op);
+    ceed::AssembleCeedPointEvaluator(info, nullptr, 0, ceed, inputs, value_dim,
+                                     out_restr, &op);
     export_groups.push_back({ceed, op, std::move(field_sources)});
 
     // Cleanup (the assembled operator holds its own references).
