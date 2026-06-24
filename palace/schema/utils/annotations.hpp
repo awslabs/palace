@@ -312,19 +312,22 @@ class is_description<::palace::schema::utils::DescDeprecated<text, T>>
 // Type is the trailing variadic so commas inside template arguments pass
 // through the preprocessor without extra parentheses.
 #define PALACE_SCHEMA_DESC(FieldName, Description, ... /*Type*/) \
-  ::palace::schema::utils::Desc<Description, __VA_ARGS__> FieldName
+  using FieldName##_schema_type = __VA_ARGS__;                   \
+  ::palace::schema::utils::Desc<Description, FieldName##_schema_type> FieldName
 
 // Declare a described member carrying the `x-palace-advanced` flag. The
 // walker detects the `DescAdvanced<>` wrapper type at field-probe time and
 // stamps `"x-palace-advanced": true` on the emitted property body.
 #define PALACE_SCHEMA_DESC_ADVANCED(FieldName, Description, ... /*Type*/) \
-  ::palace::schema::utils::DescAdvanced<Description, __VA_ARGS__> FieldName
+  using FieldName##_schema_type = __VA_ARGS__;                            \
+  ::palace::schema::utils::DescAdvanced<Description, FieldName##_schema_type> FieldName
 
 // Declare a described member carrying the `x-palace-deprecated` flag.
 // Intended for legacy keys the loader still accepts but docs should label
 // as discouraged.
 #define PALACE_SCHEMA_DESC_DEPRECATED(FieldName, Description, ... /*Type*/) \
-  ::palace::schema::utils::DescDeprecated<Description, __VA_ARGS__> FieldName
+  using FieldName##_schema_type = __VA_ARGS__;                              \
+  ::palace::schema::utils::DescDeprecated<Description, FieldName##_schema_type> FieldName
 
 // Declare a described member and mark it as required in the emitted
 // schema. The walker replaces reflect-cpp's native `required` array with
@@ -332,7 +335,8 @@ class is_description<::palace::schema::utils::DescDeprecated<text, T>>
 // declared via plain `PALACE_SCHEMA_DESC` is optional and the loader
 // substitutes the C++ initializer when the key is absent.
 #define PALACE_SCHEMA_DESC_REQUIRED(FieldName, Description, ... /*Type*/) \
-  ::palace::schema::utils::DescRequired<Description, __VA_ARGS__> FieldName
+  using FieldName##_schema_type = __VA_ARGS__;                            \
+  ::palace::schema::utils::DescRequired<Description, FieldName##_schema_type> FieldName
 
 // Construct a `std::string` field type with a ctre-style regex pattern
 // attached. The emitted JSON Schema property gets a `"pattern"` keyword
