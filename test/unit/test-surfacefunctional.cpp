@@ -127,6 +127,39 @@ double RefSurfaceCoefficientIntegral(mfem::ParMesh &pmesh, mfem::Coefficient &f,
   return sum;
 }
 
+// Build a 2D mesh with two material regions (attribute 1: y < 0.5, vacuum; attribute
+// 2: y >= 0.5, dielectric) and interior boundary elements (attribute 7) added on the
+// material interface at y = 0.5.
+std::unique_ptr<Mesh> MakeInterfaceMesh2D(MPI_Comm comm, mfem::Element::Type elem_type)
+{
+  mfem::Mesh smesh = mfem::Mesh::MakeCartesian2D(2, 2, elem_type, false, 1.0, 1.0);
+  for (int e = 0; e < smesh.GetNE(); e++)
+  {
+    mfem::Vector center(2);
+    smesh.GetElementCenter(e, center);
+    smesh.SetAttribute(e, (center(1) < 0.5) ? 1 : 2);
+  }
+  // Add interior boundary elements on the material interface.
+  for (int f = 0; f < smesh.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    smesh.GetFaceElements(f, &e1, &e2);
+    if (e1 >= 0 && e2 >= 0 && smesh.GetAttribute(e1) != smesh.GetAttribute(e2))
+    {
+      auto *face_elem = smesh.GetFace(f)->Duplicate(&smesh);
+      face_elem->SetAttribute(7);
+      smesh.AddBdrElement(face_elem);
+    }
+  }
+  smesh.FinalizeTopology();
+  smesh.Finalize();
+  smesh.SetAttributes();
+  smesh.EnsureNodes();
+  REQUIRE(Mpi::Size(comm) <= smesh.GetNE());
+  auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
+  return std::make_unique<Mesh>(std::move(pmesh));
+}
+
 // Build a 3D mesh with two material regions (attribute 1: z < 0.5, vacuum; attribute
 // 2: z >= 0.5, dielectric) and interior boundary elements (attribute 7) added on the
 // material interface at z = 0.5.
@@ -428,6 +461,127 @@ TEST_CASE("SurfaceFunctional Interface Dielectric", "[surfacefunctional][Serial]
   {
     // Boundary attribute 7 is the interior vacuum-dielectric interface (two-sided,
     // side selection by material light speed for MA/MS/SA, averaging for DEFAULT).
+    mfem::Array<int> marker(bdr_attr_max);
+    marker = 0;
+    marker[7 - 1] = 1;
+    for (auto type : {InterfaceDielectric::DEFAULT, InterfaceDielectric::MA,
+                      InterfaceDielectric::MS, InterfaceDielectric::SA})
+    {
+      CAPTURE(static_cast<int>(type));
+      TestType(type, marker);
+    }
+  }
+}
+
+TEST_CASE("SurfaceFunctional Interface Dielectric 2D", "[surfacefunctional][Serial][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  auto order = GENERATE(1, 2);
+  auto complex = GENERATE(false, true);
+  CAPTURE(elem_type, order, complex);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = MakeInterfaceMesh2D(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  // Materials: vacuum for attribute 1, dielectric for attribute 2. Use diagonal
+  // anisotropy to exercise the 2x2 coefficient unpacking path in the libCEED kernels.
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s[0] = 11.7;
+  dielectric.epsilon_r.s[1] = 3.2;
+  dielectric.epsilon_r.s[2] = 5.1;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::ND_FECollection nd_fec(order, pmesh.Dimension());
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec);
+
+  GridFunction E(nd_fespace, complex);
+  mfem::VectorFunctionCoefficient fr(2,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = std::sin(1.7 * x(1)) + 0.25 * x(0);
+                                       v(1) = std::cos(0.3 + x(0)) + x(1) * x(1);
+                                     });
+  E.Real().ProjectCoefficient(fr);
+  if (complex)
+  {
+    mfem::VectorFunctionCoefficient fi(2,
+                                       [](const mfem::Vector &x, mfem::Vector &v)
+                                       {
+                                         v(0) = x(0) * x(1) - 0.2;
+                                         v(1) = std::sin(x(0) + 0.5 * x(1));
+                                       });
+    E.Imag().ProjectCoefficient(fi);
+  }
+
+  const double t_i = 2.0e-3, epsilon_i = 10.0;
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+
+  auto TestType = [&](InterfaceDielectric type, const mfem::Array<int> &marker)
+  {
+    SurfaceFunctional epr(*mesh, marker, nd_fespace, mat_op, type, t_i, epsilon_i);
+    REQUIRE(epr.IsValid());
+    auto MakeLegacy = [&]() -> std::unique_ptr<mfem::Coefficient>
+    {
+      switch (type)
+      {
+        case InterfaceDielectric::DEFAULT:
+          return std::make_unique<
+              InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>>(E, mat_op, t_i,
+                                                                            epsilon_i);
+        case InterfaceDielectric::MA:
+          return std::make_unique<InterfaceDielectricCoefficient<InterfaceDielectric::MA>>(
+              E, mat_op, t_i, epsilon_i);
+        case InterfaceDielectric::MS:
+          return std::make_unique<InterfaceDielectricCoefficient<InterfaceDielectric::MS>>(
+              E, mat_op, t_i, epsilon_i);
+        case InterfaceDielectric::SA:
+          return std::make_unique<InterfaceDielectricCoefficient<InterfaceDielectric::SA>>(
+              E, mat_op, t_i, epsilon_i);
+      }
+      return {};
+    };
+    auto legacy = MakeLegacy();
+    const double ref = RefSurfaceCoefficientIntegral(pmesh, *legacy, marker);
+    const double val = epr.Eval(E);
+    CAPTURE(ref, val);
+    if (std::abs(ref) > 0.0)
+    {
+      CHECK(val == Catch::Approx(ref).epsilon(1.0e-10));
+    }
+    else
+    {
+      CHECK(std::abs(val) < 1.0e-12);
+    }
+  };
+
+  SECTION("Exterior boundary")
+  {
+    for (auto type : {InterfaceDielectric::DEFAULT, InterfaceDielectric::MA,
+                      InterfaceDielectric::MS, InterfaceDielectric::SA})
+    {
+      CAPTURE(static_cast<int>(type));
+      for (int attr : {1, 3})  // bottom (vacuum side), top (dielectric side)
+      {
+        CAPTURE(attr);
+        REQUIRE(pmesh.bdr_attributes.Find(attr) >= 0);
+        mfem::Array<int> marker(bdr_attr_max);
+        marker = 0;
+        marker[attr - 1] = 1;
+        TestType(type, marker);
+      }
+    }
+  }
+
+  SECTION("Interior material interface")
+  {
     mfem::Array<int> marker(bdr_attr_max);
     marker = 0;
     marker[7 - 1] = 1;

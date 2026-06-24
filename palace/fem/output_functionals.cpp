@@ -28,6 +28,7 @@
 PalacePragmaDiagnosticPush
 PalacePragmaDiagnosticDisableUnused
 
+#include "fem/qfunctions/21/surf_21_qf.h"
 #include "fem/qfunctions/32/surf_32_qf.h"
 
 PalacePragmaDiagnosticPop
@@ -481,9 +482,21 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
 void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                       const mfem::Array<int> &bdr_attr_marker)
 {
-  if (mesh.Dimension() != 3 || mesh.SpaceDimension() != 3)
+  const int dim = mesh.Dimension();
+  const int sdim = mesh.SpaceDimension();
+  const bool is_2d = (dim == 2 && sdim == 2);
+  const bool is_3d = (dim == 3 && sdim == 3);
+  if (!is_2d && !is_3d)
   {
-    // Not yet supported (2D solver meshes): callers fall back to the legacy paths.
+    valid = false;
+    return;
+  }
+  if (is_2d && kind != Kind::AREA && kind != Kind::HCURL_NORM2 &&
+      kind != Kind::INTERFACE_EPR)
+  {
+    // Initial 2D support covers line integrals needed by interface dielectric
+    // postprocessing. Other boundary-output and surface-flux kinds still use the
+    // legacy paths until their 2D scalar/vector conventions are implemented.
     valid = false;
     return;
   }
@@ -492,7 +505,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   const mfem::FiniteElementSpace &mesh_fespace = *pmesh.GetNodes()->FESpace();
   const bool need_field = (kind != Kind::AREA);
   Ceed ceed = ceed::internal::GetCeedObjects()[0];
-  const bool use_at_points = CeedSupportsNonTensorAtPoints(ceed);
+  const bool use_at_points = is_3d && CeedSupportsNonTensorAtPoints(ceed);
 
   // Plan the evaluation for each marked boundary element and group the elements by
   // their face configuration. All elements in a group share the tabulated bases and are
@@ -598,6 +611,14 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       if (plan.elem_b >= 0 && !elem2_local)
       {
         plan.ghost_b = true;
+      }
+      if (is_2d && (plan.ghost_a || plan.ghost_b))
+      {
+        // The face-neighbor exchange path currently packs imported physical values as
+        // 3 components per point. Keep 2D processor-boundary line integrals on the
+        // legacy path until the exchange is generalized to space dimension.
+        valid = false;
+        return;
       }
       if (plan.ghost_a || plan.ghost_b)
       {
@@ -866,7 +887,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           base_ctx[1].second = 0.5 * epr_t / epr_epsilon;
           MaterialPropertyCoefficient epsilon_func(mat_op->GetAttributeToMaterial(),
                                                    mat_op->GetPermittivityReal());
-          auto mat_ctx = ceed::PopulateCoefficientContext(3, &epsilon_func);
+          auto mat_ctx = ceed::PopulateCoefficientContext(dim, &epsilon_func);
           base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
         }
         break;
@@ -1617,19 +1638,28 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     switch (kind)
     {
       case Kind::AREA:
-        info.apply_qf = f_integ_surf_area_32;
-        info.apply_qf_path = PalaceQFunctionRelativePath(f_integ_surf_area_32_loc);
+        info.apply_qf = is_2d ? f_integ_surf_area_21 : f_integ_surf_area_32;
+        info.apply_qf_path = is_2d ? PalaceQFunctionRelativePath(f_integ_surf_area_21_loc)
+                                   : PalaceQFunctionRelativePath(f_integ_surf_area_32_loc);
         break;
       case Kind::HCURL_NORM2:
-        info.apply_qf = f_integ_surf_hcurl_norm2_32;
-        info.apply_qf_path = PalaceQFunctionRelativePath(f_integ_surf_hcurl_norm2_32_loc);
+        info.apply_qf = is_2d ? f_integ_surf_hcurl_norm2_21
+                              : f_integ_surf_hcurl_norm2_32;
+        info.apply_qf_path =
+            is_2d ? PalaceQFunctionRelativePath(f_integ_surf_hcurl_norm2_21_loc)
+                  : PalaceQFunctionRelativePath(f_integ_surf_hcurl_norm2_32_loc);
         break;
       case Kind::INTERFACE_EPR:
         // All four interface types share one kernel; epr_type is set in base_ctx[0].first.
-        info.apply_qf = has_b ? f_integ_surf_epr_2_32 : f_integ_surf_epr_1_32;
-        info.apply_qf_path = PalaceQFunctionRelativePath(has_b ? f_integ_surf_epr_2_32_loc
-                                                               : f_integ_surf_epr_1_32_loc);
-        break;
+        info.apply_qf = is_2d ? (has_b ? f_integ_surf_epr_2_21 : f_integ_surf_epr_1_21)
+                              : (has_b ? f_integ_surf_epr_2_32 : f_integ_surf_epr_1_32);
+        info.apply_qf_path = is_2d
+                                 ? PalaceQFunctionRelativePath(
+                                       has_b ? f_integ_surf_epr_2_21_loc
+                                             : f_integ_surf_epr_1_21_loc)
+                                 : PalaceQFunctionRelativePath(
+                                       has_b ? f_integ_surf_epr_2_32_loc
+                                             : f_integ_surf_epr_1_32_loc);
         break;
       case Kind::BDR_FIELD_E:
       case Kind::BDR_FIELD_B:

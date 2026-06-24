@@ -58,11 +58,13 @@ void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
 
 //
 // Class to compute output functionals (integrals of functions of solution fields) over
-// surfaces (sets of boundary elements) of a 3D mesh using libCEED, supporting full
-// (non-trace) evaluation of volume fields at boundary element quadrature points. This
-// enables postprocessing measurements (interface dielectric energy participation,
-// surface fluxes, port powers, etc.) to execute on the device, in contrast to the
-// legacy mfem::Coefficient-based paths which are host-only.
+// boundary element sets using libCEED, supporting full (non-trace) evaluation of volume
+// fields at boundary element quadrature points. The 3D path covers surface integrals and
+// selected boundary visualization buffers; the 2D path currently covers line integrals
+// needed by interface dielectric postprocessing. This enables postprocessing measurements
+// (interface dielectric energy participation, surface fluxes, port powers, etc.) to
+// execute on the device, in contrast to the legacy mfem::Coefficient-based paths which
+// are host-only.
 //
 // The key construction: for each boundary element, the field is evaluated from an
 // attached volume element (or both, with averaging or differencing, for interior
