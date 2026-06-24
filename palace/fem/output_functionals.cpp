@@ -90,8 +90,8 @@ struct ElemPlan
   int face_nbr = -1;    // Face neighbor element index (Elem2No - ParMesh::GetNE())
   int ghost_attr = 0;   // Ghost element mesh attribute (material lookup on the requester)
   mfem::Geometry::Type ghost_geom = mfem::Geometry::INVALID;  // Ghost element geometry
-  // Integer/topological identities of pts_a/pts_b: reference-face rule/order plus the
-  // reference-face-to-volume subface/orientation map. These are passed to
+  // Integer/topological identities of ghost-side pts_a/pts_b: reference-face rule/order
+  // plus the reference-face-to-volume subface/orientation map. These are passed to
   // FaceNbrFieldExchange so remote point-evaluator grouping never depends on floating
   // point coordinates.
   std::vector<long long> point_key_a, point_key_b;
@@ -715,13 +715,13 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       const auto vol_geom_b = plan.ghost_b ? plan.ghost_geom
                               : (plan.elem_b >= 0) ? pmesh.GetElementGeometry(plan.elem_b)
                                                    : mfem::Geometry::INVALID;
-      if (plan.elem_a >= 0)
+      if (plan.ghost_a && plan.elem_a >= 0)
       {
         plan.point_key_a = MakeReferencePointTopologyKey(
             vol_geom_a, bdr_geom, face_ir,
             (plan.elem_a == FET.Elem1No) ? FET.Loc1 : FET.Loc2);
       }
-      if (plan.elem_b >= 0)
+      if (plan.ghost_b && plan.elem_b >= 0)
       {
         plan.point_key_b =
             MakeReferencePointTopologyKey(vol_geom_b, bdr_geom, face_ir, FET.Loc2);
