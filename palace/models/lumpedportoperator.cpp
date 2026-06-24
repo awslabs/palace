@@ -519,16 +519,6 @@ std::map<int, std::complex<double>> LumpedPortOperator::GetPowers(GridFunction &
   {
     return powers;
   }
-  auto ComputeLegacyPowers = [&]()
-  {
-    for (const auto &[idx, data] : ports)
-    {
-      powers.emplace(idx, data.GetPowerLegacy(E, B));
-    }
-    return powers;
-  };
-  const int eval_count = batched_power_eval_count++;
-
   // Assemble one union-surface POWER functional for all disjoint lumped ports. The
   // SurfaceFunctional still accumulates per-boundary-element slots; EvalComplexPowerByAttribute
   // bins those slots back to the port indices, so no processor-boundary or ghost-side
@@ -539,7 +529,7 @@ std::map<int, std::complex<double>> LumpedPortOperator::GetPowers(GridFunction &
     {
       auto &nd_fespace = *E.ParFESpace();
       const auto &mesh = *nd_fespace.GetParMesh();
-      const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+      const int bdr_attr_max = mesh::GetMaxBdrAttribute(mesh);
       batched_power_attr_to_port.SetSize(bdr_attr_max);
       for (int i = 0; i < batched_power_attr_to_port.Size(); i++)
       {
@@ -578,32 +568,12 @@ std::map<int, std::complex<double>> LumpedPortOperator::GetPowers(GridFunction &
         bin++;
       }
 
+      Mpi::GlobalAnd(1, &can_batch, nd_fespace.GetComm());
+
       if (can_batch && attr_list.Size() > 0)
       {
         const auto &data0 = ports.begin()->second;
         mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
-
-        int num_bdr_elems = 0;
-        for (int i = 0; i < mesh.GetNBE(); i++)
-        {
-          if (attr_marker[mesh.GetBdrAttribute(i) - 1])
-          {
-            num_bdr_elems++;
-          }
-        }
-        Mpi::GlobalSum(1, &num_bdr_elems, nd_fespace.GetComm());
-
-        // For tiny port surfaces, the host coefficient path is faster than paying a
-        // fresh libCEED/NVRTC setup cost. Delay JIT until enough repeated evaluations
-        // have occurred to amortize it; long driven sweeps still switch to the batched
-        // device path automatically.
-        constexpr int tiny_port_bdr_elem_threshold = 128;
-        constexpr int legacy_eval_threshold = 2;
-        if (num_bdr_elems <= tiny_port_bdr_elem_threshold &&
-            eval_count < legacy_eval_threshold)
-        {
-          return ComputeLegacyPowers();
-        }
 
         mfem::Vector x0(mesh.SpaceDimension());
         x0 = 0.0;

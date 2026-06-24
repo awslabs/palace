@@ -132,7 +132,6 @@ private:
   mutable std::unique_ptr<SurfaceFunctional> batched_power_func;
   mutable mfem::Array<int> batched_power_attr_to_port;
   mutable std::vector<int> batched_power_port_indices;
-  mutable int batched_power_eval_count = 0;
   mutable bool batched_power_unavailable = false;
 
   void SetUpBoundaryProperties(const std::map<int, config::LumpedPortData> &lumpedport,
