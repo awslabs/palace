@@ -13,6 +13,8 @@ export PALACE_AR_GPU_NP="${PALACE_AR_GPU_NP:-8}"
 RUN_ROOT="${PALACE_AR_RUN_ROOT:-/home/ubuntu/workspace/palace_ar_paraview_stream}"
 BASELINE_DIR="${PALACE_AR_BASELINE_DIR:-$RUN_ROOT/baseline_csv}"
 POST_ROOT="${PALACE_AR_POST_ROOT:-/home/ubuntu/workspace/palace_ar_paraview_stream_latest_postpro}"
+REFERENCE_POST_ROOT="${PALACE_AR_REFERENCE_POST_ROOT:-/home/ubuntu/workspace/palace_ar_paraview_stream_origin_main_reference_postpro}"
+REFERENCE_POST_DIR="$REFERENCE_POST_ROOT/transmon_amr"
 LAST_MEASURE="${PALACE_AR_LAST_MEASURE:-/home/ubuntu/workspace/palace_ar_paraview_stream_last_measure.env}"
 SHA="$(git rev-parse --short HEAD)"
 RUN_ID="${SHA}-$(date +%Y%m%dT%H%M%SZ)"
@@ -22,9 +24,10 @@ LOG="$OUT_DIR/palace.log"
 BUILD_LOG="$OUT_DIR/build.log"
 POST_DIR="$POST_ROOT/transmon_amr"
 mkdir -p "$RUN_ROOT/runs"
-# Keep only scalar reference CSVs and the most recent run artifacts. Large
-# ParaView/GridFunction output is written to POST_ROOT on the instance NVMe and
-# overwritten each run; do not accumulate one multi-GB postpro tree per trial.
+# Keep scalar CSV references plus, when seeded separately, an origin/main
+# ParaView/GridFunction reference tree at REFERENCE_POST_ROOT. Large output from
+# each candidate run is written to POST_ROOT on the instance NVMe and overwritten
+# each run; do not accumulate one multi-GB postpro tree per trial.
 find "$RUN_ROOT/runs" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
 rm -rf "$POST_ROOT"
 mkdir -p "$OUT_DIR" "$POST_ROOT"
@@ -162,6 +165,7 @@ SCALAR_COMPARED_FILES=${scalar_compared_files:-0}
 RUN_ID=$RUN_ID
 LOG=$LOG
 POST_DIR=$POST_DIR
+REFERENCE_POST_DIR=$REFERENCE_POST_DIR
 EOF2
 
 printf 'METRIC transmon_amr_paraview_seconds=%s\n' "$paraview"
@@ -175,3 +179,6 @@ printf 'METRIC scalar_compared_files=%s\n' "${scalar_compared_files:-0}"
 printf 'METRIC scalar_ok=%s\n' "${scalar_ok:-0}"
 printf 'ARTIFACT log=%s\n' "$LOG"
 printf 'ARTIFACT post_dir=%s\n' "$POST_DIR"
+if [[ -d "$REFERENCE_POST_DIR" ]]; then
+  printf 'ARTIFACT reference_post_dir=%s\n' "$REFERENCE_POST_DIR"
+fi
