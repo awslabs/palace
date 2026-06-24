@@ -24,7 +24,8 @@ CurlCurlOperator::CurlCurlOperator(const config::BoundaryData &boundaries,
                                    const std::vector<config::MaterialData> &materials,
                                    ProblemType problem_type,
                                    const std::vector<std::unique_ptr<Mesh>> &mesh)
-  : print_hdr(true), dbc_attr(SetUpBoundaryProperties(boundaries.pec, boundaries.fluxloop, *mesh.back())),
+  : print_hdr(true),
+    dbc_attr(SetUpBoundaryProperties(boundaries.pec, boundaries.fluxloop, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         solver.order, mesh.back()->Dimension(), solver.linear.mg_max_levels,
         solver.linear.mg_coarsening, false)),
@@ -69,10 +70,9 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
   surf_flux_op = SurfaceFluxOperator(iodata);
 }
 
-mfem::Array<int>
-CurlCurlOperator::SetUpBoundaryProperties(const config::PecBoundaryData &pec,
-                                          const std::map<int, config::FluxLoopData> &fluxloop,
-                                          const mfem::ParMesh &mesh)
+mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(
+    const config::PecBoundaryData &pec, const std::map<int, config::FluxLoopData> &fluxloop,
+    const mfem::ParMesh &mesh)
 {
   // Check that boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;

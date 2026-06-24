@@ -73,9 +73,10 @@ private:
   // Cached original matrix for flux loop boundary-interior coupling
   mutable std::unique_ptr<ParOperator> K_orig_;
 
-  mfem::Array<int> SetUpBoundaryProperties(const config::PecBoundaryData &pec,
-                                           const std::map<int, config::FluxLoopData> &fluxloop,
-                                           const mfem::ParMesh &mesh);
+  mfem::Array<int>
+  SetUpBoundaryProperties(const config::PecBoundaryData &pec,
+                          const std::map<int, config::FluxLoopData> &fluxloop,
+                          const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
 
 public:
