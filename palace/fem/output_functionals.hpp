@@ -113,7 +113,8 @@ public:
   }
 
   // Total buffer size (all boundary elements, lattice points, components) and
-  // per-element base offsets for the boundary visualization field kinds.
+  // per-element point-base offsets for the boundary visualization field kinds. Vector
+  // buffers are component-major: x[points], y[points], z[points].
   int BufferSize() const { return buffer_size; }
   const std::vector<int> &BufferBases() const { return buffer_bases; }
 
@@ -129,7 +130,8 @@ private:
   std::complex<double> farfield_omega = 0.0;
 
   // Boundary visualization field kinds: lattice refinement level, output scaling,
-  // total output buffer size, and per-boundary-element base offsets into the buffer.
+  // total output buffer size, and per-boundary-element point-base offsets into the
+  // component-major buffer.
   int viz_lod = 0;
   double viz_scaling = 1.0;
   int buffer_size = 0;

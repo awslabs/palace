@@ -2283,6 +2283,7 @@ TEST_CASE("SurfaceFunctional Boundary Viz Fields",
     viz.EvalBuffer(U, buffer);
     const double *buf = buffer.HostRead();
     const auto &bases = viz.BufferBases();
+    const int component_stride = viz.BufferSize() / 3;
 
     BdrFieldVectorCoefficient legacy(U);
     mfem::Vector V(3);
@@ -2298,7 +2299,7 @@ TEST_CASE("SurfaceFunctional Boundary Viz Fields",
         legacy.Eval(V, *T, ip);
         for (int c = 0; c < 3; c++)
         {
-          const double val = buf[bases[i] + 3 * j + c];
+          const double val = buf[bases[i] + j + c * component_stride];
           CAPTURE(i, j, c, V(c), val);
           CHECK(val == Catch::Approx(V(c)).epsilon(1.0e-10).margin(1.0e-13));
         }
@@ -2336,6 +2337,7 @@ TEST_CASE("SurfaceFunctional Boundary Viz Fields",
                    buffer);
     const double *buf = buffer.HostRead();
     const auto &bases = viz.BufferBases();
+    const int component_stride = viz.BufferSize() / nc;
     mfem::Vector V(3);
     for (int i = 0; i < pmesh.GetNBE(); i++)
     {
@@ -2358,7 +2360,7 @@ TEST_CASE("SurfaceFunctional Boundary Viz Fields",
           legacy_v->Eval(V, *T, ip);
           for (int c = 0; c < 3; c++)
           {
-            const double val = buf[bases[i] + 3 * j + c];
+            const double val = buf[bases[i] + j + c * component_stride];
             CAPTURE(i, j, c, V(c), val);
             CHECK(val == Catch::Approx(V(c)).epsilon(1.0e-10).margin(1.0e-13));
           }

@@ -79,6 +79,9 @@ void CeedParaViewDataCollection::WriteBoundaryPointFieldValues(
     std::ostream &os, int ref, const BoundaryPointField &field,
     const Vector &values) const
 {
+  MFEM_VERIFY(values.Size() % field.num_comp == 0,
+              "Boundary point field buffer size is not divisible by its component count!");
+  const int component_stride = values.Size() / field.num_comp;
   const double *data = values.HostRead();
   for (int i = 0; i < mesh->GetNBE(); i++)
   {
@@ -86,14 +89,14 @@ void CeedParaViewDataCollection::WriteBoundaryPointFieldValues(
         mesh->GetBdrElementBaseGeometry(i), ref, 1);
     const int base = (*field.bases)[i];
     const int npts = RefG->RefPts.GetNPoints();
-    MFEM_VERIFY(base >= 0 && base + field.num_comp * npts <= values.Size(),
+    MFEM_VERIFY(base >= 0 && base + npts <= component_stride,
                 "Boundary point field buffer is missing data for boundary element " << i
                                                                                      << "!");
     for (int j = 0; j < npts; j++)
     {
       for (int c = 0; c < field.num_comp; c++)
       {
-        const double value = data[base + field.num_comp * j + c];
+        const double value = data[base + j + c * component_stride];
         if (pv_data_format == mfem::VTKFormat::BINARY32)
         {
           const float value32 = static_cast<float>(value);
@@ -134,6 +137,9 @@ void CeedParaViewDataCollection::SaveBoundaryPointFieldVTU(
   }
   MFEM_VERIFY(value_ptr, "Boundary point field has no values to write!");
 
+  MFEM_VERIFY(value_ptr->Size() % field.num_comp == 0,
+              "Boundary point field buffer size is not divisible by its component count!");
+  const int component_stride = value_ptr->Size() / field.num_comp;
   std::vector<char> buf;
   const double *data = value_ptr->HostRead();
   for (int i = 0; i < mesh->GetNBE(); i++)
@@ -142,14 +148,14 @@ void CeedParaViewDataCollection::SaveBoundaryPointFieldVTU(
         mesh->GetBdrElementBaseGeometry(i), ref, 1);
     const int base = (*field.bases)[i];
     const int npts = RefG->RefPts.GetNPoints();
-    MFEM_VERIFY(base >= 0 && base + field.num_comp * npts <= value_ptr->Size(),
+    MFEM_VERIFY(base >= 0 && base + npts <= component_stride,
                 "Boundary point field buffer is missing data for boundary element " << i
                                                                                      << "!");
     for (int j = 0; j < npts; j++)
     {
       for (int c = 0; c < field.num_comp; c++)
       {
-        mfem::WriteBinaryOrASCII(os, buf, data[base + field.num_comp * j + c], " ",
+        mfem::WriteBinaryOrASCII(os, buf, data[base + j + c * component_stride], " ",
                                  pv_data_format);
       }
       if (pv_data_format == mfem::VTKFormat::ASCII)

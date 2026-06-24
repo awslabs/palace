@@ -748,9 +748,10 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         {
           buffer_bases.resize(pmesh.GetNBE(), -1);
         }
-        out_slot = buffer_size;
+        const int nc = BufferNumComp(kind);
+        out_slot = buffer_size / nc;
         buffer_bases[i] = out_slot;
-        buffer_size += nq * BufferNumComp(kind);
+        buffer_size += nq * nc;
         num_marked++;
       }
       else
@@ -1646,29 +1647,30 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
 
     // Output restriction: for integral kinds, num_out slots per boundary element in
     // the local output vector (component stride num_marked); for the boundary
-    // visualization field kinds, 3 components per lattice point scattering into the
-    // output buffer at the per-element base offsets.
+    // visualization field kinds, component-major lanes over all lattice points scatter
+    // into the output buffer at the per-element point-base offsets.
     CeedElemRestriction out_restr;
     if (buffer_kind)
     {
       const int nq = face_ir.GetNPoints();
       const int nc = BufferNumComp(kind);
+      const int component_stride = buffer_size / nc;
       std::vector<CeedInt> offsets(num_elem * nq);
       for (std::size_t e = 0; e < num_elem; e++)
       {
         for (int j = 0; j < nq; j++)
         {
-          offsets[e * nq + j] = group.out_slots[e] + nc * j;
+          offsets[e * nq + j] = group.out_slots[e] + j;
         }
       }
       // Even for AtPoints operators, keep the output as an ordinary EVAL_NONE
       // restriction. libCEED requires all AtPoints restrictions on the same operator to
       // use identical point-offset layouts; the output buffer is intentionally scattered
       // by boundary-element slot and should not constrain the point-coordinate layout.
-      PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, static_cast<CeedInt>(num_elem),
-                                                     nq, nc, 1, (CeedSize)buffer_size,
-                                                     CEED_MEM_HOST, CEED_COPY_VALUES,
-                                                     offsets.data(), &out_restr));
+      PalaceCeedCall(ceed, CeedElemRestrictionCreate(
+                                ceed, static_cast<CeedInt>(num_elem), nq, nc,
+                                component_stride, (CeedSize)buffer_size, CEED_MEM_HOST,
+                                CEED_COPY_VALUES, offsets.data(), &out_restr));
     }
     else if (group.at_points)
     {
