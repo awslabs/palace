@@ -125,7 +125,7 @@ void WriteGridFunctionFiles(const fs::path &dir, mfem::ParMesh &mesh,
 // high-order grid functions with synthetic data, and write both ParaView VTU and MFEM
 // grid-function outputs. The printed METRIC lines are intended for autoresearch harnesses.
 TEST_CASE_METHOD(palace::test::SharedTempDir, "SingleTransmon NC ParaView writer proxy",
-                 "[.][paraview-writer-proxy][Serial][Parallel]")
+                 "[.][paraview-writer-proxy][Serial][Parallel][GPU]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
   int rank = 0, size = 1;

@@ -70,7 +70,9 @@ PALACE_PROXY_OUTPUT_DIR="$PROXY_OUTPUT_DIR" \
   PALACE_PROXY_SEED="${PALACE_PROXY_SEED:-20260624}" \
   PALACE_PROXY_COMPRESSION="${PALACE_PROXY_COMPRESSION:-1}" \
   spack -e "$ROOT" build-env palace -- mpirun -n "$PALACE_PROXY_MPI_NP" \
-    "$UNIT_TESTS" "[paraview-writer-proxy]" --skip-benchmarks \
+    "$UNIT_TESTS" --device "${PALACE_PROXY_DEVICE:-cuda}" \
+    --backend "${PALACE_PROXY_CEED_BACKEND:-/gpu/cuda/magma}" \
+    "[paraview-writer-proxy]" --skip-benchmarks \
     >"$LOG" 2>&1
 run_status=$?
 set -e

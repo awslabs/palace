@@ -12,10 +12,12 @@ The measurement script runs the hidden Catch2 benchmark:
 palace-unit-tests "[paraview-writer-proxy]" --skip-benchmarks
 ```
 
-through the Spack environment, under MPI with:
+through the Spack environment, on CUDA GPUs, under MPI with:
 
 ```text
 PALACE_PROXY_MPI_NP=2
+PALACE_PROXY_DEVICE=cuda
+PALACE_PROXY_CEED_BACKEND=/gpu/cuda/magma
 PALACE_PROXY_ORDER=3
 PALACE_PROXY_REFINE_STEPS=2
 PALACE_PROXY_REFINE_PROB=0.3
@@ -49,12 +51,12 @@ Do not trade a large GridFunction regression for a tiny ParaView win. The useful
 
 1. Ensure the environment is concretized with Palace test dependencies (`catch2`).
 2. Run `spack -e "$ROOT" install --test=root ... --keep-stage` so `palace-unit-tests` and test data are installed.
-3. Run the hidden proxy benchmark through `spack build-env palace`.
+3. Run the hidden proxy benchmark through `spack build-env palace` with `--device cuda --backend /gpu/cuda/magma`.
 
 Do not bypass Spack with an ad-hoc CMake or make build. Use the measured harness path.
 
 ## Correctness guard
-The proxy benchmark is a hidden Catch2 test with deterministic mesh refinement/data and internal assertions. `.auto/checks.sh` requires the last proxy run to have completed successfully.
+The proxy benchmark is a hidden Catch2 test with deterministic mesh refinement/data, internal assertions, and the `[GPU]` tag so Palace test discovery runs it under the CUDA device filter. `.auto/checks.sh` requires the last proxy run to have completed successfully.
 
 Before finalizing any kept code changes, run the broader p4d GPU+CPU validation suite from the project playbook and representative full-output cases separately.
 
@@ -78,7 +80,7 @@ Possible supporting files:
 ## Off limits
 - Do **not** optimize or tune eigensolver/linear solver behavior.
 - Do **not** drop required output fields or disable ParaView/GridFunction output to win the metric.
-- Do **not** change the proxy MPI rank count or deterministic proxy size controls unless a human changes the benchmark target.
+- Do **not** change the proxy MPI rank count, CUDA device/backend settings, or deterministic proxy size controls unless a human changes the benchmark target.
 - Do **not** run direct CMake/make builds. Use Spack only.
 - Do **not** use more than `PALACE_AR_BUILD_JOBS` build jobs; default here is 32 on p4d.
 - Do **not** change transient, BoundaryMode, or 2D fallback behavior unless required to keep compilation working.
