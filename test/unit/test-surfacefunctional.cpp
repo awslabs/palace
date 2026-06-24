@@ -19,7 +19,11 @@
 #include "fem/interpolator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/output_functionals.hpp"
+#include "fixtures.hpp"
+#include "models/boundarymodeoperator.hpp"
+#include "models/domainpostoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/postoperator.hpp"
 #include "models/strattonchu.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
@@ -159,6 +163,13 @@ std::unique_ptr<Mesh> MakeInterfaceMesh2D(MPI_Comm comm, mfem::Element::Type ele
   auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
   return std::make_unique<Mesh>(std::move(pmesh));
 }
+
+class TestBoundaryModePostOperator : public PostOperator<ProblemType::BOUNDARYMODE>
+{
+public:
+  using PostOperator<ProblemType::BOUNDARYMODE>::PostOperator;
+  const Measurement &Cache() const { return measurement_cache; }
+};
 
 // Build a 3D mesh with two material regions (attribute 1: z < 0.5, vacuum; attribute
 // 2: z >= 0.5, dielectric) and interior boundary elements (attribute 7) added on the
@@ -592,6 +603,113 @@ TEST_CASE("SurfaceFunctional Interface Dielectric 2D", "[surfacefunctional][Seri
       TestType(type, marker);
     }
   }
+}
+
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "PostOperator boundary mode 2D interface dielectric matches legacy",
+                 "[postoperator][surfacefunctional][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  REQUIRE(Mpi::Size(comm) == 1);
+  constexpr int order = 2;
+
+  IoData iodata(Units(1.0, 1.0));
+  iodata.problem.type = ProblemType::BOUNDARYMODE;
+  iodata.problem.verbose = 0;
+  iodata.problem.output = temp_dir.string();
+  iodata.problem.output_formats.paraview = false;
+  iodata.problem.output_formats.gridfunction = false;
+  iodata.model.L0 = 1.0;
+  iodata.model.Lc = 1.0;
+  iodata.solver.order = order;
+  iodata.solver.boundary_mode.freq = 1.0;
+  iodata.solver.boundary_mode.n = 1;
+  iodata.solver.boundary_mode.n_post = 1;
+  iodata.solver.linear.tol = 1.0e-8;
+  iodata.solver.linear.max_it = 50;
+
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s[0] = 4.0;
+  dielectric.epsilon_r.s[1] = 6.0;
+  dielectric.epsilon_r.s[2] = 8.0;
+  iodata.domains.materials = {vacuum, dielectric};
+  iodata.boundaries.pec.attributes = {1, 2, 3, 4};
+
+  config::InterfaceDielectricData interface;
+  interface.attributes = {7};
+  interface.type = InterfaceDielectric::SA;
+  interface.t = 2.0e-3;
+  interface.epsilon_r = 10.0;
+  interface.tandelta = 3.0e-4;
+  iodata.boundaries.postpro.dielectric.emplace(1, interface);
+
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(MakeInterfaceMesh2D(comm, mfem::Element::TRIANGLE));
+  auto &pmesh = mesh.front()->Get();
+  MaterialOperator mat_op(iodata, *mesh.front());
+  BoundaryModeOperator fem_op(iodata, mesh, mat_op);
+  TestBoundaryModePostOperator post_op(iodata, fem_op);
+
+  GridFunction E(fem_op.GetNDSpace(), true), En(fem_op.GetH1Space(), true);
+  mfem::VectorFunctionCoefficient etr(2,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + 0.3 * x(0);
+                                        v(1) = std::cos(x(0)) + x(0) * x(1);
+                                      });
+  mfem::VectorFunctionCoefficient eti(2,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(0) - 0.2 * x(1);
+                                        v(1) = std::sin(x(0) + x(1));
+                                      });
+  mfem::FunctionCoefficient enr(
+      [](const mfem::Vector &x) { return 0.5 + x(0) * x(1); });
+  mfem::FunctionCoefficient eni(
+      [](const mfem::Vector &x) { return std::cos(x(0)) - 0.1 * x(1); });
+  E.Real().ProjectCoefficient(etr);
+  E.Imag().ProjectCoefficient(eti);
+  En.Real().ProjectCoefficient(enr);
+  En.Imag().ProjectCoefficient(eni);
+
+  ComplexVector et(fem_op.GetNDTrueVSize()), en(fem_op.GetH1TrueVSize());
+  E.Real().GetTrueDofs(et.Real());
+  E.Imag().GetTrueDofs(et.Imag());
+  En.Real().GetTrueDofs(en.Real());
+  En.Imag().GetTrueDofs(en.Imag());
+
+  // Public PostOperator entry point under test: BoundaryMode computes its derived B
+  // fields internally, then measures configured interface dielectric participation.
+  const double omega = 2.0;
+  const std::complex<double> kn(0.7, 0.05);
+  post_op.MeasureAndPrintAll(0, et, en, kn, omega, 0.0, 0.0, 1);
+
+  mfem::Array<int> marker(pmesh.bdr_attributes.Max());
+  marker = 0;
+  marker[7 - 1] = 1;
+  InterfaceDielectricCoefficient<InterfaceDielectric::SA> legacy(
+      E, mat_op, interface.t, interface.epsilon_r);
+  const double interface_energy = RefSurfaceCoefficientIntegral(pmesh, legacy, marker);
+  DomainPostOperator domain_post(iodata.domains.postpro, mat_op, fem_op.GetNDSpace(),
+                                 fem_op.GetCurlSpace());
+  const double domain_energy = domain_post.GetElectricFieldEnergy(E);
+  const double participation = interface_energy / domain_energy;
+
+  const auto &cache = post_op.Cache();
+  REQUIRE(cache.interface_eps_i.size() == 1);
+  const auto &measured = cache.interface_eps_i.front();
+  CHECK(measured.idx == 1);
+  CHECK(measured.energy == Catch::Approx(interface_energy).epsilon(1.0e-10));
+  CHECK(measured.energy_participation == Catch::Approx(participation).epsilon(1.0e-10));
+  CHECK(measured.quality_factor ==
+        Catch::Approx(1.0 / (participation * interface.tandelta)).epsilon(1.0e-10));
 }
 
 TEST_CASE("SurfaceFunctional Surface Flux", "[surfacefunctional][Serial][GPU]")
