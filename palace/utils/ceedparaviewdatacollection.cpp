@@ -84,7 +84,7 @@ void WriteVTKUInt8(std::ostream &os, std::vector<char> &buf, std::uint8_t value,
 }
 
 std::size_t AppendVTKBlock(std::vector<std::vector<char>> &blocks,
-                           std::size_t &offset, const std::vector<char> &raw,
+                           std::size_t &offset, std::vector<char> &raw,
                            int compression_level)
 {
   MFEM_VERIFY(raw.size() <= std::numeric_limits<std::uint32_t>::max(),
@@ -127,6 +127,7 @@ std::size_t AppendVTKBlock(std::vector<std::vector<char>> &blocks,
   const std::size_t block_offset = offset;
   offset += block.size();
   blocks.emplace_back(std::move(block));
+  raw.clear();
   return block_offset;
 }
 
@@ -232,7 +233,36 @@ void CeedParaViewDataCollection::SavePointFieldVTU(
   }
 }
 
-void CeedParaViewDataCollection::SaveMeshVTU(std::ostream &os, int ref)
+void CeedParaViewDataCollection::WritePVTUHeader(std::ostream &os, bool appended_mesh)
+{
+  const char *mesh_format = appended_mesh ? "appended" : GetDataFormatString();
+  os << "<?xml version=\"1.0\"?>\n";
+  os << "<VTKFile type=\"PUnstructuredGrid\"";
+  os << " version =\"2.2\" byte_order=\"" << mfem::VTKByteOrder() << "\">\n";
+  os << "<PUnstructuredGrid GhostLevel=\"0\">\n";
+
+  os << "<PPoints>\n";
+  os << "\t<PDataArray type=\"" << GetDataTypeString() << "\" ";
+  os << " Name=\"Points\" NumberOfComponents=\"3\""
+     << " format=\"" << mesh_format << "\"/>\n";
+  os << "</PPoints>\n";
+
+  os << "<PCells>\n";
+  os << "\t<PDataArray type=\"Int32\" ";
+  os << " Name=\"connectivity\" NumberOfComponents=\"1\""
+     << " format=\"" << mesh_format << "\"/>\n";
+  os << "\t<PDataArray type=\"Int32\" ";
+  os << " Name=\"offsets\"      NumberOfComponents=\"1\""
+     << " format=\"" << mesh_format << "\"/>\n";
+  os << "\t<PDataArray type=\"UInt8\" ";
+  os << " Name=\"types\"        NumberOfComponents=\"1\""
+     << " format=\"" << mesh_format << "\"/>\n";
+  os << "</PCells>\n";
+}
+
+void CeedParaViewDataCollection::SaveMeshVTU(
+    std::ostream &os, int ref, std::vector<std::vector<char>> *appended_blocks,
+    std::size_t *appended_offset)
 {
   // MFEM's high-order VTU mesh writer recomputes the same local VTK connectivity
   // permutation for every element. Palace ParaView output commonly uses one geometry
@@ -245,6 +275,8 @@ void CeedParaViewDataCollection::SaveMeshVTU(std::ostream &os, int ref)
     return;
   }
 
+  const bool appended = appended_blocks && appended_offset &&
+                        pv_data_format != mfem::VTKFormat::ASCII;
   const char *fmt_str = (pv_data_format == mfem::VTKFormat::ASCII) ? "ascii" : "binary";
   const char *type_str = (pv_data_format != mfem::VTKFormat::BINARY32) ? "Float64"
                                                                         : "Float32";
@@ -271,8 +303,11 @@ void CeedParaViewDataCollection::SaveMeshVTU(std::ostream &os, int ref)
   mfem::DenseMatrix pmat;
 
   os << "<Points>\n";
-  os << "<DataArray type=\"" << type_str
-     << "\" NumberOfComponents=\"3\" format=\"" << fmt_str << "\">\n";
+  if (!appended)
+  {
+    os << "<DataArray type=\"" << type_str
+       << "\" NumberOfComponents=\"3\" format=\"" << fmt_str << "\">\n";
+  }
   if (pv_data_format != mfem::VTKFormat::ASCII)
   {
     ReserveBinary(buf, 3 * num_points, VTKRealSize(pv_data_format));
@@ -301,16 +336,30 @@ void CeedParaViewDataCollection::SaveMeshVTU(std::ostream &os, int ref)
       }
     }
   }
-  if (pv_data_format != mfem::VTKFormat::ASCII)
+  if (appended)
   {
-    mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+    const std::size_t offset =
+        AppendVTKBlock(*appended_blocks, *appended_offset, buf, GetCompressionLevel());
+    os << "<DataArray type=\"" << type_str
+       << "\" NumberOfComponents=\"3\" format=\"appended\" offset=\"" << offset
+       << "\"/>\n";
   }
-  os << "</DataArray>" << std::endl;
+  else
+  {
+    if (pv_data_format != mfem::VTKFormat::ASCII)
+    {
+      mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+    }
+    os << "</DataArray>" << std::endl;
+  }
   os << "</Points>" << std::endl;
 
   os << "<Cells>" << std::endl;
-  os << "<DataArray type=\"Int32\" Name=\"connectivity\" format=\"" << fmt_str
-     << "\">" << std::endl;
+  if (!appended)
+  {
+    os << "<DataArray type=\"Int32\" Name=\"connectivity\" format=\"" << fmt_str
+       << "\">" << std::endl;
+  }
   if (pv_data_format != mfem::VTKFormat::ASCII)
   {
     ReserveBinary(buf, num_points, sizeof(std::int32_t));
@@ -339,14 +388,27 @@ void CeedParaViewDataCollection::SaveMeshVTU(std::ostream &os, int ref)
     point_offset += local_connectivity.Size();
     offsets.push_back(point_offset);
   }
-  if (pv_data_format != mfem::VTKFormat::ASCII)
+  if (appended)
   {
-    mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+    const std::size_t offset =
+        AppendVTKBlock(*appended_blocks, *appended_offset, buf, GetCompressionLevel());
+    os << "<DataArray type=\"Int32\" Name=\"connectivity\" format=\"appended\""
+       << " offset=\"" << offset << "\"/>" << std::endl;
   }
-  os << "</DataArray>" << std::endl;
+  else
+  {
+    if (pv_data_format != mfem::VTKFormat::ASCII)
+    {
+      mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+    }
+    os << "</DataArray>" << std::endl;
+  }
 
-  os << "<DataArray type=\"Int32\" Name=\"offsets\" format=\"" << fmt_str
-     << "\">" << std::endl;
+  if (!appended)
+  {
+    os << "<DataArray type=\"Int32\" Name=\"offsets\" format=\"" << fmt_str
+       << "\">" << std::endl;
+  }
   if (pv_data_format != mfem::VTKFormat::ASCII)
   {
     ReserveBinary(buf, offsets.size(), sizeof(std::int32_t));
@@ -355,14 +417,27 @@ void CeedParaViewDataCollection::SaveMeshVTU(std::ostream &os, int ref)
   {
     WriteVTKInt32(os, buf, offset, "\n", pv_data_format);
   }
-  if (pv_data_format != mfem::VTKFormat::ASCII)
+  if (appended)
   {
-    mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+    const std::size_t block_offset =
+        AppendVTKBlock(*appended_blocks, *appended_offset, buf, GetCompressionLevel());
+    os << "<DataArray type=\"Int32\" Name=\"offsets\" format=\"appended\""
+       << " offset=\"" << block_offset << "\"/>" << std::endl;
   }
-  os << "</DataArray>" << std::endl;
+  else
+  {
+    if (pv_data_format != mfem::VTKFormat::ASCII)
+    {
+      mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+    }
+    os << "</DataArray>" << std::endl;
+  }
 
-  os << "<DataArray type=\"UInt8\" Name=\"types\" format=\"" << fmt_str << "\">"
-     << std::endl;
+  if (!appended)
+  {
+    os << "<DataArray type=\"UInt8\" Name=\"types\" format=\"" << fmt_str << "\">"
+       << std::endl;
+  }
   if (pv_data_format != mfem::VTKFormat::ASCII)
   {
     ReserveBinary(buf, static_cast<std::size_t>(ne), sizeof(std::uint8_t));
@@ -373,16 +448,29 @@ void CeedParaViewDataCollection::SaveMeshVTU(std::ostream &os, int ref)
     WriteVTKUInt8(os, buf, static_cast<std::uint8_t>(vtk_geom_map[GetGeom(i)]), "\n",
                   pv_data_format);
   }
-  if (pv_data_format != mfem::VTKFormat::ASCII)
+  if (appended)
   {
-    mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+    const std::size_t offset =
+        AppendVTKBlock(*appended_blocks, *appended_offset, buf, GetCompressionLevel());
+    os << "<DataArray type=\"UInt8\" Name=\"types\" format=\"appended\""
+       << " offset=\"" << offset << "\"/>" << std::endl;
   }
-  os << "</DataArray>" << std::endl;
+  else
+  {
+    if (pv_data_format != mfem::VTKFormat::ASCII)
+    {
+      mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+    }
+    os << "</DataArray>" << std::endl;
+  }
   os << "</Cells>" << std::endl;
 
   os << "<CellData Scalars=\"attribute\">" << std::endl;
-  os << "<DataArray type=\"Int32\" Name=\"attribute\" format=\"" << fmt_str
-     << "\">" << std::endl;
+  if (!appended)
+  {
+    os << "<DataArray type=\"Int32\" Name=\"attribute\" format=\"" << fmt_str
+       << "\">" << std::endl;
+  }
   if (pv_data_format != mfem::VTKFormat::ASCII)
   {
     ReserveBinary(buf, static_cast<std::size_t>(ne), sizeof(std::int32_t));
@@ -392,11 +480,21 @@ void CeedParaViewDataCollection::SaveMeshVTU(std::ostream &os, int ref)
     const int attr = bdr_output ? mesh->GetBdrAttribute(i) : mesh->GetAttribute(i);
     WriteVTKInt32(os, buf, attr, "\n", pv_data_format);
   }
-  if (pv_data_format != mfem::VTKFormat::ASCII)
+  if (appended)
   {
-    mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+    const std::size_t offset =
+        AppendVTKBlock(*appended_blocks, *appended_offset, buf, GetCompressionLevel());
+    os << "<DataArray type=\"Int32\" Name=\"attribute\" format=\"appended\""
+       << " offset=\"" << offset << "\"/>" << std::endl;
   }
-  os << "</DataArray>" << std::endl;
+  else
+  {
+    if (pv_data_format != mfem::VTKFormat::ASCII)
+    {
+      mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+    }
+    os << "</DataArray>" << std::endl;
+  }
   os << "</CellData>" << std::endl;
 }
 
@@ -490,8 +588,6 @@ void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
     os << " compressor=\"vtkZLibDataCompressor\"";
   }
   os << " version=\"2.2\" byte_order=\"" << mfem::VTKByteOrder() << "\">\n";
-  os << "<UnstructuredGrid>\n";
-  SaveMeshVTU(os, ref);
 
   std::vector<std::vector<char>> appended_blocks;
   std::size_t appended_offset = 0;
@@ -500,6 +596,9 @@ void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
   auto *appended_offset_ptr = (pv_data_format == mfem::VTKFormat::ASCII)
                                   ? nullptr
                                   : &appended_offset;
+
+  os << "<UnstructuredGrid>\n";
+  SaveMeshVTU(os, ref, appended_ptr, appended_offset_ptr);
 
   os << "<PointData >\n";
   for (FieldMapIterator it = field_map.begin(); it != field_map.end(); ++it)
@@ -642,11 +741,14 @@ void CeedParaViewDataCollection::Save()
       const std::string os_str = vtu_prefix + GeneratePVTUFileName("data");
       std::ofstream pvtu_out(os_str);
       MFEM_VERIFY(pvtu_out.is_open(), "Failed to open ofstream " << os_str);
-      WritePVTUHeader(pvtu_out);
+      const bool appended_mesh =
+          high_order_output && pv_data_format != mfem::VTKFormat::ASCII;
+      WritePVTUHeader(pvtu_out, appended_mesh);
 
       const char *appended_field_format =
           (pv_data_format == mfem::VTKFormat::ASCII) ? GetDataFormatString()
                                                      : "appended";
+      const char *mesh_cell_format = appended_mesh ? "appended" : GetDataFormatString();
       pvtu_out << "<PPointData>\n";
       for (auto &field_it : field_map)
       {
@@ -689,7 +791,7 @@ void CeedParaViewDataCollection::Save()
       pvtu_out << "<PCellData>\n";
       pvtu_out << "\t<PDataArray type=\"Int32\" Name=\"attribute\" "
                   "NumberOfComponents=\"1\""
-               << " format=\"" << GetDataFormatString() << "\"/>\n";
+               << " format=\"" << mesh_cell_format << "\"/>\n";
       pvtu_out << "</PCellData>\n";
 
       WritePVTUFooter(pvtu_out, "proc");
@@ -707,7 +809,7 @@ void CeedParaViewDataCollection::Save()
       const std::string os_str = col_path + "/" + q_fname;
       std::ofstream pvtu_out(os_str);
       MFEM_VERIFY(pvtu_out.is_open(), "Failed to open ofstream " << os_str);
-      WritePVTUHeader(pvtu_out);
+      mfem::ParaViewDataCollection::WritePVTUHeader(pvtu_out);
       const int vec_dim = q_field.second->GetVDim();
       pvtu_out << "<PPointData>\n";
       pvtu_out << "<PDataArray type=\"" << GetDataTypeString() << "\" Name=\""

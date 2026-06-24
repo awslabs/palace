@@ -34,7 +34,10 @@ private:
   std::map<std::string, PointField> domain_point_fields;
   std::map<std::string, PointField> boundary_point_fields;
 
-  void SaveMeshVTU(std::ostream &os, int ref);
+  void WritePVTUHeader(std::ostream &os, bool appended_mesh);
+  void SaveMeshVTU(std::ostream &os, int ref,
+                   std::vector<std::vector<char>> *appended_blocks,
+                   std::size_t *appended_offset);
   void SaveDataVTU(std::ostream &os, int ref);
   void SaveGFieldVTU(std::ostream &os, int ref, const FieldMapIterator &it,
                      std::vector<std::vector<char>> *appended_blocks,
