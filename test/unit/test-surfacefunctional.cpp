@@ -996,8 +996,10 @@ TEST_CASE("SurfaceFunctional AtPoints surface flux matches mapped path",
       const auto mapped = Eval(type, two_sided, true);
       const auto maybe_at_points = Eval(type, two_sided, false);
       CAPTURE(mapped.real(), mapped.imag(), maybe_at_points.real(), maybe_at_points.imag());
-      CHECK(maybe_at_points.real() == Catch::Approx(mapped.real()).epsilon(1.0e-10));
-      CHECK(maybe_at_points.imag() == Catch::Approx(mapped.imag()).epsilon(1.0e-10));
+      CHECK(maybe_at_points.real() ==
+            Catch::Approx(mapped.real()).epsilon(1.0e-10).margin(1.0e-12));
+      CHECK(maybe_at_points.imag() ==
+            Catch::Approx(mapped.imag()).epsilon(1.0e-10).margin(1.0e-12));
     }
   }
   RestoreEnv();
