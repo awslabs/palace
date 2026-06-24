@@ -1,0 +1,149 @@
+name: Backfill Release Containers
+
+# THROWAWAY one-shot workflow to backfill container images for ALREADY-RELEASED
+# Palace versions into the internal ECR repo + S3 bucket. Unlike containers.yml
+# (which builds the develop source tree), this builds `palace@<version>` from the
+# spack recipe's pinned release commit, so it can reproduce old releases.
+#
+# Deliberately self-contained: it does NOT reuse .github/actions/build-container
+# (whose example-test step runs TODAY's examples against the OLD binary and would
+# abort older versions). No test step here. Delete this file once backfill is done.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Released Palace version to build (must exist in spack_repo recipe), e.g. 0.16.1'
+        type: string
+        required: true
+
+permissions:
+  packages: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.inputs.version }}
+  cancel-in-progress: true
+
+env:
+  GITHUB_USER: ${{ github.actor }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  AWS_REGION: us-west-2
+  ECR_REPOSITORY: palace
+  S3_BUCKET: palace-ci-containers
+
+jobs:
+  backfill:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+    runs-on: [self-hosted, '${{ matrix.arch }}']
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup environment
+        uses: ./.github/actions/setup-runner
+        with:
+          spack-version: 'develop'
+          julia-version: 'dont-install'
+          llvm-version: 'dont-install'
+          setup-intel: 'false'
+
+      - name: Install Podman
+        shell: bash
+        run: |
+          sudo add-apt-repository -y ppa:apptainer/ppa
+          sudo apt update
+          sudo apt install -y podman apptainer
+          echo 'unqualified-search-registries = ["docker.io"]' | sudo tee /etc/containers/registries.conf.d/docker.conf
+
+      - name: Pin spack env to the requested release
+        shell: bash
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          SPACK_YAML=.github/actions/build-container/spack_env/spack.yaml
+
+          # Build the tagged release from the recipe instead of the develop
+          # source tree: swap the spec version and drop the develop: path
+          # override (which pins palace to the checked-out /opt/palace source).
+          sed -i -E "s/palace@develop/palace@${VERSION}/" "$SPACK_YAML"
+
+          # Remove the `develop:` block (4 lines under `override:`). yq isn't a
+          # build dep; use a small python edit so we don't depend on key order.
+          python3 - "$SPACK_YAML" <<'PY'
+          import sys, re
+          p = sys.argv[1]
+          text = open(p).read()
+          # Strip the develop: ... palace: ... path: /opt/palace mapping.
+          text = re.sub(r"\n\s*develop:\n(?:\s+.*\n)+?(?=\s*specs:|\Z)", "\n", text)
+          open(p, "w").write(text)
+          PY
+
+          echo "=== resulting spec block ==="
+          grep -nE "palace@|develop:|path:" "$SPACK_YAML" || true
+
+      - name: Compute names
+        id: name
+        shell: bash
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          ARCH_LABEL=$(spack arch -t)
+          IMAGE_NAME="palace-${ARCH_LABEL}-${VERSION}"
+          echo "arch_label=${ARCH_LABEL}" >> "$GITHUB_OUTPUT"
+          echo "image_name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "Arch label: ${ARCH_LABEL}"
+          echo "Image name: ${IMAGE_NAME}"
+
+      - name: Generate Dockerfile
+        shell: bash
+        run: |
+          cd .github/actions/build-container/spack_env && spack -e . containerize > "$GITHUB_WORKSPACE/Dockerfile"
+
+      - name: Build OCI image
+        shell: bash
+        run: |
+          sudo podman build --format docker \
+            --build-arg GITHUB_USER="$GITHUB_USER" \
+            --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" \
+            -t ${{ steps.name.outputs.image_name }} .
+
+      - name: Save and convert to SIF
+        shell: bash
+        run: |
+          sudo podman save ${{ steps.name.outputs.image_name }}:latest -o ${{ steps.name.outputs.image_name }}.tar
+          sudo chmod a+r ${{ steps.name.outputs.image_name }}.tar
+          sudo apptainer build ${{ steps.name.outputs.image_name }}.sif docker-archive://${{ steps.name.outputs.image_name }}.tar
+          sudo chmod a+r ${{ steps.name.outputs.image_name }}.sif
+
+      - name: Push OCI image to ECR
+        # Auth is ambient via the runner's EC2 instance role.
+        shell: bash
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+          ARCH_LABEL: ${{ steps.name.outputs.arch_label }}
+          IMAGE_NAME: ${{ steps.name.outputs.image_name }}
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "::add-mask::${ACCOUNT_ID}"
+          REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          REMOTE_TAG="${REGISTRY}/${ECR_REPOSITORY}:${VERSION}-${ARCH_LABEL}"
+
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | sudo podman login --username AWS --password-stdin "$REGISTRY"
+          sudo podman tag "${IMAGE_NAME}:latest" "$REMOTE_TAG"
+          sudo podman push "$REMOTE_TAG"
+          echo "Pushed image to ${REMOTE_TAG}"
+
+      - name: Upload SIF to S3
+        shell: bash
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+          ARCH_LABEL: ${{ steps.name.outputs.arch_label }}
+          IMAGE_NAME: ${{ steps.name.outputs.image_name }}
+        run: |
+          S3_KEY="s3://${S3_BUCKET}/${VERSION}/${ARCH_LABEL}.sif"
+          aws s3 cp --region "$AWS_REGION" "${IMAGE_NAME}.sif" "$S3_KEY"
+          echo "Uploaded SIF to ${S3_KEY}"
