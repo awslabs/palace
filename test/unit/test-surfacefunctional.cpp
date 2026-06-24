@@ -883,6 +883,126 @@ TEST_CASE("SurfaceFunctional Surface Flux", "[surfacefunctional][Serial][GPU]")
   }
 }
 
+TEST_CASE("SurfaceFunctional AtPoints surface flux matches mapped path",
+          "[surfacefunctional][Serial][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  constexpr auto elem_type = mfem::Element::TETRAHEDRON;
+  constexpr int order = 2;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s[0] = 11.7;
+  dielectric.epsilon_r.s[1] = 3.1;
+  dielectric.epsilon_r.s[2] = 2.4;
+  dielectric.mu_r.s[0] = 1.4;
+  dielectric.mu_r.s[1] = 1.8;
+  dielectric.mu_r.s[2] = 2.2;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::ND_FECollection nd_fec(order, pmesh.Dimension());
+  mfem::RT_FECollection rt_fec(order - 1, pmesh.Dimension());
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+
+  GridFunction E(nd_fespace, true), B(rt_fespace, true);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + x(2) * x(2);
+                                        v(1) = std::cos(x(2)) + x(0);
+                                        v(2) = x(0) * x(1) + 1.0;
+                                      });
+  mfem::VectorFunctionCoefficient fei(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) * x(2) - 0.5;
+                                        v(1) = std::sin(x(0)) - x(2);
+                                        v(2) = std::cos(x(1)) + x(0) * x(0);
+                                      });
+  mfem::VectorFunctionCoefficient fbr(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) - 0.3 * x(2);
+                                        v(1) = std::sin(x(2)) + 0.5;
+                                        v(2) = std::cos(x(0)) - x(1) * x(2);
+                                      });
+  mfem::VectorFunctionCoefficient fbi(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::cos(x(2)) - 0.2;
+                                        v(1) = x(0) * x(2) + 0.1;
+                                        v(2) = std::sin(x(1)) - x(0);
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  E.Imag().ProjectCoefficient(fei);
+  B.Real().ProjectCoefficient(fbr);
+  B.Imag().ProjectCoefficient(fbi);
+
+  mfem::Array<int> marker(pmesh.bdr_attributes.Max());
+  marker = 0;
+  marker[7 - 1] = 1;
+  mfem::Vector x0(3);
+  x0(0) = 0.4;
+  x0(1) = 0.6;
+  x0(2) = -0.2;
+
+  const char *old_disable = std::getenv("PALACE_SURFACE_DISABLE_ATPOINTS");
+  auto RestoreEnv = [&]()
+  {
+    if (old_disable)
+    {
+      setenv("PALACE_SURFACE_DISABLE_ATPOINTS", old_disable, 1);
+    }
+    else
+    {
+      unsetenv("PALACE_SURFACE_DISABLE_ATPOINTS");
+    }
+  };
+  auto Eval = [&](SurfaceFlux type, bool two_sided, bool disable_at_points)
+  {
+    if (disable_at_points)
+    {
+      setenv("PALACE_SURFACE_DISABLE_ATPOINTS", "1", 1);
+    }
+    else
+    {
+      unsetenv("PALACE_SURFACE_DISABLE_ATPOINTS");
+    }
+    const GridFunction *E_use =
+        (type == SurfaceFlux::ELECTRIC || type == SurfaceFlux::POWER) ? &E : nullptr;
+    const GridFunction *B_use =
+        (type == SurfaceFlux::MAGNETIC || type == SurfaceFlux::POWER) ? &B : nullptr;
+    SurfaceFunctional flux(*mesh, marker, E_use ? &nd_fespace.Get() : nullptr,
+                           B_use ? &rt_fespace.Get() : nullptr, mat_op, type, two_sided,
+                           x0);
+    REQUIRE(flux.IsValid());
+    return flux.EvalFlux(E_use, B_use);
+  };
+
+  for (auto type : {SurfaceFlux::ELECTRIC, SurfaceFlux::MAGNETIC, SurfaceFlux::POWER})
+  {
+    for (bool two_sided : {false, true})
+    {
+      CAPTURE(static_cast<int>(type), two_sided);
+      const auto mapped = Eval(type, two_sided, true);
+      const auto maybe_at_points = Eval(type, two_sided, false);
+      CAPTURE(mapped.real(), mapped.imag(), maybe_at_points.real(), maybe_at_points.imag());
+      CHECK(maybe_at_points.real() == Catch::Approx(mapped.real()).epsilon(1.0e-10));
+      CHECK(maybe_at_points.imag() == Catch::Approx(mapped.imag()).epsilon(1.0e-10));
+    }
+  }
+  RestoreEnv();
+}
+
 TEST_CASE("SurfaceFunctional Complex Power", "[surfacefunctional][Serial][GPU]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;

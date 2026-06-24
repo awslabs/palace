@@ -178,8 +178,9 @@ bool CeedSupportsNonTensorAtPoints(Ceed ceed)
   // and MAGMA. Other backends keep the existing mapped-point tabulation path.
   const char *resource;
   PalaceCeedCall(ceed, CeedGetResource(ceed, &resource));
-  return std::strstr(resource, "/gpu/cuda/ref") ||
-         std::strstr(resource, "/gpu/cuda/magma");
+  return !std::getenv("PALACE_SURFACE_DISABLE_ATPOINTS") &&
+         (std::strstr(resource, "/gpu/cuda/ref") ||
+          std::strstr(resource, "/gpu/cuda/magma"));
 }
 
 int TetNumModes(int degree)
