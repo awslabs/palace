@@ -565,10 +565,7 @@ inline double EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>::GetLocalEne
   if (T.GetSpaceDim() == 2)
   {
     // In 2D, B is the scalar out-of-plane component Bz (L2). The magnetic energy density
-    // is 1/2 μ⁻¹_zz |Bz|², matching the integrated domain energy (which uses the scalar
-    // z-z permeability). Using GetVectorValue / the in-plane μ⁻¹ tensor here would read
-    // the wrong tensor component (and an uninitialized vector slot), so use the scalar
-    // field value and z-z permeability instead.
+    // is 1/2 μ⁻¹_zz |Bz|², matching the integrated domain energy.
     double Bz = U.Real().GetValue(T, T.GetIntPoint());
     double dot = Bz * Bz;
     if (U.HasImag())
