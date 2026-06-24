@@ -34,6 +34,27 @@ using namespace std::complex_literals;
 namespace
 {
 
+bool IsSupportedDomainOutputDimension(const mfem::ParMesh &mesh)
+{
+  return (mesh.Dimension() == 2 && mesh.SpaceDimension() == 2) ||
+         (mesh.Dimension() == 3 && mesh.SpaceDimension() == 3);
+}
+
+bool IsSupportedBoundaryOutputDimension(const mfem::ParMesh &mesh)
+{
+  // Boundary visualization libCEED kernels are currently 3D surface kernels. 2D
+  // boundary vectors/scalars have explicit legacy writers until their line-boundary
+  // conventions are implemented.
+  return mesh.Dimension() == 3 && mesh.SpaceDimension() == 3;
+}
+
+void RequireCeedSurfaceFunctional(const SurfaceFunctional *eval, const std::string &what)
+{
+  MFEM_VERIFY(eval && eval->IsValid(),
+              "libCEED postprocessing was expected for " + what +
+                  ", but SurfaceFunctional could not assemble!");
+}
+
 std::string OutputFolderName(const ProblemType solver_t)
 {
   switch (solver_t)
@@ -327,6 +348,9 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     }
     else
     {
+      MFEM_VERIFY(!IsSupportedDomainOutputDimension(*target.GetParMesh()),
+                  "libCEED domain field evaluator could not assemble for a supported "
+                  "mesh dimension!");
       eval.reset();
     }
   };
@@ -343,6 +367,10 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
                                                fespace.GetMaxElementOrder());
     if (!eval->IsValid())
     {
+      if (IsSupportedBoundaryOutputDimension(pmesh))
+      {
+        RequireCeedSurfaceFunctional(eval.get(), "3D boundary field visualization");
+      }
       eval.reset();
     }
   };
@@ -360,6 +388,10 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
                                                fespace.GetMaxElementOrder(), scaling);
     if (!eval->IsValid())
     {
+      if (IsSupportedBoundaryOutputDimension(pmesh))
+      {
+        RequireCeedSurfaceFunctional(eval.get(), "3D boundary coefficient visualization");
+      }
       eval.reset();
     }
   };
@@ -378,6 +410,10 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         fem_op->GetMaterialOp(), e_fespace.GetMaxElementOrder(), scaling);
     if (!eval->IsValid())
     {
+      if (IsSupportedBoundaryOutputDimension(pmesh))
+      {
+        RequireCeedSurfaceFunctional(eval.get(), "3D boundary Poynting visualization");
+      }
       eval.reset();
     }
   };

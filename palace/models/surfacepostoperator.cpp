@@ -5,6 +5,7 @@
 
 #include <complex>
 #include <set>
+#include <string>
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/vector.hpp"
@@ -21,6 +22,27 @@ namespace palace
 
 namespace
 {
+
+bool IsSupportedSurfaceFunctionalDimension(const mfem::ParMesh &mesh)
+{
+  return (mesh.Dimension() == 2 && mesh.SpaceDimension() == 2) ||
+         (mesh.Dimension() == 3 && mesh.SpaceDimension() == 3);
+}
+
+bool IsSupportedSurfaceFluxDimension(const mfem::ParMesh &mesh)
+{
+  // The libCEED surface-flux kernels currently implement 3D surface integrals. 2D line
+  // flux semantics remain on the legacy path explicitly rather than by silent invalid
+  // fallback.
+  return mesh.Dimension() == 3 && mesh.SpaceDimension() == 3;
+}
+
+void RequireCeedSurfaceFunctional(const SurfaceFunctional *func, const std::string &what)
+{
+  MFEM_VERIFY(func && func->IsValid(),
+              "libCEED postprocessing was expected for " + what +
+                  ", but SurfaceFunctional could not assemble!");
+}
 
 template <typename T>
 mfem::Array<int> SetUpBoundaryProperties(const T &data,
@@ -315,6 +337,10 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
   {
     return func->EvalFlux(E, B);
   }
+  if (SurfaceFunctional::Enabled() && IsSupportedSurfaceFluxDimension(mesh))
+  {
+    RequireCeedSurfaceFunctional(func.get(), "3D surface flux");
+  }
 
   auto f =
       it->second.GetCoefficient(E ? &E->Real() : nullptr, B ? &B->Real() : nullptr, mat_op);
@@ -367,6 +393,10 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
   if (func && func->IsValid())
   {
     return func->Eval(E);
+  }
+  if (SurfaceFunctional::Enabled() && IsSupportedSurfaceFunctionalDimension(mesh))
+  {
+    RequireCeedSurfaceFunctional(func.get(), "interface dielectric postprocessing");
   }
 
   auto f = it->second.GetCoefficient(E, mat_op);
@@ -425,6 +455,10 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   if (farfield_func && farfield_func->IsValid())
   {
     return farfield_func->EvalFarField(E, B, omega);
+  }
+  if (SurfaceFunctional::Enabled() && E.HasImag() && B.HasImag())
+  {
+    RequireCeedSurfaceFunctional(farfield_func.get(), "3D far-field postprocessing");
   }
 
   // Integrate. Each MPI process computes its contribution and we will reduce

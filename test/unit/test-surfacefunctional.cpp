@@ -1579,10 +1579,10 @@ TEST_CASE("SurfaceFunctional Nonconformal Mesh", "[surfacefunctional][Serial][GP
 TEST_CASE("SurfaceFunctional Nonconformal Parallel", "[surfacefunctional][Parallel][GPU]")
 {
   // On parallel (possibly nonconformal) meshes, two-sided evaluation across process
-  // boundaries is not yet supported: the functional must fall back to the legacy path
-  // *consistently across all ranks* (the evaluation calls are collective). Exterior
-  // surfaces are always supported. This test verifies the global consistency of the
-  // validity decision and the results of whichever path is reported valid.
+  // boundaries uses FaceNbrFieldExchange to pull remote-side physical field values.
+  // This test makes that processor-boundary behavior a committed regression: exterior
+  // and interior interface surfaces must all assemble through libCEED and match the
+  // legacy coefficient oracles.
   MPI_Comm comm = MPI_COMM_WORLD;
   auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
   const int order = 2;
@@ -1605,9 +1605,10 @@ TEST_CASE("SurfaceFunctional Nonconformal Parallel", "[surfacefunctional][Parall
   MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
 
   mfem::ND_FECollection nd_fec(order, 3);
-  FiniteElementSpace nd_fespace(*mesh, &nd_fec);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
 
-  GridFunction E(nd_fespace, true);
+  GridFunction E(nd_fespace, true), B(rt_fespace, true);
   mfem::VectorFunctionCoefficient fer(3,
                                       [](const mfem::Vector &x, mfem::Vector &v)
                                       {
@@ -1622,13 +1623,31 @@ TEST_CASE("SurfaceFunctional Nonconformal Parallel", "[surfacefunctional][Parall
                                         v(1) = std::sin(x(0)) - x(2);
                                         v(2) = std::cos(x(1)) + x(0) * x(0);
                                       });
+  mfem::VectorFunctionCoefficient fbr(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) - 0.3 * x(2);
+                                        v(1) = std::sin(x(2)) + 0.5;
+                                        v(2) = std::cos(x(0)) - x(1) * x(2);
+                                      });
+  mfem::VectorFunctionCoefficient fbi(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::cos(x(2)) - 0.2;
+                                        v(1) = x(0) * x(2) + 0.1;
+                                        v(2) = std::sin(x(1)) - x(0);
+                                      });
   E.Real().ProjectCoefficient(fer);
   E.Imag().ProjectCoefficient(fei);
+  B.Real().ProjectCoefficient(fbr);
+  B.Imag().ProjectCoefficient(fbi);
 
   // The legacy reference evaluates fields on remote sides of shared faces via face
   // neighbor data.
   E.Real().ExchangeFaceNbrData();
   E.Imag().ExchangeFaceNbrData();
+  B.Real().ExchangeFaceNbrData();
+  B.Imag().ExchangeFaceNbrData();
 
   const double t_i = 2.0e-3, epsilon_i = 10.0;
   const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
@@ -1639,51 +1658,73 @@ TEST_CASE("SurfaceFunctional Nonconformal Parallel", "[surfacefunctional][Parall
     mfem::Array<int> marker(bdr_attr_max);
     marker = 0;
     marker[attr - 1] = 1;
+    auto CheckPart = [](double val, double ref)
+    {
+      if (std::abs(ref) > 1.0e-12)
+      {
+        CHECK(val == Catch::Approx(ref).epsilon(1.0e-10));
+      }
+      else
+      {
+        CHECK(std::abs(val) < 1.0e-10);
+      }
+    };
+
     for (auto type : {InterfaceDielectric::DEFAULT, InterfaceDielectric::MA})
     {
       CAPTURE(static_cast<int>(type));
       SurfaceFunctional epr(*mesh, marker, nd_fespace, mat_op, type, t_i, epsilon_i);
 
-      // The validity decision must be identical on all ranks.
       bool valid = epr.IsValid();
       bool valid_and = valid, valid_or = valid;
       Mpi::GlobalAnd(1, &valid_and, comm);
       Mpi::GlobalOr(1, &valid_or, comm);
       REQUIRE(valid_and == valid_or);
+      REQUIRE(valid);
 
-      // Exterior boundaries must always be supported.
-      if (attr != 7)
+      auto MakeLegacy = [&]() -> std::unique_ptr<mfem::Coefficient>
       {
-        REQUIRE(valid);
-      }
-
-      if (valid)
-      {
-        auto MakeLegacy = [&]() -> std::unique_ptr<mfem::Coefficient>
+        if (type == InterfaceDielectric::DEFAULT)
         {
-          if (type == InterfaceDielectric::DEFAULT)
-          {
-            return std::make_unique<
-                InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>>(
-                E, mat_op, t_i, epsilon_i);
-          }
-          return std::make_unique<InterfaceDielectricCoefficient<InterfaceDielectric::MA>>(
+          return std::make_unique<
+              InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>>(
               E, mat_op, t_i, epsilon_i);
-        };
-        auto legacy = MakeLegacy();
-        const double ref = RefSurfaceCoefficientIntegral(pmesh, *legacy, marker);
-        const double val = epr.Eval(E);
-        CAPTURE(ref, val);
-        if (std::abs(ref) > 1.0e-12)
-        {
-          CHECK(val == Catch::Approx(ref).epsilon(1.0e-10));
         }
-        else
-        {
-          CHECK(std::abs(val) < 1.0e-10);
-        }
-      }
+        return std::make_unique<InterfaceDielectricCoefficient<InterfaceDielectric::MA>>(
+            E, mat_op, t_i, epsilon_i);
+      };
+      auto legacy = MakeLegacy();
+      const double ref = RefSurfaceCoefficientIntegral(pmesh, *legacy, marker);
+      const double val = epr.Eval(E);
+      CAPTURE(ref, val);
+      CheckPart(val, ref);
     }
+
+    mfem::Vector x0(3);
+    x0 = 0.0;
+    SurfaceFunctional power(*mesh, marker, &nd_fespace.Get(), &rt_fespace.Get(), mat_op,
+                            SurfaceFlux::POWER, /*two_sided*/ true, x0);
+    bool power_valid = power.IsValid();
+    bool power_valid_and = power_valid, power_valid_or = power_valid;
+    Mpi::GlobalAnd(1, &power_valid_and, comm);
+    Mpi::GlobalOr(1, &power_valid_or, comm);
+    REQUIRE(power_valid_and == power_valid_or);
+    REQUIRE(power_valid);
+
+    auto MakePowerLegacy = [&](const mfem::ParGridFunction &Er,
+                               const mfem::ParGridFunction &Br)
+    {
+      auto coeff = std::make_unique<BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>>(
+          &Er, &Br, mat_op, /*two_sided*/ true, x0);
+      return RefSurfaceCoefficientIntegral(pmesh, *coeff, marker);
+    };
+    const std::complex<double> ref(MakePowerLegacy(E.Real(), B.Real()) +
+                                       MakePowerLegacy(E.Imag(), B.Imag()),
+                                   0.0);
+    const std::complex<double> val = power.EvalFlux(&E, &B);
+    CAPTURE(ref.real(), val.real(), val.imag());
+    CheckPart(val.real(), ref.real());
+    CheckPart(val.imag(), 0.0);
   }
 }
 
@@ -2389,6 +2430,8 @@ TEST_CASE("FaceNbrFieldExchange", "[surfacefunctional][Serial][Parallel]")
     auto &req = requests.emplace_back();
     req.face_nbr_elem = fn;
     req.source_mask = (fn % 2 == 0) ? 0b01u : 0b11u;
+    req.point_key = {static_cast<long long>(elem_type), static_cast<long long>(order),
+                     4};
     req.pts.resize(4);
     req.pts[0].Set3(0.1, 0.2, 0.3);
     req.pts[1].Set3(0.25, 0.25, 0.25);

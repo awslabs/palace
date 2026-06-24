@@ -30,10 +30,10 @@ namespace palace
 namespace
 {
 
-// Key identifying one export point-evaluator group. Deliberately keyed by request
-// order rather than floating-point coordinates: production code may use reference
-// coordinates to evaluate a point, but point identity/grouping should be integer and
-// topological, not a fuzzy coordinate comparison.
+// Key identifying one export point-evaluator group. The request supplies an
+// integer/topological point_key (reference-face topology/orientation/subface identity),
+// so grouping never depends on rounded physical or reference point coordinates. Ad-hoc
+// requests with an empty point_key receive a unique request-order key.
 using PointConfigKey = std::vector<long long>;
 
 // Message tags for the setup (payload size, payload) and evaluation exchanges. A
@@ -102,9 +102,10 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
   }
 
   // Serialize the requests per neighbor (as doubles: position in the neighbor's send
-  // element list, number of points, source mask, then the point coordinates), and
-  // assign the import offsets (per neighbor, in request construction order, source
-  // slots in ascending order; the serving process lays out the reply values in exactly
+  // element list, number of points, source mask, integer point-key length and entries,
+  // then the point coordinates), and assign the import offsets (per neighbor, in
+  // request construction order, source slots in ascending order; the serving process
+  // lays out the reply values in exactly
   // this order).
   import_offsets.resize(requests.size());
   for (auto &offsets : import_offsets)
@@ -128,6 +129,11 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
       payload.push_back(static_cast<double>(req.face_nbr_elem - elem_offsets[i]));
       payload.push_back(static_cast<double>(nq));
       payload.push_back(static_cast<double>(req.source_mask));
+      payload.push_back(static_cast<double>(req.point_key.size()));
+      for (auto v : req.point_key)
+      {
+        payload.push_back(static_cast<double>(v));
+      }
       for (const auto &ip : req.pts)
       {
         payload.push_back(ip.x);
@@ -185,8 +191,8 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
   }
 
   // Parse the received requests, assigning export offsets with the same layout rules
-  // as the import offsets above. Keep each received request/source as its own export
-  // group: this avoids merging point sets by rounded floating-point coordinates.
+  // as the import offsets above. Requests are grouped only by integer/topological
+  // point-key data; empty keys intentionally fall back to unique request-order groups.
   struct ExportGroup
   {
     std::vector<mfem::IntegrationPoint> pts;
@@ -206,6 +212,15 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
       const int p = static_cast<int>(std::llround(payload[k++]));
       const int nq = static_cast<int>(std::llround(payload[k++]));
       const auto mask = static_cast<unsigned int>(std::llround(payload[k++]));
+      const int point_key_size = static_cast<int>(std::llround(payload[k++]));
+      MFEM_VERIFY(point_key_size >= 0,
+                  "Invalid face neighbor point-key size in received field exchange "
+                  "request!");
+      std::vector<long long> point_key(point_key_size);
+      for (int q = 0; q < point_key_size; q++)
+      {
+        point_key[q] = std::llround(payload[k++]);
+      }
       MFEM_VERIFY(p >= 0 && p < pmesh.send_face_nbr_elements.RowSize(i),
                   "Invalid face neighbor element position in received field exchange "
                   "request!");
@@ -225,11 +240,18 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
           MFEM_VERIFY(fespaces[s],
                       "Missing finite element space for received source slot!");
           PointConfigKey key;
-          key.reserve(4);
+          key.reserve(4 + point_key.size());
           key.push_back(s);
           key.push_back(static_cast<long long>(geom));
           key.push_back(nq);
-          key.push_back(export_group_id++);
+          if (point_key.empty())
+          {
+            key.push_back(export_group_id++);
+          }
+          else
+          {
+            key.insert(key.end(), point_key.begin(), point_key.end());
+          }
           auto &group = export_map[key];
           if (group.pts.empty())
           {

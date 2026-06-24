@@ -69,12 +69,11 @@ void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
 // The key construction: for each boundary element, the field is evaluated from an
 // attached volume element (or both, with averaging or differencing, for interior
 // boundaries, following the conventions of BdrGridFunctionCoefficient and its derived
-// legacy coefficients). Boundary elements are grouped by the mapped positions of the
-// face quadrature points in the volume element reference space(s), so that each group
-// shares tabulated bases (the volume element basis evaluated at the mapped face
-// quadrature points) and element restrictions (the volume element dofs, reusing the
-// standard volume restriction machinery including H(curl)/H(div) dof orientations and
-// transformations).
+// legacy coefficients). AtPoints-capable groups keep mapped reference points as runtime
+// data; mapped-integration-rule groups use per-assembly integer identities rather than
+// rounded coordinate keys. Processor-boundary ghost values are requested through
+// FaceNbrFieldExchange with integer/topological reference-face orientation keys so point
+// identity never depends on fuzzy coordinate matching.
 //
 class SurfaceFunctional
 {
@@ -144,9 +143,11 @@ private:
   const mfem::ParFiniteElementSpace *rt_fespace;
   const MaterialOperator *mat_op;
 
-  // Whether the functional could be assembled (false when the configuration is not yet
-  // supported, e.g. non-3D meshes or two-sided evaluation on process-boundary interior
-  // surfaces, in which case callers should fall back to the legacy evaluation paths).
+  // Whether the functional could be assembled. False means the configuration is outside
+  // the current support matrix (for example 2D surface-flux or boundary-visualization
+  // line outputs); model-level callers may explicitly use legacy code for those cases,
+  // but supported cases should treat invalid assembly as an error rather than silently
+  // falling back.
   bool valid = true;
 
   // MPI communicator from the mesh.
@@ -245,7 +246,9 @@ public:
   SurfaceFunctional &operator=(const SurfaceFunctional &) = delete;
 
   // Whether the functional was successfully assembled. When false, evaluation is not
-  // possible and callers should use the legacy evaluation paths.
+  // possible. Supported model-level paths should error rather than silently falling back;
+  // explicit legacy/oracle paths remain available for unsupported configurations and
+  // validation.
   bool IsValid() const { return valid; }
 
   // Evaluate the functional for the given field (L-vector, e.g. the local vector of a

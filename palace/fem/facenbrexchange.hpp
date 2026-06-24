@@ -49,9 +49,19 @@ public:
     // Bitmask over the source field slots to evaluate (bit s set: source slot s).
     unsigned int source_mask;
 
+    // Integer/topological identity of the point set, independent of physical or
+    // floating-point coordinates. SurfaceFunctional fills this with the reference-face
+    // topology/orientation/subface key used to generate pts. Requests with the same
+    // point_key, source slot, element geometry, and point count can share one libCEED
+    // point evaluator. Empty keys are allowed for ad-hoc requests and force a unique
+    // evaluator group.
+    std::vector<long long> point_key;
+
     // Evaluation points in the neighbor element's reference space (the ghost element
     // reference space coincides with the owning process' local element reference
-    // space, as the ghost elements preserve the neighbor's vertex ordering).
+    // space, as the ghost elements preserve the neighbor's vertex ordering). These
+    // coordinates are used only to evaluate the requested points, not to decide point
+    // identity/grouping.
     std::vector<mfem::IntegrationPoint> pts;
   };
 

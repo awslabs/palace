@@ -90,6 +90,11 @@ struct ElemPlan
   int face_nbr = -1;    // Face neighbor element index (Elem2No - ParMesh::GetNE())
   int ghost_attr = 0;   // Ghost element mesh attribute (material lookup on the requester)
   mfem::Geometry::Type ghost_geom = mfem::Geometry::INVALID;  // Ghost element geometry
+  // Integer/topological identities of pts_a/pts_b: reference-face rule/order plus the
+  // reference-face-to-volume subface/orientation map. These are passed to
+  // FaceNbrFieldExchange so remote point-evaluator grouping never depends on floating
+  // point coordinates.
+  std::vector<long long> point_key_a, point_key_b;
 };
 
 // Data for one group of boundary elements sharing the same face configuration.
@@ -115,6 +120,7 @@ struct FaceGroup
   double side_scale = 1.0;
   double normal_scale = 1.0;
   std::vector<int> face_nbr, ghost_attr, req_idx;
+  std::vector<std::vector<long long>> face_nbr_point_keys;
   // For AtPoints groups, the mapped volume reference coordinates vary by boundary
   // element and are stored in boundary-element order, nq entries per element. Local
   // split SURFACE_FLUX groups may also carry a per-entry normal scale folded into the
@@ -122,6 +128,44 @@ struct FaceGroup
   std::vector<mfem::IntegrationPoint> mapped_pts_a, mapped_pts_b;
   std::vector<double> normal_scales;
 };
+
+std::vector<long long> MakeReferencePointTopologyKey(
+    mfem::Geometry::Type vol_geom, mfem::Geometry::Type face_geom,
+    const mfem::IntegrationRule &face_ir, mfem::IntegrationPointTransformation &loc)
+{
+  // The key identifies the reference-face point set by topology/orientation, not by the
+  // floating-point point coordinates themselves. Loc maps reference face vertices into
+  // the attached volume element reference space. For nonconforming subfaces those mapped
+  // vertices can be dyadic sub-vertices; encode them on a fine integer lattice and verify
+  // the map is exactly representable there. This avoids fuzzy physical-coordinate
+  // matching while still distinguishing conforming faces, orientations, and
+  // nonconforming child subfaces.
+  constexpr long long denom = 1LL << 30;
+  auto Encode = [denom](double x)
+  {
+    const long long v = std::llround(denom * x);
+    MFEM_VERIFY(std::abs(x - static_cast<double>(v) / denom) <= 1.0e-12,
+                "Unable to encode reference face topology key exactly!");
+    return v;
+  };
+
+  std::vector<long long> key;
+  const mfem::IntegrationRule *verts = mfem::Geometries.GetVertices(face_geom);
+  key.reserve(4 + 3 * verts->GetNPoints());
+  key.push_back(static_cast<long long>(vol_geom));
+  key.push_back(static_cast<long long>(face_geom));
+  key.push_back(static_cast<long long>(face_ir.GetOrder()));
+  key.push_back(static_cast<long long>(face_ir.GetNPoints()));
+  for (int i = 0; i < verts->GetNPoints(); i++)
+  {
+    mfem::IntegrationPoint ip;
+    loc.Transform(verts->IntPoint(i), ip);
+    key.push_back(Encode(ip.x));
+    key.push_back(Encode(ip.y));
+    key.push_back(Encode(ip.z));
+  }
+  return key;
+}
 
 void FoldNormalScaleIntoFaceJacobian(const mfem::DenseMatrix &J, double normal_scale,
                                      double *Jf)
@@ -444,10 +488,11 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
 {
   AssembleLocal(mesh, bdr_attr_marker);
 
-  // The validity decision must be globally consistent: a rank may locally require an
-  // unsupported configuration (e.g. two-sided evaluation across a process boundary)
-  // while others do not. All ranks must agree on whether the libCEED path or the
-  // legacy fallback is used so that the collective evaluation calls match.
+  // The validity decision must be globally consistent: a rank may locally encounter an
+  // unsupported configuration while others do not. All ranks must agree on whether the
+  // libCEED path is valid so that collective evaluation calls match; model-level callers
+  // decide whether invalid means an explicit unsupported-case legacy path or an error for
+  // a supported path.
   bool global_valid = valid;
   Mpi::GlobalAnd(1, &global_valid, comm);
   if (!global_valid && valid)
@@ -499,9 +544,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   const bool use_at_points = is_3d && CeedSupportsNonTensorAtPoints(ceed);
 
   // Plan the evaluation for each marked boundary element and group the elements by
-  // their face configuration. AtPoints groups share tabulated bases and are processed by
-  // a single libCEED operator. Non-AtPoints groups intentionally remain one group per
-  // AddGroup call for now so point identity is not inferred from rounded coordinates.
+  // their face configuration. AtPoints groups share tabulated bases and carry mapped
+  // reference points as runtime data. Non-AtPoints groups intentionally remain one group
+  // per AddGroup call for now so point identity is not inferred from rounded
+  // coordinates; processor-boundary requests use separate integer/topological point keys
+  // for their remote point-evaluator grouping.
   static std::atomic<long long> next_mapped_assembly_id{0};
   const long long mapped_assembly_id = next_mapped_assembly_id++;
   std::map<FaceConfigKey, FaceGroup> face_groups;
@@ -668,6 +715,17 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       const auto vol_geom_b = plan.ghost_b ? plan.ghost_geom
                               : (plan.elem_b >= 0) ? pmesh.GetElementGeometry(plan.elem_b)
                                                    : mfem::Geometry::INVALID;
+      if (plan.elem_a >= 0)
+      {
+        plan.point_key_a = MakeReferencePointTopologyKey(
+            vol_geom_a, bdr_geom, face_ir,
+            (plan.elem_a == FET.Elem1No) ? FET.Loc1 : FET.Loc2);
+      }
+      if (plan.elem_b >= 0)
+      {
+        plan.point_key_b =
+            MakeReferencePointTopologyKey(vol_geom_b, bdr_geom, face_ir, FET.Loc2);
+      }
       const bool can_surface_flux_at_points_a =
           use_at_points && kind == Kind::SURFACE_FLUX && plan.elem_a >= 0 &&
           !plan.ghost_a && vol_geom_a == mfem::Geometry::TETRAHEDRON;
@@ -710,9 +768,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
 
       auto AddGroup = [&](int elem_a, bool ghost_a, mfem::Geometry::Type geom_a,
-                          const std::vector<mfem::IntegrationPoint> &pts_a, int elem_b,
+                          const std::vector<mfem::IntegrationPoint> &pts_a,
+                          const std::vector<long long> &point_key_a, int elem_b,
                           bool ghost_b, mfem::Geometry::Type geom_b,
                           const std::vector<mfem::IntegrationPoint> &pts_b,
+                          const std::vector<long long> &point_key_b,
                           bool at_points_group, double side_scale, double normal_scale)
       {
         FaceConfigKey key;
@@ -781,6 +841,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           {
             it->second.face_nbr.push_back(plan.face_nbr);
             it->second.ghost_attr.push_back(plan.ghost_attr);
+            it->second.face_nbr_point_keys.push_back(point_key_a);
           }
           else
           {
@@ -793,6 +854,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           {
             it->second.face_nbr.push_back(plan.face_nbr);
             it->second.ghost_attr.push_back(plan.ghost_attr);
+            it->second.face_nbr_point_keys.push_back(point_key_b);
           }
           else
           {
@@ -810,10 +872,10 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         // preserves the original two-sided difference or non-two-sided average.
         const double scale_a = flux_two_sided ? 1.0 : 0.5;
         const double scale_b = flux_two_sided ? -1.0 : 0.5;
-        AddGroup(plan.elem_a, false, vol_geom_a, plan.pts_a, -1, false,
-                 mfem::Geometry::INVALID, {}, true, 1.0, scale_a);
-        AddGroup(plan.elem_b, false, vol_geom_b, plan.pts_b, -1, false,
-                 mfem::Geometry::INVALID, {}, true, 1.0, scale_b);
+        AddGroup(plan.elem_a, false, vol_geom_a, plan.pts_a, plan.point_key_a, -1, false,
+                 mfem::Geometry::INVALID, {}, {}, true, 1.0, scale_a);
+        AddGroup(plan.elem_b, false, vol_geom_b, plan.pts_b, plan.point_key_b, -1, false,
+                 mfem::Geometry::INVALID, {}, {}, true, 1.0, scale_b);
       }
       else if (buffer_kind && can_at_points_a && can_at_points_b)
       {
@@ -827,16 +889,17 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
             kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M ||
             kind == Kind::BDR_POYNTING;
         const double side_weight = average_quantity ? 0.5 : 1.0;
-        AddGroup(plan.elem_a, false, vol_geom_a, plan.pts_a, -1, false,
-                 mfem::Geometry::INVALID, {}, true, side_weight, 1.0);
-        AddGroup(plan.elem_b, false, vol_geom_b, plan.pts_b, -1, false,
-                 mfem::Geometry::INVALID, {}, true, side_weight, -1.0);
+        AddGroup(plan.elem_a, false, vol_geom_a, plan.pts_a, plan.point_key_a, -1, false,
+                 mfem::Geometry::INVALID, {}, {}, true, side_weight, 1.0);
+        AddGroup(plan.elem_b, false, vol_geom_b, plan.pts_b, plan.point_key_b, -1, false,
+                 mfem::Geometry::INVALID, {}, {}, true, side_weight, -1.0);
       }
       else
       {
         const bool at_points_group = can_at_points_a && plan.elem_b < 0;
-        AddGroup(plan.elem_a, plan.ghost_a, vol_geom_a, plan.pts_a, plan.elem_b,
-                 plan.ghost_b, vol_geom_b, plan.pts_b, at_points_group, 1.0, 1.0);
+        AddGroup(plan.elem_a, plan.ghost_a, vol_geom_a, plan.pts_a, plan.point_key_a,
+                 plan.elem_b, plan.ghost_b, vol_geom_b, plan.pts_b, plan.point_key_b,
+                 at_points_group, 1.0, 1.0);
       }
     }
   }
@@ -1051,6 +1114,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         {
           pts[q] = ir.IntPoint(q);
         }
+        MFEM_VERIFY(g.face_nbr_point_keys.size() == g.face_nbr.size(),
+                    "Invalid face-neighbor point-key layout for surface functional!");
         g.req_idx.resize(g.face_nbr.size());
         for (std::size_t e = 0; e < g.face_nbr.size(); e++)
         {
@@ -1058,6 +1123,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           auto &req = requests.emplace_back();
           req.face_nbr_elem = g.face_nbr[e];
           req.source_mask = source_mask;
+          req.point_key = g.face_nbr_point_keys[e];
           req.pts = pts;
         }
       }
