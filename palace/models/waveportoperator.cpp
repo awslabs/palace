@@ -19,7 +19,7 @@
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "fem/interpolator.hpp"
-#include "fem/surfacefunctional.hpp"
+#include "fem/output_functionals.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
 #include "linalg/arpack.hpp"

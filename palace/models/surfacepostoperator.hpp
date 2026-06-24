@@ -9,7 +9,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
-#include "fem/surfacefunctional.hpp"
+#include "fem/output_functionals.hpp"
 
 namespace palace
 {

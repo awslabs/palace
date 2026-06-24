@@ -7,7 +7,7 @@
 #include <array>
 #include <vector>
 #include <mfem.hpp>
-#include "fem/surfacefunctional.hpp"
+#include "fem/output_functionals.hpp"
 #include "linalg/vector.hpp"
 
 namespace palace

@@ -10,7 +10,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/lumpedelement.hpp"
-#include "fem/surfacefunctional.hpp"
+#include "fem/output_functionals.hpp"
 
 namespace palace
 {

@@ -14,7 +14,7 @@
 #include <mfem.hpp>
 #include "fem/gridfunction.hpp"
 #include "fem/interpolator.hpp"
-#include "fem/surfacefunctional.hpp"
+#include "fem/output_functionals.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/domainpostoperator.hpp"

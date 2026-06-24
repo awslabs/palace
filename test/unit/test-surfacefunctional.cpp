@@ -17,7 +17,7 @@
 #include "fem/integrator.hpp"
 #include "fem/interpolator.hpp"
 #include "fem/mesh.hpp"
-#include "fem/surfacefunctional.hpp"
+#include "fem/output_functionals.hpp"
 #include "models/materialoperator.hpp"
 #include "models/strattonchu.hpp"
 #include "utils/communication.hpp"

@@ -43,7 +43,7 @@ constexpr double QUANTIZE_SCALE = 1.0e10;
 constexpr int TAG_SETUP_SIZE = 1741, TAG_SETUP_PAYLOAD = 1742, TAG_EVAL = 1743;
 
 // Registry of evaluation point integration rules with application lifetime (as in
-// surfacefunctional.cpp): mfem::FiniteElement::GetDofToQuad caches tabulations keyed by
+// output_functionals.cpp): mfem::FiniteElement::GetDofToQuad caches tabulations keyed by
 // the IntegrationRule pointer inside the (global, shared) FiniteElement objects, so
 // destroying an IntegrationRule which was used for tabulation would leave a dangling
 // cache entry.

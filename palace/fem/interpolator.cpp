@@ -18,7 +18,7 @@
 #include "fem/libceed/ceed.hpp"
 #include "fem/libceed/functional.hpp"
 #include "fem/libceed/restriction.hpp"
-#include "fem/surfacefunctional.hpp"
+#include "fem/output_functionals.hpp"
 #include "utils/diagnostic.hpp"
 
 PalacePragmaDiagnosticPush
