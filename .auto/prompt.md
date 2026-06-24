@@ -1,181 +1,103 @@
-# Autoresearch: Palace GPU SurfaceFunctional reduction performance
+# Autoresearch: Palace ParaView streaming for large SingleTransmon AMR
 
 ## Objective
-Improve Palace GPU postprocessing performance by moving/keeping 3D statics + driven surface reductions on efficient libCEED kernel paths with much less setup/JIT/operator proliferation.
-
-The current bottleneck is not the arithmetic in the surface integral QFunctions. Profiling showed the integral kernels take only milliseconds while postprocessing takes tens of seconds. The issue is that mapped volume-reference face quadrature coordinates are baked into `SurfaceFunctional` grouping and basis/operator specialization, creating many libCEED operators and NVRTC compiles for equivalent trace configurations.
-
-The first target is local `SURFACE_FLUX` reductions in `palace/fem/surfacefunctional.cpp`. Once that is working and measured, reuse the same local low-level context for `INTERFACE_EPR`, then `FARFIELD`.
-
-## Branch
-Work on this branch only:
+Reduce the **ParaView** timer for the large SingleTransmon AMR GPU workload on p4d, starting from branch:
 
 ```text
-hughcars/libceed-output-functionals-dev-auto2
+origin/hughcars/libceed-output-functionals-dev-paraview-stream
 ```
 
-It was created from the current tip of:
+This branch already replaced the worst `-auto2` behavior of materializing derived domain ParaView fields as intermediate `ParGridFunction`s. It adds `CeedParaViewDataCollection` and a `DomainFieldEvaluator` VTU point-buffer mode. Your job is to keep pushing that direction and reduce the large AMR SingleTransmon ParaView time further.
 
-```text
-hughcars/libceed-output-functionals-dev
-```
+## Workload
+The measurement script runs:
 
-Commit each kept experiment to the `-auto2` branch so the improvement history is visible. The original `-auto` branch is owned by another machine; do not commit to it. The non-auto branch is the comparison baseline.
+- `examples/transmon/transmon_amr.json`
+- Eigenmode `N=2`, `Save=2`
+- `Solver.Order=3`
+- `Model.Refinement.MaxIts=2`
+- `Solver.Device="GPU"`
+- `OutputFormats.Paraview=true`
+- `OutputFormats.GridFunction=true`
+- all GPUs by default: `PALACE_AR_GPU_NP=8`
+
+This is the same large nonconforming AMR case that exposed the `-auto2` ParaView regression:
+
+- `origin/main` reference observed earlier: ParaView ~220 s, GridFunction ~188 s, total ~983 s
+- `-auto2` before this branch: ParaView ~524 s, GridFunction ~6.8 s, total ~1117 s
+- expected target for this branch: keep GridFunction fast while driving ParaView toward/below the old coefficient-streaming path
 
 ## Primary metric
-- **surface_score_seconds** (seconds, lower is better):
-  Phase 1 default is CPW-only, so this is `cpw_postprocessing`. Later, set `PALACE_AR_CASES=all` to validate the full statics+driven score: `spheres_postprocessing + rings_postprocessing + cpw_postprocessing`.
+- **transmon_amr_paraview_seconds** (seconds, lower is better): Avg. value from Palace's `Elapsed Time Report`, row `Paraview`.
+
+Keep a result only when this metric improves and scalar-output checks pass. Re-run close wins if the improvement is within noise.
 
 ## Secondary metrics
-Always report/consider:
+The measure script also emits:
 
-- `spheres_postprocessing`, `rings_postprocessing`, `cpw_postprocessing`
-- `cpw_farfields`
-- `spheres_nvrtc`, `rings_nvrtc`, `cpw_nvrtc`
-- `spheres_cuModuleLoadData`, `rings_cuModuleLoadData`, `cpw_cuModuleLoadData`
-- `spheres_surface_flux_groups`, `rings_surface_flux_groups`, `cpw_surface_flux_groups`
-- `cpw_interface_epr_groups`, `cpw_farfield_groups`
-- `spheres_total`, `rings_total`, `cpw_total`
+- `transmon_amr_total_seconds`
+- `transmon_amr_postprocessing_seconds`
+- `transmon_amr_gridfunction_seconds`
+- `transmon_amr_operator_construction_seconds`
+- `scalar_max_rel`, `scalar_max_abs`, `scalar_compared_files`
 
-## Baseline cases
-The measurement script defaults to CPW-only for fast iteration:
+Do not trade a large GridFunction or total-runtime regression for a tiny ParaView win. The main win must be in output/postprocessing, not the solver.
 
-1. `examples/cpw/cpw_lumped_uniform.json` — driven rich postprocessing, one driven point at `17 GHz`, field output saved
+## Correctness guard
+`.auto/measure.sh` creates a scalar CSV baseline on the first unmodified run and compares later runs against it. `.auto/checks.sh` fails if scalar drift exceeds the threshold recorded by the measure script.
 
-Full validation is available by running `PALACE_AR_CASES=all .auto/measure.sh`, which adds:
-
-2. `examples/spheres/spheres.json` — electrostatic `SURFACE_FLUX`
-3. `examples/rings/rings.json` — magnetostatic `SURFACE_FLUX`
-
-Starting reference from prior measurements:
-
-- `spheres`: postprocessing ~3.5 s, `nvrtcCompileProgram` ~254, `SURFACE_FLUX` groups `7` and `6`
-- `rings`: postprocessing ~33 s, `nvrtcCompileProgram` ~1830, `SURFACE_FLUX` groups `37` and `53`
-- `cpw_lumped`: postprocessing ~23 s, far fields ~3 s, `nvrtcCompileProgram` ~1610
-- Temporary grouping instrumentation showed these collapse to one coarse group when mapped coordinates are ignored:
-  - `spheres SURFACE_FLUX`: `7/6 -> 1/1`
-  - `rings SURFACE_FLUX`: `37/53 -> 1/1`
-  - `cpw_lumped SURFACE_FLUX`, `INTERFACE_EPR`, and `FARFIELD`: each line -> `1`
+The scalar guard is intentionally local to this transmon workload. Before finalizing any kept changes, run the broader p4d GPU+CPU validation suite from the project playbook.
 
 ## Files in scope
-Primary low-level scope:
+Primary files:
 
-- `palace/fem/surfacefunctional.cpp`
-- `palace/fem/surfacefunctional.hpp`
-- `palace/fem/qfunctions/32/surf_32_qf.h`
-- `palace/fem/libceed/functional.cpp`
-- `palace/fem/libceed/functional.hpp`
+- `palace/utils/ceedparaviewdatacollection.hpp`
+- `palace/utils/ceedparaviewdatacollection.cpp`
+- `palace/fem/surfacefunctional.hpp` (the embedded `DomainFieldEvaluator`)
+- `palace/fem/surfacefunctional.cpp` (the embedded `DomainFieldEvaluator`)
+- `palace/models/postoperator.hpp`
+- `palace/models/postoperator.cpp`
 
-Tests/guards:
+Possible supporting files:
 
-- `test/unit/CMakeLists.txt`
-- `test/unit/test-*.cpp`
-
-Later batching stage only, after low-level grouping works:
-
-- `palace/models/surfacepostoperator.cpp`
-- `palace/models/surfacepostoperator.hpp`
-- `palace/models/lumpedportoperator.cpp`
-- `palace/models/waveportoperator.cpp`
+- `palace/utils/CMakeLists.txt`
+- small test files under `test/unit/` if you add targeted coverage
 
 ## Off limits
-Do not optimize or edit:
+- Do **not** optimize or tune eigensolver/linear solver behavior.
+- Do **not** drop required output fields or disable ParaView/GridFunction output to win the metric.
+- Do **not** remove scalar correctness checks.
+- Do **not** run direct CMake/make builds. Use Spack only.
+- Do **not** use more than `PALACE_AR_BUILD_JOBS` build jobs; default here is 32 on p4d.
+- Do **not** change transient, BoundaryMode, or 2D fallback behavior unless required to keep compilation working.
 
-- linear solver/preconditioner/coarse solver paths
-- BoundaryMode, transient, or 2D fallback paths unless required to keep compilation working
-- example meshes
-- Spack environment files, generated profiling JSONs/logs, `postpro/`, build directories
-- libCEED, unless a Palace-side change proves a missing libCEED primitive is strictly required
+## Starting implementation notes
+Current branch state:
 
-## Hard constraints
-- Use Spack only. Never run direct CMake/make.
-- Do not exceed `-j4`.
-- Remote build command is:
-  ```bash
-  source /home/ubuntu/spack/share/spack/setup-env.sh
-  spack -e /home/ubuntu/palace install -j4
-  ```
-- Preserve correctness: capacitance/inductance/S-parameters/participations/far-field scalar outputs should remain consistent with baseline logs.
-- Keep changes atomic. Commit each kept experiment with a clear metric-oriented message.
-- Prefer reducing group/JIT/operator proliferation over moving cost into heavier kernels.
+- `CeedParaViewDataCollection` subclasses MFEM `ParaViewDataCollection` and adds domain/boundary point-field maps.
+- `DomainFieldEvaluator` can fill either an interpolatory L2 `ParGridFunction` or a full VTU point buffer in MFEM's element/refined-point traversal order.
+- `PostOperator` registers derived domain fields (`U_e`, `U_m`, `S`) as direct domain point fields for ParaView and still uses GridFunction evaluators for MFEM grid-function output.
+- Boundary libCEED visualization buffers are registered as direct boundary point fields.
 
-## Technical strategy hints
-The current fine grouping includes mapped volume-reference quadrature coordinates. The implementation should make mapped trace points runtime data rather than JIT key data while preserving 2D surface integral semantics.
+Promising directions:
 
-When considering an “AtPoints-backed reduction,” treat it only as an implementation mechanism for runtime trace-point basis evaluation. The operation remains a 2D surface integral reduction, not ParaView/gridfunction point output.
+1. Avoid full-size temporary point buffers where possible. Current streaming still allocates complete point buffers before writing; a chunked writer could evaluate one geometry/rank chunk, copy/write it, then reuse scratch.
+2. Reduce duplicate host/device transfers and repeated `HostRead()` synchronization during VTU writing.
+3. Avoid repeated refined-geometry and header work when MFEM already traverses the same element/order lattice.
+4. Split the timer inside ParaView save if needed, but remove instrumentation before keeping unless it remains useful and low-noise.
+5. Preserve the direct VTU point-field API shape: it should be easy to reason about and should not depend on fuzzy floating-point point lookup.
 
-Surface-only quantities should not participate in volume trace specialization:
-
-- surface-only: `dS`, unit normal `n`, oriented weighted normal `wN`, physical coordinate `x`, normal flip, `x0` outward orientation
-- still requires adjacent cell trace: H(curl) `E`, H(div) `B`, Piola transforms, material side attributes, two-sided/ghost semantics
-
-## Suggested order
-1. Collapse the CPW-local `SURFACE_FLUX` mapped-reference-coordinate grouping.
-2. Extend/verify the same CPW-local collapsed path for `INTERFACE_EPR`.
-3. Extend/verify the same CPW-local collapsed path for `FARFIELD`.
-4. Run `PALACE_AR_CASES=all .auto/measure.sh` and make sure `spheres`/`rings` improve too.
-4. Then handle ghost/two-sided parallel interfaces.
-5. Then consider batching same-kind surface postprocessing requests in `models/`.
-
-Surface geometry precompute (`w`, `n`, `wN`, `x` EVAL_NONE arrays) is useful cleanup and may be folded into the grouping work if it simplifies implementation, but it is not by itself the main performance milestone.
-
-
-
-
-## Processor-boundary / MPI verification gate
-Every kept experiment must pass `.auto/checks.sh`, which now runs the CPW workload on 16 CPU MPI ranks after `git diff --check`. The primary optimization metric remains the one-rank GPU CPW postprocessing time, but the 16-rank CPU run is a hard pass/fail gate and emits `cpw_mpi16_cpu_*` metrics for inspection. Do not disable, weaken, or bypass this gate: processor-boundary and ghost-face behavior is critical, and we want many processor boundaries to flush out mistakes. AtPoints shortcuts are only safe for local non-ghost tetrahedral sides; multi-rank processor-boundary surfaces must continue to use a correct fallback unless explicitly implemented and verified.
-
-## Fast measurement mode
-Default `.auto/measure.sh` is intentionally CPW-only to keep iterations short. It still reports the primary metric name `surface_score_seconds`, but in this phase that value equals `cpw_postprocessing`. Use full mode only after a promising CPW improvement:
+## How to run
 
 ```bash
-PALACE_AR_CASES=all .auto/measure.sh
+./.auto/measure.sh
 ```
 
-## Keep/discard policy
-Keep only if:
+This builds with Spack and runs the large transmon AMR case. It prints `METRIC` lines for autoresearch.
 
-- `.auto/measure.sh` exits 0,
-- `.auto/checks.sh` passes,
-- `surface_score_seconds` improves, or a targeted submetric improves substantially with no meaningful regression,
-- and the direction matches the current stage goal (e.g. group count collapse for `SURFACE_FLUX`).
-
-Discard if:
-
-- correctness changes,
-- group counts do not improve for the targeted functional,
-- `nvrtcCompileProgram` or postprocessing time regress materially,
-- or the code becomes broad/fragile without a metric win.
-
-## Resuming
-On every resume:
-
-1. Read this file.
-2. Read `AGENTS.md`.
-3. Skim `surface_functional_kernel_proliferation_report.md` if present.
-4. Read `.auto/log.jsonl` tail and `git log --oneline --decorate -20`.
-5. Continue with the next compact experiment; do not restart broad surveys.
-
-## What's been tried
-Prior profiling showed the surface integral QFunction GPU time is tiny: rings flux kernels were ~2.3 ms while postprocessing was ~33 s; CPW EPR/flux/farfield kernels were under ~10 ms while postprocessing was ~23 s. Therefore optimize setup/JIT/operator proliferation, not arithmetic throughput.
-
-## Manual baseline before autoresearch loop
-A manual all-cases `.auto/measure.sh` run during setup succeeded with:
-
-```text
-METRIC surface_score_seconds=76.767000
-METRIC spheres_postprocessing=6.085000
-METRIC spheres_nvrtc=254
-METRIC spheres_surface_flux_groups=13
-METRIC rings_postprocessing=39.405000
-METRIC rings_nvrtc=1830
-METRIC rings_surface_flux_groups=90
-METRIC cpw_postprocessing=31.277000
-METRIC cpw_farfields=3.478000
-METRIC cpw_nvrtc=1610
-METRIC cpw_surface_flux_groups=45
-METRIC cpw_interface_epr_groups=23
-METRIC cpw_farfield_groups=8
-```
-
-Use the next `run_experiment` baseline as the official autoresearch baseline, but these values are a sanity check for whether measurement is working.
+## Loop rules
+1. First action: run `.auto/measure.sh` unmodified and log the baseline before editing code.
+2. Inspect source and logs deeply before each change; this workload is expensive.
+3. Keep atomic commits with clear metric deltas.
+4. Discard regressions or correctness failures.
+5. Update this file or `.auto/ideas.md` when you learn something that should survive context compaction.

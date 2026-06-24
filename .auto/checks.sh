@@ -2,12 +2,15 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 git diff --check
-
-# Processor-boundary gate: every kept experiment must also complete the CPW
-# postprocessing workload on 16 CPU MPI ranks. The primary metric remains the
-# one-rank GPU CPW postprocessing time, but multi-rank correctness is a hard
-# pass/fail condition because ghost/processor-boundary surfaces must stay on
-# the safe path.
-if [[ -x .auto/verify_mpi_cpu.sh ]]; then
-  PALACE_AR_MPI_CPU_RANKS=16 .auto/verify_mpi_cpu.sh
+LAST_MEASURE="${PALACE_AR_LAST_MEASURE:-/tmp/palace_ar_paraview_stream_last_measure.env}"
+if [[ ! -f "$LAST_MEASURE" ]]; then
+  echo "Missing last measure status: $LAST_MEASURE" >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+source "$LAST_MEASURE"
+if [[ "${SCALAR_OK:-0}" != "1" ]]; then
+  echo "Scalar output check failed: max_rel=${SCALAR_MAX_REL:-unknown}, max_abs=${SCALAR_MAX_ABS:-unknown}, files=${SCALAR_COMPARED_FILES:-unknown}" >&2
+  echo "Log: ${LOG:-unknown}" >&2
+  exit 1
 fi
