@@ -303,7 +303,8 @@ amr_dir = joinpath(   #hide
     "..",             #hide
     "..",             #hide
     "test",           #hide
-    "examples",       #hide
+    "data",           #hide
+    "regression",     #hide
     "ref",            #hide
     "transmon",       #hide
     "transmon_amr"    #hide
