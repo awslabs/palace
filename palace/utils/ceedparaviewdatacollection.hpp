@@ -4,6 +4,7 @@
 #ifndef PALACE_UTILS_CEED_PARAVIEW_DATA_COLLECTION_HPP
 #define PALACE_UTILS_CEED_PARAVIEW_DATA_COLLECTION_HPP
 
+#include <cstddef>
 #include <fstream>
 #include <map>
 #include <string>
@@ -35,9 +36,13 @@ private:
 
   void SaveMeshVTU(std::ostream &os, int ref);
   void SaveDataVTU(std::ostream &os, int ref);
-  void SaveGFieldVTU(std::ostream &os, int ref, const FieldMapIterator &it);
+  void SaveGFieldVTU(std::ostream &os, int ref, const FieldMapIterator &it,
+                     std::vector<std::vector<char>> *appended_blocks,
+                     std::size_t *appended_offset);
   void SavePointFieldVTU(std::ostream &os, int ref, const std::string &name,
-                         const PointField &field, bool boundary);
+                         const PointField &field, bool boundary,
+                         std::vector<std::vector<char>> *appended_blocks,
+                         std::size_t *appended_offset);
 
 public:
   using mfem::ParaViewDataCollection::ParaViewDataCollection;

@@ -9,6 +9,9 @@
 #include <regex>
 #include <vector>
 #include <mfem/mesh/vtk.hpp>
+#ifdef MFEM_USE_ZLIB
+#include <zlib.h>
+#endif
 
 namespace palace
 {
@@ -80,6 +83,53 @@ void WriteVTKUInt8(std::ostream &os, std::vector<char> &buf, std::uint8_t value,
   }
 }
 
+std::size_t AppendVTKBlock(std::vector<std::vector<char>> &blocks,
+                           std::size_t &offset, const std::vector<char> &raw,
+                           int compression_level)
+{
+  MFEM_VERIFY(raw.size() <= std::numeric_limits<std::uint32_t>::max(),
+              "VTK XML appended block exceeds 32-bit header size!");
+
+  std::vector<char> block;
+  const auto nbytes = static_cast<std::uint32_t>(raw.size());
+  if (compression_level == 0)
+  {
+    block.reserve(sizeof(std::uint32_t) + raw.size());
+    AppendPod(block, nbytes);
+    block.insert(block.end(), raw.begin(), raw.end());
+  }
+  else
+  {
+#ifdef MFEM_USE_ZLIB
+    MFEM_VERIFY(compression_level >= -1 && compression_level <= 9,
+                "Compression level must be between -1 and 9 (inclusive)!");
+    uLongf compressed_size = compressBound(nbytes);
+    std::vector<unsigned char> compressed(compressed_size);
+    const int status = compress2(compressed.data(), &compressed_size,
+                                 reinterpret_cast<const Bytef *>(raw.data()), nbytes,
+                                 compression_level);
+    MFEM_VERIFY(status == Z_OK, "zlib compression failed while writing VTU data!");
+
+    const std::uint32_t header[4] = {1u, nbytes, 0u,
+                                     static_cast<std::uint32_t>(compressed_size)};
+    block.reserve(sizeof(header) + compressed_size);
+    for (const auto value : header)
+    {
+      AppendPod(block, value);
+    }
+    block.insert(block.end(), reinterpret_cast<const char *>(compressed.data()),
+                 reinterpret_cast<const char *>(compressed.data() + compressed_size));
+#else
+    MFEM_ABORT("MFEM must be compiled with ZLib support to output compressed VTU data.");
+#endif
+  }
+
+  const std::size_t block_offset = offset;
+  offset += block.size();
+  blocks.emplace_back(std::move(block));
+  return block_offset;
+}
+
 }  // namespace
 
 
@@ -111,9 +161,10 @@ void CeedParaViewDataCollection::DeregisterBoundaryPointField(const std::string 
   boundary_point_fields.erase(field_name);
 }
 
-void CeedParaViewDataCollection::SavePointFieldVTU(std::ostream &os, int ref,
-                                                   const std::string &name,
-                                                   const PointField &field, bool boundary)
+void CeedParaViewDataCollection::SavePointFieldVTU(
+    std::ostream &os, int ref, const std::string &name, const PointField &field,
+    bool boundary, std::vector<std::vector<char>> *appended_blocks,
+    std::size_t *appended_offset)
 {
   MFEM_VERIFY(boundary == bdr_output,
               "Precomputed point field registration does not match the ParaView "
@@ -125,9 +176,14 @@ void CeedParaViewDataCollection::SavePointFieldVTU(std::ostream &os, int ref,
   MFEM_VERIFY(static_cast<int>(field.bases->size()) == ne,
               "Point field base offsets do not match the mesh!");
 
-  os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << name
-     << "\" NumberOfComponents=\"" << field.num_comp << "\""
-     << " format=\"" << GetDataFormatString() << "\" >" << '\n';
+  const bool appended = appended_blocks && appended_offset &&
+                        pv_data_format != mfem::VTKFormat::ASCII;
+  if (!appended)
+  {
+    os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << name
+       << "\" NumberOfComponents=\"" << field.num_comp << "\""
+       << " format=\"" << GetDataFormatString() << "\" >" << '\n';
+  }
 
   std::vector<char> buf;
   if (pv_data_format != mfem::VTKFormat::ASCII)
@@ -158,11 +214,22 @@ void CeedParaViewDataCollection::SavePointFieldVTU(std::ostream &os, int ref,
       }
     }
   }
-  if (pv_data_format != mfem::VTKFormat::ASCII)
+  if (appended)
   {
-    mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+    const std::size_t offset =
+        AppendVTKBlock(*appended_blocks, *appended_offset, buf, GetCompressionLevel());
+    os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << name
+       << "\" NumberOfComponents=\"" << field.num_comp << "\""
+       << " format=\"appended\" offset=\"" << offset << "\"/>" << '\n';
   }
-  os << "</DataArray>" << std::endl;
+  else
+  {
+    if (pv_data_format != mfem::VTKFormat::ASCII)
+    {
+      mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+    }
+    os << "</DataArray>" << std::endl;
+  }
 }
 
 void CeedParaViewDataCollection::SaveMeshVTU(std::ostream &os, int ref)
@@ -333,17 +400,23 @@ void CeedParaViewDataCollection::SaveMeshVTU(std::ostream &os, int ref)
   os << "</CellData>" << std::endl;
 }
 
-void CeedParaViewDataCollection::SaveGFieldVTU(std::ostream &os, int ref,
-                                               const FieldMapIterator &it)
+void CeedParaViewDataCollection::SaveGFieldVTU(
+    std::ostream &os, int ref, const FieldMapIterator &it,
+    std::vector<std::vector<char>> *appended_blocks, std::size_t *appended_offset)
 {
   mfem::Vector val;
   mfem::DenseMatrix vval, pmat;
   std::vector<char> buf;
   const int vec_dim = it->second->VectorDim();
-  os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << it->first
-     << "\" NumberOfComponents=\"" << vec_dim << "\" "
-     << mfem::VTKComponentLabels(vec_dim) << " "
-     << "format=\"" << GetDataFormatString() << "\" >" << '\n';
+  const bool appended = appended_blocks && appended_offset &&
+                        pv_data_format != mfem::VTKFormat::ASCII;
+  if (!appended)
+  {
+    os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << it->first
+       << "\" NumberOfComponents=\"" << vec_dim << "\" "
+       << mfem::VTKComponentLabels(vec_dim) << " "
+       << "format=\"" << GetDataFormatString() << "\" >" << '\n';
+  }
 
   if (pv_data_format != mfem::VTKFormat::ASCII)
   {
@@ -390,11 +463,23 @@ void CeedParaViewDataCollection::SaveGFieldVTU(std::ostream &os, int ref,
       }
     }
   }
-  if (pv_data_format != mfem::VTKFormat::ASCII)
+  if (appended)
   {
-    mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+    const std::size_t offset =
+        AppendVTKBlock(*appended_blocks, *appended_offset, buf, GetCompressionLevel());
+    os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << it->first
+       << "\" NumberOfComponents=\"" << vec_dim << "\" "
+       << mfem::VTKComponentLabels(vec_dim) << " "
+       << "format=\"appended\" offset=\"" << offset << "\"/>" << '\n';
   }
-  os << "</DataArray>" << std::endl;
+  else
+  {
+    if (pv_data_format != mfem::VTKFormat::ASCII)
+    {
+      mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+    }
+    os << "</DataArray>" << std::endl;
+  }
 }
 
 void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
@@ -408,13 +493,21 @@ void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
   os << "<UnstructuredGrid>\n";
   SaveMeshVTU(os, ref);
 
+  std::vector<std::vector<char>> appended_blocks;
+  std::size_t appended_offset = 0;
+  auto *appended_ptr = (pv_data_format == mfem::VTKFormat::ASCII) ? nullptr
+                                                                   : &appended_blocks;
+  auto *appended_offset_ptr = (pv_data_format == mfem::VTKFormat::ASCII)
+                                  ? nullptr
+                                  : &appended_offset;
+
   os << "<PointData >\n";
   for (FieldMapIterator it = field_map.begin(); it != field_map.end(); ++it)
   {
     MFEM_VERIFY(!bdr_output,
                 "GridFunction output is not supported for ParaViewDataCollection on "
                 "domain boundary!");
-    SaveGFieldVTU(os, ref, it);
+    SaveGFieldVTU(os, ref, it, appended_ptr, appended_offset_ptr);
   }
   for (const auto &kv : GetCoeffFieldMap())
   {
@@ -426,15 +519,26 @@ void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
   }
   for (const auto &kv : domain_point_fields)
   {
-    SavePointFieldVTU(os, ref, kv.first, kv.second, false);
+    SavePointFieldVTU(os, ref, kv.first, kv.second, false, appended_ptr,
+                      appended_offset_ptr);
   }
   for (const auto &kv : boundary_point_fields)
   {
-    SavePointFieldVTU(os, ref, kv.first, kv.second, true);
+    SavePointFieldVTU(os, ref, kv.first, kv.second, true, appended_ptr,
+                      appended_offset_ptr);
   }
   os << "</PointData>\n";
   os << "</Piece>\n";
   os << "</UnstructuredGrid>\n";
+  if (!appended_blocks.empty())
+  {
+    os << "<AppendedData encoding=\"raw\">\n_";
+    for (const auto &block : appended_blocks)
+    {
+      os.write(block.data(), static_cast<std::streamsize>(block.size()));
+    }
+    os << "\n</AppendedData>\n";
+  }
   os << "</VTKFile>" << std::endl;
 }
 
@@ -540,6 +644,9 @@ void CeedParaViewDataCollection::Save()
       MFEM_VERIFY(pvtu_out.is_open(), "Failed to open ofstream " << os_str);
       WritePVTUHeader(pvtu_out);
 
+      const char *appended_field_format =
+          (pv_data_format == mfem::VTKFormat::ASCII) ? GetDataFormatString()
+                                                     : "appended";
       pvtu_out << "<PPointData>\n";
       for (auto &field_it : field_map)
       {
@@ -547,7 +654,7 @@ void CeedParaViewDataCollection::Save()
         pvtu_out << "<PDataArray type=\"" << GetDataTypeString() << "\" Name=\""
                  << field_it.first << "\" NumberOfComponents=\"" << vec_dim << "\" "
                  << mfem::VTKComponentLabels(vec_dim) << " "
-                 << "format=\"" << GetDataFormatString() << "\" />\n";
+                 << "format=\"" << appended_field_format << "\" />\n";
       }
       for (const auto &field_it : GetCoeffFieldMap())
       {
@@ -567,7 +674,7 @@ void CeedParaViewDataCollection::Save()
         pvtu_out << "<PDataArray type=\"" << GetDataTypeString() << "\" Name=\""
                  << field_it.first << "\" NumberOfComponents=\"" << field_it.second.num_comp
                  << "\" "
-                 << "format=\"" << GetDataFormatString() << "\" />\n";
+                 << "format=\"" << appended_field_format << "\" />\n";
       };
       for (const auto &field_it : domain_point_fields)
       {
