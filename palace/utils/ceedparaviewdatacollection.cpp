@@ -104,21 +104,18 @@ std::size_t AppendVTKBlock(std::vector<std::vector<char>> &blocks,
     MFEM_VERIFY(compression_level >= -1 && compression_level <= 9,
                 "Compression level must be between -1 and 9 (inclusive)!");
     uLongf compressed_size = compressBound(nbytes);
-    std::vector<unsigned char> compressed(compressed_size);
-    const int status = compress2(compressed.data(), &compressed_size,
+    constexpr std::size_t header_size = 4 * sizeof(std::uint32_t);
+    block.resize(header_size + compressed_size);
+    auto *compressed = reinterpret_cast<Bytef *>(block.data() + header_size);
+    const int status = compress2(compressed, &compressed_size,
                                  reinterpret_cast<const Bytef *>(raw.data()), nbytes,
                                  compression_level);
     MFEM_VERIFY(status == Z_OK, "zlib compression failed while writing VTU data!");
 
     const std::uint32_t header[4] = {1u, nbytes, 0u,
                                      static_cast<std::uint32_t>(compressed_size)};
-    block.reserve(sizeof(header) + compressed_size);
-    for (const auto value : header)
-    {
-      AppendPod(block, value);
-    }
-    block.insert(block.end(), reinterpret_cast<const char *>(compressed.data()),
-                 reinterpret_cast<const char *>(compressed.data() + compressed_size));
+    std::memcpy(block.data(), header, sizeof(header));
+    block.resize(header_size + compressed_size);
 #else
     MFEM_ABORT("MFEM must be compiled with ZLib support to output compressed VTU data.");
 #endif
