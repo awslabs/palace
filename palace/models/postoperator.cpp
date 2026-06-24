@@ -768,7 +768,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
 
   const mfem::VTKFormat format = mfem::VTKFormat::BINARY32;
 #if defined(MFEM_USE_ZLIB)
-  const int compress = -1;  // Default compression level
+  const int compress = 1;  // Fast zlib compression for large ParaView output
 #else
   const int compress = 0;
 #endif
