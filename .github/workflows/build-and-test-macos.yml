@@ -17,7 +17,7 @@ concurrency:
 jobs:
   # Filter to allow skipping the test if no relevant changes occurred.
   filter:
-    runs-on: macos-latest
+    runs-on: macos-15
     outputs:
       test: ${{ steps.filter.outputs.test }}
     steps:
@@ -123,7 +123,7 @@ jobs:
         #   with-eigensolver: slepc
         #   with-solver: strumpack
 
-    runs-on: macos-latest-xlarge
+    runs-on: macos-15-xlarge
     steps:
       - uses: actions/checkout@v6
         if: needs.filter.outputs.test == 'true'
