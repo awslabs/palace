@@ -992,6 +992,18 @@ TEST_CASE("SurfaceFunctional Complex Power", "[surfacefunctional][Serial][GPU]")
   mfem::Vector x0(3);
   x0 = 0.0;
 
+  auto CheckPart = [](double v, double r)
+  {
+    if (std::abs(r) > 1.0e-12)
+    {
+      CHECK(v == Catch::Approx(r).epsilon(1.0e-10));
+    }
+    else
+    {
+      CHECK(std::abs(v) < 1.0e-10);
+    }
+  };
+
   for (int attr : {1, 6, 7})  // Exterior (vacuum side), exterior (dielectric), interior
   {
     CAPTURE(attr);
@@ -1003,19 +1015,36 @@ TEST_CASE("SurfaceFunctional Complex Power", "[surfacefunctional][Serial][GPU]")
     const std::complex<double> ref = LegacyPower(attr, marker);
     const std::complex<double> val = power.EvalComplexPower(E, B);
     CAPTURE(ref.real(), ref.imag(), val.real(), val.imag());
-    auto CheckPart = [](double v, double r)
-    {
-      if (std::abs(r) > 1.0e-12)
-      {
-        CHECK(v == Catch::Approx(r).epsilon(1.0e-10));
-      }
-      else
-      {
-        CHECK(std::abs(v) < 1.0e-10);
-      }
-    };
     CheckPart(val.real(), ref.real());
     CheckPart(val.imag(), ref.imag());
+  }
+
+  SECTION("Batched by boundary attribute")
+  {
+    mfem::Array<int> marker(bdr_attr_max), attr_to_bin(bdr_attr_max);
+    marker = 0;
+    attr_to_bin = -1;
+    std::vector<int> attrs = {1, 6, 7};
+    for (std::size_t i = 0; i < attrs.size(); i++)
+    {
+      marker[attrs[i] - 1] = 1;
+      attr_to_bin[attrs[i] - 1] = static_cast<int>(i);
+    }
+    SurfaceFunctional power(*mesh, marker, &nd_fespace.Get(), &rt_fespace.Get(), mat_op,
+                            SurfaceFlux::POWER, /*two_sided*/ true, x0);
+    const auto values = power.EvalComplexPowerByAttribute(
+        E, B, attr_to_bin, static_cast<int>(attrs.size()));
+    REQUIRE(values.size() == attrs.size());
+    for (std::size_t i = 0; i < attrs.size(); i++)
+    {
+      mfem::Array<int> single_marker(bdr_attr_max);
+      single_marker = 0;
+      single_marker[attrs[i] - 1] = 1;
+      const std::complex<double> ref = LegacyPower(attrs[i], single_marker);
+      CAPTURE(attrs[i], ref.real(), ref.imag(), values[i].real(), values[i].imag());
+      CheckPart(values[i].real(), ref.real());
+      CheckPart(values[i].imag(), ref.imag());
+    }
   }
 }
 
