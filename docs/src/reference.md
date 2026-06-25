@@ -305,7 +305,7 @@ internal sample frequencies. For each complex HDM solution ``\bm{x}^*``, *Palace
 orthogonalized real and imaginary components, ``\mathrm{Re}(\bm{x}^*)`` and
 ``\mathrm{Im}(\bm{x}^*)``, as separate real basis vectors. The Gram-Schmidt
 orthogonalization variant is controlled by
-[`config["Solver"]["Driven"]["AdaptiveGSOrthogonalization"]`](config/solver.md#solver%5B%22Driven%22%5D),
+[`config["Solver"]["Driven"]["AdaptiveGSOrthogonalization"]`](config/reference.md#config-solver-driven),
 though most users should not need to change it.
 
 ### Internal sample selection
@@ -328,7 +328,7 @@ time system as a first-order system with twice as many state variables.
 
 Each excitation pattern gets its own rational interpolation for selecting future samples.
 The initial samples are the frequency-domain endpoints and any user-requested samples with
-[`"AddToPROM": true`](config/solver.md#solver%5B%22Driven%22%5D%5B%22Samples%22%5D). After
+[`"AddToPROM": true`](config/reference.md#config-solver-driven-samples). After
 that, the interpolation suggests the next sample from an error indicator that can be
 evaluated without another HDM solve. The selected HDM solution is then added to the shared
 PROM basis.
@@ -345,8 +345,8 @@ solution using
 ```
 
 Convergence is declared when this quantity is below
-[`config["Solver"]["Driven"]["AdaptiveTol"]`](config/solver.md#solver%5B%22Driven%22%5D) for
-[`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](config/solver.md#solver%5B%22Driven%22%5D)
+[`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven) for
+[`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](config/reference.md#config-solver-driven)
 consecutive samples. The norm here is the finite-element coefficient-space L2 norm. It is
 related to, but not the same as, a physical energy norm such as
 ``\int \bm{E}^*(\bm{r})\cdot\bm{E}(\bm{r})\,d^3r``. Consequently, the adaptive tolerance is
@@ -383,7 +383,7 @@ or additional validation against a uniform sweep.
 
 The rational interpolation assumes that the sampled HDM solutions are accurate. In practice,
 they inherit the error of the linear solver. If
-[`config["Solver"]["Linear"]["Tol"]`](config/solver.md#solver%5B%22Linear%22%5D) is too close
+[`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear) is too close
 to `"AdaptiveTol"`, the interpolation can become ill-conditioned and *Palace* may warn
 about rank-deficient minimal rational interpolation matrices. In that case, tighten the
 linear solver tolerance, loosen the adaptive tolerance, or validate with a uniform solve.
