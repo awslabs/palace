@@ -62,6 +62,13 @@ enum class InterfaceDielectric : char
   SA
 };
 
+// Mesh entity location: domain/volume elements or boundary/surface elements.
+enum class MeshEntityType : char
+{
+  Domain,
+  Boundary
+};
+
 // Frequency sampling schemes.
 enum class FrequencySampling : char
 {

@@ -13,6 +13,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/vector.hpp"
+#include "utils/labels.hpp"
 
 namespace palace
 {
@@ -38,33 +39,40 @@ private:
   std::map<std::string, PointField> boundary_point_fields;
   std::map<std::string, PointField> domain_point_fields;
 
-  bool UseAppendedBoundaryPointFields() const;
-  bool UseAppendedDomainPointFields() const;
+  std::map<std::string, PointField> &PointFields(MeshEntityType location);
+  const std::map<std::string, PointField> &PointFields(MeshEntityType location) const;
+  int NumPointFieldEntities(MeshEntityType location) const;
+  mfem::Geometry::Type PointFieldBaseGeometry(MeshEntityType location, int i) const;
+  static const char *PointFieldLocationName(MeshEntityType location);
+  static const char *PointFieldEntityName(MeshEntityType location);
+  bool LocationMatchesOutput(MeshEntityType location) const;
+
+  void RegisterPointField(MeshEntityType location, const std::string &field_name,
+                          const Vector &values, const std::vector<int> &bases,
+                          int num_comp);
+  void RegisterPointEvaluator(MeshEntityType location, const std::string &field_name,
+                              std::function<void(Vector &)> evaluator,
+                              const std::vector<int> &bases, int num_comp,
+                              int buffer_size);
+  void DeregisterPointField(MeshEntityType location, const std::string &field_name);
+
+  bool UseAppendedPointFields(MeshEntityType location) const;
   int MaxPointFieldBufferSize(const std::map<std::string, PointField> &fields) const;
-  std::uint64_t BoundaryPointFieldPayloadSize(int ref, const PointField &field) const;
-  std::uint64_t DomainPointFieldPayloadSize(int ref, const PointField &field) const;
-  void WriteBoundaryPointFieldValues(std::ostream &os, int ref, const PointField &field,
-                                     const Vector &values) const;
-  void WriteDomainPointFieldValues(std::ostream &os, int ref, const PointField &field,
-                                   const Vector &values) const;
+  std::uint64_t PointFieldPayloadSize(MeshEntityType location, int ref,
+                                      const PointField &field) const;
+  void WritePointFieldValues(MeshEntityType location, std::ostream &os, int ref,
+                             const PointField &field, const Vector &values) const;
 
   void SaveDataVTU(std::ostream &os, int ref);
-  void SaveBoundaryPointFieldVTU(std::ostream &os, int ref, const std::string &name,
-                                 const PointField &field, Vector *scratch);
-  void SaveDomainPointFieldVTU(std::ostream &os, int ref, const std::string &name,
-                               const PointField &field, Vector *scratch);
-  void SaveBoundaryPointFieldVTUAppendedHeader(std::ostream &os, int ref,
-                                               const std::string &name,
-                                               const PointField &field,
-                                               std::uint64_t offset);
-  void SaveDomainPointFieldVTUAppendedHeader(std::ostream &os, int ref,
-                                             const std::string &name,
-                                             const PointField &field,
-                                             std::uint64_t offset);
-  void SaveBoundaryPointFieldVTUAppendedPayload(std::ostream &os, int ref,
-                                                const PointField &field, Vector *scratch);
-  void SaveDomainPointFieldVTUAppendedPayload(std::ostream &os, int ref,
-                                              const PointField &field, Vector *scratch);
+  void SavePointFieldVTU(MeshEntityType location, std::ostream &os, int ref,
+                         const std::string &name, const PointField &field,
+                         Vector *scratch);
+  void SavePointFieldVTUAppendedHeader(MeshEntityType location, std::ostream &os,
+                                       int ref, const std::string &name,
+                                       const PointField &field, std::uint64_t offset);
+  void SavePointFieldVTUAppendedPayload(MeshEntityType location, std::ostream &os,
+                                        int ref, const PointField &field,
+                                        Vector *scratch);
 
 public:
   using mfem::ParaViewDataCollection::ParaViewDataCollection;

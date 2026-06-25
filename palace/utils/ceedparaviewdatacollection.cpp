@@ -3,6 +3,7 @@
 
 #include "utils/ceedparaviewdatacollection.hpp"
 
+#include <algorithm>
 #include <limits>
 #include <regex>
 #include <utility>
@@ -12,58 +13,129 @@
 namespace palace
 {
 
+std::map<std::string, CeedParaViewDataCollection::PointField> &
+CeedParaViewDataCollection::PointFields(MeshEntityType location)
+{
+  switch (location)
+  {
+    case MeshEntityType::Domain:
+      return domain_point_fields;
+    case MeshEntityType::Boundary:
+      return boundary_point_fields;
+  }
+  MFEM_ABORT("Unknown point field location!");
+}
+
+const std::map<std::string, CeedParaViewDataCollection::PointField> &
+CeedParaViewDataCollection::PointFields(MeshEntityType location) const
+{
+  switch (location)
+  {
+    case MeshEntityType::Domain:
+      return domain_point_fields;
+    case MeshEntityType::Boundary:
+      return boundary_point_fields;
+  }
+  MFEM_ABORT("Unknown point field location!");
+}
+
+int CeedParaViewDataCollection::NumPointFieldEntities(MeshEntityType location) const
+{
+  return location == MeshEntityType::Domain ? mesh->GetNE() : mesh->GetNBE();
+}
+
+mfem::Geometry::Type CeedParaViewDataCollection::PointFieldBaseGeometry(
+    MeshEntityType location, int i) const
+{
+  return location == MeshEntityType::Domain ? mesh->GetElementBaseGeometry(i)
+                                            : mesh->GetBdrElementBaseGeometry(i);
+}
+
+const char *CeedParaViewDataCollection::PointFieldLocationName(MeshEntityType location)
+{
+  return location == MeshEntityType::Domain ? "Domain" : "Boundary";
+}
+
+const char *CeedParaViewDataCollection::PointFieldEntityName(MeshEntityType location)
+{
+  return location == MeshEntityType::Domain ? "element" : "boundary element";
+}
+
+bool CeedParaViewDataCollection::LocationMatchesOutput(MeshEntityType location) const
+{
+  return location == MeshEntityType::Domain ? !bdr_output : bdr_output;
+}
+
+void CeedParaViewDataCollection::RegisterPointField(
+    MeshEntityType location, const std::string &field_name, const Vector &values,
+    const std::vector<int> &bases, int num_comp)
+{
+  MFEM_VERIFY(num_comp > 0, PointFieldLocationName(location)
+                                 << " point field must have at least one component!");
+  PointFields(location)[field_name] = PointField{&values, {}, &bases, num_comp,
+                                                 values.Size()};
+}
+
+void CeedParaViewDataCollection::RegisterPointEvaluator(
+    MeshEntityType location, const std::string &field_name,
+    std::function<void(Vector &)> evaluator, const std::vector<int> &bases,
+    int num_comp, int buffer_size)
+{
+  MFEM_VERIFY(evaluator, PointFieldLocationName(location)
+                             << " point evaluator must be callable!");
+  MFEM_VERIFY(num_comp > 0, PointFieldLocationName(location)
+                                 << " point field must have at least one component!");
+  MFEM_VERIFY(buffer_size >= 0, PointFieldLocationName(location)
+                                    << " point evaluator buffer size is invalid!");
+  PointFields(location)[field_name] =
+      PointField{nullptr, std::move(evaluator), &bases, num_comp, buffer_size};
+}
+
+void CeedParaViewDataCollection::DeregisterPointField(MeshEntityType location,
+                                                      const std::string &field_name)
+{
+  PointFields(location).erase(field_name);
+}
+
 void CeedParaViewDataCollection::RegisterBoundaryPointField(
     const std::string &field_name, const Vector &values, const std::vector<int> &bases,
     int num_comp)
 {
-  MFEM_VERIFY(num_comp > 0, "Boundary point field must have at least one component!");
-  boundary_point_fields[field_name] = PointField{&values, {}, &bases, num_comp,
-                                                values.Size()};
+  RegisterPointField(MeshEntityType::Boundary, field_name, values, bases, num_comp);
 }
 
 void CeedParaViewDataCollection::RegisterBoundaryPointEvaluator(
     const std::string &field_name, std::function<void(Vector &)> evaluator,
     const std::vector<int> &bases, int num_comp, int buffer_size)
 {
-  MFEM_VERIFY(evaluator, "Boundary point evaluator must be callable!");
-  MFEM_VERIFY(num_comp > 0, "Boundary point field must have at least one component!");
-  MFEM_VERIFY(buffer_size >= 0, "Boundary point evaluator buffer size is invalid!");
-  boundary_point_fields[field_name] =
-      PointField{nullptr, std::move(evaluator), &bases, num_comp, buffer_size};
+  RegisterPointEvaluator(MeshEntityType::Boundary, field_name, std::move(evaluator),
+                         bases, num_comp, buffer_size);
 }
 
 void CeedParaViewDataCollection::RegisterDomainPointEvaluator(
     const std::string &field_name, std::function<void(Vector &)> evaluator,
     const std::vector<int> &bases, int num_comp, int buffer_size)
 {
-  MFEM_VERIFY(evaluator, "Domain point evaluator must be callable!");
-  MFEM_VERIFY(num_comp > 0, "Domain point field must have at least one component!");
-  MFEM_VERIFY(buffer_size >= 0, "Domain point evaluator buffer size is invalid!");
-  domain_point_fields[field_name] =
-      PointField{nullptr, std::move(evaluator), &bases, num_comp, buffer_size};
+  RegisterPointEvaluator(MeshEntityType::Domain, field_name, std::move(evaluator), bases,
+                         num_comp, buffer_size);
 }
 
 void CeedParaViewDataCollection::DeregisterBoundaryPointField(
     const std::string &field_name)
 {
-  boundary_point_fields.erase(field_name);
+  DeregisterPointField(MeshEntityType::Boundary, field_name);
 }
 
 void CeedParaViewDataCollection::DeregisterDomainPointField(
     const std::string &field_name)
 {
-  domain_point_fields.erase(field_name);
+  DeregisterPointField(MeshEntityType::Domain, field_name);
 }
 
-bool CeedParaViewDataCollection::UseAppendedBoundaryPointFields() const
+bool CeedParaViewDataCollection::UseAppendedPointFields(MeshEntityType location) const
 {
-  return bdr_output && !boundary_point_fields.empty() &&
-         pv_data_format != mfem::VTKFormat::ASCII && GetCompressionLevel() == 0;
-}
-
-bool CeedParaViewDataCollection::UseAppendedDomainPointFields() const
-{
-  return !bdr_output && !domain_point_fields.empty() &&
+  const auto &fields = PointFields(location);
+  return LocationMatchesOutput(location) && !fields.empty() &&
          pv_data_format != mfem::VTKFormat::ASCII && GetCompressionLevel() == 0;
 }
 
@@ -78,19 +150,21 @@ int CeedParaViewDataCollection::MaxPointFieldBufferSize(
   return size;
 }
 
-std::uint64_t CeedParaViewDataCollection::BoundaryPointFieldPayloadSize(
-    int ref, const PointField &field) const
+std::uint64_t CeedParaViewDataCollection::PointFieldPayloadSize(
+    MeshEntityType location, int ref, const PointField &field) const
 {
   MFEM_VERIFY((field.values || field.evaluator) && field.bases && field.num_comp > 0,
-              "Invalid boundary point field registration!");
-  MFEM_VERIFY(static_cast<int>(field.bases->size()) == mesh->GetNBE(),
-              "Boundary point field base offsets do not match the mesh boundary!");
+              "Invalid " << PointFieldLocationName(location)
+                          << " point field registration!");
+  MFEM_VERIFY(static_cast<int>(field.bases->size()) == NumPointFieldEntities(location),
+              PointFieldLocationName(location)
+                  << " point field base offsets do not match the mesh!");
 
   std::uint64_t value_count = 0;
-  for (int i = 0; i < mesh->GetNBE(); i++)
+  for (int i = 0; i < NumPointFieldEntities(location); i++)
   {
-    const auto *RefG = mfem::GlobGeometryRefiner.Refine(
-        mesh->GetBdrElementBaseGeometry(i), ref, 1);
+    const auto *RefG =
+        mfem::GlobGeometryRefiner.Refine(PointFieldBaseGeometry(location, i), ref, 1);
     value_count += static_cast<std::uint64_t>(field.num_comp) *
                    static_cast<std::uint64_t>(RefG->RefPts.GetNPoints());
   }
@@ -99,43 +173,26 @@ std::uint64_t CeedParaViewDataCollection::BoundaryPointFieldPayloadSize(
   return value_count * scalar_size;
 }
 
-std::uint64_t CeedParaViewDataCollection::DomainPointFieldPayloadSize(
-    int ref, const PointField &field) const
-{
-  MFEM_VERIFY((field.values || field.evaluator) && field.bases && field.num_comp > 0,
-              "Invalid domain point field registration!");
-  MFEM_VERIFY(static_cast<int>(field.bases->size()) == mesh->GetNE(),
-              "Domain point field base offsets do not match the mesh!");
-
-  std::uint64_t value_count = 0;
-  for (int i = 0; i < mesh->GetNE(); i++)
-  {
-    const auto *RefG = mfem::GlobGeometryRefiner.Refine(mesh->GetElementBaseGeometry(i),
-                                                       ref, 1);
-    value_count += static_cast<std::uint64_t>(field.num_comp) *
-                   static_cast<std::uint64_t>(RefG->RefPts.GetNPoints());
-  }
-  const std::uint64_t scalar_size =
-      pv_data_format == mfem::VTKFormat::BINARY32 ? sizeof(float) : sizeof(double);
-  return value_count * scalar_size;
-}
-
-void CeedParaViewDataCollection::WriteBoundaryPointFieldValues(
-    std::ostream &os, int ref, const PointField &field, const Vector &values) const
+void CeedParaViewDataCollection::WritePointFieldValues(MeshEntityType location,
+                                                       std::ostream &os, int ref,
+                                                       const PointField &field,
+                                                       const Vector &values) const
 {
   MFEM_VERIFY(values.Size() % field.num_comp == 0,
-              "Boundary point field buffer size is not divisible by its component count!");
+              PointFieldLocationName(location)
+                  << " point field buffer size is not divisible by its component count!");
   const int component_stride = values.Size() / field.num_comp;
   const double *data = values.HostRead();
-  for (int i = 0; i < mesh->GetNBE(); i++)
+  for (int i = 0; i < NumPointFieldEntities(location); i++)
   {
-    const auto *RefG = mfem::GlobGeometryRefiner.Refine(
-        mesh->GetBdrElementBaseGeometry(i), ref, 1);
+    const auto *RefG =
+        mfem::GlobGeometryRefiner.Refine(PointFieldBaseGeometry(location, i), ref, 1);
     const int base = (*field.bases)[i];
     const int npts = RefG->RefPts.GetNPoints();
     MFEM_VERIFY(base >= 0 && base + npts <= component_stride,
-                "Boundary point field buffer is missing data for boundary element " << i
-                                                                                     << "!");
+                PointFieldLocationName(location)
+                    << " point field buffer is missing data for "
+                    << PointFieldEntityName(location) << " " << i << "!");
     for (int j = 0; j < npts; j++)
     {
       for (int c = 0; c < field.num_comp; c++)
@@ -155,109 +212,20 @@ void CeedParaViewDataCollection::WriteBoundaryPointFieldValues(
   }
 }
 
-void CeedParaViewDataCollection::WriteDomainPointFieldValues(
-    std::ostream &os, int ref, const PointField &field, const Vector &values) const
+void CeedParaViewDataCollection::SavePointFieldVTU(MeshEntityType location,
+                                                   std::ostream &os, int ref,
+                                                   const std::string &name,
+                                                   const PointField &field,
+                                                   Vector *scratch)
 {
-  MFEM_VERIFY(values.Size() % field.num_comp == 0,
-              "Domain point field buffer size is not divisible by its component count!");
-  const int component_stride = values.Size() / field.num_comp;
-  const double *data = values.HostRead();
-  for (int i = 0; i < mesh->GetNE(); i++)
-  {
-    const auto *RefG = mfem::GlobGeometryRefiner.Refine(mesh->GetElementBaseGeometry(i),
-                                                       ref, 1);
-    const int base = (*field.bases)[i];
-    const int npts = RefG->RefPts.GetNPoints();
-    MFEM_VERIFY(base >= 0 && base + npts <= component_stride,
-                "Domain point field buffer is missing data for element " << i << "!");
-    for (int j = 0; j < npts; j++)
-    {
-      for (int c = 0; c < field.num_comp; c++)
-      {
-        const double value = data[base + j + c * component_stride];
-        if (pv_data_format == mfem::VTKFormat::BINARY32)
-        {
-          const float value32 = static_cast<float>(value);
-          os.write(reinterpret_cast<const char *>(&value32), sizeof(value32));
-        }
-        else
-        {
-          os.write(reinterpret_cast<const char *>(&value), sizeof(value));
-        }
-      }
-    }
-  }
-}
-
-void CeedParaViewDataCollection::SaveBoundaryPointFieldVTU(
-    std::ostream &os, int ref, const std::string &name, const PointField &field,
-    Vector *scratch)
-{
-  MFEM_VERIFY(bdr_output, "Boundary point fields require boundary ParaView output!");
+  MFEM_VERIFY(LocationMatchesOutput(location), PointFieldLocationName(location)
+                                            << " point fields require matching ParaView output!");
   MFEM_VERIFY((field.values || field.evaluator) && field.bases && field.num_comp > 0,
-              "Invalid boundary point field registration!");
-  MFEM_VERIFY(static_cast<int>(field.bases->size()) == mesh->GetNBE(),
-              "Boundary point field base offsets do not match the mesh boundary!");
-
-  os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << name
-     << "\" NumberOfComponents=\"" << field.num_comp << "\""
-     << " format=\"" << GetDataFormatString() << "\" >" << '\n';
-
-  Vector values;
-  const Vector *value_ptr = field.values;
-  if (field.evaluator)
-  {
-    MFEM_VERIFY(scratch && scratch->Size() >= field.buffer_size,
-                "Boundary point evaluator scratch buffer is too small!");
-    values.MakeRef(*scratch, 0, field.buffer_size);
-    field.evaluator(values);
-    value_ptr = &values;
-  }
-  MFEM_VERIFY(value_ptr, "Boundary point field has no values to write!");
-
-  MFEM_VERIFY(value_ptr->Size() % field.num_comp == 0,
-              "Boundary point field buffer size is not divisible by its component count!");
-  const int component_stride = value_ptr->Size() / field.num_comp;
-  std::vector<char> buf;
-  const double *data = value_ptr->HostRead();
-  for (int i = 0; i < mesh->GetNBE(); i++)
-  {
-    const auto *RefG = mfem::GlobGeometryRefiner.Refine(
-        mesh->GetBdrElementBaseGeometry(i), ref, 1);
-    const int base = (*field.bases)[i];
-    const int npts = RefG->RefPts.GetNPoints();
-    MFEM_VERIFY(base >= 0 && base + npts <= component_stride,
-                "Boundary point field buffer is missing data for boundary element " << i
-                                                                                     << "!");
-    for (int j = 0; j < npts; j++)
-    {
-      for (int c = 0; c < field.num_comp; c++)
-      {
-        mfem::WriteBinaryOrASCII(os, buf, data[base + j + c * component_stride], " ",
-                                 pv_data_format);
-      }
-      if (pv_data_format == mfem::VTKFormat::ASCII)
-      {
-        os << '\n';
-      }
-    }
-  }
-  if (pv_data_format != mfem::VTKFormat::ASCII)
-  {
-    mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
-  }
-  os << "</DataArray>" << std::endl;
-}
-
-void CeedParaViewDataCollection::SaveDomainPointFieldVTU(
-    std::ostream &os, int ref, const std::string &name, const PointField &field,
-    Vector *scratch)
-{
-  MFEM_VERIFY(!bdr_output, "Domain point fields require domain ParaView output!");
-  MFEM_VERIFY((field.values || field.evaluator) && field.bases && field.num_comp > 0,
-              "Invalid domain point field registration!");
-  MFEM_VERIFY(static_cast<int>(field.bases->size()) == mesh->GetNE(),
-              "Domain point field base offsets do not match the mesh!");
+              "Invalid " << PointFieldLocationName(location)
+                          << " point field registration!");
+  MFEM_VERIFY(static_cast<int>(field.bases->size()) == NumPointFieldEntities(location),
+              PointFieldLocationName(location)
+                  << " point field base offsets do not match the mesh!");
 
   os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << name
      << "\" NumberOfComponents=\"" << field.num_comp << "\" "
@@ -269,26 +237,31 @@ void CeedParaViewDataCollection::SaveDomainPointFieldVTU(
   if (field.evaluator)
   {
     MFEM_VERIFY(scratch && scratch->Size() >= field.buffer_size,
-                "Domain point evaluator scratch buffer is too small!");
+                PointFieldLocationName(location)
+                    << " point evaluator scratch buffer is too small!");
     values.MakeRef(*scratch, 0, field.buffer_size);
     field.evaluator(values);
     value_ptr = &values;
   }
-  MFEM_VERIFY(value_ptr, "Domain point field has no values to write!");
+  MFEM_VERIFY(value_ptr, PointFieldLocationName(location)
+                             << " point field has no values to write!");
 
   MFEM_VERIFY(value_ptr->Size() % field.num_comp == 0,
-              "Domain point field buffer size is not divisible by its component count!");
+              PointFieldLocationName(location)
+                  << " point field buffer size is not divisible by its component count!");
   const int component_stride = value_ptr->Size() / field.num_comp;
   std::vector<char> buf;
   const double *data = value_ptr->HostRead();
-  for (int i = 0; i < mesh->GetNE(); i++)
+  for (int i = 0; i < NumPointFieldEntities(location); i++)
   {
-    const auto *RefG = mfem::GlobGeometryRefiner.Refine(mesh->GetElementBaseGeometry(i),
-                                                       ref, 1);
+    const auto *RefG =
+        mfem::GlobGeometryRefiner.Refine(PointFieldBaseGeometry(location, i), ref, 1);
     const int base = (*field.bases)[i];
     const int npts = RefG->RefPts.GetNPoints();
     MFEM_VERIFY(base >= 0 && base + npts <= component_stride,
-                "Domain point field buffer is missing data for element " << i << "!");
+                PointFieldLocationName(location)
+                    << " point field buffer is missing data for "
+                    << PointFieldEntityName(location) << " " << i << "!");
     for (int j = 0; j < npts; j++)
     {
       for (int c = 0; c < field.num_comp; c++)
@@ -309,39 +282,30 @@ void CeedParaViewDataCollection::SaveDomainPointFieldVTU(
   os << "</DataArray>" << std::endl;
 }
 
-void CeedParaViewDataCollection::SaveBoundaryPointFieldVTUAppendedHeader(
-    std::ostream &os, int ref, const std::string &name, const PointField &field,
-    std::uint64_t offset)
+void CeedParaViewDataCollection::SavePointFieldVTUAppendedHeader(
+    MeshEntityType location, std::ostream &os, int ref, const std::string &name,
+    const PointField &field, std::uint64_t offset)
 {
-  MFEM_VERIFY(bdr_output, "Boundary point fields require boundary ParaView output!");
-  const std::uint64_t payload_size = BoundaryPointFieldPayloadSize(ref, field);
+  MFEM_VERIFY(LocationMatchesOutput(location), PointFieldLocationName(location)
+                                            << " point fields require matching ParaView output!");
+  const std::uint64_t payload_size = PointFieldPayloadSize(location, ref, field);
   MFEM_VERIFY(payload_size <= std::numeric_limits<std::uint32_t>::max(),
-              "Boundary point field is too large for the current appended VTU writer!");
-  os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << name
-     << "\" NumberOfComponents=\"" << field.num_comp << "\""
-     << " format=\"appended\" offset=\"" << offset << "\" />" << '\n';
-}
-
-void CeedParaViewDataCollection::SaveDomainPointFieldVTUAppendedHeader(
-    std::ostream &os, int ref, const std::string &name, const PointField &field,
-    std::uint64_t offset)
-{
-  MFEM_VERIFY(!bdr_output, "Domain point fields require domain ParaView output!");
-  const std::uint64_t payload_size = DomainPointFieldPayloadSize(ref, field);
-  MFEM_VERIFY(payload_size <= std::numeric_limits<std::uint32_t>::max(),
-              "Domain point field is too large for the current appended VTU writer!");
+              PointFieldLocationName(location)
+                  << " point field is too large for the current appended VTU writer!");
   os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << name
      << "\" NumberOfComponents=\"" << field.num_comp << "\" "
      << mfem::VTKComponentLabels(field.num_comp) << " "
      << "format=\"appended\" offset=\"" << offset << "\" />" << '\n';
 }
 
-void CeedParaViewDataCollection::SaveBoundaryPointFieldVTUAppendedPayload(
-    std::ostream &os, int ref, const PointField &field, Vector *scratch)
+void CeedParaViewDataCollection::SavePointFieldVTUAppendedPayload(
+    MeshEntityType location, std::ostream &os, int ref, const PointField &field,
+    Vector *scratch)
 {
-  const std::uint64_t payload_size64 = BoundaryPointFieldPayloadSize(ref, field);
+  const std::uint64_t payload_size64 = PointFieldPayloadSize(location, ref, field);
   MFEM_VERIFY(payload_size64 <= std::numeric_limits<std::uint32_t>::max(),
-              "Boundary point field is too large for the current appended VTU writer!");
+              PointFieldLocationName(location)
+                  << " point field is too large for the current appended VTU writer!");
   const std::uint32_t payload_size = static_cast<std::uint32_t>(payload_size64);
   os.write(reinterpret_cast<const char *>(&payload_size), sizeof(payload_size));
 
@@ -350,36 +314,15 @@ void CeedParaViewDataCollection::SaveBoundaryPointFieldVTUAppendedPayload(
   if (field.evaluator)
   {
     MFEM_VERIFY(scratch && scratch->Size() >= field.buffer_size,
-                "Boundary point evaluator scratch buffer is too small!");
+                PointFieldLocationName(location)
+                    << " point evaluator scratch buffer is too small!");
     values.MakeRef(*scratch, 0, field.buffer_size);
     field.evaluator(values);
     value_ptr = &values;
   }
-  MFEM_VERIFY(value_ptr, "Boundary point field has no values to write!");
-  WriteBoundaryPointFieldValues(os, ref, field, *value_ptr);
-}
-
-void CeedParaViewDataCollection::SaveDomainPointFieldVTUAppendedPayload(
-    std::ostream &os, int ref, const PointField &field, Vector *scratch)
-{
-  const std::uint64_t payload_size64 = DomainPointFieldPayloadSize(ref, field);
-  MFEM_VERIFY(payload_size64 <= std::numeric_limits<std::uint32_t>::max(),
-              "Domain point field is too large for the current appended VTU writer!");
-  const std::uint32_t payload_size = static_cast<std::uint32_t>(payload_size64);
-  os.write(reinterpret_cast<const char *>(&payload_size), sizeof(payload_size));
-
-  Vector values;
-  const Vector *value_ptr = field.values;
-  if (field.evaluator)
-  {
-    MFEM_VERIFY(scratch && scratch->Size() >= field.buffer_size,
-                "Domain point evaluator scratch buffer is too small!");
-    values.MakeRef(*scratch, 0, field.buffer_size);
-    field.evaluator(values);
-    value_ptr = &values;
-  }
-  MFEM_VERIFY(value_ptr, "Domain point field has no values to write!");
-  WriteDomainPointFieldValues(os, ref, field, *value_ptr);
+  MFEM_VERIFY(value_ptr, PointFieldLocationName(location)
+                             << " point field has no values to write!");
+  WritePointFieldValues(location, os, ref, field, *value_ptr);
 }
 
 void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
@@ -410,8 +353,8 @@ void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
   {
     SaveVCoeffFieldVTU(os, ref, kv.first, *kv.second);
   }
-  const bool appended_boundary_fields = UseAppendedBoundaryPointFields();
-  const bool appended_domain_fields = UseAppendedDomainPointFields();
+  const bool appended_boundary_fields = UseAppendedPointFields(MeshEntityType::Boundary);
+  const bool appended_domain_fields = UseAppendedPointFields(MeshEntityType::Domain);
   Vector boundary_point_scratch, domain_point_scratch;
   if (!boundary_point_fields.empty())
   {
@@ -428,28 +371,30 @@ void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
   {
     if (appended_boundary_fields)
     {
-      SaveBoundaryPointFieldVTUAppendedHeader(os, ref, kv.first, kv.second,
-                                              appended_offset);
+      SavePointFieldVTUAppendedHeader(MeshEntityType::Boundary, os, ref, kv.first,
+                                      kv.second, appended_offset);
       appended_offset += sizeof(std::uint32_t) +
-                         BoundaryPointFieldPayloadSize(ref, kv.second);
+                         PointFieldPayloadSize(MeshEntityType::Boundary, ref, kv.second);
     }
     else
     {
-      SaveBoundaryPointFieldVTU(os, ref, kv.first, kv.second, &boundary_point_scratch);
+      SavePointFieldVTU(MeshEntityType::Boundary, os, ref, kv.first, kv.second,
+                        &boundary_point_scratch);
     }
   }
   for (const auto &kv : domain_point_fields)
   {
     if (appended_domain_fields)
     {
-      SaveDomainPointFieldVTUAppendedHeader(os, ref, kv.first, kv.second,
-                                            appended_offset);
+      SavePointFieldVTUAppendedHeader(MeshEntityType::Domain, os, ref, kv.first,
+                                      kv.second, appended_offset);
       appended_offset += sizeof(std::uint32_t) +
-                         DomainPointFieldPayloadSize(ref, kv.second);
+                         PointFieldPayloadSize(MeshEntityType::Domain, ref, kv.second);
     }
     else
     {
-      SaveDomainPointFieldVTU(os, ref, kv.first, kv.second, &domain_point_scratch);
+      SavePointFieldVTU(MeshEntityType::Domain, os, ref, kv.first, kv.second,
+                        &domain_point_scratch);
     }
   }
   os << "</PointData>\n";
@@ -460,12 +405,13 @@ void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
     os << "<AppendedData encoding=\"raw\">\n_";
     for (const auto &kv : boundary_point_fields)
     {
-      SaveBoundaryPointFieldVTUAppendedPayload(os, ref, kv.second,
-                                               &boundary_point_scratch);
+      SavePointFieldVTUAppendedPayload(MeshEntityType::Boundary, os, ref, kv.second,
+                                       &boundary_point_scratch);
     }
     for (const auto &kv : domain_point_fields)
     {
-      SaveDomainPointFieldVTUAppendedPayload(os, ref, kv.second, &domain_point_scratch);
+      SavePointFieldVTUAppendedPayload(MeshEntityType::Domain, os, ref, kv.second,
+                                       &domain_point_scratch);
     }
     os << "\n</AppendedData>\n";
   }
