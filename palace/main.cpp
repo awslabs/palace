@@ -20,6 +20,7 @@
 #include "fem/mesh.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/slepc.hpp"
+#include "schema/types/config.hpp"
 #include "utils/communication.hpp"
 #include "utils/device.hpp"
 #include "utils/geodata.hpp"
@@ -217,7 +218,8 @@ int main(int argc, char *argv[])
     if (Mpi::Root(world_comm))
     {
       auto config = IoData::ParseAndValidate(argv[argc - 1]);
-      IoData iodata(config, false);
+      auto pconfig = IoData::ParsePalaceConfiguration(argv[argc - 1]);
+      IoData iodata(config, pconfig, false);
       if (!std::filesystem::exists(iodata.model.mesh))
       {
         MFEM_ABORT("Unable to open mesh file \"" << iodata.model.mesh << "\"!");
@@ -235,7 +237,8 @@ int main(int argc, char *argv[])
   // Parse configuration file.
   PrintPalaceBanner(world_comm);
   auto config = IoData::ParseAndValidate(argv[1]);
-  IoData iodata(config, false);
+  auto pconfig = IoData::ParsePalaceConfiguration(argv[1]);
+  IoData iodata(config, pconfig, false);
   MakeOutputFolder(iodata, world_comm);
 
   // Write the resolved configuration to the output directory so users have a complete
