@@ -30,13 +30,63 @@ runs:
 
         end_timer "Setup podman and apptainer"
 
+    - name: Compute container metadata
+      id: meta
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        # The PR's source branch (pull_request events) or the dispatched branch.
+        HEAD_BRANCH: ${{ github.head_ref || github.ref_name }}
+        # 'true' iff a same-repo PR carries the push-containers label. Fork PRs
+        # resolve head.repo to the fork, so this stays false for them — they must
+        # never reach the instance-role push credentials on the public repo.
+        LABEL_PUSH: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'push-containers') && github.event.pull_request.head.repo.full_name == github.repository }}
+      run: |
+        ARCH_LABEL=$(spack arch -t)
+
+        # Sanitize the branch into an ECR-tag/S3-prefix-safe slug: ECR tags allow
+        # only [A-Za-z0-9_.-], and '/' is illegal, so collapse everything else
+        # to '-'. The dev-<branch> name is intentionally MOVING (a re-push to the
+        # same branch overwrites its prototype image).
+        BRANCH_SLUG=$(echo "$HEAD_BRANCH" | sed 's#[^A-Za-z0-9_.-]#-#g')
+
+        # Decide the published name and whether to push, by trigger:
+        #   - tag push  vX.Y.Z      -> "X.Y.Z"        (release), pushed
+        #   - push to   main        -> "main"         (rolling dev), pushed
+        #   - PR w/ push-containers -> "dev-<branch>" (prototype), pushed
+        #                              (same-repo PRs only; forks never push)
+        #   - everything else       -> "dev-<branch>", build only, never pushed
+        #                              (plain PRs, manual dispatch re-runs).
+        # ECR tags can't contain '/', so VERSION uses '-' while the S3 prefix
+        # keeps '/' for a tidy bucket layout.
+        if [ "$EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+          VERSION="main"; S3_PREFIX="main"; PUSH=true
+        elif [ "$EVENT_NAME" = "push" ] && [ "${GITHUB_REF#refs/tags/v}" != "$GITHUB_REF" ]; then
+          VERSION="${GITHUB_REF#refs/tags/v}"; S3_PREFIX="$VERSION"; PUSH=true
+        elif [ "$LABEL_PUSH" = "true" ]; then
+          VERSION="dev-${BRANCH_SLUG}"; S3_PREFIX="dev/${BRANCH_SLUG}"; PUSH=true
+        else
+          VERSION="dev-${BRANCH_SLUG}"; S3_PREFIX="dev/${BRANCH_SLUG}"; PUSH=false
+        fi
+
+        echo "arch_label=${ARCH_LABEL}" >> "$GITHUB_OUTPUT"
+        echo "version=${VERSION}"       >> "$GITHUB_OUTPUT"
+        echo "s3_prefix=${S3_PREFIX}"   >> "$GITHUB_OUTPUT"
+        echo "push=${PUSH}"             >> "$GITHUB_OUTPUT"
+
+        echo "Arch label: ${ARCH_LABEL}"
+        echo "Version:    ${VERSION}"
+        echo "S3 prefix:  ${S3_PREFIX}"
+        echo "Push:       ${PUSH}"
+
     - name: Compute image name
       id: name
       shell: bash
+      env:
+        ARCH_LABEL: ${{ steps.meta.outputs.arch_label }}
       run: |
-        ARCH=$(spack arch -t)
         SHORT_HASH=$(git rev-parse --short HEAD)
-        IMAGE_NAME="palace-${ARCH}-${SHORT_HASH}"
+        IMAGE_NAME="palace-${ARCH_LABEL}-${SHORT_HASH}"
         echo "image_name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
         echo "Image name: ${IMAGE_NAME}"
 
@@ -104,15 +154,66 @@ runs:
 
         end_timer "Test container"
 
+    - name: Push OCI image to ECR
+      if: steps.meta.outputs.push == 'true'
+      shell: bash
+      env:
+        AWS_REGION: us-west-2
+        ECR_REPOSITORY: palace
+        VERSION: ${{ steps.meta.outputs.version }}
+        ARCH_LABEL: ${{ steps.meta.outputs.arch_label }}
+        IMAGE_NAME: ${{ steps.name.outputs.image_name }}
+      run: |
+        # Pushes on main/tag builds and push-containers-labelled PRs (see the
+        # metadata step). Auth is ambient via the runner's EC2 instance role.
+        source /tmp/timing_functions.sh
+        start_timer
+
+        ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+        # Redact the account ID from all subsequent log output.
+        echo "::add-mask::${ACCOUNT_ID}"
+        REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        REMOTE_TAG="${REGISTRY}/${ECR_REPOSITORY}:${VERSION}-${ARCH_LABEL}"
+
+        aws ecr get-login-password --region "$AWS_REGION" \
+          | sudo podman login --username AWS --password-stdin "$REGISTRY"
+
+        sudo podman tag "${IMAGE_NAME}:latest" "$REMOTE_TAG"
+        sudo podman push "$REMOTE_TAG"
+
+        echo "Pushed image to ${REMOTE_TAG}"
+        end_timer "Push OCI image to ECR"
+
+    - name: Upload SIF to S3
+      # Pushes on main/tag builds and push-containers-labelled PRs (see the
+      # metadata step). Auth is ambient via the runner's EC2 instance role.
+      if: steps.meta.outputs.push == 'true'
+      shell: bash
+      env:
+        AWS_REGION: us-west-2
+        S3_BUCKET: palace-ci-containers
+        S3_PREFIX: ${{ steps.meta.outputs.s3_prefix }}
+        ARCH_LABEL: ${{ steps.meta.outputs.arch_label }}
+        IMAGE_NAME: ${{ steps.name.outputs.image_name }}
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+
+        S3_KEY="s3://${S3_BUCKET}/${S3_PREFIX}/${ARCH_LABEL}.sif"
+        aws s3 cp --region "$AWS_REGION" "${IMAGE_NAME}.sif" "$S3_KEY"
+
+        echo "Uploaded SIF to ${S3_KEY}"
+        end_timer "Upload SIF to S3"
+
     - name: Upload OCI image
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ steps.name.outputs.image_name }}-oci
         path: ${{ steps.name.outputs.image_name }}.tar
         retention-days: 1
 
     - name: Upload SIF image
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ steps.name.outputs.image_name }}-sif
         path: ${{ steps.name.outputs.image_name }}.sif

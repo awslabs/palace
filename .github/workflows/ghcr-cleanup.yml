@@ -59,14 +59,40 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
+      - name: Print buildcache version count before cleanup
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh api /orgs/${{ github.repository_owner }}/packages/container/palace-develop-testing \
+            --jq '"palace-develop-testing versions before cleanup: \(.version_count)"'
+
       # Each Spack spec is a tagged version in the container package. We keep
       # the most recent 500 versions (roughly 5-10 full build sets) and delete
       # older ones. The action deletes at most 100 per run.
       - name: Delete old buildcache versions
-        uses: actions/delete-package-versions@v5
-        with:
+        id: cleanup
+        continue-on-error: true
+        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5
+        with: &delete-package-versions-inputs
           package-name: palace-develop-testing
           package-type: container
           owner: awslabs
           min-versions-to-keep: 500
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Retry deleting old buildcache versions
+        if: steps.cleanup.outcome == 'failure'
+        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5
+        with: *delete-package-versions-inputs
+
+      - name: Print buildcache version count after cleanup
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh api /orgs/${{ github.repository_owner }}/packages/container/palace-develop-testing \
+            --jq '"palace-develop-testing versions after cleanup: \(.version_count)"'

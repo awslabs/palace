@@ -51,7 +51,7 @@ spack:
         secret_variable: GITHUB_TOKEN
   specs:
     # FIXME(awslabs/palace#731): re-enable the `compilers` spec group when the
-    # underlying Spack spec-groups bug is fixed; gcc-15 is currently apt-
+    # underlying Spack spec-groups bug is fixed; gcc-16 is currently apt-
     # installed in PalaceDockerfile.
     #
     # - group: compilers
@@ -61,7 +61,7 @@ spack:
     #   specs:
     #     # If you change this, you might need to change PalaceDockerfile so
     #     # that we remove the compiler from the container
-    #     - gcc@15
+    #     - gcc@16
     #   override:
     #     concretizer:
     #       # Do not force the target to be specific, let it generic, so that
@@ -72,7 +72,7 @@ spack:
     # FIXME(awslabs/palace#731): re-enable with `compilers` group above.
     # needs: [compilers]
     specs:
-    - palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64 %gcc@15 ^openblas@0.3.29 ^openmpi schedulers=none fabrics=ofi
+    - palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64 %gcc@16 ^openblas ^openmpi schedulers=none fabrics=ofi
     override:
       packages:
         # Enable AWS EFA

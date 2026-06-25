@@ -49,6 +49,9 @@ The format of this changelog is based on
   - Added Floquet port boundary conditions for frequency-domain driven simulations on
     periodic structures, with support for oblique incidence, multi-order diffraction,
     TE/TM/circular polarization, and adaptive frequency sweeps. [PR 693](https://github.com/awslabs/palace/pull/693).
+  - Upgraded documentation of Palace JSON config. Added script to generate config page automatically
+    from fields in the JSON schema. Enables linking to individual tags and better html visuals.
+    [PR 716](https://github.com/awslabs/palace/pull/716)
 
 #### Interface Changes
 
@@ -104,6 +107,10 @@ The format of this changelog is based on
     [PR 727](https://github.com/awslabs/palace/pull/727).
   - Fixed a bug causing incorrect S-parameters when lumped port pairs have different R values
     [PR 743](https://github.com/awslabs/palace/pull/743).
+  - Fixed a bug where mesh cracking refinement (`RefineCrackElements`) would fail on periodic meshes
+    [PR 777](https://github.com/awslabs/palace/pull/777).
+  - Fixed a bug where the magnetic energy field calculation in 2D simulations used the incorrect
+    permeability vector components [PR 782](https://github.com/awslabs/palace/pull/782).
 
 ## [0.16.1] - 2026-04-24
 
