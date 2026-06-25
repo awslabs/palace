@@ -17,15 +17,15 @@
 namespace palace
 {
 
-// ParaView data collection with an extra registration path for boundary point data
-// ordered exactly as MFEM's boundary VTU writer emits refined points. The data can be
-// precomputed or evaluated lazily during Save(). This avoids pretending libCEED output
-// is an mfem::Coefficient and, more importantly, avoids recovering point identity from
-// floating-point reference coordinates during Save().
+// ParaView data collection with extra registration paths for point data ordered exactly
+// as MFEM's VTU writer emits refined points. The data can be precomputed or evaluated
+// lazily during Save(). This avoids pretending libCEED output is an mfem::Coefficient
+// and, more importantly, avoids recovering point identity from floating-point reference
+// coordinates during Save().
 class CeedParaViewDataCollection : public mfem::ParaViewDataCollection
 {
 private:
-  struct BoundaryPointField
+  struct PointField
   {
     const Vector *values = nullptr;
     std::function<void(Vector &)> evaluator;
@@ -35,25 +35,36 @@ private:
   };
 
   std::fstream pvd_stream;
-  std::map<std::string, BoundaryPointField> boundary_point_fields;
+  std::map<std::string, PointField> boundary_point_fields;
+  std::map<std::string, PointField> domain_point_fields;
 
   bool UseAppendedBoundaryPointFields() const;
-  int MaxBoundaryPointFieldBufferSize() const;
-  std::uint64_t BoundaryPointFieldPayloadSize(int ref,
-                                              const BoundaryPointField &field) const;
-  void WriteBoundaryPointFieldValues(std::ostream &os, int ref,
-                                     const BoundaryPointField &field,
+  bool UseAppendedDomainPointFields() const;
+  int MaxPointFieldBufferSize(const std::map<std::string, PointField> &fields) const;
+  std::uint64_t BoundaryPointFieldPayloadSize(int ref, const PointField &field) const;
+  std::uint64_t DomainPointFieldPayloadSize(int ref, const PointField &field) const;
+  void WriteBoundaryPointFieldValues(std::ostream &os, int ref, const PointField &field,
                                      const Vector &values) const;
+  void WriteDomainPointFieldValues(std::ostream &os, int ref, const PointField &field,
+                                   const Vector &values) const;
+
   void SaveDataVTU(std::ostream &os, int ref);
   void SaveBoundaryPointFieldVTU(std::ostream &os, int ref, const std::string &name,
-                                 const BoundaryPointField &field, Vector *scratch);
+                                 const PointField &field, Vector *scratch);
+  void SaveDomainPointFieldVTU(std::ostream &os, int ref, const std::string &name,
+                               const PointField &field, Vector *scratch);
   void SaveBoundaryPointFieldVTUAppendedHeader(std::ostream &os, int ref,
                                                const std::string &name,
-                                               const BoundaryPointField &field,
+                                               const PointField &field,
                                                std::uint64_t offset);
+  void SaveDomainPointFieldVTUAppendedHeader(std::ostream &os, int ref,
+                                             const std::string &name,
+                                             const PointField &field,
+                                             std::uint64_t offset);
   void SaveBoundaryPointFieldVTUAppendedPayload(std::ostream &os, int ref,
-                                                const BoundaryPointField &field,
-                                                Vector *scratch);
+                                                const PointField &field, Vector *scratch);
+  void SaveDomainPointFieldVTUAppendedPayload(std::ostream &os, int ref,
+                                              const PointField &field, Vector *scratch);
 
 public:
   using mfem::ParaViewDataCollection::ParaViewDataCollection;
@@ -64,7 +75,12 @@ public:
                                       std::function<void(Vector &)> evaluator,
                                       const std::vector<int> &bases, int num_comp,
                                       int buffer_size);
+  void RegisterDomainPointEvaluator(const std::string &field_name,
+                                    std::function<void(Vector &)> evaluator,
+                                    const std::vector<int> &bases, int num_comp,
+                                    int buffer_size);
   void DeregisterBoundaryPointField(const std::string &field_name);
+  void DeregisterDomainPointField(const std::string &field_name);
 
   void Save() override;
 };

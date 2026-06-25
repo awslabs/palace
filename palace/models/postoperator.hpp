@@ -183,7 +183,7 @@ protected:
   // ParaView data collection: writing fields to disk for visualization.
   // This is an optional, since ParaViewDataCollection has no default (empty) ctor,
   // and we only want initialize it if ShouldWriteParaviewFields() returns true.
-  std::optional<mfem::ParaViewDataCollection> paraview;
+  std::optional<CeedParaViewDataCollection> paraview;
   std::optional<CeedParaViewDataCollection> paraview_bdr;
 
   // MFEM grid function output details.
@@ -203,9 +203,10 @@ protected:
   // Surface Charge (re+im).
   std::unique_ptr<mfem::Coefficient> U_e, U_m, V_s, Q_sr, Q_si;
 
-  // libCEED evaluators and output grid functions for the domain coefficient fields
-  // (U_e, U_m, S), replacing per-point host coefficient evaluation at ParaView save
-  // time when supported.
+  // libCEED evaluators and optional output grid functions for the domain coefficient
+  // fields (U_e, U_m, S), replacing per-point host coefficient evaluation at ParaView
+  // save time when supported. ParaView output uses lazy component-major point buffers;
+  // gridfunction output still uses the GridFunction path when requested.
   std::unique_ptr<mfem::L2_FECollection> viz_fec;
   std::unique_ptr<mfem::ParFiniteElementSpace> viz_scalar_fespace, viz_vector_fespace;
   std::unique_ptr<mfem::ParGridFunction> U_e_gf, U_m_gf, S_gf;

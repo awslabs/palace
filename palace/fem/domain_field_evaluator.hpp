@@ -45,10 +45,16 @@ private:
   bool valid = true;
 
   // Per-geometry assembled libCEED operators, evaluating at the target space nodal
-  // points and scattering directly into the output grid function. The element attribute
-  // vectors are operator inputs and must outlive the operators.
-  std::vector<fem::CeedGroupOperator> groups;
+  // points and scattering directly into the output grid function or into a
+  // component-major point buffer for ParaView output. The element attribute vectors are
+  // operator inputs and must outlive the operators.
+  std::vector<fem::CeedGroupOperator> groups, buffer_groups;
   std::deque<Vector> elem_attrs;
+
+  // Component-major point buffer layout for domain visualization fields. Buffer bases
+  // are point offsets in the same element/refined-point order used by MFEM's VTU writer.
+  int buffer_size = 0, buffer_num_comp = 0;
+  std::vector<int> buffer_bases;
 
   // Staging vector used to initialize the field input CeedVectors at construction.
   mutable Vector field_staging;
@@ -71,10 +77,21 @@ public:
   // Whether the evaluator was successfully assembled.
   bool IsValid() const { return valid; }
 
+  // Total buffer size (all elements, lattice points, components), number of components,
+  // and per-element point-base offsets for the domain visualization field. Vector
+  // buffers are component-major: x[points], y[points], z[points].
+  int BufferSize() const { return buffer_size; }
+  int BufferNumComp() const { return buffer_num_comp; }
+  const std::vector<int> &BufferBases() const { return buffer_bases; }
+
   // Fill the output vector (L-vector of the target space, e.g. a GridFunction) with
   // the pointwise quantity. Real and imaginary field contributions add. Local
   // operation (no MPI communication).
   void Eval(const GridFunction *E, const GridFunction *B, Vector &out) const;
+
+  // Fill the component-major domain visualization point buffer. Real and imaginary field
+  // contributions add. Local operation (no MPI communication).
+  void EvalBuffer(const GridFunction *E, const GridFunction *B, Vector &buffer) const;
 };
 
 }  // namespace palace

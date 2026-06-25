@@ -343,8 +343,11 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
                                                   b_fespace, target, scaling);
     if (eval->IsValid())
     {
-      gf = std::make_unique<mfem::ParGridFunction>(&target);
-      gf->UseDevice(true);
+      if (ShouldWriteGridFunctionFields())
+      {
+        gf = std::make_unique<mfem::ParGridFunction>(&target);
+        gf->UseDevice(true);
+      }
     }
     else
     {
@@ -631,7 +634,10 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   // Output mesh coordinate units same as input.
   paraview->SetCycle(-1);
   paraview->SetDataFormat(format);
-  paraview->SetCompressionLevel(compress);
+  // Domain libCEED point fields use appended raw VTU arrays so their payload can be
+  // written by the CPU without an extra full-field base64 staging buffer. Keep domain
+  // output uncompressed; boundary output does the same below.
+  paraview->SetCompressionLevel(0);
   paraview->SetHighOrderOutput(use_ho);
   paraview->SetLevelsOfDetail(refine_ho);
 
@@ -640,16 +646,30 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   paraview_bdr->SetDataFormat(format);
   // Boundary libCEED point fields use appended raw VTU arrays so their payload can be
   // written by the CPU without an extra full-field base64 staging buffer. Keep boundary
-  // output uncompressed; domain output still uses the normal compressed MFEM path above.
+  // output uncompressed, matching the domain libCEED point-field path above.
   paraview_bdr->SetCompressionLevel(0);
   paraview_bdr->SetHighOrderOutput(use_ho);
   paraview_bdr->SetLevelsOfDetail(refine_ho);
 
-  // Register libCEED boundary visualization fields lazily: ParaView Save() evaluates
-  // one field at a time into a temporary device-capable buffer and then writes that
-  // buffer to the VTU file. This keeps peak memory proportional to one output field
-  // instead of the sum of all boundary fields, while still doing the sampling/transforms
-  // in libCEED.
+  // Register libCEED domain and boundary visualization fields lazily: ParaView Save()
+  // evaluates one field at a time into a reusable device-capable component-major buffer
+  // and then writes that buffer to the VTU file. This keeps peak memory proportional to
+  // one output field instead of the sum of all derived fields, while still doing the
+  // sampling/transforms in libCEED.
+  auto RegisterDomainEvalField = [&](const std::string &name,
+                                     const std::unique_ptr<DomainFieldEvaluator> &eval,
+                                     const GridFunction *E_field,
+                                     const GridFunction *B_field)
+  {
+    const auto *eval_ptr = eval.get();
+    const auto *E_ptr = E_field;
+    const auto *B_ptr = B_field;
+    paraview->RegisterDomainPointEvaluator(
+        name,
+        [eval_ptr, E_ptr, B_ptr](Vector &buffer)
+        { eval_ptr->EvalBuffer(E_ptr, B_ptr, buffer); },
+        eval_ptr->BufferBases(), eval_ptr->BufferNumComp(), eval_ptr->BufferSize());
+  };
   auto RegisterBdrEvalField = [&](const std::string &name,
                                   const std::unique_ptr<SurfaceFunctional> &eval,
                                   const auto &field, SurfaceFunctional::Kind kind)
@@ -787,7 +807,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   // energy 1/2 Hᴴ B. Also Poynting vector S = E x H⋆.
   if (U_e)
   {
-    U_e_eval ? paraview->RegisterField("U_e", U_e_gf.get())
+    U_e_eval ? RegisterDomainEvalField("U_e", U_e_eval, E.get(), nullptr)
              : paraview->RegisterCoeffField("U_e", U_e.get());
     if (Ue_bdr_eval)
     {
@@ -801,7 +821,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   }
   if (U_m)
   {
-    U_m_eval ? paraview->RegisterField("U_m", U_m_gf.get())
+    U_m_eval ? RegisterDomainEvalField("U_m", U_m_eval, nullptr, B.get())
              : paraview->RegisterCoeffField("U_m", U_m.get());
     if (Um_bdr_eval)
     {
@@ -815,7 +835,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   }
   if (S)
   {
-    S_eval ? paraview->RegisterField("S", S_gf.get())
+    S_eval ? RegisterDomainEvalField("S", S_eval, E.get(), B.get())
            : paraview->RegisterVCoeffField("S", S.get());
     if (S_bdr_eval)
     {
@@ -1017,20 +1037,9 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
     paraview->RegisterCoeffField("Sn", Sn.get());
     sn_registered = true;
   }
-  // Fill the libCEED-evaluated output fields (the fields are dimensionalized at this
-  // point, matching the legacy coefficient evaluation in ParaViewDataCollection::Save).
-  if (U_e_eval)
-  {
-    U_e_eval->Eval(E.get(), nullptr, *U_e_gf);
-  }
-  if (U_m_eval)
-  {
-    U_m_eval->Eval(nullptr, B.get(), *U_m_gf);
-  }
-  if (S_eval)
-  {
-    S_eval->Eval(E.get(), B.get(), *S_gf);
-  }
+  // libCEED-evaluated derived domain fields are registered as lazy point evaluators;
+  // Save() evaluates them now, after dimensionalization, matching the legacy coefficient
+  // evaluation point in ParaViewDataCollection::Save without materializing GridFunctions.
   double paraview_time = time;
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
