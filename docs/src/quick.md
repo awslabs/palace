@@ -107,7 +107,7 @@ leading to different electromagnetic [problem types](guide/problem.md):
  3. Grid function files for visualizing fields with [GLVis](https://glvis.org)
 
 The full list of problem types and their outputs is available in the
-[problem configuration guide](config/problem.md).
+[problem configuration guide](config/reference.md#config-problem).
 
 In this tutorial, we'll use a mesh generated with [Gmsh](https://gmsh.info/),
 create a configuration file for an `Electrostatic` problem, and visualize the
@@ -273,7 +273,7 @@ the mesh while setting the non-activated terminals to ground. All simulation
 types in *Palace* have some form of iteration (over frequencies, times, mode
 numbers, or terminals). The output is saved to the `"Output"` folder specified
 in the `"Problem"` section in the JSON file, `postpro` in this example. If the
-output already exists, it will be overwritten. See [`config["Problem"]`](config/problem.md)
+output already exists, it will be overwritten. See [`config["Problem"]`](config/reference.md#config-problem)
 for details on all available problem types and their outputs.
 
 ```@example json
@@ -286,7 +286,7 @@ The `Model` section specifies the desired geometry. In addition to defining the
 mesh, it specifies how to convert mesh units to physical units using the `L0`
 parameter. For example, `L0` of `1e-2` means that one mesh unit corresponds to
 one centimeter. The `Model` section can also include settings for adaptive mesh
-refinement. See [`config["Model"]`](config/model.md) for more information.
+refinement. See [`config["Model"]`](config/reference.md#config-model) for more information.
 
 ```@example json
 print_section(spheres_json, "Model") # hide
@@ -301,7 +301,7 @@ specifying its physical properties. In our mesh, we have just one 3D region (the
 vacuum between the spheres and outer boundary) identified by attribute 1. While
 vacuum properties are applied by default, you can specify various material
 characteristics as detailed in
-[`config["Domains"]["Materials"]`](config/domains.md#domains%5B%22Materials%22%5D).
+[`config["Domains"]["Materials"]`](config/reference.md#config-domains-materials).
 
 The `Domains` section also includes a `Postprocessing` subsection for
 calculating specific quantities. In this example, we add:
@@ -332,7 +332,7 @@ print_section(spheres_json, "Domains") # hide
 
 The `Boundaries` section maps 2D surfaces in your mesh to their physical
 boundary conditions. *Palace* offers numerous boundary condition types, all
-documented in [`config["Boundaries"]`](config/boundaries.md).
+documented in [`config["Boundaries"]`](config/reference.md#config-boundaries).
 
 Unlike 3D regions, which all require `Material` specifications, 2D surfaces have
 default behavior: any external surface without an explicit boundary condition is
@@ -353,7 +353,7 @@ new row to the output CSV files.
 Like the `Domains` section, `Boundaries` also includes a `Postprocessing`
 subsection for calculating quantities such as surface fluxes across 2D regions.
 Here, we compute the fluxes of electric fields across the spherical conductors.
-See [`config["Boundaries"]`](config/boundaries.md) for all available
+See [`config["Boundaries"]`](config/reference.md#config-boundaries) for all available
 postprocessing options.
 
 ```@example json
@@ -370,7 +370,7 @@ linear solver parameters in `"Linear"` are not essential for this tutorial.
 
 Other problem types typically have more extensive `Solver` configurations,
 including excitation parameters and frequency sweep settings. For complete
-details on all solver options, see [`config["Solver"]`](config/solver.md).
+details on all solver options, see [`config["Solver"]`](config/reference.md#config-solver).
 
 ```@example json
 print_section(spheres_json, "Solver") # hide

@@ -52,7 +52,7 @@ This page focuses on practical setup and validation.
 ## Quick start
 
 The only configuration difference between uniform and adaptive driven sweeps is the value of
-[`config["Solver"]["Driven"]["AdaptiveTol"]`](../config/solver.md#solver%5B%22Driven%22%5D).
+[`config["Solver"]["Driven"]["AdaptiveTol"]`](../config/reference.md#config-solver-driven).
 The default value is `0.0`, which uses the uniform solver. Any positive value enables the
 adaptive solver.
 
@@ -82,18 +82,18 @@ When studying a new model, a good workflow is:
 
 The most important configuration options are:
 
-  - [`config["Solver"]["Driven"]["AdaptiveTol"]`](../config/solver.md#solver%5B%22Driven%22%5D):
+  - [`config["Solver"]["Driven"]["AdaptiveTol"]`](../config/reference.md#config-solver-driven):
     adaptive convergence tolerance. A value around `1e-3` is often a reasonable starting
     point for S-parameter sweeps, but the right value is model- and quantity-dependent.
-  - [`config["Solver"]["Linear"]["Tol"]`](../config/solver.md#solver%5B%22Linear%22%5D):
+  - [`config["Solver"]["Linear"]["Tol"]`](../config/reference.md#config-solver-linear):
     linear solver tolerance for the underlying full solves. This should usually be
     substantially smaller than `"AdaptiveTol"`. If *Palace* logs warnings about a
     rank-deficient minimal rational interpolation, try tightening this tolerance or using a
     looser `"AdaptiveTol"`.
-  - [`config["Solver"]["Driven"]["AdaptiveMaxSamples"]`](../config/solver.md#solver%5B%22Driven%22%5D):
+  - [`config["Solver"]["Driven"]["AdaptiveMaxSamples"]`](../config/reference.md#config-solver-driven):
     maximum number of full samples per excitation. If this cap is reached before
     convergence, increase it or revisit the tolerances.
-  - [`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](../config/solver.md#solver%5B%22Driven%22%5D):
+  - [`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](../config/reference.md#config-solver-driven):
     number of consecutive successful sample checks required before convergence. Increasing
     this can make early termination less likely, at the cost of more full solves.
 

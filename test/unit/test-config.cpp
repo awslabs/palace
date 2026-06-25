@@ -1286,7 +1286,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
     auto fp_gaps =
         SchemaCoverageGaps("config/boundaries.json", "/properties/FloquetPort/items",
-                           config["Boundaries"]["FloquetPort"][0]);
+                           config["Boundaries"]["FloquetPort"][0],
+                           /*skip=*/{"MaxOrder"});
     INFO("Boundaries.FloquetPort[] missing keys: " << json(fp_gaps).dump());
     CHECK(fp_gaps.empty());
 
@@ -1414,10 +1415,11 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(config["Solver"]["BoundaryMode"]["Type"].get<std::string>() != "Default");
 
     // Coverage gate. Attributes is opt-in (used to extract a 2D submesh from a 3D
-    // mesh); leaving it absent means "use the parent mesh as-is", so we skip it.
+    // mesh); leaving it absent means "use the parent mesh as-is". Target is resolved
+    // from the mesh/materials at solve time, so omission remains the auto-selection path.
     auto bm_gaps = SchemaCoverageGaps("config/solver.json", "/properties/BoundaryMode",
                                       config["Solver"]["BoundaryMode"],
-                                      /*skip=*/{"Attributes"});
+                                      /*skip=*/{"Attributes", "Target"});
     INFO("Solver.BoundaryMode missing keys: " << json(bm_gaps).dump());
     CHECK(bm_gaps.empty());
   }

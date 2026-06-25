@@ -5,57 +5,51 @@ SPDX-License-Identifier: Apache-2.0
 --->
 ```
 
-# Overview
+# Configuration File
 
-A configuration file written in the [JSON format](https://en.wikipedia.org/wiki/JSON) is
-used specify the runtime options for a *Palace* simulation. The following sections give a
-detailed overview of the file format and available settings.
+*Palace* simulations are configured using a single [JSON](https://en.wikipedia.org/wiki/JSON) file
+passed as the command-line argument. If you are new to *Palace*, start with the [quick-start
+guide](../quick.md) to see a full worked example.
 
-Parameters are specified in the form of keyword/value pairs where the key is a string and
-the value may be a string, boolean, integer or floating point number, or array. Parameters
-are grouped into a hierarchy of objects. We support relaxed JSON formatting with C++-style
-comments (`//`, `/* */`). Integer arrays can be specified as comma-separated lists of
-integers or integer ranges, for example `[1,3-5,6]` is parsed as `[1,3,4,5,6]`.
-
-In the following sections, default values for the parameters are specified alongside the
-description of each keyword in square brackets. Keywords for which there is no default
-value listed (`[None]`) are required in general if specifying values for other keywords
-under the same top-level object.
-
-The top-level JSON object of the configuration file has the following structure:
+The configuration file has five required top-level sections:
 
 ```json
 {
-    "Problem":
-    {
-        ...
-    },
-    "Model":
-    {
-        ...
-    },
-    "Domains":
-    {
-        ...
-    },
-    "Boundaries":
-    {
-        ...
-    },
-    "Solver":
-    {
-        ...
-    }
+    "Problem":    { ... },
+    "Model":      { ... },
+    "Domains":    { ... },
+    "Boundaries": { ... },
+    "Solver":     { ... }
 }
 ```
 
-Each property of the top-level `config` JSON object is detailed in its corresponding
-section of the documentation.
+The complete reference for every configuration option is in the [Configuration File
+Reference](reference.md). Each entry shows the JSON key, type, default value, and description.
+Fields marked **required** have no default and must be supplied.
 
-## Contents
+## File format
 
-  - [`config["Problem"]`](problem.md)
-  - [`config["Model"]`](model.md)
-  - [`config["Domains"]`](domains.md)
-  - [`config["Boundaries"]`](boundaries.md)
-  - [`config["Solver"]`](solver.md)
+The configuration file uses JSON with two custom extensions that make it easier to write by hand.
+
+  - *Comments*: C (`/* */`) and C++ (`// ...`) style comments can be included.
+  - *Integer range expansion*: Integer arrays for mesh attributes are comma-separated lists, but can
+    include inclusive ranges `a-b`. For example, `"Attributes": [1, 3-5, 8]` is equivalent to
+    `"Attributes": [1, 3, 4, 5, 8]`.
+
+These custom extensions are preprocessed into standard JSON before parsing. Apart from these, the
+file must be valid JSON. Duplicate keys within any object are detected and reported as an error.
+
+## JSON Validation
+
+*Palace* validates the configuration file against a [JSON
+Schema](https://json-schema.org/draft-07/schema) before the solver starts. The same schema can be
+used independently to check your configuration before running *Palace* by running:
+
+```bash
+./scripts/validate_config config.json
+```
+
+Note that there are constraints on the configuration that cannot be expressed in a JSON Schema.
+*Palace* may still fail to run with your configuration even if JSON Schema validation passes.
+Consult the [Configuration File Reference](reference.md) and the [User Guide](../guide/guide.md) for
+the requirements of individual settings.

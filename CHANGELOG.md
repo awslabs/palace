@@ -49,6 +49,9 @@ The format of this changelog is based on
   - Added Floquet port boundary conditions for frequency-domain driven simulations on
     periodic structures, with support for oblique incidence, multi-order diffraction,
     TE/TM/circular polarization, and adaptive frequency sweeps. [PR 693](https://github.com/awslabs/palace/pull/693).
+  - Upgraded documentation of Palace JSON config. Added script to generate config page automatically
+    from fields in the JSON schema. Enables linking to individual tags and better html visuals.
+    [PR 716](https://github.com/awslabs/palace/pull/716)
 
 #### Interface Changes
 

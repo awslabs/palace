@@ -51,7 +51,7 @@ boundary condition, enforcing zero tangential magnetic field and thus zero surfa
 density.
 
 The excitation pulse is configured under
-[`config["Solver"]["Transient"]`](../config/solver.md#solver%5B%22Transient%22%5D). Here, we
+[`config["Solver"]["Transient"]`](../config/reference.md#config-solver-transient). Here, we
 use a modulated Gaussian pulse shape, with time dependence given by the expression
 
 ```math
@@ -104,7 +104,7 @@ of the lumped port. This serves two purposes: it enables ``Z_{PV}`` postprocessi
 (written to `port-Z.csv`) and it fixes the wave-port mode polarity so that cross-type
 S-parameters (``S_{12}``, ``S_{21}``) have consistent signs with the lumped-port
 reference. See the
-[wave port configuration documentation](../config/boundaries.md#boundaries%5B%22WavePort%22%5D)
+[wave port configuration documentation](../config/reference.md#config-boundaries-waveport)
 for details on `"VoltagePath"`.
 
 |S_{22}| \approx -9.5\text{ dB}``, with``S_{21} = S_{12}`` to within the level of

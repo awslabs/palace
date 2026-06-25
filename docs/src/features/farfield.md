@@ -22,7 +22,7 @@ follows:
     the propagation of waves to infinity. This can be accomplished by enclosing
     the system inside a sphere or box and applying
     [`config["Boundaries"]["Absorbing"]` boundary
-    conditions](../config/boundaries.md#boundaries%5B%22Absorbing%22%5D).
+    conditions](../config/reference.md#config-boundaries-absorbing).
   - The result is provided as complex vectors ``r \mathbf{E}(\theta, \phi)``,
     where ``(\theta, \phi)`` identify a point on sphere at infinite distance and
     the result is defined up to a global phase.
@@ -88,7 +88,7 @@ results will be combined and duplicates removed.
 
 Once a simulation is run, *Palace* generates a CSV file named `farfield-rE.csv`
 in the folder specified by the
-[`config["Problem"]["Output"]`](../config/problem.md#config%5B%22Problem%22%5D)
+[`config["Problem"]["Output"]`](../config/reference.md#config-problem)
 configuration.
 
 The CSV contains a header line that describes the columns, and one row for each

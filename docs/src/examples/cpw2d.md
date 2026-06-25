@@ -15,7 +15,7 @@ end
 
 ## Problem description
 
-This example demonstrates the [`"BoundaryMode"`](../config/solver.md#solver-boundarymode)
+This example demonstrates the [`"BoundaryMode"`](../config/reference.md#config-solver-boundarymode)
 simulation type by computing propagation
 constants, effective indices, and characteristic impedance for a coplanar waveguide (CPW)
 cross-section. It uses a similar CPW geometry as the
@@ -35,9 +35,9 @@ The CPW has a center trace on a silicon substrate (``\varepsilon_r = 11.47``,
 ## Configuration
 
 Both configurations use
-[`"Problem": {"Type": "BoundaryMode"}`](../config/problem.md#config-problem) and request 2
+[`"Problem": {"Type": "BoundaryMode"}`](../config/reference.md#config-problem-type) and request 2
 modes at 5 GHz. The key
-[solver settings](../config/solver.md#solver-boundarymode) are:
+[solver settings](../config/reference.md#config-solver-boundarymode) are:
 
 ```json
 "BoundaryMode":
