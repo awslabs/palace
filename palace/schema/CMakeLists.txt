@@ -13,8 +13,10 @@
 #      for `palace::schema::PalaceConfig` to stdout. Invoked at build time
 #      by cmake/EmbedSchema.cmake.
 #
-# Neither target is linked into libpalace in Phase 1; reflect-cpp stays out
-# of the runtime binary.
+# Neither of these targets is linked into libpalace. reflect-cpp itself is
+# linked into libpalace separately (see palace/CMakeLists.txt) so the runtime
+# can parse configuration into the schema types; these targets are only the
+# build-time schema-emission tooling.
 
 add_library(palace_schema_utils STATIC utils/schema.cpp)
 # PUBLIC includes the palace/ source root so consumers can write

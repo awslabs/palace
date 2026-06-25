@@ -1828,7 +1828,7 @@
                 "Output": {
                     "type": "string",
                     "description": "Directory path for saving postprocessing outputs.",
-                    "default": ""
+                    "default": "postpro"
                 },
                 "OutputFormats": {
                     "$ref": "#/$defs/OutputFormats",
