@@ -74,49 +74,40 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        # Use nproc, but halve to account for hyperthreading.
-        LOGICAL_CORES=$(nproc)
-        THREADS_PER_CORE=$(lscpu | grep "Thread(s) per core" | awk '{print $4}')
-        if [ "$THREADS_PER_CORE" = "2" ]; then
-            export NUM_PROC_TEST=$((LOGICAL_CORES / 2))
-        else
-            export NUM_PROC_TEST=$LOGICAL_CORES
-        fi
-
-        if [[ "${{ inputs.variant }}" == *"+openmp"* ]]; then
-          NUM_PROC_TEST=$(( NUM_PROC_TEST / 2 ))
-          export OMP_NUM_THREADS=2
-        else
-          export OMP_NUM_THREADS=1
-        fi
 
         eval $(spack -e . load --sh palace)
 
-        LINEAR_SOLVER="${{ inputs.linear-solver }}"
-        EXTRA_ARGS=(--palace-linear-solver "${LINEAR_SOLVER:-Default}")
+        # The installed package ships a relocatable CTestTestfile next to the
+        # test data (share/palace/test), so the install-only runner can drive
+        # the regression cases with ctest -- per-case scheduling and PROCESSORS
+        # accounting, same as the build-tree jobs. Rank/thread/PROCESSORS are
+        # baked at build time; the linear solver (and GPU device) are passed
+        # through the environment so one build serves the whole solver matrix.
+        TEST_DIR="$(dirname "$(dirname "$(command -v palace-unit-tests)")")/share/palace/test"
+        export PALACE_TEST_LINEAR_SOLVER="${{ inputs.linear-solver }}"
+        JOBS="$(nproc)"
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
-          EXTRA_ARGS+=(--device cuda)
-          export NUM_PROC_TEST=1
+          export PALACE_TEST_DEVICE=cuda
+          JOBS=1  # one GPU: don't run device cases concurrently
         fi
 
-        run_group() {
-          local spec="$1"
-          mpirun -np "$NUM_PROC_TEST" palace-unit-tests "$spec" "${EXTRA_ARGS[@]}"
+        run_ctest() {
+          ctest --test-dir "$TEST_DIR" --output-on-failure -j "$JOBS" "$@"
         }
 
-        # Map the action's `test-cases` input onto a Catch2 filter. "default"
-        # is the always-on suite; "long" the heavy [Long] cases; anything else
-        # is a space-separated list of explicit case names.
+        # Map the action's `test-cases` input onto a ctest selection. "default"
+        # is the always-on regression label; "long" the heavy [Long] cases;
+        # anything else is a space-separated list of explicit case names.
         run_cases() {
           local raw="$1"
           if [[ -z "$raw" || "$raw" == "default" ]]; then
-            run_group "[Regression]~[Long]"
+            run_ctest -L "^regression$"
           elif [[ "$raw" == "long" ]]; then
-            run_group "[Long]"
+            run_ctest -L "^long$"
           else
-            for case in $raw; do
-              run_group "$case"
-            done
+            local regex
+            regex="$(echo "$raw" | tr ' ' '|')"
+            run_ctest -R "^(regression|long)-(${regex})$"
           fi
         }
 

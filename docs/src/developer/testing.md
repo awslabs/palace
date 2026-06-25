@@ -498,9 +498,17 @@ mpirun -n 2 ./palace-unit-tests "[Regression]~*cpw*"   # skip cpw cases
 ./palace-unit-tests rings                              # single case, 1 rank
 ```
 
-When using the CTest registrations, prefer `ctest -j N` over a manual
-loop; CTest uses each case's `PROCESSORS` property to avoid oversubscribing
+When using the CTest registrations, prefer `ctest -j N` over a manual loop;
+CTest uses each case's `PROCESSORS` property to avoid oversubscribing
 rank/thread slots.
+
+Install-only runners (e.g. Spack jobs that install from a buildcache) have no
+build tree, so the build-tree CTestTestfiles are unavailable. A relocatable
+CTestTestfile is installed at `<prefix>/share/palace/test/CTestTestfile.cmake`
+for exactly this case; with `palace-unit-tests` on `PATH` (e.g. `spack load
+palace`), run `ctest --test-dir <prefix>/share/palace/test -L "^regression$"`.
+The linear solver and device are read from `PALACE_TEST_LINEAR_SOLVER` and
+`PALACE_TEST_DEVICE` so one installed build serves the whole solver matrix.
 
 #### Overrides
 

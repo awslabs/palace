@@ -319,8 +319,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_BUILD_WITH_SANITIZERS", "asan"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
-            # Pin the test suite's OpenMP thread count so CTest's PROCESSORS
-            # accounting (ranks x threads) is exact for +openmp builds.
+            # Pin the test suite's MPI ranks and OpenMP threads so CTest's
+            # PROCESSORS accounting (ranks x threads) is exact. GPU builds run
+            # the regression cases single-rank.
+            self.define("PALACE_TESTS_NUMPROC", 1 if self.spec.satisfies("+cuda") else 2),
             self.define("PALACE_TESTS_OMP_THREADS", 2 if self.spec.satisfies("+openmp") else 1),
         ]
 
