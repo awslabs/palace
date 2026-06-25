@@ -328,7 +328,7 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
 
   SECTION("Ambiguous schema key")
   {
-    // "Postprocessing" exists in both boundaries.json and domains.json.
+    // "Postprocessing" exists in both the Boundaries and Domains scopes.
     json data = {{"Index", 1}};
     std::string err = ValidateConfig(data, "Postprocessing");
     CHECK(!err.empty());

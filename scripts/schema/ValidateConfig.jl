@@ -14,7 +14,7 @@ export validate_config_file
 Validate the provided configuration file against the provided JSON Schema
 """
 function validate_config_file(; config_file::AbstractString, schema_file::AbstractString)
-    # Resolve relative paths in schema by running parsefile in its directory
+    # Run parsefile in the schema's directory for consistent path resolution
     schema = cd(() -> Schema(JSON.parsefile(schema_file)), dirname(schema_file))
     config = JSON.parse(replace_range_expand(preprocess_string(read(config_file, String))))
     return validate(schema, config)

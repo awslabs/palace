@@ -234,8 +234,8 @@ each schema version; a schema version applies to that release and all later ones
 
 A CI check (the `check-schema-version` job in
 [`.github/workflows/style.yml`](https://github.com/awslabs/palace/blob/main/.github/workflows/style.yml))
-fails a pull request that modifies any schema JSON file under `scripts/schema/` without
-also changing the version in `"$id"`. This catches the common mistake of editing the
+fails a pull request that modifies `scripts/schema/config-schema.json` without also
+changing the version in `"$id"`. This catches the common mistake of editing the
 contract but forgetting to bump the version; it does not (and cannot) verify that the
 size of the bump matches the change, so the MODEL/REVISION/ADDITION judgment above
 remains a code-review responsibility. When a change is genuinely annotation-only the bump

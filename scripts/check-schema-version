@@ -7,9 +7,8 @@ help()
 {
     echo "Usage: check-schema-version [OPTIONS] [BASE_REF]
 
-Fail if any configuration schema JSON file (scripts/schema/*.json and
-scripts/schema/config/*.json) changed relative to BASE_REF without a corresponding
-change to the \"\$id\" field in scripts/schema/config-schema.json.
+Fail if scripts/schema/config-schema.json changed relative to BASE_REF without a
+corresponding change to the \"\$id\" version in that file.
 
 This guards against editing the configuration contract while forgetting to bump the
 schema version. It does not judge whether the size of the bump (MODEL/REVISION/ADDITION)
@@ -39,8 +38,7 @@ done
 set -- "${POSITIONAL[@]}"
 
 BASE_REF="${1:-origin/main}"
-SCHEMA_DIR="scripts/schema"
-ROOT_SCHEMA="${SCHEMA_DIR}/config-schema.json"
+ROOT_SCHEMA="scripts/schema/config-schema.json"
 ID_KEY='\$id'
 
 if ! git rev-parse --verify --quiet "${BASE_REF}^{commit}" > /dev/null; then
@@ -48,12 +46,11 @@ if ! git rev-parse --verify --quiet "${BASE_REF}^{commit}" > /dev/null; then
     exit 1
 fi
 
-# Schema JSON files that changed relative to the base ref.
-CHANGED=$(git diff --name-only "${BASE_REF}" -- \
-    "${SCHEMA_DIR}/*.json" "${SCHEMA_DIR}/config/*.json")
+# Check if the schema file changed relative to the base ref.
+CHANGED=$(git diff --name-only "${BASE_REF}" -- "${ROOT_SCHEMA}")
 
 if [[ -z "${CHANGED}" ]]; then
-    echo "No schema JSON files changed; nothing to check"
+    echo "Schema file unchanged; nothing to check"
     exit 0
 fi
 

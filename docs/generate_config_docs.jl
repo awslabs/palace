@@ -1,7 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Auto-generates docs/src/config/*.md from scripts/schema/config/*.json
+# Auto-generates docs/src/config/reference.md from scripts/schema/config-schema.json.
+# The schema is a single consolidated file: each top-level section lives under
+# `properties` (e.g. `properties.Solver`) and shared shapes live under `$defs`,
+# reached via local `#/$defs/...` references.
 # Run via: julia --project docs/generate_config_docs.jl
 # Or included in docs/make.jl
 
@@ -10,7 +13,6 @@ using OrderedCollections
 using CommonMark
 using JuliaFormatter
 
-const SCHEMA_DIR = joinpath(@__DIR__, "..", "scripts", "schema", "config")
 const ROOT_SCHEMA_PATH = joinpath(@__DIR__, "..", "scripts", "schema", "config-schema.json")
 const OUTPUT_DIR = joinpath(@__DIR__, "src", "config")
 
@@ -41,13 +43,33 @@ end
 
 # --- Schema loading ---
 
+# The five top-level configuration sections, in document order. Each maps to a key under
+# the consolidated schema's `properties` (e.g. "Solver" => root["properties"]["Solver"]).
+const SECTION_KEYS = ["Problem", "Model", "Domains", "Boundaries", "Solver"]
+
 """
-Load a top-level schema dict by section name (e.g. "problem").
-Uses dicttype=OrderedDict to preserve JSON key order throughout.
+Load the consolidated root schema. Uses dicttype=OrderedDict to preserve JSON key
+order throughout. Shared shapes live under `root["\$defs"]`; the per-section bodies
+live under `root["properties"]`.
 """
-function load_schema(name::String)::AbstractDict
-    path = joinpath(SCHEMA_DIR, "$name.json")
-    return JSON.parsefile(path; dicttype=OrderedDict)
+function load_root_schema()::AbstractDict
+    return JSON.parsefile(ROOT_SCHEMA_PATH; dicttype=OrderedDict)
+end
+
+"""
+Return the schema body for one top-level section (e.g. "Solver"), merged with the
+root-level `\$defs` so that local `#/\$defs/...` references resolve when the body is
+later passed around as its own `root` for ref resolution.
+"""
+function section_schema(root::AbstractDict, key::String)::AbstractDict
+    haskey(root, "properties") && haskey(root["properties"], key) ||
+        error("Section \"$key\" not found under root \"properties\"")
+    body = root["properties"][key]
+    # Carry the root `$defs` onto the section body so `#/$defs/...` refs resolve when the
+    # body is used as the `root` argument to the rendering functions.
+    merged = OrderedDict{String, Any}(body)
+    haskey(root, "\$defs") && (merged["\$defs"] = root["\$defs"])
+    return merged
 end
 
 # --- $ref resolution ---
@@ -876,22 +898,24 @@ end
 
 # --- File generation ---
 
-const SECTIONS = ["problem", "model", "domains", "boundaries", "solver"]
-
 """
 Generate a single docs/src/config/reference.md containing all config sections.
-Each schema becomes an H1 section. A TOC with top-level + subsection links is
+Each section becomes an H2 section. A TOC with top-level + subsection links is
 prepended. Individual per-section files are no longer written.
+
+Each section body is read from `root["properties"][key]`; `section_schema` carries the
+root `\$defs` onto the body so local `#/\$defs/...` references resolve when the body is
+used as its own `root` for the rendering pass.
 """
 function generate_all(; output_dir::String=OUTPUT_DIR)
-    schemas = [(name, load_schema(name)) for name in SECTIONS]
-    root_schema = JSON.parsefile(ROOT_SCHEMA_PATH; dicttype=OrderedDict)
+    root_schema = load_root_schema()
     root_required = Set(get(root_schema, "required", String[]))
+    schemas = [(key, section_schema(root_schema, key)) for key in SECTION_KEYS]
 
     # Collect TOC entries from every schema before rendering
     all_toc = [
-        collect_toc_entries(schema, schema, [get(schema, "title", titlecase(name))]) for
-        (name, schema) in schemas
+        collect_toc_entries(schema, schema, [get(schema, "title", key)]) for
+        (key, schema) in schemas
     ]
 
     buf = IOBuffer()
@@ -902,8 +926,8 @@ function generate_all(; output_dir::String=OUTPUT_DIR)
     print(buf, render_toc(all_toc))
 
     # All sections
-    for (name, schema) in schemas
-        root_key = get(schema, "title", titlecase(name))
+    for (key, schema) in schemas
+        root_key = get(schema, "title", key)
         section_field = FieldDoc(
             root_key,
             root_key,
@@ -930,14 +954,14 @@ function generate_all(; output_dir::String=OUTPUT_DIR)
 end
 
 # Keep generate_file for tests (writes a single section to a temp file at H1)
-function generate_file(name::String; output_dir::String=OUTPUT_DIR)
-    schema = load_schema(name)
-    root_key = get(schema, "title", titlecase(name))
+function generate_file(key::String; output_dir::String=OUTPUT_DIR)
+    schema = section_schema(load_root_schema(), key)
+    root_key = get(schema, "title", key)
     buf = IOBuffer()
     print(buf, COPYRIGHT_HEADER)
     render_schema_section!(buf, schema, schema, [root_key], 1)
-    write(joinpath(output_dir, "$name.md"), String(take!(buf)))
-    @info "Generated $(joinpath(output_dir, name * ".md"))"
+    write(joinpath(output_dir, "$key.md"), String(take!(buf)))
+    @info "Generated $(joinpath(output_dir, key * ".md"))"
 end
 
 # --- Entry point ---
