@@ -23,17 +23,6 @@ constexpr const char *root_schema_file = "config-schema.json";
 namespace
 {
 
-// Loader callback required by json_validator. With a single-file schema all $refs are
-// internal (#/$defs/...), so this should never be called.
-class EmbeddedSchemaLoader
-{
-public:
-  json operator()(const nlohmann::json_uri &uri, json &)
-  {
-    throw std::runtime_error("Unexpected external $ref: " + uri.url());
-  }
-};
-
 // Search for a schema property by key name, collecting all matches.
 // Helper for FindSchemaByKey - populates results vector. The depth parameter
 // guards against pathological self-referential $defs cycles.
@@ -403,7 +392,10 @@ std::string ValidateConfig(const nlohmann::json &config)
     return std::string("Failed to parse schema: ") + e.what();
   }
 
-  json_validator validator{EmbeddedSchemaLoader()};
+  // No schema loader is supplied: the single-file schema uses only internal
+  // ("#/$defs/...") references. An external $ref would make the validator throw a
+  // descriptive error, caught and returned below.
+  json_validator validator;
   try
   {
     validator.set_root_schema(schema);
@@ -447,7 +439,8 @@ std::string ValidateConfig(const nlohmann::json &config, const std::string &sche
     return "Schema key not found: " + schema_key;
   }
 
-  json_validator validator{EmbeddedSchemaLoader()};
+  // No schema loader is supplied: see the note in the single-argument overload above.
+  json_validator validator;
   try
   {
     validator.set_root_schema(sub_schema);
