@@ -160,6 +160,19 @@ include(Catch)
 # Common coverage environment variable setup
 set(SHOULD_SET_LLVM_PROFILE_FILE "$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:IntelLLVM>>>")
 
+# Test parallelism is a build-time contract so CTest accounts for every CPU a
+# test process occupies: PALACE_TESTS_NUMPROC MPI ranks x PALACE_TESTS_OMP_THREADS
+# OpenMP threads = the PROCESSORS slots each case reserves. The OpenMP count is
+# pinned via each test's ENVIRONMENT below (rather than read from a runtime
+# OMP_NUM_THREADS) so the slot accounting cannot drift. Both knobs cover the
+# unit tests as well, so a single setting controls the whole suite's footprint.
+set(PALACE_TESTS_NUMPROC 2 CACHE STRING
+    "MPI ranks per [Parallel]/[Regression] unit-test case.")
+set(PALACE_TESTS_OMP_THREADS 1 CACHE STRING
+    "OpenMP threads per unit-test process.")
+math(EXPR PALACE_TESTS_PROCESSORS "${PALACE_TESTS_NUMPROC} * ${PALACE_TESTS_OMP_THREADS}")
+set(PALACE_TESTS_OMP_ENV "OMP_NUM_THREADS=${PALACE_TESTS_OMP_THREADS}")
+
 # Serial tests
 catch_discover_tests(unit-tests
   TEST_PREFIX "serial-"
@@ -169,47 +182,39 @@ catch_discover_tests(unit-tests
   TEST_SPEC "[Serial]~[Regression]~[Long]"
   EXTRA_ARGS --skip-benchmarks
   PROPERTIES
+    PROCESSORS ${PALACE_TESTS_OMP_THREADS}
     SKIP_RETURN_CODE 4
-    # When building with coverage, set LLVM_PROFILE_FILE for parallel execution
-    ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/serial/coverage-%p.profraw>"
+    # Pin OpenMP threads; set LLVM_PROFILE_FILE for parallel coverage runs.
+    ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/serial/coverage-%p.profraw>"
 )
 
 # MPI tests  
 catch_discover_tests(unit-tests
   TEST_PREFIX "mpi-"
   TEST_SPEC "[Parallel]~[Regression]~[Long]"
-  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2 ${MPIEXEC_PREFLAGS}
+  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_TESTS_NUMPROC} ${MPIEXEC_PREFLAGS}
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS} --skip-benchmarks
   PROPERTIES
-    PROCESSORS 2
+    PROCESSORS ${PALACE_TESTS_PROCESSORS}
     SKIP_RETURN_CODE 4
-    # When building with coverage, set LLVM_PROFILE_FILE for parallel execution
-    ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
+    ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
 )
 
 # Regression tests: full-mesh Palace solves diffed against reference CSVs under
 # PALACE_TEST_DATA_DIR/regression/ref. Slow enough to deserve their own ctest
 # prefix (`ctest -L "^regression$"` to select, `-LE "^(regression|long)$"` to
-# skip both regression flavors).
-#
-# Rank count is a build-time knob so CTest knows exactly how many slots each
-# case consumes. CI chooses both values explicitly; for OpenMP jobs it sets
-# PROCESSORS to ranks * OMP_NUM_THREADS.
-set(PALACE_REGRESSION_NUMPROC 2 CACHE STRING
-    "MPI ranks per [Regression] ctest case.")
-set(PALACE_REGRESSION_PROCESSORS ${PALACE_REGRESSION_NUMPROC} CACHE STRING
-    "CTest processor slots reserved per [Regression] case.")
-
+# skip both regression flavors). Ranks/threads/slots follow the suite-wide
+# PALACE_TESTS_* contract above.
 catch_discover_tests(unit-tests
   TEST_PREFIX "regression-"
   TEST_SPEC "[Regression]~[Long]"
-  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_REGRESSION_NUMPROC} ${MPIEXEC_PREFLAGS}
+  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_TESTS_NUMPROC} ${MPIEXEC_PREFLAGS}
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS}
   PROPERTIES
     LABELS regression
-    PROCESSORS ${PALACE_REGRESSION_PROCESSORS}
+    PROCESSORS ${PALACE_TESTS_PROCESSORS}
     SKIP_RETURN_CODE 4
-    ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/regression/coverage-%p.profraw>"
+    ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/regression/coverage-%p.profraw>"
 )
 
 # Long regression tests: full-mesh Palace solves that take 10+ minutes
@@ -222,13 +227,13 @@ catch_discover_tests(unit-tests
 catch_discover_tests(unit-tests
   TEST_PREFIX "long-"
   TEST_SPEC "[Long]"
-  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_REGRESSION_NUMPROC} ${MPIEXEC_PREFLAGS}
+  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_TESTS_NUMPROC} ${MPIEXEC_PREFLAGS}
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS}
   PROPERTIES
     LABELS long
-    PROCESSORS ${PALACE_REGRESSION_PROCESSORS}
+    PROCESSORS ${PALACE_TESTS_PROCESSORS}
     SKIP_RETURN_CODE 4
-    ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/regression/coverage-%p.profraw>"
+    ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/regression/coverage-%p.profraw>"
 )
 
 # GPU tests (if available)
@@ -249,10 +254,11 @@ if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
       # Don't allow more than one GPU test at a time.
       # In theory, we could allow one per GPU, but that's much harder to implement.
       RESOURCE_LOCK gpu
+      PROCESSORS ${PALACE_TESTS_OMP_THREADS}
       SKIP_RETURN_CODE 4
 
-      # When building with coverage, set LLVM_PROFILE_FILE for parallel execution
-      ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/gpu/coverage-%p.profraw>"
+      # Pin OpenMP threads; set LLVM_PROFILE_FILE for parallel coverage runs.
+      ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/gpu/coverage-%p.profraw>"
   )
 
   # TODO: ADD MPI+GPU tests. This requires checking that we have enough GPUs

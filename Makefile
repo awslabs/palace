@@ -27,7 +27,7 @@ docs-generate-config:
 # Tests
 #
 # Runs the [Regression] cases against an existing CMake build tree.
-# Override BUILD_DIR if your build lives elsewhere; PALACE_REGRESSION_NUMPROC
+# Override BUILD_DIR if your build lives elsewhere; PALACE_TESTS_NUMPROC
 # (default 2, set in test/unit/CMakeLists.txt) controls per-case rank count.
 BUILD_DIR ?= build
 tests:

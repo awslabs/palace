@@ -469,22 +469,25 @@ keep runner occupancy reasonable.
 #### CTest invocation
 
 Each regression case is also registered as an individual `regression-*`
-CTest entry with label `regression`. The CMake cache variables
-`PALACE_REGRESSION_NUMPROC` (default 2) and
-`PALACE_REGRESSION_PROCESSORS` (defaulting to the same value) set the MPI rank
-count and the CTest slot reservation for each case. CI passes both explicitly;
-for OpenMP jobs, `PALACE_REGRESSION_PROCESSORS` is ranks multiplied by
-`OMP_NUM_THREADS`.
+CTest entry with label `regression`. The whole suite (serial, MPI, and
+regression cases) shares two build-time cache variables:
+`PALACE_TESTS_NUMPROC` (default 2) sets the MPI rank count and
+`PALACE_TESTS_OMP_THREADS` (default 1) sets the OpenMP threads per process.
+Each case reserves `PALACE_TESTS_NUMPROC * PALACE_TESTS_OMP_THREADS` CTest
+slots (`PROCESSORS`) and the harness pins `OMP_NUM_THREADS` to the configured
+value, so a runtime `OMP_NUM_THREADS` cannot desync the slot accounting. CI
+passes both values explicitly; `ctest -j N` then only bounds how many cases
+run concurrently.
 
 ```bash
 # CI-style: let CTest schedule the regression cases
-ctest -L "^regression$" -j 8 --output-on-failure
+ctest -L "^regression$" -j "$(nproc)" --output-on-failure
 
 # Just the cpw eigen cases
-ctest -L "^regression$" -R cpw_.*_eigen -j 8 --output-on-failure
+ctest -L "^regression$" -R cpw_.*_eigen -j "$(nproc)" --output-on-failure
 
 # Long regression cases (transmon eigenmodes)
-ctest -L "^long$" -j 8 --output-on-failure
+ctest -L "^long$" -j "$(nproc)" --output-on-failure
 ```
 
 Catch2 tag combinations work as you'd expect:

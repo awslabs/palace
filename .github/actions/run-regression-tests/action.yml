@@ -92,10 +92,6 @@ runs:
 
         eval $(spack -e . load --sh palace)
 
-        # The installed palace-unit-tests binary was built with
-        # PALACE_TEST_DATA_DIR pointing at the installed test data. Regression
-        # configs, meshes, and references live under that tree, so the split
-        # Spack jobs can run the installed binary directly.
         LINEAR_SOLVER="${{ inputs.linear-solver }}"
         EXTRA_ARGS=(--palace-linear-solver "${LINEAR_SOLVER:-Default}")
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then

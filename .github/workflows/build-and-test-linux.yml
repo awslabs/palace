@@ -457,19 +457,19 @@ jobs:
 
           # Build and install (with unit tests)
           # Compile so that MFEM throws exceptions rather then aborts for unit-tests
-          REGRESSION_NUM_PROC=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
-          if [[ "$REGRESSION_NUM_PROC" -gt 8 ]]; then
-            REGRESSION_NUM_PROC=8
-          fi
-          REGRESSION_PROCESSORS=$REGRESSION_NUM_PROC
+          # Tests run at a fixed PALACE_TESTS_NUMPROC ranks; OpenMP jobs pin two
+          # threads per process. CTest derives PROCESSORS = ranks x threads and
+          # pins OMP_NUM_THREADS itself, so -j only bounds case concurrency.
           if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
-            REGRESSION_NUM_PROC=$(( REGRESSION_NUM_PROC / 2 ))
+            TESTS_OMP_THREADS=2
+          else
+            TESTS_OMP_THREADS=1
           fi
           mkdir palace-build && cd palace-build
           cmake .. \
             -DCMAKE_INSTALL_PREFIX=$(pwd)/../palace-install \
-            -DPALACE_REGRESSION_NUMPROC=$REGRESSION_NUM_PROC \
-            -DPALACE_REGRESSION_PROCESSORS=$REGRESSION_PROCESSORS \
+            -DPALACE_TESTS_NUMPROC=2 \
+            -DPALACE_TESTS_OMP_THREADS=$TESTS_OMP_THREADS \
             -DBUILD_SHARED_LIBS=$BUILD_SHARED \
             -DPALACE_WITH_64BIT_INT=$WITH_INT64 \
             -DPALACE_WITH_OPENMP=$WITH_OPENMP \
@@ -489,19 +489,12 @@ jobs:
       - name: Run unit tests
         if: needs.filter.outputs.test == 'true'
         timeout-minutes: 10
-        env:
-          NUM_PROC_TEST_MAX: '8'
         run: |
           # Configure environment
           if [[ "${{ matrix.compiler }}" == 'intel' ]] || \
              [[ "${{ matrix.mpi }}" == 'intelmpi' ]] || \
              [[ "${{ matrix.math-libs }}" == 'intelmkl' ]]; then
             source /opt/intel/oneapi/setvars.sh  # Sets PATH, MKLROOT
-          fi
-          if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
-            export OMP_NUM_THREADS=2
-          else
-            export OMP_NUM_THREADS=1
           fi
           export LD_LIBRARY_PATH=$(pwd)/palace-install/lib:$LD_LIBRARY_PATH
           export LD_LIBRARY_PATH=$(pwd)/palace-install/lib64:$LD_LIBRARY_PATH
@@ -528,8 +521,9 @@ jobs:
           else
             cd $(pwd)/palace-build/palace-build/test/unit
             # Skip [Regression] and [Long] cases here; they have their
-            # own slower steps further down.
-            ctest -j $NUM_PROC_TEST_MAX --output-on-failure -LE "^(regression|long)$"
+            # own slower steps further down. CTest pins OMP_NUM_THREADS and
+            # reserves PROCESSORS per case, so -j just bounds concurrency.
+            ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -LE "^(regression|long)$"
           fi
 
       - name: Deploy coverage to gh-pages
@@ -569,8 +563,6 @@ jobs:
         # "regression"). The configured MPI rank count and PROCESSORS property
         # reserve matching ctest slots so -j can fan out safely.
         timeout-minutes: 60
-        env:
-          NUM_PROC_TEST_MAX: '8'
         run: |
           # Configure environment
           if [[ "${{ matrix.compiler }}" == 'intel' ]] || \
@@ -584,19 +576,12 @@ jobs:
           if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
             export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
           fi
-          export CTEST_PARALLEL_LEVEL=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
-          if [[ "$CTEST_PARALLEL_LEVEL" -gt "$NUM_PROC_TEST_MAX" ]]; then
-            CTEST_PARALLEL_LEVEL=$NUM_PROC_TEST_MAX
-          fi
-          if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
-            export OMP_NUM_THREADS=2
-          else
-            export OMP_NUM_THREADS=1
-          fi
           export PATH=$(pwd)/palace-install/bin:$PATH
 
           cd palace-build/palace-build/test/unit
-          ctest -j "$CTEST_PARALLEL_LEVEL" --output-on-failure -L "^regression$"
+          # CTest pins OMP_NUM_THREADS and reserves PROCESSORS per case, so -j is
+          # just an upper bound on concurrency and can safely be all cores.
+          ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -L "^regression$"
 
       - name: Check antenna postprocessing example
         # The Julia plot script that ships with the antenna example is
