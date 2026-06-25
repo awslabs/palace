@@ -3102,8 +3102,10 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
           face_to_be.clear();
           return 0;  // Mesh was converted to simplices, start over
         }
-        const bool periodic = !iodata.boundaries.periodic.boundary_pairs.empty() ||
-                              std::getenv("PALACE_773_FORCE_LES");
+        const char *force_les_env = std::getenv("PALACE_773_FORCE_LES");
+        const bool force_les = force_les_env && std::string(force_les_env) != "0";
+        const bool periodic =
+            !iodata.boundaries.periodic.boundary_pairs.empty() || force_les;
         if (!periodic)
         {
           // Non-periodic mesh: use MFEM's marked-edge conforming refinement.
