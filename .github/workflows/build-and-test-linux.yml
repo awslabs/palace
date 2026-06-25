@@ -529,14 +529,18 @@ jobs:
 
       - name: Add coverage link to summary
         if: needs.filter.outputs.test == 'true' && matrix.with-coverage
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.sha }}
         run: |
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            COVERAGE_URL="https://awslabs.github.io/palace/previews/PR${{ github.event.pull_request.number }}/coverage/"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            COVERAGE_URL="https://awslabs.github.io/palace/previews/PR${PR_NUMBER}/coverage/"
           else
-            COVERAGE_URL="https://awslabs.github.io/palace/coverage/${{ github.sha }}/"
+            COVERAGE_URL="https://awslabs.github.io/palace/coverage/${SHA}/"
           fi
-          echo "### Coverage Report" >> $GITHUB_STEP_SUMMARY
-          echo "View the coverage report at: [Coverage Report](${COVERAGE_URL})" >> $GITHUB_STEP_SUMMARY
+          echo "### Coverage Report" >> "$GITHUB_STEP_SUMMARY"
+          echo "View the coverage report at: [Coverage Report](${COVERAGE_URL})" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage report
         if: needs.filter.outputs.test == 'true' && matrix.with-coverage

@@ -54,22 +54,26 @@ jobs:
 
       - name: Set success status
         if: github.event_name == 'pull_request' && success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+          gh api "repos/$REPO/statuses/$HEAD_SHA" \
             --method POST \
             --field state=success \
             --field context=long-tests \
             --field description="Long tests passed"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set failure status
         if: github.event_name == 'pull_request' && (failure() || cancelled())
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+          gh api "repos/$REPO/statuses/$HEAD_SHA" \
             --method POST \
             --field state=failure \
             --field context=long-tests \
             --field description="Long tests failed"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

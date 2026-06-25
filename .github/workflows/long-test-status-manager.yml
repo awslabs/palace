@@ -56,14 +56,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Set bypass status for trivial changes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+          gh api "repos/$REPO/statuses/$HEAD_SHA" \
             --method POST \
             --field state=success \
             --field context=long-tests \
             --field description="Long tests bypassed (trivial changes)"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Require long tests when non-trivial changes are detected
   handle-non-trivial-changes:
@@ -74,14 +76,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Set pending status for non-trivial changes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+          gh api "repos/$REPO/statuses/$HEAD_SHA" \
             --method POST \
             --field state=pending \
             --field context=long-tests \
             --field description="Waiting for long tests (add 'trigger-long-tests' label to run)"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Handle adding/removing 'no-long-tests' label
   handle-no-long-tests:
@@ -91,23 +95,27 @@ jobs:
       # When label is added: bypass long test requirement
       - name: Set bypass status
         if: github.event.action == 'labeled'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+          gh api "repos/$REPO/statuses/$HEAD_SHA" \
             --method POST \
             --field state=success \
             --field context=long-tests \
             --field description="Long tests bypassed"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # When label is removed: require long tests again
       - name: Remove bypass status
         if: github.event.action == 'unlabeled'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+          gh api "repos/$REPO/statuses/$HEAD_SHA" \
             --method POST \
             --field state=pending \
             --field context=long-tests \
             --field description="Waiting for long tests (add 'trigger-long-tests' label to run)"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
