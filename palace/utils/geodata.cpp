@@ -260,6 +260,14 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
                  iodata.model.mesh);
   }
 
+  if (const char *cmp = std::getenv("PALACE_773_DUMP"); cmp && Mpi::Root(comm) && smesh)
+  {
+    std::ofstream fo(cmp);
+    fo.precision(MSH_FLT_PRECISION);
+    smesh->Print(fo);
+    Mpi::Print("[773-CMP] Wrote preprocessed mesh to {}\n", cmp);
+  }
+
   return smesh;
 }
 
@@ -2342,17 +2350,52 @@ int LocalEdgeSplit(std::unique_ptr<mfem::Mesh> &orig_mesh,
     return ring;
   };
 
+  // Edge length (squared) helper for quality-preserving selection ordering.
+  auto edge_len2 = [&](const std::pair<int, int> &e)
+  {
+    const double *c0 = orig_mesh->GetVertex(e.first);
+    const double *c1 = orig_mesh->GetVertex(e.second);
+    double l2 = 0.0;
+    for (int d = 0; d < orig_mesh->SpaceDimension(); d++)
+    {
+      l2 += (c0[d] - c1[d]) * (c0[d] - c1[d]);
+    }
+    return l2;
+  };
+
+  // Order the candidate edges by descending length so that the greedy independent-set
+  // selection below prefers the longest edge. When a tetrahedron is incident on more than
+  // one flagged edge, this makes the longest of them claim the tet, matching the
+  // longest-edge bisection used by mfem::Mesh::GeneralRefinement (the conforming-refinement
+  // path this routine replaces) and preserving element quality. Equal-length ties are broken
+  // by the sorted vertex pair for determinism.
+  std::vector<std::pair<int, int>> sorted_edges;
+  sorted_edges.reserve(edges.size());
+  for (const auto &e : edges)
+  {
+    sorted_edges.push_back({std::min(e.first, e.second), std::max(e.first, e.second)});
+  }
+  std::sort(sorted_edges.begin(), sorted_edges.end(),
+            [&](const std::pair<int, int> &a, const std::pair<int, int> &b)
+            {
+              double la = edge_len2(a), lb = edge_len2(b);
+              if (la != lb)
+              {
+                return la > lb;  // longest first
+              }
+              return a < b;  // deterministic tie-break
+            });
+
   // Select a maximal independent set of candidate edges: greedily accept an edge only if
   // none of the tetrahedra in its ring already belong to an accepted edge. Each accepted
   // edge is assigned a unique midpoint vertex id (appended after the original vertices).
-  // Map from a sorted vertex pair to the midpoint vertex id. The ids are assigned in a
-  // second pass over the (sorted) map so that they increase in the same order the midpoint
-  // vertices are subsequently added via AddVertex below; assigning during the (input-order)
-  // selection loop would mismatch the id with the AddVertex order whenever the input edge
-  // order differs from the sorted-key order, corrupting midpoint coordinates.
+  // The ids are assigned in a second pass over the (sorted) map so that they increase in
+  // the same order the midpoint vertices are subsequently added via AddVertex below;
+  // assigning during the selection loop would mismatch the id with the AddVertex order
+  // whenever the selection order differs from the sorted-key order.
   std::map<std::pair<int, int>, int> edge_midpoint;
   std::unordered_set<int> claimed_elem;
-  for (const auto &e : edges)
+  for (const auto &e : sorted_edges)
   {
     int v0 = e.first, v1 = e.second;
     auto ring = edge_ring(v0, v1);
@@ -3059,7 +3102,8 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
           face_to_be.clear();
           return 0;  // Mesh was converted to simplices, start over
         }
-        const bool periodic = !iodata.boundaries.periodic.boundary_pairs.empty();
+        const bool periodic = !iodata.boundaries.periodic.boundary_pairs.empty() ||
+                              std::getenv("PALACE_773_FORCE_LES");
         if (!periodic)
         {
           // Non-periodic mesh: use MFEM's marked-edge conforming refinement.
