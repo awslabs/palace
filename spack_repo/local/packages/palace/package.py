@@ -320,9 +320,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
             # Pin the test suite's MPI ranks and OpenMP threads so CTest's
-            # PROCESSORS accounting (ranks x threads) is exact. GPU builds run
-            # the regression cases single-rank.
-            self.define("PALACE_TESTS_NUMPROC", 1 if self.spec.satisfies("+cuda") else 2),
+            # PROCESSORS accounting (ranks x threads) is exact. Keep ~8 CPUs per
+            # case (fewer ranks shift tail eigenvalues past tolerance for some
+            # solvers); GPU builds run single-rank.
+            self.define(
+                "PALACE_TESTS_NUMPROC",
+                1 if self.spec.satisfies("+cuda") else (4 if self.spec.satisfies("+openmp") else 8),
+            ),
             self.define("PALACE_TESTS_OMP_THREADS", 2 if self.spec.satisfies("+openmp") else 1),
         ]
 

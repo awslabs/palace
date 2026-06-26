@@ -457,18 +457,27 @@ jobs:
 
           # Build and install (with unit tests)
           # Compile so that MFEM throws exceptions rather then aborts for unit-tests
-          # Tests run at a fixed PALACE_TESTS_NUMPROC ranks; OpenMP jobs pin two
-          # threads per process. CTest derives PROCESSORS = ranks x threads and
-          # pins OMP_NUM_THREADS itself, so -j only bounds case concurrency.
+          # Tests run at PALACE_TESTS_NUMPROC ranks x PALACE_TESTS_OMP_THREADS
+          # threads; CTest derives PROCESSORS = ranks x threads and pins
+          # OMP_NUM_THREADS, so -j only bounds concurrency. Keep ~8 CPUs per case
+          # (fewer ranks shift tail eigenvalues past tolerance for some solvers).
+          TEST_CORES=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
+          if [[ "$TEST_CORES" -gt 8 ]]; then
+            TEST_CORES=8
+          fi
           if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
             TESTS_OMP_THREADS=2
           else
             TESTS_OMP_THREADS=1
           fi
+          TESTS_NUMPROC=$(( TEST_CORES / TESTS_OMP_THREADS ))
+          if [[ "$TESTS_NUMPROC" -lt 1 ]]; then
+            TESTS_NUMPROC=1
+          fi
           mkdir palace-build && cd palace-build
           cmake .. \
             -DCMAKE_INSTALL_PREFIX=$(pwd)/../palace-install \
-            -DPALACE_TESTS_NUMPROC=2 \
+            -DPALACE_TESTS_NUMPROC=$TESTS_NUMPROC \
             -DPALACE_TESTS_OMP_THREADS=$TESTS_OMP_THREADS \
             -DBUILD_SHARED_LIBS=$BUILD_SHARED \
             -DPALACE_WITH_64BIT_INT=$WITH_INT64 \
