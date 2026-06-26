@@ -10,13 +10,13 @@ SPDX-License-Identifier: Apache-2.0
 In this tutorial we discuss *Palace*'s circuit synthesis feature, which extracts a lumped-circuit
 model of a device directly from the full-wave FEM. The synthesis feature is based on the rational
 interpolation of the adaptive driven solver, which is discussed in [Driven Solver: Uniform vs
-Adaptive](../features/adaptive_driven_solver.md). We assume familiarity with the details therein.
+Adaptive](adaptive_driven_solver.md). We assume familiarity with the details therein.
 We will continue to use the transmon model as our reference example, which features in the
-[eigenmode](transmon.md) and [driven](../features/adaptive_driven_solver.md) tutorials.
+[eigenmode](../examples/transmon.md) and [driven](adaptive_driven_solver.md) tutorials.
 
 !!! warning "Warning: More Algorithmic Details Ahead!"
 
-    The synthesis feature prints out circuit matrices, whose detailed form depends on "internal" algorithmic choices of the [adaptive driven solver](../features/adaptive_driven_solver.md) and on *Palace*'s conventions.
+    The synthesis feature prints out circuit matrices, whose detailed form depends on "internal" algorithmic choices of the [adaptive driven solver](adaptive_driven_solver.md) and on *Palace*'s conventions.
 
     The internal algorithmic choices may change if better numerical algorithms become available. Furthermore, the interpretation of the output results requires some care to get right. Please proceed with caution.
 
@@ -33,7 +33,7 @@ We will continue to use the transmon model as our reference example, which featu
 ## Circuit Synthesis Quick-Start
 
 The circuit extraction requires using the adaptive driven solver (`"AdaptiveTol" > 0`) and setting
-the flag [`"AdaptiveCircuitSynthesis": true`](../config/solver.md#solver%5B%22Driven%22%5D). A
+the flag [`"AdaptiveCircuitSynthesis": true`](../config/reference.md#config-solver-driven). A
 `"Solver"/"Driven"` configuration might look like:
 
 ```json
@@ -58,7 +58,7 @@ of the driven solver as well as the following additional files:
     synthesized matrices ``\mathrm{Im}~\widehat{\bm{L}}^{-1}``, ``\mathrm{Im}~\widehat{\bm{R}}^{-1}``,
     ``\mathrm{Im}~\widehat{\bm{C}}``. Each matrix is only printed when the *Palace* simulation contains a
     non-zero contribution to that matrix. For example, a [material loss
-    tangent](../config/domains.md#domains%5B%22Materials%22%5D) results in a contribution to
+    tangent](../config/reference.md#config-domains-materials) results in a contribution to
     ``\mathrm{Im}~\widehat{\bm{C}}``. These terms may seem unfamiliar, since in "textbook" circuits ``\widehat{\bm{L}}``,
     ``\widehat{\bm{R}}``, ``\widehat{\bm{C}}`` are real.
   - `rom-orthogonalization-matrix-R.csv`: the Gram–Schmidt ``R`` factor of the synthesized circuit
@@ -74,14 +74,14 @@ There are several constraints and considerations for using this feature:
     that that lumped ports cannot share parallel edges, since the degree of freedom on the edge
     contributes to both ports.
   - The
-    [`"AdaptiveCircuitSynthesisDomainOrthogonalization"`](../config/solver.md#solver%5B%22Driven%22%5D)
+    [`"AdaptiveCircuitSynthesisDomainOrthogonalization"`](../config/reference.md#config-solver-driven)
     option controls how the non-port basis vectors are orthogonalized and therefore determines the
     voltage normalization of synthesized nodes. In general, a user should not need to switch from
     the default value of `"Energy"`.
   - `"AdaptiveCircuitSynthesis": true` requires `"AdaptiveTol" > 0`; *Palace* reports an error
     otherwise.
   - All the guidance and caveats on using the adaptive solver discussed in [Driven Solver: Uniform
-    vs Adaptive](../features/adaptive_driven_solver.md) still apply.
+    vs Adaptive](adaptive_driven_solver.md) still apply.
 
 ## Circuit Theory and Conventions
 
@@ -92,13 +92,13 @@ magnetostatic) to AC simulations. We will discuss our approach below, but refer 
 for in-depth discussions.
 
 The circuit synthesis of *Palace* is currently based on the adaptive driven solver — [see the driven
-solver tutorial](../features/adaptive_driven_solver.md) — so is AC *only*. The result will be an
+solver tutorial](adaptive_driven_solver.md) — so is AC *only*. The result will be an
 effective (synthesized) circuit that will only accurately reproduce the response in the domain it
 was trained on.
 
 ### Projective Construction
 
-Let us recall the basics of the [ROM construction](../features/adaptive_driven_solver.md). The
+Let us recall the basics of the [ROM construction](adaptive_driven_solver.md). The
 linear equation that Palace solves when evaluating an driven simulation is ``\bm{A}(\omega) \bm{x} = i \omega \bm{b}``, where
 
 ```math
@@ -228,13 +228,13 @@ not only that it corresponds to a sensible physical quantity and so converges to
 changing finite element order or mesh refinement. We refer to the orthogonalization as `"Energy"`.
 
 *Palace* offers the user to change the orthogonalization rule with the flag
-[`"AdaptiveCircuitSynthesisDomainOrthogonalization"`](../config/solver.md#solver%5B%22Driven%22%5D),
+[`"AdaptiveCircuitSynthesisDomainOrthogonalization"`](../config/reference.md#config-solver-driven),
 although most users should not need this.
 
 ## Running the Transmon Model with Circuit Synthesis
 
-We continue with the transmon model from the [eigenmode](transmon.md) and [driven
-solver](../features/adaptive_driven_solver.md) tutorials. We enable circuit synthesis with the
+We continue with the transmon model from the [eigenmode](../examples/transmon.md) and [driven
+solver](adaptive_driven_solver.md) tutorials. We enable circuit synthesis with the
 `"AdaptiveCircuitSynthesis": true` flag:
 
 ```json
@@ -293,10 +293,10 @@ Let us look at the difference in the standard output `domain-E.csv` between the 
 
 The left column above shows the domain electric energy ``E_\mathrm{elec}`` from the uniform driven
 solver, which we use as our reference baseline. This is exactly the same data shown previously in
-the [driven solver tutorial](../features/adaptive_driven_solver.md#transmon-example). The
+the [driven solver tutorial](adaptive_driven_solver.md#transmon-example). The
 middle column shows the RMS normalized absolute error between the electric energy calculated via the
 adaptive solver with circuit synthesis turned on and the uniform reference. The meaning of this plot
-was described [previously](../features/adaptive_driven_solver.md#transmon-example). The
+was described [previously](adaptive_driven_solver.md#transmon-example). The
 dashed lines indicate the adaptive tolerance `"AdaptiveTol"`; however, these are *not* bounds on
 the error of the domain energy. As discussed in the driven solver tutorial, the adaptive tolerance
 controls the error in the electric field coefficients and not the error in a derived quantity such
