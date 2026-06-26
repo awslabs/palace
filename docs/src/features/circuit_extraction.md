@@ -192,10 +192,15 @@ the port ``\bm{e}_j`` is via the inner product defined by the power flow:
 \langle \bm{E}_1, \bm{e}_j \rangle_{\Gamma_j} = \int_{\Gamma_j} dS \, \bm{n} \cdot (\bm{E}_1 \times \frac{[\bm{e}_j]^*}{Z_s})
 ```
 
-This matches the requirements from the Lorentz reciprocity theorem. Intuitively, it means that if
-every boundary mode ``\bm{e}`` carries energy independently, which is essential to recover the
-correct excitation behaviour. When ``E = \bm{e}_j``, this is the defines the normalization of the
-port mode. [TODO: WHAT IS THE NORAMLIZATION].
+This is the time-averaged power flowing across the port (a Poynting flux), and using it as the
+inner product is what makes the orthogonalization consistent with Lorentz reciprocity. Intuitively,
+it means that each boundary mode ``\bm{e}_j`` carries power independently of the others — the port
+modes are *power-orthogonal* — which is essential to recover the correct port excitation and
+scattering behaviour. Setting ``\bm{E}_1 = \bm{e}_j`` then fixes the normalization of the port mode:
+*Palace* scales ``\bm{e}_j`` so that ``\int_{\Gamma_j} |\bm{e}_j|^2 \, dS = |Z_R| \sum_e W_e / L_e``,
+summed over the port's lumped elements with widths ``W_e`` and lengths ``L_e``. For a single
+rectangular element this corresponds to a port voltage ``V_j = \sqrt{|Z_R|}``, i.e. a mode carrying
+unit power referenced to ``Z_R``.
 
 The [reference](../reference.md) discusses the relationship between physical surface impedance on a
 port ``Z_s`` and the circuit characteristic impedance ``Z``. For ports that are not purely resistive
