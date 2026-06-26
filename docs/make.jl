@@ -87,7 +87,8 @@ makedocs(
             "guide/parallelism.md"
         ],
         "Configuration File" => Any["config/config.md", "config/reference.md"],
-        "Features" => Any["features/farfield.md", "features/adaptive_driven_solver.md"],
+        "Features" => Any["features/farfield.md", "features/adaptive_driven_solver.md",
+                          "features/driven_rom_and_circuits.md"],
         "Examples" => Any[
             "examples/examples.md",
             "examples/spheres.md",
@@ -98,7 +99,8 @@ makedocs(
             "examples/coaxial.md",
             "examples/cpw.md",
             "examples/cpw2d.md",
-            "examples/dielectric_grating.md"
+            "examples/dielectric_grating.md",
+            "examples/tutorial_circuit_extraction.md"
         ],
         "faq.md",
         "For Developers" => Any[
