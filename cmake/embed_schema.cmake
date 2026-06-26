@@ -17,7 +17,7 @@ get_filename_component(SCHEMA_OUTPUT_DIR "${SCHEMA_HEADER}" DIRECTORY)
 file(MAKE_DIRECTORY "${SCHEMA_OUTPUT_DIR}")
 
 # Collect all schema files
-file(GLOB_RECURSE SCHEMA_FILES "${SCHEMA_DIR}/*.json")
+file(GLOB SCHEMA_FILES "${SCHEMA_DIR}/*.json")
 
 # Generate the header file
 set(SCHEMA_HEADER_CONTENT

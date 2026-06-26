@@ -30,20 +30,19 @@ namespace
 // the mesh at runtime, `MaterialAxes`/`Center` carry opt-in semantics where absence
 // is meaningful).
 //
-// `schema_filename` is the key in `schema::GetSchemaMap()` (e.g. "config/model.json").
-// `pointer` is a JSON Pointer into that schema document selecting the scope to walk
-// (e.g. "" for the top of model.json, "/properties/Refinement" for the nested
-// Refinement object, or "/properties/Conductivity/items" for an array element).
+// `pointer` is a JSON Pointer into the root schema document selecting the scope to walk
+// (e.g. "/properties/Model" for the Model section,
+// "/properties/Model/properties/Refinement" for a nested object, or
+// "/properties/Boundaries/properties/Conductivity/items" for an array element).
 //
 // Use this in round-trip tests to catch the case where someone adds a new optional
 // schema property without wiring `ConcretizeDefaults` to emit it.
-std::vector<std::string> SchemaCoverageGaps(const std::string &schema_filename,
-                                            const std::string &pointer,
+std::vector<std::string> SchemaCoverageGaps(const std::string &pointer,
                                             const json &concretized_subtree,
                                             const std::set<std::string> &skip = {})
 {
   const auto &schema_map = schema::GetSchemaMap();
-  auto it = schema_map.find(schema_filename);
+  auto it = schema_map.find("config-schema.json");
   REQUIRE(it != schema_map.end());
   const json schema = json::parse(it->second);
 
@@ -1245,53 +1244,50 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
     // Coverage gates. Each schema scope this fixture exercises is checked here so a
     // future schema addition without matching Concretize emission fails this section.
-    auto model_gaps = SchemaCoverageGaps("config/model.json", "", config["Model"],
+    auto model_gaps = SchemaCoverageGaps("/properties/Model", config["Model"],
                                          /*skip=*/{"Lc"});
     INFO("Model missing keys: " << json(model_gaps).dump());
     CHECK(model_gaps.empty());
 
     // Boxes/Spheres are opt-in arrays of explicit refinement regions; absence means
     // no per-region refinement and there is no scalar default to emit.
-    auto ref_gaps = SchemaCoverageGaps("config/model.json", "/properties/Refinement",
+    auto ref_gaps = SchemaCoverageGaps("/properties/Model/properties/Refinement",
                                        config["Model"]["Refinement"],
                                        /*skip=*/{"Boxes", "Spheres"});
     INFO("Model.Refinement missing keys: " << json(ref_gaps).dump());
     CHECK(ref_gaps.empty());
 
-    auto abs_gaps = SchemaCoverageGaps("config/boundaries.json", "/properties/Absorbing",
+    auto abs_gaps = SchemaCoverageGaps("/properties/Boundaries/properties/Absorbing",
                                        config["Boundaries"]["Absorbing"]);
     INFO("Boundaries.Absorbing missing keys: " << json(abs_gaps).dump());
     CHECK(abs_gaps.empty());
 
     auto cond_gaps =
-        SchemaCoverageGaps("config/boundaries.json", "/properties/Conductivity/items",
+        SchemaCoverageGaps("/properties/Boundaries/properties/Conductivity/items",
                            config["Boundaries"]["Conductivity"][0]);
     INFO("Boundaries.Conductivity[] missing keys: " << json(cond_gaps).dump());
     CHECK(cond_gaps.empty());
 
-    auto imp_gaps =
-        SchemaCoverageGaps("config/boundaries.json", "/properties/Impedance/items",
-                           config["Boundaries"]["Impedance"][0]);
+    auto imp_gaps = SchemaCoverageGaps("/properties/Boundaries/properties/Impedance/items",
+                                       config["Boundaries"]["Impedance"][0]);
     INFO("Boundaries.Impedance[] missing keys: " << json(imp_gaps).dump());
     CHECK(imp_gaps.empty());
 
     // LumpedPort: Direction/CoordinateSystem/Elements are opt-in alternatives to
     // Attributes for declaring the port geometry; concretize does not synthesize them.
-    auto lp_gaps =
-        SchemaCoverageGaps("config/boundaries.json", "/properties/LumpedPort/items",
-                           config["Boundaries"]["LumpedPort"][0],
-                           /*skip=*/{"CoordinateSystem", "Elements"});
+    auto lp_gaps = SchemaCoverageGaps("/properties/Boundaries/properties/LumpedPort/items",
+                                      config["Boundaries"]["LumpedPort"][0],
+                                      /*skip=*/{"CoordinateSystem", "Elements"});
     INFO("Boundaries.LumpedPort[] missing keys: " << json(lp_gaps).dump());
     CHECK(lp_gaps.empty());
 
-    auto fp_gaps =
-        SchemaCoverageGaps("config/boundaries.json", "/properties/FloquetPort/items",
-                           config["Boundaries"]["FloquetPort"][0],
-                           /*skip=*/{"MaxOrder"});
+    auto fp_gaps = SchemaCoverageGaps("/properties/Boundaries/properties/FloquetPort/items",
+                                      config["Boundaries"]["FloquetPort"][0],
+                                      /*skip=*/{"MaxOrder"});
     INFO("Boundaries.FloquetPort[] missing keys: " << json(fp_gaps).dump());
     CHECK(fp_gaps.empty());
 
-    auto per_gaps = SchemaCoverageGaps("config/boundaries.json", "/properties/Periodic",
+    auto per_gaps = SchemaCoverageGaps("/properties/Boundaries/properties/Periodic",
                                        config["Boundaries"]["Periodic"]);
     INFO("Boundaries.Periodic missing keys: " << json(per_gaps).dump());
     CHECK(per_gaps.empty());
@@ -1346,7 +1342,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     // Coverage gate: every optional schema property under Solver.Eigenmode must be
     // emitted by ConcretizeDefaults. A schema addition without a Concretize update
     // surfaces here.
-    auto eigen_gaps = SchemaCoverageGaps("config/solver.json", "/properties/Eigenmode",
+    auto eigen_gaps = SchemaCoverageGaps("/properties/Solver/properties/Eigenmode",
                                          config["Solver"]["Eigenmode"]);
     INFO("Solver.Eigenmode missing keys: " << json(eigen_gaps).dump());
     CHECK(eigen_gaps.empty());
@@ -1380,7 +1376,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     // Coverage gate. Order/RelTol/AbsTol are intentionally only emitted for the
     // adaptive CVODE/ARKODE schemes (GEN_ALPHA/RUNGE_KUTTA warn if present); this
     // test uses the default GEN_ALPHA, so we skip them here.
-    auto trans_gaps = SchemaCoverageGaps("config/solver.json", "/properties/Transient",
+    auto trans_gaps = SchemaCoverageGaps("/properties/Solver/properties/Transient",
                                          config["Solver"]["Transient"],
                                          /*skip=*/{"Order", "RelTol", "AbsTol"});
     INFO("Solver.Transient missing keys: " << json(trans_gaps).dump());
@@ -1417,7 +1413,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     // Coverage gate. Attributes is opt-in (used to extract a 2D submesh from a 3D
     // mesh); leaving it absent means "use the parent mesh as-is". Target is resolved
     // from the mesh/materials at solve time, so omission remains the auto-selection path.
-    auto bm_gaps = SchemaCoverageGaps("config/solver.json", "/properties/BoundaryMode",
+    auto bm_gaps = SchemaCoverageGaps("/properties/Solver/properties/BoundaryMode",
                                       config["Solver"]["BoundaryMode"],
                                       /*skip=*/{"Attributes", "Target"});
     INFO("Solver.BoundaryMode missing keys: " << json(bm_gaps).dump());
@@ -1464,10 +1460,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     // polarity; absence means the internal polarity convention is used. Both are
     // opt-in features with no meaningful default value to emit (mutually exclusive),
     // so they are deliberately not concretized.
-    auto wp_gaps =
-        SchemaCoverageGaps("config/boundaries.json", "/properties/WavePort/items",
-                           config["Boundaries"]["WavePort"][0],
-                           /*skip=*/{"VoltagePath", "PolarityAttributes"});
+    auto wp_gaps = SchemaCoverageGaps("/properties/Boundaries/properties/WavePort/items",
+                                      config["Boundaries"]["WavePort"][0],
+                                      /*skip=*/{"VoltagePath", "PolarityAttributes"});
     INFO("Boundaries.WavePort[] missing keys: " << json(wp_gaps).dump());
     CHECK(wp_gaps.empty());
   }
@@ -1514,7 +1509,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
     // Coverage gate. MaterialAxes is opt-in: omission means "diagonal in standard
     // basis". Concretize does not synthesize one.
-    auto mat_gaps = SchemaCoverageGaps("config/domains.json", "/properties/Materials/items",
+    auto mat_gaps = SchemaCoverageGaps("/properties/Domains/properties/Materials/items",
                                        config["Domains"]["Materials"][0],
                                        /*skip=*/{"MaterialAxes"});
     INFO("Domains.Materials[] missing keys: " << json(mat_gaps).dump());

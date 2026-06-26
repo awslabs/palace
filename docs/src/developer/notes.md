@@ -191,6 +191,56 @@ The generator reads the following JSON Schema fields:
   - `"x-palace-advanced"`: Custom field; shows `advanced` badge if `true`.
   - `"x-palace-deprecated"`: Custom field; shows `deprecated` badge if `true`.
 
+### Schema versioning
+
+The root schema (`scripts/schema/config-schema.json`) carries a standard `"$id"` field
+with a URN that embeds a [SchemaVer](https://docs.snowplow.io/docs/pipeline-components-and-non-pipeline-components/iglu/common-architecture/schemaver/) version, e.g.
+`"urn:palace:schema:1-0-0"`. This version tracks the configuration *contract*
+independently of the *Palace* release version, so downstream tooling can reason about
+configuration compatibility. Using the standard `"$id"` keyword means any JSON Schema
+tooling can identify the schema without custom extensions.
+
+SchemaVer uses the format `MODEL-REVISION-ADDITION`:
+
+  - MODEL: a breaking change to the schema's model — e.g. removing or renaming a field,
+    tightening validation so a previously-valid config is rejected, or changing the
+    meaning or the default of a value.
+  - REVISION: a backward-compatible change that extends the model — e.g. a new optional
+    field, a new allowed enum value, or relaxing a constraint so previously-invalid
+    configs are now accepted.
+  - ADDITION: a change that does not affect which configurations are accepted — e.g.
+    updating a `description`, `title`, or other annotation.
+
+#### Relationship to the *Palace* version
+
+The two versions move independently: the schema's `MODEL-REVISION-ADDITION` is not tied
+numerically to *Palace*'s release version. The coupling is one-directional:
+
+  - A MODEL or REVISION schema change always bumps the *Palace* version.
+  - A *Palace* release does not imply a schema change. Most releases (bug fixes,
+    solver work, performance, docs) leave the configuration contract untouched and so do
+    not bump the schema version.
+
+Because the schema is versioned independently, a single schema version generally spans
+several *Palace* releases. The table below records the first *Palace* release shipping
+each schema version; a schema version applies to that release and all later ones up to
+(but not including) the next entry. Add a row whenever the schema version is bumped.
+
+| Schema version | First *Palace* release | Notes                              |
+|:--------------:|:----------------------:|:---------------------------------- |
+| `1-0-0`        | `0.17`                 | First explicitly-versioned schema. |
+
+#### Enforcement
+
+A CI check (the `check-schema-version` job in
+[`.github/workflows/style.yml`](https://github.com/awslabs/palace/blob/main/.github/workflows/style.yml))
+fails a pull request that modifies `scripts/schema/config-schema.json` without also
+changing the version in `"$id"`. This catches the common mistake of editing the
+contract but forgetting to bump the version; it does not (and cannot) verify that the
+size of the bump matches the change, so the MODEL/REVISION/ADDITION judgment above
+remains a code-review responsibility. When a change is genuinely annotation-only the bump
+is just an ADDITION, so the rule still applies.
+
 ## Timing
 
 Timing facilities are provided by the `Timer` and `BlockTimer` classes.

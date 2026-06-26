@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <sstream>
+#include <string_view>
 #include <nlohmann/json-schema.hpp>
 #include "communication.hpp"
 #include "embedded_schema.hpp"
@@ -21,34 +22,6 @@ constexpr const char *root_schema_file = "config-schema.json";
 
 namespace
 {
-
-// Strip leading path prefixes (/, ./) to normalize schema references.
-std::string StripPathPrefix(std::string path)
-{
-  while (!path.empty() && (path[0] == '/' || path[0] == '.'))
-  {
-    path = path.substr(1);
-  }
-  return path;
-}
-
-// Loader for resolving $ref in schemas using embedded schema strings.
-class EmbeddedSchemaLoader
-{
-public:
-  json operator()(const nlohmann::json_uri &uri, json &schema)
-  {
-    std::string path = StripPathPrefix(uri.path());
-    const auto &schema_map = schema::GetSchemaMap();
-    auto it = schema_map.find(path);
-    if (it == schema_map.end())
-    {
-      throw std::runtime_error("Schema not found: " + path);
-    }
-    schema = json::parse(it->second);
-    return schema;
-  }
-};
 
 // Search for a schema property by key name, collecting all matches.
 // Helper for FindSchemaByKey - populates results vector. The depth parameter
@@ -98,12 +71,10 @@ void FindAllSchemasByKey(const json &schema, const std::string &key, const json 
   {
     for (const auto &[k, v] : props_it->items())
     {
-      // Handle $ref.
+      // Handle $ref: resolve internal #/$defs/ references.
       if (v.contains("$ref"))
       {
         std::string ref_raw = v["$ref"].get<std::string>();
-        // Internal $defs reference: resolve and recurse so nested-via-$ref
-        // schemas (e.g. BoundaryPostprocessing.FarField) are still findable.
         if (ref_raw.find("#/$defs/") == 0)
         {
           std::string def_name = ref_raw.substr(8);
@@ -111,17 +82,6 @@ void FindAllSchemasByKey(const json &schema, const std::string &key, const json 
           {
             FindAllSchemasByKey(defs[def_name], key, defs, results, depth + 1);
           }
-          continue;
-        }
-        std::string ref = StripPathPrefix(ref_raw);
-        const auto &schema_map = schema::GetSchemaMap();
-        if (auto it = schema_map.find(ref); it != schema_map.end())
-        {
-          FindAllSchemasByKey(json::parse(it->second), key, defs, results, depth + 1);
-        }
-        else
-        {
-          Mpi::Warning("Could not resolve schema $ref: {}\n", ref);
         }
       }
       else
@@ -140,7 +100,7 @@ void FindAllSchemasByKey(const json &schema, const std::string &key, const json 
 
 // Search for a schema property by key name, checking each level before recursing.
 // Returns the schema for that key (with $defs preserved), or null if not found.
-// Warns and returns null if the key is ambiguous (found in multiple schema files).
+// Warns and returns null if the key is ambiguous (found in multiple schema scopes).
 json FindSchemaByKey(const json &schema, const std::string &key,
                      const json &root_defs = json())
 {
@@ -169,19 +129,7 @@ json ResolveRef(const json &node, const json &defs)
     return node;
   }
   std::string ref = node["$ref"].get<std::string>();
-  if (ref.empty())
-  {
-    return json();  // Invalid empty $ref.
-  }
-  if (ref[0] == '.')
-  {
-    const auto &schema_map = schema::GetSchemaMap();
-    if (auto it = schema_map.find(StripPathPrefix(ref)); it != schema_map.end())
-    {
-      return json::parse(it->second);
-    }
-  }
-  else if (ref.substr(0, 8) == "#/$defs/")
+  if (ref.substr(0, 8) == "#/$defs/")
   {
     std::string def_name = ref.substr(8);
     if (defs.contains(def_name))
@@ -405,6 +353,26 @@ public:
   std::string get_errors() const { return errors.str(); }
 };
 
+std::string GetSchemaVersion()
+{
+  const auto &schema_map = schema::GetSchemaMap();
+  auto it = schema_map.find(root_schema_file);
+  if (it != schema_map.end())
+  {
+    const json schema = json::parse(it->second);
+    if (schema.contains("$id"))
+    {
+      const std::string &id = schema["$id"];
+      constexpr std::string_view prefix = "urn:palace:schema:";
+      if (id.substr(0, prefix.size()) == prefix)
+      {
+        return id.substr(prefix.size());
+      }
+    }
+  }
+  return "unknown";
+}
+
 std::string ValidateConfig(const nlohmann::json &config)
 {
   const auto &schema_map = schema::GetSchemaMap();
@@ -424,7 +392,10 @@ std::string ValidateConfig(const nlohmann::json &config)
     return std::string("Failed to parse schema: ") + e.what();
   }
 
-  json_validator validator{EmbeddedSchemaLoader()};
+  // No schema loader is supplied: the single-file schema uses only internal
+  // ("#/$defs/...") references. An external $ref would make the validator throw a
+  // descriptive error, caught and returned below.
+  json_validator validator;
   try
   {
     validator.set_root_schema(schema);
@@ -468,7 +439,8 @@ std::string ValidateConfig(const nlohmann::json &config, const std::string &sche
     return "Schema key not found: " + schema_key;
   }
 
-  json_validator validator{EmbeddedSchemaLoader()};
+  // No schema loader is supplied: see the note in the single-argument overload above.
+  json_validator validator;
   try
   {
     validator.set_root_schema(sub_schema);

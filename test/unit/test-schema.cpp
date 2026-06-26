@@ -1,6 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <fmt/format.h>
@@ -326,7 +328,7 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
 
   SECTION("Ambiguous schema key")
   {
-    // "Postprocessing" exists in both boundaries.json and domains.json.
+    // "Postprocessing" exists in both the Boundaries and Domains scopes.
     json data = {{"Index", 1}};
     std::string err = ValidateConfig(data, "Postprocessing");
     CHECK(!err.empty());
@@ -711,4 +713,29 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
                    {"Solver", json::object()}};
     CHECK(!ValidateConfig(config).empty());
   }
+}
+
+TEST_CASE("Schema Version", "[schema][Serial]")
+{
+  // The root schema must carry a version via the standard "$id" field using a URN
+  // (see issue #760). Format: "urn:palace:schema:MODEL-REVISION-ADDITION" (SchemaVer).
+  // GetSchemaVersion() extracts that version from the "$id" and is what
+  // `palace --version` reports, so testing through it also covers that path.
+  const std::string version = GetSchemaVersion();
+  INFO("Schema version: " << version);
+
+  // "unknown" means the root schema had no "$id" with the "urn:palace:schema:" prefix.
+  REQUIRE(version != "unknown");
+
+  // Must be a "MODEL-REVISION-ADDITION" SchemaVer of non-negative integers.
+  std::array<int, 3> parts = {-1, -1, -1};
+  const int matched =
+      std::sscanf(version.c_str(), "%d-%d-%d", &parts[0], &parts[1], &parts[2]);
+  CHECK(matched == 3);
+  for (const int p : parts)
+  {
+    CHECK(p >= 0);
+  }
+
+  CHECK(version == fmt::format("{}-{}-{}", parts[0], parts[1], parts[2]));
 }

@@ -20,6 +20,12 @@ The format of this changelog is based on
     with CPW lumped-port and transmon examples, plus reference documentation for
     the adaptive PROM/MRI algorithm and practical guidance on tolerances,
     convergence, and validation [PR 702](https://github.com/awslabs/palace/pull/702).
+  - Added a [SchemaVer](https://docs.snowplow.io/docs/pipeline-components-and-non-pipeline-components/iglu/common-architecture/schemaver/)
+    version to the root configuration JSON schema via the standard `"$id"` field
+    (`"urn:palace:schema:1-0-0"`). The schema contract is now versioned independently of
+    the *Palace* release so downstream tools can reason about configuration compatibility.
+    See `docs/src/developer/notes.md` for details.
+    [PR 765](https://github.com/awslabs/palace/issues/765).
   - Added `"IncludeInSynthesis"` boolean flag to lumped port configuration (default `true`).
     When adaptive driven circuit synthesis is enabled
     (`config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]`), this flag controls whether

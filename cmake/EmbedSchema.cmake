@@ -15,7 +15,7 @@ endif()
 file(MAKE_DIRECTORY ${SCHEMA_OUTPUT_DIR})
 
 # Collect all schema files
-file(GLOB_RECURSE SCHEMA_FILES "${SCHEMA_DIR}/*.json")
+file(GLOB SCHEMA_FILES "${SCHEMA_DIR}/*.json")
 
 # Regenerate the header during build (not configure) when schema files change
 add_custom_command(

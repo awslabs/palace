@@ -1,31 +1,2909 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:palace:schema:1-0-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["Problem", "Model", "Domains", "Boundaries", "Solver"],
-  "properties":
-  {
-    "Problem": { "$ref": "./config/problem.json" },
-    "Model": { "$ref": "./config/model.json" },
-    "Domains": { "$ref": "./config/domains.json" },
-    "Boundaries": { "$ref": "./config/boundaries.json" },
-    "Solver": { "$ref": "./config/solver.json" }
+  "required": [
+    "Problem",
+    "Model",
+    "Domains",
+    "Boundaries",
+    "Solver"
+  ],
+  "properties": {
+    "Problem": {
+      "title": "Problem",
+      "description": "Top-level configuration for the simulation type and output.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type"
+      ],
+      "properties": {
+        "Type": {
+          "$ref": "#/$defs/ProblemType"
+        },
+        "Verbose": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Controls the level of log file printing.",
+          "default": 1
+        },
+        "Output": {
+          "type": "string",
+          "description": "Directory path for saving postprocessing outputs. When omitted, results are written to a `postpro` directory relative to the working directory.",
+          "default": "postpro"
+        },
+        "OutputFormats": {
+          "$ref": "#/$defs/OutputFormats"
+        }
+      }
+    },
+    "Model": {
+      "title": "Model",
+      "description": "Mesh and model configuration.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Mesh"
+      ],
+      "properties": {
+        "Mesh": {
+          "type": "string",
+          "description": "Input mesh file path. An absolute path is recommended. If the provided mesh is nonconformal, it is assumed to come from a previous *Palace* AMR solve, and all mesh preprocessing checks and modifications (for example [CrackInternalBoundaryElements](@ref config-model-crackinternalboundaryelements)) are skipped."
+        },
+        "L0": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Unit, relative to meters, for mesh vertex coordinates. For example, a value of `1.0e-6` means the mesh coordinates are in \u03bcm.",
+          "default": 1e-06
+        },
+        "Lc": {
+          "type": "number",
+          "description": "Characteristic length scale used for nondimensionalization, specified in mesh length units. This keyword should typically not be specified by the user. If omitted, Palace uses the largest mesh bounding-box dimension, `max_i(bbmax_i - bbmin_i)`. A value of `1.0` will disable nondimensionalization, so that all computations will take place in the same units as the mesh.",
+          "exclusiveMinimum": 0.0
+        },
+        "RemoveCurvature": {
+          "type": "boolean",
+          "description": "Project high-order nodes to the mesh surface, removing all curvature before the simulation.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "MakeSimplex": {
+          "type": "boolean",
+          "description": "Convert all mesh elements to simplices (tetrahedra/triangles).",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "MakeHexahedral": {
+          "type": "boolean",
+          "description": "Convert all mesh elements to hexahedra.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "ReorderElements": {
+          "type": "boolean",
+          "description": "Reorder mesh elements to improve cache efficiency.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "CleanUnusedElements": {
+          "type": "boolean",
+          "description": "Remove elements not connected to any domain material.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "CrackInternalBoundaryElements": {
+          "type": "boolean",
+          "description": "Duplicate nodes along internal boundary elements to create a crack.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "RefineCrackElements": {
+          "type": "boolean",
+          "description": "Refine elements adjacent to cracked internal boundaries.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "CrackDisplacementFactor": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Displacement factor applied to cracked nodes as a fraction of the local element size.",
+          "default": 1e-12,
+          "x-palace-advanced": true
+        },
+        "AddInterfaceBoundaryElements": {
+          "type": "boolean",
+          "description": "Add boundary elements at interfaces between domains that lack them.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "ExportPrerefinedMesh": {
+          "type": "boolean",
+          "description": "Export the mesh after preprocessing but before AMR refinement.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "ReorientTetMesh": {
+          "type": "boolean",
+          "description": "Reorient tetrahedral elements to ensure positive Jacobians.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "Partitioning": {
+          "type": "string",
+          "description": "Path to a mesh partitioning file. If omitted, partitioning is computed automatically.",
+          "minLength": 1,
+          "x-palace-advanced": true
+        },
+        "Refinement": {
+          "$ref": "#/$defs/Refinement"
+        }
+      }
+    },
+    "Domains": {
+      "title": "Domains",
+      "description": "Material and domain configuration.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Materials"
+      ],
+      "properties": {
+        "Materials": {
+          "type": "array",
+          "description": "Array of material property objects.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/Material"
+          }
+        },
+        "CurrentDipole": {
+          "type": "array",
+          "description": "Array of current dipole source excitations.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/CurrentDipole"
+          }
+        },
+        "Postprocessing": {
+          "$ref": "#/$defs/DomainPostprocessing"
+        }
+      }
+    },
+    "Boundaries": {
+      "type": "object",
+      "title": "Boundaries",
+      "description": "Boundary condition configuration.",
+      "additionalProperties": false,
+      "required": [],
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "PEC",
+              "Ground"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "PMC",
+              "ZeroCharge"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "PEC": {
+          "$ref": "#/$defs/PEC",
+          "title": "PEC Boundary",
+          "description": "Perfect electric conductor (PEC) boundary condition: enforces zero tangential electric field. This is a homogeneous Dirichlet condition for frequency/time domain and magnetostatic formulations."
+        },
+        "PMC": {
+          "$ref": "#/$defs/PMC",
+          "title": "PMC Boundary",
+          "description": "Perfect magnetic conductor (PMC) boundary condition: enforces zero tangential magnetic field. This is the natural (homogeneous Neumann) boundary condition; it also imposes symmetry of the electric field across the surface."
+        },
+        "Impedance": {
+          "type": "array",
+          "description": "Array of surface impedance boundary conditions. The surface impedance relates the tangential electric and magnetic fields using the parallel combination of the specified resistance, inductance, and capacitance per square.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/Impedance"
+          }
+        },
+        "Absorbing": {
+          "$ref": "#/$defs/Absorbing",
+          "title": "Absorbing Boundary",
+          "description": "Farfield absorbing (scattering) boundary conditions. These are artificial boundary conditions applied at farfield boundaries to minimize reflections."
+        },
+        "Conductivity": {
+          "type": "array",
+          "description": "Array of finite conductivity surface impedance boundaries. Models the effect of a boundary with non-infinite conductivity for conductors with thickness much larger than the skin depth. Only available for frequency domain driven and eigenmode simulations.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/Conductivity"
+          }
+        },
+        "LumpedPort": {
+          "type": "array",
+          "title": "Lumped Port",
+          "description": "Array of lumped port boundary conditions. Lumped ports can be specified on boundaries internal to the computational domain.",
+          "additionalItems": false,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/LumpedPortAttributes"
+              },
+              {
+                "$ref": "#/$defs/LumpedPortElements"
+              }
+            ]
+          }
+        },
+        "WavePort": {
+          "type": "array",
+          "title": "Wave Port",
+          "description": "Array of numeric wave port boundary conditions. Wave ports can only be specified on the true boundary of the computational domain (they must be \"one-sided\"). A 2D boundary mode eigenproblem is solved on each wave port to compute the port mode shape. Only available for frequency domain driven and eigenmode simulations.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/WavePort"
+          }
+        },
+        "FloquetPort": {
+          "type": "array",
+          "title": "Floquet Port",
+          "description": "Array of Floquet port boundary conditions for periodic driven simulations. Floquet ports model diffraction gratings and other periodic electromagnetic devices, compute diffraction-order S-parameters, and require [Periodic](@ref config-boundaries-periodic) boundary conditions with two transverse boundary pairs.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/FloquetPort"
+          }
+        },
+        "WavePortPEC": {
+          "$ref": "#/$defs/WavePortPEC",
+          "title": "Wave Port PEC",
+          "description": "Additional PEC boundary conditions for the 2D eigensolve used in wave port mode analysis, along with those already specified under [PEC](@ref config-boundaries-pec) and [Conductivity](@ref config-boundaries-conductivity). Only relevant when [WavePort](@ref config-boundaries-waveport) boundaries are present."
+        },
+        "SurfaceCurrent": {
+          "type": "array",
+          "title": "Surface Current",
+          "description": "Array of surface current source boundaries. Prescribes a unit source surface current excitation on the given boundary to excite a driven, transient, or magnetostatic simulation. For magnetostatic simulations, inductance matrix entries are extracted for each surface current boundary.",
+          "additionalItems": false,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/SurfaceCurrentAttributes"
+              },
+              {
+                "$ref": "#/$defs/SurfaceCurrentElements"
+              }
+            ]
+          }
+        },
+        "Ground": {
+          "$ref": "#/$defs/Ground",
+          "title": "Ground Boundary",
+          "description": "Zero-voltage (ground) boundary condition for electrostatic simulations. Mutually exclusive with [PEC](@ref config-boundaries-pec)."
+        },
+        "ZeroCharge": {
+          "$ref": "#/$defs/ZeroCharge",
+          "title": "Zero Charge Boundary",
+          "description": "Zero surface charge (homogeneous Neumann) boundary condition for electrostatic simulations. Also imposes symmetry of the electric field across the surface. Mutually exclusive with [PMC](@ref config-boundaries-pmc)."
+        },
+        "Terminal": {
+          "type": "array",
+          "description": "Array of terminal boundaries for electrostatic simulations. Capacitance matrix entries are extracted for each terminal.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/Terminal"
+          }
+        },
+        "Periodic": {
+          "$ref": "#/$defs/Periodic",
+          "title": "Periodic Boundary",
+          "description": "Periodic boundary conditions for surfaces whose meshes are identical after translation and/or rotation. Floquet periodic boundary conditions with a phase shift are also supported."
+        },
+        "Postprocessing": {
+          "$ref": "#/$defs/BoundaryPostprocessing",
+          "title": "Boundary Postprocessing",
+          "description": "Configuration for boundary postprocessing."
+        }
+      }
+    },
+    "Solver": {
+      "type": "object",
+      "title": "Solver",
+      "description": "Solver configuration for all simulation types.",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "Order": {
+          "type": "integer",
+          "description": "Finite element order (degree). Arbitrary high-order spaces are supported.",
+          "minimum": 1,
+          "default": 1
+        },
+        "PartialAssemblyOrder": {
+          "type": "integer",
+          "description": "Order at which to switch from full assembly of finite element operators to [partial assembly](https://mfem.org/howto/assembly_levels/). Setting to `1` fully activates partial assembly on all levels; a large value (greater than [Order](@ref config-solver-order)) results in fully assembled sparse matrix operators.",
+          "minimum": 1,
+          "default": 1
+        },
+        "QuadratureOrderJacobian": {
+          "type": "boolean",
+          "description": "Use the Jacobian-based quadrature order instead of the default.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "QuadratureOrderExtra": {
+          "type": "integer",
+          "description": "Extra quadrature order added on top of the default.",
+          "default": 0,
+          "x-palace-advanced": true
+        },
+        "Device": {
+          "$ref": "#/$defs/Device",
+          "description": "The runtime device configuration passed to [MFEM](https://mfem.org/howto/assembly_levels/) to activate different computation backends. When *Palace* is built with OpenMP support (`PALACE_WITH_OPENMP=ON`), `omp` is automatically added to the MFEM device list.",
+          "default": "CPU"
+        },
+        "Backend": {
+          "type": "string",
+          "description": "Specifies the [libCEED backend](https://libceed.org/en/latest/gettingstarted/#backends) to use. If omitted, Palace selects a suitable backend based on [Device](@ref config-solver-device).",
+          "minLength": 1
+        },
+        "Eigenmode": {
+          "$ref": "#/$defs/Eigenmode",
+          "title": "Eigenmode Solver",
+          "description": "Configuration for the eigenvalue solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Eigenmode\"`."
+        },
+        "Driven": {
+          "$ref": "#/$defs/Driven",
+          "title": "Driven Solver",
+          "description": "Configuration for the frequency domain driven solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Driven\"`."
+        },
+        "Transient": {
+          "$ref": "#/$defs/Transient",
+          "title": "Transient Solver",
+          "description": "Configuration for the time domain driven solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Transient\"`. Simulations always start from rest at *t* = 0."
+        },
+        "Electrostatic": {
+          "$ref": "#/$defs/Electrostatic",
+          "title": "Electrostatic Solver",
+          "description": "Configuration for the electrostatic solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Electrostatic\"`."
+        },
+        "Magnetostatic": {
+          "$ref": "#/$defs/Magnetostatic",
+          "title": "Magnetostatic Solver",
+          "description": "Configuration for the magnetostatic solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Magnetostatic\"`."
+        },
+        "BoundaryMode": {
+          "$ref": "#/$defs/BoundaryMode"
+        },
+        "Linear": {
+          "$ref": "#/$defs/Linear",
+          "title": "Linear Solver",
+          "description": "Configuration for the linear solver used by all simulation types."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "ProblemType": {
+      "type": "string",
+      "description": "Controls the simulation type.",
+      "oneOf": [
+        {
+          "const": "Eigenmode",
+          "description": "Perform an eigenmode analysis."
+        },
+        {
+          "const": "Driven",
+          "description": "Perform a frequency-domain driven simulation."
+        },
+        {
+          "const": "Transient",
+          "description": "Perform a time-domain excitation response simulation."
+        },
+        {
+          "const": "Electrostatic",
+          "description": "Perform an electrostatic analysis to compute the capacitance matrix for a set of voltage terminals."
+        },
+        {
+          "const": "Magnetostatic",
+          "description": "Perform a magnetostatic analysis to compute the inductance matrix for a set of current sources."
+        },
+        {
+          "const": "BoundaryMode",
+          "description": "Perform a 2D waveguide boundary mode analysis to compute propagation constants on a cross-section."
+        }
+      ]
+    },
+    "OutputFormats": {
+      "type": "object",
+      "title": "Output Formats",
+      "additionalProperties": false,
+      "description": "Configures the field output formats.",
+      "properties": {
+        "Paraview": {
+          "type": "boolean",
+          "description": "Set to `true` to output fields in [ParaView](https://www.paraview.org/) format.",
+          "default": true
+        },
+        "GridFunction": {
+          "type": "boolean",
+          "description": "Set to `true` to output fields in MFEM grid function format for visualization with [GLVis](https://glvis.org/).",
+          "default": false
+        }
+      }
+    },
+    "Refinement": {
+      "type": "object",
+      "title": "Mesh Refinement",
+      "description": "Configuration for adaptive and uniform mesh refinement.",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "Tol": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Stop adaptive mesh refinement (AMR) when the norm of the estimated error falls below this value. The error is reported in `error-indicators.csv`.",
+          "default": 0.01
+        },
+        "MaxIts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum number of AMR iterations to perform.",
+          "default": 0
+        },
+        "MaxSize": {
+          "type": "number",
+          "minimum": 0,
+          "description": "The maximum allowable number of degrees of freedom for AMR. If an adapted mesh exceeds this value no further adaptation will occur. A value less than 1 means that no maximum size constraint will be imposed.",
+          "default": 0
+        },
+        "UpdateFraction": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "exclusiveMaximum": 1.0,
+          "description": "D\u00f6rfler marking fraction used to specify which elements to refine. This marking strategy will mark the smallest number of elements that make up \"UpdateFraction\" of the total error in the mesh. A larger value will refine more elements per iteration, at the cost of the final mesh being less efficient.",
+          "default": 0.7
+        },
+        "Nonconformal": {
+          "type": "boolean",
+          "description": "Use nonconformal refinement in adaptation. Required for non-simplex meshes.",
+          "default": true
+        },
+        "MaxNCLevels": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum number of nonconformal refinement levels. `0` means no limit.",
+          "default": 1,
+          "x-palace-advanced": true
+        },
+        "MaximumImbalance": {
+          "type": "number",
+          "minimum": 1.0,
+          "description": "Maximum ratio of elements between the most- and least-loaded MPI ranks before repartitioning.",
+          "default": 1.1,
+          "x-palace-advanced": true
+        },
+        "SaveAdaptIterations": {
+          "type": "boolean",
+          "description": "Save postprocessing results from each AMR iteration in a subdirectory `iterationX`.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "SaveAdaptMesh": {
+          "type": "boolean",
+          "description": "Save the final adapted mesh to disk.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "UniformLevels": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Levels of uniform parallel mesh refinement to be performed on the input mesh. If not performing AMR, these may be used as levels within a geometric multigrid scheme. If performing AMR the most refined mesh is used as the initial mesh and the coarser meshes cannot be used in a geometric multigrid scheme.",
+          "default": 0
+        },
+        "SerialUniformLevels": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Levels of uniform serial mesh refinement applied before parallel distribution.",
+          "default": 0,
+          "x-palace-advanced": true
+        },
+        "Boxes": {
+          "type": "array",
+          "description": "Array of axis-aligned box refinement regions. All elements with a node inside the box are marked for refinement.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/Box"
+          }
+        },
+        "Spheres": {
+          "type": "array",
+          "description": "Array of sphere refinement regions. All elements with a node inside the sphere are marked for refinement.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/Sphere"
+          }
+        }
+      }
+    },
+    "Box": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Levels",
+        "BoundingBoxMin",
+        "BoundingBoxMax"
+      ],
+      "properties": {
+        "Levels": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Levels of parallel mesh refinement inside this box region."
+        },
+        "BoundingBoxMin": {
+          "$ref": "#/$defs/Point3D",
+          "description": "Minimum coordinates `[x, y, z]` of the axis-aligned bounding box for this refinement region, in mesh length units."
+        },
+        "BoundingBoxMax": {
+          "$ref": "#/$defs/Point3D",
+          "description": "Maximum coordinates `[x, y, z]` of the axis-aligned bounding box for this refinement region, in mesh length units."
+        }
+      }
+    },
+    "Sphere": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Levels",
+        "Radius",
+        "Center"
+      ],
+      "properties": {
+        "Levels": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Levels of parallel mesh refinement inside this sphere region."
+        },
+        "Radius": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Radius of the sphere, in mesh length units."
+        },
+        "Center": {
+          "$ref": "#/$defs/Point3D",
+          "description": "Center coordinates `[x, y, z]` of the sphere, in mesh length units."
+        }
+      }
+    },
+    "Point3D": {
+      "type": "array",
+      "additionalItems": false,
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "Material": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Attributes"
+      ],
+      "properties": {
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh domain attributes this object applies to."
+        },
+        "Permeability": {
+          "$ref": "#/$defs/ScalarOrVector3",
+          "description": "Relative permeability for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
+          "default": 1.0
+        },
+        "Permittivity": {
+          "$ref": "#/$defs/ScalarOrVector3",
+          "description": "Relative permittivity for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
+          "default": 1.0
+        },
+        "LossTan": {
+          "$ref": "#/$defs/ScalarOrVector3",
+          "description": "Loss tangent for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
+          "default": 0.0
+        },
+        "Conductivity": {
+          "$ref": "#/$defs/ScalarOrVector3",
+          "description": "Electrical conductivity for this material, S/m. Activates the Ohmic loss model in this domain. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
+          "default": 0.0
+        },
+        "LondonDepth": {
+          "type": "number",
+          "description": "London penetration depth for this material, specified in mesh length units. Activates the London equations-based model relating superconducting current and electromagnetic fields in this domain.",
+          "default": 0.0
+        },
+        "MaterialAxes": {
+          "type": "array",
+          "description": "Axes directions for specification of anisotropic material properties. Required to be unit length and orthogonal.",
+          "default": [
+            [
+              1.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "items": {
+            "$ref": "#/$defs/Vector3"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        }
+      }
+    },
+    "CurrentDipole": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Moment",
+        "Center",
+        "Direction"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Index of this current dipole source, used in postprocessing output files."
+        },
+        "Moment": {
+          "type": "number",
+          "description": "Current dipole moment magnitude, A\u00b7m."
+        },
+        "Center": {
+          "$ref": "#/$defs/Vector3",
+          "description": "Coordinates of the dipole center position `[x, y, z]`, in mesh length units."
+        },
+        "Direction": {
+          "description": "Direction of the Dirac current source specifying the dipole. Axis-aligned directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. The direction can alternatively be specified as a normalized array of three values, for example `[0.0, 1.0, 0.0]`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DipoleDirection"
+            },
+            {
+              "$ref": "#/$defs/Vector3"
+            }
+          ]
+        }
+      }
+    },
+    "DomainPostprocessing": {
+      "type": "object",
+      "title": "Domain Postprocessing",
+      "description": "Configuration for domain postprocessing.",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "Energy": {
+          "type": "array",
+          "description": "Array of objects for postprocessing domain energies. Postprocesses the electric and magnetic field energy inside a given domain. Results are written to `domain-E.csv` in the output directory.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/Energy"
+          }
+        },
+        "Probe": {
+          "type": "array",
+          "description": "Array of probe points for evaluating field values at specified locations in space. The electric field **E** and magnetic flux density **B** are probed and written to `probe-E.csv` and `probe-B.csv` in the output directory.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/Probe"
+          }
+        }
+      }
+    },
+    "Energy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Attributes"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Index of this energy postprocessing domain, used in output files."
+        },
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh domain attributes this object applies to."
+        }
+      }
+    },
+    "Probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Center"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Index of this probe, used in postprocessing output files."
+        },
+        "Center": {
+          "$ref": "#/$defs/Vector3",
+          "description": "Coordinates of this probe `[x, y, z]`, in mesh length units."
+        }
+      }
+    },
+    "Attributes": {
+      "description": "Integer array of mesh attributes this object applies to.",
+      "type": "array",
+      "additionalItems": false,
+      "items": {
+        "type": "integer"
+      },
+      "minItems": 1
+    },
+    "Vector3": {
+      "type": "array",
+      "additionalItems": false,
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3,
+      "description": "3-element vector."
+    },
+    "ScalarOrVector3": {
+      "oneOf": [
+        {
+          "type": "number"
+        },
+        {
+          "$ref": "#/$defs/Vector3"
+        }
+      ]
+    },
+    "DipoleDirection": {
+      "type": "string",
+      "enum": [
+        "X",
+        "Y",
+        "Z",
+        "+X",
+        "+Y",
+        "+Z",
+        "-X",
+        "-Y",
+        "-Z",
+        "x",
+        "y",
+        "z",
+        "+x",
+        "+y",
+        "+z",
+        "-x",
+        "-y",
+        "-z"
+      ]
+    },
+    "PEC": {
+      "type": "object",
+      "title": "PEC Boundary",
+      "description": "Perfect electric conductor (PEC) boundary condition: enforces zero tangential electric field. This is a homogeneous Dirichlet condition for frequency/time domain and magnetostatic formulations.",
+      "additionalProperties": false,
+      "required": [
+        "Attributes"
+      ],
+      "properties": {
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        }
+      }
+    },
+    "PMC": {
+      "type": "object",
+      "title": "PMC Boundary",
+      "description": "Perfect magnetic conductor (PMC) boundary condition: enforces zero tangential magnetic field. This is the natural (homogeneous Neumann) boundary condition; it also imposes symmetry of the electric field across the surface.",
+      "additionalProperties": false,
+      "required": [
+        "Attributes"
+      ],
+      "properties": {
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        }
+      }
+    },
+    "Ground": {
+      "type": "object",
+      "title": "Ground Boundary",
+      "description": "Zero-voltage (ground) boundary condition for electrostatic simulations. Mutually exclusive with [PEC](@ref config-boundaries-pec).",
+      "additionalProperties": false,
+      "required": [
+        "Attributes"
+      ],
+      "properties": {
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        }
+      }
+    },
+    "ZeroCharge": {
+      "type": "object",
+      "title": "Zero Charge Boundary",
+      "description": "Zero surface charge (homogeneous Neumann) boundary condition for electrostatic simulations. Also imposes symmetry of the electric field across the surface. Mutually exclusive with [PMC](@ref config-boundaries-pmc).",
+      "additionalProperties": false,
+      "required": [
+        "Attributes"
+      ],
+      "properties": {
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        }
+      }
+    },
+    "WavePortPEC": {
+      "type": "object",
+      "title": "Wave Port PEC",
+      "description": "Additional PEC boundary conditions for the 2D eigensolve used in wave port mode analysis, along with those already specified under [PEC](@ref config-boundaries-pec) and [Conductivity](@ref config-boundaries-conductivity). Only relevant when [WavePort](@ref config-boundaries-waveport) boundaries are present.",
+      "additionalProperties": false,
+      "required": [
+        "Attributes"
+      ],
+      "properties": {
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        }
+      }
+    },
+    "Impedance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Attributes"
+      ],
+      "properties": {
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        },
+        "Rs": {
+          "type": "number",
+          "description": "Surface resistance for this impedance boundary, \u03a9/sq.",
+          "default": 0.0
+        },
+        "Ls": {
+          "type": "number",
+          "description": "Surface inductance for this impedance boundary, H/sq.",
+          "default": 0.0
+        },
+        "Cs": {
+          "type": "number",
+          "description": "Surface capacitance for this impedance boundary, F/sq.",
+          "default": 0.0
+        }
+      }
+    },
+    "Absorbing": {
+      "type": "object",
+      "title": "Absorbing Boundary",
+      "description": "Farfield absorbing (scattering) boundary conditions. These are artificial boundary conditions applied at farfield boundaries to minimize reflections.",
+      "additionalProperties": false,
+      "required": [
+        "Attributes"
+      ],
+      "properties": {
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        },
+        "Order": {
+          "type": "integer",
+          "description": "Specify a first- or second-order approximation for the absorbing boundary condition. Second-order is only available for frequency domain driven simulations.",
+          "minimum": 1,
+          "maximum": 2,
+          "default": 1,
+          "x-palace-advanced": true
+        }
+      }
+    },
+    "Conductivity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Attributes",
+        "Conductivity"
+      ],
+      "properties": {
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        },
+        "Conductivity": {
+          "type": "number",
+          "description": "Electrical conductivity for this boundary, S/m."
+        },
+        "Permeability": {
+          "type": "number",
+          "description": "Relative permeability for this boundary.",
+          "default": 1.0
+        },
+        "Thickness": {
+          "type": "number",
+          "description": "Optional conductor thickness in mesh length units. Activates a finite-thickness boundary condition for metal.",
+          "default": 0.0
+        },
+        "External": {
+          "type": "boolean",
+          "description": "Whether this boundary is on the exterior of the computational domain. Relevant for the thickness correction.",
+          "default": false
+        }
+      }
+    },
+    "LumpedPortAttributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Attributes"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Index of this lumped port, used in postprocessing output files. Must be unique across all port and source types.",
+          "exclusiveMinimum": 0
+        },
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes for this lumped port boundary. If this port is to be a multielement lumped port with more than a single lumped element, use the \"Elements\" array described below."
+        },
+        "Direction": {
+          "description": "Excitation direction. Axis-aligned Cartesian directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. Coaxial directions use `\"+R\"`, `\"-R\"`. Alternatively, specify a normalized 3-element array, e.g. `[0.0, 1.0, 0.0]`. The coordinate system is determined by `\"CoordinateSystem\"`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PortDirection"
+            },
+            {
+              "$ref": "#/$defs/Vector3"
+            }
+          ]
+        },
+        "CoordinateSystem": {
+          "$ref": "#/$defs/CoordinateSystem",
+          "description": "Coordinate system used to express the `\"Direction\"` vector. If a keyword argument is used for `\"Direction\"` this value is ignored.",
+          "default": "Cartesian"
+        },
+        "R": {
+          "type": "number",
+          "description": "Circuit resistance, \u03a9. Use with `\"L\"` and `\"C\"`; do not mix with surface parameters `\"Rs\"`, `\"Ls\"`, `\"Cs\"`.",
+          "default": 0.0
+        },
+        "L": {
+          "type": "number",
+          "description": "Circuit inductance, H. Use with `\"R\"` and `\"C\"`; do not mix with surface parameters `\"Rs\"`, `\"Ls\"`, `\"Cs\"`.",
+          "default": 0.0
+        },
+        "C": {
+          "type": "number",
+          "description": "Circuit capacitance, F. Use with `\"R\"` and `\"L\"`; do not mix with surface parameters `\"Rs\"`, `\"Ls\"`, `\"Cs\"`.",
+          "default": 0.0
+        },
+        "Rs": {
+          "type": "number",
+          "description": "Surface resistance, \u03a9/sq. Use with `\"Ls\"` and `\"Cs\"`; do not mix with circuit parameters `\"R\"`, `\"L\"`, `\"C\"`.",
+          "default": 0.0
+        },
+        "Ls": {
+          "type": "number",
+          "description": "Surface inductance, H/sq. Use with `\"Rs\"` and `\"Cs\"`; do not mix with circuit parameters `\"R\"`, `\"L\"`, `\"C\"`.",
+          "default": 0.0
+        },
+        "Cs": {
+          "type": "number",
+          "description": "Surface capacitance, F/sq. Use with `\"Rs\"` and `\"Ls\"`; do not mix with circuit parameters `\"R\"`, `\"L\"`, `\"C\"`.",
+          "default": 0.0
+        },
+        "Excitation": {
+          "description": "Turns on or off port excitation for driven or transient simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
+          "default": false,
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/ExcitationIndex"
+            }
+          ]
+        },
+        "Active": {
+          "type": "boolean",
+          "description": "Turns on or off the damping boundary condition for this port for driven or transient simulations.",
+          "default": true
+        },
+        "IncludeInSynthesis": {
+          "type": "boolean",
+          "description": "Controls whether this lumped port contributes a port-mode basis vector to the reduced-order model when adaptive driven circuit synthesis is enabled ([AdaptiveCircuitSynthesis](@ref config-solver-driven-adaptivecircuitsynthesis)). The boundary condition itself (the `R`/`L`/`C` or `Rs`/`Ls`/`Cs` termination) is always enforced; only the inclusion of the port mode in the synthesized circuit matrices is affected. Set to `false` on passive terminations whose row/column in the synthesized ``L^{-1}``, ``C``, ``R^{-1}`` matrices is not needed \u2014 for example, peripheral 50 Ohm launcher pads kept in the simulation for correct physics but not measured. Setting this to `false` reduces the size of the PROM basis by one vector per excluded port. Excited ports must always be included; the configuration parser will reject a port with `\"Excitation\" > 0` and `\"IncludeInSynthesis\": false`.",
+          "default": true,
+          "x-palace-advanced": true
+        }
+      }
+    },
+    "LumpedPortElements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Elements"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Index of this lumped port, used in postprocessing output files. Must be unique across all port and source types.",
+          "exclusiveMinimum": 0
+        },
+        "Elements": {
+          "type": "array",
+          "description": "Sub-elements for a multielement lumped port. Use this instead of the top-level `\"Attributes\"`/`\"Direction\"`/`\"CoordinateSystem\"` when the port spans multiple disjoint boundary surfaces. Elements add in parallel.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/Element"
+          }
+        },
+        "Direction": {
+          "description": "Excitation direction. Axis-aligned Cartesian directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. Coaxial directions use `\"+R\"`, `\"-R\"`. Alternatively, specify a normalized 3-element array, e.g. `[0.0, 1.0, 0.0]`. The coordinate system is determined by `\"CoordinateSystem\"`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PortDirection"
+            },
+            {
+              "$ref": "#/$defs/Vector3"
+            }
+          ]
+        },
+        "CoordinateSystem": {
+          "$ref": "#/$defs/CoordinateSystem",
+          "description": "Coordinate system used to express the `\"Direction\"` vector. If a keyword argument is used for `\"Direction\"` this value is ignored.",
+          "default": "Cartesian"
+        },
+        "R": {
+          "type": "number",
+          "description": "Circuit resistance, \u03a9. Use with `\"L\"` and `\"C\"`; do not mix with surface parameters `\"Rs\"`, `\"Ls\"`, `\"Cs\"`.",
+          "default": 0.0
+        },
+        "L": {
+          "type": "number",
+          "description": "Circuit inductance, H. Use with `\"R\"` and `\"C\"`; do not mix with surface parameters `\"Rs\"`, `\"Ls\"`, `\"Cs\"`.",
+          "default": 0.0
+        },
+        "C": {
+          "type": "number",
+          "description": "Circuit capacitance, F. Use with `\"R\"` and `\"L\"`; do not mix with surface parameters `\"Rs\"`, `\"Ls\"`, `\"Cs\"`.",
+          "default": 0.0
+        },
+        "Rs": {
+          "type": "number",
+          "description": "Surface resistance, \u03a9/sq. Use with `\"Ls\"` and `\"Cs\"`; do not mix with circuit parameters `\"R\"`, `\"L\"`, `\"C\"`.",
+          "default": 0.0
+        },
+        "Ls": {
+          "type": "number",
+          "description": "Surface inductance, H/sq. Use with `\"Rs\"` and `\"Cs\"`; do not mix with circuit parameters `\"R\"`, `\"L\"`, `\"C\"`.",
+          "default": 0.0
+        },
+        "Cs": {
+          "type": "number",
+          "description": "Surface capacitance, F/sq. Use with `\"Rs\"` and `\"Ls\"`; do not mix with circuit parameters `\"R\"`, `\"L\"`, `\"C\"`.",
+          "default": 0.0
+        },
+        "Excitation": {
+          "description": "Turns on or off port excitation for driven or transient simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
+          "default": false,
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/ExcitationIndex"
+            }
+          ]
+        },
+        "Active": {
+          "type": "boolean",
+          "description": "Turns on or off the damping boundary condition for this port for driven or transient simulations.",
+          "default": true
+        },
+        "IncludeInSynthesis": {
+          "type": "boolean",
+          "description": "Controls whether this lumped port contributes a port-mode basis vector to the reduced-order model when adaptive driven circuit synthesis is enabled ([AdaptiveCircuitSynthesis](@ref config-solver-driven-adaptivecircuitsynthesis)). The boundary condition itself (the `R`/`L`/`C` or `Rs`/`Ls`/`Cs` termination) is always enforced; only the inclusion of the port mode in the synthesized circuit matrices is affected. Set to `false` on passive terminations whose row/column in the synthesized ``L^{-1}``, ``C``, ``R^{-1}`` matrices is not needed \u2014 for example, peripheral 50 Ohm launcher pads kept in the simulation for correct physics but not measured. Setting this to `false` reduces the size of the PROM basis by one vector per excluded port. Excited ports must always be included; the configuration parser will reject a port with `\"Excitation\" > 0` and `\"IncludeInSynthesis\": false`.",
+          "default": true,
+          "x-palace-advanced": true
+        }
+      }
+    },
+    "Element": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Attributes",
+        "Direction"
+      ],
+      "properties": {
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        },
+        "Direction": {
+          "description": "Excitation direction. Axis-aligned Cartesian directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. Coaxial directions use `\"+R\"`, `\"-R\"`. Alternatively, specify a normalized 3-element array, e.g. `[0.0, 1.0, 0.0]`. The coordinate system is determined by `\"CoordinateSystem\"`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PortDirection"
+            },
+            {
+              "$ref": "#/$defs/Vector3"
+            }
+          ]
+        },
+        "CoordinateSystem": {
+          "$ref": "#/$defs/CoordinateSystem",
+          "description": "Coordinate system for this element's `\"Direction\"` vector.",
+          "default": "Cartesian"
+        }
+      }
+    },
+    "WavePort": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Attributes"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Index of this wave port, used in postprocessing output files. Must be unique across all port and source types.",
+          "exclusiveMinimum": 0
+        },
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        },
+        "Mode": {
+          "type": "integer",
+          "description": "Mode index (1-based) for the characteristic port mode of this wave port, ranked in order of decreasing wave number.",
+          "exclusiveMinimum": 0,
+          "default": 1
+        },
+        "Offset": {
+          "type": "number",
+          "description": "Offset distance used for S-parameter de-embedding for this wave port, specified in mesh length units.",
+          "minimum": 0.0,
+          "default": 0.0
+        },
+        "SolverType": {
+          "type": "string",
+          "description": "Eigenvalue solver for computing the boundary mode. Accepts the same options as [`/Solver/Eigenmode/Type`](@ref config-solver-eigenmode-type). If omitted, Palace selects the available eigenvalue solver backend.",
+          "oneOf": [
+            {
+              "const": "Default",
+              "description": "Use Palace's default backend selection for the available build."
+            },
+            {
+              "const": "SLEPc",
+              "description": "Use the SLEPc eigensolver backend."
+            },
+            {
+              "const": "ARPACK",
+              "description": "Use the ARPACK eigensolver backend."
+            }
+          ]
+        },
+        "Excitation": {
+          "description": "Turns on or off port excitation for driven simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
+          "default": false,
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/ExcitationIndex"
+            }
+          ]
+        },
+        "Active": {
+          "type": "boolean",
+          "description": "Turns on or off the damping boundary condition for this port for driven simulations.",
+          "default": true
+        },
+        "MaxIts": {
+          "type": "integer",
+          "description": "Maximum number of iterations for the GMRES solver used in the wave port boundary mode analysis.",
+          "exclusiveMinimum": 0,
+          "default": 45,
+          "x-palace-advanced": true
+        },
+        "KSPTol": {
+          "type": "number",
+          "description": "Tolerance for the linear solver used in the wave port boundary mode analysis.",
+          "exclusiveMinimum": 0.0,
+          "default": 1e-08,
+          "x-palace-advanced": true
+        },
+        "EigenTol": {
+          "type": "number",
+          "description": "Tolerance for the eigenvalue solver used in the wave port boundary mode analysis.",
+          "exclusiveMinimum": 0.0,
+          "default": 1e-06,
+          "x-palace-advanced": true
+        },
+        "MaxSize": {
+          "type": "integer",
+          "description": "Maximum subspace dimension for the eigenvalue solver. If omitted, Palace uses `max(2 \u00d7 Mode, Mode + 15)`.",
+          "exclusiveMinimum": 0,
+          "x-palace-advanced": true
+        },
+        "Verbose": {
+          "type": "integer",
+          "description": "Verbosity level for the wave port linear and eigensolvers.",
+          "minimum": 0.0,
+          "default": 0,
+          "x-palace-advanced": true
+        },
+        "VoltagePath": {
+          "type": "array",
+          "description": "Open path of coordinate points across the port face, specified in mesh length units. Each entry is a floating point array of length equal to the spatial dimension. The path is **directed from the signal (high-potential) terminal to the ground (low-potential) terminal**, matching the lumped-port `\"Direction\"` convention. When specified, this: 1. Pins the wave-port mode polarity so that ``\\int E_{\\text{mode}} \\cdot dl`` along the path is real-positive (required for consistent S-parameter signs when mixing wave and lumped ports in a driven simulation; without it, cross-type S-parameters may be ``180^\\circ`` out of phase). 2. Enables voltage and characteristic impedance ``Z_{PV}`` postprocessing for the wave port. For example, in a coaxial wave port the first point is on the inner conductor (signal) and the last point is on the outer conductor (ground); for a CPW port, the first point is on the center trace and the last point in the gap. Uses GSLIB interpolation.",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 3,
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "NSamples": {
+          "type": "integer",
+          "description": "Number of uniformly spaced sample points for the coordinate-based voltage line integral.",
+          "minimum": 1,
+          "default": 100
+        },
+        "PolarityAttributes": {
+          "type": "array",
+          "description": "Pair of parent-mesh boundary attributes `[signal, ground]` (signal/high-potential terminal first, ground/low-potential terminal second). Same role as the polarity component of [VoltagePath](@ref config-boundaries-waveport-voltagepath): the mode is flipped so that the modal E-field points from the signal attribute toward the ground attribute. Ignored if `\"VoltagePath\"` is also specified. Lightweight alternative to `\"VoltagePath\"` when only polarity is needed (no ``Z_{PV}``, no GSLIB). Both attributes must be present as distinct boundary attributes in the input mesh, with edges that lie on the port face.",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "FloquetPort": {
+      "type": "object",
+      "title": "Floquet Port",
+      "description": "Floquet port boundary condition for periodic driven simulations.",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Attributes"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Index of this Floquet port, used in postprocessing output files. Must be unique across all port and source types.",
+          "exclusiveMinimum": 0
+        },
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes for this Floquet port. The port face must be planar and lie on the true boundary of the computational domain; the adjacent medium must be homogeneous and isotropic."
+        },
+        "Excitation": {
+          "description": "Excitation flag or positive excitation index. When excited, injects a unit-power plane wave in the specular `(0, 0)` diffraction order.",
+          "default": false,
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "$ref": "#/$defs/ExcitationIndex"
+            }
+          ]
+        },
+        "IncidentPolarization": {
+          "type": "string",
+          "description": "Incident plane-wave polarization.",
+          "default": "TE",
+          "oneOf": [
+            {
+              "const": "TE",
+              "description": "Transverse electric (s-polarization)."
+            },
+            {
+              "const": "TM",
+              "description": "Transverse magnetic (p-polarization)."
+            },
+            {
+              "const": "RHC",
+              "description": "Right-hand circular polarization."
+            },
+            {
+              "const": "LHC",
+              "description": "Left-hand circular polarization."
+            }
+          ]
+        },
+        "MaxOrder": {
+          "type": "integer",
+          "description": "Maximum diffraction order index to include. If omitted, Palace starts from `3` and caps each lattice direction at the mesh Nyquist limit `max(1, floor(p \u00d7 \u03c0 / (|b_i| \u00d7 h_max)))`, where `p` is the maximum element order, `b_i` is a reciprocal lattice vector, and `h_max` is the maximum port-boundary element size. `0` includes only the specular `(0, 0)` order.",
+          "minimum": 0
+        }
+      }
+    },
+    "SurfaceCurrentAttributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Attributes"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Index of this surface current source, used in postprocessing output files. Must be unique across all port and source types.",
+          "exclusiveMinimum": 0
+        },
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes for this surface current boundary. If this is to be a object with more than a single element, use the \"Elements\" array described below."
+        },
+        "Direction": {
+          "description": "Excitation direction. Axis-aligned Cartesian directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. Coaxial directions use `\"+R\"`, `\"-R\"`. Alternatively, specify a normalized 3-element array, e.g. `[0.0, 1.0, 0.0]`. The coordinate system is determined by `\"CoordinateSystem\"`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PortDirection"
+            },
+            {
+              "$ref": "#/$defs/Vector3"
+            }
+          ]
+        },
+        "CoordinateSystem": {
+          "$ref": "#/$defs/CoordinateSystem",
+          "description": "Coordinate system for the `\"Direction\"` vector. Same options as [`/LumpedPort/CoordinateSystem`](@ref config-boundaries-lumpedport-coordinatesystem).",
+          "default": "Cartesian"
+        }
+      }
+    },
+    "SurfaceCurrentElements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Elements"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Index of this surface current source, used in postprocessing output files. Must be unique across all port and source types.",
+          "exclusiveMinimum": 0
+        },
+        "Elements": {
+          "type": "array",
+          "description": "Sub-elements for a multielement surface current source. Use this instead of the top-level `\"Attributes\"`/`\"Direction\"`/`\"CoordinateSystem\"` when the source spans multiple disjoint boundary surfaces. Elements add in parallel to give the same total current as a single-element source.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/Element"
+          }
+        },
+        "Direction": {
+          "description": "Excitation direction. Axis-aligned Cartesian directions can be specified using keywords: `\"+X\"`, `\"-X\"`, `\"+Y\"`, `\"-Y\"`, `\"+Z\"`, `\"-Z\"`. Coaxial directions use `\"+R\"`, `\"-R\"`. Alternatively, specify a normalized 3-element array, e.g. `[0.0, 1.0, 0.0]`. The coordinate system is determined by `\"CoordinateSystem\"`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PortDirection"
+            },
+            {
+              "$ref": "#/$defs/Vector3"
+            }
+          ]
+        },
+        "CoordinateSystem": {
+          "$ref": "#/$defs/CoordinateSystem",
+          "description": "Coordinate system for the `\"Direction\"` vector. Same options as [`/LumpedPort/CoordinateSystem`](@ref config-boundaries-lumpedport-coordinatesystem).",
+          "default": "Cartesian"
+        }
+      }
+    },
+    "Terminal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Attributes"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Index of this terminal, used in postprocessing output files and to index the computed capacitance matrix.",
+          "exclusiveMinimum": 0
+        },
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        }
+      }
+    },
+    "Periodic": {
+      "type": "object",
+      "title": "Periodic Boundary",
+      "description": "Periodic boundary conditions for surfaces whose meshes are identical after translation and/or rotation. Floquet periodic boundary conditions with a phase shift are also supported.",
+      "additionalProperties": false,
+      "required": [
+        "BoundaryPairs"
+      ],
+      "properties": {
+        "FloquetWaveVector": {
+          "$ref": "#/$defs/FloquetWaveVector"
+        },
+        "FloquetReferenceFrequency": {
+          "type": "number",
+          "description": "Reference frequency, GHz, at which `\"FloquetWaveVector\"` is defined. When nonzero, the Bloch wave vector scales linearly with frequency during a driven frequency sweep; when zero, it is held constant.",
+          "minimum": 0,
+          "default": 0.0
+        },
+        "BoundaryPairs": {
+          "type": "array",
+          "description": "Array of donor\u2013receiver boundary pairs defining the periodic mapping.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/BoundaryPair"
+          }
+        }
+      }
+    },
+    "BoundaryPair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "DonorAttributes",
+        "ReceiverAttributes"
+      ],
+      "properties": {
+        "DonorAttributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of donor mesh boundary attributes for a periodic boundary pair."
+        },
+        "ReceiverAttributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of receiver mesh boundary attributes for a periodic boundary pair."
+        },
+        "Translation": {
+          "$ref": "#/$defs/Vector3",
+          "description": "3-element translation vector `[dx, dy, dz]` from donor to receiver boundary, in mesh length units. If neither `\"Translation\"` nor `\"AffineTransformation\"` are specified, the transformation is detected automatically."
+        },
+        "AffineTransformation": {
+          "$ref": "#/$defs/AffineTransformation",
+          "description": "16-element row-major 4\u00d74 affine transformation matrix from donor to receiver boundary, in mesh length units. If neither `\"Translation\"` nor `\"AffineTransformation\"` are specified, the transformation is detected automatically."
+        }
+      }
+    },
+    "BoundaryPostprocessing": {
+      "type": "object",
+      "title": "Boundary Postprocessing",
+      "description": "Configuration for boundary postprocessing.",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "SurfaceFlux": {
+          "type": "array",
+          "title": "Surface Flux",
+          "description": "Array of surface flux postprocessing boundaries. Results are written to `surface-F.csv` in the output directory.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/SurfaceFlux"
+          }
+        },
+        "Dielectric": {
+          "type": "array",
+          "description": "Array of interface dielectric loss postprocessing boundaries. Computes energy participation ratios (EPR) and quality factors for dielectric interfaces. See also the [reference documentation](../reference.md#Bulk-and-interface-dielectric-loss). Results are written to `surface-Q.csv` in the output directory.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/Dielectric"
+          }
+        },
+        "Impedance": {
+          "type": "array",
+          "title": "Mode Impedance",
+          "description": "Array of objects for postprocessing mode impedance via voltage and current line integrals.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/PostprocessingImpedance"
+          }
+        },
+        "Voltage": {
+          "type": "array",
+          "title": "Mode Voltage",
+          "description": "Array of objects for postprocessing mode voltage via line integrals.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/PostprocessingVoltage"
+          }
+        },
+        "FarField": {
+          "$ref": "#/$defs/FarField",
+          "title": "Far Field",
+          "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary."
+        }
+      }
+    },
+    "PostprocessingImpedance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Index of this impedance postprocessing boundary, used in postprocessing output files."
+        },
+        "VoltageAttributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes for the voltage integration path across the gap between ground and trace. Either `\"VoltageAttributes\"` or `\"VoltagePath\"` must be specified."
+        },
+        "CurrentAttributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes for the current integration loop around the trace. Either `\"CurrentAttributes\"` or `\"CurrentPath\"` may be specified for the V/I impedance calculation."
+        },
+        "VoltagePath": {
+          "$ref": "#/$defs/CoordinatePath",
+          "description": "Array of coordinate points defining an open path for computing the voltage line integral ``V = \\int \\mathbf{E} \\cdot d\\mathbf{l}``. Each element is a floating point array of length equal to the spatial dimension. At least two points are required. Specified in mesh length units. Uses uniformly weighted GSLIB interpolation, which is less accurate than the attribute-based method but does not require modifying the mesh to include integration boundaries."
+        },
+        "CurrentPath": {
+          "$ref": "#/$defs/CoordinatePath",
+          "description": "Array of coordinate points defining a closed loop for computing the current line integral ``I = \\oint \\mathbf{H}_t \\cdot d\\mathbf{l}``. Each element is a floating point array of length equal to the spatial dimension. The last point connects back to the first. Specified in mesh length units."
+        },
+        "NSamples": {
+          "type": "integer",
+          "description": "Number of uniformly spaced sample points for the coordinate-based line integrals (using GSLIB interpolation).",
+          "minimum": 1,
+          "default": 100
+        }
+      }
+    },
+    "PostprocessingVoltage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Index of this voltage postprocessing boundary, used in postprocessing output files."
+        },
+        "VoltageAttributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes for the voltage integration path. Either `\"VoltageAttributes\"` or `\"VoltagePath\"` must be specified."
+        },
+        "VoltagePath": {
+          "$ref": "#/$defs/CoordinatePath",
+          "description": "Array of coordinate points defining an open path for computing the voltage line integral ``V = \\int \\mathbf{E} \\cdot d\\mathbf{l}``. Each element is a floating point array of length equal to the spatial dimension. At least two points are required. Specified in mesh length units."
+        },
+        "NSamples": {
+          "type": "integer",
+          "description": "Number of uniformly spaced sample points for the coordinate-based line integral (GSLIB interpolation).",
+          "minimum": 1,
+          "default": 100
+        }
+      }
+    },
+    "SurfaceFlux": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Attributes",
+        "Type"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Index of this surface flux postprocessing boundary, used in output files.",
+          "exclusiveMinimum": 0
+        },
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        },
+        "Type": {
+          "$ref": "#/$defs/SurfaceFluxType",
+          "description": "Type of surface flux to integrate over the boundary."
+        },
+        "TwoSided": {
+          "type": "boolean",
+          "description": "For internal boundary surfaces: when `false`, the flux on both sides is averaged; when `true`, it is summed with opposite normal direction.",
+          "default": false
+        },
+        "Center": {
+          "$ref": "#/$defs/Vector3",
+          "description": "Point used to determine the outward normal orientation, in mesh length units. Only used when `\"TwoSided\"` is `false`. If not specified, the point will be computed as the centroid of the axis-aligned bounding box for all elements making up the postprocessing boundary."
+        }
+      }
+    },
+    "Dielectric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Attributes",
+        "Thickness",
+        "Permittivity"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Index of this dielectric interface, used in output files.",
+          "exclusiveMinimum": 0
+        },
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        },
+        "Type": {
+          "$ref": "#/$defs/InterfaceDielectric",
+          "description": "Interface type used to determine the boundary conditions for computing the EPR. See also [theory reference](../reference.md#Bulk-and-interface-dielectric-loss).",
+          "default": "Default"
+        },
+        "Thickness": {
+          "type": "number",
+          "description": "Thickness of this dielectric interface, in mesh length units."
+        },
+        "Permittivity": {
+          "type": "number",
+          "description": "Relative permittivity of this dielectric interface layer. This should be the interface layer permittivity for the specific \"Type\" of interface specified."
+        },
+        "LossTan": {
+          "type": "number",
+          "description": "Loss tangent of this dielectric interface.",
+          "default": 0.0
+        }
+      }
+    },
+    "FarField": {
+      "type": "object",
+      "title": "Far Field",
+      "description": "Far-field electric field extraction. The boundary attributes must enclose the system and be on an external boundary.",
+      "additionalProperties": false,
+      "required": [
+        "Attributes"
+      ],
+      "properties": {
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        },
+        "NSample": {
+          "type": "integer",
+          "description": "Number of uniformly-spaced points used to discretize the far-field sphere.",
+          "minimum": 0,
+          "default": 0
+        },
+        "ThetaPhis": {
+          "type": "array",
+          "description": "Additional specific (\u03b8, \u03c6) angle pairs in degrees at which to evaluate the far field. \u03b8 \u2208 [0\u00b0, 180\u00b0] is the polar angle, \u03c6 \u2208 [0\u00b0, 360\u00b0] is the azimuthal angle.",
+          "items": {
+            "$ref": "#/$defs/ThetaPhi"
+          }
+        }
+      }
+    },
+    "ExcitationIndex": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "CoordinateSystem": {
+      "type": "string",
+      "description": "Coordinate system used to express the `\"Direction\"` vector. If a keyword argument is used for `\"Direction\"` this value is ignored.",
+      "default": "Cartesian",
+      "oneOf": [
+        {
+          "description": "Standard Cartesian coordinates.",
+          "const": "Cartesian"
+        },
+        {
+          "description": "Cylindrical coordinates (enables `+R`/`-R` directions).",
+          "const": "Cylindrical"
+        }
+      ]
+    },
+    "SurfaceFluxType": {
+      "type": "string",
+      "description": "Type of surface flux to integrate over the boundary.",
+      "oneOf": [
+        {
+          "description": "Integrate the electric flux density.",
+          "const": "Electric"
+        },
+        {
+          "description": "Integrate the magnetic flux density.",
+          "const": "Magnetic"
+        },
+        {
+          "description": "Integrate the Poynting vector (energy flux).",
+          "const": "Power"
+        }
+      ]
+    },
+    "InterfaceDielectric": {
+      "type": "string",
+      "description": "Interface type used to determine the boundary conditions for computing the EPR. See also [theory reference](../reference.md#Bulk-and-interface-dielectric-loss).",
+      "default": "Default",
+      "oneOf": [
+        {
+          "description": "Use the full electric field evaluated at the boundary.",
+          "const": "Default"
+        },
+        {
+          "description": "Use metal-air interface boundary conditions.",
+          "const": "MA"
+        },
+        {
+          "description": "Use metal-substrate interface boundary conditions.",
+          "const": "MS"
+        },
+        {
+          "description": "Use substrate-air interface boundary conditions.",
+          "const": "SA"
+        }
+      ]
+    },
+    "FloquetWaveVector": {
+      "type": "array",
+      "description": "3-element Floquet wave vector `[kx, ky, kz]` defining the phase delay between periodic boundaries, in radians per mesh length unit.",
+      "additionalItems": false,
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3,
+      "default": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "AffineTransformation": {
+      "type": "array",
+      "description": "16-element row-major 4\u00d74 affine transformation matrix from donor to receiver boundary, in mesh length units. If neither `\"Translation\"` nor `\"AffineTransformation\"` are specified, the transformation is detected automatically.",
+      "additionalItems": false,
+      "minItems": 16,
+      "maxItems": 16,
+      "items": {
+        "type": "number"
+      }
+    },
+    "ThetaPhi": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "number"
+      }
+    },
+    "CoordinatePath": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "minItems": 2,
+        "maxItems": 3,
+        "items": {
+          "type": "number"
+        }
+      }
+    },
+    "PortDirection": {
+      "type": "string",
+      "enum": [
+        "R",
+        "X",
+        "Y",
+        "Z",
+        "+R",
+        "+X",
+        "+Y",
+        "+Z",
+        "-R",
+        "-X",
+        "-Y",
+        "-Z",
+        "r",
+        "x",
+        "y",
+        "z",
+        "+r",
+        "+x",
+        "+y",
+        "+z",
+        "-r",
+        "-x",
+        "-y",
+        "-z"
+      ]
+    },
+    "Device": {
+      "type": "string",
+      "description": "The runtime device configuration passed to [MFEM](https://mfem.org/howto/assembly_levels/) to activate different computation backends. When *Palace* is built with OpenMP support (`PALACE_WITH_OPENMP=ON`), `omp` is automatically added to the MFEM device list.",
+      "default": "CPU",
+      "oneOf": [
+        {
+          "description": "Run on CPU.",
+          "const": "CPU"
+        },
+        {
+          "description": "Run on GPU via CUDA (`MFEM_USE_CUDA=ON`) or HIP (`MFEM_USE_HIP=ON`).",
+          "const": "GPU"
+        },
+        {
+          "description": "MFEM debug device, useful for diagnosing GPU-related issues.",
+          "const": "Debug"
+        }
+      ]
+    },
+    "Orthogonalization": {
+      "type": "string",
+      "description": "Gram-Schmidt variant for orthogonalizing the adaptive reduced-order model basis. Same options as [`/Linear/GSOrthogonalization`](@ref config-solver-linear-gsorthogonalization).",
+      "default": "CGS2",
+      "x-palace-advanced": true,
+      "oneOf": [
+        {
+          "description": "Modified Gram-Schmidt.",
+          "const": "MGS"
+        },
+        {
+          "description": "Classical Gram-Schmidt.",
+          "const": "CGS"
+        },
+        {
+          "description": "Two-step classical Gram-Schmidt with reorthogonalization.",
+          "const": "CGS2"
+        }
+      ]
+    },
+    "AdaptiveCircuitSynthesisDomainOrthogonalization": {
+      "type": "string",
+      "description": "Weight matrix type for domain orthogonalization when building synthesized circuit matrices.",
+      "default": "Energy",
+      "x-palace-advanced": true,
+      "oneOf": [
+        {
+          "description": "Use the energy-based domain mass matrix.",
+          "const": "Energy"
+        },
+        {
+          "description": "Use the identity matrix in the finite element basis.",
+          "const": "FEBasisIdentity"
+        },
+        {
+          "description": "Use the physical-space field overlap.",
+          "const": "SpaceOverlap"
+        }
+      ]
+    },
+    "EigenSolverBackend": {
+      "type": "string",
+      "oneOf": [
+        {
+          "const": "Default",
+          "description": "Use Palace's default backend selection for the available build."
+        },
+        {
+          "const": "SLEPc",
+          "description": "Use the SLEPc eigensolver backend."
+        },
+        {
+          "const": "ARPACK",
+          "description": "Use the ARPACK eigensolver backend."
+        }
+      ]
+    },
+    "NonlinearEigenSolver": {
+      "type": "string",
+      "default": "Hybrid",
+      "oneOf": [
+        {
+          "const": "Hybrid",
+          "description": "Use the hybrid nonlinear eigensolver strategy."
+        },
+        {
+          "const": "SLP",
+          "description": "Use the successive linear problems nonlinear eigensolver."
+        }
+      ]
+    },
+    "TimeSteppingScheme": {
+      "type": "string",
+      "default": "GeneralizedAlpha",
+      "oneOf": [
+        {
+          "const": "Default",
+          "description": "Use Palace's default time integration scheme."
+        },
+        {
+          "const": "GeneralizedAlpha",
+          "description": "Use the generalized-\u03b1 time integration scheme."
+        },
+        {
+          "const": "RungeKutta",
+          "description": "Use the Runge-Kutta time integrator."
+        },
+        {
+          "const": "CVODE",
+          "description": "Use the CVODE time integrator."
+        },
+        {
+          "const": "ARKODE",
+          "description": "Use the ARKODE time integrator."
+        }
+      ]
+    },
+    "Excitation": {
+      "type": "string",
+      "oneOf": [
+        {
+          "const": "Sinusoidal",
+          "description": "Sinusoidal source excitation."
+        },
+        {
+          "const": "Gaussian",
+          "description": "Gaussian pulse excitation."
+        },
+        {
+          "const": "DifferentiatedGaussian",
+          "description": "Differentiated Gaussian pulse excitation."
+        },
+        {
+          "const": "ModulatedGaussian",
+          "description": "Gaussian-modulated sinusoidal excitation."
+        },
+        {
+          "const": "Ramp",
+          "description": "Ramp-step excitation."
+        },
+        {
+          "const": "SmoothStep",
+          "description": "Smooth step excitation."
+        }
+      ]
+    },
+    "LinearSolverType": {
+      "type": "string",
+      "oneOf": [
+        {
+          "const": "Default",
+          "description": "Use Palace's default linear preconditioner selection."
+        },
+        {
+          "const": "AMS",
+          "description": "Use the Hypre AMS preconditioner."
+        },
+        {
+          "const": "BoomerAMG",
+          "description": "Use the Hypre BoomerAMG preconditioner."
+        },
+        {
+          "const": "MUMPS",
+          "description": "Use the MUMPS sparse direct solver."
+        },
+        {
+          "const": "SuperLU",
+          "description": "Use the SuperLU_DIST sparse direct solver."
+        },
+        {
+          "const": "STRUMPACK",
+          "description": "Use the STRUMPACK sparse direct solver."
+        },
+        {
+          "const": "STRUMPACK-MP",
+          "description": "Use the STRUMPACK-MP sparse direct solver variant."
+        },
+        {
+          "const": "Jacobi",
+          "description": "Use the Jacobi preconditioner."
+        }
+      ]
+    },
+    "KrylovSolver": {
+      "type": "string",
+      "oneOf": [
+        {
+          "const": "Default",
+          "description": "Use Palace's default Krylov solver for the active problem type."
+        },
+        {
+          "const": "CG",
+          "description": "Use conjugate gradients."
+        },
+        {
+          "const": "MINRES",
+          "description": "Use MINRES."
+        },
+        {
+          "const": "GMRES",
+          "description": "Use GMRES."
+        },
+        {
+          "const": "FGMRES",
+          "description": "Use flexible GMRES."
+        },
+        {
+          "const": "BiCGSTAB",
+          "description": "Use BiCGSTAB."
+        }
+      ]
+    },
+    "MultigridCoarsening": {
+      "type": "string",
+      "default": "Logarithmic",
+      "oneOf": [
+        {
+          "const": "Linear",
+          "description": "Use linearly decreasing polynomial order between p-multigrid levels."
+        },
+        {
+          "const": "Logarithmic",
+          "description": "Use logarithmic polynomial-order coarsening between p-multigrid levels."
+        }
+      ]
+    },
+    "PreconditionerSide": {
+      "type": "string",
+      "oneOf": [
+        {
+          "const": "Default",
+          "description": "Use Palace's default preconditioning side for the chosen Krylov solver."
+        },
+        {
+          "const": "Right",
+          "description": "Use right preconditioning."
+        },
+        {
+          "const": "Left",
+          "description": "Use left preconditioning."
+        }
+      ]
+    },
+    "SymbolicFactorization": {
+      "type": "string",
+      "oneOf": [
+        {
+          "const": "Default",
+          "description": "Use the sparse direct solver's default column ordering."
+        },
+        {
+          "const": "METIS",
+          "description": "Use METIS column ordering."
+        },
+        {
+          "const": "ParMETIS",
+          "description": "Use ParMETIS column ordering."
+        },
+        {
+          "const": "Scotch",
+          "description": "Use Scotch column ordering."
+        },
+        {
+          "const": "PTScotch",
+          "description": "Use PT-Scotch column ordering."
+        },
+        {
+          "const": "PORD",
+          "description": "Use PORD column ordering."
+        },
+        {
+          "const": "AMD",
+          "description": "Use AMD column ordering."
+        },
+        {
+          "const": "RCM",
+          "description": "Use reverse Cuthill-McKee ordering."
+        }
+      ]
+    },
+    "SparseCompression": {
+      "type": "string",
+      "default": "None",
+      "oneOf": [
+        {
+          "const": "None",
+          "description": "Disable low-rank compression."
+        },
+        {
+          "const": "BLR",
+          "description": "Use block low-rank compression."
+        },
+        {
+          "const": "HSS",
+          "description": "Use hierarchically semi-separable compression."
+        },
+        {
+          "const": "HODLR",
+          "description": "Use hierarchically off-diagonal low-rank compression."
+        },
+        {
+          "const": "ZFP",
+          "description": "Use ZFP lossy compression."
+        },
+        {
+          "const": "BLR-HODLR",
+          "description": "Use the BLR-HODLR hybrid compression mode."
+        },
+        {
+          "const": "ZFP-BLR-HODLR",
+          "description": "Use the ZFP-BLR-HODLR hybrid compression mode."
+        }
+      ]
+    },
+    "Eigenmode": {
+      "type": "object",
+      "title": "Eigenmode Solver",
+      "description": "Configuration for the eigenvalue solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Eigenmode\"`.",
+      "additionalProperties": false,
+      "required": [
+        "Target"
+      ],
+      "properties": {
+        "Target": {
+          "type": "number",
+          "description": "(Nonzero) frequency target above which to search for eigenvalues, GHz.",
+          "exclusiveMinimum": 0.0
+        },
+        "Tol": {
+          "type": "number",
+          "description": "Relative convergence tolerance for the eigenvalue solver.",
+          "minimum": 0.0,
+          "default": 1e-06
+        },
+        "MaxIts": {
+          "type": "integer",
+          "description": "Maximum number of iterations for the iterative eigenvalue solver. If omitted, Palace uses `1,000,000` iterations.",
+          "exclusiveMinimum": 0
+        },
+        "MaxSize": {
+          "type": "integer",
+          "description": "Maximum subspace dimension for the eigenvalue solver. If omitted, Palace uses `max(2 \u00d7 N, N + 15)`.",
+          "exclusiveMinimum": 0
+        },
+        "N": {
+          "type": "integer",
+          "description": "Number of eigenvalues to compute.",
+          "exclusiveMinimum": 0,
+          "default": 1
+        },
+        "Save": {
+          "type": "integer",
+          "description": "Number of computed field modes to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization). Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
+          "default": 0
+        },
+        "Type": {
+          "$ref": "#/$defs/EigenSolverBackend",
+          "description": "Specifies the eigenvalue solver backend."
+        },
+        "PEPLinear": {
+          "type": "boolean",
+          "description": "Linearize the polynomial eigenvalue problem before solving.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "Scaling": {
+          "type": "boolean",
+          "description": "Enable scaling of the eigenvalue problem.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "StartVector": {
+          "type": "boolean",
+          "description": "Use a random start vector for the eigensolver.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "StartVectorConstant": {
+          "type": "boolean",
+          "description": "Use a constant start vector instead of a random one.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "MassOrthogonal": {
+          "type": "boolean",
+          "description": "Orthogonalize eigenvectors with respect to the mass matrix.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "NonlinearType": {
+          "$ref": "#/$defs/NonlinearEigenSolver",
+          "description": "Specifies the nonlinear eigenvalue solver for problems with frequency-dependent boundary conditions."
+        },
+        "RefineNonlinear": {
+          "type": "boolean",
+          "description": "Refine nonlinear eigenvalue solutions after the initial solve.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "LinearTol": {
+          "type": "number",
+          "description": "Tolerance for the inner linear solve within the nonlinear eigensolver.",
+          "minimum": 0.0,
+          "default": 0.001,
+          "x-palace-advanced": true
+        },
+        "TargetUpper": {
+          "type": "number",
+          "description": "Upper frequency bound for the eigenvalue search, GHz. Only used for nonlinear problems. If omitted, Palace uses `3 \u00d7 Target`. An inaccurate upper bound can negatively affect convergence of the nonlinear eigensolver.",
+          "exclusiveMinimum": 0.0,
+          "x-palace-advanced": true
+        },
+        "PreconditionerLag": {
+          "type": "integer",
+          "description": "Number of eigensolver iterations between preconditioner updates.",
+          "minimum": 0,
+          "default": 10,
+          "x-palace-advanced": true
+        },
+        "PreconditionerLagTol": {
+          "type": "number",
+          "description": "Residual tolerance below which preconditioner updates are skipped.",
+          "minimum": 0.0,
+          "default": 0.0001,
+          "x-palace-advanced": true
+        },
+        "MaxRestart": {
+          "type": "integer",
+          "description": "Maximum number of restarts for the eigensolver.",
+          "minimum": 0,
+          "default": 2,
+          "x-palace-advanced": true
+        }
+      }
+    },
+    "Driven": {
+      "type": "object",
+      "title": "Driven Solver",
+      "description": "Configuration for the frequency domain driven solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Driven\"`.",
+      "additionalProperties": false,
+      "properties": {
+        "MinFreq": {
+          "type": "number",
+          "description": "Lower bound of the frequency sweep interval, GHz. Deprecated: use [`Linear Samples`](@ref config-solver-driven-samples-linear) interface instead.",
+          "x-palace-deprecated": true
+        },
+        "MaxFreq": {
+          "type": "number",
+          "description": "Upper bound of the frequency sweep interval, GHz. Deprecated: use [`Linear Samples`](@ref config-solver-driven-samples-linear) interface instead.",
+          "x-palace-deprecated": true
+        },
+        "FreqStep": {
+          "type": "number",
+          "description": "Frequency step size for the frequency sweep, GHz. Deprecated: use [`Linear Samples`](@ref config-solver-driven-samples-linear) interface instead.",
+          "x-palace-deprecated": true
+        },
+        "SaveStep": {
+          "type": "integer",
+          "description": "Controls how often, in number of frequency steps, to save computed fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization). Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output). Deprecated: use [`Linear Samples`](@ref config-solver-driven-samples-linear) interface instead.",
+          "default": 0,
+          "x-palace-deprecated": true
+        },
+        "Samples": {
+          "type": "array",
+          "description": "Array of frequency sample specifications. Combined with `\"MinFreq\"`/`\"MaxFreq\"`/`\"FreqStep\"` to form a sorted, unique set of samples.",
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/SamplesPoint",
+                "title": "Point Samples",
+                "description": "Explicit list of frequency sample points."
+              },
+              {
+                "$ref": "#/$defs/SamplesLinear",
+                "title": "Linear Samples",
+                "description": "Linearly-spaced frequency samples."
+              },
+              {
+                "$ref": "#/$defs/SamplesLog",
+                "title": "Log Samples",
+                "description": "Logarithmically-spaced frequency samples."
+              }
+            ]
+          }
+        },
+        "Save": {
+          "type": "array",
+          "description": "Additional frequencies at which to save computed fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), in addition to those specified by `\"SaveStep\"`. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
+          "additionalItems": false,
+          "items": {
+            "type": "number"
+          }
+        },
+        "Restart": {
+          "type": "integer",
+          "description": "1-based sample index from which to restart a partial frequency sweep (i.e. `\"Restart\": x` starts from the *x*-th sample of the combined sample set). Not valid for adaptive sweep.",
+          "exclusiveMinimum": 0,
+          "default": 1
+        },
+        "AdaptiveTol": {
+          "type": "number",
+          "description": "Relative error convergence tolerance for adaptive fast frequency sweep. A value of `0` disables adaptive sweep and the full-order model is solved at each frequency step. A positive value ensures the reduced-order model is reliable relative to the full-order model in the frequency band of interest.",
+          "minimum": 0.0,
+          "default": 0.0
+        },
+        "AdaptiveMaxSamples": {
+          "type": "number",
+          "description": "Maximum number of frequency samples used to construct the reduced-order model for adaptive sweep, if the tolerance (`\"AdaptiveTol\"`) is not met first. In simulations with multiple excitations, this is the maximum per excitation.",
+          "exclusiveMinimum": 0,
+          "default": 20
+        },
+        "AdaptiveConvergenceMemory": {
+          "type": "integer",
+          "description": "Number of consecutive samples satisfying the error tolerance required to declare convergence of the adaptive sampling algorithm.",
+          "exclusiveMinimum": 0,
+          "default": 2
+        },
+        "AdaptiveGSOrthogonalization": {
+          "$ref": "#/$defs/Orthogonalization",
+          "description": "Gram-Schmidt variant for orthogonalizing the adaptive reduced-order model basis. Same options as [`/Linear/GSOrthogonalization`](@ref config-solver-linear-gsorthogonalization).",
+          "default": "CGS2",
+          "x-palace-advanced": true
+        },
+        "AdaptiveCircuitSynthesis": {
+          "type": "boolean",
+          "description": "Use the adaptive reduced-order model to print synthesized circuit-like matrices (L\u207b\u00b9, R\u207b\u00b9, C). Requires adaptive sweep to be enabled, all `LumpedPort` fields to be orthogonal, and only LRC-type frequency dependence (no `WavePort`, `Conductivity`, or second-order farfield BCs).",
+          "default": false
+        },
+        "AdaptiveCircuitSynthesisDomainOrthogonalization": {
+          "$ref": "#/$defs/AdaptiveCircuitSynthesisDomainOrthogonalization",
+          "description": "Weight matrix type for domain orthogonalization when building synthesized circuit matrices.",
+          "default": "Energy",
+          "x-palace-advanced": true
+        }
+      }
+    },
+    "SamplesPoint": {
+      "type": "object",
+      "title": "Point Samples",
+      "description": "Explicit list of frequency sample points.",
+      "additionalProperties": false,
+      "required": [
+        "Freq"
+      ],
+      "properties": {
+        "Type": {
+          "const": "Point",
+          "default": "Point"
+        },
+        "Freq": {
+          "type": "array",
+          "description": "Explicit frequencies to sample, GHz.",
+          "items": {
+            "type": "number"
+          }
+        },
+        "SaveStep": {
+          "type": "integer",
+          "description": "Save fields every N steps within this sample. `0` disables saving.",
+          "default": 0
+        },
+        "AddToPROM": {
+          "type": "boolean",
+          "description": "Force inclusion of these points in the PROM for adaptive sweep (primarily a debugging tool).",
+          "default": false
+        }
+      }
+    },
+    "SamplesLinear": {
+      "type": "object",
+      "title": "Linear Samples",
+      "description": "Linearly-spaced frequency samples.",
+      "additionalProperties": false,
+      "required": [
+        "MinFreq",
+        "MaxFreq"
+      ],
+      "properties": {
+        "Type": {
+          "const": "Linear",
+          "default": "Linear"
+        },
+        "MinFreq": {
+          "type": "number",
+          "description": "Lower bound, GHz.",
+          "minimum": 0.0
+        },
+        "MaxFreq": {
+          "type": "number",
+          "description": "Upper bound, GHz.",
+          "minimum": 0.0
+        },
+        "FreqStep": {
+          "type": "number",
+          "description": "Step size, GHz. Mutually exclusive with `\"NSample\"`.",
+          "minimum": 0.0
+        },
+        "NSample": {
+          "type": "integer",
+          "description": "Number of samples. Mutually exclusive with `\"FreqStep\"`.",
+          "minimum": 0
+        },
+        "SaveStep": {
+          "type": "integer",
+          "description": "Save fields every N steps. `0` disables saving.",
+          "default": 0
+        },
+        "AddToPROM": {
+          "type": "boolean",
+          "description": "Force inclusion in the PROM for adaptive sweep.",
+          "default": false
+        }
+      }
+    },
+    "SamplesLog": {
+      "type": "object",
+      "title": "Log Samples",
+      "description": "Logarithmically-spaced frequency samples.",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "MinFreq",
+        "MaxFreq",
+        "NSample"
+      ],
+      "properties": {
+        "Type": {
+          "const": "Log",
+          "default": "Log"
+        },
+        "MinFreq": {
+          "type": "number",
+          "description": "Lower bound, GHz.",
+          "exclusiveMinimum": 0.0
+        },
+        "MaxFreq": {
+          "type": "number",
+          "description": "Upper bound, GHz.",
+          "exclusiveMinimum": 0.0
+        },
+        "NSample": {
+          "type": "integer",
+          "description": "Number of samples.",
+          "minimum": 1
+        },
+        "SaveStep": {
+          "type": "integer",
+          "description": "Save fields every N steps. `0` disables saving.",
+          "default": 0
+        },
+        "AddToPROM": {
+          "type": "boolean",
+          "description": "Force inclusion in the PROM for adaptive sweep.",
+          "default": false
+        }
+      }
+    },
+    "Transient": {
+      "type": "object",
+      "title": "Transient Solver",
+      "description": "Configuration for the time domain driven solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Transient\"`. Simulations always start from rest at *t* = 0.",
+      "additionalProperties": false,
+      "required": [
+        "Excitation",
+        "MaxTime",
+        "TimeStep"
+      ],
+      "properties": {
+        "Type": {
+          "$ref": "#/$defs/TimeSteppingScheme",
+          "description": "Time integration scheme for the second-order ODE system."
+        },
+        "Excitation": {
+          "$ref": "#/$defs/Excitation",
+          "description": "Controls the time dependence of the source excitation."
+        },
+        "ExcitationFreq": {
+          "type": "number",
+          "description": "Center frequency for harmonic source excitations, GHz. Only relevant when `\"Excitation\"` is `\"Sinusoidal\"`, `\"Gaussian\"`, `\"DifferentiatedGaussian\"`, or `\"ModulatedGaussian\"`.",
+          "default": 0.0
+        },
+        "ExcitationWidth": {
+          "type": "number",
+          "description": "Pulse width for Gaussian-type source excitations, ns. Only relevant when `\"Excitation\"` is `\"Gaussian\"`, `\"DifferentiatedGaussian\"`, `\"ModulatedGaussian\"`, or `\"SmoothStep\"`.",
+          "default": 0.0
+        },
+        "MaxTime": {
+          "type": "number",
+          "description": "End of simulation time interval, ns.",
+          "exclusiveMinimum": 0.0
+        },
+        "TimeStep": {
+          "type": "number",
+          "description": "Uniform time step size, ns.",
+          "exclusiveMinimum": 0.0
+        },
+        "SaveStep": {
+          "type": "integer",
+          "description": "Controls how often, in number of time steps, to save computed fields to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization). Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
+          "default": 0
+        },
+        "Order": {
+          "type": "integer",
+          "description": "Order of adaptive Runge-Kutta integrators or maximum multistep method order, must be within `[2, 5]`. Only relevant when `\"Type\"` is `\"ARKODE\"` or `\"CVODE\"`.",
+          "minimum": 2,
+          "maximum": 5,
+          "default": 2
+        },
+        "RelTol": {
+          "type": "number",
+          "description": "Relative tolerance for adaptive time-stepping. Only relevant when `\"Type\"` is `\"ARKODE\"` or `\"CVODE\"`.",
+          "exclusiveMinimum": 0.0,
+          "default": 0.0001
+        },
+        "AbsTol": {
+          "type": "number",
+          "description": "Absolute tolerance for adaptive time-stepping. Only relevant when `\"Type\"` is `\"ARKODE\"` or `\"CVODE\"`.",
+          "exclusiveMinimum": 0.0,
+          "default": 1e-09
+        }
+      }
+    },
+    "BoundaryMode": {
+      "type": "object",
+      "title": "Boundary Mode Solver",
+      "description": "Configures the 2D boundary mode analysis solver, which computes propagation constants of guided modes on a waveguide cross-section. Used when [Type](@ref config-problem-type) is `\"BoundaryMode\"`.",
+      "additionalProperties": false,
+      "required": [
+        "Freq"
+      ],
+      "properties": {
+        "Freq": {
+          "type": "number",
+          "description": "Operating frequency for the mode analysis, GHz.",
+          "exclusiveMinimum": 0.0
+        },
+        "N": {
+          "type": "integer",
+          "description": "Number of modes to compute.",
+          "minimum": 1,
+          "default": 1
+        },
+        "Save": {
+          "type": "integer",
+          "description": "Number of computed field modes to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization). Files are saved in the `paraview/` (and/or `gridfunction/`) directory under the directory specified by [Output](@ref config-problem-output).",
+          "minimum": 0,
+          "default": 0
+        },
+        "Target": {
+          "type": "number",
+          "description": "Target effective index ``n_\\text{eff} = k_n / k_0`` for the eigenvalue solver shift-and-invert spectral transformation, where ``k_n`` is the propagation constant of the guided mode and ``k_0 = \\omega / c_0`` is the free-space wavenumber. When specified, the solver searches for modes with effective index near this value. If omitted, Palace computes the shift from material properties as `k_n = (\u03c9 / c_min) \u00d7 sqrt(1.1)`, where `c_min` is the minimum material light speed in the solve domain.",
+          "exclusiveMinimum": 0.0
+        },
+        "Tol": {
+          "type": "number",
+          "description": "Relative convergence tolerance for the eigenvalue solver.",
+          "exclusiveMinimum": 0.0,
+          "default": 1e-06
+        },
+        "MaxSize": {
+          "type": "integer",
+          "description": "Maximum subspace dimension for the eigenvalue solver. If omitted, Palace uses `max(2 \u00d7 N, N + 15)`.",
+          "exclusiveMinimum": 0,
+          "x-palace-advanced": true
+        },
+        "Type": {
+          "$ref": "#/$defs/EigenSolverBackend",
+          "description": "Specifies the eigenvalue solver to be used for the mode analysis. See [Eigenmode Type](@ref config-solver-eigenmode-type)."
+        },
+        "Attributes": {
+          "type": "array",
+          "description": "Integer array of 3D mesh boundary attributes from which to extract a 2D cross-section submesh for the mode analysis. When specified, the input mesh must be 3D and a standalone 2D submesh is extracted from these boundary faces. When not specified, the input mesh is used directly and must be 2D.",
+          "additionalItems": false,
+          "minItems": 1,
+          "items": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "Electrostatic": {
+      "type": "object",
+      "title": "Electrostatic Solver",
+      "description": "Configuration for the electrostatic solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Electrostatic\"`.",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "Save": {
+          "type": "integer",
+          "description": "Number of computed electric field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the entries in the computed capacitance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
+          "minimum": 0,
+          "default": 0
+        }
+      }
+    },
+    "Magnetostatic": {
+      "type": "object",
+      "title": "Magnetostatic Solver",
+      "description": "Configuration for the magnetostatic solver. Only relevant when [`/Problem/Type`](@ref config-problem-type) is `\"Magnetostatic\"`.",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "Save": {
+          "type": "integer",
+          "description": "Number of computed magnetic field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the entries in the computed inductance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
+          "minimum": 0,
+          "default": 0
+        }
+      }
+    },
+    "Linear": {
+      "type": "object",
+      "title": "Linear Solver",
+      "description": "Configuration for the linear solver used by all simulation types.",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "Type": {
+          "$ref": "#/$defs/LinearSolverType",
+          "description": "Specifies the solver used for preconditioning the linear system. If omitted, Palace selects the solver based on the problem type and available sparse direct solvers."
+        },
+        "KSPType": {
+          "$ref": "#/$defs/KrylovSolver",
+          "description": "Specifies the iterative Krylov subspace solver. If omitted, Palace uses CG for electrostatic, magnetostatic, and transient simulations, and GMRES otherwise."
+        },
+        "Tol": {
+          "type": "number",
+          "description": "Relative residual convergence tolerance for the iterative linear solver.",
+          "minimum": 0.0,
+          "default": 1e-06
+        },
+        "MaxIts": {
+          "type": "integer",
+          "description": "Maximum number of iterations for the iterative linear solver.",
+          "exclusiveMinimum": 0,
+          "default": 100
+        },
+        "MaxSize": {
+          "type": "integer",
+          "description": "Maximum Krylov space size for GMRES/FGMRES. If omitted, Palace uses [`MaxIts`](@ref config-solver-linear-maxits).",
+          "exclusiveMinimum": 0
+        },
+        "InitialGuess": {
+          "type": "boolean",
+          "description": "Use the previous solution as an initial guess for the iterative solver. If omitted, Palace enables this for driven simulations without adaptive frequency sweep, transient simulations, electrostatics, and magnetostatics, and disables it otherwise.",
+          "x-palace-advanced": true
+        },
+        "MGMaxLevels": {
+          "type": "integer",
+          "description": "When greater than 1, enables [geometric multigrid preconditioning](https://en.wikipedia.org/wiki/Multigrid_method) using p- and h-multigrid coarsening. The solver specified by `\"Type\"` is used on the coarsest level; fine levels use Chebyshev smoothing. If omitted, Palace uses `1` for boundary mode analysis (multigrid disabled) and `100` otherwise.",
+          "minimum": 1
+        },
+        "MGCoarsenType": {
+          "$ref": "#/$defs/MultigridCoarsening",
+          "description": "Coarsening strategy for constructing p-multigrid levels."
+        },
+        "MGUseMesh": {
+          "type": "boolean",
+          "description": "Use the mesh hierarchy for h-multigrid coarsening.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "MGAuxiliarySmoother": {
+          "type": "boolean",
+          "description": "Use an auxiliary space smoother on multigrid levels. If omitted, Palace disables this by default for electrostatic and magnetostatic simulations and enables it otherwise.",
+          "x-palace-advanced": true
+        },
+        "MGCycleIts": {
+          "type": "integer",
+          "description": "Number of V-cycle iterations per preconditioner application for multigrid preconditioners (when geometric multigrid is enabled or `\"Type\"` is `\"AMS\"` or `\"BoomerAMG\"`). If omitted, Palace uses `2` for AMS frequency-domain problems (`\"Type\"` is `\"AMS\"` for eigenmode or driven simulations) and `1` otherwise.",
+          "exclusiveMinimum": 0
+        },
+        "MGSmoothIts": {
+          "type": "integer",
+          "description": "Number of pre- and post-smooth iterations for multigrid preconditioners, when the geometric multigrid preconditioner is enabled.",
+          "exclusiveMinimum": 0,
+          "default": 1
+        },
+        "MGSmoothOrder": {
+          "type": "integer",
+          "description": "Polynomial smoothing order for geometric multigrid. If omitted, Palace uses `max(2 \u00d7 solution order, 4)`.",
+          "exclusiveMinimum": 0
+        },
+        "MGSmoothEigScaleMax": {
+          "type": "number",
+          "description": "Maximum eigenvalue scale for the Chebyshev smoother.",
+          "exclusiveMinimum": 0,
+          "default": 1.0,
+          "x-palace-advanced": true
+        },
+        "MGSmoothEigScaleMin": {
+          "type": "number",
+          "description": "Minimum eigenvalue scale for the Chebyshev smoother.",
+          "minimum": 0,
+          "default": 0.0,
+          "x-palace-advanced": true
+        },
+        "MGSmoothChebyshev4th": {
+          "type": "boolean",
+          "description": "Use 4th-kind Chebyshev polynomial smoother.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "PCMatReal": {
+          "type": "boolean",
+          "description": "When `true`, builds the preconditioner for frequency domain problems using a real-valued approximation of the system matrix. Always used on the coarsest multigrid level regardless of this setting.",
+          "default": false
+        },
+        "PCMatShifted": {
+          "type": "boolean",
+          "description": "When `true`, builds the preconditioner using a positive-definite approximation by flipping the sign of the mass matrix contribution. Can improve performance at high frequencies relative to the lowest nonzero eigenfrequencies of the model. If omitted, Palace enables this for driven simulations using AMS and for boundary mode simulations with multigrid enabled, and disables it otherwise."
+        },
+        "ComplexCoarseSolve": {
+          "type": "boolean",
+          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver. When `false`, uses the real-valued approximation.",
+          "default": false
+        },
+        "DropSmallEntries": {
+          "type": "boolean",
+          "description": "When `true`, drops entries smaller than double-precision machine epsilon from the system matrix used in the sparse direct solver.",
+          "default": false
+        },
+        "ReorderingReuse": {
+          "type": "boolean",
+          "description": "Reuse the matrix reordering from the previous solve.",
+          "default": true,
+          "x-palace-advanced": true
+        },
+        "PCSide": {
+          "$ref": "#/$defs/PreconditionerSide",
+          "description": "Preconditioning side. If omitted, Palace uses the chosen iterative solver's preconditioning side. Not all options are available for all iterative solver choices."
+        },
+        "ColumnOrdering": {
+          "$ref": "#/$defs/SymbolicFactorization",
+          "description": "Column ordering algorithm for sparse direct solvers. If omitted, Palace uses the sparse direct solver's default ordering.",
+          "x-palace-advanced": true
+        },
+        "STRUMPACKCompressionType": {
+          "$ref": "#/$defs/SparseCompression",
+          "description": "STRUMPACK compression type.",
+          "x-palace-advanced": true
+        },
+        "STRUMPACKCompressionTol": {
+          "type": "number",
+          "description": "Tolerance for STRUMPACK lossy compression.",
+          "minimum": 0.0,
+          "default": 0.001,
+          "x-palace-advanced": true
+        },
+        "STRUMPACKLossyPrecision": {
+          "type": "integer",
+          "description": "Precision bits for STRUMPACK ZFP lossy compression.",
+          "minimum": 0,
+          "default": 16,
+          "x-palace-advanced": true
+        },
+        "STRUMPACKButterflyLevels": {
+          "type": "integer",
+          "description": "Number of butterfly levels for STRUMPACK HODLR compression.",
+          "minimum": 0,
+          "default": 1,
+          "x-palace-advanced": true
+        },
+        "SuperLU3DCommunicator": {
+          "type": "boolean",
+          "description": "Use a 3D process grid communicator for SuperLU_DIST.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "AMSVectorInterpolation": {
+          "type": "boolean",
+          "description": "Use vector interpolation in AMS.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "AMSSingularOperator": {
+          "type": "boolean",
+          "description": "Indicate to AMS that the operator is singular (e.g. magnetostatics with no essential boundary conditions). If omitted, Palace enables this for magnetostatic simulations and disables it otherwise.",
+          "x-palace-advanced": true
+        },
+        "AMGAggressiveCoarsening": {
+          "type": "boolean",
+          "description": "Enable aggressive coarsening in BoomerAMG. If omitted, Palace enables this for electrostatic, magnetostatic, and transient simulations, and disables it otherwise.",
+          "x-palace-advanced": true
+        },
+        "AMSMaxIts": {
+          "type": "integer",
+          "description": "Number of AMS iterations per preconditioner application when geometric multigrid is enabled (`\"MGMaxLevels\"` > 1). If omitted, Palace uses [`/Solver/Order`](@ref config-solver-order).",
+          "exclusiveMinimum": 0
+        },
+        "DivFreeTol": {
+          "type": "number",
+          "description": "Relative tolerance for divergence-free cleaning used in the eigenmode simulation type. Ignored when a nonzero Floquet wave vector is specified or when a nonzero [LondonDepth](@ref config-domains-materials-londondepth) is used.",
+          "minimum": 0.0,
+          "default": 1e-12
+        },
+        "DivFreeMaxIts": {
+          "type": "integer",
+          "description": "Maximum number of iterations for divergence-free cleaning. Ignored under the same conditions as `\"DivFreeTol\"`.",
+          "minimum": 0,
+          "default": 1000
+        },
+        "EstimatorTol": {
+          "type": "number",
+          "description": "Relative tolerance for the flux projection solve used in the error estimate calculation.",
+          "minimum": 0.0,
+          "default": 1e-06
+        },
+        "EstimatorMaxIts": {
+          "type": "integer",
+          "description": "Maximum number of iterations for the flux projection solve used in the error estimate calculation.",
+          "minimum": 0,
+          "default": 10000
+        },
+        "EstimatorMG": {
+          "type": "boolean",
+          "description": "When `true`, uses a multigrid preconditioner with AMG coarse solve for the error estimator linear solver instead of Jacobi.",
+          "default": false
+        },
+        "GSOrthogonalization": {
+          "$ref": "#/$defs/Orthogonalization",
+          "description": "Gram-Schmidt variant used to orthogonalize vectors in Krylov subspace methods and other parts of the solver.",
+          "default": "MGS"
+        }
+      }
+    }
   },
   "allOf": [
     {
       "if": {
         "properties": {
           "Problem": {
-            "properties": { "Type": { "const": "Driven" } },
-            "required": ["Type"]
+            "properties": {
+              "Type": {
+                "const": "Driven"
+              }
+            },
+            "required": [
+              "Type"
+            ]
           }
         }
       },
       "then": {
         "properties": {
-          "Solver": { "required": ["Driven"] }
+          "Solver": {
+            "required": [
+              "Driven"
+            ]
+          }
         }
       }
     },
@@ -33,14 +2911,24 @@
       "if": {
         "properties": {
           "Problem": {
-            "properties": { "Type": { "const": "Eigenmode" } },
-            "required": ["Type"]
+            "properties": {
+              "Type": {
+                "const": "Eigenmode"
+              }
+            },
+            "required": [
+              "Type"
+            ]
           }
         }
       },
       "then": {
         "properties": {
-          "Solver": { "required": ["Eigenmode"] }
+          "Solver": {
+            "required": [
+              "Eigenmode"
+            ]
+          }
         }
       }
     },
@@ -48,14 +2936,24 @@
       "if": {
         "properties": {
           "Problem": {
-            "properties": { "Type": { "const": "Transient" } },
-            "required": ["Type"]
+            "properties": {
+              "Type": {
+                "const": "Transient"
+              }
+            },
+            "required": [
+              "Type"
+            ]
           }
         }
       },
       "then": {
         "properties": {
-          "Solver": { "required": ["Transient"] }
+          "Solver": {
+            "required": [
+              "Transient"
+            ]
+          }
         }
       }
     },
@@ -63,14 +2961,24 @@
       "if": {
         "properties": {
           "Problem": {
-            "properties": { "Type": { "const": "BoundaryMode" } },
-            "required": ["Type"]
+            "properties": {
+              "Type": {
+                "const": "BoundaryMode"
+              }
+            },
+            "required": [
+              "Type"
+            ]
           }
         }
       },
       "then": {
         "properties": {
-          "Solver": { "required": ["BoundaryMode"] }
+          "Solver": {
+            "required": [
+              "BoundaryMode"
+            ]
+          }
         }
       }
     }
