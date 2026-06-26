@@ -161,16 +161,22 @@ include(Catch)
 set(SHOULD_SET_LLVM_PROFILE_FILE "$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:IntelLLVM>>>")
 
 # Test parallelism is a build-time contract so CTest accounts for every CPU a
-# test process occupies: PALACE_TESTS_NUMPROC MPI ranks x PALACE_TESTS_OMP_THREADS
-# OpenMP threads = the PROCESSORS slots each case reserves. The OpenMP count is
-# pinned via each test's ENVIRONMENT below (rather than read from a runtime
-# OMP_NUM_THREADS) so the slot accounting cannot drift. Both knobs cover the
-# unit tests as well, so a single setting controls the whole suite's footprint.
+# test process occupies: <ranks> MPI ranks x PALACE_TESTS_OMP_THREADS OpenMP
+# threads = the PROCESSORS slots each case reserves. The OpenMP count is pinned
+# via each test's ENVIRONMENT below (rather than read from a runtime
+# OMP_NUM_THREADS) so the slot accounting cannot drift. Unit and regression
+# cases keep separate rank counts: unit [Parallel] cases just exercise the
+# parallel code paths (2 ranks is plenty and keeps the sweep fast), while
+# regression solves need more ranks for speed and to keep tail eigenvalues on
+# the reference (too few ranks shifts them past tolerance for some solvers).
 set(PALACE_TESTS_NUMPROC 2 CACHE STRING
-    "MPI ranks per [Parallel]/[Regression] unit-test case.")
+    "MPI ranks per [Parallel] unit-test case.")
+set(PALACE_REGRESSION_NUMPROC 2 CACHE STRING
+    "MPI ranks per [Regression]/[Long] case.")
 set(PALACE_TESTS_OMP_THREADS 1 CACHE STRING
-    "OpenMP threads per unit-test process.")
+    "OpenMP threads per test process.")
 math(EXPR PALACE_TESTS_PROCESSORS "${PALACE_TESTS_NUMPROC} * ${PALACE_TESTS_OMP_THREADS}")
+math(EXPR PALACE_REGRESSION_PROCESSORS "${PALACE_REGRESSION_NUMPROC} * ${PALACE_TESTS_OMP_THREADS}")
 set(PALACE_TESTS_OMP_ENV "OMP_NUM_THREADS=${PALACE_TESTS_OMP_THREADS}")
 
 # Install-only test runners (e.g. Spack jobs that install from a buildcache)
@@ -217,16 +223,16 @@ catch_discover_tests(unit-tests
 # Regression tests: full-mesh Palace solves diffed against reference CSVs under
 # PALACE_TEST_DATA_DIR/regression/ref. Slow enough to deserve their own ctest
 # prefix (`ctest -L "^regression$"` to select, `-LE "^(regression|long)$"` to
-# skip both regression flavors). Ranks/threads/slots follow the suite-wide
-# PALACE_TESTS_* contract above.
+# skip both regression flavors). Ranks use PALACE_REGRESSION_NUMPROC (more than
+# the unit count); threads/slots follow the shared PALACE_TESTS_OMP_THREADS.
 catch_discover_tests(unit-tests
   TEST_PREFIX "regression-"
   TEST_SPEC "[Regression]~[Long]"
-  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_TESTS_NUMPROC} ${MPIEXEC_PREFLAGS}
+  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_REGRESSION_NUMPROC} ${MPIEXEC_PREFLAGS}
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS}
   PROPERTIES
     LABELS regression
-    PROCESSORS ${PALACE_TESTS_PROCESSORS}
+    PROCESSORS ${PALACE_REGRESSION_PROCESSORS}
     SKIP_RETURN_CODE 4
     ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/regression/coverage-%p.profraw>"
 )
@@ -241,11 +247,11 @@ catch_discover_tests(unit-tests
 catch_discover_tests(unit-tests
   TEST_PREFIX "long-"
   TEST_SPEC "[Long]"
-  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_TESTS_NUMPROC} ${MPIEXEC_PREFLAGS}
+  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_REGRESSION_NUMPROC} ${MPIEXEC_PREFLAGS}
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS}
   PROPERTIES
     LABELS long
-    PROCESSORS ${PALACE_TESTS_PROCESSORS}
+    PROCESSORS ${PALACE_REGRESSION_PROCESSORS}
     SKIP_RETURN_CODE 4
     ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/regression/coverage-%p.profraw>"
 )
