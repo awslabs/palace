@@ -9,8 +9,8 @@ SPDX-License-Identifier: Apache-2.0
 
 In this tutorial we discuss *Palace*'s circuit synthesis feature, which extracts a lumped-circuit
 model of a device directly from the full-wave FEM. The synthesis feature is based on the rational
-interpolation of the adaptive driven solver, which is discussed in [Driven Solver: Uniform vs
-Adaptive](adaptive_driven_solver.md). We assume familiarity with the details therein.
+interpolation of the adaptive driven solver, which is discussed in [Adaptive Frequency Sweeps for
+Driven Simulations](adaptive_driven_solver.md). We assume familiarity with the details therein.
 We will continue to use the transmon model as our reference example, which features in the
 [eigenmode](../examples/transmon.md) and [driven](adaptive_driven_solver.md) tutorials.
 
@@ -80,8 +80,8 @@ There are several constraints and considerations for using this feature:
     the default value of `"Energy"`.
   - `"AdaptiveCircuitSynthesis": true` requires `"AdaptiveTol" > 0`; *Palace* reports an error
     otherwise.
-  - All the guidance and caveats on using the adaptive solver discussed in [Driven Solver: Uniform
-    vs Adaptive](adaptive_driven_solver.md) still apply.
+  - All the guidance and caveats on using the adaptive solver discussed in [Adaptive Frequency Sweeps
+    for Driven Simulations](adaptive_driven_solver.md) still apply.
 
 ## Circuit Theory and Conventions
 
@@ -105,7 +105,7 @@ linear equation that Palace solves when evaluating an driven simulation is ``\bm
 \bm{A}(\omega) = \left[\bm{K} + i\omega \bm{C} - \omega^2 \bm{M}\right].
 ```
 
-Here, we are neglecting the possibility of terms that non-quadratic in ``\omega`` (
+Here, we are neglecting the possibility of terms that are non-quadratic in ``\omega`` (
 ``\bm{A}_2(\omega)`` and ``\bm{b}_2(\omega)``) since *Palace* cannot currently synthesize them. The
 adaptive solver creates a ROM by projecting this large system onto a set of
 orthogonal vectors ``\bm{Q}``. This forms projected matrices ``\bm{K}_r = \bm{Q}^T\bm{K}\bm{Q}``,
@@ -158,7 +158,7 @@ Here ``\bm{e}_j`` are the port mode fields and ``\bm{x}(\omega^*_k)`` are high-d
 (HDM) solutions at the sample frequencies. Because we add lumped ports first and demand that the
 lumped ports do not overlap, the orthogonalization does does not alter the port structure. We can
 sensibly interpret the top left ``N_p \times N_p`` block of the synthesized matrices as the physical
-port block.  When driving the circuit with an external excitation at a port corresponds to exciting
+port block. Driving the circuit with an external excitation at a port thus corresponds to exciting
 the appropriate row ``j``. The adaptive solver appends HDM samples one frequency at a time until the
 ROM meets the prescribed `"AdaptiveTol"`. The orthogonalization routine will now change these
 vectors and, most notably, always remove the port mode contribution since these appear earlier in
@@ -209,11 +209,11 @@ respect to the conventional circuit characteristic impedance ``Z``.
 
 #### Bulk Volume
 
-After we have enforced port orthogonalize rule above, we need a rule for bulk degrees of freedom.
-Since these will only contribute to effective synthesized nodes, we do not necessarily need to pick
-a physical normalization choice — i.e. there is no "natural" voltage choice for so generic AC mode
-shape in 3D. Different orthogonalization choices correspond to rotations or scaling in the
-synthesized space, which cancel out once we calculated physical quantities like energy, port
+After we have enforced the port orthogonalization rule above, we need a rule for bulk degrees of
+freedom. Since these will only contribute to effective synthesized nodes, we do not necessarily
+need to pick a physical normalization choice — i.e. there is no "natural" voltage choice for a
+generic AC mode shape in 3D. Different orthogonalization choices correspond to rotations or scaling
+in the synthesized space, which cancel out once we calculate physical quantities like energy, port
 scattering parameters, or eigenmode frequencies.
 
 By default, *Palace* normalizes the field according to the system mass matrix ``\bm{M}``. For two
@@ -224,10 +224,10 @@ bulk modes this corresponds to a orthogonalization according to the inner produc
 ```
 
 which is the electric domain energy, up to a factor 2. An appealing aspect of this inner product is
-not only that it corresponds to a sensible physical quantity and so converges to stable values with
-changing finite element order or mesh refinement. We refer to the orthogonalization as `"Energy"`.
+that it corresponds to a sensible physical quantity and converges to stable values with changing
+finite element order or mesh refinement. We refer to this orthogonalization rule as `"Energy"`.
 
-*Palace* offers the user to change the orthogonalization rule with the flag
+*Palace* allows the user to change the orthogonalization rule with the flag
 [`"AdaptiveCircuitSynthesisDomainOrthogonalization"`](../config/reference.md#config-solver-driven),
 although most users should not need this.
 
@@ -361,11 +361,11 @@ Let us look at the first 5 rows and columns of `rom-Rinv-re.csv`:
 
 ```csv
  port_1_re, port_2_re,  port_3_re,  sample_e1_s0_re,  sample_e1_s0_im,  ...
- 2.000e-02, 0.000e+00,  0.000e+00,       -1.799e-23,       -2.878e-22,  
- 0.000e+00, 2.000e-02,  0.000e+00,        1.799e-23,        2.878e-22,  
- 0.000e+00, 0.000e+00,  0.000e+00,        0.000e+00,        0.000e+00,  
--1.799e-23, 1.799e-23,  0.000e+00,        6.091e-10,        1.320e-08,  
--2.878e-22, 2.878e-22,  0.000e+00,        1.320e-08,        3.293e-07,  
+ 2.000e-02, 0.000e+00,  0.000e+00,       -1.799e-23,       -2.878e-22,
+ 0.000e+00, 2.000e-02,  0.000e+00,        1.799e-23,        2.878e-22,
+ 0.000e+00, 0.000e+00,  0.000e+00,        0.000e+00,        0.000e+00,
+-1.799e-23, 1.799e-23,  0.000e+00,        6.091e-10,        1.320e-08,
+-2.878e-22, 2.878e-22,  0.000e+00,        1.320e-08,        3.293e-07,
 ...
 ```
 
