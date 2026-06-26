@@ -45,6 +45,49 @@ static const char *GetPalaceGitTag()
   return commit;
 }
 
+static void PrintPalaceVersionInfo(MPI_Comm comm)
+{
+  if (std::strcmp(GetPalaceGitTag(), "UNKNOWN"))
+  {
+    Mpi::Print(comm, "Git commit: {}\n", GetPalaceGitTag());
+  }
+
+  Mpi::Print(comm, "\nBuild dependencies:\n");
+
+// Print the git description or version number for a dependency. CMake defines
+// PALACE_DEP_<NAME>_VERSION for every dependency; the value is empty for those
+// that were not built, in which case nothing is printed.
+#define X(DEP_NAME)                                                             \
+  if (PALACE_DEP_##DEP_NAME##_VERSION[0] != '\0')                               \
+  {                                                                             \
+    Mpi::Print(comm, "  " #DEP_NAME ": {}\n", PALACE_DEP_##DEP_NAME##_VERSION); \
+  }
+
+  // List of dependencies, matching the folders in palace/CMakeLists.txt.
+  X(STRUMPACK)
+  X(arpack_ng)
+  X(eigen)
+  X(fmt)
+  X(gslib)
+  X(hypre)
+  X(json)
+  X(libCEED)
+  X(libxsmm)
+  X(magma)
+  X(metis)
+  X(mfem)
+  X(mumps)
+  X(parmetis)
+  X(petsc)
+  X(scalapack)
+  X(scn)
+  X(slepc)
+  X(sundials)
+  X(superlu_dist)
+
+#undef X
+}
+
 static const char *GetPalaceCeedJitSourceDir()
 {
 #if defined(PALACE_LIBCEED_JIT_SOURCE)
@@ -181,7 +224,7 @@ int main(int argc, char *argv[])
                "Usage: {} [OPTIONS] CONFIG_FILE\n\n"
                "Options:\n"
                "  -h, --help           Show this help message and exit\n"
-               "  --version            Show version information and exit\n"
+               "  -V, --version        Show version information and exit\n"
                "  -dry-run, --dry-run  Parse configuration file for errors and exit\n\n",
                executable_path.substr(executable_path.find_last_of('/') + 1));
   };
@@ -193,9 +236,9 @@ int main(int argc, char *argv[])
       Help();
       return 0;
     }
-    if (argv_i == "--version")
+    if ((argv_i == "-V") || (argv_i == "--version"))
     {
-      Mpi::Print(world_comm, "Palace version: {}\n", GetPalaceGitTag());
+      PrintPalaceVersionInfo(world_comm);
       return 0;
     }
     if ((argv_i == "-dry-run") || (argv_i == "--dry-run"))
