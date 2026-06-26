@@ -432,6 +432,37 @@ TEST_CASE("LocalEdgeSplit", "[geodata][Serial]")
   CHECK(mesh->CheckBdrElementOrientation(false) == 0);
 }
 
+TEST_CASE("LocalEdgeSplitLongestEdge", "[geodata][Serial]")
+{
+  // Two candidate edges share a single tetrahedron, so LocalEdgeSplit can only split one of
+  // them this pass. It must pick the LONGER edge (length-ordered selection), matching the
+  // longest-edge bisection used by conforming refinement and preserving element quality.
+  // Here edge (0, 1) has length 4 and edge (2, 3) has length ~1; the long edge must win.
+  auto mesh = std::make_unique<mfem::Mesh>(3, 4, 1, 0, 3);
+  mesh->AddVertex(0.0, 0.0, 0.0);  // 0
+  mesh->AddVertex(4.0, 0.0, 0.0);  // 1  -> edge (0,1) length 4
+  mesh->AddVertex(2.0, 1.0, 0.0);  // 2
+  mesh->AddVertex(2.0, 0.0, 1.0);  // 3  -> edge (2,3) length sqrt(2) ~ 1.41
+  mesh->AddTet(0, 1, 2, 3, 1);
+  mesh->FinalizeTopology();
+
+  // Offer both edges; only one fits in the independent set (they share the tet).
+  const std::vector<std::pair<int, int>> split_edges{{2, 3}, {0, 1}};
+  REQUIRE(mesh::LocalEdgeSplit(mesh, split_edges) == 1);
+
+  // The midpoint of the LONG edge (0, 1) = (2, 0, 0) must have been inserted; the short
+  // edge (2, 3) must remain intact (deferred to a later pass).
+  REQUIRE(mesh->GetNV() == 5);
+  CheckVertex(*mesh, 4, {2.0, 0.0, 0.0});
+  for (int e = 0; e < mesh->GetNE(); e++)
+  {
+    CAPTURE(e);
+    CHECK(!ElementContainsEdge(*mesh->GetElement(e), 0, 1));  // long edge was split
+    CHECK(ElementContainsEdge(*mesh->GetElement(e), 2, 3));   // short edge untouched
+  }
+  CHECK(mesh->CheckElementOrientation(false) == 0);
+}
+
 TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
 {
   auto torus_path = fs::path(PALACE_TEST_DATA_DIR) / "mesh" / "periodic-torus-sector.msh";

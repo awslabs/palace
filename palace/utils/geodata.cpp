@@ -260,14 +260,6 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
                  iodata.model.mesh);
   }
 
-  if (const char *cmp = std::getenv("PALACE_773_DUMP"); cmp && Mpi::Root(comm) && smesh)
-  {
-    std::ofstream fo(cmp);
-    fo.precision(MSH_FLT_PRECISION);
-    smesh->Print(fo);
-    Mpi::Print("[773-CMP] Wrote preprocessed mesh to {}\n", cmp);
-  }
-
   return smesh;
 }
 
@@ -2367,8 +2359,8 @@ int LocalEdgeSplit(std::unique_ptr<mfem::Mesh> &orig_mesh,
   // selection below prefers the longest edge. When a tetrahedron is incident on more than
   // one flagged edge, this makes the longest of them claim the tet, matching the
   // longest-edge bisection used by mfem::Mesh::GeneralRefinement (the conforming-refinement
-  // path this routine replaces) and preserving element quality. Equal-length ties are broken
-  // by the sorted vertex pair for determinism.
+  // path this routine replaces) and preserving element quality. Equal-length ties are
+  // broken by the sorted vertex pair for determinism.
   std::vector<std::pair<int, int>> sorted_edges;
   sorted_edges.reserve(edges.size());
   for (const auto &e : edges)
@@ -2766,69 +2758,6 @@ std::unordered_map<int, int> CheckMesh(const mfem::Mesh &mesh,
 }
 
 template <typename T>
-class EdgeRefinementMesh : public mfem::Mesh
-{
-private:
-  // Container with keys being pairs of vertex indices (match row/column indices of v_to_v)
-  // of edges which we desire to be refined.
-  const T &refinement_edges;
-
-  void MarkTetMeshForRefinement(const mfem::DSTable &v_to_v) override
-  {
-    // The standard tetrahedral refinement in MFEM is to mark the longest edge of each tet
-    // for the first refinement. We hack this marking here in order to prioritize refinement
-    // of edges which are part of internal boundary faces being marked for refinement. This
-    // should hopefully limit the amount of extra refinement required to ensure conformity
-    // after the marked elements are refined. Marking will then discover only the longest
-    // edges, which are those within the boundary to be cracked.
-    mfem::Array<mfem::real_t> lengths;
-    GetEdgeLengths2(v_to_v, lengths);
-    const auto min_length = 0.01 * lengths.Min();
-    for (int i = 0; i < v_to_v.NumberOfRows(); i++)
-    {
-      for (mfem::DSTable::RowIterator it(v_to_v, i); !it; ++it)
-      {
-        int j = it.Column();
-        if (refinement_edges.find({i, j}) == refinement_edges.end())
-        {
-          // "Zero" the edge lengths which do not connect vertices on the interface. Avoid
-          // zero-length edges just in case.
-          lengths[it.Index()] = min_length;
-        }
-      }
-    }
-
-    // Finish marking (see mfem::Mesh::MarkTetMeshForRefinement).
-    mfem::Array<int> indices(NumOfEdges);
-    std::iota(indices.begin(), indices.end(), 0);
-    for (int i = 0; i < NumOfElements; i++)
-    {
-      if (elements[i]->GetType() == mfem::Element::TETRAHEDRON)
-      {
-        MFEM_ASSERT(dynamic_cast<mfem::Tetrahedron *>(elements[i]),
-                    "Unexpected non-Tetrahedron element type!");
-        static_cast<mfem::Tetrahedron *>(elements[i])->MarkEdge(v_to_v, lengths, indices);
-      }
-    }
-    for (int i = 0; i < NumOfBdrElements; i++)
-    {
-      if (boundary[i]->GetType() == mfem::Element::TRIANGLE)
-      {
-        MFEM_ASSERT(dynamic_cast<mfem::Triangle *>(boundary[i]),
-                    "Unexpected non-Triangle element type!");
-        static_cast<mfem::Triangle *>(boundary[i])->MarkEdge(v_to_v, lengths, indices);
-      }
-    }
-  }
-
-public:
-  EdgeRefinementMesh(mfem::Mesh &&mesh, const T &refinement_edges)
-    : mfem::Mesh(std::move(mesh)), refinement_edges(refinement_edges)
-  {
-  }
-};
-
-template <typename T>
 struct UnorderedPair
 {
   T first, second;
@@ -3087,9 +3016,9 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
       static int new_ref_its = 0;
       if (!coarse_crack_edge_to_be.empty())
       {
-        // Locally refine the mesh using conformal refinement. If necessary, convert the
-        // mesh to simplices first to enable conforming refinement (this will do nothing
-        // if the mesh is already a simplex mesh).
+        // Locally refine the mesh to decouple the under-resolved seam edges. If necessary,
+        // convert the mesh to simplices first (this will do nothing if the mesh is already
+        // a simplex mesh).
         // Note: Eventually we can implement manual conforming face refinement of pairs of
         // elements sharing a face for all element types (insert a vertex at the boundary
         // element center and connect it to all other element vertices). For now, this adds
@@ -3102,70 +3031,24 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
           face_to_be.clear();
           return 0;  // Mesh was converted to simplices, start over
         }
-        const char *force_les_env = std::getenv("PALACE_773_FORCE_LES");
-        const bool force_les = force_les_env && std::string(force_les_env) != "0";
-        const bool periodic =
-            !iodata.boundaries.periodic.boundary_pairs.empty() || force_les;
-        if (!periodic)
+        // Refine each flagged seam edge with a manual, purely local edge-fan bisection
+        // (LocalEdgeSplit) rather than mfem::Mesh::GeneralRefinement. GeneralRefinement
+        // keys new midpoints on the collapsed vertex pairs and, on a periodic mesh, cannot
+        // keep the two periodic copies of an identified seam edge consistent, corrupting
+        // the seam and aborting later in STable3D. LocalEdgeSplit touches only the ring of
+        // elements around each flagged edge with no global conformity closure, so the
+        // periodic seam is never disturbed; the inserted midpoints are decoupled by the
+        // regular cracking pass on the subsequent retry. It selects the longest flagged
+        // edge first, so it reproduces the element quality of GeneralRefinement's
+        // longest-edge bisection on non-periodic meshes too (verified to leave the minimum
+        // dihedral angle unchanged), which lets a single path serve all meshes.
+        std::vector<std::pair<int, int>> split_edges;
+        split_edges.reserve(coarse_crack_edge_to_be.size());
+        for (const auto &[edge, adjacent_be] : coarse_crack_edge_to_be)
         {
-          // Non-periodic mesh: use MFEM's marked-edge conforming refinement.
-          std::unordered_map<int, int> elem_to_refine;
-          for (const auto &[edge, adjacent_be] : coarse_crack_edge_to_be)
-          {
-            for (auto be : adjacent_be)
-            {
-              int f, o, e1, e2;
-              orig_mesh->GetBdrElementFace(be, &f, &o);
-              orig_mesh->GetFaceElements(f, &e1, &e2);
-              MFEM_ASSERT(e1 >= 0 && e2 >= 0,
-                          "Invalid internal boundary element connectivity!");
-              elem_to_refine[e1]++;  // Value-initialized to 0 at first access
-              elem_to_refine[e2]++;
-            }
-          }
-          mfem::Array<mfem::Refinement> refinements;
-          refinements.Reserve(elem_to_refine.size());
-          for (const auto &[e, count] : elem_to_refine)
-          {
-            // Tetrahedral bisection (vs. default octasection) will result in fewer added
-            // elements at the cost of a potential minor mesh quality degradation.
-            refinements.Append(mfem::Refinement(e, mfem::Refinement::X));
-          }
-          if (mesh::CheckElements(*orig_mesh).has_simplices)
-          {
-            // Mark tetrahedral mesh for refinement before doing local refinement. This is a
-            // bit of a strange pattern to override the standard conforming refinement of
-            // the mfem::Mesh class. We want to implement our own edge marking of the
-            // tetrahedra, so we move the mesh to a constructed derived class object, mark
-            // it, and then move assign it to the original base class object before
-            // refining. All of these moves should be cheap without any extra memory
-            // allocation. Also, we mark the mesh every time to ensure multiple rounds of
-            // refinement target the interior boundary (we don't care about preserving the
-            // refinement hierarchy).
-            constexpr bool refine = true, fix_orientation = false;
-            EdgeRefinementMesh ref_mesh(std::move(*orig_mesh), coarse_crack_edge_to_be);
-            ref_mesh.Finalize(refine, fix_orientation);
-            *orig_mesh = std::move(ref_mesh);
-          }
-          orig_mesh->GeneralRefinement(refinements, 0);
+          split_edges.emplace_back(edge.first, edge.second);
         }
-        else
-        {
-          // Periodic mesh: MFEM's GeneralRefinement keys new midpoints on the collapsed
-          // vertex pairs and cannot keep the two periodic copies of an identified seam edge
-          // consistent, corrupting the seam and aborting later in STable3D. Use a manual,
-          // purely local edge-fan bisection (LocalEdgeSplit) that touches only the ring of
-          // elements around each flagged edge with no global conformity closure, so the
-          // periodic seam is never disturbed. The inserted midpoints are decoupled by the
-          // regular cracking pass on the subsequent retry.
-          std::vector<std::pair<int, int>> split_edges;
-          split_edges.reserve(coarse_crack_edge_to_be.size());
-          for (const auto &[edge, adjacent_be] : coarse_crack_edge_to_be)
-          {
-            split_edges.emplace_back(edge.first, edge.second);
-          }
-          mesh::LocalEdgeSplit(orig_mesh, split_edges);
-        }
+        mesh::LocalEdgeSplit(orig_mesh, split_edges);
         new_ne_ref += orig_mesh->GetNE() - ne;
         new_ref_its++;
         face_to_be.clear();
