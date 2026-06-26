@@ -14,7 +14,6 @@
 #include <mfem.hpp>
 #include "fem/gridfunction.hpp"
 #include "fem/interpolator.hpp"
-#include "fem/output_functionals.hpp"
 #include "fem/point_field_evaluator.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"

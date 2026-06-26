@@ -11,6 +11,7 @@
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/interpolator.hpp"
+#include "fem/postprocessing_backend.hpp"
 #include "linalg/operator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/floquetportoperator.hpp"
@@ -447,7 +448,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     // U_e = 1/2 Dᴴ E = 1/2 ε_0 Eᴴ E.
     U_e = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::ELECTRIC>>(
         *E, fem_op->GetMaterialOp(), scaling);
-    if (SurfaceFunctional::Enabled())
+    if (fem::LibceedPostprocessingEnabled())
     {
       MakeFieldEvaluator(PointFieldEvaluator::Kind::ENERGY_E, E->ParFESpace(), nullptr,
                          scaling, U_e_eval, U_e_gf);
@@ -456,7 +457,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     }
 
     // Electric Boundary Field & Surface Charge.
-    if (SurfaceFunctional::Enabled())
+    if (fem::LibceedPostprocessingEnabled())
     {
       MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_E, *E->ParFESpace(),
                             E_bdr_eval);
@@ -466,7 +467,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
     }
     // Q_s = D ⋅ n = ε_0 E ⋅ n.
-    if (SurfaceFunctional::Enabled())
+    if (fem::LibceedPostprocessingEnabled())
     {
       MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::FLUX_Q, *E->ParFESpace(), scaling,
                             Q_bdr_eval);
@@ -505,7 +506,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     // U_m = 1/2 Hᴴ B = 1/2 μ⁻¹ Bᴴ B.
     U_m = std::make_unique<EnergyDensityCoefficient<EnergyDensityType::MAGNETIC>>(
         *B, fem_op->GetMaterialOp(), scaling);
-    if (SurfaceFunctional::Enabled())
+    if (fem::LibceedPostprocessingEnabled())
     {
       MakeFieldEvaluator(PointFieldEvaluator::Kind::ENERGY_M, nullptr, B->ParFESpace(),
                          scaling, U_m_eval, U_m_gf);
@@ -520,7 +521,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     // In 2D, B is scalar (L2), so boundary vector coefficients are not applicable.
     if (B->Real().VectorDim() > 1)
     {
-      if (SurfaceFunctional::Enabled())
+      if (fem::LibceedPostprocessingEnabled())
       {
         MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_B, *B->ParFESpace(),
                               B_bdr_eval);
@@ -530,7 +531,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
       }
       // J_s = n x H = n x μ⁻¹ B.
-      if (SurfaceFunctional::Enabled())
+      if (fem::LibceedPostprocessingEnabled())
       {
         MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::CURRENT_J, *B->ParFESpace(),
                               scaling, J_bdr_eval);
@@ -572,7 +573,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
                              units.Dimensionalize<Units::ValueType::FIELD_B>(1.0);
       S = std::make_unique<PoyntingVectorCoefficient>(*E, *B, fem_op->GetMaterialOp(),
                                                       scaling);
-      if (SurfaceFunctional::Enabled())
+      if (fem::LibceedPostprocessingEnabled())
       {
         MakeFieldEvaluator(PointFieldEvaluator::Kind::POYNTING, E->ParFESpace(),
                            B->ParFESpace(), scaling, S_eval, S_gf);
