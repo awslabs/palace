@@ -17,3 +17,21 @@ index 8bff45e..def57b3 100644
  
  
  # documentation
+diff --git a/src/HODLR/HODLRWrapper.cpp b/src/HODLR/HODLRWrapper.cpp
+index 750e3e6..368ea4a 100644
+--- a/src/HODLR/HODLRWrapper.cpp
++++ b/src/HODLR/HODLRWrapper.cpp
+@@ -36,8 +36,8 @@
+ #include "misc/TaskTimer.hpp"
+ #include "HODLRWrapper.hpp"
+-#include "sC_BPACK_wrapper.h"
+-#include "dC_BPACK_wrapper.h"
+-#include "cC_BPACK_wrapper.h"
+-#include "zC_BPACK_wrapper.h"
+-
++#include "sBPACK_wrapper.h"
++#include "dBPACK_wrapper.h"
++#include "cBPACK_wrapper.h"
++#include "zBPACK_wrapper.h"
++
+ namespace strumpack {
