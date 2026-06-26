@@ -6,12 +6,32 @@
 #include <algorithm>
 #include <limits>
 #include <regex>
+#include <type_traits>
 #include <utility>
 #include <vector>
 #include <mfem/mesh/vtk.hpp>
 
 namespace palace
 {
+
+namespace
+{
+
+void WriteAll(std::ostream &os, const void *data, std::size_t bytes)
+{
+  const char *ptr = static_cast<const char *>(data);
+  constexpr std::size_t max_write = std::size_t{1} << 30;
+  while (bytes > 0)
+  {
+    const std::size_t chunk = std::min(bytes, max_write);
+    os.write(ptr, static_cast<std::streamsize>(chunk));
+    MFEM_VERIFY(os.good(), "Failed while writing contiguous ParaView point data payload!");
+    ptr += chunk;
+    bytes -= chunk;
+  }
+}
+
+}  // namespace
 
 std::map<std::string, CeedParaViewDataCollection::PointField> &
 CeedParaViewDataCollection::PointFields(MeshEntityType location)
@@ -183,32 +203,50 @@ void CeedParaViewDataCollection::WritePointFieldValues(MeshEntityType location,
                   << " point field buffer size is not divisible by its component count!");
   const int component_stride = values.Size() / field.num_comp;
   const double *data = values.HostRead();
-  for (int i = 0; i < NumPointFieldEntities(location); i++)
+
+  const std::uint64_t payload_size = PointFieldPayloadSize(location, ref, field);
+  const bool binary32 = pv_data_format == mfem::VTKFormat::BINARY32;
+  const std::size_t scalar_size = binary32 ? sizeof(float) : sizeof(double);
+  MFEM_VERIFY(payload_size % scalar_size == 0,
+              "Point field payload size is not divisible by scalar size!");
+  const std::size_t payload_count = static_cast<std::size_t>(payload_size / scalar_size);
+
+  auto PackPayload = [&](auto *payload_data)
   {
-    const auto *RefG =
-        mfem::GlobGeometryRefiner.Refine(PointFieldBaseGeometry(location, i), ref, 1);
-    const int base = (*field.bases)[i];
-    const int npts = RefG->RefPts.GetNPoints();
-    MFEM_VERIFY(base >= 0 && base + npts <= component_stride,
-                PointFieldLocationName(location)
-                    << " point field buffer is missing data for "
-                    << PointFieldEntityName(location) << " " << i << "!");
-    for (int j = 0; j < npts; j++)
+    using scalar_t = std::remove_pointer_t<decltype(payload_data)>;
+    std::size_t out = 0;
+    for (int i = 0; i < NumPointFieldEntities(location); i++)
     {
-      for (int c = 0; c < field.num_comp; c++)
+      const auto *RefG =
+          mfem::GlobGeometryRefiner.Refine(PointFieldBaseGeometry(location, i), ref, 1);
+      const int base = (*field.bases)[i];
+      const int npts = RefG->RefPts.GetNPoints();
+      MFEM_VERIFY(base >= 0 && base + npts <= component_stride,
+                  PointFieldLocationName(location)
+                      << " point field buffer is missing data for "
+                      << PointFieldEntityName(location) << " " << i << "!");
+      for (int j = 0; j < npts; j++)
       {
-        const double value = data[base + j + c * component_stride];
-        if (pv_data_format == mfem::VTKFormat::BINARY32)
+        for (int c = 0; c < field.num_comp; c++)
         {
-          const float value32 = static_cast<float>(value);
-          os.write(reinterpret_cast<const char *>(&value32), sizeof(value32));
-        }
-        else
-        {
-          os.write(reinterpret_cast<const char *>(&value), sizeof(value));
+          payload_data[out++] = static_cast<scalar_t>(data[base + j + c * component_stride]);
         }
       }
     }
+    MFEM_VERIFY(out == payload_count, "Packed point field payload has an invalid size!");
+  };
+
+  if (binary32)
+  {
+    std::vector<float> payload(payload_count);
+    PackPayload(payload.data());
+    WriteAll(os, payload.data(), payload.size() * sizeof(float));
+  }
+  else
+  {
+    std::vector<double> payload(payload_count);
+    PackPayload(payload.data());
+    WriteAll(os, payload.data(), payload.size() * sizeof(double));
   }
 }
 
