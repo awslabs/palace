@@ -503,11 +503,17 @@ CTest uses each case's `PROCESSORS` property to avoid oversubscribing
 rank/thread slots.
 
 Install-only runners (e.g. Spack jobs that install from a buildcache) have no
-build tree, so the build-tree CTestTestfiles are unavailable. A relocatable
-CTestTestfile is installed at `<prefix>/share/palace/test/CTestTestfile.cmake`
-for exactly this case; with `palace-unit-tests` on `PATH` (e.g. `spack load palace`), run `ctest --test-dir <prefix>/share/palace/test -L "^regression$"`.
-The linear solver and device are read from `PALACE_TEST_LINEAR_SOLVER` and
-`PALACE_TEST_DEVICE` so one installed build serves the whole solver matrix.
+build tree, so the build-tree CTestTestfiles are unavailable. A relocatable,
+fully generic CTestTestfile is installed at
+`<prefix>/share/palace/test/CTestTestfile.cmake` for exactly this case; with
+`palace-unit-tests` on `PATH` (e.g. `spack load palace`), run
+`ctest --test-dir <prefix>/share/palace/test -L "^regression$"`. It bakes
+nothing at build time: the binary is found on `PATH`, the case list is
+discovered from the binary, and the knobs are read from the environment ---
+`PALACE_TEST_NUMPROC` (default 2), `PALACE_TEST_OMP_THREADS` (default 1),
+`PALACE_TEST_LINEAR_SOLVER`, and `PALACE_TEST_DEVICE`. Each case reserves
+`PALACE_TEST_NUMPROC * PALACE_TEST_OMP_THREADS` slots and pins `OMP_NUM_THREADS`
+to match, so the accounting comes from a single source.
 
 #### Overrides
 

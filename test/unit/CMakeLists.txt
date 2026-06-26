@@ -175,41 +175,16 @@ set(PALACE_TESTS_OMP_ENV "OMP_NUM_THREADS=${PALACE_TESTS_OMP_THREADS}")
 
 # Install-only test runners (e.g. Spack jobs that install from a buildcache)
 # have no build tree, so the CTestTestfiles `catch_discover_tests` writes below
-# are unavailable. Generate a relocatable CTestTestfile from the regression
-# case list and install it next to the test data, so those jobs can run
-# `ctest --test-dir <prefix>/share/palace/test`. The case list is read from
-# cases.cpp at configure time (no discovery at ctest time, whose interpreter
-# truncates large execute_process output).
-set(PALACE_INSTALLED_CTEST "${CMAKE_CURRENT_BINARY_DIR}/installed_ctest/CTestTestfile.cmake")
-configure_file(
-  ${CMAKE_CURRENT_SOURCE_DIR}/regression/installed_ctest.cmake.in
-  ${PALACE_INSTALLED_CTEST}
-  @ONLY
-)
-file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/regression/cases.cpp PALACE_TEST_CASE_LINES
-     REGEX "^TEST_CASE\\(")
-foreach(_line IN LISTS PALACE_TEST_CASE_LINES)
-  set(_name "")
-  string(REGEX MATCH "^TEST_CASE\\(\"([^\"]+)\", \"([^\"]+)\"" _m "${_line}")
-  set(_name "${CMAKE_MATCH_1}")
-  set(_tags "${CMAKE_MATCH_2}")
-  if(_name STREQUAL "")
-    continue()
-  endif()
-  if(NOT _tags MATCHES "\\[Regression\\]")
-    continue()
-  endif()
-  if(_tags MATCHES "\\[Long\\]")
-    set(_label long)
-  else()
-    set(_label regression)
-  endif()
-  file(APPEND ${PALACE_INSTALLED_CTEST}
-"add_test(\"${_label}-${_name}\" \"${MPIEXEC_EXECUTABLE}\" \"${MPIEXEC_NUMPROC_FLAG}\" \"${PALACE_TESTS_NUMPROC}\" \"\${_palace_bin}\" \"${_name}\" \${_palace_args})\nset_tests_properties(\"${_label}-${_name}\" PROPERTIES LABELS \"${_label}\" PROCESSORS ${PALACE_TESTS_PROCESSORS} SKIP_RETURN_CODE 4 ENVIRONMENT \"OMP_NUM_THREADS=${PALACE_TESTS_OMP_THREADS}\")\n")
-endforeach()
+# are unavailable. Install a relocatable, fully generic CTestTestfile next to
+# the test data so those jobs can run
+# `ctest --test-dir <prefix>/share/palace/test`. It is parameterized entirely
+# at run time (binary on PATH, cases discovered from the binary, ranks/threads/
+# solver/device from the environment), so it needs no regeneration or baked
+# values -- see regression/installed_ctest.cmake.
 install(
-  FILES ${PALACE_INSTALLED_CTEST}
+  FILES ${CMAKE_CURRENT_SOURCE_DIR}/regression/installed_ctest.cmake
   DESTINATION share/palace/test
+  RENAME CTestTestfile.cmake
 )
 
 # Serial tests

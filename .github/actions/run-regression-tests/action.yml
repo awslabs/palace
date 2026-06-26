@@ -77,18 +77,32 @@ runs:
 
         eval $(spack -e . load --sh palace)
 
-        # The installed package ships a relocatable CTestTestfile next to the
-        # test data (share/palace/test), so the install-only runner can drive
-        # the regression cases with ctest -- per-case scheduling and PROCESSORS
-        # accounting, same as the build-tree jobs. Rank/thread/PROCESSORS are
-        # baked at build time; the linear solver (and GPU device) are passed
-        # through the environment so one build serves the whole solver matrix.
+        # The installed package ships a relocatable, fully generic
+        # CTestTestfile next to the test data (share/palace/test), so the
+        # install-only runner drives the regression cases with ctest -- per-case
+        # scheduling and PROCESSORS accounting, same as the build-tree jobs. The
+        # ranks/threads/solver/device are all passed through the environment, so
+        # one cached build serves the whole solver matrix without a rebuild.
         TEST_DIR="$(dirname "$(dirname "$(command -v palace-unit-tests)")")/share/palace/test"
         export PALACE_TEST_LINEAR_SOLVER="${{ inputs.linear-solver }}"
+
+        # Keep ~8 CPUs per case (ranks x threads); OpenMP jobs trade ranks for
+        # threads. Fewer ranks shift tail eigenvalues past tolerance.
+        TEST_CORES=$(nproc)
+        if [[ "$TEST_CORES" -gt 8 ]]; then
+          TEST_CORES=8
+        fi
+        if [[ "${{ inputs.variant }}" == *"+openmp"* ]]; then
+          export PALACE_TEST_OMP_THREADS=2
+        else
+          export PALACE_TEST_OMP_THREADS=1
+        fi
+        export PALACE_TEST_NUMPROC=$(( TEST_CORES / PALACE_TEST_OMP_THREADS ))
         JOBS="$(nproc)"
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
           export PALACE_TEST_DEVICE=cuda
-          JOBS=1  # one GPU: don't run device cases concurrently
+          export PALACE_TEST_NUMPROC=1  # GPU: single rank
+          JOBS=1                        # one GPU: don't run device cases concurrently
         fi
 
         run_ctest() {
