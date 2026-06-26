@@ -26,7 +26,7 @@ The format of this changelog is based on
     (`"urn:palace:schema:1-0-0"`). The schema contract is now versioned independently of
     the *Palace* release so downstream tools can reason about configuration
     compatibility. See `docs/src/developer/notes.md` for details. [PR
-    765](https://github.com/awslabs/palace/issues/765).
+    765](https://github.com/awslabs/palace/pull/765).
   - Added `"IncludeInSynthesis"` boolean flag to lumped port configuration (default
     `true`). When adaptive driven circuit synthesis is enabled
     (`config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"]`), this flag controls
@@ -66,6 +66,10 @@ The format of this changelog is based on
   - Upgraded documentation of Palace JSON config. Added script to generate config page
     automatically from fields in the JSON schema. Enables linking to individual tags and
     better html visuals. [PR 716](https://github.com/awslabs/palace/pull/716)
+  - Palace now prints mesh statistics after conformal adaptive refinement, making mesh
+    quality changes easier to track during AMR runs.
+    [PR 750](https://github.com/awslabs/palace/pull/750).
+
 #### Interface Changes
 
   - Box and sphere region refinement (specified under
@@ -85,6 +89,14 @@ The format of this changelog is based on
     SLEPc's default `max(2 * N, N + 15)` for both SLEPc and ARPACK (previously the unset
     default was backend-dependent). `Solver.Eigenmode.MaxIts` now defaults to
     `1'000'000` [PR 719](https://github.com/awslabs/palace/pull/719).
+
+#### Performance Improvements
+
+  - Cached the GSLIB point locator used for wave-port voltage-path line integrals,
+    avoiding repeated setup work during adaptive sweeps with wave ports while
+    preserving results.
+    [PR 768](https://github.com/awslabs/palace/pull/768).
+
 #### Bug Fixes
 
   - Fixed the driven solver ParaView output writing the nondimensional angular frequency
@@ -121,6 +133,19 @@ The format of this changelog is based on
   - Fixed a bug where the magnetic energy field calculation in 2D simulations used the
     incorrect permeability vector components [PR
     782](https://github.com/awslabs/palace/pull/782).
+
+#### Documentation
+
+  - Corrected second-order absorbing boundary condition documentation and examples to
+    match the code behavior.
+    [PR 738](https://github.com/awslabs/palace/pull/738).
+
+#### Build system
+
+  - Fixed the ButterflyPACK superbuild, updated ButterflyPACK to v4.1.0, and enabled
+    ButterflyPACK coverage in CI.
+    [PR 667](https://github.com/awslabs/palace/pull/667).
+
 ## [0.16.1] - 2026-04-24
 
 #### New Features
