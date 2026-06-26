@@ -719,19 +719,13 @@ TEST_CASE("Schema Version", "[schema][Serial]")
 {
   // The root schema must carry a version via the standard "$id" field using a URN
   // (see issue #760). Format: "urn:palace:schema:MODEL-REVISION-ADDITION" (SchemaVer).
-  const auto &schema_map = schema::GetSchemaMap();
-  auto it = schema_map.find("config-schema.json");
-  REQUIRE(it != schema_map.end());
-  const json schema = json::parse(it->second);
-  REQUIRE(schema.contains("$id"));
-  REQUIRE(schema["$id"].is_string());
-  const std::string id = schema["$id"];
-  INFO("Schema $id: " << id);
+  // GetSchemaVersion() extracts that version from the "$id" and is what
+  // `palace --version` reports, so testing through it also covers that path.
+  const std::string version = GetSchemaVersion();
+  INFO("Schema version: " << version);
 
-  // Must start with the palace URN prefix.
-  const std::string prefix = "urn:palace:schema:";
-  REQUIRE(id.substr(0, prefix.size()) == prefix);
-  const std::string version = id.substr(prefix.size());
+  // "unknown" means the root schema had no "$id" with the "urn:palace:schema:" prefix.
+  REQUIRE(version != "unknown");
 
   // Must be a "MODEL-REVISION-ADDITION" SchemaVer of non-negative integers.
   std::array<int, 3> parts = {-1, -1, -1};
