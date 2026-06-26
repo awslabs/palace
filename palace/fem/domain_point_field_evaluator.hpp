@@ -7,7 +7,7 @@
 #include <deque>
 #include <vector>
 #include <mfem.hpp>
-#include "fem/output_functionals.hpp"
+#include "fem/ceed_group_operator.hpp"
 #include "linalg/vector.hpp"
 
 namespace palace

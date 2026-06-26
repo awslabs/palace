@@ -18,7 +18,8 @@
 #include "fem/libceed/ceed.hpp"
 #include "fem/libceed/functional.hpp"
 #include "fem/libceed/restriction.hpp"
-#include "fem/output_functionals.hpp"
+#include "fem/ceed_group_operator.hpp"
+#include "fem/postprocessing_backend.hpp"
 #include "utils/diagnostic.hpp"
 
 PalacePragmaDiagnosticPush
@@ -269,7 +270,7 @@ std::vector<double> InterpolationOperator::ProbeField(const mfem::ParGridFunctio
   // GSLIB interpolation path, especially in driven postprocessing where only a few
   // fixed monitor points are evaluated once or twice.
   constexpr int ceed_probe_min_points = 8;
-  if (SurfaceFunctional::Enabled() && npts >= ceed_probe_min_points)
+  if (fem::LibceedPostprocessingEnabled() && npts >= ceed_probe_min_points)
   {
     auto &eval = ceed_probes[U.FESpace()];
     if (!eval)

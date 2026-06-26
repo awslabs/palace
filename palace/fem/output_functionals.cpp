@@ -5,7 +5,6 @@
 
 #include <atomic>
 #include <cmath>
-#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -21,6 +20,7 @@
 #include "fem/libceed/integrator.hpp"
 #include "fem/libceed/restriction.hpp"
 #include "fem/mesh.hpp"
+#include "fem/postprocessing_backend.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -360,51 +360,6 @@ const char *SurfaceFunctional::KindName(KernelKind kind)
   return "UNKNOWN";
 }
 
-void fem::ApplyAddGroupOperators(const std::vector<fem::CeedGroupOperator> &groups,
-                                 const std::array<const Vector *, 4> &srcs,
-                                 const Vector &out, const Vector *imported)
-{
-  for (const auto &group : groups)
-  {
-    for (const auto &[name, source] : group.field_sources)
-    {
-      // Source index 4 selects the imported face neighbor field values (see
-      // SurfaceFunctional::face_nbr_exchange); the operator's restriction slices and
-      // transposes the shared vector to the per-element layout.
-      const Vector *sv = (source < 4) ? srcs[source] : imported;
-      MFEM_ASSERT(sv, "Missing source vector for libCEED field input!");
-      CeedOperatorField field;
-      CeedVector field_vec;
-      PalaceCeedCall(group.ceed,
-                     CeedOperatorGetFieldByName(group.op, name.c_str(), &field));
-      PalaceCeedCall(group.ceed, CeedOperatorFieldGetVector(field, &field_vec));
-      ceed::InitCeedVector(*sv, group.ceed, &field_vec, false);
-    }
-    CeedMemType out_mem;
-    PalaceCeedCall(group.ceed, CeedGetPreferredMemType(group.ceed, &out_mem));
-    if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && out_mem == CEED_MEM_DEVICE)
-    {
-      out_mem = CEED_MEM_HOST;
-    }
-    auto *out_data = const_cast<Vector &>(out).ReadWrite(out_mem == CEED_MEM_DEVICE);
-    const CeedSize out_size = out.Size();
-    if (!group.out_vec || group.out_size != out_size)
-    {
-      if (group.out_vec)
-      {
-        PalaceCeedCall(group.ceed, CeedVectorDestroy(&group.out_vec));
-      }
-      PalaceCeedCall(group.ceed, CeedVectorCreate(group.ceed, out_size, &group.out_vec));
-      group.out_size = out_size;
-    }
-    PalaceCeedCall(group.ceed,
-                   CeedVectorSetArray(group.out_vec, out_mem, CEED_USE_POINTER, out_data));
-    PalaceCeedCall(group.ceed, CeedOperatorApplyAdd(group.op, CEED_VECTOR_NONE,
-                                                    group.out_vec,
-                                                    CEED_REQUEST_IMMEDIATE));
-    PalaceCeedCall(group.ceed, CeedVectorTakeArray(group.out_vec, out_mem, nullptr));
-  }
-}
 
 SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
                                      const mfem::Array<int> &bdr_attr_marker,
@@ -524,8 +479,7 @@ SurfaceFunctional::~SurfaceFunctional()
 
 bool SurfaceFunctional::Enabled()
 {
-  static const bool enabled = !std::getenv("PALACE_LEGACY_SURFACE_POSTPRO");
-  return enabled;
+  return fem::LibceedPostprocessingEnabled();
 }
 
 void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker)
