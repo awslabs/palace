@@ -48,11 +48,11 @@ bool IsSupportedBoundaryOutputDimension(const mfem::ParMesh &mesh)
   return mesh.Dimension() == 3 && mesh.SpaceDimension() == 3;
 }
 
-void RequireCeedSurfaceFunctional(const SurfaceFunctional *eval, const std::string &what)
+void RequireCeedPointFieldEvaluator(const PointFieldEvaluator *eval, const std::string &what)
 {
   MFEM_VERIFY(eval && eval->IsValid(),
               "libCEED postprocessing was expected for " + what +
-                  ", but SurfaceFunctional could not assemble!");
+                  ", but PointFieldEvaluator could not assemble!");
 }
 
 std::string OutputFolderName(const ProblemType solver_t)
@@ -329,18 +329,18 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     viz_vector_fespace = std::make_unique<mfem::ParFiniteElementSpace>(
         pmesh, viz_fec.get(), pmesh->SpaceDimension());
   };
-  auto MakeFieldEvaluator = [&](DomainFieldEvaluator::Kind kind,
+  auto MakeFieldEvaluator = [&](PointFieldEvaluator::Kind kind,
                                 mfem::ParFiniteElementSpace *e_fespace,
                                 mfem::ParFiniteElementSpace *b_fespace, double scaling,
-                                std::unique_ptr<DomainFieldEvaluator> &eval,
+                                std::unique_ptr<PointFieldEvaluator> &eval,
                                 std::unique_ptr<mfem::ParGridFunction> &gf)
   {
     InitializeVizSpaces(e_fespace ? *e_fespace : *b_fespace);
-    auto &target = (kind == DomainFieldEvaluator::Kind::POYNTING) ? *viz_vector_fespace
-                                                                  : *viz_scalar_fespace;
-    eval = std::make_unique<DomainFieldEvaluator>(kind, fem_op->GetMaterialOp().GetMesh(),
-                                                  fem_op->GetMaterialOp(), e_fespace,
-                                                  b_fespace, target, scaling);
+    auto &target = (kind == PointFieldEvaluator::Kind::POYNTING) ? *viz_vector_fespace
+                                                                 : *viz_scalar_fespace;
+    eval = std::make_unique<PointFieldEvaluator>(kind, fem_op->GetMaterialOp().GetMesh(),
+                                                 fem_op->GetMaterialOp(), e_fespace,
+                                                 b_fespace, target, scaling);
     if (eval->IsValid())
     {
       if (ShouldWriteGridFunctionFields())
@@ -352,48 +352,48 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     else
     {
       MFEM_VERIFY(!IsSupportedDomainOutputDimension(*target.GetParMesh()),
-                  "libCEED domain field evaluator could not assemble for a supported "
-                  "mesh dimension!");
+                  "libCEED domain point field evaluator could not assemble for a "
+                  "supported mesh dimension!");
       eval.reset();
     }
   };
-  auto MakeBdrFieldEvaluator = [&](SurfaceFunctional::Kind kind,
+  auto MakeBdrFieldEvaluator = [&](PointFieldEvaluator::Kind kind,
                                    mfem::ParFiniteElementSpace &fespace,
-                                   std::unique_ptr<SurfaceFunctional> &eval)
+                                   std::unique_ptr<PointFieldEvaluator> &eval)
   {
     const auto &mesh = fem_op->GetMaterialOp().GetMesh();
     const auto &pmesh = mesh.Get();
     const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
     mfem::Array<int> marker(bdr_attr_max);
     marker = 1;
-    eval = std::make_unique<SurfaceFunctional>(kind, mesh, marker, fespace,
-                                               fespace.GetMaxElementOrder());
+    eval = std::make_unique<PointFieldEvaluator>(kind, mesh, marker, fespace,
+                                                 fespace.GetMaxElementOrder());
     if (!eval->IsValid())
     {
       if (IsSupportedBoundaryOutputDimension(pmesh))
       {
-        RequireCeedSurfaceFunctional(eval.get(), "3D boundary field visualization");
+        RequireCeedPointFieldEvaluator(eval.get(), "3D boundary field visualization");
       }
       eval.reset();
     }
   };
-  auto MakeBdrCoeffEvaluator = [&](SurfaceFunctional::Kind kind,
+  auto MakeBdrCoeffEvaluator = [&](PointFieldEvaluator::Kind kind,
                                    mfem::ParFiniteElementSpace &fespace, double scaling,
-                                   std::unique_ptr<SurfaceFunctional> &eval)
+                                   std::unique_ptr<PointFieldEvaluator> &eval)
   {
     const auto &mesh = fem_op->GetMaterialOp().GetMesh();
     const auto &pmesh = mesh.Get();
     const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
     mfem::Array<int> marker(bdr_attr_max);
     marker = 1;
-    eval = std::make_unique<SurfaceFunctional>(kind, mesh, marker, fespace,
-                                               fem_op->GetMaterialOp(),
-                                               fespace.GetMaxElementOrder(), scaling);
+    eval = std::make_unique<PointFieldEvaluator>(kind, mesh, marker, fespace,
+                                                 fem_op->GetMaterialOp(),
+                                                 fespace.GetMaxElementOrder(), scaling);
     if (!eval->IsValid())
     {
       if (IsSupportedBoundaryOutputDimension(pmesh))
       {
-        RequireCeedSurfaceFunctional(eval.get(), "3D boundary coefficient visualization");
+        RequireCeedPointFieldEvaluator(eval.get(), "3D boundary coefficient visualization");
       }
       eval.reset();
     }
@@ -401,21 +401,21 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
   auto MakeBdrPoyntingEvaluator = [&](mfem::ParFiniteElementSpace &e_fespace,
                                       mfem::ParFiniteElementSpace &b_fespace,
                                       double scaling,
-                                      std::unique_ptr<SurfaceFunctional> &eval)
+                                      std::unique_ptr<PointFieldEvaluator> &eval)
   {
     const auto &mesh = fem_op->GetMaterialOp().GetMesh();
     const auto &pmesh = mesh.Get();
     const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
     mfem::Array<int> marker(bdr_attr_max);
     marker = 1;
-    eval = std::make_unique<SurfaceFunctional>(
-        SurfaceFunctional::Kind::BDR_POYNTING, mesh, marker, e_fespace, b_fespace,
+    eval = std::make_unique<PointFieldEvaluator>(
+        PointFieldEvaluator::Kind::POYNTING, mesh, marker, e_fespace, b_fespace,
         fem_op->GetMaterialOp(), e_fespace.GetMaxElementOrder(), scaling);
     if (!eval->IsValid())
     {
       if (IsSupportedBoundaryOutputDimension(pmesh))
       {
-        RequireCeedSurfaceFunctional(eval.get(), "3D boundary Poynting visualization");
+        RequireCeedPointFieldEvaluator(eval.get(), "3D boundary Poynting visualization");
       }
       eval.reset();
     }
@@ -449,16 +449,16 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         *E, fem_op->GetMaterialOp(), scaling);
     if (SurfaceFunctional::Enabled())
     {
-      MakeFieldEvaluator(DomainFieldEvaluator::Kind::ENERGY_E, E->ParFESpace(), nullptr,
+      MakeFieldEvaluator(PointFieldEvaluator::Kind::ENERGY_E, E->ParFESpace(), nullptr,
                          scaling, U_e_eval, U_e_gf);
-      MakeBdrCoeffEvaluator(SurfaceFunctional::Kind::BDR_ENERGY_E, *E->ParFESpace(),
+      MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::ENERGY_E, *E->ParFESpace(),
                             scaling, Ue_bdr_eval);
     }
 
     // Electric Boundary Field & Surface Charge.
     if (SurfaceFunctional::Enabled())
     {
-      MakeBdrFieldEvaluator(SurfaceFunctional::Kind::BDR_FIELD_E, *E->ParFESpace(),
+      MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_E, *E->ParFESpace(),
                             E_bdr_eval);
     }
     if (!E_bdr_eval)
@@ -468,7 +468,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     // Q_s = D ⋅ n = ε_0 E ⋅ n.
     if (SurfaceFunctional::Enabled())
     {
-      MakeBdrCoeffEvaluator(SurfaceFunctional::Kind::BDR_FLUX_Q, *E->ParFESpace(), scaling,
+      MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::FLUX_Q, *E->ParFESpace(), scaling,
                             Q_bdr_eval);
     }
     if (!Q_bdr_eval)
@@ -507,11 +507,11 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         *B, fem_op->GetMaterialOp(), scaling);
     if (SurfaceFunctional::Enabled())
     {
-      MakeFieldEvaluator(DomainFieldEvaluator::Kind::ENERGY_M, nullptr, B->ParFESpace(),
+      MakeFieldEvaluator(PointFieldEvaluator::Kind::ENERGY_M, nullptr, B->ParFESpace(),
                          scaling, U_m_eval, U_m_gf);
       if (B->Real().VectorDim() > 1)
       {
-        MakeBdrCoeffEvaluator(SurfaceFunctional::Kind::BDR_ENERGY_M, *B->ParFESpace(),
+        MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::ENERGY_M, *B->ParFESpace(),
                               scaling, Um_bdr_eval);
       }
     }
@@ -522,7 +522,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     {
       if (SurfaceFunctional::Enabled())
       {
-        MakeBdrFieldEvaluator(SurfaceFunctional::Kind::BDR_FIELD_B, *B->ParFESpace(),
+        MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_B, *B->ParFESpace(),
                               B_bdr_eval);
       }
       if (!B_bdr_eval)
@@ -532,7 +532,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       // J_s = n x H = n x μ⁻¹ B.
       if (SurfaceFunctional::Enabled())
       {
-        MakeBdrCoeffEvaluator(SurfaceFunctional::Kind::BDR_CURRENT_J, *B->ParFESpace(),
+        MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::CURRENT_J, *B->ParFESpace(),
                               scaling, J_bdr_eval);
       }
       if (!J_bdr_eval)
@@ -574,7 +574,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
                                                       scaling);
       if (SurfaceFunctional::Enabled())
       {
-        MakeFieldEvaluator(DomainFieldEvaluator::Kind::POYNTING, E->ParFESpace(),
+        MakeFieldEvaluator(PointFieldEvaluator::Kind::POYNTING, E->ParFESpace(),
                            B->ParFESpace(), scaling, S_eval, S_gf);
         MakeBdrPoyntingEvaluator(*E->ParFESpace(), *B->ParFESpace(), scaling,
                                  S_bdr_eval);
@@ -657,7 +657,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   // one output field instead of the sum of all derived fields, while still doing the
   // sampling/transforms in libCEED.
   auto RegisterDomainEvalField = [&](const std::string &name,
-                                     const std::unique_ptr<DomainFieldEvaluator> &eval,
+                                     const std::unique_ptr<PointFieldEvaluator> &eval,
                                      const GridFunction *E_field,
                                      const GridFunction *B_field)
   {
@@ -671,17 +671,15 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
         eval_ptr->BufferBases(), eval_ptr->BufferNumComp(), eval_ptr->BufferSize());
   };
   auto RegisterBdrEvalField = [&](const std::string &name,
-                                  const std::unique_ptr<SurfaceFunctional> &eval,
-                                  const auto &field, SurfaceFunctional::Kind kind)
+                                  const std::unique_ptr<PointFieldEvaluator> &eval,
+                                  const auto &field)
   {
     const auto *eval_ptr = eval.get();
     const auto *field_ptr = &field;
     paraview_bdr->RegisterBoundaryPointEvaluator(
         name,
-        [eval_ptr, field_ptr](Vector &buffer)
-        { eval_ptr->EvalBuffer(*field_ptr, buffer); },
-        eval_ptr->BufferBases(), SurfaceFunctional::BufferNumComp(kind),
-        eval_ptr->BufferSize());
+        [eval_ptr, field_ptr](Vector &buffer) { eval_ptr->EvalBuffer(*field_ptr, buffer); },
+        eval_ptr->BufferBases(), eval_ptr->BufferNumComp(), eval_ptr->BufferSize());
   };
   auto RegisterBdrPoyntingField = [&](const std::string &name)
   {
@@ -691,10 +689,8 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     paraview_bdr->RegisterBoundaryPointEvaluator(
         name,
         [eval_ptr, E_ptr, B_ptr](Vector &buffer)
-        { eval_ptr->EvalBuffer(*E_ptr, *B_ptr, buffer); },
-        eval_ptr->BufferBases(),
-        SurfaceFunctional::BufferNumComp(SurfaceFunctional::Kind::BDR_POYNTING),
-        eval_ptr->BufferSize());
+        { eval_ptr->EvalBuffer(E_ptr, B_ptr, buffer); },
+        eval_ptr->BufferBases(), eval_ptr->BufferNumComp(), eval_ptr->BufferSize());
   };
 
   // Output fields @ phase = 0 and π/2 for frequency domain (rather than, for example,
@@ -710,10 +706,8 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
       paraview->RegisterField("E_imag", &E->Imag());
       if (E_bdr_eval)
       {
-        RegisterBdrEvalField("E_real", E_bdr_eval, E->Real(),
-                             SurfaceFunctional::Kind::BDR_FIELD_E);
-        RegisterBdrEvalField("E_imag", E_bdr_eval, E->Imag(),
-                             SurfaceFunctional::Kind::BDR_FIELD_E);
+        RegisterBdrEvalField("E_real", E_bdr_eval, E->Real());
+        RegisterBdrEvalField("E_imag", E_bdr_eval, E->Imag());
       }
       else
       {
@@ -726,8 +720,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
       paraview->RegisterField("E", &E->Real());
       if (E_bdr_eval)
       {
-        RegisterBdrEvalField("E", E_bdr_eval, E->Real(),
-                             SurfaceFunctional::Kind::BDR_FIELD_E);
+        RegisterBdrEvalField("E", E_bdr_eval, E->Real());
       }
       else
       {
@@ -755,10 +748,8 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
       paraview->RegisterField("B_imag", &B->Imag());
       if (B_bdr_eval)
       {
-        RegisterBdrEvalField("B_real", B_bdr_eval, B->Real(),
-                             SurfaceFunctional::Kind::BDR_FIELD_B);
-        RegisterBdrEvalField("B_imag", B_bdr_eval, B->Imag(),
-                             SurfaceFunctional::Kind::BDR_FIELD_B);
+        RegisterBdrEvalField("B_real", B_bdr_eval, B->Real());
+        RegisterBdrEvalField("B_imag", B_bdr_eval, B->Imag());
       }
       else
       {
@@ -777,8 +768,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
       paraview->RegisterField("B", &B->Real());
       if (B_bdr_eval)
       {
-        RegisterBdrEvalField("B", B_bdr_eval, B->Real(),
-                             SurfaceFunctional::Kind::BDR_FIELD_B);
+        RegisterBdrEvalField("B", B_bdr_eval, B->Real());
       }
       else if (B_sr)
       {
@@ -811,8 +801,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
              : paraview->RegisterCoeffField("U_e", U_e.get());
     if (Ue_bdr_eval)
     {
-      RegisterBdrEvalField("U_e", Ue_bdr_eval, *E,
-                           SurfaceFunctional::Kind::BDR_ENERGY_E);
+      RegisterBdrEvalField("U_e", Ue_bdr_eval, *E);
     }
     else
     {
@@ -825,8 +814,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
              : paraview->RegisterCoeffField("U_m", U_m.get());
     if (Um_bdr_eval)
     {
-      RegisterBdrEvalField("U_m", Um_bdr_eval, *B,
-                           SurfaceFunctional::Kind::BDR_ENERGY_M);
+      RegisterBdrEvalField("U_m", Um_bdr_eval, *B);
     }
     else
     {
@@ -854,15 +842,12 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   {
     if (HasComplexGridFunction<solver_t>())
     {
-      RegisterBdrEvalField("Q_s_real", Q_bdr_eval, E->Real(),
-                           SurfaceFunctional::Kind::BDR_FLUX_Q);
-      RegisterBdrEvalField("Q_s_imag", Q_bdr_eval, E->Imag(),
-                           SurfaceFunctional::Kind::BDR_FLUX_Q);
+      RegisterBdrEvalField("Q_s_real", Q_bdr_eval, E->Real());
+      RegisterBdrEvalField("Q_s_imag", Q_bdr_eval, E->Imag());
     }
     else
     {
-      RegisterBdrEvalField("Q_s", Q_bdr_eval, E->Real(),
-                           SurfaceFunctional::Kind::BDR_FLUX_Q);
+      RegisterBdrEvalField("Q_s", Q_bdr_eval, E->Real());
     }
   }
   else if (Q_sr)
@@ -881,15 +866,12 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   {
     if (HasComplexGridFunction<solver_t>())
     {
-      RegisterBdrEvalField("J_s_real", J_bdr_eval, B->Real(),
-                           SurfaceFunctional::Kind::BDR_CURRENT_J);
-      RegisterBdrEvalField("J_s_imag", J_bdr_eval, B->Imag(),
-                           SurfaceFunctional::Kind::BDR_CURRENT_J);
+      RegisterBdrEvalField("J_s_real", J_bdr_eval, B->Real());
+      RegisterBdrEvalField("J_s_imag", J_bdr_eval, B->Imag());
     }
     else
     {
-      RegisterBdrEvalField("J_s", J_bdr_eval, B->Real(),
-                           SurfaceFunctional::Kind::BDR_CURRENT_J);
+      RegisterBdrEvalField("J_s", J_bdr_eval, B->Real());
     }
   }
   else if (J_sr)

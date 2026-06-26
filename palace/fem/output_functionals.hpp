@@ -21,6 +21,7 @@ namespace palace
 class GridFunction;
 class MaterialOperator;
 class Mesh;
+class PointFieldEvaluator;
 class FaceNbrFieldExchange;
 
 namespace fem
@@ -57,11 +58,11 @@ void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
 }  // namespace fem
 
 //
-// Class to compute output functionals (integrals of functions of solution fields) over
-// boundary element sets using libCEED, supporting full (non-trace) evaluation of volume
-// fields at boundary element quadrature points. The 3D path covers surface integrals and
-// selected boundary visualization buffers; the 2D path currently covers line integrals
-// needed by interface dielectric postprocessing. This enables postprocessing measurements
+// Class to compute reducing output functionals (integrals of functions of solution
+// fields) over boundary element sets using libCEED, supporting full (non-trace)
+// evaluation of volume fields at boundary element quadrature points. Non-reducing
+// visualization point fields are exposed through PointFieldEvaluator, which uses private
+// boundary point-field assembly hooks here. This enables postprocessing measurements
 // (interface dielectric energy participation, surface fluxes, port powers, etc.) to
 // execute on the device, in contrast to the legacy mfem::Coefficient-based paths which
 // are host-only.
@@ -94,7 +95,11 @@ public:
     BDR_POYNTING     // Poynting vector E x (mu^-1 B) at boundary visualization points
   };
 
-  // Whether the kind fills a per-point visualization buffer (vs. computing integrals).
+private:
+  friend class PointFieldEvaluator;
+
+  // Whether the kind fills a per-point visualization buffer (vs. computing reductions).
+  // Kept private: non-reducing point output should go through PointFieldEvaluator.
   static bool IsBufferKind(Kind kind)
   {
     return kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B ||
@@ -118,7 +123,6 @@ public:
   int BufferSize() const { return buffer_size; }
   const std::vector<int> &BufferBases() const { return buffer_bases; }
 
-private:
   // Computation kind and integrand parameters.
   Kind kind;
   InterfaceDielectric epr_type = InterfaceDielectric::DEFAULT;
@@ -188,6 +192,26 @@ private:
   // Zero the local output vector, apply, and return the local sum (no MPI reduction).
   double EvalLocal(const std::array<const Vector *, 4> &srcs) const;
 
+
+  // Construct boundary point-field evaluators. These are intentionally private to keep
+  // SurfaceFunctional reduction-oriented at call sites; PointFieldEvaluator owns the
+  // non-reducing visualization API.
+  SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
+                    const mfem::ParFiniteElementSpace &fespace, int lod);
+  SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
+                    const mfem::ParFiniteElementSpace &fespace,
+                    const MaterialOperator &mat_op, int lod, double scaling);
+  SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
+                    const mfem::ParFiniteElementSpace &nd_fespace,
+                    const mfem::ParFiniteElementSpace &rt_fespace,
+                    const MaterialOperator &mat_op, int lod, double scaling);
+
+  // Fill boundary visualization buffers. Friend-only; non-reducing callers use
+  // PointFieldEvaluator.
+  void EvalBuffer(const Vector &u, Vector &buffer) const;
+  void EvalBuffer(const GridFunction &u, Vector &buffer) const;
+  void EvalBuffer(const GridFunction &E, const GridFunction &B, Vector &buffer) const;
+
 public:
   // Returns false when libCEED surface functionals have been globally disabled via the
   // PALACE_LEGACY_SURFACE_POSTPRO environment variable (legacy mfem::Coefficient paths
@@ -199,24 +223,6 @@ public:
   // may be nullptr but the mesh is still required.
   SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
                     const mfem::ParFiniteElementSpace *fespace = nullptr);
-
-  // Construct a boundary visualization field evaluator (BDR_FIELD_E or BDR_FIELD_B),
-  // evaluating at the order-lod lattice points of each boundary element (the ParaView
-  // output sampling, see mfem::RefinedGeometry).
-  SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
-                    const mfem::ParFiniteElementSpace &fespace, int lod);
-
-  // Construct a boundary visualization field evaluator with material properties and
-  // output scaling (BDR_FLUX_Q, BDR_CURRENT_J, BDR_ENERGY_E, BDR_ENERGY_M).
-  SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
-                    const mfem::ParFiniteElementSpace &fespace,
-                    const MaterialOperator &mat_op, int lod, double scaling);
-
-  // Construct a boundary visualization Poynting vector evaluator (BDR_POYNTING).
-  SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
-                    const mfem::ParFiniteElementSpace &nd_fespace,
-                    const mfem::ParFiniteElementSpace &rt_fespace,
-                    const MaterialOperator &mat_op, int lod, double scaling);
 
   // Construct an interface dielectric energy participation functional with the given
   // interface type, thickness, and permittivity (see InterfaceDielectricCoefficient).
@@ -289,15 +295,6 @@ public:
   std::vector<std::array<std::complex<double>, 3>> EvalFarField(
       const GridFunction &E, const GridFunction &B, std::complex<double> omega);
 
-  // Fill the boundary visualization buffer with the pointwise field values (local
-  // operation, buffer kinds only). The single-grid-function overload accumulates the
-  // real and imaginary part contributions for quadratic single-field quantities.
-  void EvalBuffer(const Vector &u, Vector &buffer) const;
-  void EvalBuffer(const GridFunction &u, Vector &buffer) const;
-
-  // Fill the boundary visualization buffer with the Poynting vector
-  // Re{E x (mu^-1 B)^*}; real and imaginary part contributions add.
-  void EvalBuffer(const GridFunction &E, const GridFunction &B, Vector &buffer) const;
 };
 
 
