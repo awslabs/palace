@@ -60,6 +60,14 @@ if(NOT _palace_tmp)
   set(_palace_tmp "/tmp")
 endif()
 
+# On a device (GPU) run, only register cases tagged [GPU]: palace-unit-tests
+# intersects [GPU] when --device is set, so a non-GPU case would match nothing
+# and exit non-zero. Mirror that filter at discovery so it isn't registered.
+set(_palace_tag_filter "")
+if(NOT "$ENV{PALACE_TEST_DEVICE}" STREQUAL "")
+  set(_palace_tag_filter "[GPU]")
+endif()
+
 function(_palace_register spec label)
   # Discover via a file, not OUTPUT_VARIABLE: ctest's script interpreter
   # truncates large execute_process captures, but file output is complete.
@@ -85,5 +93,5 @@ function(_palace_register spec label)
   endforeach()
 endfunction()
 
-_palace_register("[Regression]~[Long]" "regression")
-_palace_register("[Long]" "long")
+_palace_register("[Regression]${_palace_tag_filter}~[Long]" "regression")
+_palace_register("[Long]${_palace_tag_filter}" "long")
