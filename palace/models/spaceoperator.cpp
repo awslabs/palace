@@ -196,11 +196,10 @@ void SpaceOperator::CheckBoundaryProperties()
   mfem::Array<int> aux_bdr_marker(dbc_marker.Size());
   for (int i = 0; i < dbc_marker.Size(); i++)
   {
-    aux_bdr_marker[i] =
-        (dbc_marker[i] || farfield_marker[i] || surf_sigma_marker[i] ||
-         surf_z_Rs_marker[i] || surf_z_Rs_marker[i] || surf_z_Ls_marker[i] ||
-         lumped_port_Rs_marker[i] || lumped_port_Ls_marker[i] || wave_port_marker[i] ||
-         floquet_port_marker[i]);
+    aux_bdr_marker[i] = (dbc_marker[i] || farfield_marker[i] || surf_sigma_marker[i] ||
+                         surf_z_Rs_marker[i] || surf_rz_marker[i] || surf_z_Ls_marker[i] ||
+                         lumped_port_Rs_marker[i] || lumped_port_Ls_marker[i] ||
+                         wave_port_marker[i] || floquet_port_marker[i]);
     if (aux_bdr_marker[i])
     {
       aux_bdr_attr.Append(i + 1);
