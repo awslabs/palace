@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_FEM_DOMAIN_FIELD_EVALUATOR_HPP
-#define PALACE_FEM_DOMAIN_FIELD_EVALUATOR_HPP
+#ifndef PALACE_FEM_DOMAIN_POINT_FIELD_EVALUATOR_HPP
+#define PALACE_FEM_DOMAIN_POINT_FIELD_EVALUATOR_HPP
 
 #include <deque>
 #include <vector>
@@ -23,7 +23,7 @@ class Mesh;
 // for visualization output without per-point host coefficient evaluation. Follows the
 // conventions of EnergyDensityCoefficient and PoyntingVectorCoefficient.
 //
-class DomainFieldEvaluator
+class DomainPointFieldEvaluator
 {
 public:
   enum class Kind
@@ -65,14 +65,14 @@ private:
 public:
   // Construct an evaluator filling grid functions on target_fespace (an interpolatory
   // L2 space). The scaling multiplies the output as for the legacy coefficients.
-  DomainFieldEvaluator(Kind kind, const Mesh &mesh, const MaterialOperator &mat_op,
+  DomainPointFieldEvaluator(Kind kind, const Mesh &mesh, const MaterialOperator &mat_op,
                        const mfem::ParFiniteElementSpace *nd_fespace,
                        const mfem::ParFiniteElementSpace *rt_fespace,
                        const mfem::ParFiniteElementSpace &target_fespace, double scaling);
-  ~DomainFieldEvaluator();
+  ~DomainPointFieldEvaluator();
 
-  DomainFieldEvaluator(const DomainFieldEvaluator &) = delete;
-  DomainFieldEvaluator &operator=(const DomainFieldEvaluator &) = delete;
+  DomainPointFieldEvaluator(const DomainPointFieldEvaluator &) = delete;
+  DomainPointFieldEvaluator &operator=(const DomainPointFieldEvaluator &) = delete;
 
   // Whether the evaluator was successfully assembled.
   bool IsValid() const { return valid; }
@@ -96,4 +96,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_FEM_DOMAIN_FIELD_EVALUATOR_HPP
+#endif  // PALACE_FEM_DOMAIN_POINT_FIELD_EVALUATOR_HPP

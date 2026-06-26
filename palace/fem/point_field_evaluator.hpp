@@ -13,7 +13,7 @@
 namespace palace
 {
 
-class DomainFieldEvaluator;
+class DomainPointFieldEvaluator;
 class GridFunction;
 class MaterialOperator;
 class Mesh;
@@ -32,7 +32,7 @@ public:
 private:
   MeshEntityType location;
   Kind kind;
-  std::unique_ptr<DomainFieldEvaluator> domain_eval;
+  std::unique_ptr<DomainPointFieldEvaluator> domain_eval;
   std::unique_ptr<SurfaceFunctional> boundary_eval;
 
   static int NumComponents(Kind kind);

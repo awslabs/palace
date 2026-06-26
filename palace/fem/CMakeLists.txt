@@ -9,7 +9,7 @@ target_sources(${LIB_TARGET_NAME}
   PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/bilinearform.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/coefficient.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/domain_field_evaluator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/domain_point_field_evaluator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/errorindicator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/facenbrexchange.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/fespace.cpp

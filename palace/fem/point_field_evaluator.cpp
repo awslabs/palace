@@ -3,7 +3,7 @@
 
 #include "fem/point_field_evaluator.hpp"
 
-#include "fem/domain_field_evaluator.hpp"
+#include "fem/domain_point_field_evaluator.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/output_functionals.hpp"
 
@@ -13,16 +13,16 @@ namespace palace
 namespace
 {
 
-DomainFieldEvaluator::Kind ToDomainKind(PointFieldEvaluator::Kind kind)
+DomainPointFieldEvaluator::Kind ToDomainKind(PointFieldEvaluator::Kind kind)
 {
   switch (kind)
   {
     case PointFieldEvaluator::Kind::ENERGY_E:
-      return DomainFieldEvaluator::Kind::ENERGY_E;
+      return DomainPointFieldEvaluator::Kind::ENERGY_E;
     case PointFieldEvaluator::Kind::ENERGY_M:
-      return DomainFieldEvaluator::Kind::ENERGY_M;
+      return DomainPointFieldEvaluator::Kind::ENERGY_M;
     case PointFieldEvaluator::Kind::POYNTING:
-      return DomainFieldEvaluator::Kind::POYNTING;
+      return DomainPointFieldEvaluator::Kind::POYNTING;
     default:
       MFEM_ABORT("Unsupported domain point field kind!");
   }
@@ -46,7 +46,7 @@ PointFieldEvaluator::PointFieldEvaluator(
 {
   MFEM_VERIFY(kind == Kind::ENERGY_E || kind == Kind::ENERGY_M || kind == Kind::POYNTING,
               "Unsupported domain point field kind!");
-  domain_eval = std::make_unique<DomainFieldEvaluator>(
+  domain_eval = std::make_unique<DomainPointFieldEvaluator>(
       ToDomainKind(kind), mesh, mat_op, nd_fespace, rt_fespace, target_fespace, scaling);
 }
 

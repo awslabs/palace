@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include "domain_field_evaluator.hpp"
+#include "domain_point_field_evaluator.hpp"
 
 #include <algorithm>
 #include <map>
@@ -60,7 +60,7 @@ struct CeedAssemblyScratch
 
 }  // namespace
 
-DomainFieldEvaluator::DomainFieldEvaluator(
+DomainPointFieldEvaluator::DomainPointFieldEvaluator(
     Kind kind, const Mesh &mesh, const MaterialOperator &mat_op,
     const mfem::ParFiniteElementSpace *nd_fespace,
     const mfem::ParFiniteElementSpace *rt_fespace,
@@ -73,7 +73,7 @@ DomainFieldEvaluator::DomainFieldEvaluator(
   Assemble(mesh, mat_op, target_fespace, scaling);
 }
 
-DomainFieldEvaluator::~DomainFieldEvaluator()
+DomainPointFieldEvaluator::~DomainPointFieldEvaluator()
 {
   auto DestroyGroups = [](std::vector<fem::CeedGroupOperator> &groups)
   {
@@ -90,7 +90,7 @@ DomainFieldEvaluator::~DomainFieldEvaluator()
   DestroyGroups(buffer_groups);
 }
 
-void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &mat_op,
+void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &mat_op,
                                     const mfem::ParFiniteElementSpace &target_fespace,
                                     double scaling)
 {
@@ -378,10 +378,10 @@ void DomainFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &ma
   }
 }
 
-void DomainFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B,
+void DomainPointFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B,
                                 Vector &out) const
 {
-  MFEM_VERIFY(valid, "Eval called on an invalid (unassembled) DomainFieldEvaluator!");
+  MFEM_VERIFY(valid, "Eval called on an invalid (unassembled) DomainPointFieldEvaluator!");
   MFEM_VERIFY((E || kind == Kind::ENERGY_M) && (B || kind == Kind::ENERGY_E),
               "Missing field grid function for domain field evaluator!");
   out = 0.0;
@@ -394,15 +394,15 @@ void DomainFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B,
   }
 }
 
-void DomainFieldEvaluator::EvalBuffer(const GridFunction *E, const GridFunction *B,
+void DomainPointFieldEvaluator::EvalBuffer(const GridFunction *E, const GridFunction *B,
                                       Vector &buffer) const
 {
   MFEM_VERIFY(valid,
-              "EvalBuffer called on an invalid (unassembled) DomainFieldEvaluator!");
+              "EvalBuffer called on an invalid (unassembled) DomainPointFieldEvaluator!");
   MFEM_VERIFY((E || kind == Kind::ENERGY_M) && (B || kind == Kind::ENERGY_E),
               "Missing field grid function for domain field evaluator!");
   MFEM_ASSERT(buffer.Size() == buffer_size,
-              "Invalid buffer size for DomainFieldEvaluator::EvalBuffer!");
+              "Invalid buffer size for DomainPointFieldEvaluator::EvalBuffer!");
   buffer = 0.0;
   fem::ApplyAddGroupOperators(buffer_groups,
                               {E ? &E->Real() : nullptr, B ? &B->Real() : nullptr},
