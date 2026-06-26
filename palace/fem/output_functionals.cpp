@@ -184,38 +184,6 @@ void FoldNormalScaleIntoFaceJacobian(const mfem::DenseMatrix &J, double normal_s
   }
 }
 
-const char *KindName(SurfaceFunctional::Kind kind)
-{
-  switch (kind)
-  {
-    case SurfaceFunctional::Kind::AREA:
-      return "AREA";
-    case SurfaceFunctional::Kind::HCURL_NORM2:
-      return "HCURL_NORM2";
-    case SurfaceFunctional::Kind::INTERFACE_EPR:
-      return "INTERFACE_EPR";
-    case SurfaceFunctional::Kind::SURFACE_FLUX:
-      return "SURFACE_FLUX";
-    case SurfaceFunctional::Kind::FARFIELD:
-      return "FARFIELD";
-    case SurfaceFunctional::Kind::BDR_FIELD_E:
-      return "BDR_FIELD_E";
-    case SurfaceFunctional::Kind::BDR_FIELD_B:
-      return "BDR_FIELD_B";
-    case SurfaceFunctional::Kind::BDR_FLUX_Q:
-      return "BDR_FLUX_Q";
-    case SurfaceFunctional::Kind::BDR_CURRENT_J:
-      return "BDR_CURRENT_J";
-    case SurfaceFunctional::Kind::BDR_ENERGY_E:
-      return "BDR_ENERGY_E";
-    case SurfaceFunctional::Kind::BDR_ENERGY_M:
-      return "BDR_ENERGY_M";
-    case SurfaceFunctional::Kind::BDR_POYNTING:
-      return "BDR_POYNTING";
-  }
-  return "UNKNOWN";
-}
-
 bool CeedSupportsNonTensorAtPoints(Ceed ceed)
 {
   // This proof path uses the non-tensor simplex AtPoints kernels added for CUDA ref
@@ -319,6 +287,79 @@ struct CeedAssemblyScratch
 
 }  // namespace
 
+
+SurfaceFunctional::KernelKind SurfaceFunctional::ToKernelKind(Kind kind)
+{
+  switch (kind)
+  {
+    case Kind::AREA:
+      return KernelKind::AREA;
+    case Kind::HCURL_NORM2:
+      return KernelKind::HCURL_NORM2;
+    case Kind::INTERFACE_EPR:
+      return KernelKind::INTERFACE_EPR;
+    case Kind::SURFACE_FLUX:
+      return KernelKind::SURFACE_FLUX;
+    case Kind::FARFIELD:
+      return KernelKind::FARFIELD;
+  }
+  MFEM_ABORT("Unknown surface functional kind!");
+}
+
+SurfaceFunctional::KernelKind SurfaceFunctional::ToKernelKind(PointFieldKind kind)
+{
+  switch (kind)
+  {
+    case PointFieldKind::FIELD_E:
+      return KernelKind::BDR_FIELD_E;
+    case PointFieldKind::FIELD_B:
+      return KernelKind::BDR_FIELD_B;
+    case PointFieldKind::FLUX_Q:
+      return KernelKind::BDR_FLUX_Q;
+    case PointFieldKind::CURRENT_J:
+      return KernelKind::BDR_CURRENT_J;
+    case PointFieldKind::ENERGY_E:
+      return KernelKind::BDR_ENERGY_E;
+    case PointFieldKind::ENERGY_M:
+      return KernelKind::BDR_ENERGY_M;
+    case PointFieldKind::POYNTING:
+      return KernelKind::BDR_POYNTING;
+  }
+  MFEM_ABORT("Unknown point field kind!");
+}
+
+const char *SurfaceFunctional::KindName(KernelKind kind)
+{
+  switch (kind)
+  {
+    case KernelKind::AREA:
+      return "AREA";
+    case KernelKind::HCURL_NORM2:
+      return "HCURL_NORM2";
+    case KernelKind::INTERFACE_EPR:
+      return "INTERFACE_EPR";
+    case KernelKind::SURFACE_FLUX:
+      return "SURFACE_FLUX";
+    case KernelKind::FARFIELD:
+      return "FARFIELD";
+    case KernelKind::BDR_FIELD_E:
+      return "BDR_FIELD_E";
+    case KernelKind::BDR_FIELD_B:
+      return "BDR_FIELD_B";
+    case KernelKind::BDR_FLUX_Q:
+      return "BDR_FLUX_Q";
+    case KernelKind::BDR_CURRENT_J:
+      return "BDR_CURRENT_J";
+    case KernelKind::BDR_ENERGY_E:
+      return "BDR_ENERGY_E";
+    case KernelKind::BDR_ENERGY_M:
+      return "BDR_ENERGY_M";
+    case KernelKind::BDR_POYNTING:
+      return "BDR_POYNTING";
+  }
+  return "UNKNOWN";
+}
+
 void fem::ApplyAddGroupOperators(const std::vector<fem::CeedGroupOperator> &groups,
                                  const std::array<const Vector *, 4> &srcs,
                                  const Vector &out, const Vector *imported)
@@ -368,7 +409,7 @@ void fem::ApplyAddGroupOperators(const std::vector<fem::CeedGroupOperator> &grou
 SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
                                      const mfem::Array<int> &bdr_attr_marker,
                                      const mfem::ParFiniteElementSpace *fespace)
-  : kind(kind), nd_fespace(fespace), rt_fespace(nullptr), mat_op(nullptr),
+  : kind(ToKernelKind(kind)), nd_fespace(fespace), rt_fespace(nullptr), mat_op(nullptr),
     comm(mesh.GetComm())
 {
   MFEM_VERIFY(kind == Kind::AREA || kind == Kind::HCURL_NORM2,
@@ -379,47 +420,50 @@ SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
   Assemble(mesh, bdr_attr_marker);
 }
 
-SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
+SurfaceFunctional::SurfaceFunctional(PointFieldKind kind, const Mesh &mesh,
                                      const mfem::Array<int> &bdr_attr_marker,
                                      const mfem::ParFiniteElementSpace &fespace, int lod)
-  : kind(kind), nd_fespace(kind == Kind::BDR_FIELD_E ? &fespace : nullptr),
-    rt_fespace(kind == Kind::BDR_FIELD_B ? &fespace : nullptr), mat_op(nullptr),
+  : kind(ToKernelKind(kind)),
+    nd_fespace(kind == PointFieldKind::FIELD_E ? &fespace : nullptr),
+    rt_fespace(kind == PointFieldKind::FIELD_B ? &fespace : nullptr), mat_op(nullptr),
     comm(mesh.GetComm()), viz_lod(lod)
 {
-  MFEM_VERIFY(kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B,
-              "Invalid SurfaceFunctional constructor for the requested functional kind!");
+  MFEM_VERIFY(kind == PointFieldKind::FIELD_E || kind == PointFieldKind::FIELD_B,
+              "Invalid SurfaceFunctional point-field backend constructor!");
   Assemble(mesh, bdr_attr_marker);
 }
 
-SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
+SurfaceFunctional::SurfaceFunctional(PointFieldKind kind, const Mesh &mesh,
                                      const mfem::Array<int> &bdr_attr_marker,
                                      const mfem::ParFiniteElementSpace &fespace,
                                      const MaterialOperator &mat_op, int lod,
                                      double scaling)
-  : kind(kind),
-    nd_fespace((kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_ENERGY_E) ? &fespace
-                                                                       : nullptr),
-    rt_fespace((kind == Kind::BDR_CURRENT_J || kind == Kind::BDR_ENERGY_M) ? &fespace
-                                                                          : nullptr),
+  : kind(ToKernelKind(kind)),
+    nd_fespace((kind == PointFieldKind::FLUX_Q || kind == PointFieldKind::ENERGY_E)
+                   ? &fespace
+                   : nullptr),
+    rt_fespace((kind == PointFieldKind::CURRENT_J || kind == PointFieldKind::ENERGY_M)
+                   ? &fespace
+                   : nullptr),
     mat_op(&mat_op), comm(mesh.GetComm()), viz_lod(lod), viz_scaling(scaling)
 {
-  MFEM_VERIFY(kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_CURRENT_J ||
-                  kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M,
-              "Invalid SurfaceFunctional constructor for the requested functional kind!");
+  MFEM_VERIFY(kind == PointFieldKind::FLUX_Q || kind == PointFieldKind::CURRENT_J ||
+                  kind == PointFieldKind::ENERGY_E || kind == PointFieldKind::ENERGY_M,
+              "Invalid SurfaceFunctional point-field backend constructor!");
   Assemble(mesh, bdr_attr_marker);
 }
 
-SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
+SurfaceFunctional::SurfaceFunctional(PointFieldKind kind, const Mesh &mesh,
                                      const mfem::Array<int> &bdr_attr_marker,
                                      const mfem::ParFiniteElementSpace &nd_fespace,
                                      const mfem::ParFiniteElementSpace &rt_fespace,
                                      const MaterialOperator &mat_op, int lod,
                                      double scaling)
-  : kind(kind), nd_fespace(&nd_fespace), rt_fespace(&rt_fespace), mat_op(&mat_op),
-    comm(mesh.GetComm()), viz_lod(lod), viz_scaling(scaling)
+  : kind(ToKernelKind(kind)), nd_fespace(&nd_fespace), rt_fespace(&rt_fespace),
+    mat_op(&mat_op), comm(mesh.GetComm()), viz_lod(lod), viz_scaling(scaling)
 {
-  MFEM_VERIFY(kind == Kind::BDR_POYNTING,
-              "Invalid SurfaceFunctional constructor for the requested functional kind!");
+  MFEM_VERIFY(kind == PointFieldKind::POYNTING,
+              "Invalid SurfaceFunctional point-field backend constructor!");
   Assemble(mesh, bdr_attr_marker);
 }
 
@@ -428,7 +472,7 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const mfem::ParFiniteElementSpace &nd_fespace,
                                      const MaterialOperator &mat_op,
                                      InterfaceDielectric type, double t_i, double epsilon_i)
-  : kind(Kind::INTERFACE_EPR), epr_type(type), epr_t(t_i), epr_epsilon(epsilon_i),
+  : kind(KernelKind::INTERFACE_EPR), epr_type(type), epr_t(t_i), epr_epsilon(epsilon_i),
     nd_fespace(&nd_fespace), rt_fespace(nullptr), mat_op(&mat_op), comm(mesh.GetComm())
 {
   Assemble(mesh, bdr_attr_marker);
@@ -440,7 +484,7 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const mfem::ParFiniteElementSpace *rt_fespace,
                                      const MaterialOperator &mat_op, SurfaceFlux type,
                                      bool two_sided, const mfem::Vector &x0)
-  : kind(Kind::SURFACE_FLUX), flux_type(type), flux_two_sided(two_sided), flux_x0(x0),
+  : kind(KernelKind::SURFACE_FLUX), flux_type(type), flux_two_sided(two_sided), flux_x0(x0),
     nd_fespace(nd_fespace), rt_fespace(rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
 {
   MFEM_VERIFY(
@@ -456,7 +500,7 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const mfem::ParFiniteElementSpace &rt_fespace,
                                      const MaterialOperator &mat_op,
                                      const std::vector<std::array<double, 3>> &r_naughts)
-  : kind(Kind::FARFIELD), farfield_dirs(r_naughts), nd_fespace(&nd_fespace),
+  : kind(KernelKind::FARFIELD), farfield_dirs(r_naughts), nd_fespace(&nd_fespace),
     rt_fespace(&rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
 {
   Assemble(mesh, bdr_attr_marker);
@@ -527,8 +571,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     valid = false;
     return;
   }
-  if (is_2d && kind != Kind::AREA && kind != Kind::HCURL_NORM2 &&
-      kind != Kind::INTERFACE_EPR)
+  if (is_2d && kind != KernelKind::AREA && kind != KernelKind::HCURL_NORM2 &&
+      kind != KernelKind::INTERFACE_EPR)
   {
     // Initial 2D support covers line integrals needed by interface dielectric
     // postprocessing. Other boundary-output and surface-flux kinds still use the
@@ -539,7 +583,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   const mfem::ParMesh &pmesh = mesh.Get();
   MFEM_VERIFY(pmesh.GetNodes(), "The mesh has no nodal FE space!");
   const mfem::FiniteElementSpace &mesh_fespace = *pmesh.GetNodes()->FESpace();
-  const bool need_field = (kind != Kind::AREA);
+  const bool need_field = (kind != KernelKind::AREA);
   Ceed ceed = ceed::internal::GetCeedObjects()[0];
   const bool use_at_points = is_3d && CeedSupportsNonTensorAtPoints(ceed);
 
@@ -586,11 +630,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       {
         // No field inputs (side selection does not apply).
       }
-      else if (kind == Kind::HCURL_NORM2)
+      else if (kind == KernelKind::HCURL_NORM2)
       {
         plan.elem_a = FET.Elem1No;
       }
-      else if (kind == Kind::FARFIELD)
+      else if (kind == KernelKind::FARFIELD)
       {
         if (has_elem2)
         {
@@ -601,8 +645,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         }
         plan.elem_a = FET.Elem1No;
       }
-      else if (kind == Kind::SURFACE_FLUX || IsBufferKind(kind) ||
-               (kind == Kind::INTERFACE_EPR && epr_type == InterfaceDielectric::DEFAULT))
+      else if (kind == KernelKind::SURFACE_FLUX || IsBufferKind(kind) ||
+               (kind == KernelKind::INTERFACE_EPR && epr_type == InterfaceDielectric::DEFAULT))
       {
         plan.elem_a = FET.Elem1No;
         if (has_elem2)
@@ -719,17 +763,17 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
             MakeReferencePointTopologyKey(vol_geom_b, bdr_geom, face_ir, FET.Loc2);
       }
       const bool can_surface_flux_at_points_a =
-          use_at_points && kind == Kind::SURFACE_FLUX && plan.elem_a >= 0 &&
+          use_at_points && kind == KernelKind::SURFACE_FLUX && plan.elem_a >= 0 &&
           !plan.ghost_a && vol_geom_a == mfem::Geometry::TETRAHEDRON;
       const bool can_surface_flux_at_points_b =
-          use_at_points && kind == Kind::SURFACE_FLUX && plan.elem_b >= 0 &&
+          use_at_points && kind == KernelKind::SURFACE_FLUX && plan.elem_b >= 0 &&
           !plan.ghost_b && vol_geom_b == mfem::Geometry::TETRAHEDRON;
       const bool can_epr_at_points =
-          use_at_points && kind == Kind::INTERFACE_EPR && plan.elem_a >= 0 &&
+          use_at_points && kind == KernelKind::INTERFACE_EPR && plan.elem_a >= 0 &&
           plan.elem_b < 0 && !plan.ghost_a &&
           vol_geom_a == mfem::Geometry::TETRAHEDRON;
       const bool can_farfield_at_points =
-          use_at_points && kind == Kind::FARFIELD && plan.elem_a >= 0 &&
+          use_at_points && kind == KernelKind::FARFIELD && plan.elem_a >= 0 &&
           plan.elem_b < 0 && !plan.ghost_a &&
           vol_geom_a == mfem::Geometry::TETRAHEDRON;
       const bool can_at_points_a =
@@ -783,7 +827,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         // conventions. Encode those discrete states directly rather than carrying a
         // floating-point grouping key.
         key.push_back(static_cast<long long>(std::llround(2.0 * side_scale)));
-        key.push_back(static_cast<long long>((at_points_group && kind == Kind::SURFACE_FLUX)
+        key.push_back(static_cast<long long>((at_points_group && kind == KernelKind::SURFACE_FLUX)
                                                 ? 0
                                                 : std::llround(2.0 * normal_scale)));
         if (!at_points_group)
@@ -823,7 +867,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         {
           it->second.mapped_pts_a.insert(it->second.mapped_pts_a.end(), pts_a.begin(),
                                          pts_a.end());
-          if (kind == Kind::SURFACE_FLUX)
+          if (kind == KernelKind::SURFACE_FLUX)
           {
             it->second.normal_scales.push_back(normal_scale);
           }
@@ -857,7 +901,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         it->second.out_slots.push_back(out_slot);
       };
 
-      if (kind == Kind::SURFACE_FLUX && can_surface_flux_at_points_a &&
+      if (kind == KernelKind::SURFACE_FLUX && can_surface_flux_at_points_a &&
           can_surface_flux_at_points_b)
       {
         // Split local two-sided flux into one-sided AtPoints operators so each side's
@@ -878,9 +922,9 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         // reference coordinates, so preserving the two-sided kernels would reintroduce
         // mapped-point specialization.
         const bool average_quantity =
-            kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B ||
-            kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M ||
-            kind == Kind::BDR_POYNTING;
+            kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B ||
+            kind == KernelKind::BDR_ENERGY_E || kind == KernelKind::BDR_ENERGY_M ||
+            kind == KernelKind::BDR_POYNTING;
         const double side_weight = average_quantity ? 0.5 : 1.0;
         AddGroup(plan.elem_a, false, vol_geom_a, plan.pts_a, plan.point_key_a, -1, false,
                  mfem::Geometry::INVALID, {}, {}, true, side_weight, 1.0);
@@ -900,9 +944,9 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   // Initialize the local output vector and field staging vector. Far-field operators
   // produce 6 values (Re/Im of a 3-vector) per direction per element.
   const int num_out =
-      (kind == Kind::FARFIELD) ? 6 * static_cast<int>(farfield_dirs.size()) : 1;
+      (kind == KernelKind::FARFIELD) ? 6 * static_cast<int>(farfield_dirs.size()) : 1;
   local_out.SetSize(
-      (kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B) ? 0 : num_marked * num_out);
+      (kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B) ? 0 : num_marked * num_out);
   local_out.UseDevice(true);
   if (need_field)
   {
@@ -915,7 +959,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
 
   // Build the (group independent part of the) QFunction context for the integrand.
   std::vector<CeedIntScalar> base_ctx;
-  if (kind == Kind::INTERFACE_EPR)
+  if (kind == KernelKind::INTERFACE_EPR)
   {
     // CeedIntScalar is a union, so the runtime integrand selector (epr_type) needs its
     // own slot: [0].first = epr_type (0 = DEFAULT, 1 = MA, 2 = MS, 3 = SA), then
@@ -952,7 +996,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         break;
     }
   }
-  else if (kind == Kind::SURFACE_FLUX)
+  else if (kind == KernelKind::SURFACE_FLUX)
   {
     base_ctx.resize(5);
     base_ctx[0].second = 1.0;  // Normal sign, set per group
@@ -976,19 +1020,19 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
     }
   }
-  else if (kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_CURRENT_J)
+  else if (kind == KernelKind::BDR_FLUX_Q || kind == KernelKind::BDR_CURRENT_J)
   {
     base_ctx.resize(2);
     base_ctx[0].second = 1.0;  // Normal sign, set per group
     base_ctx[1].second = viz_scaling;
     MaterialPropertyCoefficient coeff_func(mat_op->GetAttributeToMaterial(),
-                                           (kind == Kind::BDR_FLUX_Q)
+                                           (kind == KernelKind::BDR_FLUX_Q)
                                                ? mat_op->GetPermittivityReal()
                                                : mat_op->GetInvPermeability());
     auto mat_ctx = ceed::PopulateCoefficientContext(3, &coeff_func);
     base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
   }
-  else if (kind == Kind::BDR_POYNTING)
+  else if (kind == KernelKind::BDR_POYNTING)
   {
     // Pointwise S = scale * E x (mu^-1 B). For split two-sided AtPoints groups,
     // group.side_scale folds in the legacy 1/2 side average.
@@ -999,21 +1043,21 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     auto mat_ctx = ceed::PopulateCoefficientContext(3, &invmu_func);
     base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
   }
-  else if (kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M)
+  else if (kind == KernelKind::BDR_ENERGY_E || kind == KernelKind::BDR_ENERGY_M)
   {
     // Shared energy kernel: [0].first = piola (0 = ND/E, 1 = RT/B), [1].second = scaling,
     // material table at +2.
     base_ctx.resize(2);
-    base_ctx[0].first = (kind == Kind::BDR_ENERGY_M) ? 1 : 0;
+    base_ctx[0].first = (kind == KernelKind::BDR_ENERGY_M) ? 1 : 0;
     base_ctx[1].second = viz_scaling;
     MaterialPropertyCoefficient coeff_func(mat_op->GetAttributeToMaterial(),
-                                           (kind == Kind::BDR_ENERGY_E)
+                                           (kind == KernelKind::BDR_ENERGY_E)
                                                ? mat_op->GetPermittivityReal()
                                                : mat_op->GetInvPermeability());
     auto mat_ctx = ceed::PopulateCoefficientContext(3, &coeff_func);
     base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
   }
-  else if (kind == Kind::FARFIELD)
+  else if (kind == KernelKind::FARFIELD)
   {
     const int N = static_cast<int>(farfield_dirs.size());
     const auto b_map_type = rt_fespace->FEColl()->GetMapType(dim);
@@ -1044,11 +1088,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     base_ctx.resize(2);
     base_ctx[0].second = 0.0;
     base_ctx[1].second = 1.0;
-    if (kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B)
+    if (kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B)
     {
       // Shared field kernel: [0].first = piola (0 = ND/E, 1 = RT/B),
       // [1].second = output scale (used when split AtPoints sides accumulate).
-      base_ctx[0].first = (kind == Kind::BDR_FIELD_B) ? 1 : 0;
+      base_ctx[0].first = (kind == KernelKind::BDR_FIELD_B) ? 1 : 0;
     }
   }
 
@@ -1075,7 +1119,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       std::array<const mfem::ParFiniteElementSpace *, FaceNbrFieldExchange::MaxSources>
           ex_fes = {nullptr, nullptr, nullptr, nullptr};
       unsigned int source_mask;
-      if (kind == Kind::SURFACE_FLUX)
+      if (kind == KernelKind::SURFACE_FLUX)
       {
         ex_fes[0] = nd_fespace;
         ex_fes[1] = rt_fespace;
@@ -1083,7 +1127,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                       : (flux_type == SurfaceFlux::MAGNETIC) ? 0b10u
                                                              : 0b11u;
       }
-      else if (kind == Kind::BDR_POYNTING)
+      else if (kind == KernelKind::BDR_POYNTING)
       {
         ex_fes[0] = nd_fespace;
         ex_fes[1] = rt_fespace;
@@ -1219,7 +1263,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         }
         AddSequentialPointInput("qw", qw, 1);
       }
-      if (kind == Kind::SURFACE_FLUX && !group.normal_scales.empty())
+      if (kind == KernelKind::SURFACE_FLUX && !group.normal_scales.empty())
       {
         MFEM_VERIFY(group.normal_scales.size() == num_elem,
                     "SURFACE_FLUX AtPoints normal scales must be entry-indexed!");
@@ -1236,7 +1280,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           T.SetIntPoint(&ip);
           const mfem::DenseMatrix &J = T.Jacobian();
           const double normal_scale =
-              (kind == Kind::SURFACE_FLUX && !group.normal_scales.empty())
+              (kind == KernelKind::SURFACE_FLUX && !group.normal_scales.empty())
                   ? group.normal_scales[e]
                   : 1.0;
           const std::size_t off = 6 * (e * nq + q);
@@ -1246,7 +1290,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
       AddSequentialPointInput("grad_x_f", face_geom, 6);
     };
-    const bool field_kind = (kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B);
+    const bool field_kind = (kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B);
     if (!field_kind)
     {
       if (group.at_points)
@@ -1437,7 +1481,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       AddVolGeomInputs("2", group.vol_indices_b, group.vol_geom_b,
                        group.at_points ? face_ir : *group.mapped_ir_b);
     }
-    if (kind == Kind::SURFACE_FLUX || kind == Kind::FARFIELD)
+    if (kind == KernelKind::SURFACE_FLUX || kind == KernelKind::FARFIELD)
     {
       if (group.at_points)
       {
@@ -1449,7 +1493,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         const int nq = face_ir.GetNPoints();
         auto &x_pts = elem_attrs.emplace_back(num_elem * nq * 3);
         x_pts = 0.0;
-        if (!(kind == Kind::SURFACE_FLUX && flux_two_sided))
+        if (!(kind == KernelKind::SURFACE_FLUX && flux_two_sided))
         {
           for (std::size_t e = 0; e < num_elem; e++)
           {
@@ -1544,7 +1588,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       scratch.vecs.push_back(vec);
       scratch.restrs.push_back(restr);
     };
-    if (kind == Kind::BDR_POYNTING)
+    if (kind == KernelKind::BDR_POYNTING)
     {
       auto AddPoyntingSide = [&](const std::string &suffix,
                                  const std::vector<int> &indices,
@@ -1572,7 +1616,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                         group.at_points ? face_ir : *group.mapped_ir_b, group.ghost_b);
       }
     }
-    else if (kind == Kind::HCURL_NORM2 || kind == Kind::INTERFACE_EPR || buffer_kind)
+    else if (kind == KernelKind::HCURL_NORM2 || kind == KernelKind::INTERFACE_EPR || buffer_kind)
     {
       const auto &field_fespace = rt_fespace ? *rt_fespace : *nd_fespace;
       if (group.ghost_a)
@@ -1597,7 +1641,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         }
       }
     }
-    else if (kind == Kind::FARFIELD)
+    else if (kind == KernelKind::FARFIELD)
     {
       const mfem::IntegrationRule &ir = group.at_points ? face_ir : *group.mapped_ir_a;
       AddFieldInput("u_1", 0, *nd_fespace, group.vol_indices_a, group.vol_geom_a, ir);
@@ -1605,7 +1649,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       AddFieldInput("u_3", 2, *rt_fespace, group.vol_indices_a, group.vol_geom_a, ir);
       AddFieldInput("u_4", 3, *rt_fespace, group.vol_indices_a, group.vol_geom_a, ir);
     }
-    else if (kind == Kind::SURFACE_FLUX)
+    else if (kind == KernelKind::SURFACE_FLUX)
     {
       int count = 0;
       auto AddSide = [&](const std::vector<int> &indices, mfem::Geometry::Type geom,
@@ -1705,19 +1749,19 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     ceed::CeedQFunctionInfo info;
     switch (kind)
     {
-      case Kind::AREA:
+      case KernelKind::AREA:
         info.apply_qf = is_2d ? f_integ_surf_area_21 : f_integ_surf_area_32;
         info.apply_qf_path = is_2d ? PalaceQFunctionRelativePath(f_integ_surf_area_21_loc)
                                    : PalaceQFunctionRelativePath(f_integ_surf_area_32_loc);
         break;
-      case Kind::HCURL_NORM2:
+      case KernelKind::HCURL_NORM2:
         info.apply_qf = is_2d ? f_integ_surf_hcurl_norm2_21
                               : f_integ_surf_hcurl_norm2_32;
         info.apply_qf_path =
             is_2d ? PalaceQFunctionRelativePath(f_integ_surf_hcurl_norm2_21_loc)
                   : PalaceQFunctionRelativePath(f_integ_surf_hcurl_norm2_32_loc);
         break;
-      case Kind::INTERFACE_EPR:
+      case KernelKind::INTERFACE_EPR:
         // All four interface types share one kernel; epr_type is set in base_ctx[0].first.
         info.apply_qf = is_2d ? (has_b ? f_integ_surf_epr_2_21 : f_integ_surf_epr_1_21)
                               : (has_b ? f_integ_surf_epr_2_32 : f_integ_surf_epr_1_32);
@@ -1729,46 +1773,46 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                        has_b ? f_integ_surf_epr_2_32_loc
                                              : f_integ_surf_epr_1_32_loc);
         break;
-      case Kind::BDR_FIELD_E:
-      case Kind::BDR_FIELD_B:
+      case KernelKind::BDR_FIELD_E:
+      case KernelKind::BDR_FIELD_B:
         // Shared kernel; the ND/RT Piola is set in base_ctx[0].first.
         ctx[1].second *= group.side_scale;
         info.apply_qf = has_b ? f_eval_bdr_field_2_32 : f_eval_bdr_field_1_32;
         info.apply_qf_path = PalaceQFunctionRelativePath(has_b ? f_eval_bdr_field_2_32_loc
                                                                : f_eval_bdr_field_1_32_loc);
         break;
-      case Kind::BDR_FLUX_Q:
+      case KernelKind::BDR_FLUX_Q:
         ctx[0].second = (group.flip_normal ? -1.0 : 1.0) * group.normal_scale;
         info.apply_qf = has_b ? f_eval_bdr_flux_q_2_32 : f_eval_bdr_flux_q_1_32;
         info.apply_qf_path = PalaceQFunctionRelativePath(
             has_b ? f_eval_bdr_flux_q_2_32_loc : f_eval_bdr_flux_q_1_32_loc);
         break;
-      case Kind::BDR_CURRENT_J:
+      case KernelKind::BDR_CURRENT_J:
         ctx[0].second = (group.flip_normal ? -1.0 : 1.0) * group.normal_scale;
         info.apply_qf = has_b ? f_eval_bdr_current_j_2_32 : f_eval_bdr_current_j_1_32;
         info.apply_qf_path = PalaceQFunctionRelativePath(
             has_b ? f_eval_bdr_current_j_2_32_loc : f_eval_bdr_current_j_1_32_loc);
         break;
-      case Kind::BDR_ENERGY_E:
-      case Kind::BDR_ENERGY_M:
+      case KernelKind::BDR_ENERGY_E:
+      case KernelKind::BDR_ENERGY_M:
         // Shared kernel; the ND/RT Piola is set in base_ctx[0].first.
         ctx[1].second *= group.side_scale;
         info.apply_qf = has_b ? f_eval_bdr_energy_2_32 : f_eval_bdr_energy_1_32;
         info.apply_qf_path = PalaceQFunctionRelativePath(
             has_b ? f_eval_bdr_energy_2_32_loc : f_eval_bdr_energy_1_32_loc);
         break;
-      case Kind::BDR_POYNTING:
+      case KernelKind::BDR_POYNTING:
         ctx[0].second *= group.side_scale;
         info.apply_qf = has_b ? f_eval_bdr_poynting_2_32 : f_eval_bdr_poynting_1_32;
         info.apply_qf_path = PalaceQFunctionRelativePath(
             has_b ? f_eval_bdr_poynting_2_32_loc : f_eval_bdr_poynting_1_32_loc);
         break;
-      case Kind::FARFIELD:
+      case KernelKind::FARFIELD:
         ctx[0].second = group.flip_normal ? -1.0 : 1.0;
         info.apply_qf = f_integ_surf_farfield_32;
         info.apply_qf_path = PalaceQFunctionRelativePath(f_integ_surf_farfield_32_loc);
         break;
-      case Kind::SURFACE_FLUX:
+      case KernelKind::SURFACE_FLUX:
         ctx[0].second =
             (group.flip_normal ? -1.0 : 1.0) *
             ((group.at_points && !group.normal_scales.empty())
@@ -1818,7 +1862,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       ceed::AssembleCeedPointEvaluatorAtPoints(
           info, ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, inputs,
           points_restr, points_vec, num_out, out_restr, &op,
-          (kind == Kind::FARFIELD) ? &op_ctx : nullptr);
+          (kind == KernelKind::FARFIELD) ? &op_ctx : nullptr);
     }
     else
     {
@@ -1872,7 +1916,7 @@ double SurfaceFunctional::EvalLocal(const std::array<const Vector *, 4> &srcs) c
 
 double SurfaceFunctional::Eval(const Vector *u) const
 {
-  MFEM_VERIFY(kind == Kind::AREA || u,
+  MFEM_VERIFY(kind == KernelKind::AREA || u,
               "SurfaceFunctional::Eval requires a field vector for functionals with "
               "field inputs!");
   double dot = EvalLocal({u, nullptr});
@@ -1883,7 +1927,7 @@ double SurfaceFunctional::Eval(const Vector *u) const
 double SurfaceFunctional::Eval(const GridFunction &u) const
 {
   MFEM_VERIFY(valid, "Eval called on an invalid (unassembled) SurfaceFunctional!");
-  MFEM_VERIFY(kind == Kind::HCURL_NORM2 || kind == Kind::INTERFACE_EPR,
+  MFEM_VERIFY(kind == KernelKind::HCURL_NORM2 || kind == KernelKind::INTERFACE_EPR,
               "SurfaceFunctional::Eval with a grid function is only valid for functionals "
               "quadratic in a single field!");
   double dot = 0.0;
@@ -1910,7 +1954,7 @@ double SurfaceFunctional::Eval(const GridFunction &u) const
 std::complex<double> SurfaceFunctional::EvalFlux(const GridFunction *E,
                                                  const GridFunction *B) const
 {
-  MFEM_VERIFY(kind == Kind::SURFACE_FLUX,
+  MFEM_VERIFY(kind == KernelKind::SURFACE_FLUX,
               "SurfaceFunctional::EvalFlux is only valid for surface flux functionals!");
   MFEM_VERIFY(
       (E || (flux_type != SurfaceFlux::ELECTRIC && flux_type != SurfaceFlux::POWER)) &&
@@ -1942,7 +1986,7 @@ std::complex<double> SurfaceFunctional::EvalFlux(const GridFunction *E,
 
 void SurfaceFunctional::EvalBuffer(const Vector &u, Vector &buffer) const
 {
-  MFEM_VERIFY(valid && IsBufferKind(kind) && kind != Kind::BDR_POYNTING,
+  MFEM_VERIFY(valid && IsBufferKind(kind) && kind != KernelKind::BDR_POYNTING,
               "EvalBuffer requires a valid single-field boundary visualization functional!");
   MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
   buffer = 0.0;
@@ -1959,7 +2003,7 @@ void SurfaceFunctional::EvalBuffer(const Vector &u, Vector &buffer) const
 
 void SurfaceFunctional::EvalBuffer(const GridFunction &u, Vector &buffer) const
 {
-  MFEM_VERIFY(valid && IsBufferKind(kind) && kind != Kind::BDR_POYNTING,
+  MFEM_VERIFY(valid && IsBufferKind(kind) && kind != KernelKind::BDR_POYNTING,
               "EvalBuffer requires a valid single-field boundary visualization functional!");
   MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
   buffer = 0.0;
@@ -1985,7 +2029,7 @@ void SurfaceFunctional::EvalBuffer(const GridFunction &u, Vector &buffer) const
 void SurfaceFunctional::EvalBuffer(const GridFunction &E, const GridFunction &B,
                                    Vector &buffer) const
 {
-  MFEM_VERIFY(valid && kind == Kind::BDR_POYNTING,
+  MFEM_VERIFY(valid && kind == KernelKind::BDR_POYNTING,
               "EvalBuffer requires a valid boundary Poynting visualization functional!");
   MFEM_VERIFY(E.HasImag() == B.HasImag(),
               "Mismatch between real- and complex-valued E and B fields in boundary "
@@ -2016,7 +2060,7 @@ std::vector<std::array<std::complex<double>, 3>>
 SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
                                 std::complex<double> omega)
 {
-  MFEM_VERIFY(kind == Kind::FARFIELD && E.HasImag() && B.HasImag(),
+  MFEM_VERIFY(kind == KernelKind::FARFIELD && E.HasImag() && B.HasImag(),
               "SurfaceFunctional::EvalFarField requires a far-field functional and "
               "complex-valued fields!");
   MFEM_VERIFY(valid, "EvalFarField called on an invalid (unassembled) SurfaceFunctional!");
@@ -2085,7 +2129,7 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
 std::complex<double> SurfaceFunctional::EvalComplexPower(const GridFunction &E,
                                                          const GridFunction &B) const
 {
-  MFEM_VERIFY(kind == Kind::SURFACE_FLUX && flux_type == SurfaceFlux::POWER &&
+  MFEM_VERIFY(kind == KernelKind::SURFACE_FLUX && flux_type == SurfaceFlux::POWER &&
                   flux_two_sided,
               "SurfaceFunctional::EvalComplexPower is only valid for two-sided POWER "
               "flux functionals!");
@@ -2114,7 +2158,7 @@ std::vector<std::complex<double>> SurfaceFunctional::EvalComplexPowerByAttribute
     const GridFunction &E, const GridFunction &B, const mfem::Array<int> &attr_to_bin,
     int num_bins) const
 {
-  MFEM_VERIFY(kind == Kind::SURFACE_FLUX && flux_type == SurfaceFlux::POWER &&
+  MFEM_VERIFY(kind == KernelKind::SURFACE_FLUX && flux_type == SurfaceFlux::POWER &&
                   flux_two_sided,
               "SurfaceFunctional::EvalComplexPowerByAttribute is only valid for "
               "two-sided POWER flux functionals!");

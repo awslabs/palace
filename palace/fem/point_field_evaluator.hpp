@@ -27,16 +27,7 @@ class SurfaceFunctional;
 class PointFieldEvaluator
 {
 public:
-  enum class Kind
-  {
-    FIELD_E,    // H(curl) E field values (boundary only for now)
-    FIELD_B,    // H(div) B field values (boundary only for now)
-    FLUX_Q,     // Surface charge (eps E) . n (boundary only)
-    CURRENT_J,  // Surface current n x (mu^-1 B) (boundary only)
-    ENERGY_E,   // Electric energy density
-    ENERGY_M,   // Magnetic energy density
-    POYNTING    // Poynting vector E x (mu^-1 B)
-  };
+  using Kind = PointFieldKind;
 
 private:
   MeshEntityType location;

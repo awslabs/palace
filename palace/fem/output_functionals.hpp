@@ -85,34 +85,50 @@ public:
     HCURL_NORM2,    // ∫ |u|² dS for an H(curl) field u (single-sided, for validation)
     INTERFACE_EPR,  // Interface dielectric energy following InterfaceDielectricCoefficient
     SURFACE_FLUX,   // Surface flux following BdrSurfaceFluxCoefficient
-    FARFIELD,       // Stratton-Chu far-field following AddStrattonChuIntegrandAtElement
-    BDR_FIELD_E,    // H(curl) field values at boundary visualization points
-    BDR_FIELD_B,    // H(div) field values at boundary visualization points
-    BDR_FLUX_Q,     // Surface charge (eps E) . n at boundary visualization points
-    BDR_CURRENT_J,   // Surface current n x (mu^-1 B) at boundary visualization points
-    BDR_ENERGY_E,    // Electric energy density at boundary visualization points
-    BDR_ENERGY_M,    // Magnetic energy density at boundary visualization points
-    BDR_POYNTING     // Poynting vector E x (mu^-1 B) at boundary visualization points
+    FARFIELD        // Stratton-Chu far-field following AddStrattonChuIntegrandAtElement
   };
 
 private:
   friend class PointFieldEvaluator;
 
-  // Whether the kind fills a per-point visualization buffer (vs. computing reductions).
-  // Kept private: non-reducing point output should go through PointFieldEvaluator.
-  static bool IsBufferKind(Kind kind)
+  // Internal backend selector. Public SurfaceFunctional::Kind is reduction-only;
+  // non-reducing boundary visualization entries are reachable only through
+  // PointFieldEvaluator's private backend hooks.
+  enum class KernelKind
   {
-    return kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B ||
-           kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_CURRENT_J ||
-           kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M ||
-           kind == Kind::BDR_POYNTING;
+    AREA,
+    HCURL_NORM2,
+    INTERFACE_EPR,
+    SURFACE_FLUX,
+    FARFIELD,
+    BDR_FIELD_E,
+    BDR_FIELD_B,
+    BDR_FLUX_Q,
+    BDR_CURRENT_J,
+    BDR_ENERGY_E,
+    BDR_ENERGY_M,
+    BDR_POYNTING
+  };
+
+  static KernelKind ToKernelKind(Kind kind);
+  static KernelKind ToKernelKind(PointFieldKind kind);
+  static const char *KindName(KernelKind kind);
+
+  // Whether the backend kind fills a per-point visualization buffer (vs. computing
+  // reductions).
+  static bool IsBufferKind(KernelKind kind)
+  {
+    return kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B ||
+           kind == KernelKind::BDR_FLUX_Q || kind == KernelKind::BDR_CURRENT_J ||
+           kind == KernelKind::BDR_ENERGY_E || kind == KernelKind::BDR_ENERGY_M ||
+           kind == KernelKind::BDR_POYNTING;
   }
 
   // Number of components per visualization point for buffer kinds.
-  static int BufferNumComp(Kind kind)
+  static int BufferNumComp(KernelKind kind)
   {
-    return (kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_ENERGY_E ||
-            kind == Kind::BDR_ENERGY_M)
+    return (kind == KernelKind::BDR_FLUX_Q || kind == KernelKind::BDR_ENERGY_E ||
+            kind == KernelKind::BDR_ENERGY_M)
                ? 1
                : 3;
   }
@@ -124,7 +140,7 @@ private:
   const std::vector<int> &BufferBases() const { return buffer_bases; }
 
   // Computation kind and integrand parameters.
-  Kind kind;
+  KernelKind kind;
   InterfaceDielectric epr_type = InterfaceDielectric::DEFAULT;
   double epr_t = 0.0, epr_epsilon = 0.0;
   SurfaceFlux flux_type = SurfaceFlux::ELECTRIC;
@@ -150,10 +166,9 @@ private:
   const MaterialOperator *mat_op;
 
   // Whether the functional could be assembled. False means the configuration is outside
-  // the current support matrix (for example 2D surface-flux or boundary-visualization
-  // line outputs); model-level callers may explicitly use legacy code for those cases,
-  // but supported cases should treat invalid assembly as an error rather than silently
-  // falling back.
+  // the current support matrix; model-level callers may explicitly use legacy code for
+  // those cases, but supported cases should treat invalid assembly as an error rather
+  // than silently falling back.
   bool valid = true;
 
   // MPI communicator from the mesh.
@@ -192,16 +207,18 @@ private:
   // Zero the local output vector, apply, and return the local sum (no MPI reduction).
   double EvalLocal(const std::array<const Vector *, 4> &srcs) const;
 
-
   // Construct boundary point-field evaluators. These are intentionally private to keep
   // SurfaceFunctional reduction-oriented at call sites; PointFieldEvaluator owns the
   // non-reducing visualization API.
-  SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
+  SurfaceFunctional(PointFieldKind kind, const Mesh &mesh,
+                    const mfem::Array<int> &bdr_attr_marker,
                     const mfem::ParFiniteElementSpace &fespace, int lod);
-  SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
+  SurfaceFunctional(PointFieldKind kind, const Mesh &mesh,
+                    const mfem::Array<int> &bdr_attr_marker,
                     const mfem::ParFiniteElementSpace &fespace,
                     const MaterialOperator &mat_op, int lod, double scaling);
-  SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
+  SurfaceFunctional(PointFieldKind kind, const Mesh &mesh,
+                    const mfem::Array<int> &bdr_attr_marker,
                     const mfem::ParFiniteElementSpace &nd_fespace,
                     const mfem::ParFiniteElementSpace &rt_fespace,
                     const MaterialOperator &mat_op, int lod, double scaling);
@@ -294,9 +311,7 @@ public:
   // the frequency changes. Collective on the mesh communicator.
   std::vector<std::array<std::complex<double>, 3>> EvalFarField(
       const GridFunction &E, const GridFunction &B, std::complex<double> omega);
-
 };
-
 
 }  // namespace palace
 

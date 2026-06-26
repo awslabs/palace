@@ -28,27 +28,6 @@ DomainFieldEvaluator::Kind ToDomainKind(PointFieldEvaluator::Kind kind)
   }
 }
 
-SurfaceFunctional::Kind ToBoundaryKind(PointFieldEvaluator::Kind kind)
-{
-  switch (kind)
-  {
-    case PointFieldEvaluator::Kind::FIELD_E:
-      return SurfaceFunctional::Kind::BDR_FIELD_E;
-    case PointFieldEvaluator::Kind::FIELD_B:
-      return SurfaceFunctional::Kind::BDR_FIELD_B;
-    case PointFieldEvaluator::Kind::FLUX_Q:
-      return SurfaceFunctional::Kind::BDR_FLUX_Q;
-    case PointFieldEvaluator::Kind::CURRENT_J:
-      return SurfaceFunctional::Kind::BDR_CURRENT_J;
-    case PointFieldEvaluator::Kind::ENERGY_E:
-      return SurfaceFunctional::Kind::BDR_ENERGY_E;
-    case PointFieldEvaluator::Kind::ENERGY_M:
-      return SurfaceFunctional::Kind::BDR_ENERGY_M;
-    case PointFieldEvaluator::Kind::POYNTING:
-      return SurfaceFunctional::Kind::BDR_POYNTING;
-  }
-  MFEM_ABORT("Unsupported boundary point field kind!");
-}
 
 }  // namespace
 
@@ -80,7 +59,7 @@ PointFieldEvaluator::PointFieldEvaluator(Kind kind, const Mesh &mesh,
   MFEM_VERIFY(kind == Kind::FIELD_E || kind == Kind::FIELD_B,
               "Unsupported boundary field point kind!");
   boundary_eval.reset(
-      new SurfaceFunctional(ToBoundaryKind(kind), mesh, bdr_attr_marker, fespace, lod));
+      new SurfaceFunctional(kind, mesh, bdr_attr_marker, fespace, lod));
 }
 
 PointFieldEvaluator::PointFieldEvaluator(Kind kind, const Mesh &mesh,
@@ -93,8 +72,8 @@ PointFieldEvaluator::PointFieldEvaluator(Kind kind, const Mesh &mesh,
   MFEM_VERIFY(kind == Kind::FLUX_Q || kind == Kind::CURRENT_J ||
                   kind == Kind::ENERGY_E || kind == Kind::ENERGY_M,
               "Unsupported boundary material point field kind!");
-  boundary_eval.reset(new SurfaceFunctional(ToBoundaryKind(kind), mesh, bdr_attr_marker,
-                                            fespace, mat_op, lod, scaling));
+  boundary_eval.reset(new SurfaceFunctional(kind, mesh, bdr_attr_marker, fespace, mat_op, lod,
+                                            scaling));
 }
 
 PointFieldEvaluator::PointFieldEvaluator(Kind kind, const Mesh &mesh,
@@ -106,9 +85,8 @@ PointFieldEvaluator::PointFieldEvaluator(Kind kind, const Mesh &mesh,
   : location(MeshEntityType::Boundary), kind(kind)
 {
   MFEM_VERIFY(kind == Kind::POYNTING, "Unsupported two-field boundary point kind!");
-  boundary_eval.reset(new SurfaceFunctional(ToBoundaryKind(kind), mesh, bdr_attr_marker,
-                                            nd_fespace, rt_fespace, mat_op, lod,
-                                            scaling));
+  boundary_eval.reset(new SurfaceFunctional(kind, mesh, bdr_attr_marker, nd_fespace, rt_fespace,
+                                            mat_op, lod, scaling));
 }
 
 PointFieldEvaluator::~PointFieldEvaluator() = default;
