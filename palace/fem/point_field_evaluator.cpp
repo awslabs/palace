@@ -10,47 +10,52 @@
 namespace palace
 {
 
-int PointFieldEvaluator::NumComponents(Kind kind)
+namespace
 {
-  return (kind == Kind::FLUX_Q || kind == Kind::ENERGY_E || kind == Kind::ENERGY_M) ? 1
-                                                                                     : 3;
-}
 
-DomainFieldEvaluator::Kind PointFieldEvaluator::ToDomainKind(Kind kind)
+DomainFieldEvaluator::Kind ToDomainKind(PointFieldEvaluator::Kind kind)
 {
   switch (kind)
   {
-    case Kind::ENERGY_E:
+    case PointFieldEvaluator::Kind::ENERGY_E:
       return DomainFieldEvaluator::Kind::ENERGY_E;
-    case Kind::ENERGY_M:
+    case PointFieldEvaluator::Kind::ENERGY_M:
       return DomainFieldEvaluator::Kind::ENERGY_M;
-    case Kind::POYNTING:
+    case PointFieldEvaluator::Kind::POYNTING:
       return DomainFieldEvaluator::Kind::POYNTING;
     default:
       MFEM_ABORT("Unsupported domain point field kind!");
   }
 }
 
-SurfaceFunctional::Kind PointFieldEvaluator::ToBoundaryKind(Kind kind)
+SurfaceFunctional::Kind ToBoundaryKind(PointFieldEvaluator::Kind kind)
 {
   switch (kind)
   {
-    case Kind::FIELD_E:
+    case PointFieldEvaluator::Kind::FIELD_E:
       return SurfaceFunctional::Kind::BDR_FIELD_E;
-    case Kind::FIELD_B:
+    case PointFieldEvaluator::Kind::FIELD_B:
       return SurfaceFunctional::Kind::BDR_FIELD_B;
-    case Kind::FLUX_Q:
+    case PointFieldEvaluator::Kind::FLUX_Q:
       return SurfaceFunctional::Kind::BDR_FLUX_Q;
-    case Kind::CURRENT_J:
+    case PointFieldEvaluator::Kind::CURRENT_J:
       return SurfaceFunctional::Kind::BDR_CURRENT_J;
-    case Kind::ENERGY_E:
+    case PointFieldEvaluator::Kind::ENERGY_E:
       return SurfaceFunctional::Kind::BDR_ENERGY_E;
-    case Kind::ENERGY_M:
+    case PointFieldEvaluator::Kind::ENERGY_M:
       return SurfaceFunctional::Kind::BDR_ENERGY_M;
-    case Kind::POYNTING:
+    case PointFieldEvaluator::Kind::POYNTING:
       return SurfaceFunctional::Kind::BDR_POYNTING;
   }
   MFEM_ABORT("Unsupported boundary point field kind!");
+}
+
+}  // namespace
+
+int PointFieldEvaluator::NumComponents(Kind kind)
+{
+  return (kind == Kind::FLUX_Q || kind == Kind::ENERGY_E || kind == Kind::ENERGY_M) ? 1
+                                                                                     : 3;
 }
 
 PointFieldEvaluator::PointFieldEvaluator(

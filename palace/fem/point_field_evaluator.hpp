@@ -7,17 +7,17 @@
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
-#include "fem/domain_field_evaluator.hpp"
-#include "fem/output_functionals.hpp"
 #include "linalg/vector.hpp"
 #include "utils/labels.hpp"
 
 namespace palace
 {
 
+class DomainFieldEvaluator;
 class GridFunction;
 class MaterialOperator;
 class Mesh;
+class SurfaceFunctional;
 
 // Non-reducing libCEED evaluator for visualization point fields. Unlike reduction
 // functionals, this produces one value per local visualization point (component-major in
@@ -45,8 +45,6 @@ private:
   std::unique_ptr<SurfaceFunctional> boundary_eval;
 
   static int NumComponents(Kind kind);
-  static DomainFieldEvaluator::Kind ToDomainKind(Kind kind);
-  static SurfaceFunctional::Kind ToBoundaryKind(Kind kind);
 
 public:
   // Domain pointwise evaluator for U_e, U_m, or S at VTU visualization points. The
