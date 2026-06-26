@@ -86,24 +86,30 @@ runs:
         TEST_DIR="$(dirname "$(dirname "$(command -v palace-unit-tests)")")/share/palace/test"
         export PALACE_TEST_LINEAR_SOLVER="${{ inputs.linear-solver }}"
 
-        # Keep ~8 CPUs per case (ranks x threads); OpenMP jobs trade ranks for
-        # threads. Fewer ranks shift tail eigenvalues past tolerance.
-        TEST_CORES=$(nproc)
-        if [[ "$TEST_CORES" -gt 8 ]]; then
-          TEST_CORES=8
+        # Rank/thread matrix is identical to the pre-Catch2 Julia harness so the
+        # refactor doesn't change how many ranks each regression case runs at:
+        # physical cores (nproc halved when hyperthreaded), halved again and
+        # paired with 2 OpenMP threads for +openmp, single rank for +cuda.
+        LOGICAL_CORES=$(nproc)
+        THREADS_PER_CORE=$(lscpu | grep "Thread(s) per core" | awk '{print $4}')
+        if [ "$THREADS_PER_CORE" = "2" ]; then
+          NUM_PROC_TEST=$(( LOGICAL_CORES / 2 ))
+        else
+          NUM_PROC_TEST=$LOGICAL_CORES
         fi
         if [[ "${{ inputs.variant }}" == *"+openmp"* ]]; then
+          NUM_PROC_TEST=$(( NUM_PROC_TEST / 2 ))
           export PALACE_TEST_OMP_THREADS=2
         else
           export PALACE_TEST_OMP_THREADS=1
         fi
-        export PALACE_TEST_NUMPROC=$(( TEST_CORES / PALACE_TEST_OMP_THREADS ))
-        JOBS="$(nproc)"
+        JOBS=$(( NUM_PROC_TEST * PALACE_TEST_OMP_THREADS ))
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
           export PALACE_TEST_DEVICE=cuda
-          export PALACE_TEST_NUMPROC=1  # GPU: single rank
-          JOBS=1                        # one GPU: don't run device cases concurrently
+          NUM_PROC_TEST=1  # GPU: single rank
+          JOBS=1           # one GPU: don't run device cases concurrently
         fi
+        export PALACE_TEST_NUMPROC=$NUM_PROC_TEST
 
         run_ctest() {
           ctest --test-dir "$TEST_DIR" --output-on-failure -j "$JOBS" "$@"
