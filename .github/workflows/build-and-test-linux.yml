@@ -242,6 +242,7 @@ jobs:
           with-openmp: openmp
           with-eigensolver: slepc
           with-solver: strumpack
+          with-butterflypack: true
           with-coverage: true
 
     # Flaky arm builds with ubuntu 24 means we pin to ubuntu 22
@@ -451,6 +452,7 @@ jobs:
           [[ "${{ matrix.with-eigensolver }}" == 'arpack' ]] && WITH_ARPACK='ON' || WITH_ARPACK='OFF'
           [[ "${{ matrix.with-sanitizers }}" == 'true' ]] && WITH_SANITIZERS='ON' || WITH_SANITIZERS='OFF'
           [[ "${{ matrix.with-coverage }}" == 'true' ]] && WITH_COVERAGE='ON' || WITH_COVERAGE='OFF'
+          [[ "${{ matrix.with-butterflypack }}" == 'true' ]] && WITH_BUTTERFLYPACK='ON' || WITH_BUTTERFLYPACK='OFF'
 
 
           # Build and install (with unit tests)
@@ -463,6 +465,7 @@ jobs:
             -DPALACE_WITH_OPENMP=$WITH_OPENMP \
             -DPALACE_WITH_SUPERLU=$WITH_SUPERLU \
             -DPALACE_WITH_STRUMPACK=$WITH_STRUMPACK \
+            -DPALACE_WITH_STRUMPACK_BUTTERFLYPACK=$WITH_BUTTERFLYPACK \
             -DPALACE_WITH_MUMPS=$WITH_MUMPS \
             -DPALACE_WITH_SLEPC=$WITH_SLEPC \
             -DPALACE_WITH_ARPACK=$WITH_ARPACK \
