@@ -87,15 +87,16 @@ void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(
     {
       for (auto attr : data.attributes)
       {
+        if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
+        {
+          bdr_warn_list.insert(attr);
+          continue;
+        }
         MFEM_VERIFY(!impedance_marker[attr - 1],
                     "Multiple definitions of rational impedance boundary properties for "
                     "boundary attribute "
                         << attr << "!");
         impedance_marker[attr - 1] = 1;
-        if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
-        {
-          bdr_warn_list.insert(attr);
-        }
       }
     }
     if (!bdr_warn_list.empty())
@@ -110,11 +111,9 @@ void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(
 
   // A rational surface impedance contributes only to the frequency-dependent system matrix
   // A2(ω); it has no time-domain (transient) or static realization here.
-  MFEM_VERIFY(impedance.empty() || problem_type == ProblemType::DRIVEN ||
-                  problem_type == ProblemType::EIGENMODE ||
-                  problem_type == ProblemType::BOUNDARYMODE,
+  MFEM_VERIFY(impedance.empty() || problem_type == ProblemType::DRIVEN,
               "Rational impedance boundaries are only available for frequency-domain "
-              "simulations (driven, eigenmode, boundary mode)!");
+              "driven simulation type!");
 
   boundaries.reserve(impedance.size());
   for (const auto &data : impedance)
@@ -200,21 +199,26 @@ void SurfaceRationalImpedanceOperator::AddExtraSystemBdrCoefficients(
     MFEM_VERIFY(std::abs(N) > 0.0,
                 "Rational impedance boundary has a transmission zero (Zs = 0) at the "
                 "evaluation frequency; the admittance iω/Zs is singular!");
-    const std::complex<double> Z = N / D;
-    // Passivity necessary condition on the imaginary axis: Re{Zs(iω)} >= 0. Warn once per
-    // boundary (relative tolerance avoids false alarms on lossless reactive terminations).
-    if (!bdr.warned_passivity && Z.real() < -1.0e-9 * std::abs(Z))
+    // Surface admittance Ys = 1/Zs = D/N (finite since N != 0). Working with the admittance
+    // directly avoids forming Zs = N/D, which is infinite at an impedance pole (D = 0) even
+    // though the Robin contribution iω/Zs = iω·Ys is well-defined (and zero) there.
+    const std::complex<double> Y = D / N;
+
+    // Passivity necessary condition on the imaginary axis: Re{Zs} >= 0 <=> Re{Ys} >= 0.
+    // Warn once per boundary (relative tolerance avoids false alarms on lossless reactive
+    // terminations).
+    if (!bdr.warned_passivity && Y.real() < -1.0e-9 * std::abs(Y))
     {
       const double f_ghz = omega * freq_scale / (2.0 * M_PI);
       Mpi::Warning("Rational impedance boundary (attribute {:d}) is not passive at "
                    "f = {:.4f} GHz: Re(Zs) = {:.3e} < 0!\n",
-                   bdr.attr_list.Size() ? bdr.attr_list[0] : -1, f_ghz, Z.real());
+                   bdr.attr_list.Size() ? bdr.attr_list[0] : -1, f_ghz, (1.0 / Y).real());
       bdr.warned_passivity = true;
     }
     for (auto attr : bdr.attr_list)
     {
       const double sc = bdr.attr_scaling.at(attr);
-      const std::complex<double> coef = s / (Z * sc);  // iω·Ys per square
+      const std::complex<double> coef = s * Y / sc;  // iω·Ys per square
       fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.real());
       fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.imag());
     }
