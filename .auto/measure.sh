@@ -38,37 +38,29 @@ cfg.setdefault('Model', {}).setdefault('Refinement', {})['MaxIts'] = 1
 json.dump(cfg, open(dst, 'w'), indent=2)
 PY
 
-cat > "$LATEST/rank_wrapper.sh" <<'EOS'
-#!/usr/bin/env bash
-set -euo pipefail
-rank=${PMI_RANK:-0}
-if [[ "$rank" == "0" ]]; then
-  exec "$NSYS_BIN" profile \
+export NSYS_BIN PROFROOT="$LATEST/profile" PALACE_BIN PALACE_CFG="$CONFIG" \
+  PALACE_PROFILE_PARAVIEW_RANGE=1
+set +e
+(
+  cd "$ROOT/examples/transmon"
+  spack -e "$ROOT" build-env palace -- "$NSYS_BIN" profile \
     --trace=cuda,nvtx,osrt,mpi \
     --mpi-impl=mpich \
     --sample=none \
+    --cpuctxsw=none \
+    --capture-range=cudaProfilerApi \
+    --capture-range-end=repeat \
     --osrt-file-access=true \
     --force-overwrite=true \
     --stats=false \
     --show-output=true \
-    --output "$PROFROOT/rank0" \
-    "$PALACE_BIN" "$PALACE_CFG"
-else
-  exec "$PALACE_BIN" "$PALACE_CFG"
-fi
-EOS
-chmod +x "$LATEST/rank_wrapper.sh"
-
-export NSYS_BIN PROFROOT="$LATEST/profile" PALACE_BIN PALACE_CFG="$CONFIG"
-set +e
-(
-  cd "$ROOT/examples/transmon"
-  spack -e "$ROOT" build-env palace -- mpirun -n "$NP" "$LATEST/rank_wrapper.sh"
+    --output "$PROFROOT/allranks" \
+    mpirun -n "$NP" "$PALACE_BIN" "$PALACE_CFG"
 ) > "$PALACE_LOG" 2>&1
 run_rc=$?
 set -e
 
-report=$(ls "$LATEST"/profile/rank0*.nsys-rep 2>/dev/null | head -1 || true)
+report=$(ls "$LATEST"/profile/*.nsys-rep 2>/dev/null | head -1 || true)
 if [[ -n "$report" ]]; then
   "$NSYS_BIN" stats --force-export=true \
     --report cuda_api_sum,cuda_gpu_sum,cuda_gpu_mem_time_sum,cuda_gpu_mem_size_sum,osrt_sum,syscall_sum,mpi_event_sum \
