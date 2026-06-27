@@ -55,6 +55,11 @@ bool IsSupportedBoundaryOutputDimension(const mfem::ParMesh &mesh)
   return mesh.Dimension() == 3 && mesh.SpaceDimension() == 3;
 }
 
+bool AllowNonconformingCeedParaview()
+{
+  return std::getenv("PALACE_CEED_NONCONFORMING_PARAVIEW") != nullptr;
+}
+
 bool UseCeedDomainParaviewPointFields(const mfem::ParMesh &mesh)
 {
   if (!IsSupportedDomainOutputDimension(mesh))
@@ -69,7 +74,25 @@ bool UseCeedDomainParaviewPointFields(const mfem::ParMesh &mesh)
   // meshes and explicit opt-in diagnostics, while using the robust coefficient writer for
   // nonconforming ParaView domain fields. GridFunction output can still use libCEED
   // evaluators independently.
-  if (mesh.Nonconforming() && !std::getenv("PALACE_CEED_NONCONFORMING_PARAVIEW"))
+  if (mesh.Nonconforming() && !AllowNonconformingCeedParaview())
+  {
+    return false;
+  }
+  return true;
+}
+
+bool UseCeedBoundaryParaviewPointFields(const mfem::ParMesh &mesh)
+{
+  if (!IsSupportedBoundaryOutputDimension(mesh))
+  {
+    return false;
+  }
+
+  // Boundary point evaluators have the same nonconforming AMR pathology as domain point
+  // streams on the transmon workload: many tiny libCEED point operators and module loads
+  // dominate while GPU kernels are only a few seconds. Prefer the legacy coefficient
+  // writer on nonconforming meshes unless explicitly opted in for diagnostics.
+  if (mesh.Nonconforming() && !AllowNonconformingCeedParaview())
   {
     return false;
   }
@@ -382,11 +405,14 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     viz_vector_fespace = std::make_unique<mfem::ParFiniteElementSpace>(
         pmesh, viz_fec.get(), pmesh->SpaceDimension());
   };
+  const auto &output_mesh = fem_op->GetNDSpace().GetParMesh();
   const bool use_ceed_domain_fields = fem::LibceedPostprocessingEnabled() &&
                                       (ShouldWriteGridFunctionFields() ||
                                        (ShouldWriteParaviewFields() &&
-                                        UseCeedDomainParaviewPointFields(
-                                            fem_op->GetNDSpace().GetParMesh())));
+                                        UseCeedDomainParaviewPointFields(output_mesh)));
+  const bool use_ceed_boundary_fields = fem::LibceedPostprocessingEnabled() &&
+                                        ShouldWriteParaviewFields() &&
+                                        UseCeedBoundaryParaviewPointFields(output_mesh);
 
   auto MakeFieldEvaluator = [&](PointFieldEvaluator::Kind kind,
                                 mfem::ParFiniteElementSpace *e_fespace,
@@ -511,14 +537,14 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       MakeFieldEvaluator(PointFieldEvaluator::Kind::ENERGY_E, E->ParFESpace(), nullptr,
                          scaling, U_e_eval, U_e_gf);
     }
-    if (fem::LibceedPostprocessingEnabled())
+    if (use_ceed_boundary_fields)
     {
       MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::ENERGY_E, *E->ParFESpace(),
                             scaling, Ue_bdr_eval);
     }
 
     // Electric Boundary Field & Surface Charge.
-    if (fem::LibceedPostprocessingEnabled())
+    if (use_ceed_boundary_fields)
     {
       MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_E, *E->ParFESpace(),
                             E_bdr_eval);
@@ -528,7 +554,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       E_sr = std::make_unique<BdrFieldVectorCoefficient>(E->Real());
     }
     // Q_s = D ⋅ n = ε_0 E ⋅ n.
-    if (fem::LibceedPostprocessingEnabled())
+    if (use_ceed_boundary_fields)
     {
       MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::FLUX_Q, *E->ParFESpace(), scaling,
                             Q_bdr_eval);
@@ -572,7 +598,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
       MakeFieldEvaluator(PointFieldEvaluator::Kind::ENERGY_M, nullptr, B->ParFESpace(),
                          scaling, U_m_eval, U_m_gf);
     }
-    if (fem::LibceedPostprocessingEnabled())
+    if (use_ceed_boundary_fields)
     {
       if (B->Real().VectorDim() > 1)
       {
@@ -585,7 +611,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     // In 2D, B is scalar (L2), so boundary vector coefficients are not applicable.
     if (B->Real().VectorDim() > 1)
     {
-      if (fem::LibceedPostprocessingEnabled())
+      if (use_ceed_boundary_fields)
       {
         MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_B, *B->ParFESpace(),
                               B_bdr_eval);
@@ -595,7 +621,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         B_sr = std::make_unique<BdrFieldVectorCoefficient>(B->Real());
       }
       // J_s = n x H = n x μ⁻¹ B.
-      if (fem::LibceedPostprocessingEnabled())
+      if (use_ceed_boundary_fields)
       {
         MakeBdrCoeffEvaluator(PointFieldEvaluator::Kind::CURRENT_J, *B->ParFESpace(),
                               scaling, J_bdr_eval);
@@ -642,7 +668,7 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         MakeFieldEvaluator(PointFieldEvaluator::Kind::POYNTING, E->ParFESpace(),
                            B->ParFESpace(), scaling, S_eval, S_gf);
       }
-      if (fem::LibceedPostprocessingEnabled())
+      if (use_ceed_boundary_fields)
       {
         MakeBdrPoyntingEvaluator(*E->ParFESpace(), *B->ParFESpace(), scaling,
                                  S_bdr_eval);
@@ -700,6 +726,8 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
                             : B->ParFESpace()->GetMaxElementOrder();
   const bool use_ceed_domain_paraview =
       UseCeedDomainParaviewPointFields(fem_op->GetNDSpace().GetParMesh());
+  const bool use_ceed_boundary_paraview =
+      UseCeedBoundaryParaviewPointFields(fem_op->GetNDSpace().GetParMesh());
 
   // Output mesh coordinate units same as input.
   paraview->SetCycle(-1);
@@ -715,10 +743,9 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   paraview_bdr->SetBoundaryOutput(true);
   paraview_bdr->SetCycle(-1);
   paraview_bdr->SetDataFormat(format);
-  // Boundary libCEED point fields use appended raw VTU arrays so their payload can be
-  // written by the CPU without an extra full-field base64 staging buffer. Keep boundary
-  // output uncompressed, matching the domain libCEED point-field path above.
-  paraview_bdr->SetCompressionLevel(0);
+  // Boundary libCEED point fields also require uncompressed appended raw arrays. When
+  // AMR boundary fields fall back to legacy coefficients, restore MFEM compression.
+  paraview_bdr->SetCompressionLevel(use_ceed_boundary_paraview ? 0 : compress);
   paraview_bdr->SetHighOrderOutput(use_ho);
   paraview_bdr->SetLevelsOfDetail(refine_ho);
 
