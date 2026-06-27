@@ -60,7 +60,7 @@ set +e
 run_rc=$?
 set -e
 
-report=$(ls "$LATEST"/profile/*.nsys-rep 2>/dev/null | head -1 || true)
+report=$(find "$LATEST/profile" -maxdepth 1 -name '*.nsys-rep' -printf '%s %p\n' 2>/dev/null | sort -nr | awk 'NR==1 {print $2}' || true)
 if [[ -n "$report" ]]; then
   "$NSYS_BIN" stats --force-export=true \
     --report cuda_api_sum,cuda_gpu_sum,cuda_gpu_mem_time_sum,cuda_gpu_mem_size_sum,osrt_sum,syscall_sum,mpi_event_sum \

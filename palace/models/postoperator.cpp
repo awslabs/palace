@@ -698,14 +698,17 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   const int refine_ho = HasEGridFunction<solver_t>()
                             ? E->ParFESpace()->GetMaxElementOrder()
                             : B->ParFESpace()->GetMaxElementOrder();
+  const bool use_ceed_domain_paraview =
+      UseCeedDomainParaviewPointFields(fem_op->GetNDSpace().GetParMesh());
 
   // Output mesh coordinate units same as input.
   paraview->SetCycle(-1);
   paraview->SetDataFormat(format);
   // Domain libCEED point fields use appended raw VTU arrays so their payload can be
-  // written by the CPU without an extra full-field base64 staging buffer. Keep domain
-  // output uncompressed; boundary output does the same below.
-  paraview->SetCompressionLevel(0);
+  // written by the CPU without an extra full-field base64 staging buffer and require
+  // uncompressed output. When AMR domain fields fall back to legacy coefficients, restore
+  // MFEM's default compression to avoid the uncompressed VTU memory and I/O blowup.
+  paraview->SetCompressionLevel(use_ceed_domain_paraview ? 0 : compress);
   paraview->SetHighOrderOutput(use_ho);
   paraview->SetLevelsOfDetail(refine_ho);
 
@@ -726,8 +729,6 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   // sampling/transforms in libCEED. Nonconforming domain meshes use the legacy coefficient
   // writer unless PALACE_CEED_NONCONFORMING_PARAVIEW is set; see
   // UseCeedDomainParaviewPointFields for the AMR pointstream tradeoff.
-  const bool use_ceed_domain_paraview =
-      UseCeedDomainParaviewPointFields(fem_op->GetNDSpace().GetParMesh());
   auto RegisterDomainEvalField = [&](const std::string &name,
                                      const std::unique_ptr<PointFieldEvaluator> &eval,
                                      const GridFunction *E_field,
