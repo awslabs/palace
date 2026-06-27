@@ -716,9 +716,9 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
 
   const mfem::VTKFormat format = mfem::VTKFormat::BINARY32;
 #if defined(MFEM_USE_ZLIB)
-  const int compress = -1;  // Default compression level
+  const int fast_compress = 1;
 #else
-  const int compress = 0;
+  const int fast_compress = 0;
 #endif
   const bool use_ho = true;
   const int refine_ho = HasEGridFunction<solver_t>()
@@ -736,7 +736,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   // written by the CPU without an extra full-field base64 staging buffer and require
   // uncompressed output. When AMR domain fields fall back to legacy coefficients, restore
   // MFEM's default compression to avoid the uncompressed VTU memory and I/O blowup.
-  paraview->SetCompressionLevel(use_ceed_domain_paraview ? 0 : compress);
+  paraview->SetCompressionLevel(use_ceed_domain_paraview ? 0 : fast_compress);
   paraview->SetHighOrderOutput(use_ho);
   paraview->SetLevelsOfDetail(refine_ho);
 
@@ -745,7 +745,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   paraview_bdr->SetDataFormat(format);
   // Boundary libCEED point fields also require uncompressed appended raw arrays. When
   // AMR boundary fields fall back to legacy coefficients, restore MFEM compression.
-  paraview_bdr->SetCompressionLevel(use_ceed_boundary_paraview ? 0 : compress);
+  paraview_bdr->SetCompressionLevel(use_ceed_boundary_paraview ? 0 : fast_compress);
   paraview_bdr->SetHighOrderOutput(use_ho);
   paraview_bdr->SetLevelsOfDetail(refine_ho);
 
