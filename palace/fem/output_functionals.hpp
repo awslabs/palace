@@ -122,6 +122,7 @@ private:
   double viz_scaling = 1.0;
   int buffer_size = 0;
   std::vector<int> buffer_bases;
+  std::vector<int> trace_bdr_indices;
 
   // Field finite element spaces (not owned): nd_fespace for H(curl) fields (source index
   // 0), rt_fespace for H(div) fields (source index 1). Either may be nullptr depending

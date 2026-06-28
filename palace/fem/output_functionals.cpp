@@ -624,6 +624,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     // visualization points into attached volume elements or assemble two-sided/ghost
     // operators. EvalTraceFieldBuffer samples those boundary DOFs directly.
     buffer_bases.resize(pmesh.GetNBE(), -1);
+    trace_bdr_indices.clear();
+    trace_bdr_indices.reserve(pmesh.GetNBE());
     int num_marked = 0;
     for (int i = 0; i < pmesh.GetNBE(); i++)
     {
@@ -639,6 +641,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       const auto bdr_geom = pmesh.GetBdrElementGeometry(i);
       const mfem::IntegrationRule &face_ir =
           mfem::GlobGeometryRefiner.Refine(bdr_geom, viz_lod, 1)->RefPts;
+      trace_bdr_indices.push_back(i);
       buffer_bases[i] = buffer_size / BufferNumComp(kind);
       buffer_size += face_ir.GetNPoints() * BufferNumComp(kind);
       num_marked++;
@@ -2174,18 +2177,10 @@ void SurfaceFunctional::EvalTraceFieldBuffer(const Vector &u, Vector &buffer) co
   mfem::Vector loc_data, shape, val, normal;
   mfem::DenseMatrix vshape;
   mfem::IsoparametricTransformation T;
-  for (int i = 0; i < pmesh.GetNBE(); i++)
+  for (const int i : trace_bdr_indices)
   {
     const int base = buffer_bases[i];
-    if (base < 0)
-    {
-      continue;
-    }
-
-    int face_id, face_orientation;
-    pmesh.GetBdrElementFace(i, &face_id, &face_orientation);
-    MFEM_VERIFY(face_id >= 0,
-                "Boundary trace field output requires a valid MFEM face id!");
+    MFEM_VERIFY(base >= 0, "Boundary trace field output has an invalid buffer base!");
     const mfem::FiniteElement *fe = fespace->GetBE(i);
     MFEM_VERIFY(fe, "Unable to get boundary trace finite element for E_t/B_n output!");
     const mfem::IntegrationRule &face_ir = mfem::GlobGeometryRefiner
