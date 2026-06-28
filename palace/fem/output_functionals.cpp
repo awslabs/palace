@@ -1392,8 +1392,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
       AddSequentialPointInput("grad_x_f", face_geom, 6);
     };
-    const bool field_kind = (kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B);
-    if (!field_kind)
+    const bool needs_face_geom =
+        kind != KernelKind::BDR_FIELD_E && kind != KernelKind::BDR_FIELD_B &&
+        kind != KernelKind::BDR_ENERGY_E && kind != KernelKind::BDR_ENERGY_M &&
+        kind != KernelKind::BDR_POYNTING;
+    if (needs_face_geom)
     {
       if (group.at_points)
       {

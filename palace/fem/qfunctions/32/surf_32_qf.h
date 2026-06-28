@@ -692,9 +692,8 @@ CEED_QFUNCTION(f_eval_bdr_current_j_2_32)(void *__restrict__ ctx_, CeedInt Q,
 // Boundary Poynting vector: per-side S = scale * E x (mu^-1 B), averaged over both
 // sides for interior boundaries. This matches PoyntingVectorCoefficient's boundary
 // branch: full vector, no n-dot, no 1/2 time-average factor. Context: [0].second =
-// scaling, material table at +1. Inputs ("_1"): grad_x_f, attr_1, grad_x_1, u_e_1,
-// u_b_1; ("_2"): grad_x_f, attr_1, grad_x_1, attr_2, grad_x_2, u_e_1, u_b_1,
-// u_e_2, u_b_2.
+// scaling, material table at +1. Inputs ("_1"): attr_1, grad_x_1, u_e_1, u_b_1;
+// ("_2"): attr_1, grad_x_1, attr_2, grad_x_2, u_e_1, u_b_1, u_e_2, u_b_2.
 CEED_QFUNCTION_HELPER void SurfPoynting32(const CeedIntScalar *ctx, CeedInt i, CeedInt Q,
                                           CeedInt attr, const CeedScalar *J_v,
                                           const CeedScalar *u_e, const CeedScalar *u_b,
@@ -715,7 +714,7 @@ CEED_QFUNCTION(f_eval_bdr_poynting_1_32)(void *__restrict__ ctx_, CeedInt Q,
                                          CeedScalar *const *out)
 {
   const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
-  const CeedScalar *attr = in[1], *J_v = in[2], *u_e = in[3], *u_b = in[4];
+  const CeedScalar *attr = in[0], *J_v = in[1], *u_e = in[2], *u_b = in[3];
   CeedScalar *v = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
@@ -735,8 +734,8 @@ CEED_QFUNCTION(f_eval_bdr_poynting_2_32)(void *__restrict__ ctx_, CeedInt Q,
                                          CeedScalar *const *out)
 {
   const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
-  const CeedScalar *attr_1 = in[1], *J_v1 = in[2], *attr_2 = in[3], *J_v2 = in[4],
-                   *u_e_1 = in[5], *u_b_1 = in[6], *u_e_2 = in[7], *u_b_2 = in[8];
+  const CeedScalar *attr_1 = in[0], *J_v1 = in[1], *attr_2 = in[2], *J_v2 = in[3],
+                   *u_e_1 = in[4], *u_b_1 = in[5], *u_e_2 = in[6], *u_b_2 = in[7];
   CeedScalar *v = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
@@ -755,13 +754,13 @@ CEED_QFUNCTION(f_eval_bdr_poynting_2_32)(void *__restrict__ ctx_, CeedInt Q,
 // Boundary energy densities: per-side 1/2 (mat F).F with the side attribute, averaged
 // over both sides for interior boundaries. The H(curl)/H(div) space is selected at
 // runtime from ctx[0].first; ctx[1].second = scaling, material table at +2. Inputs
-// ("_1"): grad_x_f, attr_1, grad_x_1, u_1; ("_2"): grad_x_f, attr_1, grad_x_1, attr_2,
-// grad_x_2, u_1, u_2.
+// ("_1"): attr_1, grad_x_1, u_1; ("_2"): attr_1, grad_x_1, attr_2, grad_x_2, u_1,
+// u_2.
 CEED_QFUNCTION(f_eval_bdr_energy_1_32)(void *__restrict__ ctx_, CeedInt Q,
                                        const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
-  const CeedScalar *attr = in[1], *J_v = in[2], *u = in[3];
+  const CeedScalar *attr = in[0], *J_v = in[1], *u = in[2];
   CeedScalar *v = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
@@ -779,8 +778,8 @@ CEED_QFUNCTION(f_eval_bdr_energy_2_32)(void *__restrict__ ctx_, CeedInt Q,
                                        const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
-  const CeedScalar *attr_1 = in[1], *J_v1 = in[2], *attr_2 = in[3], *J_v2 = in[4],
-                   *u_1 = in[5], *u_2 = in[6];
+  const CeedScalar *attr_1 = in[0], *J_v1 = in[1], *attr_2 = in[2], *J_v2 = in[3],
+                   *u_1 = in[4], *u_2 = in[5];
   CeedScalar *v = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
