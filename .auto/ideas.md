@@ -7,3 +7,7 @@
 - Explore fusing domain derived point fields (`U_e`, `U_m`, `S`) into one libCEED point evaluation pass so E/B/material/geometry are loaded once and multiple outputs are written together. This needs VTK multi-array handling or temporary tuple buffers.
 - If whole-domain scratch memory is still the issue, design chunk-specific libCEED restrictions/operators. libCEED has no apply-time element subset/range parameter; chunking requires chunk-specific restrictions/operators.
 - Hybrid fallback: gate AMR/nonconforming ParaView domain derived fields back to legacy coefficient output while retaining libCEED for GridFunction, reductions, CPW, and boundary cases. Use if profiling shows pointstream cannot be fixed quickly.
+
+## Finite NC face-map trace plan for boundary ParaView point fields
+
+See `.auto/nc_trace_plan_idea.md`. The goal is to remove the nonconforming ParaView fallback by grouping libCEED boundary point evaluators by MFEM/NCMesh finite NC face-map identity (`FaceInformation::point_matrix`, orientation, local face id, side/ghost role) instead of treating each mapped point set as unique via `mapped_group_id++`. Run `./.auto/measure_nc_trace.sh` to opt back into `PALACE_CEED_NONCONFORMING_PARAVIEW=1` and judge against the no-fallback baseline (~1226 s), not the fallback best (~117 s).
