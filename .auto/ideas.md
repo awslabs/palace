@@ -10,4 +10,4 @@
 
 ## Finite NC face-map trace plan for boundary ParaView point fields
 
-See `.auto/nc_trace_plan_idea.md`. The goal is to remove the nonconforming ParaView fallback by grouping libCEED boundary point evaluators by MFEM/NCMesh finite NC face-map identity (`FaceInformation::point_matrix`, orientation, local face id, side/ghost role) instead of treating each mapped point set as unique via `mapped_group_id++`. Run `./.auto/measure_nc_trace.sh` to opt back into `PALACE_CEED_NONCONFORMING_PARAVIEW=1` and judge against the no-fallback baseline (~1226 s), not the fallback best (~117 s).
+See `.auto/nc_trace_plan_idea.md`. The goal is to remove the nonconforming ParaView fallback by grouping libCEED boundary point evaluators by MFEM/NCMesh finite NC face-map identity (`FaceInformation::point_matrix`, orientation, local face id, side/ghost role) instead of treating each mapped point set as unique via `mapped_group_id++`. Run `PALACE_CEED_NONCONFORMING_PARAVIEW=1 PALACE_SURFACE_PROFILE=1 ./.auto/measure.sh` to opt back into the libCEED NC ParaView path and judge against the no-fallback baseline (~1226 s), not the fallback best (~117 s).

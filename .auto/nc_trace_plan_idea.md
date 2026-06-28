@@ -137,17 +137,10 @@ For CUDA/libCEED AtPoints-capable cases, the operator should not need a separate
 
 ### 5. Measurement target
 
-Use the wrapper:
+Use the canonical autoresearch measure script with the opt-in environment in the command (the autoresearch harness rejects alternate measure wrapper scripts when `.auto/measure.sh` exists):
 
 ```bash
-./.auto/measure_nc_trace.sh
-```
-
-which sets:
-
-```bash
-PALACE_CEED_NONCONFORMING_PARAVIEW=1
-PALACE_SURFACE_PROFILE=1
+PALACE_CEED_NONCONFORMING_PARAVIEW=1 PALACE_SURFACE_PROFILE=1 ./.auto/measure.sh
 ```
 
 A useful candidate is one that improves the opt-in no-fallback path substantially from ~1226 s and collapses group/operator counts, even if it does not immediately beat the current fallback result of ~117 s. The fallback result remains the performance reference, but this experiment is about removing the fallback by fixing the abstraction.
