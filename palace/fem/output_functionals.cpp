@@ -1392,10 +1392,13 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
       AddSequentialPointInput("grad_x_f", face_geom, 6);
     };
-    const bool needs_face_geom =
-        kind != KernelKind::BDR_FIELD_E && kind != KernelKind::BDR_FIELD_B &&
-        kind != KernelKind::BDR_ENERGY_E && kind != KernelKind::BDR_ENERGY_M &&
-        kind != KernelKind::BDR_POYNTING;
+    const bool field_value_kind =
+        kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B;
+    const bool needs_face_geom = !field_value_kind &&
+                                 kind != KernelKind::BDR_ENERGY_E &&
+                                 kind != KernelKind::BDR_ENERGY_M &&
+                                 kind != KernelKind::BDR_POYNTING;
+    const bool needs_elem_attr = !field_value_kind;
     if (needs_face_geom)
     {
       if (group.at_points)
@@ -1427,19 +1430,22 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                 mfem::Geometry::Type geom, const mfem::IntegrationRule &ir)
     {
       const int num_pts = group.at_points ? face_ir.GetNPoints() : ir.GetNPoints();
-      const auto &loc_attr = mesh.GetCeedAttributes();
       if (group.at_points)
       {
-        auto &elem_attr_pts = elem_attrs.emplace_back(indices.size() * num_pts);
-        for (std::size_t k = 0; k < indices.size(); k++)
+        if (needs_elem_attr)
         {
-          const double attr = loc_attr.at(pmesh.GetAttribute(indices[k]));
-          for (int q = 0; q < num_pts; q++)
+          const auto &loc_attr = mesh.GetCeedAttributes();
+          auto &elem_attr_pts = elem_attrs.emplace_back(indices.size() * num_pts);
+          for (std::size_t k = 0; k < indices.size(); k++)
           {
-            elem_attr_pts[k * num_pts + q] = attr;
+            const double attr = loc_attr.at(pmesh.GetAttribute(indices[k]));
+            for (int q = 0; q < num_pts; q++)
+            {
+              elem_attr_pts[k * num_pts + q] = attr;
+            }
           }
+          AddSequentialPointInput("attr_" + suffix, elem_attr_pts, 1);
         }
-        AddSequentialPointInput("attr_" + suffix, elem_attr_pts, 1);
 
         CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
             mesh_fespace, ceed, geom, indices, /*is_interp*/ true);
@@ -1458,31 +1464,36 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         return;
       }
 
-      auto &elem_attr = elem_attrs.emplace_back(indices.size());
-      for (std::size_t k = 0; k < indices.size(); k++)
+      CeedElemRestriction attr_restr = nullptr;
+      CeedBasis attr_basis = nullptr;
+      CeedVector attr_vec = nullptr;
+      if (needs_elem_attr)
       {
-        elem_attr[k] = loc_attr.at(pmesh.GetAttribute(indices[k]));
+        const auto &loc_attr = mesh.GetCeedAttributes();
+        auto &elem_attr = elem_attrs.emplace_back(indices.size());
+        for (std::size_t k = 0; k < indices.size(); k++)
+        {
+          elem_attr[k] = loc_attr.at(pmesh.GetAttribute(indices[k]));
+        }
+        PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
+                                 ceed, indices.size(), 1, 1, indices.size(),
+                                 CEED_STRIDES_BACKEND, &attr_restr));
+        {
+          // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
+          mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
+          Bt = 1.0;
+          Gt = 0.0;
+          qX = 0.0;
+          qW = 0.0;
+          PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1,
+                                                 num_pts, Bt.GetData(), Gt.GetData(),
+                                                 qX.GetData(), qW.GetData(),
+                                                 &attr_basis));
+        }
+        ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
+        inputs.push_back(
+            {"attr_" + suffix, attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
       }
-      CeedElemRestriction attr_restr;
-      CeedBasis attr_basis;
-      CeedVector attr_vec;
-      PalaceCeedCall(
-          ceed, CeedElemRestrictionCreateStrided(ceed, indices.size(), 1, 1, indices.size(),
-                                                 CEED_STRIDES_BACKEND, &attr_restr));
-      {
-        // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
-        mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
-        Bt = 1.0;
-        Gt = 0.0;
-        qX = 0.0;
-        qW = 0.0;
-        PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
-                                               Bt.GetData(), Gt.GetData(), qX.GetData(),
-                                               qW.GetData(), &attr_basis));
-      }
-      ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
-      inputs.push_back(
-          {"attr_" + suffix, attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
       CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
           mesh_fespace, ceed, geom, indices, /*is_interp*/ true);
       const mfem::FiniteElement *mesh_fe =
@@ -1493,11 +1504,14 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
       inputs.push_back(
           {"x_" + suffix, mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
-      scratch.vecs.push_back(attr_vec);
+      if (needs_elem_attr)
+      {
+        scratch.vecs.push_back(attr_vec);
+        scratch.restrs.push_back(attr_restr);
+        scratch.bases.push_back(attr_basis);
+      }
       scratch.vecs.push_back(mesh_nodes_vec);
-      scratch.restrs.push_back(attr_restr);
       scratch.restrs.push_back(mesh_restr);
-      scratch.bases.push_back(attr_basis);
       scratch.bases.push_back(mesh_basis);
     };
     // Ghost (face neighbor) side variant: the volume element lives on another process,
@@ -1510,31 +1524,36 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                      const mfem::IntegrationRule &ir)
     {
       const int num_pts = ir.GetNPoints();
-      auto &elem_attr = elem_attrs.emplace_back(group.ghost_attr.size());
-      const auto &loc_attr = mesh.GetCeedAttributes();
-      for (std::size_t k = 0; k < group.ghost_attr.size(); k++)
+      CeedElemRestriction attr_restr = nullptr;
+      CeedBasis attr_basis = nullptr;
+      CeedVector attr_vec = nullptr;
+      if (needs_elem_attr)
       {
-        elem_attr[k] = loc_attr.at(group.ghost_attr[k]);
+        auto &elem_attr = elem_attrs.emplace_back(group.ghost_attr.size());
+        const auto &loc_attr = mesh.GetCeedAttributes();
+        for (std::size_t k = 0; k < group.ghost_attr.size(); k++)
+        {
+          elem_attr[k] = loc_attr.at(group.ghost_attr[k]);
+        }
+        PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
+                                 ceed, group.ghost_attr.size(), 1, 1,
+                                 group.ghost_attr.size(), CEED_STRIDES_BACKEND,
+                                 &attr_restr));
+        {
+          mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
+          Bt = 1.0;
+          Gt = 0.0;
+          qX = 0.0;
+          qW = 0.0;
+          PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1,
+                                                 num_pts, Bt.GetData(), Gt.GetData(),
+                                                 qX.GetData(), qW.GetData(),
+                                                 &attr_basis));
+        }
+        ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
+        inputs.push_back({"attr_" + suffix, attr_vec, attr_restr, attr_basis,
+                          ceed::EvalMode::Interp});
       }
-      CeedElemRestriction attr_restr;
-      CeedBasis attr_basis;
-      CeedVector attr_vec;
-      PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
-                               ceed, group.ghost_attr.size(), 1, 1,
-                               group.ghost_attr.size(), CEED_STRIDES_BACKEND, &attr_restr));
-      {
-        mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
-        Bt = 1.0;
-        Gt = 0.0;
-        qX = 0.0;
-        qW = 0.0;
-        PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
-                                               Bt.GetData(), Gt.GetData(), qX.GetData(),
-                                               qW.GetData(), &attr_basis));
-      }
-      ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
-      inputs.push_back(
-          {"attr_" + suffix, attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
       // Constant identity Jacobian (component-major [elem][comp][pt]), passed directly
       // to the kernel's grad_x_<suffix> input (EVAL_NONE). It is 2x2 for 2D line
       // integrals and 3x3 for 3D surface integrals.
@@ -1562,11 +1581,14 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       ceed::InitCeedVector(ident, ceed, &ident_vec);
       inputs.push_back(
           {"grad_x_" + suffix, ident_vec, ident_restr, nullptr, ceed::EvalMode::None});
-      scratch.vecs.push_back(attr_vec);
+      if (needs_elem_attr)
+      {
+        scratch.vecs.push_back(attr_vec);
+        scratch.restrs.push_back(attr_restr);
+        scratch.bases.push_back(attr_basis);
+      }
       scratch.vecs.push_back(ident_vec);
-      scratch.restrs.push_back(attr_restr);
       scratch.restrs.push_back(ident_restr);
-      scratch.bases.push_back(attr_basis);
     };
     if (group.ghost_a)
     {

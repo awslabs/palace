@@ -543,13 +543,13 @@ CEED_QFUNCTION_HELPER void SurfField32(CeedInt piola, CeedInt i, CeedInt Q,
 // the boundary element lattice points), following BdrFieldVectorCoefficient: the field
 // from the attached volume element, averaged over both sides for interior boundaries.
 // The H(curl)/H(div) space is selected at runtime from ctx[0].first, so the E (ND) and
-// B (RT) boundary fields share one kernel. Inputs ("_1"): attr_1, grad_x_1, u_1; ("_2"):
-// attr_1, grad_x_1, attr_2, grad_x_2, u_1, u_2. Output: 3 components per point.
+// B (RT) boundary fields share one kernel. Inputs ("_1"): grad_x_1, u_1; ("_2"):
+// grad_x_1, grad_x_2, u_1, u_2. Output: 3 components per point.
 CEED_QFUNCTION(f_eval_bdr_field_1_32)(void *__restrict__ ctx_, CeedInt Q,
                                       const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
-  const CeedScalar *J_v = in[1], *u = in[2];
+  const CeedScalar *J_v = in[0], *u = in[1];
   CeedScalar *v = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
@@ -567,7 +567,7 @@ CEED_QFUNCTION(f_eval_bdr_field_2_32)(void *__restrict__ ctx_, CeedInt Q,
                                       const CeedScalar *const *in, CeedScalar *const *out)
 {
   const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
-  const CeedScalar *J_v1 = in[1], *J_v2 = in[3], *u_1 = in[4], *u_2 = in[5];
+  const CeedScalar *J_v1 = in[0], *J_v2 = in[1], *u_1 = in[2], *u_2 = in[3];
   CeedScalar *v = out[0];
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
