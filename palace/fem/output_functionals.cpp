@@ -123,6 +123,7 @@ struct FaceGroup
   double normal_scale = 1.0;
   std::vector<int> face_nbr, ghost_attr, req_idx;
   std::vector<std::vector<long long>> face_nbr_point_keys;
+  std::vector<std::vector<mfem::IntegrationPoint>> face_nbr_points;
   // For AtPoints groups, the mapped volume reference coordinates vary by boundary
   // element and are stored in boundary-element order, nq entries per element. Local
   // split SURFACE_FLUX groups may also carry a per-entry normal scale folded into the
@@ -862,6 +863,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         key.push_back(static_cast<long long>((at_points_group && kind == KernelKind::SURFACE_FLUX)
                                                 ? 0
                                                 : std::llround(2.0 * normal_scale)));
+        const bool ghost_only_mapped_group =
+            !at_points_group && elem_a >= 0 && ghost_a && elem_b < 0;
         if (!at_points_group)
         {
           auto AppendTraceKey = [&key](const std::vector<long long> &trace_key)
@@ -869,7 +872,13 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
             key.push_back(static_cast<long long>(trace_key.size()));
             key.insert(key.end(), trace_key.begin(), trace_key.end());
           };
-          AppendTraceKey(elem_a >= 0 ? point_key_a : std::vector<long long>());
+          // A one-sided ghost group consumes already-imported point values with EVAL_NONE;
+          // its local libCEED operator only needs the point count. Keep the per-request
+          // trace key/points for FaceNbrFieldExchange, but do not let remote trace-map
+          // variants fragment the local ghost accumulation operator.
+          AppendTraceKey((elem_a >= 0 && !ghost_only_mapped_group)
+                             ? point_key_a
+                             : std::vector<long long>());
           AppendTraceKey(elem_b >= 0 ? point_key_b : std::vector<long long>());
         }
 
@@ -902,7 +911,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         }
         else if (!at_points_group)
         {
-          if (elem_a >= 0)
+          if (elem_a >= 0 && !ghost_only_mapped_group)
           {
             MFEM_VERIFY(it->second.mapped_ir_a,
                         "Missing representative side-A mapped rule for NC trace group!");
@@ -932,6 +941,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
             it->second.face_nbr.push_back(plan.face_nbr);
             it->second.ghost_attr.push_back(plan.ghost_attr);
             it->second.face_nbr_point_keys.push_back(point_key_a);
+            it->second.face_nbr_points.push_back(pts_a);
           }
           else
           {
@@ -945,6 +955,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
             it->second.face_nbr.push_back(plan.face_nbr);
             it->second.ghost_attr.push_back(plan.ghost_attr);
             it->second.face_nbr_point_keys.push_back(point_key_b);
+            it->second.face_nbr_points.push_back(pts_b);
           }
           else
           {
@@ -1223,7 +1234,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         {
           pts[q] = ir.IntPoint(q);
         }
-        MFEM_VERIFY(g.face_nbr_point_keys.size() == g.face_nbr.size(),
+        MFEM_VERIFY(g.face_nbr_point_keys.size() == g.face_nbr.size() &&
+                        g.face_nbr_points.size() == g.face_nbr.size(),
                     "Invalid face-neighbor point-key layout for surface functional!");
         g.req_idx.resize(g.face_nbr.size());
         for (std::size_t e = 0; e < g.face_nbr.size(); e++)
@@ -1233,7 +1245,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           req.face_nbr_elem = g.face_nbr[e];
           req.source_mask = source_mask;
           req.point_key = g.face_nbr_point_keys[e];
-          req.pts = pts;
+          req.pts = g.face_nbr_points[e].empty() ? pts : g.face_nbr_points[e];
         }
       }
       face_nbr_exchange = std::make_unique<FaceNbrFieldExchange>(mesh, ex_fes, requests);
