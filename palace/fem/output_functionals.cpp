@@ -3,6 +3,7 @@
 
 #include "output_functionals.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -42,10 +43,11 @@ namespace
 
 // Key identifying a group of boundary elements that can share one libCEED operator. For
 // AtPoints-capable groups, mapped volume reference coordinates are runtime point data and
-// do not participate in the key. For the older mapped-integration-rule path, each call
-// gets an integer group id rather than keying by rounded point coordinates; this avoids
-// using floating-point coordinates to decide point identity while leaving room for a
-// future orientation-table grouping pass.
+// do not participate in the key. For the mapped-integration-rule path, nonconforming
+// trace maps are keyed by MFEM's finite face topology (local face/orientation,
+// conformity, and NCMesh point matrix class), with exact dyadic reference-vertex data as
+// a guard against missing a discrete orientation bit. This keeps grouping independent of
+// physical coordinates or arbitrary per-element point clouds.
 using FaceConfigKey = std::vector<long long>;
 
 // Registry of mapped face integration rules. The IntegrationRule objects must have
@@ -129,42 +131,114 @@ struct FaceGroup
   std::vector<double> normal_scales;
 };
 
-std::vector<long long> MakeReferencePointTopologyKey(
-    mfem::Geometry::Type vol_geom, mfem::Geometry::Type face_geom,
-    const mfem::IntegrationRule &face_ir, mfem::IntegrationPointTransformation &loc)
+long long EncodeReferenceCoordinate(double x)
 {
-  // The key identifies the reference-face point set by topology/orientation, not by the
-  // floating-point point coordinates themselves. Loc maps reference face vertices into
-  // the attached volume element reference space. For nonconforming subfaces those mapped
-  // vertices can be dyadic sub-vertices; encode them on a fine integer lattice and verify
-  // the map is exactly representable there. This avoids fuzzy physical-coordinate
-  // matching while still distinguishing conforming faces, orientations, and
-  // nonconforming child subfaces.
   constexpr long long denom = 1LL << 30;
-  auto Encode = [denom](double x)
-  {
-    const long long v = std::llround(denom * x);
-    MFEM_VERIFY(std::abs(x - static_cast<double>(v) / denom) <= 1.0e-12,
-                "Unable to encode reference face topology key exactly!");
-    return v;
-  };
+  const long long v = std::llround(denom * x);
+  MFEM_VERIFY(std::abs(x - static_cast<double>(v) / denom) <= 1.0e-12,
+              "Unable to encode NC trace-map reference coordinate exactly!");
+  return v;
+}
 
-  std::vector<long long> key;
+void AppendDenseMatrixTopologyKey(const mfem::DenseMatrix *pm, FaceConfigKey &key)
+{
+  if (!pm)
+  {
+    key.push_back(0);  // No NC point matrix.
+    return;
+  }
+  key.push_back(1);
+  key.push_back(pm->Height());
+  key.push_back(pm->Width());
+  for (int j = 0; j < pm->Width(); j++)
+  {
+    for (int i = 0; i < pm->Height(); i++)
+    {
+      key.push_back(EncodeReferenceCoordinate((*pm)(i, j)));
+    }
+  }
+}
+
+int FaceInformationSide(const mfem::Mesh::FaceInformation &face, int elem, bool ghost,
+                        int face_nbr)
+{
+  for (int side = 0; side < 2; side++)
+  {
+    if (ghost)
+    {
+      if (face.element[side].location == mfem::Mesh::ElementLocation::FaceNbr &&
+          face.element[side].index == face_nbr)
+      {
+        return side;
+      }
+    }
+    else if (face.element[side].location == mfem::Mesh::ElementLocation::Local &&
+             face.element[side].index == elem)
+    {
+      return side;
+    }
+  }
+  MFEM_VERIFY(false, "Unable to match boundary trace side to MFEM FaceInformation!");
+  return -1;
+}
+
+std::vector<long long> MakeTraceMapTopologyKey(
+    const mfem::Mesh::FaceInformation &face, int side,
+    mfem::Geometry::Type vol_geom, mfem::Geometry::Type face_geom,
+    const mfem::IntegrationRule &face_ir, int bdr_to_face_orientation,
+    mfem::IntegrationPointTransformation &loc)
+{
+  // The primary identity is MFEM/NCMesh topology: face tag, side role, local face id,
+  // orientation, element conformity, and the finite NC point-matrix class. The encoded
+  // reference-vertex image is not a fuzzy point-cloud key; it is an exact dyadic guard
+  // for the reference trace map that catches omitted orientation/subface bits.
+  FaceConfigKey key;
   const mfem::IntegrationRule *verts = mfem::Geometries.GetVertices(face_geom);
-  key.reserve(4 + 3 * verts->GetNPoints());
+  key.reserve(24 + 3 * verts->GetNPoints() +
+              (face.point_matrix ? face.point_matrix->Height() * face.point_matrix->Width()
+                                 : 0));
   key.push_back(static_cast<long long>(vol_geom));
   key.push_back(static_cast<long long>(face_geom));
   key.push_back(static_cast<long long>(face_ir.GetOrder()));
   key.push_back(static_cast<long long>(face_ir.GetNPoints()));
+  key.push_back(static_cast<long long>(bdr_to_face_orientation));
+  key.push_back(static_cast<long long>(face.topology));
+  key.push_back(static_cast<long long>(face.tag));
+  key.push_back(static_cast<long long>(side));
+  key.push_back(static_cast<long long>(face.element[side].location));
+  key.push_back(static_cast<long long>(face.element[side].conformity));
+  key.push_back(static_cast<long long>(face.element[side].local_face_id));
+  key.push_back(static_cast<long long>(face.element[side].orientation));
+  key.push_back(face.ncface >= 0 ? 1 : 0);
+  AppendDenseMatrixTopologyKey(face.point_matrix, key);
   for (int i = 0; i < verts->GetNPoints(); i++)
   {
+    mfem::IntegrationPoint fip = mfem::Mesh::TransformBdrElementToFace(
+        face_geom, bdr_to_face_orientation, verts->IntPoint(i));
     mfem::IntegrationPoint ip;
-    loc.Transform(verts->IntPoint(i), ip);
-    key.push_back(Encode(ip.x));
-    key.push_back(Encode(ip.y));
-    key.push_back(Encode(ip.z));
+    loc.Transform(fip, ip);
+    key.push_back(EncodeReferenceCoordinate(ip.x));
+    key.push_back(EncodeReferenceCoordinate(ip.y));
+    key.push_back(EncodeReferenceCoordinate(ip.z));
   }
   return key;
+}
+
+void VerifyMappedRuleMatches(const mfem::IntegrationRule &ir,
+                             const std::vector<mfem::IntegrationPoint> &pts)
+{
+  MFEM_VERIFY(ir.GetNPoints() == static_cast<int>(pts.size()),
+              "NC trace-map key reused with a different number of mapped points!");
+  for (int q = 0; q < ir.GetNPoints(); q++)
+  {
+    const auto &a = ir.IntPoint(q);
+    const auto &b = pts[static_cast<std::size_t>(q)];
+    const double err = std::max({std::abs(a.x - b.x), std::abs(a.y - b.y),
+                                 std::abs(a.z - b.z), std::abs(a.weight - b.weight)});
+    MFEM_VERIFY(err <= 1.0e-12,
+                "NC trace-map key reused for different mapped reference points; "
+                "refine the finite MFEM/NCMesh face-map key before using this group!");
+  }
 }
 
 void FoldNormalScaleIntoFaceJacobian(const mfem::DenseMatrix &J, double normal_scale,
@@ -543,15 +617,13 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
 
   // Plan the evaluation for each marked boundary element and group the elements by
   // their face configuration. AtPoints groups share tabulated bases and carry mapped
-  // reference points as runtime data. Non-AtPoints groups intentionally remain one group
-  // per AddGroup call for now so point identity is not inferred from rounded
-  // coordinates; processor-boundary requests use separate integer/topological point keys
-  // for their remote point-evaluator grouping.
+  // reference points as runtime data. Non-AtPoints groups use a finite trace-map key
+  // derived from MFEM/NCMesh face topology instead of creating one operator per boundary
+  // element.
   static std::atomic<long long> next_mapped_assembly_id{0};
   const long long mapped_assembly_id = next_mapped_assembly_id++;
   std::map<FaceConfigKey, FaceGroup> face_groups;
   int num_marked = 0;
-  int mapped_group_id = 0;
   {
     constexpr double threshold = 1.0 - 1.0e-6;
     mfem::FaceElementTransformations FET;
@@ -696,25 +768,31 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
 
       // Build the group key. For AtPoints-capable groups, the mapped volume reference
-      // coordinates are runtime data rather than part of the basis/JIT key. For older
-      // mapped-integration-rule groups, AddGroup assigns an integer group id so each
-      // distinct point set gets its own registered rule without fuzzy coordinate keying.
+      // coordinates are runtime data rather than part of the basis/JIT key. For mapped
+      // integration rules, the finite MFEM/NCMesh trace-map keys distinguish the small
+      // set of conforming/NC subface maps without using per-element identities.
       const auto vol_geom_a = plan.ghost_a ? plan.ghost_geom
                               : (plan.elem_a >= 0) ? pmesh.GetElementGeometry(plan.elem_a)
                                                    : mfem::Geometry::INVALID;
       const auto vol_geom_b = plan.ghost_b ? plan.ghost_geom
                               : (plan.elem_b >= 0) ? pmesh.GetElementGeometry(plan.elem_b)
                                                    : mfem::Geometry::INVALID;
-      if (plan.ghost_a && plan.elem_a >= 0)
+      const mfem::Mesh::FaceInformation face_info = pmesh.GetFaceInformation(f);
+      if (plan.elem_a >= 0)
       {
-        plan.point_key_a = MakeReferencePointTopologyKey(
-            vol_geom_a, bdr_geom, face_ir,
+        const int side = FaceInformationSide(face_info, plan.elem_a, plan.ghost_a,
+                                             plan.face_nbr);
+        plan.point_key_a = MakeTraceMapTopologyKey(
+            face_info, side, vol_geom_a, bdr_geom, face_ir, o,
             (plan.elem_a == FET.Elem1No) ? FET.Loc1 : FET.Loc2);
       }
-      if (plan.ghost_b && plan.elem_b >= 0)
+      if (plan.elem_b >= 0)
       {
+        const int side = FaceInformationSide(face_info, plan.elem_b, plan.ghost_b,
+                                             plan.face_nbr);
         plan.point_key_b =
-            MakeReferencePointTopologyKey(vol_geom_b, bdr_geom, face_ir, FET.Loc2);
+            MakeTraceMapTopologyKey(face_info, side, vol_geom_b, bdr_geom, face_ir, o,
+                                    FET.Loc2);
       }
       const bool can_surface_flux_at_points_a =
           use_at_points && kind == KernelKind::SURFACE_FLUX && plan.elem_a >= 0 &&
@@ -786,7 +864,13 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                                 : std::llround(2.0 * normal_scale)));
         if (!at_points_group)
         {
-          key.push_back(static_cast<long long>(mapped_group_id++));
+          auto AppendTraceKey = [&key](const std::vector<long long> &trace_key)
+          {
+            key.push_back(static_cast<long long>(trace_key.size()));
+            key.insert(key.end(), trace_key.begin(), trace_key.end());
+          };
+          AppendTraceKey(elem_a >= 0 ? point_key_a : std::vector<long long>());
+          AppendTraceKey(elem_b >= 0 ? point_key_b : std::vector<long long>());
         }
 
         auto it = face_groups.find(key);
@@ -815,6 +899,21 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
             group.mapped_ir_b = GetRegisteredMappedIr(key_b, pts_b);
           }
           it = face_groups.emplace(key, std::move(group)).first;
+        }
+        else if (!at_points_group)
+        {
+          if (elem_a >= 0)
+          {
+            MFEM_VERIFY(it->second.mapped_ir_a,
+                        "Missing representative side-A mapped rule for NC trace group!");
+            VerifyMappedRuleMatches(*it->second.mapped_ir_a, pts_a);
+          }
+          if (elem_b >= 0)
+          {
+            MFEM_VERIFY(it->second.mapped_ir_b,
+                        "Missing representative side-B mapped rule for NC trace group!");
+            VerifyMappedRuleMatches(*it->second.mapped_ir_b, pts_b);
+          }
         }
         it->second.bdr_indices.push_back(i);
         if (at_points_group)
@@ -1126,22 +1225,40 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   // on a single Ceed context (no OpenMP parallel assembly or application; correctness
   // first, this can be extended with the thread partitioning of fem/mesh.cpp later).
   const bool profile = (std::getenv("PALACE_SURFACE_PROFILE") != nullptr);
-  long long profile_counts[4] = {0, 0, 0, 0};  // groups, elems, AtPoints groups, AtPoints elems
+  // groups, elems, AtPoints groups/elems, mapped groups/elems, two-sided groups,
+  // ghost groups.
+  long long profile_counts[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+  long long profile_max_group_elems = 0;
   for (auto &face_group : face_groups)
   {
     auto &group = face_group.second;
     const std::size_t num_elem = group.bdr_indices.size();
+    const bool has_b = !group.vol_indices_b.empty() || group.ghost_b;
     if (profile)
     {
       profile_counts[0]++;
       profile_counts[1] += static_cast<long long>(num_elem);
+      profile_max_group_elems = std::max(profile_max_group_elems,
+                                         static_cast<long long>(num_elem));
       if (group.at_points)
       {
         profile_counts[2]++;
         profile_counts[3] += static_cast<long long>(num_elem);
       }
+      else
+      {
+        profile_counts[4]++;
+        profile_counts[5] += static_cast<long long>(num_elem);
+      }
+      if (has_b)
+      {
+        profile_counts[6]++;
+      }
+      if (group.ghost_a || group.ghost_b)
+      {
+        profile_counts[7]++;
+      }
     }
-    const bool has_b = !group.vol_indices_b.empty() || group.ghost_b;
     const bool buffer_kind = IsBufferKind(kind);
     const mfem::IntegrationRule &face_ir =
         buffer_kind
@@ -1828,12 +1945,15 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   }
   if (profile)
   {
-    Mpi::GlobalSum(4, profile_counts, comm);
+    Mpi::GlobalSum(8, profile_counts, comm);
+    Mpi::GlobalMax(1, &profile_max_group_elems, comm);
     Mpi::Print(comm,
                "SurfaceFunctional profile kind={} groups={} elems={} at_points_groups={} "
-               "at_points_elems={}\n",
+               "at_points_elems={} mapped_groups={} mapped_elems={} two_sided_groups={} "
+               "ghost_groups={} max_group_elems={}\n",
                KindName(kind), profile_counts[0], profile_counts[1], profile_counts[2],
-               profile_counts[3]);
+               profile_counts[3], profile_counts[4], profile_counts[5],
+               profile_counts[6], profile_counts[7], profile_max_group_elems);
   }
 }
 
