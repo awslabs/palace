@@ -984,6 +984,25 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         AddGroup(plan.elem_b, false, vol_geom_b, plan.pts_b, plan.point_key_b, -1, false,
                  mfem::Geometry::INVALID, {}, {}, true, side_weight, -1.0);
       }
+      else if (buffer_kind && plan.elem_a >= 0 && plan.elem_b >= 0 &&
+               ((can_at_points_a && plan.ghost_b) || (can_at_points_b && plan.ghost_a)))
+      {
+        // For shared NC faces, only the local side can use libCEED AtPoints; the ghost
+        // side must first be imported through FaceNbrFieldExchange. Split the trace so
+        // the local contribution still batches with other AtPoints boundary fields, and
+        // only the ghost contribution uses the finite mapped trace key.
+        const bool average_quantity =
+            kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B ||
+            kind == KernelKind::BDR_ENERGY_E || kind == KernelKind::BDR_ENERGY_M ||
+            kind == KernelKind::BDR_POYNTING;
+        const double side_weight = average_quantity ? 0.5 : 1.0;
+        AddGroup(plan.elem_a, plan.ghost_a, vol_geom_a, plan.pts_a, plan.point_key_a,
+                 -1, false, mfem::Geometry::INVALID, {}, {}, can_at_points_a,
+                 side_weight, 1.0);
+        AddGroup(plan.elem_b, plan.ghost_b, vol_geom_b, plan.pts_b, plan.point_key_b,
+                 -1, false, mfem::Geometry::INVALID, {}, {}, can_at_points_b,
+                 side_weight, -1.0);
+      }
       else
       {
         const bool at_points_group = can_at_points_a && plan.elem_b < 0;
