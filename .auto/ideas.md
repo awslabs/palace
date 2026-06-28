@@ -7,6 +7,8 @@
 - Explore fusing domain derived point fields (`U_e`, `U_m`, `S`) into one libCEED point evaluation pass so E/B/material/geometry are loaded once and multiple outputs are written together. This needs VTK multi-array handling or temporary tuple buffers.
 - If whole-domain scratch memory is still the issue, design chunk-specific libCEED restrictions/operators. libCEED has no apply-time element subset/range parameter; chunking requires chunk-specific restrictions/operators.
 - Hybrid fallback: gate AMR/nonconforming ParaView domain derived fields back to legacy coefficient output while retaining libCEED for GridFunction, reductions, CPW, and boundary cases. Use if profiling shows pointstream cannot be fixed quickly.
+- Boundary point-field fusion/share idea after NC trace-plan wins: E-related boundary outputs (`BDR_FIELD_E`, `BDR_FLUX_Q`, `BDR_ENERGY_E`, and the E side of `BDR_POYNTING`) and B-related outputs repeat similar AtPoints/exchange work. A larger refactor could share `FaceNbrFieldExchange` imported values across boundary point fields or fuse multiple BDR outputs into one libCEED operator writing multiple buffers. This is structural and should include correctness tests, not a quick micro-optimization.
+- Hugh follow-up constraint: continuous boundary traces should use the existing MFEM boundary-element/slave-fine tessellation (`GetNBE()`, `GetBdrElementTransformation`, `GetBdrElementBaseGeometry`) and face/boundary DOFs, not attached volume mappings. Use E_t from H(curl) trace DOFs and B_n from H(div) trace DOFs; reserve finite NC map grouping for true jump/discontinuous quantities (`Q_s`, `J_s`, side-labeled complements). Do not introduce a custom master-face output list.
 
 ## Finite NC face-map trace plan for boundary ParaView point fields
 

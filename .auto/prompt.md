@@ -84,7 +84,7 @@ Primary:
 - `palace/fem/point_field_evaluator.cpp/.hpp` — facade for domain/boundary visualization point fields.
 - `palace/fem/ceed_group_operator.cpp/.hpp` — libCEED operator application helpers.
 - `palace/models/postoperator.cpp/.hpp` — registration policy for ParaView/GridFunction output and backend selection.
-- `palace/fem/output_functionals.cpp/.hpp` — boundary point/reduction backend; touch only if profiler points there.
+- `palace/fem/output_functionals.cpp/.hpp` — boundary point/reduction backend; touch only if profiler points there. Current NC trace-plan direction: continuous boundary traces should use MFEM boundary/face DOFs on the existing `GetNBE()` slave-fine tessellation (`E_t` from H(curl), `B_n` from H(div)); keep finite NC map grouping for true jump/discontinuous quantities like `Q_s`/`J_s`.
 
 Secondary/test files:
 - `test/unit/test-postoperator-boundary-viz.cpp`

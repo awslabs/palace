@@ -190,7 +190,9 @@ private:
                     const MaterialOperator &mat_op, int lod, double scaling);
 
   // Fill boundary visualization buffers. Friend-only; non-reducing callers use
-  // PointFieldEvaluator.
+  // PointFieldEvaluator. Continuous trace fields (E_t/B_n) use boundary/face DOFs
+  // directly on the MFEM boundary-element tessellation.
+  void EvalTraceFieldBuffer(const Vector &u, Vector &buffer) const;
   void EvalBuffer(const Vector &u, Vector &buffer) const;
   void EvalBuffer(const GridFunction &u, Vector &buffer) const;
   void EvalBuffer(const GridFunction &E, const GridFunction &B, Vector &buffer) const;

@@ -10,6 +10,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include "fem/coefficient.hpp"
 #include "fem/facenbrexchange.hpp"
 #include "fem/fespace.hpp"
@@ -615,6 +616,45 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   const bool need_field = (kind != KernelKind::AREA);
   Ceed ceed = ceed::internal::GetCeedObjects()[0];
   const bool use_at_points = is_3d && CeedSupportsNonTensorAtPoints(ceed);
+
+  if (kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B)
+  {
+    // Continuous trace fields live on the MFEM boundary/face DOFs. Keep the VTU geometry
+    // on the existing boundary elements (including NC slave/leaf faces), but do not map
+    // visualization points into attached volume elements or assemble two-sided/ghost
+    // operators. EvalTraceFieldBuffer samples those boundary DOFs directly.
+    buffer_bases.resize(pmesh.GetNBE(), -1);
+    int num_marked = 0;
+    for (int i = 0; i < pmesh.GetNBE(); i++)
+    {
+      const int attr = pmesh.GetBdrAttribute(i);
+      if (!bdr_attr_marker[attr - 1])
+      {
+        continue;
+      }
+      int face_id, face_orientation;
+      pmesh.GetBdrElementFace(i, &face_id, &face_orientation);
+      MFEM_VERIFY(face_id >= 0,
+                  "Boundary trace field output requires a valid MFEM face id!");
+      const auto bdr_geom = pmesh.GetBdrElementGeometry(i);
+      const mfem::IntegrationRule &face_ir =
+          mfem::GlobGeometryRefiner.Refine(bdr_geom, viz_lod, 1)->RefPts;
+      buffer_bases[i] = buffer_size / BufferNumComp(kind);
+      buffer_size += face_ir.GetNPoints() * BufferNumComp(kind);
+      num_marked++;
+    }
+    if (std::getenv("PALACE_SURFACE_PROFILE") != nullptr)
+    {
+      long long profile_counts[2] = {static_cast<long long>(num_marked), 0};
+      Mpi::GlobalSum(2, profile_counts, comm);
+      Mpi::Print(comm,
+                 "SurfaceFunctional profile kind={} groups=0 elems={} "
+                 "at_points_groups=0 at_points_elems=0 mapped_groups=0 mapped_elems=0 "
+                 "two_sided_groups=0 ghost_groups=0 max_group_elems=0 trace_elems={}\n",
+                 KindName(kind), profile_counts[0], profile_counts[0]);
+    }
+    return;
+  }
 
   // Plan the evaluation for each marked boundary element and group the elements by
   // their face configuration. AtPoints groups share tabulated bases and carry mapped
@@ -2114,12 +2154,121 @@ std::complex<double> SurfaceFunctional::EvalFlux(const GridFunction *E,
   return dot;
 }
 
+void SurfaceFunctional::EvalTraceFieldBuffer(const Vector &u, Vector &buffer) const
+{
+  MFEM_VERIFY(kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B,
+              "Trace-field buffer evaluation is only valid for boundary E/B fields!");
+  const mfem::ParFiniteElementSpace *fespace =
+      (kind == KernelKind::BDR_FIELD_E) ? nd_fespace : rt_fespace;
+  MFEM_VERIFY(fespace, "Missing finite element space for boundary trace field output!");
+  const mfem::ParMesh &pmesh = *fespace->GetParMesh();
+  const int nc = BufferNumComp(kind);
+  MFEM_VERIFY(nc == 3, "Boundary trace field output expects ambient 3-vector buffers!");
+  MFEM_VERIFY(buffer.Size() == buffer_size && buffer_size % nc == 0,
+              "Invalid boundary trace field buffer size!");
+  const int component_stride = buffer_size / nc;
+  double *out = buffer.HostReadWrite();
+
+  mfem::Array<int> vdofs;
+  mfem::DofTransformation dof_trans;
+  mfem::Vector loc_data, shape, val, normal;
+  mfem::DenseMatrix vshape;
+  mfem::IsoparametricTransformation T;
+  for (int i = 0; i < pmesh.GetNBE(); i++)
+  {
+    const int base = buffer_bases[i];
+    if (base < 0)
+    {
+      continue;
+    }
+
+    int face_id, face_orientation;
+    pmesh.GetBdrElementFace(i, &face_id, &face_orientation);
+    MFEM_VERIFY(face_id >= 0,
+                "Boundary trace field output requires a valid MFEM face id!");
+    const mfem::FiniteElement *fe = fespace->GetBE(i);
+    MFEM_VERIFY(fe, "Unable to get boundary trace finite element for E_t/B_n output!");
+    const mfem::IntegrationRule &face_ir = mfem::GlobGeometryRefiner
+                                               .Refine(pmesh.GetBdrElementGeometry(i),
+                                                       viz_lod, 1)
+                                               ->RefPts;
+    MFEM_VERIFY(base + face_ir.GetNPoints() <= component_stride,
+                "Boundary trace field buffer base is out of range!");
+
+    fespace->GetBdrElementVDofs(i, vdofs, dof_trans);
+    u.GetSubVector(vdofs, loc_data);
+    dof_trans.InvTransformPrimal(loc_data);
+    pmesh.GetBdrElementTransformation(i, &T);
+
+    if (kind == KernelKind::BDR_FIELD_B)
+    {
+      // RT trace elements are scalar H^{-1/2} normal flux densities on the boundary
+      // element. Output the signed normal trace as an ambient normal vector to preserve
+      // the existing three-component ParaView field shape while avoiding any attached
+      // volume-element evaluation.
+      MFEM_VERIFY(fe->GetRangeType() == mfem::FiniteElement::SCALAR,
+                  "Expected scalar RT trace finite element for B_n output!");
+      shape.SetSize(fe->GetDof());
+      normal.SetSize(3);
+      for (int q = 0; q < face_ir.GetNPoints(); q++)
+      {
+        const mfem::IntegrationPoint &ip = face_ir.IntPoint(q);
+        T.SetIntPoint(&ip);
+        if (fe->GetMapType() == mfem::FiniteElement::VALUE)
+        {
+          fe->CalcShape(ip, shape);
+        }
+        else
+        {
+          fe->CalcPhysShape(T, shape);
+        }
+        const double bn = shape * loc_data;
+        mfem::CalcOrtho(T.Jacobian(), normal);
+        const double normal_norm = normal.Norml2();
+        MFEM_VERIFY(normal_norm > 0.0, "Invalid boundary normal for B_n output!");
+        normal /= normal_norm;
+        for (int c = 0; c < 3; c++)
+        {
+          out[base + q + c * component_stride] += bn * normal(c);
+        }
+      }
+    }
+    else
+    {
+      // ND trace elements evaluate the tangential trace as an ambient vector on the
+      // boundary element. NC slave/leaf face constraints are already represented in the
+      // boundary DOF restriction, so no Elem2/master-side mapping is needed.
+      MFEM_VERIFY(fe->GetRangeType() == mfem::FiniteElement::VECTOR,
+                  "Expected vector ND trace finite element for E_t output!");
+      const int vdim = std::max(pmesh.SpaceDimension(), fe->GetRangeDim());
+      vshape.SetSize(fe->GetDof(), vdim);
+      val.SetSize(vdim);
+      for (int q = 0; q < face_ir.GetNPoints(); q++)
+      {
+        const mfem::IntegrationPoint &ip = face_ir.IntPoint(q);
+        T.SetIntPoint(&ip);
+        fe->CalcVShape(T, vshape);
+        vshape.MultTranspose(loc_data, val);
+        for (int c = 0; c < 3; c++)
+        {
+          out[base + q + c * component_stride] += (c < val.Size()) ? val(c) : 0.0;
+        }
+      }
+    }
+  }
+}
+
 void SurfaceFunctional::EvalBuffer(const Vector &u, Vector &buffer) const
 {
   MFEM_VERIFY(valid && IsBufferKind(kind) && kind != KernelKind::BDR_POYNTING,
               "EvalBuffer requires a valid single-field boundary visualization functional!");
   MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
   buffer = 0.0;
+  if (kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B)
+  {
+    EvalTraceFieldBuffer(u, buffer);
+    return;
+  }
   if (face_nbr_exchange)
   {
     face_nbr_exchange->Exchange({&u});
@@ -2139,7 +2288,11 @@ void SurfaceFunctional::EvalBuffer(const GridFunction &u, Vector &buffer) const
   buffer = 0.0;
   auto Apply = [&](const Vector &v)
   {
-    if (face_nbr_exchange)
+    if (kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B)
+    {
+      EvalTraceFieldBuffer(v, buffer);
+    }
+    else if (face_nbr_exchange)
     {
       face_nbr_exchange->Exchange({&v});
       fem::ApplyAddGroupOperators(groups, {&v}, buffer, &face_nbr_exchange->Imported());
