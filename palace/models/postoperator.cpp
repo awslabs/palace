@@ -69,10 +69,10 @@ bool UseCeedDomainParaviewPointFields(const mfem::ParMesh &mesh)
   }
 
   // The libCEED VTU point-buffer path currently evaluates nonconforming AMR elements
-  // into whole-domain component-major point streams. On large AMR meshes this can
-  // dominate ParaView output time and memory even though the legacy coefficient writer
-  // emits the same arrays at the same VTU points. Keep the libCEED path for conforming
-  // meshes and explicit opt-in diagnostics, while using the robust coefficient writer for
+  // into whole-domain point streams. On large AMR meshes this can dominate ParaView
+  // output time and memory even though the legacy coefficient writer emits the same
+  // arrays at the same VTU points. Keep the libCEED path for conforming meshes and
+  // explicit opt-in diagnostics, while using the robust coefficient writer for
   // nonconforming ParaView domain fields. GridFunction output can still use libCEED
   // evaluators independently.
   if (mesh.Nonconforming() && !AllowNonconformingCeedParaview())
@@ -785,12 +785,13 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   paraview_bdr->SetLevelsOfDetail(refine_ho);
 
   // Register libCEED domain and boundary visualization fields lazily: ParaView Save()
-  // evaluates one field at a time into a reusable device-capable component-major buffer
-  // and then writes that buffer to the VTU file. This keeps peak memory proportional to
-  // one output field instead of the sum of all derived fields, while still doing the
-  // sampling/transforms in libCEED. Nonconforming domain meshes use the legacy coefficient
-  // writer unless PALACE_CEED_NONCONFORMING_PARAVIEW is set; see
-  // UseCeedDomainParaviewPointFields for the AMR pointstream tradeoff.
+  // evaluates one field at a time into a reusable device-capable buffer and then writes
+  // that buffer to the VTU file. Domain direct-VTU buffers are point-major to match VTK
+  // tuple order; boundary buffers keep the existing component-major packing path. This
+  // keeps peak memory proportional to one output field instead of the sum of all derived
+  // fields, while still doing the sampling/transforms in libCEED. Nonconforming domain
+  // meshes use the legacy coefficient writer unless PALACE_CEED_NONCONFORMING_PARAVIEW
+  // is set; see UseCeedDomainParaviewPointFields for the AMR pointstream tradeoff.
   auto RegisterDomainEvalField = [&](const std::string &name,
                                      const std::unique_ptr<PointFieldEvaluator> &eval,
                                      const GridFunction *E_field,
@@ -1322,21 +1323,14 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
   {
     paraview->DeregisterVCoeffField(name);
   }
-  mfem::L2_FECollection pwconst_fec(0, mesh.Dimension());
-  mfem::FiniteElementSpace pwconst_fespace(&mesh, &pwconst_fec);
-  std::unique_ptr<mfem::GridFunction> rank, eta;
-  {
-    rank = std::make_unique<mfem::GridFunction>(&pwconst_fespace);
-    *rank = mesh.GetMyRank() + 1;
-    paraview->RegisterField("Rank", rank.get());
-  }
+  Vector rank(mesh.GetNE());
+  rank = mesh.GetMyRank() + 1;
+  paraview->RegisterDomainCellField("Rank", rank);
   if (indicator)
   {
-    eta = std::make_unique<mfem::GridFunction>(&pwconst_fespace);
-    MFEM_VERIFY(eta->Size() == indicator->Local().Size(),
+    MFEM_VERIFY(mesh.GetNE() == indicator->Local().Size(),
                 "Size mismatch for provided ErrorIndicator for postprocessing!");
-    *eta = indicator->Local();
-    paraview->RegisterField("Indicator", eta.get());
+    paraview->RegisterDomainCellField("Indicator", indicator->Local());
   }
   for (const char *name : {"E", "E_real", "E_imag", "B", "B_real", "B_imag",
                            "U_e", "U_m", "S"})
@@ -1360,13 +1354,10 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
                final_domain_save_seconds, avg_final_domain_save_seconds);
   }
   StopCudaProfilerParaviewRange();
-  if (rank)
+  paraview->DeregisterDomainCellField("Rank");
+  if (indicator)
   {
-    paraview->DeregisterField("Rank");
-  }
-  if (eta)
-  {
-    paraview->DeregisterField("Indicator");
+    paraview->DeregisterDomainCellField("Indicator");
   }
   for (const auto &[name, gf] : field_map)
   {

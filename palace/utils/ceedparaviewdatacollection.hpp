@@ -35,10 +35,16 @@ private:
     int buffer_size = 0;
     bool point_major = false;
   };
+  struct CellField
+  {
+    const Vector *values = nullptr;
+    int num_comp = 0;
+  };
 
   std::fstream pvd_stream;
   std::map<std::string, PointField> boundary_point_fields;
   std::map<std::string, PointField> domain_point_fields;
+  std::map<std::string, CellField> domain_cell_fields;
 
   std::map<std::string, PointField> &PointFields(MeshEntityType location);
   const std::map<std::string, PointField> &PointFields(MeshEntityType location) const;
@@ -56,6 +62,8 @@ private:
                               const std::vector<int> &bases, int num_comp,
                               int buffer_size, bool point_major = false);
   void DeregisterPointField(MeshEntityType location, const std::string &field_name);
+  void WriteCellFieldVTU(std::ostream &os, const std::string &name,
+                         const CellField &field) const;
 
   bool UseAppendedPointFields(MeshEntityType location) const;
   int MaxPointFieldBufferSize(const std::map<std::string, PointField> &fields) const;
@@ -88,8 +96,11 @@ public:
                                     std::function<void(Vector &)> evaluator,
                                     const std::vector<int> &bases, int num_comp,
                                     int buffer_size, bool point_major = false);
+  void RegisterDomainCellField(const std::string &field_name, const Vector &values,
+                               int num_comp = 1);
   void DeregisterBoundaryPointField(const std::string &field_name);
   void DeregisterDomainPointField(const std::string &field_name);
+  void DeregisterDomainCellField(const std::string &field_name);
 
   void Save() override;
 };

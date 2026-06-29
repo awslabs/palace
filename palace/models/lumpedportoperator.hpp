@@ -52,11 +52,13 @@ protected:
   // Linear forms for postprocessing integrated quantities on the port.
   mutable std::unique_ptr<mfem::LinearForm> s, v;
 
-  // libCEED surface functional for port power computation, replacing per-call boundary
-  // LinearForm assembly in the legacy path when supported.
-  mutable std::unique_ptr<SurfaceFunctional> power_func;
+  // libCEED surface functionals for port power, voltage, and S-parameter computation,
+  // replacing host boundary LinearForm paths when supported.
+  mutable std::unique_ptr<SurfaceFunctional> power_func, v_func;
 
   void InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespace) const;
+  SurfaceModeCoefficient GetModeCoefficient(const LumpedElementData &elem,
+                                            double coeff) const;
 
 public:
   LumpedPortData(const config::LumpedPortData &data, const MaterialOperator &mat_op,

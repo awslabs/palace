@@ -135,11 +135,14 @@ struct FaceGroup
 
 long long EncodeReferenceCoordinate(double x)
 {
-  constexpr long long denom = 1LL << 30;
-  const long long v = std::llround(denom * x);
-  MFEM_VERIFY(std::abs(x - static_cast<double>(v) / denom) <= 1.0e-12,
-              "Unable to encode NC trace-map reference coordinate exactly!");
-  return v;
+  // Most NC trace maps have exact dyadic reference coordinates, but conforming/curved or
+  // generated boundary-mode examples can arrive here with ordinary floating-point
+  // reference coordinates from MFEM transformations. Quantize finely enough to keep the
+  // topology key deterministic; VerifyMappedRuleMatches below remains the safety net
+  // against accidentally reusing one mapped integration rule for different points.
+  constexpr long long denom = 1LL << 40;
+  MFEM_VERIFY(std::isfinite(x), "Invalid reference coordinate in trace-map key!");
+  return std::llround(denom * x);
 }
 
 void AppendDenseMatrixTopologyKey(const mfem::DenseMatrix *pm, FaceConfigKey &key)
@@ -418,6 +421,8 @@ const char *SurfaceFunctional::KindName(KernelKind kind)
       return "SURFACE_FLUX";
     case KernelKind::FARFIELD:
       return "FARFIELD";
+    case KernelKind::MODE_OVERLAP:
+      return "MODE_OVERLAP";
     case KernelKind::BDR_FIELD_E:
       return "BDR_FIELD_E";
     case KernelKind::BDR_FIELD_B:
@@ -537,6 +542,32 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
   Assemble(mesh, bdr_attr_marker);
 }
 
+SurfaceFunctional::SurfaceFunctional(
+    const Mesh &mesh, const mfem::ParFiniteElementSpace &nd_fespace,
+    const std::vector<SurfaceModeCoefficient> &mode_coeffs)
+  : kind(KernelKind::MODE_OVERLAP), nd_fespace(&nd_fespace), rt_fespace(nullptr),
+    mat_op(nullptr), comm(mesh.GetComm())
+{
+  const mfem::ParMesh &pmesh = mesh.Get();
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> bdr_attr_marker(bdr_attr_max);
+  bdr_attr_marker = 0;
+  for (const auto &coeff : mode_coeffs)
+  {
+    for (int attr : coeff.attr_list)
+    {
+      MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
+                  "Invalid boundary attribute for surface mode-overlap functional!");
+      bdr_attr_marker[attr - 1] = 1;
+      const bool inserted = mode_coeff_by_attr.emplace(attr, coeff).second;
+      MFEM_VERIFY(inserted,
+                  "Surface mode-overlap functional does not support overlapping mode "
+                  "coefficient attributes!");
+    }
+  }
+  Assemble(mesh, bdr_attr_marker);
+}
+
 SurfaceFunctional::~SurfaceFunctional()
 {
   for (auto &group : groups)
@@ -605,8 +636,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       kind != KernelKind::INTERFACE_EPR)
   {
     // Initial 2D support covers line integrals needed by interface dielectric
-    // postprocessing. Other boundary-output and surface-flux kinds still use the
-    // legacy paths until their 2D scalar/vector conventions are implemented.
+    // postprocessing. Other boundary-output, surface-flux, and mode-overlap kinds still
+    // use the legacy paths until their 2D scalar/vector conventions are implemented.
     valid = false;
     return;
   }
@@ -700,7 +731,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       {
         // No field inputs (side selection does not apply).
       }
-      else if (kind == KernelKind::HCURL_NORM2)
+      else if (kind == KernelKind::HCURL_NORM2 || kind == KernelKind::MODE_OVERLAP)
       {
         plan.elem_a = FET.Elem1No;
       }
@@ -852,10 +883,15 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           use_at_points && kind == KernelKind::FARFIELD && plan.elem_a >= 0 &&
           plan.elem_b < 0 && !plan.ghost_a &&
           vol_geom_a == mfem::Geometry::TETRAHEDRON;
+      const bool can_mode_overlap_at_points =
+          use_at_points && kind == KernelKind::MODE_OVERLAP && plan.elem_a >= 0 &&
+          plan.elem_b < 0 && !plan.ghost_a &&
+          vol_geom_a == mfem::Geometry::TETRAHEDRON;
       const bool can_at_points_a =
           (use_at_points && buffer_kind && plan.elem_a >= 0 && !plan.ghost_a &&
            vol_geom_a == mfem::Geometry::TETRAHEDRON) ||
-          can_surface_flux_at_points_a || can_epr_at_points || can_farfield_at_points;
+          can_surface_flux_at_points_a || can_epr_at_points || can_farfield_at_points ||
+          can_mode_overlap_at_points;
       const bool can_at_points_b =
           (use_at_points && buffer_kind && plan.elem_b >= 0 && !plan.ghost_b &&
            vol_geom_b == mfem::Geometry::TETRAHEDRON) ||
@@ -906,6 +942,12 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         key.push_back(static_cast<long long>((at_points_group && kind == KernelKind::SURFACE_FLUX)
                                                 ? 0
                                                 : std::llround(2.0 * normal_scale)));
+        if (kind == KernelKind::MODE_OVERLAP)
+        {
+          // The mode coefficient is boundary-attribute dependent. Keep each attribute in
+          // a separate operator group so the qfunction context can remain group-constant.
+          key.push_back(static_cast<long long>(attr));
+        }
         const bool ghost_only_mapped_group =
             !at_points_group && elem_a >= 0 && ghost_a && elem_b < 0;
         if (!at_points_group)
@@ -1183,6 +1225,12 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     auto mat_ctx = ceed::PopulateCoefficientContext(3, &coeff_func);
     base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
   }
+  else if (kind == KernelKind::MODE_OVERLAP)
+  {
+    // Group-specific entries are filled after selecting the boundary attribute:
+    // [0].first = type, [1].second = scale, [2..4].second = direction/origin.
+    base_ctx.resize(5);
+  }
   else if (kind == KernelKind::FARFIELD)
   {
     const int N = static_cast<int>(farfield_dirs.size());
@@ -1441,7 +1489,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                  kind != KernelKind::BDR_ENERGY_E &&
                                  kind != KernelKind::BDR_ENERGY_M &&
                                  kind != KernelKind::BDR_POYNTING;
-    const bool needs_elem_attr = !field_value_kind;
+    const bool needs_elem_attr = !field_value_kind && kind != KernelKind::MODE_OVERLAP;
     if (needs_face_geom)
     {
       if (group.at_points)
@@ -1651,7 +1699,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       AddVolGeomInputs("2", group.vol_indices_b, group.vol_geom_b,
                        group.at_points ? face_ir : *group.mapped_ir_b);
     }
-    if (kind == KernelKind::SURFACE_FLUX || kind == KernelKind::FARFIELD)
+    if (kind == KernelKind::SURFACE_FLUX || kind == KernelKind::FARFIELD ||
+        kind == KernelKind::MODE_OVERLAP)
     {
       if (group.at_points)
       {
@@ -1786,7 +1835,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                         group.at_points ? face_ir : *group.mapped_ir_b, group.ghost_b);
       }
     }
-    else if (kind == KernelKind::HCURL_NORM2 || kind == KernelKind::INTERFACE_EPR || buffer_kind)
+    else if (kind == KernelKind::HCURL_NORM2 || kind == KernelKind::INTERFACE_EPR ||
+             kind == KernelKind::MODE_OVERLAP || buffer_kind)
     {
       const auto &field_fespace = rt_fespace ? *rt_fespace : *nd_fespace;
       if (group.ghost_a)
@@ -1982,6 +2032,28 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         info.apply_qf = f_integ_surf_farfield_32;
         info.apply_qf_path = PalaceQFunctionRelativePath(f_integ_surf_farfield_32_loc);
         break;
+      case KernelKind::MODE_OVERLAP:
+        {
+          MFEM_VERIFY(!group.bdr_indices.empty(),
+                      "Empty boundary group for mode-overlap functional!");
+          const int attr = pmesh.GetBdrAttribute(group.bdr_indices.front());
+          auto mode_it = mode_coeff_by_attr.find(attr);
+          MFEM_VERIFY(mode_it != mode_coeff_by_attr.end(),
+                      "Missing mode coefficient for marked boundary attribute!");
+          const auto &mode = mode_it->second;
+          ctx[0].first = (mode.type == SurfaceModeCoefficient::Type::COAXIAL) ? 1 : 0;
+          ctx[1].second = mode.scale;
+          const auto &data = (mode.type == SurfaceModeCoefficient::Type::COAXIAL)
+                                 ? mode.origin
+                                 : mode.direction;
+          for (int d = 0; d < 3; d++)
+          {
+            ctx[2 + d].second = data[d];
+          }
+          info.apply_qf = f_integ_surf_mode_32;
+          info.apply_qf_path = PalaceQFunctionRelativePath(f_integ_surf_mode_32_loc);
+        }
+        break;
       case KernelKind::SURFACE_FLUX:
         ctx[0].second =
             (group.flip_normal ? -1.0 : 1.0) *
@@ -2119,6 +2191,20 @@ double SurfaceFunctional::Eval(const GridFunction &u) const
     {
       dot = linalg::LocalSum(local_out);
     }
+  }
+  Mpi::GlobalSum(1, &dot, comm);
+  return dot;
+}
+
+std::complex<double> SurfaceFunctional::EvalModeOverlap(const GridFunction &E) const
+{
+  MFEM_VERIFY(kind == KernelKind::MODE_OVERLAP,
+              "SurfaceFunctional::EvalModeOverlap is only valid for mode-overlap "
+              "functionals!");
+  std::complex<double> dot(EvalLocal({&E.Real(), nullptr}), 0.0);
+  if (E.HasImag())
+  {
+    dot.imag(EvalLocal({&E.Imag(), nullptr}));
   }
   Mpi::GlobalSum(1, &dot, comm);
   return dot;

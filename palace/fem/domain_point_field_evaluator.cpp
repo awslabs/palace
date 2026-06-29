@@ -108,10 +108,10 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
   const mfem::ParMesh &pmesh = mesh.Get();
   const mfem::FiniteElementSpace &mesh_fespace = *pmesh.GetNodes()->FESpace();
 
-  // Component-major point buffer layout matching MFEM's domain VTU point order (element
-  // order, then refined/nodal points within each element). Vector outputs use contiguous
-  // lanes x[points], y[points], z[points], which matches libCEED's natural QFunction
-  // output layout; CeedParaViewDataCollection interleaves these lanes while writing VTU.
+  // Point-major buffer layout matching VTK tuple order and MFEM's domain VTU point
+  // order (element order, then refined/nodal points within each element). The output
+  // restriction scatters each point tuple contiguously so CeedParaViewDataCollection can
+  // write the payload without repacking.
   buffer_num_comp = target_fespace.GetVDim();
   buffer_bases.assign(pmesh.GetNE(), -1);
   int buffer_points = 0;
@@ -294,7 +294,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
 
     // Assemble a second operator for the direct VTU point-buffer path. This evaluates at
     // MFEM's refined VTU points (not necessarily the same order as the target L2 nodes)
-    // and scatters into component-major lanes consumed by CeedParaViewDataCollection.
+    // and scatters into point-major tuples consumed by CeedParaViewDataCollection.
     const mfem::IntegrationRule &vtu_ir =
         mfem::GlobGeometryRefiner.Refine(geom, vtu_lod, 1)->RefPts;
     const int num_vtu_pts = vtu_ir.GetNPoints();

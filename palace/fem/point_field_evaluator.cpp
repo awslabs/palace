@@ -109,6 +109,12 @@ int PointFieldEvaluator::BufferSize() const
                                             : boundary_eval->BufferSize();
 }
 
+int PointFieldEvaluator::BufferNumComp() const
+{
+  return location == MeshEntityType::Domain ? domain_eval->BufferNumComp()
+                                            : NumComponents(kind);
+}
+
 const std::vector<int> &PointFieldEvaluator::BufferBases() const
 {
   return location == MeshEntityType::Domain ? domain_eval->BufferBases()
