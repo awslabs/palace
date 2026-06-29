@@ -158,6 +158,21 @@ DetectUnifiedPMLSlabGeometry(const std::vector<config::MaterialData> &materials,
                                   u_max_mfem);
   const std::array<double, 3> u_min{{u_min_mfem[0], u_min_mfem[1], u_min_mfem[2]}};
   const std::array<double, 3> u_max{{u_max_mfem[0], u_max_mfem[1], u_max_mfem[2]}};
+
+  // If none of the auto-detect PML attributes are present anywhere on this mesh, the
+  // union bounding box is empty (min > max on every axis: GetAxisAlignedBoundingBox
+  // seeds min/max with +inf/-inf and no element updates them). This happens when the
+  // MaterialOperator is built on a mesh that does not contain the PML region — e.g. the
+  // wave-port boundary submesh, which carries the full material list but only the port-
+  // face attributes. Return an empty geometry quietly; the per-material loop below maps
+  // nothing on such a mesh, so the PML simply does not participate there.
+  const bool union_empty =
+      (u_min[0] > u_max[0]) && (u_min[1] > u_max[1]) && (u_min[2] > u_max[2]);
+  if (union_empty)
+  {
+    return {};
+  }
+
   auto geom = pml::DetectSlabGeometry(u_min, u_max, bbmin, bbmax);
   const bool any_active =
       std::any_of(geom.direction_signs.begin(), geom.direction_signs.end(),
