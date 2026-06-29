@@ -17,6 +17,10 @@ DomainPointFieldEvaluator::Kind ToDomainKind(PointFieldEvaluator::Kind kind)
 {
   switch (kind)
   {
+    case PointFieldEvaluator::Kind::FIELD_E:
+      return DomainPointFieldEvaluator::Kind::FIELD_E;
+    case PointFieldEvaluator::Kind::FIELD_B:
+      return DomainPointFieldEvaluator::Kind::FIELD_B;
     case PointFieldEvaluator::Kind::ENERGY_E:
       return DomainPointFieldEvaluator::Kind::ENERGY_E;
     case PointFieldEvaluator::Kind::ENERGY_M:
@@ -44,7 +48,9 @@ PointFieldEvaluator::PointFieldEvaluator(
     const mfem::ParFiniteElementSpace &target_fespace, double scaling)
   : location(MeshEntityType::Domain), kind(kind)
 {
-  MFEM_VERIFY(kind == Kind::ENERGY_E || kind == Kind::ENERGY_M || kind == Kind::POYNTING,
+  MFEM_VERIFY(kind == Kind::FIELD_E || kind == Kind::FIELD_B ||
+                  kind == Kind::ENERGY_E || kind == Kind::ENERGY_M ||
+                  kind == Kind::POYNTING,
               "Unsupported domain point field kind!");
   domain_eval = std::make_unique<DomainPointFieldEvaluator>(
       ToDomainKind(kind), mesh, mat_op, nd_fespace, rt_fespace, target_fespace, scaling);
@@ -119,9 +125,16 @@ void PointFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B,
 
 void PointFieldEvaluator::EvalBuffer(const Vector &u, Vector &buffer) const
 {
-  MFEM_VERIFY(IsValid() && location == MeshEntityType::Boundary && kind != Kind::POYNTING,
-              "Vector EvalBuffer is only valid for single-field boundary point fields!");
-  boundary_eval->EvalBuffer(u, buffer);
+  MFEM_VERIFY(IsValid() && kind != Kind::POYNTING,
+              "Vector EvalBuffer is only valid for single-field point fields!");
+  if (location == MeshEntityType::Domain)
+  {
+    domain_eval->EvalBuffer(u, buffer);
+  }
+  else
+  {
+    boundary_eval->EvalBuffer(u, buffer);
+  }
 }
 
 void PointFieldEvaluator::EvalBuffer(const GridFunction &u, Vector &buffer) const

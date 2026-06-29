@@ -28,6 +28,8 @@ class DomainPointFieldEvaluator
 public:
   enum class Kind
   {
+    FIELD_E,   // E field value, vector output
+    FIELD_B,   // B field value, vector output
     ENERGY_E,  // 1/2 (ε E)ᴴ E, scalar output
     ENERGY_M,  // 1/2 (μ⁻¹ B)ᴴ B, scalar output
     POYNTING   // Re{E x (μ⁻¹ B)⥁}, vector output
@@ -88,6 +90,10 @@ public:
   // the pointwise quantity. Real and imaginary field contributions add. Local
   // operation (no MPI communication).
   void Eval(const GridFunction *E, const GridFunction *B, Vector &out) const;
+
+  // Fill the component-major domain visualization point buffer for a single linear
+  // field. Local operation (no MPI communication).
+  void EvalBuffer(const Vector &u, Vector &buffer) const;
 
   // Fill the component-major domain visualization point buffer. Real and imaginary field
   // contributions add. Local operation (no MPI communication).

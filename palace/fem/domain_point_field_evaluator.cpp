@@ -67,8 +67,11 @@ DomainPointFieldEvaluator::DomainPointFieldEvaluator(
     const mfem::ParFiniteElementSpace &target_fespace, double scaling)
   : kind(kind), nd_fespace(nd_fespace), rt_fespace(rt_fespace)
 {
-  MFEM_VERIFY((nd_fespace || kind == Kind::ENERGY_M) &&
-                  (rt_fespace || kind == Kind::ENERGY_E),
+  const bool needs_nd = kind == Kind::FIELD_E || kind == Kind::ENERGY_E ||
+                        kind == Kind::POYNTING;
+  const bool needs_rt = kind == Kind::FIELD_B || kind == Kind::ENERGY_M ||
+                        kind == Kind::POYNTING;
+  MFEM_VERIFY((!needs_nd || nd_fespace) && (!needs_rt || rt_fespace),
               "Missing finite element space for domain field evaluator!");
   Assemble(mesh, mat_op, target_fespace, scaling);
 }
@@ -129,10 +132,14 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
     geom_elems[pmesh.GetElementGeometry(e)].push_back(e);
   }
 
-  // QFunction context: scaling factor followed by the material property table.
-  std::vector<CeedIntScalar> ctx(1);
-  ctx[0].second = scaling;
+  // QFunction context: derived quantities need a scaling factor followed by the material
+  // property table. Plain field probes only need geometry and field values.
+  const bool field_value_kind = (kind == Kind::FIELD_E || kind == Kind::FIELD_B);
+  std::vector<CeedIntScalar> ctx;
+  if (!field_value_kind)
   {
+    ctx.resize(1);
+    ctx[0].second = scaling;
     const auto &coeff = (kind == Kind::ENERGY_E)
                             ? mat_op.GetPermittivityReal()
                             : (scalar_magnetic_field ? mat_op.GetCurlCurlInvPermeability()
@@ -166,6 +173,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
     // (for on the fly geometry evaluation at the points).
     std::vector<ceed::CeedFunctionalFieldInput> inputs;
     std::vector<std::pair<std::string, int>> field_sources;
+    if (!field_value_kind)
     {
       auto &elem_attr = elem_attrs.emplace_back(indices.size());
       const auto &loc_attr = mesh.GetCeedAttributes();
@@ -230,11 +238,11 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
       scratch.restrs.push_back(restr);
       scratch.bases.push_back(basis);
     };
-    if (kind == Kind::ENERGY_E || kind == Kind::POYNTING)
+    if (kind == Kind::FIELD_E || kind == Kind::ENERGY_E || kind == Kind::POYNTING)
     {
       AddFieldInput("u_1", 0, *nd_fespace);
     }
-    if (kind == Kind::ENERGY_M || kind == Kind::POYNTING)
+    if (kind == Kind::FIELD_B || kind == Kind::ENERGY_M || kind == Kind::POYNTING)
     {
       AddFieldInput(kind == Kind::POYNTING ? "u_2" : "u_1", 1, *rt_fespace);
     }
@@ -249,6 +257,18 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
     ceed::CeedQFunctionInfo info;
     switch (kind)
     {
+      case Kind::FIELD_E:
+        info.apply_qf = (dim == 2) ? f_eval_probe_hcurl_22 : f_eval_probe_hcurl_33;
+        info.apply_qf_path = (dim == 2)
+                                 ? PalaceQFunctionRelativePath(f_eval_probe_hcurl_22_loc)
+                                 : PalaceQFunctionRelativePath(f_eval_probe_hcurl_33_loc);
+        break;
+      case Kind::FIELD_B:
+        info.apply_qf = (dim == 2) ? f_eval_probe_hdiv_22 : f_eval_probe_hdiv_33;
+        info.apply_qf_path = (dim == 2)
+                                 ? PalaceQFunctionRelativePath(f_eval_probe_hdiv_22_loc)
+                                 : PalaceQFunctionRelativePath(f_eval_probe_hdiv_33_loc);
+        break;
       case Kind::ENERGY_E:
         info.apply_qf = (dim == 2) ? f_eval_energy_e_22 : f_eval_energy_e_33;
         info.apply_qf_path = (dim == 2) ? PalaceQFunctionRelativePath(f_eval_energy_e_22_loc)
@@ -267,9 +287,9 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
     }
 
     CeedOperator op;
-    ceed::AssembleCeedPointEvaluator(info, ctx.data(), ctx.size() * sizeof(CeedIntScalar),
-                                     ceed, inputs, target_fespace.GetVDim(), out_restr,
-                                     &op);
+    ceed::AssembleCeedPointEvaluator(
+        info, ctx.empty() ? nullptr : ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
+        inputs, target_fespace.GetVDim(), out_restr, &op);
     groups.push_back({ceed, op, std::move(field_sources)});
 
     // Assemble a second operator for the direct VTU point-buffer path. This evaluates at
@@ -280,6 +300,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
     const int num_vtu_pts = vtu_ir.GetNPoints();
     std::vector<ceed::CeedFunctionalFieldInput> buffer_inputs;
     std::vector<std::pair<std::string, int>> buffer_field_sources;
+    if (!field_value_kind)
     {
       auto &elem_attr = elem_attrs.emplace_back(indices.size());
       const auto &loc_attr = mesh.GetCeedAttributes();
@@ -343,11 +364,11 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
       scratch.restrs.push_back(restr);
       scratch.bases.push_back(basis);
     };
-    if (kind == Kind::ENERGY_E || kind == Kind::POYNTING)
+    if (kind == Kind::FIELD_E || kind == Kind::ENERGY_E || kind == Kind::POYNTING)
     {
       AddBufferFieldInput("u_1", 0, *nd_fespace);
     }
-    if (kind == Kind::ENERGY_M || kind == Kind::POYNTING)
+    if (kind == Kind::FIELD_B || kind == Kind::ENERGY_M || kind == Kind::POYNTING)
     {
       AddBufferFieldInput(kind == Kind::POYNTING ? "u_2" : "u_1", 1, *rt_fespace);
     }
@@ -371,9 +392,9 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
     }
     scratch.restrs.push_back(buffer_out_restr);
     CeedOperator buffer_op;
-    ceed::AssembleCeedPointEvaluator(info, ctx.data(), ctx.size() * sizeof(CeedIntScalar),
-                                     ceed, buffer_inputs, buffer_num_comp,
-                                     buffer_out_restr, &buffer_op);
+    ceed::AssembleCeedPointEvaluator(
+        info, ctx.empty() ? nullptr : ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
+        buffer_inputs, buffer_num_comp, buffer_out_restr, &buffer_op);
     buffer_groups.push_back({ceed, buffer_op, std::move(buffer_field_sources)});
   }
 }
@@ -382,7 +403,8 @@ void DomainPointFieldEvaluator::Eval(const GridFunction *E, const GridFunction *
                                 Vector &out) const
 {
   MFEM_VERIFY(valid, "Eval called on an invalid (unassembled) DomainPointFieldEvaluator!");
-  MFEM_VERIFY((E || kind == Kind::ENERGY_M) && (B || kind == Kind::ENERGY_E),
+  MFEM_VERIFY((E || kind == Kind::FIELD_B || kind == Kind::ENERGY_M) &&
+                  (B || kind == Kind::FIELD_E || kind == Kind::ENERGY_E),
               "Missing field grid function for domain field evaluator!");
   out = 0.0;
   fem::ApplyAddGroupOperators(groups, {E ? &E->Real() : nullptr, B ? &B->Real() : nullptr},
@@ -394,12 +416,28 @@ void DomainPointFieldEvaluator::Eval(const GridFunction *E, const GridFunction *
   }
 }
 
+void DomainPointFieldEvaluator::EvalBuffer(const Vector &u, Vector &buffer) const
+{
+  MFEM_VERIFY(valid,
+              "EvalBuffer called on an invalid (unassembled) DomainPointFieldEvaluator!");
+  MFEM_VERIFY(kind == Kind::FIELD_E || kind == Kind::FIELD_B,
+              "Vector EvalBuffer is only valid for linear field evaluators!");
+  MFEM_ASSERT(buffer.Size() == buffer_size,
+              "Invalid buffer size for DomainPointFieldEvaluator::EvalBuffer!");
+  buffer = 0.0;
+  fem::ApplyAddGroupOperators(buffer_groups,
+                              {kind == Kind::FIELD_E ? &u : nullptr,
+                               kind == Kind::FIELD_B ? &u : nullptr, nullptr, nullptr},
+                              buffer);
+}
+
 void DomainPointFieldEvaluator::EvalBuffer(const GridFunction *E, const GridFunction *B,
                                       Vector &buffer) const
 {
   MFEM_VERIFY(valid,
               "EvalBuffer called on an invalid (unassembled) DomainPointFieldEvaluator!");
-  MFEM_VERIFY((E || kind == Kind::ENERGY_M) && (B || kind == Kind::ENERGY_E),
+  MFEM_VERIFY((E || kind == Kind::FIELD_B || kind == Kind::ENERGY_M) &&
+                  (B || kind == Kind::FIELD_E || kind == Kind::ENERGY_E),
               "Missing field grid function for domain field evaluator!");
   MFEM_ASSERT(buffer.Size() == buffer_size,
               "Invalid buffer size for DomainPointFieldEvaluator::EvalBuffer!");

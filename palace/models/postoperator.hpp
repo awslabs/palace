@@ -209,7 +209,8 @@ protected:
   std::unique_ptr<mfem::L2_FECollection> viz_fec;
   std::unique_ptr<mfem::ParFiniteElementSpace> viz_scalar_fespace, viz_vector_fespace;
   std::unique_ptr<mfem::ParGridFunction> U_e_gf, U_m_gf, S_gf;
-  std::unique_ptr<PointFieldEvaluator> U_e_eval, U_m_eval, S_eval;
+  std::unique_ptr<PointFieldEvaluator> E_domain_eval, B_domain_eval, U_e_eval, U_m_eval,
+      S_eval;
 
   // libCEED evaluators for boundary collection fields (E_s, B_s, Q_s, J_s, U_e, U_m,
   // S). CeedParaViewDataCollection evaluates these lazily into one temporary buffer per
