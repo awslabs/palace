@@ -152,7 +152,7 @@ bool PointFieldEvaluator::ReleaseBoundaryEvaluatorAfterUse() const
     --retain_boundary_eval_count;
     return false;
   }
-  return kind != Kind::FIELD_E;
+  return !(kind == Kind::FIELD_E || kind == Kind::FIELD_B);
 }
 
 void PointFieldEvaluator::MaybeReleaseBoundaryEvaluator() const
