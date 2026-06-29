@@ -3,6 +3,7 @@
 
 #include "pml.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include "fem/libceed/ceed.hpp"
@@ -10,6 +11,58 @@
 
 namespace palace::pml
 {
+
+namespace
+{
+
+bool HasActiveDirection(const SlabGeometry &g)
+{
+  return std::any_of(g.direction_signs.begin(), g.direction_signs.end(),
+                     [](int s) { return s != 0; });
+}
+
+double GeometryTolerance(const std::array<double, 3> &global_min,
+                         const std::array<double, 3> &global_max, double rel_tol)
+{
+  double extent = 1.0;
+  for (int axis = 0; axis < 3; axis++)
+  {
+    extent = std::max(extent, global_max[axis] - global_min[axis]);
+  }
+  return rel_tol * extent;
+}
+
+bool IntervalsTouch(double a_min, double a_max, double b_min, double b_max, double tol)
+{
+  return a_min <= b_max + tol && b_min <= a_max + tol;
+}
+
+bool RegionsTouch(const SlabRegion &a, const SlabRegion &b, double tol)
+{
+  for (int axis = 0; axis < 3; axis++)
+  {
+    if (!IntervalsTouch(a.attr_min[axis], a.attr_max[axis], b.attr_min[axis],
+                        b.attr_max[axis], tol))
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+SlabRegion UnionRegion(int attribute, const SlabRegion &a, const SlabRegion &b)
+{
+  SlabRegion u;
+  u.attribute = attribute;
+  for (int axis = 0; axis < 3; axis++)
+  {
+    u.attr_min[axis] = std::min(a.attr_min[axis], b.attr_min[axis]);
+    u.attr_max[axis] = std::max(a.attr_max[axis], b.attr_max[axis]);
+  }
+  return u;
+}
+
+}  // namespace
 
 std::array<double, 3> ComputeDepth(const Profile &profile, const std::array<double, 3> &x)
 {
@@ -170,7 +223,7 @@ Profile BuildProfile(const config::PMLData &data, double mu_r, double epsilon_r)
 
   ResolveSigmaMaxDefaults(data, mu_r, epsilon_r, p.sigma_max);
 
-  // Static PML requires a positive reference frequency (enforced at config parse time).
+  // Static PML requires a positive reference frequency (enforced during config checks).
   // Frequency-dependent PML leaves ω at zero here; SpaceOperator refreshes it per solve.
   p.reference_frequency = data.frequency_dependent ? 0.0 : data.reference_frequency;
 
@@ -223,6 +276,83 @@ SlabGeometry DetectSlabGeometry(const std::array<double, 3> &attr_min,
     // Spans (touches both faces) or is interior (touches neither) ⇒ no PML on this axis.
   }
   return g;
+}
+
+std::vector<AttributeSlabGeometry>
+DetectLayeredSlabGeometry(const std::vector<SlabRegion> &regions,
+                          const std::array<double, 3> &global_min,
+                          const std::array<double, 3> &global_max, double rel_tol)
+{
+  std::vector<AttributeSlabGeometry> result;
+  result.reserve(regions.size());
+  for (const auto &region : regions)
+  {
+    result.push_back({region.attribute,
+                      DetectSlabGeometry(region.attr_min, region.attr_max, global_min,
+                                         global_max, rel_tol)});
+  }
+
+  const double tol = GeometryTolerance(global_min, global_max, rel_tol);
+  bool changed = true;
+  while (changed)
+  {
+    changed = false;
+    for (std::size_t i = 0; i < regions.size(); i++)
+    {
+      if (HasActiveDirection(result[i].geometry))
+      {
+        continue;
+      }
+      for (std::size_t j = 0; j < regions.size(); j++)
+      {
+        if (!HasActiveDirection(result[j].geometry))
+        {
+          continue;
+        }
+        SlabRegion group = regions[j];
+        for (std::size_t k = 0; k < regions.size(); k++)
+        {
+          if (result[k].geometry.direction_signs == result[j].geometry.direction_signs)
+          {
+            group = UnionRegion(0, group, regions[k]);
+          }
+        }
+        if (!RegionsTouch(regions[i], group, tol))
+        {
+          continue;
+        }
+        const auto candidate_union = UnionRegion(0, regions[i], group);
+        const auto candidate_geom =
+            DetectSlabGeometry(candidate_union.attr_min, candidate_union.attr_max, global_min,
+                               global_max, rel_tol);
+        if (candidate_geom.direction_signs == result[j].geometry.direction_signs)
+        {
+          result[i].geometry = candidate_geom;
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+
+  for (std::size_t i = 0; i < regions.size(); i++)
+  {
+    if (!HasActiveDirection(result[i].geometry))
+    {
+      continue;
+    }
+    SlabRegion group = regions[i];
+    for (std::size_t j = 0; j < regions.size(); j++)
+    {
+      if (result[j].geometry.direction_signs == result[i].geometry.direction_signs)
+      {
+        group = UnionRegion(0, group, regions[j]);
+      }
+    }
+    result[i].geometry =
+        DetectSlabGeometry(group.attr_min, group.attr_max, global_min, global_max, rel_tol);
+  }
+  return result;
 }
 
 std::array<double, 3> ComputeSlabCentroid(const config::PMLData &data,
