@@ -22,11 +22,31 @@ PREFIX=$(spack -e "$ROOT" location -i palace)
 CUDA_PREFIX=$(spack -e "$ROOT" location -i cuda)
 NSYS_BIN="$CUDA_PREFIX/bin/nsys"
 PALACE_BIN="$PREFIX/bin/palace-x86_64.bin"
-CONFIG="$LATEST/transmon_amr1_pv_only.json"
+EXAMPLE_REL=${PALACE_AR_PROFILE_EXAMPLE:-}
+if [[ -n "$EXAMPLE_REL" ]]; then
+  EXAMPLE_NAME=${PALACE_AR_PROFILE_EXAMPLE_NAME:-$(basename "${EXAMPLE_REL%.json}")}
+  CONFIG="$LATEST/${EXAMPLE_NAME}.json"
+  echo "$EXAMPLE_REL" > "$LATEST/profile_example.txt"
+else
+  CONFIG="$LATEST/transmon_amr1_pv_only.json"
+  rm -f "$LATEST/profile_example.txt"
+fi
 PALACE_LOG="$LATEST/palace.log"
 NSYS_STATS="$LATEST/nsys_stats.txt"
 
-python3 - "$ROOT/examples/transmon/transmon_amr.json" "$CONFIG" "$LATEST/output" <<'PY'
+if [[ -n "$EXAMPLE_REL" ]]; then
+  EXAMPLE_SRC="$ROOT/$EXAMPLE_REL"
+  EXAMPLE_CWD="$ROOT/$(dirname "$EXAMPLE_REL")"
+  python3 - "$EXAMPLE_SRC" "$CONFIG" "$LATEST/output" <<'PY'
+import json, sys
+src, dst, out = sys.argv[1:]
+cfg = json.load(open(src))
+cfg.setdefault('Problem', {})['Output'] = out
+cfg.setdefault('Solver', {})['Device'] = 'GPU'
+json.dump(cfg, open(dst, 'w'), indent=2)
+PY
+else
+  python3 - "$ROOT/examples/transmon/transmon_amr.json" "$CONFIG" "$LATEST/output" <<'PY'
 import json, sys
 src, dst, out = sys.argv[1:]
 cfg = json.load(open(src))
@@ -37,12 +57,14 @@ cfg.setdefault('Solver', {})['Device'] = 'GPU'
 cfg.setdefault('Model', {}).setdefault('Refinement', {})['MaxIts'] = 1
 json.dump(cfg, open(dst, 'w'), indent=2)
 PY
+  EXAMPLE_CWD="$ROOT/examples/transmon"
+fi
 
 export NSYS_BIN PROFROOT="$LATEST/profile" PALACE_BIN PALACE_CFG="$CONFIG" \
   PALACE_PROFILE_PARAVIEW_RANGE=1 PALACE_VOLUME_PROFILE=1
 set +e
 (
-  cd "$ROOT/examples/transmon"
+  cd "$EXAMPLE_CWD"
   spack -e "$ROOT" build-env palace -- "$NSYS_BIN" profile \
     --trace=cuda,nvtx,osrt,mpi \
     --mpi-impl=mpich \

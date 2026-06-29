@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 LATEST=${PALACE_AR_LATEST:-/home/ubuntu/scratch/palace_nsight_autoresearch/latest}
+if [[ -n "${PALACE_AR_PROFILE_EXAMPLE:-}" || -f "$LATEST/profile_example.txt" ]]; then
+python3 - "$LATEST/output" "$LATEST/profile_example.txt" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+marker = Path(sys.argv[2])
+if marker.exists():
+    print(f'checking profiled example output for {marker.read_text().strip()}')
+if not root.exists():
+    raise SystemExit(f'missing output directory: {root}')
+size = sum(p.stat().st_size for p in root.rglob('*') if p.is_file())
+if size < 1_000_000:
+    raise SystemExit(f'profiled example output unexpectedly small: {size}')
+if not any(root.rglob('*.csv')) and not any(root.rglob('*.pvtu')) and not any(root.rglob('*.vtu')):
+    raise SystemExit(f'profiled example produced no CSV or ParaView files under {root}')
+PY
+exit 0
+fi
 python3 - "$LATEST/output" <<'PY'
 from pathlib import Path
 import re
