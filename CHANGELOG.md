@@ -19,6 +19,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Improve hybrid nonlinear eigensolver convergence when using 2nd-order absorbing boundary
+    conditions. [PR 792](https://github.com/awslabs/palace/pull/792).
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial
