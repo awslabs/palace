@@ -17,7 +17,7 @@ The format of this changelog is based on
 #### New Features
 
   - Improve hybrid nonlinear eigensolver convergence when using 2nd-order absorbing boundary
-    conditions. [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
+    conditions. [PR 792](https://github.com/awslabs/palace/pull/792).
 
 #### Interface Changes
 
