@@ -83,7 +83,7 @@ jobs:
           with-eigensolver: arpack
           with-solver: superlu
         - compiler: clang
-          mpi: mpich
+          mpi: openmpi  # was mpich; see https://github.com/awslabs/palace/issues/790
           math-libs: openblas
           build-shared: static
           with-64bit-int: int32
