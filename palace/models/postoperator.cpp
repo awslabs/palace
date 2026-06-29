@@ -707,7 +707,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
         {
           if (retain_for_next_field)
           {
-            eval_ptr->RetainBoundaryEvaluatorOnce();
+            eval_ptr->RetainBoundaryEvaluatorFor(1);
           }
           eval_ptr->EvalBuffer(*field_ptr, buffer);
         },

@@ -57,7 +57,7 @@ private:
   double boundary_scaling = 1.0;
   int boundary_buffer_size = 0;
   std::vector<int> boundary_buffer_bases;
-  mutable bool retain_boundary_eval_once = false;
+  mutable int retain_boundary_eval_count = 0;
 
   static int NumComponents(Kind kind);
   void EnsureBoundaryEvaluator() const;
@@ -100,10 +100,10 @@ public:
   int BufferNumComp() const { return NumComponents(kind); }
   const std::vector<int> &BufferBases() const;
 
-  // Keep the next boundary evaluator instance alive for one following EvalBuffer call.
-  // This lets ParaView reuse the same libCEED operator for adjacent real/imaginary
-  // boundary fields without retaining it across unrelated fields or timesteps.
-  void RetainBoundaryEvaluatorOnce() const { retain_boundary_eval_once = true; }
+  // Keep the next boundary evaluator instance alive for a small fixed number of
+  // following EvalBuffer calls. This lets ParaView reuse the same libCEED operator for
+  // adjacent mode/component fields without retaining it across unrelated field kinds.
+  void RetainBoundaryEvaluatorFor(int count) const { retain_boundary_eval_count = count; }
 
   // Domain-only compatibility path for grid-function output.
   void Eval(const GridFunction *E, const GridFunction *B, Vector &out) const;

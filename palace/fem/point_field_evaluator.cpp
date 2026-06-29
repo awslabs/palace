@@ -147,12 +147,12 @@ void PointFieldEvaluator::CacheBoundaryMetadata()
 
 bool PointFieldEvaluator::ReleaseBoundaryEvaluatorAfterUse() const
 {
-  if (retain_boundary_eval_once)
+  if (retain_boundary_eval_count > 0)
   {
-    retain_boundary_eval_once = false;
+    --retain_boundary_eval_count;
     return false;
   }
-  return true;
+  return kind != Kind::FIELD_E;
 }
 
 void PointFieldEvaluator::MaybeReleaseBoundaryEvaluator() const
