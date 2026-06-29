@@ -527,6 +527,8 @@ void MaterialOperator::SetUpMaterialProperties(
         mat_epsilon(mat_idx) = 0.0;
         mat_epsilon_imag(mat_idx) = 0.0;
         mat_epsilon_abs(mat_idx) = 0.0;
+        mat_muinvkx(mat_idx) = 0.0;
+        mat_kxTmuinvkx(mat_idx) = 0.0;
       }
     }
 
