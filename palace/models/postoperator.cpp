@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <complex>
 #include <cstdlib>
+#include <memory>
 #include <set>
 #include <string>
 #include "drivers/boundarymodesolver.hpp"
@@ -770,6 +771,60 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
         { eval_ptr->EvalBuffer(E_ptr, B_ptr, buffer); },
         eval_ptr->BufferBases(), eval_ptr->BufferNumComp(), eval_ptr->BufferSize());
   };
+  auto RegisterDomainBaseField = [&](const std::string &name,
+                                     const mfem::ParGridFunction &gf)
+  {
+    if (!use_ceed_domain_paraview)
+    {
+      paraview->RegisterField(name, const_cast<mfem::ParGridFunction *>(&gf));
+      return;
+    }
+    const auto *gf_ptr = &gf;
+    const auto *pmesh = gf.ParFESpace()->GetParMesh();
+    const int num_comp = gf.VectorDim();
+    auto bases = std::make_shared<std::vector<int>>(pmesh->GetNE(), -1);
+    int buffer_points = 0;
+    for (int e = 0; e < pmesh->GetNE(); e++)
+    {
+      const auto *RefG = mfem::GlobGeometryRefiner.Refine(
+          pmesh->GetElementBaseGeometry(e), refine_ho, 1);
+      (*bases)[e] = buffer_points;
+      buffer_points += RefG->RefPts.GetNPoints();
+    }
+    const int buffer_size = buffer_points * num_comp;
+    paraview->RegisterDomainPointEvaluator(
+        name,
+        [gf_ptr, pmesh, bases, num_comp, buffer_size, refine_ho](Vector &buffer)
+        {
+          MFEM_VERIFY(buffer.Size() == buffer_size,
+                      "Invalid buffer size for domain GridFunction point output!");
+          MFEM_VERIFY(num_comp > 0, "Invalid component count for GridFunction output!");
+          const int component_stride = buffer_size / num_comp;
+          double *out = buffer.HostWrite();
+          mfem::IsoparametricTransformation T;
+          mfem::DenseMatrix vals;
+          for (int e = 0; e < pmesh->GetNE(); e++)
+          {
+            const auto *RefG = mfem::GlobGeometryRefiner.Refine(
+                pmesh->GetElementBaseGeometry(e), refine_ho, 1);
+            const mfem::IntegrationRule &ir = RefG->RefPts;
+            const int base = (*bases)[e];
+            pmesh->GetElementTransformation(e, &T);
+            gf_ptr->GetVectorValues(T, ir, vals);
+            MFEM_VERIFY(vals.Width() == ir.GetNPoints(),
+                        "Invalid GridFunction point output interpolation size!");
+            for (int j = 0; j < ir.GetNPoints(); j++)
+            {
+              for (int c = 0; c < num_comp; c++)
+              {
+                out[base + j + c * component_stride] =
+                    (c < vals.Height()) ? vals(c, j) : 0.0;
+              }
+            }
+          }
+        },
+        *bases, num_comp, buffer_size);
+  };
   auto RegisterBdrEvalField = [&](const std::string &name,
                                   const std::unique_ptr<PointFieldEvaluator> &eval,
                                   const auto &field)
@@ -802,8 +857,8 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   {
     if (HasComplexGridFunction<solver_t>())
     {
-      paraview->RegisterField("E_real", &E->Real());
-      paraview->RegisterField("E_imag", &E->Imag());
+      RegisterDomainBaseField("E_real", E->Real());
+      RegisterDomainBaseField("E_imag", E->Imag());
       if (E_bdr_eval)
       {
         RegisterBdrEvalField("E_real", E_bdr_eval, E->Real());
@@ -817,7 +872,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     }
     else
     {
-      paraview->RegisterField("E", &E->Real());
+      RegisterDomainBaseField("E", E->Real());
       if (E_bdr_eval)
       {
         RegisterBdrEvalField("E", E_bdr_eval, E->Real());
@@ -844,8 +899,8 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   {
     if (HasComplexGridFunction<solver_t>())
     {
-      paraview->RegisterField("B_real", &B->Real());
-      paraview->RegisterField("B_imag", &B->Imag());
+      RegisterDomainBaseField("B_real", B->Real());
+      RegisterDomainBaseField("B_imag", B->Imag());
       if (B_bdr_eval)
       {
         RegisterBdrEvalField("B_real", B_bdr_eval, B->Real());
@@ -865,7 +920,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     }
     else
     {
-      paraview->RegisterField("B", &B->Real());
+      RegisterDomainBaseField("B", B->Real());
       if (B_bdr_eval)
       {
         RegisterBdrEvalField("B", B_bdr_eval, B->Real());
@@ -1232,6 +1287,11 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
                 "Size mismatch for provided ErrorIndicator for postprocessing!");
     *eta = indicator->Local();
     paraview->RegisterField("Indicator", eta.get());
+  }
+  for (const char *name : {"E", "E_real", "E_imag", "B", "B_real", "B_imag",
+                           "U_e", "U_m", "S"})
+  {
+    paraview->DeregisterDomainPointField(name);
   }
   StartCudaProfilerParaviewRange();
   const bool volume_profile = std::getenv("PALACE_VOLUME_PROFILE") != nullptr;
