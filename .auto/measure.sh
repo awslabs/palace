@@ -38,12 +38,18 @@ if [[ -n "$EXAMPLE_REL" ]]; then
   EXAMPLE_SRC="$ROOT/$EXAMPLE_REL"
   EXAMPLE_CWD="$ROOT/$(dirname "$EXAMPLE_REL")"
   python3 - "$EXAMPLE_SRC" "$CONFIG" "$LATEST/output" <<'PY'
-import json, sys
+import re, sys
 src, dst, out = sys.argv[1:]
-cfg = json.load(open(src))
-cfg.setdefault('Problem', {})['Output'] = out
-cfg.setdefault('Solver', {})['Device'] = 'GPU'
-json.dump(cfg, open(dst, 'w'), indent=2)
+txt = open(src).read()
+txt, n = re.subn(r'"Output"\s*:\s*"[^"]*"', f'"Output": "{out}"', txt, count=1)
+if n == 0:
+    raise SystemExit(f'{src} has no Problem.Output entry to rewrite')
+txt, n = re.subn(r'"Device"\s*:\s*"[^"]*"', '"Device": "GPU"', txt, count=1)
+if n == 0:
+    txt, n = re.subn(r'("Solver"\s*:\s*\{)', r'\1\n    "Device": "GPU",', txt, count=1)
+    if n == 0:
+        raise SystemExit(f'{src} has no Solver block to inject Device=GPU')
+open(dst, 'w').write(txt)
 PY
 else
   python3 - "$ROOT/examples/transmon/transmon_amr.json" "$CONFIG" "$LATEST/output" <<'PY'

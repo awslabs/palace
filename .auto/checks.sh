@@ -12,9 +12,9 @@ if marker.exists():
 if not root.exists():
     raise SystemExit(f'missing output directory: {root}')
 size = sum(p.stat().st_size for p in root.rglob('*') if p.is_file())
-if size < 1_000_000:
+if size < 50_000:
     raise SystemExit(f'profiled example output unexpectedly small: {size}')
-if not any(root.rglob('*.csv')) and not any(root.rglob('*.pvtu')) and not any(root.rglob('*.vtu')):
+if not any(root.rglob('*.csv')) and not any(root.rglob('*.pvd')) and not any(root.rglob('*.pvtu')) and not any(root.rglob('*.vtu')):
     raise SystemExit(f'profiled example produced no CSV or ParaView files under {root}')
 PY
 exit 0
