@@ -403,17 +403,6 @@ PMLData::PMLData(const json &pml)
                  "\"PML.FrequencyDependent\" is true.\n");
   }
 
-  // Static PML requires a reference frequency — without it the stretch is zero and the
-  // layer is effectively inactive. Fail early rather than producing a silently-
-  // incorrect solve.
-  if (!frequency_dependent && reference_frequency <= 0.0)
-  {
-    MFEM_ABORT("\"PML.ReferenceFrequency\" must be specified and positive for static "
-               "PML. Set it to the center frequency of your driven sweep, or the "
-               "target frequency for eigenmode. Set \"PML.FrequencyDependent\" to true "
-               "to avoid specifying a fixed reference.");
-  }
-
   allow_refinement = pml.value("AllowRefinement", allow_refinement);
 }
 

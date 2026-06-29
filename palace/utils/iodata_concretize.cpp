@@ -229,6 +229,23 @@ void ConcretizeModel(const config::ModelData &model, json &j_model)
                 {"SerialUniformLevels", ref.ser_uniform_ref_levels}});
 }
 
+void ConcretizePML(const config::PMLData &pml, json &j_pml)
+{
+  ApplyEntries(j_pml,
+               {{"CoordinateType", ToString(pml.coordinate_type)},
+                {"Order", pml.order},
+                {"SigmaMax", pml.sigma_max},
+                {"KappaMax", pml.kappa_max},
+                {"AlphaMax", pml.alpha_max},
+                {"ReflectionTarget", pml.reflection_target},
+                {"FrequencyDependent", pml.frequency_dependent},
+                {"AllowRefinement", pml.allow_refinement}});
+  if (!pml.frequency_dependent)
+  {
+    Concretize(j_pml, "ReferenceFrequency", pml.reference_frequency);
+  }
+}
+
 void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
 {
   // Materials: positional match to the C++ vector. Emit the per-property baseline only
@@ -247,6 +264,14 @@ void ConcretizeDomains(const config::DomainData &domains, json &j_domains)
                                {"LossTan", m.tandelta.s[0]},
                                {"Conductivity", m.sigma.s[0]},
                                {"LondonDepth", m.lambda_L}});
+      if (m.pml)
+      {
+        if (!j_mats[i].contains("PML"))
+        {
+          j_mats[i]["PML"] = json::object();
+        }
+        ConcretizePML(*m.pml, j_mats[i]["PML"]);
+      }
     }
   }
 }

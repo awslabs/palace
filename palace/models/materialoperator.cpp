@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <unordered_set>
 #include "fem/libceed/ceed.hpp"  // for <ceed.h> before coeff_qf.h
 #include "fem/qfunctions/coeff/coeff_qf.h"
@@ -118,71 +119,72 @@ mfem::DenseMatrix ToDenseMatrixTruncated(const config::SymmetricMatrixData<N> &d
 namespace
 {
 
-// Union-bounding-box pre-pass over all PML materials that use auto-detected geometry,
-// so N stacked slabs (multiple attributes, possibly across multiple materials) share
-// one logical profile geometry: same inner interface, same total thickness, same
-// σ_max. Without this, each slab's σ(z) resets to 0 at its inner face and auto-σ_max
-// is computed from the per-slab (smaller) thickness — which gives substantially worse
-// absorption than an unsplit layer of the same total thickness.
-pml::SlabGeometry
-DetectUnifiedPMLSlabGeometry(const std::vector<config::MaterialData> &materials,
-                             const mfem::ParMesh &mesh, int attr_max, int attr_max_local,
-                             const std::array<double, 3> &bbmin,
-                             const std::array<double, 3> &bbmax)
+bool EmptyBoundingBox(const std::array<double, 3> &min, const std::array<double, 3> &max)
 {
-  mfem::Array<int> union_marker(attr_max);
-  union_marker = 0;
-  bool any_autodetect = false;
+  return (min[0] > max[0]) && (min[1] > max[1]) && (min[2] > max[2]);
+}
+
+bool HasActiveDirection(const pml::SlabGeometry &g)
+{
+  return std::any_of(g.direction_signs.begin(), g.direction_signs.end(),
+                     [](int s) { return s != 0; });
+}
+
+// Per-attribute pre-pass over all PML materials that use auto-detected geometry. Detection
+// is done per connected signed-face layer, so stacked slabs on one side share a continuous
+// profile while opposite sides of a full-box PML remain distinct.
+std::map<int, pml::SlabGeometry>
+DetectAutoPMLSlabGeometry(const std::vector<config::MaterialData> &materials,
+                          const mfem::ParMesh &mesh, int attr_max,
+                          const std::array<double, 3> &bbmin,
+                          const std::array<double, 3> &bbmax)
+{
+  std::vector<int> auto_attrs;
   for (const auto &data : materials)
   {
     if (!data.pml.has_value() || !data.pml->autodetect_geometry)
     {
       continue;
     }
-    any_autodetect = true;
-    for (auto attr : data.attributes)
+    auto_attrs.insert(auto_attrs.end(), data.attributes.begin(), data.attributes.end());
+  }
+  std::sort(auto_attrs.begin(), auto_attrs.end());
+  auto_attrs.erase(std::unique(auto_attrs.begin(), auto_attrs.end()), auto_attrs.end());
+  if (auto_attrs.empty())
+  {
+    return {};
+  }
+
+  std::vector<pml::SlabRegion> regions;
+  regions.reserve(auto_attrs.size());
+  for (auto attr : auto_attrs)
+  {
+    if (attr <= 0 || attr > attr_max)
     {
-      if (attr > 0 && attr <= attr_max_local)
-      {
-        union_marker[attr - 1] = 1;
-      }
+      continue;
+    }
+
+    // GetAxisAlignedBoundingBox does a global MPI reduction, so every rank must call it in
+    // the same order. Attributes absent from this mesh produce an empty box and are skipped.
+    mfem::Array<int> marker(attr_max);
+    marker = 0;
+    marker[attr - 1] = 1;
+    mfem::Vector a_min_mfem, a_max_mfem;
+    mesh::GetAxisAlignedBoundingBox(mesh, marker, /*bdr=*/false, a_min_mfem, a_max_mfem);
+    const std::array<double, 3> a_min{{a_min_mfem[0], a_min_mfem[1], a_min_mfem[2]}};
+    const std::array<double, 3> a_max{{a_max_mfem[0], a_max_mfem[1], a_max_mfem[2]}};
+    if (!EmptyBoundingBox(a_min, a_max))
+    {
+      regions.push_back({attr, a_min, a_max});
     }
   }
-  if (!any_autodetect)
-  {
-    return {};
-  }
-  // GetAxisAlignedBoundingBox does a global MPI reduction, so every rank must call it.
-  mfem::Vector u_min_mfem, u_max_mfem;
-  mesh::GetAxisAlignedBoundingBox(mesh, union_marker, /*bdr=*/false, u_min_mfem,
-                                  u_max_mfem);
-  const std::array<double, 3> u_min{{u_min_mfem[0], u_min_mfem[1], u_min_mfem[2]}};
-  const std::array<double, 3> u_max{{u_max_mfem[0], u_max_mfem[1], u_max_mfem[2]}};
 
-  // If none of the auto-detect PML attributes are present anywhere on this mesh, the
-  // union bounding box is empty (min > max on every axis: GetAxisAlignedBoundingBox
-  // seeds min/max with +inf/-inf and no element updates them). This happens when the
-  // MaterialOperator is built on a mesh that does not contain the PML region — e.g. the
-  // wave-port boundary submesh, which carries the full material list but only the port-
-  // face attributes. Return an empty geometry quietly; the per-material loop below maps
-  // nothing on such a mesh, so the PML simply does not participate there.
-  const bool union_empty =
-      (u_min[0] > u_max[0]) && (u_min[1] > u_max[1]) && (u_min[2] > u_max[2]);
-  if (union_empty)
+  std::map<int, pml::SlabGeometry> attr_geom;
+  for (const auto &entry : pml::DetectLayeredSlabGeometry(regions, bbmin, bbmax))
   {
-    return {};
+    attr_geom.emplace(entry.attribute, entry.geometry);
   }
-
-  auto geom = pml::DetectSlabGeometry(u_min, u_max, bbmin, bbmax);
-  const bool any_active =
-      std::any_of(geom.direction_signs.begin(), geom.direction_signs.end(),
-                  [](int s) { return s != 0; });
-  MFEM_VERIFY(any_active,
-              "Auto-detected PML geometry found no PML attributes touching the global "
-              "mesh bounding box. Ensure the PML region sits on the outer boundary of "
-              "the mesh, or specify \"Direction\" and \"Thickness\" explicitly in each "
-              "PML material.");
-  return geom;
+  return attr_geom;
 }
 
 }  // namespace
@@ -470,26 +472,25 @@ void MaterialOperator::SetUpMaterialProperties(
   int attr_max = attr_max_local;
   Mpi::GlobalMax(1, &attr_max, mesh.GetComm());
 
-  const auto unified_geom =
-      DetectUnifiedPMLSlabGeometry(materials, mesh, attr_max, attr_max_local, bbmin, bbmax);
+  const auto auto_pml_geom =
+      DetectAutoPMLSlabGeometry(materials, mesh, attr_max, bbmin, bbmax);
 
-  for (std::size_t i = 0; i < materials.size(); i++)
+  auto AddPMLProfile = [&](const config::MaterialData &data, config::PMLData pml_cfg,
+                           const std::vector<int> &attributes)
   {
-    if (!materials[i].pml.has_value())
+    std::vector<int> ceed_attrs;
+    ceed_attrs.reserve(attributes.size());
+    for (auto attr : attributes)
     {
-      continue;
+      auto it = loc_attr.find(attr);
+      if (it != loc_attr.end())
+      {
+        ceed_attrs.push_back(it->second);
+      }
     }
-    const auto &data = materials[i];
-    // Local copy that may have direction_signs / thickness filled in by auto-detection.
-    auto pml_cfg = *data.pml;
-
-    // Auto-detected geometry uses the unified slab geometry computed in the pre-pass
-    // above, so all PML materials that participate in auto-detection share the same
-    // thickness and inner interface. This makes N-slab and 1-slab layouts equivalent.
-    if (pml_cfg.autodetect_geometry)
+    if (ceed_attrs.empty())
     {
-      pml_cfg.direction_signs = unified_geom.direction_signs;
-      pml_cfg.thickness = unified_geom.thickness;
+      return;
     }
 
     // Build the Profile. Use the isotropic average of the anisotropic ε_r / μ_r for the
@@ -513,23 +514,12 @@ void MaterialOperator::SetUpMaterialProperties(
     const int profile_idx = static_cast<int>(pml_profiles.size());
     pml_profiles.push_back(profile);
 
-    // Map each of this material's libCEED attributes to this profile, and zero out the
-    // bulk mat_muinv / mat_epsilon entries for those attributes so the standard
-    // coefficient path contributes nothing. Only local attributes (those present in
-    // this rank's CEED attribute map) are mapped.
-    for (auto attr : data.attributes)
+    // Map each libCEED attribute to this profile, and zero out the bulk mat_muinv /
+    // mat_epsilon entries for those attributes so the bulk coefficient path contributes
+    // nothing.
+    for (auto ceed_attr : ceed_attrs)
     {
-      auto it = loc_attr.find(attr);
-      if (it == loc_attr.end())
-      {
-        continue;
-      }
-      const int ceed_attr = it->second;  // 1-based
       pml_attr_to_profile[ceed_attr - 1] = profile_idx;
-
-      // Zero out the bulk material tensors for this attribute so the bulk coefficient
-      // path contributes nothing (PML tensors are assembled separately via per-QP
-      // integrators).
       const int mat_idx = attr_mat[ceed_attr - 1];
       if (mat_idx >= 0)
       {
@@ -544,6 +534,43 @@ void MaterialOperator::SetUpMaterialProperties(
     if (pml_cfg.frequency_dependent)
     {
       has_pml_freq_dependent_attr = true;
+    }
+  };
+
+  for (std::size_t i = 0; i < materials.size(); i++)
+  {
+    if (!materials[i].pml.has_value())
+    {
+      continue;
+    }
+    const auto &data = materials[i];
+    // Local copy that may have direction_signs / thickness filled in by auto-detection.
+    auto pml_cfg = *data.pml;
+
+    if (!pml_cfg.autodetect_geometry)
+    {
+      AddPMLProfile(data, pml_cfg, data.attributes);
+      continue;
+    }
+
+    for (auto attr : data.attributes)
+    {
+      if (loc_attr.find(attr) == loc_attr.end())
+      {
+        continue;
+      }
+      auto geom_it = auto_pml_geom.find(attr);
+      MFEM_VERIFY(geom_it != auto_pml_geom.end() && HasActiveDirection(geom_it->second),
+                  "Auto-detected PML geometry found no active layer for domain attribute "
+                      << attr
+                      << ". Ensure the PML region is connected to the outer boundary of the "
+                         "mesh, or specify \"Direction\" and \"Thickness\" explicitly.");
+      pml_cfg.direction_signs = geom_it->second.direction_signs;
+      pml_cfg.thickness = geom_it->second.thickness;
+      {
+        std::vector<int> attr_list{attr};
+        AddPMLProfile(data, pml_cfg, attr_list);
+      }
     }
   }
 

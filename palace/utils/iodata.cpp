@@ -391,6 +391,43 @@ void IoData::CheckConfiguration()
     }
   }
 
+  for (auto &material : domains.materials)
+  {
+    if (!material.pml || material.pml->frequency_dependent ||
+        material.pml->reference_frequency > 0.0)
+    {
+      continue;
+    }
+
+    MFEM_VERIFY(material.pml->reference_frequency < 0.0,
+                "\"PML.ReferenceFrequency\" must be positive when specified. Omit it "
+                "or use a negative value to request the solver default.");
+
+    double reference_frequency = -1.0;
+    if (problem.type == ProblemType::DRIVEN)
+    {
+      MFEM_VERIFY(!solver.driven.sample_f.empty(),
+                  "Static PML default ReferenceFrequency requires at least one driven "
+                  "sample frequency!");
+      reference_frequency =
+          0.5 * (solver.driven.sample_f.front() + solver.driven.sample_f.back());
+    }
+    else if (problem.type == ProblemType::EIGENMODE)
+    {
+      reference_frequency = solver.eigenmode.target;
+    }
+    else
+    {
+      MFEM_ABORT("Static PML requires a positive \"PML.ReferenceFrequency\" for "
+                 "problem types other than Driven and Eigenmode.");
+    }
+    MFEM_VERIFY(reference_frequency > 0.0,
+                "Static PML requires a positive reference frequency. Set "
+                "\"PML.ReferenceFrequency\", use positive driven sample frequencies, "
+                "or set a positive Eigenmode target.");
+    material.pml->reference_frequency = reference_frequency;
+  }
+
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
   {

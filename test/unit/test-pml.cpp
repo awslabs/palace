@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <complex>
+#include <vector>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -324,6 +325,72 @@ TEST_CASE("PML::DetectSlabGeometry", "[pml][Serial]")
     REQUIRE(g.direction_signs[0] == 0);   // not −x
     REQUIRE(g.direction_signs[1] == 0);   // not +x
     REQUIRE(g.direction_signs[3] == +1);  // +y active
+  }
+}
+
+TEST_CASE("PML::DetectLayeredSlabGeometry", "[pml][Serial]")
+{
+  SECTION("Stacked one-sided slabs share the full layer thickness")
+  {
+    const std::array<double, 3> g_min{{0.0, 0.0, 0.0}};
+    const std::array<double, 3> g_max{{1.0, 1.0, 1.3}};
+    const std::vector<pml::SlabRegion> regions{
+        {2, {{0.0, 0.0, 1.0}}, {{1.0, 1.0, 1.1}}},
+        {3, {{0.0, 0.0, 1.1}}, {{1.0, 1.0, 1.2}}},
+        {4, {{0.0, 0.0, 1.2}}, {{1.0, 1.0, 1.3}}},
+    };
+    auto geom = pml::DetectLayeredSlabGeometry(regions, g_min, g_max);
+    REQUIRE(geom.size() == regions.size());
+    for (const auto &entry : geom)
+    {
+      REQUIRE(entry.geometry.direction_signs == std::array<int, 6>{{0, 0, 0, 0, 0, +1}});
+      REQUIRE(entry.geometry.thickness[5] == Approx(0.3));
+    }
+  }
+
+  SECTION("Opposite faces remain distinct")
+  {
+    const std::array<double, 3> g_min{{-1.2, -1.0, -1.0}};
+    const std::array<double, 3> g_max{{+1.2, +1.0, +1.0}};
+    const std::vector<pml::SlabRegion> regions{
+        {2, {{-1.2, -1.0, -1.0}}, {{-1.0, +1.0, +1.0}}},
+        {3, {{+1.0, -1.0, -1.0}}, {{+1.2, +1.0, +1.0}}},
+    };
+    auto geom = pml::DetectLayeredSlabGeometry(regions, g_min, g_max);
+    REQUIRE(geom[0].geometry.direction_signs ==
+            std::array<int, 6>{{-1, 0, 0, 0, 0, 0}});
+    REQUIRE(geom[1].geometry.direction_signs ==
+            std::array<int, 6>{{0, +1, 0, 0, 0, 0}});
+    REQUIRE(geom[0].geometry.thickness[0] == Approx(0.2));
+    REQUIRE(geom[1].geometry.thickness[1] == Approx(0.2));
+  }
+
+  SECTION("Six-sided box PML detects all signed faces")
+  {
+    const std::array<double, 3> g_min{{-1.2, -1.2, -1.2}};
+    const std::array<double, 3> g_max{{+1.2, +1.2, +1.2}};
+    const std::vector<pml::SlabRegion> regions{
+        {2, {{-1.2, -1.0, -1.0}}, {{-1.0, +1.0, +1.0}}},
+        {3, {{+1.0, -1.0, -1.0}}, {{+1.2, +1.0, +1.0}}},
+        {4, {{-1.0, -1.2, -1.0}}, {{+1.0, -1.0, +1.0}}},
+        {5, {{-1.0, +1.0, -1.0}}, {{+1.0, +1.2, +1.0}}},
+        {6, {{-1.0, -1.0, -1.2}}, {{+1.0, +1.0, -1.0}}},
+        {7, {{-1.0, -1.0, +1.0}}, {{+1.0, +1.0, +1.2}}},
+    };
+    auto geom = pml::DetectLayeredSlabGeometry(regions, g_min, g_max);
+    const std::array<std::array<int, 6>, 6> expected{{
+        {{-1, 0, 0, 0, 0, 0}},
+        {{0, +1, 0, 0, 0, 0}},
+        {{0, 0, -1, 0, 0, 0}},
+        {{0, 0, 0, +1, 0, 0}},
+        {{0, 0, 0, 0, -1, 0}},
+        {{0, 0, 0, 0, 0, +1}},
+    }};
+    REQUIRE(geom.size() == expected.size());
+    for (std::size_t i = 0; i < expected.size(); i++)
+    {
+      REQUIRE(geom[i].geometry.direction_signs == expected[i]);
+    }
   }
 }
 

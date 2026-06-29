@@ -1511,8 +1511,74 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     // basis". Concretize does not synthesize one.
     auto mat_gaps = SchemaCoverageGaps("/properties/Domains/properties/Materials/items",
                                        config["Domains"]["Materials"][0],
-                                       /*skip=*/{"MaterialAxes"});
+                                       /*skip=*/{"MaterialAxes", "PML"});
     INFO("Domains.Materials[] missing keys: " << json(mat_gaps).dump());
     CHECK(mat_gaps.empty());
+  }
+
+  SECTION("Static PML ReferenceFrequency defaults to driven sweep center")
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}, {"PML", json::object()}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}}}}};
+
+    IoData iodata1(config, false);
+    REQUIRE(iodata1.domains.materials[0].pml);
+    CHECK(iodata1.domains.materials[0].pml->reference_frequency == 2.0);
+
+    config = IoData::ConcretizeDefaults(iodata1, config);
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    auto &j_pml = config["Domains"]["Materials"][0]["PML"];
+    CHECK(j_pml["ReferenceFrequency"].get<double>() == 2.0);
+    CHECK(j_pml["FrequencyDependent"].get<bool>() == false);
+    CHECK(j_pml["AllowRefinement"].get<bool>() == false);
+
+    IoData iodata2(config, false);
+    REQUIRE(iodata2.domains.materials[0].pml);
+    CHECK(iodata2.domains.materials[0].pml->reference_frequency ==
+          iodata1.domains.materials[0].pml->reference_frequency);
+
+    auto pml_gaps = SchemaCoverageGaps("/$defs/Material/properties/PML", j_pml,
+                                       /*skip=*/{"Direction", "Thickness"});
+    INFO("Domains.Materials[].PML missing keys: " << json(pml_gaps).dump());
+    CHECK(pml_gaps.empty());
+  }
+
+  SECTION("Static PML ReferenceFrequency defaults to eigenmode target")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains",
+                    {{"Materials", {{{"Attributes", {1}}, {"PML", json::object()}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Eigenmode", {{"Target", 4.2}}}}}};
+
+    IoData iodata(config, false);
+    REQUIRE(iodata.domains.materials[0].pml);
+    CHECK(iodata.domains.materials[0].pml->reference_frequency == 4.2);
+
+    config = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(config["Domains"]["Materials"][0]["PML"]["ReferenceFrequency"].get<double>() ==
+          4.2);
+  }
+
+  SECTION("Static PML ReferenceFrequency zero is invalid")
+  {
+    json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains",
+                    {{"Materials",
+                      {{{"Attributes", {1}}, {"PML", {{"ReferenceFrequency", 0.0}}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}}}}};
+
+    CHECK_THROWS(IoData(config, false));
   }
 }
