@@ -173,6 +173,48 @@ public:
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
 };
 
+// Floquet PML mass integrator a(u, v) = (K^T μ̃⁻¹ K u, v), where K is the matrix
+// representation of cross product with the Floquet wave vector. The context prepends K
+// to the usual packed PML profile context.
+class FloquetMassPMLIntegrator : public BilinearFormIntegrator
+{
+protected:
+  const void *ctx;
+  std::size_t ctx_size;
+  PMLTensorPart part;
+
+public:
+  FloquetMassPMLIntegrator(const void *ctx, std::size_t ctx_size, PMLTensorPart part)
+    : BilinearFormIntegrator(nullptr), ctx(ctx), ctx_size(ctx_size), part(part)
+  {
+  }
+
+  void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
+                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+};
+
+// Floquet PML cross integrator
+// a(u, v) = (K^T μ̃⁻¹ curl u, v) - (μ̃⁻¹ K u, curl v). This mirrors the pair of
+// MixedVectorCurl/MixedVectorWeakCurl integrators used for non-PML Floquet terms.
+class FloquetCrossPMLIntegrator : public BilinearFormIntegrator
+{
+protected:
+  const void *ctx;
+  std::size_t ctx_size;
+  PMLTensorPart part;
+
+public:
+  FloquetCrossPMLIntegrator(const void *ctx, std::size_t ctx_size, PMLTensorPart part)
+    : BilinearFormIntegrator(nullptr), ctx(ctx), ctx_size(ctx_size), part(part)
+  {
+  }
+
+  void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
+                CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
+                CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+};
+
 // PML diffusion integrator a(φ, ψ) = (ε̃ ∇φ, ∇ψ) for H1 scalar elements. This is the
 // auxiliary-space companion to VectorFEMassPMLIntegrator: the Hiptmair/AFW-type GMG
 // preconditioner splits the H(curl) operator into a primary ND smoother and an auxiliary

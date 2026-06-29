@@ -24,9 +24,10 @@ namespace
 // Build the libCEED operator for a 3D PML integrator. All PML paths share everything
 // except the QFunction pointer and the eval mode, so they factor into a common helper.
 void AssemblePML33(CeedQFunctionUser apply_qf, const char *apply_qf_path,
-                   EvalMode eval_mode, const void *ctx, std::size_t ctx_size, Ceed ceed,
-                   CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
-                   CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
+                   unsigned int eval_mode, const void *ctx, std::size_t ctx_size,
+                   Ceed ceed, CeedElemRestriction trial_restr,
+                   CeedElemRestriction test_restr, CeedBasis trial_basis,
+                   CeedBasis test_basis, CeedVector geom_data,
                    CeedElemRestriction geom_data_restr, CeedOperator *op)
 {
   CeedInt dim, space_dim;
@@ -74,6 +75,32 @@ QFPair EpsQF(PMLTensorPart part)
   }
   MFEM_ABORT("Unreachable PMLTensorPart");
 }
+QFPair FloquetMassQF(PMLTensorPart part)
+{
+  switch (part)
+  {
+    case PMLTensorPart::Re:
+      return {f_apply_hcurl_pml_floquet_mass_re_33,
+              f_apply_hcurl_pml_floquet_mass_re_33_loc};
+    case PMLTensorPart::Im:
+      return {f_apply_hcurl_pml_floquet_mass_im_33,
+              f_apply_hcurl_pml_floquet_mass_im_33_loc};
+  }
+  MFEM_ABORT("Unreachable PMLTensorPart");
+}
+QFPair FloquetCrossQF(PMLTensorPart part)
+{
+  switch (part)
+  {
+    case PMLTensorPart::Re:
+      return {f_apply_hcurl_pml_floquet_cross_re_33,
+              f_apply_hcurl_pml_floquet_cross_re_33_loc};
+    case PMLTensorPart::Im:
+      return {f_apply_hcurl_pml_floquet_cross_im_33,
+              f_apply_hcurl_pml_floquet_cross_im_33_loc};
+  }
+  MFEM_ABORT("Unreachable PMLTensorPart");
+}
 
 }  // namespace
 
@@ -98,6 +125,31 @@ void VectorFEMassPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_re
   const auto qf = EpsQF(part);
   AssemblePML33(qf.qf, qf.loc, EvalMode::Interp, ctx, ctx_size, ceed, trial_restr,
                 test_restr, trial_basis, test_basis, geom_data, geom_data_restr, op);
+}
+
+void FloquetMassPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
+                                        CeedElemRestriction test_restr,
+                                        CeedBasis trial_basis, CeedBasis test_basis,
+                                        CeedVector geom_data,
+                                        CeedElemRestriction geom_data_restr,
+                                        CeedOperator *op) const
+{
+  const auto qf = FloquetMassQF(part);
+  AssemblePML33(qf.qf, qf.loc, EvalMode::Interp, ctx, ctx_size, ceed, trial_restr,
+                test_restr, trial_basis, test_basis, geom_data, geom_data_restr, op);
+}
+
+void FloquetCrossPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
+                                         CeedElemRestriction test_restr,
+                                         CeedBasis trial_basis, CeedBasis test_basis,
+                                         CeedVector geom_data,
+                                         CeedElemRestriction geom_data_restr,
+                                         CeedOperator *op) const
+{
+  const auto qf = FloquetCrossQF(part);
+  constexpr unsigned int ops = EvalMode::Interp | EvalMode::Curl;
+  AssemblePML33(qf.qf, qf.loc, ops, ctx, ctx_size, ceed, trial_restr, test_restr,
+                trial_basis, test_basis, geom_data, geom_data_restr, op);
 }
 
 void DiffusionPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
