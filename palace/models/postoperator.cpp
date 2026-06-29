@@ -697,13 +697,20 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   };
   auto RegisterBdrEvalField = [&](const std::string &name,
                                   const std::unique_ptr<PointFieldEvaluator> &eval,
-                                  const auto &field)
+                                  const auto &field, bool retain_for_next_field = false)
   {
     const auto *eval_ptr = eval.get();
     const auto *field_ptr = &field;
     paraview_bdr->RegisterBoundaryPointEvaluator(
         name,
-        [eval_ptr, field_ptr](Vector &buffer) { eval_ptr->EvalBuffer(*field_ptr, buffer); },
+        [eval_ptr, field_ptr, retain_for_next_field](Vector &buffer)
+        {
+          if (retain_for_next_field)
+          {
+            eval_ptr->RetainBoundaryEvaluatorOnce();
+          }
+          eval_ptr->EvalBuffer(*field_ptr, buffer);
+        },
         eval_ptr->BufferBases(), eval_ptr->BufferNumComp(), eval_ptr->BufferSize());
   };
   auto RegisterBdrPoyntingField = [&](const std::string &name)
@@ -732,7 +739,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
       if (E_bdr_eval)
       {
         RegisterBdrEvalField("E_real", E_bdr_eval, E->Real());
-        RegisterBdrEvalField("E_imag", E_bdr_eval, E->Imag());
+        RegisterBdrEvalField("E_imag", E_bdr_eval, E->Imag(), true);
       }
       else
       {
@@ -774,7 +781,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
       if (B_bdr_eval)
       {
         RegisterBdrEvalField("B_real", B_bdr_eval, B->Real());
-        RegisterBdrEvalField("B_imag", B_bdr_eval, B->Imag());
+        RegisterBdrEvalField("B_imag", B_bdr_eval, B->Imag(), true);
       }
       else
       {
@@ -868,7 +875,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     if (HasComplexGridFunction<solver_t>())
     {
       RegisterBdrEvalField("Q_s_real", Q_bdr_eval, E->Real());
-      RegisterBdrEvalField("Q_s_imag", Q_bdr_eval, E->Imag());
+      RegisterBdrEvalField("Q_s_imag", Q_bdr_eval, E->Imag(), true);
     }
     else
     {
@@ -892,7 +899,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     if (HasComplexGridFunction<solver_t>())
     {
       RegisterBdrEvalField("J_s_real", J_bdr_eval, B->Real());
-      RegisterBdrEvalField("J_s_imag", J_bdr_eval, B->Imag());
+      RegisterBdrEvalField("J_s_imag", J_bdr_eval, B->Imag(), true);
     }
     else
     {

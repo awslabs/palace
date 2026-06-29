@@ -147,7 +147,20 @@ void PointFieldEvaluator::CacheBoundaryMetadata()
 
 bool PointFieldEvaluator::ReleaseBoundaryEvaluatorAfterUse() const
 {
+  if (retain_boundary_eval_once)
+  {
+    retain_boundary_eval_once = false;
+    return false;
+  }
   return true;
+}
+
+void PointFieldEvaluator::MaybeReleaseBoundaryEvaluator() const
+{
+  if (ReleaseBoundaryEvaluatorAfterUse())
+  {
+    boundary_eval.reset();
+  }
 }
 
 bool PointFieldEvaluator::IsValid() const
@@ -181,10 +194,7 @@ void PointFieldEvaluator::EvalBuffer(const Vector &u, Vector &buffer) const
               "Vector EvalBuffer is only valid for single-field boundary point fields!");
   EnsureBoundaryEvaluator();
   boundary_eval->EvalBuffer(u, buffer);
-  if (ReleaseBoundaryEvaluatorAfterUse())
-  {
-    boundary_eval.reset();
-  }
+  MaybeReleaseBoundaryEvaluator();
 }
 
 void PointFieldEvaluator::EvalBuffer(const GridFunction &u, Vector &buffer) const
@@ -194,10 +204,7 @@ void PointFieldEvaluator::EvalBuffer(const GridFunction &u, Vector &buffer) cons
               "fields!");
   EnsureBoundaryEvaluator();
   boundary_eval->EvalBuffer(u, buffer);
-  if (ReleaseBoundaryEvaluatorAfterUse())
-  {
-    boundary_eval.reset();
-  }
+  MaybeReleaseBoundaryEvaluator();
 }
 
 void PointFieldEvaluator::EvalBuffer(const GridFunction *E, const GridFunction *B,
@@ -223,10 +230,7 @@ void PointFieldEvaluator::EvalBuffer(const GridFunction *E, const GridFunction *
     MFEM_VERIFY(u, "Boundary point field requires a source field!");
     boundary_eval->EvalBuffer(*u, buffer);
   }
-  if (ReleaseBoundaryEvaluatorAfterUse())
-  {
-    boundary_eval.reset();
-  }
+  MaybeReleaseBoundaryEvaluator();
 }
 
 }  // namespace palace
