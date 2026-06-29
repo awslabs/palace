@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <memory>
 #include <regex>
 #include <type_traits>
 #include <utility>
@@ -219,12 +220,12 @@ void CeedParaViewDataCollection::WritePointFieldValues(MeshEntityType location,
                     << " point-major field buffer has an invalid size!");
     if (binary32)
     {
-      std::vector<float> payload(payload_count);
+      auto payload = std::make_unique<float[]>(payload_count);
       for (std::size_t i = 0; i < payload_count; i++)
       {
         payload[i] = static_cast<float>(data[i]);
       }
-      WriteAll(os, payload.data(), payload.size() * sizeof(float));
+      WriteAll(os, payload.get(), payload_count * sizeof(float));
     }
     else
     {
