@@ -68,6 +68,10 @@ fi
 
 export NSYS_BIN PROFROOT="$LATEST/profile" PALACE_BIN PALACE_CFG="$CONFIG" \
   PALACE_PROFILE_PARAVIEW_RANGE=1 PALACE_VOLUME_PROFILE=1
+NSYS_CAPTURE_ARGS=(--capture-range=cudaProfilerApi --capture-range-end=repeat)
+if [[ "${PALACE_AR_PROFILE_FULL_RUN:-0}" == "1" ]]; then
+  NSYS_CAPTURE_ARGS=()
+fi
 set +e
 (
   cd "$EXAMPLE_CWD"
@@ -76,8 +80,7 @@ set +e
     --mpi-impl=mpich \
     --sample=none \
     --cpuctxsw=none \
-    --capture-range=cudaProfilerApi \
-    --capture-range-end=repeat \
+    "${NSYS_CAPTURE_ARGS[@]}" \
     --osrt-file-access=true \
     --force-overwrite=true \
     --stats=false \
