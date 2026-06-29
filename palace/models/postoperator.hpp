@@ -132,6 +132,7 @@ protected:
   // Field output format control flags.
   bool enable_paraview_output = false;
   bool enable_gridfunction_output = false;
+  bool field_coefficients_initialized = false;
 
   // How many / which fields to output.
   int output_delta_post = 0;                          // printing rate (TRANSIENT)
@@ -225,11 +226,15 @@ protected:
   };
   std::map<int, WavePortFieldData> port_E0;
 
-  // Setup coefficients for field postprocessing.
+  // Setup coefficients/evaluators for field output. These can be large libCEED objects on
+  // GPU, so initialize them lazily at write time instead of keeping them alive during the
+  // solve/preconditioner phase.
   void SetupFieldCoefficients();
+  void EnsureFieldCoefficientsSetup();
 
   // Initialize Paraview, register all fields to write.
   void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");
+  void EnsureParaviewDataCollection();
 
 public:
   // Public overload for the driven solver only, that takes in an excitation index and

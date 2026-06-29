@@ -403,6 +403,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->SetBMat(*KM);
     eigen->RescaleEigenvectors(num_conv);
   }
+  // The shifted linear system and its preconditioner are only needed during the
+  // eigensolve. Release their device allocations before error estimation and field-output
+  // postprocessing, where large libCEED visualization operators may need additional GPU
+  // memory on refined meshes.
+  ksp.reset();
+  P.reset();
+  A.reset();
   Mpi::Print("\n");
 
   for (int i = 0; i < num_conv; i++)

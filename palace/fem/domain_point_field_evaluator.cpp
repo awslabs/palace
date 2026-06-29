@@ -41,6 +41,9 @@ struct CeedAssemblyScratch
   std::vector<CeedBasis> bases;
 
   CeedAssemblyScratch(Ceed ceed) : ceed(ceed) {}
+  CeedAssemblyScratch(const CeedAssemblyScratch &) = delete;
+  CeedAssemblyScratch &operator=(const CeedAssemblyScratch &) = delete;
+
   ~CeedAssemblyScratch()
   {
     for (auto &v : vecs)
@@ -75,19 +78,8 @@ DomainPointFieldEvaluator::DomainPointFieldEvaluator(
 
 DomainPointFieldEvaluator::~DomainPointFieldEvaluator()
 {
-  auto DestroyGroups = [](std::vector<fem::CeedGroupOperator> &groups)
-  {
-    for (auto &group : groups)
-    {
-      PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
-      if (group.out_vec)
-      {
-        PalaceCeedCall(group.ceed, CeedVectorDestroy(&group.out_vec));
-      }
-    }
-  };
-  DestroyGroups(groups);
-  DestroyGroups(buffer_groups);
+  fem::DestroyGroupOperators(groups);
+  fem::DestroyGroupOperators(buffer_groups);
 }
 
 void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperator &mat_op,
