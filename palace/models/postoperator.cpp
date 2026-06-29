@@ -803,7 +803,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
         name,
         [eval_ptr, E_ptr, B_ptr](Vector &buffer)
         { eval_ptr->EvalBuffer(E_ptr, B_ptr, buffer); },
-        eval_ptr->BufferBases(), eval_ptr->BufferNumComp(), eval_ptr->BufferSize());
+        eval_ptr->BufferBases(), eval_ptr->BufferNumComp(), eval_ptr->BufferSize(), true);
   };
   auto RegisterDomainBaseField = [&](const std::string &name,
                                      const mfem::ParGridFunction &gf)
@@ -873,7 +873,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     paraview->RegisterDomainPointEvaluator(
         name,
         [eval_ptr, field_ptr](Vector &buffer) { eval_ptr->EvalBuffer(*field_ptr, buffer); },
-        eval_ptr->BufferBases(), eval_ptr->BufferNumComp(), eval_ptr->BufferSize());
+        eval_ptr->BufferBases(), eval_ptr->BufferNumComp(), eval_ptr->BufferSize(), true);
   };
   auto RegisterBdrEvalField = [&](const std::string &name,
                                   const std::unique_ptr<PointFieldEvaluator> &eval,

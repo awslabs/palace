@@ -380,13 +380,12 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
         const int point_base = buffer_bases[indices[e]];
         for (int j = 0; j < num_vtu_pts; j++)
         {
-          offsets[e * num_vtu_pts + j] = point_base + j;
+          offsets[e * num_vtu_pts + j] = (point_base + j) * buffer_num_comp;
         }
       }
-      const int component_stride = buffer_size / buffer_num_comp;
       PalaceCeedCall(ceed, CeedElemRestrictionCreate(
                                 ceed, static_cast<CeedInt>(indices.size()), num_vtu_pts,
-                                buffer_num_comp, component_stride, (CeedSize)buffer_size,
+                                buffer_num_comp, 1, (CeedSize)buffer_size,
                                 CEED_MEM_HOST, CEED_COPY_VALUES, offsets.data(),
                                 &buffer_out_restr));
     }
