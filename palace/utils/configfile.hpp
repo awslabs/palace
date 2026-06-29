@@ -280,8 +280,9 @@ public:
   // dependent PML gives uniform absorption across a broadband sweep.
   bool frequency_dependent = false;
 
-  // Reference ω₀ (in Hz, nondimensionalized at load time) for static PML. Negative ⇒
-  // use the solver-appropriate default (driven center frequency / eigen target).
+  // Reference frequency f0 (in GHz, nondimensionalized at load time) for static PML.
+  // Negative means use the solver-appropriate default (driven center frequency / eigen
+  // target).
   // Ignored when frequency_dependent is true.
   double reference_frequency = -1.0;
 

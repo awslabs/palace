@@ -146,11 +146,26 @@ struct SlabGeometry
   std::array<int, 6> direction_signs{{0, 0, 0, 0, 0, 0}};
   std::array<double, 6> thickness{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
 };
+struct SlabRegion
+{
+  int attribute = 0;
+  std::array<double, 3> attr_min{{0.0, 0.0, 0.0}};
+  std::array<double, 3> attr_max{{0.0, 0.0, 0.0}};
+};
+struct AttributeSlabGeometry
+{
+  int attribute = 0;
+  SlabGeometry geometry;
+};
 SlabGeometry DetectSlabGeometry(const std::array<double, 3> &attr_min,
                                 const std::array<double, 3> &attr_max,
                                 const std::array<double, 3> &global_min,
                                 const std::array<double, 3> &global_max,
                                 double rel_tol = 1.0e-6);
+std::vector<AttributeSlabGeometry>
+DetectLayeredSlabGeometry(const std::vector<SlabRegion> &regions,
+                          const std::array<double, 3> &global_min,
+                          const std::array<double, 3> &global_max, double rel_tol = 1.0e-6);
 
 // Pack a Profile into the libCEED QFunction context layout consumed by pml_qf.h's
 // PMLEvalStretchTensors. Writes kPMLRegionStride entries into the output array.

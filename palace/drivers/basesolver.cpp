@@ -4,6 +4,7 @@
 #include "basesolver.hpp"
 
 #include <array>
+#include <utility>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "drivers/transientsolver.hpp"
@@ -177,6 +178,47 @@ mfem::Array<int> MarkedElements(const Vector &e, double threshold)
   return ind;
 }
 
+int MaskPMLRefinementIndicators(const IoData &iodata, const mfem::ParMesh &mesh, Vector &e)
+{
+  MFEM_VERIFY(e.Size() == mesh.GetNE(),
+              "Error indicator size does not match the number of local mesh elements!");
+  const int attr_max = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
+  if (attr_max == 0)
+  {
+    return 0;
+  }
+
+  mfem::Array<int> marker(attr_max);
+  marker = 0;
+  for (const auto &data : iodata.domains.materials)
+  {
+    if (!data.pml.has_value() || data.pml->allow_refinement)
+    {
+      continue;
+    }
+    for (auto attr : data.attributes)
+    {
+      if (attr > 0 && attr <= attr_max)
+      {
+        marker[attr - 1] = 1;
+      }
+    }
+  }
+
+  int masked = 0;
+  auto *E = e.HostReadWrite();
+  for (int i = 0; i < mesh.GetNE(); i++)
+  {
+    const int attr = mesh.GetAttribute(i);
+    if (attr > 0 && attr <= marker.Size() && marker[attr - 1])
+    {
+      E[i] = 0.0;
+      masked++;
+    }
+  }
+  return masked;
+}
+
 }  // namespace
 
 BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread,
@@ -237,7 +279,15 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   auto [indicators, ntdof] = Solve(mesh);
   MFEM_VERIFY(solve_converged_,
               "Initial solve did not converge; no converged result to fall back on!");
-  double err = indicators.Norml2(comm);
+  auto BuildRefinementIndicators = [&](const ErrorIndicator &current_indicators)
+  {
+    Vector refinement_indicators(current_indicators.Local());
+    int masked = MaskPMLRefinementIndicators(iodata, *mesh.back(), refinement_indicators);
+    Mpi::GlobalSum(1, &masked, comm);
+    return std::pair{std::move(refinement_indicators), masked};
+  };
+  auto [refinement_indicators, masked_pml_elements] = BuildRefinementIndicators(indicators);
+  double err = linalg::Norml2(comm, refinement_indicators);
 
   // Record the initial solve as iteration 1 (matching the "iteration01" archive
   // subdirectory written for adaptive runs).
@@ -290,19 +340,24 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     }
 
     // Mark.
-    const auto marked_elements = [&comm, &refinement](const auto &indicators)
+    if (masked_pml_elements > 0)
+    {
+      Mpi::Print(" PML refinement disabled for {:d} element{}\n", masked_pml_elements,
+                 masked_pml_elements == 1 ? "" : "s");
+    }
+    const auto marked_elements = [&comm, &refinement](const Vector &indicators)
     {
       const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
-          comm, indicators.Local(), refinement.update_fraction);
-      const auto marked_elements = MarkedElements(indicators.Local(), threshold);
+          comm, indicators, refinement.update_fraction);
+      const auto marked_elements = MarkedElements(indicators, threshold);
       const auto [glob_marked_elements, glob_elements] =
-          linalg::GlobalSize2(comm, marked_elements, indicators.Local());
+          linalg::GlobalSize2(comm, marked_elements, indicators);
       Mpi::Print(
           " Marked {:d}/{:d} elements for refinement ({:.2f}% of the error, θ = {:.2f})\n",
           glob_marked_elements, glob_elements, 100 * marked_error,
           refinement.update_fraction);
       return marked_elements;
-    }(indicators);
+    }(refinement_indicators);
 
     // Refine.
     {
@@ -365,7 +420,9 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       ntdof = prev_ntdof;
       break;
     }
-    err = indicators.Norml2(comm);
+    std::tie(refinement_indicators, masked_pml_elements) =
+        BuildRefinementIndicators(indicators);
+    err = linalg::Norml2(comm, refinement_indicators);
 
     // Record that this AMR iteration has completed; the Solve above has already written all
     // of its postprocessing output. The 1-based index (it + 1, since the initial solve is
