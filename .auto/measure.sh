@@ -39,7 +39,7 @@ json.dump(cfg, open(dst, 'w'), indent=2)
 PY
 
 export NSYS_BIN PROFROOT="$LATEST/profile" PALACE_BIN PALACE_CFG="$CONFIG" \
-  PALACE_PROFILE_PARAVIEW_RANGE=1
+  PALACE_PROFILE_PARAVIEW_RANGE=1 PALACE_VOLUME_PROFILE=1
 set +e
 (
   cd "$ROOT/examples/transmon"
@@ -119,7 +119,19 @@ total = last_timer_row('Total')
 post = last_timer_row('Postprocessing')
 op = last_timer_row('Operator Construction')
 mem_pv = last_memory_row('Paraview')
+volume_saves = []
+boundary_saves = []
+for m in re.finditer(r"VolumeProfile step=\S+ domain_save_max=([0-9.eE+-]+) domain_save_avg=([0-9.eE+-]+) boundary_save_max=([0-9.eE+-]+)", text):
+    volume_saves.append(float(m.group(1)))
+    boundary_saves.append(float(m.group(3)))
+final_volume_saves = [float(m.group(1)) for m in re.finditer(r"VolumeProfile final_domain_save_max=([0-9.eE+-]+)", text)]
+volume_seconds = sum(volume_saves)
+boundary_seconds = sum(boundary_saves)
+final_volume_seconds = sum(final_volume_saves)
 report_bytes = os.path.getsize(report) if report and os.path.exists(report) else 0
+print(f"METRIC volume_paraview_seconds={volume_seconds if volume_saves else 999999.0}")
+print(f"METRIC boundary_paraview_seconds={boundary_seconds}")
+print(f"METRIC final_volume_paraview_seconds={final_volume_seconds}")
 print(f"METRIC paraview_seconds={pv[2] if pv else 999999.0}")
 print(f"METRIC total_seconds={total[2] if total else 999999.0}")
 print(f"METRIC postprocessing_seconds={post[2] if post else 0.0}")

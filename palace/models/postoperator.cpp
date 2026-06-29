@@ -1135,8 +1135,30 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   paraview_bdr->SetCycle(step);
   paraview_bdr->SetTime(paraview_time);
   StartCudaProfilerParaviewRange();
+  const bool volume_profile = std::getenv("PALACE_VOLUME_PROFILE") != nullptr;
+  double domain_save_seconds = 0.0, boundary_save_seconds = 0.0;
+  double save_t0 = volume_profile ? MPI_Wtime() : 0.0;
   paraview->Save();
+  if (volume_profile)
+  {
+    domain_save_seconds = MPI_Wtime() - save_t0;
+    save_t0 = MPI_Wtime();
+  }
   paraview_bdr->Save();
+  if (volume_profile)
+  {
+    boundary_save_seconds = MPI_Wtime() - save_t0;
+    double max_times[2] = {domain_save_seconds, boundary_save_seconds};
+    double avg_times[2] = {domain_save_seconds, boundary_save_seconds};
+    Mpi::GlobalMax(2, max_times, fem_op->GetComm());
+    Mpi::GlobalSum(2, avg_times, fem_op->GetComm());
+    const double nranks = static_cast<double>(Mpi::Size(fem_op->GetComm()));
+    Mpi::Print(fem_op->GetComm(),
+               "VolumeProfile step={} domain_save_max={:.9e} domain_save_avg={:.9e} "
+               "boundary_save_max={:.9e} boundary_save_avg={:.9e}\n",
+               step, max_times[0], avg_times[0] / nranks, max_times[1],
+               avg_times[1] / nranks);
+  }
   StopCudaProfilerParaviewRange();
   mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
   ScaleGridFunctions(1.0 / mesh_Lc0, mesh.Dimension(), E, B, V, A);
@@ -1212,7 +1234,21 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
     paraview->RegisterField("Indicator", eta.get());
   }
   StartCudaProfilerParaviewRange();
+  const bool volume_profile = std::getenv("PALACE_VOLUME_PROFILE") != nullptr;
+  const double save_t0 = volume_profile ? MPI_Wtime() : 0.0;
   paraview->Save();
+  if (volume_profile)
+  {
+    double final_domain_save_seconds = MPI_Wtime() - save_t0;
+    double avg_final_domain_save_seconds = final_domain_save_seconds;
+    Mpi::GlobalMax(1, &final_domain_save_seconds, fem_op->GetComm());
+    Mpi::GlobalSum(1, &avg_final_domain_save_seconds, fem_op->GetComm());
+    avg_final_domain_save_seconds /= static_cast<double>(Mpi::Size(fem_op->GetComm()));
+    Mpi::Print(fem_op->GetComm(),
+               "VolumeProfile final_domain_save_max={:.9e} "
+               "final_domain_save_avg={:.9e}\n",
+               final_domain_save_seconds, avg_final_domain_save_seconds);
+  }
   StopCudaProfilerParaviewRange();
   if (rank)
   {
