@@ -23,9 +23,11 @@ try:
 except FileNotFoundError:
     text=''
 oom=1 if ('CUDA_ERROR_OUT_OF_MEMORY' in text or 'OUT_OF_MEMORY' in text or 'Out of memory' in text) else 0
-completed=1 if re.search(r'Completed\s+\d+\s+iterations of adaptive mesh refinement', text) else 0
-# Palace prints multiple timing tables. Use the last Total for successful runs.
+amr_completed=1 if re.search(r'Completed\s+\d+\s+iterations of adaptive mesh refinement', text) else 0
+# Palace prints multiple timing tables. Use the last Total for successful runs. MaxIts=0
+# has no AMR completion banner, so treat clean process exit with a Total timer as complete.
 totals=[float(x) for x in re.findall(r'^Total\s+([0-9]+(?:\.[0-9]+)?)\s+', text, re.M)]
+completed=1 if (exit_code==0 and oom==0 and totals) else amr_completed
 metric=totals[-1] if completed and exit_code==0 and totals else 999999.0
 initial_elements=0
 refined_elements=0
@@ -70,8 +72,9 @@ fi
 
 cd "$ROOT"
 source "$SPACK_SETUP"
-# Spack only; keep parallelism at -j4.
-yes | spack -e "$ROOT" install --overwrite -j4 >/tmp/palace_auto_spack_${TAG}.log 2>&1
+# Spack only; keep parallelism at -j4. Use printf rather than `yes` so pipefail
+# does not treat yes's SIGPIPE as a benchmark-wrapper crash.
+printf 'y\n' | spack -e "$ROOT" install --overwrite -j4 >/tmp/palace_auto_spack_${TAG}.log 2>&1
 PREFIX=$(spack -e "$ROOT" location -i local.palace)
 BIN=$PREFIX/bin/palace-x86_64.bin
 
@@ -86,7 +89,7 @@ d['Problem']['OutputFormats']['GridFunction']=True
 d.setdefault('Solver', {})['Device']='GPU'
 ref=d.setdefault('Model', {}).setdefault('Refinement', {})
 ref['Nonconformal']=False
-ref['MaxIts']=1
+ref['MaxIts']=int(__import__('os').environ.get('PALACE_MEASURE_MAXITS', '1'))
 # Make mesh absolute if the source was relative.
 mesh=d.setdefault('Model', {}).get('Mesh', '')
 if mesh and not mesh.startswith('/'):
@@ -97,8 +100,12 @@ PY
 
 rm -f "$LOG" "$EXIT"
 set +e
-if [[ -f "$API" ]]; then
-  env PALACE_SURFACE_PROFILE=1 LD_PRELOAD="$API" "$BIN" "$CFG" >"$LOG" 2>&1
+PRELOAD=${PALACE_MEASURE_PRELOAD:-}
+if [[ -z "$PRELOAD" && -f "$API" ]]; then
+  PRELOAD=$API
+fi
+if [[ -n "$PRELOAD" ]]; then
+  env PALACE_SURFACE_PROFILE=1 LD_PRELOAD="$PRELOAD" "$BIN" "$CFG" >"$LOG" 2>&1
 else
   env PALACE_SURFACE_PROFILE=1 "$BIN" "$CFG" >"$LOG" 2>&1
 fi

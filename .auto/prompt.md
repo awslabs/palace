@@ -20,6 +20,14 @@ The run must keep GPU execution and both ParaView and GridFunction output enable
   - `transmon_ncfalse_initial_paraview_s`, `transmon_ncfalse_initial_gridfunction_s`: initial-mesh output timings if available.
   - `transmon_ncfalse_nvrtc`, `transmon_ncfalse_cuModuleLoadData`: CUDA/NVRTC counts if the process exits cleanly enough for the preload destructor.
 
+Optional diagnostic preload:
+
+```bash
+PALACE_MEASURE_PRELOAD=/tmp/libcuda_memtrace.so ./.auto/measure.sh
+```
+
+This uses `.auto/cuda_memtrace.c` to report live CUDA allocations and backtraces when a CUDA allocation fails.
+
 ## How to Run
 
 ```bash
