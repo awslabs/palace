@@ -49,9 +49,9 @@ All configurations use a mesh length unit of ``\mu\text{m}``.
 ## Configuration
 
 Each configuration uses
-[`"Problem": {"Type": "Magnetostatic"}`](../config/problem.md#config-problem) and specifies
+[`"Problem": {"Type": "Magnetostatic"}`](../config/reference.md#config-problem) and specifies
 flux loop boundaries via the
-[`"FluxLoop"`](../config/boundaries.md#boundaries-fluxloop) keyword. The shared solver
+[`"FluxLoop"`](../config/reference.md#config-boundaries) keyword. The shared solver
 settings are:
 
 ```json

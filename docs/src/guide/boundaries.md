@@ -230,7 +230,7 @@ affects the source term on the right hand side.
 ## Flux boundary
 
 Flux loop boundary conditions are available for magnetostatic simulations and are specified
-using the [`"FluxLoop"`](../config/boundaries.md#boundaries%5B%22FluxLoop%22%5D) boundary
+using the [`"FluxLoop"`](../config/reference.md#config-boundaries) boundary
 keyword. This boundary condition prescribes magnetic flux through specified holes in
 conducting surfaces, enabling inductance matrix extraction for flux-based excitations. The
 flux loop boundary condition works by:
