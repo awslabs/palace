@@ -40,7 +40,7 @@ private:
 #if defined(MFEM_USE_GSLIB)
   mfem::FindPointsGSLIB op;
 
-  // libCEED evaluators at the located probe points (device capable, no per-sample GSLIB
+  // libCEED evaluators at the located probe points, avoiding per-sample GSLIB
   // interpolation), constructed lazily per source finite element space.
   mutable std::map<const mfem::FiniteElementSpace *, std::unique_ptr<CeedProbeEvaluator>>
       ceed_probes;
