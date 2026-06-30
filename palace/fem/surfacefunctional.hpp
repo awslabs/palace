@@ -32,7 +32,16 @@ struct CeedGroupOperator
   Ceed ceed;
   CeedOperator op;
   std::vector<std::pair<std::string, int>> field_sources;
+  // Optional retained QFunction context handle for in-place runtime updates (e.g.
+  // far-field frequency) without reassembly; nullptr if the operator has no context or
+  // the context is not updated. Owned by the group (destroyed with it).
+  CeedQFunctionContext ctx = nullptr;
 };
+
+// Re-point the passive field inputs of each group operator at the given source vectors
+// and accumulate into the output vector with CeedOperatorApplyAdd.
+void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
+                            const std::array<const Vector *, 4> &srcs, const Vector &out);
 
 }  // namespace fem
 
@@ -62,8 +71,37 @@ public:
     AREA,           // ∫ dS (no field input, for validation)
     HCURL_NORM2,    // ∫ |u|² dS for an H(curl) field u (single-sided, for validation)
     INTERFACE_EPR,  // Interface dielectric energy following InterfaceDielectricCoefficient
-    SURFACE_FLUX    // Surface flux following BdrSurfaceFluxCoefficient
+    SURFACE_FLUX,   // Surface flux following BdrSurfaceFluxCoefficient
+    FARFIELD,       // Stratton-Chu far-field following AddStrattonChuIntegrandAtElement
+    BDR_FIELD_E,    // H(curl) field values at boundary visualization points
+    BDR_FIELD_B,    // H(div) field values at boundary visualization points
+    BDR_FLUX_Q,     // Surface charge (eps E) . n at boundary visualization points
+    BDR_CURRENT_J,  // Surface current n x (mu^-1 B) at boundary visualization points
+    BDR_ENERGY_E,   // Electric energy density at boundary visualization points
+    BDR_ENERGY_M    // Magnetic energy density at boundary visualization points
   };
+
+  // Whether the kind fills a per-point visualization buffer (vs. computing integrals).
+  static bool IsBufferKind(Kind kind)
+  {
+    return kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B ||
+           kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_CURRENT_J ||
+           kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M;
+  }
+
+  // Number of components per visualization point for buffer kinds.
+  static int BufferNumComp(Kind kind)
+  {
+    return (kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_ENERGY_E ||
+            kind == Kind::BDR_ENERGY_M)
+               ? 1
+               : 3;
+  }
+
+  // Total buffer size (all boundary elements, lattice points, components) and
+  // per-element base offsets for the boundary visualization field kinds.
+  int BufferSize() const { return buffer_size; }
+  const std::vector<int> &BufferBases() const { return buffer_bases; }
 
 private:
   // Computation kind and integrand parameters.
@@ -73,6 +111,15 @@ private:
   SurfaceFlux flux_type = SurfaceFlux::ELECTRIC;
   bool flux_two_sided = false;
   mfem::Vector flux_x0;
+  std::vector<std::array<double, 3>> farfield_dirs;
+  double farfield_omega_re = 0.0, farfield_omega_im = 0.0;
+
+  // Boundary visualization field kinds: lattice refinement level, output scaling,
+  // total output buffer size, and per-boundary-element base offsets into the buffer.
+  int viz_lod = 0;
+  double viz_scaling = 1.0;
+  int buffer_size = 0;
+  std::vector<int> buffer_bases;
 
   // Field finite element spaces (not owned): fespace_e for H(curl) fields (source index
   // 0), fespace_b for H(div) fields (source index 1). Either may be nullptr depending
@@ -108,10 +155,10 @@ private:
 
   // Apply all group operators with the field inputs pointed at the given source
   // vectors, accumulating into the local output vector.
-  void ApplyAdd(const std::array<const Vector *, 2> &srcs) const;
+  void ApplyAdd(const std::array<const Vector *, 4> &srcs) const;
 
   // Zero the local output vector, apply, and return the local sum (no MPI reduction).
-  double EvalLocal(const std::array<const Vector *, 2> &srcs) const;
+  double EvalLocal(const std::array<const Vector *, 4> &srcs) const;
 
 public:
   // Returns false when libCEED surface functionals have been globally disabled via the
@@ -124,6 +171,18 @@ public:
   // may be nullptr but the mesh is still required.
   SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
                     const mfem::ParFiniteElementSpace *fespace = nullptr);
+
+  // Construct a boundary visualization field evaluator (BDR_FIELD_E or BDR_FIELD_B),
+  // evaluating at the order-lod lattice points of each boundary element (the ParaView
+  // output sampling, see mfem::RefinedGeometry).
+  SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
+                    const mfem::ParFiniteElementSpace &fespace, int lod);
+
+  // Construct a boundary visualization field evaluator with material properties and
+  // output scaling (BDR_FLUX_Q, BDR_CURRENT_J, BDR_ENERGY_E, BDR_ENERGY_M).
+  SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
+                    const mfem::ParFiniteElementSpace &fespace,
+                    const MaterialOperator &mat_op, int lod, double scaling);
 
   // Construct an interface dielectric energy participation functional with the given
   // interface type, thickness, and permittivity (see InterfaceDielectricCoefficient).
@@ -140,6 +199,14 @@ public:
                     const mfem::ParFiniteElementSpace *rt_fespace,
                     const MaterialOperator &mat_op, SurfaceFlux type, bool two_sided,
                     const mfem::Vector &x0);
+
+  // Construct a Stratton-Chu far-field functional for the given observation directions
+  // (see AddStrattonChuIntegrandAtElement; external boundaries only).
+  SurfaceFunctional(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
+                    const mfem::ParFiniteElementSpace &nd_fespace,
+                    const mfem::ParFiniteElementSpace &rt_fespace,
+                    const MaterialOperator &mat_op,
+                    const std::vector<std::array<double, 3>> &r_naughts);
 
   ~SurfaceFunctional();
 
@@ -170,6 +237,20 @@ public:
   // LumpedPortData::GetPower (two-sided POWER flux functionals only). Collective on the
   // mesh communicator.
   std::complex<double> EvalComplexPower(const GridFunction &E, const GridFunction &B) const;
+
+  // Evaluate the far-field rE integrals for all observation directions at the given
+  // (complex) frequency, following SurfacePostOperator::GetFarFieldrE. Reassembles when
+  // the frequency changes. Collective on the mesh communicator.
+  std::vector<std::array<std::complex<double>, 3>> EvalFarField(const GridFunction &E,
+                                                                const GridFunction &B,
+                                                                double omega_re,
+                                                                double omega_im);
+
+  // Fill the boundary visualization buffer with the pointwise field values (local
+  // operation, buffer kinds only). The grid function overload accumulates the real and
+  // imaginary part contributions (energy density kinds).
+  void EvalBuffer(const Vector &u, Vector &buffer) const;
+  void EvalBuffer(const GridFunction &u, Vector &buffer) const;
 };
 
 //

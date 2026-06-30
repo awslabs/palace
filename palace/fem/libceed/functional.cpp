@@ -84,10 +84,14 @@ void AssembleCeedSurfaceFunctional(const CeedQFunctionInfo &info, void *ctx,
                                    std::size_t ctx_size, Ceed ceed,
                                    const std::vector<CeedFunctionalFieldInput> &inputs,
                                    CeedInt num_out_comp, CeedElemRestriction out_restr,
-                                   CeedOperator *op)
+                                   CeedOperator *op, CeedQFunctionContext *ctx_out)
 {
   MFEM_VERIFY(!info.assemble_q_data,
               "Surface functional integrator does not support quadrature data assembly!");
+  if (ctx_out)
+  {
+    *ctx_out = nullptr;
+  }
 
   // Create basis for summing contributions from all quadrature points on each element
   // for each output component (all-ones interpolation matrix). The number of quadrature
@@ -127,7 +131,16 @@ void AssembleCeedSurfaceFunctional(const CeedQFunctionInfo &info, void *ctx,
     PalaceCeedCall(ceed, CeedQFunctionContextSetData(apply_ctx, CEED_MEM_HOST,
                                                      CEED_COPY_VALUES, ctx_size, ctx));
     PalaceCeedCall(ceed, CeedQFunctionSetContext(apply_qf, apply_ctx));
-    PalaceCeedCall(ceed, CeedQFunctionContextDestroy(&apply_ctx));
+    if (ctx_out)
+    {
+      // Transfer ownership of the context handle to the caller (for in-place runtime
+      // updates without reassembly); it must be destroyed by the caller.
+      *ctx_out = apply_ctx;
+    }
+    else
+    {
+      PalaceCeedCall(ceed, CeedQFunctionContextDestroy(&apply_ctx));
+    }
   }
 
   for (const auto &input : inputs)

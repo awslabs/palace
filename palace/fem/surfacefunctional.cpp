@@ -105,30 +105,6 @@ void AppendPoints(FaceConfigKey &key, const std::vector<mfem::IntegrationPoint> 
   }
 }
 
-// Re-point the passive field inputs of each group operator at the given source vectors
-// and accumulate into the output vector with CeedOperatorApplyAdd.
-void ApplyAddGroups(const std::vector<fem::CeedGroupOperator> &groups,
-                    const std::array<const Vector *, 2> &srcs, const Vector &out)
-{
-  for (const auto &[ceed, op, field_sources] : groups)
-  {
-    for (const auto &[name, source] : field_sources)
-    {
-      MFEM_ASSERT(srcs[source], "Missing source vector for libCEED field input!");
-      CeedOperatorField field;
-      CeedVector field_vec;
-      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(op, name.c_str(), &field));
-      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &field_vec));
-      ceed::InitCeedVector(*srcs[source], ceed, &field_vec, false);
-    }
-    CeedVector out_vec;
-    ceed::InitCeedVector(out, ceed, &out_vec);
-    PalaceCeedCall(
-        ceed, CeedOperatorApplyAdd(op, CEED_VECTOR_NONE, out_vec, CEED_REQUEST_IMMEDIATE));
-    PalaceCeedCall(ceed, CeedVectorDestroy(&out_vec));
-  }
-}
-
 // Holds libCEED object references created during operator assembly for destruction once
 // the assembled operator owns them.
 struct CeedAssemblyScratch
@@ -158,6 +134,29 @@ struct CeedAssemblyScratch
 
 }  // namespace
 
+void fem::ApplyAddGroupOperators(const std::vector<fem::CeedGroupOperator> &groups,
+                                 const std::array<const Vector *, 4> &srcs,
+                                 const Vector &out)
+{
+  for (const auto &[ceed, op, field_sources, ctx] : groups)
+  {
+    for (const auto &[name, source] : field_sources)
+    {
+      MFEM_ASSERT(srcs[source], "Missing source vector for libCEED field input!");
+      CeedOperatorField field;
+      CeedVector field_vec;
+      PalaceCeedCall(ceed, CeedOperatorGetFieldByName(op, name.c_str(), &field));
+      PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &field_vec));
+      ceed::InitCeedVector(*srcs[source], ceed, &field_vec, false);
+    }
+    CeedVector out_vec;
+    ceed::InitCeedVector(out, ceed, &out_vec);
+    PalaceCeedCall(
+        ceed, CeedOperatorApplyAdd(op, CEED_VECTOR_NONE, out_vec, CEED_REQUEST_IMMEDIATE));
+    PalaceCeedCall(ceed, CeedVectorDestroy(&out_vec));
+  }
+}
+
 SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
                                      const mfem::Array<int> &bdr_attr_marker,
                                      const mfem::ParFiniteElementSpace *fespace)
@@ -169,6 +168,36 @@ SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
   MFEM_VERIFY(kind == Kind::AREA || fespace,
               "SurfaceFunctional requires a field finite element space for functionals "
               "with field inputs!");
+  Assemble(mesh, bdr_attr_marker);
+}
+
+SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
+                                     const mfem::Array<int> &bdr_attr_marker,
+                                     const mfem::ParFiniteElementSpace &fespace, int lod)
+  : kind(kind), fespace_e(kind == Kind::BDR_FIELD_E ? &fespace : nullptr),
+    fespace_b(kind == Kind::BDR_FIELD_B ? &fespace : nullptr), mat_op(nullptr),
+    comm(mesh.GetComm()), viz_lod(lod)
+{
+  MFEM_VERIFY(kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B,
+              "Invalid SurfaceFunctional constructor for the requested functional kind!");
+  Assemble(mesh, bdr_attr_marker);
+}
+
+SurfaceFunctional::SurfaceFunctional(Kind kind, const Mesh &mesh,
+                                     const mfem::Array<int> &bdr_attr_marker,
+                                     const mfem::ParFiniteElementSpace &fespace,
+                                     const MaterialOperator &mat_op, int lod,
+                                     double scaling)
+  : kind(kind),
+    fespace_e((kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_ENERGY_E) ? &fespace
+                                                                       : nullptr),
+    fespace_b((kind == Kind::BDR_CURRENT_J || kind == Kind::BDR_ENERGY_M) ? &fespace
+                                                                          : nullptr),
+    mat_op(&mat_op), comm(mesh.GetComm()), viz_lod(lod), viz_scaling(scaling)
+{
+  MFEM_VERIFY(kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_CURRENT_J ||
+                  kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M,
+              "Invalid SurfaceFunctional constructor for the requested functional kind!");
   Assemble(mesh, bdr_attr_marker);
 }
 
@@ -199,11 +228,27 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
   Assemble(mesh, bdr_attr_marker);
 }
 
+SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
+                                     const mfem::Array<int> &bdr_attr_marker,
+                                     const mfem::ParFiniteElementSpace &nd_fespace,
+                                     const mfem::ParFiniteElementSpace &rt_fespace,
+                                     const MaterialOperator &mat_op,
+                                     const std::vector<std::array<double, 3>> &r_naughts)
+  : kind(Kind::FARFIELD), farfield_dirs(r_naughts), fespace_e(&nd_fespace),
+    fespace_b(&rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
+{
+  Assemble(mesh, bdr_attr_marker);
+}
+
 SurfaceFunctional::~SurfaceFunctional()
 {
   for (auto &group : groups)
   {
     PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
+    if (group.ctx)
+    {
+      PalaceCeedCall(group.ceed, CeedQFunctionContextDestroy(&group.ctx));
+    }
   }
 }
 
@@ -229,6 +274,10 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
     for (auto &group : groups)
     {
       PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
+      if (group.ctx)
+      {
+        PalaceCeedCall(group.ceed, CeedQFunctionContextDestroy(&group.ctx));
+      }
     }
     groups.clear();
     valid = false;
@@ -290,7 +339,18 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       {
         plan.elem_a = FET.Elem1No;
       }
-      else if (kind == Kind::SURFACE_FLUX ||
+      else if (kind == Kind::FARFIELD)
+      {
+        if (has_elem2)
+        {
+          // Far-field computations are only supported on external boundaries (the
+          // legacy path errors in this case as well).
+          valid = false;
+          return;
+        }
+        plan.elem_a = FET.Elem1No;
+      }
+      else if (kind == Kind::SURFACE_FLUX || IsBufferKind(kind) ||
                (kind == Kind::INTERFACE_EPR && epr_type == InterfaceDielectric::DEFAULT))
       {
         plan.elem_a = FET.Elem1No;
@@ -346,8 +406,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       // (TransformBdrElementToFace with the boundary element to face orientation) ->
       // element 1/2 reference coordinates (FET.Loc1/Loc2).
       const auto bdr_geom = pmesh.GetBdrElementGeometry(i);
-      const int q_order = fem::DefaultIntegrationOrder::Get(pmesh, bdr_geom);
-      const mfem::IntegrationRule &face_ir = mfem::IntRules.Get(bdr_geom, q_order);
+      const bool buffer_kind = IsBufferKind(kind);
+      const mfem::IntegrationRule &face_ir =
+          buffer_kind ? mfem::GlobGeometryRefiner.Refine(bdr_geom, viz_lod, 1)->RefPts
+                      : mfem::IntRules.Get(
+                            bdr_geom, fem::DefaultIntegrationOrder::Get(pmesh, bdr_geom));
       const int nq = face_ir.GetNPoints();
       int f, o;
       pmesh.GetBdrElementFace(i, &f, &o);
@@ -419,12 +482,30 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       {
         it->second.vol_indices_b.push_back(plan.elem_b);
       }
-      it->second.out_slots.push_back(num_marked++);
+      if (IsBufferKind(kind))
+      {
+        if (buffer_bases.empty())
+        {
+          buffer_bases.resize(pmesh.GetNBE(), -1);
+        }
+        buffer_bases[i] = buffer_size;
+        it->second.out_slots.push_back(buffer_size);
+        buffer_size += nq * BufferNumComp(kind);
+        num_marked++;
+      }
+      else
+      {
+        it->second.out_slots.push_back(num_marked++);
+      }
     }
   }
 
-  // Initialize the local output vector and field staging vector.
-  local_out.SetSize(num_marked);
+  // Initialize the local output vector and field staging vector. Far-field operators
+  // produce 6 values (Re/Im of a 3-vector) per direction per element.
+  const int num_out =
+      (kind == Kind::FARFIELD) ? 6 * static_cast<int>(farfield_dirs.size()) : 1;
+  local_out.SetSize(
+      (kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B) ? 0 : num_marked * num_out);
   local_out.UseDevice(true);
   if (need_field)
   {
@@ -489,6 +570,40 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
     }
   }
+  else if (kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_CURRENT_J ||
+           kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M)
+  {
+    base_ctx.resize(2);
+    base_ctx[0].second = 1.0;  // Normal sign, set per group
+    base_ctx[1].second = viz_scaling;
+    MaterialPropertyCoefficient coeff_func(
+        mat_op->GetAttributeToMaterial(),
+        (kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_ENERGY_E)
+            ? mat_op->GetPermittivityReal()
+            : mat_op->GetInvPermeability());
+    auto mat_ctx = ceed::PopulateCoefficientContext(3, &coeff_func);
+    base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+  }
+  else if (kind == Kind::FARFIELD)
+  {
+    const int N = static_cast<int>(farfield_dirs.size());
+    base_ctx.resize(4 + 3 * N);
+    base_ctx[0].second = 1.0;  // Normal sign, set per group
+    base_ctx[1].second = farfield_omega_re;
+    base_ctx[2].second = farfield_omega_im;
+    base_ctx[3].first = N;
+    for (int d = 0; d < N; d++)
+    {
+      for (int c = 0; c < 3; c++)
+      {
+        base_ctx[4 + 3 * d + c].second = farfield_dirs[d][c];
+      }
+    }
+    MaterialPropertyCoefficient c0_func(mat_op->GetAttributeToMaterial(),
+                                        mat_op->GetLightSpeed());
+    auto mat_ctx = ceed::PopulateCoefficientContext(3, &c0_func);
+    base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
+  }
   else
   {
     base_ctx.resize(2);
@@ -504,8 +619,12 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   {
     const std::size_t num_elem = group.bdr_indices.size();
     const bool has_b = !group.vol_indices_b.empty();
-    const mfem::IntegrationRule &face_ir = mfem::IntRules.Get(
-        group.bdr_geom, fem::DefaultIntegrationOrder::Get(pmesh, group.bdr_geom));
+    const bool buffer_kind = IsBufferKind(kind);
+    const mfem::IntegrationRule &face_ir =
+        buffer_kind
+            ? mfem::GlobGeometryRefiner.Refine(group.bdr_geom, viz_lod, 1)->RefPts
+            : mfem::IntRules.Get(group.bdr_geom,
+                                 fem::DefaultIntegrationOrder::Get(pmesh, group.bdr_geom));
 
     // Objects are owned by the assembled operator; scratch destroys our references.
     CeedAssemblyScratch scratch(ceed);
@@ -524,6 +643,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     {
       face_mesh_fe = mesh_fespace.FEColl()->TraceFiniteElementForGeometry(group.bdr_geom);
     }
+    const bool field_kind = (kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B);
+    if (!field_kind)
     {
       CeedBasis face_mesh_basis;
       ceed::InitBasisAtPoints(*face_mesh_fe, face_ir, mesh_fespace.GetVDim(), ceed,
@@ -532,7 +653,10 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           mesh_fespace, ceed, group.bdr_geom, group.bdr_indices, /*is_interp*/ true);
       CeedVector mesh_nodes_vec;
       ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
-      inputs.push_back({"qw", nullptr, nullptr, face_mesh_basis, ceed::EvalMode::Weight});
+      if (!buffer_kind)
+      {
+        inputs.push_back({"qw", nullptr, nullptr, face_mesh_basis, ceed::EvalMode::Weight});
+      }
       inputs.push_back(
           {"x_f", mesh_nodes_vec, face_mesh_restr, face_mesh_basis, ceed::EvalMode::Grad});
       scratch.vecs.push_back(mesh_nodes_vec);
@@ -594,7 +718,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     {
       AddVolGeomInputs("2", group.vol_indices_b, group.vol_geom_b, *group.mapped_ir_b);
     }
-    if (kind == Kind::SURFACE_FLUX)
+    if (kind == Kind::SURFACE_FLUX || kind == Kind::FARFIELD)
     {
       // Coordinates at the face quadrature points, interpolated from the mesh nodes
       // with the boundary element basis (constant input, never re-pointed).
@@ -630,15 +754,27 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       scratch.restrs.push_back(restr);
       scratch.bases.push_back(basis);
     };
-    if (kind == Kind::HCURL_NORM2 || kind == Kind::INTERFACE_EPR)
+    if (kind == Kind::HCURL_NORM2 || kind == Kind::INTERFACE_EPR || buffer_kind)
     {
-      AddFieldInput("u_1", 0, *fespace_e, group.vol_indices_a, group.vol_geom_a,
+      const auto &field_fespace = fespace_b ? *fespace_b : *fespace_e;
+      AddFieldInput("u_1", 0, field_fespace, group.vol_indices_a, group.vol_geom_a,
                     *group.mapped_ir_a);
       if (has_b)
       {
-        AddFieldInput("u_2", 0, *fespace_e, group.vol_indices_b, group.vol_geom_b,
+        AddFieldInput("u_2", 0, field_fespace, group.vol_indices_b, group.vol_geom_b,
                       *group.mapped_ir_b);
       }
+    }
+    else if (kind == Kind::FARFIELD)
+    {
+      AddFieldInput("u_1", 0, *fespace_e, group.vol_indices_a, group.vol_geom_a,
+                    *group.mapped_ir_a);
+      AddFieldInput("u_2", 1, *fespace_e, group.vol_indices_a, group.vol_geom_a,
+                    *group.mapped_ir_a);
+      AddFieldInput("u_3", 2, *fespace_b, group.vol_indices_a, group.vol_geom_a,
+                    *group.mapped_ir_a);
+      AddFieldInput("u_4", 3, *fespace_b, group.vol_indices_a, group.vol_geom_a,
+                    *group.mapped_ir_a);
     }
     else if (kind == Kind::SURFACE_FLUX)
     {
@@ -662,12 +798,35 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
     }
 
-    // Output restriction: one slot per boundary element in the local output vector.
+    // Output restriction: for integral kinds, num_out slots per boundary element in
+    // the local output vector (component stride num_marked); for the boundary
+    // visualization field kinds, 3 components per lattice point scattering into the
+    // output buffer at the per-element base offsets.
     CeedElemRestriction out_restr;
-    PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, static_cast<CeedInt>(num_elem), 1,
-                                                   1, num_marked, num_marked, CEED_MEM_HOST,
-                                                   CEED_COPY_VALUES, group.out_slots.data(),
-                                                   &out_restr));
+    if (buffer_kind)
+    {
+      const int nq = face_ir.GetNPoints();
+      const int nc = BufferNumComp(kind);
+      std::vector<CeedInt> offsets(num_elem * nq);
+      for (std::size_t e = 0; e < num_elem; e++)
+      {
+        for (int j = 0; j < nq; j++)
+        {
+          offsets[e * nq + j] = group.out_slots[e] + nc * j;
+        }
+      }
+      PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, static_cast<CeedInt>(num_elem),
+                                                     nq, nc, 1, (CeedSize)buffer_size,
+                                                     CEED_MEM_HOST, CEED_COPY_VALUES,
+                                                     offsets.data(), &out_restr));
+    }
+    else
+    {
+      PalaceCeedCall(ceed, CeedElemRestrictionCreate(
+                               ceed, static_cast<CeedInt>(num_elem), 1, num_out, num_marked,
+                               (CeedSize)num_marked * num_out, CEED_MEM_HOST,
+                               CEED_COPY_VALUES, group.out_slots.data(), &out_restr));
+    }
     scratch.restrs.push_back(out_restr);
 
     // Select the QFunction and finalize the (group dependent) context.
@@ -708,6 +867,43 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
             break;
         }
         break;
+      case Kind::BDR_FIELD_E:
+        info.apply_qf = has_b ? f_eval_bdr_hcurl_2_32 : f_eval_bdr_hcurl_1_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(has_b ? f_eval_bdr_hcurl_2_32_loc
+                                                               : f_eval_bdr_hcurl_1_32_loc);
+        break;
+      case Kind::BDR_FIELD_B:
+        info.apply_qf = has_b ? f_eval_bdr_hdiv_2_32 : f_eval_bdr_hdiv_1_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(has_b ? f_eval_bdr_hdiv_2_32_loc
+                                                               : f_eval_bdr_hdiv_1_32_loc);
+        break;
+      case Kind::BDR_FLUX_Q:
+        ctx[0].second = group.flip_normal ? -1.0 : 1.0;
+        info.apply_qf = has_b ? f_eval_bdr_flux_q_2_32 : f_eval_bdr_flux_q_1_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            has_b ? f_eval_bdr_flux_q_2_32_loc : f_eval_bdr_flux_q_1_32_loc);
+        break;
+      case Kind::BDR_CURRENT_J:
+        ctx[0].second = group.flip_normal ? -1.0 : 1.0;
+        info.apply_qf = has_b ? f_eval_bdr_current_j_2_32 : f_eval_bdr_current_j_1_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            has_b ? f_eval_bdr_current_j_2_32_loc : f_eval_bdr_current_j_1_32_loc);
+        break;
+      case Kind::BDR_ENERGY_E:
+        info.apply_qf = has_b ? f_eval_bdr_energy_e_2_32 : f_eval_bdr_energy_e_1_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            has_b ? f_eval_bdr_energy_e_2_32_loc : f_eval_bdr_energy_e_1_32_loc);
+        break;
+      case Kind::BDR_ENERGY_M:
+        info.apply_qf = has_b ? f_eval_bdr_energy_m_2_32 : f_eval_bdr_energy_m_1_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(
+            has_b ? f_eval_bdr_energy_m_2_32_loc : f_eval_bdr_energy_m_1_32_loc);
+        break;
+      case Kind::FARFIELD:
+        ctx[0].second = group.flip_normal ? -1.0 : 1.0;
+        info.apply_qf = f_integ_surf_farfield_32;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_integ_surf_farfield_32_loc);
+        break;
       case Kind::SURFACE_FLUX:
         ctx[0].second = group.flip_normal ? -1.0 : 1.0;
         switch (flux_type)
@@ -733,19 +929,28 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
 
     // Assemble the operator.
     CeedOperator op;
-    ceed::AssembleCeedSurfaceFunctional(info, ctx.data(),
-                                        ctx.size() * sizeof(CeedIntScalar), ceed, inputs, 1,
-                                        out_restr, &op);
-    groups.push_back({ceed, op, std::move(field_sources)});
+    CeedQFunctionContext op_ctx = nullptr;
+    if (buffer_kind)
+    {
+      ceed::AssembleCeedPointEvaluator(info, ctx.data(), ctx.size() * sizeof(CeedIntScalar),
+                                       ceed, inputs, BufferNumComp(kind), out_restr, &op);
+    }
+    else
+    {
+      ceed::AssembleCeedSurfaceFunctional(info, ctx.data(),
+                                          ctx.size() * sizeof(CeedIntScalar), ceed, inputs,
+                                          num_out, out_restr, &op, &op_ctx);
+    }
+    groups.push_back({ceed, op, std::move(field_sources), op_ctx});
   }
 }
 
-void SurfaceFunctional::ApplyAdd(const std::array<const Vector *, 2> &srcs) const
+void SurfaceFunctional::ApplyAdd(const std::array<const Vector *, 4> &srcs) const
 {
-  ApplyAddGroups(groups, srcs, local_out);
+  fem::ApplyAddGroupOperators(groups, srcs, local_out);
 }
 
-double SurfaceFunctional::EvalLocal(const std::array<const Vector *, 2> &srcs) const
+double SurfaceFunctional::EvalLocal(const std::array<const Vector *, 4> &srcs) const
 {
   MFEM_VERIFY(valid, "Eval called on an invalid (unassembled) SurfaceFunctional!");
   if (local_out.Size() == 0)
@@ -819,6 +1024,99 @@ std::complex<double> SurfaceFunctional::EvalFlux(const GridFunction *E,
   }
   Mpi::GlobalSum(1, &dot, comm);
   return dot;
+}
+
+void SurfaceFunctional::EvalBuffer(const Vector &u, Vector &buffer) const
+{
+  MFEM_VERIFY(valid && IsBufferKind(kind),
+              "EvalBuffer requires a valid boundary visualization field functional!");
+  MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
+  buffer = 0.0;
+  fem::ApplyAddGroupOperators(groups, {&u}, buffer);
+}
+
+void SurfaceFunctional::EvalBuffer(const GridFunction &u, Vector &buffer) const
+{
+  MFEM_VERIFY(valid && IsBufferKind(kind),
+              "EvalBuffer requires a valid boundary visualization field functional!");
+  MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
+  buffer = 0.0;
+  fem::ApplyAddGroupOperators(groups, {&u.Real()}, buffer);
+  if (u.HasImag())
+  {
+    fem::ApplyAddGroupOperators(groups, {&u.Imag()}, buffer);
+  }
+}
+
+std::vector<std::array<std::complex<double>, 3>>
+SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
+                                double omega_re, double omega_im)
+{
+  MFEM_VERIFY(kind == Kind::FARFIELD && E.HasImag() && B.HasImag(),
+              "SurfaceFunctional::EvalFarField requires a far-field functional and "
+              "complex-valued fields!");
+  MFEM_VERIFY(valid, "EvalFarField called on an invalid (unassembled) SurfaceFunctional!");
+
+  // The frequency enters only the QFunction context (the omega slots); update it in
+  // place rather than reassembling the operators. Reassembly would rebuild the bases,
+  // restrictions, and on-the-fly geometry inputs and re-JIT the (expensive) far-field
+  // kernel on every frequency -- none of which depend on omega. FARFIELD context layout
+  // (see Assemble): [0] normal sign, [1] omega_re, [2] omega_im, [3] N, [4..] directions,
+  // then the material context.
+  if (omega_re != farfield_omega_re || omega_im != farfield_omega_im)
+  {
+    farfield_omega_re = omega_re;
+    farfield_omega_im = omega_im;
+    for (auto &group : groups)
+    {
+      if (!group.ctx)
+      {
+        continue;
+      }
+      CeedIntScalar *data;
+      PalaceCeedCall(group.ceed,
+                     CeedQFunctionContextGetData(group.ctx, CEED_MEM_HOST, &data));
+      data[1].second = omega_re;
+      data[2].second = omega_im;
+      PalaceCeedCall(group.ceed, CeedQFunctionContextRestoreData(group.ctx, &data));
+    }
+  }
+
+  // Integrate, reduce each component over the local elements and all processes, and
+  // apply the final cross products (following GetFarFieldrE).
+  const int N = static_cast<int>(farfield_dirs.size());
+  const int num_marked = local_out.Size() / std::max(6 * N, 1);
+  std::vector<double> integrals(6 * N, 0.0);
+  if (local_out.Size() > 0)
+  {
+    local_out = 0.0;
+    fem::ApplyAddGroupOperators(groups, {&E.Real(), &E.Imag(), &B.Real(), &B.Imag()},
+                                local_out);
+    Vector slice;
+    slice.UseDevice(true);
+    for (int c = 0; c < 6 * N; c++)
+    {
+      slice.MakeRef(local_out, c * num_marked, num_marked);
+      integrals[c] = linalg::LocalSum(slice);
+    }
+  }
+  Mpi::GlobalSum(6 * N, integrals.data(), comm);
+
+  std::vector<std::array<std::complex<double>, 3>> result(N);
+  for (int d = 0; d < N; d++)
+  {
+    const auto &r = farfield_dirs[d];
+    const double *Ir = integrals.data() + 6 * d, *Ii = integrals.data() + 6 * d + 3;
+    const double cr[3] = {r[1] * Ir[2] - r[2] * Ir[1], r[2] * Ir[0] - r[0] * Ir[2],
+                          r[0] * Ir[1] - r[1] * Ir[0]};
+    const double ci[3] = {r[1] * Ii[2] - r[2] * Ii[1], r[2] * Ii[0] - r[0] * Ii[2],
+                          r[0] * Ii[1] - r[1] * Ii[0]};
+    for (int c = 0; c < 3; c++)
+    {
+      result[d][c] = {cr[c], ci[c]};
+    }
+  }
+  return result;
 }
 
 std::complex<double> SurfaceFunctional::EvalComplexPower(const GridFunction &E,
@@ -1033,10 +1331,12 @@ void DomainFieldEvaluator::Eval(const GridFunction *E, const GridFunction *B,
   MFEM_VERIFY((E || kind == Kind::ENERGY_M) && (B || kind == Kind::ENERGY_E),
               "Missing field grid function for domain field evaluator!");
   out = 0.0;
-  ApplyAddGroups(groups, {E ? &E->Real() : nullptr, B ? &B->Real() : nullptr}, out);
+  fem::ApplyAddGroupOperators(groups, {E ? &E->Real() : nullptr, B ? &B->Real() : nullptr},
+                              out);
   if (E ? E->HasImag() : B->HasImag())
   {
-    ApplyAddGroups(groups, {E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr}, out);
+    fem::ApplyAddGroupOperators(groups,
+                                {E ? &E->Imag() : nullptr, B ? &B->Imag() : nullptr}, out);
   }
 }
 

@@ -38,12 +38,16 @@ struct CeedFunctionalFieldInput
 // stored geometry factor data). The QFunction output "v" (size num_out_comp) is summed
 // over quadrature points via an all-ones basis, yielding num_out_comp values per
 // element in the active output vector through out_restr. Apply with
-// CeedOperatorApplyAdd(op, CEED_VECTOR_NONE, output, ...).
+// CeedOperatorApplyAdd(op, CEED_VECTOR_NONE, output, ...). If ctx_out is non-null and a
+// QFunction context was created, the context handle is returned (ownership transferred
+// to the caller, which must destroy it) so the caller can update runtime context values
+// in place (CeedQFunctionContextGetData/RestoreData) without reassembling the operator.
 void AssembleCeedSurfaceFunctional(const CeedQFunctionInfo &info, void *ctx,
                                    std::size_t ctx_size, Ceed ceed,
                                    const std::vector<CeedFunctionalFieldInput> &inputs,
                                    CeedInt num_out_comp, CeedElemRestriction out_restr,
-                                   CeedOperator *op);
+                                   CeedOperator *op,
+                                   CeedQFunctionContext *ctx_out = nullptr);
 
 // Construct a libCEED operator which evaluates a pointwise function of the provided
 // fields at arbitrary points of each element (for example the nodal points of an
