@@ -33,6 +33,7 @@ private:
     const std::vector<int> *bases = nullptr;
     int num_comp = 0;
     int buffer_size = 0;
+    bool point_major = false;
   };
 
   std::fstream pvd_stream;
@@ -52,7 +53,8 @@ private:
                           int num_comp);
   void RegisterPointEvaluator(MeshEntityType location, const std::string &field_name,
                               std::function<void(Vector &)> evaluator,
-                              const std::vector<int> &bases, int num_comp, int buffer_size);
+                              const std::vector<int> &bases, int num_comp, int buffer_size,
+                              bool point_major = false);
   void DeregisterPointField(MeshEntityType location, const std::string &field_name);
 
   bool UseAppendedPointFields(MeshEntityType location) const;
@@ -83,7 +85,7 @@ public:
   void RegisterDomainPointEvaluator(const std::string &field_name,
                                     std::function<void(Vector &)> evaluator,
                                     const std::vector<int> &bases, int num_comp,
-                                    int buffer_size);
+                                    int buffer_size, bool point_major = false);
   void DeregisterBoundaryPointField(const std::string &field_name);
   void DeregisterDomainPointField(const std::string &field_name);
 
