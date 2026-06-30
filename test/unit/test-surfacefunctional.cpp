@@ -11,16 +11,20 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include "fem/coefficient.hpp"
+#include "fem/facenbrexchange.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
+#include "fem/interpolator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/surfacefunctional.hpp"
 #include "models/materialoperator.hpp"
+#include "models/strattonchu.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/geodata.hpp"
 #include "utils/labels.hpp"
+#include "utils/units.hpp"
 
 namespace palace
 {
@@ -1387,6 +1391,497 @@ TEST_CASE("DomainFieldEvaluator", "[surfacefunctional][Serial][Parallel][GPU]")
     PoyntingVectorCoefficient legacy(E, B, mat_op, scaling);
     ref.ProjectCoefficient(legacy);
     CheckField(val, ref);
+  }
+}
+
+TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto order = GENERATE(1, 2);
+  CAPTURE(elem_type, order);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};  // Isotropic (far-field requirement)
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+
+  GridFunction E(nd_fespace, true), B(rt_fespace, true);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + x(2) * x(2);
+                                        v(1) = std::cos(x(2)) + x(0);
+                                        v(2) = x(0) * x(1) + 1.0;
+                                      });
+  mfem::VectorFunctionCoefficient fei(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) * x(2) - 0.5;
+                                        v(1) = std::sin(x(0)) - x(2);
+                                        v(2) = std::cos(x(1)) + x(0) * x(0);
+                                      });
+  mfem::VectorFunctionCoefficient fbr(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) - 0.3 * x(2);
+                                        v(1) = std::sin(x(2)) + 0.5;
+                                        v(2) = std::cos(x(0)) - x(1) * x(2);
+                                      });
+  mfem::VectorFunctionCoefficient fbi(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::cos(x(2)) - 0.2;
+                                        v(1) = x(0) * x(2) + 0.1;
+                                        v(2) = std::sin(x(1)) - x(0);
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  E.Imag().ProjectCoefficient(fei);
+  B.Real().ProjectCoefficient(fbr);
+  B.Imag().ProjectCoefficient(fbi);
+
+  // Observation directions and (complex) frequency.
+  std::vector<std::array<double, 3>> r_naughts;
+  for (auto [theta, phi] : {std::pair{0.3, 0.7}, {1.2, 2.1}, {2.4, 4.5}})
+  {
+    r_naughts.push_back({std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi),
+                         std::cos(theta)});
+  }
+  const double omega_re = 2.7, omega_im = 0.15;
+
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 0;
+  marker[1 - 1] = 1;  // Exterior boundary (z = 0)
+
+  // Legacy reference following GetFarFieldrE.
+  std::vector<std::array<double, 3>> integrals_r(r_naughts.size()),
+      integrals_i(r_naughts.size());
+  for (int i = 0; i < pmesh.GetNBE(); i++)
+  {
+    if (!marker[pmesh.GetBdrAttribute(i) - 1])
+    {
+      continue;
+    }
+    auto *T = const_cast<mfem::ParMesh &>(pmesh).GetBdrElementTransformation(i);
+    const auto *fe = nd_fespace.Get().GetBE(i);
+    const auto *ir =
+        &mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
+    AddStrattonChuIntegrandAtElement(E, B, mat_op, omega_re, omega_im, r_naughts, *T, *ir,
+                                     integrals_r, integrals_i);
+  }
+  Mpi::GlobalSum(3 * r_naughts.size(), integrals_r.data()->data(), comm);
+  Mpi::GlobalSum(3 * r_naughts.size(), integrals_i.data()->data(), comm);
+
+  SurfaceFunctional farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts);
+  REQUIRE(farfield.IsValid());
+  auto result = farfield.EvalFarField(E, B, omega_re, omega_im);
+  REQUIRE(result.size() == r_naughts.size());
+  for (std::size_t d = 0; d < r_naughts.size(); d++)
+  {
+    const auto &r = r_naughts[d];
+    const auto &Ir = integrals_r[d];
+    const auto &Ii = integrals_i[d];
+    const std::array<double, 3> cr = {r[1] * Ir[2] - r[2] * Ir[1],
+                                      r[2] * Ir[0] - r[0] * Ir[2],
+                                      r[0] * Ir[1] - r[1] * Ir[0]};
+    const std::array<double, 3> ci = {r[1] * Ii[2] - r[2] * Ii[1],
+                                      r[2] * Ii[0] - r[0] * Ii[2],
+                                      r[0] * Ii[1] - r[1] * Ii[0]};
+    for (int c = 0; c < 3; c++)
+    {
+      CAPTURE(d, c, cr[c], ci[c], result[d][c].real(), result[d][c].imag());
+      CHECK(result[d][c].real() == Catch::Approx(cr[c]).epsilon(1.0e-10).margin(1.0e-14));
+      CHECK(result[d][c].imag() == Catch::Approx(ci[c]).epsilon(1.0e-10).margin(1.0e-14));
+    }
+  }
+
+  // Changing the frequency must reassemble and still agree (different result).
+  auto result2 = farfield.EvalFarField(E, B, 2.0 * omega_re, 0.0);
+  CHECK(std::abs(result2[0][0] - result[0][0]) > 0.0);
+}
+
+#if defined(MFEM_USE_GSLIB)
+TEST_CASE("InterpolationOperator Ceed Probes", "[surfacefunctional][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto order = GENERATE(1, 2);
+  CAPTURE(elem_type, order);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec);
+  GridFunction E(nd_fespace, true);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + x(2) * x(2);
+                                        v(1) = std::cos(x(2)) + x(0);
+                                        v(2) = x(0) * x(1) + 1.0;
+                                      });
+  mfem::VectorFunctionCoefficient fei(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) * x(2) - 0.5;
+                                        v(1) = std::sin(x(0)) - x(2);
+                                        v(2) = std::cos(x(1)) + x(0) * x(0);
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  E.Imag().ProjectCoefficient(fei);
+
+  // Probe points (element interiors, in both material regions; points on element
+  // borders are avoided since interpolated values of H(curl) fields are multi-valued
+  // there and the GSLIB reference resolves the donor element rank-dependently).
+  std::map<int, config::ProbeData> probes;
+  const std::array<std::array<double, 3>, 3> pts = {
+      {{0.21, 0.37, 0.23}, {0.74, 0.52, 0.81}, {0.53, 0.48, 0.52}}};
+  for (std::size_t i = 0; i < pts.size(); i++)
+  {
+    config::ProbeData data;
+    data.center = pts[i];
+    probes.emplace(static_cast<int>(i + 1), data);
+  }
+  Units units(1.0, 1.0);
+  InterpolationOperator interp(probes, units, nd_fespace);
+
+  // Reference: GSLIB interpolation at the same points (byVDIM).
+  const int npts = static_cast<int>(pts.size());
+  mfem::Vector xyz(npts * 3), vals_r(npts * 3), vals_i(npts * 3);
+  for (int i = 0; i < npts; i++)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      xyz(d * npts + i) = pts[i][d];
+    }
+  }
+  fem::InterpolateFunction(xyz, E.Real(), vals_r, mfem::Ordering::byNODES);
+  fem::InterpolateFunction(xyz, E.Imag(), vals_i, mfem::Ordering::byNODES);
+
+  auto vals = interp.ProbeField(E);
+  REQUIRE(static_cast<int>(vals.size()) == npts * 3);
+  for (int i = 0; i < npts; i++)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      // ProbeField returns byVDIM; the InterpolateFunction reference returns with the
+      // requested (byNODES) ordering.
+      const auto val = vals[3 * i + d];
+      const double ref_r = vals_r(d * npts + i), ref_i = vals_i(d * npts + i);
+      CAPTURE(i, d, ref_r, ref_i);
+      CHECK(val.real() == Catch::Approx(ref_r).epsilon(1.0e-9).margin(1.0e-12));
+      CHECK(val.imag() == Catch::Approx(ref_i).epsilon(1.0e-9).margin(1.0e-12));
+    }
+  }
+}
+#endif
+
+TEST_CASE("SurfaceFunctional Boundary Viz Fields",
+          "[surfacefunctional][Serial][Parallel][GPU]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto order = GENERATE(1, 2);
+  auto nonconformal = GENERATE(false, true);
+  CAPTURE(elem_type, order, nonconformal);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  auto mesh = nonconformal ? MakeNCInterfaceMesh(comm, elem_type)
+                           : MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s[0] = 11.7;
+  dielectric.epsilon_r.s[1] = 11.7;
+  dielectric.epsilon_r.s[2] = 11.7;
+  dielectric.mu_r.s[0] = 1.4;
+  dielectric.mu_r.s[1] = 1.4;
+  dielectric.mu_r.s[2] = 1.4;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+
+  GridFunction E(nd_fespace, false), B(rt_fespace, false);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(x(1)) + x(2) * x(2);
+                                        v(1) = std::cos(x(2)) + x(0);
+                                        v(2) = x(0) * x(1) + 1.0;
+                                      });
+  mfem::VectorFunctionCoefficient fbr(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) - 0.3 * x(2);
+                                        v(1) = std::sin(x(2)) + 0.5;
+                                        v(2) = std::cos(x(0)) - x(1) * x(2);
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  B.Real().ProjectCoefficient(fbr);
+  E.Real().ExchangeFaceNbrData();
+  B.Real().ExchangeFaceNbrData();
+
+  const int lod = order;
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> marker(bdr_attr_max);
+  marker = 1;
+
+  auto TestKind = [&](SurfaceFunctional::Kind kind, const mfem::ParFiniteElementSpace &fes,
+                      const mfem::ParGridFunction &U)
+  {
+    SurfaceFunctional viz(kind, *mesh, marker, fes, lod);
+
+    // The validity decision must be identical on all ranks; interior surfaces split
+    // across processes fall back (consistently).
+    bool valid = viz.IsValid();
+    bool valid_and = valid, valid_or = valid;
+    Mpi::GlobalAnd(1, &valid_and, comm);
+    Mpi::GlobalOr(1, &valid_or, comm);
+    REQUIRE(valid_and == valid_or);
+    if (!valid)
+    {
+      return;
+    }
+
+    Vector buffer(viz.BufferSize());
+    buffer.UseDevice(true);
+    viz.EvalBuffer(U, buffer);
+    const double *buf = buffer.HostRead();
+    const auto &bases = viz.BufferBases();
+
+    BdrFieldVectorCoefficient legacy(U);
+    mfem::Vector V(3);
+    for (int i = 0; i < pmesh.GetNBE(); i++)
+    {
+      const auto &RefG =
+          *mfem::GlobGeometryRefiner.Refine(pmesh.GetBdrElementGeometry(i), lod, 1);
+      auto *T = pmesh.GetBdrElementTransformation(i);
+      for (int j = 0; j < RefG.RefPts.GetNPoints(); j++)
+      {
+        const auto &ip = RefG.RefPts.IntPoint(j);
+        T->SetIntPoint(&ip);
+        legacy.Eval(V, *T, ip);
+        for (int c = 0; c < 3; c++)
+        {
+          const double val = buf[bases[i] + 3 * j + c];
+          CAPTURE(i, j, c, V(c), val);
+          CHECK(val == Catch::Approx(V(c)).epsilon(1.0e-10).margin(1.0e-13));
+        }
+      }
+    }
+  };
+
+  TestKind(SurfaceFunctional::Kind::BDR_FIELD_E, nd_fespace, E.Real());
+  TestKind(SurfaceFunctional::Kind::BDR_FIELD_B, rt_fespace, B.Real());
+
+  // Material-dependent boundary visualization kinds (surface charge, surface current,
+  // boundary energy densities) against the corresponding legacy coefficients.
+  const double scaling = 1.7;
+  auto TestKindCoeff = [&](SurfaceFunctional::Kind kind,
+                           const mfem::ParFiniteElementSpace &fes,
+                           mfem::Coefficient *legacy_s, mfem::VectorCoefficient *legacy_v)
+  {
+    const int nc = SurfaceFunctional::BufferNumComp(kind);
+    SurfaceFunctional viz(kind, *mesh, marker, fes, mat_op, lod, scaling);
+    bool valid = viz.IsValid();
+    bool valid_and = valid, valid_or = valid;
+    Mpi::GlobalAnd(1, &valid_and, comm);
+    Mpi::GlobalOr(1, &valid_or, comm);
+    REQUIRE(valid_and == valid_or);
+    if (!valid)
+    {
+      return;
+    }
+    Vector buffer(viz.BufferSize());
+    buffer.UseDevice(true);
+    viz.EvalBuffer(kind == SurfaceFunctional::Kind::BDR_CURRENT_J ||
+                           kind == SurfaceFunctional::Kind::BDR_ENERGY_M
+                       ? B.Real()
+                       : E.Real(),
+                   buffer);
+    const double *buf = buffer.HostRead();
+    const auto &bases = viz.BufferBases();
+    mfem::Vector V(3);
+    for (int i = 0; i < pmesh.GetNBE(); i++)
+    {
+      const auto &RefG =
+          *mfem::GlobGeometryRefiner.Refine(pmesh.GetBdrElementGeometry(i), lod, 1);
+      auto *T = pmesh.GetBdrElementTransformation(i);
+      for (int j = 0; j < RefG.RefPts.GetNPoints(); j++)
+      {
+        const auto &ip = RefG.RefPts.IntPoint(j);
+        T->SetIntPoint(&ip);
+        if (nc == 1)
+        {
+          const double ref = legacy_s->Eval(*T, ip);
+          const double val = buf[bases[i] + j];
+          CAPTURE(i, j, ref, val);
+          CHECK(val == Catch::Approx(ref).epsilon(1.0e-10).margin(1.0e-13));
+        }
+        else
+        {
+          legacy_v->Eval(V, *T, ip);
+          for (int c = 0; c < 3; c++)
+          {
+            const double val = buf[bases[i] + 3 * j + c];
+            CAPTURE(i, j, c, V(c), val);
+            CHECK(val == Catch::Approx(V(c)).epsilon(1.0e-10).margin(1.0e-13));
+          }
+        }
+      }
+    }
+  };
+  {
+    BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC> q_legacy(
+        &E.Real(), nullptr, mat_op, true, mfem::Vector(), scaling);
+    TestKindCoeff(SurfaceFunctional::Kind::BDR_FLUX_Q, nd_fespace, &q_legacy, nullptr);
+  }
+  {
+    BdrSurfaceCurrentVectorCoefficient j_legacy(B.Real(), mat_op, scaling);
+    TestKindCoeff(SurfaceFunctional::Kind::BDR_CURRENT_J, rt_fespace, nullptr, &j_legacy);
+  }
+  {
+    EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> ue_legacy(E, mat_op, scaling);
+    TestKindCoeff(SurfaceFunctional::Kind::BDR_ENERGY_E, nd_fespace, &ue_legacy, nullptr);
+  }
+  {
+    EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> um_legacy(B, mat_op, scaling);
+    TestKindCoeff(SurfaceFunctional::Kind::BDR_ENERGY_M, rt_fespace, &um_legacy, nullptr);
+  }
+}
+
+TEST_CASE("FaceNbrFieldExchange", "[surfacefunctional][Serial][Parallel]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  auto order = GENERATE(1, 2);
+  auto nonconformal = GENERATE(false, true);
+  CAPTURE(elem_type, order, nonconformal);
+
+  auto mesh = nonconformal ? MakeNCInterfaceMesh(comm, elem_type)
+                           : MakeInterfaceMesh(comm, elem_type);
+  auto &pmesh = mesh->Get();
+
+  mfem::ND_FECollection nd_fec(order, pmesh.Dimension());
+  mfem::RT_FECollection rt_fec(order - 1, pmesh.Dimension());
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), rt_fespace(*mesh, &rt_fec);
+
+  // Project non-trivial smooth fields. The reference values are computed from the same
+  // projected grid functions through the legacy mfem face neighbor dof exchange, so the
+  // comparison is exact up to roundoff (not projection error).
+  mfem::ParGridFunction E(&nd_fespace.Get()), B(&rt_fespace.Get());
+  mfem::VectorFunctionCoefficient fe(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = std::sin(x(1)) + x(2) * x(2);
+                                       v(1) = std::cos(x(2)) + x(0);
+                                       v(2) = x(0) * x(1) + 1.0;
+                                     });
+  mfem::VectorFunctionCoefficient fb(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = x(1) * x(2) - 0.5;
+                                       v(1) = std::sin(x(0)) - x(2);
+                                       v(2) = std::cos(x(1)) + x(0) * x(0);
+                                     });
+  E.ProjectCoefficient(fe);
+  B.ProjectCoefficient(fb);
+
+  // Request E (slot 0) at a few reference points of every ghost element, and both E
+  // and B (slot 1) for every other ghost element (exercising the value layouts). The
+  // points are valid reference coordinates for both tetrahedra and hexahedra.
+  const int num_ghost = pmesh.GetNFaceNeighborElements();
+  std::vector<FaceNbrFieldExchange::Request> requests;
+  for (int fn = 0; fn < num_ghost; fn++)
+  {
+    auto &req = requests.emplace_back();
+    req.face_nbr_elem = fn;
+    req.source_mask = (fn % 2 == 0) ? 0b01u : 0b11u;
+    req.pts.resize(4);
+    req.pts[0].Set3(0.1, 0.2, 0.3);
+    req.pts[1].Set3(0.25, 0.25, 0.25);
+    req.pts[2].Set3(0.05, 0.1, 0.7);
+    req.pts[3].Set3(0.3, 0.05, 0.05);
+  }
+  FaceNbrFieldExchange exchange(
+      *mesh, {&nd_fespace.Get(), &rt_fespace.Get(), nullptr, nullptr}, requests);
+  exchange.Exchange({&E, &B, nullptr, nullptr});
+
+  // Reference: evaluate the ghost elements through the legacy dof exchange.
+  E.ExchangeFaceNbrData();
+  B.ExchangeFaceNbrData();
+  std::vector<double> vals(exchange.Imported().HostRead(),
+                           exchange.Imported().HostRead() + exchange.ImportSize());
+  mfem::Vector ref(3);
+  int num_checked = 0;
+  for (std::size_t r = 0; r < requests.size(); r++)
+  {
+    const auto &req = requests[r];
+    for (int s = 0; s < 2; s++)
+    {
+      const int offset = exchange.ImportOffset(static_cast<int>(r), s);
+      if (!(req.source_mask & (1u << s)))
+      {
+        CHECK(offset < 0);
+        continue;
+      }
+      const auto &U = (s == 0) ? E : B;
+      for (std::size_t j = 0; j < req.pts.size(); j++)
+      {
+        U.GetVectorValue(pmesh.GetNE() + req.face_nbr_elem, req.pts[j], ref);
+        for (int c = 0; c < 3; c++)
+        {
+          CAPTURE(r, s, j, c);
+          CHECK(vals[offset + 3 * j + c] == Catch::Approx(ref(c)).margin(1.0e-12));
+          num_checked++;
+        }
+      }
+    }
+  }
+  // With more than one process, the partition must produce at least one ghost element
+  // somewhere (the exchange is the point of the test).
+  int num_global = num_checked;
+  Mpi::GlobalSum(1, &num_global, comm);
+  CHECK((Mpi::Size(comm) == 1 || num_global > 0));
+
+  // The field inputs are re-pointed at the sources on each call: scaling the field
+  // scales the exchanged values.
+  E *= 2.0;
+  exchange.Exchange({&E, &B, nullptr, nullptr});
+  const double *vals2 = exchange.Imported().HostRead();
+  for (std::size_t r = 0; r < requests.size(); r++)
+  {
+    const int offset = exchange.ImportOffset(static_cast<int>(r), 0);
+    for (std::size_t j = 0; j < 3 * requests[r].pts.size(); j++)
+    {
+      CHECK(vals2[offset + j] == Catch::Approx(2.0 * vals[offset + j]).margin(1.0e-12));
+    }
   }
 }
 
