@@ -471,7 +471,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   MFEM_VERIFY(K && M, "Invalid empty HDM matrices when constructing PROM!");
 
   // Per-port boundary masses for wave ports (ω-independent). The wave-port contribution
-  // to A(ω) is then assembled at each ω as Σ_p kₙ,p(ω)·M^(p)_{μ⁻¹,r}, where M^(p)_r is
+  // to A(ω) is then assembled at each ω as Σ_p kₙ,p(ω)·M_{μ⁻¹,r,p}, where M_{r,p} is
   // projected onto the basis only when the basis grows. This avoids HDM-scale work in
   // the online phase. See WavePortOperator::AddBoundaryMassBdrCoefficients and
   // SpaceOperator::GetWavePortBoundaryMassMatrix.
@@ -766,7 +766,7 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
   }
   Mr.conservativeResize(dim_V_new, dim_V_new);
   ProjectMatInternal(comm, V, *M, Mr, r, dim_V_old, true);
-  // Per-port wave-port masses. M^(p)_r is initialized lazily so the map only contains
+  // Per-port wave-port masses. M_{r,p} is initialized lazily so the map only contains
   // entries when the per-port HDM operator was non-null on this rank.
   for (auto &[port_idx, Mp_hdm] : Mwp_p)
   {
@@ -879,7 +879,7 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     Ar += (1i * omega) * Cr;
   }
   Ar += (-omega * omega) * Mr;
-  // Wave-port contribution: A_wp(ω) = i·Σ_p kₙ,p(ω)·M^(p)_{μ⁻¹}. The Mwp_p HDM
+  // Wave-port contribution: A_wp(ω) = i·Σ_p kₙ,p(ω)·M_{μ⁻¹,p}. The Mwp_p HDM
   // operators are purely imaginary (constructed with the boundary mass in the imaginary
   // slot), so multiplying their projection by the real scalar kₙ recovers the i·kₙ·M
   // contribution to the system matrix. The cross-section EVP for kₙ,p(ω) is small

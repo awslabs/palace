@@ -174,8 +174,8 @@ protected:
   std::unique_ptr<ComplexOperator> K, M, C, A2;
   ComplexVector RHS1, RHS2, r;
 
-  // Per-port wave-port boundary mass operators M^(p)_{μ⁻¹} (ω-independent). The
-  // wave-port contribution to A(ω) factors as i·Σ_p kₙ,p(ω)·M^(p)_{μ⁻¹}; storing the
+  // Per-port wave-port boundary mass operators M_{μ⁻¹,p} (ω-independent). The
+  // wave-port contribution to A(ω) factors as i·Σ_p kₙ,p(ω)·M_{μ⁻¹,p}; storing the
   // ω-independent operator once and the per-port reduced projection separately lets the
   // PROM online phase apply the wave-port term without touching any HDM-size object.
   // Keys are wave-port indices.

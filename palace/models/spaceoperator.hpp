@@ -213,9 +213,9 @@ public:
                                                  Operator::DiagonalPolicy diag_policy,
                                                  bool include_wave_ports);
 
-  // Construct the ω-independent boundary mass matrix M^(p)_{μ⁻¹} for a single wave port,
+  // Construct the ω-independent boundary mass matrix M_{μ⁻¹,p} for a single wave port,
   // returned with PEC essential DoF rows handled by `diag_policy`. The full wave-port
-  // contribution to the system matrix at frequency ω is `i·kₙ,p(ω)·M^(p)_{μ⁻¹}` with
+  // contribution to the system matrix at frequency ω is `i·kₙ,p(ω)·M_{μ⁻¹,p}` with
   // `kₙ,p` from `GetWavePortOp().GetWavePortKn(port_idx, ω)`. Returns a null pointer if
   // the port boundary contributes no DoFs on this rank.
   template <typename OperType>

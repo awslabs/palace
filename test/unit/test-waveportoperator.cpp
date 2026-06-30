@@ -49,9 +49,9 @@ auto LoadScaleParMesh(IoData &iodata, MPI_Comm world_comm)
 }  // namespace
 
 // Verify the factorisation invariant
-//   Im{A2(ω) v}  ==  Σ_p kₙ,p(ω) · M^(p)_{μ⁻¹} v   (as ND-vector actions),
+//   Im{A2(ω) v}  ==  Σ_p kₙ,p(ω) · M_{μ⁻¹,p} v   (as ND-vector actions),
 // where A2(ω) is the imaginary part of `GetExtraSystemMatrix(ω)` (the wave-port
-// contribution; cf. waveportoperator.cpp:1080-1088) and M^(p)_{μ⁻¹} is the new per-port
+// contribution; cf. waveportoperator.cpp:1080-1088) and M_{μ⁻¹,p} is the new per-port
 // boundary mass returned by `GetWavePortBoundaryMassMatrix(p)`. The identity must hold
 // at every ω since both sides assemble the same bilinear form, with the only ω-dependent
 // factor being the scalar kₙ,p(ω).
@@ -59,17 +59,18 @@ TEST_CASE("WavePortOperator-BoundaryMassFactorisation",
           "[waveportoperator][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
-  auto cpw_source_dir = fs::path(PALACE_SOURCE_EXAMPLES_DIR) / "cpw";
-  auto config_path = cpw_source_dir / "cpw_wave_uniform.json";
+  // The cpw example config and mesh are installed under the test data directory via the
+  // regression fixtures (which symlink to examples/cpw and are dereferenced on install).
+  auto cpw_dir = fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / "cpw";
+  auto config_path = cpw_dir / "cpw_wave_uniform.json";
 
-  // Pull the json from the source tree so the mesh reference (relative path) resolves.
-  // Override Mesh to absolute so the test does not depend on cwd.
+  // Override Mesh to absolute so the relative mesh reference resolves regardless of cwd.
   std::ifstream f(config_path);
   REQUIRE(f.good());
   json setup = json::parse(f, /*cb=*/nullptr, /*allow_exceptions=*/true,
                            /*ignore_comments=*/true);
   auto mesh_rel = setup["Model"]["Mesh"].get<std::string>();
-  setup["Model"]["Mesh"] = (cpw_source_dir / mesh_rel).string();
+  setup["Model"]["Mesh"] = (cpw_dir / mesh_rel).string();
   // Avoid writing any postprocessing output during unit test.
   setup["Problem"]["Output"] = "";
 
@@ -123,7 +124,7 @@ TEST_CASE("WavePortOperator-BoundaryMassFactorisation",
     y_lhs = 0.0;
     A2->Mult(v, y_lhs);
 
-    // RHS: Σ_p kₙ,p(ω) · M^(p)_{μ⁻¹} v. The M^(p) we built lives in the imaginary part,
+    // RHS: Σ_p kₙ,p(ω) · M_{μ⁻¹,p} v. The M_p we built lives in the imaginary part,
     // so we want Im{Mwp_p · v} multiplied by the real scalar kₙ.
     y_rhs = 0.0;
     for (std::size_t i = 0; i < port_idxs.size(); i++)
