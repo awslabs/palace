@@ -57,11 +57,13 @@ private:
   double boundary_scaling = 1.0;
   int boundary_buffer_size = 0;
   std::vector<int> boundary_buffer_bases;
+  mutable int retain_boundary_eval_count = 0;
 
   static int NumComponents(Kind kind);
   void EnsureBoundaryEvaluator() const;
   void CacheBoundaryMetadata();
   bool ReleaseBoundaryEvaluatorAfterUse() const;
+  void MaybeReleaseBoundaryEvaluator() const;
 
 public:
   // Domain pointwise evaluator for U_e, U_m, or S at VTU visualization points. The
@@ -97,6 +99,11 @@ public:
   int BufferSize() const;
   int BufferNumComp() const { return NumComponents(kind); }
   const std::vector<int> &BufferBases() const;
+
+  // Keep the next boundary evaluator instance alive for a small fixed number of
+  // following EvalBuffer calls. This lets ParaView reuse the same libCEED operator for
+  // adjacent mode/component fields without retaining it across unrelated field kinds.
+  void RetainBoundaryEvaluatorFor(int count) const { retain_boundary_eval_count = count; }
 
   // Domain-only compatibility path for grid-function output.
   void Eval(const GridFunction *E, const GridFunction *B, Vector &out) const;
