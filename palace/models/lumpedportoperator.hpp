@@ -10,6 +10,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/lumpedelement.hpp"
+#include "fem/surfacefunctional.hpp"
 
 namespace palace
 {
@@ -50,6 +51,10 @@ public:
 protected:
   // Linear forms for postprocessing integrated quantities on the port.
   mutable std::unique_ptr<mfem::LinearForm> s, v;
+
+  // libCEED surface functional for port power computation (device capable, replaces the
+  // per-measurement linear form reassembly of the legacy path when supported).
+  mutable std::unique_ptr<SurfaceFunctional> power_func;
 
   void InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespace) const;
 
