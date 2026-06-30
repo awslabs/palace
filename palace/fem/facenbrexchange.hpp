@@ -5,6 +5,7 @@
 #define PALACE_FEM_FACE_NBR_EXCHANGE_HPP
 
 #include <array>
+#include <deque>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/ceed_group_operator.hpp"
@@ -89,8 +90,10 @@ private:
 
   // Staging vector used to initialize the field input CeedVectors at construction (the
   // field CeedVectors are re-pointed at the caller's data on each Exchange() call), and
-  // the exported / imported value vectors.
+  // the exported / imported value vectors. export_attrs holds persistent AtPoints
+  // coordinate buffers referenced by export operators.
   mutable Vector field_staging, exported, imported;
+  std::deque<Vector> export_attrs;
 
 public:
   // Construct the exchange for the given requests against ghost elements of the mesh.
