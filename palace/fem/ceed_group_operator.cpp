@@ -15,6 +15,12 @@ void DestroyGroupOperators(std::vector<CeedGroupOperator> &groups)
 {
   for (auto &group : groups)
   {
+    for (auto &[field_vec, source] : group.field_vec_sources)
+    {
+      (void)source;
+      PalaceCeedCall(group.ceed, CeedVectorDestroy(&field_vec));
+    }
+    group.field_vec_sources.clear();
     if (group.out_vec)
     {
       PalaceCeedCall(group.ceed, CeedVectorDestroy(&group.out_vec));
@@ -39,20 +45,28 @@ void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
 {
   for (const auto &group : groups)
   {
-    for (const auto &[name, source] : group.field_sources)
+    if (group.field_vec_sources.size() != group.field_sources.size())
+    {
+      group.field_vec_sources.clear();
+      group.field_vec_sources.reserve(group.field_sources.size());
+      for (const auto &[name, source] : group.field_sources)
+      {
+        CeedOperatorField field;
+        CeedVector field_vec;
+        PalaceCeedCall(group.ceed,
+                       CeedOperatorGetFieldByName(group.op, name.c_str(), &field));
+        PalaceCeedCall(group.ceed, CeedOperatorFieldGetVector(field, &field_vec));
+        group.field_vec_sources.emplace_back(field_vec, source);
+      }
+    }
+    for (auto &[field_vec, source] : group.field_vec_sources)
     {
       // Source index 4 selects an optional imported vector, used by surface reductions
       // and boundary point fields for face-neighbor field values. The operator's
       // restriction slices and transposes the shared vector to the per-element layout.
       const Vector *sv = (source < 4) ? srcs[source] : imported;
       MFEM_ASSERT(sv, "Missing source vector for libCEED field input!");
-      CeedOperatorField field;
-      CeedVector field_vec;
-      PalaceCeedCall(group.ceed,
-                     CeedOperatorGetFieldByName(group.op, name.c_str(), &field));
-      PalaceCeedCall(group.ceed, CeedOperatorFieldGetVector(field, &field_vec));
       ceed::InitCeedVector(*sv, group.ceed, &field_vec, false);
-      PalaceCeedCall(group.ceed, CeedVectorDestroy(&field_vec));
     }
     CeedMemType out_mem;
     PalaceCeedCall(group.ceed, CeedGetPreferredMemType(group.ceed, &out_mem));
