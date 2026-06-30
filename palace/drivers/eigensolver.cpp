@@ -39,6 +39,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SpaceOperator space_op(iodata, mesh);
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  const bool has_C = (C != nullptr);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
 
   // Check if there are nonlinear terms and, if so, setup interpolation operator.
@@ -76,8 +77,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Configure objects for postprocessing.
   PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op);
-  ComplexVector E(Curl.Width()), B(Curl.Height());
-  E.UseDevice(true);
+  ComplexVector B(Curl.Height());
   B.UseDevice(true);
 
   // Define and configure the eigensolver to solve the eigenvalue problem:
@@ -403,15 +403,50 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->SetBMat(*KM);
     eigen->RescaleEigenvectors(num_conv);
   }
+  std::vector<std::complex<double>> eigenvalues(num_conv);
+  std::vector<double> errors_bkwd(num_conv), errors_abs(num_conv);
+  std::vector<ComplexVector> eigenvectors;
+  eigenvectors.reserve(num_conv);
+  for (int i = 0; i < num_conv; i++)
+  {
+    eigenvalues[i] = eigen->GetEigenvalue(i);
+    errors_bkwd[i] = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
+    errors_abs[i] = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
+    auto &E = eigenvectors.emplace_back(Curl.Width());
+    E.UseDevice(true);
+    eigen->GetEigenvector(i, E);
+  }
+
+  // The shifted linear system, eigenvalue solver, and assembled matrices are only needed
+  // through eigenvector extraction. Release their device allocations before error
+  // estimation and field-output postprocessing, where large libCEED visualization
+  // operators may need additional GPU memory on refined meshes.
+  eigen.reset();
+  KM.reset();
+  ksp.reset();
+  P.reset();
+  A.reset();
+  divfree.reset();
+  Kp.reset();
+  Cp.reset();
+  Mp.reset();
+  A2_0.reset();
+  A2_1.reset();
+  A2_2.reset();
+  A2.reset();
+  interp_op.reset();
+  K.reset();
+  C.reset();
+  M.reset();
   Mpi::Print("\n");
 
   for (int i = 0; i < num_conv; i++)
   {
     // Get the eigenvalue and relative error.
-    std::complex<double> omega = eigen->GetEigenvalue(i);
-    double error_bkwd = eigen->GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
-    double error_abs = eigen->GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
-    if (!C && !has_A2)
+    std::complex<double> omega = eigenvalues[i];
+    double error_bkwd = errors_bkwd[i];
+    double error_abs = errors_abs[i];
+    if (!has_C && !has_A2)
     {
       // Linear EVP has eigenvalue μ = -λ² = ω².
       omega = std::sqrt(omega);
@@ -424,8 +459,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
-    eigen->GetEigenvector(i, E);
-
+    auto &E = eigenvectors[i];
     linalg::NormalizePhase(space_op.GetComm(), E);
 
     Curl.Mult(E.Real(), B.Real());
