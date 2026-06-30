@@ -822,6 +822,12 @@ std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) co
     // outward normal, contributions negated), matching LumpedPortData::GetPower.
     return power_func->EvalComplexPower(E, B);
   }
+  if (SurfaceFunctional::Enabled() && mesh.Dimension() == 3 && mesh.SpaceDimension() == 3)
+  {
+    MFEM_VERIFY(power_func && power_func->IsValid(),
+                "libCEED wave-port power postprocessing could not assemble for a "
+                "supported 3D port surface!");
+  }
 
   BdrSurfaceCurrentVectorCoefficient nxHr_func(B.Real(), mat_op);
   BdrSurfaceCurrentVectorCoefficient nxHi_func(B.Imag(), mat_op);
