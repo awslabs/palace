@@ -246,9 +246,8 @@ auto BuildCeedGeomFactorData(
             const int attr = mesh.GetAttribute(i);
             const int nbr_attr = GetBdrNeighborAttribute(
                 submesh->GetParentElementIDMap()[i], *submesh->GetParent(), FET, T1, T2);
-            MFEM_ASSERT(loc_bdr_attr.find(attr) != loc_bdr_attr.end() &&
-                            loc_bdr_attr.at(attr).find(nbr_attr) !=
-                                loc_bdr_attr.at(attr).end(),
+            MFEM_ASSERT(loc_bdr_attr.contains(attr) &&
+                            loc_bdr_attr.at(attr).contains(nbr_attr),
                         "Missing libCEED boundary attribute for attribute " << attr << "!");
             return loc_bdr_attr.at(attr).at(nbr_attr);
           };
@@ -258,7 +257,7 @@ auto BuildCeedGeomFactorData(
       return [&](int i)
       {
         const int attr = mesh.GetAttribute(i);
-        MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),
+        MFEM_ASSERT(loc_attr.contains(attr),
                     "Missing libCEED domain attribute for attribute " << attr << "!");
         return loc_attr.at(attr);
       };
@@ -290,8 +289,7 @@ auto BuildCeedGeomFactorData(
     {
       const int attr = mesh.GetBdrAttribute(i);
       const int nbr_attr = GetBdrNeighborAttribute(i, mesh, FET, T1, T2);
-      MFEM_ASSERT(loc_bdr_attr.find(attr) != loc_bdr_attr.end() &&
-                      loc_bdr_attr.at(attr).find(nbr_attr) != loc_bdr_attr.at(attr).end(),
+      MFEM_ASSERT(loc_bdr_attr.contains(attr) && loc_bdr_attr.at(attr).contains(nbr_attr),
                   "Missing libCEED boundary attribute for attribute " << attr << "!");
       return loc_bdr_attr.at(attr).at(nbr_attr);
     };

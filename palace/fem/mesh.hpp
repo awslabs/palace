@@ -107,7 +107,7 @@ public:
     mfem::Array<int> loc_attr_list;
     for (auto attr : attr_list)
     {
-      if (loc_attr.find(attr) != loc_attr.end())
+      if (loc_attr.contains(attr))
       {
         loc_attr_list.Append(loc_attr.at(attr));
       }
@@ -125,7 +125,7 @@ public:
     mfem::Array<int> loc_attr_list;
     for (auto attr : attr_list)
     {
-      if (loc_bdr_attr.find(attr) != loc_bdr_attr.end())
+      if (loc_bdr_attr.contains(attr))
       {
         const auto &bdr_attr_map = loc_bdr_attr.at(attr);
         for (auto it = bdr_attr_map.begin(); it != bdr_attr_map.end(); ++it)
