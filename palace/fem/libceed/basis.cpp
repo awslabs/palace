@@ -185,6 +185,15 @@ void InitBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
   }
 }
 
+void InitBasisAtPoints(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
+                       CeedInt num_comp, Ceed ceed, CeedBasis *basis)
+{
+  // Always use full tabulation: the integration rule points may be arbitrary (not a
+  // tensor-product rule), which the tensor basis construction cannot represent. The
+  // corresponding element restriction must use native dof ordering.
+  InitNonTensorBasis(fe, ir, num_comp, ceed, basis);
+}
+
 void InitInterpolatorBasis(const mfem::FiniteElement &trial_fe,
                            const mfem::FiniteElement &test_fe, CeedInt trial_num_comp,
                            CeedInt test_num_comp, Ceed ceed, CeedBasis *basis)

@@ -300,6 +300,22 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
   const auto &mesh = *h1_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
+
+  // Use the libCEED surface functional path when supported (device capable, no
+  // per-measurement reassembly).
+  auto &func = flux_funcs[idx];
+  if (!func && SurfaceFunctional::Enabled())
+  {
+    func = std::make_unique<SurfaceFunctional>(
+        mat_op.GetMesh(), attr_marker, E ? E->ParFESpace() : nullptr,
+        B ? B->ParFESpace() : nullptr, mat_op, it->second.type, it->second.two_sided,
+        it->second.center);
+  }
+  if (func && func->IsValid())
+  {
+    return func->EvalFlux(E, B);
+  }
+
   auto f =
       it->second.GetCoefficient(E ? &E->Real() : nullptr, B ? &B->Real() : nullptr, mat_op);
   std::complex<double> dot(GetLocalSurfaceIntegral(*f, attr_marker), 0.0);
@@ -338,6 +354,21 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
   const auto &mesh = *h1_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
+
+  // Use the libCEED surface functional path when supported (device capable, no
+  // per-measurement reassembly).
+  auto &func = eps_funcs[idx];
+  if (!func && SurfaceFunctional::Enabled())
+  {
+    func = std::make_unique<SurfaceFunctional>(mat_op.GetMesh(), attr_marker,
+                                               *E.ParFESpace(), mat_op, it->second.type,
+                                               it->second.t, it->second.epsilon);
+  }
+  if (func && func->IsValid())
+  {
+    return func->Eval(E);
+  }
+
   auto f = it->second.GetCoefficient(E, mat_op);
   double dot = GetLocalSurfaceIntegral(*f, attr_marker);
   Mpi::GlobalSum(1, &dot, E.GetComm());
