@@ -1288,11 +1288,12 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
                                                      MaterialPropertyCoefficient &fbi)
 {
   // Real-ω wave-port BC (driven / boundary-mode path). The contribution looks a lot like
-  // the lumped port boundary, except the iω / Z_s coefficient goes to i·k_n / μ where k_n is
-  // specific to the port mode at the operating frequency. Only the real (propagating) part
-  // of k_n is used here: a real-ω driven/boundary-mode solve models a lossless, energy-
-  // carrying port line, so the line-attenuation Im(k_n) is intentionally dropped. (The
-  // eigenmode nonlinear solve uses the full complex k_n via the complex overload below.)
+  // the lumped port boundary, except the iω / Z_s coefficient goes to i·k_n / μ where k_n
+  // is specific to the port mode at the operating frequency. Only the real (propagating)
+  // part of k_n is used here: a real-ω driven/boundary-mode solve models a lossless,
+  // energy- carrying port line, so the line-attenuation Im(k_n) is intentionally dropped.
+  // (The eigenmode nonlinear solve uses the full complex k_n via the complex overload
+  // below.)
   Initialize(omega);
   for (const auto &[idx, data] : ports)
   {

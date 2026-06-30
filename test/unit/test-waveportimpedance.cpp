@@ -290,7 +290,8 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
   // Closed-form TE10 propagation constant k_n(ω) = √(εμ ω² − k_c²). In this Units(1,1)
   // / Lc = 1 m setup the internal angular frequency is ω·tc with tc = Lc/c0, and k_n comes
   // back in rad/m. Build the analytic reference directly in physical (rad/m) units and
-  // compare against the dimensionalized SolveKnComplex result k_n_phys = k_n_nondim · (1/Lc).
+  // compare against the dimensionalized SolveKnComplex result k_n_phys = k_n_nondim ·
+  // (1/Lc).
   const double c0 = electromagnetics::c0_;
   const double kc = M_PI / a_m;  // TE10 transverse cutoff wavenumber [rad/m]
   auto kn_closed_form = [&](std::complex<double> omega_rad_s) -> std::complex<double>
