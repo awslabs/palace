@@ -483,14 +483,14 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
   }
 
   const auto &pairs = periodic.at("BoundaryPairs");
-  for (auto it = pairs.begin(); it != pairs.end(); ++it)
+  for (const auto &pair : pairs)
   {
     PeriodicData &data = boundary_pairs.emplace_back();
-    data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
+    data.donor_attributes = pair.at("DonorAttributes").get<std::vector<int>>();  // Required
     data.receiver_attributes =
-        it->at("ReceiverAttributes").get<std::vector<int>>();  // Required
-    auto translation = it->find("Translation");
-    if (translation != it->end())
+        pair.at("ReceiverAttributes").get<std::vector<int>>();  // Required
+    auto translation = pair.find("Translation");
+    if (translation != pair.end())
     {
       std::array<double, 3> translation_array = translation->get<std::array<double, 3>>();
       for (int i = 0; i < 3; i++)
@@ -500,8 +500,8 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
       }
       data.affine_transform[3 * 4 + 3] = 1.0;
     }
-    auto transformation = it->find("AffineTransformation");
-    if (transformation != it->end())
+    auto transformation = pair.find("AffineTransformation");
+    if (transformation != pair.end())
     {
       data.affine_transform = transformation->get<std::array<double, 16>>();
     }
@@ -1169,11 +1169,11 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   // extra samples. Can use equality comparison given no floating point operations have been
   // done.
   prom_indices = {0, sample_f.size() - 1};
-  if (prom_f.size() > 0 && prom_f.back() == sample_f.back())
+  if (!prom_f.empty() && prom_f.back() == sample_f.back())
   {
     prom_f.pop_back();
   }
-  if (prom_f.size() > 0 && prom_f.front() == sample_f.front())
+  if (!prom_f.empty() && prom_f.front() == sample_f.front())
   {
     prom_f.erase(prom_f.begin(), std::next(prom_f.begin()));
   }

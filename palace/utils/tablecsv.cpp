@@ -251,7 +251,7 @@ Table::Table(std::string_view table_str,
       while (!entries.at_end())
       {
         auto entry_trim = trim_space(entries.next());
-        if ((entry_trim == col_options.empty_cell_val) || (entry_trim.size() == 0))
+        if ((entry_trim == col_options.empty_cell_val) || (entry_trim.empty()))
         {
         }
         else

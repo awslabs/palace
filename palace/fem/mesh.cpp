@@ -121,10 +121,10 @@ auto GetElementIndices(const mfem::ParMesh &mesh, bool use_bdr, int start, int s
   // Populate the indices arrays for each element geometry.
   std::unordered_map<mfem::Geometry::Type, int> offsets;
   std::unordered_map<mfem::Geometry::Type, std::vector<int>> element_indices;
-  for (auto it = counts.begin(); it != counts.end(); ++it)
+  for (const auto &[geom, count] : counts)
   {
-    offsets[it->first] = 0;
-    element_indices[it->first].resize(it->second);
+    offsets[geom] = 0;
+    element_indices[geom].resize(count);
   }
   for (int i = start; i < stop; i++)
   {

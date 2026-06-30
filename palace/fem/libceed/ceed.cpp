@@ -72,7 +72,7 @@ void Finalize()
 
 std::string Print()
 {
-  MFEM_VERIFY(internal::GetCeedObjects().size() > 0,
+  MFEM_VERIFY(!internal::GetCeedObjects().empty(),
               "libCEED must be initialized before querying the active backend!");
   Ceed ceed = internal::GetCeedObjects()[0];
   const char *ceed_resource;

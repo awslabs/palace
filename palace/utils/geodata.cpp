@@ -3028,19 +3028,10 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
           }
         }
       }
-      for (auto it = coarse_crack_edge_to_be.begin(); it != coarse_crack_edge_to_be.end();)
-      {
-        // Remove all seam edges which are on the "outside" of the crack (visited only
-        // once).
-        if (it->second.size() == 1)
-        {
-          it = coarse_crack_edge_to_be.erase(it);
-        }
-        else
-        {
-          ++it;
-        }
-      }
+      // Remove all seam edges which are on the "outside" of the crack (visited only
+      // once).
+      std::erase_if(coarse_crack_edge_to_be,
+                    [](const auto &kv) { return kv.second.size() == 1; });
       // Static reporting variables so can persist across retries.
       static int new_ne_ref = 0;
       static int new_ref_its = 0;
@@ -3138,7 +3129,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
 
     new_nv += new_nv_dups;
     new_nbe += crack_bdr_elem.size();
-    if (crack_bdr_elem.size() > 0)
+    if (!crack_bdr_elem.empty())
     {
       Mpi::Print("Added {:d} duplicate vertices for interior boundaries in the mesh\n",
                  new_nv_dups);

@@ -1491,22 +1491,22 @@ void PostOperator<solver_t>::MeasureProbes() const
 #if defined(MFEM_USE_GSLIB)
   if constexpr (HasEGridFunction<solver_t>())
   {
-    if (interp_op.GetProbes().size() > 0 && E)
+    if (!interp_op.GetProbes().empty() && E)
     {
       measurement_cache.probe_E_field = interp_op.ProbeField(*E);
     }
   }
-  if (En && interp_op.GetProbes().size() > 0)
+  if (En && !interp_op.GetProbes().empty())
   {
     measurement_cache.probe_En_field = interp_op.ProbeField(*En);
   }
-  if (Bt_inplane && interp_op.GetProbes().size() > 0)
+  if (Bt_inplane && !interp_op.GetProbes().empty())
   {
     measurement_cache.probe_Bt_field = interp_op.ProbeField(*Bt_inplane);
   }
   if constexpr (HasBGridFunction<solver_t>())
   {
-    if (interp_op.GetProbes().size() > 0 && B)
+    if (!interp_op.GetProbes().empty() && B)
     {
       measurement_cache.probe_B_field = interp_op.ProbeField(*B);
     }
