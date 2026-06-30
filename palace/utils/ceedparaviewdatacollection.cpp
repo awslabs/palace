@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <memory>
 #include <regex>
 #include <type_traits>
 #include <utility>
@@ -95,13 +96,13 @@ void CeedParaViewDataCollection::RegisterPointField(MeshEntityType location,
   MFEM_VERIFY(num_comp > 0, PointFieldLocationName(location)
                                 << " point field must have at least one component!");
   PointFields(location)[field_name] =
-      PointField{&values, {}, &bases, num_comp, values.Size()};
+      PointField{&values, {}, &bases, num_comp, values.Size(), false};
 }
 
 void CeedParaViewDataCollection::RegisterPointEvaluator(
     MeshEntityType location, const std::string &field_name,
     std::function<void(Vector &)> evaluator, const std::vector<int> &bases, int num_comp,
-    int buffer_size)
+    int buffer_size, bool point_major)
 {
   MFEM_VERIFY(evaluator, PointFieldLocationName(location)
                              << " point evaluator must be callable!");
@@ -110,7 +111,7 @@ void CeedParaViewDataCollection::RegisterPointEvaluator(
   MFEM_VERIFY(buffer_size >= 0, PointFieldLocationName(location)
                                     << " point evaluator buffer size is invalid!");
   PointFields(location)[field_name] =
-      PointField{nullptr, std::move(evaluator), &bases, num_comp, buffer_size};
+      PointField{nullptr, std::move(evaluator), &bases, num_comp, buffer_size, point_major};
 }
 
 void CeedParaViewDataCollection::DeregisterPointField(MeshEntityType location,
@@ -137,10 +138,10 @@ void CeedParaViewDataCollection::RegisterBoundaryPointEvaluator(
 
 void CeedParaViewDataCollection::RegisterDomainPointEvaluator(
     const std::string &field_name, std::function<void(Vector &)> evaluator,
-    const std::vector<int> &bases, int num_comp, int buffer_size)
+    const std::vector<int> &bases, int num_comp, int buffer_size, bool point_major)
 {
   RegisterPointEvaluator(MeshEntityType::Domain, field_name, std::move(evaluator), bases,
-                         num_comp, buffer_size);
+                         num_comp, buffer_size, point_major);
 }
 
 void CeedParaViewDataCollection::DeregisterBoundaryPointField(const std::string &field_name)
@@ -212,6 +213,27 @@ void CeedParaViewDataCollection::WritePointFieldValues(MeshEntityType location,
   MFEM_VERIFY(payload_size % scalar_size == 0,
               "Point field payload size is not divisible by scalar size!");
   const std::size_t payload_count = static_cast<std::size_t>(payload_size / scalar_size);
+
+  if (field.point_major)
+  {
+    MFEM_VERIFY(static_cast<std::size_t>(values.Size()) == payload_count,
+                PointFieldLocationName(location)
+                    << " point-major field buffer has an invalid size!");
+    if (binary32)
+    {
+      auto payload = std::make_unique<float[]>(payload_count);
+      for (std::size_t i = 0; i < payload_count; i++)
+      {
+        payload[i] = static_cast<float>(data[i]);
+      }
+      WriteAll(os, payload.get(), payload_count * sizeof(float));
+    }
+    else
+    {
+      WriteAll(os, data, payload_count * sizeof(double));
+    }
+    return;
+  }
 
   auto PackPayload = [&](auto *payload_data)
   {
