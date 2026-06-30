@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -275,7 +276,7 @@ std::vector<char> DecodeVtkBinaryPayload(std::string_view encoded, bool compress
   return uncompressed;
 }
 
-std::string_view ExtractDataArrayPayload(std::string_view xml, const std::string &name)
+std::string_view ExtractDataArrayTag(std::string_view xml, const std::string &name)
 {
   const std::string needle = "Name=\"" + name + "\"";
   const auto name_pos = xml.find(needle);
@@ -284,9 +285,48 @@ std::string_view ExtractDataArrayPayload(std::string_view xml, const std::string
   REQUIRE(tag_begin != std::string_view::npos);
   const auto tag_end = xml.find('>', name_pos);
   REQUIRE(tag_end != std::string_view::npos);
+  return xml.substr(tag_begin, tag_end - tag_begin + 1);
+}
+
+std::string_view ExtractDataArrayPayload(std::string_view xml, const std::string &name)
+{
+  const std::string needle = "Name=\"" + name + "\"";
+  const auto name_pos = xml.find(needle);
+  REQUIRE(name_pos != std::string_view::npos);
+  const auto tag_end = xml.find('>', name_pos);
+  REQUIRE(tag_end != std::string_view::npos);
   const auto close = xml.find("</DataArray>", tag_end);
   REQUIRE(close != std::string_view::npos);
   return xml.substr(tag_end + 1, close - tag_end - 1);
+}
+
+std::uint64_t ExtractUnsignedAttribute(std::string_view tag, std::string_view attr)
+{
+  const std::string needle = std::string(attr) + "=\"";
+  const auto begin = tag.find(needle);
+  REQUIRE(begin != std::string_view::npos);
+  const auto value_begin = begin + needle.size();
+  const auto value_end = tag.find('"', value_begin);
+  REQUIRE(value_end != std::string_view::npos);
+  return std::stoull(std::string(tag.substr(value_begin, value_end - value_begin)));
+}
+
+std::vector<char> ExtractAppendedDataArrayPayload(std::string_view xml,
+                                                  std::string_view tag)
+{
+  REQUIRE(tag.find("format=\"appended\"") != std::string_view::npos);
+  const auto offset = ExtractUnsignedAttribute(tag, "offset");
+  const auto appended_begin = xml.find("<AppendedData");
+  REQUIRE(appended_begin != std::string_view::npos);
+  const auto underscore = xml.find('_', appended_begin);
+  REQUIRE(underscore != std::string_view::npos);
+  const auto data_begin = underscore + 1 + offset;
+  REQUIRE(data_begin + sizeof(std::uint32_t) <= xml.size());
+  const auto nbytes = ReadLittleEndian<std::uint32_t>(xml.data() + data_begin);
+  const auto payload_begin = data_begin + sizeof(std::uint32_t);
+  REQUIRE(payload_begin + nbytes <= xml.size());
+  return {xml.begin() + static_cast<std::ptrdiff_t>(payload_begin),
+          xml.begin() + static_cast<std::ptrdiff_t>(payload_begin + nbytes)};
 }
 
 bool VtuUsesCompression(std::string_view xml)
@@ -294,15 +334,21 @@ bool VtuUsesCompression(std::string_view xml)
   return xml.find("compressor=\"vtkZLibDataCompressor\"") != std::string_view::npos;
 }
 
+std::vector<char> ReadDataArrayBytes(std::string_view xml, const std::string &name)
+{
+  const auto tag = ExtractDataArrayTag(xml, name);
+  if (tag.find("format=\"appended\"") != std::string_view::npos)
+  {
+    return ExtractAppendedDataArrayPayload(xml, tag);
+  }
+  return DecodeVtkBinaryPayload(ExtractDataArrayPayload(xml, name),
+                                VtuUsesCompression(xml));
+}
+
 std::vector<double> ReadFloatDataArray(std::string_view xml, const std::string &name)
 {
-  const auto name_pos = xml.find("Name=\"" + name + "\"");
-  REQUIRE(name_pos != std::string_view::npos);
-  const auto tag_begin = xml.rfind("<DataArray", name_pos);
-  const auto tag_end = xml.find('>', name_pos);
-  const auto tag = xml.substr(tag_begin, tag_end - tag_begin + 1);
-  const auto bytes =
-      DecodeVtkBinaryPayload(ExtractDataArrayPayload(xml, name), VtuUsesCompression(xml));
+  const auto tag = ExtractDataArrayTag(xml, name);
+  const auto bytes = ReadDataArrayBytes(xml, name);
 
   std::vector<double> values;
   if (tag.find("type=\"Float32\"") != std::string_view::npos)
@@ -329,8 +375,7 @@ std::vector<double> ReadFloatDataArray(std::string_view xml, const std::string &
 
 std::vector<int> ReadIntDataArray(std::string_view xml, const std::string &name)
 {
-  const auto bytes =
-      DecodeVtkBinaryPayload(ExtractDataArrayPayload(xml, name), VtuUsesCompression(xml));
+  const auto bytes = ReadDataArrayBytes(xml, name);
   REQUIRE(bytes.size() % sizeof(std::int32_t) == 0);
   std::vector<int> values(bytes.size() / sizeof(std::int32_t));
   for (std::size_t i = 0; i < values.size(); i++)
@@ -352,6 +397,18 @@ int CountBoundaryVisualizationPoints(const mfem::ParMesh &pmesh, int lod)
   return count;
 }
 
+int CountDomainVisualizationPoints(const mfem::ParMesh &pmesh, int lod)
+{
+  int count = 0;
+  for (int i = 0; i < pmesh.GetNE(); i++)
+  {
+    const auto &RefG =
+        *mfem::GlobGeometryRefiner.Refine(pmesh.GetElementBaseGeometry(i), lod, 1);
+    count += RefG.RefPts.GetNPoints();
+  }
+  return count;
+}
+
 ErrorStats CompareScalarField(const std::vector<double> &values, mfem::ParMesh &pmesh,
                               int lod, mfem::Coefficient &legacy, double rtol, double atol)
 {
@@ -362,6 +419,28 @@ ErrorStats CompareScalarField(const std::vector<double> &values, mfem::ParMesh &
     const auto &RefG =
         *mfem::GlobGeometryRefiner.Refine(pmesh.GetBdrElementBaseGeometry(i), lod, 1);
     auto *T = pmesh.GetBdrElementTransformation(i);
+    for (int j = 0; j < RefG.RefPts.GetNPoints(); j++, idx++)
+    {
+      const auto &ip = RefG.RefPts.IntPoint(j);
+      T->SetIntPoint(&ip);
+      stats.Add(values[idx], legacy.Eval(*T, ip), rtol, atol);
+    }
+  }
+  REQUIRE(idx == static_cast<int>(values.size()));
+  return stats;
+}
+
+ErrorStats CompareScalarDomainField(const std::vector<double> &values, mfem::ParMesh &pmesh,
+                                    int lod, mfem::Coefficient &legacy, double rtol,
+                                    double atol)
+{
+  ErrorStats stats;
+  int idx = 0;
+  for (int i = 0; i < pmesh.GetNE(); i++)
+  {
+    const auto &RefG =
+        *mfem::GlobGeometryRefiner.Refine(pmesh.GetElementBaseGeometry(i), lod, 1);
+    auto *T = pmesh.GetElementTransformation(i);
     for (int j = 0; j < RefG.RefPts.GetNPoints(); j++, idx++)
     {
       const auto &ip = RefG.RefPts.IntPoint(j);
@@ -405,6 +484,40 @@ void RequireInteriorBoundaryWasWritten(std::string_view xml, const mfem::ParMesh
   const auto attributes = ReadIntDataArray(xml, "attribute");
   REQUIRE(attributes.size() == static_cast<std::size_t>(pmesh.GetNBE()));
   CHECK(std::find(attributes.begin(), attributes.end(), 7) != attributes.end());
+}
+
+ErrorStats CompareVectorDomainField(const std::vector<double> &values, mfem::ParMesh &pmesh,
+                                    int lod, mfem::VectorCoefficient &legacy, double rtol,
+                                    double atol)
+{
+  ErrorStats stats;
+  int idx = 0;
+  mfem::Vector ref(legacy.GetVDim());
+  for (int i = 0; i < pmesh.GetNE(); i++)
+  {
+    const auto &RefG =
+        *mfem::GlobGeometryRefiner.Refine(pmesh.GetElementBaseGeometry(i), lod, 1);
+    auto *T = pmesh.GetElementTransformation(i);
+    for (int j = 0; j < RefG.RefPts.GetNPoints(); j++)
+    {
+      const auto &ip = RefG.RefPts.IntPoint(j);
+      T->SetIntPoint(&ip);
+      legacy.Eval(ref, *T, ip);
+      for (int c = 0; c < legacy.GetVDim(); c++, idx++)
+      {
+        stats.Add(values[idx], ref(c), rtol, atol);
+      }
+    }
+  }
+  REQUIRE(idx == static_cast<int>(values.size()));
+  return stats;
+}
+
+void RequirePointFieldUsesAppendedData(std::string_view xml, const std::string &name)
+{
+  const auto tag = ExtractDataArrayTag(xml, name);
+  CHECK(tag.find("format=\"appended\"") != std::string_view::npos);
+  CHECK(xml.find("<AppendedData encoding=\"raw\">") != std::string_view::npos);
 }
 
 }  // namespace
@@ -464,16 +577,28 @@ TEST_CASE_METHOD(test::SharedTempDir,
 
   DimensionalizeForPostOperatorOutput(iodata.units, E, B);
 
-  const auto vtu = ReadFile(fs::path(iodata.problem.output) / "paraview" /
-                            "eigenmode_boundary" / "Cycle000001" / "proc000000.vtu");
-  RequireInteriorBoundaryWasWritten(vtu, pmesh);
+  const auto domain_vtu = ReadFile(fs::path(iodata.problem.output) / "paraview" /
+                                   "eigenmode" / "Cycle000001" / "proc000000.vtu");
+  const auto boundary_vtu =
+      ReadFile(fs::path(iodata.problem.output) / "paraview" / "eigenmode_boundary" /
+               "Cycle000001" / "proc000000.vtu");
+  RequireInteriorBoundaryWasWritten(boundary_vtu, pmesh);
+  RequirePointFieldUsesAppendedData(boundary_vtu, "E_real");
+  RequirePointFieldUsesAppendedData(domain_vtu, "U_e");
 
   const int lod = order;
-  const int npts = CountBoundaryVisualizationPoints(pmesh, lod);
-  auto ReadChecked = [&](const std::string &name, int components)
+  const int n_bdr_pts = CountBoundaryVisualizationPoints(pmesh, lod);
+  const int n_domain_pts = CountDomainVisualizationPoints(pmesh, lod);
+  auto ReadBoundaryChecked = [&](const std::string &name, int components)
   {
-    auto values = ReadFloatDataArray(vtu, name);
-    REQUIRE(values.size() == static_cast<std::size_t>(npts * components));
+    auto values = ReadFloatDataArray(boundary_vtu, name);
+    REQUIRE(values.size() == static_cast<std::size_t>(n_bdr_pts * components));
+    return values;
+  };
+  auto ReadDomainChecked = [&](const std::string &name, int components)
+  {
+    auto values = ReadFloatDataArray(domain_vtu, name);
+    REQUIRE(values.size() == static_cast<std::size_t>(n_domain_pts * components));
     return values;
   };
 
@@ -485,13 +610,13 @@ TEST_CASE_METHOD(test::SharedTempDir,
 
   BdrFieldVectorCoefficient E_real_legacy(E.Real()), E_imag_legacy(E.Imag());
   BdrFieldVectorCoefficient B_real_legacy(B.Real()), B_imag_legacy(B.Imag());
-  CheckStats("E_real", CompareVectorField(ReadChecked("E_real", 3), pmesh, lod,
+  CheckStats("E_real", CompareVectorField(ReadBoundaryChecked("E_real", 3), pmesh, lod,
                                           E_real_legacy, rtol, atol));
-  CheckStats("E_imag", CompareVectorField(ReadChecked("E_imag", 3), pmesh, lod,
+  CheckStats("E_imag", CompareVectorField(ReadBoundaryChecked("E_imag", 3), pmesh, lod,
                                           E_imag_legacy, rtol, atol));
-  CheckStats("B_real", CompareVectorField(ReadChecked("B_real", 3), pmesh, lod,
+  CheckStats("B_real", CompareVectorField(ReadBoundaryChecked("B_real", 3), pmesh, lod,
                                           B_real_legacy, rtol, atol));
-  CheckStats("B_imag", CompareVectorField(ReadChecked("B_imag", 3), pmesh, lod,
+  CheckStats("B_imag", CompareVectorField(ReadBoundaryChecked("B_imag", 3), pmesh, lod,
                                           B_imag_legacy, rtol, atol));
 
   mfem::Vector unused_x0;
@@ -501,24 +626,30 @@ TEST_CASE_METHOD(test::SharedTempDir,
       &E.Imag(), nullptr, mat_op, true, unused_x0, eps_scaling);
   BdrSurfaceCurrentVectorCoefficient J_real_legacy(B.Real(), mat_op, invmu_scaling);
   BdrSurfaceCurrentVectorCoefficient J_imag_legacy(B.Imag(), mat_op, invmu_scaling);
-  CheckStats("Q_s_real", CompareScalarField(ReadChecked("Q_s_real", 1), pmesh, lod,
+  CheckStats("Q_s_real", CompareScalarField(ReadBoundaryChecked("Q_s_real", 1), pmesh, lod,
                                             Q_real_legacy, rtol, atol));
-  CheckStats("Q_s_imag", CompareScalarField(ReadChecked("Q_s_imag", 1), pmesh, lod,
+  CheckStats("Q_s_imag", CompareScalarField(ReadBoundaryChecked("Q_s_imag", 1), pmesh, lod,
                                             Q_imag_legacy, rtol, atol));
-  CheckStats("J_s_real", CompareVectorField(ReadChecked("J_s_real", 3), pmesh, lod,
+  CheckStats("J_s_real", CompareVectorField(ReadBoundaryChecked("J_s_real", 3), pmesh, lod,
                                             J_real_legacy, rtol, atol));
-  CheckStats("J_s_imag", CompareVectorField(ReadChecked("J_s_imag", 3), pmesh, lod,
+  CheckStats("J_s_imag", CompareVectorField(ReadBoundaryChecked("J_s_imag", 3), pmesh, lod,
                                             J_imag_legacy, rtol, atol));
 
   EnergyDensityCoefficient<EnergyDensityType::ELECTRIC> Ue_legacy(E, mat_op, eps_scaling);
   EnergyDensityCoefficient<EnergyDensityType::MAGNETIC> Um_legacy(B, mat_op, invmu_scaling);
   PoyntingVectorCoefficient S_legacy(E, B, mat_op, invmu_scaling);
-  CheckStats("U_e",
-             CompareScalarField(ReadChecked("U_e", 1), pmesh, lod, Ue_legacy, rtol, atol));
-  CheckStats("U_m",
-             CompareScalarField(ReadChecked("U_m", 1), pmesh, lod, Um_legacy, rtol, atol));
-  CheckStats("S",
-             CompareVectorField(ReadChecked("S", 3), pmesh, lod, S_legacy, rtol, atol));
+  CheckStats("U_e boundary", CompareScalarField(ReadBoundaryChecked("U_e", 1), pmesh, lod,
+                                                Ue_legacy, rtol, atol));
+  CheckStats("U_m boundary", CompareScalarField(ReadBoundaryChecked("U_m", 1), pmesh, lod,
+                                                Um_legacy, rtol, atol));
+  CheckStats("S boundary", CompareVectorField(ReadBoundaryChecked("S", 3), pmesh, lod,
+                                              S_legacy, rtol, atol));
+  CheckStats("U_e domain", CompareScalarDomainField(ReadDomainChecked("U_e", 1), pmesh, lod,
+                                                    Ue_legacy, rtol, atol));
+  CheckStats("U_m domain", CompareScalarDomainField(ReadDomainChecked("U_m", 1), pmesh, lod,
+                                                    Um_legacy, rtol, atol));
+  CheckStats("S domain", CompareVectorDomainField(ReadDomainChecked("S", 3), pmesh, lod,
+                                                  S_legacy, rtol, atol));
 }
 
 }  // namespace palace
