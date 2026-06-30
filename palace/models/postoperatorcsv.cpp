@@ -3,6 +3,8 @@
 
 #include "postoperatorcsv.hpp"
 
+#include <numbers>
+
 #include <mfem.hpp>
 
 #include "models/curlcurloperator.hpp"
@@ -25,7 +27,7 @@ Measurement Measurement::Dimensionalize(const Units &units,
   Measurement measurement_cache;
   measurement_cache.freq =
       units.Dimensionalize<Units::ValueType::FREQUENCY>(nondim_measurement_cache.freq) /
-      (2 * M_PI);
+      (2 * std::numbers::pi);
   measurement_cache.ex_idx = nondim_measurement_cache.ex_idx;                        // NONE
   measurement_cache.Jcoeff_excitation = nondim_measurement_cache.Jcoeff_excitation;  // NONE
   measurement_cache.eigenmode_Q = nondim_measurement_cache.eigenmode_Q;              // NONE
@@ -80,7 +82,7 @@ Measurement Measurement::Dimensionalize(const Units &units,
 
       dim[k].mode_port_kappa =
           units.Dimensionalize<Units::ValueType::FREQUENCY>(data.mode_port_kappa) /
-          (2 * M_PI);
+          (2 * std::numbers::pi);
       dim[k].quality_factor = data.quality_factor;                                  // NONE
       dim[k].inductive_energy_participation = data.inductive_energy_participation;  // NONE
     }
@@ -168,7 +170,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   Measurement measurement_cache;
   measurement_cache.freq =
       units.Nondimensionalize<Units::ValueType::FREQUENCY>(dim_measurement_cache.freq) *
-      (2 * M_PI);
+      (2 * std::numbers::pi);
   measurement_cache.ex_idx = dim_measurement_cache.ex_idx;                        // NONE
   measurement_cache.Jcoeff_excitation = dim_measurement_cache.Jcoeff_excitation;  // NONE
   measurement_cache.eigenmode_Q = dim_measurement_cache.eigenmode_Q;              // NONE
@@ -223,7 +225,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
 
       dim[k].mode_port_kappa =
           units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.mode_port_kappa) *
-          (2 * M_PI);
+          (2 * std::numbers::pi);
       dim[k].quality_factor = data.quality_factor;                                  // NONE
       dim[k].inductive_energy_participation = data.inductive_energy_participation;  // NONE
     }
@@ -718,8 +720,8 @@ void PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_p
     const auto &E_field = measurement_cache.farfield.E_field[i];
 
     // Print as degrees instead of radians.
-    farfield_E->table["theta"] << 180 / M_PI * theta;
-    farfield_E->table["phi"] << 180 / M_PI * phi;
+    farfield_E->table["theta"] << 180 / std::numbers::pi * theta;
+    farfield_E->table["phi"] << 180 / std::numbers::pi * phi;
     for (int i_dim = 0; i_dim < v_dim; i_dim++)
     {
       farfield_E->table[fmt::format("rE{}_re", i_dim)] << E_field[i_dim].real();

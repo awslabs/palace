@@ -8,6 +8,7 @@
 #include <array>
 #include <limits>
 #include <map>
+#include <numbers>
 #include <numeric>
 #include <queue>
 #include <set>
@@ -1168,7 +1169,8 @@ mfem::Vector BoundingBox::Deviations(const mfem::Vector &direction) const
     }
     ax_norm = std::sqrt(ax_norm);
     double cosine = (dir_norm > 0.0 && ax_norm > 0.0) ? dot / (dir_norm * ax_norm) : 0.0;
-    deviation_deg(i) = std::acos(std::min(1.0, std::abs(cosine))) * (180.0 / M_PI);
+    deviation_deg(i) =
+        std::acos(std::min(1.0, std::abs(cosine))) * (180.0 / std::numbers::pi);
   }
   return deviation_deg;
 }

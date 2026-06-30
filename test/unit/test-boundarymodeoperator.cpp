@@ -4,6 +4,7 @@
 #include <cmath>
 #include <complex>
 #include <functional>
+#include <numbers>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -97,8 +98,8 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
     dbc_tdof_list.Append(nd_size + h1_dbc_tdof_list[i]);
   }
 
-  double omega =
-      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
+  double omega = 2.0 * std::numbers::pi *
+                 iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
   double c_min = mat_op.GetLightSpeedMax().Min();
   Mpi::GlobalMin(1, &c_min, nd_fespace.GetComm());
   double kn_target = omega / c_min * std::sqrt(1.1);

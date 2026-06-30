@@ -6,6 +6,7 @@
 
 #include <array>
 #include <memory>
+#include <numbers>
 #include <mfem.hpp>
 
 namespace palace
@@ -71,7 +72,7 @@ public:
                      const mfem::Array<int> &attr_list, const mfem::ParMesh &mesh);
 
   double GetGeometryLength() const override { return std::log(r_outer / r_inner); }
-  double GetGeometryWidth() const override { return 2.0 * M_PI; }
+  double GetGeometryWidth() const override { return 2.0 * std::numbers::pi; }
 
   std::unique_ptr<mfem::VectorCoefficient>
   GetModeCoefficient(double coeff = 1.0) const override;

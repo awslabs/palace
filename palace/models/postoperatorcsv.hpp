@@ -6,6 +6,7 @@
 
 #include <map>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <string_view>
 #include <tuple>
@@ -217,7 +218,10 @@ struct Measurement
                                        const Measurement &dim_measurement_cache);
   // Helpers for converting complex variable to magnitude in dB and phase.
   static double Magnitude(std::complex<double> x) { return 20.0 * std::log10(std::abs(x)); }
-  static double Phase(std::complex<double> x) { return std::arg(x) * 180.0 / M_PI; }
+  static double Phase(std::complex<double> x)
+  {
+    return std::arg(x) * 180.0 / std::numbers::pi;
+  }
 };
 
 namespace _impl
