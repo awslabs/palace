@@ -7,6 +7,7 @@
 #include <array>
 #include <complex>
 #include <deque>
+#include <map>
 #include <memory>
 #include <vector>
 #include <mfem.hpp>
@@ -22,6 +23,24 @@ class MaterialOperator;
 class Mesh;
 class PointFieldEvaluator;
 class FaceNbrFieldExchange;
+
+// Description of a real vector-valued mode coefficient on a marked boundary surface.
+// UNIFORM represents scale * direction. COAXIAL represents scale * (x - origin) /
+// |x - origin|^2, matching CoaxialElementData::GetModeCoefficient.
+struct SurfaceModeCoefficient
+{
+  enum class Type
+  {
+    UNIFORM,
+    COAXIAL
+  };
+
+  Type type = Type::UNIFORM;
+  mfem::Array<int> attr_list;
+  double scale = 1.0;
+  std::array<double, 3> direction = {0.0, 0.0, 0.0};
+  std::array<double, 3> origin = {0.0, 0.0, 0.0};
+};
 
 //
 // Class to compute reducing output functionals (integrals of functions of solution
@@ -67,6 +86,7 @@ private:
     INTERFACE_EPR,
     SURFACE_FLUX,
     FARFIELD,
+    MODE_OVERLAP,
     BDR_FIELD_E,
     BDR_FIELD_B,
     BDR_FLUX_Q,
@@ -114,6 +134,7 @@ private:
   mfem::Vector flux_x0;
   std::vector<std::array<double, 3>> farfield_dirs;
   std::complex<double> farfield_omega = 0.0;
+  std::map<int, SurfaceModeCoefficient> mode_coeff_by_attr;
 
   // Boundary visualization field kinds: lattice refinement level, output scaling,
   // total output buffer size, and per-boundary-element point-base offsets into the
@@ -234,6 +255,12 @@ public:
                     const MaterialOperator &mat_op,
                     const std::vector<std::array<double, 3>> &r_naughts);
 
+  // Construct a linear H(curl) mode-overlap functional, ∫ E · f_mode dS, for lumped-port
+  // voltage and S-parameter extraction. The mode coefficient data is real-valued; complex
+  // fields are evaluated by applying the same functional to the real and imaginary parts.
+  SurfaceFunctional(const Mesh &mesh, const mfem::ParFiniteElementSpace &nd_fespace,
+                    const std::vector<SurfaceModeCoefficient> &mode_coeffs);
+
   ~SurfaceFunctional();
 
   SurfaceFunctional(const SurfaceFunctional &) = delete;
@@ -280,6 +307,10 @@ public:
   // the frequency changes. Collective on the mesh communicator.
   std::vector<std::array<std::complex<double>, 3>>
   EvalFarField(const GridFunction &E, const GridFunction &B, std::complex<double> omega);
+
+  // Evaluate the linear mode-overlap functional, returning the complex integral when the
+  // supplied field has real and imaginary parts.
+  std::complex<double> EvalModeOverlap(const GridFunction &E) const;
 };
 
 }  // namespace palace

@@ -20,10 +20,11 @@ class Mesh;
 class SurfaceFunctional;
 
 // Non-reducing libCEED evaluator for visualization point fields. Unlike reduction
-// functionals, this produces one value per local visualization point (component-major in
-// the output buffer) and is intended to feed ParaView point data. The mesh entity
-// location selects domain elements or boundary elements; the operation remains
-// pointwise, not an MPI-reduced functional.
+// functionals, this produces one value per local visualization point and is intended to
+// feed ParaView point data. Domain direct-VTU buffers are point-major; boundary buffers
+// use the existing component-major writer path. The mesh entity location selects domain
+// elements or boundary elements; the operation remains pointwise, not an MPI-reduced
+// functional.
 class PointFieldEvaluator
 {
 public:
@@ -97,7 +98,7 @@ public:
   Kind GetKind() const { return kind; }
 
   int BufferSize() const;
-  int BufferNumComp() const { return NumComponents(kind); }
+  int BufferNumComp() const;
   const std::vector<int> &BufferBases() const;
 
   // Keep the next boundary evaluator instance alive for a small fixed number of
@@ -108,10 +109,11 @@ public:
   // Domain-only compatibility path for grid-function output.
   void Eval(const GridFunction *E, const GridFunction *B, Vector &out) const;
 
-  // Fill the component-major visualization buffer. The Vector overload is for already
-  // split real/imaginary boundary fields; the GridFunction overload accumulates real and
-  // imaginary contributions for quadratic single-field quantities. For POYNTING pass E
-  // and B to the two-field overload.
+  // Fill the visualization buffer. Domain buffers are point-major for direct VTU output;
+  // boundary buffers are component-major. The Vector overload is for already split
+  // real/imaginary fields; the GridFunction overload accumulates real and imaginary
+  // contributions for quadratic single-field quantities. For POYNTING pass E and B to
+  // the two-field overload.
   void EvalBuffer(const Vector &u, Vector &buffer) const;
   void EvalBuffer(const GridFunction &u, Vector &buffer) const;
   void EvalBuffer(const GridFunction *E, const GridFunction *B, Vector &buffer) const;

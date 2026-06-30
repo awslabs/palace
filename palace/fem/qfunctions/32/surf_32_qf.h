@@ -224,6 +224,46 @@ CEED_QFUNCTION(f_integ_surf_epr_2_32)(void *__restrict__ ctx_, CeedInt Q,
   return 0;
 }
 
+// Linear H(curl) mode-overlap integral for lumped-port voltage and S-parameter
+// extraction: v = qw * detJ_f * E . f_mode. Context layout:
+// [0].first = mode type (0 = uniform, 1 = coaxial), [1].second = scale,
+// [2..4].second = direction (uniform) or origin (coaxial). Inputs: qw, grad_x_f,
+// grad_x_1, x, u_1.
+CEED_QFUNCTION(f_integ_surf_mode_32)(void *__restrict__ ctx_, CeedInt Q,
+                                     const CeedScalar *const *in, CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *qw = in[0], *J_f = in[1], *J_v = in[2], *x = in[3], *u = in[4];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar J_f_loc[6], n[3], E[3], f[3];
+    MatUnpack32(J_f + i, Q, J_f_loc);
+    SurfHcurlField32(i, Q, J_v, u, E);
+    if (ctx[0].first == 0)
+    {
+      const CeedScalar scale = ctx[1].second;
+      f[0] = scale * ctx[2].second;
+      f[1] = scale * ctx[3].second;
+      f[2] = scale * ctx[4].second;
+    }
+    else
+    {
+      f[0] = x[i + Q * 0] - ctx[2].second;
+      f[1] = x[i + Q * 1] - ctx[3].second;
+      f[2] = x[i + Q * 2] - ctx[4].second;
+      const CeedScalar r2 = f[0] * f[0] + f[1] * f[1] + f[2] * f[2];
+      const CeedScalar scale = ctx[1].second / r2;
+      f[0] *= scale;
+      f[1] *= scale;
+      f[2] *= scale;
+    }
+    v[i] = qw[i] * SurfMeasure32(J_f_loc, n) * (E[0] * f[0] + E[1] * f[1] + E[2] * f[2]);
+  }
+  return 0;
+}
+
 // Surface flux integrands following BdrSurfaceFluxCoefficient (fem/coefficient.hpp):
 //   ELECTRIC: V = eps E, MAGNETIC: V = B, POWER: V = E x (mu⁻¹ B),
 // with v = V . n times the surface measure. The context is a CeedIntScalar array:
