@@ -3,12 +3,14 @@
 
 #include "output_functionals.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include "fem/coefficient.hpp"
 #include "fem/facenbrexchange.hpp"
 #include "fem/fespace.hpp"
@@ -42,10 +44,11 @@ namespace
 
 // Key identifying a group of boundary elements that can share one libCEED operator. For
 // AtPoints-capable groups, mapped volume reference coordinates are runtime point data and
-// do not participate in the key. For the older mapped-integration-rule path, each call
-// gets an integer group id rather than keying by rounded point coordinates; this avoids
-// using floating-point coordinates to decide point identity while leaving room for a
-// future orientation-table grouping pass.
+// do not participate in the key. For the mapped-integration-rule path, nonconforming
+// trace maps are keyed by MFEM's finite face topology (local face/orientation,
+// conformity, and NCMesh point matrix class), with exact dyadic reference-vertex data as
+// a guard against missing a discrete orientation bit. This keeps grouping independent of
+// physical coordinates or arbitrary per-element point clouds.
 using FaceConfigKey = std::vector<long long>;
 
 // Registry of mapped face integration rules. The IntegrationRule objects must have
@@ -121,6 +124,7 @@ struct FaceGroup
   double normal_scale = 1.0;
   std::vector<int> face_nbr, ghost_attr, req_idx;
   std::vector<std::vector<long long>> face_nbr_point_keys;
+  std::vector<std::vector<mfem::IntegrationPoint>> face_nbr_points;
   // For AtPoints groups, the mapped volume reference coordinates vary by boundary
   // element and are stored in boundary-element order, nq entries per element. Local
   // split SURFACE_FLUX groups may also carry a per-entry normal scale folded into the
@@ -129,43 +133,115 @@ struct FaceGroup
   std::vector<double> normal_scales;
 };
 
-std::vector<long long>
-MakeReferencePointTopologyKey(mfem::Geometry::Type vol_geom, mfem::Geometry::Type face_geom,
-                              const mfem::IntegrationRule &face_ir,
-                              mfem::IntegrationPointTransformation &loc)
+long long EncodeReferenceCoordinate(double x)
 {
-  // The key identifies the reference-face point set by topology/orientation, not by the
-  // floating-point point coordinates themselves. Loc maps reference face vertices into
-  // the attached volume element reference space. For nonconforming subfaces those mapped
-  // vertices can be dyadic sub-vertices; encode them on a fine integer lattice and verify
-  // the map is exactly representable there. This avoids fuzzy physical-coordinate
-  // matching while still distinguishing conforming faces, orientations, and
-  // nonconforming child subfaces.
   constexpr long long denom = 1LL << 30;
-  auto Encode = [denom](double x)
-  {
-    const long long v = std::llround(denom * x);
-    MFEM_VERIFY(std::abs(x - static_cast<double>(v) / denom) <= 1.0e-12,
-                "Unable to encode reference face topology key exactly!");
-    return v;
-  };
+  const long long v = std::llround(denom * x);
+  MFEM_VERIFY(std::abs(x - static_cast<double>(v) / denom) <= 1.0e-12,
+              "Unable to encode NC trace-map reference coordinate exactly!");
+  return v;
+}
 
-  std::vector<long long> key;
+void AppendDenseMatrixTopologyKey(const mfem::DenseMatrix *pm, FaceConfigKey &key)
+{
+  if (!pm)
+  {
+    key.push_back(0);  // No NC point matrix.
+    return;
+  }
+  key.push_back(1);
+  key.push_back(pm->Height());
+  key.push_back(pm->Width());
+  for (int j = 0; j < pm->Width(); j++)
+  {
+    for (int i = 0; i < pm->Height(); i++)
+    {
+      key.push_back(EncodeReferenceCoordinate((*pm)(i, j)));
+    }
+  }
+}
+
+int FaceInformationSide(const mfem::Mesh::FaceInformation &face, int elem, bool ghost,
+                        int face_nbr)
+{
+  for (int side = 0; side < 2; side++)
+  {
+    if (ghost)
+    {
+      if (face.element[side].location == mfem::Mesh::ElementLocation::FaceNbr &&
+          face.element[side].index == face_nbr)
+      {
+        return side;
+      }
+    }
+    else if (face.element[side].location == mfem::Mesh::ElementLocation::Local &&
+             face.element[side].index == elem)
+    {
+      return side;
+    }
+  }
+  MFEM_VERIFY(false, "Unable to match boundary trace side to MFEM FaceInformation!");
+  return -1;
+}
+
+std::vector<long long> MakeTraceMapTopologyKey(const mfem::Mesh::FaceInformation &face,
+                                               int side, mfem::Geometry::Type vol_geom,
+                                               mfem::Geometry::Type face_geom,
+                                               const mfem::IntegrationRule &face_ir,
+                                               int bdr_to_face_orientation,
+                                               mfem::IntegrationPointTransformation &loc)
+{
+  // The primary identity is MFEM/NCMesh topology: face tag, side role, local face id,
+  // orientation, element conformity, and the finite NC point-matrix class. The encoded
+  // reference-vertex image is not a fuzzy point-cloud key; it is an exact dyadic guard
+  // for the reference trace map that catches omitted orientation/subface bits.
+  FaceConfigKey key;
   const mfem::IntegrationRule *verts = mfem::Geometries.GetVertices(face_geom);
-  key.reserve(4 + 3 * verts->GetNPoints());
+  key.reserve(
+      24 + 3 * verts->GetNPoints() +
+      (face.point_matrix ? face.point_matrix->Height() * face.point_matrix->Width() : 0));
   key.push_back(static_cast<long long>(vol_geom));
   key.push_back(static_cast<long long>(face_geom));
   key.push_back(static_cast<long long>(face_ir.GetOrder()));
   key.push_back(static_cast<long long>(face_ir.GetNPoints()));
+  key.push_back(static_cast<long long>(bdr_to_face_orientation));
+  key.push_back(static_cast<long long>(face.topology));
+  key.push_back(static_cast<long long>(face.tag));
+  key.push_back(static_cast<long long>(side));
+  key.push_back(static_cast<long long>(face.element[side].location));
+  key.push_back(static_cast<long long>(face.element[side].conformity));
+  key.push_back(static_cast<long long>(face.element[side].local_face_id));
+  key.push_back(static_cast<long long>(face.element[side].orientation));
+  key.push_back(face.ncface >= 0 ? 1 : 0);
+  AppendDenseMatrixTopologyKey(face.point_matrix, key);
   for (int i = 0; i < verts->GetNPoints(); i++)
   {
+    mfem::IntegrationPoint fip = mfem::Mesh::TransformBdrElementToFace(
+        face_geom, bdr_to_face_orientation, verts->IntPoint(i));
     mfem::IntegrationPoint ip;
-    loc.Transform(verts->IntPoint(i), ip);
-    key.push_back(Encode(ip.x));
-    key.push_back(Encode(ip.y));
-    key.push_back(Encode(ip.z));
+    loc.Transform(fip, ip);
+    key.push_back(EncodeReferenceCoordinate(ip.x));
+    key.push_back(EncodeReferenceCoordinate(ip.y));
+    key.push_back(EncodeReferenceCoordinate(ip.z));
   }
   return key;
+}
+
+void VerifyMappedRuleMatches(const mfem::IntegrationRule &ir,
+                             const std::vector<mfem::IntegrationPoint> &pts)
+{
+  MFEM_VERIFY(ir.GetNPoints() == static_cast<int>(pts.size()),
+              "NC trace-map key reused with a different number of mapped points!");
+  for (int q = 0; q < ir.GetNPoints(); q++)
+  {
+    const auto &a = ir.IntPoint(q);
+    const auto &b = pts[static_cast<std::size_t>(q)];
+    const double err = std::max({std::abs(a.x - b.x), std::abs(a.y - b.y),
+                                 std::abs(a.z - b.z), std::abs(a.weight - b.weight)});
+    MFEM_VERIFY(err <= 1.0e-12,
+                "NC trace-map key reused for different mapped reference points; "
+                "refine the finite MFEM/NCMesh face-map key before using this group!");
+  }
 }
 
 void FoldNormalScaleIntoFaceJacobian(const mfem::DenseMatrix &J, double normal_scale,
@@ -530,17 +606,57 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   Ceed ceed = ceed::internal::GetCeedObjects()[0];
   const bool use_at_points = is_3d && CeedSupportsNonTensorAtPoints(ceed);
 
+  if (kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B)
+  {
+    // Continuous trace fields live on the MFEM boundary/face DOFs. Keep the VTU geometry
+    // on the existing boundary elements (including NC slave/leaf faces), but do not map
+    // visualization points into attached volume elements or assemble two-sided/ghost
+    // operators. EvalTraceFieldBuffer samples those boundary DOFs directly.
+    buffer_bases.resize(pmesh.GetNBE(), -1);
+    trace_bdr_indices.clear();
+    trace_bdr_indices.reserve(pmesh.GetNBE());
+    int num_marked = 0;
+    for (int i = 0; i < pmesh.GetNBE(); i++)
+    {
+      const int attr = pmesh.GetBdrAttribute(i);
+      if (!bdr_attr_marker[attr - 1])
+      {
+        continue;
+      }
+      int face_id, face_orientation;
+      pmesh.GetBdrElementFace(i, &face_id, &face_orientation);
+      MFEM_VERIFY(face_id >= 0,
+                  "Boundary trace field output requires a valid MFEM face id!");
+      const auto bdr_geom = pmesh.GetBdrElementGeometry(i);
+      const mfem::IntegrationRule &face_ir =
+          mfem::GlobGeometryRefiner.Refine(bdr_geom, viz_lod, 1)->RefPts;
+      trace_bdr_indices.push_back(i);
+      buffer_bases[i] = buffer_size / BufferNumComp(kind);
+      buffer_size += face_ir.GetNPoints() * BufferNumComp(kind);
+      num_marked++;
+    }
+    if (std::getenv("PALACE_SURFACE_PROFILE") != nullptr)
+    {
+      long long profile_counts[2] = {static_cast<long long>(num_marked), 0};
+      Mpi::GlobalSum(2, profile_counts, comm);
+      Mpi::Print(comm,
+                 "SurfaceFunctional profile kind={} groups=0 elems={} "
+                 "at_points_groups=0 at_points_elems=0 mapped_groups=0 mapped_elems=0 "
+                 "two_sided_groups=0 ghost_groups=0 max_group_elems=0 trace_elems={}\n",
+                 KindName(kind), profile_counts[0], profile_counts[0]);
+    }
+    return;
+  }
+
   // Plan the evaluation for each marked boundary element and group the elements by
   // their face configuration. AtPoints groups share tabulated bases and carry mapped
-  // reference points as runtime data. Non-AtPoints groups intentionally remain one group
-  // per AddGroup call for now so point identity is not inferred from rounded
-  // coordinates; processor-boundary requests use separate integer/topological point keys
-  // for their remote point-evaluator grouping.
+  // reference points as runtime data. Non-AtPoints groups use a finite trace-map key
+  // derived from MFEM/NCMesh face topology instead of creating one operator per boundary
+  // element.
   static std::atomic<long long> next_mapped_assembly_id{0};
   const long long mapped_assembly_id = next_mapped_assembly_id++;
   std::map<FaceConfigKey, FaceGroup> face_groups;
   int num_marked = 0;
-  int mapped_group_id = 0;
   {
     constexpr double threshold = 1.0 - 1.0e-6;
     mfem::FaceElementTransformations FET;
@@ -686,25 +802,30 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
 
       // Build the group key. For AtPoints-capable groups, the mapped volume reference
-      // coordinates are runtime data rather than part of the basis/JIT key. For older
-      // mapped-integration-rule groups, AddGroup assigns an integer group id so each
-      // distinct point set gets its own registered rule without fuzzy coordinate keying.
+      // coordinates are runtime data rather than part of the basis/JIT key. For mapped
+      // integration rules, the finite MFEM/NCMesh trace-map keys distinguish the small
+      // set of conforming/NC subface maps without using per-element identities.
       const auto vol_geom_a = plan.ghost_a         ? plan.ghost_geom
                               : (plan.elem_a >= 0) ? pmesh.GetElementGeometry(plan.elem_a)
                                                    : mfem::Geometry::INVALID;
       const auto vol_geom_b = plan.ghost_b         ? plan.ghost_geom
                               : (plan.elem_b >= 0) ? pmesh.GetElementGeometry(plan.elem_b)
                                                    : mfem::Geometry::INVALID;
-      if (plan.ghost_a && plan.elem_a >= 0)
+      const mfem::Mesh::FaceInformation face_info = pmesh.GetFaceInformation(f);
+      if (plan.elem_a >= 0)
       {
-        plan.point_key_a = MakeReferencePointTopologyKey(
-            vol_geom_a, bdr_geom, face_ir,
-            (plan.elem_a == FET.Elem1No) ? FET.Loc1 : FET.Loc2);
+        const int side =
+            FaceInformationSide(face_info, plan.elem_a, plan.ghost_a, plan.face_nbr);
+        plan.point_key_a =
+            MakeTraceMapTopologyKey(face_info, side, vol_geom_a, bdr_geom, face_ir, o,
+                                    (plan.elem_a == FET.Elem1No) ? FET.Loc1 : FET.Loc2);
       }
-      if (plan.ghost_b && plan.elem_b >= 0)
+      if (plan.elem_b >= 0)
       {
-        plan.point_key_b =
-            MakeReferencePointTopologyKey(vol_geom_b, bdr_geom, face_ir, FET.Loc2);
+        const int side =
+            FaceInformationSide(face_info, plan.elem_b, plan.ghost_b, plan.face_nbr);
+        plan.point_key_b = MakeTraceMapTopologyKey(face_info, side, vol_geom_b, bdr_geom,
+                                                   face_ir, o, FET.Loc2);
       }
       const bool can_surface_flux_at_points_a =
           use_at_points && kind == KernelKind::SURFACE_FLUX && plan.elem_a >= 0 &&
@@ -773,9 +894,23 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
             static_cast<long long>((at_points_group && kind == KernelKind::SURFACE_FLUX)
                                        ? 0
                                        : std::llround(2.0 * normal_scale)));
+        const bool ghost_only_mapped_group =
+            !at_points_group && elem_a >= 0 && ghost_a && elem_b < 0;
         if (!at_points_group)
         {
-          key.push_back(static_cast<long long>(mapped_group_id++));
+          auto AppendTraceKey = [&key](const std::vector<long long> &trace_key)
+          {
+            key.push_back(static_cast<long long>(trace_key.size()));
+            key.insert(key.end(), trace_key.begin(), trace_key.end());
+          };
+          // A one-sided ghost group consumes already-imported point values with EVAL_NONE;
+          // its local libCEED operator only needs the point count. Keep the per-request
+          // trace key/points for FaceNbrFieldExchange, but do not let remote trace-map
+          // variants fragment the local ghost accumulation operator.
+          AppendTraceKey((elem_a >= 0 && !ghost_only_mapped_group)
+                             ? point_key_a
+                             : std::vector<long long>());
+          AppendTraceKey(elem_b >= 0 ? point_key_b : std::vector<long long>());
         }
 
         auto it = face_groups.find(key);
@@ -805,6 +940,21 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           }
           it = face_groups.emplace(key, std::move(group)).first;
         }
+        else if (!at_points_group)
+        {
+          if (elem_a >= 0 && !ghost_only_mapped_group)
+          {
+            MFEM_VERIFY(it->second.mapped_ir_a,
+                        "Missing representative side-A mapped rule for NC trace group!");
+            VerifyMappedRuleMatches(*it->second.mapped_ir_a, pts_a);
+          }
+          if (elem_b >= 0)
+          {
+            MFEM_VERIFY(it->second.mapped_ir_b,
+                        "Missing representative side-B mapped rule for NC trace group!");
+            VerifyMappedRuleMatches(*it->second.mapped_ir_b, pts_b);
+          }
+        }
         it->second.bdr_indices.push_back(i);
         if (at_points_group)
         {
@@ -822,6 +972,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
             it->second.face_nbr.push_back(plan.face_nbr);
             it->second.ghost_attr.push_back(plan.ghost_attr);
             it->second.face_nbr_point_keys.push_back(point_key_a);
+            it->second.face_nbr_points.push_back(pts_a);
           }
           else
           {
@@ -835,6 +986,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
             it->second.face_nbr.push_back(plan.face_nbr);
             it->second.ghost_attr.push_back(plan.ghost_attr);
             it->second.face_nbr_point_keys.push_back(point_key_b);
+            it->second.face_nbr_points.push_back(pts_b);
           }
           else
           {
@@ -873,6 +1025,24 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                  mfem::Geometry::INVALID, {}, {}, true, side_weight, 1.0);
         AddGroup(plan.elem_b, false, vol_geom_b, plan.pts_b, plan.point_key_b, -1, false,
                  mfem::Geometry::INVALID, {}, {}, true, side_weight, -1.0);
+      }
+      else if (buffer_kind && plan.elem_a >= 0 && plan.elem_b >= 0 &&
+               ((can_at_points_a && plan.ghost_b) || (can_at_points_b && plan.ghost_a)))
+      {
+        // For shared NC faces, only the local side can use libCEED AtPoints; the ghost
+        // side must first be imported through FaceNbrFieldExchange. Split the trace so
+        // the local contribution still batches with other AtPoints boundary fields, and
+        // only the ghost contribution uses the finite mapped trace key.
+        const bool average_quantity =
+            kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B ||
+            kind == KernelKind::BDR_ENERGY_E || kind == KernelKind::BDR_ENERGY_M ||
+            kind == KernelKind::BDR_POYNTING;
+        const double side_weight = average_quantity ? 0.5 : 1.0;
+        AddGroup(plan.elem_a, plan.ghost_a, vol_geom_a, plan.pts_a, plan.point_key_a, -1,
+                 false, mfem::Geometry::INVALID, {}, {}, can_at_points_a, side_weight, 1.0);
+        AddGroup(plan.elem_b, plan.ghost_b, vol_geom_b, plan.pts_b, plan.point_key_b, -1,
+                 false, mfem::Geometry::INVALID, {}, {}, can_at_points_b, side_weight,
+                 -1.0);
       }
       else
       {
@@ -1095,7 +1265,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         {
           pts[q] = ir.IntPoint(q);
         }
-        MFEM_VERIFY(g.face_nbr_point_keys.size() == g.face_nbr.size(),
+        MFEM_VERIFY(g.face_nbr_point_keys.size() == g.face_nbr.size() &&
+                        g.face_nbr_points.size() == g.face_nbr.size(),
                     "Invalid face-neighbor point-key layout for surface functional!");
         g.req_idx.resize(g.face_nbr.size());
         for (std::size_t e = 0; e < g.face_nbr.size(); e++)
@@ -1105,7 +1276,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           req.face_nbr_elem = g.face_nbr[e];
           req.source_mask = source_mask;
           req.point_key = g.face_nbr_point_keys[e];
-          req.pts = pts;
+          req.pts = g.face_nbr_points[e].empty() ? pts : g.face_nbr_points[e];
         }
       }
       face_nbr_exchange = std::make_unique<FaceNbrFieldExchange>(mesh, ex_fes, requests);
@@ -1116,23 +1287,40 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   // on a single Ceed context (no OpenMP parallel assembly or application; correctness
   // first, this can be extended with the thread partitioning of fem/mesh.cpp later).
   const bool profile = (std::getenv("PALACE_SURFACE_PROFILE") != nullptr);
-  long long profile_counts[4] = {0, 0, 0,
-                                 0};  // groups, elems, AtPoints groups, AtPoints elems
+  // groups, elems, AtPoints groups/elems, mapped groups/elems, two-sided groups,
+  // ghost groups.
+  long long profile_counts[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+  long long profile_max_group_elems = 0;
   for (auto &face_group : face_groups)
   {
     auto &group = face_group.second;
     const std::size_t num_elem = group.bdr_indices.size();
+    const bool has_b = !group.vol_indices_b.empty() || group.ghost_b;
     if (profile)
     {
       profile_counts[0]++;
       profile_counts[1] += static_cast<long long>(num_elem);
+      profile_max_group_elems =
+          std::max(profile_max_group_elems, static_cast<long long>(num_elem));
       if (group.at_points)
       {
         profile_counts[2]++;
         profile_counts[3] += static_cast<long long>(num_elem);
       }
+      else
+      {
+        profile_counts[4]++;
+        profile_counts[5] += static_cast<long long>(num_elem);
+      }
+      if (has_b)
+      {
+        profile_counts[6]++;
+      }
+      if (group.ghost_a || group.ghost_b)
+      {
+        profile_counts[7]++;
+      }
     }
-    const bool has_b = !group.vol_indices_b.empty() || group.ghost_b;
     const bool buffer_kind = IsBufferKind(kind);
     const mfem::IntegrationRule &face_ir =
         buffer_kind
@@ -1233,9 +1421,13 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
       AddSequentialPointInput("grad_x_f", face_geom, 6);
     };
-    const bool field_kind =
-        (kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B);
-    if (!field_kind)
+    const bool field_value_kind =
+        kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B;
+    const bool needs_face_geom = !field_value_kind && kind != KernelKind::BDR_ENERGY_E &&
+                                 kind != KernelKind::BDR_ENERGY_M &&
+                                 kind != KernelKind::BDR_POYNTING;
+    const bool needs_elem_attr = !field_value_kind;
+    if (needs_face_geom)
     {
       if (group.at_points)
       {
@@ -1266,19 +1458,22 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                 mfem::Geometry::Type geom, const mfem::IntegrationRule &ir)
     {
       const int num_pts = group.at_points ? face_ir.GetNPoints() : ir.GetNPoints();
-      const auto &loc_attr = mesh.GetCeedAttributes();
       if (group.at_points)
       {
-        auto &elem_attr_pts = elem_attrs.emplace_back(indices.size() * num_pts);
-        for (std::size_t k = 0; k < indices.size(); k++)
+        if (needs_elem_attr)
         {
-          const double attr = loc_attr.at(pmesh.GetAttribute(indices[k]));
-          for (int q = 0; q < num_pts; q++)
+          const auto &loc_attr = mesh.GetCeedAttributes();
+          auto &elem_attr_pts = elem_attrs.emplace_back(indices.size() * num_pts);
+          for (std::size_t k = 0; k < indices.size(); k++)
           {
-            elem_attr_pts[k * num_pts + q] = attr;
+            const double attr = loc_attr.at(pmesh.GetAttribute(indices[k]));
+            for (int q = 0; q < num_pts; q++)
+            {
+              elem_attr_pts[k * num_pts + q] = attr;
+            }
           }
+          AddSequentialPointInput("attr_" + suffix, elem_attr_pts, 1);
         }
-        AddSequentialPointInput("attr_" + suffix, elem_attr_pts, 1);
 
         CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
             mesh_fespace, ceed, geom, indices, /*is_interp*/ true);
@@ -1297,31 +1492,35 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         return;
       }
 
-      auto &elem_attr = elem_attrs.emplace_back(indices.size());
-      for (std::size_t k = 0; k < indices.size(); k++)
+      CeedElemRestriction attr_restr = nullptr;
+      CeedBasis attr_basis = nullptr;
+      CeedVector attr_vec = nullptr;
+      if (needs_elem_attr)
       {
-        elem_attr[k] = loc_attr.at(pmesh.GetAttribute(indices[k]));
+        const auto &loc_attr = mesh.GetCeedAttributes();
+        auto &elem_attr = elem_attrs.emplace_back(indices.size());
+        for (std::size_t k = 0; k < indices.size(); k++)
+        {
+          elem_attr[k] = loc_attr.at(pmesh.GetAttribute(indices[k]));
+        }
+        PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
+                                 ceed, indices.size(), 1, 1, indices.size(),
+                                 CEED_STRIDES_BACKEND, &attr_restr));
+        {
+          // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
+          mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
+          Bt = 1.0;
+          Gt = 0.0;
+          qX = 0.0;
+          qW = 0.0;
+          PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
+                                                 Bt.GetData(), Gt.GetData(), qX.GetData(),
+                                                 qW.GetData(), &attr_basis));
+        }
+        ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
+        inputs.push_back(
+            {"attr_" + suffix, attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
       }
-      CeedElemRestriction attr_restr;
-      CeedBasis attr_basis;
-      CeedVector attr_vec;
-      PalaceCeedCall(
-          ceed, CeedElemRestrictionCreateStrided(ceed, indices.size(), 1, 1, indices.size(),
-                                                 CEED_STRIDES_BACKEND, &attr_restr));
-      {
-        // Note: ceed::GetCeedTopology(CEED_TOPOLOGY_LINE) == 1.
-        mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
-        Bt = 1.0;
-        Gt = 0.0;
-        qX = 0.0;
-        qW = 0.0;
-        PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
-                                               Bt.GetData(), Gt.GetData(), qX.GetData(),
-                                               qW.GetData(), &attr_basis));
-      }
-      ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
-      inputs.push_back(
-          {"attr_" + suffix, attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
       CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
           mesh_fespace, ceed, geom, indices, /*is_interp*/ true);
       const mfem::FiniteElement *mesh_fe =
@@ -1332,11 +1531,14 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
       inputs.push_back(
           {"x_" + suffix, mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
-      scratch.vecs.push_back(attr_vec);
+      if (needs_elem_attr)
+      {
+        scratch.vecs.push_back(attr_vec);
+        scratch.restrs.push_back(attr_restr);
+        scratch.bases.push_back(attr_basis);
+      }
       scratch.vecs.push_back(mesh_nodes_vec);
-      scratch.restrs.push_back(attr_restr);
       scratch.restrs.push_back(mesh_restr);
-      scratch.bases.push_back(attr_basis);
       scratch.bases.push_back(mesh_basis);
     };
     // Ghost (face neighbor) side variant: the volume element lives on another process,
@@ -1349,31 +1551,36 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         [&](const std::string &suffix, const mfem::IntegrationRule &ir)
     {
       const int num_pts = ir.GetNPoints();
-      auto &elem_attr = elem_attrs.emplace_back(group.ghost_attr.size());
-      const auto &loc_attr = mesh.GetCeedAttributes();
-      for (std::size_t k = 0; k < group.ghost_attr.size(); k++)
+      CeedElemRestriction attr_restr = nullptr;
+      CeedBasis attr_basis = nullptr;
+      CeedVector attr_vec = nullptr;
+      if (needs_elem_attr)
       {
-        elem_attr[k] = loc_attr.at(group.ghost_attr[k]);
+        auto &elem_attr = elem_attrs.emplace_back(group.ghost_attr.size());
+        const auto &loc_attr = mesh.GetCeedAttributes();
+        for (std::size_t k = 0; k < group.ghost_attr.size(); k++)
+        {
+          elem_attr[k] = loc_attr.at(group.ghost_attr[k]);
+        }
+        PalaceCeedCall(ceed,
+                       CeedElemRestrictionCreateStrided(ceed, group.ghost_attr.size(), 1, 1,
+                                                        group.ghost_attr.size(),
+                                                        CEED_STRIDES_BACKEND, &attr_restr));
+        {
+          mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
+          Bt = 1.0;
+          Gt = 0.0;
+          qX = 0.0;
+          qW = 0.0;
+          PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
+                                                 Bt.GetData(), Gt.GetData(), qX.GetData(),
+                                                 qW.GetData(), &attr_basis));
+        }
+        ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
+        inputs.push_back(
+            {"attr_" + suffix, attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
       }
-      CeedElemRestriction attr_restr;
-      CeedBasis attr_basis;
-      CeedVector attr_vec;
-      PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(
-                               ceed, group.ghost_attr.size(), 1, 1, group.ghost_attr.size(),
-                               CEED_STRIDES_BACKEND, &attr_restr));
-      {
-        mfem::Vector Bt(num_pts), Gt(num_pts), qX(num_pts), qW(num_pts);
-        Bt = 1.0;
-        Gt = 0.0;
-        qX = 0.0;
-        qW = 0.0;
-        PalaceCeedCall(ceed, CeedBasisCreateH1(ceed, CEED_TOPOLOGY_LINE, 1, 1, num_pts,
-                                               Bt.GetData(), Gt.GetData(), qX.GetData(),
-                                               qW.GetData(), &attr_basis));
-      }
-      ceed::InitCeedVector(elem_attr, ceed, &attr_vec);
-      inputs.push_back(
-          {"attr_" + suffix, attr_vec, attr_restr, attr_basis, ceed::EvalMode::Interp});
+
       // Constant identity Jacobian (component-major [elem][comp][pt]), passed directly
       // to the kernel's grad_x_<suffix> input (EVAL_NONE). It is 2x2 for 2D line
       // integrals and 3x3 for 3D surface integrals.
@@ -1401,11 +1608,14 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       ceed::InitCeedVector(ident, ceed, &ident_vec);
       inputs.push_back(
           {"grad_x_" + suffix, ident_vec, ident_restr, nullptr, ceed::EvalMode::None});
-      scratch.vecs.push_back(attr_vec);
+      if (needs_elem_attr)
+      {
+        scratch.vecs.push_back(attr_vec);
+        scratch.restrs.push_back(attr_restr);
+        scratch.bases.push_back(attr_basis);
+      }
       scratch.vecs.push_back(ident_vec);
-      scratch.restrs.push_back(attr_restr);
       scratch.restrs.push_back(ident_restr);
-      scratch.bases.push_back(attr_basis);
     };
     if (group.ghost_a)
     {
@@ -1813,12 +2023,15 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
   }
   if (profile)
   {
-    Mpi::GlobalSum(4, profile_counts, comm);
+    Mpi::GlobalSum(8, profile_counts, comm);
+    Mpi::GlobalMax(1, &profile_max_group_elems, comm);
     Mpi::Print(comm,
                "SurfaceFunctional profile kind={} groups={} elems={} at_points_groups={} "
-               "at_points_elems={}\n",
+               "at_points_elems={} mapped_groups={} mapped_elems={} two_sided_groups={} "
+               "ghost_groups={} max_group_elems={}\n",
                KindName(kind), profile_counts[0], profile_counts[1], profile_counts[2],
-               profile_counts[3]);
+               profile_counts[3], profile_counts[4], profile_counts[5], profile_counts[6],
+               profile_counts[7], profile_max_group_elems);
   }
 }
 
@@ -1923,6 +2136,101 @@ std::complex<double> SurfaceFunctional::EvalFlux(const GridFunction *E,
   return dot;
 }
 
+void SurfaceFunctional::EvalTraceFieldBuffer(const Vector &u, Vector &buffer) const
+{
+  MFEM_VERIFY(kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B,
+              "Trace-field buffer evaluation is only valid for boundary E/B fields!");
+  const mfem::ParFiniteElementSpace *fespace =
+      (kind == KernelKind::BDR_FIELD_E) ? nd_fespace : rt_fespace;
+  MFEM_VERIFY(fespace, "Missing finite element space for boundary trace field output!");
+  const mfem::ParMesh &pmesh = *fespace->GetParMesh();
+  const int nc = BufferNumComp(kind);
+  MFEM_VERIFY(nc == 3, "Boundary trace field output expects ambient 3-vector buffers!");
+  MFEM_VERIFY(buffer.Size() == buffer_size && buffer_size % nc == 0,
+              "Invalid boundary trace field buffer size!");
+  const int component_stride = buffer_size / nc;
+  double *out = buffer.HostReadWrite();
+
+  mfem::Array<int> vdofs;
+  mfem::DofTransformation dof_trans;
+  mfem::Vector loc_data, shape, val, normal;
+  mfem::DenseMatrix vshape;
+  mfem::IsoparametricTransformation T;
+  for (const int i : trace_bdr_indices)
+  {
+    const int base = buffer_bases[i];
+    MFEM_VERIFY(base >= 0, "Boundary trace field output has an invalid buffer base!");
+    const mfem::FiniteElement *fe = fespace->GetBE(i);
+    MFEM_VERIFY(fe, "Unable to get boundary trace finite element for E_t/B_n output!");
+    const mfem::IntegrationRule &face_ir =
+        mfem::GlobGeometryRefiner.Refine(pmesh.GetBdrElementGeometry(i), viz_lod, 1)
+            ->RefPts;
+    MFEM_VERIFY(base + face_ir.GetNPoints() <= component_stride,
+                "Boundary trace field buffer base is out of range!");
+
+    fespace->GetBdrElementVDofs(i, vdofs, dof_trans);
+    u.GetSubVector(vdofs, loc_data);
+    dof_trans.InvTransformPrimal(loc_data);
+    pmesh.GetBdrElementTransformation(i, &T);
+
+    if (kind == KernelKind::BDR_FIELD_B)
+    {
+      // RT trace elements are scalar H^{-1/2} normal flux densities on the boundary
+      // element. Output the signed normal trace as an ambient normal vector to preserve
+      // the existing three-component ParaView field shape while avoiding any attached
+      // volume-element evaluation.
+      MFEM_VERIFY(fe->GetRangeType() == mfem::FiniteElement::SCALAR,
+                  "Expected scalar RT trace finite element for B_n output!");
+      shape.SetSize(fe->GetDof());
+      normal.SetSize(3);
+      for (int q = 0; q < face_ir.GetNPoints(); q++)
+      {
+        const mfem::IntegrationPoint &ip = face_ir.IntPoint(q);
+        T.SetIntPoint(&ip);
+        if (fe->GetMapType() == mfem::FiniteElement::VALUE)
+        {
+          fe->CalcShape(ip, shape);
+        }
+        else
+        {
+          fe->CalcPhysShape(T, shape);
+        }
+        const double bn = shape * loc_data;
+        mfem::CalcOrtho(T.Jacobian(), normal);
+        const double normal_norm = normal.Norml2();
+        MFEM_VERIFY(normal_norm > 0.0, "Invalid boundary normal for B_n output!");
+        normal /= normal_norm;
+        for (int c = 0; c < 3; c++)
+        {
+          out[base + q + c * component_stride] += bn * normal(c);
+        }
+      }
+    }
+    else
+    {
+      // ND trace elements evaluate the tangential trace as an ambient vector on the
+      // boundary element. NC slave/leaf face constraints are already represented in the
+      // boundary DOF restriction, so no Elem2/master-side mapping is needed.
+      MFEM_VERIFY(fe->GetRangeType() == mfem::FiniteElement::VECTOR,
+                  "Expected vector ND trace finite element for E_t output!");
+      const int vdim = std::max(pmesh.SpaceDimension(), fe->GetRangeDim());
+      vshape.SetSize(fe->GetDof(), vdim);
+      val.SetSize(vdim);
+      for (int q = 0; q < face_ir.GetNPoints(); q++)
+      {
+        const mfem::IntegrationPoint &ip = face_ir.IntPoint(q);
+        T.SetIntPoint(&ip);
+        fe->CalcVShape(T, vshape);
+        vshape.MultTranspose(loc_data, val);
+        for (int c = 0; c < 3; c++)
+        {
+          out[base + q + c * component_stride] += (c < val.Size()) ? val(c) : 0.0;
+        }
+      }
+    }
+  }
+}
+
 void SurfaceFunctional::EvalBuffer(const Vector &u, Vector &buffer) const
 {
   MFEM_VERIFY(
@@ -1930,6 +2238,11 @@ void SurfaceFunctional::EvalBuffer(const Vector &u, Vector &buffer) const
       "EvalBuffer requires a valid single-field boundary visualization functional!");
   MFEM_ASSERT(buffer.Size() == buffer_size, "Invalid buffer size for EvalBuffer!");
   buffer = 0.0;
+  if (kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B)
+  {
+    EvalTraceFieldBuffer(u, buffer);
+    return;
+  }
   if (face_nbr_exchange)
   {
     face_nbr_exchange->Exchange({&u});
@@ -1950,7 +2263,11 @@ void SurfaceFunctional::EvalBuffer(const GridFunction &u, Vector &buffer) const
   buffer = 0.0;
   auto Apply = [&](const Vector &v)
   {
-    if (face_nbr_exchange)
+    if (kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B)
+    {
+      EvalTraceFieldBuffer(v, buffer);
+    }
+    else if (face_nbr_exchange)
     {
       face_nbr_exchange->Exchange({&v});
       fem::ApplyAddGroupOperators(groups, {&v}, buffer, &face_nbr_exchange->Imported());

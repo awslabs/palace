@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -65,6 +66,78 @@ const mfem::IntegrationRule *GetRegisteredIr(const PointConfigKey &key,
     it = registry.emplace(key, std::move(ir)).first;
   }
   return it->second.get();
+}
+
+bool CeedSupportsNonTensorAtPoints(Ceed ceed)
+{
+  const char *resource;
+  PalaceCeedCall(ceed, CeedGetResource(ceed, &resource));
+  return !std::getenv("PALACE_SURFACE_DISABLE_ATPOINTS") &&
+         (std::strstr(resource, "/gpu/cuda/ref") ||
+          std::strstr(resource, "/gpu/cuda/magma"));
+}
+
+int TetNumModes(int degree)
+{
+  return (degree + 1) * (degree + 2) * (degree + 3) / 6;
+}
+
+mfem::IntegrationRule MakeTetLatticeRule(int degree)
+{
+  mfem::IntegrationRule ir(TetNumModes(degree));
+  int q = 0;
+  if (degree == 0)
+  {
+    ir.IntPoint(q).Set3(0.25, 0.25, 0.25);
+    ir.IntPoint(q++).weight = 1.0;
+  }
+  else
+  {
+    for (int total = 0; total <= degree; total++)
+    {
+      for (int i = 0; i <= total; i++)
+      {
+        for (int j = 0; j <= total - i; j++)
+        {
+          const int k = total - i - j;
+          ir.IntPoint(q).Set3(static_cast<double>(i) / degree,
+                              static_cast<double>(j) / degree,
+                              static_cast<double>(k) / degree);
+          ir.IntPoint(q++).weight = 1.0;
+        }
+      }
+    }
+  }
+  return ir;
+}
+
+void InitTetBasisForAtPoints(const mfem::FiniteElement &fe, bool grad_only,
+                             CeedInt num_comp, Ceed ceed, CeedBasis *basis)
+{
+  MFEM_VERIFY(fe.GetGeomType() == mfem::Geometry::TETRAHEDRON,
+              "FaceNbrFieldExchange AtPoints export currently supports tetrahedral "
+              "volume elements only!");
+  const int degree = std::max(0, fe.GetOrder() - (grad_only ? 1 : 0));
+  const mfem::IntegrationRule ir = MakeTetLatticeRule(degree);
+  ceed::InitBasisAtPoints(fe, ir, num_comp, ceed, basis);
+}
+
+void CreateSequentialPointRestriction(Ceed ceed, std::size_t num_elem, int nq, int num_comp,
+                                      CeedSize l_size, CeedElemRestriction *restr)
+{
+  const CeedInt total_pts = static_cast<CeedInt>(num_elem * nq);
+  std::vector<CeedInt> offsets(num_elem + 1 + total_pts);
+  for (std::size_t e = 0; e <= num_elem; e++)
+  {
+    offsets[e] = static_cast<CeedInt>(num_elem + 1 + e * nq);
+  }
+  for (CeedInt i = 0; i < total_pts; i++)
+  {
+    offsets[num_elem + 1 + i] = i;
+  }
+  PalaceCeedCall(ceed, CeedElemRestrictionCreateAtPoints(
+                           ceed, static_cast<CeedInt>(num_elem), total_pts, num_comp,
+                           l_size, CEED_MEM_HOST, CEED_COPY_VALUES, offsets.data(), restr));
 }
 
 }  // namespace
@@ -194,12 +267,19 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     MPI_Waitall(static_cast<int>(mpi_reqs.size()), mpi_reqs.data(), MPI_STATUSES_IGNORE);
   }
 
+  Ceed ceed = ceed::internal::GetCeedObjects()[0];
+  const bool use_at_points = CeedSupportsNonTensorAtPoints(ceed);
+
   // Parse the received requests, assigning export offsets with the same layout rules
-  // as the import offsets above. Requests are grouped only by integer/topological
-  // point-key data; empty keys intentionally fall back to unique request-order groups.
+  // as the import offsets above. On CUDA backends, tetrahedral export evaluators use
+  // libCEED AtPoints so requests with the same source/geometry/point count can share one
+  // operator even when their finite NC trace maps differ. Other backends keep the
+  // mapped-integration-rule grouping by integer/topological point-key data; empty keys
+  // intentionally fall back to unique request-order groups.
   struct ExportGroup
   {
-    std::vector<mfem::IntegrationPoint> pts;
+    bool at_points = false;
+    std::vector<mfem::IntegrationPoint> pts;  // Representative IR or concatenated AtPoints
     std::vector<int> elems;
     std::vector<int> bases;  // Export vector base offset per element entry
   };
@@ -243,21 +323,31 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
         {
           MFEM_VERIFY(fespaces[s],
                       "Missing finite element space for received source slot!");
+          const bool at_points_group = use_at_points && geom == mfem::Geometry::TETRAHEDRON;
           PointConfigKey key;
-          key.reserve(4 + point_key.size());
+          key.reserve(5 + point_key.size());
           key.push_back(s);
           key.push_back(static_cast<long long>(geom));
           key.push_back(nq);
-          if (point_key.empty())
+          key.push_back(static_cast<long long>(at_points_group));
+          if (!at_points_group)
           {
-            key.push_back(export_group_id++);
-          }
-          else
-          {
-            key.insert(key.end(), point_key.begin(), point_key.end());
+            if (point_key.empty())
+            {
+              key.push_back(export_group_id++);
+            }
+            else
+            {
+              key.insert(key.end(), point_key.begin(), point_key.end());
+            }
           }
           auto &group = export_map[key];
-          if (group.pts.empty())
+          group.at_points = at_points_group;
+          if (at_points_group)
+          {
+            group.pts.insert(group.pts.end(), pts.begin(), pts.end());
+          }
+          else if (group.pts.empty())
           {
             group.pts = pts;
           }
@@ -296,7 +386,6 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
   field_staging.UseDevice(true);
   field_staging = 0.0;
   const mfem::FiniteElementSpace &mesh_fespace = *pmesh.GetNodes()->FESpace();
-  Ceed ceed = ceed::internal::GetCeedObjects()[0];
   for (const auto &[key, group] : export_map)
   {
     const int s = static_cast<int>(key[0]);
@@ -304,18 +393,49 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     const int nq = static_cast<int>(key[2]);
     const std::size_t num_elem = group.elems.size();
     const auto &fespace = *fespaces[s];
-    const mfem::IntegrationRule *ir = GetRegisteredIr(key, group.pts);
+    MFEM_VERIFY(!group.at_points ||
+                    group.pts.size() == num_elem * static_cast<std::size_t>(nq),
+                "Invalid AtPoints export point layout for face neighbor exchange!");
+    const mfem::IntegrationRule *ir =
+        group.at_points ? nullptr : GetRegisteredIr(key, group.pts);
 
     // Inputs: mesh node gradients (on-the-fly geometry for the Piola transformations)
     // and the field, both evaluated at the points.
     std::vector<ceed::CeedFunctionalFieldInput> inputs;
     std::vector<std::pair<std::string, int>> field_sources;
+    CeedElemRestriction points_restr = nullptr;
+    CeedVector points_vec = nullptr;
+    if (group.at_points)
+    {
+      auto &points = export_attrs.emplace_back(3 * num_elem * nq);
+      for (std::size_t e = 0; e < num_elem; e++)
+      {
+        for (int q = 0; q < nq; q++)
+        {
+          const auto &ip = group.pts[e * nq + q];
+          const std::size_t off = 3 * (e * nq + q);
+          points[off + 0] = ip.x;
+          points[off + 1] = ip.y;
+          points[off + 2] = ip.z;
+        }
+      }
+      CreateSequentialPointRestriction(ceed, num_elem, nq, 3, points.Size(), &points_restr);
+      ceed::InitCeedVector(points, ceed, &points_vec);
+    }
     CeedElemRestriction mesh_restr = FiniteElementSpace::BuildCeedElemRestriction(
         mesh_fespace, ceed, geom, group.elems, /*is_interp*/ true);
     const mfem::FiniteElement *mesh_fe =
         mesh_fespace.FEColl()->FiniteElementForGeometry(geom);
     CeedBasis mesh_basis;
-    ceed::InitBasisAtPoints(*mesh_fe, *ir, mesh_fespace.GetVDim(), ceed, &mesh_basis);
+    if (group.at_points)
+    {
+      InitTetBasisForAtPoints(*mesh_fe, /*grad_only*/ true, mesh_fespace.GetVDim(), ceed,
+                              &mesh_basis);
+    }
+    else
+    {
+      ceed::InitBasisAtPoints(*mesh_fe, *ir, mesh_fespace.GetVDim(), ceed, &mesh_basis);
+    }
     CeedVector mesh_nodes_vec;
     ceed::InitCeedVector(*mesh_fespace.GetMesh()->GetNodes(), ceed, &mesh_nodes_vec);
     inputs.push_back({"x", mesh_nodes_vec, mesh_restr, mesh_basis, ceed::EvalMode::Grad});
@@ -325,7 +445,15 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
     MFEM_VERIFY(fe, "Unable to get field finite element for face neighbor exchange!");
     CeedBasis field_basis;
-    ceed::InitBasisAtPoints(*fe, *ir, fespace.GetVDim(), ceed, &field_basis);
+    if (group.at_points)
+    {
+      InitTetBasisForAtPoints(*fe, /*grad_only*/ false, fespace.GetVDim(), ceed,
+                              &field_basis);
+    }
+    else
+    {
+      ceed::InitBasisAtPoints(*fe, *ir, fespace.GetVDim(), ceed, &field_basis);
+    }
     CeedVector field_vec;
     ceed::InitCeedVector(field_staging, ceed, &field_vec);
     inputs.push_back({"u_1", field_vec, field_restr, field_basis, ceed::EvalMode::Interp});
@@ -382,11 +510,27 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
       }
     }
     CeedOperator op;
-    ceed::AssembleCeedPointEvaluator(info, nullptr, 0, ceed, inputs, value_dim, out_restr,
-                                     &op);
+    if (group.at_points)
+    {
+      ceed::AssembleCeedPointEvaluatorAtPoints(info, nullptr, 0, ceed, inputs, points_restr,
+                                               points_vec, value_dim, out_restr, &op);
+    }
+    else
+    {
+      ceed::AssembleCeedPointEvaluator(info, nullptr, 0, ceed, inputs, value_dim, out_restr,
+                                       &op);
+    }
     export_groups.push_back({ceed, op, std::move(field_sources)});
 
     // Cleanup (the assembled operator holds its own references).
+    if (points_vec)
+    {
+      PalaceCeedCall(ceed, CeedVectorDestroy(&points_vec));
+    }
+    if (points_restr)
+    {
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&points_restr));
+    }
     PalaceCeedCall(ceed, CeedVectorDestroy(&mesh_nodes_vec));
     PalaceCeedCall(ceed, CeedVectorDestroy(&field_vec));
     PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_restr));
