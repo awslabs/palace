@@ -313,9 +313,6 @@ protected:
   void InitializeProbeB(const InterpolationOperator &interp_op, int v_dim);
   void PrintProbeB(const InterpolationOperator &interp_op, int v_dim);
 
-  // TODO(C++20): Upgrade SFINAE to C++20 concepts to simplify static selection since we can
-  // just use `void Function(...) requires (solver_t == Type::A);`.
-
   // Driven + Transient
   std::optional<TableWithCSVFile> surface_I;
 
