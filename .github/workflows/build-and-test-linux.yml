@@ -61,7 +61,7 @@ jobs:
           with-openmp: openmp
           with-eigensolver: slepc
           with-solver: strumpack
-        # arm GCC / OpenBLAS.
+        # arm GCC / OpenBLAS and ARPACK.
         - arch: arm
           compiler: gcc
           mpi: openmpi
@@ -69,7 +69,7 @@ jobs:
           build-shared: static
           with-64bit-int: int64
           with-openmp: serial
-          with-eigensolver: slepc
+          with-eigensolver: arpack
           with-solver: mumps
         # Sanitizer build (ASan/UBSan), x86 Clang.
         - arch: x86
