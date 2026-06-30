@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <numbers>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -960,7 +961,8 @@ TEST_CASE("LumpedPort_ReactiveExcitation_Cube321", "[lumped_port][Serial][Parall
   // (3) Characteristic impedance Z_ref(w) = 1 / (1/R + 1/(iwL) + iwC). Check against a
   // direct evaluation at a representative (nondimensional) frequency.
   const double f_GHz = 10.0;
-  const double omega = 2.0 * M_PI * iodata.units.Nondimensionalize<VT::FREQUENCY>(f_GHz);
+  const double omega =
+      2.0 * std::numbers::pi * iodata.units.Nondimensionalize<VT::FREQUENCY>(f_GHz);
   const std::complex<double> imag_unit{0.0, 1.0};
   std::complex<double> Y = 0.0;
   if (case_R > 0.0)

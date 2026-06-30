@@ -7,6 +7,7 @@
 #include <complex>
 #include <map>
 #include <memory>
+#include <numbers>
 #include <set>
 #include <string>
 #include <tuple>
@@ -1175,7 +1176,8 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   double paraview_time = time;
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
-    paraview_time = units.Dimensionalize<Units::ValueType::FREQUENCY>(time) / (2.0 * M_PI);
+    paraview_time =
+        units.Dimensionalize<Units::ValueType::FREQUENCY>(time) / (2.0 * std::numbers::pi);
   }
   paraview->SetCycle(step);
   paraview->SetTime(paraview_time);
@@ -2052,7 +2054,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   MeasureAllImpl();
 
   std::complex<double> freq =
-      units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * std::numbers::pi);
   post_op_csv.PrintAllCSVData(*this, measurement_cache, freq.real(), step, ex_idx);
   if (ShouldWriteParaviewFields(step))
   {
@@ -2279,7 +2281,7 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   MeasureSParameter();
 
   const std::complex<double> freq =
-      units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * std::numbers::pi);
   post_op_csv.PrintReducedCSVData(*this, measurement_cache, freq.real(), step, ex_idx);
 }
 
@@ -2312,10 +2314,10 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
     table.insert(Column("idx", "m", idx_pad, {}, {}, "") << step + 1);
     table.insert(Column("f_re", "Re{f} (GHz)")
                  << (units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real())) /
-                        (2 * M_PI));
+                        (2 * std::numbers::pi));
     table.insert(Column("f_im", "Im{f} (GHz)")
                  << (units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.imag())) /
-                        (2 * M_PI));
+                        (2 * std::numbers::pi));
     table.insert(Column("q", "Q") << measurement_cache.eigenmode_Q);
     table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);
     table.insert(Column("err_abs", "Error (Abs.)") << error_abs);

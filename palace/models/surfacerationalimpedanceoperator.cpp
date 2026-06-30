@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <complex>
+#include <numbers>
 #include <set>
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -369,7 +370,7 @@ void SurfaceRationalImpedanceOperator::AddExtraSystemBdrCoefficients(
     // terminations).
     if (!bdr.warned_passivity && Y.real() < -1.0e-9 * std::abs(Y))
     {
-      const double f_ghz = omega * freq_scale / (2.0 * M_PI);
+      const double f_ghz = omega * freq_scale / (2.0 * std::numbers::pi);
       Mpi::Warning("Rational impedance boundary (attribute {:d}) is not passive at "
                    "f = {:.4f} GHz: Re(Zs) = {:.3e} < 0!\n",
                    bdr.attr_list.Size() ? bdr.attr_list[0] : -1, f_ghz, (1.0 / Y).real());

@@ -4,6 +4,7 @@
 #include "floquetportoperator.hpp"
 
 #include <cmath>
+#include <numbers>
 #include <fmt/core.h>
 #include <mfem.hpp>
 #include "fem/integrator.hpp"
@@ -297,10 +298,10 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
     if (h_max > 0.0)
     {
       int p = nd_fespace.GetMaxElementOrder();
-      int nyquist_m =
-          std::max(1, static_cast<int>(std::floor(p * M_PI / (b1.Norml2() * h_max))));
-      int nyquist_n =
-          std::max(1, static_cast<int>(std::floor(p * M_PI / (b2.Norml2() * h_max))));
+      int nyquist_m = std::max(
+          1, static_cast<int>(std::floor(p * std::numbers::pi / (b1.Norml2() * h_max))));
+      int nyquist_n = std::max(
+          1, static_cast<int>(std::floor(p * std::numbers::pi / (b2.Norml2() * h_max))));
       if (max_order_m > nyquist_m || max_order_n > nyquist_n)
       {
         Mpi::Print(" Floquet port: capping MaxOrder from ({:d}, {:d}) to ({:d}, {:d}) "
@@ -354,13 +355,13 @@ void FloquetPortData::ComputeReciprocalLattice(const mfem::Vector &a1,
   b2.SetSize(3);
   for (int i = 0; i < 3; i++)
   {
-    b1(i) = 2.0 * M_PI * a2xn(i) / vol_sq;
-    b2(i) = 2.0 * M_PI * nxa1(i) / vol_sq;
+    b1(i) = 2.0 * std::numbers::pi * a2xn(i) / vol_sq;
+    b2(i) = 2.0 * std::numbers::pi * nxa1(i) / vol_sq;
   }
 
   // Verify: a_i . b_j = 2*pi * delta_ij.
-  MFEM_VERIFY(std::abs(a1 * b1 - 2.0 * M_PI) < 1e-10 &&
-                  std::abs(a2 * b2 - 2.0 * M_PI) < 1e-10,
+  MFEM_VERIFY(std::abs(a1 * b1 - 2.0 * std::numbers::pi) < 1e-10 &&
+                  std::abs(a2 * b2 - 2.0 * std::numbers::pi) < 1e-10,
               "Reciprocal lattice computation failed: diagonal check!");
   MFEM_VERIFY(std::abs(a1 * b2) < 1e-10 && std::abs(a2 * b1) < 1e-10,
               "Reciprocal lattice computation failed: off-diagonal check!");

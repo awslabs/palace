@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <limits>
 #include <map>
+#include <numbers>
 #include <string>
 #include <vector>
 
@@ -203,8 +204,8 @@ palace::test::CustomCheck ComparePortSParameters(double rtol, double atol)
       {
         const double amp_a = std::pow(10.0, mag_a->data[row] / 20.0);
         const double amp_r = std::pow(10.0, mag_r.data[row] / 20.0);
-        const double phase_a_rad = phase_a->data[row] * M_PI / 180.0;
-        const double phase_r_rad = phase_r->data[row] * M_PI / 180.0;
+        const double phase_a_rad = phase_a->data[row] * std::numbers::pi / 180.0;
+        const double phase_r_rad = phase_r->data[row] * std::numbers::pi / 180.0;
         const std::complex<double> s_a = std::polar(amp_a, phase_a_rad);
         const std::complex<double> s_r = std::polar(amp_r, phase_r_rad);
         const double error = std::abs(s_a - s_r);
@@ -600,7 +601,8 @@ palace::test::CustomCheck TestWavePortCoupledRoundTrip(double atol)
     for (std::size_t r = 0; r < circuit.n_rows(); r++)
     {
       // Reconstruct the boundary-plane S = H Y_syn⁻¹ G - I from the exported CSVs.
-      const std::complex<double> s(0.0, 2.0 * M_PI * circuit[f_col].data[r] * 1.0e9);
+      const std::complex<double> s(0.0,
+                                   2.0 * std::numbers::pi * circuit[f_col].data[r] * 1.0e9);
       const Eigen::MatrixXcd Y = linv / s + rinv + s * cap;
       const Eigen::MatrixXcd S_csv =
           H[r] * Y.fullPivLu().solve(G[r]) - Eigen::MatrixXcd::Identity(np, np);
@@ -650,7 +652,7 @@ palace::test::CustomCheck TestWavePortCoupledRoundTrip(double atol)
       for (std::size_t r = 0; r < actual.n_rows(); r++)
       {
         const double mag = std::pow(10.0, actual[c].data[r] / 20.0);
-        const double arg = M_PI * actual[phase].data[r] / 180.0;
+        const double arg = std::numbers::pi * actual[phase].data[r] / 180.0;
         const std::complex<double> field = mag * std::exp(std::complex<double>(0.0, arg));
         const std::complex<double> synth(circuit[re].data[r], circuit[im].data[r]);
         INFO("row " << r + 1 << " " << key << ": synthesized " << synth << " vs field "
@@ -783,7 +785,7 @@ palace::test::CustomCheck TestWavePortSRoundTrip(double atol_lin)
     for (std::size_t rr = 0; rr < n_freq; ++rr)
     {
       const double f_ghz = ref_t[f_col].data[rr];
-      const std::complex<double> s = j1 * (2.0 * M_PI * f_ghz * 1.0e9);
+      const std::complex<double> s = j1 * (2.0 * std::numbers::pi * f_ghz * 1.0e9);
 
       // Full nodal admittance, then Schur-reduce onto the n_ports terminals.
       const Eigen::MatrixXcd y = linv / s + rinv + s * cap;

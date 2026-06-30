@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <unordered_set>
 #include <fmt/format.h>
 #include "linalg/densematrix.hpp"
@@ -463,7 +464,7 @@ void MaterialOperator::SetUpFloquetWaveVector(const config::PeriodicBoundaryData
   {
     for (int i = 0; i < sdim; i++)
     {
-      double half_bz = M_PI / bbmax[i];
+      double half_bz = std::numbers::pi / bbmax[i];
       if (wave_vector[i] > half_bz || wave_vector[i] < -half_bz)
       {
         wave_vector[i] = std::remainder(wave_vector[i], 2.0 * half_bz);

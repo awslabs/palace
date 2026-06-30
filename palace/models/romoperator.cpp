@@ -11,6 +11,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <numbers>
 #include <numeric>
 #include <string_view>
 #include <tuple>
@@ -99,7 +100,7 @@ inline std::vector<double> SampleChebyshevLobatto(double w_lo, double w_hi, int 
   }
   for (int i = 0; i < n; i++)
   {
-    ws[i] = w_mid - w_half * std::cos(M_PI * i / (n - 1));
+    ws[i] = w_mid - w_half * std::cos(std::numbers::pi * i / (n - 1));
   }
   return ws;
 }
@@ -110,7 +111,7 @@ inline std::vector<double> SampleChebyshevGauss(double w_lo, double w_hi, int n)
   std::vector<double> ws(n);
   for (int j = 0; j < n; j++)
   {
-    ws[j] = w_mid - w_half * std::cos(M_PI * (2 * j + 1) / (2.0 * n));
+    ws[j] = w_mid - w_half * std::cos(std::numbers::pi * (2 * j + 1) / (2.0 * n));
   }
   return ws;
 }
@@ -2806,7 +2807,7 @@ void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &pos
   }
 
   const double unit_GHz =
-      units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * M_PI);
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * std::numbers::pi);
   const double unit_ohm_inv = 1.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
 
   // Physical frequency scale s_phys = iω·ω0 with ω0 = unit_henry_inv/unit_ohm_inv, so
@@ -2953,9 +2954,11 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   // evaluation is collective (prolongation, operator application, norms), so it must
   // also run on every rank before the root-only output below.
   const double fmin_GHz =
-      units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_min) / (2.0 * M_PI);
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_min) /
+      (2.0 * std::numbers::pi);
   const double fmax_GHz =
-      units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_max) / (2.0 * M_PI);
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_max) /
+      (2.0 * std::numbers::pi);
   auto eigs = ComputeEigenvalueEstimates(*matrices.L_inv, matrices.R_inv.get(), *matrices.C,
                                          fmin_GHz, fmax_GHz);
   ComputeEigenvalueEstimateErrors(units, eigs);
@@ -3117,7 +3120,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       out.table.insert(fmt::format("im_{}", key), fmt::format("Im{{{}}}", key));
     }
     const double unit_GHz =
-        units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * M_PI);
+        units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * std::numbers::pi);
     for (std::size_t fi = 0; fi < sweep_omega_samples.size(); fi++)
     {
       out.table["f"] << sweep_omega_samples[fi] * unit_GHz;
@@ -3146,7 +3149,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   if (!coupled_g.empty())
   {
     const double unit_GHz =
-        units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * M_PI);
+        units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * std::numbers::pi);
     auto write_coupling = [&](std::string_view filename, bool source)
     {
       auto out = TableWithCSVFile(post_dir / filename);
@@ -3400,8 +3403,8 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
       continue;
     }
     const std::complex<double> omega_phys = w0 * (s(k) * inv_i);
-    const double f_re = omega_phys.real() / (2.0 * M_PI * 1.0e9);
-    const double f_im = omega_phys.imag() / (2.0 * M_PI * 1.0e9);
+    const double f_re = omega_phys.real() / (2.0 * std::numbers::pi * 1.0e9);
+    const double f_im = omega_phys.imag() / (2.0 * std::numbers::pi * 1.0e9);
     if (f_re < fmin_GHz || f_re > fmax_GHz)
     {
       continue;
@@ -3511,7 +3514,7 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
   u.UseDevice(true);
   res.UseDevice(true);
   const double freq_to_omega_nd =
-      2.0 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(1.0);
+      2.0 * std::numbers::pi * units.Nondimensionalize<Units::ValueType::FREQUENCY>(1.0);
   for (auto &est : estimates)
   {
     // Physical complex frequency f (GHz) → nondimensional complex angular frequency.

@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <numbers>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -176,7 +177,8 @@ TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial][Parallel]")
 
   // Initialize the modes at the test frequency. Internal units: ω·tc.
   const double omega_nondim =
-      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+      2.0 * std::numbers::pi *
+      iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
   wave_port_op.Initialize(omega_nondim);
 
   std::complex<double> Z_PV_nondim = wave_port_op.GetPort(1).GetCharacteristicImpedance();
@@ -360,7 +362,8 @@ TEST_CASE("WavePort TE10 mode polarity sign", "[waveportimpedance][Serial]")
   wave_port_op.SetSuppressOutput(true);
 
   const double omega_nondim =
-      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+      2.0 * std::numbers::pi *
+      iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
   wave_port_op.Initialize(omega_nondim);
 
   // MakeCartesian3D face attributes: 2 = y=0 (broadside), 4 = y=a (broadside). TE10
@@ -430,8 +433,8 @@ TEST_CASE("WavePort anisotropic mode ordering", "[waveportimpedance][Serial][Par
     ExposedWavePortOperator wave_port_op(iodata, mat_op, nd_fespace.Get(),
                                          h1_fespace.Get());
     wave_port_op.SetSuppressOutput(true);
-    const double omega =
-        2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+    const double omega = 2.0 * std::numbers::pi *
+                         iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
     wave_port_op.Initialize(omega);
 
     const double kn_scale =
@@ -439,8 +442,8 @@ TEST_CASE("WavePort anisotropic mode ordering", "[waveportimpedance][Serial][Par
     return wave_port_op.GetPort(1).kn0 * kn_scale;
   };
 
-  const double k0 = 2.0 * M_PI * f_GHz * 1.0e9 / electromagnetics::c0_;
-  const double kc = M_PI / a_m;
+  const double k0 = 2.0 * std::numbers::pi * f_GHz * 1.0e9 / electromagnetics::c0_;
+  const double kc = std::numbers::pi / a_m;
   auto te10_kn =
       [&](const std::array<double, 3> &mu_r, const std::array<double, 3> &epsilon_r)
   { return std::sqrt(mu_r[0] * epsilon_r[1] * k0 * k0 - (mu_r[0] / mu_r[2]) * kc * kc); };
@@ -528,7 +531,7 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
   // compare against the dimensionalized SolveKnComplex result k_n_phys = k_n_nondim ·
   // (1/Lc).
   const double c0 = electromagnetics::c0_;
-  const double kc = M_PI / a_m;  // TE10 transverse cutoff wavenumber [rad/m]
+  const double kc = std::numbers::pi / a_m;  // TE10 transverse cutoff wavenumber [rad/m]
   auto kn_closed_form = [&](std::complex<double> omega_rad_s) -> std::complex<double>
   {
     // k_n = √((ω/c)² − k_c²); principal branch gives Re(k_n) ≥ 0 (forward sheet).
@@ -539,7 +542,8 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
   // Helper: nondimensional ω for a physical frequency f [GHz].
   auto omega_nd = [&](double f_GHz)
   {
-    return 2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+    return 2.0 * std::numbers::pi *
+           iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
   };
   // k_n scale factor (nondim → rad/m): kc_len = 1/Lc(meters).
   const double kn_scale = 1.0 / iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
@@ -551,7 +555,7 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
         port.SolveKnComplex(std::complex<double>(omega_nd(f_GHz), 0.0));
     const std::complex<double> kn_phys = kn_nd * kn_scale;
     const std::complex<double> kn_ref =
-        kn_closed_form(2.0 * M_PI * f_GHz * 1.0e9);  // ≈ 158.24 rad/m, ~0 imag
+        kn_closed_form(2.0 * std::numbers::pi * f_GHz * 1.0e9);  // ≈ 158.24 rad/m, ~0 imag
     CAPTURE(kn_phys, kn_ref);
     CHECK_THAT(kn_phys.real(), WithinRel(kn_ref.real(), 1.0e-4));
     CHECK_THAT(kn_phys.imag(), WithinAbs(0.0, 1.0e-4 * kn_ref.real()));
@@ -567,7 +571,8 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
     const std::complex<double> scale_c(1.0, 0.05);
     std::complex<double> kn_nd = port.SolveKnComplex(omega_nd(f_r_GHz) * scale_c);
     const std::complex<double> kn_phys = kn_nd * kn_scale;
-    const std::complex<double> omega_rad_s = 2.0 * M_PI * f_r_GHz * 1.0e9 * scale_c;
+    const std::complex<double> omega_rad_s =
+        2.0 * std::numbers::pi * f_r_GHz * 1.0e9 * scale_c;
     const std::complex<double> kn_ref = kn_closed_form(omega_rad_s);
     CAPTURE(kn_phys, kn_ref);
     // Both real and imaginary parts must match the closed-form analytic continuation.
@@ -588,7 +593,7 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
     std::complex<double> kn_nd = port.SolveKnComplex(omega_nd(f_r_GHz) * scale_c);
     const std::complex<double> kn_phys = kn_nd * kn_scale;
     const std::complex<double> kn_ref =
-        kn_closed_form(2.0 * M_PI * f_r_GHz * 1.0e9 * scale_c);
+        kn_closed_form(2.0 * std::numbers::pi * f_r_GHz * 1.0e9 * scale_c);
     CAPTURE(kn_phys, kn_ref);
     CHECK(kn_phys.real() >= 0.0);  // forward / decaying sheet
     CHECK_THAT(kn_phys.real(), WithinRel(kn_ref.real(), 1.0e-4));
@@ -681,7 +686,8 @@ TEST_CASE("WavePortData lossy fill at real and complex ω", "[waveportimpedance]
     auto &port = const_cast<WavePortData &>(wave_port_op.GetPort(1));
 
     const double omega_nd =
-        2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+        2.0 * std::numbers::pi *
+        iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
     const std::complex<double> kn_nd = port.SolveKnComplex(omega_nd * omega_scale);
     const double kn_scale =
         1.0 / iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
@@ -689,16 +695,17 @@ TEST_CASE("WavePortData lossy fill at real and complex ω", "[waveportimpedance]
   };
 
   const double c0 = electromagnetics::c0_;
-  const double mu0 = 4.0e-7 * M_PI;
+  const double mu0 = 4.0e-7 * std::numbers::pi;
   auto kn_closed_form = [&](double kc, std::complex<double> omega_rad_s)
   {
     const std::complex<double> k0 = omega_rad_s / c0;
     return std::sqrt(
         k0 * k0 - std::complex<double>(0.0, 1.0) * omega_rad_s * mu0 * sigma_Sm - kc * kc);
   };
-  const double kc_te10 = M_PI / a_m;
-  const double kc_tm11 = M_PI * std::sqrt(1.0 / (a_m * a_m) + 1.0 / (b_m * b_m));
-  const std::complex<double> omega_r(2.0 * M_PI * f_GHz * 1.0e9, 0.0);
+  const double kc_te10 = std::numbers::pi / a_m;
+  const double kc_tm11 =
+      std::numbers::pi * std::sqrt(1.0 / (a_m * a_m) + 1.0 / (b_m * b_m));
+  const std::complex<double> omega_r(2.0 * std::numbers::pi * f_GHz * 1.0e9, 0.0);
 
   SECTION("TE10 (transverse only: validates Att +iωσ)")
   {
@@ -803,8 +810,8 @@ TEST_CASE("WavePort rotated-mu reconstruction", "[waveportimpedance][Serial][Par
     ExposedWavePortOperator wave_port_op(iodata, mat_op, nd_fespace.Get(),
                                          h1_fespace.Get());
     wave_port_op.SetSuppressOutput(true);
-    const double omega =
-        2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+    const double omega = 2.0 * std::numbers::pi *
+                         iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
     wave_port_op.Initialize(omega);
     const auto &port = wave_port_op.GetPort(1);
     return {port.modal_reaction, port.modal_reaction_scalar};

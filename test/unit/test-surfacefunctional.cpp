@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <numbers>
 #include <set>
 #include <string>
 #include <mfem.hpp>
@@ -2517,8 +2518,8 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
     constexpr int num_directions = 257;
     for (int i = static_cast<int>(r_naughts.size()); i < num_directions; i++)
     {
-      const double theta = M_PI * (i + 0.5) / num_directions;
-      const double phi = 2.0 * M_PI * i * 0.6180339887498948;
+      const double theta = std::numbers::pi * (i + 0.5) / num_directions;
+      const double phi = 2.0 * std::numbers::pi * i * 0.6180339887498948;
       r_naughts.push_back({std::sin(theta) * std::cos(phi), std::sin(theta) * std::sin(phi),
                            std::cos(theta)});
     }

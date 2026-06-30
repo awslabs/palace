@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <numbers>
 #include <set>
 #include <string>
 #include <vector>
@@ -905,8 +906,8 @@ TEST_CASE("FarField", "[config][Serial]")
     CHECK(data.thetaphis.size() == 2);
     CHECK(data.thetaphis[0].first == Catch::Approx(0.0).margin(delta_eps));
     CHECK(data.thetaphis[0].second == Catch::Approx(0.0).margin(delta_eps));
-    CHECK(data.thetaphis[1].first == Catch::Approx(M_PI / 2).margin(delta_eps));
-    CHECK(data.thetaphis[1].second == Catch::Approx(M_PI).margin(delta_eps));
+    CHECK(data.thetaphis[1].first == Catch::Approx(std::numbers::pi / 2).margin(delta_eps));
+    CHECK(data.thetaphis[1].second == Catch::Approx(std::numbers::pi).margin(delta_eps));
   }
 
   SECTION("Duplicate removal")
@@ -967,7 +968,7 @@ TEST_CASE("FarField", "[config][Serial]")
       {
         if (std::abs(point.first) < delta_eps)
           has_north_pole = true;
-        if (std::abs(point.first - M_PI) < delta_eps)
+        if (std::abs(point.first - std::numbers::pi) < delta_eps)
           has_south_pole = true;
       }
       CHECK(has_north_pole);
@@ -983,8 +984,9 @@ TEST_CASE("FarField", "[config][Serial]")
       for (const auto &point : data.thetaphis)
       {
         if ((std::abs(point.second) < delta_eps ||
-             std::abs(point.second - M_PI) < delta_eps) &&
-            std::abs(point.first) > delta_eps && std::abs(point.first - M_PI) > delta_eps)
+             std::abs(point.second - std::numbers::pi) < delta_eps) &&
+            std::abs(point.first) > delta_eps &&
+            std::abs(point.first - std::numbers::pi) > delta_eps)
         {
           xz_plane_count++;
         }
@@ -996,7 +998,7 @@ TEST_CASE("FarField", "[config][Serial]")
       int equator_count = 0;
       for (const auto &point : data.thetaphis)
       {
-        if (std::abs(point.first - M_PI / 2.0) < delta_eps)
+        if (std::abs(point.first - std::numbers::pi / 2.0) < delta_eps)
         {
           equator_count++;
         }

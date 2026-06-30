@@ -3,6 +3,7 @@
 
 #include <complex>
 #include <memory>
+#include <numbers>
 #include <type_traits>
 #include <vector>
 #include <catch2/catch_template_test_macros.hpp>
@@ -319,7 +320,7 @@ TEST_CASE("OrthogonalizeColumn Parameterized - Complex 1", "[orthog][Serial][Par
   }
 
   // Rank-wise orthogonal basis vectors
-  auto theta = (2. * M_PI * mpi_rank) / mpi_size;
+  auto theta = (2. * std::numbers::pi * mpi_rank) / mpi_size;
   V.at(mpi_rank).Real()[mpi_rank] = std::cos(theta);
   V.at(mpi_rank).Imag()[mpi_rank] = std::sin(theta);
 
