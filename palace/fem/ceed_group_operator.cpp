@@ -11,6 +11,28 @@ namespace palace
 namespace fem
 {
 
+void DestroyGroupOperators(std::vector<CeedGroupOperator> &groups)
+{
+  for (auto &group : groups)
+  {
+    if (group.out_vec)
+    {
+      PalaceCeedCall(group.ceed, CeedVectorDestroy(&group.out_vec));
+      group.out_size = 0;
+    }
+    if (group.ctx)
+    {
+      PalaceCeedCall(group.ceed, CeedQFunctionContextDestroy(&group.ctx));
+    }
+    if (group.op)
+    {
+      PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
+    }
+    group.field_sources.clear();
+  }
+  groups.clear();
+}
+
 void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
                             const std::array<const Vector *, 4> &srcs, const Vector &out,
                             const Vector *imported)
@@ -30,6 +52,7 @@ void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
                      CeedOperatorGetFieldByName(group.op, name.c_str(), &field));
       PalaceCeedCall(group.ceed, CeedOperatorFieldGetVector(field, &field_vec));
       ceed::InitCeedVector(*sv, group.ceed, &field_vec, false);
+      PalaceCeedCall(group.ceed, CeedVectorDestroy(&field_vec));
     }
     CeedMemType out_mem;
     PalaceCeedCall(group.ceed, CeedGetPreferredMemType(group.ceed, &out_mem));

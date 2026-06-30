@@ -21,8 +21,8 @@ namespace fem
 // inputs re-pointed at caller data (by source vector index) on each evaluation.
 struct CeedGroupOperator
 {
-  Ceed ceed;
-  CeedOperator op;
+  Ceed ceed = nullptr;
+  CeedOperator op = nullptr;
   std::vector<std::pair<std::string, int>> field_sources;
   // Optional retained QFunction context handle for in-place runtime updates (e.g.
   // far-field frequency) without reassembly; nullptr if the operator has no context or
@@ -43,6 +43,10 @@ struct CeedGroupOperator
 void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
                             const std::array<const Vector *, 4> &srcs, const Vector &out,
                             const Vector *imported = nullptr);
+
+// Destroy the libCEED references owned by a group-operator vector and clear it. The Ceed
+// context itself is borrowed and is not destroyed here.
+void DestroyGroupOperators(std::vector<CeedGroupOperator> &groups);
 
 }  // namespace fem
 

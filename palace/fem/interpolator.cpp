@@ -172,17 +172,7 @@ public:
     }
   }
 
-  ~CeedProbeEvaluator()
-  {
-    for (auto &group : groups)
-    {
-      PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
-      if (group.out_vec)
-      {
-        PalaceCeedCall(group.ceed, CeedVectorDestroy(&group.out_vec));
-      }
-    }
-  }
+  ~CeedProbeEvaluator() { fem::DestroyGroupOperators(groups); }
 
   bool IsValid() const { return valid; }
 
