@@ -122,6 +122,7 @@ private:
   double viz_scaling = 1.0;
   int buffer_size = 0;
   std::vector<int> buffer_bases;
+  std::vector<int> trace_bdr_indices;
 
   // Field finite element spaces (not owned): nd_fespace for H(curl) fields (source index
   // 0), rt_fespace for H(div) fields (source index 1). Either may be nullptr depending
@@ -190,7 +191,9 @@ private:
                     const MaterialOperator &mat_op, int lod, double scaling);
 
   // Fill boundary visualization buffers. Friend-only; non-reducing callers use
-  // PointFieldEvaluator.
+  // PointFieldEvaluator. Continuous trace fields (E_t/B_n) use boundary/face DOFs
+  // directly on the MFEM boundary-element tessellation.
+  void EvalTraceFieldBuffer(const Vector &u, Vector &buffer) const;
   void EvalBuffer(const Vector &u, Vector &buffer) const;
   void EvalBuffer(const GridFunction &u, Vector &buffer) const;
   void EvalBuffer(const GridFunction &E, const GridFunction &B, Vector &buffer) const;
