@@ -272,6 +272,9 @@ struct CeedAssemblyScratch
   std::vector<CeedBasis> bases;
 
   CeedAssemblyScratch(Ceed ceed) : ceed(ceed) {}
+  CeedAssemblyScratch(const CeedAssemblyScratch &) = delete;
+  CeedAssemblyScratch &operator=(const CeedAssemblyScratch &) = delete;
+
   ~CeedAssemblyScratch()
   {
     for (auto &v : vecs)
@@ -465,18 +468,7 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
 
 SurfaceFunctional::~SurfaceFunctional()
 {
-  for (auto &group : groups)
-  {
-    PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
-    if (group.ctx)
-    {
-      PalaceCeedCall(group.ceed, CeedQFunctionContextDestroy(&group.ctx));
-    }
-    if (group.out_vec)
-    {
-      PalaceCeedCall(group.ceed, CeedVectorDestroy(&group.out_vec));
-    }
-  }
+  fem::DestroyGroupOperators(groups);
 }
 
 bool SurfaceFunctional::Enabled()
@@ -497,20 +489,15 @@ void SurfaceFunctional::Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_a
   Mpi::GlobalAnd(1, &global_valid, comm);
   if (!global_valid && valid)
   {
-    // Discard the locally assembled operators; the legacy path will be used.
-    for (auto &group : groups)
-    {
-      PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
-      if (group.ctx)
-      {
-        PalaceCeedCall(group.ceed, CeedQFunctionContextDestroy(&group.ctx));
-      }
-      if (group.out_vec)
-      {
-        PalaceCeedCall(group.ceed, CeedVectorDestroy(&group.out_vec));
-      }
-    }
-    groups.clear();
+    // Discard locally assembled state; the legacy path will be used.
+    fem::DestroyGroupOperators(groups);
+    face_nbr_exchange.reset();
+    elem_attrs.clear();
+    field_staging.SetSize(0);
+    local_out.SetSize(0);
+    local_out_attrs.clear();
+    buffer_bases.clear();
+    buffer_size = 0;
     valid = false;
   }
 }
@@ -1818,9 +1805,9 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
     }
     else
     {
-      ceed::AssembleCeedSurfaceFunctional(info, ctx.data(),
-                                          ctx.size() * sizeof(CeedIntScalar), ceed, inputs,
-                                          num_out, out_restr, &op, &op_ctx);
+      ceed::AssembleCeedSurfaceFunctional(
+          info, ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed, inputs, num_out,
+          out_restr, &op, (kind == KernelKind::FARFIELD) ? &op_ctx : nullptr);
     }
     groups.push_back({ceed, op, std::move(field_sources), op_ctx});
   }

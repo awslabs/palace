@@ -30,12 +30,38 @@ public:
   using Kind = PointFieldKind;
 
 private:
+  enum class BoundaryEvaluatorType
+  {
+    NONE,
+    FIELD,
+    MATERIAL,
+    POYNTING
+  };
+
   MeshEntityType location;
   Kind kind;
+  bool valid = false;
   std::unique_ptr<DomainPointFieldEvaluator> domain_eval;
-  std::unique_ptr<SurfaceFunctional> boundary_eval;
+  mutable std::unique_ptr<SurfaceFunctional> boundary_eval;
+
+  // Boundary evaluators may be released after metadata extraction/evaluation and rebuilt
+  // on demand to avoid retaining many large libCEED AtPoints operators simultaneously.
+  BoundaryEvaluatorType boundary_type = BoundaryEvaluatorType::NONE;
+  const Mesh *boundary_mesh = nullptr;
+  mfem::Array<int> boundary_marker;
+  const mfem::ParFiniteElementSpace *boundary_fespace = nullptr;
+  const mfem::ParFiniteElementSpace *boundary_nd_fespace = nullptr;
+  const mfem::ParFiniteElementSpace *boundary_rt_fespace = nullptr;
+  const MaterialOperator *boundary_mat_op = nullptr;
+  int boundary_lod = 0;
+  double boundary_scaling = 1.0;
+  int boundary_buffer_size = 0;
+  std::vector<int> boundary_buffer_bases;
 
   static int NumComponents(Kind kind);
+  void EnsureBoundaryEvaluator() const;
+  void CacheBoundaryMetadata();
+  bool ReleaseBoundaryEvaluatorAfterUse() const;
 
 public:
   // Domain pointwise evaluator for U_e, U_m, or S at VTU visualization points. The
