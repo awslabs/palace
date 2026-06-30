@@ -28,6 +28,9 @@ struct CeedGroupOperator
   // far-field frequency) without reassembly; nullptr if the operator has no context or
   // the context is not updated. Owned by the group (destroyed with it).
   CeedQFunctionContext ctx = nullptr;
+  // Cached passive field vectors for field_sources, populated on first apply to avoid
+  // repeated string lookups in libCEED during ParaView point-field output.
+  mutable std::vector<std::pair<CeedVector, int>> field_vec_sources;
   // Reusable output vector wrapper. The pointed-to MFEM Vector data is supplied at
   // apply time, but the libCEED vector object itself can be retained across repeated
   // postprocessing evaluations instead of being created/destroyed for every group apply.
