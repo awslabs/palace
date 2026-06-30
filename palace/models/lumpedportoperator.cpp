@@ -234,6 +234,7 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
   const bool has_imag = E.HasImag();
   auto &nd_fespace = *E.ParFESpace();
   const auto &mesh = *nd_fespace.GetParMesh();
+
   SumVectorCoefficient fbr(mesh.SpaceDimension()), fbi(mesh.SpaceDimension());
   mfem::Array<int> attr_list;
   for (const auto &elem : elems)
