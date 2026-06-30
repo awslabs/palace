@@ -12,6 +12,16 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+#### New Features
+
+  - Added support for the [NVIDIA cuDSS](https://docs.nvidia.com/cuda/cudss/index.html)
+    high-performance CUDA sparse direct solver, selectable via
+    `config["Solver"]["Linear"]["Type"] = "cuDSS"` for the KSP and wave port solvers.
+    Enable at build time with `PALACE_WITH_CUDSS=ON` (requires `PALACE_WITH_CUDA=ON`).
+    [PR 717](https://github.com/awslabs/palace/pull/717).
+
 ## [0.17.0] - 2026-06-28
 
 #### New Features

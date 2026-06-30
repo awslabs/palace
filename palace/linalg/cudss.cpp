@@ -6,8 +6,6 @@
 
 #if defined(MFEM_USE_CUDSS)
 
-#include "utils/iodata.hpp"
-
 namespace palace
 {
 
@@ -30,8 +28,11 @@ mfem::CuDSSSolver::MatType GetCuDSSMatType(MatrixSymmetry sym)
 
 }  // namespace
 
-CuDSSSolver::CuDSSSolver(MPI_Comm comm, MatrixSymmetry sym, SymbolicFactorization reorder,
-                         bool reorder_reuse, int print)
+// cuDSS does not expose a reordering-strategy selection (it only supports reordering
+// reuse), so the SymbolicFactorization argument is accepted for interface parity with the
+// other direct solvers (see MakeWrapperSolver in ksp.cpp) but is intentionally unused.
+CuDSSSolver::CuDSSSolver(MPI_Comm comm, MatrixSymmetry sym,
+                         SymbolicFactorization /*reorder*/, bool reorder_reuse, int print)
   : mfem::CuDSSSolver(comm)
 {
   SetMatrixSymType(GetCuDSSMatType(sym));

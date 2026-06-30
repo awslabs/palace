@@ -412,6 +412,8 @@ void IoData::CheckConfiguration()
       solver.linear.type = LinearSolver::STRUMPACK;
 #elif defined(MFEM_USE_MUMPS)
       solver.linear.type = LinearSolver::MUMPS;
+#elif defined(MFEM_USE_CUDSS)
+      solver.linear.type = LinearSolver::CUDSS;
 #else
       solver.linear.type = LinearSolver::AMS;
 #endif
@@ -592,6 +594,10 @@ void IoData::CheckConfiguration()
 #if !defined(MFEM_USE_MUMPS)
   MFEM_VERIFY(solver.linear.type != LinearSolver::MUMPS,
               "Linear solver MUMPS requested but Palace was not built with MUMPS support!");
+#endif
+#if !defined(MFEM_USE_CUDSS)
+  MFEM_VERIFY(solver.linear.type != LinearSolver::CUDSS,
+              "Linear solver cuDSS requested but Palace was not built with cuDSS support!");
 #endif
 
   // Configure settings for quadrature rules and partial assembly.
