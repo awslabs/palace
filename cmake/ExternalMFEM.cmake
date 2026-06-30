@@ -400,7 +400,7 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_gmsh_parser_performance.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5246.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5353.diff"
-  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_bdr_edge_dof_extraction.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr4983.diff"
 )
 
 include(ExternalProject)
