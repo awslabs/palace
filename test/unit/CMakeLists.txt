@@ -105,7 +105,7 @@ endif()
 # Add JIT source file path definition for libCEED
 set_property(
   SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
-  APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_INSTALL_PREFIX}/include/palace/\""
+  APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}/fem/\""
 )
 
 # Add path for test data files.
