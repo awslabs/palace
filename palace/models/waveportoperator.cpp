@@ -233,7 +233,7 @@ public:
 };
 
 // Computes boundary mode n x H, where +n is the outward mesh normal: n x H =
-// -1/(iωμ) (ikₙ Eₜ + ∇ₜ Eₙ), using the tangential and normal electric field component grid
+// -1/(iωμ) (ik_n Eₜ + ∇ₜ Eₙ), using the tangential and normal electric field component grid
 // functions evaluated on the (single-sided) boundary element.
 template <ValueType Type>
 class BdrSubmeshHVectorCoefficient : public mfem::VectorCoefficient
@@ -323,7 +323,7 @@ public:
       return submesh.GetParent()->GetAttribute(iel1);
     }();
 
-    // Compute Re/Im{-1/i (ikₙ Eₜ + ∇ₜ Eₙ)} (t-gradient evaluated in boundary element).
+    // Compute Re/Im{-1/i (ik_n Eₜ + ∇ₜ Eₙ)} (t-gradient evaluated in boundary element).
     double U_data[3];
     mfem::Vector U(U_data, vdim);
     if constexpr (Type == ValueType::REAL)
@@ -651,12 +651,12 @@ void WavePortData::Initialize(double omega)
   Mpi::Broadcast(1, &lambda, port_root, port_mesh->GetComm());
 
   // Extract the eigenmode solution and postprocess. The extracted eigenvalue is λ =
-  // 1 / (-kₙ² - σ).
+  // 1 / (-k_n² - σ).
   kn0 = std::sqrt(-sigma - 1.0 / lambda);
   omega0 = omega;
 
   // Separate the computed field out into eₜ and eₙ and transform back to the physical
-  // electric field variables Eₜ = eₜ and Eₙ = eₙ / (i·kₙ). Order: load raw eigenvector,
+  // electric field variables Eₜ = eₜ and Eₙ = eₙ / (i·k_n). Order: load raw eigenvector,
   // phase-normalize, then apply the shared VD back-transform.
   {
     if (port_comm != MPI_COMM_NULL)
@@ -769,7 +769,7 @@ std::complex<double> WavePortData::SolveKnComplex(std::complex<double> omega)
     }
   }
   Mpi::Broadcast(1, &lambda, port_root, port_mesh->GetComm());
-  // kₙ = √(−σ − 1/λ_evp). Principal branch gives Re(kₙ) ≥ 0 (forward-propagating /
+  // k_n = √(−σ − 1/λ_evp). Principal branch gives Re(k_n) ≥ 0 (forward-propagating /
   // forward-decaying sheet), which is the physical convention for the +z mode.
   return std::sqrt(-sigma - 1.0 / lambda);
 }
@@ -1288,11 +1288,11 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(double omega,
                                                      MaterialPropertyCoefficient &fbi)
 {
   // Real-ω wave-port BC (driven / boundary-mode path). The contribution looks a lot like
-  // the lumped port boundary, except the iω / Z_s coefficient goes to i·kₙ / μ where kₙ is
+  // the lumped port boundary, except the iω / Z_s coefficient goes to i·k_n / μ where k_n is
   // specific to the port mode at the operating frequency. Only the real (propagating) part
-  // of kₙ is used here: a real-ω driven/boundary-mode solve models a lossless, energy-
-  // carrying port line, so the line-attenuation Im(kₙ) is intentionally dropped. (The
-  // eigenmode nonlinear solve uses the full complex kₙ via the complex overload below.)
+  // of k_n is used here: a real-ω driven/boundary-mode solve models a lossless, energy-
+  // carrying port line, so the line-attenuation Im(k_n) is intentionally dropped. (The
+  // eigenmode nonlinear solve uses the full complex k_n via the complex overload below.)
   Initialize(omega);
   for (const auto &[idx, data] : ports)
   {
@@ -1309,8 +1309,8 @@ void WavePortOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
                                                      MaterialPropertyCoefficient &fbi)
 {
   // Complex-ω wave-port BC for the eigenmode nonlinear solve. The system contribution is
-  // A2_wp = i·kₙ(ω)·M^(p)_{μ⁻¹} with the EXACT complex kₙ(ω) from the cross-section EVP
-  // solved at the genuinely complex eigenvalue (ω = -i·λ). For kₙ = β + iα, expanding
+  // A2_wp = i·k_n(ω)·M_{μ⁻¹,p} with the EXACT complex k_n(ω) from the cross-section EVP
+  // solved at the genuinely complex eigenvalue (ω = -i·λ). For k_n = β + iα, expanding
   // i·(β + iα) = −α + iβ puts the line-attenuation term −α·M on the real slot (fbr) and
   // the propagating term β·M on the imaginary slot (fbi). SolveKnComplex is
   // side-effect-free (does NOT cache, leaving omega0/kn0/port_E0t untouched), so the real-ω
@@ -1341,7 +1341,7 @@ void WavePortOperator::AddBoundaryMassBdrCoefficients(int port_idx,
 {
   // Per-port μ⁻¹ boundary mass coefficient with optional scalar scaling. Pulling this out
   // of AddExtraSystemBdrCoefficients gives the reduced-order model access to the
-  // ω-independent operator separately from its per-ω scaling kₙ(ω).
+  // ω-independent operator separately from its per-ω scaling k_n(ω).
   auto it = ports.find(port_idx);
   if (it == ports.end() || !it->second.active)
   {

@@ -585,7 +585,7 @@ SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
 {
   // Per-port μ⁻¹ boundary mass matrix, ω-independent — see
   // WavePortOperator::AddBoundaryMassBdrCoefficients. Pure imaginary part of A2(ω) when
-  // the per-ω scalar i·kₙ(ω) is reattached.
+  // the per-ω scalar i·k_n(ω) is reattached.
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
   wave_port_op.AddBoundaryMassBdrCoefficients(port_idx, fb);

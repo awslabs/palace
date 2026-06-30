@@ -153,13 +153,13 @@ public:
   [[nodiscard]] int GetModePolaritySign(int high_attr, int low_attr) const;
 
   // Solve the cross-section modal EVP at a COMPLEX frequency and return the complex
-  // propagation constant kₙ(ω), WITHOUT reconstructing the mode field or disturbing the
+  // propagation constant k_n(ω), WITHOUT reconstructing the mode field or disturbing the
   // cached real-ω state (omega0 / kn0 / port_E0t). This evaluates the wave-port BC as an
   // analytic continuation onto the complex-λ plane (λ = i·ω) by re-solving the EVP at the
   // genuinely complex ω, used by the eigenmode nonlinear eigensolver to evaluate the
   // wave-port BC at the complex eigenvalue. MPI-collective on the FE space communicator
   // (matrix assembly), with the eigenvalue broadcast from the port root. For real ω this
-  // returns the same kₙ as Initialize(ω) (full complex value, including any cross-section
+  // returns the same k_n as Initialize(ω) (full complex value, including any cross-section
   // loss), whereas GetWavePortKn truncates to the real part.
   std::complex<double> SolveKnComplex(std::complex<double> omega);
 
@@ -247,7 +247,7 @@ public:
 
   // Add the ω-independent boundary mass contribution from a single wave port to a material
   // property coefficient. The full system contribution from this port is
-  // i·kₙ(ω)·(this) — see AddExtraSystemBdrCoefficients. Used to factor out the
+  // i·k_n(ω)·(this) — see AddExtraSystemBdrCoefficients. Used to factor out the
   // ω-independent operator for reuse by the reduced-order model. The port_idx must refer
   // to an active port; if it does not, no contribution is added.
   void AddBoundaryMassBdrCoefficients(int port_idx, MaterialPropertyCoefficient &fb) const;
@@ -259,27 +259,27 @@ public:
                                       double scale) const;
 
   // Complex-frequency wave-port BC overload for the eigenmode nonlinear solve. Stamps the
-  // full complex wave-port term i·kₙ(ω)·M^(p) with kₙ(ω) from the exact cross-section EVP
+  // full complex wave-port term i·k_n(ω)·M_p with k_n(ω) from the exact cross-section EVP
   // solved at the genuinely complex frequency ω = -i·λ (WavePortData::SolveKnComplex): the
-  // line-attenuation −Im(kₙ)·M goes on fbr and the propagating Re(kₙ)·M on fbi. Does not
+  // line-attenuation −Im(k_n)·M goes on fbr and the propagating Re(k_n)·M on fbi. Does not
   // disturb the cached real-ω modal state. For real ω this matches the double overload's
   // physics with the attenuation additionally carried on fbr.
   void AddExtraSystemBdrCoefficients(std::complex<double> omega,
                                      MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi);
 
-  // Compute and return the (real part of the) modal propagation constant kₙ for the
+  // Compute and return the (real part of the) modal propagation constant k_n for the
   // specified port at the given operating frequency. Triggers the per-port cross-section
   // EVP via WavePortData::Initialize; result is cached per port (per ω). Used by the
   // reduced-order model to assemble the wave-port contribution online without touching
   // any HDM-size object.
   double GetWavePortKn(int port_idx, double omega);
 
-  // Complex-frequency propagation constant kₙ(ω) for the eigenmode nonlinear solve's
+  // Complex-frequency propagation constant k_n(ω) for the eigenmode nonlinear solve's
   // complex-λ wave-port BC (λ = i·ω). Runs the cross-section modal EVP at a genuinely
-  // complex ω and returns the recovered complex kₙ without disturbing the cached real-ω
+  // complex ω and returns the recovered complex k_n without disturbing the cached real-ω
   // modal field. The complex-ω counterpart of GetWavePortKn (which solves at real ω and
-  // truncates to Re(kₙ)). See WavePortData::SolveKnComplex.
+  // truncates to Re(k_n)). See WavePortData::SolveKnComplex.
   std::complex<double> GetWavePortKnComplex(int port_idx, std::complex<double> omega);
 
   // Add contributions to the right-hand side source term vector for an incident field at

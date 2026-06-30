@@ -221,11 +221,11 @@ TEST_CASE("WavePort TE10 mode polarity sign", "[waveportimpedance][Serial]")
 
 // Validate the COMPLEX-frequency wave-port cross-section solve
 // (WavePortData::SolveKnComplex) against the closed-form TE10 propagation constant,
-// evaluated at a genuinely complex frequency ω. For a lossless homogeneous guide kₙ(ω) =
+// evaluated at a genuinely complex frequency ω. For a lossless homogeneous guide k_n(ω) =
 // √(εμ ω² − k_c²), k_c = π/a, is an EXACT analytic function of ω. The whole
 // complex-wave-port path (used by the eigenmode nonlinear solve at ω = -i·λ) rests on
-// SolveKnComplex reproducing this analytic continuation off the real axis — i.e. kₙ(ω) for
-// complex ω must equal √(εμ ω² − k_c²) to discretization error, NOT the real-ω value kₙ(Re
+// SolveKnComplex reproducing this analytic continuation off the real axis — i.e. k_n(ω) for
+// complex ω must equal √(εμ ω² − k_c²) to discretization error, NOT the real-ω value k_n(Re
 // ω). This pins that down directly, independent of any cavity / eigenmode / Q
 // considerations.
 TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
@@ -242,7 +242,7 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
 
   Units units(1.0, 1.0);
   IoData iodata(units);
-  iodata.model.L0 = 1.0;  // Mesh coordinates are in raw meters → kₙ_nondim is in rad/m.
+  iodata.model.L0 = 1.0;  // Mesh coordinates are in raw meters → k_n_nondim is in rad/m.
   iodata.model.Lc = 1.0;
 
   auto &material = iodata.domains.materials.emplace_back();
@@ -287,15 +287,15 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
   wave_port_op.SetSuppressOutput(true);
   auto &port = const_cast<WavePortData &>(wave_port_op.GetPort(1));
 
-  // Closed-form TE10 propagation constant kₙ(ω) = √(εμ ω² − k_c²). In this Units(1,1)
-  // / Lc = 1 m setup the internal angular frequency is ω·tc with tc = Lc/c0, and kₙ comes
+  // Closed-form TE10 propagation constant k_n(ω) = √(εμ ω² − k_c²). In this Units(1,1)
+  // / Lc = 1 m setup the internal angular frequency is ω·tc with tc = Lc/c0, and k_n comes
   // back in rad/m. Build the analytic reference directly in physical (rad/m) units and
-  // compare against the dimensionalized SolveKnComplex result kₙ_phys = kₙ_nondim · (1/Lc).
+  // compare against the dimensionalized SolveKnComplex result k_n_phys = k_n_nondim · (1/Lc).
   const double c0 = electromagnetics::c0_;
   const double kc = M_PI / a_m;  // TE10 transverse cutoff wavenumber [rad/m]
   auto kn_closed_form = [&](std::complex<double> omega_rad_s) -> std::complex<double>
   {
-    // kₙ = √((ω/c)² − k_c²); principal branch gives Re(kₙ) ≥ 0 (forward sheet).
+    // k_n = √((ω/c)² − k_c²); principal branch gives Re(k_n) ≥ 0 (forward sheet).
     const std::complex<double> k0 = omega_rad_s / c0;
     return std::sqrt(k0 * k0 - kc * kc);
   };
@@ -305,7 +305,7 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
   {
     return 2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
   };
-  // kₙ scale factor (nondim → rad/m): kc_len = 1/Lc(meters).
+  // k_n scale factor (nondim → rad/m): kc_len = 1/Lc(meters).
   const double kn_scale = 1.0 / iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
 
   SECTION("real ω above cutoff")
@@ -325,7 +325,7 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
   {
     // Probe a genuinely complex frequency: f = 10 GHz with a 5% imaginary part (a Q≈10
     // quasinormal-mode-like point, ω = ω_r(1 + i/20)). The exact solve MUST track the
-    // analytic continuation here — this is precisely where a real-ω evaluation (kₙ at
+    // analytic continuation here — this is precisely where a real-ω evaluation (k_n at
     // Re ω) would differ by O(Im ω / Re ω) ~ 1/(2Q).
     const double f_r_GHz = 10.0;
     const std::complex<double> scale_c(1.0, 0.05);
@@ -345,7 +345,7 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
   SECTION("complex ω near cutoff")
   {
     // f_r just above cutoff (≈6.56 GHz) with loss: this is the branch-sensitive regime.
-    // The principal-branch √ must give Re(kₙ) ≥ 0 (forward / decaying sheet), matching the
+    // The principal-branch √ must give Re(k_n) ≥ 0 (forward / decaying sheet), matching the
     // closed form — guards against the wrong-Riemann-sheet hazard.
     const double f_r_GHz = 7.0;
     const std::complex<double> scale_c(1.0, 0.08);
