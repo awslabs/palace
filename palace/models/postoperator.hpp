@@ -12,6 +12,7 @@
 #include <type_traits>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/domain_field_evaluator.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/interpolator.hpp"
 #include "fem/output_functionals.hpp"

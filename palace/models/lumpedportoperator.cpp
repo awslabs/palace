@@ -257,6 +257,12 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
   {
     return power_func->EvalComplexPower(E, B);
   }
+  if (SurfaceFunctional::Enabled() && mesh.Dimension() == 3 && mesh.SpaceDimension() == 3)
+  {
+    MFEM_VERIFY(power_func && power_func->IsValid(),
+                "libCEED lumped-port power postprocessing could not assemble for a "
+                "supported 3D port surface!");
+  }
   return GetPowerLegacy(E, B);
 }
 
@@ -599,6 +605,13 @@ std::map<int, std::complex<double>> LumpedPortOperator::GetPowers(GridFunction &
     }
     if (batched_power_func)
     {
+      if (E.ParFESpace()->GetParMesh()->Dimension() == 3 &&
+          E.ParFESpace()->GetParMesh()->SpaceDimension() == 3)
+      {
+        MFEM_VERIFY(batched_power_func->IsValid(),
+                    "libCEED batched lumped-port power postprocessing could not assemble "
+                    "for supported 3D port surfaces!");
+      }
       batched_power_unavailable = true;
     }
   }
