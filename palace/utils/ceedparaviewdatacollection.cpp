@@ -7,6 +7,7 @@
 #include <limits>
 #include <memory>
 #include <regex>
+#include <sstream>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -120,6 +121,41 @@ void CeedParaViewDataCollection::DeregisterPointField(MeshEntityType location,
   PointFields(location).erase(field_name);
 }
 
+void CeedParaViewDataCollection::WriteCellFieldVTU(std::ostream &os,
+                                                   const std::string &name,
+                                                   const CellField &field) const
+{
+  MFEM_VERIFY(!bdr_output, "Domain cell fields require domain ParaView output!");
+  MFEM_VERIFY(field.values && field.num_comp > 0,
+              "Invalid domain cell field registration!");
+  MFEM_VERIFY(field.values->Size() == mesh->GetNE() * field.num_comp,
+              "Domain cell field size does not match the mesh cell count!");
+
+  os << "<DataArray type=\"" << GetDataTypeString() << "\" Name=\"" << name
+     << "\" NumberOfComponents=\"" << field.num_comp << "\" "
+     << mfem::VTKComponentLabels(field.num_comp) << " "
+     << "format=\"" << GetDataFormatString() << "\" >" << '\n';
+
+  std::vector<char> buf;
+  const double *data = field.values->HostRead();
+  for (int i = 0; i < mesh->GetNE(); i++)
+  {
+    for (int c = 0; c < field.num_comp; c++)
+    {
+      mfem::WriteBinaryOrASCII(os, buf, data[i * field.num_comp + c], " ", pv_data_format);
+    }
+    if (pv_data_format == mfem::VTKFormat::ASCII)
+    {
+      os << '\n';
+    }
+  }
+  if (pv_data_format != mfem::VTKFormat::ASCII)
+  {
+    mfem::WriteBase64WithSizeAndClear(os, buf, GetCompressionLevel());
+  }
+  os << "</DataArray>" << std::endl;
+}
+
 void CeedParaViewDataCollection::RegisterBoundaryPointField(const std::string &field_name,
                                                             const Vector &values,
                                                             const std::vector<int> &bases,
@@ -149,9 +185,23 @@ void CeedParaViewDataCollection::DeregisterBoundaryPointField(const std::string 
   DeregisterPointField(MeshEntityType::Boundary, field_name);
 }
 
+void CeedParaViewDataCollection::RegisterDomainCellField(const std::string &field_name,
+                                                         const Vector &values, int num_comp)
+{
+  MFEM_VERIFY(num_comp > 0, "Domain cell field must have at least one component!");
+  MFEM_VERIFY(values.Size() == mesh->GetNE() * num_comp,
+              "Domain cell field size does not match the mesh cell count!");
+  domain_cell_fields[field_name] = CellField{&values, num_comp};
+}
+
 void CeedParaViewDataCollection::DeregisterDomainPointField(const std::string &field_name)
 {
   DeregisterPointField(MeshEntityType::Domain, field_name);
+}
+
+void CeedParaViewDataCollection::DeregisterDomainCellField(const std::string &field_name)
+{
+  domain_cell_fields.erase(field_name);
 }
 
 bool CeedParaViewDataCollection::UseAppendedPointFields(MeshEntityType location) const
@@ -401,8 +451,33 @@ void CeedParaViewDataCollection::SaveDataVTU(std::ostream &os, int ref)
   }
   os << " version=\"2.2\" byte_order=\"" << mfem::VTKByteOrder() << "\">\n";
   os << "<UnstructuredGrid>\n";
-  mesh->PrintVTU(os, ref, pv_data_format, high_order_output, GetCompressionLevel(),
-                 bdr_output);
+  if (domain_cell_fields.empty())
+  {
+    mesh->PrintVTU(os, ref, pv_data_format, high_order_output, GetCompressionLevel(),
+                   bdr_output);
+  }
+  else
+  {
+    // MFEM owns mesh/attribute VTU emission and closes the <CellData> block before
+    // returning. For lightweight element fields (rank, AMR indicator), splice our arrays
+    // into that existing CellData section instead of routing them through a piecewise
+    // constant GridFunction, which would expand one cell value to every refined point.
+    std::ostringstream mesh_os;
+    mesh_os.precision(os.precision());
+    mesh->PrintVTU(mesh_os, ref, pv_data_format, high_order_output, GetCompressionLevel(),
+                   bdr_output);
+    const std::string mesh_vtu = mesh_os.str();
+    const std::string cell_data_end = "</CellData>";
+    const auto pos = mesh_vtu.find(cell_data_end);
+    MFEM_VERIFY(pos != std::string::npos,
+                "Unable to locate CellData block in MFEM VTU mesh output!");
+    os.write(mesh_vtu.data(), static_cast<std::streamsize>(pos));
+    for (const auto &kv : domain_cell_fields)
+    {
+      WriteCellFieldVTU(os, kv.first, kv.second);
+    }
+    os.write(mesh_vtu.data() + pos, static_cast<std::streamsize>(mesh_vtu.size() - pos));
+  }
 
   os << "<PointData >\n";
   for (FieldMapIterator it = field_map.begin(); it != field_map.end(); ++it)
@@ -629,6 +704,13 @@ void CeedParaViewDataCollection::Save()
       pvtu_out << "\t<PDataArray type=\"Int32\" Name=\"attribute\" "
                   "NumberOfComponents=\"1\""
                << " format=\"" << GetDataFormatString() << "\"/>\n";
+      for (const auto &field_it : domain_cell_fields)
+      {
+        pvtu_out << "<PDataArray type=\"" << GetDataTypeString() << "\" Name=\""
+                 << field_it.first << "\" NumberOfComponents=\"" << field_it.second.num_comp
+                 << "\" " << mfem::VTKComponentLabels(field_it.second.num_comp) << " "
+                 << "format=\"" << GetDataFormatString() << "\" />\n";
+      }
       pvtu_out << "</PCellData>\n";
 
       WritePVTUFooter(pvtu_out, "proc");

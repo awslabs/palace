@@ -161,6 +161,38 @@ double LumpedPortData::GetExcitationVoltage() const
   }
 }
 
+SurfaceModeCoefficient LumpedPortData::GetModeCoefficient(const LumpedElementData &elem,
+                                                          double coeff) const
+{
+  SurfaceModeCoefficient mode;
+  mode.attr_list = elem.GetAttrList();
+  mode.scale = coeff;
+  if (const auto *uniform = dynamic_cast<const UniformElementData *>(&elem))
+  {
+    mode.type = SurfaceModeCoefficient::Type::UNIFORM;
+    const auto &dir = uniform->GetDirection();
+    for (int d = 0; d < 3; d++)
+    {
+      mode.direction[d] = (d < dir.Size()) ? dir(d) : 0.0;
+    }
+  }
+  else if (const auto *coax = dynamic_cast<const CoaxialElementData *>(&elem))
+  {
+    mode.type = SurfaceModeCoefficient::Type::COAXIAL;
+    mode.scale *= coax->GetDirection();
+    const auto &origin = coax->GetOrigin();
+    for (int d = 0; d < 3; d++)
+    {
+      mode.origin[d] = (d < origin.Size()) ? origin(d) : 0.0;
+    }
+  }
+  else
+  {
+    MFEM_ABORT("Unknown lumped element type for mode-overlap coefficient!");
+  }
+  return mode;
+}
+
 void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespace) const
 {
   const auto &mesh = *nd_fespace.GetParMesh();
@@ -327,20 +359,43 @@ std::complex<double> LumpedPortData::GetPowerLegacy(GridFunction &E, GridFunctio
 
 std::complex<double> LumpedPortData::GetSParameter(GridFunction &E) const
 {
-  // Compute port S-parameter, or the projection of the field onto the port mode.
-  InitializeLinearForms(*E.ParFESpace());
-  std::complex<double> dot((*s) * E.Real(), 0.0);
-  if (E.HasImag())
+  // The S-parameter mode coefficient is the voltage coefficient scaled by 1/sqrt(R):
+  // H_inc = 1 / sqrt((R W/L n) W L n) = 1 / (W n sqrt(R)). Reuse the device-backed
+  // voltage overlap and preserve the legacy zero result for ports without resistance.
+  if (std::abs(R) == 0.0)
   {
-    dot.imag((*s) * E.Imag());
+    return 0.0;
   }
-  Mpi::GlobalSum(1, &dot, E.GetComm());
-  return dot;
+  return GetVoltage(E) / std::sqrt(R);
 }
 
 std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
 {
-  // Compute the average voltage across the port.
+  // Compute the average voltage across the port using the same mode-overlap machinery as
+  // S-parameters, with the voltage normalization coefficient.
+  if (!v_func && SurfaceFunctional::Enabled())
+  {
+    std::vector<SurfaceModeCoefficient> modes;
+    modes.reserve(elems.size());
+    for (const auto &elem : elems)
+    {
+      modes.push_back(
+          GetModeCoefficient(*elem, 1.0 / (elem->GetGeometryWidth() * elems.size())));
+    }
+    v_func = std::make_unique<SurfaceFunctional>(mat_op.GetMesh(), *E.ParFESpace(), modes);
+  }
+  if (v_func && v_func->IsValid())
+  {
+    return v_func->EvalModeOverlap(E);
+  }
+  const auto &mesh = *E.ParFESpace()->GetParMesh();
+  if (SurfaceFunctional::Enabled() && mesh.Dimension() == 3 && mesh.SpaceDimension() == 3)
+  {
+    MFEM_VERIFY(v_func && v_func->IsValid(),
+                "libCEED lumped-port voltage postprocessing could not assemble for a "
+                "supported 3D port surface!");
+  }
+
   InitializeLinearForms(*E.ParFESpace());
   std::complex<double> dot((*v) * E.Real(), 0.0);
   if (E.HasImag())
