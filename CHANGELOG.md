@@ -46,6 +46,25 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     introducing a chunked MPI broadcast call handle arbitrarily large meshes.
     [PR 810](https://github.com/awslabs/palace/pull/810).
 
+#### Interface Changes
+
+  - Eigenmode simulations with frequency-dependent boundary conditions (e.g. waveports,
+    second-order absorbing, surface conductivity) now evaluate the boundary conditions at
+    the true complex frequency/eigenmode. Previously, the boundary conditions were
+    evaluated using only the real component of the eigenmode.
+    [PR 778](https://github.com/awslabs/palace/pull/778).
+
+#### Bug Fixes
+
+  - Fixed S-parameter post-processing for mixed Floquet + lumped/wave port configurations.
+    Previously, `MeasureSParameter()` skipped processing when Floquet ports coexisted with
+    lumped or wave ports, leaving `port-S.csv` with incorrect values. The fix applies a power
+    normalization factor, restoring S-matrix unitarity and reciprocity for the mixed
+    case [PR 804](https://github.com/awslabs/palace/pull/804).
+  - Fixed a bug in the 2D mode eigensolver that sometimes led to crashes when waveports
+    were used in conjunction with non-zero conductivity materials.
+    [PR 778](https://github.com/awslabs/palace/pull/778).
+
 ## [0.17.0] - 2026-06-28
 
 #### New Features
@@ -136,11 +155,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     SLEPc's default `max(2 * N, N + 15)` for both SLEPc and ARPACK (previously the unset
     default was backend-dependent). `Solver.Eigenmode.MaxIts` now defaults to
     `1'000'000` [PR 719](https://github.com/awslabs/palace/pull/719).
-  - Eigenmode simulations with frequency-dependent boundary conditions (e.g. waveports,
-    second-order absorbing, surface conductivity) now evaluate the boundary conditions at
-    the true complex frequency/eigenmode. Previously, the boundary conditions were
-    evaluated using only the real component of the eigenmode.
-    [PR 778](https://github.com/awslabs/palace/pull/778).
 
 #### Performance Improvements
 
@@ -185,9 +199,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed a bug where the magnetic energy field calculation in 2D simulations used the
     incorrect permeability vector components [PR
     782](https://github.com/awslabs/palace/pull/782).
-  - Fixed a bug in the 2D mode eigensolver that sometimes led to crashes when waveports
-    were used in conjunction with non-zero conductivity materials.
-    [PR 778](https://github.com/awslabs/palace/pull/778).
 
 #### Documentation
 
