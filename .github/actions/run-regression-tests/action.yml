@@ -21,8 +21,8 @@ inputs:
     description: 'Math libraries'
     required: false
     default: ''
-  solver:
-    description: 'Solver to test'
+  linear-solver:
+    description: 'Linear solver to test'
     required: false
     default: 'Default'
   test-cases:
@@ -41,7 +41,6 @@ runs:
       if: inputs.testing-on-build-runner != 'true'
       uses: ./.github/actions/setup-runner
       with:
-        julia-version: 'release'
         spack-version: 'develop'
         llvm-version: ${{ inputs.toolchain == 'llvm' && '19' || 'dont-install' }}
         setup-intel: ${{ inputs.toolchain == 'intel-oneapi' && 'true' || 'false' }}
@@ -61,7 +60,13 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        spack -e . install --only-concrete --no-check-signature
+        # --test root builds and installs the palace-unit-tests binary
+        # (and its test data). The target is EXCLUDE_FROM_ALL, so
+        # without --test root the regression harness binary is never
+        # built and `spack load palace` can't expose it. The lock was
+        # already concretized with --test root by the build job, so the
+        # test deps (catch2) are present in the concrete environment.
+        spack -e . install --only-concrete --no-check-signature --test root
         end_timer "Install from cache"
 
     - name: Run Integration Tests
@@ -69,46 +74,68 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        # Use nproc, but halve to account for hyperthreading.
+
+        eval $(spack -e . load --sh palace)
+
+        # The installed package ships a relocatable, fully generic
+        # CTestTestfile next to the test data (share/palace/test), so the
+        # install-only runner drives the regression cases with ctest -- per-case
+        # scheduling and PROCESSORS accounting, same as the build-tree jobs. The
+        # ranks/threads/solver/device are all passed through the environment, so
+        # one cached build serves the whole solver matrix without a rebuild.
+        TEST_DIR="$(dirname "$(dirname "$(command -v palace-unit-tests)")")/share/palace/test"
+        export PALACE_TEST_LINEAR_SOLVER="${{ inputs.linear-solver }}"
+
+        # Rank/thread matrix is identical to the pre-Catch2 Julia harness so the
+        # refactor doesn't change how many ranks each regression case runs at:
+        # physical cores (nproc halved when hyperthreaded), halved again and
+        # paired with 2 OpenMP threads for +openmp, single rank for +cuda.
         LOGICAL_CORES=$(nproc)
         THREADS_PER_CORE=$(lscpu | grep "Thread(s) per core" | awk '{print $4}')
         if [ "$THREADS_PER_CORE" = "2" ]; then
-            export NUM_PROC_TEST=$((LOGICAL_CORES / 2))
+          NUM_PROC_TEST=$(( LOGICAL_CORES / 2 ))
         else
-            export NUM_PROC_TEST=$LOGICAL_CORES
+          NUM_PROC_TEST=$LOGICAL_CORES
         fi
-
         if [[ "${{ inputs.variant }}" == *"+openmp"* ]]; then
           NUM_PROC_TEST=$(( NUM_PROC_TEST / 2 ))
-          export OMP_NUM_THREADS=2
+          export PALACE_TEST_OMP_THREADS=2
         else
-          export OMP_NUM_THREADS=1
+          export PALACE_TEST_OMP_THREADS=1
         fi
-
-        eval $(spack -e . load --sh palace)
-        julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
-        
+        JOBS=$(( NUM_PROC_TEST * PALACE_TEST_OMP_THREADS ))
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
-          export PALACE_DEVICE=GPU
-          export NUM_PROC_TEST=1
+          export PALACE_TEST_DEVICE=cuda
+          NUM_PROC_TEST=1  # GPU: single rank
+          JOBS=1           # one GPU: don't run device cases concurrently
         fi
+        export PALACE_TEST_NUMPROC=$NUM_PROC_TEST
 
-        TEST_CASES="${{ inputs.test-cases }}"
-        if [[ "$TEST_CASES" == "long" ]]; then
-          TEST_CASES="transmon/transmon_amr"
-        elif [[ "$TEST_CASES" == "default" ]]; then
-          TEST_CASES=""
-        fi
+        run_ctest() {
+          ctest --test-dir "$TEST_DIR" --output-on-failure -j "$JOBS" "$@"
+        }
 
-        julia --project=test/examples --color=yes test/examples/runtests.jl \
-          --palace-solver ${{ inputs.solver }} \
-          ${TEST_CASES:+--test-cases "$TEST_CASES"}
+        # Map the action's `test-cases` input onto a ctest selection. "default"
+        # is the always-on regression label; "long" the heavy [Long] cases;
+        # anything else is a space-separated list of explicit case names.
+        run_cases() {
+          local raw="$1"
+          if [[ -z "$raw" || "$raw" == "default" ]]; then
+            run_ctest -L "^regression$"
+          elif [[ "$raw" == "long" ]]; then
+            run_ctest -L "^long$"
+          else
+            local regex
+            regex="$(echo "$raw" | tr ' ' '|')"
+            run_ctest -R "^(regression|long)-(${regex})$"
+          fi
+        }
+
+        run_cases "${{ inputs.test-cases }}"
 
         ADDITIONAL="${{ inputs.additional-test-cases }}"
         if [[ -n "$ADDITIONAL" ]]; then
-          julia --project=test/examples --color=yes test/examples/runtests.jl \
-            --palace-solver ${{ inputs.solver }} \
-            --test-cases "$ADDITIONAL"
+          run_cases "$ADDITIONAL"
         fi
 
         end_timer "Run Integration Tests"

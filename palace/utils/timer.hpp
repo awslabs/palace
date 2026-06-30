@@ -84,7 +84,7 @@ public:
   // clang-format on
 
 private:
-  const TimePoint start_time;
+  TimePoint start_time;
   TimePoint last_lap_time;
   std::vector<Duration> data;
   std::vector<int> counts;
@@ -346,6 +346,24 @@ public:
 
   // Whether Finalize has been called.
   static bool IsFinalized() { return !reduced_time.empty(); }
+
+  // Clear all process-wide BlockTimer state. Used by palace::Run to
+  // prevent timing/memory statistics from bleeding between successive
+  // solves when Palace is embedded (e.g. in the regression test
+  // harness). Production main() calls Run once, so this is a no-op
+  // for the CLI executable.
+  static void Reset()
+  {
+    timer = Timer();
+    while (!stack.empty())
+    {
+      stack.pop();
+    }
+    reduced_time = ReducedData();
+    reduced_rank_mem = ReducedData();
+    reduced_node_mem = ReducedData();
+    num_nodes = 0;
+  }
 
   // Print timing and memory tables from stored reduction results.
   static void Print(MPI_Comm comm)

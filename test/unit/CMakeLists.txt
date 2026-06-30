@@ -51,10 +51,15 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-waveportimpedance.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/regression_helpers.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/regression/cases.cpp
 )
 
 # Set output name for installed binary
 set_target_properties(unit-tests PROPERTIES OUTPUT_NAME palace-unit-tests)
+
+# Let regression/*.cpp find regression_helpers.hpp via a bare include.
+target_include_directories(unit-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # Below we link using WHOLE_ARCHIVE with coverage, otherwise LLVM won't report coverage of
 # all palace files. The actual linker commands to do this by hand is delicate. (see
 # https://cmake.org/cmake/help/latest/variable/CMAKE_LANG_LINK_LIBRARY_USING_FEATURE.html#loading-a-whole-static-library)
@@ -102,7 +107,7 @@ set_property(
   APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_LIBCEED_JIT_SOURCE_DIR=\"${CMAKE_INSTALL_PREFIX}/include/palace/\""
 )
 
-# Add path for test data files. 
+# Add path for test data files.
 target_compile_definitions(
   unit-tests
   PRIVATE "PALACE_TEST_DATA_DIR=\"${CMAKE_INSTALL_PREFIX}/share/palace/test/data\""
@@ -129,10 +134,12 @@ install(
   RUNTIME DESTINATION bin
 )
 
-# Install test data files to share directory
-install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
-  DESTINATION share/palace/test/
+# Install test data files to share directory. Some source-tree regression fixtures are
+# symlinks to shared example inputs; dereference them so installed test data is
+# self-contained.
+set(PALACE_TEST_DATA_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../data")
+install(CODE
+  "file(COPY \"${PALACE_TEST_DATA_SOURCE_DIR}\" DESTINATION \"\${CMAKE_INSTALL_PREFIX}/share/palace/test\" FOLLOW_SYMLINK_CHAIN)"
 )
 
 # Install jsons from the all the examples (used in some tests)
@@ -153,28 +160,100 @@ include(Catch)
 # Common coverage environment variable setup
 set(SHOULD_SET_LLVM_PROFILE_FILE "$<AND:$<BOOL:${PALACE_BUILD_WITH_COVERAGE}>,$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:IntelLLVM>>>")
 
+# Test parallelism is a build-time contract so CTest accounts for every CPU a
+# test process occupies: <ranks> MPI ranks x PALACE_TESTS_OMP_THREADS OpenMP
+# threads = the PROCESSORS slots each case reserves. The OpenMP count is pinned
+# via each test's ENVIRONMENT below (rather than read from a runtime
+# OMP_NUM_THREADS) so the slot accounting cannot drift. Unit and regression
+# cases keep separate rank counts: unit [Parallel] cases just exercise the
+# parallel code paths (2 ranks is plenty and keeps the sweep fast), while
+# regression solves need more ranks for speed and to keep tail eigenvalues on
+# the reference (too few ranks shifts them past tolerance for some solvers).
+set(PALACE_TESTS_NUMPROC 2 CACHE STRING
+    "MPI ranks per [Parallel] unit-test case.")
+set(PALACE_REGRESSION_NUMPROC 2 CACHE STRING
+    "MPI ranks per [Regression]/[Long] case.")
+set(PALACE_TESTS_OMP_THREADS 1 CACHE STRING
+    "OpenMP threads per test process.")
+math(EXPR PALACE_TESTS_PROCESSORS "${PALACE_TESTS_NUMPROC} * ${PALACE_TESTS_OMP_THREADS}")
+math(EXPR PALACE_REGRESSION_PROCESSORS "${PALACE_REGRESSION_NUMPROC} * ${PALACE_TESTS_OMP_THREADS}")
+set(PALACE_TESTS_OMP_ENV "OMP_NUM_THREADS=${PALACE_TESTS_OMP_THREADS}")
+
+# Install-only test runners (e.g. Spack jobs that install from a buildcache)
+# have no build tree, so the CTestTestfiles `catch_discover_tests` writes below
+# are unavailable. Install a relocatable, fully generic CTestTestfile next to
+# the test data so those jobs can run
+# `ctest --test-dir <prefix>/share/palace/test`. It is parameterized entirely
+# at run time (binary on PATH, cases discovered from the binary, ranks/threads/
+# solver/device from the environment), so it needs no regeneration or baked
+# values -- see regression/installed_ctest.cmake.
+install(
+  FILES ${CMAKE_CURRENT_SOURCE_DIR}/regression/installed_ctest.cmake
+  DESTINATION share/palace/test
+  RENAME CTestTestfile.cmake
+)
+
 # Serial tests
 catch_discover_tests(unit-tests
   TEST_PREFIX "serial-"
-  TEST_SPEC "[Serial]"
+  # Exclude [Regression] (slow, own registration) and [Long] (run only via the
+  # long-* registration), keeping the default sweep fast. [Long] is an
+  # orthogonal modifier: it applies to unit tests too, not just regression.
+  TEST_SPEC "[Serial]~[Regression]~[Long]"
   EXTRA_ARGS --skip-benchmarks
   PROPERTIES
+    PROCESSORS ${PALACE_TESTS_OMP_THREADS}
     SKIP_RETURN_CODE 4
-    # When building with coverage, set LLVM_PROFILE_FILE for parallel execution
-    ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/serial/coverage-%p.profraw>"
+    # Pin OpenMP threads; set LLVM_PROFILE_FILE for parallel coverage runs.
+    ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/serial/coverage-%p.profraw>"
 )
 
 # MPI tests  
 catch_discover_tests(unit-tests
   TEST_PREFIX "mpi-"
-  TEST_SPEC "[Parallel]"
-  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2 ${MPIEXEC_PREFLAGS}
+  TEST_SPEC "[Parallel]~[Regression]~[Long]"
+  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_TESTS_NUMPROC} ${MPIEXEC_PREFLAGS}
   EXTRA_ARGS ${MPIEXEC_POSTFLAGS} --skip-benchmarks
   PROPERTIES
-    PROCESSORS 2
+    PROCESSORS ${PALACE_TESTS_PROCESSORS}
     SKIP_RETURN_CODE 4
-    # When building with coverage, set LLVM_PROFILE_FILE for parallel execution
-    ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
+    ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
+)
+
+# Regression tests: full-mesh Palace solves diffed against reference CSVs under
+# PALACE_TEST_DATA_DIR/regression/ref. Slow enough to deserve their own ctest
+# prefix (`ctest -L "^regression$"` to select, `-LE "^(regression|long)$"` to
+# skip both regression flavors). Ranks use PALACE_REGRESSION_NUMPROC (more than
+# the unit count); threads/slots follow the shared PALACE_TESTS_OMP_THREADS.
+catch_discover_tests(unit-tests
+  TEST_PREFIX "regression-"
+  TEST_SPEC "[Regression]~[Long]"
+  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_REGRESSION_NUMPROC} ${MPIEXEC_PREFLAGS}
+  EXTRA_ARGS ${MPIEXEC_POSTFLAGS}
+  PROPERTIES
+    LABELS regression
+    PROCESSORS ${PALACE_REGRESSION_PROCESSORS}
+    SKIP_RETURN_CODE 4
+    ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/regression/coverage-%p.profraw>"
+)
+
+# Long regression tests: full-mesh Palace solves that take 10+ minutes
+# even at modest rank counts (transmon eigenmodes). Tagged
+# `[Regression][Long]` and registered as `long-*` ctest entries with
+# label `long`. Default `palace-unit-tests` and
+# `ctest -L "^regression$"` runs skip them; the long-tests CI workflow
+# (triggered by the `trigger-long-tests` PR label) selects them via
+# `ctest -L "^long$"`.
+catch_discover_tests(unit-tests
+  TEST_PREFIX "long-"
+  TEST_SPEC "[Long]"
+  TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_REGRESSION_NUMPROC} ${MPIEXEC_PREFLAGS}
+  EXTRA_ARGS ${MPIEXEC_POSTFLAGS}
+  PROPERTIES
+    LABELS long
+    PROCESSORS ${PALACE_REGRESSION_PROCESSORS}
+    SKIP_RETURN_CODE 4
+    ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/regression/coverage-%p.profraw>"
 )
 
 # GPU tests (if available)
@@ -187,16 +266,19 @@ endif()
 if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
   catch_discover_tests(unit-tests
     TEST_PREFIX "gpu-"
-    TEST_SPEC "[GPU]"
+    # Exclude [Regression] (own registration) and [Long] (long-* only) so the
+    # GPU sweep stays focused on fast unit tests.
+    TEST_SPEC "[GPU]~[Regression]~[Long]"
     EXTRA_ARGS --device ${PALACE_GPU_DEVICE} --skip-benchmarks
     PROPERTIES
       # Don't allow more than one GPU test at a time.
       # In theory, we could allow one per GPU, but that's much harder to implement.
       RESOURCE_LOCK gpu
+      PROCESSORS ${PALACE_TESTS_OMP_THREADS}
       SKIP_RETURN_CODE 4
 
-      # When building with coverage, set LLVM_PROFILE_FILE for parallel execution
-      ENVIRONMENT "$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/gpu/coverage-%p.profraw>"
+      # Pin OpenMP threads; set LLVM_PROFILE_FILE for parallel coverage runs.
+      ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/gpu/coverage-%p.profraw>"
   )
 
   # TODO: ADD MPI+GPU tests. This requires checking that we have enough GPUs

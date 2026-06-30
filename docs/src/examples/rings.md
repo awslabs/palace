@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ```@setup include_example
 function include_example_file(example_path, filename)
-    print(read(joinpath(@__DIR__, "..", "..", "..", "test", "examples", "ref", example_path, filename), String))
+    print(read(joinpath(@__DIR__, "..", "..", "..", "test", "data", "regression", "ref", example_path, filename), String))
 end
 ```
 
@@ -109,7 +109,7 @@ we arrive at
 ```@example
 using DelimitedFiles: readdlm #hide
 using Printf #hide
-path = joinpath(@__DIR__, "..", "..", "..", "test", "examples", "ref", "rings") #hide
+path = joinpath(@__DIR__, "..", "..", "..", "test", "data", "regression", "ref", "rings") #hide
 surface_F = readdlm(joinpath(path, "surface-F.csv"), ',', Float64, skipstart=1) #hide
 terminal_I = readdlm(joinpath(path, "terminal-I.csv"), ',', Float64, skipstart=1) #hide
 result = copy(surface_F) #hide

@@ -319,6 +319,17 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_BUILD_WITH_SANITIZERS", "asan"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
+            # Pin the test suite's MPI ranks and OpenMP threads so CTest's
+            # PROCESSORS accounting (ranks x threads) is exact. Unit [Parallel]
+            # cases stay at 2 ranks (light, fast); regression cases use ~8 CPUs
+            # (fewer ranks shift tail eigenvalues past tolerance for some
+            # solvers); GPU builds run single-rank.
+            self.define("PALACE_TESTS_NUMPROC", 2),
+            self.define(
+                "PALACE_REGRESSION_NUMPROC",
+                1 if self.spec.satisfies("+cuda") else (4 if self.spec.satisfies("+openmp") else 8),
+            ),
+            self.define("PALACE_TESTS_OMP_THREADS", 2 if self.spec.satisfies("+openmp") else 1),
         ]
 
         if self.spec.satisfies("@0.16:"):

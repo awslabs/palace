@@ -31,8 +31,8 @@ jobs:
               - 'cmake/**'
               - 'extern/**'
               - 'examples/**'
-              - 'test/examples/**'
               - 'test/unit/**'
+              - 'test/data/**'
               - '.github/workflows/build-and-test-macos.yml'
 
   build-and-test-macos:
@@ -83,7 +83,7 @@ jobs:
           with-eigensolver: arpack
           with-solver: superlu
         - compiler: clang
-          mpi: mpich
+          mpi: openmpi  # was mpich; see https://github.com/awslabs/palace/issues/790
           math-libs: openblas
           build-shared: static
           with-64bit-int: int32
@@ -129,14 +129,6 @@ jobs:
         if: needs.filter.outputs.test == 'true'
         with:
           submodules: 'recursive'
-
-      - uses: julia-actions/setup-julia@v2
-        if: needs.filter.outputs.test == 'true'
-        with:
-          version: '1'
-
-      - uses: julia-actions/cache@v3
-        if: needs.filter.outputs.test == 'true'
 
       - name: Configure Open MPI
         if: needs.filter.outputs.test == 'true' && matrix.mpi == 'openmpi'
@@ -220,9 +212,30 @@ jobs:
           [[ "${{ matrix.with-eigensolver }}" == 'arpack' ]] && WITH_ARPACK='ON' || WITH_ARPACK='OFF'
 
           # Build and install (with unit tests)
+          # Unit [Parallel] cases run at PALACE_TESTS_NUMPROC ranks (small, fast);
+          # regression cases run at PALACE_REGRESSION_NUMPROC (~8 CPUs/case --
+          # fewer ranks shift tail eigenvalues past tolerance for some solvers).
+          # CTest derives PROCESSORS = ranks x threads and pins OMP_NUM_THREADS,
+          # so -j only bounds concurrency.
+          TEST_CORES=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
+          if [[ "$TEST_CORES" -gt 8 ]]; then
+            TEST_CORES=8
+          fi
+          if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
+            TESTS_OMP_THREADS=2
+          else
+            TESTS_OMP_THREADS=1
+          fi
+          REGRESSION_NUMPROC=$(( TEST_CORES / TESTS_OMP_THREADS ))
+          if [[ "$REGRESSION_NUMPROC" -lt 1 ]]; then
+            REGRESSION_NUMPROC=1
+          fi
           mkdir palace-build && cd palace-build
           cmake .. \
             -DCMAKE_INSTALL_PREFIX=$(pwd)/../palace-install \
+            -DPALACE_TESTS_NUMPROC=2 \
+            -DPALACE_REGRESSION_NUMPROC=$REGRESSION_NUMPROC \
+            -DPALACE_TESTS_OMP_THREADS=$TESTS_OMP_THREADS \
             -DBUILD_SHARED_LIBS=$BUILD_SHARED \
             -DPALACE_WITH_64BIT_INT=$WITH_INT64 \
             -DPALACE_WITH_OPENMP=$WITH_OPENMP \
@@ -237,42 +250,25 @@ jobs:
       - name: Run unit tests
         if: needs.filter.outputs.test == 'true'
         timeout-minutes: 5
-        env:
-          NUM_PROC_TEST_MAX: '2'
         run: |
           # Configure environment
-          if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
-            export OMP_NUM_THREADS=2
-          else
-            export OMP_NUM_THREADS=1
-          fi
           export DYLD_LIBRARY_PATH="$(pwd)/palace-install/lib:$DYLD_LIBRARY_PATH"
           cd $(pwd)/palace-build/palace-build/test/unit
 
-          # Run Serial tests
-          ./palace-unit-tests --skip-benchmarks
-          # Run Parallel tests
-          mpirun -np $NUM_PROC_TEST_MAX ./palace-unit-tests --skip-benchmarks
+          # Skip [Regression] and [Long] cases here; they have their
+          # own slower steps further down. CTest pins OMP_NUM_THREADS and
+          # reserves PROCESSORS per case, so -j just bounds concurrency.
+          ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -LE "^(regression|long)$"
 
-      - name: Run regression tests for examples/
+      - name: Run regression tests
         if: needs.filter.outputs.test == 'true'
+        # CTest owns per-case scheduling for the [Regression] cases (label
+        # "regression"). The build-time rank/thread contract sets each case's
+        # PROCESSORS property so -j can fan out safely.
         timeout-minutes: 40
-        env:
-          NUM_PROC_TEST_MAX: '8'
         run: |
           # Configure environment
-          export NUM_PROC_TEST=$(nproc 2> /dev/null || sysctl -n hw.ncpu)
-          if [[ "$NUM_PROC_TEST" -gt "$NUM_PROC_TEST_MAX" ]]; then
-            NUM_PROC_TEST=$NUM_PROC_TEST_MAX
-          fi
-          if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
-            NUM_PROC_TEST=$(( NUM_PROC_TEST / 2 ))
-            export OMP_NUM_THREADS=2
-          else
-            export OMP_NUM_THREADS=1
-          fi
           export PATH=$(pwd)/palace-install/bin:$PATH
 
-          # Run tests
-          julia --project=test/examples -e 'using Pkg; Pkg.instantiate()'
-          julia --project=test/examples --color=yes test/examples/runtests.jl
+          cd palace-build/palace-build/test/unit
+          ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -L "^regression$"

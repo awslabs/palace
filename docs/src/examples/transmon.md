@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ```@setup include_example
 function include_example_file(example_path, filename, max_lines = 4)
-    content = read(joinpath(@__DIR__, "..", "..", "..", "test", "examples", "ref", example_path, filename), String)
+    content = read(joinpath(@__DIR__, "..", "..", "..", "test", "data", "regression", "ref", example_path, filename), String)
     lines = split(content, '\n')
     println(join(lines[1:min(max_lines, length(lines))], '\n'))
 end
@@ -303,7 +303,8 @@ amr_dir = joinpath(   #hide
     "..",             #hide
     "..",             #hide
     "test",           #hide
-    "examples",       #hide
+    "data",           #hide
+    "regression",     #hide
     "ref",            #hide
     "transmon",       #hide
     "transmon_amr"    #hide

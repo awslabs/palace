@@ -3,29 +3,21 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 #include <mpi.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
-#include "drivers/boundarymodesolver.hpp"
-#include "drivers/drivensolver.hpp"
-#include "drivers/eigensolver.hpp"
-#include "drivers/electrostaticsolver.hpp"
-#include "drivers/magnetostaticsolver.hpp"
-#include "drivers/transientsolver.hpp"
-#include "fem/errorindicator.hpp"
+#include "driver.hpp"
 #include "fem/libceed/ceed.hpp"
-#include "fem/mesh.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/slepc.hpp"
 #include "utils/communication.hpp"
 #include "utils/device.hpp"
-#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/jsonschema.hpp"
-#include "utils/memoryreporting.hpp"
 #include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
 #include "utils/timer.hpp"
@@ -170,9 +162,6 @@ int main(int argc, char *argv[])
   int world_size = Mpi::Size(world_comm);
   Mpi::Print(world_comm, "\n");
 
-  // Initialize the timer.
-  BlockTimer bt(Timer::INIT);
-
   // Parse command-line options.
   std::vector<std::string_view> argv_sv(argv, argv + argc);
   bool dryrun = false;
@@ -247,90 +236,39 @@ int main(int argc, char *argv[])
     iodata.WriteResolvedConfig(config, argv[1]);
   }
 
-  BlockTimer bt1(Timer::INIT);
-  // Initialize the MFEM device and configure libCEED backend.
-  int omp_threads = utils::ConfigureOmp(), ngpu = utils::GetDeviceCount();
-  mfem::Device device(ConfigureDevice(iodata.solver.device),
-                      utils::GetDeviceId(world_comm, ngpu));
-  ConfigureCeedBackend(iodata.solver.ceed_backend);
+  // Initialize device + numerics. The BlockTimer is scoped to this block so it
+  // credits the INIT phase before palace::Run starts its own timing.
+  int omp_threads, ngpu;
+  std::optional<mfem::Device> device;
+  {
+    BlockTimer bt(Timer::INIT);
+    omp_threads = utils::ConfigureOmp();
+    ngpu = utils::GetDeviceCount();
+    device.emplace(ConfigureDevice(iodata.solver.device),
+                   utils::GetDeviceId(world_comm, ngpu));
+    ConfigureCeedBackend(iodata.solver.ceed_backend);
 #if defined(PALACE_WITH_GPU_AWARE_MPI)
-  device.SetGPUAwareMPI(true);
+    device->SetGPUAwareMPI(true);
 #endif
 
-  // Initialize Hypre and, optionally, SLEPc/PETSc.
-  hypre::Initialize();
+    // Initialize Hypre and, optionally, SLEPc/PETSc.
+    hypre::Initialize();
 #if defined(PALACE_WITH_SLEPC)
-  slepc::Initialize(argc, argv, nullptr, nullptr);
-  if (PETSC_COMM_WORLD != world_comm)
-  {
-    Mpi::Print(world_comm, "Error: Problem during MPI initialization!\n\n");
-    return 1;
-  }
+    slepc::Initialize(argc, argv, nullptr, nullptr);
+    if (PETSC_COMM_WORLD != world_comm)
+    {
+      Mpi::Print(world_comm, "Error: Problem during MPI initialization!\n\n");
+      return 1;
+    }
 #endif
-
-  // Initialize the problem driver.
-  PrintPalaceInfo(world_comm, world_size, omp_threads, ngpu, device);
-  const auto solver = [&]() -> std::unique_ptr<BaseSolver>
-  {
-    switch (iodata.problem.type)
-    {
-      case ProblemType::DRIVEN:
-        return std::make_unique<DrivenSolver>(iodata, world_root, world_size, omp_threads,
-                                              GetPalaceGitTag());
-      case ProblemType::EIGENMODE:
-        return std::make_unique<EigenSolver>(iodata, world_root, world_size, omp_threads,
-                                             GetPalaceGitTag());
-      case ProblemType::ELECTROSTATIC:
-        return std::make_unique<ElectrostaticSolver>(iodata, world_root, world_size,
-                                                     omp_threads, GetPalaceGitTag());
-      case ProblemType::MAGNETOSTATIC:
-        return std::make_unique<MagnetostaticSolver>(iodata, world_root, world_size,
-                                                     omp_threads, GetPalaceGitTag());
-      case ProblemType::TRANSIENT:
-        return std::make_unique<TransientSolver>(iodata, world_root, world_size,
-                                                 omp_threads, GetPalaceGitTag());
-      case ProblemType::BOUNDARYMODE:
-        return std::make_unique<BoundaryModeSolver>(iodata, world_root, world_size,
-                                                    omp_threads, GetPalaceGitTag());
-    }
-    return nullptr;
-  }();
-
-  // Load the serial mesh, apply problem-type-specific serial-stage preprocessing,
-  // nondimensionalize, then partition, distribute, and refine.
-  std::vector<std::unique_ptr<Mesh>> mesh;
-  {
-    auto smesh = mesh::Load(iodata, world_comm);
-    solver->Preprocess(iodata, smesh, world_comm);
-    std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
-    mfem_mesh.push_back(mesh::Partition(iodata, std::move(smesh), world_comm));
-    mesh::RefineMesh(iodata, mfem_mesh);
-    Mpi::Print(world_comm, "\n");
-    memory_reporting::PrintMemoryUsage(world_comm,
-                                       memory_reporting::GetCurrentMemoryStats(world_comm));
-    memory_reporting::PrintMemoryUsage(
-        world_comm, memory_reporting::GetCurrentNodeMemoryStats(world_comm));
-    for (auto &m : mfem_mesh)
-    {
-      mesh.push_back(std::make_unique<Mesh>(std::move(m)));
-    }
   }
 
-  // Run the problem driver.
-  solver->SolveEstimateMarkRefine(mesh);
-
-  // Print timing summary.
-  auto peak_mem = memory_reporting::GetPeakMemoryStats(world_comm);
-  auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(world_comm);
-  Mpi::Print(world_comm, "\n");
-  memory_reporting::PrintMemoryUsage(world_comm, peak_mem);
-  memory_reporting::PrintMemoryUsage(world_comm, peak_node_mem);
-  BlockTimer::Finalize(world_comm);
-  BlockTimer::Print(world_comm);
-  solver->SaveMetadata(BlockTimer::GlobalTimer());
-  solver->SaveMetadata(peak_mem);
-  solver->SaveMetadata(peak_node_mem);
-  Mpi::Print(world_comm, "\n");
+  // Hand off to the driver library entry point. Keeping the lifted block out of
+  // main keeps the executable body thin and lets the Catch2 regression harness
+  // reuse the exact same code path on an in-process IoData. See palace/driver.hpp
+  // for the preconditions it expects.
+  PrintPalaceInfo(world_comm, world_size, omp_threads, ngpu, *device);
+  palace::Run(iodata, world_comm, omp_threads, GetPalaceGitTag());
 
   // Finalize libCEED.
   ceed::Finalize();
