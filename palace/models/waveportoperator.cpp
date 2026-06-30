@@ -19,6 +19,7 @@
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "fem/interpolator.hpp"
+#include "fem/surfacefunctional.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
 #include "linalg/arpack.hpp"
@@ -793,15 +794,37 @@ double WavePortData::GetExcitationPower() const
 
 std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) const
 {
-  // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface using
-  // the computed E and H = μ⁻¹ B fields, where +n is the outward mesh normal. The
-  // BdrSurfaceCurrentVectorCoefficient computes -n x H for the outward normal. The linear
-  // form is reconstructed from scratch each time due to changing H.
+  // Compute the stationary complex power on the port, E ⋅ (-n x H⋆), integrated over the
+  // port surface with +n the outward mesh normal. Use the libCEED surface functional path
+  // when supported to avoid per-measurement host linear form assembly; the legacy path is
+  // retained as a fallback.
   MFEM_VERIFY(E.HasImag() && B.HasImag(),
               "Wave ports expect complex-valued E and B fields in port power "
               "calculation!");
   auto &nd_fespace = *E.ParFESpace();
   const auto &mesh = *nd_fespace.GetParMesh();
+
+  // Use the libCEED surface functional path when supported (device capable, no
+  // per-measurement reassembly). Set two_sided = true even on the exterior port surface so
+  // the QFunction uses the fixed outward normal directly (no x0-based reorientation).
+  if (!power_func && SurfaceFunctional::Enabled())
+  {
+    int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
+    mfem::Vector x0(mesh.SpaceDimension());
+    x0 = 0.0;
+    power_func = std::make_unique<SurfaceFunctional>(
+        mat_op.GetMesh(), attr_marker, &nd_fespace, B.ParFESpace(), mat_op,
+        SurfaceFlux::POWER, /*two_sided*/ true, x0);
+  }
+  if (power_func && power_func->IsValid())
+  {
+    // EvalComplexPower returns the complex Poynting integral with the same normal
+    // convention as the legacy BdrSurfaceCurrentVectorCoefficient path (n x H for the
+    // outward normal, contributions negated), matching LumpedPortData::GetPower.
+    return power_func->EvalComplexPower(E, B);
+  }
+
   BdrSurfaceCurrentVectorCoefficient nxHr_func(B.Real(), mat_op);
   BdrSurfaceCurrentVectorCoefficient nxHi_func(B.Imag(), mat_op);
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;

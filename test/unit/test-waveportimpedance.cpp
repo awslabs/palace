@@ -8,7 +8,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
+#include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "models/materialoperator.hpp"
 #include "models/waveportoperator.hpp"
@@ -21,6 +23,39 @@
 namespace palace
 {
 using namespace Catch::Matchers;
+
+std::complex<double> RefWavePortPower(const MaterialOperator &mat_op,
+                                      const mfem::Array<int> &attr_list, GridFunction &E,
+                                      GridFunction &B)
+{
+  auto &nd_fespace = *E.ParFESpace();
+  const auto &mesh = *nd_fespace.GetParMesh();
+  BdrSurfaceCurrentVectorCoefficient nxHr_func(B.Real(), mat_op);
+  BdrSurfaceCurrentVectorCoefficient nxHi_func(B.Imag(), mat_op);
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
+  std::complex<double> dot;
+  {
+    mfem::LinearForm pr(&nd_fespace);
+    pr.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHr_func), attr_marker);
+    pr.UseFastAssembly(false);
+    pr.UseDevice(false);
+    pr.Assemble();
+    pr.UseDevice(true);
+    dot = -(pr * E.Real()) - std::complex<double>(0.0, 1.0) * (pr * E.Imag());
+  }
+  {
+    mfem::LinearForm pi(&nd_fespace);
+    pi.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(nxHi_func), attr_marker);
+    pi.UseFastAssembly(false);
+    pi.UseDevice(false);
+    pi.Assemble();
+    pi.UseDevice(true);
+    dot += -(pi * E.Imag()) + std::complex<double>(0.0, 1.0) * (pi * E.Real());
+  }
+  Mpi::GlobalSum(1, &dot, nd_fespace.GetComm());
+  return dot;
+}
 
 // Expose private WavePortOperator::Initialize so tests can drive a single port without
 // needing the full simulation harness (and without const_cast around GetPort()).
@@ -147,6 +182,103 @@ TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial]")
 // is +y-aligned, so naming y=0 as "signal" (high) and y=a as "ground" (low) gives a
 // (high → low) direction of +y, matching the field, sign = +1. Swapping the two
 // attribute roles flips the expected sign to -1.
+TEST_CASE("WavePort port power", "[waveportimpedance][Serial][GPU]")
+{
+  MPI_Comm comm = Mpi::World();
+
+  const double a_m = 22.86e-3, b_m = 10.16e-3, L_m = 10.0e-3;
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(6, 6, 4, mfem::Element::TETRAHEDRON, L_m, a_m, b_m));
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.model.L0 = 1.0;
+  iodata.model.Lc = 1.0;
+
+  auto &material = iodata.domains.materials.emplace_back();
+  material.attributes = {1};
+  material.epsilon_r.s = {2.5, 1.7, 1.3};
+  material.mu_r.s = {1.1, 1.2, 1.4};
+
+  iodata.boundaries.pec.attributes = {1, 2, 3, 4, 6};
+
+  auto &wave = iodata.boundaries.waveport.try_emplace(1).first->second;
+  wave.attributes = {5};
+  wave.mode_idx = 1;
+  wave.excitation = 0;
+  wave.active = true;
+  wave.eig_tol = 1.0e-8;
+  wave.ksp_tol = 1.0e-8;
+  wave.ksp_max_its = 100;
+  wave.max_size = std::max(2 * wave.mode_idx, wave.mode_idx + 15);
+
+  iodata.solver.order = 2;
+  iodata.solver.linear.tol = 1.0e-8;
+  iodata.solver.linear.max_it = 200;
+  iodata.problem.type = ProblemType::DRIVEN;
+
+  iodata.NondimensionalizeInputs(serial_mesh);
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  iodata.CheckConfiguration();
+  Mesh palace_mesh(std::move(par_mesh));
+
+  auto nd_fec =
+      std::make_unique<mfem::ND_FECollection>(iodata.solver.order, palace_mesh.Dimension());
+  auto rt_fec = std::make_unique<mfem::RT_FECollection>(iodata.solver.order - 1,
+                                                        palace_mesh.Dimension());
+  auto h1_fec =
+      std::make_unique<mfem::H1_FECollection>(iodata.solver.order, palace_mesh.Dimension());
+  FiniteElementSpace nd_fespace_palace(palace_mesh, nd_fec.get());
+  FiniteElementSpace rt_fespace_palace(palace_mesh, rt_fec.get());
+  FiniteElementSpace h1_fespace_palace(palace_mesh, h1_fec.get());
+  MaterialOperator mat_op(iodata, palace_mesh);
+
+  WavePortOperator wave_port_op(iodata, mat_op, nd_fespace_palace.Get(),
+                                h1_fespace_palace.Get());
+  wave_port_op.SetSuppressOutput(true);
+
+  GridFunction E(nd_fespace_palace, true), B(rt_fespace_palace, true);
+  mfem::VectorFunctionCoefficient fer(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = std::sin(2.0 * x(1)) + x(2);
+                                        v(1) = std::cos(x(0) + x(2));
+                                        v(2) = x(0) * x(1) + 0.25;
+                                      });
+  mfem::VectorFunctionCoefficient fei(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) * x(2) - 0.1;
+                                        v(1) = std::sin(1.5 * x(0)) - x(2);
+                                        v(2) = std::cos(x(1)) + x(0) * x(0);
+                                      });
+  mfem::VectorFunctionCoefficient fbr(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = x(1) - 0.3 * x(2);
+                                        v(1) = std::sin(x(2)) + 0.5;
+                                        v(2) = std::cos(x(0)) - x(1) * x(2);
+                                      });
+  mfem::VectorFunctionCoefficient fbi(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v(0) = 0.2 + x(0) * x(2);
+                                        v(1) = x(0) - std::cos(x(1));
+                                        v(2) = std::sin(x(0) + x(1));
+                                      });
+  E.Real().ProjectCoefficient(fer);
+  E.Imag().ProjectCoefficient(fei);
+  B.Real().ProjectCoefficient(fbr);
+  B.Imag().ProjectCoefficient(fbi);
+
+  auto ref = RefWavePortPower(mat_op, wave_port_op.GetPort(1).GetAttrList(), E, B);
+  auto val = wave_port_op.GetPort(1).GetPower(E, B);
+  CAPTURE(ref, val);
+  CHECK_THAT(val.real(), WithinRel(ref.real(), 1.0e-10));
+  CHECK_THAT(val.imag(), WithinRel(ref.imag(), 1.0e-10));
+}
+
 TEST_CASE("WavePort TE10 mode polarity sign", "[waveportimpedance][Serial]")
 {
   MPI_Comm comm = Mpi::World();

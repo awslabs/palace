@@ -415,6 +415,18 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, farfield.attr_list);
 
+  // Use the libCEED surface functional path when supported (device capable, no
+  // per-point host evaluation).
+  if (!farfield_func && SurfaceFunctional::Enabled() && E.HasImag() && B.HasImag())
+  {
+    farfield_func = std::make_unique<SurfaceFunctional>(
+        mat_op.GetMesh(), attr_marker, *E.ParFESpace(), *B.ParFESpace(), mat_op, r_naughts);
+  }
+  if (farfield_func && farfield_func->IsValid())
+  {
+    return farfield_func->EvalFarField(E, B, omega_re, omega_im);
+  }
+
   // Integrate. Each MPI process computes its contribution and we will reduce
   // everything at the end. We make them std::vector<std::array<double, 3>>
   // because we want a very simple memory layout so that we can reduce
