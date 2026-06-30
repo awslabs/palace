@@ -35,7 +35,7 @@ Generate a mesh for a rectangular sheet with two circular holes using Gmsh
   - gui - whether to launch the Gmsh GUI on mesh generation
 """
 function generate_sheet_with_two_holes_mesh(;
-    filename::AbstractString="sheet_w_two_holes2.msh",
+    filename::AbstractString="sheet_w_two_holes.msh",
     L_outer::Real=20.0,
     rect_width::Real=12.0,
     rect_height::Real=6.0,
