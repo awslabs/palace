@@ -33,9 +33,8 @@ void Initialize(const char *resource, const char *jit_source_dir)
     PalacePragmaOmp(master)
     {
       // Only parallelize libCEED operators over threads when not using the GPU.
-      const int nt = !std::string_view(resource).compare(0, 4, "/cpu")
-                         ? utils::GetNumActiveThreads()
-                         : 1;
+      const int nt =
+          std::string_view(resource).starts_with("/cpu") ? utils::GetNumActiveThreads() : 1;
       internal::ceeds.resize(nt, nullptr);
     }
   }

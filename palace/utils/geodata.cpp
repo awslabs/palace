@@ -2826,7 +2826,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
           return std::find(e.attributes.begin(), e.attributes.end(), x) !=
                  e.attributes.end();
         };
-        cba.erase(std::remove_if(cba.begin(), cba.end(), attr_in_elem), cba.end());
+        std::erase_if(cba, attr_in_elem);
       }
     }
     return cba;
