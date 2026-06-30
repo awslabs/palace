@@ -471,7 +471,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   MFEM_VERIFY(K && M, "Invalid empty HDM matrices when constructing PROM!");
 
   // Per-port boundary masses for wave ports (ω-independent). The wave-port contribution
-  // to A(ω) is then assembled at each ω as Σ_p kₙ,p(ω)·M_{μ⁻¹,r,p}, where M_{r,p} is
+  // to A(ω) is then assembled at each ω as Σ_p k_{n,p}(ω)·M_{μ⁻¹,r,p}, where M_{r,p} is
   // projected onto the basis only when the basis grows. This avoids HDM-scale work in
   // the online phase. See WavePortOperator::AddBoundaryMassBdrCoefficients and
   // SpaceOperator::GetWavePortBoundaryMassMatrix.
@@ -879,10 +879,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     Ar += (1i * omega) * Cr;
   }
   Ar += (-omega * omega) * Mr;
-  // Wave-port contribution: A_wp(ω) = i·Σ_p kₙ,p(ω)·M_{μ⁻¹,p}. The Mwp_p HDM
+  // Wave-port contribution: A_wp(ω) = i·Σ_p k_{n,p}(ω)·M_{μ⁻¹,p}. The Mwp_p HDM
   // operators are purely imaginary (constructed with the boundary mass in the imaginary
-  // slot), so multiplying their projection by the real scalar kₙ recovers the i·kₙ·M
-  // contribution to the system matrix. The cross-section EVP for kₙ,p(ω) is small
+  // slot), so multiplying their projection by the real scalar k_n recovers the i·k_n·M
+  // contribution to the system matrix. The cross-section EVP for k_{n,p}(ω) is small
   // relative to a full HDM solve and is the only ω-dependent work here.
   for (const auto &[port_idx, Mp_r] : Mwp_p_r)
   {

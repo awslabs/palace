@@ -49,12 +49,12 @@ auto LoadScaleParMesh(IoData &iodata, MPI_Comm world_comm)
 }  // namespace
 
 // Verify the factorisation invariant
-//   Im{A2(ω) v}  ==  Σ_p kₙ,p(ω) · M_{μ⁻¹,p} v   (as ND-vector actions),
+//   Im{A2(ω) v}  ==  Σ_p k_{n,p}(ω) · M_{μ⁻¹,p} v   (as ND-vector actions),
 // where A2(ω) is the imaginary part of `GetExtraSystemMatrix(ω)` (the wave-port
 // contribution; cf. waveportoperator.cpp:1080-1088) and M_{μ⁻¹,p} is the new per-port
 // boundary mass returned by `GetWavePortBoundaryMassMatrix(p)`. The identity must hold
 // at every ω since both sides assemble the same bilinear form, with the only ω-dependent
-// factor being the scalar kₙ,p(ω).
+// factor being the scalar k_{n,p}(ω).
 TEST_CASE("WavePortOperator-BoundaryMassFactorisation",
           "[waveportoperator][Serial][Parallel]")
 {
@@ -117,15 +117,15 @@ TEST_CASE("WavePortOperator-BoundaryMassFactorisation",
   for (double omega : omega_nd)
   {
     // LHS: imaginary part of A2(ω) acting on v. A2 currently encodes the wave-port term
-    // as fbi (imaginary part of the bilinear form), so Im{A2 v} carries the kₙ-scaled
+    // as fbi (imaginary part of the bilinear form), so Im{A2 v} carries the k_n-scaled
     // boundary mass action.
     auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
     REQUIRE(A2);
     y_lhs = 0.0;
     A2->Mult(v, y_lhs);
 
-    // RHS: Σ_p kₙ,p(ω) · M_{μ⁻¹,p} v. The M_p we built lives in the imaginary part,
-    // so we want Im{Mwp_p · v} multiplied by the real scalar kₙ.
+    // RHS: Σ_p k_{n,p}(ω) · M_{μ⁻¹,p} v. The M_p we built lives in the imaginary part,
+    // so we want Im{Mwp_p · v} multiplied by the real scalar k_n.
     y_rhs = 0.0;
     for (std::size_t i = 0; i < port_idxs.size(); i++)
     {

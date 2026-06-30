@@ -215,8 +215,8 @@ public:
 
   // Construct the ω-independent boundary mass matrix M_{μ⁻¹,p} for a single wave port,
   // returned with PEC essential DoF rows handled by `diag_policy`. The full wave-port
-  // contribution to the system matrix at frequency ω is `i·kₙ,p(ω)·M_{μ⁻¹,p}` with
-  // `kₙ,p` from `GetWavePortOp().GetWavePortKn(port_idx, ω)`. Returns a null pointer if
+  // contribution to the system matrix at frequency ω is `i·k_{n,p}(ω)·M_{μ⁻¹,p}` with
+  // `k_{n,p}` from `GetWavePortOp().GetWavePortKn(port_idx, ω)`. Returns a null pointer if
   // the port boundary contributes no DoFs on this rank.
   template <typename OperType>
   std::unique_ptr<OperType>
