@@ -77,7 +77,7 @@ void FindAllSchemasByKey(const json &schema, const std::string &key, const json 
       if (v.contains("$ref"))
       {
         std::string ref_raw = v["$ref"].get<std::string>();
-        if (ref_raw.find("#/$defs/") == 0)
+        if (ref_raw.starts_with("#/$defs/"))
         {
           std::string def_name = ref_raw.substr(8);
           if (!defs.is_null() && defs.contains(def_name))
@@ -419,7 +419,7 @@ std::string GetSchemaVersion()
     {
       const std::string &id = schema["$id"];
       constexpr std::string_view prefix = "urn:palace:schema:";
-      if (id.substr(0, prefix.size()) == prefix)
+      if (id.starts_with(prefix))
       {
         return id.substr(prefix.size());
       }

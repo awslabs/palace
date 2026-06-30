@@ -2113,7 +2113,7 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   long n_waveport_rows = 0;
   for (long j = n_port_modes; j < static_cast<long>(v_node_label.size()); j++)
   {
-    if (v_node_label[j].rfind("waveport_", 0) == 0)
+    if (v_node_label[j].starts_with("waveport_"))
     {
       n_waveport_rows++;
     }
@@ -3001,7 +3001,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     const long n_lumped = static_cast<long>(NumSynthesisPortModes());
     long n_wave = 0;
     for (long j = n_lumped; j < static_cast<long>(v_node_label.size()) &&
-                            v_node_label[j].rfind("waveport_", 0) == 0;
+                            v_node_label[j].starts_with("waveport_");
          j++)
     {
       n_wave++;
@@ -3486,7 +3486,7 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
     long n_waveport_rows = 0;
     for (long j = n_port_modes; j < static_cast<long>(v_node_label.size()); j++)
     {
-      if (v_node_label[j].rfind("waveport_", 0) == 0)
+      if (v_node_label[j].starts_with("waveport_"))
       {
         n_waveport_rows++;
       }
