@@ -44,19 +44,23 @@ void InitNonTensorBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRu
   const int dim = fe.GetDim();
   const int P = maps.ndof;
   const int Q = maps.nqpt;
-  mfem::DenseMatrix qX(dim, Q);
+  // libCEED expects reference coordinates in component-major layout,
+  // q_ref[d * Q + q].  MFEM DenseMatrix is column-major, so store the logical
+  // transpose (points as rows, dimensions as columns): qX(q, d) has exactly the
+  // layout libCEED expects while keeping matrix-style indexing.
+  mfem::DenseMatrix qX(Q, dim);
   mfem::Vector qW(Q);
   for (int i = 0; i < Q; i++)
   {
     const mfem::IntegrationPoint &ip = ir.IntPoint(i);
-    qX(0, i) = ip.x;
+    qX(i, 0) = ip.x;
     if (dim > 1)
     {
-      qX(1, i) = ip.y;
+      qX(i, 1) = ip.y;
     }
     if (dim > 2)
     {
-      qX(2, i) = ip.z;
+      qX(i, 2) = ip.z;
     }
     qW(i) = ip.weight;
   }

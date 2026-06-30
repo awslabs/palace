@@ -30,11 +30,11 @@ namespace palace
 namespace
 {
 
-// Key uniquely identifying a set of evaluation points for an export group: source
-// slot, element geometry, and the quantized point coordinates.
+// Key identifying one export point-evaluator group. Deliberately keyed by request
+// order rather than floating-point coordinates: production code may use reference
+// coordinates to evaluate a point, but point identity/grouping should be integer and
+// topological, not a fuzzy coordinate comparison.
 using PointConfigKey = std::vector<long long>;
-
-constexpr double QUANTIZE_SCALE = 1.0e10;
 
 // Message tags for the setup (payload size, payload) and evaluation exchanges. A
 // single evaluation tag is sufficient: all processes perform the evaluation calls of
@@ -43,7 +43,7 @@ constexpr double QUANTIZE_SCALE = 1.0e10;
 constexpr int TAG_SETUP_SIZE = 1741, TAG_SETUP_PAYLOAD = 1742, TAG_EVAL = 1743;
 
 // Registry of evaluation point integration rules with application lifetime (as in
-// surfacefunctional.cpp): mfem::FiniteElement::GetDofToQuad caches tabulations keyed by
+// output_functionals.cpp): mfem::FiniteElement::GetDofToQuad caches tabulations keyed by
 // the IntegrationRule pointer inside the (global, shared) FiniteElement objects, so
 // destroying an IntegrationRule which was used for tabulation would leave a dangling
 // cache entry.
@@ -185,8 +185,8 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
   }
 
   // Parse the received requests, assigning export offsets with the same layout rules
-  // as the import offsets above, and grouping the evaluations by source slot, element
-  // geometry, and quantized evaluation points (so groups share tabulated bases).
+  // as the import offsets above. Keep each received request/source as its own export
+  // group: this avoids merging point sets by rounded floating-point coordinates.
   struct ExportGroup
   {
     std::vector<mfem::IntegrationPoint> pts;
@@ -194,6 +194,7 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     std::vector<int> bases;  // Export vector base offset per element entry
   };
   std::map<PointConfigKey, ExportGroup> export_map;
+  int export_group_id = 0;
   int export_size = 0;
   for (int i = 0; i < num_nbr; i++)
   {
@@ -224,16 +225,11 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
           MFEM_VERIFY(fespaces[s],
                       "Missing finite element space for received source slot!");
           PointConfigKey key;
-          key.reserve(3 + 3 * pts.size());
+          key.reserve(4);
           key.push_back(s);
           key.push_back(static_cast<long long>(geom));
           key.push_back(nq);
-          for (const auto &ip : pts)
-          {
-            key.push_back(std::llround(ip.x * QUANTIZE_SCALE));
-            key.push_back(std::llround(ip.y * QUANTIZE_SCALE));
-            key.push_back(std::llround(ip.z * QUANTIZE_SCALE));
-          }
+          key.push_back(export_group_id++);
           auto &group = export_map[key];
           if (group.pts.empty())
           {
@@ -362,6 +358,10 @@ FaceNbrFieldExchange::~FaceNbrFieldExchange()
   for (auto &group : export_groups)
   {
     PalaceCeedCall(group.ceed, CeedOperatorDestroy(&group.op));
+    if (group.out_vec)
+    {
+      PalaceCeedCall(group.ceed, CeedVectorDestroy(&group.out_vec));
+    }
   }
 }
 

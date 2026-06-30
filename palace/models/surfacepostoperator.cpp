@@ -301,8 +301,8 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
 
-  // Use the libCEED surface functional path when supported (device capable, no
-  // per-measurement reassembly).
+  // Use the libCEED surface functional path when supported, avoiding per-call
+  // boundary LinearForm assembly in the legacy coefficient path.
   auto &func = flux_funcs[idx];
   if (!func && SurfaceFunctional::Enabled())
   {
@@ -355,8 +355,8 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
 
-  // Use the libCEED surface functional path when supported (device capable, no
-  // per-measurement reassembly).
+  // Use the libCEED surface functional path when supported, avoiding per-call
+  // boundary LinearForm assembly in the legacy coefficient path.
   auto &func = eps_funcs[idx];
   if (!func && SurfaceFunctional::Enabled())
   {
@@ -392,7 +392,7 @@ SurfacePostOperator::GetLocalSurfaceIntegral(mfem::Coefficient &f,
 
 std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFieldrE(
     const std::vector<std::pair<double, double>> &theta_phi_pairs, const GridFunction &E,
-    const GridFunction &B, double omega_re, double omega_im) const
+    const GridFunction &B, std::complex<double> omega) const
 {
   if (theta_phi_pairs.empty())
     return {};
@@ -415,8 +415,8 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, farfield.attr_list);
 
-  // Use the libCEED surface functional path when supported (device capable, no
-  // per-point host evaluation).
+  // Use the libCEED surface functional path when supported, avoiding per-point host
+  // coefficient evaluation in the legacy path.
   if (!farfield_func && SurfaceFunctional::Enabled() && E.HasImag() && B.HasImag())
   {
     farfield_func = std::make_unique<SurfaceFunctional>(
@@ -424,7 +424,7 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   }
   if (farfield_func && farfield_func->IsValid())
   {
-    return farfield_func->EvalFarField(E, B, omega_re, omega_im);
+    return farfield_func->EvalFarField(E, B, omega);
   }
 
   // Integrate. Each MPI process computes its contribution and we will reduce
@@ -444,8 +444,8 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
     const auto *ir =
         &mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
 
-    AddStrattonChuIntegrandAtElement(E, B, mat_op, omega_re, omega_im, r_naughts, *T, *ir,
-                                     integrals_r, integrals_i);
+    AddStrattonChuIntegrandAtElement(E, B, mat_op, omega.real(), omega.imag(), r_naughts,
+                                     *T, *ir, integrals_r, integrals_i);
   }
 
   double *data_r_ptr = integrals_r.data()->data();

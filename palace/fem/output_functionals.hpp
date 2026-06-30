@@ -1,12 +1,13 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#ifndef PALACE_FEM_SURFACE_FUNCTIONAL_HPP
-#define PALACE_FEM_SURFACE_FUNCTIONAL_HPP
+#ifndef PALACE_FEM_OUTPUT_FUNCTIONALS_HPP
+#define PALACE_FEM_OUTPUT_FUNCTIONALS_HPP
 
 #include <array>
 #include <complex>
 #include <deque>
+#include <memory>
 #include <string>
 #include <vector>
 #include <mfem.hpp>
@@ -20,6 +21,7 @@ namespace palace
 class GridFunction;
 class MaterialOperator;
 class Mesh;
+class FaceNbrFieldExchange;
 
 namespace fem
 {
@@ -36,12 +38,21 @@ struct CeedGroupOperator
   // far-field frequency) without reassembly; nullptr if the operator has no context or
   // the context is not updated. Owned by the group (destroyed with it).
   CeedQFunctionContext ctx = nullptr;
+  // Reusable output vector wrapper. The pointed-to MFEM Vector data is supplied at
+  // apply time, but the libCEED vector object itself can be retained across repeated
+  // postprocessing evaluations instead of being created/destroyed for every group apply.
+  mutable CeedVector out_vec = nullptr;
+  mutable CeedSize out_size = 0;
 };
 
 // Re-point the passive field inputs of each group operator at the given source vectors
-// and accumulate into the output vector with CeedOperatorApplyAdd.
+// and accumulate into the output vector with CeedOperatorApplyAdd. A field source index
+// of 4 (out of the srcs range) selects the optional imported vector instead, used to
+// feed face neighbor (ghost) field values exchanged for two-sided interior boundaries on
+// parallel interfaces (see FaceNbrFieldExchange).
 void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
-                            const std::array<const Vector *, 4> &srcs, const Vector &out);
+                            const std::array<const Vector *, 4> &srcs, const Vector &out,
+                            const Vector *imported = nullptr);
 
 }  // namespace fem
 
@@ -78,7 +89,8 @@ public:
     BDR_FLUX_Q,     // Surface charge (eps E) . n at boundary visualization points
     BDR_CURRENT_J,  // Surface current n x (mu^-1 B) at boundary visualization points
     BDR_ENERGY_E,   // Electric energy density at boundary visualization points
-    BDR_ENERGY_M    // Magnetic energy density at boundary visualization points
+    BDR_ENERGY_M,   // Magnetic energy density at boundary visualization points
+    BDR_POYNTING    // Poynting vector E x (mu^-1 B) at boundary visualization points
   };
 
   // Whether the kind fills a per-point visualization buffer (vs. computing integrals).
@@ -86,7 +98,8 @@ public:
   {
     return kind == Kind::BDR_FIELD_E || kind == Kind::BDR_FIELD_B ||
            kind == Kind::BDR_FLUX_Q || kind == Kind::BDR_CURRENT_J ||
-           kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M;
+           kind == Kind::BDR_ENERGY_E || kind == Kind::BDR_ENERGY_M ||
+           kind == Kind::BDR_POYNTING;
   }
 
   // Number of components per visualization point for buffer kinds.
@@ -112,7 +125,7 @@ private:
   bool flux_two_sided = false;
   mfem::Vector flux_x0;
   std::vector<std::array<double, 3>> farfield_dirs;
-  double farfield_omega_re = 0.0, farfield_omega_im = 0.0;
+  std::complex<double> farfield_omega = 0.0;
 
   // Boundary visualization field kinds: lattice refinement level, output scaling,
   // total output buffer size, and per-boundary-element base offsets into the buffer.
@@ -121,12 +134,12 @@ private:
   int buffer_size = 0;
   std::vector<int> buffer_bases;
 
-  // Field finite element spaces (not owned): fespace_e for H(curl) fields (source index
-  // 0), fespace_b for H(div) fields (source index 1). Either may be nullptr depending
+  // Field finite element spaces (not owned): nd_fespace for H(curl) fields (source index
+  // 0), rt_fespace for H(div) fields (source index 1). Either may be nullptr depending
   // on the functional kind. Material operator (not owned) for material property lookups
   // and side selection.
-  const mfem::ParFiniteElementSpace *fespace_e;
-  const mfem::ParFiniteElementSpace *fespace_b;
+  const mfem::ParFiniteElementSpace *nd_fespace;
+  const mfem::ParFiniteElementSpace *rt_fespace;
   const MaterialOperator *mat_op;
 
   // Whether the functional could be assembled (false when the configuration is not yet
@@ -143,12 +156,22 @@ private:
   std::vector<fem::CeedGroupOperator> groups;
   std::deque<Vector> elem_attrs;
 
+  // Face neighbor field exchange for two-sided interior boundaries crossing parallel
+  // interfaces: the owning process pulls the neighbor (ghost) volume field values at the
+  // face quadrature points, fed to the ghost side of the two-sided operators (nullptr
+  // when no marked boundary element has a ghost neighbor). Refilled before each apply.
+  std::unique_ptr<FaceNbrFieldExchange> face_nbr_exchange;
+
   // Staging vector used to initialize the field input CeedVectors at construction. The
   // field CeedVectors are re-pointed at the caller's data on each Eval() call.
   mutable Vector field_staging;
 
   // Local output vector with one slot per marked boundary element on this process.
+  // Integral functionals also keep the originating boundary attribute for each slot so
+  // batched model-level callers can recover several independent reductions from one
+  // assembled operator without changing the per-element libCEED kernels.
   mutable Vector local_out;
+  std::vector<int> local_out_attrs;
 
   void Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
   void AssembleLocal(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
@@ -182,6 +205,12 @@ public:
   // output scaling (BDR_FLUX_Q, BDR_CURRENT_J, BDR_ENERGY_E, BDR_ENERGY_M).
   SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
                     const mfem::ParFiniteElementSpace &fespace,
+                    const MaterialOperator &mat_op, int lod, double scaling);
+
+  // Construct a boundary visualization Poynting vector evaluator (BDR_POYNTING).
+  SurfaceFunctional(Kind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
+                    const mfem::ParFiniteElementSpace &nd_fespace,
+                    const mfem::ParFiniteElementSpace &rt_fespace,
                     const MaterialOperator &mat_op, int lod, double scaling);
 
   // Construct an interface dielectric energy participation functional with the given
@@ -238,19 +267,30 @@ public:
   // mesh communicator.
   std::complex<double> EvalComplexPower(const GridFunction &E, const GridFunction &B) const;
 
+  // Same complex-power convention as EvalComplexPower, but return one result per
+  // boundary-attribute bin. attr_to_bin is indexed by boundary attribute - 1 and uses -1
+  // for attributes not assigned to any output bin. This enables safe batching of many
+  // disjoint port surfaces while retaining per-port scalar outputs. Collective on the
+  // mesh communicator.
+  std::vector<std::complex<double>>
+  EvalComplexPowerByAttribute(const GridFunction &E, const GridFunction &B,
+                              const mfem::Array<int> &attr_to_bin, int num_bins) const;
+
   // Evaluate the far-field rE integrals for all observation directions at the given
   // (complex) frequency, following SurfacePostOperator::GetFarFieldrE. Reassembles when
   // the frequency changes. Collective on the mesh communicator.
-  std::vector<std::array<std::complex<double>, 3>> EvalFarField(const GridFunction &E,
-                                                                const GridFunction &B,
-                                                                double omega_re,
-                                                                double omega_im);
+  std::vector<std::array<std::complex<double>, 3>>
+  EvalFarField(const GridFunction &E, const GridFunction &B, std::complex<double> omega);
 
   // Fill the boundary visualization buffer with the pointwise field values (local
-  // operation, buffer kinds only). The grid function overload accumulates the real and
-  // imaginary part contributions (energy density kinds).
+  // operation, buffer kinds only). The single-grid-function overload accumulates the
+  // real and imaginary part contributions for quadratic single-field quantities.
   void EvalBuffer(const Vector &u, Vector &buffer) const;
   void EvalBuffer(const GridFunction &u, Vector &buffer) const;
+
+  // Fill the boundary visualization buffer with the Poynting vector
+  // Re{E x (mu^-1 B)^*}; real and imaginary part contributions add.
+  void EvalBuffer(const GridFunction &E, const GridFunction &B, Vector &buffer) const;
 };
 
 //
@@ -272,10 +312,10 @@ public:
 private:
   Kind kind;
 
-  // Source field finite element spaces (not owned): fespace_e for H(curl), fespace_b
+  // Source field finite element spaces (not owned): nd_fespace for H(curl), rt_fespace
   // for H(div); either may be nullptr depending on the kind.
-  const mfem::ParFiniteElementSpace *fespace_e;
-  const mfem::ParFiniteElementSpace *fespace_b;
+  const mfem::ParFiniteElementSpace *nd_fespace;
+  const mfem::ParFiniteElementSpace *rt_fespace;
 
   // Whether the evaluator could be assembled (3D meshes only).
   bool valid = true;
@@ -315,4 +355,4 @@ public:
 
 }  // namespace palace
 
-#endif  // PALACE_FEM_SURFACE_FUNCTIONAL_HPP
+#endif  // PALACE_FEM_OUTPUT_FUNCTIONALS_HPP

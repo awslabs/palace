@@ -3,6 +3,7 @@
 
 #include "lumpedportoperator.hpp"
 
+#include <set>
 #include <fmt/ranges.h>
 #include "fem/coefficient.hpp"
 #include "fem/gridfunction.hpp"
@@ -235,8 +236,8 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
   auto &nd_fespace = *E.ParFESpace();
   const auto &mesh = *nd_fespace.GetParMesh();
 
-  // Use the libCEED surface functional path when supported (device capable, no
-  // per-measurement reassembly).
+  // Use the libCEED surface functional path when supported, avoiding per-call
+  // boundary LinearForm assembly in the legacy coefficient path.
   if (!power_func && SurfaceFunctional::Enabled())
   {
     mfem::Array<int> attr_list;
@@ -256,6 +257,20 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
   {
     return power_func->EvalComplexPower(E, B);
   }
+  return GetPowerLegacy(E, B);
+}
+
+std::complex<double> LumpedPortData::GetPowerLegacy(GridFunction &E, GridFunction &B) const
+{
+  // Host fallback matching the original coefficient/linear-form implementation. This is
+  // still the cheapest path for very small port surfaces before libCEED JIT costs can be
+  // amortized over many samples.
+  MFEM_VERIFY((E.HasImag() && B.HasImag()) || (!E.HasImag() && !B.HasImag()),
+              "Mismatch between real- and complex-valued E and B fields in port power "
+              "calculation!");
+  const bool has_imag = E.HasImag();
+  auto &nd_fespace = *E.ParFESpace();
+  const auto &mesh = *nd_fespace.GetParMesh();
 
   SumVectorCoefficient fbr(mesh.SpaceDimension()), fbi(mesh.SpaceDimension());
   mfem::Array<int> attr_list;
@@ -493,6 +508,106 @@ const LumpedPortData &LumpedPortOperator::GetPort(int idx) const
   auto it = ports.find(idx);
   MFEM_VERIFY(it != ports.end(), "Unknown lumped port index requested!");
   return it->second;
+}
+
+std::map<int, std::complex<double>> LumpedPortOperator::GetPowers(GridFunction &E,
+                                                                  GridFunction &B) const
+{
+  std::map<int, std::complex<double>> powers;
+  if (ports.empty())
+  {
+    return powers;
+  }
+  // Assemble one union-surface POWER functional for all disjoint lumped ports. The
+  // SurfaceFunctional still accumulates per-boundary-element slots;
+  // EvalComplexPowerByAttribute bins those slots back to the port indices, so no
+  // processor-boundary or ghost-side behavior is weakened relative to the per-port path.
+  if (!batched_power_unavailable && SurfaceFunctional::Enabled())
+  {
+    if (!batched_power_func)
+    {
+      auto &nd_fespace = *E.ParFESpace();
+      const auto &mesh = *nd_fespace.GetParMesh();
+      const int bdr_attr_max = mesh::GetMaxBdrAttribute(mesh);
+      batched_power_attr_to_port.SetSize(bdr_attr_max);
+      for (int i = 0; i < batched_power_attr_to_port.Size(); i++)
+      {
+        batched_power_attr_to_port[i] = -1;
+      }
+      batched_power_port_indices.clear();
+
+      mfem::Array<int> attr_list;
+      std::set<int> seen_attrs;
+      bool can_batch = true;
+      int bin = 0;
+      for (const auto &[idx, data] : ports)
+      {
+        batched_power_port_indices.push_back(idx);
+        for (const auto &elem : data.elems)
+        {
+          for (int attr : elem->GetAttrList())
+          {
+            if (attr <= 0 || attr > bdr_attr_max || !seen_attrs.insert(attr).second)
+            {
+              can_batch = false;
+              break;
+            }
+            attr_list.Append(attr);
+            batched_power_attr_to_port[attr - 1] = bin;
+          }
+          if (!can_batch)
+          {
+            break;
+          }
+        }
+        if (!can_batch)
+        {
+          break;
+        }
+        bin++;
+      }
+
+      Mpi::GlobalAnd(1, &can_batch, nd_fespace.GetComm());
+
+      if (can_batch && attr_list.Size() > 0)
+      {
+        const auto &data0 = ports.begin()->second;
+        mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
+
+        mfem::Vector x0(mesh.SpaceDimension());
+        x0 = 0.0;
+        batched_power_func = std::make_unique<SurfaceFunctional>(
+            data0.mat_op.GetMesh(), attr_marker, &nd_fespace, B.ParFESpace(), data0.mat_op,
+            SurfaceFlux::POWER, /*two_sided*/ true, x0);
+      }
+      else
+      {
+        batched_power_unavailable = true;
+      }
+    }
+
+    if (batched_power_func && batched_power_func->IsValid())
+    {
+      auto values = batched_power_func->EvalComplexPowerByAttribute(
+          E, B, batched_power_attr_to_port,
+          static_cast<int>(batched_power_port_indices.size()));
+      for (std::size_t i = 0; i < batched_power_port_indices.size(); i++)
+      {
+        powers.emplace(batched_power_port_indices[i], values[i]);
+      }
+      return powers;
+    }
+    if (batched_power_func)
+    {
+      batched_power_unavailable = true;
+    }
+  }
+
+  for (const auto &[idx, data] : ports)
+  {
+    powers.emplace(idx, data.GetPower(E, B));
+  }
+  return powers;
 }
 
 mfem::Array<int> LumpedPortOperator::GetAttrList() const

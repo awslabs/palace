@@ -17,7 +17,7 @@
 #include "fem/integrator.hpp"
 #include "fem/interpolator.hpp"
 #include "fem/mesh.hpp"
-#include "fem/surfacefunctional.hpp"
+#include "fem/output_functionals.hpp"
 #include "models/materialoperator.hpp"
 #include "models/strattonchu.hpp"
 #include "utils/communication.hpp"
@@ -1487,7 +1487,7 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
 
   SurfaceFunctional farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts);
   REQUIRE(farfield.IsValid());
-  auto result = farfield.EvalFarField(E, B, omega_re, omega_im);
+  auto result = farfield.EvalFarField(E, B, {omega_re, omega_im});
   REQUIRE(result.size() == r_naughts.size());
   for (std::size_t d = 0; d < r_naughts.size(); d++)
   {
@@ -1509,7 +1509,7 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
   }
 
   // Changing the frequency must reassemble and still agree (different result).
-  auto result2 = farfield.EvalFarField(E, B, 2.0 * omega_re, 0.0);
+  auto result2 = farfield.EvalFarField(E, B, {2.0 * omega_re, 0.0});
   CHECK(std::abs(result2[0][0] - result[0][0]) > 0.0);
 }
 
