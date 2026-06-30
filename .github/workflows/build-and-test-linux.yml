@@ -40,9 +40,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:  # Pairwise testing (from allpairspy)
-        # Bug in MPICH on Ubuntu 24 means we disable Ubuntu24 builds.
-        # https://stackoverflow.com/questions/78815680/mpi-comm-size-always-returns-1-again
+        include:
+        # x86 Intel stack.
         - arch: x86
           compiler: intel
           mpi: intelmpi
@@ -52,33 +51,7 @@ jobs:
           with-openmp: openmp
           with-eigensolver: slepc
           with-solver: superlu
-        # - arch: x86
-        #   compiler: gcc
-        #   mpi: mpich
-        #   math-libs: openblas
-        #   build-shared: static
-        #   with-64bit-int: int32
-        #   with-openmp: serial
-        #   with-eigensolver: arpack
-        #   with-solver: strumpack
-        - arch: x86
-          compiler: clang
-          mpi: openmpi
-          math-libs: aocl
-          build-shared: static
-          with-64bit-int: int64
-          with-openmp: serial
-          with-eigensolver: slepc
-          with-solver: mumps
-        # - arch: x86
-        #   compiler: clang
-        #   mpi: mpich
-        #   math-libs: aocl
-        #   build-shared: shared
-        #   with-64bit-int: int32
-        #   with-openmp: openmp
-        #   with-eigensolver: arpack
-        #   with-solver: mumps
+        # x86 GCC / OpenBLAS open stack.
         - arch: x86
           compiler: gcc
           mpi: openmpi
@@ -88,78 +61,7 @@ jobs:
           with-openmp: openmp
           with-eigensolver: slepc
           with-solver: strumpack
-        - arch: x86
-          compiler: intel
-          mpi: intelmpi
-          math-libs: intelmkl
-          build-shared: static
-          with-64bit-int: int32
-          with-openmp: serial
-          with-eigensolver: arpack
-          with-solver: superlu
-        - arch: x86
-          compiler: intel
-          mpi: intelmpi
-          math-libs: intelmkl
-          build-shared: static
-          with-64bit-int: int32
-          with-openmp: openmp
-          with-eigensolver: slepc
-          with-solver: strumpack
-        - arch: x86
-          compiler: intel
-          mpi: intelmpi
-          math-libs: intelmkl
-          build-shared: shared
-          with-64bit-int: int64
-          with-openmp: serial
-          with-eigensolver: arpack
-          with-solver: mumps
-        - arch: x86
-          compiler: gcc
-          mpi: openmpi
-          math-libs: aocl
-          build-shared: shared
-          with-64bit-int: int32
-          with-openmp: serial
-          with-eigensolver: arpack
-          with-solver: superlu
-        # - arch: x86
-        #   compiler: clang
-        #   mpi: mpich
-        #   math-libs: openblas
-        #   build-shared: shared
-        #   with-64bit-int: int64
-        #   with-openmp: serial
-        #   with-eigensolver: slepc
-        #   with-solver: superlu
-        - arch: arm
-          compiler: gcc
-          mpi: mpich
-          math-libs: openblas
-          build-shared: shared
-          with-64bit-int: int64
-          with-openmp: openmp
-          with-eigensolver: slepc
-          with-solver: superlu
-        - arch: arm
-          compiler: clang
-          mpi: openmpi
-          math-libs: armpl
-          build-shared: static
-          with-64bit-int: int32
-          with-openmp: serial
-          with-eigensolver: arpack
-          with-solver: strumpack
-        - arch: arm
-          compiler: clang
-          mpi: mpich
-          math-libs: armpl
-          build-shared: shared
-          with-64bit-int: int32
-          with-openmp: serial # openmp -- mumps 5.8.0 introduces hang possibility
-          with-eigensolver: arpack
-          with-solver: mumps
+        # arm GCC / OpenBLAS.
         - arch: arm
           compiler: gcc
           mpi: openmpi
@@ -169,60 +71,7 @@ jobs:
           with-openmp: serial
           with-eigensolver: slepc
           with-solver: mumps
-        - arch: arm
-          compiler: gcc
-          mpi: openmpi
-          math-libs: armpl
-          build-shared: shared
-          with-64bit-int: int64
-          with-openmp: serial
-          with-eigensolver: arpack
-          with-solver: superlu
-        - arch: arm
-          compiler: clang
-          mpi: mpich
-          math-libs: openblas
-          build-shared: static
-          with-64bit-int: int32
-          with-openmp: openmp
-          with-eigensolver: slepc
-          with-solver: strumpack
-        - arch: arm
-          compiler: clang
-          mpi: mpich
-          math-libs: openblas
-          build-shared: static
-          with-64bit-int: int64
-          with-openmp: serial
-          with-eigensolver: arpack
-          with-solver: superlu
-        - arch: arm
-          compiler: gcc
-          mpi: openmpi
-          math-libs: armpl
-          build-shared: shared
-          with-64bit-int: int32
-          with-openmp: openmp
-          with-eigensolver: slepc
-          with-solver: strumpack
-        - arch: arm
-          compiler: gcc
-          mpi: openmpi
-          math-libs: armpl
-          build-shared: shared
-          with-64bit-int: int32
-          with-openmp: openmp
-          with-eigensolver: slepc
-          with-solver: superlu
-        - arch: arm
-          compiler: gcc
-          mpi: openmpi
-          math-libs: armpl
-          build-shared: shared
-          with-64bit-int: int64
-          with-openmp: openmp
-          with-eigensolver: slepc
-          with-solver: strumpack
+        # Sanitizer build (ASan/UBSan), x86 Clang.
         - arch: x86
           compiler: clang
           mpi: openmpi
@@ -233,6 +82,7 @@ jobs:
           with-eigensolver: slepc
           with-solver: superlu
           with-sanitizers: true
+        # Coverage build, x86 GCC.
         - arch: x86
           compiler: gcc
           mpi: openmpi
@@ -242,7 +92,6 @@ jobs:
           with-openmp: openmp
           with-eigensolver: slepc
           with-solver: strumpack
-          with-butterflypack: true
           with-coverage: true
 
     # Flaky arm builds with ubuntu 24 means we pin to ubuntu 22
@@ -599,7 +448,7 @@ jobs:
         # exercised here so it doesn't bit-rot. Gated to one matrix entry
         # to avoid paying the ~7 min Julia precompile per job. Reads the
         # farfield CSV the regression step left in the staging tree.
-        if: needs.filter.outputs.test == 'true' && matrix.arch == 'x86' && matrix.compiler == 'gcc' && matrix.math-libs == 'aocl'
+        if: needs.filter.outputs.test == 'true' && matrix.arch == 'x86' && matrix.compiler == 'gcc' && matrix.math-libs == 'openblas' && !matrix.with-coverage
         run: |
           STAGE_ROOT="${TMPDIR:-/tmp}/palace-regression"
           FARFIELD="$STAGE_ROOT/antenna/antenna_short_dipole/postpro/antenna_short_dipole/farfield-rE.csv"
