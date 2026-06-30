@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <complex>
 #include <cstdlib>
+#include <memory>
 #include <set>
 #include <string>
 #include "drivers/boundarymodesolver.hpp"
@@ -410,10 +411,11 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
         pmesh, viz_fec.get(), pmesh->SpaceDimension());
   };
   const auto &output_mesh = fem_op->GetNDSpace().GetParMesh();
+  const bool use_ceed_domain_paraview_fields =
+      ShouldWriteParaviewFields() && UseCeedDomainParaviewPointFields(output_mesh);
   const bool use_ceed_domain_fields =
       fem::LibceedPostprocessingEnabled() &&
-      (ShouldWriteGridFunctionFields() ||
-       (ShouldWriteParaviewFields() && UseCeedDomainParaviewPointFields(output_mesh)));
+      (ShouldWriteGridFunctionFields() || use_ceed_domain_paraview_fields);
   const bool use_ceed_boundary_fields = fem::LibceedPostprocessingEnabled() &&
                                         ShouldWriteParaviewFields() &&
                                         UseCeedBoundaryParaviewPointFields(output_mesh);
@@ -442,6 +444,28 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     {
       MFEM_VERIFY(!IsSupportedDomainOutputDimension(*target.GetParMesh()),
                   "libCEED domain point field evaluator could not assemble for a "
+                  "supported mesh dimension!");
+      eval.reset();
+    }
+  };
+  auto MakeBaseDomainFieldEvaluator = [&](PointFieldEvaluator::Kind kind,
+                                          mfem::ParFiniteElementSpace &fespace,
+                                          std::unique_ptr<PointFieldEvaluator> &eval)
+  {
+    if (!use_ceed_domain_paraview_fields)
+    {
+      return;
+    }
+    InitializeVizSpaces(fespace);
+    eval = std::make_unique<PointFieldEvaluator>(
+        kind, fem_op->GetMaterialOp().GetMesh(), fem_op->GetMaterialOp(),
+        kind == PointFieldEvaluator::Kind::FIELD_E ? &fespace : nullptr,
+        kind == PointFieldEvaluator::Kind::FIELD_B ? &fespace : nullptr,
+        *viz_vector_fespace, 1.0);
+    if (!eval->IsValid())
+    {
+      MFEM_VERIFY(!IsSupportedDomainOutputDimension(*fespace.GetParMesh()),
+                  "libCEED base domain point field evaluator could not assemble for a "
                   "supported mesh dimension!");
       eval.reset();
     }
@@ -547,6 +571,8 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
     }
 
     // Electric Boundary Field & Surface Charge.
+    MakeBaseDomainFieldEvaluator(PointFieldEvaluator::Kind::FIELD_E, *E->ParFESpace(),
+                                 E_domain_eval);
     if (use_ceed_boundary_fields)
     {
       MakeBdrFieldEvaluator(PointFieldEvaluator::Kind::FIELD_E, *E->ParFESpace(),
@@ -612,6 +638,11 @@ void PostOperator<solver_t>::SetupFieldCoefficients()
 
     // Magnetic Boundary Field & Surface Current.
     // In 2D, B is scalar (L2), so boundary vector coefficients are not applicable.
+    if (B->Real().VectorDim() > 1)
+    {
+      MakeBaseDomainFieldEvaluator(PointFieldEvaluator::Kind::FIELD_B, *B->ParFESpace(),
+                                   B_domain_eval);
+    }
     if (B->Real().VectorDim() > 1)
     {
       if (use_ceed_boundary_fields)
@@ -788,7 +819,77 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     paraview->RegisterDomainPointEvaluator(
         name, [eval_ptr, E_ptr, B_ptr](Vector &buffer)
         { eval_ptr->EvalBuffer(E_ptr, B_ptr, buffer); }, eval_ptr->BufferBases(),
-        eval_ptr->BufferNumComp(), eval_ptr->BufferSize());
+        eval_ptr->BufferNumComp(), eval_ptr->BufferSize(), true);
+  };
+  auto RegisterDomainBaseField =
+      [&](const std::string &name, const mfem::ParGridFunction &gf)
+  {
+    if (!use_ceed_domain_paraview)
+    {
+      paraview->RegisterField(name, const_cast<mfem::ParGridFunction *>(&gf));
+      return;
+    }
+    const auto *gf_ptr = &gf;
+    const auto *pmesh = gf.ParFESpace()->GetParMesh();
+    const int num_comp = gf.VectorDim();
+    auto bases = std::make_shared<std::vector<int>>(pmesh->GetNE(), -1);
+    int buffer_points = 0;
+    for (int e = 0; e < pmesh->GetNE(); e++)
+    {
+      const auto *RefG =
+          mfem::GlobGeometryRefiner.Refine(pmesh->GetElementBaseGeometry(e), refine_ho, 1);
+      (*bases)[e] = buffer_points;
+      buffer_points += RefG->RefPts.GetNPoints();
+    }
+    const int buffer_size = buffer_points * num_comp;
+    paraview->RegisterDomainPointEvaluator(
+        name,
+        [gf_ptr, pmesh, bases, num_comp, buffer_size, refine_ho](Vector &buffer)
+        {
+          MFEM_VERIFY(buffer.Size() == buffer_size,
+                      "Invalid buffer size for domain GridFunction point output!");
+          MFEM_VERIFY(num_comp > 0, "Invalid component count for GridFunction output!");
+          const int component_stride = buffer_size / num_comp;
+          double *out = buffer.HostWrite();
+          mfem::IsoparametricTransformation T;
+          mfem::DenseMatrix vals;
+          for (int e = 0; e < pmesh->GetNE(); e++)
+          {
+            const auto *RefG = mfem::GlobGeometryRefiner.Refine(
+                pmesh->GetElementBaseGeometry(e), refine_ho, 1);
+            const mfem::IntegrationRule &ir = RefG->RefPts;
+            const int base = (*bases)[e];
+            pmesh->GetElementTransformation(e, &T);
+            gf_ptr->GetVectorValues(T, ir, vals);
+            MFEM_VERIFY(vals.Width() == ir.GetNPoints(),
+                        "Invalid GridFunction point output interpolation size!");
+            for (int j = 0; j < ir.GetNPoints(); j++)
+            {
+              for (int c = 0; c < num_comp; c++)
+              {
+                out[base + j + c * component_stride] =
+                    (c < vals.Height()) ? vals(c, j) : 0.0;
+              }
+            }
+          }
+        },
+        *bases, num_comp, buffer_size);
+  };
+  auto RegisterDomainBaseEvalField = [&](const std::string &name,
+                                         const std::unique_ptr<PointFieldEvaluator> &eval,
+                                         const mfem::ParGridFunction &field)
+  {
+    if (!eval)
+    {
+      RegisterDomainBaseField(name, field);
+      return;
+    }
+    const auto *eval_ptr = eval.get();
+    const auto *field_ptr = &field;
+    paraview->RegisterDomainPointEvaluator(
+        name,
+        [eval_ptr, field_ptr](Vector &buffer) { eval_ptr->EvalBuffer(*field_ptr, buffer); },
+        eval_ptr->BufferBases(), eval_ptr->BufferNumComp(), eval_ptr->BufferSize(), true);
   };
   auto RegisterBdrEvalField = [&](const std::string &name,
                                   const std::unique_ptr<PointFieldEvaluator> &eval,
@@ -828,8 +929,8 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   {
     if (HasComplexGridFunction<solver_t>())
     {
-      paraview->RegisterField("E_real", &E->Real());
-      paraview->RegisterField("E_imag", &E->Imag());
+      RegisterDomainBaseEvalField("E_real", E_domain_eval, E->Real());
+      RegisterDomainBaseEvalField("E_imag", E_domain_eval, E->Imag());
       if (E_bdr_eval)
       {
         RegisterBdrEvalField("E_real", E_bdr_eval, E->Real());
@@ -843,7 +944,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     }
     else
     {
-      paraview->RegisterField("E", &E->Real());
+      RegisterDomainBaseEvalField("E", E_domain_eval, E->Real());
       if (E_bdr_eval)
       {
         RegisterBdrEvalField("E", E_bdr_eval, E->Real());
@@ -870,8 +971,8 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   {
     if (HasComplexGridFunction<solver_t>())
     {
-      paraview->RegisterField("B_real", &B->Real());
-      paraview->RegisterField("B_imag", &B->Imag());
+      RegisterDomainBaseEvalField("B_real", B_domain_eval, B->Real());
+      RegisterDomainBaseEvalField("B_imag", B_domain_eval, B->Imag());
       if (B_bdr_eval)
       {
         RegisterBdrEvalField("B_real", B_bdr_eval, B->Real());
@@ -891,7 +992,7 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     }
     else
     {
-      paraview->RegisterField("B", &B->Real());
+      RegisterDomainBaseEvalField("B", B_domain_eval, B->Real());
       if (B_bdr_eval)
       {
         RegisterBdrEvalField("B", B_bdr_eval, B->Real());
@@ -1238,6 +1339,11 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
                 "Size mismatch for provided ErrorIndicator for postprocessing!");
     *eta = indicator->Local();
     paraview->RegisterField("Indicator", eta.get());
+  }
+  for (const char *name :
+       {"E", "E_real", "E_imag", "B", "B_real", "B_imag", "U_e", "U_m", "S"})
+  {
+    paraview->DeregisterDomainPointField(name);
   }
   StartCudaProfilerParaviewRange();
   paraview->Save();
