@@ -1590,7 +1590,7 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
   for (int be = 0; be < parent.GetNBE(); be++)
   {
     const int attr = parent.GetBdrAttribute(be);
-    const bool is_surface = surface_attr_set.count(attr) > 0;
+    const bool is_surface = surface_attr_set.contains(attr);
     parent.GetBdrElementEdges(be, edges, orientations);
     for (int edge : edges)
     {
@@ -1623,7 +1623,7 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
     auto [it, inserted] = edge_to_attr.try_emplace(key, attr);
     if (!inserted && !is_surface)
     {
-      const bool current_is_surface = surface_attr_set.count(it->second) > 0;
+      const bool current_is_surface = surface_attr_set.contains(it->second);
       it->second = current_is_surface ? attr : std::min(it->second, attr);
     }
   }
@@ -1639,7 +1639,7 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
                 "Submesh boundary element edge index out of range!");
     const auto key = EdgeKey(parent_edge_map[submesh_edge]);
     const auto it = edge_to_attr.find(key);
-    if (it != edge_to_attr.end() && surface_attr_set.count(it->second) == 0)
+    if (it != edge_to_attr.end() && !surface_attr_set.contains(it->second))
     {
       submesh.SetBdrAttribute(sbe, it->second);
     }
@@ -1685,7 +1685,7 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
   for (int be = 0; be < parent.GetNBE(); be++)
   {
     int attr = parent.GetBdrAttribute(be);
-    if (internal_attr_set.count(attr) == 0)
+    if (!internal_attr_set.contains(attr))
     {
       continue;  // Not an internal boundary attribute
     }
@@ -1702,7 +1702,7 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
   for (int be = 0; be < parent.GetNBE(); be++)
   {
     int attr = parent.GetBdrAttribute(be);
-    if (surface_attr_set.count(attr) == 0)
+    if (!surface_attr_set.contains(attr))
     {
       continue;  // Not a surface face
     }
@@ -1718,7 +1718,7 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
   std::unordered_map<int, int> intersection_edges;
   for (const auto &[edge, attr] : edge_to_internal_attr)
   {
-    if (surface_edges.count(edge) > 0)
+    if (surface_edges.contains(edge))
     {
       intersection_edges[edge] = attr;
     }
@@ -1755,7 +1755,7 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
   mfem::Array<int> new_be_to_face;
   for (const auto &[parent_edge, attr] : intersection_edges)
   {
-    if (existing_bdr_edges.count(parent_edge) > 0)
+    if (existing_bdr_edges.contains(parent_edge))
     {
       continue;  // Already a boundary element
     }
