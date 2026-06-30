@@ -49,9 +49,19 @@ public:
     // Bitmask over the source field slots to evaluate (bit s set: source slot s).
     unsigned int source_mask;
 
+    // Integer/topological identity of the point set, independent of physical or
+    // floating-point coordinates. SurfaceFunctional fills this with the reference-face
+    // topology/orientation/subface key used to generate pts. Requests with the same
+    // point_key, source slot, element geometry, and point count can share one libCEED
+    // point evaluator. Empty keys are allowed for ad-hoc requests and force a unique
+    // evaluator group.
+    std::vector<long long> point_key;
+
     // Evaluation points in the neighbor element's reference space (the ghost element
     // reference space coincides with the owning process' local element reference
-    // space, as the ghost elements preserve the neighbor's vertex ordering).
+    // space, as the ghost elements preserve the neighbor's vertex ordering). These
+    // coordinates are used only to evaluate the requested points, not to decide point
+    // identity/grouping.
     std::vector<mfem::IntegrationPoint> pts;
   };
 
@@ -69,8 +79,8 @@ private:
   std::vector<Message> recv_msgs, send_msgs;
 
   // For request r (construction order), base offset of the values for source slot s in
-  // the imported vector (-1 when not requested). Values are 3 components per point,
-  // point-major: [x0 y0 z0 x1 y1 z1 ...].
+  // the imported vector (-1 when not requested). Values are space-dimension components
+  // per point, point-major: [x0 y0 (z0) x1 y1 (z1) ...].
   std::vector<std::array<int, MaxSources>> import_offsets;
 
   // Assembled libCEED point evaluators serving the requests of neighboring processes,
@@ -103,7 +113,7 @@ public:
 
   // Base offset in the imported vector of the values of source slot s for request r
   // (construction order), or -1 when source s was not requested. Layout per request
-  // and source: 3 components per point, point-major.
+  // and source: space-dimension components per point, point-major.
   int ImportOffset(int r, int s) const { return import_offsets[r][s]; }
 
   // The imported values vector (filled by Exchange()).

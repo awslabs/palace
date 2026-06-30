@@ -432,10 +432,13 @@ CEED_QFUNCTION(f_integ_surf_flux_p_2_32)(void *__restrict__ ctx_, CeedInt Q,
 //   I = (ik/4pi) [n x E - r0 x (n x ZH)] e^{ik r0.r'} dS,  ZH = c0 B, k = omega/c0,
 // with complex omega and fields. The context is a CeedIntScalar array: [0].second =
 // normal sign, [1].second = omega_re, [2].second = omega_im, [3].first = number of
-// directions N, [4..4+3N).second = directions, followed by the (isotropic) light speed
-// material property context. Output: 6N components per element (Re I, Im I per
-// direction, 3 each). Inputs: qw, grad_x_f, attr_1, grad_x_1, x, u_1..u_4 =
-// E_re, E_im, B_re, B_im (external boundaries only).
+// directions N, [4].first = B-field Piola map (0 = H(curl), 1 = H(div)),
+// [5..5+3N).second = directions, followed by the (isotropic) light speed material
+// property context. The B-field Piola map matches GridFunction::GetVectorValue for the
+// supplied B space. Output: 6N components per element (Re I, Im I per direction, 3
+// each).
+// Inputs: qw, grad_x_f, attr_1, grad_x_1, x, u_1..u_4 = E_re, E_im, B_re, B_im
+// (external boundaries only).
 CEED_QFUNCTION(f_integ_surf_farfield_32)(void *__restrict__ ctx_, CeedInt Q,
                                          const CeedScalar *const *in,
                                          CeedScalar *const *out)
@@ -445,8 +448,8 @@ CEED_QFUNCTION(f_integ_surf_farfield_32)(void *__restrict__ ctx_, CeedInt Q,
                    *u_er = in[5], *u_ei = in[6], *u_br = in[7], *u_bi = in[8];
   CeedScalar *v = out[0];
   const CeedScalar s_n = ctx[0].second, omega_re = ctx[1].second, omega_im = ctx[2].second;
-  const CeedInt N = ctx[3].first;
-  const CeedIntScalar *dirs = ctx + 4, *mat = ctx + 4 + 3 * N;
+  const CeedInt N = ctx[3].first, b_hdiv = ctx[4].first;
+  const CeedIntScalar *dirs = ctx + 5, *mat = ctx + 5 + 3 * N;
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
@@ -459,8 +462,16 @@ CEED_QFUNCTION(f_integ_surf_farfield_32)(void *__restrict__ ctx_, CeedInt Q,
     n[2] *= s_n;
     SurfHcurlField32(i, Q, J_v, u_er, E_r);
     SurfHcurlField32(i, Q, J_v, u_ei, E_i);
-    SurfHdivField32(i, Q, J_v, u_br, B_r);
-    SurfHdivField32(i, Q, J_v, u_bi, B_i);
+    if (b_hdiv)
+    {
+      SurfHdivField32(i, Q, J_v, u_br, B_r);
+      SurfHdivField32(i, Q, J_v, u_bi, B_i);
+    }
+    else
+    {
+      SurfHcurlField32(i, Q, J_v, u_br, B_r);
+      SurfHcurlField32(i, Q, J_v, u_bi, B_i);
+    }
     CoeffUnpack3(mat, (CeedInt)attr[i], c0_mat);
     MultAx33(c0_mat, B_r, ZH_r);
     MultAx33(c0_mat, B_i, ZH_i);

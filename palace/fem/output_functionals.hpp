@@ -58,21 +58,22 @@ void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
 
 //
 // Class to compute output functionals (integrals of functions of solution fields) over
-// surfaces (sets of boundary elements) of a 3D mesh using libCEED, supporting full
-// (non-trace) evaluation of volume fields at boundary element quadrature points. This
-// enables postprocessing measurements (interface dielectric energy participation,
-// surface fluxes, port powers, etc.) to execute on the device, in contrast to the
-// legacy mfem::Coefficient-based paths which are host-only.
+// boundary element sets using libCEED, supporting full (non-trace) evaluation of volume
+// fields at boundary element quadrature points. The 3D path covers surface integrals and
+// selected boundary visualization buffers; the 2D path currently covers line integrals
+// needed by interface dielectric postprocessing. This enables postprocessing measurements
+// (interface dielectric energy participation, surface fluxes, port powers, etc.) to
+// execute on the device, in contrast to the legacy mfem::Coefficient-based paths which
+// are host-only.
 //
 // The key construction: for each boundary element, the field is evaluated from an
 // attached volume element (or both, with averaging or differencing, for interior
 // boundaries, following the conventions of BdrGridFunctionCoefficient and its derived
-// legacy coefficients). Boundary elements are grouped by the mapped positions of the
-// face quadrature points in the volume element reference space(s), so that each group
-// shares tabulated bases (the volume element basis evaluated at the mapped face
-// quadrature points) and element restrictions (the volume element dofs, reusing the
-// standard volume restriction machinery including H(curl)/H(div) dof orientations and
-// transformations).
+// legacy coefficients). AtPoints-capable groups keep mapped reference points as runtime
+// data; mapped-integration-rule groups use per-assembly integer identities rather than
+// rounded coordinate keys. Processor-boundary ghost values are requested through
+// FaceNbrFieldExchange with integer/topological reference-face orientation keys so point
+// identity never depends on fuzzy coordinate matching.
 //
 class SurfaceFunctional
 {
@@ -142,9 +143,11 @@ private:
   const mfem::ParFiniteElementSpace *rt_fespace;
   const MaterialOperator *mat_op;
 
-  // Whether the functional could be assembled (false when the configuration is not yet
-  // supported, e.g. non-3D meshes or two-sided evaluation on process-boundary interior
-  // surfaces, in which case callers should fall back to the legacy evaluation paths).
+  // Whether the functional could be assembled. False means the configuration is outside
+  // the current support matrix (for example 2D surface-flux or boundary-visualization
+  // line outputs); model-level callers may explicitly use legacy code for those cases,
+  // but supported cases should treat invalid assembly as an error rather than silently
+  // falling back.
   bool valid = true;
 
   // MPI communicator from the mesh.
@@ -243,7 +246,9 @@ public:
   SurfaceFunctional &operator=(const SurfaceFunctional &) = delete;
 
   // Whether the functional was successfully assembled. When false, evaluation is not
-  // possible and callers should use the legacy evaluation paths.
+  // possible. Supported model-level paths should error rather than silently falling back;
+  // explicit legacy/oracle paths remain available for unsupported configurations and
+  // validation.
   bool IsValid() const { return valid; }
 
   // Evaluate the functional for the given field (L-vector, e.g. the local vector of a
@@ -291,66 +296,6 @@ public:
   // Fill the boundary visualization buffer with the Poynting vector
   // Re{E x (mu^-1 B)^*}; real and imaginary part contributions add.
   void EvalBuffer(const GridFunction &E, const GridFunction &B, Vector &buffer) const;
-};
-
-//
-// Class to evaluate derived field quantities (energy densities, Poynting vector) at the
-// nodal points of an interpolatory output space using libCEED, filling a grid function
-// for visualization output without per-point host coefficient evaluation. Follows the
-// conventions of EnergyDensityCoefficient and PoyntingVectorCoefficient.
-//
-class DomainFieldEvaluator
-{
-public:
-  enum class Kind
-  {
-    ENERGY_E,  // 1/2 (ε E)ᴴ E, scalar output
-    ENERGY_M,  // 1/2 (μ⁻¹ B)ᴴ B, scalar output
-    POYNTING   // Re{E x (μ⁻¹ B)⥁}, vector output
-  };
-
-private:
-  Kind kind;
-
-  // Source field finite element spaces (not owned): nd_fespace for H(curl), rt_fespace
-  // for H(div); either may be nullptr depending on the kind.
-  const mfem::ParFiniteElementSpace *nd_fespace;
-  const mfem::ParFiniteElementSpace *rt_fespace;
-
-  // Whether the evaluator could be assembled (3D meshes only).
-  bool valid = true;
-
-  // Per-geometry assembled libCEED operators, evaluating at the target space nodal
-  // points and scattering directly into the output grid function. The element attribute
-  // vectors are operator inputs and must outlive the operators.
-  std::vector<fem::CeedGroupOperator> groups;
-  std::deque<Vector> elem_attrs;
-
-  // Staging vector used to initialize the field input CeedVectors at construction.
-  mutable Vector field_staging;
-
-  void Assemble(const Mesh &mesh, const MaterialOperator &mat_op,
-                const mfem::ParFiniteElementSpace &target_fespace, double scaling);
-
-public:
-  // Construct an evaluator filling grid functions on target_fespace (an interpolatory
-  // L2 space). The scaling multiplies the output as for the legacy coefficients.
-  DomainFieldEvaluator(Kind kind, const Mesh &mesh, const MaterialOperator &mat_op,
-                       const mfem::ParFiniteElementSpace *nd_fespace,
-                       const mfem::ParFiniteElementSpace *rt_fespace,
-                       const mfem::ParFiniteElementSpace &target_fespace, double scaling);
-  ~DomainFieldEvaluator();
-
-  DomainFieldEvaluator(const DomainFieldEvaluator &) = delete;
-  DomainFieldEvaluator &operator=(const DomainFieldEvaluator &) = delete;
-
-  // Whether the evaluator was successfully assembled.
-  bool IsValid() const { return valid; }
-
-  // Fill the output vector (L-vector of the target space, e.g. a GridFunction) with
-  // the pointwise quantity. Real and imaginary field contributions add. Local
-  // operation (no MPI communication).
-  void Eval(const GridFunction *E, const GridFunction *B, Vector &out) const;
 };
 
 }  // namespace palace
