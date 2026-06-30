@@ -9,7 +9,8 @@ target_sources(${LIB_TARGET_NAME}
   PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/bilinearform.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/coefficient.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/domain_field_evaluator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/ceed_group_operator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/domain_point_field_evaluator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/errorindicator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/facenbrexchange.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/fespace.cpp
@@ -19,6 +20,8 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/lumpedelement.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/mesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/output_functionals.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/point_field_evaluator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/postprocessing_backend.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/curlcurl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/curlcurlmass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/diffusion.cpp

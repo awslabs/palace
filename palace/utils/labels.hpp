@@ -62,6 +62,26 @@ enum class InterfaceDielectric : char
   SA
 };
 
+// Mesh entity location: domain/volume elements or boundary/surface elements.
+enum class MeshEntityType : char
+{
+  Domain,
+  Boundary
+};
+
+// Non-reducing point field outputs for visualization. These produce one value per
+// sampled mesh point rather than a globally reduced scalar/array.
+enum class PointFieldKind : char
+{
+  FIELD_E,    // H(curl) E field values
+  FIELD_B,    // H(div) B field values
+  FLUX_Q,     // Surface charge (eps E) . n
+  CURRENT_J,  // Surface current n x (mu^-1 B)
+  ENERGY_E,   // Electric energy density
+  ENERGY_M,   // Magnetic energy density
+  POYNTING    // Poynting vector E x (mu^-1 B)
+};
+
 // Frequency sampling schemes.
 enum class FrequencySampling : char
 {
