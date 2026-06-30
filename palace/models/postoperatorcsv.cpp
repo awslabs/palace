@@ -595,7 +595,7 @@ void PostOperatorCSV<solver_t>::PrintDomainE()
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeSurfaceF(const SurfacePostOperator &surf_post_op)
 {
-  if (!(surf_post_op.flux_surfs.size() > 0))
+  if (surf_post_op.flux_surfs.empty())
   {
     return;
   }
@@ -676,7 +676,7 @@ void PostOperatorCSV<solver_t>::PrintSurfaceF()
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeSurfaceQ(const SurfacePostOperator &surf_post_op)
 {
-  if (!(surf_post_op.eps_surfs.size() > 0))
+  if (surf_post_op.eps_surfs.empty())
   {
     return;
   }
@@ -805,7 +805,7 @@ void PostOperatorCSV<solver_t>::InitializeProbeField(
     std::string_view file_name, std::string_view col_prefix, std::string_view label_base,
     std::string_view unit, int v_dim)
 {
-  if (!(interp_op.GetProbes().size() > 0) || v_dim <= 0)
+  if (interp_op.GetProbes().empty() || v_dim <= 0)
   {
     return;
   }

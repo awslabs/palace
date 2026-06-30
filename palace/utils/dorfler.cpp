@@ -32,10 +32,10 @@ std::array<double, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
   }
 
   // The pivot is the first point which leaves (1-θ) of the total sum after it.
-  const double local_total = sum.size() > 0 ? sum.back() : 0.0;
+  const double local_total = !sum.empty() ? sum.back() : 0.0;
   auto pivot = std::lower_bound(sum.begin(), sum.end(), (1 - fraction) * local_total);
   auto index = std::distance(sum.begin(), pivot);
-  double error_threshold = estimates.size() > 0 ? estimates[index] : 0.0;
+  double error_threshold = !estimates.empty() ? estimates[index] : 0.0;
 
   // Compute the number of elements, and amount of error, marked by threshold value e.
   auto Marked = [&estimates, &sum, &local_total](double e) -> std::pair<std::size_t, double>
@@ -85,7 +85,7 @@ std::array<double, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
   Mpi::GlobalSum(3, &error.total, comm);
   const double max_indicator = [&]()
   {
-    double max_indicator = estimates.size() > 0 ? estimates.back() : 0.0;
+    double max_indicator = !estimates.empty() ? estimates.back() : 0.0;
     Mpi::GlobalMax(1, &max_indicator, comm);
     return max_indicator;
   }();
