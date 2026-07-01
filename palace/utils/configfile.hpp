@@ -705,6 +705,28 @@ public:
   BoundaryPostData(const json &postpro);
 };
 
+struct FluxLoopData
+{
+public:
+  // List of boundary attributes for the metal surface.
+  std::vector<int> fluxloop_pec = {};
+
+  // List of boundary attributes for holes (one per hole).
+  std::vector<int> hole_attributes = {};
+
+  // Flux amounts for each hole (same size as hole_attributes).
+  std::vector<double> flux_amounts = {};
+
+  // Direction vector for flux orientation.
+  std::array<double, 3> direction = {0.0, 0.0, 1.0};
+
+  // Regularization parameter for curl-curl system stability.
+  double regularization = 1e-6;
+
+  FluxLoopData() = default;
+  FluxLoopData(const json &fluxloop);
+};
+
 struct BoundaryData
 {
 public:
@@ -727,6 +749,7 @@ public:
   std::map<int, FloquetPortData> floquetport = {};
   std::map<int, SurfaceCurrentData> current = {};
   PeriodicBoundaryData periodic = {};
+  std::map<int, FluxLoopData> fluxloop = {};
   BoundaryPostData postpro = {};
 
   BoundaryData() = default;

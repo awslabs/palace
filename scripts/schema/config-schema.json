@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-0-0",
+  "$id": "urn:palace:schema:1-1-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -282,6 +282,15 @@
                 "$ref": "#/$defs/SurfaceCurrentElements"
               }
             ]
+          }
+        },
+        "FluxLoop": {
+          "type": "array",
+          "title": "Flux Loop",
+          "description": "Array of flux loop boundaries for magnetostatic simulations. Prescribes fixed amounts of magnetic flux through holes in metallic planes. The inductance matrix is extracted from the stored magnetic energy.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/FluxLoop"
           }
         },
         "Ground": {
@@ -1435,6 +1444,57 @@
           "$ref": "#/$defs/CoordinateSystem",
           "description": "Coordinate system for the `\"Direction\"` vector. Same options as [`/LumpedPort/CoordinateSystem`](@ref config-boundaries-lumpedport-coordinatesystem).",
           "default": "Cartesian"
+        }
+      }
+    },
+    "FluxLoop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "FluxLoopPEC",
+        "HoleAttributes",
+        "FluxAmounts",
+        "Direction"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Index of this flux loop, used in postprocessing output files.",
+          "exclusiveMinimum": 0
+        },
+        "FluxLoopPEC": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes for the metal surface on which the 2D surface curl problem is solved."
+        },
+        "HoleAttributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes for hole perimeters where integral flux constraints are applied."
+        },
+        "FluxAmounts": {
+          "type": "array",
+          "description": "Prescribed flux through each hole in units of the flux quantum. Must have the same length as HoleAttributes.",
+          "additionalItems": false,
+          "items": {
+            "type": "number"
+          }
+        },
+        "Direction": {
+          "description": "Surface normal direction for flux orientation. Can be a string shorthand (\"+X\", \"-Z\", etc.) or a 3-element numeric array.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PortDirection"
+            },
+            {
+              "$ref": "#/$defs/Vector3"
+            }
+          ]
+        },
+        "Regularization": {
+          "type": "number",
+          "description": "Regularization parameter for the curl-curl system stability on the 2D surface problem.",
+          "exclusiveMinimum": 0.0,
+          "default": 1.0e-6
         }
       }
     },

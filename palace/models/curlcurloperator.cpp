@@ -24,7 +24,8 @@ CurlCurlOperator::CurlCurlOperator(const config::BoundaryData &boundaries,
                                    const std::vector<config::MaterialData> &materials,
                                    ProblemType problem_type,
                                    const std::vector<std::unique_ptr<Mesh>> &mesh)
-  : print_hdr(true), dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
+  : print_hdr(true),
+    dbc_attr(SetUpBoundaryProperties(boundaries.pec, boundaries.fluxloop, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         solver.order, mesh.back()->Dimension(), solver.linear.mg_max_levels,
         solver.linear.mg_coarsening, false)),
@@ -66,11 +67,12 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
   : CurlCurlOperator(iodata.boundaries, iodata.solver, iodata.domains.materials,
                      iodata.problem.type, mesh)
 {
+  surf_flux_op = SurfaceFluxOperator(iodata);
 }
 
-mfem::Array<int>
-CurlCurlOperator::SetUpBoundaryProperties(const config::PecBoundaryData &pec,
-                                          const mfem::ParMesh &mesh)
+mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(
+    const config::PecBoundaryData &pec, const std::map<int, config::FluxLoopData> &fluxloop,
+    const mfem::ParMesh &mesh)
 {
   // Check that boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
@@ -110,6 +112,22 @@ CurlCurlOperator::SetUpBoundaryProperties(const config::PecBoundaryData &pec,
       continue;
     }
     dbc_bcs.Append(attr);
+  }
+  // Add flux loop boundary attributes as essential boundaries
+  std::set<int> flux_attrs;
+  for (const auto &[idx, data] : fluxloop)
+  {
+    for (auto attr : data.fluxloop_pec)
+    {
+      if (attr > 0 && attr <= bdr_attr_max && bdr_attr_marker[attr - 1])
+      {
+        flux_attrs.insert(attr);
+      }
+    }
+  }
+  for (auto attr : flux_attrs)
+  {
+    dbc_bcs.Append(attr);  // Each attribute added only once
   }
   return dbc_bcs;
 }
@@ -209,7 +227,7 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   return K;
 }
 
-void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
+void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)
 {
   // Assemble the surface current excitation +J. The SurfaceCurrentOperator assembles -J
   // (meant for time or frequency domain Maxwell discretization, so we multiply by -1 to
@@ -234,5 +252,100 @@ void CurlCurlOperator::GetExcitationVector(int idx, Vector &RHS)
   GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
 }
+
+template <ProblemType T>
+void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
+                                               PostOperator<T> &post_op)
+{
+  GetFluxExcitationVector(idx, RHS, post_op, nullptr);
+}
+
+template <ProblemType T>
+void CurlCurlOperator::GetFluxExcitationVector(int idx, Vector &RHS,
+                                               PostOperator<T> &post_op,
+                                               Vector *boundary_values)
+{
+  // Assemble the surface flux excitation for this specific flux loop
+  // by solving the 2D surface curl problem on the metallic surface
+  // that contains the flux hole.
+  Vector flux_solution;
+  if (boundary_values)
+  {
+    SolveSurfaceCurlProblem(idx, post_op, *boundary_values);
+    flux_solution = *boundary_values;  // Use the pre-allocated result
+  }
+  else
+  {
+    flux_solution = SolveSurfaceCurlProblem(idx, post_op);
+  }
+
+  RHS.SetSize(GetNDSpace().GetTrueVSize());
+  RHS.UseDevice(true);
+  RHS = 0.0;
+
+  // Early exit if boundary values are zero
+  double boundary_norm = linalg::Norml2(GetComm(), flux_solution);
+  if (boundary_norm < 1e-12)
+  {
+    return;
+  }
+
+  // Cache original matrix if not already cached
+  if (!K_orig_)
+  {
+    MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetInvPermeability());
+    BilinearForm k(GetNDSpace());
+    k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
+    auto k_mat = k.Assemble(GetNDSpaces(), false);
+    K_orig_ = std::make_unique<ParOperator>(std::move(k_mat.back()), GetNDSpace());
+  }
+
+  // Compute RHS = -K × boundary_values for boundary-interior coupling
+  K_orig_->Mult(flux_solution, RHS);
+  RHS *= -1.0;
+
+  // Set boundary DOF entries to the prescribed values
+  linalg::SetSubVector(RHS, dbc_tdof_lists.back(), flux_solution);
+}
+
+template <ProblemType T>
+Vector CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx,
+                                                 PostOperator<T> &post_op) const
+{
+  // Validate flux loop index exists
+  MFEM_VERIFY(surf_flux_op.Size() > 0, "No flux loops configured!");
+  surf_flux_op.GetSource(flux_loop_idx);  // Will throw if not found
+
+  return surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(),
+                                              post_op);
+}
+
+template <ProblemType T>
+void CurlCurlOperator::SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T> &post_op,
+                                               Vector &result) const
+{
+  // Validate flux loop index exists
+  MFEM_VERIFY(surf_flux_op.Size() > 0, "No flux loops configured!");
+  surf_flux_op.GetSource(flux_loop_idx);  // Will throw if not found
+
+  surf_flux_op.SolveSurfaceCurlProblem(flux_loop_idx, GetMesh(), GetNDSpace(), post_op,
+                                       result);
+}
+
+// Explicit template instantiations for PostOperator<ProblemType::MAGNETOSTATIC>
+template void CurlCurlOperator::GetFluxExcitationVector<ProblemType::MAGNETOSTATIC>(
+    int idx, Vector &RHS, PostOperator<ProblemType::MAGNETOSTATIC> &post_op);
+
+template void CurlCurlOperator::GetFluxExcitationVector<ProblemType::MAGNETOSTATIC>(
+    int idx, Vector &RHS, PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
+    Vector *boundary_values);
+
+template Vector CurlCurlOperator::SolveSurfaceCurlProblem<ProblemType::MAGNETOSTATIC>(
+    int flux_loop_idx, PostOperator<ProblemType::MAGNETOSTATIC> &post_op) const;
+
+template void CurlCurlOperator::SolveSurfaceCurlProblem<ProblemType::MAGNETOSTATIC>(
+    int flux_loop_idx, PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
+    Vector &result) const;
 
 }  // namespace palace
