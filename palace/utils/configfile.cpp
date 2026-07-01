@@ -545,7 +545,14 @@ WavePortData::WavePortData(const json &port)
   // Resolve subspace sentinel: fed directly into ModeEigenSolver → SLEPc/ARPACK.
   if (max_size <= 0)
   {
-    max_size = DefaultEigenSubspaceSize(mode_idx);
+    // Wave-port boundary mode solves target a small, fixed number of propagating modes
+    // (typically Mode 1-3) and are re-solved many times over a frequency sweep, unlike the
+    // general 3D eigenmode driver, which may target dozens of eigenvalues and benefits
+    // from a generously oversized subspace for robust convergence. Use a smaller default
+    // subspace tuned for the wave-port case while preserving the same requested
+    // eigenmodes and tolerances; users needing more headroom (e.g. densely clustered
+    // modes near cutoff) can still override via "MaxSize".
+    max_size = std::max(2 * mode_idx, mode_idx + 5);
   }
 }
 

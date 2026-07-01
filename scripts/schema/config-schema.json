@@ -1263,7 +1263,7 @@
         },
         "MaxSize": {
           "type": "integer",
-          "description": "Maximum subspace dimension for the eigenvalue solver. If omitted, Palace uses `max(2 \u00d7 Mode, Mode + 15)`.",
+          "description": "Maximum subspace dimension for the eigenvalue solver. If omitted, Palace uses `max(2 \u00d7 Mode, Mode + 5)`, smaller than the general eigenmode solver's default since wave-port boundary mode problems target only a handful of propagating modes.",
           "exclusiveMinimum": 0,
           "x-palace-advanced": true
         },
