@@ -1,0 +1,377 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - models/waveportoperator.hpp</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html">top level</a> - <a href="index.html">models</a> - waveportoperator.hpp<span style="font-size: 80%;"> (source / <a href="waveportoperator.hpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">5</td>
+            <td class="headerCovTableEntry">5</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-07-01 20:34:30</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">-</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #ifndef PALACE_MODELS_WAVE_PORT_OPERATOR_HPP</span>
+<span id="L5"><span class="lineNum">       5</span>              : #define PALACE_MODELS_WAVE_PORT_OPERATOR_HPP</span>
+<span id="L6"><span class="lineNum">       6</span>              : </span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;array&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;complex&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;map&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;memory&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &lt;unordered_map&gt;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &lt;mfem.hpp&gt;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &quot;fem/fespace.hpp&quot;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &quot;fem/gridfunction.hpp&quot;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &quot;fem/mesh.hpp&quot;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &quot;linalg/eps.hpp&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : #include &quot;linalg/ksp.hpp&quot;</span>
+<span id="L18"><span class="lineNum">      18</span>              : #include &quot;linalg/operator.hpp&quot;</span>
+<span id="L19"><span class="lineNum">      19</span>              : #include &quot;linalg/vector.hpp&quot;</span>
+<span id="L20"><span class="lineNum">      20</span>              : #include &quot;models/modeeigensolver.hpp&quot;</span>
+<span id="L21"><span class="lineNum">      21</span>              : #include &quot;utils/configfile.hpp&quot;</span>
+<span id="L22"><span class="lineNum">      22</span>              : #include &quot;utils/labels.hpp&quot;</span>
+<span id="L23"><span class="lineNum">      23</span>              : </span>
+<span id="L24"><span class="lineNum">      24</span>              : namespace palace</span>
+<span id="L25"><span class="lineNum">      25</span>              : {</span>
+<span id="L26"><span class="lineNum">      26</span>              : </span>
+<span id="L27"><span class="lineNum">      27</span>              : class FarfieldBoundaryOperator;</span>
+<span id="L28"><span class="lineNum">      28</span>              : class IoData;</span>
+<span id="L29"><span class="lineNum">      29</span>              : class MaterialOperator;</span>
+<span id="L30"><span class="lineNum">      30</span>              : class MaterialPropertyCoefficient;</span>
+<span id="L31"><span class="lineNum">      31</span>              : class SumVectorCoefficient;</span>
+<span id="L32"><span class="lineNum">      32</span>              : class SurfaceConductivityOperator;</span>
+<span id="L33"><span class="lineNum">      33</span>              : class SurfaceImpedanceOperator;</span>
+<span id="L34"><span class="lineNum">      34</span>              : class Units;</span>
+<span id="L35"><span class="lineNum">      35</span>              : </span>
+<span id="L36"><span class="lineNum">      36</span>              : namespace config</span>
+<span id="L37"><span class="lineNum">      37</span>              : {</span>
+<span id="L38"><span class="lineNum">      38</span>              : </span>
+<span id="L39"><span class="lineNum">      39</span>              : struct BoundaryData;</span>
+<span id="L40"><span class="lineNum">      40</span>              : struct DomainData;</span>
+<span id="L41"><span class="lineNum">      41</span>              : struct LinearSolverData;</span>
+<span id="L42"><span class="lineNum">      42</span>              : struct SolverData;</span>
+<span id="L43"><span class="lineNum">      43</span>              : struct WavePortData;</span>
+<span id="L44"><span class="lineNum">      44</span>              : </span>
+<span id="L45"><span class="lineNum">      45</span>              : }  // namespace config</span>
+<span id="L46"><span class="lineNum">      46</span>              : </span>
+<span id="L47"><span class="lineNum">      47</span>              : enum class ProblemType : char;</span>
+<span id="L48"><span class="lineNum">      48</span>              : </span>
+<span id="L49"><span class="lineNum">      49</span>              : class FiniteElementSpace;</span>
+<span id="L50"><span class="lineNum">      50</span>              : </span>
+<span id="L51"><span class="lineNum">      51</span>              : //</span>
+<span id="L52"><span class="lineNum">      52</span>              : // Wave port data for a single port boundary.</span>
+<span id="L53"><span class="lineNum">      53</span>              : //</span>
+<span id="L54"><span class="lineNum">      54</span>              : class WavePortData</span>
+<span id="L55"><span class="lineNum">      55</span>              : {</span>
+<span id="L56"><span class="lineNum">      56</span>              : public:</span>
+<span id="L57"><span class="lineNum">      57</span>              :   // Reference to material property data (not owned).</span>
+<span id="L58"><span class="lineNum">      58</span>              :   const MaterialOperator &amp;mat_op;</span>
+<span id="L59"><span class="lineNum">      59</span>              : </span>
+<span id="L60"><span class="lineNum">      60</span>              :   // Wave port properties.</span>
+<span id="L61"><span class="lineNum">      61</span>              :   int mode_idx;</span>
+<span id="L62"><span class="lineNum">      62</span>              :   double d_offset;</span>
+<span id="L63"><span class="lineNum">      63</span>              :   int excitation;</span>
+<span id="L64"><span class="lineNum">      64</span>              :   bool active;</span>
+<span id="L65"><span class="lineNum">      65</span>              :   std::complex&lt;double&gt; kn0;</span>
+<span id="L66"><span class="lineNum">      66</span>              :   double omega0;</span>
+<span id="L67"><span class="lineNum">      67</span>              :   mfem::Vector port_normal;</span>
+<span id="L68"><span class="lineNum">      68</span>              : </span>
+<span id="L69"><span class="lineNum">      69</span>              : private:</span>
+<span id="L70"><span class="lineNum">      70</span>              :   // List of all boundary attributes making up this port boundary.</span>
+<span id="L71"><span class="lineNum">      71</span>              :   mfem::Array&lt;int&gt; attr_list;</span>
+<span id="L72"><span class="lineNum">      72</span>              : </span>
+<span id="L73"><span class="lineNum">      73</span>              :   // SubMesh data structures to define finite element spaces and grid functions on the</span>
+<span id="L74"><span class="lineNum">      74</span>              :   // SubMesh corresponding to this port boundary.</span>
+<span id="L75"><span class="lineNum">      75</span>              :   std::unique_ptr&lt;Mesh&gt; port_mesh;</span>
+<span id="L76"><span class="lineNum">      76</span>              :   std::unique_ptr&lt;mfem::FiniteElementCollection&gt; port_nd_fec, port_h1_fec;</span>
+<span id="L77"><span class="lineNum">      77</span>              :   std::unique_ptr&lt;FiniteElementSpace&gt; port_nd_fespace, port_h1_fespace;</span>
+<span id="L78"><span class="lineNum">      78</span>              :   std::unique_ptr&lt;mfem::ParTransferMap&gt; port_nd_transfer, port_h1_transfer;</span>
+<span id="L79"><span class="lineNum">      79</span>              :   std::unordered_map&lt;int, int&gt; submesh_parent_elems;</span>
+<span id="L80"><span class="lineNum">      80</span>              :   mfem::Array&lt;int&gt; port_dbc_tdof_list;</span>
+<span id="L81"><span class="lineNum">      81</span>              :   double mu_eps_max;</span>
+<span id="L82"><span class="lineNum">      82</span>              : </span>
+<span id="L83"><span class="lineNum">      83</span>              :   // Submesh-specific material operator and boundary condition operators. Constructed on</span>
+<span id="L84"><span class="lineNum">      84</span>              :   // the remapped submesh with rebuilt CEED data for correct attribute mapping.</span>
+<span id="L85"><span class="lineNum">      85</span>              :   std::unique_ptr&lt;MaterialOperator&gt; port_mat_op;</span>
+<span id="L86"><span class="lineNum">      86</span>              :   std::unique_ptr&lt;SurfaceImpedanceOperator&gt; port_surf_z_op;</span>
+<span id="L87"><span class="lineNum">      87</span>              :   std::unique_ptr&lt;FarfieldBoundaryOperator&gt; port_farfield_op;</span>
+<span id="L88"><span class="lineNum">      88</span>              :   std::unique_ptr&lt;SurfaceConductivityOperator&gt; port_surf_sigma_op;</span>
+<span id="L89"><span class="lineNum">      89</span>              : </span>
+<span id="L90"><span class="lineNum">      90</span>              :   // Boundary mode eigenvalue problem solver.</span>
+<span id="L91"><span class="lineNum">      91</span>              :   std::unique_ptr&lt;ModeEigenSolver&gt; mode_solver;</span>
+<span id="L92"><span class="lineNum">      92</span>              :   ComplexVector v0, e0;</span>
+<span id="L93"><span class="lineNum">      93</span>              : </span>
+<span id="L94"><span class="lineNum">      94</span>              :   // Communicator for processes which have elements for this port.</span>
+<span id="L95"><span class="lineNum">      95</span>              :   MPI_Comm port_comm = MPI_COMM_NULL;</span>
+<span id="L96"><span class="lineNum">      96</span>              :   int port_root = 0;</span>
+<span id="L97"><span class="lineNum">      97</span>              : </span>
+<span id="L98"><span class="lineNum">      98</span>              :   // Grid functions storing the last computed electric field mode on the port, and stored</span>
+<span id="L99"><span class="lineNum">      99</span>              :   // objects for computing functions of the port modes for use as an excitation or in</span>
+<span id="L100"><span class="lineNum">     100</span>              :   // postprocessing.</span>
+<span id="L101"><span class="lineNum">     101</span>              :   std::unique_ptr&lt;GridFunction&gt; port_E0t, port_E0n, port_S0t, port_E;</span>
+<span id="L102"><span class="lineNum">     102</span>              :   std::unique_ptr&lt;mfem::LinearForm&gt; port_sr, port_si;</span>
+<span id="L103"><span class="lineNum">     103</span>              : </span>
+<span id="L104"><span class="lineNum">     104</span>              :   // Voltage path for line integral (optional, for impedance postprocessing).</span>
+<span id="L105"><span class="lineNum">     105</span>              :   std::vector&lt;mfem::Vector&gt; voltage_path;</span>
+<span id="L106"><span class="lineNum">     106</span>              :   int voltage_n_samples;</span>
+<span id="L107"><span class="lineNum">     107</span>              :   bool has_voltage_coords = false;</span>
+<span id="L108"><span class="lineNum">     108</span>              : </span>
+<span id="L109"><span class="lineNum">     109</span>              :   // Reverse transfer map (port submesh → parent mesh) and parent-mesh GridFunction</span>
+<span id="L110"><span class="lineNum">     110</span>              :   // used to evaluate line integrals of the port mode field via GSLIB on the 3D parent</span>
+<span id="L111"><span class="lineNum">     111</span>              :   // mesh. Only allocated if the user configured a voltage path.</span>
+<span id="L112"><span class="lineNum">     112</span>              :   std::unique_ptr&lt;mfem::ParTransferMap&gt; port_nd_transfer_reverse;</span>
+<span id="L113"><span class="lineNum">     113</span>              :   std::unique_ptr&lt;GridFunction&gt; parent_E0t;</span>
+<span id="L114"><span class="lineNum">     114</span>              : </span>
+<span id="L115"><span class="lineNum">     115</span>              :   // Cached GSLIB point locator for the voltage-path line integrals, Setup once on the</span>
+<span id="L116"><span class="lineNum">     116</span>              :   // (fixed) parent mesh. The geometric Setup is the dominant cost, so reusing it across</span>
+<span id="L117"><span class="lineNum">     117</span>              :   // every Initialize() avoids an O(num_elements) hash rebuild per frequency — critical for</span>
+<span id="L118"><span class="lineNum">     118</span>              :   // the circuit-synthesis dispersion fit, which evaluates the mode at many frequencies.</span>
+<span id="L119"><span class="lineNum">     119</span>              :   // Only allocated if the user configured a voltage path.</span>
+<span id="L120"><span class="lineNum">     120</span>              : #if defined(MFEM_USE_GSLIB)</span>
+<span id="L121"><span class="lineNum">     121</span>              :   std::unique_ptr&lt;mfem::FindPointsGSLIB&gt; voltage_gslib_op;</span>
+<span id="L122"><span class="lineNum">     122</span>              : #endif</span>
+<span id="L123"><span class="lineNum">     123</span>              : </span>
+<span id="L124"><span class="lineNum">     124</span>              :   // Optional polarity attributes (parent-mesh boundary attrs [high, low], signal</span>
+<span id="L125"><span class="lineNum">     125</span>              :   // first, ground second). When non-zero (i.e. set by the user) the mode is flipped</span>
+<span id="L126"><span class="lineNum">     126</span>              :   // so that E points from high to low, matching the lumped-port `+R Direction`</span>
+<span id="L127"><span class="lineNum">     127</span>              :   // convention. Computed without GSLIB by evaluating the mode at port-submesh</span>
+<span id="L128"><span class="lineNum">     128</span>              :   // boundary element centroids adjacent to each attribute.</span>
+<span id="L129"><span class="lineNum">     129</span>              :   std::array&lt;int, 2&gt; polarity_attributes = {0, 0};</span>
+<span id="L130"><span class="lineNum">     130</span>              : </span>
+<span id="L131"><span class="lineNum">     131</span>              : public:</span>
+<span id="L132"><span class="lineNum">     132</span>              :   // 3D submesh constructor: extracts submesh from parent mesh.</span>
+<span id="L133"><span class="lineNum">     133</span>              :   WavePortData(const config::WavePortData &amp;data, const config::BoundaryData &amp;boundaries,</span>
+<span id="L134"><span class="lineNum">     134</span>              :                const config::DomainData &amp;domains, ProblemType problem_type,</span>
+<span id="L135"><span class="lineNum">     135</span>              :                const config::LinearSolverData &amp;linear, const Units &amp;units,</span>
+<span id="L136"><span class="lineNum">     136</span>              :                const MaterialOperator &amp;mat_op, mfem::ParFiniteElementSpace &amp;nd_fespace,</span>
+<span id="L137"><span class="lineNum">     137</span>              :                mfem::ParFiniteElementSpace &amp;h1_fespace, const mfem::Array&lt;int&gt; &amp;dbc_attr);</span>
+<span id="L138"><span class="lineNum">     138</span>              : </span>
+<span id="L139"><span class="lineNum">     139</span>              :   ~WavePortData();</span>
+<span id="L140"><span class="lineNum">     140</span>              : </span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaGNC tlaBgGNC">          29 :   [[nodiscard]] constexpr bool HasExcitation() const { return excitation != 0; }</span></span>
+<span id="L142"><span class="lineNum">     142</span> <span class="tlaGNC">          36 :   [[nodiscard]] bool HasVoltageCoords() const { return has_voltage_coords; }</span></span>
+<span id="L143"><span class="lineNum">     143</span>              : </span>
+<span id="L144"><span class="lineNum">     144</span> <span class="tlaGNC">          48 :   const auto &amp;GetAttrList() const { return attr_list; }</span></span>
+<span id="L145"><span class="lineNum">     145</span>              : </span>
+<span id="L146"><span class="lineNum">     146</span>              :   void Initialize(double omega);</span>
+<span id="L147"><span class="lineNum">     147</span>              : </span>
+<span id="L148"><span class="lineNum">     148</span>              :   // Compute the sign of the modal E-field projected on the (high → low) direction</span>
+<span id="L149"><span class="lineNum">     149</span>              :   // implied by the given pair of parent-mesh boundary attributes (signal terminal</span>
+<span id="L150"><span class="lineNum">     150</span>              :   // first, ground terminal second). Returns +1, -1, or 0 if attributes were not</span>
+<span id="L151"><span class="lineNum">     151</span>              :   // resolvable on this mesh partition. Used by Initialize() to flip the mode polarity</span>
+<span id="L152"><span class="lineNum">     152</span>              :   // without requiring GSLIB.</span>
+<span id="L153"><span class="lineNum">     153</span>              :   [[nodiscard]] int GetModePolaritySign(int high_attr, int low_attr) const;</span>
+<span id="L154"><span class="lineNum">     154</span>              : </span>
+<span id="L155"><span class="lineNum">     155</span>              :   // Solve the cross-section modal EVP at a COMPLEX frequency and return the complex</span>
+<span id="L156"><span class="lineNum">     156</span>              :   // propagation constant k_n(ω), WITHOUT reconstructing the mode field or disturbing the</span>
+<span id="L157"><span class="lineNum">     157</span>              :   // cached real-ω state (omega0 / kn0 / port_E0t). This evaluates the wave-port BC as an</span>
+<span id="L158"><span class="lineNum">     158</span>              :   // analytic continuation onto the complex-λ plane (λ = i·ω) by re-solving the EVP at the</span>
+<span id="L159"><span class="lineNum">     159</span>              :   // genuinely complex ω, used by the eigenmode nonlinear eigensolver to evaluate the</span>
+<span id="L160"><span class="lineNum">     160</span>              :   // wave-port BC at the complex eigenvalue. MPI-collective on the FE space communicator</span>
+<span id="L161"><span class="lineNum">     161</span>              :   // (matrix assembly), with the eigenvalue broadcast from the port root. For real ω this</span>
+<span id="L162"><span class="lineNum">     162</span>              :   // returns the same k_n as Initialize(ω) (full complex value, including any cross-section</span>
+<span id="L163"><span class="lineNum">     163</span>              :   // loss), whereas GetWavePortKn truncates to the real part.</span>
+<span id="L164"><span class="lineNum">     164</span>              :   std::complex&lt;double&gt; SolveKnComplex(std::complex&lt;double&gt; omega);</span>
+<span id="L165"><span class="lineNum">     165</span>              : </span>
+<span id="L166"><span class="lineNum">     166</span>              :   HYPRE_BigInt GlobalTrueNDSize() const { return port_nd_fespace-&gt;GlobalTrueVSize(); }</span>
+<span id="L167"><span class="lineNum">     167</span>              :   HYPRE_BigInt GlobalTrueH1Size() const { return port_h1_fespace-&gt;GlobalTrueVSize(); }</span>
+<span id="L168"><span class="lineNum">     168</span>              : </span>
+<span id="L169"><span class="lineNum">     169</span>              :   std::unique_ptr&lt;mfem::VectorCoefficient&gt; GetModeExcitationCoefficientReal() const;</span>
+<span id="L170"><span class="lineNum">     170</span>              :   std::unique_ptr&lt;mfem::VectorCoefficient&gt; GetModeExcitationCoefficientImag() const;</span>
+<span id="L171"><span class="lineNum">     171</span>              : </span>
+<span id="L172"><span class="lineNum">     172</span>              :   std::unique_ptr&lt;mfem::VectorCoefficient&gt;</span>
+<span id="L173"><span class="lineNum">     173</span>              :   GetModeFieldCoefficientReal(double scaling = 1.0) const;</span>
+<span id="L174"><span class="lineNum">     174</span>              :   std::unique_ptr&lt;mfem::VectorCoefficient&gt;</span>
+<span id="L175"><span class="lineNum">     175</span>              :   GetModeFieldCoefficientImag(double scaling = 1.0) const;</span>
+<span id="L176"><span class="lineNum">     176</span>              : </span>
+<span id="L177"><span class="lineNum">     177</span>              :   // Characteristic impedance Z = |V|^2 / (2P) from the port mode voltage and unit power.</span>
+<span id="L178"><span class="lineNum">     178</span>              :   // Requires voltage coordinates to be configured.</span>
+<span id="L179"><span class="lineNum">     179</span>              :   std::complex&lt;double&gt; GetCharacteristicImpedance() const;</span>
+<span id="L180"><span class="lineNum">     180</span>              : </span>
+<span id="L181"><span class="lineNum">     181</span>              :   double GetExcitationPower() const;</span>
+<span id="L182"><span class="lineNum">     182</span>              : </span>
+<span id="L183"><span class="lineNum">     183</span>              :   // Excitation voltage from the normalized port mode field.</span>
+<span id="L184"><span class="lineNum">     184</span>              :   std::complex&lt;double&gt; GetExcitationVoltage() const;</span>
+<span id="L185"><span class="lineNum">     185</span>              : </span>
+<span id="L186"><span class="lineNum">     186</span>              :   std::complex&lt;double&gt; GetPower(GridFunction &amp;E, GridFunction &amp;B) const;</span>
+<span id="L187"><span class="lineNum">     187</span>              :   std::complex&lt;double&gt; GetSParameter(GridFunction &amp;E) const;</span>
+<span id="L188"><span class="lineNum">     188</span>              : </span>
+<span id="L189"><span class="lineNum">     189</span>              :   // Voltage line integral V = integral of E . dl on the port, using the 3D E field.</span>
+<span id="L190"><span class="lineNum">     190</span>              :   // Requires voltage coordinates to be configured.</span>
+<span id="L191"><span class="lineNum">     191</span>              :   std::complex&lt;double&gt; GetVoltage(GridFunction &amp;E) const;</span>
+<span id="L192"><span class="lineNum">     192</span>              : };</span>
+<span id="L193"><span class="lineNum">     193</span>              : </span>
+<span id="L194"><span class="lineNum">     194</span>              : //</span>
+<span id="L195"><span class="lineNum">     195</span>              : // A class handling wave port boundaries and their postprocessing.</span>
+<span id="L196"><span class="lineNum">     196</span>              : //</span>
+<span id="L197"><span class="lineNum">     197</span> <span class="tlaGNC">           3 : class WavePortOperator</span></span>
+<span id="L198"><span class="lineNum">     198</span>              : {</span>
+<span id="L199"><span class="lineNum">     199</span>              : private:</span>
+<span id="L200"><span class="lineNum">     200</span>              :   // Mapping from port index to data structure containing port information.</span>
+<span id="L201"><span class="lineNum">     201</span>              :   std::map&lt;int, WavePortData&gt; ports;</span>
+<span id="L202"><span class="lineNum">     202</span>              : </span>
+<span id="L203"><span class="lineNum">     203</span>              :   // Flag which forces no printing during WavePortData::Print().</span>
+<span id="L204"><span class="lineNum">     204</span>              :   bool suppress_output;</span>
+<span id="L205"><span class="lineNum">     205</span>              :   double fc, kc;</span>
+<span id="L206"><span class="lineNum">     206</span>              : </span>
+<span id="L207"><span class="lineNum">     207</span>              :   void SetUpBoundaryProperties(const config::BoundaryData &amp;boundaries,</span>
+<span id="L208"><span class="lineNum">     208</span>              :                                const config::DomainData &amp;domains,</span>
+<span id="L209"><span class="lineNum">     209</span>              :                                const config::SolverData &amp;solver, ProblemType problem_type,</span>
+<span id="L210"><span class="lineNum">     210</span>              :                                const Units &amp;units, const MaterialOperator &amp;mat_op,</span>
+<span id="L211"><span class="lineNum">     211</span>              :                                mfem::ParFiniteElementSpace &amp;nd_fespace,</span>
+<span id="L212"><span class="lineNum">     212</span>              :                                mfem::ParFiniteElementSpace &amp;h1_fespace);</span>
+<span id="L213"><span class="lineNum">     213</span>              :   void PrintBoundaryInfo(const Units &amp;units, const mfem::ParMesh &amp;mesh);</span>
+<span id="L214"><span class="lineNum">     214</span>              : </span>
+<span id="L215"><span class="lineNum">     215</span>              : protected:</span>
+<span id="L216"><span class="lineNum">     216</span>              :   // Compute boundary modes for all wave port boundaries at the specified frequency.</span>
+<span id="L217"><span class="lineNum">     217</span>              :   // Protected so test fixtures can drive this directly via a thin subclass.</span>
+<span id="L218"><span class="lineNum">     218</span>              :   void Initialize(double omega);</span>
+<span id="L219"><span class="lineNum">     219</span>              : </span>
+<span id="L220"><span class="lineNum">     220</span>              : public:</span>
+<span id="L221"><span class="lineNum">     221</span>              :   WavePortOperator(const config::BoundaryData &amp;boundaries,</span>
+<span id="L222"><span class="lineNum">     222</span>              :                    const config::DomainData &amp;domains, const config::SolverData &amp;solver,</span>
+<span id="L223"><span class="lineNum">     223</span>              :                    ProblemType problem_type, const Units &amp;units,</span>
+<span id="L224"><span class="lineNum">     224</span>              :                    const MaterialOperator &amp;mat_op, mfem::ParFiniteElementSpace &amp;nd_fespace,</span>
+<span id="L225"><span class="lineNum">     225</span>              :                    mfem::ParFiniteElementSpace &amp;h1_fespace);</span>
+<span id="L226"><span class="lineNum">     226</span>              :   WavePortOperator(const IoData &amp;iodata, const MaterialOperator &amp;mat_op,</span>
+<span id="L227"><span class="lineNum">     227</span>              :                    mfem::ParFiniteElementSpace &amp;nd_fespace,</span>
+<span id="L228"><span class="lineNum">     228</span>              :                    mfem::ParFiniteElementSpace &amp;h1_fespace);</span>
+<span id="L229"><span class="lineNum">     229</span>              : </span>
+<span id="L230"><span class="lineNum">     230</span>              :   // Access data structures for the wave port with the given index.</span>
+<span id="L231"><span class="lineNum">     231</span>              :   const WavePortData &amp;GetPort(int idx) const;</span>
+<span id="L232"><span class="lineNum">     232</span>              :   auto begin() const { return ports.begin(); }</span>
+<span id="L233"><span class="lineNum">     233</span>              :   auto end() const { return ports.end(); }</span>
+<span id="L234"><span class="lineNum">     234</span>              :   auto rbegin() const { return ports.rbegin(); }</span>
+<span id="L235"><span class="lineNum">     235</span>              :   auto rend() const { return ports.rend(); }</span>
+<span id="L236"><span class="lineNum">     236</span>              :   auto Size() const { return ports.size(); }</span>
+<span id="L237"><span class="lineNum">     237</span>              : </span>
+<span id="L238"><span class="lineNum">     238</span>              :   // Enable or suppress all outputs (log printing and fields to disk).</span>
+<span id="L239"><span class="lineNum">     239</span> <span class="tlaGNC">           5 :   void SetSuppressOutput(bool suppress) { suppress_output = suppress; }</span></span>
+<span id="L240"><span class="lineNum">     240</span>              : </span>
+<span id="L241"><span class="lineNum">     241</span>              :   // Returns array of wave port attributes.</span>
+<span id="L242"><span class="lineNum">     242</span>              :   mfem::Array&lt;int&gt; GetAttrList() const;</span>
+<span id="L243"><span class="lineNum">     243</span>              : </span>
+<span id="L244"><span class="lineNum">     244</span>              :   // Add contributions to system matrix from wave ports.</span>
+<span id="L245"><span class="lineNum">     245</span>              :   void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &amp;fbr,</span>
+<span id="L246"><span class="lineNum">     246</span>              :                                      MaterialPropertyCoefficient &amp;fbi);</span>
+<span id="L247"><span class="lineNum">     247</span>              : </span>
+<span id="L248"><span class="lineNum">     248</span>              :   // Add the ω-independent boundary mass contribution from a single wave port to a material</span>
+<span id="L249"><span class="lineNum">     249</span>              :   // property coefficient. The full system contribution from this port is</span>
+<span id="L250"><span class="lineNum">     250</span>              :   // i·k_n(ω)·(this) — see AddExtraSystemBdrCoefficients. Used to factor out the</span>
+<span id="L251"><span class="lineNum">     251</span>              :   // ω-independent operator for reuse by the reduced-order model. The port_idx must refer</span>
+<span id="L252"><span class="lineNum">     252</span>              :   // to an active port; if it does not, no contribution is added.</span>
+<span id="L253"><span class="lineNum">     253</span>              :   void AddBoundaryMassBdrCoefficients(int port_idx, MaterialPropertyCoefficient &amp;fb) const;</span>
+<span id="L254"><span class="lineNum">     254</span>              : </span>
+<span id="L255"><span class="lineNum">     255</span>              :   // As above, with an explicit scale factor on the contribution. Used internally by</span>
+<span id="L256"><span class="lineNum">     256</span>              :   // AddExtraSystemBdrCoefficients to share the per-port coefficient setup without</span>
+<span id="L257"><span class="lineNum">     257</span>              :   // duplicating the mfem::MaterialPropertyCoefficient construction.</span>
+<span id="L258"><span class="lineNum">     258</span>              :   void AddBoundaryMassBdrCoefficients(int port_idx, MaterialPropertyCoefficient &amp;fb,</span>
+<span id="L259"><span class="lineNum">     259</span>              :                                       double scale) const;</span>
+<span id="L260"><span class="lineNum">     260</span>              : </span>
+<span id="L261"><span class="lineNum">     261</span>              :   // Complex-frequency wave-port BC overload for the eigenmode nonlinear solve. Stamps the</span>
+<span id="L262"><span class="lineNum">     262</span>              :   // full complex wave-port term i·k_n(ω)·M_p with k_n(ω) from the exact cross-section EVP</span>
+<span id="L263"><span class="lineNum">     263</span>              :   // solved at the genuinely complex frequency ω = -i·λ (WavePortData::SolveKnComplex): the</span>
+<span id="L264"><span class="lineNum">     264</span>              :   // line-attenuation −Im(k_n)·M goes on fbr and the propagating Re(k_n)·M on fbi. Does not</span>
+<span id="L265"><span class="lineNum">     265</span>              :   // disturb the cached real-ω modal state. For real ω this matches the double overload's</span>
+<span id="L266"><span class="lineNum">     266</span>              :   // physics with the attenuation additionally carried on fbr.</span>
+<span id="L267"><span class="lineNum">     267</span>              :   void AddExtraSystemBdrCoefficients(std::complex&lt;double&gt; omega,</span>
+<span id="L268"><span class="lineNum">     268</span>              :                                      MaterialPropertyCoefficient &amp;fbr,</span>
+<span id="L269"><span class="lineNum">     269</span>              :                                      MaterialPropertyCoefficient &amp;fbi);</span>
+<span id="L270"><span class="lineNum">     270</span>              : </span>
+<span id="L271"><span class="lineNum">     271</span>              :   // Compute and return the (real part of the) modal propagation constant k_n for the</span>
+<span id="L272"><span class="lineNum">     272</span>              :   // specified port at the given operating frequency. Triggers the per-port cross-section</span>
+<span id="L273"><span class="lineNum">     273</span>              :   // EVP via WavePortData::Initialize; result is cached per port (per ω). Used by the</span>
+<span id="L274"><span class="lineNum">     274</span>              :   // reduced-order model to assemble the wave-port contribution online without touching</span>
+<span id="L275"><span class="lineNum">     275</span>              :   // any HDM-size object.</span>
+<span id="L276"><span class="lineNum">     276</span>              :   double GetWavePortKn(int port_idx, double omega);</span>
+<span id="L277"><span class="lineNum">     277</span>              : </span>
+<span id="L278"><span class="lineNum">     278</span>              :   // Complex-frequency propagation constant k_n(ω) for the eigenmode nonlinear solve's</span>
+<span id="L279"><span class="lineNum">     279</span>              :   // complex-λ wave-port BC (λ = i·ω). Runs the cross-section modal EVP at a genuinely</span>
+<span id="L280"><span class="lineNum">     280</span>              :   // complex ω and returns the recovered complex k_n without disturbing the cached real-ω</span>
+<span id="L281"><span class="lineNum">     281</span>              :   // modal field. The complex-ω counterpart of GetWavePortKn (which solves at real ω and</span>
+<span id="L282"><span class="lineNum">     282</span>              :   // truncates to Re(k_n)). See WavePortData::SolveKnComplex.</span>
+<span id="L283"><span class="lineNum">     283</span>              :   std::complex&lt;double&gt; GetWavePortKnComplex(int port_idx, std::complex&lt;double&gt; omega);</span>
+<span id="L284"><span class="lineNum">     284</span>              : </span>
+<span id="L285"><span class="lineNum">     285</span>              :   // Add contributions to the right-hand side source term vector for an incident field at</span>
+<span id="L286"><span class="lineNum">     286</span>              :   // excited port boundaries.</span>
+<span id="L287"><span class="lineNum">     287</span>              :   void AddExcitationBdrCoefficients(int excitation_idx, double omega,</span>
+<span id="L288"><span class="lineNum">     288</span>              :                                     SumVectorCoefficient &amp;fbr, SumVectorCoefficient &amp;fbi);</span>
+<span id="L289"><span class="lineNum">     289</span>              : };</span>
+<span id="L290"><span class="lineNum">     290</span>              : </span>
+<span id="L291"><span class="lineNum">     291</span>              : }  // namespace palace</span>
+<span id="L292"><span class="lineNum">     292</span>              : </span>
+<span id="L293"><span class="lineNum">     293</span>              : #endif  // PALACE_MODELS_WAVE_PORT_OPERATOR_HPP</span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
