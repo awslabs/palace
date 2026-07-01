@@ -108,7 +108,6 @@ protected:
   // Pointer to operator handling discretization and FEM space appropriate to solver. It
   // also contains the reference to all domains, boundary conditions, etc. needed for
   // measurement and printing.
-  // TODO(C++20): Use std::reference_wrapper with incomplete types.
   fem_op_t<solver_t> *fem_op;
 
   // Unit converter from IOData to scale mesh and measurements. Lightweight class so it is

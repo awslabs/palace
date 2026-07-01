@@ -32,7 +32,6 @@ class BaseSolver
 {
 protected:
   // Reference to configuration file data (not owned).
-  // TODO(C++20): Update to reference wrapper of incomplete type.
   const IoData &iodata;
 
   // Parameters for writing postprocessing outputs.
