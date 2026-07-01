@@ -155,11 +155,13 @@ private:
   std::unique_ptr<ComplexOperator> opA2, opA, opP;
 
   // Function to compute the A2 operator.
-  std::optional<std::function<std::unique_ptr<ComplexOperator>(double)>> funcA2;
+  std::optional<std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>>
+      funcA2;
 
   // Function to compute the preconditioner matrix.
   std::optional<std::function<std::unique_ptr<ComplexOperator>(
-      std::complex<double>, std::complex<double>, std::complex<double>, double)>>
+      std::complex<double>, std::complex<double>, std::complex<double>,
+      std::complex<double>)>>
       funcP;
 
   // Linear eigenvalue solver used to set initial guess.
@@ -206,12 +208,12 @@ public:
 
   // Set the frequency-dependent A2 matrix function.
   void SetExtraSystemMatrix(
-      std::function<std::unique_ptr<ComplexOperator>(double)>) override;
+      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>) override;
 
   // Set the preconditioner update function.
   void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
                                    std::complex<double>, std::complex<double>,
-                                   std::complex<double>, double)>) override;
+                                   std::complex<double>, std::complex<double>)>) override;
 
   // Set the update frequency of the preconditioner.
   void SetPreconditionerLag(int preconditioner_update_freq,
@@ -247,7 +249,7 @@ class NewtonInterpolationOperator : public Interpolation
 {
 private:
   // Function to compute the A2 operator.
-  std::function<std::unique_ptr<ComplexOperator>(double)> funcA2;
+  std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> funcA2;
 
   // Number of points used in the interpolation (currently always second order).
   int num_points = 3;
@@ -261,12 +263,19 @@ private:
   // Divided difference operators.
   std::vector<std::vector<std::unique_ptr<ComplexOperator>>> ops;
 
+  // Optional frozen-pole correction (NLEPS frozen-ABC seed). When set via AddFrozenPole,
+  // GetInterpolationOperator folds frozen_corr[order]·frozen_M into each returned
+  // coefficient. frozen_M_ff is owned here so it outlives the returned operators.
+  std::unique_ptr<ComplexOperator> frozen_M;
+  std::vector<std::complex<double>> frozen_corr;
+
   // Workspace objects for solver application.
   mutable ComplexVector rhs;
 
 public:
   NewtonInterpolationOperator(
-      std::function<std::unique_ptr<ComplexOperator>(double)> funcA2, const int size);
+      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> funcA2,
+      const int size);
 
   // Interpolate the A2 matrix between sigma_min and sigma_max with a Newton polynomial.
   void Interpolate(const std::complex<double> sigma_min,
@@ -274,6 +283,16 @@ public:
 
   // Get the interpolation operator of specified order.
   std::unique_ptr<ComplexOperator> GetInterpolationOperator(int order) const;
+
+  // Fold a frozen pole f(λ)·M into the interpolation: by linearity, remove its
+  // interpolated contribution (the scalar interpolant of f at the nodes, times the constant
+  // M) from every order, and re-add the pole frozen at lambda_target into the order-0
+  // coefficient. Takes ownership of M; a null M is a no-op. Must be called after
+  // Interpolate(). Subsequent GetInterpolationOperator calls return the corrected
+  // operators.
+  void AddFrozenPole(std::unique_ptr<ComplexOperator> M,
+                     const std::function<std::complex<double>(std::complex<double>)> &f,
+                     std::complex<double> lambda_target);
 
   // Perform multiplication with interpolation operator of specified order.
   void Mult(int order, const ComplexVector &x, ComplexVector &y) const;

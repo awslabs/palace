@@ -144,32 +144,75 @@ mfem::Array<int> SurfaceConductivityOperator::GetAttrList() const
   return attr_list;
 }
 
-void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
-    double omega, MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi)
+std::complex<double>
+SurfaceConductivityOperator::EvaluateScalar(std::size_t group_idx,
+                                            std::complex<double> omega) const
 {
   // If the provided conductor thickness is empty (zero), prescribe a surface impedance
   // (1+i)/σδ, where δ is the skin depth. If it is nonzero, use a finite thickness
   // modification which correctly produces the DC limit when h << δ. See the Ansys HFSS
   // user manual section titled "Surface Impedance Boundary Condition for Metal Traces of
-  // Finite Thickness."
-  for (const auto &bdr : boundaries)
+  // Finite Thickness." The skin depth δ = √(2/(μσω)) and the cosh/cos/sinh/sin thickness
+  // terms are evaluated with std::complex, so this is the analytic continuation of the
+  // real-ω formula: for upper-half-plane λ → ω = -i·λ in the right half-plane, the
+  // principal branch of std::sqrt keeps Re(δ) > 0 (physical decaying sheet). For real ω
+  // (imag = 0) it reduces bit-for-bit to the original real-ω expression.
+  MFEM_ASSERT(group_idx < boundaries.size(),
+              "SurfaceConductivityOperator::EvaluateScalar: group_idx out of range!");
+  const auto &bdr = boundaries[group_idx];
+  const std::complex<double> delta = std::sqrt(2.0 / (bdr.mu * bdr.sigma * omega));
+  const std::complex<double> base = 1.0 / (bdr.sigma * delta);
+  // Half-space limit: Z = (1 + i)·base.
+  std::complex<double> Z = std::complex<double>(1.0, 1.0) * base;
+  if (bdr.h > 0.0)
   {
-    if (std::abs(bdr.sigma) > 0.0)
+    // Finite-thickness HFSS correction. The real-ω implementation scales Re(Z) and Im(Z)
+    // by (sinh ν ± sin ν)/(cosh ν − cos ν) separately; the equivalent complex form is
+    //   Z = base·[(sinh ν + sin ν) + i·(sinh ν − sin ν)] / (cosh ν − cos ν),
+    // with ν = h/δ. cosh, cos, sinh, sin of complex ν are entire functions (no new branch
+    // points), and at real ω this matches the original two-ratio expression exactly.
+    const std::complex<double> nu = bdr.h / delta;
+    const std::complex<double> den = std::cosh(nu) - std::cos(nu);
+    const std::complex<double> shp = std::sinh(nu) + std::sin(nu);
+    const std::complex<double> shm = std::sinh(nu) - std::sin(nu);
+    Z = base * (shp + std::complex<double>(0.0, 1.0) * shm) / den;
+  }
+  // The BC term has coefficient iω/Z (like for standard lumped surface impedance).
+  return 1i * omega / Z;
+}
+
+void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
+    double omega, MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi)
+{
+  // Real-ω stamping: per-group coefficient i·ω/Z(ω) split into (fbr, fbi).
+  for (std::size_t g = 0; g < boundaries.size(); g++)
+  {
+    if (std::abs(boundaries[g].sigma) > 0.0)
     {
-      double delta = std::sqrt(2.0 / (bdr.mu * bdr.sigma * omega));
-      std::complex<double> Z = 1.0 / (bdr.sigma * delta);
-      Z.imag(Z.real());
-      if (bdr.h > 0.0)
-      {
-        double nu = bdr.h / delta;
-        double den = std::cosh(nu) - std::cos(nu);
-        Z.real(Z.real() * (std::sinh(nu) + std::sin(nu)) / den);
-        Z.imag(Z.imag() * (std::sinh(nu) - std::sin(nu)) / den);
-      }
-      // The BC term has coefficient iω/Z (like for standard lumped surface impedance).
-      std::complex<double> s(1i * omega / Z);
-      fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(bdr.attr_list), s.real());
-      fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(bdr.attr_list), s.imag());
+      const std::complex<double> s = EvaluateScalar(g, std::complex<double>(omega, 0.0));
+      fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(boundaries[g].attr_list),
+                              s.real());
+      fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(boundaries[g].attr_list),
+                              s.imag());
+    }
+  }
+}
+
+void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
+    std::complex<double> omega, MaterialPropertyCoefficient &fbr,
+    MaterialPropertyCoefficient &fbi)
+{
+  // Complex-ω stamping: identical to the real-ω overload but evaluates i·ω/Z(ω) at a
+  // genuinely complex ω (analytic continuation, ω = -i·λ).
+  for (std::size_t g = 0; g < boundaries.size(); g++)
+  {
+    if (std::abs(boundaries[g].sigma) > 0.0)
+    {
+      const std::complex<double> s = EvaluateScalar(g, omega);
+      fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(boundaries[g].attr_list),
+                              s.real());
+      fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(boundaries[g].attr_list),
+                              s.imag());
     }
   }
 }
