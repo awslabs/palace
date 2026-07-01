@@ -1,0 +1,642 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - home/runner/work/palace/palace/test/unit/regression/cases.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../../../../../../../../index.html">top level</a> - <a href="index.html">/home/runner/work/palace/palace/test/unit/regression</a> - cases.cpp<span style="font-size: 80%;"> (source / <a href="cases.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
+            <td class="headerCovTableEntry">288</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-06-30 22:15:52</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
+            <td class="headerCovTableEntry">35</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : // Regression cases: full Palace solves diffed against test data references.</span>
+<span id="L5"><span class="lineNum">       5</span>              : // Each case carries [Serial][Parallel][GPU][Regression] (the category</span>
+<span id="L6"><span class="lineNum">       6</span>              : // tag is orthogonal to execution style — every case is valid at any</span>
+<span id="L7"><span class="lineNum">       7</span>              : // rank count and on either CPU or GPU). [Long] modifies a regression</span>
+<span id="L8"><span class="lineNum">       8</span>              : // case to be skipped from the default sweep and run only under the</span>
+<span id="L9"><span class="lineNum">       9</span>              : // long-tests CI workflow.</span>
+<span id="L10"><span class="lineNum">      10</span>              : </span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &lt;algorithm&gt;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &lt;cmath&gt;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &lt;limits&gt;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &lt;string&gt;</span>
+<span id="L15"><span class="lineNum">      15</span>              : </span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &lt;catch2/catch_test_macros.hpp&gt;</span>
+<span id="L17"><span class="lineNum">      17</span>              : #include &lt;catch2/matchers/catch_matchers_floating_point.hpp&gt;</span>
+<span id="L18"><span class="lineNum">      18</span>              : </span>
+<span id="L19"><span class="lineNum">      19</span>              : #include &quot;regression_helpers.hpp&quot;</span>
+<span id="L20"><span class="lineNum">      20</span>              : #include &quot;utils/tablecsv.hpp&quot;</span>
+<span id="L21"><span class="lineNum">      21</span>              : </span>
+<span id="L22"><span class="lineNum">      22</span>              : namespace</span>
+<span id="L23"><span class="lineNum">      23</span>              : {</span>
+<span id="L24"><span class="lineNum">      24</span>              : </span>
+<span id="L25"><span class="lineNum">      25</span>              : // ---------------------------------------------------------------------------</span>
+<span id="L26"><span class="lineNum">      26</span>              : // Shared custom-check factories. Each returns a callable matching</span>
+<span id="L27"><span class="lineNum">      27</span>              : // palace::test::CustomCheck so TEST_CASEs can register them per-CSV.</span>
+<span id="L28"><span class="lineNum">      28</span>              : // ---------------------------------------------------------------------------</span>
+<span id="L29"><span class="lineNum">      29</span>              : </span>
+<span id="L30"><span class="lineNum">      30</span>              : // Magnitude-only farfield check. Phase of the complex E components is not</span>
+<span id="L31"><span class="lineNum">      31</span>              : // reproducible across MPI partitions, so we compare</span>
+<span id="L32"><span class="lineNum">      32</span>              : //   |E|(row) = sqrt(|Ex|^2 + |Ey|^2 + |Ez|^2)</span>
+<span id="L33"><span class="lineNum">      33</span>              : // at the case's rtol. The six trailing columns are r*Re{E_x}, r*Im{E_x}, ...,</span>
+<span id="L34"><span class="lineNum">      34</span>              : // r*Im{E_z} for both driven and eigenmode output (the leading columns differ).</span>
+<span id="L35"><span class="lineNum">      35</span>              : palace::test::CustomCheck TestFarfield(double rtol)</span>
+<span id="L36"><span class="lineNum">      36</span>              : {</span>
+<span id="L37"><span class="lineNum">      37</span> <span class="tlaUNC tlaBgUNC">           0 :   return [rtol](palace::Table &amp;a, palace::Table &amp;r)</span></span>
+<span id="L38"><span class="lineNum">      38</span>              :   {</span>
+<span id="L39"><span class="lineNum">      39</span> <span class="tlaUNC">           0 :     CHECK(a.n_cols() &gt;= 6);</span></span>
+<span id="L40"><span class="lineNum">      40</span> <span class="tlaUNC">           0 :     CHECK(a.n_cols() == r.n_cols());</span></span>
+<span id="L41"><span class="lineNum">      41</span> <span class="tlaUNC">           0 :     if (a.n_cols() &lt; 6 || a.n_cols() != r.n_cols())</span></span>
+<span id="L42"><span class="lineNum">      42</span>              :     {</span>
+<span id="L43"><span class="lineNum">      43</span> <span class="tlaUNC">           0 :       return;</span></span>
+<span id="L44"><span class="lineNum">      44</span>              :     }</span>
+<span id="L45"><span class="lineNum">      45</span> <span class="tlaUNC">           0 :     const std::size_t e0 = a.n_cols() - 6;</span></span>
+<span id="L46"><span class="lineNum">      46</span> <span class="tlaUNC">           0 :     const std::size_t n_rows = std::min(a.n_rows(), r.n_rows());</span></span>
+<span id="L47"><span class="lineNum">      47</span> <span class="tlaUNC">           0 :     for (std::size_t i = 0; i &lt; n_rows; ++i)</span></span>
+<span id="L48"><span class="lineNum">      48</span>              :     {</span>
+<span id="L49"><span class="lineNum">      49</span> <span class="tlaUNC">           0 :       auto mag_sq = [&amp;](palace::Table &amp;t)</span></span>
+<span id="L50"><span class="lineNum">      50</span>              :       {</span>
+<span id="L51"><span class="lineNum">      51</span> <span class="tlaUNC">           0 :         auto sq = [](double x, double y) { return x * x + y * y; };</span></span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaUNC">           0 :         return sq(t[e0].data[i], t[e0 + 1].data[i]) +</span></span>
+<span id="L53"><span class="lineNum">      53</span> <span class="tlaUNC">           0 :                sq(t[e0 + 2].data[i], t[e0 + 3].data[i]) +</span></span>
+<span id="L54"><span class="lineNum">      54</span> <span class="tlaUNC">           0 :                sq(t[e0 + 4].data[i], t[e0 + 5].data[i]);</span></span>
+<span id="L55"><span class="lineNum">      55</span> <span class="tlaUNC">           0 :       };</span></span>
+<span id="L56"><span class="lineNum">      56</span> <span class="tlaUNC">           0 :       const double m_a = std::sqrt(mag_sq(a));</span></span>
+<span id="L57"><span class="lineNum">      57</span> <span class="tlaUNC">           0 :       const double m_r = std::sqrt(mag_sq(r));</span></span>
+<span id="L58"><span class="lineNum">      58</span> <span class="tlaUNC">           0 :       INFO(&quot;row &quot; &lt;&lt; i + 1 &lt;&lt; &quot;: |E| actual=&quot; &lt;&lt; m_a &lt;&lt; &quot; ref=&quot; &lt;&lt; m_r);</span></span>
+<span id="L59"><span class="lineNum">      59</span> <span class="tlaUNC">           0 :       const double thresh = rtol * std::max(m_a, m_r);</span></span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaUNC">           0 :       CHECK(std::abs(m_a - m_r) &lt;= thresh);</span></span>
+<span id="L61"><span class="lineNum">      61</span> <span class="tlaUNC">           0 :     }</span></span>
+<span id="L62"><span class="lineNum">      62</span>              :   };</span>
+<span id="L63"><span class="lineNum">      63</span>              : }</span>
+<span id="L64"><span class="lineNum">      64</span>              : </span>
+<span id="L65"><span class="lineNum">      65</span>              : // Generalised magnitude comparison for any CSV with paired</span>
+<span id="L66"><span class="lineNum">      66</span>              : // &quot;Re{X} (unit)&quot; / &quot;Im{X} (unit)&quot; complex columns. For each Re column</span>
+<span id="L67"><span class="lineNum">      67</span>              : // it pairs the matching Im (looked up by header_text), then compares</span>
+<span id="L68"><span class="lineNum">      68</span>              : // |X| = sqrt(Re^2 + Im^2) at the case's tolerances. Real-only columns</span>
+<span id="L69"><span class="lineNum">      69</span>              : // (frequency, V_inc, etc.) fall through to the same WithinRel ||</span>
+<span id="L70"><span class="lineNum">      70</span>              : // WithinAbs check the default comparator uses. Used for adaptive</span>
+<span id="L71"><span class="lineNum">      71</span>              : // frequency sweeps where the ROM-interpolated phase wobbles at zero</span>
+<span id="L72"><span class="lineNum">      72</span>              : // crossings but |X| tracks the converged response.</span>
+<span id="L73"><span class="lineNum">      73</span>              : palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)</span>
+<span id="L74"><span class="lineNum">      74</span>              : {</span>
+<span id="L75"><span class="lineNum">      75</span> <span class="tlaUNC">           0 :   return [rtol, atol](palace::Table &amp;actual, palace::Table &amp;reference)</span></span>
+<span id="L76"><span class="lineNum">      76</span>              :   {</span>
+<span id="L77"><span class="lineNum">      77</span>              :     auto find_by_header = [](palace::Table &amp;t, const std::string &amp;h) -&gt; palace::Column *</span>
+<span id="L78"><span class="lineNum">      78</span>              :     {</span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaUNC">           0 :       for (auto &amp;c : t)</span></span>
+<span id="L80"><span class="lineNum">      80</span>              :       {</span>
+<span id="L81"><span class="lineNum">      81</span> <span class="tlaUNC">           0 :         if (c.header_text == h)</span></span>
+<span id="L82"><span class="lineNum">      82</span>              :         {</span>
+<span id="L83"><span class="lineNum">      83</span>              :           return &amp;c;</span>
+<span id="L84"><span class="lineNum">      84</span>              :         }</span>
+<span id="L85"><span class="lineNum">      85</span>              :       }</span>
+<span id="L86"><span class="lineNum">      86</span>              :       return nullptr;</span>
+<span id="L87"><span class="lineNum">      87</span>              :     };</span>
+<span id="L88"><span class="lineNum">      88</span>              : </span>
+<span id="L89"><span class="lineNum">      89</span>              :     const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());</span>
+<span id="L90"><span class="lineNum">      90</span> <span class="tlaUNC">           0 :     const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());</span></span>
+<span id="L91"><span class="lineNum">      91</span> <span class="tlaUNC">           0 :     for (std::size_t c = 0; c &lt; n_cols; ++c)</span></span>
+<span id="L92"><span class="lineNum">      92</span>              :     {</span>
+<span id="L93"><span class="lineNum">      93</span> <span class="tlaUNC">           0 :       const std::string &amp;hdr = actual[c].header_text;</span></span>
+<span id="L94"><span class="lineNum">      94</span> <span class="tlaUNC">           0 :       INFO(&quot;column &quot; &lt;&lt; c &lt;&lt; &quot;: '&quot; &lt;&lt; hdr &lt;&lt; &quot;'&quot;);</span></span>
+<span id="L95"><span class="lineNum">      95</span> <span class="tlaUNC">           0 :       CHECK(hdr == reference[c].header_text);</span></span>
+<span id="L96"><span class="lineNum">      96</span>              : </span>
+<span id="L97"><span class="lineNum">      97</span>              :       // Im{...} columns are checked alongside their Re partner; skip</span>
+<span id="L98"><span class="lineNum">      98</span>              :       // them here so we don't double-count or compare the imaginary</span>
+<span id="L99"><span class="lineNum">      99</span>              :       // half on its own.</span>
+<span id="L100"><span class="lineNum">     100</span> <span class="tlaUNC">           0 :       if (hdr.rfind(&quot;Im{&quot;, 0) == 0)</span></span>
+<span id="L101"><span class="lineNum">     101</span>              :       {</span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaUNC">           0 :         continue;</span></span>
+<span id="L103"><span class="lineNum">     103</span>              :       }</span>
+<span id="L104"><span class="lineNum">     104</span>              : </span>
+<span id="L105"><span class="lineNum">     105</span> <span class="tlaUNC">           0 :       if (hdr.rfind(&quot;Re{&quot;, 0) == 0)</span></span>
+<span id="L106"><span class="lineNum">     106</span>              :       {</span>
+<span id="L107"><span class="lineNum">     107</span>              :         std::string im_hdr = hdr;</span>
+<span id="L108"><span class="lineNum">     108</span> <span class="tlaUNC">           0 :         im_hdr.replace(0, 3, &quot;Im{&quot;);  // &quot;Re{X} (unit)&quot; -&gt; &quot;Im{X} (unit)&quot;</span></span>
+<span id="L109"><span class="lineNum">     109</span> <span class="tlaUNC">           0 :         palace::Column *im_a = find_by_header(actual, im_hdr);</span></span>
+<span id="L110"><span class="lineNum">     110</span> <span class="tlaUNC">           0 :         palace::Column *im_r = find_by_header(reference, im_hdr);</span></span>
+<span id="L111"><span class="lineNum">     111</span> <span class="tlaUNC">           0 :         CHECK(im_a != nullptr);</span></span>
+<span id="L112"><span class="lineNum">     112</span> <span class="tlaUNC">           0 :         CHECK(im_r != nullptr);</span></span>
+<span id="L113"><span class="lineNum">     113</span> <span class="tlaUNC">           0 :         if (!im_a || !im_r)</span></span>
+<span id="L114"><span class="lineNum">     114</span>              :         {</span>
+<span id="L115"><span class="lineNum">     115</span> <span class="tlaUNC">           0 :           continue;</span></span>
+<span id="L116"><span class="lineNum">     116</span>              :         }</span>
+<span id="L117"><span class="lineNum">     117</span> <span class="tlaUNC">           0 :         for (std::size_t r = 0; r &lt; n_rows; ++r)</span></span>
+<span id="L118"><span class="lineNum">     118</span>              :         {</span>
+<span id="L119"><span class="lineNum">     119</span> <span class="tlaUNC">           0 :           const double re_av = actual[c].data[r];</span></span>
+<span id="L120"><span class="lineNum">     120</span> <span class="tlaUNC">           0 :           const double im_av = im_a-&gt;data[r];</span></span>
+<span id="L121"><span class="lineNum">     121</span> <span class="tlaUNC">           0 :           const double re_rv = reference[c].data[r];</span></span>
+<span id="L122"><span class="lineNum">     122</span> <span class="tlaUNC">           0 :           const double im_rv = im_r-&gt;data[r];</span></span>
+<span id="L123"><span class="lineNum">     123</span> <span class="tlaUNC">           0 :           const double mag_a = std::sqrt(re_av * re_av + im_av * im_av);</span></span>
+<span id="L124"><span class="lineNum">     124</span> <span class="tlaUNC">           0 :           const double mag_r = std::sqrt(re_rv * re_rv + im_rv * im_rv);</span></span>
+<span id="L125"><span class="lineNum">     125</span> <span class="tlaUNC">           0 :           INFO(&quot;row &quot; &lt;&lt; r + 1 &lt;&lt; &quot; |&quot; &lt;&lt; hdr.substr(3, hdr.find('}', 3) - 3) &lt;&lt; &quot;|&quot;);</span></span>
+<span id="L126"><span class="lineNum">     126</span> <span class="tlaUNC">           0 :           CHECK_THAT(mag_a, Catch::Matchers::WithinRel(mag_r, rtol) ||</span></span>
+<span id="L127"><span class="lineNum">     127</span>              :                                 Catch::Matchers::WithinAbs(mag_r, atol));</span>
+<span id="L128"><span class="lineNum">     128</span> <span class="tlaUNC">           0 :         }</span></span>
+<span id="L129"><span class="lineNum">     129</span> <span class="tlaUNC">           0 :         continue;</span></span>
+<span id="L130"><span class="lineNum">     130</span>              :       }</span>
+<span id="L131"><span class="lineNum">     131</span>              : </span>
+<span id="L132"><span class="lineNum">     132</span>              :       // Real-valued column (e.g. f (GHz), V_inc, |S| (dB)): compare</span>
+<span id="L133"><span class="lineNum">     133</span>              :       // values directly with the same matchers.</span>
+<span id="L134"><span class="lineNum">     134</span> <span class="tlaUNC">           0 :       for (std::size_t r = 0; r &lt; n_rows; ++r)</span></span>
+<span id="L135"><span class="lineNum">     135</span>              :       {</span>
+<span id="L136"><span class="lineNum">     136</span> <span class="tlaUNC">           0 :         CHECK_THAT(actual[c].data[r],</span></span>
+<span id="L137"><span class="lineNum">     137</span>              :                    Catch::Matchers::WithinRel(reference[c].data[r], rtol) ||</span>
+<span id="L138"><span class="lineNum">     138</span>              :                        Catch::Matchers::WithinAbs(reference[c].data[r], atol));</span>
+<span id="L139"><span class="lineNum">     139</span>              :       }</span>
+<span id="L140"><span class="lineNum">     140</span> <span class="tlaUNC">           0 :     }</span></span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaUNC">           0 :   };</span></span>
+<span id="L142"><span class="lineNum">     142</span>              : }</span>
+<span id="L143"><span class="lineNum">     143</span>              : </span>
+<span id="L144"><span class="lineNum">     144</span>              : // Standard &quot;drop per-element extrema + eigenmode error columns&quot; list.</span>
+<span id="L145"><span class="lineNum">     145</span>              : const std::vector&lt;std::string&gt; kEigenExcluded = {&quot;Maximum&quot;, &quot;Minimum&quot;, &quot;Mean&quot;,</span>
+<span id="L146"><span class="lineNum">     146</span>              :                                                  &quot;Error (Bkwd.)&quot;, &quot;Error (Abs.)&quot;};</span>
+<span id="L147"><span class="lineNum">     147</span>              : constexpr auto kForceDefaultSolver = palace::test::SolverOverridePolicy::ForceDefault;</span>
+<span id="L148"><span class="lineNum">     148</span>              : </span>
+<span id="L149"><span class="lineNum">     149</span>              : // Floquet-port S-parameters: compare only the |S[...]| (dB) magnitude columns</span>
+<span id="L150"><span class="lineNum">     150</span>              : // (phase isn't reproducible). NaN entries (evanescent modes) and signals below</span>
+<span id="L151"><span class="lineNum">     151</span>              : // -200 dB (negligible) count as matches. Ports the Julia test_floquet_sparams.</span>
+<span id="L152"><span class="lineNum">     152</span>              : palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)</span>
+<span id="L153"><span class="lineNum">     153</span>              : {</span>
+<span id="L154"><span class="lineNum">     154</span> <span class="tlaUNC">           0 :   return [rtol, atol](palace::Table &amp;actual, palace::Table &amp;reference)</span></span>
+<span id="L155"><span class="lineNum">     155</span>              :   {</span>
+<span id="L156"><span class="lineNum">     156</span>              :     const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());</span>
+<span id="L157"><span class="lineNum">     157</span> <span class="tlaUNC">           0 :     const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());</span></span>
+<span id="L158"><span class="lineNum">     158</span> <span class="tlaUNC">           0 :     for (std::size_t c = 0; c &lt; n_cols; ++c)</span></span>
+<span id="L159"><span class="lineNum">     159</span>              :     {</span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaUNC">           0 :       const std::string &amp;hdr = reference[c].header_text;</span></span>
+<span id="L161"><span class="lineNum">     161</span> <span class="tlaUNC">           0 :       if (hdr.find(&quot;|S[&quot;) == std::string::npos || hdr.find(&quot;(dB)&quot;) == std::string::npos)</span></span>
+<span id="L162"><span class="lineNum">     162</span>              :       {</span>
+<span id="L163"><span class="lineNum">     163</span> <span class="tlaUNC">           0 :         continue;</span></span>
+<span id="L164"><span class="lineNum">     164</span>              :       }</span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaUNC">           0 :       for (std::size_t r = 0; r &lt; n_rows; ++r)</span></span>
+<span id="L166"><span class="lineNum">     166</span>              :       {</span>
+<span id="L167"><span class="lineNum">     167</span> <span class="tlaUNC">           0 :         const double v_new = actual[c].data[r];</span></span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaUNC">           0 :         const double v_ref = reference[c].data[r];</span></span>
+<span id="L169"><span class="lineNum">     169</span> <span class="tlaUNC">           0 :         if ((std::isnan(v_new) &amp;&amp; std::isnan(v_ref)) || v_ref &lt; -200.0)</span></span>
+<span id="L170"><span class="lineNum">     170</span>              :         {</span>
+<span id="L171"><span class="lineNum">     171</span> <span class="tlaUNC">           0 :           continue;</span></span>
+<span id="L172"><span class="lineNum">     172</span>              :         }</span>
+<span id="L173"><span class="lineNum">     173</span> <span class="tlaUNC">           0 :         INFO(&quot;row &quot; &lt;&lt; r + 1 &lt;&lt; &quot; column '&quot; &lt;&lt; hdr &lt;&lt; &quot;'&quot;);</span></span>
+<span id="L174"><span class="lineNum">     174</span> <span class="tlaUNC">           0 :         CHECK_THAT(v_new, Catch::Matchers::WithinRel(v_ref, rtol) ||</span></span>
+<span id="L175"><span class="lineNum">     175</span>              :                               Catch::Matchers::WithinAbs(v_ref, atol));</span>
+<span id="L176"><span class="lineNum">     176</span> <span class="tlaUNC">           0 :       }</span></span>
+<span id="L177"><span class="lineNum">     177</span>              :     }</span>
+<span id="L178"><span class="lineNum">     178</span> <span class="tlaUNC">           0 :   };</span></span>
+<span id="L179"><span class="lineNum">     179</span>              : }</span>
+<span id="L180"><span class="lineNum">     180</span>              : </span>
+<span id="L181"><span class="lineNum">     181</span>              : }  // namespace</span>
+<span id="L182"><span class="lineNum">     182</span>              : </span>
+<span id="L183"><span class="lineNum">     183</span>              : // ===========================================================================</span>
+<span id="L184"><span class="lineNum">     184</span>              : // 3D cases. Order follows the retired Julia regression harness.</span>
+<span id="L185"><span class="lineNum">     185</span>              : // ===========================================================================</span>
+<span id="L186"><span class="lineNum">     186</span>              : </span>
+<span id="L187"><span class="lineNum">     187</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;spheres&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L188"><span class="lineNum">     188</span>              : {</span>
+<span id="L189"><span class="lineNum">     189</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L190"><span class="lineNum">     190</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-4;</span></span>
+<span id="L191"><span class="lineNum">     191</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-16;</span></span>
+<span id="L192"><span class="lineNum">     192</span> <span class="tlaUNC">           0 :   opts.excluded_columns = {&quot;Maximum&quot;, &quot;Minimum&quot;};</span></span>
+<span id="L193"><span class="lineNum">     193</span> <span class="tlaUNC">           0 :   opts.gridfunction_fields = true;</span></span>
+<span id="L194"><span class="lineNum">     194</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;spheres&quot;, &quot;spheres.json&quot;, &quot;&quot;, opts);</span></span>
+<span id="L195"><span class="lineNum">     195</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L196"><span class="lineNum">     196</span>              : </span>
+<span id="L197"><span class="lineNum">     197</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;rings&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L198"><span class="lineNum">     198</span>              : {</span>
+<span id="L199"><span class="lineNum">     199</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L200"><span class="lineNum">     200</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-4;</span></span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-16;</span></span>
+<span id="L202"><span class="lineNum">     202</span> <span class="tlaUNC">           0 :   opts.excluded_columns = {&quot;Maximum&quot;, &quot;Minimum&quot;};</span></span>
+<span id="L203"><span class="lineNum">     203</span> <span class="tlaUNC">           0 :   opts.linear_solver_policy = kForceDefaultSolver;</span></span>
+<span id="L204"><span class="lineNum">     204</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;rings&quot;, &quot;rings.json&quot;, &quot;&quot;, opts);</span></span>
+<span id="L205"><span class="lineNum">     205</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L206"><span class="lineNum">     206</span>              : </span>
+<span id="L207"><span class="lineNum">     207</span>              : // --- cylinder: reltol=1e-4, abstol=1e-16 for the four eigen-style cases ---</span>
+<span id="L208"><span class="lineNum">     208</span>              : </span>
+<span id="L209"><span class="lineNum">     209</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cylinder_cavity_pec&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L210"><span class="lineNum">     210</span>              : {</span>
+<span id="L211"><span class="lineNum">     211</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L212"><span class="lineNum">     212</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-4;</span></span>
+<span id="L213"><span class="lineNum">     213</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-16;</span></span>
+<span id="L214"><span class="lineNum">     214</span> <span class="tlaUNC">           0 :   opts.excluded_columns = kEigenExcluded;</span></span>
+<span id="L215"><span class="lineNum">     215</span> <span class="tlaUNC">           0 :   opts.skip_rowcount = true;</span></span>
+<span id="L216"><span class="lineNum">     216</span> <span class="tlaUNC">           0 :   opts.linear_solver_policy = kForceDefaultSolver;</span></span>
+<span id="L217"><span class="lineNum">     217</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cylinder&quot;, &quot;cavity_pec.json&quot;, &quot;cavity_pec&quot;, opts);</span></span>
+<span id="L218"><span class="lineNum">     218</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L219"><span class="lineNum">     219</span>              : </span>
+<span id="L220"><span class="lineNum">     220</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cylinder_cavity_impedance&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L221"><span class="lineNum">     221</span>              : {</span>
+<span id="L222"><span class="lineNum">     222</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L223"><span class="lineNum">     223</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-4;</span></span>
+<span id="L224"><span class="lineNum">     224</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-16;</span></span>
+<span id="L225"><span class="lineNum">     225</span> <span class="tlaUNC">           0 :   opts.excluded_columns = kEigenExcluded;</span></span>
+<span id="L226"><span class="lineNum">     226</span> <span class="tlaUNC">           0 :   opts.skip_rowcount = true;</span></span>
+<span id="L227"><span class="lineNum">     227</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cylinder&quot;, &quot;cavity_impedance.json&quot;, &quot;cavity_impedance&quot;,</span></span>
+<span id="L228"><span class="lineNum">     228</span>              :                                   opts);</span>
+<span id="L229"><span class="lineNum">     229</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L230"><span class="lineNum">     230</span>              : </span>
+<span id="L231"><span class="lineNum">     231</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cylinder_waveguide&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L232"><span class="lineNum">     232</span>              : {</span>
+<span id="L233"><span class="lineNum">     233</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L234"><span class="lineNum">     234</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-4;</span></span>
+<span id="L235"><span class="lineNum">     235</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-16;</span></span>
+<span id="L236"><span class="lineNum">     236</span> <span class="tlaUNC">           0 :   opts.excluded_columns = kEigenExcluded;</span></span>
+<span id="L237"><span class="lineNum">     237</span> <span class="tlaUNC">           0 :   opts.skip_rowcount = true;</span></span>
+<span id="L238"><span class="lineNum">     238</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cylinder&quot;, &quot;waveguide.json&quot;, &quot;waveguide&quot;, opts);</span></span>
+<span id="L239"><span class="lineNum">     239</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L240"><span class="lineNum">     240</span>              : </span>
+<span id="L241"><span class="lineNum">     241</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cylinder_floquet&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L242"><span class="lineNum">     242</span>              : {</span>
+<span id="L243"><span class="lineNum">     243</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L244"><span class="lineNum">     244</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-4;</span></span>
+<span id="L245"><span class="lineNum">     245</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-16;</span></span>
+<span id="L246"><span class="lineNum">     246</span> <span class="tlaUNC">           0 :   opts.excluded_columns = kEigenExcluded;</span></span>
+<span id="L247"><span class="lineNum">     247</span> <span class="tlaUNC">           0 :   opts.skip_rowcount = true;</span></span>
+<span id="L248"><span class="lineNum">     248</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cylinder&quot;, &quot;floquet.json&quot;, &quot;floquet&quot;, opts);</span></span>
+<span id="L249"><span class="lineNum">     249</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L250"><span class="lineNum">     250</span>              : </span>
+<span id="L251"><span class="lineNum">     251</span>              : // Looser rtol than the cylinder eigen cases above (partition-sensitive).</span>
+<span id="L252"><span class="lineNum">     252</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cylinder_driven_wave&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L253"><span class="lineNum">     253</span>              : {</span>
+<span id="L254"><span class="lineNum">     254</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L255"><span class="lineNum">     255</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-3;</span></span>
+<span id="L256"><span class="lineNum">     256</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-16;</span></span>
+<span id="L257"><span class="lineNum">     257</span> <span class="tlaUNC">           0 :   opts.excluded_columns = {&quot;Maximum&quot;, &quot;Minimum&quot;, &quot;Mean&quot;};</span></span>
+<span id="L258"><span class="lineNum">     258</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cylinder&quot;, &quot;driven_wave.json&quot;, &quot;driven_wave&quot;, opts);</span></span>
+<span id="L259"><span class="lineNum">     259</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L260"><span class="lineNum">     260</span>              : </span>
+<span id="L261"><span class="lineNum">     261</span>              : // Floquet-port dielectric grating: structure + Floquet S-parameter magnitudes</span>
+<span id="L262"><span class="lineNum">     262</span>              : // (phase, evanescent-NaN and negligible entries skipped). Tolerances from the</span>
+<span id="L263"><span class="lineNum">     263</span>              : // driven_wave block.</span>
+<span id="L264"><span class="lineNum">     264</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;dielectric_grating_uniform&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L265"><span class="lineNum">     265</span>              : {</span>
+<span id="L266"><span class="lineNum">     266</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L267"><span class="lineNum">     267</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-3;</span></span>
+<span id="L268"><span class="lineNum">     268</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-16;</span></span>
+<span id="L269"><span class="lineNum">     269</span> <span class="tlaUNC">           0 :   opts.excluded_columns = {&quot;Maximum&quot;, &quot;Minimum&quot;};</span></span>
+<span id="L270"><span class="lineNum">     270</span> <span class="tlaUNC">           0 :   opts.skip_rowcount = true;</span></span>
+<span id="L271"><span class="lineNum">     271</span> <span class="tlaUNC">           0 :   opts.paraview_fields = false;</span></span>
+<span id="L272"><span class="lineNum">     272</span> <span class="tlaUNC">           0 :   opts.custom_checks[&quot;port-floquet-S.csv&quot;] = TestFloquetSParams(opts.rtol, opts.atol);</span></span>
+<span id="L273"><span class="lineNum">     273</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;dielectric_grating&quot;, &quot;dielectric_grating_uniform.json&quot;,</span></span>
+<span id="L274"><span class="lineNum">     274</span>              :                                   &quot;uniform&quot;, opts);</span>
+<span id="L275"><span class="lineNum">     275</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L276"><span class="lineNum">     276</span>              : </span>
+<span id="L277"><span class="lineNum">     277</span>              : // --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all three ---</span>
+<span id="L278"><span class="lineNum">     278</span>              : </span>
+<span id="L279"><span class="lineNum">     279</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;antenna_halfwave_dipole&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L280"><span class="lineNum">     280</span>              : {</span>
+<span id="L281"><span class="lineNum">     281</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L282"><span class="lineNum">     282</span> <span class="tlaUNC">           0 :   opts.rtol = 2.0e-2;</span></span>
+<span id="L283"><span class="lineNum">     283</span> <span class="tlaUNC">           0 :   opts.atol = 5.0e-9;</span></span>
+<span id="L284"><span class="lineNum">     284</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;antenna&quot;, &quot;antenna_halfwave_dipole.json&quot;,</span></span>
+<span id="L285"><span class="lineNum">     285</span>              :                                   &quot;antenna_halfwave_dipole&quot;, opts);</span>
+<span id="L286"><span class="lineNum">     286</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L287"><span class="lineNum">     287</span>              : </span>
+<span id="L288"><span class="lineNum">     288</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;antenna_short_dipole&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L289"><span class="lineNum">     289</span>              : {</span>
+<span id="L290"><span class="lineNum">     290</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L291"><span class="lineNum">     291</span> <span class="tlaUNC">           0 :   opts.rtol = 2.0e-2;</span></span>
+<span id="L292"><span class="lineNum">     292</span> <span class="tlaUNC">           0 :   opts.atol = 5.0e-9;</span></span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaUNC">           0 :   opts.custom_checks[&quot;farfield-rE.csv&quot;] = TestFarfield(opts.rtol);</span></span>
+<span id="L294"><span class="lineNum">     294</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;antenna&quot;, &quot;antenna_short_dipole.json&quot;,</span></span>
+<span id="L295"><span class="lineNum">     295</span>              :                                   &quot;antenna_short_dipole&quot;, opts);</span>
+<span id="L296"><span class="lineNum">     296</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L297"><span class="lineNum">     297</span>              : </span>
+<span id="L298"><span class="lineNum">     298</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;antenna_halfwave_dipole_surfacecurrent&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L299"><span class="lineNum">     299</span>              : {</span>
+<span id="L300"><span class="lineNum">     300</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L301"><span class="lineNum">     301</span> <span class="tlaUNC">           0 :   opts.rtol = 2.0e-2;</span></span>
+<span id="L302"><span class="lineNum">     302</span> <span class="tlaUNC">           0 :   opts.atol = 5.0e-9;</span></span>
+<span id="L303"><span class="lineNum">     303</span> <span class="tlaUNC">           0 :   opts.paraview_fields = false;</span></span>
+<span id="L304"><span class="lineNum">     304</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;antenna&quot;, &quot;antenna_halfwave_dipole_surfacecurrent.json&quot;,</span></span>
+<span id="L305"><span class="lineNum">     305</span>              :                                   &quot;antenna_halfwave_dipole_surfacecurrent&quot;, opts);</span>
+<span id="L306"><span class="lineNum">     306</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L307"><span class="lineNum">     307</span>              : </span>
+<span id="L308"><span class="lineNum">     308</span>              : // --- coaxial + cpw non-adaptive + cpw eigen: reltol still 2e-2 (from  ---</span>
+<span id="L309"><span class="lineNum">     309</span>              : // --- antenna block), abstol drops to 1e-11 before the coaxial block.  ---</span>
+<span id="L310"><span class="lineNum">     310</span>              : </span>
+<span id="L311"><span class="lineNum">     311</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;coaxial_open&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L312"><span class="lineNum">     312</span>              : {</span>
+<span id="L313"><span class="lineNum">     313</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L314"><span class="lineNum">     314</span> <span class="tlaUNC">           0 :   opts.rtol = 2.0e-2;</span></span>
+<span id="L315"><span class="lineNum">     315</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-11;</span></span>
+<span id="L316"><span class="lineNum">     316</span> <span class="tlaUNC">           0 :   opts.excluded_columns = {&quot;Maximum&quot;, &quot;Minimum&quot;};</span></span>
+<span id="L317"><span class="lineNum">     317</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;coaxial&quot;, &quot;coaxial_open.json&quot;, &quot;open&quot;, opts);</span></span>
+<span id="L318"><span class="lineNum">     318</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L319"><span class="lineNum">     319</span>              : </span>
+<span id="L320"><span class="lineNum">     320</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;coaxial_matched&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L321"><span class="lineNum">     321</span>              : {</span>
+<span id="L322"><span class="lineNum">     322</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L323"><span class="lineNum">     323</span> <span class="tlaUNC">           0 :   opts.rtol = 2.0e-2;</span></span>
+<span id="L324"><span class="lineNum">     324</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-11;</span></span>
+<span id="L325"><span class="lineNum">     325</span> <span class="tlaUNC">           0 :   opts.excluded_columns = {&quot;Maximum&quot;, &quot;Minimum&quot;};</span></span>
+<span id="L326"><span class="lineNum">     326</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;coaxial&quot;, &quot;coaxial_matched.json&quot;, &quot;matched&quot;, opts);</span></span>
+<span id="L327"><span class="lineNum">     327</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L328"><span class="lineNum">     328</span>              : </span>
+<span id="L329"><span class="lineNum">     329</span>              : // Mixed lumped + wave port S-parameters (added in PR #743). Same tolerances as the</span>
+<span id="L330"><span class="lineNum">     330</span>              : // other coaxial cases; port-Z.csv / port-S.csv are diffed like any other CSV.</span>
+<span id="L331"><span class="lineNum">     331</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;coaxial_lumped_wave&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L332"><span class="lineNum">     332</span>              : {</span>
+<span id="L333"><span class="lineNum">     333</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L334"><span class="lineNum">     334</span> <span class="tlaUNC">           0 :   opts.rtol = 2.0e-2;</span></span>
+<span id="L335"><span class="lineNum">     335</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-11;</span></span>
+<span id="L336"><span class="lineNum">     336</span> <span class="tlaUNC">           0 :   opts.excluded_columns = {&quot;Maximum&quot;, &quot;Minimum&quot;};</span></span>
+<span id="L337"><span class="lineNum">     337</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;coaxial&quot;, &quot;coaxial_lumped_wave.json&quot;, &quot;lumped_wave&quot;,</span></span>
+<span id="L338"><span class="lineNum">     338</span>              :                                   opts);</span>
+<span id="L339"><span class="lineNum">     339</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L340"><span class="lineNum">     340</span>              : </span>
+<span id="L341"><span class="lineNum">     341</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cpw_lumped_uniform&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L342"><span class="lineNum">     342</span>              : {</span>
+<span id="L343"><span class="lineNum">     343</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L344"><span class="lineNum">     344</span> <span class="tlaUNC">           0 :   opts.rtol = 2.0e-2;</span></span>
+<span id="L345"><span class="lineNum">     345</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-11;</span></span>
+<span id="L346"><span class="lineNum">     346</span> <span class="tlaUNC">           0 :   opts.excluded_columns = {&quot;Maximum&quot;, &quot;Minimum&quot;};</span></span>
+<span id="L347"><span class="lineNum">     347</span> <span class="tlaUNC">           0 :   opts.custom_checks[&quot;farfield-rE.csv&quot;] = TestFarfield(opts.rtol);</span></span>
+<span id="L348"><span class="lineNum">     348</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cpw&quot;, &quot;cpw_lumped_uniform.json&quot;, &quot;lumped_uniform&quot;, opts);</span></span>
+<span id="L349"><span class="lineNum">     349</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L350"><span class="lineNum">     350</span>              : </span>
+<span id="L351"><span class="lineNum">     351</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cpw_wave_uniform&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L352"><span class="lineNum">     352</span>              : {</span>
+<span id="L353"><span class="lineNum">     353</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L354"><span class="lineNum">     354</span> <span class="tlaUNC">           0 :   opts.rtol = 2.0e-2;</span></span>
+<span id="L355"><span class="lineNum">     355</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-11;</span></span>
+<span id="L356"><span class="lineNum">     356</span> <span class="tlaUNC">           0 :   opts.excluded_columns = {&quot;Maximum&quot;, &quot;Minimum&quot;};</span></span>
+<span id="L357"><span class="lineNum">     357</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cpw&quot;, &quot;cpw_wave_uniform.json&quot;, &quot;wave_uniform&quot;, opts);</span></span>
+<span id="L358"><span class="lineNum">     358</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L359"><span class="lineNum">     359</span>              : </span>
+<span id="L360"><span class="lineNum">     360</span>              : // Adaptive frequency sweeps run as smoke tests: structure (output tree,</span>
+<span id="L361"><span class="lineNum">     361</span>              : // CSV set, headers, row/column counts) is enforced, numeric comparison</span>
+<span id="L362"><span class="lineNum">     362</span>              : // is disabled via infinite tolerances.</span>
+<span id="L363"><span class="lineNum">     363</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cpw_lumped_adaptive&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L364"><span class="lineNum">     364</span>              : {</span>
+<span id="L365"><span class="lineNum">     365</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L366"><span class="lineNum">     366</span> <span class="tlaUNC">           0 :   opts.rtol = std::numeric_limits&lt;double&gt;::infinity();</span></span>
+<span id="L367"><span class="lineNum">     367</span> <span class="tlaUNC">           0 :   opts.atol = std::numeric_limits&lt;double&gt;::infinity();</span></span>
+<span id="L368"><span class="lineNum">     368</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cpw&quot;, &quot;cpw_lumped_adaptive.json&quot;, &quot;lumped_adaptive&quot;,</span></span>
+<span id="L369"><span class="lineNum">     369</span>              :                                   opts);</span>
+<span id="L370"><span class="lineNum">     370</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L371"><span class="lineNum">     371</span>              : </span>
+<span id="L372"><span class="lineNum">     372</span>              : // cpw_wave_adaptive omits [GPU]: wave-port adaptive sweeps are skipped on GPU</span>
+<span id="L373"><span class="lineNum">     373</span>              : // (awslabs/palace#375), matching the old harness's `device != &quot;GPU&quot;` guard.</span>
+<span id="L374"><span class="lineNum">     374</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cpw_wave_adaptive&quot;, &quot;[Serial][Parallel][Regression]&quot;)</span></span>
+<span id="L375"><span class="lineNum">     375</span>              : {</span>
+<span id="L376"><span class="lineNum">     376</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L377"><span class="lineNum">     377</span> <span class="tlaUNC">           0 :   opts.rtol = std::numeric_limits&lt;double&gt;::infinity();</span></span>
+<span id="L378"><span class="lineNum">     378</span> <span class="tlaUNC">           0 :   opts.atol = std::numeric_limits&lt;double&gt;::infinity();</span></span>
+<span id="L379"><span class="lineNum">     379</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cpw&quot;, &quot;cpw_wave_adaptive.json&quot;, &quot;wave_adaptive&quot;, opts);</span></span>
+<span id="L380"><span class="lineNum">     380</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L381"><span class="lineNum">     381</span>              : </span>
+<span id="L382"><span class="lineNum">     382</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cpw_lumped_eigen&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L383"><span class="lineNum">     383</span>              : {</span>
+<span id="L384"><span class="lineNum">     384</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L385"><span class="lineNum">     385</span> <span class="tlaUNC">           0 :   opts.rtol = 2.0e-2;</span></span>
+<span id="L386"><span class="lineNum">     386</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-11;</span></span>
+<span id="L387"><span class="lineNum">     387</span>              :   // Drop phase-sensitive port columns and Q_ext / κ_ext normalisations;</span>
+<span id="L388"><span class="lineNum">     388</span>              :   // keep the farfield magnitude check.</span>
+<span id="L389"><span class="lineNum">     389</span>              :   opts.excluded_columns = {&quot;Maximum&quot;,      &quot;Minimum&quot;, &quot;Mean&quot;,      &quot;Error (Bkwd.)&quot;,</span>
+<span id="L390"><span class="lineNum">     390</span>              :                            &quot;Error (Abs.)&quot;, &quot;Re{V[&quot;,   &quot;Im{V[&quot;,     &quot;Re{I[&quot;,</span>
+<span id="L391"><span class="lineNum">     391</span> <span class="tlaUNC">           0 :                            &quot;Im{I[&quot;,        &quot;Q_ext&quot;,   &quot;\u03ba_ext&quot;};</span></span>
+<span id="L392"><span class="lineNum">     392</span> <span class="tlaUNC">           0 :   opts.skip_rowcount = true;</span></span>
+<span id="L393"><span class="lineNum">     393</span> <span class="tlaUNC">           0 :   opts.custom_checks[&quot;farfield-rE.csv&quot;] = TestFarfield(opts.rtol);</span></span>
+<span id="L394"><span class="lineNum">     394</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cpw&quot;, &quot;cpw_lumped_eigen.json&quot;, &quot;lumped_eigen&quot;, opts);</span></span>
+<span id="L395"><span class="lineNum">     395</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L396"><span class="lineNum">     396</span>              : </span>
+<span id="L397"><span class="lineNum">     397</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cpw_wave_eigen&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L398"><span class="lineNum">     398</span>              : {</span>
+<span id="L399"><span class="lineNum">     399</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L400"><span class="lineNum">     400</span> <span class="tlaUNC">           0 :   opts.rtol = 2.0e-2;</span></span>
+<span id="L401"><span class="lineNum">     401</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-11;</span></span>
+<span id="L402"><span class="lineNum">     402</span> <span class="tlaUNC">           0 :   opts.excluded_columns = kEigenExcluded;</span></span>
+<span id="L403"><span class="lineNum">     403</span> <span class="tlaUNC">           0 :   opts.skip_rowcount = true;</span></span>
+<span id="L404"><span class="lineNum">     404</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cpw&quot;, &quot;cpw_wave_eigen.json&quot;, &quot;wave_eigen&quot;, opts);</span></span>
+<span id="L405"><span class="lineNum">     405</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L406"><span class="lineNum">     406</span>              : </span>
+<span id="L407"><span class="lineNum">     407</span>              : // --- adapter: same reltol / atol as the cpw eigen block above ---</span>
+<span id="L408"><span class="lineNum">     408</span>              : </span>
+<span id="L409"><span class="lineNum">     409</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;adapter_hybrid&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L410"><span class="lineNum">     410</span>              : {</span>
+<span id="L411"><span class="lineNum">     411</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L412"><span class="lineNum">     412</span> <span class="tlaUNC">           0 :   opts.rtol = 2.0e-2;</span></span>
+<span id="L413"><span class="lineNum">     413</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-11;</span></span>
+<span id="L414"><span class="lineNum">     414</span> <span class="tlaUNC">           0 :   opts.excluded_columns = kEigenExcluded;</span></span>
+<span id="L415"><span class="lineNum">     415</span> <span class="tlaUNC">           0 :   opts.skip_rowcount = true;</span></span>
+<span id="L416"><span class="lineNum">     416</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;adapter&quot;, &quot;hybrid.json&quot;, &quot;hybrid&quot;, opts);</span></span>
+<span id="L417"><span class="lineNum">     417</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L418"><span class="lineNum">     418</span>              : </span>
+<span id="L419"><span class="lineNum">     419</span>              : // --- transmon: heavy eigen cases. Tagged `[Regression][Long]` so the</span>
+<span id="L420"><span class="lineNum">     420</span>              : // default `ctest -L &quot;^regression$&quot;` sweep skips them (the regression</span>
+<span id="L421"><span class="lineNum">     421</span>              : // block uses TEST_SPEC `[Regression]~[Long]`); CI exercises them via</span>
+<span id="L422"><span class="lineNum">     422</span>              : // the `trigger-long-tests` PR label, which runs `ctest -L &quot;^long$&quot;`.</span>
+<span id="L423"><span class="lineNum">     423</span>              : // Each case takes ~10 minutes at np=2 — hence the dedicated `[Long]`</span>
+<span id="L424"><span class="lineNum">     424</span>              : // modifier and longer per-test TIMEOUT in the CMakeLists registration.</span>
+<span id="L425"><span class="lineNum">     425</span>              : </span>
+<span id="L426"><span class="lineNum">     426</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;transmon_coarse&quot;, &quot;[Serial][Parallel][GPU][Regression][Long]&quot;)</span></span>
+<span id="L427"><span class="lineNum">     427</span>              : {</span>
+<span id="L428"><span class="lineNum">     428</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L429"><span class="lineNum">     429</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-2;</span></span>
+<span id="L430"><span class="lineNum">     430</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-16;</span></span>
+<span id="L431"><span class="lineNum">     431</span>              :   opts.excluded_columns = {&quot;Maximum&quot;, &quot;Minimum&quot;, &quot;Mean&quot;,  &quot;Error (Bkwd.)&quot;, &quot;Error (Abs.)&quot;,</span>
+<span id="L432"><span class="lineNum">     432</span> <span class="tlaUNC">           0 :                            &quot;Re{V[&quot;,   &quot;Im{V[&quot;,   &quot;Re{I[&quot;, &quot;Im{I[&quot;};</span></span>
+<span id="L433"><span class="lineNum">     433</span> <span class="tlaUNC">           0 :   opts.abs_columns = {&quot;\u03ba_ext&quot;};</span></span>
+<span id="L434"><span class="lineNum">     434</span> <span class="tlaUNC">           0 :   opts.skip_rowcount = true;</span></span>
+<span id="L435"><span class="lineNum">     435</span> <span class="tlaUNC">           0 :   opts.gridfunction_fields = true;</span></span>
+<span id="L436"><span class="lineNum">     436</span> <span class="tlaUNC">           0 :   opts.linear_solver_policy = kForceDefaultSolver;</span></span>
+<span id="L437"><span class="lineNum">     437</span> <span class="tlaUNC">           0 :   opts.eigen_solver_policy = kForceDefaultSolver;</span></span>
+<span id="L438"><span class="lineNum">     438</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;transmon&quot;, &quot;transmon_coarse.json&quot;, &quot;transmon_coarse&quot;,</span></span>
+<span id="L439"><span class="lineNum">     439</span>              :                                   opts);</span>
+<span id="L440"><span class="lineNum">     440</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L441"><span class="lineNum">     441</span>              : </span>
+<span id="L442"><span class="lineNum">     442</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;transmon_amr&quot;, &quot;[Serial][Parallel][GPU][Regression][Long]&quot;)</span></span>
+<span id="L443"><span class="lineNum">     443</span>              : {</span>
+<span id="L444"><span class="lineNum">     444</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L445"><span class="lineNum">     445</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-2;</span></span>
+<span id="L446"><span class="lineNum">     446</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-16;</span></span>
+<span id="L447"><span class="lineNum">     447</span>              :   opts.excluded_columns = {&quot;Maximum&quot;, &quot;Minimum&quot;, &quot;Mean&quot;,  &quot;Error (Bkwd.)&quot;, &quot;Error (Abs.)&quot;,</span>
+<span id="L448"><span class="lineNum">     448</span> <span class="tlaUNC">           0 :                            &quot;Re{V[&quot;,   &quot;Im{V[&quot;,   &quot;Re{I[&quot;, &quot;Im{I[&quot;};</span></span>
+<span id="L449"><span class="lineNum">     449</span> <span class="tlaUNC">           0 :   opts.abs_columns = {&quot;\u03ba_ext&quot;};</span></span>
+<span id="L450"><span class="lineNum">     450</span> <span class="tlaUNC">           0 :   opts.skip_rowcount = true;</span></span>
+<span id="L451"><span class="lineNum">     451</span> <span class="tlaUNC">           0 :   opts.gridfunction_fields = true;</span></span>
+<span id="L452"><span class="lineNum">     452</span> <span class="tlaUNC">           0 :   opts.linear_solver_policy = kForceDefaultSolver;</span></span>
+<span id="L453"><span class="lineNum">     453</span> <span class="tlaUNC">           0 :   opts.eigen_solver_policy = kForceDefaultSolver;</span></span>
+<span id="L454"><span class="lineNum">     454</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;transmon&quot;, &quot;transmon_amr.json&quot;, &quot;transmon_amr&quot;, opts);</span></span>
+<span id="L455"><span class="lineNum">     455</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L456"><span class="lineNum">     456</span>              : </span>
+<span id="L457"><span class="lineNum">     457</span>              : // adapter_slp is a dormant entry in runtests.jl: the case is listed in</span>
+<span id="L458"><span class="lineNum">     458</span>              : // the conditional block but neither examples/adapter/slp.json nor</span>
+<span id="L459"><span class="lineNum">     459</span>              : // No adapter/slp reference data exists on this branch. Omit until the</span>
+<span id="L460"><span class="lineNum">     460</span>              : // fixtures are added.</span>
+<span id="L461"><span class="lineNum">     461</span>              : </span>
+<span id="L462"><span class="lineNum">     462</span>              : // ===========================================================================</span>
+<span id="L463"><span class="lineNum">     463</span>              : // 2D cases.</span>
+<span id="L464"><span class="lineNum">     464</span>              : // ===========================================================================</span>
+<span id="L465"><span class="lineNum">     465</span>              : </span>
+<span id="L466"><span class="lineNum">     466</span>              : // cavity2d eigenmode uses the tight 1e-4 / 1e-16 tolerance.</span>
+<span id="L467"><span class="lineNum">     467</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cavity2d_eigenmode&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L468"><span class="lineNum">     468</span>              : {</span>
+<span id="L469"><span class="lineNum">     469</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L470"><span class="lineNum">     470</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-4;</span></span>
+<span id="L471"><span class="lineNum">     471</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-16;</span></span>
+<span id="L472"><span class="lineNum">     472</span> <span class="tlaUNC">           0 :   opts.excluded_columns = kEigenExcluded;</span></span>
+<span id="L473"><span class="lineNum">     473</span> <span class="tlaUNC">           0 :   opts.skip_rowcount = true;</span></span>
+<span id="L474"><span class="lineNum">     474</span> <span class="tlaUNC">           0 :   opts.linear_solver_policy = kForceDefaultSolver;</span></span>
+<span id="L475"><span class="lineNum">     475</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cavity2d&quot;, &quot;cavity2d.json&quot;, &quot;eigenmode&quot;, opts);</span></span>
+<span id="L476"><span class="lineNum">     476</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L477"><span class="lineNum">     477</span>              : </span>
+<span id="L478"><span class="lineNum">     478</span>              : // Coarse 2D driven tolerances (partition- and platform-sensitive).</span>
+<span id="L479"><span class="lineNum">     479</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cavity2d_driven&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L480"><span class="lineNum">     480</span>              : {</span>
+<span id="L481"><span class="lineNum">     481</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L482"><span class="lineNum">     482</span> <span class="tlaUNC">           0 :   opts.rtol = 2.0e-2;</span></span>
+<span id="L483"><span class="lineNum">     483</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-8;</span></span>
+<span id="L484"><span class="lineNum">     484</span> <span class="tlaUNC">           0 :   opts.excluded_columns = {&quot;Maximum&quot;, &quot;Minimum&quot;};</span></span>
+<span id="L485"><span class="lineNum">     485</span> <span class="tlaUNC">           0 :   opts.linear_solver_policy = kForceDefaultSolver;</span></span>
+<span id="L486"><span class="lineNum">     486</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cavity2d&quot;, &quot;cavity2d_driven.json&quot;, &quot;driven&quot;, opts);</span></span>
+<span id="L487"><span class="lineNum">     487</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L488"><span class="lineNum">     488</span>              : </span>
+<span id="L489"><span class="lineNum">     489</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cavity2d_electrostatic&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L490"><span class="lineNum">     490</span>              : {</span>
+<span id="L491"><span class="lineNum">     491</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L492"><span class="lineNum">     492</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-4;</span></span>
+<span id="L493"><span class="lineNum">     493</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-10;</span></span>
+<span id="L494"><span class="lineNum">     494</span> <span class="tlaUNC">           0 :   opts.excluded_columns = {&quot;Maximum&quot;, &quot;Minimum&quot;};</span></span>
+<span id="L495"><span class="lineNum">     495</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cavity2d&quot;, &quot;cavity2d_electrostatic.json&quot;,</span></span>
+<span id="L496"><span class="lineNum">     496</span>              :                                   &quot;electrostatic&quot;, opts);</span>
+<span id="L497"><span class="lineNum">     497</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L498"><span class="lineNum">     498</span>              : </span>
+<span id="L499"><span class="lineNum">     499</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cavity2d_magnetostatic&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L500"><span class="lineNum">     500</span>              : {</span>
+<span id="L501"><span class="lineNum">     501</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L502"><span class="lineNum">     502</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-4;</span></span>
+<span id="L503"><span class="lineNum">     503</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-10;</span></span>
+<span id="L504"><span class="lineNum">     504</span> <span class="tlaUNC">           0 :   opts.excluded_columns = {&quot;Maximum&quot;, &quot;Minimum&quot;};</span></span>
+<span id="L505"><span class="lineNum">     505</span> <span class="tlaUNC">           0 :   opts.linear_solver_policy = kForceDefaultSolver;</span></span>
+<span id="L506"><span class="lineNum">     506</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cavity2d&quot;, &quot;cavity2d_magnetostatic.json&quot;,</span></span>
+<span id="L507"><span class="lineNum">     507</span>              :                                   &quot;magnetostatic&quot;, opts);</span>
+<span id="L508"><span class="lineNum">     508</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L509"><span class="lineNum">     509</span>              : </span>
+<span id="L510"><span class="lineNum">     510</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cavity2d_transient&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L511"><span class="lineNum">     511</span>              : {</span>
+<span id="L512"><span class="lineNum">     512</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L513"><span class="lineNum">     513</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-4;</span></span>
+<span id="L514"><span class="lineNum">     514</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-10;</span></span>
+<span id="L515"><span class="lineNum">     515</span> <span class="tlaUNC">           0 :   opts.excluded_columns = {&quot;Maximum&quot;, &quot;Minimum&quot;};</span></span>
+<span id="L516"><span class="lineNum">     516</span> <span class="tlaUNC">           0 :   opts.linear_solver_policy = kForceDefaultSolver;</span></span>
+<span id="L517"><span class="lineNum">     517</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cavity2d&quot;, &quot;cavity2d_transient.json&quot;, &quot;transient&quot;, opts);</span></span>
+<span id="L518"><span class="lineNum">     518</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L519"><span class="lineNum">     519</span>              : </span>
+<span id="L520"><span class="lineNum">     520</span>              : // cpw2d boundary-mode cases: reltol=1e-2 because impedance depends on</span>
+<span id="L521"><span class="lineNum">     521</span>              : // voltage path integration (cross-platform reproducibility).</span>
+<span id="L522"><span class="lineNum">     522</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cpw2d_thin&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L523"><span class="lineNum">     523</span>              : {</span>
+<span id="L524"><span class="lineNum">     524</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L525"><span class="lineNum">     525</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-2;</span></span>
+<span id="L526"><span class="lineNum">     526</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-10;  // abstol from the preceding cavity2d block</span></span>
+<span id="L527"><span class="lineNum">     527</span>              :   opts.excluded_columns = {&quot;Maximum&quot;,      &quot;Minimum&quot;,      &quot;Mean&quot;,     &quot;Error (Bkwd.)&quot;,</span>
+<span id="L528"><span class="lineNum">     528</span> <span class="tlaUNC">           0 :                            &quot;Error (Abs.)&quot;, &quot;Im{kn} (1/m)&quot;, &quot;Im{n_eff}&quot;};</span></span>
+<span id="L529"><span class="lineNum">     529</span> <span class="tlaUNC">           0 :   opts.skip_rowcount = true;</span></span>
+<span id="L530"><span class="lineNum">     530</span> <span class="tlaUNC">           0 :   opts.linear_solver_policy = kForceDefaultSolver;</span></span>
+<span id="L531"><span class="lineNum">     531</span> <span class="tlaUNC">           0 :   opts.custom_checks[&quot;mode-V.csv&quot;] = CompareComplexMagnitudes(opts.rtol, opts.atol);</span></span>
+<span id="L532"><span class="lineNum">     532</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cpw2d&quot;, &quot;cpw2d_thin.json&quot;, &quot;thin&quot;, opts);</span></span>
+<span id="L533"><span class="lineNum">     533</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L534"><span class="lineNum">     534</span>              : </span>
+<span id="L535"><span class="lineNum">     535</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cpw2d_thick_impedance&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L536"><span class="lineNum">     536</span>              : {</span>
+<span id="L537"><span class="lineNum">     537</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L538"><span class="lineNum">     538</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-2;</span></span>
+<span id="L539"><span class="lineNum">     539</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-10;</span></span>
+<span id="L540"><span class="lineNum">     540</span>              :   opts.excluded_columns = {&quot;Maximum&quot;,      &quot;Minimum&quot;,      &quot;Mean&quot;,     &quot;Error (Bkwd.)&quot;,</span>
+<span id="L541"><span class="lineNum">     541</span> <span class="tlaUNC">           0 :                            &quot;Error (Abs.)&quot;, &quot;Im{kn} (1/m)&quot;, &quot;Im{n_eff}&quot;};</span></span>
+<span id="L542"><span class="lineNum">     542</span> <span class="tlaUNC">           0 :   opts.skip_rowcount = true;</span></span>
+<span id="L543"><span class="lineNum">     543</span> <span class="tlaUNC">           0 :   opts.linear_solver_policy = kForceDefaultSolver;</span></span>
+<span id="L544"><span class="lineNum">     544</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cpw2d&quot;, &quot;cpw2d_thick_impedance.json&quot;, &quot;thick_impedance&quot;,</span></span>
+<span id="L545"><span class="lineNum">     545</span>              :                                   opts);</span>
+<span id="L546"><span class="lineNum">     546</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L547"><span class="lineNum">     547</span>              : </span>
+<span id="L548"><span class="lineNum">     548</span>              : // 2D mode analysis from a 3D mesh: back to reltol=1e-4, atol still 1e-10.</span>
+<span id="L549"><span class="lineNum">     549</span> <span class="tlaUNC">           0 : TEST_CASE(&quot;cpw_wave_2dmode&quot;, &quot;[Serial][Parallel][GPU][Regression]&quot;)</span></span>
+<span id="L550"><span class="lineNum">     550</span>              : {</span>
+<span id="L551"><span class="lineNum">     551</span>              :   palace::test::RegressionOptions opts;</span>
+<span id="L552"><span class="lineNum">     552</span> <span class="tlaUNC">           0 :   opts.rtol = 1.0e-4;</span></span>
+<span id="L553"><span class="lineNum">     553</span> <span class="tlaUNC">           0 :   opts.atol = 1.0e-10;</span></span>
+<span id="L554"><span class="lineNum">     554</span> <span class="tlaUNC">           0 :   opts.excluded_columns = kEigenExcluded;</span></span>
+<span id="L555"><span class="lineNum">     555</span> <span class="tlaUNC">           0 :   opts.skip_rowcount = true;</span></span>
+<span id="L556"><span class="lineNum">     556</span> <span class="tlaUNC">           0 :   opts.linear_solver_policy = kForceDefaultSolver;</span></span>
+<span id="L557"><span class="lineNum">     557</span> <span class="tlaUNC">           0 :   palace::test::RunRegressionCase(&quot;cpw&quot;, &quot;cpw_wave_2dmode.json&quot;, &quot;wave_2dmode&quot;, opts);</span></span>
+<span id="L558"><span class="lineNum">     558</span> <span class="tlaUNC">           0 : }</span></span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>

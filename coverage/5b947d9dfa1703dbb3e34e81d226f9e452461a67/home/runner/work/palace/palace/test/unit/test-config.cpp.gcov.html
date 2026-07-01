@@ -1,0 +1,1477 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - Palace Coverage Report - home/runner/work/palace/palace/test/unit/test-config.cpp</title>
+  <link rel="stylesheet" type="text/css" href="../../../../../../../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../../../../../../../index.html">top level</a> - <a href="index.html">/home/runner/work/palace/palace/test/unit</a> - test-config.cpp<span style="font-size: 80%;"> (source / <a href="test-config.cpp.func-c.html">functions</a>)</span></td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">Palace Coverage Report</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryHi">99.7&nbsp;%</td>
+            <td class="headerCovTableEntry">678</td>
+            <td class="headerCovTableEntry">676</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2026-06-09 04:51:50</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
+            <td class="headerCovTableEntry">7</td>
+            <td class="headerCovTableEntry">7</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Legend:</td>
+            <td class="headerValueLeg">            Lines:
+            <span class="coverLegendCov">hit</span>
+            <span class="coverLegendNoCov">not hit</span>
+</td>
+            <td></td>
+          </tr>
+                  <tr><td><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
+<span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
+<span id="L3"><span class="lineNum">       3</span>              : </span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &lt;set&gt;</span>
+<span id="L5"><span class="lineNum">       5</span>              : #include &lt;string&gt;</span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;vector&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &lt;catch2/catch_approx.hpp&gt;</span>
+<span id="L8"><span class="lineNum">       8</span>              : #include &lt;catch2/catch_test_macros.hpp&gt;</span>
+<span id="L9"><span class="lineNum">       9</span>              : #include &lt;nlohmann/json.hpp&gt;</span>
+<span id="L10"><span class="lineNum">      10</span>              : #include &lt;catch2/generators/catch_generators_all.hpp&gt;</span>
+<span id="L11"><span class="lineNum">      11</span>              : #include &lt;catch2/matchers/catch_matchers_floating_point.hpp&gt;</span>
+<span id="L12"><span class="lineNum">      12</span>              : #include &quot;embedded_schema.hpp&quot;</span>
+<span id="L13"><span class="lineNum">      13</span>              : #include &quot;linalg/ksp.hpp&quot;</span>
+<span id="L14"><span class="lineNum">      14</span>              : #include &quot;utils/configfile.hpp&quot;</span>
+<span id="L15"><span class="lineNum">      15</span>              : #include &quot;utils/iodata.hpp&quot;</span>
+<span id="L16"><span class="lineNum">      16</span>              : #include &quot;utils/jsonschema.hpp&quot;</span>
+<span id="L17"><span class="lineNum">      17</span>              : </span>
+<span id="L18"><span class="lineNum">      18</span>              : using json = nlohmann::json;</span>
+<span id="L19"><span class="lineNum">      19</span>              : using namespace palace;</span>
+<span id="L20"><span class="lineNum">      20</span>              : </span>
+<span id="L21"><span class="lineNum">      21</span>              : namespace</span>
+<span id="L22"><span class="lineNum">      22</span>              : {</span>
+<span id="L23"><span class="lineNum">      23</span>              : </span>
+<span id="L24"><span class="lineNum">      24</span>              : // Returns the names of properties declared in the given schema scope that the</span>
+<span id="L25"><span class="lineNum">      25</span>              : // concretized config does NOT contain, excluding (a) properties marked `required`</span>
+<span id="L26"><span class="lineNum">      26</span>              : // in the schema (the user must provide those at parse time, no default applies)</span>
+<span id="L27"><span class="lineNum">      27</span>              : // and (b) any names in `skip` (intentional omissions — e.g. `Lc` is computed from</span>
+<span id="L28"><span class="lineNum">      28</span>              : // the mesh at runtime, `MaterialAxes`/`Center` carry opt-in semantics where absence</span>
+<span id="L29"><span class="lineNum">      29</span>              : // is meaningful).</span>
+<span id="L30"><span class="lineNum">      30</span>              : //</span>
+<span id="L31"><span class="lineNum">      31</span>              : // `schema_filename` is the key in `schema::GetSchemaMap()` (e.g. &quot;config/model.json&quot;).</span>
+<span id="L32"><span class="lineNum">      32</span>              : // `pointer` is a JSON Pointer into that schema document selecting the scope to walk</span>
+<span id="L33"><span class="lineNum">      33</span>              : // (e.g. &quot;&quot; for the top of model.json, &quot;/properties/Refinement&quot; for the nested</span>
+<span id="L34"><span class="lineNum">      34</span>              : // Refinement object, or &quot;/properties/Conductivity/items&quot; for an array element).</span>
+<span id="L35"><span class="lineNum">      35</span>              : //</span>
+<span id="L36"><span class="lineNum">      36</span>              : // Use this in round-trip tests to catch the case where someone adds a new optional</span>
+<span id="L37"><span class="lineNum">      37</span>              : // schema property without wiring `ConcretizeDefaults` to emit it.</span>
+<span id="L38"><span class="lineNum">      38</span> <span class="tlaGNC tlaBgGNC">          12 : std::vector&lt;std::string&gt; SchemaCoverageGaps(const std::string &amp;schema_filename,</span></span>
+<span id="L39"><span class="lineNum">      39</span>              :                                             const std::string &amp;pointer,</span>
+<span id="L40"><span class="lineNum">      40</span>              :                                             const json &amp;concretized_subtree,</span>
+<span id="L41"><span class="lineNum">      41</span>              :                                             const std::set&lt;std::string&gt; &amp;skip = {})</span>
+<span id="L42"><span class="lineNum">      42</span>              : {</span>
+<span id="L43"><span class="lineNum">      43</span> <span class="tlaGNC">          12 :   const auto &amp;schema_map = schema::GetSchemaMap();</span></span>
+<span id="L44"><span class="lineNum">      44</span> <span class="tlaGNC">          12 :   auto it = schema_map.find(schema_filename);</span></span>
+<span id="L45"><span class="lineNum">      45</span> <span class="tlaGNC">          12 :   REQUIRE(it != schema_map.end());</span></span>
+<span id="L46"><span class="lineNum">      46</span> <span class="tlaGNC">          24 :   const json schema = json::parse(it-&gt;second);</span></span>
+<span id="L47"><span class="lineNum">      47</span> <span class="tlaGNC">          12 :   const json scope = schema.at(json::json_pointer(pointer));</span></span>
+<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC">          24 :   REQUIRE(scope.contains(&quot;properties&quot;));</span></span>
+<span id="L49"><span class="lineNum">      49</span>              :   std::set&lt;std::string&gt; required_set;</span>
+<span id="L50"><span class="lineNum">      50</span> <span class="tlaGNC">          12 :   if (auto rit = scope.find(&quot;required&quot;); rit != scope.end())</span></span>
+<span id="L51"><span class="lineNum">      51</span>              :   {</span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">          39 :     for (const auto &amp;r : *rit)</span></span>
+<span id="L53"><span class="lineNum">      53</span>              :     {</span>
+<span id="L54"><span class="lineNum">      54</span> <span class="tlaGNC">          30 :       required_set.insert(r.get&lt;std::string&gt;());</span></span>
+<span id="L55"><span class="lineNum">      55</span>              :     }</span>
+<span id="L56"><span class="lineNum">      56</span>              :   }</span>
+<span id="L57"><span class="lineNum">      57</span>              :   std::vector&lt;std::string&gt; gaps;</span>
+<span id="L58"><span class="lineNum">      58</span> <span class="tlaGNC">         139 :   for (const auto &amp;[name, _sub] : scope.at(&quot;properties&quot;).items())</span></span>
+<span id="L59"><span class="lineNum">      59</span>              :   {</span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaGNC">          27 :     if (required_set.count(name) || skip.count(name))</span></span>
+<span id="L61"><span class="lineNum">      61</span>              :     {</span>
+<span id="L62"><span class="lineNum">      62</span> <span class="tlaGNC">          27 :       continue;</span></span>
+<span id="L63"><span class="lineNum">      63</span>              :     }</span>
+<span id="L64"><span class="lineNum">      64</span> <span class="tlaGNC">          88 :     if (!concretized_subtree.is_object() || !concretized_subtree.contains(name))</span></span>
+<span id="L65"><span class="lineNum">      65</span>              :     {</span>
+<span id="L66"><span class="lineNum">      66</span> <span class="tlaUNC tlaBgUNC">           0 :       gaps.push_back(name);</span></span>
+<span id="L67"><span class="lineNum">      67</span>              :     }</span>
+<span id="L68"><span class="lineNum">      68</span>              :   }</span>
+<span id="L69"><span class="lineNum">      69</span> <span class="tlaGNC tlaBgGNC">          12 :   return gaps;</span></span>
+<span id="L70"><span class="lineNum">      70</span> <span class="tlaUNC tlaBgUNC">           0 : }</span></span>
+<span id="L71"><span class="lineNum">      71</span>              : </span>
+<span id="L72"><span class="lineNum">      72</span>              : }  // namespace</span>
+<span id="L73"><span class="lineNum">      73</span>              : </span>
+<span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC tlaBgGNC">          13 : TEST_CASE(&quot;Config Boundary Ports&quot;, &quot;[config][Serial]&quot;)</span></span>
+<span id="L75"><span class="lineNum">      75</span>              : {</span>
+<span id="L76"><span class="lineNum">      76</span> <span class="tlaGNC">          13 :   SECTION(&quot;Basic passing config with bool excitation&quot;)</span></span>
+<span id="L77"><span class="lineNum">      77</span>              :   {</span>
+<span id="L78"><span class="lineNum">      78</span>              :     json boundaries = {{&quot;LumpedPort&quot;,</span>
+<span id="L79"><span class="lineNum">      79</span>              :                         {{{&quot;Attributes&quot;, {5}},</span>
+<span id="L80"><span class="lineNum">      80</span>              :                           {&quot;Index&quot;, 1},</span>
+<span id="L81"><span class="lineNum">      81</span>              :                           {&quot;R&quot;, 50.0},</span>
+<span id="L82"><span class="lineNum">      82</span>              :                           {&quot;Direction&quot;, &quot;+Y&quot;},</span>
+<span id="L83"><span class="lineNum">      83</span>              :                           {&quot;Excitation&quot;, true}},</span>
+<span id="L84"><span class="lineNum">      84</span>              :                          {{&quot;Attributes&quot;, {16}},</span>
+<span id="L85"><span class="lineNum">      85</span>              :                           {&quot;Index&quot;, 2},</span>
+<span id="L86"><span class="lineNum">      86</span>              :                           {&quot;R&quot;, 50.0},</span>
+<span id="L87"><span class="lineNum">      87</span>              :                           {&quot;Direction&quot;, &quot;-Y&quot;},</span>
+<span id="L88"><span class="lineNum">      88</span>              :                           {&quot;Excitation&quot;, false}},</span>
+<span id="L89"><span class="lineNum">      89</span>              :                          {{&quot;Active&quot;, false},</span>
+<span id="L90"><span class="lineNum">      90</span>              :                           {&quot;Index&quot;, 3},</span>
+<span id="L91"><span class="lineNum">      91</span>              :                           {&quot;Elements&quot;,</span>
+<span id="L92"><span class="lineNum">      92</span>              :                            {{{&quot;Attributes&quot;, {27}}, {&quot;Direction&quot;, &quot;+X&quot;}},</span>
+<span id="L93"><span class="lineNum">      93</span>              :                             {{&quot;Attributes&quot;, {38}}, {&quot;Direction&quot;, &quot;-X&quot;}}}},</span>
+<span id="L94"><span class="lineNum">      94</span>              :                           {&quot;R&quot;, 50.0}}}},</span>
+<span id="L95"><span class="lineNum">      95</span>              :                        {&quot;WavePort&quot;,</span>
+<span id="L96"><span class="lineNum">      96</span>              :                         {{{&quot;Attributes&quot;, {6}}, {&quot;Index&quot;, 4}, {&quot;Excitation&quot;, true}},</span>
+<span id="L97"><span class="lineNum">      97</span>              :                          {{&quot;Attributes&quot;, {17}}, {&quot;Index&quot;, 5}, {&quot;Excitation&quot;, false}},</span>
+<span id="L98"><span class="lineNum">      98</span>              :                          {{&quot;Attributes&quot;, {18}}, {&quot;Index&quot;, 6}, {&quot;Active&quot;, false}}}},</span>
+<span id="L99"><span class="lineNum">      99</span>              :                        {&quot;PEC&quot;, {{&quot;Attributes&quot;, {3}}}},</span>
+<span id="L100"><span class="lineNum">     100</span> <span class="tlaGNC">         144 :                        {&quot;Absorbing&quot;, {{&quot;Attributes&quot;, {4}}}}};</span></span>
+<span id="L101"><span class="lineNum">     101</span> <span class="tlaGNC">           1 :     config::BoundaryData boundary_ex_bool(boundaries);</span></span>
+<span id="L102"><span class="lineNum">     102</span>              : </span>
+<span id="L103"><span class="lineNum">     103</span> <span class="tlaGNC">           1 :     CHECK(boundary_ex_bool.lumpedport.at(1).active);</span></span>
+<span id="L104"><span class="lineNum">     104</span> <span class="tlaGNC">           1 :     CHECK(boundary_ex_bool.lumpedport.at(3).active == false);</span></span>
+<span id="L105"><span class="lineNum">     105</span> <span class="tlaGNC">           1 :     CHECK(boundary_ex_bool.lumpedport.at(1).excitation != 0);</span></span>
+<span id="L106"><span class="lineNum">     106</span> <span class="tlaGNC">           1 :     CHECK(boundary_ex_bool.lumpedport.at(3).excitation == 0);</span></span>
+<span id="L107"><span class="lineNum">     107</span> <span class="tlaGNC">           1 :     CHECK(boundary_ex_bool.waveport.at(5).excitation == 0);</span></span>
+<span id="L108"><span class="lineNum">     108</span> <span class="tlaGNC">           1 :     CHECK(boundary_ex_bool.waveport.at(6).excitation == 0);</span></span>
+<span id="L109"><span class="lineNum">     109</span>              : </span>
+<span id="L110"><span class="lineNum">     110</span>              :     // Equivalent config with int excitation.</span>
+<span id="L111"><span class="lineNum">     111</span>              :     json boundaries_int = {{&quot;LumpedPort&quot;,</span>
+<span id="L112"><span class="lineNum">     112</span>              :                             {{{&quot;Attributes&quot;, {5}},</span>
+<span id="L113"><span class="lineNum">     113</span>              :                               {&quot;Index&quot;, 1},</span>
+<span id="L114"><span class="lineNum">     114</span>              :                               {&quot;R&quot;, 50.0},</span>
+<span id="L115"><span class="lineNum">     115</span>              :                               {&quot;Direction&quot;, &quot;+Y&quot;},</span>
+<span id="L116"><span class="lineNum">     116</span>              :                               {&quot;Excitation&quot;, 1}},</span>
+<span id="L117"><span class="lineNum">     117</span>              :                              {{&quot;Attributes&quot;, {16}},</span>
+<span id="L118"><span class="lineNum">     118</span>              :                               {&quot;Index&quot;, 2},</span>
+<span id="L119"><span class="lineNum">     119</span>              :                               {&quot;R&quot;, 50.0},</span>
+<span id="L120"><span class="lineNum">     120</span>              :                               {&quot;Direction&quot;, &quot;-Y&quot;},</span>
+<span id="L121"><span class="lineNum">     121</span>              :                               {&quot;Excitation&quot;, 0}},</span>
+<span id="L122"><span class="lineNum">     122</span>              :                              {{&quot;Active&quot;, false},</span>
+<span id="L123"><span class="lineNum">     123</span>              :                               {&quot;Index&quot;, 3},</span>
+<span id="L124"><span class="lineNum">     124</span>              :                               {&quot;Elements&quot;,</span>
+<span id="L125"><span class="lineNum">     125</span>              :                                {{{&quot;Attributes&quot;, {27}}, {&quot;Direction&quot;, &quot;+X&quot;}},</span>
+<span id="L126"><span class="lineNum">     126</span>              :                                 {{&quot;Attributes&quot;, {38}}, {&quot;Direction&quot;, &quot;-X&quot;}}}},</span>
+<span id="L127"><span class="lineNum">     127</span>              :                               {&quot;R&quot;, 50.0}}}},</span>
+<span id="L128"><span class="lineNum">     128</span>              :                            {&quot;WavePort&quot;,</span>
+<span id="L129"><span class="lineNum">     129</span>              :                             {{{&quot;Attributes&quot;, {6}}, {&quot;Index&quot;, 4}, {&quot;Excitation&quot;, 1}},</span>
+<span id="L130"><span class="lineNum">     130</span>              :                              {{&quot;Attributes&quot;, {17}}, {&quot;Index&quot;, 5}, {&quot;Excitation&quot;, 0}},</span>
+<span id="L131"><span class="lineNum">     131</span>              :                              {{&quot;Attributes&quot;, {18}}, {&quot;Index&quot;, 6}, {&quot;Active&quot;, false}}}},</span>
+<span id="L132"><span class="lineNum">     132</span>              :                            {&quot;PEC&quot;, {{&quot;Attributes&quot;, {3}}}},</span>
+<span id="L133"><span class="lineNum">     133</span> <span class="tlaGNC">         144 :                            {&quot;Absorbing&quot;, {{&quot;Attributes&quot;, {4}}}}};</span></span>
+<span id="L134"><span class="lineNum">     134</span> <span class="tlaGNC">           1 :     config::BoundaryData boundary_ex_int(boundaries_int);</span></span>
+<span id="L135"><span class="lineNum">     135</span>              : </span>
+<span id="L136"><span class="lineNum">     136</span> <span class="tlaGNC">           1 :     REQUIRE(boundary_ex_bool.lumpedport.size() == boundary_ex_int.lumpedport.size());</span></span>
+<span id="L137"><span class="lineNum">     137</span>              :     auto it_int = boundary_ex_int.lumpedport.begin();</span>
+<span id="L138"><span class="lineNum">     138</span>              :     auto it_bool = boundary_ex_bool.lumpedport.begin();</span>
+<span id="L139"><span class="lineNum">     139</span> <span class="tlaGNC">           4 :     for (; it_int != boundary_ex_int.lumpedport.end(); it_int++, it_bool++)</span></span>
+<span id="L140"><span class="lineNum">     140</span>              :     {</span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaGNC">           3 :       CHECK(it_bool-&gt;first == it_int-&gt;first);</span></span>
+<span id="L142"><span class="lineNum">     142</span> <span class="tlaGNC">           3 :       CHECK(it_bool-&gt;second.excitation == it_int-&gt;second.excitation);</span></span>
+<span id="L143"><span class="lineNum">     143</span>              :     }</span>
+<span id="L144"><span class="lineNum">     144</span> <span class="tlaGNC">          15 :   }</span></span>
+<span id="L145"><span class="lineNum">     145</span>              : </span>
+<span id="L146"><span class="lineNum">     146</span> <span class="tlaGNC">          13 :   SECTION(&quot;Repeated index within LumpedPort throws&quot;)</span></span>
+<span id="L147"><span class="lineNum">     147</span>              :   {</span>
+<span id="L148"><span class="lineNum">     148</span>              :     json boundaries = {</span>
+<span id="L149"><span class="lineNum">     149</span>              :         {&quot;LumpedPort&quot;,</span>
+<span id="L150"><span class="lineNum">     150</span>              :          {{{&quot;Attributes&quot;, {5}},</span>
+<span id="L151"><span class="lineNum">     151</span>              :            {&quot;Index&quot;, 1},</span>
+<span id="L152"><span class="lineNum">     152</span>              :            {&quot;R&quot;, 50},</span>
+<span id="L153"><span class="lineNum">     153</span>              :            {&quot;Direction&quot;, &quot;+Y&quot;},</span>
+<span id="L154"><span class="lineNum">     154</span>              :            {&quot;Excitation&quot;, true}},</span>
+<span id="L155"><span class="lineNum">     155</span>              :           {{&quot;Attributes&quot;, {16}},</span>
+<span id="L156"><span class="lineNum">     156</span>              :            {&quot;Index&quot;, 1},</span>
+<span id="L157"><span class="lineNum">     157</span>              :            {&quot;R&quot;, 50},</span>
+<span id="L158"><span class="lineNum">     158</span>              :            {&quot;Direction&quot;, &quot;-Y&quot;},</span>
+<span id="L159"><span class="lineNum">     159</span>              :            {&quot;Excitation&quot;, false}}}},</span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaGNC">          61 :         {&quot;WavePort&quot;, {{{&quot;Attributes&quot;, {6}}, {&quot;Index&quot;, 2}, {&quot;Excitation&quot;, true}}}}};</span></span>
+<span id="L161"><span class="lineNum">     161</span> <span class="tlaGNC">           1 :     CHECK_THROWS(config::BoundaryData(boundaries));</span></span>
+<span id="L162"><span class="lineNum">     162</span> <span class="tlaGNC">          13 :   }</span></span>
+<span id="L163"><span class="lineNum">     163</span>              : </span>
+<span id="L164"><span class="lineNum">     164</span> <span class="tlaGNC">          13 :   SECTION(&quot;Repeated index within WavePort throws&quot;)</span></span>
+<span id="L165"><span class="lineNum">     165</span>              :   {</span>
+<span id="L166"><span class="lineNum">     166</span>              :     json boundaries = {{&quot;LumpedPort&quot;,</span>
+<span id="L167"><span class="lineNum">     167</span>              :                         {{{&quot;Attributes&quot;, {5}},</span>
+<span id="L168"><span class="lineNum">     168</span>              :                           {&quot;Index&quot;, 1},</span>
+<span id="L169"><span class="lineNum">     169</span>              :                           {&quot;R&quot;, 50},</span>
+<span id="L170"><span class="lineNum">     170</span>              :                           {&quot;Direction&quot;, &quot;+Y&quot;},</span>
+<span id="L171"><span class="lineNum">     171</span>              :                           {&quot;Excitation&quot;, true}}}},</span>
+<span id="L172"><span class="lineNum">     172</span>              :                        {&quot;WavePort&quot;,</span>
+<span id="L173"><span class="lineNum">     173</span>              :                         {{{&quot;Attributes&quot;, {6}}, {&quot;Index&quot;, 2}, {&quot;Excitation&quot;, true}},</span>
+<span id="L174"><span class="lineNum">     174</span> <span class="tlaGNC">          55 :                          {{&quot;Attributes&quot;, {7}}, {&quot;Index&quot;, 2}, {&quot;Excitation&quot;, true}}}}};</span></span>
+<span id="L175"><span class="lineNum">     175</span> <span class="tlaGNC">           1 :     CHECK_THROWS(config::BoundaryData(boundaries));</span></span>
+<span id="L176"><span class="lineNum">     176</span> <span class="tlaGNC">          13 :   }</span></span>
+<span id="L177"><span class="lineNum">     177</span>              : </span>
+<span id="L178"><span class="lineNum">     178</span> <span class="tlaGNC">          13 :   SECTION(&quot;Repeated index cross-array fails validation&quot;)</span></span>
+<span id="L179"><span class="lineNum">     179</span>              :   {</span>
+<span id="L180"><span class="lineNum">     180</span>              :     json boundaries = {</span>
+<span id="L181"><span class="lineNum">     181</span>              :         {&quot;LumpedPort&quot;,</span>
+<span id="L182"><span class="lineNum">     182</span>              :          {{{&quot;Attributes&quot;, {5}},</span>
+<span id="L183"><span class="lineNum">     183</span>              :            {&quot;Index&quot;, 1},</span>
+<span id="L184"><span class="lineNum">     184</span>              :            {&quot;R&quot;, 50},</span>
+<span id="L185"><span class="lineNum">     185</span>              :            {&quot;Direction&quot;, &quot;+Y&quot;},</span>
+<span id="L186"><span class="lineNum">     186</span>              :            {&quot;Excitation&quot;, true}},</span>
+<span id="L187"><span class="lineNum">     187</span>              :           {{&quot;Attributes&quot;, {16}},</span>
+<span id="L188"><span class="lineNum">     188</span>              :            {&quot;Index&quot;, 2},</span>
+<span id="L189"><span class="lineNum">     189</span>              :            {&quot;R&quot;, 50},</span>
+<span id="L190"><span class="lineNum">     190</span>              :            {&quot;Direction&quot;, &quot;-Y&quot;},</span>
+<span id="L191"><span class="lineNum">     191</span>              :            {&quot;Excitation&quot;, false}}}},</span>
+<span id="L192"><span class="lineNum">     192</span> <span class="tlaGNC">          61 :         {&quot;WavePort&quot;, {{{&quot;Attributes&quot;, {6}}, {&quot;Index&quot;, 1}, {&quot;Excitation&quot;, true}}}}};</span></span>
+<span id="L193"><span class="lineNum">     193</span> <span class="tlaGNC">           1 :     config::BoundaryData boundary_data(boundaries);</span></span>
+<span id="L194"><span class="lineNum">     194</span> <span class="tlaGNC">           2 :     CHECK(config::Validate(boundary_data).has_value());</span></span>
+<span id="L195"><span class="lineNum">     195</span> <span class="tlaGNC">          14 :   }</span></span>
+<span id="L196"><span class="lineNum">     196</span>              : </span>
+<span id="L197"><span class="lineNum">     197</span> <span class="tlaGNC">          13 :   SECTION(&quot;Mislabeled excitation index fails validation&quot;)</span></span>
+<span id="L198"><span class="lineNum">     198</span>              :   {</span>
+<span id="L199"><span class="lineNum">     199</span>              :     json boundaries1 = {</span>
+<span id="L200"><span class="lineNum">     200</span>              :         {&quot;LumpedPort&quot;,</span>
+<span id="L201"><span class="lineNum">     201</span>              :          {{{&quot;Attributes&quot;, {5}},</span>
+<span id="L202"><span class="lineNum">     202</span>              :            {&quot;Index&quot;, 1},</span>
+<span id="L203"><span class="lineNum">     203</span>              :            {&quot;R&quot;, 50},</span>
+<span id="L204"><span class="lineNum">     204</span>              :            {&quot;Direction&quot;, &quot;+Y&quot;},</span>
+<span id="L205"><span class="lineNum">     205</span>              :            {&quot;Excitation&quot;, 2}}}},</span>
+<span id="L206"><span class="lineNum">     206</span> <span class="tlaGNC">          41 :         {&quot;WavePort&quot;, {{{&quot;Attributes&quot;, {6}}, {&quot;Index&quot;, 2}, {&quot;Excitation&quot;, 1}}}}};</span></span>
+<span id="L207"><span class="lineNum">     207</span> <span class="tlaGNC">           1 :     config::BoundaryData bd1(boundaries1);</span></span>
+<span id="L208"><span class="lineNum">     208</span> <span class="tlaGNC">           2 :     CHECK(config::Validate(bd1).has_value());</span></span>
+<span id="L209"><span class="lineNum">     209</span>              : </span>
+<span id="L210"><span class="lineNum">     210</span>              :     json boundaries2 = {</span>
+<span id="L211"><span class="lineNum">     211</span>              :         {&quot;LumpedPort&quot;,</span>
+<span id="L212"><span class="lineNum">     212</span>              :          {{{&quot;Attributes&quot;, {5}},</span>
+<span id="L213"><span class="lineNum">     213</span>              :            {&quot;Index&quot;, 1},</span>
+<span id="L214"><span class="lineNum">     214</span>              :            {&quot;R&quot;, 50},</span>
+<span id="L215"><span class="lineNum">     215</span>              :            {&quot;Direction&quot;, &quot;+Y&quot;},</span>
+<span id="L216"><span class="lineNum">     216</span>              :            {&quot;Excitation&quot;, 2}}}},</span>
+<span id="L217"><span class="lineNum">     217</span> <span class="tlaGNC">          41 :         {&quot;WavePort&quot;, {{{&quot;Attributes&quot;, {6}}, {&quot;Index&quot;, 2}, {&quot;Excitation&quot;, 0}}}}};</span></span>
+<span id="L218"><span class="lineNum">     218</span> <span class="tlaGNC">           1 :     config::BoundaryData bd2(boundaries2);</span></span>
+<span id="L219"><span class="lineNum">     219</span> <span class="tlaGNC">           2 :     CHECK(config::Validate(bd2).has_value());</span></span>
+<span id="L220"><span class="lineNum">     220</span> <span class="tlaGNC">          15 :   }</span></span>
+<span id="L221"><span class="lineNum">     221</span>              : </span>
+<span id="L222"><span class="lineNum">     222</span> <span class="tlaGNC">          13 :   SECTION(&quot;Upgrade excitation index 1&quot;)</span></span>
+<span id="L223"><span class="lineNum">     223</span>              :   {</span>
+<span id="L224"><span class="lineNum">     224</span>              :     json boundaries = {</span>
+<span id="L225"><span class="lineNum">     225</span>              :         {&quot;LumpedPort&quot;,</span>
+<span id="L226"><span class="lineNum">     226</span>              :          {{{&quot;Attributes&quot;, {5}}, {&quot;Index&quot;, 1}, {&quot;R&quot;, 50}, {&quot;Direction&quot;, &quot;+Y&quot;}},</span>
+<span id="L227"><span class="lineNum">     227</span>              :           {{&quot;Attributes&quot;, {16}},</span>
+<span id="L228"><span class="lineNum">     228</span>              :            {&quot;Index&quot;, 2},</span>
+<span id="L229"><span class="lineNum">     229</span>              :            {&quot;R&quot;, 50},</span>
+<span id="L230"><span class="lineNum">     230</span>              :            {&quot;Direction&quot;, &quot;-Y&quot;},</span>
+<span id="L231"><span class="lineNum">     231</span>              :            {&quot;Excitation&quot;, true}}}},</span>
+<span id="L232"><span class="lineNum">     232</span>              :         {&quot;WavePort&quot;,</span>
+<span id="L233"><span class="lineNum">     233</span> <span class="tlaGNC">          66 :          {{{&quot;Attributes&quot;, {6}}, {&quot;Index&quot;, 4}}, {{&quot;Attributes&quot;, {17}}, {&quot;Index&quot;, 5}}}}};</span></span>
+<span id="L234"><span class="lineNum">     234</span> <span class="tlaGNC">           1 :     config::BoundaryData boundary_data(boundaries);</span></span>
+<span id="L235"><span class="lineNum">     235</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.lumpedport.at(1).excitation == 0);</span></span>
+<span id="L236"><span class="lineNum">     236</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.lumpedport.at(2).excitation == 2);</span></span>
+<span id="L237"><span class="lineNum">     237</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.waveport.at(4).excitation == 0);</span></span>
+<span id="L238"><span class="lineNum">     238</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.waveport.at(5).excitation == 0);</span></span>
+<span id="L239"><span class="lineNum">     239</span> <span class="tlaGNC">          14 :   }</span></span>
+<span id="L240"><span class="lineNum">     240</span>              : </span>
+<span id="L241"><span class="lineNum">     241</span> <span class="tlaGNC">          13 :   SECTION(&quot;Upgrade excitation index 2&quot;)</span></span>
+<span id="L242"><span class="lineNum">     242</span>              :   {</span>
+<span id="L243"><span class="lineNum">     243</span>              :     json boundaries = {</span>
+<span id="L244"><span class="lineNum">     244</span>              :         {&quot;LumpedPort&quot;,</span>
+<span id="L245"><span class="lineNum">     245</span>              :          {{{&quot;Attributes&quot;, {5}}, {&quot;Index&quot;, 1}, {&quot;R&quot;, 50}, {&quot;Direction&quot;, &quot;+Y&quot;}},</span>
+<span id="L246"><span class="lineNum">     246</span>              :           {{&quot;Attributes&quot;, {16}},</span>
+<span id="L247"><span class="lineNum">     247</span>              :            {&quot;Index&quot;, 2},</span>
+<span id="L248"><span class="lineNum">     248</span>              :            {&quot;R&quot;, 50},</span>
+<span id="L249"><span class="lineNum">     249</span>              :            {&quot;Direction&quot;, &quot;-Y&quot;},</span>
+<span id="L250"><span class="lineNum">     250</span>              :            {&quot;Excitation&quot;, 1}}}},</span>
+<span id="L251"><span class="lineNum">     251</span>              :         {&quot;WavePort&quot;,</span>
+<span id="L252"><span class="lineNum">     252</span> <span class="tlaGNC">          66 :          {{{&quot;Attributes&quot;, {6}}, {&quot;Index&quot;, 4}}, {{&quot;Attributes&quot;, {17}}, {&quot;Index&quot;, 5}}}}};</span></span>
+<span id="L253"><span class="lineNum">     253</span> <span class="tlaGNC">           1 :     config::BoundaryData boundary_data(boundaries);</span></span>
+<span id="L254"><span class="lineNum">     254</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.lumpedport.at(1).excitation == 0);</span></span>
+<span id="L255"><span class="lineNum">     255</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.lumpedport.at(2).excitation == 2);</span></span>
+<span id="L256"><span class="lineNum">     256</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.waveport.at(4).excitation == 0);</span></span>
+<span id="L257"><span class="lineNum">     257</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.waveport.at(5).excitation == 0);</span></span>
+<span id="L258"><span class="lineNum">     258</span> <span class="tlaGNC">          14 :   }</span></span>
+<span id="L259"><span class="lineNum">     259</span>              : </span>
+<span id="L260"><span class="lineNum">     260</span> <span class="tlaGNC">          13 :   SECTION(&quot;Upgrade excitation index 3&quot;)</span></span>
+<span id="L261"><span class="lineNum">     261</span>              :   {</span>
+<span id="L262"><span class="lineNum">     262</span>              :     json boundaries = {</span>
+<span id="L263"><span class="lineNum">     263</span>              :         {&quot;LumpedPort&quot;,</span>
+<span id="L264"><span class="lineNum">     264</span>              :          {{{&quot;Attributes&quot;, {5}}, {&quot;Index&quot;, 1}, {&quot;R&quot;, 50}, {&quot;Direction&quot;, &quot;+Y&quot;}},</span>
+<span id="L265"><span class="lineNum">     265</span>              :           {{&quot;Attributes&quot;, {16}}, {&quot;Index&quot;, 2}, {&quot;R&quot;, 50}, {&quot;Direction&quot;, &quot;-Y&quot;}}}},</span>
+<span id="L266"><span class="lineNum">     266</span>              :         {&quot;WavePort&quot;,</span>
+<span id="L267"><span class="lineNum">     267</span>              :          {{{&quot;Attributes&quot;, {6}}, {&quot;Index&quot;, 4}, {&quot;Excitation&quot;, true}},</span>
+<span id="L268"><span class="lineNum">     268</span> <span class="tlaGNC">          66 :           {{&quot;Attributes&quot;, {17}}, {&quot;Index&quot;, 5}}}}};</span></span>
+<span id="L269"><span class="lineNum">     269</span> <span class="tlaGNC">           1 :     config::BoundaryData boundary_data(boundaries);</span></span>
+<span id="L270"><span class="lineNum">     270</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.lumpedport.at(1).excitation == 0);</span></span>
+<span id="L271"><span class="lineNum">     271</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.lumpedport.at(2).excitation == 0);</span></span>
+<span id="L272"><span class="lineNum">     272</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.waveport.at(4).excitation == 4);</span></span>
+<span id="L273"><span class="lineNum">     273</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.waveport.at(5).excitation == 0);</span></span>
+<span id="L274"><span class="lineNum">     274</span> <span class="tlaGNC">          14 :   }</span></span>
+<span id="L275"><span class="lineNum">     275</span>              : </span>
+<span id="L276"><span class="lineNum">     276</span> <span class="tlaGNC">          13 :   SECTION(&quot;Upgrade excitation index 4&quot;)</span></span>
+<span id="L277"><span class="lineNum">     277</span>              :   {</span>
+<span id="L278"><span class="lineNum">     278</span>              :     json boundaries = {</span>
+<span id="L279"><span class="lineNum">     279</span>              :         {&quot;LumpedPort&quot;,</span>
+<span id="L280"><span class="lineNum">     280</span>              :          {{{&quot;Attributes&quot;, {5}},</span>
+<span id="L281"><span class="lineNum">     281</span>              :            {&quot;Index&quot;, 1},</span>
+<span id="L282"><span class="lineNum">     282</span>              :            {&quot;R&quot;, 50},</span>
+<span id="L283"><span class="lineNum">     283</span>              :            {&quot;Direction&quot;, &quot;+Y&quot;},</span>
+<span id="L284"><span class="lineNum">     284</span>              :            {&quot;Excitation&quot;, true}},</span>
+<span id="L285"><span class="lineNum">     285</span>              :           {{&quot;Attributes&quot;, {16}}, {&quot;Index&quot;, 2}, {&quot;R&quot;, 50}, {&quot;Direction&quot;, &quot;-Y&quot;}}}},</span>
+<span id="L286"><span class="lineNum">     286</span>              :         {&quot;WavePort&quot;,</span>
+<span id="L287"><span class="lineNum">     287</span>              :          {{{&quot;Attributes&quot;, {6}}, {&quot;Index&quot;, 4}, {&quot;Excitation&quot;, true}},</span>
+<span id="L288"><span class="lineNum">     288</span> <span class="tlaGNC">          69 :           {{&quot;Attributes&quot;, {17}}, {&quot;Index&quot;, 5}}}}};</span></span>
+<span id="L289"><span class="lineNum">     289</span> <span class="tlaGNC">           1 :     config::BoundaryData boundary_data(boundaries);</span></span>
+<span id="L290"><span class="lineNum">     290</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.lumpedport.at(1).excitation == 1);</span></span>
+<span id="L291"><span class="lineNum">     291</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.lumpedport.at(2).excitation == 0);</span></span>
+<span id="L292"><span class="lineNum">     292</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.waveport.at(4).excitation == 1);</span></span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.waveport.at(5).excitation == 0);</span></span>
+<span id="L294"><span class="lineNum">     294</span> <span class="tlaGNC">          14 :   }</span></span>
+<span id="L295"><span class="lineNum">     295</span>              : </span>
+<span id="L296"><span class="lineNum">     296</span> <span class="tlaGNC">          13 :   SECTION(&quot;Shared excitation valid&quot;)</span></span>
+<span id="L297"><span class="lineNum">     297</span>              :   {</span>
+<span id="L298"><span class="lineNum">     298</span>              :     json boundaries = {{&quot;LumpedPort&quot;,</span>
+<span id="L299"><span class="lineNum">     299</span>              :                         {{{&quot;Attributes&quot;, {5}},</span>
+<span id="L300"><span class="lineNum">     300</span>              :                           {&quot;Index&quot;, 1},</span>
+<span id="L301"><span class="lineNum">     301</span>              :                           {&quot;R&quot;, 50},</span>
+<span id="L302"><span class="lineNum">     302</span>              :                           {&quot;Direction&quot;, &quot;+Y&quot;},</span>
+<span id="L303"><span class="lineNum">     303</span>              :                           {&quot;Excitation&quot;, 1}},</span>
+<span id="L304"><span class="lineNum">     304</span>              :                          {{&quot;Attributes&quot;, {6}},</span>
+<span id="L305"><span class="lineNum">     305</span>              :                           {&quot;Index&quot;, 2},</span>
+<span id="L306"><span class="lineNum">     306</span>              :                           {&quot;R&quot;, 50},</span>
+<span id="L307"><span class="lineNum">     307</span>              :                           {&quot;Direction&quot;, &quot;-Y&quot;},</span>
+<span id="L308"><span class="lineNum">     308</span> <span class="tlaGNC">          44 :                           {&quot;Excitation&quot;, 1}}}}};</span></span>
+<span id="L309"><span class="lineNum">     309</span> <span class="tlaGNC">           1 :     config::BoundaryData boundary_data(boundaries);</span></span>
+<span id="L310"><span class="lineNum">     310</span> <span class="tlaGNC">           2 :     CHECK(!config::Validate(boundary_data).has_value());</span></span>
+<span id="L311"><span class="lineNum">     311</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.lumpedport.at(1).excitation == 1);</span></span>
+<span id="L312"><span class="lineNum">     312</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.lumpedport.at(2).excitation == 1);</span></span>
+<span id="L313"><span class="lineNum">     313</span> <span class="tlaGNC">          14 :   }</span></span>
+<span id="L314"><span class="lineNum">     314</span>              : </span>
+<span id="L315"><span class="lineNum">     315</span> <span class="tlaGNC">          13 :   SECTION(&quot;Multi-excitation valid&quot;)</span></span>
+<span id="L316"><span class="lineNum">     316</span>              :   {</span>
+<span id="L317"><span class="lineNum">     317</span>              :     json boundaries = {{&quot;LumpedPort&quot;,</span>
+<span id="L318"><span class="lineNum">     318</span>              :                         {{{&quot;Attributes&quot;, {5}},</span>
+<span id="L319"><span class="lineNum">     319</span>              :                           {&quot;Index&quot;, 1},</span>
+<span id="L320"><span class="lineNum">     320</span>              :                           {&quot;R&quot;, 50},</span>
+<span id="L321"><span class="lineNum">     321</span>              :                           {&quot;Direction&quot;, &quot;+Y&quot;},</span>
+<span id="L322"><span class="lineNum">     322</span>              :                           {&quot;Excitation&quot;, 1}},</span>
+<span id="L323"><span class="lineNum">     323</span>              :                          {{&quot;Attributes&quot;, {6}},</span>
+<span id="L324"><span class="lineNum">     324</span>              :                           {&quot;Index&quot;, 2},</span>
+<span id="L325"><span class="lineNum">     325</span>              :                           {&quot;R&quot;, 50},</span>
+<span id="L326"><span class="lineNum">     326</span>              :                           {&quot;Direction&quot;, &quot;-Y&quot;},</span>
+<span id="L327"><span class="lineNum">     327</span> <span class="tlaGNC">          44 :                           {&quot;Excitation&quot;, 2}}}}};</span></span>
+<span id="L328"><span class="lineNum">     328</span> <span class="tlaGNC">           1 :     config::BoundaryData boundary_data(boundaries);</span></span>
+<span id="L329"><span class="lineNum">     329</span> <span class="tlaGNC">           2 :     CHECK(!config::Validate(boundary_data).has_value());</span></span>
+<span id="L330"><span class="lineNum">     330</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.lumpedport.at(1).excitation == 1);</span></span>
+<span id="L331"><span class="lineNum">     331</span> <span class="tlaGNC">           1 :     CHECK(boundary_data.lumpedport.at(2).excitation == 2);</span></span>
+<span id="L332"><span class="lineNum">     332</span> <span class="tlaGNC">          14 :   }</span></span>
+<span id="L333"><span class="lineNum">     333</span>              : </span>
+<span id="L334"><span class="lineNum">     334</span> <span class="tlaGNC">          13 :   SECTION(&quot;Terminal duplicate index fails validation&quot;)</span></span>
+<span id="L335"><span class="lineNum">     335</span>              :   {</span>
+<span id="L336"><span class="lineNum">     336</span>              :     json boundaries = {</span>
+<span id="L337"><span class="lineNum">     337</span>              :         {&quot;LumpedPort&quot;,</span>
+<span id="L338"><span class="lineNum">     338</span>              :          {{{&quot;Attributes&quot;, {5}}, {&quot;Index&quot;, 1}, {&quot;R&quot;, 50}, {&quot;Direction&quot;, &quot;+Y&quot;}}}},</span>
+<span id="L339"><span class="lineNum">     339</span> <span class="tlaGNC">          35 :         {&quot;Terminal&quot;, {{{&quot;Attributes&quot;, {6}}, {&quot;Index&quot;, 1}}}}};</span></span>
+<span id="L340"><span class="lineNum">     340</span> <span class="tlaGNC">           1 :     config::BoundaryData boundary_data(boundaries);</span></span>
+<span id="L341"><span class="lineNum">     341</span> <span class="tlaGNC">           2 :     CHECK(config::Validate(boundary_data).has_value());</span></span>
+<span id="L342"><span class="lineNum">     342</span> <span class="tlaGNC">          14 :   }</span></span>
+<span id="L343"><span class="lineNum">     343</span>              : </span>
+<span id="L344"><span class="lineNum">     344</span> <span class="tlaGNC">          13 :   SECTION(&quot;SurfaceCurrent duplicate index fails validation&quot;)</span></span>
+<span id="L345"><span class="lineNum">     345</span>              :   {</span>
+<span id="L346"><span class="lineNum">     346</span>              :     json boundaries = {</span>
+<span id="L347"><span class="lineNum">     347</span>              :         {&quot;LumpedPort&quot;,</span>
+<span id="L348"><span class="lineNum">     348</span>              :          {{{&quot;Attributes&quot;, {5}}, {&quot;Index&quot;, 1}, {&quot;R&quot;, 50}, {&quot;Direction&quot;, &quot;+Y&quot;}}}},</span>
+<span id="L349"><span class="lineNum">     349</span> <span class="tlaGNC">          38 :         {&quot;SurfaceCurrent&quot;, {{{&quot;Attributes&quot;, {6}}, {&quot;Index&quot;, 1}, {&quot;Direction&quot;, &quot;+X&quot;}}}}};</span></span>
+<span id="L350"><span class="lineNum">     350</span> <span class="tlaGNC">           1 :     config::BoundaryData boundary_data(boundaries);</span></span>
+<span id="L351"><span class="lineNum">     351</span> <span class="tlaGNC">           2 :     CHECK(config::Validate(boundary_data).has_value());</span></span>
+<span id="L352"><span class="lineNum">     352</span> <span class="tlaGNC">          14 :   }</span></span>
+<span id="L353"><span class="lineNum">     353</span> <span class="tlaGNC">         986 : }</span></span>
+<span id="L354"><span class="lineNum">     354</span>              : </span>
+<span id="L355"><span class="lineNum">     355</span> <span class="tlaGNC">           7 : TEST_CASE(&quot;Config Driven Solver&quot;, &quot;[config][Serial]&quot;)</span></span>
+<span id="L356"><span class="lineNum">     356</span>              : {</span>
+<span id="L357"><span class="lineNum">     357</span>              :   using namespace Catch::Matchers;</span>
+<span id="L358"><span class="lineNum">     358</span>              :   constexpr double delta_eps = 1.0e-9;</span>
+<span id="L359"><span class="lineNum">     359</span>              : </span>
+<span id="L360"><span class="lineNum">     360</span> <span class="tlaGNC">           7 :   SECTION(&quot;Base uniform sample&quot;)</span></span>
+<span id="L361"><span class="lineNum">     361</span>              :   {</span>
+<span id="L362"><span class="lineNum">     362</span>              :     json driven = {{&quot;MinFreq&quot;, 0.1},</span>
+<span id="L363"><span class="lineNum">     363</span>              :                    {&quot;MaxFreq&quot;, 1.1},</span>
+<span id="L364"><span class="lineNum">     364</span>              :                    {&quot;FreqStep&quot;, 0.1},</span>
+<span id="L365"><span class="lineNum">     365</span>              :                    {&quot;SaveStep&quot;, 2},</span>
+<span id="L366"><span class="lineNum">     366</span> <span class="tlaGNC">          16 :                    {&quot;Restart&quot;, 3}};</span></span>
+<span id="L367"><span class="lineNum">     367</span> <span class="tlaGNC">           1 :     config::DrivenSolverData driven_solver(driven);</span></span>
+<span id="L368"><span class="lineNum">     368</span>              : </span>
+<span id="L369"><span class="lineNum">     369</span> <span class="tlaGNC">           1 :     auto sample_f = std::vector{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1};</span></span>
+<span id="L370"><span class="lineNum">     370</span> <span class="tlaGNC">           1 :     auto save_indices = std::vector&lt;size_t&gt;{0, 2, 4, 6, 8, 10};</span></span>
+<span id="L371"><span class="lineNum">     371</span>              : </span>
+<span id="L372"><span class="lineNum">     372</span> <span class="tlaGNC">          12 :     for (size_t i = 0; i &lt; sample_f.size(); ++i)</span></span>
+<span id="L373"><span class="lineNum">     373</span>              :     {</span>
+<span id="L374"><span class="lineNum">     374</span> <span class="tlaGNC">          33 :       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));</span></span>
+<span id="L375"><span class="lineNum">     375</span>              :     }</span>
+<span id="L376"><span class="lineNum">     376</span> <span class="tlaGNC">           1 :     CHECK(driven_solver.save_indices == save_indices);</span></span>
+<span id="L377"><span class="lineNum">     377</span> <span class="tlaGNC">           2 :     CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});</span></span>
+<span id="L378"><span class="lineNum">     378</span> <span class="tlaGNC">           8 :   }</span></span>
+<span id="L379"><span class="lineNum">     379</span>              : </span>
+<span id="L380"><span class="lineNum">     380</span> <span class="tlaGNC">           7 :   SECTION(&quot;Uniform freq step with Samples&quot;)</span></span>
+<span id="L381"><span class="lineNum">     381</span>              :   {</span>
+<span id="L382"><span class="lineNum">     382</span>              :     json driven = {</span>
+<span id="L383"><span class="lineNum">     383</span>              :         {&quot;MinFreq&quot;, 0.1},</span>
+<span id="L384"><span class="lineNum">     384</span>              :         {&quot;MaxFreq&quot;, 1.1},</span>
+<span id="L385"><span class="lineNum">     385</span>              :         {&quot;FreqStep&quot;, 0.1},</span>
+<span id="L386"><span class="lineNum">     386</span>              :         {&quot;SaveStep&quot;, 2},</span>
+<span id="L387"><span class="lineNum">     387</span>              :         {&quot;Samples&quot;,</span>
+<span id="L388"><span class="lineNum">     388</span> <span class="tlaGNC">          29 :          {{{&quot;MinFreq&quot;, 0.1}, {&quot;MaxFreq&quot;, 1.1}, {&quot;FreqStep&quot;, 0.1}, {&quot;SaveStep&quot;, 2}}}}};</span></span>
+<span id="L389"><span class="lineNum">     389</span> <span class="tlaGNC">           1 :     config::DrivenSolverData driven_solver(driven);</span></span>
+<span id="L390"><span class="lineNum">     390</span>              : </span>
+<span id="L391"><span class="lineNum">     391</span> <span class="tlaGNC">           1 :     auto sample_f = std::vector{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1};</span></span>
+<span id="L392"><span class="lineNum">     392</span> <span class="tlaGNC">           1 :     auto save_indices = std::vector&lt;size_t&gt;{0, 2, 4, 6, 8, 10};</span></span>
+<span id="L393"><span class="lineNum">     393</span>              : </span>
+<span id="L394"><span class="lineNum">     394</span> <span class="tlaGNC">          12 :     for (size_t i = 0; i &lt; sample_f.size(); ++i)</span></span>
+<span id="L395"><span class="lineNum">     395</span>              :     {</span>
+<span id="L396"><span class="lineNum">     396</span> <span class="tlaGNC">          33 :       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));</span></span>
+<span id="L397"><span class="lineNum">     397</span>              :     }</span>
+<span id="L398"><span class="lineNum">     398</span> <span class="tlaGNC">           1 :     CHECK(driven_solver.save_indices == save_indices);</span></span>
+<span id="L399"><span class="lineNum">     399</span> <span class="tlaGNC">           2 :     CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});</span></span>
+<span id="L400"><span class="lineNum">     400</span> <span class="tlaGNC">           8 :   }</span></span>
+<span id="L401"><span class="lineNum">     401</span>              : </span>
+<span id="L402"><span class="lineNum">     402</span> <span class="tlaGNC">           7 :   SECTION(&quot;Uniform NSample&quot;)</span></span>
+<span id="L403"><span class="lineNum">     403</span>              :   {</span>
+<span id="L404"><span class="lineNum">     404</span>              :     json driven = {</span>
+<span id="L405"><span class="lineNum">     405</span>              :         {&quot;Samples&quot;,</span>
+<span id="L406"><span class="lineNum">     406</span> <span class="tlaGNC">          17 :          {{{&quot;MinFreq&quot;, 0.0}, {&quot;MaxFreq&quot;, 1.0}, {&quot;NSample&quot;, 9}, {&quot;SaveStep&quot;, 2}}}}};</span></span>
+<span id="L407"><span class="lineNum">     407</span> <span class="tlaGNC">           1 :     config::DrivenSolverData driven_solver(driven);</span></span>
+<span id="L408"><span class="lineNum">     408</span>              : </span>
+<span id="L409"><span class="lineNum">     409</span> <span class="tlaGNC">           1 :     auto sample_f = std::vector{0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0};</span></span>
+<span id="L410"><span class="lineNum">     410</span> <span class="tlaGNC">           1 :     auto save_indices = std::vector&lt;size_t&gt;{0, 2, 4, 6, 8};</span></span>
+<span id="L411"><span class="lineNum">     411</span>              : </span>
+<span id="L412"><span class="lineNum">     412</span> <span class="tlaGNC">          10 :     for (size_t i = 0; i &lt; sample_f.size(); ++i)</span></span>
+<span id="L413"><span class="lineNum">     413</span>              :     {</span>
+<span id="L414"><span class="lineNum">     414</span> <span class="tlaGNC">          27 :       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));</span></span>
+<span id="L415"><span class="lineNum">     415</span>              :     }</span>
+<span id="L416"><span class="lineNum">     416</span> <span class="tlaGNC">           1 :     CHECK(driven_solver.save_indices == save_indices);</span></span>
+<span id="L417"><span class="lineNum">     417</span> <span class="tlaGNC">           2 :     CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});</span></span>
+<span id="L418"><span class="lineNum">     418</span> <span class="tlaGNC">           8 :   }</span></span>
+<span id="L419"><span class="lineNum">     419</span>              : </span>
+<span id="L420"><span class="lineNum">     420</span> <span class="tlaGNC">           7 :   SECTION(&quot;Paired uniform sample&quot;)</span></span>
+<span id="L421"><span class="lineNum">     421</span>              :   {</span>
+<span id="L422"><span class="lineNum">     422</span>              :     json driven = {</span>
+<span id="L423"><span class="lineNum">     423</span>              :         {&quot;Samples&quot;,</span>
+<span id="L424"><span class="lineNum">     424</span>              :          {{{&quot;MinFreq&quot;, 0.0}, {&quot;MaxFreq&quot;, 1.0}, {&quot;NSample&quot;, 5}, {&quot;SaveStep&quot;, 2}},</span>
+<span id="L425"><span class="lineNum">     425</span> <span class="tlaGNC">          30 :           {{&quot;MinFreq&quot;, 0.0}, {&quot;MaxFreq&quot;, 10.0}, {&quot;NSample&quot;, 5}, {&quot;SaveStep&quot;, 1}}}}};</span></span>
+<span id="L426"><span class="lineNum">     426</span> <span class="tlaGNC">           1 :     config::DrivenSolverData driven_solver(driven);</span></span>
+<span id="L427"><span class="lineNum">     427</span>              : </span>
+<span id="L428"><span class="lineNum">     428</span> <span class="tlaGNC">           1 :     auto sample_f = std::vector{0.0, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0};</span></span>
+<span id="L429"><span class="lineNum">     429</span> <span class="tlaGNC">           1 :     auto save_indices = std::vector&lt;size_t&gt;{0, 2, 4, 5, 6, 7, 8};</span></span>
+<span id="L430"><span class="lineNum">     430</span>              : </span>
+<span id="L431"><span class="lineNum">     431</span> <span class="tlaGNC">          10 :     for (size_t i = 0; i &lt; sample_f.size(); ++i)</span></span>
+<span id="L432"><span class="lineNum">     432</span>              :     {</span>
+<span id="L433"><span class="lineNum">     433</span> <span class="tlaGNC">          27 :       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));</span></span>
+<span id="L434"><span class="lineNum">     434</span>              :     }</span>
+<span id="L435"><span class="lineNum">     435</span> <span class="tlaGNC">           1 :     CHECK(driven_solver.save_indices == save_indices);</span></span>
+<span id="L436"><span class="lineNum">     436</span> <span class="tlaGNC">           2 :     CHECK(driven_solver.prom_indices == std::vector{0, sample_f.size() - 1});</span></span>
+<span id="L437"><span class="lineNum">     437</span> <span class="tlaGNC">           8 :   }</span></span>
+<span id="L438"><span class="lineNum">     438</span>              : </span>
+<span id="L439"><span class="lineNum">     439</span> <span class="tlaGNC">           7 :   SECTION(&quot;Uniform with point samples&quot;)</span></span>
+<span id="L440"><span class="lineNum">     440</span>              :   {</span>
+<span id="L441"><span class="lineNum">     441</span>              :     json driven = {{&quot;Samples&quot;,</span>
+<span id="L442"><span class="lineNum">     442</span>              :                     {{{&quot;MinFreq&quot;, 0.0}, {&quot;MaxFreq&quot;, 1.0}, {&quot;NSample&quot;, 9}, {&quot;SaveStep&quot;, 2}},</span>
+<span id="L443"><span class="lineNum">     443</span>              :                      {{&quot;Freq&quot;, {0.15, 0.35, 0.55}}, {&quot;SaveStep&quot;, 1}, {&quot;AddToPROM&quot;, true}}}},</span>
+<span id="L444"><span class="lineNum">     444</span>              :                    {&quot;Save&quot;, {0.0, 0.35, 1.0}},</span>
+<span id="L445"><span class="lineNum">     445</span> <span class="tlaGNC">          49 :                    {&quot;AdaptiveTol&quot;, 1e-3}};</span></span>
+<span id="L446"><span class="lineNum">     446</span> <span class="tlaGNC">           1 :     config::DrivenSolverData driven_solver(driven);</span></span>
+<span id="L447"><span class="lineNum">     447</span>              : </span>
+<span id="L448"><span class="lineNum">     448</span>              :     auto sample_f = std::vector{0.0, 0.125, 0.15,  0.25, 0.35,  0.375,</span>
+<span id="L449"><span class="lineNum">     449</span> <span class="tlaGNC">           1 :                                 0.5, 0.55,  0.625, 0.75, 0.875, 1.0};</span></span>
+<span id="L450"><span class="lineNum">     450</span> <span class="tlaGNC">           1 :     auto save_indices = std::vector&lt;size_t&gt;{0, 2, 3, 4, 6, 7, 9, 11};</span></span>
+<span id="L451"><span class="lineNum">     451</span> <span class="tlaGNC">           1 :     auto prom_indices = std::vector&lt;size_t&gt;{0, sample_f.size() - 1, 2, 4, 7};</span></span>
+<span id="L452"><span class="lineNum">     452</span>              : </span>
+<span id="L453"><span class="lineNum">     453</span> <span class="tlaGNC">          13 :     for (size_t i = 0; i &lt; sample_f.size(); ++i)</span></span>
+<span id="L454"><span class="lineNum">     454</span>              :     {</span>
+<span id="L455"><span class="lineNum">     455</span> <span class="tlaGNC">          36 :       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));</span></span>
+<span id="L456"><span class="lineNum">     456</span>              :     }</span>
+<span id="L457"><span class="lineNum">     457</span> <span class="tlaGNC">           1 :     CHECK(driven_solver.save_indices == save_indices);</span></span>
+<span id="L458"><span class="lineNum">     458</span> <span class="tlaGNC">           1 :     CHECK(driven_solver.prom_indices == prom_indices);</span></span>
+<span id="L459"><span class="lineNum">     459</span> <span class="tlaGNC">           8 :   }</span></span>
+<span id="L460"><span class="lineNum">     460</span>              : </span>
+<span id="L461"><span class="lineNum">     461</span> <span class="tlaGNC">           7 :   SECTION(&quot;Log with point samples&quot;)</span></span>
+<span id="L462"><span class="lineNum">     462</span>              :   {</span>
+<span id="L463"><span class="lineNum">     463</span>              :     json driven = {{&quot;Samples&quot;,</span>
+<span id="L464"><span class="lineNum">     464</span>              :                     {{{&quot;Type&quot;, &quot;Log&quot;},</span>
+<span id="L465"><span class="lineNum">     465</span>              :                       {&quot;MinFreq&quot;, 0.1},</span>
+<span id="L466"><span class="lineNum">     466</span>              :                       {&quot;MaxFreq&quot;, 1.0},</span>
+<span id="L467"><span class="lineNum">     467</span>              :                       {&quot;NSample&quot;, 5},</span>
+<span id="L468"><span class="lineNum">     468</span>              :                       {&quot;SaveStep&quot;, 2}},</span>
+<span id="L469"><span class="lineNum">     469</span>              :                      {{&quot;Freq&quot;, {0.15, 0.35, 0.55}}, {&quot;SaveStep&quot;, 1}, {&quot;AddToPROM&quot;, true}}}},</span>
+<span id="L470"><span class="lineNum">     470</span> <span class="tlaGNC">          41 :                    {&quot;AdaptiveTol&quot;, 1e-3}};</span></span>
+<span id="L471"><span class="lineNum">     471</span> <span class="tlaGNC">           1 :     config::DrivenSolverData driven_solver(driven);</span></span>
+<span id="L472"><span class="lineNum">     472</span>              : </span>
+<span id="L473"><span class="lineNum">     473</span>              :     auto sample_f = std::vector{0.1,  0.15, 0.1778279410038923, 0.31622776601683794,</span>
+<span id="L474"><span class="lineNum">     474</span> <span class="tlaGNC">           1 :                                 0.35, 0.55, 0.5623413251903491, 1.0};</span></span>
+<span id="L475"><span class="lineNum">     475</span> <span class="tlaGNC">           1 :     auto save_indices = std::vector&lt;size_t&gt;{0, 1, 3, 4, 5, 7};</span></span>
+<span id="L476"><span class="lineNum">     476</span> <span class="tlaGNC">           1 :     auto prom_indices = std::vector&lt;size_t&gt;{0, sample_f.size() - 1, 1, 4, 5};</span></span>
+<span id="L477"><span class="lineNum">     477</span>              : </span>
+<span id="L478"><span class="lineNum">     478</span> <span class="tlaGNC">           9 :     for (size_t i = 0; i &lt; sample_f.size(); ++i)</span></span>
+<span id="L479"><span class="lineNum">     479</span>              :     {</span>
+<span id="L480"><span class="lineNum">     480</span> <span class="tlaGNC">          24 :       CHECK_THAT(driven_solver.sample_f[i], WithinAbs(sample_f[i], delta_eps));</span></span>
+<span id="L481"><span class="lineNum">     481</span>              :     }</span>
+<span id="L482"><span class="lineNum">     482</span> <span class="tlaGNC">           1 :     CHECK(driven_solver.save_indices == save_indices);</span></span>
+<span id="L483"><span class="lineNum">     483</span> <span class="tlaGNC">           1 :     CHECK(driven_solver.prom_indices == prom_indices);</span></span>
+<span id="L484"><span class="lineNum">     484</span> <span class="tlaGNC">           8 :   }</span></span>
+<span id="L485"><span class="lineNum">     485</span>              : </span>
+<span id="L486"><span class="lineNum">     486</span> <span class="tlaGNC">           7 :   SECTION(&quot;Invalid configs throw&quot;)</span></span>
+<span id="L487"><span class="lineNum">     487</span>              :   {</span>
+<span id="L488"><span class="lineNum">     488</span>              :     // Empty</span>
+<span id="L489"><span class="lineNum">     489</span> <span class="tlaGNC">           3 :     CHECK_THROWS(config::DrivenSolverData(json::object()));</span></span>
+<span id="L490"><span class="lineNum">     490</span>              : </span>
+<span id="L491"><span class="lineNum">     491</span>              :     // Mismatch type - Point with range</span>
+<span id="L492"><span class="lineNum">     492</span>              :     json mismatch1 = {{&quot;Samples&quot;,</span>
+<span id="L493"><span class="lineNum">     493</span>              :                        {{{&quot;Type&quot;, &quot;Point&quot;},</span>
+<span id="L494"><span class="lineNum">     494</span>              :                          {&quot;MinFreq&quot;, 0.0},</span>
+<span id="L495"><span class="lineNum">     495</span>              :                          {&quot;MaxFreq&quot;, 1.0},</span>
+<span id="L496"><span class="lineNum">     496</span>              :                          {&quot;NSample&quot;, 11},</span>
+<span id="L497"><span class="lineNum">     497</span> <span class="tlaGNC">          20 :                          {&quot;SaveStep&quot;, 2}}}}};</span></span>
+<span id="L498"><span class="lineNum">     498</span> <span class="tlaGNC">           1 :     CHECK_THROWS(config::DrivenSolverData(mismatch1));</span></span>
+<span id="L499"><span class="lineNum">     499</span>              : </span>
+<span id="L500"><span class="lineNum">     500</span>              :     // Mismatch type - Log with FreqStep</span>
+<span id="L501"><span class="lineNum">     501</span>              :     json mismatch2 = {{&quot;Samples&quot;,</span>
+<span id="L502"><span class="lineNum">     502</span>              :                        {{{&quot;Type&quot;, &quot;Log&quot;},</span>
+<span id="L503"><span class="lineNum">     503</span>              :                          {&quot;MinFreq&quot;, 0.1},</span>
+<span id="L504"><span class="lineNum">     504</span>              :                          {&quot;MaxFreq&quot;, 1.0},</span>
+<span id="L505"><span class="lineNum">     505</span>              :                          {&quot;FreqStep&quot;, 11},</span>
+<span id="L506"><span class="lineNum">     506</span> <span class="tlaGNC">          20 :                          {&quot;SaveStep&quot;, 2}}}}};</span></span>
+<span id="L507"><span class="lineNum">     507</span> <span class="tlaGNC">           1 :     CHECK_THROWS(config::DrivenSolverData(mismatch2));</span></span>
+<span id="L508"><span class="lineNum">     508</span>              : </span>
+<span id="L509"><span class="lineNum">     509</span>              :     // Mismatch type - Linear with Freq array</span>
+<span id="L510"><span class="lineNum">     510</span> <span class="tlaGNC">          19 :     json mismatch3 = {{&quot;Samples&quot;, {{{&quot;Type&quot;, &quot;Linear&quot;}, {&quot;Freq&quot;, {0.11, 0.22, 0.34}}}}}};</span></span>
+<span id="L511"><span class="lineNum">     511</span> <span class="tlaGNC">           1 :     CHECK_THROWS(config::DrivenSolverData(mismatch3));</span></span>
+<span id="L512"><span class="lineNum">     512</span>              : </span>
+<span id="L513"><span class="lineNum">     513</span>              :     // Invalid save frequency</span>
+<span id="L514"><span class="lineNum">     514</span>              :     json invalid_save = {</span>
+<span id="L515"><span class="lineNum">     515</span>              :         {&quot;Samples&quot;,</span>
+<span id="L516"><span class="lineNum">     516</span>              :          {{{&quot;MinFreq&quot;, 0.0}, {&quot;MaxFreq&quot;, 1.0}, {&quot;NSample&quot;, 11}, {&quot;SaveStep&quot;, 2}},</span>
+<span id="L517"><span class="lineNum">     517</span>              :           {{&quot;Freq&quot;, {0.15, 0.35, 0.55}}, {&quot;SaveStep&quot;, 1}, {&quot;AddToPROM&quot;, true}}}},</span>
+<span id="L518"><span class="lineNum">     518</span>              :         {&quot;Save&quot;, {0.05}},</span>
+<span id="L519"><span class="lineNum">     519</span> <span class="tlaGNC">          45 :         {&quot;AdaptiveTol&quot;, 1e-3}};</span></span>
+<span id="L520"><span class="lineNum">     520</span> <span class="tlaGNC">           1 :     CHECK_THROWS(config::DrivenSolverData(invalid_save));</span></span>
+<span id="L521"><span class="lineNum">     521</span> <span class="tlaGNC">           7 :   }</span></span>
+<span id="L522"><span class="lineNum">     522</span> <span class="tlaGNC">         296 : }</span></span>
+<span id="L523"><span class="lineNum">     523</span>              : </span>
+<span id="L524"><span class="lineNum">     524</span> <span class="tlaGNC">           8 : TEST_CASE(&quot;FarField&quot;, &quot;[config][Serial]&quot;)</span></span>
+<span id="L525"><span class="lineNum">     525</span>              : {</span>
+<span id="L526"><span class="lineNum">     526</span>              :   constexpr double delta_eps = 1.0e-6;</span>
+<span id="L527"><span class="lineNum">     527</span>              : </span>
+<span id="L528"><span class="lineNum">     528</span> <span class="tlaGNC">           8 :   SECTION(&quot;Default constructor&quot;)</span></span>
+<span id="L529"><span class="lineNum">     529</span>              :   {</span>
+<span id="L530"><span class="lineNum">     530</span>              :     config::FarFieldPostData data;</span>
+<span id="L531"><span class="lineNum">     531</span>              : </span>
+<span id="L532"><span class="lineNum">     532</span> <span class="tlaGNC">           2 :     CHECK(data.attributes.empty());</span></span>
+<span id="L533"><span class="lineNum">     533</span> <span class="tlaGNC">           2 :     CHECK(data.thetaphis.empty());</span></span>
+<span id="L534"><span class="lineNum">     534</span> <span class="tlaGNC">           9 :   }</span></span>
+<span id="L535"><span class="lineNum">     535</span>              : </span>
+<span id="L536"><span class="lineNum">     536</span> <span class="tlaGNC">           8 :   SECTION(&quot;Basic setup with attributes only&quot;)</span></span>
+<span id="L537"><span class="lineNum">     537</span>              :   {</span>
+<span id="L538"><span class="lineNum">     538</span> <span class="tlaGNC">          12 :     json farfield = {{&quot;Attributes&quot;, {1, 3, 5}}};</span></span>
+<span id="L539"><span class="lineNum">     539</span> <span class="tlaGNC">           1 :     config::FarFieldPostData data(farfield);</span></span>
+<span id="L540"><span class="lineNum">     540</span>              : </span>
+<span id="L541"><span class="lineNum">     541</span> <span class="tlaGNC">           2 :     CHECK(data.attributes == std::vector&lt;int&gt;{1, 3, 5});</span></span>
+<span id="L542"><span class="lineNum">     542</span> <span class="tlaGNC">           2 :     CHECK(data.thetaphis.empty());</span></span>
+<span id="L543"><span class="lineNum">     543</span> <span class="tlaGNC">           9 :   }</span></span>
+<span id="L544"><span class="lineNum">     544</span>              : </span>
+<span id="L545"><span class="lineNum">     545</span> <span class="tlaGNC">           8 :   SECTION(&quot;ThetaPhis conversion to radians&quot;)</span></span>
+<span id="L546"><span class="lineNum">     546</span>              :   {</span>
+<span id="L547"><span class="lineNum">     547</span> <span class="tlaGNC">          24 :     json farfield = {{&quot;Attributes&quot;, {1}}, {&quot;ThetaPhis&quot;, {{0.0, 0.0}, {90.0, 180.0}}}};</span></span>
+<span id="L548"><span class="lineNum">     548</span> <span class="tlaGNC">           1 :     config::FarFieldPostData data(farfield);</span></span>
+<span id="L549"><span class="lineNum">     549</span>              : </span>
+<span id="L550"><span class="lineNum">     550</span> <span class="tlaGNC">           1 :     CHECK(data.thetaphis.size() == 2);</span></span>
+<span id="L551"><span class="lineNum">     551</span> <span class="tlaGNC">           2 :     CHECK(data.thetaphis[0].first == Catch::Approx(0.0).margin(delta_eps));</span></span>
+<span id="L552"><span class="lineNum">     552</span> <span class="tlaGNC">           2 :     CHECK(data.thetaphis[0].second == Catch::Approx(0.0).margin(delta_eps));</span></span>
+<span id="L553"><span class="lineNum">     553</span> <span class="tlaGNC">           2 :     CHECK(data.thetaphis[1].first == Catch::Approx(M_PI / 2).margin(delta_eps));</span></span>
+<span id="L554"><span class="lineNum">     554</span> <span class="tlaGNC">           2 :     CHECK(data.thetaphis[1].second == Catch::Approx(M_PI).margin(delta_eps));</span></span>
+<span id="L555"><span class="lineNum">     555</span> <span class="tlaGNC">           9 :   }</span></span>
+<span id="L556"><span class="lineNum">     556</span>              : </span>
+<span id="L557"><span class="lineNum">     557</span> <span class="tlaGNC">           8 :   SECTION(&quot;Duplicate removal&quot;)</span></span>
+<span id="L558"><span class="lineNum">     558</span>              :   {</span>
+<span id="L559"><span class="lineNum">     559</span>              :     json farfield = {{&quot;Attributes&quot;, {1}},</span>
+<span id="L560"><span class="lineNum">     560</span> <span class="tlaGNC">          36 :                      {&quot;ThetaPhis&quot;, {{0.0, 0.0}, {90.0, 180.0}, {0.0, 0.0}, {90.0, 180.0}}}};</span></span>
+<span id="L561"><span class="lineNum">     561</span> <span class="tlaGNC">           1 :     config::FarFieldPostData data(farfield);</span></span>
+<span id="L562"><span class="lineNum">     562</span>              : </span>
+<span id="L563"><span class="lineNum">     563</span> <span class="tlaGNC">           1 :     CHECK(data.thetaphis.size() == 2);</span></span>
+<span id="L564"><span class="lineNum">     564</span> <span class="tlaGNC">           9 :   }</span></span>
+<span id="L565"><span class="lineNum">     565</span>              : </span>
+<span id="L566"><span class="lineNum">     566</span> <span class="tlaGNC">           8 :   SECTION(&quot;Spherical coordinate duplicate removal&quot;)</span></span>
+<span id="L567"><span class="lineNum">     567</span>              :   {</span>
+<span id="L568"><span class="lineNum">     568</span>              :     // Test pole singularity: (0°, any φ) should be treated as same point.</span>
+<span id="L569"><span class="lineNum">     569</span>              :     {</span>
+<span id="L570"><span class="lineNum">     570</span>              :       json farfield = {{&quot;Attributes&quot;, {1}},</span>
+<span id="L571"><span class="lineNum">     571</span> <span class="tlaGNC">          30 :                        {&quot;ThetaPhis&quot;, {{0.0, 0.0}, {0.0, 90.0}, {0.0, 180.0}}}};</span></span>
+<span id="L572"><span class="lineNum">     572</span> <span class="tlaGNC">           1 :       config::FarFieldPostData data(farfield);</span></span>
+<span id="L573"><span class="lineNum">     573</span> <span class="tlaGNC">           1 :       CHECK(data.thetaphis.size() == 1);</span></span>
+<span id="L574"><span class="lineNum">     574</span> <span class="tlaGNC">           1 :     }</span></span>
+<span id="L575"><span class="lineNum">     575</span>              : </span>
+<span id="L576"><span class="lineNum">     576</span>              :     // Test phi periodicity: φ and φ+360° are same point.</span>
+<span id="L577"><span class="lineNum">     577</span>              :     {</span>
+<span id="L578"><span class="lineNum">     578</span> <span class="tlaGNC">          24 :       json farfield = {{&quot;Attributes&quot;, {1}}, {&quot;ThetaPhis&quot;, {{45.0, 30.0}, {45.0, 390.0}}}};</span></span>
+<span id="L579"><span class="lineNum">     579</span> <span class="tlaGNC">           1 :       config::FarFieldPostData data(farfield);</span></span>
+<span id="L580"><span class="lineNum">     580</span> <span class="tlaGNC">           1 :       CHECK(data.thetaphis.size() == 1);</span></span>
+<span id="L581"><span class="lineNum">     581</span> <span class="tlaGNC">           1 :     }</span></span>
+<span id="L582"><span class="lineNum">     582</span>              : </span>
+<span id="L583"><span class="lineNum">     583</span>              :     // Test theta reflection: (θ, φ) ≡ (180°-θ, φ+180°).</span>
+<span id="L584"><span class="lineNum">     584</span>              :     {</span>
+<span id="L585"><span class="lineNum">     585</span> <span class="tlaGNC">          24 :       json farfield = {{&quot;Attributes&quot;, {1}}, {&quot;ThetaPhis&quot;, {{60.0, 45.0}, {120.0, 225.0}}}};</span></span>
+<span id="L586"><span class="lineNum">     586</span> <span class="tlaGNC">           1 :       config::FarFieldPostData data(farfield);</span></span>
+<span id="L587"><span class="lineNum">     587</span> <span class="tlaGNC">           1 :       CHECK(data.thetaphis.size() == 1);</span></span>
+<span id="L588"><span class="lineNum">     588</span> <span class="tlaGNC">           1 :     }</span></span>
+<span id="L589"><span class="lineNum">     589</span> <span class="tlaGNC">           8 :   }</span></span>
+<span id="L590"><span class="lineNum">     590</span>              : </span>
+<span id="L591"><span class="lineNum">     591</span> <span class="tlaGNC">           8 :   SECTION(&quot;Combined NSample and ThetaPhis&quot;)</span></span>
+<span id="L592"><span class="lineNum">     592</span>              :   {</span>
+<span id="L593"><span class="lineNum">     593</span> <span class="tlaGNC">          21 :     json farfield = {{&quot;Attributes&quot;, {1}}, {&quot;NSample&quot;, 10}, {&quot;ThetaPhis&quot;, {{33.0, 22.0}}}};</span></span>
+<span id="L594"><span class="lineNum">     594</span> <span class="tlaGNC">           1 :     config::FarFieldPostData data(farfield);</span></span>
+<span id="L595"><span class="lineNum">     595</span>              : </span>
+<span id="L596"><span class="lineNum">     596</span> <span class="tlaGNC">           1 :     CHECK(data.thetaphis.size() == 11);</span></span>
+<span id="L597"><span class="lineNum">     597</span> <span class="tlaGNC">           9 :   }</span></span>
+<span id="L598"><span class="lineNum">     598</span>              : </span>
+<span id="L599"><span class="lineNum">     599</span> <span class="tlaGNC">           8 :   SECTION(&quot;NSample sphere sampling&quot;)</span></span>
+<span id="L600"><span class="lineNum">     600</span>              :   {</span>
+<span id="L601"><span class="lineNum">     601</span> <span class="tlaGNC">           8 :     for (int nsample : {2, 6, 10, 15, 20, 25, 64800})</span></span>
+<span id="L602"><span class="lineNum">     602</span>              :     {</span>
+<span id="L603"><span class="lineNum">     603</span> <span class="tlaGNC">          77 :       json farfield = {{&quot;Attributes&quot;, {1}}, {&quot;NSample&quot;, nsample}};</span></span>
+<span id="L604"><span class="lineNum">     604</span> <span class="tlaGNC">           7 :       config::FarFieldPostData data(farfield);</span></span>
+<span id="L605"><span class="lineNum">     605</span>              : </span>
+<span id="L606"><span class="lineNum">     606</span>              :       // Exact point count.</span>
+<span id="L607"><span class="lineNum">     607</span> <span class="tlaGNC">           7 :       CHECK(data.thetaphis.size() == nsample);</span></span>
+<span id="L608"><span class="lineNum">     608</span>              : </span>
+<span id="L609"><span class="lineNum">     609</span>              :       // Poles always included.</span>
+<span id="L610"><span class="lineNum">     610</span>              :       bool has_north_pole = false, has_south_pole = false;</span>
+<span id="L611"><span class="lineNum">     611</span> <span class="tlaGNC">       64885 :       for (const auto &amp;point : data.thetaphis)</span></span>
+<span id="L612"><span class="lineNum">     612</span>              :       {</span>
+<span id="L613"><span class="lineNum">     613</span> <span class="tlaGNC">       64878 :         if (std::abs(point.first) &lt; delta_eps)</span></span>
+<span id="L614"><span class="lineNum">     614</span>              :           has_north_pole = true;</span>
+<span id="L615"><span class="lineNum">     615</span> <span class="tlaGNC">       64878 :         if (std::abs(point.first - M_PI) &lt; delta_eps)</span></span>
+<span id="L616"><span class="lineNum">     616</span>              :           has_south_pole = true;</span>
+<span id="L617"><span class="lineNum">     617</span>              :       }</span>
+<span id="L618"><span class="lineNum">     618</span> <span class="tlaGNC">          14 :       CHECK(has_north_pole);</span></span>
+<span id="L619"><span class="lineNum">     619</span> <span class="tlaGNC">          14 :       CHECK(has_south_pole);</span></span>
+<span id="L620"><span class="lineNum">     620</span>              : </span>
+<span id="L621"><span class="lineNum">     621</span> <span class="tlaGNC">           7 :       if (nsample == 2)</span></span>
+<span id="L622"><span class="lineNum">     622</span>              :         continue;</span>
+<span id="L623"><span class="lineNum">     623</span>              : </span>
+<span id="L624"><span class="lineNum">     624</span> <span class="tlaGNC">           6 :       int n_theta = std::max(1, static_cast&lt;int&gt;(std::sqrt(nsample - 2)));</span></span>
+<span id="L625"><span class="lineNum">     625</span>              : </span>
+<span id="L626"><span class="lineNum">     626</span>              :       // XZ plane inclusion (excluding poles).</span>
+<span id="L627"><span class="lineNum">     627</span>              :       int xz_plane_count = 0;</span>
+<span id="L628"><span class="lineNum">     628</span> <span class="tlaGNC">       64882 :       for (const auto &amp;point : data.thetaphis)</span></span>
+<span id="L629"><span class="lineNum">     629</span>              :       {</span>
+<span id="L630"><span class="lineNum">     630</span> <span class="tlaGNC">       64876 :         if ((std::abs(point.second) &lt; delta_eps ||</span></span>
+<span id="L631"><span class="lineNum">     631</span> <span class="tlaGNC">       64876 :              std::abs(point.second - M_PI) &lt; delta_eps) &amp;&amp;</span></span>
+<span id="L632"><span class="lineNum">     632</span> <span class="tlaGNC">       65145 :             std::abs(point.first) &gt; delta_eps &amp;&amp; std::abs(point.first - M_PI) &gt; delta_eps)</span></span>
+<span id="L633"><span class="lineNum">     633</span>              :         {</span>
+<span id="L634"><span class="lineNum">     634</span> <span class="tlaGNC">         538 :           xz_plane_count++;</span></span>
+<span id="L635"><span class="lineNum">     635</span>              :         }</span>
+<span id="L636"><span class="lineNum">     636</span>              :       }</span>
+<span id="L637"><span class="lineNum">     637</span>              :       // Each ring contributes two points.</span>
+<span id="L638"><span class="lineNum">     638</span> <span class="tlaGNC">           6 :       CHECK(xz_plane_count &gt;= 2 * n_theta);</span></span>
+<span id="L639"><span class="lineNum">     639</span>              : </span>
+<span id="L640"><span class="lineNum">     640</span>              :       // Equator inclusion.</span>
+<span id="L641"><span class="lineNum">     641</span>              :       int equator_count = 0;</span>
+<span id="L642"><span class="lineNum">     642</span> <span class="tlaGNC">       64882 :       for (const auto &amp;point : data.thetaphis)</span></span>
+<span id="L643"><span class="lineNum">     643</span>              :       {</span>
+<span id="L644"><span class="lineNum">     644</span> <span class="tlaGNC">       64876 :         if (std::abs(point.first - M_PI / 2.0) &lt; delta_eps)</span></span>
+<span id="L645"><span class="lineNum">     645</span>              :         {</span>
+<span id="L646"><span class="lineNum">     646</span> <span class="tlaGNC">         346 :           equator_count++;</span></span>
+<span id="L647"><span class="lineNum">     647</span>              :         }</span>
+<span id="L648"><span class="lineNum">     648</span>              :       }</span>
+<span id="L649"><span class="lineNum">     649</span> <span class="tlaGNC">           6 :       CHECK(equator_count &gt;= std::max(1, (nsample - 2) / (2 * n_theta)));</span></span>
+<span id="L650"><span class="lineNum">     650</span> <span class="tlaGNC">           7 :     }</span></span>
+<span id="L651"><span class="lineNum">     651</span> <span class="tlaGNC">           8 :   }</span></span>
+<span id="L652"><span class="lineNum">     652</span>              : </span>
+<span id="L653"><span class="lineNum">     653</span> <span class="tlaGNC">           8 :   SECTION(&quot;NSample edge cases&quot;)</span></span>
+<span id="L654"><span class="lineNum">     654</span>              :   {</span>
+<span id="L655"><span class="lineNum">     655</span>              :     // NSample = 0 produces no points.</span>
+<span id="L656"><span class="lineNum">     656</span>              :     {</span>
+<span id="L657"><span class="lineNum">     657</span> <span class="tlaGNC">          11 :       json farfield = {{&quot;Attributes&quot;, {1}}, {&quot;NSample&quot;, 0}};</span></span>
+<span id="L658"><span class="lineNum">     658</span> <span class="tlaGNC">           1 :       config::FarFieldPostData data(farfield);</span></span>
+<span id="L659"><span class="lineNum">     659</span> <span class="tlaGNC">           2 :       CHECK(data.thetaphis.empty());</span></span>
+<span id="L660"><span class="lineNum">     660</span> <span class="tlaGNC">           1 :     }</span></span>
+<span id="L661"><span class="lineNum">     661</span>              : </span>
+<span id="L662"><span class="lineNum">     662</span>              :     // NSample = 1 produces two points (the poles).</span>
+<span id="L663"><span class="lineNum">     663</span>              :     {</span>
+<span id="L664"><span class="lineNum">     664</span> <span class="tlaGNC">          11 :       json farfield = {{&quot;Attributes&quot;, {1}}, {&quot;NSample&quot;, 1}};</span></span>
+<span id="L665"><span class="lineNum">     665</span> <span class="tlaGNC">           1 :       config::FarFieldPostData data(farfield);</span></span>
+<span id="L666"><span class="lineNum">     666</span> <span class="tlaGNC">           1 :       CHECK(data.thetaphis.size() == 2);</span></span>
+<span id="L667"><span class="lineNum">     667</span> <span class="tlaGNC">           1 :     }</span></span>
+<span id="L668"><span class="lineNum">     668</span> <span class="tlaGNC">           8 :   }</span></span>
+<span id="L669"><span class="lineNum">     669</span> <span class="tlaGNC">         164 : }</span></span>
+<span id="L670"><span class="lineNum">     670</span>              : </span>
+<span id="L671"><span class="lineNum">     671</span> <span class="tlaGNC">          12 : TEST_CASE(&quot;ParseStringAsDirection&quot;, &quot;[config][Serial]&quot;)</span></span>
+<span id="L672"><span class="lineNum">     672</span>              : {</span>
+<span id="L673"><span class="lineNum">     673</span> <span class="tlaGNC">          12 :   SECTION(&quot;Cartesian&quot;)</span></span>
+<span id="L674"><span class="lineNum">     674</span>              :   {</span>
+<span id="L675"><span class="lineNum">     675</span> <span class="tlaGNC">          10 :     auto s = GENERATE(&quot;x&quot;, &quot;+x&quot;, &quot;-x&quot;, &quot;y&quot;, &quot;+y&quot;, &quot;-y&quot;, &quot;z&quot;, &quot;+z&quot;, &quot;-z&quot;);</span></span>
+<span id="L676"><span class="lineNum">     676</span> <span class="tlaGNC">          18 :     REQUIRE_NOTHROW(config::ParseStringAsDirection(s, true));</span></span>
+<span id="L677"><span class="lineNum">     677</span>              : </span>
+<span id="L678"><span class="lineNum">     678</span> <span class="tlaGNC">           9 :     auto [dir, cs] = config::ParseStringAsDirection(s, true);</span></span>
+<span id="L679"><span class="lineNum">     679</span> <span class="tlaGNC">           9 :     CHECK(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2] == 1.0);</span></span>
+<span id="L680"><span class="lineNum">     680</span> <span class="tlaGNC">           9 :     CHECK(cs == CoordinateSystem::CARTESIAN);</span></span>
+<span id="L681"><span class="lineNum">     681</span> <span class="tlaGNC">           9 :     auto val = (s[0] == '-' ? -1 : 1);</span></span>
+<span id="L682"><span class="lineNum">     682</span> <span class="tlaGNC">          18 :     CHECK((dir[0] == val || dir[1] == val || dir[2] == val));</span></span>
+<span id="L683"><span class="lineNum">     683</span> <span class="tlaGNC">          12 :   }</span></span>
+<span id="L684"><span class="lineNum">     684</span>              : </span>
+<span id="L685"><span class="lineNum">     685</span> <span class="tlaGNC">          12 :   SECTION(&quot;Cylindrical&quot;)</span></span>
+<span id="L686"><span class="lineNum">     686</span>              :   {</span>
+<span id="L687"><span class="lineNum">     687</span> <span class="tlaGNC">           4 :     auto s = GENERATE(&quot;r&quot;, &quot;+r&quot;, &quot;-r&quot;);</span></span>
+<span id="L688"><span class="lineNum">     688</span> <span class="tlaGNC">           6 :     REQUIRE_NOTHROW(config::ParseStringAsDirection(s, true));</span></span>
+<span id="L689"><span class="lineNum">     689</span>              : </span>
+<span id="L690"><span class="lineNum">     690</span> <span class="tlaGNC">           3 :     auto [dir, cs] = config::ParseStringAsDirection(s, true);</span></span>
+<span id="L691"><span class="lineNum">     691</span> <span class="tlaGNC">           5 :     CHECK(dir[0] == (s[0] == '-' ? -1 : 1));</span></span>
+<span id="L692"><span class="lineNum">     692</span> <span class="tlaGNC">           3 :     CHECK(dir[1] == 0);</span></span>
+<span id="L693"><span class="lineNum">     693</span> <span class="tlaGNC">           3 :     CHECK(dir[2] == 0);</span></span>
+<span id="L694"><span class="lineNum">     694</span> <span class="tlaGNC">           3 :     CHECK(cs == CoordinateSystem::CYLINDRICAL);</span></span>
+<span id="L695"><span class="lineNum">     695</span> <span class="tlaGNC">          12 :   }</span></span>
+<span id="L696"><span class="lineNum">     696</span>              : </span>
+<span id="L697"><span class="lineNum">     697</span> <span class="tlaGNC">          24 :   CHECK_NOTHROW(config::ParseStringAsDirection(&quot;&quot;, false));</span></span>
+<span id="L698"><span class="lineNum">     698</span> <span class="tlaGNC">          12 : }</span></span>
+<span id="L699"><span class="lineNum">     699</span>              : </span>
+<span id="L700"><span class="lineNum">     700</span> <span class="tlaGNC">          20 : TEST_CASE(&quot;ConcretizeDefaults&quot;, &quot;[config][Serial]&quot;)</span></span>
+<span id="L701"><span class="lineNum">     701</span>              : {</span>
+<span id="L702"><span class="lineNum">     702</span> <span class="tlaGNC">          20 :   SECTION(&quot;Electrostatic resolves linear solver sentinels&quot;)</span></span>
+<span id="L703"><span class="lineNum">     703</span>              :   {</span>
+<span id="L704"><span class="lineNum">     704</span>              :     json config = {{&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Electrostatic&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L705"><span class="lineNum">     705</span>              :                    {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L706"><span class="lineNum">     706</span>              :                    {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L707"><span class="lineNum">     707</span> <span class="tlaGNC">           1 :                    {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L708"><span class="lineNum">     708</span> <span class="tlaGNC">          37 :                    {&quot;Solver&quot;, json::object()}};</span></span>
+<span id="L709"><span class="lineNum">     709</span>              : </span>
+<span id="L710"><span class="lineNum">     710</span> <span class="tlaGNC">           1 :     IoData iodata(config, false);</span></span>
+<span id="L711"><span class="lineNum">     711</span>              : </span>
+<span id="L712"><span class="lineNum">     712</span>              :     // CheckConfiguration should have resolved the sentinels.</span>
+<span id="L713"><span class="lineNum">     713</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.type == LinearSolver::BOOMER_AMG);</span></span>
+<span id="L714"><span class="lineNum">     714</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.krylov_solver == KrylovSolver::CG);</span></span>
+<span id="L715"><span class="lineNum">     715</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.initial_guess == 1);</span></span>
+<span id="L716"><span class="lineNum">     716</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.pc_mat_shifted == 0);</span></span>
+<span id="L717"><span class="lineNum">     717</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.mg_smooth_aux == 0);</span></span>
+<span id="L718"><span class="lineNum">     718</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.ams_singular_op == 0);</span></span>
+<span id="L719"><span class="lineNum">     719</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.amg_agg_coarsen == 1);</span></span>
+<span id="L720"><span class="lineNum">     720</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.ams_max_it == 1);</span></span>
+<span id="L721"><span class="lineNum">     721</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.mg_cycle_it == 1);</span></span>
+<span id="L722"><span class="lineNum">     722</span> <span class="tlaGNC">           1 :     CHECK(GetPreconditionerMatrixSymmetry(iodata) == MatrixSymmetry::SPD);</span></span>
+<span id="L723"><span class="lineNum">     723</span>              : </span>
+<span id="L724"><span class="lineNum">     724</span>              :     // ConcretizeDefaults should write resolved values back to JSON.</span>
+<span id="L725"><span class="lineNum">     725</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata, config);</span></span>
+<span id="L726"><span class="lineNum">     726</span>              : </span>
+<span id="L727"><span class="lineNum">     727</span> <span class="tlaGNC">           1 :     auto &amp;j_linear = config[&quot;Solver&quot;][&quot;Linear&quot;];</span></span>
+<span id="L728"><span class="lineNum">     728</span> <span class="tlaGNC">           2 :     CHECK(j_linear[&quot;Type&quot;].get&lt;std::string&gt;() == &quot;BoomerAMG&quot;);</span></span>
+<span id="L729"><span class="lineNum">     729</span> <span class="tlaGNC">           2 :     CHECK(j_linear[&quot;KSPType&quot;].get&lt;std::string&gt;() == &quot;CG&quot;);</span></span>
+<span id="L730"><span class="lineNum">     730</span> <span class="tlaGNC">           2 :     CHECK(j_linear[&quot;InitialGuess&quot;].get&lt;int&gt;() == 1);</span></span>
+<span id="L731"><span class="lineNum">     731</span> <span class="tlaGNC">           2 :     CHECK(j_linear[&quot;PCMatShifted&quot;].get&lt;int&gt;() == 0);</span></span>
+<span id="L732"><span class="lineNum">     732</span> <span class="tlaGNC">           2 :     CHECK(j_linear[&quot;MGAuxiliarySmoother&quot;].get&lt;int&gt;() == 0);</span></span>
+<span id="L733"><span class="lineNum">     733</span> <span class="tlaGNC">           2 :     CHECK(j_linear[&quot;AMSSingularOperator&quot;].get&lt;int&gt;() == 0);</span></span>
+<span id="L734"><span class="lineNum">     734</span> <span class="tlaGNC">           2 :     CHECK(j_linear[&quot;AMGAggressiveCoarsening&quot;].get&lt;int&gt;() == 1);</span></span>
+<span id="L735"><span class="lineNum">     735</span> <span class="tlaGNC">           2 :     CHECK(j_linear[&quot;AMSMaxIts&quot;].get&lt;int&gt;() == 1);</span></span>
+<span id="L736"><span class="lineNum">     736</span> <span class="tlaGNC">           2 :     CHECK(j_linear[&quot;MGCycleIts&quot;].get&lt;int&gt;() == 1);</span></span>
+<span id="L737"><span class="lineNum">     737</span> <span class="tlaGNC">          21 :   }</span></span>
+<span id="L738"><span class="lineNum">     738</span>              : </span>
+<span id="L739"><span class="lineNum">     739</span> <span class="tlaGNC">          20 :   SECTION(&quot;Omitted Output resolves to default and concretizes (issue #745)&quot;)</span></span>
+<span id="L740"><span class="lineNum">     740</span>              :   {</span>
+<span id="L741"><span class="lineNum">     741</span>              :     // The schema marks Problem.Output optional, so a config without it must parse</span>
+<span id="L742"><span class="lineNum">     742</span>              :     // without aborting and fall back to the documented &quot;postpro&quot; default.</span>
+<span id="L743"><span class="lineNum">     743</span>              :     json config = {{&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Electrostatic&quot;}}},</span>
+<span id="L744"><span class="lineNum">     744</span>              :                    {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L745"><span class="lineNum">     745</span>              :                    {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L746"><span class="lineNum">     746</span> <span class="tlaGNC">           1 :                    {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L747"><span class="lineNum">     747</span> <span class="tlaGNC">          34 :                    {&quot;Solver&quot;, json::object()}};</span></span>
+<span id="L748"><span class="lineNum">     748</span>              : </span>
+<span id="L749"><span class="lineNum">     749</span> <span class="tlaGNC">           1 :     IoData iodata(config, false);</span></span>
+<span id="L750"><span class="lineNum">     750</span> <span class="tlaGNC">           1 :     CHECK(iodata.problem.output == &quot;postpro&quot;);</span></span>
+<span id="L751"><span class="lineNum">     751</span>              : </span>
+<span id="L752"><span class="lineNum">     752</span>              :     // ConcretizeDefaults must emit the resolved, non-empty value back to JSON.</span>
+<span id="L753"><span class="lineNum">     753</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata, config);</span></span>
+<span id="L754"><span class="lineNum">     754</span> <span class="tlaGNC">           2 :     CHECK(config[&quot;Problem&quot;][&quot;Output&quot;].get&lt;std::string&gt;() == &quot;postpro&quot;);</span></span>
+<span id="L755"><span class="lineNum">     755</span> <span class="tlaGNC">          21 :   }</span></span>
+<span id="L756"><span class="lineNum">     756</span>              : </span>
+<span id="L757"><span class="lineNum">     757</span> <span class="tlaGNC">          20 :   SECTION(&quot;Magnetostatic resolves to AMS with singular operator&quot;)</span></span>
+<span id="L758"><span class="lineNum">     758</span>              :   {</span>
+<span id="L759"><span class="lineNum">     759</span>              :     json config = {{&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Magnetostatic&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L760"><span class="lineNum">     760</span>              :                    {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L761"><span class="lineNum">     761</span>              :                    {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L762"><span class="lineNum">     762</span> <span class="tlaGNC">           1 :                    {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L763"><span class="lineNum">     763</span> <span class="tlaGNC">          37 :                    {&quot;Solver&quot;, json::object()}};</span></span>
+<span id="L764"><span class="lineNum">     764</span>              : </span>
+<span id="L765"><span class="lineNum">     765</span> <span class="tlaGNC">           1 :     IoData iodata(config, false);</span></span>
+<span id="L766"><span class="lineNum">     766</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.type == LinearSolver::AMS);</span></span>
+<span id="L767"><span class="lineNum">     767</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.krylov_solver == KrylovSolver::CG);</span></span>
+<span id="L768"><span class="lineNum">     768</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.ams_singular_op == 1);</span></span>
+<span id="L769"><span class="lineNum">     769</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.ams_max_it == 1);</span></span>
+<span id="L770"><span class="lineNum">     770</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.mg_cycle_it == 1);</span></span>
+<span id="L771"><span class="lineNum">     771</span> <span class="tlaGNC">           1 :     CHECK(GetPreconditionerMatrixSymmetry(iodata) == MatrixSymmetry::SPD);</span></span>
+<span id="L772"><span class="lineNum">     772</span>              : </span>
+<span id="L773"><span class="lineNum">     773</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata, config);</span></span>
+<span id="L774"><span class="lineNum">     774</span> <span class="tlaGNC">           2 :     CHECK(config[&quot;Solver&quot;][&quot;Linear&quot;][&quot;Type&quot;].get&lt;std::string&gt;() == &quot;AMS&quot;);</span></span>
+<span id="L775"><span class="lineNum">     775</span> <span class="tlaGNC">           2 :     CHECK(config[&quot;Solver&quot;][&quot;Linear&quot;][&quot;AMSSingularOperator&quot;].get&lt;int&gt;() == 1);</span></span>
+<span id="L776"><span class="lineNum">     776</span> <span class="tlaGNC">           2 :     CHECK(config[&quot;Solver&quot;][&quot;Linear&quot;][&quot;AMSMaxIts&quot;].get&lt;int&gt;() == 1);</span></span>
+<span id="L777"><span class="lineNum">     777</span> <span class="tlaGNC">           2 :     CHECK(config[&quot;Solver&quot;][&quot;Linear&quot;][&quot;MGCycleIts&quot;].get&lt;int&gt;() == 1);</span></span>
+<span id="L778"><span class="lineNum">     778</span> <span class="tlaGNC">          21 :   }</span></span>
+<span id="L779"><span class="lineNum">     779</span>              : </span>
+<span id="L780"><span class="lineNum">     780</span> <span class="tlaGNC">          20 :   SECTION(&quot;User-specified values survive concretization&quot;)</span></span>
+<span id="L781"><span class="lineNum">     781</span>              :   {</span>
+<span id="L782"><span class="lineNum">     782</span>              :     json config = {</span>
+<span id="L783"><span class="lineNum">     783</span>              :         {&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Electrostatic&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L784"><span class="lineNum">     784</span>              :         {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L785"><span class="lineNum">     785</span>              :         {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L786"><span class="lineNum">     786</span> <span class="tlaGNC">           1 :         {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L787"><span class="lineNum">     787</span> <span class="tlaGNC">          48 :         {&quot;Solver&quot;, {{&quot;Order&quot;, 3}, {&quot;Linear&quot;, {{&quot;Type&quot;, &quot;BoomerAMG&quot;}, {&quot;KSPType&quot;, &quot;CG&quot;}}}}}};</span></span>
+<span id="L788"><span class="lineNum">     788</span>              : </span>
+<span id="L789"><span class="lineNum">     789</span> <span class="tlaGNC">           1 :     IoData iodata(config, false);</span></span>
+<span id="L790"><span class="lineNum">     790</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata, config);</span></span>
+<span id="L791"><span class="lineNum">     791</span>              : </span>
+<span id="L792"><span class="lineNum">     792</span>              :     // User-specified values should be preserved.</span>
+<span id="L793"><span class="lineNum">     793</span> <span class="tlaGNC">           2 :     CHECK(config[&quot;Solver&quot;][&quot;Order&quot;].get&lt;int&gt;() == 3);</span></span>
+<span id="L794"><span class="lineNum">     794</span> <span class="tlaGNC">           2 :     CHECK(config[&quot;Solver&quot;][&quot;Linear&quot;][&quot;Type&quot;].get&lt;std::string&gt;() == &quot;BoomerAMG&quot;);</span></span>
+<span id="L795"><span class="lineNum">     795</span> <span class="tlaGNC">           2 :     CHECK(config[&quot;Solver&quot;][&quot;Linear&quot;][&quot;KSPType&quot;].get&lt;std::string&gt;() == &quot;CG&quot;);</span></span>
+<span id="L796"><span class="lineNum">     796</span> <span class="tlaGNC">          21 :   }</span></span>
+<span id="L797"><span class="lineNum">     797</span>              : </span>
+<span id="L798"><span class="lineNum">     798</span> <span class="tlaGNC">          20 :   SECTION(&quot;EigenSolverBackend DEFAULT resolves to concrete backend&quot;)</span></span>
+<span id="L799"><span class="lineNum">     799</span>              :   {</span>
+<span id="L800"><span class="lineNum">     800</span>              :     json config = {{&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Eigenmode&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L801"><span class="lineNum">     801</span>              :                    {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L802"><span class="lineNum">     802</span>              :                    {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L803"><span class="lineNum">     803</span> <span class="tlaGNC">           1 :                    {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L804"><span class="lineNum">     804</span> <span class="tlaGNC">          42 :                    {&quot;Solver&quot;, {{&quot;Eigenmode&quot;, {{&quot;Target&quot;, 1.0}}}}}};</span></span>
+<span id="L805"><span class="lineNum">     805</span>              : </span>
+<span id="L806"><span class="lineNum">     806</span> <span class="tlaGNC">           1 :     IoData iodata(config, false);</span></span>
+<span id="L807"><span class="lineNum">     807</span>              : </span>
+<span id="L808"><span class="lineNum">     808</span>              : #if defined(PALACE_WITH_SLEPC)</span>
+<span id="L809"><span class="lineNum">     809</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.eigenmode.type == EigenSolverBackend::SLEPC);</span></span>
+<span id="L810"><span class="lineNum">     810</span>              : #elif defined(PALACE_WITH_ARPACK)</span>
+<span id="L811"><span class="lineNum">     811</span>              :     CHECK(iodata.solver.eigenmode.type == EigenSolverBackend::ARPACK);</span>
+<span id="L812"><span class="lineNum">     812</span>              : #endif</span>
+<span id="L813"><span class="lineNum">     813</span>              : </span>
+<span id="L814"><span class="lineNum">     814</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata, config);</span></span>
+<span id="L815"><span class="lineNum">     815</span>              : </span>
+<span id="L816"><span class="lineNum">     816</span>              :     // The resolved config should say the concrete backend name, not &quot;Default&quot;.</span>
+<span id="L817"><span class="lineNum">     817</span> <span class="tlaGNC">           1 :     auto type_str = config[&quot;Solver&quot;][&quot;Eigenmode&quot;][&quot;Type&quot;].get&lt;std::string&gt;();</span></span>
+<span id="L818"><span class="lineNum">     818</span>              : #if defined(PALACE_WITH_SLEPC)</span>
+<span id="L819"><span class="lineNum">     819</span> <span class="tlaGNC">           1 :     CHECK(type_str == &quot;SLEPc&quot;);</span></span>
+<span id="L820"><span class="lineNum">     820</span>              : #elif defined(PALACE_WITH_ARPACK)</span>
+<span id="L821"><span class="lineNum">     821</span>              :     CHECK(type_str == &quot;ARPACK&quot;);</span>
+<span id="L822"><span class="lineNum">     822</span>              : #endif</span>
+<span id="L823"><span class="lineNum">     823</span> <span class="tlaGNC">          21 :   }</span></span>
+<span id="L824"><span class="lineNum">     824</span>              : </span>
+<span id="L825"><span class="lineNum">     825</span> <span class="tlaGNC">          20 :   SECTION(&quot;WavePort eigen solver DEFAULT resolves to concrete backend&quot;)</span></span>
+<span id="L826"><span class="lineNum">     826</span>              :   {</span>
+<span id="L827"><span class="lineNum">     827</span>              :     json config = {</span>
+<span id="L828"><span class="lineNum">     828</span>              :         {&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Driven&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L829"><span class="lineNum">     829</span>              :         {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L830"><span class="lineNum">     830</span>              :         {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L831"><span class="lineNum">     831</span>              :         {&quot;Boundaries&quot;,</span>
+<span id="L832"><span class="lineNum">     832</span>              :          {{&quot;WavePort&quot;, {{{&quot;Index&quot;, 1}, {&quot;Attributes&quot;, {2}}, {&quot;Excitation&quot;, true}}}}}},</span>
+<span id="L833"><span class="lineNum">     833</span>              :         {&quot;Solver&quot;,</span>
+<span id="L834"><span class="lineNum">     834</span>              :          {{&quot;Driven&quot;,</span>
+<span id="L835"><span class="lineNum">     835</span> <span class="tlaGNC">          69 :            {{&quot;Samples&quot;, {{{&quot;MinFreq&quot;, 1.0}, {&quot;MaxFreq&quot;, 2.0}, {&quot;FreqStep&quot;, 0.5}}}}}}}}};</span></span>
+<span id="L836"><span class="lineNum">     836</span>              : </span>
+<span id="L837"><span class="lineNum">     837</span> <span class="tlaGNC">           1 :     IoData iodata(config, false);</span></span>
+<span id="L838"><span class="lineNum">     838</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata, config);</span></span>
+<span id="L839"><span class="lineNum">     839</span>              : </span>
+<span id="L840"><span class="lineNum">     840</span> <span class="tlaGNC">           1 :     auto type_str = config[&quot;Boundaries&quot;][&quot;WavePort&quot;][0][&quot;SolverType&quot;].get&lt;std::string&gt;();</span></span>
+<span id="L841"><span class="lineNum">     841</span>              : #if defined(PALACE_WITH_SLEPC)</span>
+<span id="L842"><span class="lineNum">     842</span> <span class="tlaGNC">           1 :     CHECK(type_str == &quot;SLEPc&quot;);</span></span>
+<span id="L843"><span class="lineNum">     843</span>              : #elif defined(PALACE_WITH_ARPACK)</span>
+<span id="L844"><span class="lineNum">     844</span>              :     CHECK(type_str == &quot;ARPACK&quot;);</span>
+<span id="L845"><span class="lineNum">     845</span>              : #endif</span>
+<span id="L846"><span class="lineNum">     846</span> <span class="tlaGNC">          21 :   }</span></span>
+<span id="L847"><span class="lineNum">     847</span>              : </span>
+<span id="L848"><span class="lineNum">     848</span> <span class="tlaGNC">          20 :   SECTION(&quot;mg_smooth_order resolves from solver order&quot;)</span></span>
+<span id="L849"><span class="lineNum">     849</span>              :   {</span>
+<span id="L850"><span class="lineNum">     850</span>              :     json config = {{&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Electrostatic&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L851"><span class="lineNum">     851</span>              :                    {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L852"><span class="lineNum">     852</span>              :                    {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L853"><span class="lineNum">     853</span> <span class="tlaGNC">           1 :                    {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L854"><span class="lineNum">     854</span> <span class="tlaGNC">          39 :                    {&quot;Solver&quot;, {{&quot;Order&quot;, 5}}}};</span></span>
+<span id="L855"><span class="lineNum">     855</span>              : </span>
+<span id="L856"><span class="lineNum">     856</span> <span class="tlaGNC">           1 :     IoData iodata(config, false);</span></span>
+<span id="L857"><span class="lineNum">     857</span>              :     // max(2 * 5, 4) = 10</span>
+<span id="L858"><span class="lineNum">     858</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.mg_smooth_order == 10);</span></span>
+<span id="L859"><span class="lineNum">     859</span>              :     // ams_max_it defaults to solver.order = 5</span>
+<span id="L860"><span class="lineNum">     860</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.ams_max_it == 5);</span></span>
+<span id="L861"><span class="lineNum">     861</span>              : </span>
+<span id="L862"><span class="lineNum">     862</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata, config);</span></span>
+<span id="L863"><span class="lineNum">     863</span> <span class="tlaGNC">           2 :     CHECK(config[&quot;Solver&quot;][&quot;Linear&quot;][&quot;MGSmoothOrder&quot;].get&lt;int&gt;() == 10);</span></span>
+<span id="L864"><span class="lineNum">     864</span> <span class="tlaGNC">           2 :     CHECK(config[&quot;Solver&quot;][&quot;Linear&quot;][&quot;AMSMaxIts&quot;].get&lt;int&gt;() == 5);</span></span>
+<span id="L865"><span class="lineNum">     865</span> <span class="tlaGNC">          21 :   }</span></span>
+<span id="L866"><span class="lineNum">     866</span>              : </span>
+<span id="L867"><span class="lineNum">     867</span> <span class="tlaGNC">          20 :   SECTION(&quot;max_size defaults to max_it&quot;)</span></span>
+<span id="L868"><span class="lineNum">     868</span>              :   {</span>
+<span id="L869"><span class="lineNum">     869</span>              :     json config = {{&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Electrostatic&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L870"><span class="lineNum">     870</span>              :                    {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L871"><span class="lineNum">     871</span>              :                    {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L872"><span class="lineNum">     872</span> <span class="tlaGNC">           1 :                    {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L873"><span class="lineNum">     873</span> <span class="tlaGNC">          42 :                    {&quot;Solver&quot;, {{&quot;Linear&quot;, {{&quot;MaxIts&quot;, 200}}}}}};</span></span>
+<span id="L874"><span class="lineNum">     874</span>              : </span>
+<span id="L875"><span class="lineNum">     875</span> <span class="tlaGNC">           1 :     IoData iodata(config, false);</span></span>
+<span id="L876"><span class="lineNum">     876</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.linear.max_size == 200);</span></span>
+<span id="L877"><span class="lineNum">     877</span>              : </span>
+<span id="L878"><span class="lineNum">     878</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata, config);</span></span>
+<span id="L879"><span class="lineNum">     879</span> <span class="tlaGNC">           2 :     CHECK(config[&quot;Solver&quot;][&quot;Linear&quot;][&quot;MaxSize&quot;].get&lt;int&gt;() == 200);</span></span>
+<span id="L880"><span class="lineNum">     880</span> <span class="tlaGNC">          21 :   }</span></span>
+<span id="L881"><span class="lineNum">     881</span>              : </span>
+<span id="L882"><span class="lineNum">     882</span> <span class="tlaGNC">          20 :   SECTION(&quot;Solver.Order default captured&quot;)</span></span>
+<span id="L883"><span class="lineNum">     883</span>              :   {</span>
+<span id="L884"><span class="lineNum">     884</span>              :     json config = {{&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Electrostatic&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L885"><span class="lineNum">     885</span>              :                    {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L886"><span class="lineNum">     886</span>              :                    {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L887"><span class="lineNum">     887</span> <span class="tlaGNC">           1 :                    {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L888"><span class="lineNum">     888</span> <span class="tlaGNC">          37 :                    {&quot;Solver&quot;, json::object()}};</span></span>
+<span id="L889"><span class="lineNum">     889</span>              : </span>
+<span id="L890"><span class="lineNum">     890</span> <span class="tlaGNC">           1 :     IoData iodata(config, false);</span></span>
+<span id="L891"><span class="lineNum">     891</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.order == 1);</span></span>
+<span id="L892"><span class="lineNum">     892</span>              : </span>
+<span id="L893"><span class="lineNum">     893</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata, config);</span></span>
+<span id="L894"><span class="lineNum">     894</span> <span class="tlaGNC">           2 :     CHECK(config[&quot;Solver&quot;][&quot;Order&quot;].get&lt;int&gt;() == 1);</span></span>
+<span id="L895"><span class="lineNum">     895</span> <span class="tlaGNC">          21 :   }</span></span>
+<span id="L896"><span class="lineNum">     896</span>              : </span>
+<span id="L897"><span class="lineNum">     897</span> <span class="tlaGNC">          20 :   SECTION(&quot;Linear default Tol, MaxIts, and orthogonalization captured&quot;)</span></span>
+<span id="L898"><span class="lineNum">     898</span>              :   {</span>
+<span id="L899"><span class="lineNum">     899</span>              :     json config = {{&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Electrostatic&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L900"><span class="lineNum">     900</span>              :                    {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L901"><span class="lineNum">     901</span>              :                    {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L902"><span class="lineNum">     902</span> <span class="tlaGNC">           1 :                    {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L903"><span class="lineNum">     903</span> <span class="tlaGNC">          37 :                    {&quot;Solver&quot;, json::object()}};</span></span>
+<span id="L904"><span class="lineNum">     904</span>              : </span>
+<span id="L905"><span class="lineNum">     905</span> <span class="tlaGNC">           1 :     IoData iodata(config, false);</span></span>
+<span id="L906"><span class="lineNum">     906</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata, config);</span></span>
+<span id="L907"><span class="lineNum">     907</span> <span class="tlaGNC">           1 :     auto &amp;j_linear = config[&quot;Solver&quot;][&quot;Linear&quot;];</span></span>
+<span id="L908"><span class="lineNum">     908</span>              : </span>
+<span id="L909"><span class="lineNum">     909</span> <span class="tlaGNC">           2 :     CHECK(j_linear[&quot;Tol&quot;].get&lt;double&gt;() == Catch::Approx(1.0e-6));</span></span>
+<span id="L910"><span class="lineNum">     910</span> <span class="tlaGNC">           2 :     CHECK(j_linear[&quot;MaxIts&quot;].get&lt;int&gt;() == 100);</span></span>
+<span id="L911"><span class="lineNum">     911</span> <span class="tlaGNC">           2 :     CHECK(j_linear[&quot;GSOrthogonalization&quot;].get&lt;std::string&gt;() == &quot;MGS&quot;);</span></span>
+<span id="L912"><span class="lineNum">     912</span>              :     // PCSide and ColumnOrdering default to the DEFAULT enum value (not a compile-time</span>
+<span id="L913"><span class="lineNum">     913</span>              :     // alias); the concretized name records that the user accepted Palace's internal</span>
+<span id="L914"><span class="lineNum">     914</span>              :     // default rather than naming a specific backend option.</span>
+<span id="L915"><span class="lineNum">     915</span> <span class="tlaGNC">           2 :     CHECK(j_linear[&quot;PCSide&quot;].get&lt;std::string&gt;() == &quot;Default&quot;);</span></span>
+<span id="L916"><span class="lineNum">     916</span> <span class="tlaGNC">           2 :     CHECK(j_linear[&quot;ColumnOrdering&quot;].get&lt;std::string&gt;() == &quot;Default&quot;);</span></span>
+<span id="L917"><span class="lineNum">     917</span> <span class="tlaGNC">          21 :   }</span></span>
+<span id="L918"><span class="lineNum">     918</span>              : </span>
+<span id="L919"><span class="lineNum">     919</span> <span class="tlaGNC">          20 :   SECTION(&quot;Transient resolves Type DEFAULT to GeneralizedAlpha&quot;)</span></span>
+<span id="L920"><span class="lineNum">     920</span>              :   {</span>
+<span id="L921"><span class="lineNum">     921</span>              :     json config = {</span>
+<span id="L922"><span class="lineNum">     922</span>              :         {&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Transient&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L923"><span class="lineNum">     923</span>              :         {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L924"><span class="lineNum">     924</span>              :         {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L925"><span class="lineNum">     925</span> <span class="tlaGNC">           1 :         {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L926"><span class="lineNum">     926</span>              :         {&quot;Solver&quot;,</span>
+<span id="L927"><span class="lineNum">     927</span>              :          {{&quot;Transient&quot;,</span>
+<span id="L928"><span class="lineNum">     928</span> <span class="tlaGNC">          48 :            {{&quot;Excitation&quot;, &quot;Sinusoidal&quot;}, {&quot;MaxTime&quot;, 1.0}, {&quot;TimeStep&quot;, 0.01}}}}}};</span></span>
+<span id="L929"><span class="lineNum">     929</span>              : </span>
+<span id="L930"><span class="lineNum">     930</span> <span class="tlaGNC">           1 :     IoData iodata(config, false);</span></span>
+<span id="L931"><span class="lineNum">     931</span> <span class="tlaGNC">           1 :     CHECK(iodata.solver.transient.type == TimeSteppingScheme::GEN_ALPHA);</span></span>
+<span id="L932"><span class="lineNum">     932</span>              : </span>
+<span id="L933"><span class="lineNum">     933</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata, config);</span></span>
+<span id="L934"><span class="lineNum">     934</span> <span class="tlaGNC">           1 :     auto &amp;j_transient = config[&quot;Solver&quot;][&quot;Transient&quot;];</span></span>
+<span id="L935"><span class="lineNum">     935</span>              :     // Must resolve to the concrete name, NOT &quot;Default&quot;. This depends on the ordering</span>
+<span id="L936"><span class="lineNum">     936</span>              :     // contract in PALACE_JSON_SERIALIZE_ENUM(TimeSteppingScheme, ...).</span>
+<span id="L937"><span class="lineNum">     937</span> <span class="tlaGNC">           2 :     CHECK(j_transient[&quot;Type&quot;].get&lt;std::string&gt;() == &quot;GeneralizedAlpha&quot;);</span></span>
+<span id="L938"><span class="lineNum">     938</span>              :     // Order is not consumed by GeneralizedAlpha/RungeKutta and triggers a warning at</span>
+<span id="L939"><span class="lineNum">     939</span>              :     // parse time if emitted; ConcretizeTransient must omit it for these schemes.</span>
+<span id="L940"><span class="lineNum">     940</span> <span class="tlaGNC">           2 :     CHECK_FALSE(j_transient.contains(&quot;Order&quot;));</span></span>
+<span id="L941"><span class="lineNum">     941</span> <span class="tlaGNC">           2 :     CHECK_FALSE(j_transient.contains(&quot;RelTol&quot;));</span></span>
+<span id="L942"><span class="lineNum">     942</span> <span class="tlaGNC">           2 :     CHECK_FALSE(j_transient.contains(&quot;AbsTol&quot;));</span></span>
+<span id="L943"><span class="lineNum">     943</span> <span class="tlaGNC">          21 :   }</span></span>
+<span id="L944"><span class="lineNum">     944</span>              : </span>
+<span id="L945"><span class="lineNum">     945</span> <span class="tlaGNC">          20 :   SECTION(&quot;Eigenmode captures additional defaults&quot;)</span></span>
+<span id="L946"><span class="lineNum">     946</span>              :   {</span>
+<span id="L947"><span class="lineNum">     947</span>              :     json config = {{&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Eigenmode&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L948"><span class="lineNum">     948</span>              :                    {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L949"><span class="lineNum">     949</span>              :                    {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L950"><span class="lineNum">     950</span> <span class="tlaGNC">           1 :                    {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L951"><span class="lineNum">     951</span> <span class="tlaGNC">          42 :                    {&quot;Solver&quot;, {{&quot;Eigenmode&quot;, {{&quot;Target&quot;, 1.0}}}}}};</span></span>
+<span id="L952"><span class="lineNum">     952</span>              : </span>
+<span id="L953"><span class="lineNum">     953</span> <span class="tlaGNC">           1 :     IoData iodata(config, false);</span></span>
+<span id="L954"><span class="lineNum">     954</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata, config);</span></span>
+<span id="L955"><span class="lineNum">     955</span> <span class="tlaGNC">           1 :     auto &amp;j_eigen = config[&quot;Solver&quot;][&quot;Eigenmode&quot;];</span></span>
+<span id="L956"><span class="lineNum">     956</span>              : </span>
+<span id="L957"><span class="lineNum">     957</span> <span class="tlaGNC">           2 :     CHECK(j_eigen[&quot;Tol&quot;].get&lt;double&gt;() == Catch::Approx(1.0e-6));</span></span>
+<span id="L958"><span class="lineNum">     958</span> <span class="tlaGNC">           2 :     CHECK(j_eigen[&quot;N&quot;].get&lt;int&gt;() == 1);</span></span>
+<span id="L959"><span class="lineNum">     959</span> <span class="tlaGNC">           2 :     CHECK(j_eigen[&quot;Save&quot;].get&lt;int&gt;() == 0);</span></span>
+<span id="L960"><span class="lineNum">     960</span> <span class="tlaGNC">           2 :     CHECK(j_eigen[&quot;PEPLinear&quot;].get&lt;bool&gt;() == true);</span></span>
+<span id="L961"><span class="lineNum">     961</span> <span class="tlaGNC">           2 :     CHECK(j_eigen[&quot;Scaling&quot;].get&lt;bool&gt;() == true);</span></span>
+<span id="L962"><span class="lineNum">     962</span> <span class="tlaGNC">           2 :     CHECK(j_eigen[&quot;StartVector&quot;].get&lt;bool&gt;() == true);</span></span>
+<span id="L963"><span class="lineNum">     963</span> <span class="tlaGNC">           2 :     CHECK(j_eigen[&quot;StartVectorConstant&quot;].get&lt;bool&gt;() == false);</span></span>
+<span id="L964"><span class="lineNum">     964</span> <span class="tlaGNC">           2 :     CHECK(j_eigen[&quot;MassOrthogonal&quot;].get&lt;bool&gt;() == false);</span></span>
+<span id="L965"><span class="lineNum">     965</span> <span class="tlaGNC">          21 :   }</span></span>
+<span id="L966"><span class="lineNum">     966</span>              : </span>
+<span id="L967"><span class="lineNum">     967</span> <span class="tlaGNC">          20 :   SECTION(&quot;Round-trip: resolved config validates and re-parses identically&quot;)</span></span>
+<span id="L968"><span class="lineNum">     968</span>              :   {</span>
+<span id="L969"><span class="lineNum">     969</span>              :     // Start from a sparse Electrostatic config with one non-default (Order=3) and one</span>
+<span id="L970"><span class="lineNum">     970</span>              :     // user-set Linear field (MaxIts=250). Everything else resolves from defaults.</span>
+<span id="L971"><span class="lineNum">     971</span>              :     json config = {{&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Electrostatic&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L972"><span class="lineNum">     972</span>              :                    {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L973"><span class="lineNum">     973</span>              :                    {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L974"><span class="lineNum">     974</span> <span class="tlaGNC">           1 :                    {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L975"><span class="lineNum">     975</span> <span class="tlaGNC">          45 :                    {&quot;Solver&quot;, {{&quot;Order&quot;, 3}, {&quot;Linear&quot;, {{&quot;MaxIts&quot;, 250}}}}}};</span></span>
+<span id="L976"><span class="lineNum">     976</span>              : </span>
+<span id="L977"><span class="lineNum">     977</span> <span class="tlaGNC">           1 :     IoData iodata1(config, false);</span></span>
+<span id="L978"><span class="lineNum">     978</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata1, config);</span></span>
+<span id="L979"><span class="lineNum">     979</span>              : </span>
+<span id="L980"><span class="lineNum">     980</span>              :     // The resolved config must pass schema validation; otherwise a user cannot</span>
+<span id="L981"><span class="lineNum">     981</span>              :     // actually re-run Palace on the produced file.</span>
+<span id="L982"><span class="lineNum">     982</span> <span class="tlaGNC">           1 :     std::string err = ValidateConfig(config);</span></span>
+<span id="L983"><span class="lineNum">     983</span> <span class="tlaGNC">           2 :     INFO(&quot;schema validation error: &quot; &lt;&lt; err);</span></span>
+<span id="L984"><span class="lineNum">     984</span> <span class="tlaGNC">           2 :     CHECK(err.empty());</span></span>
+<span id="L985"><span class="lineNum">     985</span>              : </span>
+<span id="L986"><span class="lineNum">     986</span> <span class="tlaGNC">           1 :     IoData iodata2(config, false);</span></span>
+<span id="L987"><span class="lineNum">     987</span>              : </span>
+<span id="L988"><span class="lineNum">     988</span> <span class="tlaGNC">           1 :     CHECK(iodata2.solver.order == iodata1.solver.order);</span></span>
+<span id="L989"><span class="lineNum">     989</span>              :     const auto &amp;l1 = iodata1.solver.linear;</span>
+<span id="L990"><span class="lineNum">     990</span>              :     const auto &amp;l2 = iodata2.solver.linear;</span>
+<span id="L991"><span class="lineNum">     991</span> <span class="tlaGNC">           1 :     CHECK(l2.type == l1.type);</span></span>
+<span id="L992"><span class="lineNum">     992</span> <span class="tlaGNC">           1 :     CHECK(l2.krylov_solver == l1.krylov_solver);</span></span>
+<span id="L993"><span class="lineNum">     993</span> <span class="tlaGNC">           1 :     CHECK(l2.tol == l1.tol);</span></span>
+<span id="L994"><span class="lineNum">     994</span> <span class="tlaGNC">           1 :     CHECK(l2.max_it == l1.max_it);</span></span>
+<span id="L995"><span class="lineNum">     995</span> <span class="tlaGNC">           1 :     CHECK(l2.max_size == l1.max_size);</span></span>
+<span id="L996"><span class="lineNum">     996</span> <span class="tlaGNC">           1 :     CHECK(l2.initial_guess == l1.initial_guess);</span></span>
+<span id="L997"><span class="lineNum">     997</span> <span class="tlaGNC">           1 :     CHECK(l2.pc_mat_shifted == l1.pc_mat_shifted);</span></span>
+<span id="L998"><span class="lineNum">     998</span> <span class="tlaGNC">           1 :     CHECK(l2.mg_smooth_aux == l1.mg_smooth_aux);</span></span>
+<span id="L999"><span class="lineNum">     999</span> <span class="tlaGNC">           1 :     CHECK(l2.mg_smooth_order == l1.mg_smooth_order);</span></span>
+<span id="L1000"><span class="lineNum">    1000</span> <span class="tlaGNC">           1 :     CHECK(l2.mg_cycle_it == l1.mg_cycle_it);</span></span>
+<span id="L1001"><span class="lineNum">    1001</span> <span class="tlaGNC">           1 :     CHECK(l2.ams_singular_op == l1.ams_singular_op);</span></span>
+<span id="L1002"><span class="lineNum">    1002</span> <span class="tlaGNC">           1 :     CHECK(l2.ams_max_it == l1.ams_max_it);</span></span>
+<span id="L1003"><span class="lineNum">    1003</span> <span class="tlaGNC">           1 :     CHECK(l2.amg_agg_coarsen == l1.amg_agg_coarsen);</span></span>
+<span id="L1004"><span class="lineNum">    1004</span> <span class="tlaGNC">           1 :     CHECK(l2.reorder_reuse == l1.reorder_reuse);</span></span>
+<span id="L1005"><span class="lineNum">    1005</span> <span class="tlaGNC">           1 :     CHECK(l2.pc_side == l1.pc_side);</span></span>
+<span id="L1006"><span class="lineNum">    1006</span> <span class="tlaGNC">           1 :     CHECK(l2.sym_factorization == l1.sym_factorization);</span></span>
+<span id="L1007"><span class="lineNum">    1007</span> <span class="tlaGNC">           1 :     CHECK(l2.gs_orthog == l1.gs_orthog);</span></span>
+<span id="L1008"><span class="lineNum">    1008</span> <span class="tlaGNC">          22 :   }</span></span>
+<span id="L1009"><span class="lineNum">    1009</span>              : </span>
+<span id="L1010"><span class="lineNum">    1010</span> <span class="tlaGNC">          20 :   SECTION(&quot;Round-trip: Model, Refinement, and Boundaries are reproducible&quot;)</span></span>
+<span id="L1011"><span class="lineNum">    1011</span>              :   {</span>
+<span id="L1012"><span class="lineNum">    1012</span>              :     json config = {</span>
+<span id="L1013"><span class="lineNum">    1013</span>              :         {&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Driven&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L1014"><span class="lineNum">    1014</span>              :         {&quot;Model&quot;,</span>
+<span id="L1015"><span class="lineNum">    1015</span>              :          {{&quot;Mesh&quot;, &quot;test.msh&quot;},</span>
+<span id="L1016"><span class="lineNum">    1016</span>              :           {&quot;L0&quot;, 1.0e-3},</span>
+<span id="L1017"><span class="lineNum">    1017</span>              :           {&quot;MakeSimplex&quot;, true},</span>
+<span id="L1018"><span class="lineNum">    1018</span>              :           {&quot;Partitioning&quot;, &quot;parts.txt&quot;},</span>
+<span id="L1019"><span class="lineNum">    1019</span>              :           {&quot;Refinement&quot;, {{&quot;MaxIts&quot;, 4}, {&quot;MaxSize&quot;, 1000}, {&quot;UpdateFraction&quot;, 0.5}}}}},</span>
+<span id="L1020"><span class="lineNum">    1020</span>              :         {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L1021"><span class="lineNum">    1021</span>              :         {&quot;Boundaries&quot;,</span>
+<span id="L1022"><span class="lineNum">    1022</span>              :          {{&quot;Absorbing&quot;, {{&quot;Attributes&quot;, {2}}, {&quot;Order&quot;, 2}}},</span>
+<span id="L1023"><span class="lineNum">    1023</span>              :           {&quot;Conductivity&quot;, {{{&quot;Attributes&quot;, {3}}, {&quot;Conductivity&quot;, 5.8e7}}}},</span>
+<span id="L1024"><span class="lineNum">    1024</span>              :           {&quot;Impedance&quot;,</span>
+<span id="L1025"><span class="lineNum">    1025</span>              :            {{{&quot;Attributes&quot;, {4}}, {&quot;Rs&quot;, 50.0}, {&quot;Ls&quot;, 1.0e-9}, {&quot;Cs&quot;, 1.0e-12}}}},</span>
+<span id="L1026"><span class="lineNum">    1026</span>              :           {&quot;LumpedPort&quot;,</span>
+<span id="L1027"><span class="lineNum">    1027</span>              :            {{{&quot;Index&quot;, 1},</span>
+<span id="L1028"><span class="lineNum">    1028</span>              :              {&quot;Attributes&quot;, {5}},</span>
+<span id="L1029"><span class="lineNum">    1029</span>              :              {&quot;Direction&quot;, &quot;+X&quot;},</span>
+<span id="L1030"><span class="lineNum">    1030</span>              :              {&quot;R&quot;, 50.0},</span>
+<span id="L1031"><span class="lineNum">    1031</span>              :              {&quot;L&quot;, 1.0e-9},</span>
+<span id="L1032"><span class="lineNum">    1032</span>              :              {&quot;Excitation&quot;, true},</span>
+<span id="L1033"><span class="lineNum">    1033</span>              :              {&quot;Active&quot;, false}}}},</span>
+<span id="L1034"><span class="lineNum">    1034</span>              :           {&quot;Periodic&quot;,</span>
+<span id="L1035"><span class="lineNum">    1035</span>              :            {{&quot;FloquetWaveVector&quot;, {0.1, 0.2, 0.3}},</span>
+<span id="L1036"><span class="lineNum">    1036</span>              :             {&quot;BoundaryPairs&quot;,</span>
+<span id="L1037"><span class="lineNum">    1037</span>              :              {{{&quot;DonorAttributes&quot;, {10}}, {&quot;ReceiverAttributes&quot;, {11}}}}}}},</span>
+<span id="L1038"><span class="lineNum">    1038</span>              :           {&quot;Postprocessing&quot;,</span>
+<span id="L1039"><span class="lineNum">    1039</span>              :            {{&quot;SurfaceFlux&quot;,</span>
+<span id="L1040"><span class="lineNum">    1040</span>              :              {{{&quot;Index&quot;, 1},</span>
+<span id="L1041"><span class="lineNum">    1041</span>              :                {&quot;Attributes&quot;, {6}},</span>
+<span id="L1042"><span class="lineNum">    1042</span>              :                {&quot;Type&quot;, &quot;Electric&quot;},</span>
+<span id="L1043"><span class="lineNum">    1043</span>              :                {&quot;TwoSided&quot;, true}}}},</span>
+<span id="L1044"><span class="lineNum">    1044</span>              :             {&quot;Dielectric&quot;,</span>
+<span id="L1045"><span class="lineNum">    1045</span>              :              {{{&quot;Index&quot;, 1},</span>
+<span id="L1046"><span class="lineNum">    1046</span>              :                {&quot;Attributes&quot;, {7}},</span>
+<span id="L1047"><span class="lineNum">    1047</span>              :                {&quot;Type&quot;, &quot;MA&quot;},</span>
+<span id="L1048"><span class="lineNum">    1048</span>              :                {&quot;Thickness&quot;, 1.0e-9},</span>
+<span id="L1049"><span class="lineNum">    1049</span>              :                {&quot;Permittivity&quot;, 4.0},</span>
+<span id="L1050"><span class="lineNum">    1050</span>              :                {&quot;LossTan&quot;, 0.002}}}}}}}},</span>
+<span id="L1051"><span class="lineNum">    1051</span> <span class="tlaGNC">         226 :         {&quot;Solver&quot;, {{&quot;Driven&quot;, {{&quot;MinFreq&quot;, 1.0}, {&quot;MaxFreq&quot;, 2.0}, {&quot;FreqStep&quot;, 0.1}}}}}};</span></span>
+<span id="L1052"><span class="lineNum">    1052</span>              : </span>
+<span id="L1053"><span class="lineNum">    1053</span> <span class="tlaGNC">           1 :     IoData iodata1(config, false);</span></span>
+<span id="L1054"><span class="lineNum">    1054</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata1, config);</span></span>
+<span id="L1055"><span class="lineNum">    1055</span>              : </span>
+<span id="L1056"><span class="lineNum">    1056</span> <span class="tlaGNC">           1 :     std::string err = ValidateConfig(config);</span></span>
+<span id="L1057"><span class="lineNum">    1057</span> <span class="tlaGNC">           2 :     INFO(&quot;schema validation error: &quot; &lt;&lt; err);</span></span>
+<span id="L1058"><span class="lineNum">    1058</span> <span class="tlaGNC">           2 :     CHECK(err.empty());</span></span>
+<span id="L1059"><span class="lineNum">    1059</span>              : </span>
+<span id="L1060"><span class="lineNum">    1060</span> <span class="tlaGNC">           1 :     IoData iodata2(config, false);</span></span>
+<span id="L1061"><span class="lineNum">    1061</span>              : </span>
+<span id="L1062"><span class="lineNum">    1062</span>              :     const auto &amp;m1 = iodata1.model;</span>
+<span id="L1063"><span class="lineNum">    1063</span>              :     const auto &amp;m2 = iodata2.model;</span>
+<span id="L1064"><span class="lineNum">    1064</span> <span class="tlaGNC">           1 :     CHECK(m2.L0 == m1.L0);</span></span>
+<span id="L1065"><span class="lineNum">    1065</span> <span class="tlaGNC">           1 :     CHECK(m2.Lc == m1.Lc);</span></span>
+<span id="L1066"><span class="lineNum">    1066</span> <span class="tlaGNC">           1 :     CHECK(m2.remove_curvature == m1.remove_curvature);</span></span>
+<span id="L1067"><span class="lineNum">    1067</span> <span class="tlaGNC">           1 :     CHECK(m2.make_simplex == m1.make_simplex);</span></span>
+<span id="L1068"><span class="lineNum">    1068</span> <span class="tlaGNC">           1 :     CHECK(m2.make_hex == m1.make_hex);</span></span>
+<span id="L1069"><span class="lineNum">    1069</span> <span class="tlaGNC">           1 :     CHECK(m2.reorder_elements == m1.reorder_elements);</span></span>
+<span id="L1070"><span class="lineNum">    1070</span> <span class="tlaGNC">           1 :     CHECK(m2.clean_unused_elements == m1.clean_unused_elements);</span></span>
+<span id="L1071"><span class="lineNum">    1071</span> <span class="tlaGNC">           1 :     CHECK(m2.crack_bdr_elements == m1.crack_bdr_elements);</span></span>
+<span id="L1072"><span class="lineNum">    1072</span> <span class="tlaGNC">           1 :     CHECK(m2.refine_crack_elements == m1.refine_crack_elements);</span></span>
+<span id="L1073"><span class="lineNum">    1073</span> <span class="tlaGNC">           1 :     CHECK(m2.crack_displ_factor == m1.crack_displ_factor);</span></span>
+<span id="L1074"><span class="lineNum">    1074</span> <span class="tlaGNC">           1 :     CHECK(m2.add_bdr_elements == m1.add_bdr_elements);</span></span>
+<span id="L1075"><span class="lineNum">    1075</span> <span class="tlaGNC">           1 :     CHECK(m2.export_prerefined_mesh == m1.export_prerefined_mesh);</span></span>
+<span id="L1076"><span class="lineNum">    1076</span> <span class="tlaGNC">           1 :     CHECK(m2.reorient_tet_mesh == m1.reorient_tet_mesh);</span></span>
+<span id="L1077"><span class="lineNum">    1077</span> <span class="tlaGNC">           1 :     CHECK(m2.partitioning == m1.partitioning);</span></span>
+<span id="L1078"><span class="lineNum">    1078</span>              :     const auto &amp;r1 = m1.refinement;</span>
+<span id="L1079"><span class="lineNum">    1079</span>              :     const auto &amp;r2 = m2.refinement;</span>
+<span id="L1080"><span class="lineNum">    1080</span> <span class="tlaGNC">           1 :     CHECK(r2.tol == r1.tol);</span></span>
+<span id="L1081"><span class="lineNum">    1081</span> <span class="tlaGNC">           1 :     CHECK(r2.max_it == r1.max_it);</span></span>
+<span id="L1082"><span class="lineNum">    1082</span> <span class="tlaGNC">           1 :     CHECK(r2.max_size == r1.max_size);</span></span>
+<span id="L1083"><span class="lineNum">    1083</span> <span class="tlaGNC">           1 :     CHECK(r2.nonconformal == r1.nonconformal);</span></span>
+<span id="L1084"><span class="lineNum">    1084</span> <span class="tlaGNC">           1 :     CHECK(r2.max_nc_levels == r1.max_nc_levels);</span></span>
+<span id="L1085"><span class="lineNum">    1085</span> <span class="tlaGNC">           1 :     CHECK(r2.update_fraction == r1.update_fraction);</span></span>
+<span id="L1086"><span class="lineNum">    1086</span> <span class="tlaGNC">           1 :     CHECK(r2.maximum_imbalance == r1.maximum_imbalance);</span></span>
+<span id="L1087"><span class="lineNum">    1087</span> <span class="tlaGNC">           1 :     CHECK(r2.save_adapt_iterations == r1.save_adapt_iterations);</span></span>
+<span id="L1088"><span class="lineNum">    1088</span> <span class="tlaGNC">           1 :     CHECK(r2.save_adapt_mesh == r1.save_adapt_mesh);</span></span>
+<span id="L1089"><span class="lineNum">    1089</span> <span class="tlaGNC">           1 :     CHECK(r2.uniform_ref_levels == r1.uniform_ref_levels);</span></span>
+<span id="L1090"><span class="lineNum">    1090</span> <span class="tlaGNC">           1 :     CHECK(r2.ser_uniform_ref_levels == r1.ser_uniform_ref_levels);</span></span>
+<span id="L1091"><span class="lineNum">    1091</span> <span class="tlaGNC">           1 :     CHECK(iodata2.boundaries.farfield.order == iodata1.boundaries.farfield.order);</span></span>
+<span id="L1092"><span class="lineNum">    1092</span> <span class="tlaGNC">           1 :     REQUIRE(iodata1.boundaries.conductivity.size() == 1);</span></span>
+<span id="L1093"><span class="lineNum">    1093</span> <span class="tlaGNC">           1 :     REQUIRE(iodata2.boundaries.conductivity.size() == 1);</span></span>
+<span id="L1094"><span class="lineNum">    1094</span> <span class="tlaGNC">           1 :     CHECK(iodata2.boundaries.conductivity[0].h == iodata1.boundaries.conductivity[0].h);</span></span>
+<span id="L1095"><span class="lineNum">    1095</span> <span class="tlaGNC">           1 :     CHECK(iodata2.boundaries.conductivity[0].external ==</span></span>
+<span id="L1096"><span class="lineNum">    1096</span>              :           iodata1.boundaries.conductivity[0].external);</span>
+<span id="L1097"><span class="lineNum">    1097</span> <span class="tlaGNC">           1 :     REQUIRE(iodata1.boundaries.impedance.size() == 1);</span></span>
+<span id="L1098"><span class="lineNum">    1098</span> <span class="tlaGNC">           1 :     REQUIRE(iodata2.boundaries.impedance.size() == 1);</span></span>
+<span id="L1099"><span class="lineNum">    1099</span> <span class="tlaGNC">           1 :     CHECK(iodata2.boundaries.impedance[0].Rs == iodata1.boundaries.impedance[0].Rs);</span></span>
+<span id="L1100"><span class="lineNum">    1100</span> <span class="tlaGNC">           1 :     CHECK(iodata2.boundaries.impedance[0].Ls == iodata1.boundaries.impedance[0].Ls);</span></span>
+<span id="L1101"><span class="lineNum">    1101</span> <span class="tlaGNC">           1 :     CHECK(iodata2.boundaries.impedance[0].Cs == iodata1.boundaries.impedance[0].Cs);</span></span>
+<span id="L1102"><span class="lineNum">    1102</span> <span class="tlaGNC">           2 :     REQUIRE(iodata2.boundaries.lumpedport.count(1) == 1);</span></span>
+<span id="L1103"><span class="lineNum">    1103</span> <span class="tlaGNC">           1 :     const auto &amp;lp1 = iodata1.boundaries.lumpedport.at(1);</span></span>
+<span id="L1104"><span class="lineNum">    1104</span> <span class="tlaGNC">           1 :     const auto &amp;lp2 = iodata2.boundaries.lumpedport.at(1);</span></span>
+<span id="L1105"><span class="lineNum">    1105</span> <span class="tlaGNC">           1 :     CHECK(lp2.R == lp1.R);</span></span>
+<span id="L1106"><span class="lineNum">    1106</span> <span class="tlaGNC">           1 :     CHECK(lp2.L == lp1.L);</span></span>
+<span id="L1107"><span class="lineNum">    1107</span> <span class="tlaGNC">           1 :     CHECK(lp2.C == lp1.C);</span></span>
+<span id="L1108"><span class="lineNum">    1108</span> <span class="tlaGNC">           1 :     CHECK(lp2.Rs == lp1.Rs);</span></span>
+<span id="L1109"><span class="lineNum">    1109</span> <span class="tlaGNC">           1 :     CHECK(lp2.Ls == lp1.Ls);</span></span>
+<span id="L1110"><span class="lineNum">    1110</span> <span class="tlaGNC">           1 :     CHECK(lp2.Cs == lp1.Cs);</span></span>
+<span id="L1111"><span class="lineNum">    1111</span> <span class="tlaGNC">           1 :     CHECK(lp2.excitation == lp1.excitation);</span></span>
+<span id="L1112"><span class="lineNum">    1112</span> <span class="tlaGNC">           1 :     CHECK(lp2.active == lp1.active);</span></span>
+<span id="L1113"><span class="lineNum">    1113</span> <span class="tlaGNC">           2 :     CHECK(iodata2.boundaries.periodic.wave_vector ==</span></span>
+<span id="L1114"><span class="lineNum">    1114</span>              :           iodata1.boundaries.periodic.wave_vector);</span>
+<span id="L1115"><span class="lineNum">    1115</span> <span class="tlaGNC">           2 :     REQUIRE(iodata2.boundaries.postpro.flux.count(1) == 1);</span></span>
+<span id="L1116"><span class="lineNum">    1116</span> <span class="tlaGNC">           1 :     CHECK(iodata2.boundaries.postpro.flux.at(1).two_sided ==</span></span>
+<span id="L1117"><span class="lineNum">    1117</span>              :           iodata1.boundaries.postpro.flux.at(1).two_sided);</span>
+<span id="L1118"><span class="lineNum">    1118</span> <span class="tlaGNC">           2 :     REQUIRE(iodata2.boundaries.postpro.dielectric.count(1) == 1);</span></span>
+<span id="L1119"><span class="lineNum">    1119</span> <span class="tlaGNC">           1 :     CHECK(iodata2.boundaries.postpro.dielectric.at(1).type ==</span></span>
+<span id="L1120"><span class="lineNum">    1120</span>              :           iodata1.boundaries.postpro.dielectric.at(1).type);</span>
+<span id="L1121"><span class="lineNum">    1121</span> <span class="tlaGNC">           1 :     CHECK(iodata2.boundaries.postpro.dielectric.at(1).tandelta ==</span></span>
+<span id="L1122"><span class="lineNum">    1122</span>              :           iodata1.boundaries.postpro.dielectric.at(1).tandelta);</span>
+<span id="L1123"><span class="lineNum">    1123</span>              : </span>
+<span id="L1124"><span class="lineNum">    1124</span>              :     // Coverage gates. Each schema scope this fixture exercises is checked here so a</span>
+<span id="L1125"><span class="lineNum">    1125</span>              :     // future schema addition without matching Concretize emission fails this section.</span>
+<span id="L1126"><span class="lineNum">    1126</span> <span class="tlaGNC">           2 :     auto model_gaps = SchemaCoverageGaps(&quot;config/model.json&quot;, &quot;&quot;, config[&quot;Model&quot;],</span></span>
+<span id="L1127"><span class="lineNum">    1127</span> <span class="tlaGNC">           1 :                                          /*skip=*/{&quot;Lc&quot;});</span></span>
+<span id="L1128"><span class="lineNum">    1128</span> <span class="tlaGNC">           4 :     INFO(&quot;Model missing keys: &quot; &lt;&lt; json(model_gaps).dump());</span></span>
+<span id="L1129"><span class="lineNum">    1129</span> <span class="tlaGNC">           2 :     CHECK(model_gaps.empty());</span></span>
+<span id="L1130"><span class="lineNum">    1130</span>              : </span>
+<span id="L1131"><span class="lineNum">    1131</span>              :     // Boxes/Spheres are opt-in arrays of explicit refinement regions; absence means</span>
+<span id="L1132"><span class="lineNum">    1132</span>              :     // no per-region refinement and there is no scalar default to emit.</span>
+<span id="L1133"><span class="lineNum">    1133</span> <span class="tlaGNC">           3 :     auto ref_gaps = SchemaCoverageGaps(&quot;config/model.json&quot;, &quot;/properties/Refinement&quot;,</span></span>
+<span id="L1134"><span class="lineNum">    1134</span> <span class="tlaGNC">           1 :                                        config[&quot;Model&quot;][&quot;Refinement&quot;],</span></span>
+<span id="L1135"><span class="lineNum">    1135</span> <span class="tlaGNC">           1 :                                        /*skip=*/{&quot;Boxes&quot;, &quot;Spheres&quot;});</span></span>
+<span id="L1136"><span class="lineNum">    1136</span> <span class="tlaGNC">           4 :     INFO(&quot;Model.Refinement missing keys: &quot; &lt;&lt; json(ref_gaps).dump());</span></span>
+<span id="L1137"><span class="lineNum">    1137</span> <span class="tlaGNC">           2 :     CHECK(ref_gaps.empty());</span></span>
+<span id="L1138"><span class="lineNum">    1138</span>              : </span>
+<span id="L1139"><span class="lineNum">    1139</span> <span class="tlaGNC">           2 :     auto abs_gaps = SchemaCoverageGaps(&quot;config/boundaries.json&quot;, &quot;/properties/Absorbing&quot;,</span></span>
+<span id="L1140"><span class="lineNum">    1140</span> <span class="tlaGNC">           2 :                                        config[&quot;Boundaries&quot;][&quot;Absorbing&quot;]);</span></span>
+<span id="L1141"><span class="lineNum">    1141</span> <span class="tlaGNC">           4 :     INFO(&quot;Boundaries.Absorbing missing keys: &quot; &lt;&lt; json(abs_gaps).dump());</span></span>
+<span id="L1142"><span class="lineNum">    1142</span> <span class="tlaGNC">           2 :     CHECK(abs_gaps.empty());</span></span>
+<span id="L1143"><span class="lineNum">    1143</span>              : </span>
+<span id="L1144"><span class="lineNum">    1144</span>              :     auto cond_gaps =</span>
+<span id="L1145"><span class="lineNum">    1145</span> <span class="tlaGNC">           2 :         SchemaCoverageGaps(&quot;config/boundaries.json&quot;, &quot;/properties/Conductivity/items&quot;,</span></span>
+<span id="L1146"><span class="lineNum">    1146</span> <span class="tlaGNC">           2 :                            config[&quot;Boundaries&quot;][&quot;Conductivity&quot;][0]);</span></span>
+<span id="L1147"><span class="lineNum">    1147</span> <span class="tlaGNC">           4 :     INFO(&quot;Boundaries.Conductivity[] missing keys: &quot; &lt;&lt; json(cond_gaps).dump());</span></span>
+<span id="L1148"><span class="lineNum">    1148</span> <span class="tlaGNC">           2 :     CHECK(cond_gaps.empty());</span></span>
+<span id="L1149"><span class="lineNum">    1149</span>              : </span>
+<span id="L1150"><span class="lineNum">    1150</span>              :     auto imp_gaps =</span>
+<span id="L1151"><span class="lineNum">    1151</span> <span class="tlaGNC">           2 :         SchemaCoverageGaps(&quot;config/boundaries.json&quot;, &quot;/properties/Impedance/items&quot;,</span></span>
+<span id="L1152"><span class="lineNum">    1152</span> <span class="tlaGNC">           2 :                            config[&quot;Boundaries&quot;][&quot;Impedance&quot;][0]);</span></span>
+<span id="L1153"><span class="lineNum">    1153</span> <span class="tlaGNC">           4 :     INFO(&quot;Boundaries.Impedance[] missing keys: &quot; &lt;&lt; json(imp_gaps).dump());</span></span>
+<span id="L1154"><span class="lineNum">    1154</span> <span class="tlaGNC">           2 :     CHECK(imp_gaps.empty());</span></span>
+<span id="L1155"><span class="lineNum">    1155</span>              : </span>
+<span id="L1156"><span class="lineNum">    1156</span>              :     // LumpedPort: Direction/CoordinateSystem/Elements are opt-in alternatives to</span>
+<span id="L1157"><span class="lineNum">    1157</span>              :     // Attributes for declaring the port geometry; concretize does not synthesize them.</span>
+<span id="L1158"><span class="lineNum">    1158</span>              :     auto lp_gaps =</span>
+<span id="L1159"><span class="lineNum">    1159</span> <span class="tlaGNC">           3 :         SchemaCoverageGaps(&quot;config/boundaries.json&quot;, &quot;/properties/LumpedPort/items&quot;,</span></span>
+<span id="L1160"><span class="lineNum">    1160</span> <span class="tlaGNC">           1 :                            config[&quot;Boundaries&quot;][&quot;LumpedPort&quot;][0],</span></span>
+<span id="L1161"><span class="lineNum">    1161</span> <span class="tlaGNC">           1 :                            /*skip=*/{&quot;CoordinateSystem&quot;, &quot;Elements&quot;});</span></span>
+<span id="L1162"><span class="lineNum">    1162</span> <span class="tlaGNC">           4 :     INFO(&quot;Boundaries.LumpedPort[] missing keys: &quot; &lt;&lt; json(lp_gaps).dump());</span></span>
+<span id="L1163"><span class="lineNum">    1163</span> <span class="tlaGNC">           2 :     CHECK(lp_gaps.empty());</span></span>
+<span id="L1164"><span class="lineNum">    1164</span>              : </span>
+<span id="L1165"><span class="lineNum">    1165</span> <span class="tlaGNC">           2 :     auto per_gaps = SchemaCoverageGaps(&quot;config/boundaries.json&quot;, &quot;/properties/Periodic&quot;,</span></span>
+<span id="L1166"><span class="lineNum">    1166</span> <span class="tlaGNC">           2 :                                        config[&quot;Boundaries&quot;][&quot;Periodic&quot;]);</span></span>
+<span id="L1167"><span class="lineNum">    1167</span> <span class="tlaGNC">           4 :     INFO(&quot;Boundaries.Periodic missing keys: &quot; &lt;&lt; json(per_gaps).dump());</span></span>
+<span id="L1168"><span class="lineNum">    1168</span> <span class="tlaGNC">           2 :     CHECK(per_gaps.empty());</span></span>
+<span id="L1169"><span class="lineNum">    1169</span> <span class="tlaGNC">          22 :   }</span></span>
+<span id="L1170"><span class="lineNum">    1170</span>              : </span>
+<span id="L1171"><span class="lineNum">    1171</span> <span class="tlaGNC">          20 :   SECTION(&quot;User-written \&quot;Default\&quot; is replaced with the resolved concrete value&quot;)</span></span>
+<span id="L1172"><span class="lineNum">    1172</span>              :   {</span>
+<span id="L1173"><span class="lineNum">    1173</span>              :     // If the user explicitly writes the sentinel string, we must still concretize —</span>
+<span id="L1174"><span class="lineNum">    1174</span>              :     // otherwise the resolved config contains a default, defeating the whole feature.</span>
+<span id="L1175"><span class="lineNum">    1175</span>              :     json config = {{&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Eigenmode&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L1176"><span class="lineNum">    1176</span>              :                    {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L1177"><span class="lineNum">    1177</span>              :                    {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L1178"><span class="lineNum">    1178</span> <span class="tlaGNC">           1 :                    {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L1179"><span class="lineNum">    1179</span>              :                    {&quot;Solver&quot;,</span>
+<span id="L1180"><span class="lineNum">    1180</span>              :                     {{&quot;Eigenmode&quot;, {{&quot;Target&quot;, 1.0}, {&quot;Type&quot;, &quot;Default&quot;}}},</span>
+<span id="L1181"><span class="lineNum">    1181</span> <span class="tlaGNC">          54 :                      {&quot;Linear&quot;, {{&quot;Type&quot;, &quot;Default&quot;}, {&quot;KSPType&quot;, &quot;Default&quot;}}}}}};</span></span>
+<span id="L1182"><span class="lineNum">    1182</span>              : </span>
+<span id="L1183"><span class="lineNum">    1183</span> <span class="tlaGNC">           1 :     IoData iodata(config, false);</span></span>
+<span id="L1184"><span class="lineNum">    1184</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata, config);</span></span>
+<span id="L1185"><span class="lineNum">    1185</span>              : </span>
+<span id="L1186"><span class="lineNum">    1186</span> <span class="tlaGNC">           1 :     auto &amp;j_eigen = config[&quot;Solver&quot;][&quot;Eigenmode&quot;];</span></span>
+<span id="L1187"><span class="lineNum">    1187</span> <span class="tlaGNC">           1 :     auto &amp;j_linear = config[&quot;Solver&quot;][&quot;Linear&quot;];</span></span>
+<span id="L1188"><span class="lineNum">    1188</span> <span class="tlaGNC">           2 :     CHECK(j_eigen[&quot;Type&quot;].get&lt;std::string&gt;() != &quot;Default&quot;);</span></span>
+<span id="L1189"><span class="lineNum">    1189</span> <span class="tlaGNC">           2 :     CHECK(j_linear[&quot;Type&quot;].get&lt;std::string&gt;() != &quot;Default&quot;);</span></span>
+<span id="L1190"><span class="lineNum">    1190</span> <span class="tlaGNC">           2 :     CHECK(j_linear[&quot;KSPType&quot;].get&lt;std::string&gt;() != &quot;Default&quot;);</span></span>
+<span id="L1191"><span class="lineNum">    1191</span> <span class="tlaGNC">          21 :   }</span></span>
+<span id="L1192"><span class="lineNum">    1192</span>              : </span>
+<span id="L1193"><span class="lineNum">    1193</span> <span class="tlaGNC">          20 :   SECTION(&quot;Round-trip: Eigenmode DEFAULT backend resolved concretely&quot;)</span></span>
+<span id="L1194"><span class="lineNum">    1194</span>              :   {</span>
+<span id="L1195"><span class="lineNum">    1195</span>              :     json config = {{&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Eigenmode&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L1196"><span class="lineNum">    1196</span>              :                    {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L1197"><span class="lineNum">    1197</span>              :                    {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L1198"><span class="lineNum">    1198</span> <span class="tlaGNC">           1 :                    {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L1199"><span class="lineNum">    1199</span> <span class="tlaGNC">          42 :                    {&quot;Solver&quot;, {{&quot;Eigenmode&quot;, {{&quot;Target&quot;, 1.0}}}}}};</span></span>
+<span id="L1200"><span class="lineNum">    1200</span>              : </span>
+<span id="L1201"><span class="lineNum">    1201</span> <span class="tlaGNC">           1 :     IoData iodata1(config, false);</span></span>
+<span id="L1202"><span class="lineNum">    1202</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata1, config);</span></span>
+<span id="L1203"><span class="lineNum">    1203</span>              : </span>
+<span id="L1204"><span class="lineNum">    1204</span> <span class="tlaGNC">           1 :     std::string err = ValidateConfig(config);</span></span>
+<span id="L1205"><span class="lineNum">    1205</span> <span class="tlaGNC">           2 :     INFO(&quot;schema validation error: &quot; &lt;&lt; err);</span></span>
+<span id="L1206"><span class="lineNum">    1206</span> <span class="tlaGNC">           2 :     CHECK(err.empty());</span></span>
+<span id="L1207"><span class="lineNum">    1207</span>              : </span>
+<span id="L1208"><span class="lineNum">    1208</span> <span class="tlaGNC">           1 :     IoData iodata2(config, false);</span></span>
+<span id="L1209"><span class="lineNum">    1209</span> <span class="tlaGNC">           1 :     CHECK(iodata2.solver.eigenmode.type == iodata1.solver.eigenmode.type);</span></span>
+<span id="L1210"><span class="lineNum">    1210</span>              :     // The emitted Type must be the concrete backend name, not the alias &quot;Default&quot;.</span>
+<span id="L1211"><span class="lineNum">    1211</span> <span class="tlaGNC">           2 :     CHECK(config[&quot;Solver&quot;][&quot;Eigenmode&quot;][&quot;Type&quot;].get&lt;std::string&gt;() != &quot;Default&quot;);</span></span>
+<span id="L1212"><span class="lineNum">    1212</span> <span class="tlaGNC">           1 :     CHECK(iodata2.solver.eigenmode.target == iodata1.solver.eigenmode.target);</span></span>
+<span id="L1213"><span class="lineNum">    1213</span> <span class="tlaGNC">           1 :     CHECK(iodata2.solver.eigenmode.target_upper == iodata1.solver.eigenmode.target_upper);</span></span>
+<span id="L1214"><span class="lineNum">    1214</span> <span class="tlaGNC">           1 :     CHECK(iodata2.solver.eigenmode.max_it == iodata1.solver.eigenmode.max_it);</span></span>
+<span id="L1215"><span class="lineNum">    1215</span> <span class="tlaGNC">           1 :     CHECK(iodata2.solver.eigenmode.max_size == iodata1.solver.eigenmode.max_size);</span></span>
+<span id="L1216"><span class="lineNum">    1216</span>              : </span>
+<span id="L1217"><span class="lineNum">    1217</span>              :     // Coverage gate: every optional schema property under Solver.Eigenmode must be</span>
+<span id="L1218"><span class="lineNum">    1218</span>              :     // emitted by ConcretizeDefaults. A schema addition without a Concretize update</span>
+<span id="L1219"><span class="lineNum">    1219</span>              :     // surfaces here.</span>
+<span id="L1220"><span class="lineNum">    1220</span> <span class="tlaGNC">           2 :     auto eigen_gaps = SchemaCoverageGaps(&quot;config/solver.json&quot;, &quot;/properties/Eigenmode&quot;,</span></span>
+<span id="L1221"><span class="lineNum">    1221</span> <span class="tlaGNC">           2 :                                          config[&quot;Solver&quot;][&quot;Eigenmode&quot;]);</span></span>
+<span id="L1222"><span class="lineNum">    1222</span> <span class="tlaGNC">           4 :     INFO(&quot;Solver.Eigenmode missing keys: &quot; &lt;&lt; json(eigen_gaps).dump());</span></span>
+<span id="L1223"><span class="lineNum">    1223</span> <span class="tlaGNC">           2 :     CHECK(eigen_gaps.empty());</span></span>
+<span id="L1224"><span class="lineNum">    1224</span> <span class="tlaGNC">          22 :   }</span></span>
+<span id="L1225"><span class="lineNum">    1225</span>              : </span>
+<span id="L1226"><span class="lineNum">    1226</span> <span class="tlaGNC">          20 :   SECTION(&quot;Round-trip: Transient DEFAULT scheme resolved concretely&quot;)</span></span>
+<span id="L1227"><span class="lineNum">    1227</span>              :   {</span>
+<span id="L1228"><span class="lineNum">    1228</span>              :     json config = {</span>
+<span id="L1229"><span class="lineNum">    1229</span>              :         {&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Transient&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L1230"><span class="lineNum">    1230</span>              :         {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L1231"><span class="lineNum">    1231</span>              :         {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L1232"><span class="lineNum">    1232</span> <span class="tlaGNC">           1 :         {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L1233"><span class="lineNum">    1233</span>              :         {&quot;Solver&quot;,</span>
+<span id="L1234"><span class="lineNum">    1234</span>              :          {{&quot;Transient&quot;,</span>
+<span id="L1235"><span class="lineNum">    1235</span> <span class="tlaGNC">          48 :            {{&quot;Excitation&quot;, &quot;Sinusoidal&quot;}, {&quot;MaxTime&quot;, 1.0}, {&quot;TimeStep&quot;, 0.01}}}}}};</span></span>
+<span id="L1236"><span class="lineNum">    1236</span>              : </span>
+<span id="L1237"><span class="lineNum">    1237</span> <span class="tlaGNC">           1 :     IoData iodata1(config, false);</span></span>
+<span id="L1238"><span class="lineNum">    1238</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata1, config);</span></span>
+<span id="L1239"><span class="lineNum">    1239</span>              : </span>
+<span id="L1240"><span class="lineNum">    1240</span> <span class="tlaGNC">           1 :     std::string err = ValidateConfig(config);</span></span>
+<span id="L1241"><span class="lineNum">    1241</span> <span class="tlaGNC">           2 :     INFO(&quot;schema validation error: &quot; &lt;&lt; err);</span></span>
+<span id="L1242"><span class="lineNum">    1242</span> <span class="tlaGNC">           2 :     CHECK(err.empty());</span></span>
+<span id="L1243"><span class="lineNum">    1243</span>              : </span>
+<span id="L1244"><span class="lineNum">    1244</span> <span class="tlaGNC">           1 :     IoData iodata2(config, false);</span></span>
+<span id="L1245"><span class="lineNum">    1245</span> <span class="tlaGNC">           1 :     CHECK(iodata2.solver.transient.type == iodata1.solver.transient.type);</span></span>
+<span id="L1246"><span class="lineNum">    1246</span> <span class="tlaGNC">           2 :     CHECK(config[&quot;Solver&quot;][&quot;Transient&quot;][&quot;Type&quot;].get&lt;std::string&gt;() != &quot;Default&quot;);</span></span>
+<span id="L1247"><span class="lineNum">    1247</span> <span class="tlaGNC">           1 :     CHECK(iodata2.solver.transient.excitation == iodata1.solver.transient.excitation);</span></span>
+<span id="L1248"><span class="lineNum">    1248</span> <span class="tlaGNC">           1 :     CHECK(iodata2.solver.transient.max_t == iodata1.solver.transient.max_t);</span></span>
+<span id="L1249"><span class="lineNum">    1249</span> <span class="tlaGNC">           1 :     CHECK(iodata2.solver.transient.delta_t == iodata1.solver.transient.delta_t);</span></span>
+<span id="L1250"><span class="lineNum">    1250</span>              : </span>
+<span id="L1251"><span class="lineNum">    1251</span>              :     // Coverage gate. Order/RelTol/AbsTol are intentionally only emitted for the</span>
+<span id="L1252"><span class="lineNum">    1252</span>              :     // adaptive CVODE/ARKODE schemes (GEN_ALPHA/RUNGE_KUTTA warn if present); this</span>
+<span id="L1253"><span class="lineNum">    1253</span>              :     // test uses the default GEN_ALPHA, so we skip them here.</span>
+<span id="L1254"><span class="lineNum">    1254</span> <span class="tlaGNC">           3 :     auto trans_gaps = SchemaCoverageGaps(&quot;config/solver.json&quot;, &quot;/properties/Transient&quot;,</span></span>
+<span id="L1255"><span class="lineNum">    1255</span> <span class="tlaGNC">           1 :                                          config[&quot;Solver&quot;][&quot;Transient&quot;],</span></span>
+<span id="L1256"><span class="lineNum">    1256</span> <span class="tlaGNC">           1 :                                          /*skip=*/{&quot;Order&quot;, &quot;RelTol&quot;, &quot;AbsTol&quot;});</span></span>
+<span id="L1257"><span class="lineNum">    1257</span> <span class="tlaGNC">           4 :     INFO(&quot;Solver.Transient missing keys: &quot; &lt;&lt; json(trans_gaps).dump());</span></span>
+<span id="L1258"><span class="lineNum">    1258</span> <span class="tlaGNC">           2 :     CHECK(trans_gaps.empty());</span></span>
+<span id="L1259"><span class="lineNum">    1259</span> <span class="tlaGNC">          22 :   }</span></span>
+<span id="L1260"><span class="lineNum">    1260</span>              : </span>
+<span id="L1261"><span class="lineNum">    1261</span> <span class="tlaGNC">          20 :   SECTION(&quot;Round-trip: BoundaryMode defaulted fields are reproducible&quot;)</span></span>
+<span id="L1262"><span class="lineNum">    1262</span>              :   {</span>
+<span id="L1263"><span class="lineNum">    1263</span>              :     // Freq is required at parse; only defaulted fields need verification.</span>
+<span id="L1264"><span class="lineNum">    1264</span>              :     json config = {{&quot;Problem&quot;, {{&quot;Type&quot;, &quot;BoundaryMode&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L1265"><span class="lineNum">    1265</span>              :                    {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L1266"><span class="lineNum">    1266</span>              :                    {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L1267"><span class="lineNum">    1267</span> <span class="tlaGNC">           1 :                    {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L1268"><span class="lineNum">    1268</span> <span class="tlaGNC">          42 :                    {&quot;Solver&quot;, {{&quot;BoundaryMode&quot;, {{&quot;Freq&quot;, 10.0}}}}}};</span></span>
+<span id="L1269"><span class="lineNum">    1269</span>              : </span>
+<span id="L1270"><span class="lineNum">    1270</span> <span class="tlaGNC">           1 :     IoData iodata1(config, false);</span></span>
+<span id="L1271"><span class="lineNum">    1271</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata1, config);</span></span>
+<span id="L1272"><span class="lineNum">    1272</span>              : </span>
+<span id="L1273"><span class="lineNum">    1273</span> <span class="tlaGNC">           1 :     std::string err = ValidateConfig(config);</span></span>
+<span id="L1274"><span class="lineNum">    1274</span> <span class="tlaGNC">           2 :     INFO(&quot;schema validation error: &quot; &lt;&lt; err);</span></span>
+<span id="L1275"><span class="lineNum">    1275</span> <span class="tlaGNC">           2 :     CHECK(err.empty());</span></span>
+<span id="L1276"><span class="lineNum">    1276</span>              : </span>
+<span id="L1277"><span class="lineNum">    1277</span> <span class="tlaGNC">           1 :     IoData iodata2(config, false);</span></span>
+<span id="L1278"><span class="lineNum">    1278</span>              :     const auto &amp;b1 = iodata1.solver.boundary_mode;</span>
+<span id="L1279"><span class="lineNum">    1279</span>              :     const auto &amp;b2 = iodata2.solver.boundary_mode;</span>
+<span id="L1280"><span class="lineNum">    1280</span> <span class="tlaGNC">           1 :     CHECK(b2.n == b1.n);</span></span>
+<span id="L1281"><span class="lineNum">    1281</span> <span class="tlaGNC">           1 :     CHECK(b2.n_post == b1.n_post);</span></span>
+<span id="L1282"><span class="lineNum">    1282</span> <span class="tlaGNC">           1 :     CHECK(b2.target == b1.target);</span></span>
+<span id="L1283"><span class="lineNum">    1283</span> <span class="tlaGNC">           1 :     CHECK(b2.tol == b1.tol);</span></span>
+<span id="L1284"><span class="lineNum">    1284</span> <span class="tlaGNC">           1 :     CHECK(b2.max_size == b1.max_size);</span></span>
+<span id="L1285"><span class="lineNum">    1285</span> <span class="tlaGNC">           1 :     CHECK(b2.type == b1.type);</span></span>
+<span id="L1286"><span class="lineNum">    1286</span> <span class="tlaGNC">           2 :     CHECK(config[&quot;Solver&quot;][&quot;BoundaryMode&quot;][&quot;Type&quot;].get&lt;std::string&gt;() != &quot;Default&quot;);</span></span>
+<span id="L1287"><span class="lineNum">    1287</span>              : </span>
+<span id="L1288"><span class="lineNum">    1288</span>              :     // Coverage gate. Attributes is opt-in (used to extract a 2D submesh from a 3D</span>
+<span id="L1289"><span class="lineNum">    1289</span>              :     // mesh); leaving it absent means &quot;use the parent mesh as-is&quot;, so we skip it.</span>
+<span id="L1290"><span class="lineNum">    1290</span> <span class="tlaGNC">           3 :     auto bm_gaps = SchemaCoverageGaps(&quot;config/solver.json&quot;, &quot;/properties/BoundaryMode&quot;,</span></span>
+<span id="L1291"><span class="lineNum">    1291</span> <span class="tlaGNC">           1 :                                       config[&quot;Solver&quot;][&quot;BoundaryMode&quot;],</span></span>
+<span id="L1292"><span class="lineNum">    1292</span> <span class="tlaGNC">           1 :                                       /*skip=*/{&quot;Attributes&quot;});</span></span>
+<span id="L1293"><span class="lineNum">    1293</span> <span class="tlaGNC">           4 :     INFO(&quot;Solver.BoundaryMode missing keys: &quot; &lt;&lt; json(bm_gaps).dump());</span></span>
+<span id="L1294"><span class="lineNum">    1294</span> <span class="tlaGNC">           2 :     CHECK(bm_gaps.empty());</span></span>
+<span id="L1295"><span class="lineNum">    1295</span> <span class="tlaGNC">          22 :   }</span></span>
+<span id="L1296"><span class="lineNum">    1296</span>              : </span>
+<span id="L1297"><span class="lineNum">    1297</span> <span class="tlaGNC">          20 :   SECTION(&quot;Round-trip: WavePort defaulted fields are reproducible&quot;)</span></span>
+<span id="L1298"><span class="lineNum">    1298</span>              :   {</span>
+<span id="L1299"><span class="lineNum">    1299</span>              :     // Index, Attributes are required at parse; only defaulted fields need verification.</span>
+<span id="L1300"><span class="lineNum">    1300</span>              :     json config = {</span>
+<span id="L1301"><span class="lineNum">    1301</span>              :         {&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Driven&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L1302"><span class="lineNum">    1302</span>              :         {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L1303"><span class="lineNum">    1303</span>              :         {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L1304"><span class="lineNum">    1304</span>              :         {&quot;Boundaries&quot;, {{&quot;WavePort&quot;, {{{&quot;Index&quot;, 1}, {&quot;Attributes&quot;, {2}}}}}}},</span>
+<span id="L1305"><span class="lineNum">    1305</span> <span class="tlaGNC">          62 :         {&quot;Solver&quot;, {{&quot;Driven&quot;, {{&quot;MinFreq&quot;, 1.0}, {&quot;MaxFreq&quot;, 2.0}, {&quot;FreqStep&quot;, 0.1}}}}}};</span></span>
+<span id="L1306"><span class="lineNum">    1306</span>              : </span>
+<span id="L1307"><span class="lineNum">    1307</span> <span class="tlaGNC">           1 :     IoData iodata1(config, false);</span></span>
+<span id="L1308"><span class="lineNum">    1308</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata1, config);</span></span>
+<span id="L1309"><span class="lineNum">    1309</span>              : </span>
+<span id="L1310"><span class="lineNum">    1310</span> <span class="tlaGNC">           1 :     std::string err = ValidateConfig(config);</span></span>
+<span id="L1311"><span class="lineNum">    1311</span> <span class="tlaGNC">           2 :     INFO(&quot;schema validation error: &quot; &lt;&lt; err);</span></span>
+<span id="L1312"><span class="lineNum">    1312</span> <span class="tlaGNC">           2 :     CHECK(err.empty());</span></span>
+<span id="L1313"><span class="lineNum">    1313</span>              : </span>
+<span id="L1314"><span class="lineNum">    1314</span> <span class="tlaGNC">           1 :     IoData iodata2(config, false);</span></span>
+<span id="L1315"><span class="lineNum">    1315</span> <span class="tlaGNC">           2 :     REQUIRE(iodata2.boundaries.waveport.count(1) == 1);</span></span>
+<span id="L1316"><span class="lineNum">    1316</span> <span class="tlaGNC">           1 :     const auto &amp;w1 = iodata1.boundaries.waveport.at(1);</span></span>
+<span id="L1317"><span class="lineNum">    1317</span> <span class="tlaGNC">           1 :     const auto &amp;w2 = iodata2.boundaries.waveport.at(1);</span></span>
+<span id="L1318"><span class="lineNum">    1318</span> <span class="tlaGNC">           1 :     CHECK(w2.mode_idx == w1.mode_idx);</span></span>
+<span id="L1319"><span class="lineNum">    1319</span> <span class="tlaGNC">           1 :     CHECK(w2.d_offset == w1.d_offset);</span></span>
+<span id="L1320"><span class="lineNum">    1320</span> <span class="tlaGNC">           1 :     CHECK(w2.eigen_solver == w1.eigen_solver);</span></span>
+<span id="L1321"><span class="lineNum">    1321</span> <span class="tlaGNC">           2 :     CHECK(config[&quot;Boundaries&quot;][&quot;WavePort&quot;][0][&quot;SolverType&quot;].get&lt;std::string&gt;() !=</span></span>
+<span id="L1322"><span class="lineNum">    1322</span>              :           &quot;Default&quot;);</span>
+<span id="L1323"><span class="lineNum">    1323</span> <span class="tlaGNC">           1 :     CHECK(w2.active == w1.active);</span></span>
+<span id="L1324"><span class="lineNum">    1324</span> <span class="tlaGNC">           1 :     CHECK(w2.ksp_max_its == w1.ksp_max_its);</span></span>
+<span id="L1325"><span class="lineNum">    1325</span> <span class="tlaGNC">           1 :     CHECK(w2.ksp_tol == w1.ksp_tol);</span></span>
+<span id="L1326"><span class="lineNum">    1326</span> <span class="tlaGNC">           1 :     CHECK(w2.eig_tol == w1.eig_tol);</span></span>
+<span id="L1327"><span class="lineNum">    1327</span> <span class="tlaGNC">           1 :     CHECK(w2.max_size == w1.max_size);</span></span>
+<span id="L1328"><span class="lineNum">    1328</span> <span class="tlaGNC">           1 :     CHECK(w2.verbose == w1.verbose);</span></span>
+<span id="L1329"><span class="lineNum">    1329</span> <span class="tlaGNC">           1 :     CHECK(w2.n_samples == w1.n_samples);</span></span>
+<span id="L1330"><span class="lineNum">    1330</span>              : </span>
+<span id="L1331"><span class="lineNum">    1331</span>              :     // Coverage gate. VoltagePath is an opt-in coordinate path for line integral</span>
+<span id="L1332"><span class="lineNum">    1332</span>              :     // postprocessing on the port face; absence means no voltage line integral.</span>
+<span id="L1333"><span class="lineNum">    1333</span>              :     // PolarityAttributes is an opt-in [high, low] terminal pair for fixing the mode</span>
+<span id="L1334"><span class="lineNum">    1334</span>              :     // polarity; absence means the internal polarity convention is used. Both are</span>
+<span id="L1335"><span class="lineNum">    1335</span>              :     // opt-in features with no meaningful default value to emit (mutually exclusive),</span>
+<span id="L1336"><span class="lineNum">    1336</span>              :     // so they are deliberately not concretized.</span>
+<span id="L1337"><span class="lineNum">    1337</span>              :     auto wp_gaps =</span>
+<span id="L1338"><span class="lineNum">    1338</span> <span class="tlaGNC">           3 :         SchemaCoverageGaps(&quot;config/boundaries.json&quot;, &quot;/properties/WavePort/items&quot;,</span></span>
+<span id="L1339"><span class="lineNum">    1339</span> <span class="tlaGNC">           1 :                            config[&quot;Boundaries&quot;][&quot;WavePort&quot;][0],</span></span>
+<span id="L1340"><span class="lineNum">    1340</span> <span class="tlaGNC">           1 :                            /*skip=*/{&quot;VoltagePath&quot;, &quot;PolarityAttributes&quot;});</span></span>
+<span id="L1341"><span class="lineNum">    1341</span> <span class="tlaGNC">           4 :     INFO(&quot;Boundaries.WavePort[] missing keys: &quot; &lt;&lt; json(wp_gaps).dump());</span></span>
+<span id="L1342"><span class="lineNum">    1342</span> <span class="tlaGNC">           2 :     CHECK(wp_gaps.empty());</span></span>
+<span id="L1343"><span class="lineNum">    1343</span> <span class="tlaGNC">          22 :   }</span></span>
+<span id="L1344"><span class="lineNum">    1344</span>              : </span>
+<span id="L1345"><span class="lineNum">    1345</span> <span class="tlaGNC">          20 :   SECTION(&quot;Round-trip: Material defaulted physical properties are reproducible&quot;)</span></span>
+<span id="L1346"><span class="lineNum">    1346</span>              :   {</span>
+<span id="L1347"><span class="lineNum">    1347</span>              :     // Attributes is required at parse; physical properties (mu_r, epsilon_r, tandelta,</span>
+<span id="L1348"><span class="lineNum">    1348</span>              :     // sigma, lambda_L) all have scalar defaults that must survive concretize → reparse.</span>
+<span id="L1349"><span class="lineNum">    1349</span>              :     json config = {</span>
+<span id="L1350"><span class="lineNum">    1350</span>              :         {&quot;Problem&quot;, {{&quot;Type&quot;, &quot;Driven&quot;}, {&quot;Output&quot;, &quot;test_output&quot;}}},</span>
+<span id="L1351"><span class="lineNum">    1351</span>              :         {&quot;Model&quot;, {{&quot;Mesh&quot;, &quot;test.msh&quot;}}},</span>
+<span id="L1352"><span class="lineNum">    1352</span>              :         {&quot;Domains&quot;, {{&quot;Materials&quot;, {{{&quot;Attributes&quot;, {1}}}}}}},</span>
+<span id="L1353"><span class="lineNum">    1353</span> <span class="tlaGNC">           1 :         {&quot;Boundaries&quot;, json::object()},</span></span>
+<span id="L1354"><span class="lineNum">    1354</span> <span class="tlaGNC">          48 :         {&quot;Solver&quot;, {{&quot;Driven&quot;, {{&quot;MinFreq&quot;, 1.0}, {&quot;MaxFreq&quot;, 2.0}, {&quot;FreqStep&quot;, 0.1}}}}}};</span></span>
+<span id="L1355"><span class="lineNum">    1355</span>              : </span>
+<span id="L1356"><span class="lineNum">    1356</span> <span class="tlaGNC">           1 :     IoData iodata1(config, false);</span></span>
+<span id="L1357"><span class="lineNum">    1357</span> <span class="tlaGNC">           1 :     config = IoData::ConcretizeDefaults(iodata1, config);</span></span>
+<span id="L1358"><span class="lineNum">    1358</span>              : </span>
+<span id="L1359"><span class="lineNum">    1359</span> <span class="tlaGNC">           1 :     std::string err = ValidateConfig(config);</span></span>
+<span id="L1360"><span class="lineNum">    1360</span> <span class="tlaGNC">           2 :     INFO(&quot;schema validation error: &quot; &lt;&lt; err);</span></span>
+<span id="L1361"><span class="lineNum">    1361</span> <span class="tlaGNC">           2 :     CHECK(err.empty());</span></span>
+<span id="L1362"><span class="lineNum">    1362</span>              : </span>
+<span id="L1363"><span class="lineNum">    1363</span>              :     // The concretized JSON must mention every defaulted physical property.</span>
+<span id="L1364"><span class="lineNum">    1364</span> <span class="tlaGNC">           1 :     auto &amp;j_mat = config[&quot;Domains&quot;][&quot;Materials&quot;][0];</span></span>
+<span id="L1365"><span class="lineNum">    1365</span> <span class="tlaGNC">           2 :     CHECK(j_mat.contains(&quot;Permeability&quot;));</span></span>
+<span id="L1366"><span class="lineNum">    1366</span> <span class="tlaGNC">           2 :     CHECK(j_mat.contains(&quot;Permittivity&quot;));</span></span>
+<span id="L1367"><span class="lineNum">    1367</span> <span class="tlaGNC">           2 :     CHECK(j_mat.contains(&quot;LossTan&quot;));</span></span>
+<span id="L1368"><span class="lineNum">    1368</span> <span class="tlaGNC">           2 :     CHECK(j_mat.contains(&quot;Conductivity&quot;));</span></span>
+<span id="L1369"><span class="lineNum">    1369</span> <span class="tlaGNC">           2 :     CHECK(j_mat.contains(&quot;LondonDepth&quot;));</span></span>
+<span id="L1370"><span class="lineNum">    1370</span>              : </span>
+<span id="L1371"><span class="lineNum">    1371</span> <span class="tlaGNC">           1 :     IoData iodata2(config, false);</span></span>
+<span id="L1372"><span class="lineNum">    1372</span> <span class="tlaGNC">           1 :     REQUIRE(iodata1.domains.materials.size() == 1);</span></span>
+<span id="L1373"><span class="lineNum">    1373</span> <span class="tlaGNC">           1 :     REQUIRE(iodata2.domains.materials.size() == 1);</span></span>
+<span id="L1374"><span class="lineNum">    1374</span>              :     const auto &amp;m1 = iodata1.domains.materials[0];</span>
+<span id="L1375"><span class="lineNum">    1375</span>              :     const auto &amp;m2 = iodata2.domains.materials[0];</span>
+<span id="L1376"><span class="lineNum">    1376</span> <span class="tlaGNC">           4 :     for (int k = 0; k &lt; 3; ++k)</span></span>
+<span id="L1377"><span class="lineNum">    1377</span>              :     {</span>
+<span id="L1378"><span class="lineNum">    1378</span> <span class="tlaGNC">           3 :       CHECK(m2.mu_r.s[k] == m1.mu_r.s[k]);</span></span>
+<span id="L1379"><span class="lineNum">    1379</span> <span class="tlaGNC">           3 :       CHECK(m2.epsilon_r.s[k] == m1.epsilon_r.s[k]);</span></span>
+<span id="L1380"><span class="lineNum">    1380</span> <span class="tlaGNC">           3 :       CHECK(m2.tandelta.s[k] == m1.tandelta.s[k]);</span></span>
+<span id="L1381"><span class="lineNum">    1381</span> <span class="tlaGNC">           3 :       CHECK(m2.sigma.s[k] == m1.sigma.s[k]);</span></span>
+<span id="L1382"><span class="lineNum">    1382</span>              :     }</span>
+<span id="L1383"><span class="lineNum">    1383</span> <span class="tlaGNC">           1 :     CHECK(m2.lambda_L == m1.lambda_L);</span></span>
+<span id="L1384"><span class="lineNum">    1384</span>              : </span>
+<span id="L1385"><span class="lineNum">    1385</span>              :     // Coverage gate. MaterialAxes is opt-in: omission means &quot;diagonal in standard</span>
+<span id="L1386"><span class="lineNum">    1386</span>              :     // basis&quot;. Concretize does not synthesize one.</span>
+<span id="L1387"><span class="lineNum">    1387</span> <span class="tlaGNC">           3 :     auto mat_gaps = SchemaCoverageGaps(&quot;config/domains.json&quot;, &quot;/properties/Materials/items&quot;,</span></span>
+<span id="L1388"><span class="lineNum">    1388</span> <span class="tlaGNC">           1 :                                        config[&quot;Domains&quot;][&quot;Materials&quot;][0],</span></span>
+<span id="L1389"><span class="lineNum">    1389</span> <span class="tlaGNC">           1 :                                        /*skip=*/{&quot;MaterialAxes&quot;});</span></span>
+<span id="L1390"><span class="lineNum">    1390</span> <span class="tlaGNC">           4 :     INFO(&quot;Domains.Materials[] missing keys: &quot; &lt;&lt; json(mat_gaps).dump());</span></span>
+<span id="L1391"><span class="lineNum">    1391</span> <span class="tlaGNC">           2 :     CHECK(mat_gaps.empty());</span></span>
+<span id="L1392"><span class="lineNum">    1392</span> <span class="tlaGNC">          22 :   }</span></span>
+<span id="L1393"><span class="lineNum">    1393</span> <span class="tlaGNC">        1092 : }</span></span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../../../../../../../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.0-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
