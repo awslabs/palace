@@ -499,11 +499,19 @@ template <typename OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy)
 {
+  return GetExtraSystemMatrix<OperType>(omega, diag_policy, /*include_wave_ports=*/true);
+}
+
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy,
+                                    bool include_wave_ports)
+{
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       fbi(mat_op.MaxCeedBdrAttribute());
-  AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
+  AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi, include_wave_ports);
   int empty[2] = {(dfbr.empty() && fbr.empty()), (dfbi.empty() && fbi.empty())};
   Mpi::GlobalMin(2, empty, GetComm());
   if (empty[0] && empty[1])
@@ -533,6 +541,40 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
     auto A = std::make_unique<ParOperator>(std::move(ar), GetNDSpace());
     A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     return A;
+  }
+}
+
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
+                                             Operator::DiagonalPolicy diag_policy)
+{
+  // Per-port μ⁻¹ boundary mass matrix, ω-independent — see
+  // WavePortOperator::AddBoundaryMassBdrCoefficients. Pure imaginary part of A2(ω) when
+  // the per-ω scalar i·kₙ(ω) is reattached.
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
+  wave_port_op.AddBoundaryMassBdrCoefficients(port_idx, fb);
+  int empty = fb.empty();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto m =
+      AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+  else
+  {
+    auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
   }
 }
 
@@ -975,14 +1017,19 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
                                                   MaterialPropertyCoefficient &dfbr,
                                                   MaterialPropertyCoefficient &dfbi,
                                                   MaterialPropertyCoefficient &fbr,
-                                                  MaterialPropertyCoefficient &fbi)
+                                                  MaterialPropertyCoefficient &fbi,
+                                                  bool include_wave_ports)
 {
   // Contribution for second-order farfield boundaries and finite conductivity boundaries.
   farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi);
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
 
-  // Contribution for numeric wave ports.
-  wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+  // Contribution for numeric wave ports. Skipped when the caller will apply the wave-port
+  // contribution separately via per-port operators (see GetWavePortBoundaryMassMatrix).
+  if (include_wave_ports)
+  {
+    wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+  }
 
   // Contribution for Floquet ports (Robin BC).
   floquet_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
@@ -1234,6 +1281,16 @@ template std::unique_ptr<Operator>
 SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy);
+
+template std::unique_ptr<Operator>
+SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy, bool);
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy, bool);
+
+template std::unique_ptr<Operator>
+SpaceOperator::GetWavePortBoundaryMassMatrix(int, Operator::DiagonalPolicy);
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetWavePortBoundaryMassMatrix(int, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, const Operator *,

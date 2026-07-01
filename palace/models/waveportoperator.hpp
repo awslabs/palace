@@ -234,6 +234,26 @@ public:
   void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi);
 
+  // Add the ω-independent boundary mass contribution from a single wave port to a material
+  // property coefficient. The full system contribution from this port is
+  // i·kₙ(ω)·(this) — see AddExtraSystemBdrCoefficients. Used to factor out the
+  // ω-independent operator for reuse by the reduced-order model. The port_idx must refer
+  // to an active port; if it does not, no contribution is added.
+  void AddBoundaryMassBdrCoefficients(int port_idx, MaterialPropertyCoefficient &fb) const;
+
+  // As above, with an explicit scale factor on the contribution. Used internally by
+  // AddExtraSystemBdrCoefficients to share the per-port coefficient setup without
+  // duplicating the mfem::MaterialPropertyCoefficient construction.
+  void AddBoundaryMassBdrCoefficients(int port_idx, MaterialPropertyCoefficient &fb,
+                                      double scale) const;
+
+  // Compute and return the (real part of the) modal propagation constant kₙ for the
+  // specified port at the given operating frequency. Triggers the per-port cross-section
+  // EVP via WavePortData::Initialize; result is cached per port (per ω). Used by the
+  // reduced-order model to assemble the wave-port contribution online without touching
+  // any HDM-size object.
+  double GetWavePortKn(int port_idx, double omega);
+
   // Add contributions to the right-hand side source term vector for an incident field at
   // excited port boundaries.
   void AddExcitationBdrCoefficients(int excitation_idx, double omega,
