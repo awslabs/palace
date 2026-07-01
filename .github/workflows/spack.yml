@@ -63,7 +63,7 @@ jobs:
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: gcc
-          variant: +cuda
+          variant: +cuda+cudss
           run-regression-tests: 'false'
 
   build-x64-gcc-openmp:
@@ -177,13 +177,14 @@ jobs:
           - solver: SuperLU
           - solver: STRUMPACK
           - solver: Default
+          - solver: cuDSS
     runs-on: [self-hosted, gpu-4xlarge]
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/run-regression-tests
         with:
           toolchain: gcc
-          variant: +cuda
+          variant: +cuda+cudss
           linear-solver: ${{ matrix.solver }}
 
   test-x64-gcc-openmp:
