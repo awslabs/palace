@@ -117,7 +117,13 @@ void InitTetBasisForAtPoints(const mfem::FiniteElement &fe, bool grad_only,
   MFEM_VERIFY(fe.GetGeomType() == mfem::Geometry::TETRAHEDRON,
               "FaceNbrFieldExchange AtPoints export currently supports tetrahedral "
               "volume elements only!");
-  const int degree = std::max(0, fe.GetOrder() - (grad_only ? 1 : 0));
+  // MAGMA's hardened non-tensor AtPoints basis construction (libCEED
+  // cuda-nontensor-atpoints branch) requires tabulation points that overdetermine the
+  // complete polynomial space for non-H1 spaces; square tabulations are rejected. Bump the
+  // lattice by one degree, matching the InitTetBasisForAtPoints copy in
+  // output_functionals.cpp, since this exchange builds bases for the same ND/RT field
+  // spaces.
+  const int degree = std::max(0, fe.GetOrder() - (grad_only ? 1 : 0) + 1);
   const mfem::IntegrationRule ir = MakeTetLatticeRule(degree);
   ceed::InitBasisAtPoints(fe, ir, num_comp, ceed, basis);
 }
