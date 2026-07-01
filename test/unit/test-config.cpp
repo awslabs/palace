@@ -1516,3 +1516,18 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(mat_gaps.empty());
   }
 }
+
+#if defined(MFEM_USE_CUDSS)
+TEST_CASE("Linear solver Type cuDSS parses when built with cuDSS", "[config][Serial]")
+{
+  // With cuDSS support built in, Solver.Linear.Type = "cuDSS" must parse to the
+  // CUDSS enum and not trip the "not built with cuDSS" configuration guard.
+  json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                 {"Model", {{"Mesh", "test.msh"}}},
+                 {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                 {"Boundaries", json::object()},
+                 {"Solver", {{"Linear", {{"Type", "cuDSS"}}}}}};
+  IoData iodata(config, false);
+  CHECK(iodata.solver.linear.type == LinearSolver::CUDSS);
+}
+#endif
