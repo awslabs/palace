@@ -1353,7 +1353,7 @@ void PostOperator<solver_t>::MeasureSParameter() const
       return;
     }
 
-    // Per-side wave-port de-embedding factor: exp(i·kₙ·d_offset) when the port is a
+    // Per-side wave-port de-embedding factor: exp(i·k_n·d_offset) when the port is a
     // wave port with a non-zero offset; 1 otherwise (lumped ports have no offset).
     // Applied independently on the source and observation sides, so cross-type S
     // (lumped↔wave) gets the correct single-sided phase.

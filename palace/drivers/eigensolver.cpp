@@ -42,14 +42,17 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
 
   // Check if there are nonlinear terms and, if so, setup interpolation operator.
-  auto funcA2 = [&space_op](double omega) -> std::unique_ptr<ComplexOperator>
-  { return space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO); };
+  auto funcA2 = [&space_op](std::complex<double> lambda) -> std::unique_ptr<ComplexOperator>
+  {
+    const std::complex<double> omega = lambda / std::complex<double>(0.0, 1.0);  // ω = -iλ
+    return space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+  };
   auto funcP = [&space_op](std::complex<double> a0, std::complex<double> a1,
                            std::complex<double> a2,
-                           double omega) -> std::unique_ptr<ComplexOperator>
-  { return space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, omega); };
+                           std::complex<double> a3) -> std::unique_ptr<ComplexOperator>
+  { return space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, a3); };
   const double target = iodata.solver.eigenmode.target;
-  auto A2 = funcA2(target);
+  auto A2 = funcA2(1i * target);
   bool has_A2 = (A2 != nullptr);
 
   // Extend K, C, M operators with interpolated A2 operator.
@@ -267,14 +270,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     // Search for eigenvalues closest to λ = iσ.
     eigen->SetShiftInvert(1i * target);
-    if (type == EigenSolverBackend::ARPACK)
-    {
-      // ARPACK searches based on eigenvalues of the transformed problem. The eigenvalue
-      // 1 / (λ - σ) will be a large-magnitude negative imaginary number for an eigenvalue
-      // λ with frequency close to but not below the target σ.
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_IMAGINARY);
-    }
-    else if (nonlinear_type == NonlinearEigenSolver::SLP)
+    if (nonlinear_type == NonlinearEigenSolver::SLP)
     {
       eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE);
     }
@@ -307,7 +303,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * target, -target * target + 0.0i,
                                     K.get(), C.get(), M.get(), A2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
-      1.0 + 0.0i, 1i * target, -target * target + 0.0i, target);
+      1.0 + 0.0i, 1i * target, -target * target + 0.0i, target + 0.0i);
   auto ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                 &space_op.GetH1Spaces());
   ksp->SetOperators(*A, *P);

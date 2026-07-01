@@ -73,14 +73,16 @@ public:
     MFEM_ABORT("SetOperators not defined!");
   }
 
-  virtual void SetExtraSystemMatrix(std::function<std::unique_ptr<ComplexOperator>(double)>)
+  // Set the frequency-dependent A2 matrix function A2(λ) for the nonlinear eigensolvers.
+  virtual void SetExtraSystemMatrix(
+      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>)
   {
     MFEM_ABORT("SetExtraSystemMatrix not defined!");
   }
 
-  virtual void SetPreconditionerUpdate(
-      std::function<std::unique_ptr<ComplexOperator>(
-          std::complex<double>, std::complex<double>, std::complex<double>, double)>)
+  virtual void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
+                                           std::complex<double>, std::complex<double>,
+                                           std::complex<double>, std::complex<double>)>)
   {
     MFEM_ABORT("SetPreconditionerUpdate not defined!");
   }

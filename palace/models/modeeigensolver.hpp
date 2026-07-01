@@ -69,21 +69,25 @@ ComplexHypreParMatrix AssembleBtt(const FiniteElementSpace &nd_fespace,
                                   const MaterialOperator &mat_op);
 
 // Att = mu_cc^{-1} curl-curl  -  omega^2 eps mass  -  sigma (mu^{-1} mass) + BC-t
-// (impedance / absorbing / conductivity). Frequency- and shift-dependent.
-ComplexHypreParMatrix
-AssembleAtt(const FiniteElementSpace &nd_fespace, const MaterialOperator &mat_op,
-            const mfem::Vector *normal, SurfaceImpedanceOperator &surf_z_op,
-            FarfieldBoundaryOperator &farfield_op,
-            SurfaceConductivityOperator &surf_sigma_op, double omega, double sigma);
-
-// Ann = -(mu^{-1} grad u, grad v) + omega^2 (eps u, v) + BC-n. Frequency-dependent.
-// farfield_op and surf_sigma_op contribute impedance / loss terms on the H1 block.
-ComplexHypreParMatrix AssembleAnn(const FiniteElementSpace &h1_fespace,
+// (impedance / absorbing / conductivity). Frequency- and shift-dependent. omega may be
+// complex (eigenmode nonlinear solve); for real omega (imag = 0) the assembly reduces
+// bit-for-bit to the real-frequency form.
+ComplexHypreParMatrix AssembleAtt(const FiniteElementSpace &nd_fespace,
                                   const MaterialOperator &mat_op,
                                   const mfem::Vector *normal,
                                   SurfaceImpedanceOperator &surf_z_op,
                                   FarfieldBoundaryOperator &farfield_op,
-                                  SurfaceConductivityOperator &surf_sigma_op, double omega);
+                                  SurfaceConductivityOperator &surf_sigma_op,
+                                  std::complex<double> omega, double sigma);
+
+// Ann = -(mu^{-1} grad u, grad v) + omega^2 (eps u, v) + BC-n. Frequency-dependent.
+// farfield_op and surf_sigma_op contribute impedance / loss terms on the H1 block. omega
+// may be complex; for real omega it reduces bit-for-bit to the real-frequency form.
+ComplexHypreParMatrix
+AssembleAnn(const FiniteElementSpace &h1_fespace, const MaterialOperator &mat_op,
+            const mfem::Vector *normal, SurfaceImpedanceOperator &surf_z_op,
+            FarfieldBoundaryOperator &farfield_op,
+            SurfaceConductivityOperator &surf_sigma_op, std::complex<double> omega);
 
 // Alias the ND and H1 halves of a pre-loaded eigenvector e0 = [e_t_tilde; e_n_tilde] as
 // et / en, and apply the Vardapetyan–Demkowicz back-transform en := ẽn / (i·kn) so en
@@ -132,8 +136,11 @@ public:
 
   // Solve the shifted GEP with shift sigma = -kn_target^2. Ranks configured without a
   // solver (WavePort non-port ranks with empty FE spaces) contribute to assembly only
-  // and return num_converged = 0.
-  SolveResult Solve(double omega, double sigma,
+  // and return num_converged = 0. omega may be complex (eigenmode nonlinear solve, where
+  // the cross-section EVP is solved at the genuinely complex eigenvalue ω = -i·λ); the
+  // shift sigma stays real (a pure algebraic centering). For real omega (imag = 0) the
+  // assembly and solve reduce bit-for-bit to the real-frequency form.
+  SolveResult Solve(std::complex<double> omega, double sigma,
                     const ComplexVector *initial_space = nullptr);
 
   std::complex<double> GetEigenvalue(int i) const;
@@ -215,8 +222,9 @@ private:
 
   // Assemble frequency-dependent Att and Ann, then build block A (MPI collective on FE
   // space comm). Uses bmo->AssembleAtt/Ann on the BMO path; falls through to
-  // mode_assembly:: free functions on the bare path.
-  void AssembleFrequencyDependent(double omega, double sigma);
+  // mode_assembly:: free functions on the bare path. omega may be complex (reduces to the
+  // real-frequency assembly when imag = 0).
+  void AssembleFrequencyDependent(std::complex<double> omega, double sigma);
 
   using ComplexHypreParMatrix = std::tuple<std::unique_ptr<mfem::HypreParMatrix>,
                                            std::unique_ptr<mfem::HypreParMatrix>>;
