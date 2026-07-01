@@ -231,7 +231,10 @@ void InitTetBasisForAtPoints(const mfem::FiniteElement &fe, bool grad_only,
   MFEM_VERIFY(fe.GetGeomType() == mfem::Geometry::TETRAHEDRON,
               "AtPoints surface output proof currently supports tetrahedral volume "
               "elements only!");
-  const int degree = std::max(0, fe.GetOrder() - (grad_only ? 1 : 0));
+  // MAGMA's non-tensor AtPoints basis construction requires tabulation points that
+  // overdetermine the complete polynomial space. Use one extra lattice degree to provide
+  // a small, deterministic overdetermined reconstruction while keeping AtPoints grouping.
+  const int degree = std::max(0, fe.GetOrder() - (grad_only ? 1 : 0) + 1);
   const mfem::IntegrationRule ir = MakeTetLatticeRule(degree);
   ceed::InitBasisAtPoints(fe, ir, num_comp, ceed, basis);
 }
