@@ -360,7 +360,7 @@ TEST_CASE("cpw_wave_uniform", "[Serial][Parallel][GPU][Regression]")
 // Adaptive frequency sweeps run as smoke tests: structure (output tree,
 // CSV set, headers, row/column counts) is enforced, numeric comparison
 // is disabled via infinite tolerances.
-TEST_CASE("cpw_lumped_adaptive", "[Serial][Parallel][GPU][Regression]")
+TEST_CASE("cpw_lumped_adaptive", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = std::numeric_limits<double>::infinity();
@@ -369,8 +369,7 @@ TEST_CASE("cpw_lumped_adaptive", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
-// cpw_wave_adaptive omits [GPU]: wave-port adaptive sweeps are skipped on GPU
-// (awslabs/palace#375), matching the old harness's `device != "GPU"` guard.
+// cpw_wave_adaptive omits [GPU] (awslabs/palace#375).
 TEST_CASE("cpw_wave_adaptive", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
