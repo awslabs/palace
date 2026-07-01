@@ -12,6 +12,7 @@
 #include "linalg/ams.hpp"
 #include "linalg/arpack.hpp"
 #include "linalg/blockprecond.hpp"
+#include "linalg/cudss.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/mumps.hpp"
@@ -636,9 +637,11 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
     pc_type = LinearSolver::STRUMPACK;
 #elif defined(MFEM_USE_MUMPS)
     pc_type = LinearSolver::MUMPS;
+#elif defined(MFEM_USE_CUDSS)
+    pc_type = LinearSolver::CUDSS;
 #else
     MFEM_ABORT("ModeEigenSolver requires building with SuperLU_DIST, STRUMPACK, "
-               "or MUMPS!");
+               "MUMPS, or cuDSS!");
 #endif
   }
   else if (pc_type == LinearSolver::SUPERLU)
@@ -660,6 +663,13 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
 #if !defined(MFEM_USE_MUMPS)
     MFEM_ABORT("Solver was not built with MUMPS support, please choose a "
                "different solver!");
+#endif
+  }
+  else if (pc_type == LinearSolver::CUDSS)
+  {
+#if !defined(MFEM_USE_CUDSS)
+    MFEM_ABORT("Solver was not built with cuDSS support, please choose a "
+               "different solver");
 #endif
   }
 
@@ -689,6 +699,14 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
           return std::make_unique<MumpsSolver>(comm, MatrixSymmetry::UNSYMMETRIC,
                                                linear.sym_factorization,
                                                linear.strumpack_lr_tol, true, verbose - 1);
+#endif
+        }
+        else if (pc_type == LinearSolver::CUDSS)
+        {
+#if defined(MFEM_USE_CUDSS)
+          return std::make_unique<CuDSSSolver>(comm, MatrixSymmetry::UNSYMMETRIC,
+                                               linear.sym_factorization,
+                                               true, verbose - 1);
 #endif
         }
         MFEM_ABORT("Unsupported linear solver type for boundary mode solver!");
@@ -779,6 +797,18 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
             linear.reorder_reuse);
 #else
         MFEM_ABORT("Solver was not built with MUMPS support!");
+        return {};
+#endif
+      case LinearSolver::CUDSS:
+#if defined(MFEM_USE_CUDSS)
+        return std::make_unique<MfemWrapperSolver<ComplexOperator>>(
+            std::make_unique<CuDSSSolver>(comm, MatrixSymmetry::UNSYMMETRIC,
+                                          linear.sym_factorization,
+                                          true, print),
+            false, linear.complex_coarse_solve, linear.drop_small_entries,
+            linear.reorder_reuse);
+#else
+        MFEM_ABORT("Solver was not built with cuDSS support!");
         return {};
 #endif
       default:

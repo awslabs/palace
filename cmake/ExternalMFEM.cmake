@@ -121,7 +121,13 @@ if(PALACE_WITH_CUDA)
     "-DMFEM_USE_CUDA=YES"
     "-DCMAKE_CUDA_COMPILER=${CMAKE_CUDA_COMPILER}"
     "-DCMAKE_CUDA_FLAGS=${MFEM_CUDA_FLAGS}"
+    "-DMFEM_USE_CUDSS=${PALACE_WITH_CUDSS}"
   )
+  if(PALACE_WITH_CUDSS AND NOT "${CUDSS_DIR}" STREQUAL "")
+    list(APPEND MFEM_OPTIONS
+      "-DCUDSS_DIR=${CUDSS_DIR}"
+    )
+  endif()
   if(NOT "${CMAKE_CUDA_ARCHITECTURES}" STREQUAL "")
     list(APPEND MFEM_OPTIONS
       "-DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}"
@@ -131,6 +137,7 @@ if(PALACE_WITH_CUDA)
 else()
   list(APPEND MFEM_OPTIONS
     "-DMFEM_USE_CUDA=NO"
+    "-DMFEM_USE_CUDSS=NO"
   )
 endif()
 if(PALACE_WITH_HIP)
@@ -399,6 +406,7 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_par_tet_mesh_fix_dev.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_gmsh_parser_performance.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5246.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5124_cudss.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5353.diff"
 )
 
