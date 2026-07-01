@@ -1,0 +1,79 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/lumped"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/parallel_plate.msh",
+    "L0": 1.0e-3  // mm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],  // Vacuum fill
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2]  // Parallel plates (conductors)
+    },
+    "PMC":
+    {
+      "Attributes": [3]  // Side walls (magnetic walls -> clean TEM)
+    },
+    "LumpedPort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [4],   // Source port (z = 0)
+        "R": 50.0,           // Ω reference impedance
+        "Direction": "+Y",
+        "Excitation": true
+      },
+      {
+        "Index": 2,
+        "Attributes": [5],   // Termination under test (z = L): parallel RLC, per square
+        "Rs": 376.730313668,   // Ω/sq
+        "Ls": 5.995849163282243e-09,   // H/sq
+        "Cs": 4.224638615945128e-14,   // F/sq  (parallel LC resonant at 10 GHz)
+        "Direction": "+Y"
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven":
+    {
+      "Samples":
+      [
+        {
+          "Type": "Linear",
+          "MinFreq": 6.0,   // GHz
+          "MaxFreq": 14.0,  // GHz
+          "FreqStep": 0.1   // GHz  (81 points across the 10 GHz notch)
+        }
+      ],
+      "Save": [10.0]
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-10,
+      "MaxIts": 200
+    }
+  }
+}
