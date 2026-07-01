@@ -407,6 +407,7 @@ set(MFEM_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/patch_gmsh_parser_performance.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5246.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5124_cudss.diff"
+  "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5389_cudss.diff"
   "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5353.diff"
 )
 
