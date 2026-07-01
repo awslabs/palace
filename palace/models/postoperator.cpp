@@ -1836,10 +1836,13 @@ void PostOperator<solver_t>::MeasureWavePorts() const
       MFEM_VERIFY(freq_re > 0.0,
                   "Frequency domain wave port postprocessing requires nonzero frequency!");
       auto &vi = measurement_cache.wave_port_vi[idx];
-      vi.P = data.GetPower(*E, *B);
       vi.S = data.GetSParameter(*E);
-      vi.V = data.GetVoltage(*E);
-      vi.Z_PV = data.GetCharacteristicImpedance();
+      if (data.HasVoltageCoords())
+      {
+        vi.P = data.GetPower(*E, *B);
+        vi.V = data.GetVoltage(*E);
+        vi.Z_PV = data.GetCharacteristicImpedance();
+      }
     }
   }
 }
