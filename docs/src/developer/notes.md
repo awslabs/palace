@@ -226,9 +226,9 @@ several *Palace* releases. The table below records the first *Palace* release sh
 each schema version; a schema version applies to that release and all later ones up to
 (but not including) the next entry. Add a row whenever the schema version is bumped.
 
-| Schema version | First *Palace* release | Notes                              |
-|:--------------:|:----------------------:|:---------------------------------- |
-| `1-0-0`        | `0.17`                 | First explicitly-versioned schema. |
+| Schema version | First *Palace* release | Notes                                       |
+|:--------------:|:----------------------:|:------------------------------------------- |
+| `1-0-0`        | `0.17`                 | First explicitly-versioned schema.          |
 | `1-1-0`        | `0.17.1`               | Add `RationalImpedance` boundary condition. |
 
 #### Enforcement
