@@ -34,7 +34,7 @@ enum class ProblemType : char;
 // a general Zs(ω) is an arbitrary function of frequency and therefore contributes to the
 // frequency-dependent "extra" system matrix A2(ω), exactly like the finite-conductivity
 // Robin BC (SurfaceConductivityOperator). It is consequently available only for
-// frequency-domain problem types (driven, eigenmode, boundary mode).
+// frequency-domain driven problems.
 //
 class SurfaceRationalImpedanceOperator
 {
