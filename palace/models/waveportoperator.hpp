@@ -90,7 +90,7 @@ private:
 
   // Boundary mode eigenvalue problem solver.
   std::unique_ptr<ModeEigenSolver> mode_solver;
-  ComplexVector v0, e0;
+  ComplexVector e0;
 
   // Communicator for processes which have elements for this port.
   MPI_Comm port_comm = MPI_COMM_NULL;
