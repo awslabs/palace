@@ -188,8 +188,37 @@ void SurfaceRationalImpedanceOperator::AddExtraSystemBdrCoefficients(
   // K + iωC - ω²M. Coefficients are stored nondimensionalized and highest-degree-first.
   if (omega == 0.0)
   {
-    return;  // iω/Zs -> 0 for a finite-impedance boundary; frequency-domain drivers never
-             // evaluate A2 at ω = 0.
+    // DC limit of the Robin coefficient iω/Zs = s·D(s)/N(s) as s → 0. This is 0 when
+    // N(0) != 0 (finite Zs at DC), but a rational Zs may have a transmission zero at
+    // s = 0 (N(0) = 0, i.e. Zs → 0), in which case s·D/N → D(0)/N'(0), finite and nonzero,
+    // and must still be assembled. A double (or higher) zero of N at s = 0 makes the limit
+    // diverge, which is non-physical at DC. Driven sweeps may sample MinFreq = 0.0, so this
+    // branch is reachable.
+    for (auto &bdr : boundaries)
+    {
+      const double n0 = bdr.num.back();  // N(0), constant term (highest-degree-first)
+      std::complex<double> coef0(0.0, 0.0);
+      if (n0 == 0.0)
+      {
+        const double n1 =
+            (bdr.num.size() >= 2) ? bdr.num[bdr.num.size() - 2] : 0.0;  // N'(0)
+        MFEM_VERIFY(n1 != 0.0,
+                    "Rational impedance boundary has a transmission zero of order >= 2 at "
+                    "s = 0; the DC admittance iω/Zs is singular!");
+        coef0 = bdr.den.back() / n1;  // lim_{s→0} s·D/N = D(0)/N'(0)
+      }
+      if (coef0 != 0.0)
+      {
+        for (auto attr : bdr.attr_list)
+        {
+          const double sc = bdr.attr_scaling.at(attr);
+          const std::complex<double> coef = coef0 / sc;
+          fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.real());
+          fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.imag());
+        }
+      }
+    }
+    return;
   }
   const std::complex<double> s(0.0, omega);  // s = iω (nondimensional)
   for (auto &bdr : boundaries)
