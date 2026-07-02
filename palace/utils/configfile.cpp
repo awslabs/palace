@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <numbers>
 #include <sstream>
 #include <string_view>
 #include <fmt/format.h>
@@ -482,14 +483,14 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
   }
 
   const auto &pairs = periodic.at("BoundaryPairs");
-  for (auto it = pairs.begin(); it != pairs.end(); ++it)
+  for (const auto &pair : pairs)
   {
     PeriodicData &data = boundary_pairs.emplace_back();
-    data.donor_attributes = it->at("DonorAttributes").get<std::vector<int>>();  // Required
+    data.donor_attributes = pair.at("DonorAttributes").get<std::vector<int>>();  // Required
     data.receiver_attributes =
-        it->at("ReceiverAttributes").get<std::vector<int>>();  // Required
-    auto translation = it->find("Translation");
-    if (translation != it->end())
+        pair.at("ReceiverAttributes").get<std::vector<int>>();  // Required
+    auto translation = pair.find("Translation");
+    if (translation != pair.end())
     {
       std::array<double, 3> translation_array = translation->get<std::array<double, 3>>();
       for (int i = 0; i < 3; i++)
@@ -499,8 +500,8 @@ PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
       }
       data.affine_transform[3 * 4 + 3] = 1.0;
     }
-    auto transformation = it->find("AffineTransformation");
-    if (transformation != it->end())
+    auto transformation = pair.find("AffineTransformation");
+    if (transformation != pair.end())
     {
       data.affine_transform = transformation->get<std::array<double, 16>>();
     }
@@ -681,8 +682,8 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
     if (nsample > 0)
     {
       // Always include poles.
-      thetaphis.emplace_back(0.0, 0.0);   // North pole.
-      thetaphis.emplace_back(M_PI, 0.0);  // South pole.
+      thetaphis.emplace_back(0.0, 0.0);               // North pole.
+      thetaphis.emplace_back(std::numbers::pi, 0.0);  // South pole.
 
       if (nsample > 2)
       {
@@ -721,12 +722,13 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
         {
           // Ensure equator and XZ plane inclusion.
           bool is_equator = (i == (n_theta + 1) / 2);
-          double theta = is_equator ? M_PI / 2 : std::acos(1.0 - 2.0 * i / (n_theta + 1.0));
+          double theta = is_equator ? std::numbers::pi / 2
+                                    : std::acos(1.0 - 2.0 * i / (n_theta + 1.0));
           int points_in_level = points_per_level[i - 1];
 
           for (int j = 0; j < points_in_level; ++j)
           {
-            double phi = 2.0 * M_PI * j / points_in_level;
+            double phi = 2.0 * std::numbers::pi * j / points_in_level;
 
             // Force XZ plane points (phi = 0 or π).
             if (j == 0)
@@ -735,7 +737,7 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
             }
             else if (j == points_in_level / 2)
             {
-              phi = M_PI;
+              phi = std::numbers::pi;
             }
 
             thetaphis.emplace_back(theta, phi);
@@ -760,41 +762,43 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
     auto vec_of_vec = thetaphis_json->get<std::vector<std::vector<double>>>();
     for (const auto &vec : vec_of_vec)
     {
-      thetaphis.emplace_back(vec[0] * M_PI / 180, vec[1] * M_PI / 180);
+      thetaphis.emplace_back(vec[0] * std::numbers::pi / 180,
+                             vec[1] * std::numbers::pi / 180);
     }
   }
 
   // Remove duplicate entries with numerical tolerance.
   constexpr double tol = 1e-6;
   std::sort(thetaphis.begin(), thetaphis.end());
-  auto it = std::unique(thetaphis.begin(), thetaphis.end(),
-                        [tol](const auto &a, const auto &b)
-                        {
-                          // At poles (theta ≈ 0 or π), phi is irrelevant.
-                          if ((std::abs(a.first) < tol || std::abs(a.first - M_PI) < tol) &&
-                              (std::abs(b.first) < tol || std::abs(b.first - M_PI) < tol))
-                          {
-                            return std::abs(a.first - b.first) < tol;
-                          }
+  auto it = std::unique(
+      thetaphis.begin(), thetaphis.end(),
+      [tol](const auto &a, const auto &b)
+      {
+        // At poles (theta ≈ 0 or π), phi is irrelevant.
+        if ((std::abs(a.first) < tol || std::abs(a.first - std::numbers::pi) < tol) &&
+            (std::abs(b.first) < tol || std::abs(b.first - std::numbers::pi) < tol))
+        {
+          return std::abs(a.first - b.first) < tol;
+        }
 
-                          // Check direct match.
-                          if (std::abs(a.first - b.first) < tol)
-                          {
-                            double phi_diff = std::abs(a.second - b.second);
-                            return phi_diff < tol || std::abs(phi_diff - 2.0 * M_PI) < tol;
-                          }
+        // Check direct match.
+        if (std::abs(a.first - b.first) < tol)
+        {
+          double phi_diff = std::abs(a.second - b.second);
+          return phi_diff < tol || std::abs(phi_diff - 2.0 * std::numbers::pi) < tol;
+        }
 
-                          // Check theta periodicity: (θ, φ) ≡ (π-θ, φ+π).
-                          if (std::abs(a.first - (M_PI - b.first)) < tol)
-                          {
-                            double phi_diff = std::abs(a.second - (b.second + M_PI));
-                            if (phi_diff > M_PI)
-                              phi_diff = 2.0 * M_PI - phi_diff;
-                            return phi_diff < tol;
-                          }
+        // Check theta periodicity: (θ, φ) ≡ (π-θ, φ+π).
+        if (std::abs(a.first - (std::numbers::pi - b.first)) < tol)
+        {
+          double phi_diff = std::abs(a.second - (b.second + std::numbers::pi));
+          if (phi_diff > std::numbers::pi)
+            phi_diff = 2.0 * std::numbers::pi - phi_diff;
+          return phi_diff < tol;
+        }
 
-                          return false;
-                        });
+        return false;
+      });
   thetaphis.erase(it, thetaphis.end());
 
   if (thetaphis.empty())
@@ -1165,11 +1169,11 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   // extra samples. Can use equality comparison given no floating point operations have been
   // done.
   prom_indices = {0, sample_f.size() - 1};
-  if (prom_f.size() > 0 && prom_f.back() == sample_f.back())
+  if (!prom_f.empty() && prom_f.back() == sample_f.back())
   {
     prom_f.pop_back();
   }
-  if (prom_f.size() > 0 && prom_f.front() == sample_f.front())
+  if (!prom_f.empty() && prom_f.front() == sample_f.front())
   {
     prom_f.erase(prom_f.begin(), std::next(prom_f.begin()));
   }
@@ -1603,24 +1607,25 @@ void Nondimensionalize(const Units &units, InterfaceDielectricData &data)
 
 void Nondimensionalize(const Units &units, EigenSolverData &data)
 {
-  data.target =
-      2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.target);
+  data.target = 2 * std::numbers::pi *
+                units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.target);
   data.target_upper =
-      2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.target_upper);
+      2 * std::numbers::pi *
+      units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.target_upper);
 }
 
 void Nondimensionalize(const Units &units, DrivenSolverData &data)
 {
   for (auto &f : data.sample_f)
   {
-    f = 2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
+    f = 2 * std::numbers::pi * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
   }
 }
 
 void Nondimensionalize(const Units &units, TransientSolverData &data)
 {
-  data.pulse_f =
-      2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.pulse_f);
+  data.pulse_f = 2 * std::numbers::pi *
+                 units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.pulse_f);
   data.pulse_tau = units.Nondimensionalize<Units::ValueType::TIME>(data.pulse_tau);
   data.max_t = units.Nondimensionalize<Units::ValueType::TIME>(data.max_t);
   data.delta_t = units.Nondimensionalize<Units::ValueType::TIME>(data.delta_t);

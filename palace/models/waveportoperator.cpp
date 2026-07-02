@@ -3,6 +3,7 @@
 
 #include "waveportoperator.hpp"
 #include <limits>
+#include <numbers>
 #include "fem/bilinearform.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
@@ -1227,7 +1228,7 @@ void WavePortOperator::Initialize(double omega)
   {
     Mpi::Print(
         "\nCalculating boundary modes at wave ports for ω/2π = {:.3e} GHz ({:.3e})\n",
-        omega * fc / (2.0 * M_PI), omega);
+        omega * fc / (2.0 * std::numbers::pi), omega);
   }
   for (auto &[idx, data] : ports)
   {

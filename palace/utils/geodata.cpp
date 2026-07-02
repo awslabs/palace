@@ -8,6 +8,7 @@
 #include <array>
 #include <limits>
 #include <map>
+#include <numbers>
 #include <numeric>
 #include <queue>
 #include <set>
@@ -1168,7 +1169,8 @@ mfem::Vector BoundingBox::Deviations(const mfem::Vector &direction) const
     }
     ax_norm = std::sqrt(ax_norm);
     double cosine = (dir_norm > 0.0 && ax_norm > 0.0) ? dot / (dir_norm * ax_norm) : 0.0;
-    deviation_deg(i) = std::acos(std::min(1.0, std::abs(cosine))) * (180.0 / M_PI);
+    deviation_deg(i) =
+        std::acos(std::min(1.0, std::abs(cosine))) * (180.0 / std::numbers::pi);
   }
   return deviation_deg;
 }
@@ -1530,7 +1532,7 @@ void RemapSubMeshBdrAttributes(SubMeshT &submesh, const mfem::Array<int> &surfac
     for (int be = 0; be < parent.GetNBE(); be++)
     {
       int attr = parent.GetBdrAttribute(be);
-      bool is_surface = (surface_attr_set.count(attr) > 0);
+      bool is_surface = surface_attr_set.contains(attr);
       parent.GetBdrElementEdges(be, edges, orientations);
       for (int j = 0; j < edges.Size(); j++)
       {
@@ -1644,7 +1646,7 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
   for (int be = 0; be < parent.GetNBE(); be++)
   {
     int attr = parent.GetBdrAttribute(be);
-    if (internal_attr_set.count(attr) == 0)
+    if (!internal_attr_set.contains(attr))
     {
       continue;  // Not an internal boundary attribute
     }
@@ -1661,7 +1663,7 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
   for (int be = 0; be < parent.GetNBE(); be++)
   {
     int attr = parent.GetBdrAttribute(be);
-    if (surface_attr_set.count(attr) == 0)
+    if (!surface_attr_set.contains(attr))
     {
       continue;  // Not a surface face
     }
@@ -1677,7 +1679,7 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
   std::unordered_map<int, int> intersection_edges;
   for (const auto &[edge, attr] : edge_to_internal_attr)
   {
-    if (surface_edges.count(edge) > 0)
+    if (surface_edges.contains(edge))
     {
       intersection_edges[edge] = attr;
     }
@@ -1714,7 +1716,7 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
   mfem::Array<int> new_be_to_face;
   for (const auto &[parent_edge, attr] : intersection_edges)
   {
-    if (existing_bdr_edges.count(parent_edge) > 0)
+    if (existing_bdr_edges.contains(parent_edge))
     {
       continue;  // Already a boundary element
     }
@@ -2826,7 +2828,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
           return std::find(e.attributes.begin(), e.attributes.end(), x) !=
                  e.attributes.end();
         };
-        cba.erase(std::remove_if(cba.begin(), cba.end(), attr_in_elem), cba.end());
+        std::erase_if(cba, attr_in_elem);
       }
     }
     return cba;
@@ -3026,19 +3028,10 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
           }
         }
       }
-      for (auto it = coarse_crack_edge_to_be.begin(); it != coarse_crack_edge_to_be.end();)
-      {
-        // Remove all seam edges which are on the "outside" of the crack (visited only
-        // once).
-        if (it->second.size() == 1)
-        {
-          it = coarse_crack_edge_to_be.erase(it);
-        }
-        else
-        {
-          ++it;
-        }
-      }
+      // Remove all seam edges which are on the "outside" of the crack (visited only
+      // once).
+      std::erase_if(coarse_crack_edge_to_be,
+                    [](const auto &kv) { return kv.second.size() == 1; });
       // Static reporting variables so can persist across retries.
       static int new_ne_ref = 0;
       static int new_ref_its = 0;
@@ -3136,7 +3129,7 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
 
     new_nv += new_nv_dups;
     new_nbe += crack_bdr_elem.size();
-    if (crack_bdr_elem.size() > 0)
+    if (!crack_bdr_elem.empty())
     {
       Mpi::Print("Added {:d} duplicate vertices for interior boundaries in the mesh\n",
                  new_nv_dups);

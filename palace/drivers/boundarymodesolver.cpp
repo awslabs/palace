@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <complex>
+#include <numbers>
 #include <unordered_set>
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
@@ -204,7 +205,8 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const int num_modes = bm.n;
   const double freq_GHz = bm.freq;
   const double omega =
-      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_GHz);
+      2.0 * std::numbers::pi *
+      iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_GHz);
 
   Mpi::Print("\nConfiguring 2D waveguide mode analysis at f = {:.3e} GHz "
              "(omega = {:.6e})\n",

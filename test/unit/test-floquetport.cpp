@@ -5,6 +5,7 @@
 // Tests call the actual static methods in FloquetPortData.
 
 #include <cmath>
+#include <numbers>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -31,12 +32,12 @@ TEST_CASE("Floquet Reciprocal Lattice", "[floquetport][Serial]")
 
     FloquetPortData::ComputeReciprocalLattice(a1, a2, b1, b2);
 
-    CHECK_THAT(a1 * b1, WithinRel(2.0 * M_PI, 1e-10));
-    CHECK_THAT(a2 * b2, WithinRel(2.0 * M_PI, 1e-10));
+    CHECK_THAT(a1 * b1, WithinRel(2.0 * std::numbers::pi, 1e-10));
+    CHECK_THAT(a2 * b2, WithinRel(2.0 * std::numbers::pi, 1e-10));
     CHECK_THAT(std::abs(a1 * b2), WithinAbs(0.0, 1e-10));
     CHECK_THAT(std::abs(a2 * b1), WithinAbs(0.0, 1e-10));
-    CHECK_THAT(b1.Norml2(), WithinRel(2.0 * M_PI, 1e-10));
-    CHECK_THAT(b2.Norml2(), WithinRel(2.0 * M_PI, 1e-10));
+    CHECK_THAT(b1.Norml2(), WithinRel(2.0 * std::numbers::pi, 1e-10));
+    CHECK_THAT(b2.Norml2(), WithinRel(2.0 * std::numbers::pi, 1e-10));
   }
 
   SECTION("Rectangular cell: a₁ = (4,0,0), a₂ = (0,1,0)")
@@ -49,17 +50,17 @@ TEST_CASE("Floquet Reciprocal Lattice", "[floquetport][Serial]")
 
     FloquetPortData::ComputeReciprocalLattice(a1, a2, b1, b2);
 
-    CHECK_THAT(a1 * b1, WithinRel(2.0 * M_PI, 1e-10));
-    CHECK_THAT(a2 * b2, WithinRel(2.0 * M_PI, 1e-10));
+    CHECK_THAT(a1 * b1, WithinRel(2.0 * std::numbers::pi, 1e-10));
+    CHECK_THAT(a2 * b2, WithinRel(2.0 * std::numbers::pi, 1e-10));
     CHECK_THAT(std::abs(a1 * b2), WithinAbs(0.0, 1e-10));
     CHECK_THAT(std::abs(a2 * b1), WithinAbs(0.0, 1e-10));
     // |b₁| = 2π/4 = π/2, |b₂| = 2π
-    CHECK_THAT(b1.Norml2(), WithinRel(M_PI / 2.0, 1e-10));
-    CHECK_THAT(b2.Norml2(), WithinRel(2.0 * M_PI, 1e-10));
+    CHECK_THAT(b1.Norml2(), WithinRel(std::numbers::pi / 2.0, 1e-10));
+    CHECK_THAT(b2.Norml2(), WithinRel(2.0 * std::numbers::pi, 1e-10));
     // b₁ along x, b₂ along y
-    CHECK_THAT(b1(0), WithinRel(M_PI / 2.0, 1e-10));
+    CHECK_THAT(b1(0), WithinRel(std::numbers::pi / 2.0, 1e-10));
     CHECK_THAT(std::abs(b1(1)), WithinAbs(0.0, 1e-10));
-    CHECK_THAT(b2(1), WithinRel(2.0 * M_PI, 1e-10));
+    CHECK_THAT(b2(1), WithinRel(2.0 * std::numbers::pi, 1e-10));
     CHECK_THAT(std::abs(b2(0)), WithinAbs(0.0, 1e-10));
   }
 
@@ -74,8 +75,8 @@ TEST_CASE("Floquet Reciprocal Lattice", "[floquetport][Serial]")
 
     FloquetPortData::ComputeReciprocalLattice(a1, a2, b1, b2);
 
-    CHECK_THAT(a1 * b1, WithinRel(2.0 * M_PI, 1e-10));
-    CHECK_THAT(a2 * b2, WithinRel(2.0 * M_PI, 1e-10));
+    CHECK_THAT(a1 * b1, WithinRel(2.0 * std::numbers::pi, 1e-10));
+    CHECK_THAT(a2 * b2, WithinRel(2.0 * std::numbers::pi, 1e-10));
     CHECK_THAT(std::abs(a1 * b2), WithinAbs(0.0, 1e-10));
     CHECK_THAT(std::abs(a2 * b1), WithinAbs(0.0, 1e-10));
   }
@@ -112,7 +113,7 @@ TEST_CASE("Floquet BZ Wrapping Offset", "[floquetport][Serial]")
     kF = 0.0;
     kF(0) = 1.05;  // Outside π/4 ≈ 0.785
     kF_w = 0.0;
-    kF_w(0) = std::remainder(1.05, 2.0 * M_PI / 4.0);  // Wrapped
+    kF_w(0) = std::remainder(1.05, 2.0 * std::numbers::pi / 4.0);  // Wrapped
 
     int bz_m = FloquetPortData::ComputeBZOffset(kF, kF_w, b1, b1_sq);
     CHECK(bz_m == 1);
@@ -126,7 +127,7 @@ TEST_CASE("Floquet BZ Wrapping Offset", "[floquetport][Serial]")
     kF = 0.0;
     kF(0) = -1.05;
     kF_w = 0.0;
-    kF_w(0) = std::remainder(-1.05, 2.0 * M_PI / 4.0);
+    kF_w(0) = std::remainder(-1.05, 2.0 * std::numbers::pi / 4.0);
 
     int bz_m = FloquetPortData::ComputeBZOffset(kF, kF_w, b1, b1_sq);
     CHECK(bz_m == -1);
