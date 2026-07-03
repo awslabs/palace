@@ -287,10 +287,12 @@ void IoData::CheckConfiguration()
     MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
                     (boundaries.auxpec.empty() && boundaries.waveport.empty() &&
                      (boundaries.farfield.empty() || boundaries.farfield.order == 1) &&
-                     boundaries.conductivity.empty()),
+                     boundaries.conductivity.empty() &&
+                     boundaries.rational_impedance.empty()),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) is not "
                 "supported in systems with any of: "
-                "WavePort, Absorbing (order > 1), or Conductivity boundary conditions!\n");
+                "WavePort, Absorbing (order > 1), Conductivity, or RationalImpedance "
+                "boundary conditions!\n");
   }
   else if (problem.type == ProblemType::EIGENMODE)
   {
