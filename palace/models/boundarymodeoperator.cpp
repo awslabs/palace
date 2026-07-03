@@ -9,6 +9,7 @@
 #include "models/modeeigensolver.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
+#include "models/surfacerationalimpedanceoperator.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -33,6 +34,7 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
   surf_z_op = std::make_unique<SurfaceImpedanceOperator>(iodata, mat_op, pmesh);
   farfield_op = std::make_unique<FarfieldBoundaryOperator>(iodata, mat_op, pmesh);
   surf_sigma_op = std::make_unique<SurfaceConductivityOperator>(iodata, mat_op, pmesh);
+  surf_rz_op = std::make_unique<SurfaceRationalImpedanceOperator>(iodata, mat_op, pmesh);
 
   // Frequency-independent block matrices. Atn is the ND/H1 gradient coupling,
   // Btn = -Atn^T, Btt is the ND mass.
@@ -56,14 +58,14 @@ BoundaryModeOperator::ComplexHypreParMatrix
 BoundaryModeOperator::AssembleAtt(double omega, double sigma) const
 {
   return mode_assembly::AssembleAtt(GetNDSpace(), mat_op, nullptr, *surf_z_op, *farfield_op,
-                                    *surf_sigma_op, omega, sigma);
+                                    *surf_sigma_op, *surf_rz_op, omega, sigma);
 }
 
 BoundaryModeOperator::ComplexHypreParMatrix
 BoundaryModeOperator::AssembleAnn(double omega) const
 {
   return mode_assembly::AssembleAnn(GetH1Space(), mat_op, nullptr, *surf_z_op, *farfield_op,
-                                    *surf_sigma_op, omega);
+                                    *surf_sigma_op, *surf_rz_op, omega);
 }
 
 void BoundaryModeOperator::ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn,

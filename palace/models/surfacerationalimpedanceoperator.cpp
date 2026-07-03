@@ -110,10 +110,13 @@ void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(
   }
 
   // A rational surface impedance contributes only to the frequency-dependent system matrix
-  // A2(ω); it has no time-domain (transient) or static realization here.
-  MFEM_VERIFY(impedance.empty() || problem_type == ProblemType::DRIVEN,
+  // A2(ω) in 3D simulations; it has no time-domain (transient) or static realization here.
+  // In boundary mode (and the wave port 2D eigenproblem) the operating frequency is fixed,
+  // so Zs(iω) is simply evaluated there.
+  MFEM_VERIFY(impedance.empty() || problem_type == ProblemType::DRIVEN ||
+                  problem_type == ProblemType::BOUNDARYMODE,
               "Rational impedance boundaries are only available for frequency-domain "
-              "driven simulation type!");
+              "driven and boundary simulation types!");
 
   boundaries.reserve(impedance.size());
   for (const auto &data : impedance)

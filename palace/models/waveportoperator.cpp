@@ -33,6 +33,7 @@
 #include "models/materialoperator.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
+#include "models/surfacerationalimpedanceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -379,9 +380,10 @@ WavePortData::WavePortData(const config::WavePortData &data,
       mfem::ParSubMesh::CreateFromBoundary(mesh, attr_list));
 
   // Add internal boundary elements for edges where the port face intersects other boundary
-  // faces (PEC, impedance, conductivity, absorbing). ParSubMesh::CreateFromBoundary only
-  // creates boundary elements at the geometric boundary of the selected face region, but
-  // internal intersections need boundary elements for the 2D eigenvalue problem BCs.
+  // faces (PEC, impedance, conductivity, rational impedance, absorbing).
+  // ParSubMesh::CreateFromBoundary only creates boundary elements at the geometric boundary
+  // of the selected face region, but internal intersections need boundary elements for the
+  // 2D eigenvalue problem BCs.
   {
     std::vector<int> internal_bdr_attrs;
     for (auto a : boundaries.pec.attributes)
@@ -400,6 +402,13 @@ WavePortData::WavePortData(const config::WavePortData &data,
       }
     }
     for (const auto &d : boundaries.conductivity)
+    {
+      for (auto a : d.attributes)
+      {
+        internal_bdr_attrs.push_back(a);
+      }
+    }
+    for (const auto &d : boundaries.rational_impedance)
     {
       for (auto a : d.attributes)
       {
@@ -459,6 +468,9 @@ WavePortData::WavePortData(const config::WavePortData &data,
       boundaries.farfield, problem_type, *port_mat_op, mesh);
   port_surf_sigma_op = std::make_unique<SurfaceConductivityOperator>(
       boundaries.conductivity, problem_type, units, *port_mat_op, mesh);
+  port_surf_rz_op = std::make_unique<SurfaceRationalImpedanceOperator>(
+      boundaries.rational_impedance, boundaries.cracked_attributes, problem_type, units,
+      *port_mat_op, mesh);
 
   // Construct mapping from parent (boundary) element indices to submesh (domain)
   // elements.
@@ -521,9 +533,9 @@ WavePortData::WavePortData(const config::WavePortData &data,
   {
     mode_solver = std::make_unique<ModeEigenSolver>(
         *port_mat_op, &port_normal, *port_surf_z_op, *port_farfield_op, *port_surf_sigma_op,
-        *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, mode_idx, data.max_size,
-        data.eig_tol, EigenvalueSolver::WhichType::LARGEST_REAL, linear, data.eigen_solver,
-        data.verbose, port_comm);
+        *port_surf_rz_op, *port_nd_fespace, *port_h1_fespace, port_dbc_tdof_list, mode_idx,
+        data.max_size, data.eig_tol, EigenvalueSolver::WhichType::LARGEST_REAL, linear,
+        data.eigen_solver, data.verbose, port_comm);
   }
 
   // Configure port mode sign convention: 1ᵀ Re{-n x H} >= 0 on the "upper-right quadrant"

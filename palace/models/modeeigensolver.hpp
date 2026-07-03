@@ -25,6 +25,7 @@ class FiniteElementSpaceHierarchy;
 class MaterialOperator;
 class SurfaceConductivityOperator;
 class SurfaceImpedanceOperator;
+class SurfaceRationalImpedanceOperator;
 
 template <typename OperType>
 class BlockDiagonalPreconditioner;
@@ -74,16 +75,17 @@ ComplexHypreParMatrix
 AssembleAtt(const FiniteElementSpace &nd_fespace, const MaterialOperator &mat_op,
             const mfem::Vector *normal, SurfaceImpedanceOperator &surf_z_op,
             FarfieldBoundaryOperator &farfield_op,
-            SurfaceConductivityOperator &surf_sigma_op, double omega, double sigma);
+            SurfaceConductivityOperator &surf_sigma_op,
+            SurfaceRationalImpedanceOperator &surf_rz_op, double omega, double sigma);
 
 // Ann = -(mu^{-1} grad u, grad v) + omega^2 (eps u, v) + BC-n. Frequency-dependent.
 // farfield_op and surf_sigma_op contribute impedance / loss terms on the H1 block.
-ComplexHypreParMatrix AssembleAnn(const FiniteElementSpace &h1_fespace,
-                                  const MaterialOperator &mat_op,
-                                  const mfem::Vector *normal,
-                                  SurfaceImpedanceOperator &surf_z_op,
-                                  FarfieldBoundaryOperator &farfield_op,
-                                  SurfaceConductivityOperator &surf_sigma_op, double omega);
+ComplexHypreParMatrix
+AssembleAnn(const FiniteElementSpace &h1_fespace, const MaterialOperator &mat_op,
+            const mfem::Vector *normal, SurfaceImpedanceOperator &surf_z_op,
+            FarfieldBoundaryOperator &farfield_op,
+            SurfaceConductivityOperator &surf_sigma_op,
+            SurfaceRationalImpedanceOperator &surf_rz_op, double omega);
 
 // Alias the ND and H1 halves of a pre-loaded eigenvector e0 = [e_t_tilde; e_n_tilde] as
 // et / en, and apply the Vardapetyan–Demkowicz back-transform en := ẽn / (i·kn) so en
@@ -110,6 +112,7 @@ public:
                   SurfaceImpedanceOperator &surf_z_op,
                   FarfieldBoundaryOperator &farfield_op,
                   SurfaceConductivityOperator &surf_sigma_op,
+                  SurfaceRationalImpedanceOperator &surf_rz_op,
                   const FiniteElementSpace &nd_fespace,
                   const FiniteElementSpace &h1_fespace,
                   const mfem::Array<int> &dbc_tdof_list, int num_modes, int num_vec,
@@ -168,6 +171,7 @@ private:
   SurfaceImpedanceOperator &surf_z_op;
   FarfieldBoundaryOperator &farfield_op;
   SurfaceConductivityOperator &surf_sigma_op;
+  SurfaceRationalImpedanceOperator &surf_rz_op;
 
   // References to FE spaces (not owned). Finest level of bmo's hierarchies when set.
   const FiniteElementSpace &nd_fespace;

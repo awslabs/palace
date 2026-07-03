@@ -55,7 +55,7 @@ This generalizes the parallel-RLC [impedance boundary](#Impedance-boundary) to a
 lumped-network response, for example a fitted rational approximation of a measured or
 synthesized surface impedance. Warnings are emitted for inputs that cannot correspond to a
 passive (positive-real) impedance. It is available only for frequency domain driven
-simulations.
+and boundary mode simulations.
 
 ## Absorbing (scattering) boundary
 
