@@ -23,6 +23,7 @@ spack:
     # $env is the current environment
     # $spack is the spack root
     template_dirs:
+      - "."
       - $env
       - $spack/share/spack/templates
   packages:
