@@ -35,17 +35,27 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
 
   if (HasExcitation())
   {
+    // Historically an excited port had to be purely resistive (R > 0, no reactance). We now
+    // also allow a reactive excited port, so that a structure can be driven *through* a
+    // lumped inductor/capacitor (e.g. a Josephson-junction port in a superconducting
+    // circuit). The port's R/L/C still enters the system matrix as a physical termination
+    // (see Add{Stiffness,Damping,Mass}BdrCoefficients), so the field solution correctly
+    // includes the reactance. The incident/reflected wave used to define scattering
+    // parameters is normalized to a real reference resistance (GetExcitationRefResistance):
+    // for a resistive port that is R (unchanged, legacy behaviour); for a purely reactive
+    // port (R == 0) there is no real reference power, so a traveling-wave S-parameter at
+    // that port is not well defined — the fields, the synthesized circuit matrices, and the
+    // port admittance/impedance remain valid, but its own S entry is reported as NaN. The
+    // only requirement is a non-negative resistance.
     if (has_circ)
     {
-      MFEM_VERIFY(data.R > 0.0, "Excited lumped port must have nonzero resistance!");
-      MFEM_VERIFY(data.C == 0.0 && data.L == 0.0,
-                  "Lumped port excitations do not support nonzero reactance!");
+      MFEM_VERIFY(data.R >= 0.0,
+                  "Excited lumped port must have non-negative resistance!");
     }
     else
     {
-      MFEM_VERIFY(data.Rs > 0.0, "Excited lumped port must have nonzero resistance!");
-      MFEM_VERIFY(data.Cs == 0.0 && data.Ls == 0.0,
-                  "Lumped port excitations do not support nonzero reactance!");
+      MFEM_VERIFY(data.Rs >= 0.0,
+                  "Excited lumped port must have non-negative resistance!");
     }
   }
 
@@ -182,7 +192,12 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
     SumVectorCoefficient fb(mesh.SpaceDimension());
     for (const auto &elem : elems)
     {
-      const double Rs = R * GetToSquare(*elem);
+      // Reference the S-parameter projection to the same real resistance used to normalize
+      // the incident drive (R for a resistive port; the unit reference for a purely reactive
+      // R == 0 port, so this does not divide by zero). The reactance is already present in
+      // the system matrix, so the projected field is the physical response; a purely
+      // reactive port's own S is not a meaningful traveling-wave quantity regardless.
+      const double Rs = GetExcitationRefResistance() * GetToSquare(*elem);
       const double Hinc = (std::abs(Rs) > 0.0)
                               ? 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
                                                 elem->GetGeometryLength() * elems.size())
@@ -630,11 +645,16 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
     {
       continue;
     }
-    MFEM_VERIFY(std::abs(data.R) > 0.0,
-                "Unexpected zero resistance in excited lumped port!");
+    // Normalize the incident field to a real reference resistance. For a resistive port
+    // this is the port resistance R (legacy behaviour, unchanged). For a purely reactive
+    // excited port (R == 0) there is no real port resistance to reference the incident power
+    // to, so we use the unit reference |Z_R| = 1 in internal units purely to define a finite
+    // drive amplitude; the reactance itself acts through the system-matrix termination, not
+    // through this normalization.
+    const double R_ref = data.GetExcitationRefResistance();
     for (const auto &elem : data.elems)
     {
-      const double Rs = data.R * data.GetToSquare(*elem);
+      const double Rs = R_ref * data.GetToSquare(*elem);
       const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
                                           elem->GetGeometryLength() * data.elems.size());
       fb.AddCoefficient(elem->GetModeCoefficient(2.0 * Hinc));
