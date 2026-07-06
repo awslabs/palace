@@ -97,7 +97,7 @@ public:
   // reactive excited port (R == 0) there is no real port resistance, so we fall back to the
   // unit reference impedance |Z_R| = 1 in internal units (= Z_freespace) purely to define a
   // finite drive amplitude; the reactance acts physically through the system-matrix
-  // termination, and a traveling-wave S-parameter at such a port is not well defined.
+  // termination, and that port's own S column is referenced to this unit impedance.
   double GetExcitationRefResistance() const { return (std::abs(R) > 0.0) ? R : 1.0; }
 
   enum class Branch

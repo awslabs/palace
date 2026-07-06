@@ -43,9 +43,11 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
     // includes the reactance. The incident/reflected wave used to define scattering
     // parameters is normalized to a real reference resistance (GetExcitationRefResistance):
     // for a resistive port that is R (unchanged, legacy behaviour); for a purely reactive
-    // port (R == 0) there is no real reference power, so a traveling-wave S-parameter at
-    // that port is not well defined — the fields, the synthesized circuit matrices, and the
-    // port admittance/impedance remain valid, but its own S entry is reported as NaN. The
+    // port (R == 0) it is the unit reference impedance in internal units (= Z_freespace
+    // dimensionally). The fields, the synthesized circuit matrices, and the port
+    // admittance/impedance are all valid for any R >= 0; the R == 0 port's own S column is
+    // still emitted but is referenced to that unit impedance rather than a user-chosen
+    // one, since with no real port resistance there is no natural reference for it. The
     // only requirement is a non-negative resistance.
     if (has_circ)
     {
@@ -152,12 +154,16 @@ double LumpedPortData::GetExcitationPower() const
 double LumpedPortData::GetExcitationVoltage() const
 {
   // Incident voltage should be the same across all elements of an excited lumped port.
+  // Reference the same real resistance used to normalize the incident drive
+  // (GetExcitationRefResistance: R for a resistive port, the unit reference for a purely
+  // reactive R == 0 port), so the reported V_inc is consistent with the assembled drive
+  // and nonzero for a reactive excitation.
   if (HasExcitation())
   {
     double V_inc = 0.0;
     for (const auto &elem : elems)
     {
-      const double Rs = R * GetToSquare(*elem);
+      const double Rs = GetExcitationRefResistance() * GetToSquare(*elem);
       const double E_inc = std::sqrt(
           Rs / (elem->GetGeometryWidth() * elem->GetGeometryLength() * elems.size()));
       V_inc += E_inc * elem->GetGeometryLength() / elems.size();
