@@ -63,9 +63,10 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
         shell: bash
         run: |
-          gh api /orgs/${{ github.repository_owner }}/packages/container/palace-develop-testing \
+          gh api "/orgs/${REPO_OWNER}/packages/container/palace-develop-testing" \
             --jq '"palace-develop-testing versions before cleanup: \(.version_count)"'
 
       # Each Spack spec is a tagged version in the container package. We keep
@@ -92,7 +93,8 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
         shell: bash
         run: |
-          gh api /orgs/${{ github.repository_owner }}/packages/container/palace-develop-testing \
+          gh api "/orgs/${REPO_OWNER}/packages/container/palace-develop-testing" \
             --jq '"palace-develop-testing versions after cleanup: \(.version_count)"'

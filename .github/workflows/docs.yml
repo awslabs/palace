@@ -53,11 +53,15 @@ jobs:
               - '.github/workflows/docs.yml'
       - name: Decide whether to build
         id: decide
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          FILTER_TEST: ${{ steps.filter.outputs.test }}
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/* ]] || [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          if [[ "$GITHUB_REF" == refs/tags/* ]] || [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
           else
-            echo "should_build=${{ steps.filter.outputs.test }}" >> "$GITHUB_OUTPUT"
+            echo "should_build=${FILTER_TEST}" >> "$GITHUB_OUTPUT"
           fi
 
   build-docs:
@@ -199,14 +203,15 @@ jobs:
         if: needs.filter.outputs.should_build == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPLOY_TAG: ${{ inputs.deploy_tag }}
         run: |
           # For workflow_dispatch with deploy_tag, override the runner's immutable
           # GITHUB_* env vars so Documenter.jl sees a tag push.
-          if [[ -n "${{ inputs.deploy_tag }}" ]]; then
+          if [[ -n "${DEPLOY_TAG}" ]]; then
             export GITHUB_EVENT_NAME=push
-            export GITHUB_REF=refs/tags/${{ inputs.deploy_tag }}
+            export GITHUB_REF="refs/tags/${DEPLOY_TAG}"
             export GITHUB_REF_TYPE=tag
-            export GITHUB_REF_NAME=${{ inputs.deploy_tag }}
+            export GITHUB_REF_NAME="${DEPLOY_TAG}"
           fi
           eval $(spack -e . load --sh palace)
           julia --project=docs -e 'using Pkg; Pkg.instantiate()'
@@ -216,8 +221,10 @@ jobs:
         if: >-
           needs.filter.outputs.should_build == 'true' &&
           (startsWith(github.ref, 'refs/tags/') || inputs.deploy_tag != '')
+        env:
+          TAG_REF: ${{ inputs.deploy_tag || github.ref_name }}
         run: |
-          TAG="${{ inputs.deploy_tag || github.ref_name }}"
+          TAG="${TAG_REF}"
           VERSION="${TAG#v}"
           git fetch origin gh-pages --depth=1
           STABLE=$(git show origin/gh-pages:stable)
