@@ -249,14 +249,13 @@ S_{ij} = \frac{\displaystyle\int_{\Gamma_i}\bm{E}\cdot\bm{E}^{inc}_i\,dS}
 
 For a resistive excited port, the incident field ``\bm{E}^{inc}`` is normalized so that the
 power integrated over the port boundary is unity, referenced to the port resistance ``R``.
-A lumped port with nonzero inductance and/or capacitance may also be excited (useful for
-driving a structure through a Josephson junction or other reactive element). In this case
+A lumped port with nonzero inductance and/or capacitance may also be excited. In this case
 the port's ``R``, ``L``, and ``C`` all enter the system matrix as a physical parallel
 termination, and the incident field is normalized to a real reference resistance: ``R`` when
-``R > 0``, or the free-space impedance ``Z_0 \approx 376.7~\Omega`` (in internal units,
-``|Z_R| = 1``) when ``R = 0``. The scattering parameters at resistive ports (observation or
-drive) retain their standard power-wave interpretation. For a purely reactive drive port
-(``R = 0``), the reported ``S_{ii}`` is related to the loaded port impedance by
+``R > 0``, or the free-space impedance ``Z_0 \approx 376.7~\Omega`` when ``R = 0``. The
+scattering parameters at resistive ports (observation or drive) retain their standard power-wave
+interpretation. For a purely reactive drive port (``R = 0``), the reported ``S_{ii}`` is related
+to the loaded port impedance by
 
 ```math
 S_{ii} + 1 = \frac{2\,Z_{\text{loaded}}}{Z_0}
@@ -264,7 +263,7 @@ S_{ii} + 1 = \frac{2\,Z_{\text{loaded}}}{Z_0}
 
 where ``Z_{\text{loaded}} = Z_p \parallel Z_{\text{struct}}`` is the parallel combination of
 the port impedance ``Z_p = (1/R + 1/(i\omega L) + i\omega C)^{-1}`` and the structure's
-input impedance at the port plane. This is a well-defined, reciprocal, frequency-dependent
+input impedance at the port plane. This is a reciprocal, frequency-dependent
 quantity — but it is not bounded by unity and should not be interpreted as a power
 reflection coefficient. Transmission parameters ``S_{ji}`` (``j \ne i``) between a reactive
 drive and a resistive observation port are physical voltage-transfer ratios and satisfy
