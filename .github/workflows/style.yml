@@ -93,8 +93,10 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Check changelog entry
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
-          BRANCH="${{ github.head_ref }}"
+          BRANCH="${HEAD_REF}"
           SUFFIX="${BRANCH##*/}"
           EXPECTED="changes/${SUFFIX}.md"
 
