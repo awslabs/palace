@@ -192,10 +192,10 @@ message(STATUS "Found nlohmann/json: ${nlohmann_json_VERSION} in ${nlohmann_json
 find_package(nlohmann_json_schema_validator REQUIRED CONFIG)
 message(STATUS "Found nlohmann_json_schema_validator: ${nlohmann_json_schema_validator_VERSION} in ${nlohmann_json_schema_validator_DIR}")
 
-# reflect-cpp: pulled in at build time only, consumed by the vendored
-# schema-emission helpers under palace/schema/cjs/ (used by the
-# palace_emit_schema helper target). Not linked into the runtime libpalace
-# in Phase 1.
+# reflect-cpp: consumed by the schema-emission helpers under palace/schema/
+# (palace_emit_schema) and, as of the Problem-section bridge, linked into the
+# runtime libpalace so utils/iodata.cpp can parse configuration into the schema
+# types via rfl::json::read.
 include(FetchContent)
 set(REFLECTCPP_JSON         ON  CACHE BOOL "" FORCE)
 set(REFLECTCPP_YAML         OFF CACHE BOOL "" FORCE)
@@ -448,7 +448,7 @@ endif()
 target_link_libraries(${LIB_TARGET_NAME}
   PUBLIC ${MFEM_LIBRARY} ${LIBCEED_TARGET} nlohmann_json::nlohmann_json
          nlohmann_json_schema_validator::validator fmt::fmt scn::scn
-         Eigen3::Eigen LAPACK::LAPACK MPI::MPI_CXX
+         Eigen3::Eigen LAPACK::LAPACK MPI::MPI_CXX reflectcpp
 )
 
 # Add MFEM include directory for Spack builds

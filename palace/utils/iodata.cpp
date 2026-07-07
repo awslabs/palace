@@ -12,16 +12,51 @@
 #include <stack>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <fmt/format.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+#include <rfl/json.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
+#include "schema/types/config.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/jsonschema.hpp"
 
 namespace palace
 {
+
+namespace
+{
+
+// schema::ProblemType and palace::ProblemType share the same wire strings but declare
+// their enumerators in different orders, so a numeric cast would be wrong. Map by name
+// with an explicit switch; the compiler then flags any future enumerator that is added to
+// one enum but not handled here.
+ProblemType ToPalace(schema::ProblemType type)
+{
+  using S = schema::ProblemType;
+  switch (type)
+  {
+    case S::Driven:
+      return ProblemType::DRIVEN;
+    case S::Eigenmode:
+      return ProblemType::EIGENMODE;
+    case S::Electrostatic:
+      return ProblemType::ELECTROSTATIC;
+    case S::Magnetostatic:
+      return ProblemType::MAGNETOSTATIC;
+    case S::Transient:
+      return ProblemType::TRANSIENT;
+    case S::BoundaryMode:
+      return ProblemType::BOUNDARYMODE;
+  }
+  MFEM_ABORT("Unexpected schema::ProblemType value!");
+  return ProblemType::DRIVEN;  // Unreachable; silences a missing-return warning.
+}
+
+}  // namespace
 
 std::stringstream PreprocessFile(const char *filename)
 {
@@ -216,18 +251,70 @@ json IoData::ParseAndValidate(const char *filename)
   return config;
 }
 
-IoData::IoData(const nlohmann::json &config, bool print) : units(1.0, 1.0), init(false)
+namespace
+{
+
+// Parse a JSON string into the schema configuration object. rfl::DefaultIfMissing
+// default-constructs schema::PalaceConfiguration (running the in-class initializers) and
+// overlays only the present fields, so omitted optional fields fall back to their schema
+// defaults.
+schema::PalaceConfiguration ReadPalaceConfiguration(const std::string &str,
+                                                    std::string_view source)
+{
+  auto result = rfl::json::read<schema::PalaceConfiguration, rfl::DefaultIfMissing>(str);
+  MFEM_VERIFY(result, "Failed to parse the configuration " << source << "!\n  "
+                                                           << result.error().what());
+  return std::move(*result);
+}
+
+}  // namespace
+
+schema::PalaceConfiguration IoData::ParsePalaceConfiguration(const char *filename)
+{
+  // Preprocess (strip comments, expand integer ranges) independently of nlohmann::json,
+  // then parse the whole configuration into the schema type.
+  return ReadPalaceConfiguration(PreprocessFile(filename).str(),
+                                 fmt::format("file \"{}\"", filename));
+}
+
+schema::PalaceConfiguration IoData::ParsePalaceConfiguration(const nlohmann::json &config)
+{
+  // Parse an already-loaded JSON config object into the schema type by re-serializing it.
+  return ReadPalaceConfiguration(config.dump(), "object");
+}
+
+// Each field is unwrapped from its rfl::Description (and, for Verbose, the inner
+// rfl::Validator) via .value().
+config::ProblemData IoData::FromSchema(const schema::Problem &problem)
+{
+  config::ProblemData data;
+  data.type = ToPalace(problem.Type.value());
+  data.verbose = problem.Verbose.value().value();
+  data.output = problem.Output.value();
+  data.output_formats.paraview = problem.OutputFormats.value().Paraview.value();
+  data.output_formats.gridfunction = problem.OutputFormats.value().GridFunction.value();
+  return data;
+}
+
+IoData::IoData(const nlohmann::json &config, const schema::PalaceConfiguration &pconfig,
+               bool print)
+  : units(1.0, 1.0), init(false)
+{
+  // Initialize the Problem section from the schema configuration object. The remaining
+  // sections are still read from `config` in SetUpFromJson (to be migrated to `pconfig`).
+  problem = FromSchema(pconfig.Problem.value());
+  SetUpFromJson(config, print);
+}
+
+void IoData::SetUpFromJson(const nlohmann::json &config, bool print)
 {
   if (print)
   {
     Mpi::Print("\n{}\n", config.dump(2));
   }
 
-  // Set up configuration option data structures.
-  auto problem_it = config.find("Problem");
-  MFEM_VERIFY(problem_it != config.end(),
-              "\"Problem\" must be specified in the configuration file!");
-  problem = config::ProblemData(*problem_it);
+  // Set up the remaining configuration option data structures. `problem` is populated by
+  // the caller.
   auto model_it = config.find("Model");
   MFEM_VERIFY(model_it != config.end(),
               "\"Model\" must be specified in the configuration file!");
@@ -265,7 +352,8 @@ IoData::IoData(const nlohmann::json &config, bool print) : units(1.0, 1.0), init
   CheckConfiguration();
 }
 
-IoData::IoData(const char *filename, bool print) : IoData(ParseAndValidate(filename), print)
+IoData::IoData(const char *filename, bool print)
+  : IoData(ParseAndValidate(filename), ParsePalaceConfiguration(filename), print)
 {
 }
 

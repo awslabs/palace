@@ -16,6 +16,7 @@
 #include "models/postoperatorcsv.hpp"
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
+#include "schema/types/config.hpp"
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
@@ -192,7 +193,7 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-Port-Cube1
   setup_json["Solver"]["Linear"] = {
       {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
 
-  IoData iodata(setup_json, false);
+  IoData iodata(setup_json, IoData::ParsePalaceConfiguration(setup_json), false);
 
   auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
   SpaceOperator space_op(iodata, mesh_io);
@@ -427,7 +428,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-Port-Cube32
   setup_json["Solver"]["Linear"] = {
       {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
 
-  IoData iodata(setup_json, false);
+  IoData iodata(setup_json, IoData::ParsePalaceConfiguration(setup_json), false);
 
   auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
   SpaceOperator space_op(iodata, mesh_io);
@@ -658,7 +659,7 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-PortOrthog
   setup_json["Solver"]["Linear"] = {
       {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
 
-  IoData iodata(setup_json, false);
+  IoData iodata(setup_json, IoData::ParsePalaceConfiguration(setup_json), false);
   auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
   SpaceOperator space_op(iodata, mesh_io);
   std::size_t max_size_per_excitation = 100;
@@ -712,7 +713,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-UpdatePROM-LinearDepe
   setup_json["Solver"]["Linear"] = {
       {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
 
-  IoData iodata(setup_json, false);
+  IoData iodata(setup_json, IoData::ParsePalaceConfiguration(setup_json), false);
   auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
   SpaceOperator space_op(iodata, mesh_io);
   std::size_t max_size_per_excitation = 100;
@@ -807,7 +808,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   setup_json["Solver"]["Linear"] = {
       {"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-8}};
 
-  IoData iodata(setup_json, false);
+  IoData iodata(setup_json, IoData::ParsePalaceConfiguration(setup_json), false);
 
   // The flag is parsed onto the config struct.
   const auto &cfg_ports = iodata.boundaries.lumpedport;
@@ -863,6 +864,7 @@ TEST_CASE("RomOperator-Synthesis-ExcludedExcitedRejected", "[romoperator][Serial
                             {"MaxFreq", 32.0},
                             {"FreqStep", 1.0}}}};
 
-  CHECK_THROWS_WITH((IoData{setup_json, false}),
-                    Catch::Matchers::ContainsSubstring("IncludeInSynthesis"));
+  CHECK_THROWS_WITH(
+      (IoData{setup_json, IoData::ParsePalaceConfiguration(setup_json), false}),
+      Catch::Matchers::ContainsSubstring("IncludeInSynthesis"));
 }

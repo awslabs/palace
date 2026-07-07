@@ -13,6 +13,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "embedded_schema.hpp"
 #include "linalg/ksp.hpp"
+#include "schema/types/config.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
 #include "utils/jsonschema.hpp"
@@ -851,7 +852,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Boundaries", json::object()},
                    {"Solver", json::object()}};
 
-    IoData iodata(config, false);
+    IoData iodata(config, IoData::ParsePalaceConfiguration(config), false);
 
     // CheckConfiguration should have resolved the sentinels.
     CHECK(iodata.solver.linear.type == LinearSolver::BOOMER_AMG);
@@ -890,7 +891,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Boundaries", json::object()},
                    {"Solver", json::object()}};
 
-    IoData iodata(config, false);
+    IoData iodata(config, IoData::ParsePalaceConfiguration(config), false);
     CHECK(iodata.problem.output == "postpro");
 
     // ConcretizeDefaults must emit the resolved, non-empty value back to JSON.
@@ -906,7 +907,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Boundaries", json::object()},
                    {"Solver", json::object()}};
 
-    IoData iodata(config, false);
+    IoData iodata(config, IoData::ParsePalaceConfiguration(config), false);
     CHECK(iodata.solver.linear.type == LinearSolver::AMS);
     CHECK(iodata.solver.linear.krylov_solver == KrylovSolver::CG);
     CHECK(iodata.solver.linear.ams_singular_op == 1);
@@ -930,7 +931,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
         {"Boundaries", json::object()},
         {"Solver", {{"Order", 3}, {"Linear", {{"Type", "BoomerAMG"}, {"KSPType", "CG"}}}}}};
 
-    IoData iodata(config, false);
+    IoData iodata(config, IoData::ParsePalaceConfiguration(config), false);
     config = IoData::ConcretizeDefaults(iodata, config);
 
     // User-specified values should be preserved.
@@ -947,7 +948,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Boundaries", json::object()},
                    {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
 
-    IoData iodata(config, false);
+    IoData iodata(config, IoData::ParsePalaceConfiguration(config), false);
 
 #if defined(PALACE_WITH_SLEPC)
     CHECK(iodata.solver.eigenmode.type == EigenSolverBackend::SLEPC);
@@ -976,9 +977,13 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
          {{"WavePort", {{{"Index", 1}, {"Attributes", {2}}, {"Excitation", true}}}}}},
         {"Solver",
          {{"Driven",
-           {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.5}}}}}}}}};
+           {{"Samples",
+             {{{"Type", "Linear"},
+               {"MinFreq", 1.0},
+               {"MaxFreq", 2.0},
+               {"FreqStep", 0.5}}}}}}}}};
 
-    IoData iodata(config, false);
+    IoData iodata(config, IoData::ParsePalaceConfiguration(config), false);
     config = IoData::ConcretizeDefaults(iodata, config);
 
     auto type_str = config["Boundaries"]["WavePort"][0]["SolverType"].get<std::string>();
@@ -997,7 +1002,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Boundaries", json::object()},
                    {"Solver", {{"Order", 5}}}};
 
-    IoData iodata(config, false);
+    IoData iodata(config, IoData::ParsePalaceConfiguration(config), false);
     // max(2 * 5, 4) = 10
     CHECK(iodata.solver.linear.mg_smooth_order == 10);
     // ams_max_it defaults to solver.order = 5
@@ -1016,7 +1021,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Boundaries", json::object()},
                    {"Solver", {{"Linear", {{"MaxIts", 200}}}}}};
 
-    IoData iodata(config, false);
+    IoData iodata(config, IoData::ParsePalaceConfiguration(config), false);
     CHECK(iodata.solver.linear.max_size == 200);
 
     config = IoData::ConcretizeDefaults(iodata, config);
@@ -1031,7 +1036,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Boundaries", json::object()},
                    {"Solver", json::object()}};
 
-    IoData iodata(config, false);
+    IoData iodata(config, IoData::ParsePalaceConfiguration(config), false);
     CHECK(iodata.solver.order == 1);
 
     config = IoData::ConcretizeDefaults(iodata, config);
@@ -1046,7 +1051,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Boundaries", json::object()},
                    {"Solver", json::object()}};
 
-    IoData iodata(config, false);
+    IoData iodata(config, IoData::ParsePalaceConfiguration(config), false);
     config = IoData::ConcretizeDefaults(iodata, config);
     auto &j_linear = config["Solver"]["Linear"];
 
@@ -1071,7 +1076,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
          {{"Transient",
            {{"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}}}}}};
 
-    IoData iodata(config, false);
+    IoData iodata(config, IoData::ParsePalaceConfiguration(config), false);
     CHECK(iodata.solver.transient.type == TimeSteppingScheme::GEN_ALPHA);
 
     config = IoData::ConcretizeDefaults(iodata, config);
@@ -1094,7 +1099,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Boundaries", json::object()},
                    {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
 
-    IoData iodata(config, false);
+    IoData iodata(config, IoData::ParsePalaceConfiguration(config), false);
     config = IoData::ConcretizeDefaults(iodata, config);
     auto &j_eigen = config["Solver"]["Eigenmode"];
 
@@ -1118,7 +1123,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Boundaries", json::object()},
                    {"Solver", {{"Order", 3}, {"Linear", {{"MaxIts", 250}}}}}};
 
-    IoData iodata1(config, false);
+    IoData iodata1(config, IoData::ParsePalaceConfiguration(config), false);
     config = IoData::ConcretizeDefaults(iodata1, config);
 
     // The resolved config must pass schema validation; otherwise a user cannot
@@ -1127,7 +1132,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     INFO("schema validation error: " << err);
     CHECK(err.empty());
 
-    IoData iodata2(config, false);
+    IoData iodata2(config, IoData::ParsePalaceConfiguration(config), false);
 
     CHECK(iodata2.solver.order == iodata1.solver.order);
     const auto &l1 = iodata1.solver.linear;
@@ -1195,14 +1200,14 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                {"LossTan", 0.002}}}}}}}},
         {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
 
-    IoData iodata1(config, false);
+    IoData iodata1(config, IoData::ParsePalaceConfiguration(config), false);
     config = IoData::ConcretizeDefaults(iodata1, config);
 
     std::string err = ValidateConfig(config);
     INFO("schema validation error: " << err);
     CHECK(err.empty());
 
-    IoData iodata2(config, false);
+    IoData iodata2(config, IoData::ParsePalaceConfiguration(config), false);
 
     const auto &m1 = iodata1.model;
     const auto &m2 = iodata2.model;
@@ -1339,7 +1344,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                     {{"Eigenmode", {{"Target", 1.0}, {"Type", "Default"}}},
                      {"Linear", {{"Type", "Default"}, {"KSPType", "Default"}}}}}};
 
-    IoData iodata(config, false);
+    IoData iodata(config, IoData::ParsePalaceConfiguration(config), false);
     config = IoData::ConcretizeDefaults(iodata, config);
 
     auto &j_eigen = config["Solver"]["Eigenmode"];
@@ -1357,14 +1362,14 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Boundaries", json::object()},
                    {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
 
-    IoData iodata1(config, false);
+    IoData iodata1(config, IoData::ParsePalaceConfiguration(config), false);
     config = IoData::ConcretizeDefaults(iodata1, config);
 
     std::string err = ValidateConfig(config);
     INFO("schema validation error: " << err);
     CHECK(err.empty());
 
-    IoData iodata2(config, false);
+    IoData iodata2(config, IoData::ParsePalaceConfiguration(config), false);
     CHECK(iodata2.solver.eigenmode.type == iodata1.solver.eigenmode.type);
     // The emitted Type must be the concrete backend name, not the alias "Default".
     CHECK(config["Solver"]["Eigenmode"]["Type"].get<std::string>() != "Default");
@@ -1393,14 +1398,14 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
          {{"Transient",
            {{"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}}}}}};
 
-    IoData iodata1(config, false);
+    IoData iodata1(config, IoData::ParsePalaceConfiguration(config), false);
     config = IoData::ConcretizeDefaults(iodata1, config);
 
     std::string err = ValidateConfig(config);
     INFO("schema validation error: " << err);
     CHECK(err.empty());
 
-    IoData iodata2(config, false);
+    IoData iodata2(config, IoData::ParsePalaceConfiguration(config), false);
     CHECK(iodata2.solver.transient.type == iodata1.solver.transient.type);
     CHECK(config["Solver"]["Transient"]["Type"].get<std::string>() != "Default");
     CHECK(iodata2.solver.transient.excitation == iodata1.solver.transient.excitation);
@@ -1426,14 +1431,14 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                    {"Boundaries", json::object()},
                    {"Solver", {{"BoundaryMode", {{"Freq", 10.0}}}}}};
 
-    IoData iodata1(config, false);
+    IoData iodata1(config, IoData::ParsePalaceConfiguration(config), false);
     config = IoData::ConcretizeDefaults(iodata1, config);
 
     std::string err = ValidateConfig(config);
     INFO("schema validation error: " << err);
     CHECK(err.empty());
 
-    IoData iodata2(config, false);
+    IoData iodata2(config, IoData::ParsePalaceConfiguration(config), false);
     const auto &b1 = iodata1.solver.boundary_mode;
     const auto &b2 = iodata2.solver.boundary_mode;
     CHECK(b2.n == b1.n);
@@ -1463,14 +1468,14 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
         {"Boundaries", {{"WavePort", {{{"Index", 1}, {"Attributes", {2}}}}}}},
         {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
 
-    IoData iodata1(config, false);
+    IoData iodata1(config, IoData::ParsePalaceConfiguration(config), false);
     config = IoData::ConcretizeDefaults(iodata1, config);
 
     std::string err = ValidateConfig(config);
     INFO("schema validation error: " << err);
     CHECK(err.empty());
 
-    IoData iodata2(config, false);
+    IoData iodata2(config, IoData::ParsePalaceConfiguration(config), false);
     REQUIRE(iodata2.boundaries.waveport.count(1) == 1);
     const auto &w1 = iodata1.boundaries.waveport.at(1);
     const auto &w2 = iodata2.boundaries.waveport.at(1);
@@ -1512,7 +1517,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
         {"Boundaries", json::object()},
         {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
 
-    IoData iodata1(config, false);
+    IoData iodata1(config, IoData::ParsePalaceConfiguration(config), false);
     config = IoData::ConcretizeDefaults(iodata1, config);
 
     std::string err = ValidateConfig(config);
@@ -1527,7 +1532,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_mat.contains("Conductivity"));
     CHECK(j_mat.contains("LondonDepth"));
 
-    IoData iodata2(config, false);
+    IoData iodata2(config, IoData::ParsePalaceConfiguration(config), false);
     REQUIRE(iodata1.domains.materials.size() == 1);
     REQUIRE(iodata2.domains.materials.size() == 1);
     const auto &m1 = iodata1.domains.materials[0];
@@ -1548,5 +1553,63 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                                        /*skip=*/{"MaterialAxes"});
     INFO("Domains.Materials[] missing keys: " << json(mat_gaps).dump());
     CHECK(mat_gaps.empty());
+  }
+}
+
+TEST_CASE("Problem schema bridge parity", "[config][Serial]")
+{
+  // The "Problem" section is parsed into the reflect-cpp schema type and the runtime
+  // config::ProblemData is derived from it. Pin that derivation against the legacy
+  // hand-rolled config::ProblemData(json) parser, which is kept as the oracle: for any
+  // input, parsing the config into the schema and deriving via FromSchema must agree with
+  // the old constructor.
+  auto check_parity = [](const json &problem)
+  {
+    const config::ProblemData expected(problem);
+    const auto pconfig = IoData::ParsePalaceConfiguration(json{{"Problem", problem}});
+    const config::ProblemData actual = IoData::FromSchema(pconfig.Problem.value());
+    CHECK(actual.type == expected.type);
+    CHECK(actual.verbose == expected.verbose);
+    CHECK(actual.output == expected.output);
+    CHECK(actual.output_formats.paraview == expected.output_formats.paraview);
+    CHECK(actual.output_formats.gridfunction == expected.output_formats.gridfunction);
+  };
+
+  SECTION("Minimal config falls back to schema defaults")
+  {
+    // Omitted Output → "postpro", Verbose → 1, OutputFormats → defaults.
+    check_parity({{"Type", "Driven"}});
+  }
+
+  SECTION("Every ProblemType enumerator maps correctly")
+  {
+    // Guards the ToPalace switch: schema and runtime enums share wire strings but differ
+    // in enumerator order, so each name must round-trip to the right runtime value.
+    for (const char *type : {"Eigenmode", "Driven", "Transient", "Electrostatic",
+                             "Magnetostatic", "BoundaryMode"})
+    {
+      check_parity({{"Type", type}});
+    }
+  }
+
+  SECTION("All fields populated")
+  {
+    check_parity({{"Type", "Transient"},
+                  {"Verbose", 3},
+                  {"Output", "results"},
+                  {"OutputFormats", {{"Paraview", false}, {"GridFunction", true}}}});
+  }
+
+  SECTION("Explicit empty Output passes through")
+  {
+    // An explicitly empty Output must survive as "" (both paths), so the downstream
+    // non-empty check fires identically to today.
+    check_parity({{"Type", "Driven"}, {"Output", ""}});
+  }
+
+  SECTION("Partial OutputFormats falls back per field")
+  {
+    // GridFunction omitted → its schema default (false).
+    check_parity({{"Type", "Driven"}, {"OutputFormats", {{"Paraview", false}}}});
   }
 }

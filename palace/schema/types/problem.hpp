@@ -40,7 +40,7 @@ struct Problem
                      palace::schema::utils::Min<int, 0>) = 1;
 
   PALACE_SCHEMA_DESC(Output, "Directory path for saving postprocessing outputs.",
-                     std::string) = "";
+                     std::string) = "postpro";
 
   PALACE_SCHEMA_DESC(OutputFormats, "Configures the field output formats.",
                      ::palace::schema::OutputFormats) = {};
