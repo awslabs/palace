@@ -14,12 +14,14 @@
 #include <mfem.hpp>
 #include "fem/gridfunction.hpp"
 #include "fem/interpolator.hpp"
+#include "fem/point_field_evaluator.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperatorcsv.hpp"
 #include "models/surfacepostoperator.hpp"
+#include "utils/ceedparaviewdatacollection.hpp"
 #include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/units.hpp"
@@ -130,6 +132,7 @@ protected:
   // Field output format control flags.
   bool enable_paraview_output = false;
   bool enable_gridfunction_output = false;
+  bool field_coefficients_initialized = false;
 
   // How many / which fields to output.
   int output_delta_post = 0;                          // printing rate (TRANSIENT)
@@ -180,7 +183,8 @@ protected:
   // ParaView data collection: writing fields to disk for visualization.
   // This is an optional, since ParaViewDataCollection has no default (empty) ctor,
   // and we only want initialize it if ShouldWriteParaviewFields() returns true.
-  std::optional<mfem::ParaViewDataCollection> paraview, paraview_bdr;
+  std::optional<CeedParaViewDataCollection> paraview;
+  std::optional<CeedParaViewDataCollection> paraview_bdr;
 
   // MFEM grid function output details.
   std::string gridfunction_output_dir;
@@ -199,6 +203,23 @@ protected:
   // Surface Charge (re+im).
   std::unique_ptr<mfem::Coefficient> U_e, U_m, V_s, Q_sr, Q_si;
 
+  // libCEED evaluators and optional output grid functions for the domain coefficient
+  // fields (U_e, U_m, S), replacing per-point host coefficient evaluation at ParaView
+  // save time when supported. ParaView output uses lazy component-major point buffers;
+  // gridfunction output still uses the GridFunction path when requested.
+  std::unique_ptr<mfem::L2_FECollection> viz_fec;
+  std::unique_ptr<mfem::ParFiniteElementSpace> viz_scalar_fespace, viz_vector_fespace;
+  std::unique_ptr<mfem::ParGridFunction> U_e_gf, U_m_gf, S_gf;
+  std::unique_ptr<PointFieldEvaluator> E_domain_eval, B_domain_eval, U_e_eval, U_m_eval,
+      S_eval;
+
+  // libCEED evaluators for boundary collection fields (E_s, B_s, Q_s, J_s, U_e, U_m,
+  // S). CeedParaViewDataCollection evaluates these lazily into one temporary buffer per
+  // field in the same integer boundary-element/refined-point order used for writing,
+  // avoiding coefficient adapters or floating-point point lookup at save time.
+  std::unique_ptr<PointFieldEvaluator> E_bdr_eval, B_bdr_eval, Q_bdr_eval, J_bdr_eval,
+      Ue_bdr_eval, Um_bdr_eval, S_bdr_eval;
+
   // Wave port boundary mode field postprocessing.
   struct WavePortFieldData
   {
@@ -206,11 +227,15 @@ protected:
   };
   std::map<int, WavePortFieldData> port_E0;
 
-  // Setup coefficients for field postprocessing.
+  // Setup coefficients/evaluators for field output. These can be large libCEED objects on
+  // GPU, so initialize them lazily at write time instead of keeping them alive during the
+  // solve/preconditioner phase.
   void SetupFieldCoefficients();
+  void EnsureFieldCoefficientsSetup();
 
   // Initialize Paraview, register all fields to write.
   void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");
+  void EnsureParaviewDataCollection();
 
 public:
   // Public overload for the driven solver only, that takes in an excitation index and
