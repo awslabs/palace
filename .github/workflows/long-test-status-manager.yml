@@ -57,12 +57,14 @@ jobs:
     steps:
       - name: Set bypass status for trivial changes
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+          gh api repos/"${REPO}"/statuses/"${HEAD_SHA}" \
             --method POST \
             --field state=success \
             --field context=long-tests \
             --field description="Long tests bypassed (trivial changes)"
         env:
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Require long tests when non-trivial changes are detected
@@ -75,12 +77,14 @@ jobs:
     steps:
       - name: Set pending status for non-trivial changes
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+          gh api repos/"${REPO}"/statuses/"${HEAD_SHA}" \
             --method POST \
             --field state=pending \
             --field context=long-tests \
             --field description="Waiting for long tests (add 'trigger-long-tests' label to run)"
         env:
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Handle adding/removing 'no-long-tests' label
@@ -92,22 +96,26 @@ jobs:
       - name: Set bypass status
         if: github.event.action == 'labeled'
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+          gh api repos/"${REPO}"/statuses/"${HEAD_SHA}" \
             --method POST \
             --field state=success \
             --field context=long-tests \
             --field description="Long tests bypassed"
         env:
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # When label is removed: require long tests again
       - name: Remove bypass status
         if: github.event.action == 'unlabeled'
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+          gh api repos/"${REPO}"/statuses/"${HEAD_SHA}" \
             --method POST \
             --field state=pending \
             --field context=long-tests \
             --field description="Waiting for long tests (add 'trigger-long-tests' label to run)"
         env:
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
