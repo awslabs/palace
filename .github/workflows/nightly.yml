@@ -114,29 +114,32 @@ jobs:
         if: always()
         id: pr-sha
         run: |
-          SHA=$(gh pr view ${{ matrix.pr }} --repo ${{ github.repository }} --json headRefOid -q .headRefOid)
+          SHA=$(gh pr view ${{ matrix.pr }} --repo "${REPO}" --json headRefOid -q .headRefOid)
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
         env:
+          REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set success status
         if: success()
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ steps.pr-sha.outputs.sha }} \
+          gh api repos/"${REPO}"/statuses/${{ steps.pr-sha.outputs.sha }} \
             --method POST \
             --field state=success \
             --field context=nightly-tests \
             --field description="Nightly tests passed"
         env:
+          REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set failure status
         if: failure()
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ steps.pr-sha.outputs.sha }} \
+          gh api repos/"${REPO}"/statuses/${{ steps.pr-sha.outputs.sha }} \
             --method POST \
             --field state=failure \
             --field context=nightly-tests \
             --field description="Nightly tests failed"
         env:
+          REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
