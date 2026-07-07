@@ -24,6 +24,21 @@ class Mesh;
 class PointFieldEvaluator;
 class FaceNbrFieldExchange;
 
+// Non-reducing boundary point field kinds. These are private SurfaceFunctional backend
+// hooks used by the ParaView/GridFunction follow-up; the output-functional PR keeps the
+// enum here so the reducing functional implementation is self-contained without pulling
+// in the point-field evaluator API.
+enum class PointFieldKind : char
+{
+  FIELD_E,    // H(curl) E field values
+  FIELD_B,    // H(div) B field values
+  FLUX_Q,     // Surface charge (eps E) . n
+  CURRENT_J,  // Surface current n x (mu^-1 B)
+  ENERGY_E,   // Electric energy density
+  ENERGY_M,   // Magnetic energy density
+  POYNTING    // Poynting vector E x (mu^-1 B)
+};
+
 // Description of a real vector-valued mode coefficient on a marked boundary surface.
 // UNIFORM represents scale * direction. COAXIAL represents scale * (x - origin) /
 // |x - origin|^2, matching CoaxialElementData::GetModeCoefficient.
