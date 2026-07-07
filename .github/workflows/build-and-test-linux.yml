@@ -493,8 +493,10 @@ jobs:
 
       - name: Add coverage link to summary
         if: needs.filter.outputs.test == 'true' && matrix.coverage
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          PR_NUM=${{ github.event.pull_request.number }}
+          PR_NUM="${PR_NUMBER}"
           COVERAGE_URL="https://awslabs.github.io/palace/previews/PR${PR_NUM}/coverage/"
           echo "### 📊 Coverage Report" >> $GITHUB_STEP_SUMMARY
           echo "View the coverage report at: [Coverage Report](${COVERAGE_URL})" >> $GITHUB_STEP_SUMMARY
