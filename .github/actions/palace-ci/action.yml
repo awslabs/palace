@@ -38,9 +38,9 @@ runs:
     - name: Setup environment
       uses: ./.github/actions/setup-runner
       with:
-        # Spack develop because we want to have access to the most recent
-        # version of spack-packages
-        spack-version: 'develop'
+        # Pin to the Spack 1.2 release series for reproducible CI (instead of
+        # the moving `develop` branch).
+        spack-version: 'releases/v1.2'
         # LLVM 19 because it is the latest supported by CUDA 12.9
         llvm-version: ${{ inputs.toolchain == 'llvm' && '19' || 'dont-install' }}
         setup-intel: ${{ inputs.toolchain == 'intel-oneapi' && 'true' || 'false' }}

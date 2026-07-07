@@ -77,7 +77,11 @@ jobs:
         if: needs.filter.outputs.should_build == 'true'
         uses: spack/setup-spack@v3
         with:
-          ref: develop
+          # Pin to the Spack 1.2 release series (matching the self-hosted
+          # runners) instead of the moving `develop` branch. spack@1.2 pairs
+          # with the spack-packages releases/v2026.06 repo (see repos.yaml).
+          spack_ref: releases/v1.2
+          packages_ref: releases/v2026.06
           buildcache: true
           color: true
 

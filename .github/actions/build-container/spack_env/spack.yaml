@@ -34,7 +34,9 @@ spack:
     template: PalaceDockerfile
     images:
       os: "ubuntu:24.04"
-      spack: develop
+      # Pinned to the Spack 1.2 release series (prebuilt spack/ubuntu-noble:1.2
+      # image on Docker Hub) instead of the moving `develop` tag.
+      spack: "1.2"
   # Find pre-compiled packages in binary caches. Requires GITHUB_USER and
   # GITHUB_TOKEN (or a personal access token).
   #
