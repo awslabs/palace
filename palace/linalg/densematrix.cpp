@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <limits>
+#include <numbers>
 #include <mfem.hpp>
 #include <mfem/linalg/kernels.hpp>
 
@@ -156,9 +157,9 @@ mfem::DenseMatrix MatrixFunction(const mfem::DenseMatrix &M,
     const double phi = std::atan2(std::sqrt(4.0 * x1 * x1 * x1 - x2 * x2), x2);
     const double lambda1 = (a + b + c - 2.0 * std::sqrt(x1) * std::cos(phi / 3.0)) / 3.0;
     const double lambda2 =
-        (a + b + c + 2.0 * std::sqrt(x1) * std::cos((phi - M_PI) / 3.0)) / 3.0;
+        (a + b + c + 2.0 * std::sqrt(x1) * std::cos((phi - std::numbers::pi) / 3.0)) / 3.0;
     const double lambda3 =
-        (a + b + c + 2.0 * std::sqrt(x1) * std::cos((phi + M_PI) / 3.0)) / 3.0;
+        (a + b + c + 2.0 * std::sqrt(x1) * std::cos((phi + std::numbers::pi) / 3.0)) / 3.0;
 
     auto SafeDivide = [&](double x, double y)
     {

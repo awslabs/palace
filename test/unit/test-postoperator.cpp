@@ -4,6 +4,7 @@
 #include <cmath>
 #include <complex>
 #include <fstream>
+#include <numbers>
 #include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -486,7 +487,8 @@ TEST_CASE_METHOD(test::SharedTempDir, "GridFunction export",
     auto pos = contents.find("timestep=\"") + std::string("timestep=\"").size();
     double pvd_time = std::stod(contents.substr(pos, contents.find('"', pos) - pos));
     const double expected_freq =
-        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * M_PI);
+        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) /
+        (2.0 * std::numbers::pi);
     CHECK_THAT(pvd_time, Catch::Matchers::WithinRel(expected_freq, 1.0e-5));
   }
 

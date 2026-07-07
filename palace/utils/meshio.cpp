@@ -98,27 +98,27 @@ inline int ElemTypeComsol(const std::string &type)
 inline int ElemTypeNastran(const std::string &type)
 {
   // Returns only the low-order type for a given keyword.
-  if (!type.compare(0, 5, "CTRIA"))  // 3-node triangle
+  if (type.starts_with("CTRIA"))  // 3-node triangle
   {
     return 2;
   }
-  if (!type.compare(0, 5, "CQUAD"))  // 4-node quadrangle
+  if (type.starts_with("CQUAD"))  // 4-node quadrangle
   {
     return 3;
   }
-  if (!type.compare(0, 6, "CTETRA"))  // 4-node tetrahedron
+  if (type.starts_with("CTETRA"))  // 4-node tetrahedron
   {
     return 4;
   }
-  if (!type.compare(0, 5, "CHEXA"))  // 8-node hexahedron
+  if (type.starts_with("CHEXA"))  // 8-node hexahedron
   {
     return 5;
   }
-  if (!type.compare(0, 6, "CPENTA"))  // 6-node prism
+  if (type.starts_with("CPENTA"))  // 6-node prism
   {
     return 6;
   }
-  if (!type.compare(0, 6, "CPYRAM"))  // 5-node pyramid
+  if (type.starts_with("CPYRAM"))  // 5-node pyramid
   {
     return 7;
   }
@@ -270,7 +270,7 @@ inline std::string GetLineNastran(std::ifstream &input)
   std::string str;
   std::getline(input, str);
   MFEM_VERIFY(input.good(), "Unexpected read failure parsing mesh file!");
-  str.erase(std::remove(str.begin(), str.end(), '\r'), str.end());
+  std::erase(str, '\r');
   return str[0] == '$' ? "" : str;
 }
 
@@ -568,13 +568,13 @@ void ConvertMeshComsol(const std::string &filename, std::ostream &buffer,
                 "Invalid COMSOL object version!");
 
     // If yes, then ready to parse the mesh.
-    if (!object_class.compare(0, 4, "Mesh"))
+    if (object_class.starts_with("Mesh"))
     {
       break;
     }
 
     // Otherwise, parse over the selection to the next object.
-    MFEM_VERIFY(!object_class.compare(0, 9, "Selection"),
+    MFEM_VERIFY(object_class.starts_with("Selection"),
                 "COMSOL mesh file only supports Mesh and Selection objects!");
     int version = -1;
     std::string label_str;
@@ -970,7 +970,7 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer,
     auto line = GetLineNastran(input);
     if (line.length() > 0)
     {
-      if (!line.compare(0, 10, "BEGIN BULK"))
+      if (line.starts_with("BEGIN BULK"))
       {
         break;
       }
@@ -988,11 +988,11 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer,
     auto line = GetLineNastran(input);
     if (line.length() > 0 && !input.eof())
     {
-      if (!line.compare(0, 7, "ENDDATA"))
+      if (line.starts_with("ENDDATA"))
       {
         break;  // Done parsing file
       }
-      else if (!line.compare(0, 5, "GRID*"))
+      else if (line.starts_with("GRID*"))
       {
         // Coordinates in long field format (8 + 16 * 4 + 8).
         auto next = GetLineNastran(input);
@@ -1005,7 +1005,7 @@ void ConvertMeshNastran(const std::string &filename, std::ostream &buffer,
              ConvertDoubleNastran(line.substr(7 * NASTRAN_CHUNK, 2 * NASTRAN_CHUNK)),
              ConvertDoubleNastran(next.substr(1 * NASTRAN_CHUNK, 2 * NASTRAN_CHUNK))});
       }
-      else if (!line.compare(0, 4, "GRID"))
+      else if (line.starts_with("GRID"))
       {
         if (line.find_first_of(',') != std::string::npos)
         {

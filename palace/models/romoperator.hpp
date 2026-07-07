@@ -157,7 +157,6 @@ class RomOperator
 {
 protected:
   // Reference to HDM discretization (not owned).
-  // TODO(C++20): Use std::reference_wrapper with incomplete types.
   SpaceOperator &space_op;
 
   // Used for constructing & reuse of RHS1.

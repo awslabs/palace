@@ -50,7 +50,7 @@ long GetCurrentMemory()
   std::string line;
   while (std::getline(status, line))
   {
-    if (line.compare(0, 6, "VmRSS:") == 0)
+    if (line.starts_with("VmRSS:"))
     {
       // Value is in kB.
       return std::stol(line.substr(6)) * 1024;

@@ -6,6 +6,7 @@
 #include <complex>
 #include <cstddef>
 #include <iostream>
+#include <numbers>
 #include <Eigen/Dense>
 #include <fmt/core.h>
 #include <mfem.hpp>
@@ -183,7 +184,8 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       Mpi::Print(
           "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",
           omega_i + 1, omega_sample.size(),
-          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI),
+          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
+              (2 * std::numbers::pi),
           Timer::Duration(Timer::Now() - t0).count(),
           (port_excitations.Size() > 1)
               ? fmt::format(", solve {:d}/{:d}",
@@ -302,8 +304,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // construction during the offline phase as well as the PROM solution during the online
   // phase.
   auto t0 = Timer::Now();
-  const double unit_GHz =
-      iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2 * M_PI);
+  const double unit_GHz = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) /
+                          (2 * std::numbers::pi);
   Mpi::Print("\nBeginning PROM construction offline phase:\n"
              " {:d} points for frequency sweep over [{:.3e}, {:.3e}] GHz\n",
              omega_sample.size(), omega_sample.front() * unit_GHz,
@@ -451,7 +453,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s)\n",
                  omega_i + 1, omega_sample.size(),
                  iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
-                     (2 * M_PI),
+                     (2 * std::numbers::pi),
                  Timer::Duration(Timer::Now() - t0).count());
 
       // Assemble and solve the PROM linear system.

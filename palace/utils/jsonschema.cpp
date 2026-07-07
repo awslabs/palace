@@ -75,7 +75,7 @@ void FindAllSchemasByKey(const json &schema, const std::string &key, const json 
       if (v.contains("$ref"))
       {
         std::string ref_raw = v["$ref"].get<std::string>();
-        if (ref_raw.find("#/$defs/") == 0)
+        if (ref_raw.starts_with("#/$defs/"))
         {
           std::string def_name = ref_raw.substr(8);
           if (!defs.is_null() && defs.contains(def_name))
@@ -329,7 +329,7 @@ public:
     // of valid values via FindEnumInSchema).
     else if ((schema != nullptr) &&
              (message.find("instance not found in required enum") != std::string::npos ||
-              message.rfind("no subschema has succeeded", 0) == 0))
+              message.starts_with("no subschema has succeeded")))
     {
       json enum_values = FindEnumInSchema(*schema, ptr.to_string());
       if (!enum_values.is_null() && enum_values.is_array() && !enum_values.empty())
@@ -364,7 +364,7 @@ std::string GetSchemaVersion()
     {
       const std::string &id = schema["$id"];
       constexpr std::string_view prefix = "urn:palace:schema:";
-      if (id.substr(0, prefix.size()) == prefix)
+      if (id.starts_with(prefix))
       {
         return id.substr(prefix.size());
       }

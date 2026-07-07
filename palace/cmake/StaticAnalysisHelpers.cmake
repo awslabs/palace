@@ -78,7 +78,7 @@ function(configure_cppcheck)
       "--quiet"
       "--force"
       "--template=gcc"
-      "--std=c++17"
+      "--std=c++20"
       "--enable=warning,style,performance,portability"
       "--suppressions-list=${CMAKE_BINARY_DIR}/CMakeFiles/cppcheck/suppressions.txt"
     )

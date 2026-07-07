@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <numbers>
 #include <vector>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
@@ -86,7 +87,7 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
   MPI_Comm comm = Mpi::World();
 
   auto fn_tan_shift = [](double z)
-  { return std::tan(0.5 * M_PI * (z - std::complex<double>(1., 1.))); };
+  { return std::tan(0.5 * std::numbers::pi * (z - std::complex<double>(1., 1.))); };
 
   // Test scalar case: 2 sample points for 4 x 2 vector
   MinimalRationalInterpolation mri_1(6);

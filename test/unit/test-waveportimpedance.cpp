@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <numbers>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
@@ -120,7 +121,8 @@ TEST_CASE("WavePort TE10 Z_PV", "[waveportimpedance][Serial]")
 
   // Initialize the modes at the test frequency. Internal units: ω·tc.
   const double omega_nondim =
-      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+      2.0 * std::numbers::pi *
+      iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
   wave_port_op.Initialize(omega_nondim);
 
   std::complex<double> Z_PV_nondim = wave_port_op.GetPort(1).GetCharacteristicImpedance();
@@ -207,7 +209,8 @@ TEST_CASE("WavePort TE10 mode polarity sign", "[waveportimpedance][Serial]")
   wave_port_op.SetSuppressOutput(true);
 
   const double omega_nondim =
-      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+      2.0 * std::numbers::pi *
+      iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
   wave_port_op.Initialize(omega_nondim);
 
   // MakeCartesian3D face attributes: 2 = y=0 (broadside), 4 = y=a (broadside). TE10

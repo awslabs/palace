@@ -6,6 +6,7 @@
 #include <charconv>
 #include <fstream>
 #include <iostream>
+#include <numbers>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -716,7 +717,7 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
   if (boundaries.periodic.floquet_reference_freq > 0.0)
   {
     boundaries.periodic.floquet_reference_freq =
-        2 * M_PI *
+        2 * std::numbers::pi *
         units.Nondimensionalize<Units::ValueType::FREQUENCY>(
             boundaries.periodic.floquet_reference_freq);
   }

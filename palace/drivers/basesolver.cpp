@@ -330,7 +330,7 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
     for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
     {
       auto key = Timer::descriptions[i];
-      key.erase(std::remove_if(key.begin(), key.end(), isspace), key.end());
+      std::erase_if(key, isspace);
       meta["ElapsedTime"]["Durations"][key] = timer.Data((Timer::Index)i);
       meta["ElapsedTime"]["Counts"][key] = timer.Counts((Timer::Index)i);
       meta["PeakMemoryGrowthMegabytes"]["Min"][key] = red.rank_mem.min[i] * to_mb;

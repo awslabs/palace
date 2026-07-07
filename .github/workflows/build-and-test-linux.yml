@@ -151,9 +151,25 @@ jobs:
       - name: Configure Clang compiler
         if: needs.filter.outputs.test == 'true' && matrix.compiler == 'clang'
         run: |
-          sudo apt-get install -y clang lld
+          # Use LLVM's own apt repo rather than the distro package (clang-14 on jammy):
+          # clang <= 14 has a constraint-checking bug where explicit instantiation of a
+          # class template also (incorrectly) instantiates the bodies of `requires`-
+          # constrained non-template members for specializations where the constraint is
+          # not satisfied (https://github.com/llvm/llvm-project/issues/52625, #46029).
+          # Confirmed fixed by clang-15 onward; pin to clang-19 for consistency with the
+          # clang-format-19 toolchain already used by the Style workflow.
+          wget -O- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          sudo add-apt-repository 'deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main'
+          sudo apt-get update -q
+          sudo apt-get install -y clang-19 lld-19
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 190
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 190
+          sudo update-alternatives --set clang /usr/bin/clang-19
+          sudo update-alternatives --set clang++ /usr/bin/clang++-19
+          sudo update-alternatives --install /usr/bin/ld.lld ld.lld /usr/bin/ld.lld-19 190
+          sudo update-alternatives --set ld.lld /usr/bin/ld.lld-19
           if [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
-            sudo apt-get install -y libomp-dev
+            sudo apt-get install -y libomp-19-dev
           fi
 
       - name: Configure Intel oneAPI compiler
