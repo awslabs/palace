@@ -52,10 +52,12 @@ jobs:
       - name: Push container
         if: github.event_name != 'pull_request'
         shell: bash
+        env:
+          REPO_OWNER: ${{ github.repository_owner }}
         run: |
           # Push multiple tags (separated by newlines)
           echo "Container tags: ${{ steps.metadata.outputs.tags }}"
-          echo ${{ secrets.GITHUB_TOKEN }} | singularity remote login -u ${{ github.repository_owner }} --password-stdin oras://ghcr.io
+          echo ${{ secrets.GITHUB_TOKEN }} | singularity remote login -u "${REPO_OWNER}" --password-stdin oras://ghcr.io
           while IFS= read -r remote; do
             singularity push -U $CONTAINER_NAME "oras://${remote}"
           done <<< "${{ steps.metadata.outputs.tags }}"
