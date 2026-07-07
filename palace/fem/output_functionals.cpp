@@ -187,11 +187,12 @@ void FoldNormalScaleIntoFaceJacobian(const mfem::DenseMatrix &J, double normal_s
 
 bool CeedSupportsNonTensorAtPoints(Ceed ceed)
 {
-  // This proof path uses the non-tensor simplex AtPoints kernels added for CUDA ref
-  // and MAGMA. Other backends keep the existing mapped-point tabulation path.
+  // Palace carries libCEED non-tensor AtPoints support for the CPU host path and the
+  // CUDA ref/MAGMA device paths. Other backends keep the mapped-point tabulation path.
   const char *resource;
   PalaceCeedCall(ceed, CeedGetResource(ceed, &resource));
-  return std::strstr(resource, "/gpu/cuda/ref") || std::strstr(resource, "/gpu/cuda/magma");
+  return std::strstr(resource, "/cpu/self") || std::strstr(resource, "/gpu/cuda/ref") ||
+         std::strstr(resource, "/gpu/cuda/magma");
 }
 
 int TetNumModes(int degree)
