@@ -366,23 +366,14 @@ TEST_CASE("coaxial_lumped_wave", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
-TEST_CASE("rational_impedance_uniform", "[Serial][Parallel][GPU][Regression]")
+TEST_CASE("rational_impedance", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 2.0e-2;
   opts.atol = 1.0e-11;
   opts.excluded_columns = {"Maximum", "Minimum"};
-  palace::test::RunRegressionCase("rational_impedance", "rational_uniform.json", "uniform",
-                                  opts);
-}
-
-TEST_CASE("rational_impedance_adaptive", "[Serial][Parallel][GPU][Regression]")
-{
-  palace::test::RegressionOptions opts;
-  opts.rtol = std::numeric_limits<double>::infinity();
-  opts.atol = std::numeric_limits<double>::infinity();
-  palace::test::RunRegressionCase("rational_impedance", "rational_adaptive.json",
-                                  "adaptive", opts);
+  palace::test::RunRegressionCase("rational_impedance", "parallel_rlc_rational.json",
+                                  "rational", opts);
 }
 
 TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")

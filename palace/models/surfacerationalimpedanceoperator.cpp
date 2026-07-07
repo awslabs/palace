@@ -116,7 +116,7 @@ void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(
   MFEM_VERIFY(impedance.empty() || problem_type == ProblemType::DRIVEN ||
                   problem_type == ProblemType::BOUNDARYMODE,
               "Rational impedance boundaries are only available for frequency-domain "
-              "driven and boundary simulation types!");
+              "driven and boundary mode simulation types!");
 
   boundaries.reserve(impedance.size());
   for (const auto &data : impedance)

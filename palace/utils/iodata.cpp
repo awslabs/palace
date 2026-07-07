@@ -315,6 +315,11 @@ void IoData::CheckConfiguration()
       Mpi::Warning("Electrostatic problem type does not support surface impedance boundary "
                    "conditions!\n");
     }
+    if (!boundaries.rational_impedance.empty())
+    {
+      Mpi::Warning("Electrostatic problem type does not support rational surface "
+                   "impedance boundary conditions!\n");
+    }
     if (!boundaries.auxpec.empty() || !boundaries.waveport.empty())
     {
       Mpi::Warning(
@@ -343,6 +348,11 @@ void IoData::CheckConfiguration()
       Mpi::Warning("Magnetostatic problem type does not support surface impedance boundary "
                    "conditions!\n");
     }
+    if (!boundaries.rational_impedance.empty())
+    {
+      Mpi::Warning("Magnetostatic problem type does not support rational surface "
+                   "impedance boundary conditions!\n");
+    }
     if (!boundaries.lumpedport.empty())
     {
       Mpi::Warning(
@@ -365,6 +375,11 @@ void IoData::CheckConfiguration()
     {
       Mpi::Warning("Transient problem type does not support surface conductivity boundary "
                    "conditions!\n");
+    }
+    if (!boundaries.rational_impedance.empty())
+    {
+      Mpi::Warning("Transient problem type does not support rational surface "
+                   "impedance boundary conditions!\n");
     }
     if (!boundaries.auxpec.empty() || !boundaries.waveport.empty())
     {

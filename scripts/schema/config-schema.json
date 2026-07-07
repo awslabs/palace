@@ -2413,7 +2413,7 @@
         },
         "AdaptiveCircuitSynthesis": {
           "type": "boolean",
-          "description": "Use the adaptive reduced-order model to print synthesized circuit-like matrices (L\u207b\u00b9, R\u207b\u00b9, C). Requires adaptive sweep to be enabled, all `LumpedPort` fields to be orthogonal, and only LRC-type frequency dependence (no `WavePort`, `Conductivity`, or second-order farfield BCs).",
+          "description": "Use the adaptive reduced-order model to print synthesized circuit-like matrices (L\u207b\u00b9, R\u207b\u00b9, C). Requires adaptive sweep to be enabled, all `LumpedPort` fields to be orthogonal, and only LRC-type frequency dependence (no `WavePort`, `Conductivity`, `RationalImpedance`, or second-order farfield BCs).",
           "default": false
         },
         "AdaptiveCircuitSynthesisDomainOrthogonalization": {
