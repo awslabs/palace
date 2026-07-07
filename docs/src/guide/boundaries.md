@@ -197,7 +197,13 @@ for implementation details.
     The medium adjacent to the port must be homogeneous and isotropic.
 
 For each port, the excitation is normalized to have unit incident power over the port boundary
-surface.
+surface. Lumped ports with reactive elements (`"L"` and/or `"C"`) may also be excited, including
+purely reactive ports with `"R": 0`. This is useful for driving a structure through a Josephson
+junction or other lumped reactive element. The port reactance enters the system matrix as a
+physical termination, and the fields, synthesized circuit matrices, and port voltages/currents are
+all valid. For a purely reactive port (`R = 0`) the power normalization references an internal unit
+impedance; see the [mathematical reference](../reference.md#Lumped-ports-and-wave-ports) for the
+S-parameter interpretation in this case.
 
 The presence of an incident excitation at a port is controlled by the settings
 [`config["Boundaries"]["LumpedPort"][]["Excitation"]`](../config/reference.md#config-boundaries-lumpedport)
