@@ -62,10 +62,11 @@ jobs:
       - name: Print buildcache version count before cleanup
         continue-on-error: true
         env:
+          REPO_OWNER: ${{ github.repository_owner }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          gh api /orgs/${{ github.repository_owner }}/packages/container/palace-develop-testing \
+          gh api /orgs/"${REPO_OWNER}"/packages/container/palace-develop-testing \
             --jq '"palace-develop-testing versions before cleanup: \(.version_count)"'
 
       # Each Spack spec is a tagged version in the container package. We keep
@@ -91,8 +92,9 @@ jobs:
         if: always()
         continue-on-error: true
         env:
+          REPO_OWNER: ${{ github.repository_owner }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          gh api /orgs/${{ github.repository_owner }}/packages/container/palace-develop-testing \
+          gh api /orgs/"${REPO_OWNER}"/packages/container/palace-develop-testing \
             --jq '"palace-develop-testing versions after cleanup: \(.version_count)"'
