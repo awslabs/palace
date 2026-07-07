@@ -94,9 +94,11 @@ jobs:
         run: spack  -e . bootstrap now
 
       - name: Concretize Spack
+        env:
+          PALACE_REF: ${{ github.head_ref || github.ref_name }}
         run: |
           # Using `spack develop` in order to have an in-source build
-          spack -e . develop --path=$(pwd) local.palace@git."${{ github.head_ref || github.ref_name }}"=develop
+          spack -e . develop --path=$(pwd) local.palace@git."${PALACE_REF}"=develop
           spack -e . concretize -f
 
         # Relies on cache-hit(s)
