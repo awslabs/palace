@@ -245,8 +245,8 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   double omega_rad_per_time =
       2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
   constexpr double omega_im = 0.0;
-  auto rE_computed =
-      surf_post_op.GetFarFieldrE(thetaphis, E_field, B_field, omega_rad_per_time, omega_im);
+  auto rE_computed = surf_post_op.GetFarFieldrE(thetaphis, E_field, B_field,
+                                                {omega_rad_per_time, omega_im});
 
   // Validate computed far-field against analytical solution
   for (std::size_t i = 0; i < thetaphis.size(); i++)
