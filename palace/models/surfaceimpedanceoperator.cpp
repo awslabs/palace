@@ -92,18 +92,10 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(
         continue;  // Can just ignore if wrong
       }
       bdr.attr_list.Append(attr);
-      // Compute a scaling factor to account for increased area when using mesh cracking.
-      if (cracked_attributes.find(attr) != cracked_attributes.end())
-      {
-        bdr.scaling = 2.0;
-      }
-      MFEM_VERIFY((cracked_attributes.find(attr) != cracked_attributes.end()) ||
-                      (bdr.scaling == 1.0),
-                  "Impedance boundary has both cracked and uncracked attributes!");
+      // Per-attribute scaling to account for increased area when using mesh cracking.
+      bdr.attr_scaling[attr] =
+          (cracked_attributes.find(attr) != cracked_attributes.end()) ? 2.0 : 1.0;
     }
-    bdr.Ls *= bdr.scaling;
-    bdr.Rs *= bdr.scaling;
-    bdr.Cs /= bdr.scaling;
   }
 }
 
@@ -128,17 +120,17 @@ void SurfaceImpedanceOperator::PrintBoundaryInfo(const Units &units,
       if (std::abs(bdr.Rs) > 0.0)
       {
         fmt::format_to(out, " Rs = {:.3e} Ω/sq,",
-                       units.Dimensionalize<VT::IMPEDANCE>(bdr.Rs / bdr.scaling));
+                       units.Dimensionalize<VT::IMPEDANCE>(bdr.Rs));
       }
       if (std::abs(bdr.Ls) > 0.0)
       {
         fmt::format_to(out, " Ls = {:.3e} H/sq,",
-                       units.Dimensionalize<VT::INDUCTANCE>(bdr.Ls / bdr.scaling));
+                       units.Dimensionalize<VT::INDUCTANCE>(bdr.Ls));
       }
       if (std::abs(bdr.Cs) > 0.0)
       {
         fmt::format_to(out, " Cs = {:.3e} F/sq,",
-                       units.Dimensionalize<VT::CAPACITANCE>(bdr.Cs * bdr.scaling));
+                       units.Dimensionalize<VT::CAPACITANCE>(bdr.Cs));
       }
       fmt::format_to(out, " n = ({:+.1f})\n",
                      fmt::join(mesh::GetSurfaceNormal(mesh, attr), ","));
@@ -204,7 +196,11 @@ void SurfaceImpedanceOperator::AddStiffnessBdrCoefficients(double coeff,
   {
     if (std::abs(bdr.Ls) > 0.0)
     {
-      fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(bdr.attr_list), coeff / bdr.Ls);
+      for (auto attr : bdr.attr_list)
+      {
+        const double s = bdr.attr_scaling.at(attr);
+        fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coeff / (bdr.Ls * s));
+      }
     }
   }
 }
@@ -217,7 +213,11 @@ void SurfaceImpedanceOperator::AddDampingBdrCoefficients(double coeff,
   {
     if (std::abs(bdr.Rs) > 0.0)
     {
-      fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(bdr.attr_list), coeff / bdr.Rs);
+      for (auto attr : bdr.attr_list)
+      {
+        const double s = bdr.attr_scaling.at(attr);
+        fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coeff / (bdr.Rs * s));
+      }
     }
   }
 }
@@ -230,7 +230,11 @@ void SurfaceImpedanceOperator::AddMassBdrCoefficients(double coeff,
   {
     if (std::abs(bdr.Cs) > 0.0)
     {
-      fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(bdr.attr_list), coeff * bdr.Cs);
+      for (auto attr : bdr.attr_list)
+      {
+        const double s = bdr.attr_scaling.at(attr);
+        fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coeff * bdr.Cs / s);
+      }
     }
   }
 }

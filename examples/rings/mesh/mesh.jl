@@ -41,7 +41,7 @@ function generate_ring_mesh(;
     outer_radius                       = 100.0,
     rot_center::AbstractVector{<:Real} = [0.0, 0.0, 0.0],
     rot_axis::AbstractVector{<:Real}   = [0.0, 0.0, 1.0],
-    rot_θ::Real                       = π / 6,
+    rot_θ::Real                        = π / 6,
     verbose::Integer                   = 5,
     gui::Bool                          = false
 )

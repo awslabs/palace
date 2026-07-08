@@ -16,7 +16,7 @@ given *Palace* simulation.
 
 First, the mesh comes with its own unit of length. Users specify the conversion
 between one unit of length on the mesh to meters through the
-[`config["Model"]["L0"]`](../config/problem.md#config%5B%Model%22%5D) parameter.
+[`config["Model"]["L0"]`](../config/reference.md#config-model) parameter.
 
 Second, *Palace* defines a system of non-dimensional units where the actual
 solver operates.
@@ -34,7 +34,7 @@ The non-dimensional unit system is constructed as follows:
 
 Length: Lengths are measured in units of the characteristic length `Lc`, which
 is the mesh size in mesh units, unless `Lc` is manually specified in
-[`config["Model"]["Lc"]`](../config/problem.md#config%5B%Model%22%5D). The extent
+[`config["Model"]["Lc"]`](../config/reference.md#config-model). The extent
 of the mesh is 1 in these units, with extent defined as the largest single
 dimension (e.g., for a cuboid of size 10m x 20m x 40m, this would be 40m).
 
@@ -154,6 +154,92 @@ provided in [`scripts/schema/`](https://github.com/awslabs/palace/blob/main/scri
 to parse the configuration file and check that the fields are correctly specified. This
 script and the associated Schema are also installed and can be accessed in
 `<INSTALL_DIR>/bin`.
+
+### Automatic documentation generation
+
+The [configuration file reference](../config/reference.md) is generated from the same JSON Schema
+files, using the script
+[`docs/generate_config_docs.jl`](https://github.com/awslabs/palace/blob/main/docs/generate_config_docs.jl).
+When adding a new configuration key in C++, add a corresponding Schema entry, including `"title"`,
+`"description"`, `"type"`, and `"default"`/`"required"` where applicable. The generated
+`docs/src/config/reference.md` file is intentionally not committed; `docs/make.jl` regenerates it
+at the start of every documentation build, and `make docs-generate-config` is available for local
+preview while editing descriptions.
+
+The `"default"` values in the Schema are documentation and validation metadata; they are not
+read by the C++ solver, but they must still be real concrete values that mirror the parser's
+fixed defaults. A Schema default must validate against its own field schema and must not be a
+sentinel or placeholder such as `0`, `-1`, `""`, or `"Default"` when that value only means
+"choose later". For context-sensitive or derived defaults that Palace resolves based on the
+problem type, build options, mesh, or other settings, omit `"default"` from the Schema and
+describe the omission-based behavior in `"description"` instead; the resolved config is the
+authoritative record of any chosen value that can be known at parse time. If a fixed parser
+default changes in C++, update the corresponding Schema default in the same change.
+
+The generator reads the following JSON Schema fields:
+
+  - `"title"`: Human-readable section or field name. Falls back to the JSON key if absent.
+  - `"description"`: Extended documentation rendered below the field name.
+  - `"type"`: Shown in type badge (`integer`, `number`, etc.)
+  - `"default"`: Shown in `default` badge when present. Fields with fixed defaults should encode
+    them here. Context-sensitive defaults should omit `"default"` and explain the resolution
+    behavior in `"description"`; the generated docs then omit the default badge entirely.
+  - `"required"`: Fields listed here receive a `required` badge instead of a default.
+  - `"enum"` / `"oneOf"` with `"const"`: Renders an inline enumeration table with per-value
+    descriptions within the field's description.
+  - `"minimum"`, `"maximum"`, `"exclusiveMinimum"`, `"exclusiveMaximum"`: Shown in constraint badge.
+  - `"x-palace-advanced"`: Custom field; shows `advanced` badge if `true`.
+  - `"x-palace-deprecated"`: Custom field; shows `deprecated` badge if `true`.
+
+### Schema versioning
+
+The root schema (`scripts/schema/config-schema.json`) carries a standard `"$id"` field
+with a URN that embeds a [SchemaVer](https://docs.snowplow.io/docs/pipeline-components-and-non-pipeline-components/iglu/common-architecture/schemaver/) version, e.g.
+`"urn:palace:schema:1-0-0"`. This version tracks the configuration *contract*
+independently of the *Palace* release version, so downstream tooling can reason about
+configuration compatibility. Using the standard `"$id"` keyword means any JSON Schema
+tooling can identify the schema without custom extensions.
+
+SchemaVer uses the format `MODEL-REVISION-ADDITION`:
+
+  - MODEL: a breaking change to the schema's model — e.g. removing or renaming a field,
+    tightening validation so a previously-valid config is rejected, or changing the
+    meaning or the default of a value.
+  - REVISION: a backward-compatible change that extends the model — e.g. a new optional
+    field, a new allowed enum value, or relaxing a constraint so previously-invalid
+    configs are now accepted.
+  - ADDITION: a change that does not affect which configurations are accepted — e.g.
+    updating a `description`, `title`, or other annotation.
+
+#### Relationship to the *Palace* version
+
+The two versions move independently: the schema's `MODEL-REVISION-ADDITION` is not tied
+numerically to *Palace*'s release version. The coupling is one-directional:
+
+  - A MODEL or REVISION schema change always bumps the *Palace* version.
+  - A *Palace* release does not imply a schema change. Most releases (bug fixes,
+    solver work, performance, docs) leave the configuration contract untouched and so do
+    not bump the schema version.
+
+Because the schema is versioned independently, a single schema version generally spans
+several *Palace* releases. The table below records the first *Palace* release shipping
+each schema version; a schema version applies to that release and all later ones up to
+(but not including) the next entry. Add a row whenever the schema version is bumped.
+
+| Schema version | First *Palace* release | Notes                              |
+|:--------------:|:----------------------:|:---------------------------------- |
+| `1-0-0`        | `0.17`                 | First explicitly-versioned schema. |
+
+#### Enforcement
+
+A CI check (the `check-schema-version` job in
+[`.github/workflows/style.yml`](https://github.com/awslabs/palace/blob/main/.github/workflows/style.yml))
+fails a pull request that modifies `scripts/schema/config-schema.json` without also
+changing the version in `"$id"`. This catches the common mistake of editing the
+contract but forgetting to bump the version; it does not (and cannot) verify that the
+size of the bump matches the change, so the MODEL/REVISION/ADDITION judgment above
+remains a code-review responsibility. When a change is genuinely annotation-only the bump
+is just an ADDITION, so the rule still applies.
 
 ## Timing
 

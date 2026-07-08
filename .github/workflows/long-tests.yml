@@ -7,10 +7,11 @@
 # 3. Long tests run and the long-tests status is updated
 #
 # If the PR is updated while the label is present, the tests re-run
-# automatically.
+# automatically. It can also be run manually from the GitHub Actions UI.
 name: Long Tests
 
 on:
+  workflow_dispatch:
   pull_request:
     types: [labeled, synchronize]
 
@@ -32,12 +33,14 @@ jobs:
   long-tests:
     runs-on: [self-hosted, x64]
     # Run if:
+    # - manually triggered from the Actions UI, OR
     # - the 'trigger-long-tests' label was just added, OR
     # - the PR was updated and already has the 'trigger-long-tests' label
     # Do not run from forks.
     if: |
       github.repository == 'awslabs/palace' &&
       (
+        github.event_name == 'workflow_dispatch' ||
         (github.event.action == 'labeled' && github.event.label.name == 'trigger-long-tests') ||
         (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'trigger-long-tests'))
       )
@@ -50,23 +53,27 @@ jobs:
           test-cases: long
 
       - name: Set success status
-        if: success()
+        if: github.event_name == 'pull_request' && success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+          gh api "repos/$REPO/statuses/$HEAD_SHA" \
             --method POST \
             --field state=success \
             --field context=long-tests \
             --field description="Long tests passed"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set failure status
-        if: failure() || cancelled()
+        if: github.event_name == 'pull_request' && (failure() || cancelled())
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          gh api repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }} \
+          gh api "repos/$REPO/statuses/$HEAD_SHA" \
             --method POST \
             --field state=failure \
             --field context=long-tests \
             --field description="Long tests failed"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

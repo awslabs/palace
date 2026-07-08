@@ -112,28 +112,154 @@ public:
                                  const std::complex<double> a = 1.0) const override;
 };
 
-// Wrap a sequence of operators of the same dimensions and optional coefficients.
-class SumOperator : public Operator
+template <typename OperType>
+struct SumOperatorTraits;
+
+template <>
+struct SumOperatorTraits<Operator>
 {
-private:
-  std::vector<std::pair<const Operator *, double>> ops;
-  mutable Vector z;
+  using VecType = Vector;
+  using ScalarType = double;
+};
+
+template <>
+struct SumOperatorTraits<ComplexOperator>
+{
+  using VecType = ComplexVector;
+  using ScalarType = std::complex<double>;
+};
+
+// Wrap a sequence of operators of the same dimensions and optional coefficients. In
+// non-owning mode, the caller must ensure the referenced operators outlive this object.
+template <typename OperType>
+class BaseSumOperator : public OperType
+{
+  static_assert(std::is_same_v<OperType, Operator> ||
+                    std::is_same_v<OperType, ComplexOperator>,
+                "BaseSumOperator is only defined for Operator and ComplexOperator!");
 
 public:
-  SumOperator(int s) : Operator(s) { z.UseDevice(true); }
-  SumOperator(int h, int w) : Operator(h, w) { z.UseDevice(true); }
-  SumOperator(const Operator &op, double a = 1.0);
+  using VecType = typename SumOperatorTraits<OperType>::VecType;
+  using ScalarType = typename SumOperatorTraits<OperType>::ScalarType;
 
-  void AddOperator(const Operator &op, double a = 1.0);
+private:
+  std::vector<std::pair<const OperType *, ScalarType>> ops;
+  std::vector<std::unique_ptr<OperType>> owned_ops;
+  mutable VecType z;
 
-  void Mult(const Vector &x, Vector &y) const override;
+public:
+  BaseSumOperator(int s) : OperType(s) { z.UseDevice(true); }
+  BaseSumOperator(int h, int w) : OperType(h, w) { z.UseDevice(true); }
+  BaseSumOperator(const OperType &op, ScalarType a = ScalarType{1.0})
+    : OperType(op.Height(), op.Width())
+  {
+    z.UseDevice(true);
+    AddOperator(op, a);
+  }
+  BaseSumOperator(std::unique_ptr<OperType> &&op, ScalarType a = ScalarType{1.0})
+    : OperType(op->Height(), op->Width())
+  {
+    z.UseDevice(true);
+    AddOperator(std::move(op), a);
+  }
+  BaseSumOperator(std::unique_ptr<OperType> &&A, std::unique_ptr<OperType> &&B)
+    : OperType(A->Height(), A->Width())
+  {
+    z.UseDevice(true);
+    AddOperator(std::move(A));
+    AddOperator(std::move(B));
+  }
+  BaseSumOperator(std::unique_ptr<OperType> &&A, const OperType &B)
+    : OperType(A->Height(), A->Width())
+  {
+    z.UseDevice(true);
+    AddOperator(std::move(A));
+    AddOperator(B);
+  }
+  BaseSumOperator(const OperType &A, std::unique_ptr<OperType> &&B)
+    : OperType(A.Height(), A.Width())
+  {
+    z.UseDevice(true);
+    AddOperator(A);
+    AddOperator(std::move(B));
+  }
+  BaseSumOperator(const OperType &A, const OperType &B) : OperType(A.Height(), A.Width())
+  {
+    z.UseDevice(true);
+    AddOperator(A);
+    AddOperator(B);
+  }
 
-  void MultTranspose(const Vector &x, Vector &y) const override;
+  void AddOperator(const OperType &op, ScalarType a = ScalarType{1.0})
+  {
+    MFEM_VERIFY(op.Height() == this->Height() && op.Width() == this->Width(),
+                "Invalid Operator dimensions for BaseSumOperator!");
+    ops.emplace_back(&op, a);
+  }
 
-  void AddMult(const Vector &x, Vector &y, const double a = 1.0) const override;
+  void AddOperator(std::unique_ptr<OperType> &&op, ScalarType a = ScalarType{1.0})
+  {
+    MFEM_VERIFY(op, "Cannot add an empty Operator to BaseSumOperator!");
+    const auto *op_ptr = op.get();
+    owned_ops.emplace_back(std::move(op));
+    AddOperator(*op_ptr, a);
+  }
 
-  void AddMultTranspose(const Vector &x, Vector &y, const double a = 1.0) const override;
+  void Mult(const VecType &x, VecType &y) const override
+  {
+    if (ops.size() == 1)
+    {
+      ops.front().first->Mult(x, y);
+      if (ops.front().second != ScalarType{1.0})
+      {
+        y *= ops.front().second;
+      }
+      return;
+    }
+    y = 0.0;
+    AddMult(x, y);
+  }
+
+  void MultTranspose(const VecType &x, VecType &y) const override
+  {
+    if (ops.size() == 1)
+    {
+      ops.front().first->MultTranspose(x, y);
+      if (ops.front().second != ScalarType{1.0})
+      {
+        y *= ops.front().second;
+      }
+      return;
+    }
+    y = 0.0;
+    AddMultTranspose(x, y);
+  }
+
+  void AddMult(const VecType &x, VecType &y,
+               const ScalarType a = ScalarType{1.0}) const override
+  {
+    z.SetSize(y.Size());
+    for (const auto &[op, c] : ops)
+    {
+      op->Mult(x, z);
+      y.Add(a * c, z);
+    }
+  }
+
+  void AddMultTranspose(const VecType &x, VecType &y,
+                        const ScalarType a = ScalarType{1.0}) const override
+  {
+    z.SetSize(y.Size());
+    for (const auto &[op, c] : ops)
+    {
+      op->MultTranspose(x, z);
+      y.Add(a * c, z);
+    }
+  }
 };
+
+using SumOperator = BaseSumOperator<Operator>;
+using SumComplexOperator = BaseSumOperator<ComplexOperator>;
 
 // Wraps two operators such that: (AB)ᵀ = BᵀAᵀ and, for complex symmetric operators, the
 // Hermitian transpose operation is (AB)ᴴ = BᴴAᴴ.

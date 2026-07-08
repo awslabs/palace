@@ -227,7 +227,11 @@ clean_coverage() {
 run_tests() {
     log "Running tests via ctest with max $NUM_PROC_TEST processes..."
     cd "$BUILD_DIR"
-    ctest -j "$NUM_PROC_TEST" --output-on-failure
+    # Regression and long-regression cases run by the workflow's
+    # regression / long-tests steps at NUM_PROC_TEST; exclude them here
+    # to avoid running them twice and to keep coverage focused on unit
+    # tests.
+    ctest -j "$NUM_PROC_TEST" --output-on-failure -LE "^(regression|long)$"
 }
 
 # Generate coverage for GCC.

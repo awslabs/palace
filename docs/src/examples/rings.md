@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ```@setup include_example
 function include_example_file(example_path, filename)
-    print(read(joinpath(@__DIR__, "..", "..", "..", "test", "examples", "ref", example_path, filename), String))
+    print(read(joinpath(@__DIR__, "..", "..", "..", "test", "data", "regression", "ref", example_path, filename), String))
 end
 ```
 
@@ -90,7 +90,7 @@ The typical approach used by *Palace* for lumped parameter extraction uses the c
 field energies, but one can also compute the inductance by explicitly integrating the
 magnetic flux through a surface and dividing by the excitation current. This is configured
 under
-[`config["Boundaries"]["Postprocessing"]["Inductance"]`](../config/boundaries.md#boundaries%5B%22Postprocessing%22%5D%5B%22Inductance%22%5D)
+[`config["Boundaries"]["Postprocessing"]["SurfaceFlux"]`](../config/reference.md#config-boundaries-postprocessing-surfaceflux)
 in the configuration file. The postprocessed magnetic flux values are written to `postpro/surface-F.csv`:
 
 ```@example include_example
@@ -109,7 +109,7 @@ we arrive at
 ```@example
 using DelimitedFiles: readdlm #hide
 using Printf #hide
-path = joinpath(@__DIR__, "..", "..", "..", "test", "examples", "ref", "rings") #hide
+path = joinpath(@__DIR__, "..", "..", "..", "test", "data", "regression", "ref", "rings") #hide
 surface_F = readdlm(joinpath(path, "surface-F.csv"), ',', Float64, skipstart=1) #hide
 terminal_I = readdlm(joinpath(path, "terminal-I.csv"), ',', Float64, skipstart=1) #hide
 result = copy(surface_F) #hide

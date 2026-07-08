@@ -9,10 +9,10 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Supported mesh formats
 
-The [`config["Model"]`](../config/model.md#config%5B%22Model%22%5D) object is used to
+The [`config["Model"]`](../config/reference.md#config-model) object is used to
 specify the mesh for the discretized computational domain. In general, inputs are expected
 to be dimensional nondimensionalized internally. A length scale, specified under
-[`config["Model"]["L0"]`](../config/model.md#config%5B%22Model%22%5D), describes the length
+[`config["Model"]["L0"]`](../config/reference.md#config-model), describes the length
 units of the mesh relative to 1 meter (i.e. `config["Model"]["L0"]: 1.0e-6` if the mesh
 coordinates are in ``\mu``m, this is the default value). All other entries in the
 configuration file which have units of length should be specified in units of
@@ -27,8 +27,8 @@ format mesh files, for both linear and high-order curved elements.
 
 Geometric attributes for domains and boundaries in the mesh are used to define material
 properties and boundary conditions on the desired model regions and surfaces (see
-[`config["Domains"]`](../config/domains.md) and
-[`config["Boundaries"]`](../config/boundaries.md)). These attribute integers correspond to
+[`config["Domains"]`](../config/reference.md#config-domains) and
+[`config["Boundaries"]`](../config/reference.md#config-boundaries)). These attribute integers correspond to
 tags for the domain and boundary elements in the mesh, and should be non-negative and start
 at 1. They do not need to be contiguous in the mesh file. Throughout the configuration
 file, the `"Attributes"` keyword is used to indicate which domain or boundary attributes
@@ -38,7 +38,7 @@ are relevant to the material properties or boundary conditions being specified.
 
 Refinement of the input mesh file can be performed using levels of global uniform refinement
 or region-based refinement, specified using the
-[`config["Model"]["Refinement"]`](../config/model.md#model%5B%22Refinement%22%5D) object.
+[`config["Model"]["Refinement"]`](../config/reference.md#config-model-refinement) object.
 The user can specify any combination of uniform refinement levels as well as local
 refinement regions which refines the elements inside of a certain box or sphere-shaped
 region. For simplex meshes, the refinement maintains a conforming mesh but meshes
@@ -47,7 +47,7 @@ refinement (this is not supported at this time).
 
 [Adaptive mesh refinement (AMR)](https://en.wikipedia.org/wiki/Adaptive_mesh_refinement)
 according to error estimates calculated from the computed solution can also be specified
-using the [`config["Model"]["Refinement"]`](../config/model.md#model%5B%22Refinement%22%5D)
+using the [`config["Model"]["Refinement"]`](../config/reference.md#config-model-refinement)
 object. Nonconformal refinement is supported for all mesh types, and additionally conformal
 refinement is supported for simplex meshes. AMR is available for all problem types apart
 from driven problems in the time domain.
@@ -55,7 +55,7 @@ from driven problems in the time domain.
 ## Material models
 
 Material properties are handled by the
-[`config["Domains"]["Materials"]`](../config/domains.md#domains%5B%22Materials%22%5D)
+[`config["Domains"]["Materials"]`](../config/reference.md#config-domains-materials)
 object. *Palace* supports linear, frequency independent constitutive laws for material
 modeling.
 

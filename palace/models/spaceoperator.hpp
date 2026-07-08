@@ -13,6 +13,7 @@
 #include "linalg/vector.hpp"
 #include "models/currentdipoleoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
+#include "models/floquetportoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/portexcitations.hpp"
@@ -75,6 +76,7 @@ private:
   SurfaceImpedanceOperator surf_z_op;
   LumpedPortOperator lumped_port_op;
   WavePortOperator wave_port_op;
+  FloquetPortOperator floquet_port_op;
   SurfaceCurrentOperator surf_j_op;
 
   PortExcitations port_excitation_helper;
@@ -98,7 +100,8 @@ private:
   void AddExtraSystemBdrCoefficients(double omega, MaterialPropertyCoefficient &dfbr,
                                      MaterialPropertyCoefficient &dfbi,
                                      MaterialPropertyCoefficient &fbr,
-                                     MaterialPropertyCoefficient &fbi);
+                                     MaterialPropertyCoefficient &fbi,
+                                     bool include_wave_ports = true);
   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
 
@@ -151,10 +154,19 @@ public:
   // Access to underlying BC operator objects for postprocessing.
   auto &GetLumpedPortOp() { return lumped_port_op; }
   auto &GetWavePortOp() { return wave_port_op; }
+  auto &GetFloquetPortOp() { return floquet_port_op; }
   auto &GetSurfaceCurrentOp() { return surf_j_op; }
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
+  const auto &GetFloquetPortOp() const { return floquet_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
+
+  // Get the full frequency-dependent operator A2(ω) + F(ω), where A2 is the assembled
+  // sparse boundary operator and F is the low-rank Floquet DtN correction. The returned
+  // operator can be passed directly to GetSystemMatrix as the A2 argument. If no
+  // frequency-dependent terms exist, returns nullptr.
+  std::unique_ptr<ComplexOperator>
+  GetExtraSystemOperator(double omega, Operator::DiagonalPolicy diag_policy);
 
   const auto &GetPortExcitations() const { return port_excitation_helper; }
 
@@ -192,11 +204,30 @@ public:
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
                                                  Operator::DiagonalPolicy diag_policy);
 
+  // As GetExtraSystemMatrix, but optionally excluding the wave-port contribution. Used by
+  // the reduced-order model to apply the wave-port term separately via per-port factored
+  // operators while keeping the slow path for any remaining ω-dependent BCs (e.g.
+  // second-order farfield, surface conductivity).
+  template <typename OperType>
+  std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
+                                                 Operator::DiagonalPolicy diag_policy,
+                                                 bool include_wave_ports);
+
+  // Construct the ω-independent boundary mass matrix M_{μ⁻¹,p} for a single wave port,
+  // returned with PEC essential DoF rows handled by `diag_policy`. The full wave-port
+  // contribution to the system matrix at frequency ω is `i·k_{n,p}(ω)·M_{μ⁻¹,p}` with
+  // `k_{n,p}` from `GetWavePortOp().GetWavePortKn(port_idx, ω)`. Returns a null pointer if
+  // the port boundary contributes no DoFs on this rank.
+  template <typename OperType>
+  std::unique_ptr<OperType>
+  GetWavePortBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
+
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:
   //                     A = a0 K + a1 C + a2 (Mr + i Mi) + A2.
-  // It is assumed that the inputs have been constructed using previous calls to
-  // GetSystemMatrix() and the returned operator does not inherit ownership of any of them.
+  // A2 may be a sparse ComplexParOperator or an abstract ComplexOperator (e.g., a sum of
+  // sparse and low-rank terms from GetExtraSystemOperator). The returned operator does not
+  // inherit ownership of any of the inputs.
   template <typename OperType, typename ScalarType>
   std::unique_ptr<OperType>
   GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2, const OperType *K,

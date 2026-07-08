@@ -21,6 +21,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     maintainers("hughcars", "simlap", "cameronrutherford", "sbozzolo", "phdum")
 
     version("develop", branch="main")
+    version("0.17.0", tag="v0.17.0", commit="12d8069afb5aa9e169a17e303d735e120968e9f2")
+    version("0.16.1", tag="v0.16.1", commit="c13e409f255392b9d78369c386276cf9343c2205")
     version("0.16.0", tag="v0.16.0", commit="869ee5ced4850384410a7aeebc7c25f4c01be161")
     version("0.15.0", tag="v0.15.0", commit="b6762777d85a06072fdf4cc96e8a365da73df170")
     version("0.14.0", tag="v0.14.0", commit="a428a3a32dbbd6a2a6013b3b577016c3e9425abc")
@@ -177,8 +179,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             "mfem+mpi+metis+lapack@4.9:",
             patches=[
                 "patch_par_tet_mesh_fix_dev.diff",
-                "patch_gmsh_parser_performance.diff",
+                patch("patch_gmsh_parser_performance.diff", when="@:4.9"),
                 patch("mfem_pr5246.diff", when="@:4.9"),
+                # mfem PR #5353; remove once merged upstream and mfem is bumped.
+                "mfem_pr5353.diff",
             ],
         )
         depends_on("mfem+shared", when="+shared")
@@ -315,6 +319,17 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define_from_variant("PALACE_BUILD_WITH_SANITIZERS", "asan"),
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
+            # Pin the test suite's MPI ranks and OpenMP threads so CTest's
+            # PROCESSORS accounting (ranks x threads) is exact. Unit [Parallel]
+            # cases stay at 2 ranks (light, fast); regression cases use ~8 CPUs
+            # (fewer ranks shift tail eigenvalues past tolerance for some
+            # solvers); GPU builds run single-rank.
+            self.define("PALACE_TESTS_NUMPROC", 2),
+            self.define(
+                "PALACE_REGRESSION_NUMPROC",
+                1 if self.spec.satisfies("+cuda") else (4 if self.spec.satisfies("+openmp") else 8),
+            ),
+            self.define("PALACE_TESTS_OMP_THREADS", 2 if self.spec.satisfies("+openmp") else 1),
         ]
 
         if self.spec.satisfies("@0.16:"):

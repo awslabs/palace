@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <sstream>
+#include <string_view>
 #include <nlohmann/json-schema.hpp>
 #include "communication.hpp"
 #include "embedded_schema.hpp"
@@ -22,39 +23,23 @@ constexpr const char *root_schema_file = "config-schema.json";
 namespace
 {
 
-// Strip leading path prefixes (/, ./) to normalize schema references.
-std::string StripPathPrefix(std::string path)
-{
-  while (!path.empty() && (path[0] == '/' || path[0] == '.'))
-  {
-    path = path.substr(1);
-  }
-  return path;
-}
-
-// Loader for resolving $ref in schemas using embedded schema strings.
-class EmbeddedSchemaLoader
-{
-public:
-  json operator()(const nlohmann::json_uri &uri, json &schema)
-  {
-    std::string path = StripPathPrefix(uri.path());
-    const auto &schema_map = schema::GetSchemaMap();
-    auto it = schema_map.find(path);
-    if (it == schema_map.end())
-    {
-      throw std::runtime_error("Schema not found: " + path);
-    }
-    schema = json::parse(it->second);
-    return schema;
-  }
-};
-
 // Search for a schema property by key name, collecting all matches.
-// Helper for FindSchemaByKey - populates results vector.
+// Helper for FindSchemaByKey - populates results vector. The depth parameter
+// guards against pathological self-referential $defs cycles.
 void FindAllSchemasByKey(const json &schema, const std::string &key, const json &root_defs,
-                         std::vector<json> &results)
+                         std::vector<json> &results, int depth = 0)
 {
+  constexpr int kMaxDepth = 32;
+  if (depth > kMaxDepth)
+  {
+    // Hitting the cap means a self-referential $defs cycle in the schema, which
+    // is a developer error rather than bad user input. Warn so it surfaces
+    // instead of silently truncating the search.
+    Mpi::Warning("Schema search for key '{}' exceeded max depth {}; check for a "
+                 "self-referential $defs cycle\n",
+                 key, kMaxDepth);
+    return;
+  }
   if (!schema.is_object())
   {
     return;
@@ -86,29 +71,22 @@ void FindAllSchemasByKey(const json &schema, const std::string &key, const json 
   {
     for (const auto &[k, v] : props_it->items())
     {
-      // Handle $ref.
+      // Handle $ref: resolve internal #/$defs/ references.
       if (v.contains("$ref"))
       {
         std::string ref_raw = v["$ref"].get<std::string>();
-        // Skip internal $defs references (handled elsewhere).
         if (ref_raw.find("#/$defs/") == 0)
         {
-          continue;
-        }
-        std::string ref = StripPathPrefix(ref_raw);
-        const auto &schema_map = schema::GetSchemaMap();
-        if (auto it = schema_map.find(ref); it != schema_map.end())
-        {
-          FindAllSchemasByKey(json::parse(it->second), key, defs, results);
-        }
-        else
-        {
-          Mpi::Warning("Could not resolve schema $ref: {}\n", ref);
+          std::string def_name = ref_raw.substr(8);
+          if (!defs.is_null() && defs.contains(def_name))
+          {
+            FindAllSchemasByKey(defs[def_name], key, defs, results, depth + 1);
+          }
         }
       }
       else
       {
-        FindAllSchemasByKey(v, key, defs, results);
+        FindAllSchemasByKey(v, key, defs, results, depth + 1);
       }
     }
   }
@@ -116,13 +94,13 @@ void FindAllSchemasByKey(const json &schema, const std::string &key, const json 
   // Check items for arrays.
   if (auto items_it = schema.find("items"); items_it != schema.end())
   {
-    FindAllSchemasByKey(*items_it, key, defs, results);
+    FindAllSchemasByKey(*items_it, key, defs, results, depth + 1);
   }
 }
 
 // Search for a schema property by key name, checking each level before recursing.
 // Returns the schema for that key (with $defs preserved), or null if not found.
-// Warns and returns null if the key is ambiguous (found in multiple schema files).
+// Warns and returns null if the key is ambiguous (found in multiple schema scopes).
 json FindSchemaByKey(const json &schema, const std::string &key,
                      const json &root_defs = json())
 {
@@ -151,19 +129,7 @@ json ResolveRef(const json &node, const json &defs)
     return node;
   }
   std::string ref = node["$ref"].get<std::string>();
-  if (ref.empty())
-  {
-    return json();  // Invalid empty $ref.
-  }
-  if (ref[0] == '.')
-  {
-    const auto &schema_map = schema::GetSchemaMap();
-    if (auto it = schema_map.find(StripPathPrefix(ref)); it != schema_map.end())
-    {
-      return json::parse(it->second);
-    }
-  }
-  else if (ref.substr(0, 8) == "#/$defs/")
+  if (ref.substr(0, 8) == "#/$defs/")
   {
     std::string def_name = ref.substr(8);
     if (defs.contains(def_name))
@@ -267,6 +233,26 @@ json FindEnumInSchema(const json &schema, const std::string &ptr)
       }
     }
   }
+  // oneOf is used in two ways: the "usual" way to constrain types and as an emum
+  // replacement using the oneOf+const pattern, which allows us to add documentation fields
+  // to enum entries. For oneOf+const we want to collect all values into an array for
+  // consistent error formatting.
+  if (current.contains("oneOf"))
+  {
+    const auto &branches = current["oneOf"];
+    // Check if oneOf + const enum: all items in oneOf have "const" and no "properties"
+    if (!branches.empty() &&
+        std::all_of(branches.begin(), branches.end(), [](const json &b)
+                    { return b.contains("const") && !b.contains("properties"); }))
+    {
+      json consts = json::array();
+      for (const auto &branch : branches)
+      {
+        consts.push_back(branch["const"]);
+      }
+      return consts;
+    }
+  }
   return json();
 }
 
@@ -318,15 +304,32 @@ public:
   void error(const json::json_pointer &ptr, const json &instance,
              const std::string &message) override
   {
+    // If a oneOf+const enum, we only want to print the top-level path, since that already
+    // contains all information. Individual schema mismatch of items has no new information.
+    if ((schema != nullptr) && message.find("[combination: oneOf") != std::string::npos)
+    {
+      json enum_values = FindEnumInSchema(*schema, ptr.to_string());
+      if (!enum_values.is_null() && !enum_values.empty())
+      {
+        return;
+      }
+    }
+
     errors << "At " << FormatPath(ptr.to_string()) << ": " << message;
     // Enhance type mismatch errors with actual type. These message strings are
     // implementation details of json-schema-validator 2.4.0; update if upgrading.
-    if (message == "unexpected instance type")
+    // Use find() so the enhancement also fires for oneOf/anyOf-wrapped messages
+    // like "[combination: oneOf / case#0] unexpected instance type".
+    if (message.find("unexpected instance type") != std::string::npos)
     {
       errors << " (got " << instance.type_name() << ")";
     }
-    // Enhance enum errors with valid values.
-    else if (schema && message == "instance not found in required enum")
+    // Enhance enum errors with valid values — handles flat "enum" arrays (including
+    // oneOf/anyOf-wrapped messages) and oneOf+const enum patterns (both resolve to a list
+    // of valid values via FindEnumInSchema).
+    else if ((schema != nullptr) &&
+             (message.find("instance not found in required enum") != std::string::npos ||
+              message.rfind("no subschema has succeeded", 0) == 0))
     {
       json enum_values = FindEnumInSchema(*schema, ptr.to_string());
       if (!enum_values.is_null() && enum_values.is_array() && !enum_values.empty())
@@ -350,6 +353,26 @@ public:
   std::string get_errors() const { return errors.str(); }
 };
 
+std::string GetSchemaVersion()
+{
+  const auto &schema_map = schema::GetSchemaMap();
+  auto it = schema_map.find(root_schema_file);
+  if (it != schema_map.end())
+  {
+    const json schema = json::parse(it->second);
+    if (schema.contains("$id"))
+    {
+      const std::string &id = schema["$id"];
+      constexpr std::string_view prefix = "urn:palace:schema:";
+      if (id.substr(0, prefix.size()) == prefix)
+      {
+        return id.substr(prefix.size());
+      }
+    }
+  }
+  return "unknown";
+}
+
 std::string ValidateConfig(const nlohmann::json &config)
 {
   const auto &schema_map = schema::GetSchemaMap();
@@ -369,7 +392,10 @@ std::string ValidateConfig(const nlohmann::json &config)
     return std::string("Failed to parse schema: ") + e.what();
   }
 
-  json_validator validator{EmbeddedSchemaLoader()};
+  // No schema loader is supplied: the single-file schema uses only internal
+  // ("#/$defs/...") references. An external $ref would make the validator throw a
+  // descriptive error, caught and returned below.
+  json_validator validator;
   try
   {
     validator.set_root_schema(schema);
@@ -413,7 +439,8 @@ std::string ValidateConfig(const nlohmann::json &config, const std::string &sche
     return "Schema key not found: " + schema_key;
   }
 
-  json_validator validator{EmbeddedSchemaLoader()};
+  // No schema loader is supplied: see the note in the single-argument overload above.
+  json_validator validator;
   try
   {
     validator.set_root_schema(sub_schema);

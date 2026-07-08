@@ -10,12 +10,12 @@ ARG GITHUB_TOKEN=""
 # runtime image is unaffected. Remove with the spack.yaml `compilers` group
 # fix.
 #
-# noble's default archive does not carry gcc-15 yet; pull it from the
+# noble's default archive does not carry gcc-16 yet; pull it from the
 # ubuntu-toolchain-r/test PPA.
 RUN apt-get -yqq update && \
     apt-get -yqq install --no-install-recommends software-properties-common && \
     add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
-    apt-get -yqq install --no-install-recommends gcc-15 g++-15 gfortran-15 && \
+    apt-get -yqq install --no-install-recommends gcc-16 g++-16 gfortran-16 && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy the Palace source tree
@@ -115,7 +115,7 @@ RUN cd {{ paths.environment }} && \
 
 {% block final_stage %}
 # FIXME(awslabs/palace#731): mirror the build-stage PPA install in the final
-# image so libstdc++6 there is gcc-15's, matching what palace was built
+# image so libstdc++6 there is gcc-16's, matching what palace was built
 # against. Remove with the spack.yaml `compilers` group fix.
 RUN apt-get -yqq update && \
     apt-get -yqq install --no-install-recommends software-properties-common && \

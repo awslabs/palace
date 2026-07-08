@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ```@setup include_example
 function include_example_file(example_path, filename, max_lines = 4)
-    content = read(joinpath(@__DIR__, "..", "..", "..", "test", "examples", "ref", example_path, filename), String)
+    content = read(joinpath(@__DIR__, "..", "..", "..", "test", "data", "regression", "ref", example_path, filename), String)
     lines = split(content, '\n')
     println(join(lines[1:min(max_lines, length(lines))], '\n'))
 end
@@ -19,7 +19,9 @@ end
 
     The files for this example can be found in the
     [`examples/antenna/`](https://github.com/awslabs/palace/blob/main/examples/antenna)
-    directory of the *Palace* source code. In this example, we increased the number of sampling points from 100 to 64800.
+    directory of the *Palace* source code. The documentation plots use a finer far-field
+    mesh (`n_farfield=10` in `mesh/mesh.jl`) and more far-field sampling points
+    (`NSample=64800`) than the lightweight regression-test defaults.
 
 In this example, we study a half-wave dipole antenna and analyze its radiation
 characteristics. The dipole antenna is one of the most fundamental antenna

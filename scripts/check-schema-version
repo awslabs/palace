@@ -1,0 +1,86 @@
+#!/bin/bash
+
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+help()
+{
+    echo "Usage: check-schema-version [OPTIONS] [BASE_REF]
+
+Fail if scripts/schema/config-schema.json changed relative to BASE_REF without a
+corresponding change to the \"\$id\" version in that file.
+
+This guards against editing the configuration contract while forgetting to bump the
+schema version. It does not judge whether the size of the bump (MODEL/REVISION/ADDITION)
+matches the change; that remains a code-review responsibility.
+
+Options:
+  -h, --help                       Show this help message and exit
+
+Arguments:
+  BASE_REF                         Git ref to compare against (default: origin/main)
+"
+}
+
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            help
+            exit 0
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"
+
+BASE_REF="${1:-origin/main}"
+ROOT_SCHEMA="scripts/schema/config-schema.json"
+ID_KEY='\$id'
+
+if ! git rev-parse --verify --quiet "${BASE_REF}^{commit}" > /dev/null; then
+    echo "Error: base ref '${BASE_REF}' not found"
+    exit 1
+fi
+
+# Check if the schema file changed relative to the base ref.
+CHANGED=$(git diff --name-only "${BASE_REF}" -- "${ROOT_SCHEMA}")
+
+if [[ -z "${CHANGED}" ]]; then
+    echo "Schema file unchanged; nothing to check"
+    exit 0
+fi
+
+# Extract the version from the "$id" URN (e.g. "urn:palace:schema:1-0-0" -> "1-0-0").
+schema_version_at()
+{
+    git show "$1:${ROOT_SCHEMA}" 2>/dev/null |
+        grep -o "\"${ID_KEY}\"[[:space:]]*:[[:space:]]*\"urn:palace:schema:[^\"]*\"" |
+        head -1 |
+        sed -E "s/.*urn:palace:schema:([^\"]*)\"/\1/"
+}
+
+BASE_VERSION=$(schema_version_at "${BASE_REF}")
+HEAD_VERSION=$(grep -o "\"${ID_KEY}\"[[:space:]]*:[[:space:]]*\"urn:palace:schema:[^\"]*\"" "${ROOT_SCHEMA}" |
+    head -1 |
+    sed -E "s/.*urn:palace:schema:([^\"]*)\"/\1/")
+
+if [[ -z "${HEAD_VERSION}" ]]; then
+    echo "Error: '\$id' URN not found in ${ROOT_SCHEMA}"
+    exit 1
+fi
+
+if [[ "${BASE_VERSION}" == "${HEAD_VERSION}" ]]; then
+    echo "Error: schema files changed but '\$id' version was not bumped (still ${HEAD_VERSION})."
+    echo "Changed files:"
+    echo "${CHANGED}" | while IFS= read -r file; do echo "  ${file}"; done
+    echo "Bump the version in the '\$id' URN in ${ROOT_SCHEMA} and add a row to the version"
+    echo "table in docs/src/developer/notes.md. See the 'Schema versioning' section for the policy."
+    exit 1
+fi
+
+echo "Schema files changed and '\$id' version was bumped (${BASE_VERSION:-<none>} -> ${HEAD_VERSION})"
+exit 0

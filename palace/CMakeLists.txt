@@ -26,7 +26,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Initialize the project
-project(palace LANGUAGES CXX VERSION 0.16.1)
+project(palace LANGUAGES CXX VERSION 0.17.0)
 
 # Define build settings and defaults
 set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP for shared-memory parallelism")
@@ -301,6 +301,11 @@ add_subdirectory(fem)
 add_subdirectory(linalg)
 add_subdirectory(models)
 add_subdirectory(utils)
+
+target_sources(${LIB_TARGET_NAME}
+  PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/driver.cpp
+)
 
 # Add executable target
 set(TARGET_NAME palace)

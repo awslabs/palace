@@ -36,8 +36,8 @@ jobs:
               - 'cmake/**'
               - 'extern/**'
               - 'examples/**'
-              - 'test/examples/**'
               - 'test/unit/**'
+              - 'test/data/**'
               - 'spack_repo/**'
               - '.github/actions/**'
               - '.github/workflows/spack.yml'
@@ -99,7 +99,7 @@ jobs:
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: llvm
-          additional-test-cases: transmon/transmon_coarse
+          additional-test-cases: transmon_coarse
 
   build-test-x64-intel:
     needs: filter
@@ -110,7 +110,7 @@ jobs:
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: intel-oneapi
-          additional-test-cases: transmon/transmon_coarse
+          additional-test-cases: transmon_coarse
 
   build-test-arm64-gcc:
     needs: filter
@@ -121,7 +121,7 @@ jobs:
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: gcc
-          additional-test-cases: transmon/transmon_coarse
+          additional-test-cases: transmon_coarse
 
   build-test-arm64-llvm:
     needs: filter
@@ -132,7 +132,7 @@ jobs:
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: llvm
-          additional-test-cases: transmon/transmon_coarse
+          additional-test-cases: transmon_coarse
 
   build-test-arm64-gcc-armpl:
     needs: filter
@@ -144,7 +144,7 @@ jobs:
         with:
           toolchain: gcc
           math-libs: armpl-gcc
-          additional-test-cases: transmon/transmon_coarse
+          additional-test-cases: transmon_coarse
 
   # Test jobs
   test-x64-gcc:
@@ -164,7 +164,7 @@ jobs:
       - uses: ./.github/actions/run-regression-tests
         with:
           toolchain: gcc
-          solver: ${{ matrix.solver }}
+          linear-solver: ${{ matrix.solver }}
 
   test-gpu-gcc:
     needs: [filter, build-gpu-gcc]
@@ -184,7 +184,7 @@ jobs:
         with:
           toolchain: gcc
           variant: +cuda
-          solver: ${{ matrix.solver }}
+          linear-solver: ${{ matrix.solver }}
 
   test-x64-gcc-openmp:
     needs: [filter, build-x64-gcc-openmp]
@@ -204,4 +204,4 @@ jobs:
         with:
           toolchain: gcc
           variant: "+openmp+int64"
-          solver: ${{ matrix.solver }}
+          linear-solver: ${{ matrix.solver }}

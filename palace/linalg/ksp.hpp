@@ -9,6 +9,7 @@
 #include "linalg/iterative.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
+#include "utils/labels.hpp"
 
 namespace palace
 {
@@ -22,6 +23,12 @@ namespace config
 struct LinearSolverData;
 
 }  // namespace config
+
+// Derive the preconditioner matrix symmetry (used by sparse direct solvers) from the
+// problem type, shifted-preconditioner flag, and periodicity. This is a derived runtime
+// property, not a configuration field, so it is computed here rather than stored on
+// LinearSolverData.
+MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata);
 
 //
 // Linear solver class composing an iterative solver and preconditioner object.
@@ -49,8 +56,8 @@ protected:
   bool use_timer;
 
 public:
-  BaseKspSolver(const config::LinearSolverData &linear, int verbose,
-                FiniteElementSpaceHierarchy &fespaces,
+  BaseKspSolver(const config::LinearSolverData &linear, MatrixSymmetry pc_mat_sym,
+                int verbose, FiniteElementSpaceHierarchy &fespaces,
                 FiniteElementSpaceHierarchy *aux_fespaces = nullptr);
   BaseKspSolver(const IoData &iodata, FiniteElementSpaceHierarchy &fespaces,
                 FiniteElementSpaceHierarchy *aux_fespaces = nullptr);

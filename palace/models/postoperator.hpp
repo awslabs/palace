@@ -279,8 +279,9 @@ protected:
   void MeasureDomainFieldEnergy() const;
   void MeasureLumpedPorts() const;
   void MeasureWavePorts() const;
+  void MeasureFloquetPorts() const;
   void MeasureLumpedPortsEig() const;  // Depends: DomainFieldEnergy, LumpedPorts
-  void MeasureSParameter() const;      // Depends: LumpedPorts, WavePorts
+  void MeasureSParameter() const;      // Depends: LumpedPorts, WavePorts, FloquetPorts
   void MeasureSurfaceFlux() const;
   void MeasureFarField() const;
   void MeasureInterfaceEFieldEnergy() const;  // Depends: LumpedPorts
@@ -293,6 +294,7 @@ protected:
     MeasureDomainFieldEnergy();
     MeasureLumpedPorts();
     MeasureWavePorts();
+    MeasureFloquetPorts();
     MeasureLumpedPortsEig();
     MeasureSParameter();
     MeasureSurfaceFlux();

@@ -6,6 +6,7 @@
 #include <mfem.hpp>
 
 #include "models/curlcurloperator.hpp"
+#include "models/floquetportoperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
@@ -70,6 +71,7 @@ Measurement Measurement::Dimensionalize(const Units &units,
                       units.Dimensionalize<Units::ValueType::CURRENT>(data.I_RLC[1]),
                       units.Dimensionalize<Units::ValueType::CURRENT>(data.I_RLC[2])};
       dim[k].S = data.S;  // NONE
+      dim[k].Z_PV = units.Dimensionalize<Units::ValueType::IMPEDANCE>(data.Z_PV);
 
       dim[k].inductor_energy =
           units.Dimensionalize<Units::ValueType::ENERGY>(data.inductor_energy);
@@ -88,6 +90,7 @@ Measurement Measurement::Dimensionalize(const Units &units,
       dimensionalize_port_post_data(nondim_measurement_cache.lumped_port_vi);
   measurement_cache.wave_port_vi =
       dimensionalize_port_post_data(nondim_measurement_cache.wave_port_vi);
+  measurement_cache.floquet_port_s = nondim_measurement_cache.floquet_port_s;
 
   measurement_cache.probe_E_field = units.Dimensionalize<Units::ValueType::FIELD_E>(
       nondim_measurement_cache.probe_E_field);
@@ -211,6 +214,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
                       units.Nondimensionalize<Units::ValueType::CURRENT>(data.I_RLC[1]),
                       units.Nondimensionalize<Units::ValueType::CURRENT>(data.I_RLC[2])};
       dim[k].S = data.S;  // NONE
+      dim[k].Z_PV = units.Nondimensionalize<Units::ValueType::IMPEDANCE>(data.Z_PV);
 
       dim[k].inductor_energy =
           units.Nondimensionalize<Units::ValueType::ENERGY>(data.inductor_energy);
@@ -229,6 +233,7 @@ Measurement Measurement::Nondimensionalize(const Units &units,
       dimensionalize_port_post_data(dim_measurement_cache.lumped_port_vi);
   measurement_cache.wave_port_vi =
       dimensionalize_port_post_data(dim_measurement_cache.wave_port_vi);
+  measurement_cache.floquet_port_s = dim_measurement_cache.floquet_port_s;
 
   measurement_cache.probe_E_field = units.Nondimensionalize<Units::ValueType::FIELD_E>(
       dim_measurement_cache.probe_E_field);
@@ -661,9 +666,10 @@ auto PostOperatorCSV<solver_t>::InitializeFarFieldE(const SurfacePostOperator &s
   Table t;  // Define table locally first due to potential reload.
 
   int v_dim = surf_post_op.GetVDim();
-  int scale_col = 2 * v_dim;                         // Real + Imag components
-  int nr_expected_measurement_cols = 3 + scale_col;  // freq, theta, phi
-  int nr_expected_measurement_rows = surf_post_op.farfield.size();
+  int scale_col = 2 * v_dim;  // Real + Imag components
+  int nr_expected_measurement_cols = 4 + scale_col;
+  int nr_expected_measurement_rows =
+      static_cast<int>(surf_post_op.farfield.size() * ex_idx_v_all.size());
   t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   if constexpr (U == ProblemType::EIGENMODE)
   {
@@ -674,6 +680,11 @@ auto PostOperatorCSV<solver_t>::InitializeFarFieldE(const SurfacePostOperator &s
   else
   {
     t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
+  }
+  {
+    Column ex_col("exc", "exc", 0, PrecIndexCol(solver_t), {}, "");
+    ex_col.print_as_int = true;
+    t.insert(std::move(ex_col));
   }
   t.insert(Column("theta", "theta (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
   t.insert(Column("phi", "phi (deg.)", 0, PrecIndexCol(solver_t), {}, ""));
@@ -706,6 +717,7 @@ auto PostOperatorCSV<solver_t>::PrintFarFieldE(const SurfacePostOperator &surf_p
       farfield_E->table["f_re"] << measurement_cache.freq.real();
       farfield_E->table["f_im"] << measurement_cache.freq.imag();
     }
+    farfield_E->table["exc"] << static_cast<double>(m_ex_idx);
     const auto &[theta, phi] = measurement_cache.farfield.thetaphis[i];
     const auto &E_field = measurement_cache.farfield.E_field[i];
 
@@ -1092,16 +1104,14 @@ template <ProblemType U>
 auto PostOperatorCSV<solver_t>::InitializePortS(const SpaceOperator &fem_op)
     -> std::enable_if_t<U == ProblemType::DRIVEN, void>
 {
-  if (!fem_op.GetPortExcitations().IsMultipleSimple() ||
-      !((fem_op.GetLumpedPortOp().Size() > 0) xor (fem_op.GetWavePortOp().Size() > 0)))
+  auto nr_ports = fem_op.GetLumpedPortOp().Size() + fem_op.GetWavePortOp().Size();
+  if (nr_ports == 0 || !fem_op.GetPortExcitations().IsMultipleSimple())
   {
     return;
   }
   port_S = TableWithCSVFile(post_dir / "port-S.csv", reload_table);
 
   Table t;  // Define table locally first due to potential reload.
-
-  auto nr_ports = fem_op.GetLumpedPortOp().Size() + fem_op.GetWavePortOp().Size();
 
   auto nr_expected_measurement_cols = 1 + ex_idx_v_all.size() * nr_ports;
   t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
@@ -1179,6 +1189,20 @@ auto PostOperatorCSV<solver_t>::InitializePortZ(const SpaceOperator &fem_op)
   t.reserve(nr_expected_measurement_rows, 10);
   t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
 
+  // Mode characteristic impedance Z_PV[i] for each wave port with a VoltagePath
+  // (excitation-independent, computed from the boundary mode field).
+  for (const auto &[idx, data] : fem_op.GetWavePortOp())
+  {
+    if (data.HasVoltageCoords())
+    {
+      t.insert(format("re_z_pv_{}", idx), format("Re{{Z_PV[{}]}} (Ohm)", idx), -1);
+      t.insert(format("im_z_pv_{}", idx), format("Im{{Z_PV[{}]}} (Ohm)", idx), -1);
+    }
+  }
+
+  // Per-excitation total-field impedance Z[i][j] at port i during
+  // excitation j (i.e., the input impedance the excitation source sees looking into the
+  // port, after standing-wave transformation by the rest of the structure).
   for (const auto ex_idx : ex_idx_v_all)
   {
     std::string ex_label = HasSingleExIdx() ? "" : format("[{}]", ex_idx);
@@ -1198,6 +1222,62 @@ auto PostOperatorCSV<solver_t>::InitializePortZ(const SpaceOperator &fem_op)
 
 template <ProblemType solver_t>
 template <ProblemType U>
+auto PostOperatorCSV<solver_t>::InitializeFloquetPortS(const SpaceOperator &fem_op)
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  if (fem_op.GetFloquetPortOp().Empty())
+  {
+    return;
+  }
+
+  using fmt::format;
+  floquet_port_S = TableWithCSVFile(post_dir / "port-floquet-S.csv", reload_table);
+
+  Table t;
+  t.reserve(nr_expected_measurement_rows, 100);
+  t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
+
+  auto floquet_uses_circular_output = [&fem_op](int ex_idx)
+  {
+    for (const auto &[port_idx, port] : fem_op.GetFloquetPortOp())
+    {
+      if (port.HasExcitation() && port.excitation == ex_idx)
+      {
+        return port.HasCircularExcitation();
+      }
+    }
+    return false;
+  };
+  for (const auto ex_idx : ex_idx_v_all)
+  {
+    bool circular_output = floquet_uses_circular_output(ex_idx);
+    for (const auto &[port_idx, port] : fem_op.GetFloquetPortOp())
+    {
+      for (const auto &order : port.GetOrders())
+      {
+        if (!HasFlag(order.use, FloquetModeUse::Output))
+          continue;
+        for (bool is_te : {true, false})
+        {
+          auto pol = circular_output ? (is_te ? "RHC" : "LHC") : (is_te ? "TE" : "TM");
+          t.insert(
+              format("abs_P{}_{}_{}_{}_exc{}", port_idx, order.m, order.n, pol, ex_idx),
+              format("|S[P{}({};{}){}][{}]| (dB)", port_idx, order.m, order.n, pol, ex_idx),
+              ex_idx);
+          t.insert(
+              format("arg_P{}_{}_{}_{}_exc{}", port_idx, order.m, order.n, pol, ex_idx),
+              format("arg(S[P{}({};{}){}][{}]) (deg.)", port_idx, order.m, order.n, pol,
+                     ex_idx),
+              ex_idx);
+        }
+      }
+    }
+  }
+  MoveTableValidateReload(*floquet_port_S, std::move(t));
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
 auto PostOperatorCSV<solver_t>::PrintPortZ()
     -> std::enable_if_t<U == ProblemType::DRIVEN, void>
 {
@@ -1210,19 +1290,29 @@ auto PostOperatorCSV<solver_t>::PrintPortZ()
   for (const auto &[idx, data] : measurement_cache.wave_port_vi)
   {
     // Only write Z for ports that have voltage coordinates (columns in the table).
-    auto key = format("re_Z_w{}", idx);
-    if (!port_Z->table.has(key))
+    if (!port_Z->table.has(format("re_z_{}_{}", idx, m_ex_idx)))
     {
       continue;
     }
+
+    // Mode characteristic impedance Z_PV[i] (excitation-independent, written only
+    // once on the first excitation per frequency to avoid duplicate rows).
+    if (m_ex_idx == ex_idx_v_all.front() && port_Z->table.has(format("re_z_pv_{}", idx)))
+    {
+      port_Z->table[format("re_z_pv_{}", idx)] << data.Z_PV.real();
+      port_Z->table[format("im_z_pv_{}", idx)] << data.Z_PV.imag();
+    }
+
+    // Per-excitation total-field impedance Z[i][j] = (V · conj(V)) / (2 P_avg).
+    // GetPower returns the full Poynting integral ∫(E × H*)·n dS (without the
+    // 1/2 time-averaging factor), so Z = (V · conj(V)) / P. This is direction-
+    // specific (sign of P depends on whether the field at port i is incoming or
+    // outgoing): Re{Z[i][i]} > 0 at the driven port, but Re{Z[i][j]} for i ≠ j
+    // can be negative when port i is a passive receiver of power leaving the
+    // domain.
     if (std::abs(data.P) > 0.0)
     {
-      // Z = |V|^2 / |P| — power-voltage impedance magnitude.
-      // GetPower returns the full Poynting integral ∫ (E × H*) · n dS (without the
-      // 1/2 time-averaging factor), so Z_PV = |V|^2 / (2 * P_avg) = |V|^2 / |P|.
-      // Use |P| since the sign depends on the port normal convention.
-      double Z_real = std::norm(data.V) / std::abs(data.P);
-      auto Z = std::complex<double>(Z_real, 0.0);
+      auto Z = (data.V * std::conj(data.V)) / data.P;
       port_Z->table[format("re_z_{}_{}", idx, m_ex_idx)] << Z.real();
       port_Z->table[format("im_z_{}_{}", idx, m_ex_idx)] << Z.imag();
     }
@@ -1233,6 +1323,42 @@ auto PostOperatorCSV<solver_t>::PrintPortZ()
     }
   }
   port_Z->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperatorCSV<solver_t>::PrintFloquetPortS()
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  if (!floquet_port_S)
+  {
+    return;
+  }
+  using fmt::format;
+  CheckAppendIndex(floquet_port_S->table["idx"], row_idx_v, row_i);
+  for (const auto &[port_idx, S_map] : measurement_cache.floquet_port_s)
+  {
+    for (const auto &[key, S] : S_map)
+    {
+      auto [m, n, is_te] = key;
+      auto pol = measurement_cache.floquet_circular_output ? (is_te ? "RHC" : "LHC")
+                                                           : (is_te ? "TE" : "TM");
+      auto abs_key = format("abs_P{}_{}_{}_{}_exc{}", port_idx, m, n, pol, m_ex_idx);
+      auto arg_key = format("arg_P{}_{}_{}_{}_exc{}", port_idx, m, n, pol, m_ex_idx);
+      floquet_port_S->table[abs_key] << Measurement::Magnitude(S);
+      floquet_port_S->table[arg_key] << Measurement::Phase(S);
+    }
+  }
+  std::size_t target_rows = floquet_port_S->table["idx"].n_rows();
+  for (std::size_t ci = 0; ci < floquet_port_S->table.n_cols(); ci++)
+  {
+    auto &col = floquet_port_S->table[ci];
+    while (col.n_rows() < target_rows)
+    {
+      col << std::numeric_limits<double>::quiet_NaN();
+    }
+  }
+  floquet_port_S->WriteFullTableTrunc();
 }
 
 template <ProblemType solver_t>
@@ -1544,6 +1670,7 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   {
     InitializePortS(*post_op.fem_op);
     InitializePortZ(*post_op.fem_op);
+    InitializeFloquetPortS(*post_op.fem_op);
   }
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
   {
@@ -1623,6 +1750,7 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   {
     PrintPortS();
     PrintPortZ();
+    PrintFloquetPortS();
   }
   if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
   {

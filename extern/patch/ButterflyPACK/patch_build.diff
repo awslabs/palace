@@ -1,13 +1,72 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 0468258..dc27a91 100755
+index f2e884e..cb6d7f8 100755
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -419,7 +419,7 @@ add_subdirectory(SRC_DOUBLE)
+@@ -5,7 +5,7 @@
+ ######################################################################
+ 
+ # Required version
+-cmake_minimum_required(VERSION 3.3 FATAL_ERROR)
++cmake_minimum_required(VERSION 3.5...4.0 FATAL_ERROR)
+ 
+ # SET(CMAKE_INSTALL_PREFIX < install_path >)
+ 
+@@ -494,7 +494,7 @@ add_subdirectory(SRC_DOUBLE)
  add_subdirectory(SRC_DOUBLECOMPLEX)
  add_subdirectory(SRC_SINGLE)
  add_subdirectory(SRC_COMPLEX)
 -add_subdirectory(EXAMPLE)
 +# add_subdirectory(EXAMPLE)
+ add_subdirectory(CPP_INTERFACE)
  
- # Documentation
- if(enable_doc)
+ 
+diff --git a/CPP_INTERFACE/CPPWrapper.cpp b/CPP_INTERFACE/CPPWrapper.cpp
+index f019df4..40a1848 100755
+--- a/CPP_INTERFACE/CPPWrapper.cpp
++++ b/CPP_INTERFACE/CPPWrapper.cpp
+@@ -30,6 +30,11 @@
+  * \brief Templated CPP Interface to ButterflyPACK, modified from HODLRWrapper.cpp of STRUMPACK
+  */
+ #include <cassert>
++#include <climits>
++#include <unistd.h>
++#ifndef HOST_NAME_MAX
++#define HOST_NAME_MAX 256
++#endif
+ #include <complex>
+ #include <iomanip>
+ 
+diff --git a/SRC/BPACK_factor.f90 b/SRC/BPACK_factor.f90
+index 394e93e..f257c3c 100755
+--- a/SRC/BPACK_factor.f90
++++ b/SRC/BPACK_factor.f90
+@@ -671,12 +671,18 @@ endif
+ #endif
+ #endif
+                     do ij = 1, (num_blocks-kk)*(num_blocks-kk)
++                        t_start = 0d0
++#ifdef HAVE_OPENMP
+                         t_start = omp_get_wtime()
++#endif
+                         j = (ij - 1)/(num_blocks-kk) + 1
+                         i = mod(ij - 1, (num_blocks-kk)) + 1
+                         i = i + kk
+                         j = j + kk
++                        tid = 0
++#ifdef HAVE_OPENMP
+                         tid = omp_get_thread_num()
++#endif
+                         call g2l(i, num_blocks, nprow, 1, iproc1, myi1)
+                         call g2l(j, num_blocks, npcol, 1, jproc1, myj1)
+                         if(iproc1==myrow .and. jproc1==mycol)then
+@@ -693,7 +699,10 @@ endif
+                             call Hmat_block_delete(blocks_ll)
+                             call Hmat_block_delete(blocks_uu)
+                         endif
++                        t_stop = 0d0
++#ifdef HAVE_OPENMP
+                         t_stop  = omp_get_wtime()
++#endif
+                         t_total(tid+1) = t_total(tid+1) + (t_stop - t_start)
+                     enddo
+ #ifdef HAVE_TOPLEVEL_OPENMP

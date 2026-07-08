@@ -51,19 +51,19 @@ Generate a mesh for the coplanar waveguide with wave ports using Gmsh
 """
 function generate_cpw_wave_mesh(;
     filename::AbstractString,
-    refinement::Integer        = 0,
-    order::Integer             = 1,
+    refinement::Integer       = 0,
+    order::Integer            = 1,
     trace_width_μm::Real      = 30.0,
     gap_width_μm::Real        = 18.0,
     separation_width_μm::Real = 200.0,
     ground_width_μm::Real     = 800.0,
     substrate_height_μm::Real = 500.0,
     metal_height_μm::Real     = 0.0,
-    remove_metal_vol::Bool     = true,
+    remove_metal_vol::Bool    = true,
     length_μm::Real           = 4000.0,
-    coax_ports::Bool           = false,
-    verbose::Integer           = 5,
-    gui::Bool                  = false
+    coax_ports::Bool          = false,
+    verbose::Integer          = 5,
+    gui::Bool                 = false
 )
     @assert refinement >= 0
     @assert order > 0
@@ -470,18 +470,18 @@ Generate a mesh for the coplanar waveguide with lumped ports using Gmsh
 """
 function generate_cpw_lumped_mesh(;
     filename::AbstractString,
-    refinement::Integer        = 0,
-    order::Integer             = 1,
+    refinement::Integer       = 0,
+    order::Integer            = 1,
     trace_width_μm::Real      = 30.0,
     gap_width_μm::Real        = 18.0,
     separation_width_μm::Real = 200.0,
     ground_width_μm::Real     = 800.0,
     substrate_height_μm::Real = 500.0,
     metal_height_μm::Real     = 0.0,
-    remove_metal_vol::Bool     = true,
+    remove_metal_vol::Bool    = true,
     length_μm::Real           = 4000.0,
-    verbose::Integer           = 5,
-    gui::Bool                  = false
+    verbose::Integer          = 5,
+    gui::Bool                 = false
 )
     @assert refinement >= 0
     @assert order > 0

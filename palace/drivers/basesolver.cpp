@@ -60,6 +60,14 @@ void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int widt
         // Copy metadata file since it is needed by subsequent iterations.
         fs::copy(f, dest, fs::copy_options::overwrite_existing);
       }
+      else if (fname.size() >= 14 &&
+               fname.compare(fname.size() - 14, 14, "_resolved.json") == 0)
+      {
+        // The resolved configuration is a global record of the run, not per-iteration
+        // output. Leave it in the top-level output folder rather than moving it into an
+        // iteration subfolder and symlinking back.
+        continue;
+      }
       else
       {
         // Move to the iteration subfolder and leave a relative symlink behind
@@ -260,6 +268,10 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       }
       mesh.back()->Update();
     }
+
+    // Print statistics (element counts, size h, and shape regularity kappa) for the
+    // newly-refined mesh so the evolution of mesh quality under AMR is visible.
+    mesh::PrintMeshInfo(*mesh.back(), iodata, /*full=*/false);
 
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);

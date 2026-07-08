@@ -109,7 +109,7 @@ We added GPU compatibility by (see, [MFEM documentation](https://mfem.org/gpu-su
 
  1. Adding `v.UseDevice(true);`, which defines our intent to use `v` for computations on the device.
  2. Defining `auto d_v = v.Write();`, a pointer to area of memory on the device.
- 3. Using `forall` to execute the execute the function on the device.
+ 3. Using `forall` to execute the function on the device.
 
 When we add GPU code, we need to make sure that the file is compiled with the
 correct compiler. To do so, we add the file to `TARGET_SOURCES_DEVICE` in the
@@ -131,7 +131,7 @@ To add MPI compatibility, we changed the `expected` value to account for how
 many copies of the vector `v` there are.
 
 With these additions, this test case is a meaningful and interesting test in all
-the possible configurations, so we we added the `[Parallel]` and `[GPU]` tags.
+the possible configurations, so we added the `[Parallel]` and `[GPU]` tags.
 
 *Palace* uses three special tags for execution control:
 
@@ -198,7 +198,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 
 Suppose you want to compare the result of some operations with some pre-existing
 file `expected_vector.txt`. To do this, we first need to save the file in
-`test/unit/data`. Then, we can access it as
+`test/data`. Then, we can access it as
 
 ```cpp
 auto path_expected_vector = fs::path(PALACE_TEST_DATA_DIR) / "expected_vector.txt"

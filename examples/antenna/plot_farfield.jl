@@ -4,7 +4,7 @@
 """
 Generate polar plots on the E and B planes and 3D relative radiation pattern
 from the Palace farfield output data (`farfield-rE.csv`). Only plot the first
-frequency found in the file.
+frequency (or eigenmode) and the first excitation found in the file.
 
 The 3D relative radiation pattern plot depicts a 3D surface whose distance from
 the center is proportional to the strength of the electric field.
@@ -198,7 +198,7 @@ function polar_plots(
             rticks=-25:5:2,
             radius_at_origin=-25,
             rlimits=(-25, 2),
-            theta_0=-π / 2,
+            theta_0=(-π / 2),
             direction=-1,
             rgridcolor=:lightgray,
             thetagridcolor=:lightgray
@@ -226,7 +226,7 @@ function polar_plots(
             rticks=-25:5:2,
             radius_at_origin=-25,
             rlimits=(-25, 2),
-            theta_0=-π / 2,
+            theta_0=(-π / 2),
             direction=-1,
             rgridcolor=:lightgray,
             thetagridcolor=:lightgray
@@ -345,6 +345,16 @@ function main()
         println("Processing frequency: $(freq) GHz")
         label = "freq = $freq GHz"
         data = filter(row -> row["f"] == freq, df)
+    end
+
+    # Multi-excitation driven sweeps emit one row per (frequency, excitation, angle)
+    # triple. Pick the first excitation so that downstream extractors see a single
+    # value per (theta, phi).
+    if "exc" in names(data)
+        exc = first(data[:, "exc"])
+        println("Processing excitation: $exc")
+        label *= ", exc = $exc"
+        data = filter(row -> row["exc"] == exc, data)
     end
 
     polar_filename = "farfield_polar_$(model_type).png"

@@ -51,7 +51,7 @@ boundary condition, enforcing zero tangential magnetic field and thus zero surfa
 density.
 
 The excitation pulse is configured under
-[`config["Solver"]["Transient"]`](../config/solver.md#solver%5B%22Transient%22%5D). Here, we
+[`config["Solver"]["Transient"]`](../config/reference.md#config-solver-transient). Here, we
 use a modulated Gaussian pulse shape, with time dependence given by the expression
 
 ```math
@@ -89,6 +89,26 @@ Lastly, an animation of the signal propagation for the matched (left) and shorte
   <img src="../../assets/examples/coaxial-3.gif" width="90%" />
 </p>
 ```
+
+## Mixing lumped and wave ports
+
+The same coaxial geometry is also used to demonstrate frequency-domain S-parameter
+computation when one end is terminated with a *lumped* port and the other with a *wave*
+port in a single driven simulation
+([`coaxial_lumped_wave.json`](https://github.com/awslabs/palace/blob/main/examples/coaxial/coaxial_lumped_wave.json)).
+The configuration sets `"Type": "Driven"`, places a ``100\text{ }\Omega`` lumped port at
+``z = 0`` (Index ``1``, mismatched against the line's ``\sim 50\text{ }\Omega``
+characteristic impedance to give nontrivial reflection) and a wave port at ``z = L = 40 \text{ mm}`` (Index ``2``). The wave port uses a `"VoltagePath"` from the inner conductor
+(signal) to the outer conductor (ground) at the port face, matching the `+R` direction
+of the lumped port. This serves two purposes: it enables ``Z_{PV}`` postprocessing
+(written to `port-Z.csv`) and it fixes the wave-port mode polarity so that cross-type
+S-parameters (``S_{12}``, ``S_{21}``) have consistent signs with the lumped-port
+reference. See the
+[wave port configuration documentation](../config/reference.md#config-boundaries-waveport)
+for details on `"VoltagePath"`.
+
+|S_{22}| \approx -9.5\text{ dB}``, with``S_{21} = S_{12}`` to within the level of
+attenuation set by the dielectric loss.
 
 ## References
 

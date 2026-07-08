@@ -1,14 +1,20 @@
 name: Containers
 
 # Build OCI/SIF containers for:
-# - sapphirerapids
-# - neoverse_v1
+# - sapphirerapids   (x64,       c7i)        — every publish event
+# - neoverse_v1      (arm64,     c7g)        — every publish event
+# - neoverse_v2      (arm64-8g,  c8g)        — release tags only
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+    tags: ['v*']
   pull_request:
+    # 'labeled' so adding the `push-containers` label triggers a prototype
+    # deploy; the rest are the usual PR-build triggers.
+    types: [opened, reopened, synchronize, labeled]
+  # Manual build-only re-run (e.g. after a transient runner failure). Never
+  # publishes — prototype deploys go through the `push-containers` PR label.
   workflow_dispatch:
 
 permissions:
@@ -51,7 +57,26 @@ jobs:
         arch: [arm64, x64]
     runs-on: [self-hosted, '${{ matrix.arch }}']
     steps:
+      # Release tags bypass the paths-filter: a tag is usually cut on a commit
+      # already on main, so the diff is empty and the filter would skip — which
+      # would silently drop the versioned ECR/S3 publish. Tags must always build.
       - uses: actions/checkout@v6
-        if: needs.filter.outputs.test == 'true'
+        if: needs.filter.outputs.test == 'true' || startsWith(github.ref, 'refs/tags/v')
+        with:
+          # Fetch tags so the release channel can derive the version from the
+          # git ref (and `git describe` works if ever needed).
+          fetch-depth: 0
       - uses: ./.github/actions/build-container
-        if: needs.filter.outputs.test == 'true'
+        if: needs.filter.outputs.test == 'true' || startsWith(github.ref, 'refs/tags/v')
+
+  # neoverse_v2 (Graviton4 / c8g) is a release-only performance build
+  build-containers-neoverse-v2:
+    needs: filter
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: [self-hosted, arm64-8g]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Fetch tags so the release channel can derive the version from the ref.
+          fetch-depth: 0
+      - uses: ./.github/actions/build-container

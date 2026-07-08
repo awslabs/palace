@@ -129,6 +129,11 @@
     ],
     "Postprocessing":
     {
+      "FarField":
+      {
+        "Attributes": [4],
+        "ThetaPhis": [[0.0, 0.0], [45.0, 0.0], [90.0, 0.0], [45.0, 90.0]]
+      },
       "SurfaceFlux":
       [
         {

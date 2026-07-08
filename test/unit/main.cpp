@@ -8,9 +8,14 @@
 #include "fem/libceed/ceed.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/slepc.hpp"
+#include "regression_helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/device.hpp"
 #include "utils/omp.hpp"
+
+#if defined(MFEM_USE_STRUMPACK)
+#include <StrumpackConfig.hpp>
+#endif
 
 using namespace palace;
 
@@ -23,7 +28,14 @@ bool benchmark_no_mfem_pa = false;
 
 int main(int argc, char *argv[])
 {
-  // Initialize MPI.
+  // Initialize MPI. Regression cases run palace::Run in-process, so request the
+  // same MPI thread level as the standalone driver -- STRUMPACK with PtScotch /
+  // SLATE-ScaLAPACK calls MPI from OpenMP threads and segfaults below
+  // MPI_THREAD_MULTIPLE.
+#if defined(MFEM_USE_STRUMPACK) && \
+    (defined(STRUMPACK_USE_PTSCOTCH) || defined(STRUMPACK_USE_SLATE_SCALAPACK))
+  Mpi::default_thread_required = MPI_THREAD_MULTIPLE;
+#endif
   Mpi::Init(argc, argv);
 
   // See https://github.com/catchorg/Catch2/blob/devel/docs/own-main.md.
@@ -33,12 +45,31 @@ int main(int argc, char *argv[])
   std::string device_str("cpu");          // MFEM device
   std::string ceed_backend("/cpu/self");  // libCEED backend
 
+  // Regression-suite overrides. The input fixtures and reference CSVs are
+  // normal test data rooted at PALACE_TEST_DATA_DIR; only the staging root
+  // and solver choices are configurable at run time. Empty run dir = use the
+  // temporary-directory default.
+  std::string regression_run_dir;               // --regression-run-dir
+  std::string palace_linear_solver{"Default"};  // --palace-linear-solver
+  std::string palace_eigensolver{"Default"};    // --palace-eigensolver
+
   // Build a new parser on top of Catch2's.
   using namespace Catch::Clara;
   auto cli = session.cli() |
              Opt(device_str, "device")["--device"]("MFEM device (default: \"cpu\")") |
              Opt(ceed_backend,
                  "backend")["--backend"]("libCEED backend (default: \"/cpu/self\")") |
+             Opt(regression_run_dir, "path")["--regression-run-dir"](
+                 "Staging root under which each [Regression] case gets its own "
+                 "subdirectory (inputs symlinked from examples/, outputs written "
+                 "there). Default: std::filesystem::temp_directory_path() / "
+                 "\"palace-regression\"") |
+             Opt(palace_linear_solver, "type")["--palace-linear-solver"](
+                 "Override Solver.Linear.Type for [Regression] cases (e.g. "
+                 "SuperLU, STRUMPACK)") |
+             Opt(palace_eigensolver, "type")["--palace-eigensolver"](
+                 "Override Solver.Eigenmode.Type for [Regression] cases (e.g. "
+                 "SLEPc, ARPACK)") |
              Opt(benchmark_ref_levels, "levels")["--benchmark-ref-levels"](
                  "Levels of uniform mesh refinement for benchmarks (default: 0)") |
              Opt(benchmark_order, "order")["--benchmark-order"](
@@ -98,7 +129,17 @@ int main(int argc, char *argv[])
   // of MPI processes we detect.
 
   auto cfg = session.configData();
-  // Check if device is GPU capable, if yes, add the [GPU] tag.
+
+  // Whether the user passed an explicit selector (name, wildcard, or tag
+  // spec). Catch2 intersects multiple specs, so the rank/device tags appended
+  // below refine the user's selection rather than widen it. A bare invocation
+  // additionally excludes the slow [Regression] and [Long] cases (which have
+  // their own entry points); an explicit selector can still reach them.
+  const bool user_selected_tests = !cfg.testsOrTags.empty();
+
+  // Restrict to the device/rank-appropriate cases. These intersect with any
+  // user selector (e.g. "[vector]" on one rank runs [vector] AND [Serial],
+  // dropping [Parallel]-only cases).
   if (device.Allows(mfem::Backend::CUDA_MASK | mfem::Backend::HIP_MASK))
   {
     cfg.testsOrTags.emplace_back("[GPU]");
@@ -111,8 +152,6 @@ int main(int argc, char *argv[])
           device.Allows(mfem::Backend::CUDA_MASK) ? "/gpu/cuda/magma" : "/gpu/hip/magma";
     }
   }
-  // Check if we are running with more than 1 MPI process, if yes, add the
-  // [Parallel] tag, if not add the [Serial] tag.
   if (Mpi::Size(Mpi::World()) > 1)
   {
     cfg.testsOrTags.emplace_back("[Parallel]");
@@ -121,7 +160,19 @@ int main(int argc, char *argv[])
   {
     cfg.testsOrTags.emplace_back("[Serial]");
   }
+  if (!user_selected_tests)
+  {
+    cfg.testsOrTags.emplace_back("~[Regression]");
+    cfg.testsOrTags.emplace_back("~[Long]");
+  }
   session.useConfigData(cfg);
+
+  // Forward regression-harness overrides into the helpers. Solver
+  // strings default to "Default"; the run dir uses the temporary-directory
+  // default when empty.
+  palace::test::SetRegressionRunDirOverride(regression_run_dir);
+  palace::test::SetSolverOverride(palace_linear_solver);
+  palace::test::SetEigenSolverOverride(palace_eigensolver);
 
   // Only print from the root process.
   // TODO: Print errors from other processes as well.

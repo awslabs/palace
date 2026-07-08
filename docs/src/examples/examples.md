@@ -12,9 +12,10 @@ the [`examples/`](https://github.com/awslabs/palace/blob/main/examples) director
 source code. The following sections provide complete tutorials for each of the available
 example applications.
 
-These examples are also used by *Palace*'s regression testing suite. See the
-[`test/examples/`](https://github.com/awslabs/palace/blob/main/test/examples/) directory for
-more details.
+The regression testing suite keeps its own fixture namespace and reference data under
+[`test/data/regression/`](https://github.com/awslabs/palace/blob/main/test/data/regression/).
+Shared example inputs may be symlinked there in the source tree to avoid duplication, but
+installed test data is self-contained and does not depend on source-tree examples.
 
 ## Contents
 
@@ -25,3 +26,4 @@ more details.
   - [Signal Propagation in a Coaxial Cable](coaxial.md)
   - [Crosstalk Between Coplanar Waveguides](cpw.md)
   - [2D Coplanar Waveguide Mode Analysis](cpw2d.md)
+  - [Floquet Ports for a Dielectric Grating](dielectric_grating.md)
