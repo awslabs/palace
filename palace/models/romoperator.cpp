@@ -1102,15 +1102,29 @@ int RomOperator::AddElectrostaticModesForSynthesis(const IoData &iodata,
   const mfem::ParMesh &mesh = h1_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
 
-  // Dirichlet attribute set: PEC ("Ground") plus every terminal (the per-solve excited
-  // terminal is distinguished only by its boundary value). This mirrors
-  // LaplaceOperator::SetUpBoundaryProperties.
+  // Dirichlet attribute set: PEC ("Ground"), every surface-impedance boundary, and every
+  // terminal (the per-solve excited terminal is distinguished only by its boundary
+  // value). Impedance surfaces model conductors with finite reactance in the frequency
+  // domain (e.g. kinetic-inductance films) — at DC they are perfect conductors and are
+  // grounded here automatically, since listing them under "Ground"/"PEC" would wrongly
+  // make them PEC in the driven solve. An impedance surface listed as a Terminal is
+  // excited like any other terminal instead.
   mfem::Array<int> dbc_attr;
   for (int attr : iodata.boundaries.pec.attributes)
   {
     if (attr > 0 && attr <= bdr_attr_max)
     {
       dbc_attr.Append(attr);
+    }
+  }
+  for (const auto &data : iodata.boundaries.impedance)
+  {
+    for (int attr : data.attributes)
+    {
+      if (attr > 0 && attr <= bdr_attr_max)
+      {
+        dbc_attr.Append(attr);
+      }
     }
   }
   for (const auto &[idx, data] : terminals)
