@@ -271,7 +271,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       max_size_per_excitation, port_excitations.Size(),
       iodata.solver.driven.adaptive_circuit_synthesis);
 
-  // Add ports to PROM if we do synthesis.
+  // Add ports to PROM if we do synthesis, followed by the optional enrichment solves:
+  // electrostatic solutions per Terminal and eigenmodes near the Solver/Eigenmode target.
+  // Both are added before the offline sampling loop so the RHS1r projection bookkeeping
+  // stays consistent.
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
     prom_op.AddLumpedPortModesForSynthesis();
@@ -281,6 +284,14 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       // The choice rescales the basis vector but does not change correctness.
       const double omega_ref = 0.5 * (omega_sample.front() + omega_sample.back());
       prom_op.AddWavePortModesForSynthesis(omega_ref);
+    }
+    if (iodata.solver.driven.adaptive_circuit_synthesis_electrostatic)
+    {
+      prom_op.AddElectrostaticModesForSynthesis(iodata, iodata.problem.output);
+    }
+    if (iodata.solver.driven.adaptive_circuit_synthesis_eigenmodes)
+    {
+      prom_op.AddEigenmodesForSynthesis(iodata);
     }
   }
 
