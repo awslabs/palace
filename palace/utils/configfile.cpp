@@ -1115,6 +1115,12 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   adaptive_circuit_synthesis_domain_orthog =
       driven.value("AdaptiveCircuitSynthesisDomainOrthogonalization",
                    adaptive_circuit_synthesis_domain_orthog);
+  adaptive_circuit_synthesis_eigenmodes =
+      driven.value("AdaptiveCircuitSynthesisEigenmodes",
+                   adaptive_circuit_synthesis_eigenmodes);
+  adaptive_circuit_synthesis_electrostatic =
+      driven.value("AdaptiveCircuitSynthesisElectrostatic",
+                   adaptive_circuit_synthesis_electrostatic);
 
   MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),
               "\"Restart\" is incompatible with adaptive frequency sweep!");

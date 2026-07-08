@@ -509,6 +509,28 @@ public:
   // orthogonalisation tolerance).
   void AddWavePortModesForSynthesis(double omega_ref);
 
+  // Enrich the PROM basis with eigenmodes of the full K/C/M system near the given target
+  // (labels "eigen_<k>"). A shift-and-invert eigensolve with the same operator dispatch as
+  // the eigenmode solver driver (quadratic pencil when a damping matrix is present, linear
+  // otherwise; no frequency-nonlinear A2 terms — circuit synthesis forbids them). This
+  // guarantees the resonant subspace near the target is represented in the basis
+  // independent of how strongly each mode couples to the driven ports. Parameters come
+  // from config["Solver"]["Eigenmode"]. Returns the number of converged eigenmodes added.
+  // Call after AddLumpedPortModesForSynthesis and before the offline sampling loop, so
+  // the leading port-mode block and the RHS1r projection bookkeeping stay consistent.
+  int AddEigenmodesForSynthesis(const IoData &iodata);
+
+  // Enrich the PROM basis with electrostatic (DC) solutions (labels
+  // "electrostatic_<idx>"): one Laplace solve ∇·(ε∇φ) = 0 on the H1 space per entry of
+  // config["Boundaries"]["Terminal"], with that terminal at unit voltage and all
+  // other terminals and PEC ("Ground") conductors at zero, injecting E = -∇φ into the
+  // basis through the discrete gradient interpolation. Captures the quasistatic charging
+  // patterns of conductors (e.g. floating islands) that the port-driven sweep excites
+  // only weakly. Also writes the terminal capacitance matrix (terminal-C.csv, computed
+  // from the ε-weighted field energies) to post_dir on the root process. Returns the
+  // number of solutions added. Same ordering contract as the other enrichment solves.
+  int AddElectrostaticModesForSynthesis(const IoData &iodata, const fs::path &post_dir);
+
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
   // "node_label". This will be printed in the header of the csv files when printing PROM
   // matrices. It is needed to distinguish port and solution field configuration as well as

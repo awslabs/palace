@@ -2513,6 +2513,18 @@
           "description": "Weight matrix type for domain orthogonalization when building synthesized circuit matrices.",
           "default": "Energy",
           "x-palace-advanced": true
+        },
+        "AdaptiveCircuitSynthesisEigenmodes": {
+          "type": "boolean",
+          "description": "Enrich the circuit-synthesis reduced-order basis with eigenmodes of the full system, computed by a shift-and-invert eigensolve before the adaptive offline sweep. The eigensolver parameters (`\"Target\"`, `\"N\"`, `\"Tol\"`, backend) are taken from [`config[\"Solver\"][\"Eigenmode\"]`](#config-solver-eigenmode), which must be present with a positive `\"Target\"`. This guarantees the in-band resonant subspace is represented in the basis independent of how strongly each mode couples to the driven ports. The eigenvectors appear as columns labeled `eigen_<k>` in the exported circuit matrices. Requires `\"AdaptiveCircuitSynthesis\"`. Default `false` (opt-in): the Eigenmode block has historically been ignored for driven problems.",
+          "default": false,
+          "x-palace-advanced": true
+        },
+        "AdaptiveCircuitSynthesisElectrostatic": {
+          "type": "boolean",
+          "description": "Enrich the circuit-synthesis reduced-order basis with electrostatic (DC) solutions: one Laplace solve per entry of [`config[\"Boundaries\"][\"Terminal\"]`](#config-boundaries-terminal) with that terminal at unit voltage and all other terminals and `\"Ground\"`/`\"PEC\"` conductors at zero volts, injecting the field ``E = -\\nabla V`` into the basis (columns labeled `electrostatic_<index>`). This captures the quasistatic charging patterns of conductors (for example floating islands) that the port-driven sweep excites only weakly. At DC every conductor should appear in `\"Ground\"`/`\"PEC\"` or a `\"Terminal\"` (note that conductors modeled with `\"Impedance\"` boundaries currently cannot be grounded at DC without also making them PEC); unlisted surfaces are treated as dielectric. The DC solves also write the terminal capacitance matrix (`terminal-C.csv`). Requires `\"AdaptiveCircuitSynthesis\"` and at least one `\"Terminal\"`. Default `false`.",
+          "default": false,
+          "x-palace-advanced": true
         }
       }
     },

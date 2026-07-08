@@ -14,10 +14,19 @@
 #include <utility>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
+#include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
+#include "linalg/amg.hpp"
+#include "linalg/arpack.hpp"
+#include "linalg/divfree.hpp"
+#include "linalg/eps.hpp"
+#include "linalg/gmg.hpp"
+#include "linalg/iterative.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/orthog.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/slepc.hpp"
+#include "linalg/solver.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
@@ -666,6 +675,18 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     // per included port.
     max_prom_size += 2 * NumSynthesisWavePortModes();
 
+    // Each enrichment eigenmode contributes up to two basis vectors (complex eigenvector
+    // real and imaginary parts). Each electrostatic terminal contributes one real basis
+    // vector.
+    if (iodata.solver.driven.adaptive_circuit_synthesis_eigenmodes)
+    {
+      max_prom_size += 2 * iodata.solver.eigenmode.n;
+    }
+    if (iodata.solver.driven.adaptive_circuit_synthesis_electrostatic)
+    {
+      max_prom_size += iodata.boundaries.terminal.size();
+    }
+
     // Build inner-product weight matrix.
     weight_op_W = HybridBulkBoundaryOperator{
         space_op, iodata.solver.driven.adaptive_circuit_synthesis_domain_orthog};
@@ -871,6 +892,387 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
     space_op.GetWavePortFieldVectorPrimaryEt(port_idx, omega_ref, vec);
     UpdatePROM(vec, fmt::format("waveport_{:d}", port_idx));
   }
+}
+
+int RomOperator::AddEigenmodesForSynthesis(const IoData &iodata)
+{
+  // Mirror the eigenmode solver driver's setup (drivers/eigensolver.cpp) with the same
+  // operator dispatch, minus the frequency-nonlinear A2 machinery: circuit synthesis
+  // forbids wave ports, surface conductivity, and second-order farfield boundaries, so
+  // the pencil is exactly quadratic (K + λC + λ²M with λ = iω) or linear (K u = ω²M u)
+  // when there is no damping.
+  const auto &eig = iodata.solver.eigenmode;
+  const double target = eig.target;
+  MFEM_VERIFY(target > 0.0, "Eigenmode enrichment requires a positive target frequency!");
+  {
+    const double f_target =
+        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) / (2 * M_PI);
+    Mpi::Print("\nComputing {:d} eigenmodes for PROM enrichment (σ = {:.3e} GHz)\n", eig.n,
+               f_target);
+  }
+
+  // Configure the eigenvalue solver backend.
+  std::unique_ptr<EigenvalueSolver> eigen;
+  const EigenSolverBackend type = eig.type;
+#if !defined(PALACE_WITH_ARPACK) && !defined(PALACE_WITH_SLEPC)
+#error "Eigenmode PROM enrichment requires building with ARPACK or SLEPc!"
+#endif
+  if (type == EigenSolverBackend::ARPACK)
+  {
+#if defined(PALACE_WITH_ARPACK)
+    if (C)
+    {
+      eigen = std::make_unique<arpack::ArpackPEPSolver>(space_op.GetComm(),
+                                                        iodata.problem.verbose);
+    }
+    else
+    {
+      eigen = std::make_unique<arpack::ArpackEPSSolver>(space_op.GetComm(),
+                                                        iodata.problem.verbose);
+    }
+#endif
+  }
+  else  // EigenSolverBackend::SLEPC
+  {
+#if defined(PALACE_WITH_SLEPC)
+    std::unique_ptr<slepc::SlepcEigenvalueSolver> slepc;
+    if (C)
+    {
+      if (!eig.pep_linear)
+      {
+        slepc = std::make_unique<slepc::SlepcPEPSolver>(space_op.GetComm(),
+                                                        iodata.problem.verbose);
+        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::TOAR);
+      }
+      else
+      {
+        slepc = std::make_unique<slepc::SlepcPEPLinearSolver>(space_op.GetComm(),
+                                                              iodata.problem.verbose);
+        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+      }
+    }
+    else
+    {
+      slepc = std::make_unique<slepc::SlepcEPSSolver>(space_op.GetComm(),
+                                                      iodata.problem.verbose);
+      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+    }
+    slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
+    slepc->SetOrthogonalization(iodata.solver.linear.gs_orthog == Orthogonalization::MGS,
+                                iodata.solver.linear.gs_orthog == Orthogonalization::CGS2);
+    eigen = std::move(slepc);
+#endif
+  }
+  MFEM_VERIFY(eigen, "Eigenmode PROM enrichment failed to configure an eigenvalue solver "
+                     "for the requested backend!");
+  EigenvalueSolver::ScaleType scale =
+      eig.scale ? EigenvalueSolver::ScaleType::NORM_2 : EigenvalueSolver::ScaleType::NONE;
+  if (C)
+  {
+    eigen->SetOperators(*K, *C, *M, scale);
+  }
+  else
+  {
+    eigen->SetOperators(*K, *M, scale);
+  }
+  eigen->SetNumModes(eig.n, eig.max_size);
+  eigen->SetTol(eig.tol);
+  eigen->SetMaxIter(eig.max_it);
+
+  // Divergence-free projection to solve orthogonal to the nullspace of the stiffness
+  // matrix, as in the eigenmode driver.
+  std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
+  if (iodata.solver.linear.divfree_max_it > 0 &&
+      !space_op.GetMaterialOp().HasWaveVector() &&
+      !space_op.GetMaterialOp().HasLondonDepth())
+  {
+    constexpr int divfree_verbose = 0;
+    divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
+        space_op.GetMaterialOp(), space_op.GetNDSpace(), space_op.GetH1Spaces(),
+        space_op.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,
+        iodata.solver.linear.divfree_max_it, divfree_verbose);
+    eigen->SetDivFreeProjector(*divfree);
+  }
+
+  // Initial vector.
+  if (eig.init_v0)
+  {
+    ComplexVector v0;
+    if (eig.init_v0_const)
+    {
+      space_op.GetConstantInitialVector(v0);
+    }
+    else
+    {
+      space_op.GetRandomInitialVector(v0);
+    }
+    if (divfree)
+    {
+      divfree->Mult(v0);
+    }
+    eigen->SetInitialSpace(v0);
+  }
+
+  // Shift-and-invert about the target, matching the eigenmode driver's conventions for
+  // the quadratic (λ = iω) and linear (μ = ω²) pencils.
+  if (C)
+  {
+    eigen->SetShiftInvert(1i * target);
+    if (type == EigenSolverBackend::ARPACK)
+    {
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_IMAGINARY);
+    }
+    else
+    {
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
+    }
+  }
+  else
+  {
+    eigen->SetShiftInvert(target * target);
+    if (type == EigenSolverBackend::ARPACK)
+    {
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
+    }
+    else
+    {
+      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_REAL);
+    }
+  }
+
+  // Linear solver for the spectral transformation, assembled once at the fixed shift.
+  // Reuse the shared PROM solver: every subsequent SolveHDM resets the operators.
+  auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * target,
+                                    std::complex<double>(-target * target, 0.0), K.get(),
+                                    C.get(), M.get());
+  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
+      1.0 + 0.0i, 1i * target, -target * target + 0.0i, target);
+  ksp->SetOperators(*A, *P);
+  eigen->SetLinearSolver(*ksp);
+
+  // Solve and add the converged eigenvectors to the basis. The eigenvectors are complex in
+  // general; UpdatePROM splits real and imaginary parts into separate basis columns and
+  // renormalizes, so the eigensolver's own scaling is irrelevant.
+  int num_conv = eigen->Solve();
+  const int num_add = std::min(num_conv, eig.n);
+  Mpi::Print(" Found {:d} converged eigenvalue{}, adding {:d} to the PROM basis\n",
+             num_conv, (num_conv == 1) ? "" : "s", num_add);
+  ComplexVector u;
+  u.SetSize(space_op.GetNDSpace().GetTrueVSize());
+  u.UseDevice(true);
+  for (int i = 0; i < num_add; i++)
+  {
+    std::complex<double> omega = eigen->GetEigenvalue(i);
+    if (!C)
+    {
+      omega = std::sqrt(omega);  // Linear EVP eigenvalue is μ = ω²
+    }
+    else
+    {
+      omega /= 1i;  // Quadratic EVP eigenvalue is λ = iω
+    }
+    {
+      const double f =
+          iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real()) /
+          (2 * M_PI);
+      Mpi::Print(" Eigenmode {:d}: f = {:.6e} GHz\n", i + 1, f);
+    }
+    eigen->GetEigenvector(i, u);
+    UpdatePROM(u, fmt::format("eigen_{:d}", i + 1));
+  }
+  return num_add;
+}
+
+int RomOperator::AddElectrostaticModesForSynthesis(const IoData &iodata,
+                                                   const fs::path &post_dir)
+{
+  // Solve the electrostatic problem ∇·(ε∇φ) = 0 on SpaceOperator's own H1 hierarchy
+  // (identical construction to LaplaceOperator's, without duplicating the FE spaces), one
+  // solve per terminal with that terminal at 1 V and all other conductors (PEC/"Ground"
+  // and remaining terminals) at 0 V, then inject E = -∇φ into the PROM basis via the
+  // discrete gradient interpolation.
+  const auto &terminals = iodata.boundaries.terminal;
+  MFEM_VERIFY(!terminals.empty(),
+              "Electrostatic PROM enrichment requires at least one Terminal boundary!");
+  Mpi::Print("\nComputing {:d} electrostatic solutions for PROM enrichment\n",
+             terminals.size());
+
+  auto &h1_fespaces = space_op.GetH1Spaces();
+  auto &h1_fespace = h1_fespaces.GetFinestFESpace();
+  const mfem::ParMesh &mesh = h1_fespace.GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+
+  // Dirichlet attribute set: PEC ("Ground") plus every terminal (the per-solve excited
+  // terminal is distinguished only by its boundary value). This mirrors
+  // LaplaceOperator::SetUpBoundaryProperties.
+  mfem::Array<int> dbc_attr;
+  for (int attr : iodata.boundaries.pec.attributes)
+  {
+    if (attr > 0 && attr <= bdr_attr_max)
+    {
+      dbc_attr.Append(attr);
+    }
+  }
+  for (const auto &[idx, data] : terminals)
+  {
+    for (int attr : data.attributes)
+    {
+      MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
+                  fmt::format("Terminal boundary attribute {:d} not found in mesh "
+                              "boundary attributes!",
+                              attr));
+      dbc_attr.Append(attr);
+    }
+  }
+  dbc_attr.Sort();
+  dbc_attr.Unique();
+  MFEM_VERIFY(dbc_attr.Size() > 0,
+              "Electrostatic PROM enrichment is ill-posed without any Dirichlet "
+              "boundaries!");
+  mfem::Array<int> dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_attr);
+  std::vector<mfem::Array<int>> dbc_tdof_lists(h1_fespaces.GetNumLevels());
+  for (std::size_t l = 0; l < h1_fespaces.GetNumLevels(); l++)
+  {
+    h1_fespaces.GetFESpaceAtLevel(l).Get().GetEssentialTrueDofs(dbc_marker,
+                                                                dbc_tdof_lists[l]);
+  }
+
+  // Assemble the ε-weighted Laplace stiffness over the multigrid hierarchy, with the
+  // Dirichlet dofs eliminated (DIAG_ONE). Same pattern as the divergence-free projector's
+  // H1 operator.
+  MaterialPropertyCoefficient epsilon_func(
+      space_op.GetMaterialOp().GetAttributeToMaterial(),
+      space_op.GetMaterialOp().GetPermittivityReal());
+  std::unique_ptr<Operator> K_dc;
+  const ParOperator *K_dc_finest = nullptr;
+  {
+    constexpr bool skip_zeros = false;
+    BilinearForm k(h1_fespace);
+    k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
+    auto k_vec = k.Assemble(h1_fespaces, skip_zeros);
+    auto K_mg = std::make_unique<MultigridOperator>(h1_fespaces.GetNumLevels());
+    for (std::size_t l = 0; l < h1_fespaces.GetNumLevels(); l++)
+    {
+      const auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
+      auto K_l = std::make_unique<ParOperator>(std::move(k_vec[l]), h1_fespace_l);
+      K_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+      if (l == h1_fespaces.GetNumLevels() - 1)
+      {
+        K_dc_finest = K_l.get();
+      }
+      K_mg->AddOperator(std::move(K_l));
+    }
+    K_dc = std::move(K_mg);
+  }
+
+  // Real SPD solver: AMG-preconditioned CG (geometric multigrid over the hierarchy when
+  // available), as in the divergence-free projector.
+  std::unique_ptr<KspSolver> ksp_dc;
+  {
+    auto amg = std::make_unique<MfemWrapperSolver<Operator>>(
+        std::make_unique<BoomerAmgSolver>(1, 1, true, 0));
+    amg->SetDropSmallEntries(false);
+    std::unique_ptr<Solver<Operator>> pc;
+    if (h1_fespaces.GetNumLevels() > 1)
+    {
+      const int mg_smooth_order = std::max(h1_fespace.GetMaxElementOrder(), 2);
+      pc = std::make_unique<GeometricMultigridSolver<Operator>>(
+          h1_fespace.GetComm(), std::move(amg), h1_fespaces.GetProlongationOperators(),
+          nullptr, 1, 1, mg_smooth_order, 1.0, 0.0, true);
+    }
+    else
+    {
+      pc = std::move(amg);
+    }
+    auto pcg = std::make_unique<CgSolver<Operator>>(h1_fespace.GetComm(), 0);
+    pcg->SetInitialGuess(false);
+    pcg->SetRelTol(iodata.solver.linear.tol);
+    pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
+    pcg->SetMaxIter(iodata.solver.linear.max_it);
+    ksp_dc = std::make_unique<KspSolver>(std::move(pcg), std::move(pc));
+    ksp_dc->SetOperators(*K_dc, *K_dc);
+  }
+
+  // Per-terminal solves. The solutions are kept for the capacitance postprocessing below
+  // (energy inner products with the un-eliminated stiffness).
+  const auto &Grad = space_op.GetGradMatrix();
+  std::vector<Vector> phi;
+  std::vector<int> phi_idx;
+  Vector X(h1_fespace.GetTrueVSize()), RHS(h1_fespace.GetTrueVSize());
+  X.UseDevice(true);
+  RHS.UseDevice(true);
+  ComplexVector u;
+  u.SetSize(space_op.GetNDSpace().GetTrueVSize());
+  u.UseDevice(true);
+  for (const auto &[idx, data] : terminals)
+  {
+    // Dirichlet lift: φ = 1 on this terminal, 0 elsewhere, then eliminate to get the RHS.
+    // Mirrors LaplaceOperator::GetExcitationVector.
+    mfem::ParGridFunction x(&h1_fespace.Get());
+    x = 0.0;
+    mfem::Array<int> source_marker = mesh::AttrToMarker(bdr_attr_max, data.attributes);
+    mfem::ConstantCoefficient one(1.0);
+    x.ProjectBdrCoefficient(one, source_marker);
+    X = 0.0;
+    RHS = 0.0;
+    x.ParallelProject(X);
+    K_dc_finest->EliminateRHS(X, RHS);
+    ksp_dc->Mult(RHS, X);
+
+    // Inject E = -∇φ into the PROM basis (real vector).
+    u = 0.0;
+    Grad.AddMult(X, u.Real(), -1.0);
+    UpdatePROM(u, fmt::format("electrostatic_{:d}", idx));
+
+    phi.emplace_back(X);  // Copy for capacitance postprocessing
+    phi_idx.push_back(idx);
+  }
+
+  // Terminal capacitance matrix from field-energy inner products, C(i,j) = φⱼᵀ K φᵢ with
+  // unit voltages (same identity as ElectrostaticSolver::PostprocessTerminals, using the
+  // stiffness in place of the E-field mass matrix since φᵀK φ = ∫ ε |∇φ|² dV). The
+  // eliminated Dirichlet rows contribute (1·δᵢⱼ) per constrained dof through the DIAG_ONE
+  // policy, so use the energy computed from E = -∇φ with the ε-weighted ND inner product
+  // instead: Cᵢⱼ = ∫ ε Eᵢ·Eⱼ dV. Assemble the diagonal-free ε mass action via the
+  // un-eliminated finest-level operator applied to the lifted solutions.
+  {
+    // K φ with BCs eliminated gives the wrong energy on constrained dofs; recompute the
+    // bilinear form action without elimination.
+    constexpr bool skip_zeros = false;
+    BilinearForm k(h1_fespace);
+    k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
+    auto K_ne = std::make_unique<ParOperator>(k.PartialAssemble(), h1_fespace);
+    const auto n_term = static_cast<int>(phi.size());
+    mfem::DenseMatrix C(n_term);
+    Vector Kphi(h1_fespace.GetTrueVSize());
+    Kphi.UseDevice(true);
+    for (int i = 0; i < n_term; i++)
+    {
+      K_ne->Mult(phi[i], Kphi);
+      for (int j = i; j < n_term; j++)
+      {
+        C(i, j) = C(j, i) = linalg::Dot<Vector>(space_op.GetComm(), phi[j], Kphi);
+      }
+    }
+    if (Mpi::Root(space_op.GetComm()))
+    {
+      auto unit_farad = iodata.units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+      auto out = TableWithCSVFile(post_dir / "terminal-C.csv");
+      out.table.col_options.float_precision = 12;
+      for (int j = 0; j < n_term; j++)
+      {
+        out.table.insert(fmt::format("t{:d}", phi_idx[j]),
+                         fmt::format("C[{:d}] (F)", phi_idx[j]));
+        auto &col = out.table[j];
+        for (int i = 0; i < n_term; i++)
+        {
+          col << C(i, j) * unit_farad;
+        }
+      }
+      out.WriteFullTableTrunc();
+    }
+  }
+  return static_cast<int>(phi.size());
 }
 
 void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label)
