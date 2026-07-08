@@ -35,6 +35,7 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
 
   if (HasExcitation())
   {
+    if (has_circ)
     {
       MFEM_VERIFY(data.R >= 0.0,
                   "Excited lumped port must have non-negative resistance!");
