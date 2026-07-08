@@ -352,6 +352,9 @@ protected:
     double rel_err_polynomial = 0.0;  // residual of α-only fit on dense grid
     double rel_err_augmented = 0.0;   // residual after AAA augmentation (Augmented only)
   };
+  // Number of lumped ports flagged for a quasistatic anchor solve (synthesis_anchor).
+  // Used for basis storage reservation alongside NumSynthesisPortModes.
+  std::size_t NumSynthesisAnchorPorts() const;
 
   // Helper function that normalizes PROM matrices so that they correspond to proper
   // admittance matrices on the ports. Also does unit conversion to physical (input) units.
@@ -530,6 +533,14 @@ public:
   // from the ε-weighted field energies) to post_dir on the root process. Returns the
   // number of solutions added. Same ordering contract as the other enrichment solves.
   int AddElectrostaticModesForSynthesis(const IoData &iodata, const fs::path &post_dir);
+  // Solve the screened quasistatic system (K + ν²M) x = b_p for each anchor-flagged
+  // lumped port and add the solution to the PROM basis (labels "anchor_<idx>"). The
+  // positive screening term makes the system symmetric positive definite, so the solve
+  // cannot resonate with band or near-degenerate basis modes; with ν well below the sweep
+  // band the solution is the quasistatic (inductive-limit) response of the port. Must be
+  // called after AddLumpedPortModesForSynthesis and before the offline sampling loop, so
+  // the leading port-mode block and the RHS1r projection bookkeeping stay consistent.
+  void AddLumpedPortAnchorModesForSynthesis(double nu);
 
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
   // "node_label". This will be printed in the header of the csv files when printing PROM

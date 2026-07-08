@@ -462,6 +462,16 @@ public:
   // configurations where an excited port has IncludeInSynthesis = false.
   bool include_in_synthesis = true;
 
+  // Whether this port receives a screened quasistatic anchor solve, (K + ν²M) x = b_p,
+  // whose solution is added to the PROM basis during adaptive driven circuit synthesis.
+  // Anchor vectors provide the junction-anchored (unit-current) field configuration used
+  // by downstream bare-basis netlist extraction, without requiring a pseudo-inverse of the
+  // exported inverse-inductance matrix. Default false (opt-in, preserving existing
+  // behavior); requires an inductive port that is included in synthesis. For a SQUID
+  // modeled as two arm ports, anchor a single arm — the arm responses are collinear, so a
+  // second anchor would only add a near-null basis direction.
+  bool synthesis_anchor = false;
+
   // For each lumped port index, each element contains a list of attributes making up a
   // single element of a potentially multielement lumped port.
   std::vector<internal::ElementData> elements = {};
@@ -842,6 +852,13 @@ public:
   // (e.g. floating islands) that the port-driven sweep excites only weakly. Terminals are
   // ignored by driven simulations unless this flag is set (default false).
   bool adaptive_circuit_synthesis_electrostatic = false;
+  // Screening frequency ν for quasistatic anchor solves during circuit synthesis [GHz]
+  // (nondimensionalized on input like the sweep frequencies). The anchor system
+  // (K + ν²M) x = b_p is symmetric positive definite for any ν > 0, so the solve cannot
+  // resonate with band or near-degenerate basis modes; ν should sit well below the sweep
+  // band so the anchor captures the quasistatic (inductive-limit) junction response.
+  // 0 (default) selects ν automatically as 1/10 of the lowest sweep sample frequency.
+  double adaptive_circuit_synthesis_anchor_freq = 0.0;
 
   DrivenSolverData() = default;
   DrivenSolverData(const json &driven);

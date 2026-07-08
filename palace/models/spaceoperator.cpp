@@ -1421,6 +1421,37 @@ bool SpaceOperator::GetExcitationVector2(int excitation_idx, double omega,
   return nnz2;
 }
 
+bool SpaceOperator::GetLumpedPortExcitationVector(int port_idx, ComplexVector &RHS)
+{
+  // Assemble the drive vector (dual/linear-form vector, without the iω factor) for a
+  // single lumped port selected by port index, independent of any "Excitation" grouping.
+  // Used for the quasistatic anchor solves in circuit synthesis. The assembly mirrors
+  // AddExcitationVector1Internal restricted to the one port.
+  RHS.SetSize(GetNDSpace().GetTrueVSize());
+  RHS.UseDevice(true);
+  RHS = 0.0;
+
+  SumVectorCoefficient fb(GetMesh().SpaceDimension());
+  lumped_port_op.AddPortExcitationBdrCoefficient(port_idx, fb);
+
+  int empty = fb.empty();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return false;
+  }
+
+  mfem::ParLinearForm rhs(&GetNDSpace().Get());
+  rhs.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(fb));
+  rhs.UseFastAssembly(false);
+  rhs.UseDevice(false);
+  rhs.Assemble();
+  rhs.UseDevice(true);
+  GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS.Real());
+  linalg::SetSubVector(RHS.Real(), nd_dbc_tdof_lists.back(), 0.0);
+  return true;
+}
+
 bool SpaceOperator::AddExcitationVector1Internal(int excitation_idx, Vector &RHS1)
 {
   // Assemble the time domain excitation -g'(t) J or frequency domain excitation -iω J.

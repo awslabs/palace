@@ -463,6 +463,18 @@ LumpedPortData::LumpedPortData(const json &port)
                           "{:d} because it is excited; the excitation vector is always "
                           "added to the synthesis basis.",
                           index));
+  synthesis_anchor = port.value("SynthesisAnchor", synthesis_anchor);
+  MFEM_VERIFY(!(synthesis_anchor && L <= 0.0 && Ls <= 0.0),
+              fmt::format("\"SynthesisAnchor\" cannot be true on lumped port index {:d} "
+                          "because it has no inductance (\"L\" or \"Ls\" > 0 required); "
+                          "the anchor solve computes the quasistatic response of an "
+                          "inductive (junction) port.",
+                          index));
+  MFEM_VERIFY(!(synthesis_anchor && !include_in_synthesis),
+              fmt::format("\"SynthesisAnchor\" cannot be true on lumped port index {:d} "
+                          "because it has \"IncludeInSynthesis\" false; anchor vectors "
+                          "are part of the synthesis basis.",
+                          index));
   if (port.find("Attributes") != port.end())
   {
     auto &elem = elements.emplace_back();
@@ -1119,6 +1131,11 @@ DrivenSolverData::DrivenSolverData(const json &driven)
       "AdaptiveCircuitSynthesisEigenmodes", adaptive_circuit_synthesis_eigenmodes);
   adaptive_circuit_synthesis_electrostatic = driven.value(
       "AdaptiveCircuitSynthesisElectrostatic", adaptive_circuit_synthesis_electrostatic);
+  adaptive_circuit_synthesis_anchor_freq =
+      driven.value("AdaptiveCircuitSynthesisAnchorFreq",
+                   adaptive_circuit_synthesis_anchor_freq);
+  MFEM_VERIFY(adaptive_circuit_synthesis_anchor_freq >= 0.0,
+              "\"AdaptiveCircuitSynthesisAnchorFreq\" must be non-negative!");
 
   MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),
               "\"Restart\" is incompatible with adaptive frequency sweep!");
@@ -1706,6 +1723,10 @@ void Nondimensionalize(const Units &units, DrivenSolverData &data)
   {
     f = 2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(f);
   }
+  data.adaptive_circuit_synthesis_anchor_freq =
+      2 * M_PI *
+      units.Nondimensionalize<Units::ValueType::FREQUENCY>(
+          data.adaptive_circuit_synthesis_anchor_freq);
 }
 
 void Nondimensionalize(const Units &units, TransientSolverData &data)

@@ -381,6 +381,11 @@ public:
   bool GetExcitationVector1(int excitation_idx, ComplexVector &RHS1);
   bool GetExcitationVector2(int excitation_idx, double omega, ComplexVector &RHS2);
 
+  // Assemble the drive vector (dual/linear-form vector, without the iω factor) for a
+  // single lumped port selected by port index, independent of any "Excitation" grouping
+  // in the configuration. Used for the quasistatic anchor solves in circuit synthesis.
+  bool GetLumpedPortExcitationVector(int port_idx, ComplexVector &RHS);
+
   // Fill vector corresponding to the tangential electric field E_t on a lumped port, with
   // overall normalization such that the reference impedance \vert Z_R \vert = 1 in internal
   // units.

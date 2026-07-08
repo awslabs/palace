@@ -46,6 +46,10 @@ public:
   int excitation;
   bool active;
   bool include_in_synthesis;
+  // Whether this port receives a screened quasistatic anchor solve during circuit
+  // synthesis (see RomOperator::AddLumpedPortAnchorModesForSynthesis). Opt-in via the
+  // per-port "SynthesisAnchor" config flag (default false).
+  bool synthesis_anchor;
 
 protected:
   // Linear forms for postprocessing integrated quantities on the port.
@@ -164,6 +168,11 @@ public:
   // excited port boundaries, -U_inc/(iω) for the real version (versus the full -U_inc for
   // the complex one).
   void AddExcitationBdrCoefficients(int excitation_idx, SumVectorCoefficient &fb);
+
+  // Same drive term for a single port selected by port index, independent of any
+  // "Excitation" grouping in the configuration. Used for the quasistatic anchor solves in
+  // circuit synthesis.
+  void AddPortExcitationBdrCoefficient(int port_idx, SumVectorCoefficient &fb);
 };
 
 }  // namespace palace

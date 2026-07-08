@@ -3,6 +3,7 @@
 
 #include "drivensolver.hpp"
 
+#include <algorithm>
 #include <complex>
 #include <cstddef>
 #include <iostream>
@@ -312,9 +313,11 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   space_op.GetWavePortOp().SetSuppressOutput(true);
 
   // Add ports to PROM if we do synthesis, followed by the optional enrichment solves:
-  // electrostatic solutions per Terminal and eigenmodes near the Solver/Eigenmode target.
-  // Both are added before the offline sampling loop so the RHS1r projection bookkeeping
-  // stays consistent.
+  // quasistatic anchor solves for any ports opted in via "SynthesisAnchor" (default
+  // screening frequency ν is 1/10 of the lowest sweep sample, well below the band so the
+  // anchors capture the inductive-limit response), electrostatic solutions per Terminal,
+  // and eigenmodes near the Solver/Eigenmode target. All are added before the offline
+  // sampling loop so the RHS1r projection bookkeeping stays consistent.
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
     prom_op.AddLumpedPortModesForSynthesis();
@@ -324,6 +327,18 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       // The choice rescales the basis vector but does not change correctness.
       const double omega_ref = 0.5 * (omega_sample.front() + omega_sample.back());
       prom_op.AddWavePortModesForSynthesis(omega_ref);
+    }
+    const auto &lumped_port_op = space_op.GetLumpedPortOp();
+    if (std::any_of(lumped_port_op.begin(), lumped_port_op.end(),
+                    [](const auto &port) { return port.second.synthesis_anchor; }))
+    {
+      double nu = iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq;
+      if (nu <= 0.0)
+      {
+        nu = 0.1 * omega_sample.front();  // sample_f is sorted ascending on input
+      }
+      Mpi::Print(" Anchor screening frequency: ν = {:.3e} GHz\n", nu * unit_GHz);
+      prom_op.AddLumpedPortAnchorModesForSynthesis(nu);
     }
     if (iodata.solver.driven.adaptive_circuit_synthesis_electrostatic)
     {
