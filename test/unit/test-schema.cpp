@@ -210,6 +210,22 @@ TEST_CASE("Schema Validation - Invalid Config", "[schema][Serial]")
   }
 }
 
+TEST_CASE("Schema Validation - Linear Solver Types", "[schema][Serial]")
+{
+  for (const char *type : {"AMS", "BoomerAMG", "SuperLU", "STRUMPACK", "STRUMPACK-MP",
+                           "MUMPS", "Jacobi", "cuDSS"})
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Linear", {{"Type", type}}}}}};
+    INFO("Linear.Type = " << type);
+    std::string err = ValidateConfig(config);
+    CHECK(err.empty());
+  }
+}
+
 TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
 {
 

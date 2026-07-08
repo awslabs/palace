@@ -25,6 +25,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     coefficients (its zeros and poles), generalizing the parallel-RLC `Impedance` boundary
     to any passive lumped-network response. SchemaVer 1-1-0
     [PR 770](https://github.com/awslabs/palace/pull/770).
+  - Added support for the [NVIDIA cuDSS](https://docs.nvidia.com/cuda/cudss/index.html)
+    high-performance CUDA sparse direct solver, selectable via
+    `config["Solver"]["Linear"]["Type"] = "cuDSS"` for the KSP and wave port solvers.
+    Enable at build time with `PALACE_WITH_CUDSS=ON` (requires `PALACE_WITH_CUDA=ON`).
+    SchemaVer 1-3-0 [PR 717](https://github.com/awslabs/palace/pull/717).
 
 #### Bug Fixes
 

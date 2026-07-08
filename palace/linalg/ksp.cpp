@@ -196,9 +196,6 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       pc = MakeWrapperSolver<OperType, CuDSSSolver>(linear, comm, pc_mat_sym,
                                                     linear.sym_factorization,
                                                     linear.reorder_reuse, print);
-#else
-      MFEM_ABORT(
-          "Solver was not built with cuDSS support, please choose a different solver!");
 #endif
       break;
     case LinearSolver::DEFAULT:
