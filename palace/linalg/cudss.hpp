@@ -14,8 +14,6 @@
 namespace palace
 {
 
-class IoData;
-
 //
 // A wrapper for cuDSS.
 //
