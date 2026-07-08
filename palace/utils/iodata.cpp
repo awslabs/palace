@@ -302,6 +302,57 @@ void IoData::CheckConfiguration()
     // WavePortPEC (boundaries.auxpec) is also supported: it only affects the per-port
     // cross-section eigenvalue problem (forces the port submesh outer rim to PEC) and
     // does not change the parent FE system, so synthesis works correctly with it.
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis_eigenmodes ||
+                    solver.driven.adaptive_circuit_synthesis,
+                "\"AdaptiveCircuitSynthesisEigenmodes\" requires "
+                "\"AdaptiveCircuitSynthesis\" to be enabled!\n");
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis_eigenmodes ||
+                    solver.eigenmode.target > 0.0,
+                "\"AdaptiveCircuitSynthesisEigenmodes\" requires a config[\"Solver\"]"
+                "[\"Eigenmode\"] block with a positive \"Target\" frequency!\n");
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis_electrostatic ||
+                    solver.driven.adaptive_circuit_synthesis,
+                "\"AdaptiveCircuitSynthesisElectrostatic\" requires "
+                "\"AdaptiveCircuitSynthesis\" to be enabled!\n");
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis_electrostatic ||
+                    !boundaries.terminal.empty(),
+                "\"AdaptiveCircuitSynthesisElectrostatic\" requires at least one "
+                "config[\"Boundaries\"][\"Terminal\"] entry!\n");
+    if (solver.driven.adaptive_circuit_synthesis_electrostatic)
+    {
+      // At DC every conductor must be represented in the Dirichlet sets: warn when a
+      // surface-impedance boundary (a conductor modeled with finite reactance in the
+      // frequency domain, e.g. a kinetic-inductance film) is in neither the PEC/"Ground"
+      // list nor any Terminal, since it would silently be treated as dielectric (natural
+      // boundary) by the electrostatic solves.
+      auto in_terminal_or_pec = [&](int attr)
+      {
+        for (const auto &[idx, data] : boundaries.terminal)
+        {
+          if (std::find(data.attributes.begin(), data.attributes.end(), attr) !=
+              data.attributes.end())
+          {
+            return true;
+          }
+        }
+        return std::find(boundaries.pec.attributes.begin(), boundaries.pec.attributes.end(),
+                         attr) != boundaries.pec.attributes.end();
+      };
+      for (const auto &data : boundaries.impedance)
+      {
+        for (int attr : data.attributes)
+        {
+          if (!in_terminal_or_pec(attr))
+          {
+            Mpi::Warning(
+                "Impedance boundary attribute {:d} is not listed under \"Ground\"/\"PEC\" "
+                "or any \"Terminal\"; the electrostatic enrichment solves will treat it "
+                "as a dielectric (natural) boundary rather than a conductor!\n",
+                attr);
+          }
+        }
+      }
+    }
   }
   else if (problem.type == ProblemType::EIGENMODE)
   {
