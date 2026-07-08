@@ -35,21 +35,6 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
 
   if (HasExcitation())
   {
-    // Historically an excited port had to be purely resistive (R > 0, no reactance). We now
-    // also allow a reactive excited port, so that a structure can be driven *through* a
-    // lumped inductor/capacitor (e.g. a Josephson-junction port in a superconducting
-    // circuit). The port's R/L/C still enters the system matrix as a physical termination
-    // (see Add{Stiffness,Damping,Mass}BdrCoefficients), so the field solution correctly
-    // includes the reactance. The incident/reflected wave used to define scattering
-    // parameters is normalized to a real reference resistance (GetExcitationRefResistance):
-    // for a resistive port that is R (unchanged, legacy behaviour); for a purely reactive
-    // port (R == 0) it is the unit reference impedance in internal units (= Z_freespace
-    // dimensionally). The fields, the synthesized circuit matrices, and the port
-    // admittance/impedance are all valid for any R >= 0; the R == 0 port's own S column is
-    // still emitted but is referenced to that unit impedance rather than a user-chosen
-    // one, since with no real port resistance there is no natural reference for it. The
-    // only requirement is a non-negative resistance.
-    if (has_circ)
     {
       MFEM_VERIFY(data.R >= 0.0,
                   "Excited lumped port must have non-negative resistance!");
