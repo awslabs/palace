@@ -46,9 +46,9 @@ function generate_floquet_lumped_mesh(;
     a::Real=1.0,
     b::Real=1.0,
     L::Real=2.0,
-    n_x::Integer=4,
-    n_y::Integer=4,
-    n_z::Integer=8,
+    n_x::Integer=8,
+    n_y::Integer=8,
+    n_z::Integer=20,
     order::Integer=1,
     verbose::Integer=5,
     gui::Bool=false
