@@ -236,33 +236,36 @@ Any pull request that modifies `scripts/schema/config-schema.json` must include 
 schema version bump in that same PR. This means the repository will accumulate many
 `0-x-0` and `0-0-y` bumps, but it makes every schema change individually trackable.
 
-1. Determine the bump size. Classify your schema change using the table above:
-   - MODEL: removing/renaming a field, tightening validation, changing defaults or
-     semantics (breaking).
-   - REVISION: new optional field, new enum value, relaxing a constraint
-     (backward-compatible extension).
-   - ADDITION: updating a `description`, `title`, or other annotation (no effect on
-     accepted configurations).
+ 1. Determine the bump size. Classify your schema change using the table above:
 
-2. Bump the `"$id"` version in `scripts/schema/config-schema.json`.
-   For example, going from `1-0-0` to `1-1-0`:
-   ```json
-   "$id": "urn:palace:schema:1-1-0",
-   ```
+      + MODEL: removing/renaming a field, tightening validation, changing defaults or
+        semantics (breaking).
+      + REVISION: new optional field, new enum value, relaxing a constraint
+        (backward-compatible extension).
+      + ADDITION: updating a `description`, `title`, or other annotation (no effect on
+        accepted configurations).
 
-3. Add a changelog entry in
-   [`CHANGELOG.md`](https://github.com/awslabs/palace/blob/main/CHANGELOG.md) under the
-   appropriate section for the current development version. The entry must include the
-   `SchemaVer` tag at the end, in the format:
-   ```
-   - <description of the change>. SchemaVer X-Y-Z [PR NNN](https://github.com/awslabs/palace/pull/NNN).
-   ```
-   Place the entry in the section that best describes the *motivation* (typically `New
-   Features` for additions, `Interface Changes` for breaking changes).
+ 2. Bump the `"$id"` version in `scripts/schema/config-schema.json`.
+    For example, going from `1-0-0` to `1-1-0`:
 
-4. Do NOT update the version table in this file (`docs/src/developer/notes.md`).
-   The table maps schema versions to *Palace* releases and is updated only when a release
-   is cut, not per-PR.
+    ```json
+    "$id": "urn:palace:schema:1-1-0",
+    ```
+
+ 3. Add a changelog entry in
+    [`CHANGELOG.md`](https://github.com/awslabs/palace/blob/main/CHANGELOG.md) under the
+    appropriate section for the current development version. The entry must include the
+    `SchemaVer` tag at the end, in the format:
+
+    ```
+    - <description of the change>. SchemaVer X-Y-Z [PR NNN](https://github.com/awslabs/palace/pull/NNN).
+    ```
+
+    Place the entry in the section that best describes the *motivation* (typically `New Features` for additions, `Interface Changes` for breaking changes).
+
+ 4. Do NOT update the version table in this file (`docs/src/developer/notes.md`).
+    The table maps schema versions to *Palace* releases and is updated only when a release
+    is cut, not per-PR.
 
 ##### Example changelog entry
 
