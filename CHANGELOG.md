@@ -20,7 +20,7 @@ The format of this changelog is based on
     Previously, `MeasureSParameter()` skipped processing when Floquet ports coexisted with
     lumped or wave ports, leaving `port-S.csv` with incorrect values. The fix applies a power
     normalization factor, restoring S-matrix unitarity and reciprocity for the mixed
-    case [PR 799](https://github.com/awslabs/palace/pull/799).
+    case [PR 804](https://github.com/awslabs/palace/pull/804).
 
 ## [0.17.0] - 2026-06-28
 
