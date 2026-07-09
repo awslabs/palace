@@ -23,6 +23,10 @@ inputs:
     description: 'Use develop versions of key dependencies'
     required: false
     default: 'false'
+  spack-version:
+    description: 'Spack git ref to use (e.g. develop, releases/v1.2)'
+    required: false
+    default: 'releases/v1.2'
   test-cases:
     description: 'Test cases: "default", "long", or space-separated list'
     required: false
@@ -38,9 +42,9 @@ runs:
     - name: Setup environment
       uses: ./.github/actions/setup-runner
       with:
-        # Spack develop because we want to have access to the most recent
-        # version of spack-packages
-        spack-version: 'develop'
+        # Defaults to the pinned Spack 1.2 release series (see the action's
+        # input default); the lookahead workflow overrides this with `develop`.
+        spack-version: ${{ inputs.spack-version }}
         # LLVM 19 because it is the latest supported by CUDA 12.9
         llvm-version: ${{ inputs.toolchain == 'llvm' && '19' || 'dont-install' }}
         setup-intel: ${{ inputs.toolchain == 'intel-oneapi' && 'true' || 'false' }}
