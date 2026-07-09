@@ -14,6 +14,7 @@
 #include "models/materialoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
+#include "linalg/eps.hpp"
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
@@ -60,6 +61,7 @@ public:
   using RomOperator::WavePortDispersionFit;
   auto &GetWeightOp() const { return weight_op_W; }
   auto &GetOrthR() const { return orth_R; }
+  auto &GetNodeLabels() const { return v_node_label; }
   auto &GetVectors() const { return V; }
   auto &GetKr() const { return Kr; }
   auto &GetCr() const { return Cr; }
@@ -1171,4 +1173,179 @@ TEST_CASE("RomOperator-AugmentedPencil-Eigenvalues", "[romoperator][Serial]")
   };
   CHECK(std::abs(eval_unaug(root_plus)) < 1.0e-10);
   CHECK(std::abs(eval_unaug(root_minus)) < 1.0e-10);
+}
+
+// =============================================================================
+// ENRICHMENT CONFIG VALIDATION TESTS
+// =============================================================================
+
+TEST_CASE("RomOperator-Synthesis-EigenWithoutTargetRejected", "[romoperator][Serial]")
+{
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
+  setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"R", 50.0},
+                                                {"Excitation", uint(1)},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {{"Order", 1UL},
+                          {"Driven",
+                           {{"AdaptiveTol", 1e-3},
+                            {"AdaptiveCircuitSynthesis", true},
+                            {"AdaptiveCircuitSynthesisEigenmodes", true},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", 32.0},
+                            {"FreqStep", 1.0}}}};
+  // No Solver.Eigenmode block → target defaults to 0 → should fail.
+  CHECK_THROWS_WITH((IoData{setup_json, false}),
+                    Catch::Matchers::ContainsSubstring("Eigenmode"));
+}
+
+TEST_CASE("RomOperator-Synthesis-ElectrostaticWithoutTerminalRejected",
+          "[romoperator][Serial]")
+{
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
+  setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"R", 50.0},
+                                                {"Excitation", uint(1)},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {{"Order", 1UL},
+                          {"Driven",
+                           {{"AdaptiveTol", 1e-3},
+                            {"AdaptiveCircuitSynthesis", true},
+                            {"AdaptiveCircuitSynthesisElectrostatic", true},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", 32.0},
+                            {"FreqStep", 1.0}}}};
+  // No Terminal block.
+  CHECK_THROWS_WITH((IoData{setup_json, false}),
+                    Catch::Matchers::ContainsSubstring("Terminal"));
+}
+
+TEST_CASE("RomOperator-Synthesis-EnrichmentRequiresSynthesisRejected",
+          "[romoperator][Serial]")
+{
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
+  setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"R", 50.0},
+                                                {"Excitation", uint(1)},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {{"Order", 1UL},
+                          {"Eigenmode", {{"Target", 5.0}, {"N", 2}}},
+                          {"Driven",
+                           {{"AdaptiveTol", 1e-3},
+                            {"AdaptiveCircuitSynthesisEigenmodes", true},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", 32.0},
+                            {"FreqStep", 1.0}}}};
+  // AdaptiveCircuitSynthesis is NOT set (defaults false) but eigenmode enrichment is on.
+  CHECK_THROWS_WITH((IoData{setup_json, false}),
+                    Catch::Matchers::ContainsSubstring("AdaptiveCircuitSynthesis"));
+}
+
+// =============================================================================
+// EIGENMODE ENRICHMENT BASIS TEST
+// =============================================================================
+
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "RomOperator-Synthesis-EigenmodesEnterBasis",
+                 "[romoperator][Serial]")
+{
+  MPI_Comm world_comm = Mpi::World();
+  auto mesh_path = fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh";
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"R", 50.0},
+                                                {"Excitation", uint(1)},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {{"Order", 1UL},
+                          {"Device", "CPU"},
+                          {"Eigenmode", {{"Target", 50.0}, {"N", 2}}},
+                          {"Driven",
+                           {{"AdaptiveTol", 1e-3},
+                            {"AdaptiveCircuitSynthesis", true},
+                            {"AdaptiveCircuitSynthesisEigenmodes", true},
+                            {"MinFreq", 2.0},
+                            {"MaxFreq", 100.0},
+                            {"FreqStep", 5.0}}},
+                          {"Linear", {{"Type", "Default"}, {"KSPType", "GMRES"},
+                                      {"MaxIts", 200}, {"Tol", 1e-8}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 100);
+
+  prom_op.AddLumpedPortModesForSynthesis();
+  auto dim_after_ports = prom_op.GetReducedDimension();
+
+  int num_added = prom_op.AddEigenmodesForSynthesis(iodata);
+  CHECK(num_added >= 1);
+  CHECK(prom_op.GetReducedDimension() > dim_after_ports);
+  // Labels should contain eigen_1_re (at minimum).
+  const auto &labels = prom_op.GetNodeLabels();
+  bool has_eigen = false;
+  for (const auto &l : labels)
+  {
+    if (l.find("eigen_1") != std::string::npos)
+    {
+      has_eigen = true;
+      break;
+    }
+  }
+  CHECK(has_eigen);
+  // Port block untouched.
+  CHECK(prom_op.GetOrthR()(0, 0) > 0.0);
+}
+
+// =============================================================================
+// EPS FACTORY UNIT TESTS
+// =============================================================================
+
+TEST_CASE("EigenvalueToOmega-Quadratic", "[romoperator][Serial]")
+{
+  using namespace std::complex_literals;
+  std::complex<double> omega(5.0, 0.1);  // Physical ω
+  // Quadratic pencil eigenvalue λ = iω → EigenvalueToOmega(λ, true) should give ω back.
+  auto recovered = EigenvalueToOmega(1i * omega, true);
+  CHECK_THAT(recovered.real(), WithinRel(omega.real(), 1e-12));
+  CHECK_THAT(recovered.imag(), WithinRel(omega.imag(), 1e-12));
+}
+
+TEST_CASE("EigenvalueToOmega-Linear", "[romoperator][Serial]")
+{
+  double omega = 7.5;
+  // Linear pencil eigenvalue μ = ω² → EigenvalueToOmega(μ, false) should give ω.
+  auto recovered = EigenvalueToOmega(std::complex<double>(omega * omega, 0.0), false);
+  CHECK_THAT(recovered.real(), WithinRel(omega, 1e-12));
+  CHECK(std::abs(recovered.imag()) < 1e-15);
 }
