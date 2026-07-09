@@ -10,15 +10,14 @@
 #include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
-#include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
+#include "linalg/eps.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/floquetcorrection.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/nleps.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
-#include "linalg/slepc.hpp"
 #include "linalg/vector.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperator.hpp"
@@ -42,7 +41,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SpaceOperator space_op(iodata, mesh);
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  const bool has_C = (C != nullptr);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
 
   // Check if there are nonlinear terms and, if so, setup interpolation operator.
@@ -179,73 +177,19 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Define and configure the eigensolver to solve the eigenvalue problem:
   //         (K + λ C + λ² M) u = 0    or    K u = -λ² M u
   // with λ = iω. In general, the system matrices are complex and symmetric.
-  std::unique_ptr<EigenvalueSolver> eigen;
+  // The SLP fallback for an unavailable backend (or no nonlinear term) is resolved above,
+  // before the HYBRID interpolation.
   const EigenSolverBackend type = iodata.solver.eigenmode.type;
-#if !defined(PALACE_WITH_ARPACK) && !defined(PALACE_WITH_SLEPC)
-#error "Eigenmode solver requires building with ARPACK or SLEPc!"
-#endif
-  if (type == EigenSolverBackend::ARPACK)
-  {
-#if defined(PALACE_WITH_ARPACK)
-    Mpi::Print("\nConfiguring ARPACK eigenvalue solver:\n");
-    if (C || has_A2)
-    {
-      eigen = std::make_unique<arpack::ArpackPEPSolver>(space_op.GetComm(),
-                                                        iodata.problem.verbose);
-    }
-    else
-    {
-      eigen = std::make_unique<arpack::ArpackEPSSolver>(space_op.GetComm(),
-                                                        iodata.problem.verbose);
-    }
-#endif
-  }
-  else  // EigenSolverBackend::SLEPC
-  {
-#if defined(PALACE_WITH_SLEPC)
-    Mpi::Print("\nConfiguring SLEPc eigenvalue solver:\n");
-    std::unique_ptr<slepc::SlepcEigenvalueSolver> slepc;
-    if (nonlinear_type == NonlinearEigenSolver::SLP)
-    {
-      slepc = std::make_unique<slepc::SlepcNEPSolver>(space_op.GetComm(),
-                                                      iodata.problem.verbose);
-      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);
-      slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GENERAL);
-    }
-    else
-    {
-      if (C || has_A2)
-      {
-        if (!iodata.solver.eigenmode.pep_linear)
-        {
-          slepc = std::make_unique<slepc::SlepcPEPSolver>(space_op.GetComm(),
-                                                          iodata.problem.verbose);
-          slepc->SetType(slepc::SlepcEigenvalueSolver::Type::TOAR);
-        }
-        else
-        {
-          slepc = std::make_unique<slepc::SlepcPEPLinearSolver>(space_op.GetComm(),
-                                                                iodata.problem.verbose);
-          slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
-        }
-      }
-      else
-      {
-        slepc = std::make_unique<slepc::SlepcEPSSolver>(space_op.GetComm(),
-                                                        iodata.problem.verbose);
-        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
-      }
-      slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
-    }
-    slepc->SetOrthogonalization(iodata.solver.linear.gs_orthog == Orthogonalization::MGS,
-                                iodata.solver.linear.gs_orthog == Orthogonalization::CGS2);
-    eigen = std::move(slepc);
-#endif
-  }
+  const bool quadratic = (C || has_A2);
+  const bool nonlinear_slp = (nonlinear_type == NonlinearEigenSolver::SLP);
+  std::unique_ptr<EigenvalueSolver> eigen =
+      BuildEigenvalueSolver(space_op.GetComm(), iodata.solver.eigenmode,
+                            iodata.solver.linear.gs_orthog, iodata.problem.verbose,
+                            quadratic, nonlinear_slp);
   EigenvalueSolver::ScaleType scale = iodata.solver.eigenmode.scale
                                           ? EigenvalueSolver::ScaleType::NORM_2
                                           : EigenvalueSolver::ScaleType::NONE;
-  if (nonlinear_type == NonlinearEigenSolver::SLP)
+  if (nonlinear_slp)
   {
     if (C)
     {
@@ -273,12 +217,12 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       eigen->SetOperators(*K, *M, scale);
     }
   }
-  eigen->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
-  const double tol = (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
-                         ? iodata.solver.eigenmode.linear_tol
-                         : iodata.solver.eigenmode.tol;
-  eigen->SetTol(tol);
-  eigen->SetMaxIter(iodata.solver.eigenmode.max_it);
+  if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
+  {
+    // The linearized seed solve for the hybrid approach uses a looser tolerance than the
+    // final (Quasi-Newton refined) eigenpairs.
+    eigen->SetTol(iodata.solver.eigenmode.linear_tol);
+  }
   Mpi::Print(" Scaling γ = {:.3e}, δ = {:.3e}\n", eigen->GetScalingGamma(),
              eigen->GetScalingDelta());
 
@@ -360,35 +304,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         (2 * std::numbers::pi);
     Mpi::Print(" Shift-and-invert σ = {:.3e} GHz ({:.3e})\n", f_target, target);
   }
-  if (C || has_A2 || nonlinear_type == NonlinearEigenSolver::SLP)
-  {
-    // Search for eigenvalues closest to λ = iσ.
-    eigen->SetShiftInvert(1i * target);
-    if (nonlinear_type == NonlinearEigenSolver::SLP)
-    {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_MAGNITUDE);
-    }
-    else
-    {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
-    }
-  }
-  else
-  {
-    // Linear EVP has eigenvalues μ = -λ² = ω². Search for eigenvalues closest to μ = σ².
-    eigen->SetShiftInvert(target * target);
-    if (type == EigenSolverBackend::ARPACK)
-    {
-      // ARPACK searches based on eigenvalues of the transformed problem. 1 / (μ - σ²)
-      // will be a large-magnitude positive real number for an eigenvalue μ with frequency
-      // close to but below the target σ².
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
-    }
-    else
-    {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_REAL);
-    }
-  }
+  SetEigenSolverShiftInvert(*eigen, type, target, quadratic, nonlinear_slp);
 
   // Set up the linear solver required for solving systems involving the shifted operator
   // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
@@ -534,19 +450,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   for (int i = 0; i < num_report; i++)
   {
     // Get the eigenvalue and relative error.
-    std::complex<double> omega = eigenvalues[i];
+    // The eigensolver may have been released above, so use the staged eigenvalues.
+    std::complex<double> omega = EigenvalueToOmega(eigenvalues[i], quadratic);
     double error_bkwd = errors_bkwd[i];
     double error_abs = errors_abs[i];
-    if (!has_C && !has_A2)
-    {
-      // Linear EVP has eigenvalue μ = -λ² = ω².
-      omega = std::sqrt(omega);
-    }
-    else
-    {
-      // Quadratic EVP solves for eigenvalue λ = iω.
-      omega /= 1i;
-    }
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
     // PostOperator for all postprocessing operations.
