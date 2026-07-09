@@ -38,6 +38,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed numeric wave ports ignoring their configured `"MaxIts"` and `"KSPTol"`, so the
     port-mode linear solve inherited the tolerance of the full 3D linear solver instead.
     [PR 921](https://github.com/awslabs/palace/pull/921).
+  - Fixed cuDSS builds with MPI implementations other than Open MPI. The superbuild now
+    forwards a provider-matched cuDSS communication layer to MFEM (`CUDSS_COMM_LIB`), and
+    the Spack recipe builds it against the selected MPI via `cudss+mpi`.
+    [PR 826](https://github.com/awslabs/palace/pull/826).
   - Fixed a reference-counter overflow in nonconformal meshes with high-valence vertices,
     which could assert or crash during adaptive mesh refinement.
     [PR 934](https://github.com/awslabs/palace/pull/934).
