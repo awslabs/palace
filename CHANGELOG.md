@@ -18,13 +18,9 @@ The format of this changelog is based on
 
   - Fixed S-parameter post-processing for mixed Floquet + lumped/wave port configurations.
     Previously, `MeasureSParameter()` skipped processing when Floquet ports coexisted with
-    lumped or wave ports, leaving `port-S.csv` with incorrect values: missing incident
-    subtraction on the diagonal (showing `1 + S_ii` instead of `S_ii`) and a √2 amplitude
-    error (+3.01 dB in power) on cross-type observations due to differing power
-    normalization conventions between port types. The fix applies a power normalization
-    bridge factor (÷√2 for Floquet-driven lumped/wave observations, ×√2 for lumped/wave-
-    driven Floquet observations), restoring S-matrix unitarity and reciprocity for the mixed
-    case. Floquet-only and lumped/wave-only configurations are unaffected.
+    lumped or wave ports, leaving `port-S.csv` with incorrect values. The fix applies a power
+    normalization factor, restoring S-matrix unitarity and reciprocity for the mixed
+    case [PR 799](https://github.com/awslabs/palace/pull/799).
 
 ## [0.17.0] - 2026-06-28
 
