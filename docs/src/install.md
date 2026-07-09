@@ -194,7 +194,10 @@ Additional build options are (with default values in brackets):
   - `PALACE_WITH_MUMPS [OFF]` :  Build with MUMPS sparse direct solver
   - `PALACE_WITH_CUDSS [OFF]` :  Build with NVIDIA cuDSS sparse direct solver (requires
     `PALACE_WITH_CUDA=ON`; the cuDSS installation directory can be specified with
-    `CUDSS_DIR`)
+    `CUDSS_DIR`). With Open MPI, Palace uses the communication layer bundled with
+    cuDSS by default. `CUDSS_COMM_LIB` overrides this default; for any MPI implementation
+    not recognized as Open MPI, it must specify the full path to a matching communication
+    layer. This path is forwarded to MFEM as its build-time default.
   - `PALACE_WITH_SLEPC [ON]` :  Build with SLEPc eigenvalue solver
   - `PALACE_WITH_ARPACK [OFF]` :  Build with ARPACK eigenvalue solver
   - `PALACE_WITH_LIBXSMM [ON]` :  Build with LIBXSMM backend for libCEED

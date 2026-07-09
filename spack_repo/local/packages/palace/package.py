@@ -232,7 +232,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
         depends_on("mfem+libunwind", when="build_type=Debug")
         depends_on("mfem+cudss", when="+cudss")
-        depends_on("cudss", when="+cudss")
+        depends_on("cudss+mpi", when="+cudss")
         depends_on("eigen@3.5:", type="build")
 
     with when("+libxsmm"):
