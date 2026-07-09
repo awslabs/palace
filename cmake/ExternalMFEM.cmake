@@ -128,6 +128,34 @@ if(PALACE_WITH_CUDA)
       "-DCUDSS_DIR=${CUDSS_DIR}"
     )
   endif()
+  if(PALACE_WITH_CUDSS)
+    # cuDSS loads its MPI calls from a small plugin that must be compiled against the same
+    # MPI as Palace. Build it from the source NVIDIA ships with cuDSS rather than using the
+    # bundled Open MPI binary.
+    set(PALACE_CUDSS_COMM_SRC "${CUDSS_DIR}/src/cudss_commlayer_openmpi.cu")
+    if(NOT EXISTS "${PALACE_CUDSS_COMM_SRC}")
+      message(FATAL_ERROR
+        "Could not find ${PALACE_CUDSS_COMM_SRC}. The cuDSS tarball archives include the "
+        "communication layer source under src/; the pip/conda wheels do not. Install the "
+        "archive and set CUDSS_DIR to it."
+      )
+    endif()
+    find_package(cudss CONFIG REQUIRED HINTS "${CUDSS_DIR}/lib/cmake/cudss")
+    add_library(cudss_commlayer_mpi SHARED "${PALACE_CUDSS_COMM_SRC}")
+    target_link_libraries(cudss_commlayer_mpi PRIVATE cudss CUDA::cudart MPI::MPI_CXX)
+    set_target_properties(cudss_commlayer_mpi PROPERTIES
+      CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
+      LIBRARY_OUTPUT_DIRECTORY "${CMAKE_INSTALL_PREFIX}/lib"
+      BUILD_WITH_INSTALL_RPATH ON
+      INSTALL_RPATH_USE_LINK_PATH ON
+    )
+    set(PALACE_CUDSS_COMM_LIB
+      "${CMAKE_INSTALL_PREFIX}/lib/${CMAKE_SHARED_LIBRARY_PREFIX}cudss_commlayer_mpi${CMAKE_SHARED_LIBRARY_SUFFIX}"
+    )
+    message(STATUS "Building cuDSS communication layer for the selected MPI: ${PALACE_CUDSS_COMM_LIB}")
+    list(APPEND MFEM_DEPENDENCIES cudss_commlayer_mpi)
+    list(APPEND MFEM_OPTIONS "-DMFEM_CUDSS_COMM_LIB=${PALACE_CUDSS_COMM_LIB}")
+  endif()
   palace_append_cuda_architectures(MFEM_OPTIONS)
 else()
   list(APPEND MFEM_OPTIONS

@@ -308,7 +308,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     with when("@0.18:"):
         depends_on("mfem+cudss", when="+cudss")
-        depends_on("cudss", when="+cudss")
+        depends_on("cudss+mpi", when="+cudss")
 
     with when("+libxsmm"):
         depends_on("libxsmm@2: blas=0")
