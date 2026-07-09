@@ -277,10 +277,8 @@ TEST_CASE("dielectric_grating_uniform", "[Serial][Parallel][GPU][Regression]")
 // Mixed Floquet + lumped/wave port S-parameter tests: validate the sqrt(2) power
 // normalization bridge for cross-type observations. Use custom checks to verify power
 // balance (sum |S|^2 = 1 for the lossless structure). Floquet NaN and negligible
-// entries handled as in dielectric_grating. Serial-only: the small meshes (designed for
-// fast turnaround) don't partition cleanly above ~48 ranks — some subdomains lose all
-// port boundary faces, causing an abort in the port operator setup.
-TEST_CASE("floquet_lumped", "[Serial][Regression]")
+// entries handled as in dielectric_grating.
+TEST_CASE("floquet_lumped", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-3;
@@ -292,7 +290,7 @@ TEST_CASE("floquet_lumped", "[Serial][Regression]")
                                   opts);
 }
 
-TEST_CASE("floquet_wave", "[Serial][Regression]")
+TEST_CASE("floquet_wave", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-3;
