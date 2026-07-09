@@ -17,7 +17,6 @@
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/amg.hpp"
-#include "linalg/arpack.hpp"
 #include "linalg/divfree.hpp"
 #include "linalg/eps.hpp"
 #include "linalg/gmg.hpp"
@@ -25,7 +24,6 @@
 #include "linalg/operator.hpp"
 #include "linalg/orthog.hpp"
 #include "linalg/rap.hpp"
-#include "linalg/slepc.hpp"
 #include "linalg/solver.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/materialoperator.hpp"
@@ -911,63 +909,15 @@ int RomOperator::AddEigenmodesForSynthesis(const IoData &iodata)
                f_target);
   }
 
-  // Configure the eigenvalue solver backend.
-  std::unique_ptr<EigenvalueSolver> eigen;
-  const EigenSolverBackend type = eig.type;
-#if !defined(PALACE_WITH_ARPACK) && !defined(PALACE_WITH_SLEPC)
-#error "Eigenmode PROM enrichment requires building with ARPACK or SLEPc!"
-#endif
-  if (type == EigenSolverBackend::ARPACK)
-  {
-#if defined(PALACE_WITH_ARPACK)
-    if (C)
-    {
-      eigen = std::make_unique<arpack::ArpackPEPSolver>(space_op.GetComm(),
-                                                        iodata.problem.verbose);
-    }
-    else
-    {
-      eigen = std::make_unique<arpack::ArpackEPSSolver>(space_op.GetComm(),
-                                                        iodata.problem.verbose);
-    }
-#endif
-  }
-  else  // EigenSolverBackend::SLEPC
-  {
-#if defined(PALACE_WITH_SLEPC)
-    std::unique_ptr<slepc::SlepcEigenvalueSolver> slepc;
-    if (C)
-    {
-      if (!eig.pep_linear)
-      {
-        slepc = std::make_unique<slepc::SlepcPEPSolver>(space_op.GetComm(),
-                                                        iodata.problem.verbose);
-        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::TOAR);
-      }
-      else
-      {
-        slepc = std::make_unique<slepc::SlepcPEPLinearSolver>(space_op.GetComm(),
-                                                              iodata.problem.verbose);
-        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
-      }
-    }
-    else
-    {
-      slepc = std::make_unique<slepc::SlepcEPSSolver>(space_op.GetComm(),
-                                                      iodata.problem.verbose);
-      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
-    }
-    slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
-    slepc->SetOrthogonalization(iodata.solver.linear.gs_orthog == Orthogonalization::MGS,
-                                iodata.solver.linear.gs_orthog == Orthogonalization::CGS2);
-    eigen = std::move(slepc);
-#endif
-  }
-  MFEM_VERIFY(eigen, "Eigenmode PROM enrichment failed to configure an eigenvalue solver "
-                     "for the requested backend!");
+  // Configure the eigenvalue solver: no frequency-nonlinear A2 terms here (circuit
+  // synthesis forbids them), so the pencil is quadratic exactly when damping is present.
+  const bool quadratic = (C != nullptr);
+  std::unique_ptr<EigenvalueSolver> eigen =
+      BuildEigenvalueSolver(space_op.GetComm(), eig, iodata.solver.linear.gs_orthog,
+                            iodata.problem.verbose, quadratic);
   EigenvalueSolver::ScaleType scale =
       eig.scale ? EigenvalueSolver::ScaleType::NORM_2 : EigenvalueSolver::ScaleType::NONE;
-  if (C)
+  if (quadratic)
   {
     eigen->SetOperators(*K, *C, *M, scale);
   }
@@ -975,9 +925,6 @@ int RomOperator::AddEigenmodesForSynthesis(const IoData &iodata)
   {
     eigen->SetOperators(*K, *M, scale);
   }
-  eigen->SetNumModes(eig.n, eig.max_size);
-  eigen->SetTol(eig.tol);
-  eigen->SetMaxIter(eig.max_it);
 
   // Divergence-free projection to solve orthogonal to the nullspace of the stiffness
   // matrix, as in the eigenmode driver.
@@ -1015,30 +962,7 @@ int RomOperator::AddEigenmodesForSynthesis(const IoData &iodata)
 
   // Shift-and-invert about the target, matching the eigenmode driver's conventions for
   // the quadratic (λ = iω) and linear (μ = ω²) pencils.
-  if (C)
-  {
-    eigen->SetShiftInvert(1i * target);
-    if (type == EigenSolverBackend::ARPACK)
-    {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::SMALLEST_IMAGINARY);
-    }
-    else
-    {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_IMAGINARY);
-    }
-  }
-  else
-  {
-    eigen->SetShiftInvert(target * target);
-    if (type == EigenSolverBackend::ARPACK)
-    {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_REAL);
-    }
-    else
-    {
-      eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_REAL);
-    }
-  }
+  SetEigenSolverShiftInvert(*eigen, eig.type, target, quadratic);
 
   // Linear solver for the spectral transformation, assembled once at the fixed shift.
   // Reuse the shared PROM solver: every subsequent SolveHDM resets the operators.
@@ -1062,15 +986,7 @@ int RomOperator::AddEigenmodesForSynthesis(const IoData &iodata)
   u.UseDevice(true);
   for (int i = 0; i < num_add; i++)
   {
-    std::complex<double> omega = eigen->GetEigenvalue(i);
-    if (!C)
-    {
-      omega = std::sqrt(omega);  // Linear EVP eigenvalue is μ = ω²
-    }
-    else
-    {
-      omega /= 1i;  // Quadratic EVP eigenvalue is λ = iω
-    }
+    std::complex<double> omega = EigenvalueToOmega(eigen->GetEigenvalue(i), quadratic);
     {
       const double f =
           iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real()) /

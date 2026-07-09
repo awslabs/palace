@@ -15,6 +15,13 @@ namespace palace
 template <typename VecType>
 class DivFreeSolver;
 
+namespace config
+{
+
+struct EigenSolverData;
+
+}  // namespace config
+
 //
 // Pure abstract base class for solving generalized linear eigenvalue problems problems or
 // quadratic polynomial eigenvalue problems.
@@ -141,6 +148,31 @@ public:
   // the new matrix, only normalization.
   virtual void RescaleEigenvectors(int num_eig) = 0;
 };
+
+// Construct and configure an eigenvalue solver from configuration: backend selection
+// (with compile-time availability guards), problem-structure dispatch (linear EPS,
+// quadratic PEP or linearized PEP, or NEP for the SLP nonlinear path), problem type,
+// Gram-Schmidt orthogonalization variant, number of modes, tolerance, and maximum
+// iterations. Does NOT call SetOperators or SetLinearSolver — the caller is responsible
+// for configuring the pencil operators and the spectral-transformation solver, since
+// these legitimately differ between consumers (the eigenmode solver driver may extend
+// K/C/M with interpolated frequency-nonlinear A2 terms, while the driven-solver PROM
+// enrichment uses its already-assembled bare K/C/M).
+std::unique_ptr<EigenvalueSolver>
+BuildEigenvalueSolver(MPI_Comm comm, const config::EigenSolverData &eigenmode,
+                      Orthogonalization gs_orthog, int verbose, bool quadratic,
+                      bool nonlinear_slp = false);
+
+// Configure the shift-and-invert spectral transformation about the target frequency σ,
+// with the eigenvalue conventions of the two pencils: λ = iω for the quadratic (and SLP
+// nonlinear) problem, so the shift is iσ; μ = ω² for the linear problem, so the shift is
+// σ². Also selects the backend-appropriate WhichType for eigenvalues near the target.
+void SetEigenSolverShiftInvert(EigenvalueSolver &eigen, EigenSolverBackend backend,
+                               double target, bool quadratic, bool nonlinear_slp = false);
+
+// Convert a converged eigenvalue to complex angular frequency ω for either pencil
+// convention (λ = iω quadratic, μ = ω² linear).
+std::complex<double> EigenvalueToOmega(std::complex<double> lambda, bool quadratic);
 
 }  // namespace palace
 
