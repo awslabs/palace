@@ -1349,10 +1349,19 @@ auto PostOperatorCSV<solver_t>::PrintFloquetPortS()
       floquet_port_S->table[arg_key] << Measurement::Phase(S);
     }
   }
-  std::size_t target_rows = floquet_port_S->table["idx"].n_rows();
+  // Pad columns of the current excitation that were not written this step (evanescent
+  // orders carry no S-parameter) with NaN up to the current row. Only the current
+  // excitation's column group is padded: in multi-excitation sweeps other excitations'
+  // columns are written later at these same row indices, and padding them here would
+  // misalign their data.
+  std::size_t target_rows = row_i + 1;
   for (std::size_t ci = 0; ci < floquet_port_S->table.n_cols(); ci++)
   {
     auto &col = floquet_port_S->table[ci];
+    if (col.column_group_idx != static_cast<long>(m_ex_idx))
+    {
+      continue;
+    }
     while (col.n_rows() < target_rows)
     {
       col << std::numeric_limits<double>::quiet_NaN();
