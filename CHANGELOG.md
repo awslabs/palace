@@ -28,7 +28,7 @@ The format of this changelog is based on
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial
     coefficients (its zeros and poles), generalizing the parallel-RLC `Impedance` boundary
-    to any passive lumped-network response
+    to any passive lumped-network response. SchemaVer 1-1-0
     [PR 770](https://github.com/awslabs/palace/pull/770).
 
 ## [0.17.0] - 2026-06-28
