@@ -1,0 +1,84 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/floquet_wave"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/floquet_wave.msh",
+    "L0": 1.0e-2
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1, 2],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "Periodic":
+    {
+      "FloquetWaveVector": [0.0, 0.0, 0.0],
+      "BoundaryPairs":
+      [
+        {
+          "DonorAttributes": [1],
+          "ReceiverAttributes": [2]
+        },
+        {
+          "DonorAttributes": [3],
+          "ReceiverAttributes": [4]
+        }
+      ]
+    },
+    "PEC":
+    {
+      "Attributes": [7]
+    },
+    "FloquetPort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [5],
+        "Excitation": 1,
+        "IncidentPolarization": "TE",
+        "MaxOrder": 1
+      }
+    ],
+    "WavePort":
+    [
+      {
+        "Index": 2,
+        "Attributes": [6],
+        "Excitation": 2,
+        "Mode": 1,
+        "Offset": 0.0
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Driven":
+    {
+      "MinFreq": 8.0,
+      "MaxFreq": 11.0,
+      "FreqStep": 1.5
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 200,
+      "ComplexCoarseSolve": true
+    }
+  }
+}
