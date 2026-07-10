@@ -520,10 +520,23 @@ public:
     double freq_re_GHz;  // Re(f): resonant frequency
     double freq_im_GHz;  // Im(f): half-linewidth (positive = decaying)
     double Q;            // quality factor = |Re(ω)| / (2|Im(ω)|)
+    // Eigenvector of the synthesized pencil (basis + aux rows), used to evaluate the
+    // eigenpair residual on the HDM below.
+    Eigen::VectorXcd eigvec;
+    // HDM eigenpair errors, following the eigenmode solver conventions: prolongate the
+    // eigenvector to the finite element space and evaluate the full frequency-dependent
+    // operator at the complex eigenfrequency.
+    double error_abs = -1.0;   // ‖(K + iωC − ω²M + A2(ω)) u‖₂ / ‖u‖₂
+    double error_bkwd = -1.0;  // error_abs / (‖K‖₂ + |ω|‖C‖₂ + |ω|²‖M‖₂)
   };
   static std::vector<EigenvalueEstimate>
   ComputeEigenvalueEstimates(const Eigen::MatrixXcd &L_inv, const Eigen::MatrixXcd *R_inv,
                              const Eigen::MatrixXcd &C, double fmin_GHz, double fmax_GHz);
+
+  // Fill error_abs / error_bkwd for each estimate by prolongating the eigenvector's
+  // basis block to the HDM space.
+  void ComputeEigenvalueEstimateErrors(const Units &units,
+                                       std::vector<EigenvalueEstimate> &estimates) const;
 };
 
 }  // namespace palace

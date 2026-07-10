@@ -2006,6 +2006,18 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   const auto &resistance_R_inv = matrices.R_inv;
   const auto &capacitance_C = matrices.C;
 
+  // Eigenvalue estimates of the synthesized system and their HDM eigenpair errors. The
+  // QZ runs redundantly on every rank (replicated dense matrices); the HDM error
+  // evaluation is collective (prolongation, operator application, norms), so it must
+  // also run on every rank before the root-only output below.
+  const double fmin_GHz =
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_min) / (2.0 * M_PI);
+  const double fmax_GHz =
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_max) / (2.0 * M_PI);
+  auto eigs = ComputeEigenvalueEstimates(*matrices.L_inv, matrices.R_inv.get(), *matrices.C,
+                                         fmin_GHz, fmax_GHz);
+  ComputeEigenvalueEstimateErrors(units, eigs);
+
   if (!Mpi::Root(space_op.GetComm()))
   {
     return;
@@ -2091,26 +2103,25 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
 
   PrintPortReferenceData(units, post_dir, matrices);
 
-  // Eigenvalue estimates of the synthesized system.
-  const double fmin_GHz =
-      units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_min) / (2.0 * M_PI);
-  const double fmax_GHz =
-      units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_max) / (2.0 * M_PI);
-  auto eigs = ComputeEigenvalueEstimates(*matrices.L_inv, matrices.R_inv.get(), *matrices.C,
-                                         fmin_GHz, fmax_GHz);
+  // Write the synthesized-system eigenvalue estimates (computed above, before the
+  // root-only guard) together with their HDM eigenpair errors.
   if (!eigs.empty())
   {
     auto out = TableWithCSVFile(post_dir / "rom-eigenvalues.csv");
     out.table.col_options.float_precision = 12;
-    out.table.reserve(eigs.size(), 3);
+    out.table.reserve(eigs.size(), 5);
     out.table.insert("re_f", "Re{f} (GHz)");
     out.table.insert("im_f", "Im{f} (GHz)");
     out.table.insert("Q", "Q");
+    out.table.insert("err_bkwd", "Error (Bkwd.)");
+    out.table.insert("err_abs", "Error (Abs.)");
     for (const auto &e : eigs)
     {
       out.table["re_f"] << e.freq_re_GHz;
       out.table["im_f"] << e.freq_im_GHz;
       out.table["Q"] << e.Q;
+      out.table["err_bkwd"] << e.error_bkwd;
+      out.table["err_abs"] << e.error_abs;
     }
     out.WriteFullTableTrunc();
     Mpi::Print("\n Synthesized-system eigenvalue estimates ({:d} modes in [{:.3f}, "
@@ -2118,8 +2129,8 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
                eigs.size(), fmin_GHz, fmax_GHz);
     for (const auto &e : eigs)
     {
-      Mpi::Print("   f = {:+.6e} {:+.6e}i GHz,  Q = {:.3e}\n", e.freq_re_GHz, e.freq_im_GHz,
-                 e.Q);
+      Mpi::Print("   f = {:+.6e} {:+.6e}i GHz,  Q = {:.3e},  bkwd. error = {:.3e}\n",
+                 e.freq_re_GHz, e.freq_im_GHz, e.Q, e.error_bkwd);
     }
   }
 }
@@ -2170,15 +2181,15 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
   Eigen::MatrixXcd A_col = A;  // zggev overwrites; column-major by default
   Eigen::MatrixXcd B_col = B;
   Eigen::VectorXcd alpha(N2), beta(N2);
-  Eigen::MatrixXcd vl_dummy(1, 1), vr_dummy(1, 1);
-  int ldvl = 1, ldvr = 1;
+  Eigen::MatrixXcd vl_dummy(1, 1), vr(N2, N2);
+  int ldvl = 1, ldvr = N2;
   int lwork = 4 * N2;
   Eigen::VectorXcd work(lwork);
   Eigen::VectorXd rwork(8 * N2);
   int info = 0;
-  char jobN = 'N';
-  zggev_(&jobN, &jobN, &N2, A_col.data(), &N2, B_col.data(), &N2, alpha.data(), beta.data(),
-         vl_dummy.data(), &ldvl, vr_dummy.data(), &ldvr, work.data(), &lwork, rwork.data(),
+  char jobN = 'N', jobV = 'V';
+  zggev_(&jobN, &jobV, &N2, A_col.data(), &N2, B_col.data(), &N2, alpha.data(), beta.data(),
+         vl_dummy.data(), &ldvl, vr.data(), &ldvr, work.data(), &lwork, rwork.data(),
          &info);
   MFEM_VERIFY(info == 0, "zggev failed with info = " << info);
 
@@ -2222,7 +2233,19 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
     {
       continue;
     }
-    modes.push_back({f_re, f_im, Q});
+    EigenvalueEstimate est;
+    est.freq_re_GHz = f_re;
+    est.freq_im_GHz = f_im;
+    est.Q = Q;
+    // The companion eigenvector is x = [v; s·v]; keep the "v" block (the synthesized
+    // pencil's node coordinates: basis + aux rows), normalized to unit 2-norm.
+    est.eigvec = vr.col(k).head(n);
+    const double vnorm = est.eigvec.norm();
+    if (vnorm > 0.0)
+    {
+      est.eigvec /= vnorm;
+    }
+    modes.push_back(std::move(est));
   }
   std::sort(modes.begin(), modes.end(),
             [](const auto &a, const auto &b) { return a.freq_re_GHz < b.freq_re_GHz; });
@@ -2238,6 +2261,116 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
     deduped.push_back(m);
   }
   return deduped;
+}
+
+void RomOperator::ComputeEigenvalueEstimateErrors(
+    const Units &units, std::vector<EigenvalueEstimate> &estimates) const
+{
+  // Evaluate each synthesized eigenpair on the HDM, following the eigensolver residual
+  // conventions (cf. QuasiNewtonSolver::GetResidualNorm / GetBackwardScaling):
+  //   error_abs  = ‖(K + iωC − ω²M + A2(ω)) u‖₂ / ‖u‖₂,
+  //   error_bkwd = error_abs / (‖K‖₂ + |ω|‖C‖₂ + |ω|²‖M‖₂),
+  // with ω the complex eigenfrequency in nondimensional angular units and u = V·y the
+  // prolongation of the eigenvector's basis block. The frequency-dependent A2(ω) —
+  // wave ports, second-order farfield ABC, surface conductivity — is evaluated exactly
+  // at complex ω via SpaceOperator::GetExtraSystemMatrix, so this also validates the
+  // rational dispersion fit content that the aux rows encode. The aux entries of the
+  // eigenvector have no HDM image and are dropped from the prolongation; for a converged
+  // physical mode their rational contribution is reproduced by the true A2(ω), while for
+  // a spurious aux-dominated root the truncated u cannot satisfy the HDM equation and the
+  // backward error is O(1). Collective on the space communicator.
+  if (estimates.empty() || V.empty())
+  {
+    return;
+  }
+  MPI_Comm comm = space_op.GetComm();
+  const std::size_t n_basis = V.size();
+
+  // The synthesized matrices are the reduced pencil conjugated by the diagonal port
+  // scaling v_d (CalculateNormalizedPROMMatrices: L⁻¹ = h⁻¹·v_d·Kr·v_d etc., with
+  // v_conc(j) = orth_R(j,j) on the port rows and 1 elsewhere). An eigenvector y of the
+  // synthesized pencil therefore corresponds to reduced-basis coordinates
+  // y_reduced = v_conc ∘ y.
+  Eigen::VectorXd v_conc = Eigen::VectorXd::Ones(static_cast<long>(n_basis));
+  {
+    const long n_port_modes = static_cast<long>(NumSynthesisPortModes());
+    long n_waveport_rows = 0;
+    if (!Mwp_p_r.empty())
+    {
+      for (long j = n_port_modes; j < static_cast<long>(v_node_label.size()); j++)
+      {
+        if (v_node_label[j].rfind("waveport_", 0) == 0)
+        {
+          n_waveport_rows++;
+        }
+        else
+        {
+          break;
+        }
+      }
+    }
+    for (long j = 0; j < n_port_modes + n_waveport_rows; j++)
+    {
+      v_conc[j] = orth_R(j, j);
+    }
+  }
+
+  // Spectral norms of the ω-independent operators (SLEPc/ARPACK use these for backward
+  // scaling too). Computed once.
+  const double normK = linalg::SpectralNorm(comm, *K, K->IsReal());
+  const double normC = C ? linalg::SpectralNorm(comm, *C, C->IsReal()) : 0.0;
+  const double normM = linalg::SpectralNorm(comm, *M, M->IsReal());
+
+  ComplexVector u(K->Width()), res(K->Width());
+  u.UseDevice(true);
+  res.UseDevice(true);
+  const double freq_to_omega_nd =
+      2.0 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(1.0);
+  for (auto &est : estimates)
+  {
+    // Physical complex frequency f (GHz) → nondimensional complex angular frequency.
+    // Palace's driven/eigenmode time convention is e^{iωt}: a decaying mode (positive
+    // Im{f} in eig.csv) has eigenfrequency ω = 2π(Re{f} + i·Im{f})·tc.
+    const std::complex<double> omega(freq_to_omega_nd * est.freq_re_GHz,
+                                     freq_to_omega_nd * est.freq_im_GHz);
+
+    // Prolongate the basis block: u = Σ_j (v_conc_j y_j) V[j] (V real, y complex; the
+    // v_conc factor undoes the port-row scaling baked into the synthesized pencil).
+    u = 0.0;
+    for (std::size_t j = 0; j < n_basis && j < static_cast<std::size_t>(est.eigvec.size());
+         j++)
+    {
+      const std::complex<double> yj = v_conc[static_cast<long>(j)] * est.eigvec(j);
+      linalg::AXPY(yj.real(), V[j], u.Real());
+      linalg::AXPY(yj.imag(), V[j], u.Imag());
+    }
+    const double unorm = linalg::Norml2(comm, u);
+    if (unorm == 0.0)
+    {
+      // Pure aux-state root: no basis content at all; flag with an O(1) sentinel since
+      // the mode has no HDM representation.
+      est.error_abs = est.error_bkwd = 1.0;
+      continue;
+    }
+
+    // res = (K + iωC − ω²M) u.
+    K->Mult(u, res);
+    if (C)
+    {
+      C->AddMult(u, res, 1i * omega);
+    }
+    M->AddMult(u, res, -omega * omega);
+    // The frequency-dependent boundary terms at complex ω (null when absent).
+    auto A2_omega = space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
+    if (A2_omega)
+    {
+      A2_omega->AddMult(u, res, 1.0);
+    }
+
+    est.error_abs = linalg::Norml2(comm, res) / unorm;
+    const double t = std::abs(omega);
+    est.error_bkwd = est.error_abs / (normK + t * normC + t * t * normM);
+  }
 }
 
 }  // namespace palace

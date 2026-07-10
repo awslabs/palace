@@ -494,8 +494,11 @@ TEST_CASE("adapter_driven_synth", "[Serial][Parallel][Regression]")
   opts.atol = 1.0e-11;
   // The synthesized-eigenvalue rows track the adaptive greedy sampling: modes are
   // only reproducible where the PROM converged, so allow row-count drift and compare
-  // the leading (sorted, in-band) modes.
+  // the leading (sorted, in-band) modes. The HDM eigenpair error columns in
+  // rom-eigenvalues.csv are residual diagnostics, not regression targets (same
+  // exclusion as the eigenmode cases).
   opts.skip_rowcount = true;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
   opts.excluded_files = {"rom-Linv", "rom-Rinv", "rom-C-", "rom-portload-",
                          "rom-orthogonalization-matrix-R"};
   // No field output is requested in the config.
