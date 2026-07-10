@@ -49,9 +49,9 @@ auto toEigenMatrix(const T &op, int n)
 class RomOperatorTest : public RomOperator
 {
 public:
-  using RomOperator::AugmentedPencil;
   using RomOperator::ApplyComplexPolynomialFitCorrections;
   using RomOperator::ApplyPolynomialFitCorrections;
+  using RomOperator::AugmentedPencil;
   using RomOperator::BuildAugmentedPencil;
   using RomOperator::CalculateNormalizedPROMMatrices;
   using RomOperator::NormalizedMatrices;
@@ -528,8 +528,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-Port-Cube32
   // For this two-port lumped case they should have the same shape as the total matrices
   // and contain only the diagonal R/L/C loading terms for the corresponding port row.
   REQUIRE(_norm.port_loads.size() == 2);
-  auto find_port_load = [&](std::string_view label)
-      -> const RomOperatorTest::NormalizedMatrices::PortLoad *
+  auto find_port_load =
+      [&](std::string_view label) -> const RomOperatorTest::NormalizedMatrices::PortLoad *
   {
     for (const auto &load : _norm.port_loads)
     {
@@ -562,8 +562,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-Port-Cube32
   check_load_shape(*port1_load);
   check_load_shape(*port2_load);
 
-  auto check_only_diagonal = [rom_dim](const Eigen::MatrixXcd &mat, long row,
-                                       std::complex<double> expected)
+  auto check_only_diagonal =
+      [rom_dim](const Eigen::MatrixXcd &mat, long row, std::complex<double> expected)
   {
     for (long i = 0; i < rom_dim; i++)
     {
@@ -1004,15 +1004,14 @@ TEST_CASE("RomOperator-PolynomialFitCorrections", "[romoperator][Serial]")
   Kr.setZero();
   Cr.setZero();
   Mr.setZero();
-  RomOperatorTest::ApplyComplexPolynomialFitCorrections(alpha0, alpha1, alpha2, Mp_r,
-                                                        Kr, Cr, Mr);
+  RomOperatorTest::ApplyComplexPolynomialFitCorrections(alpha0, alpha1, alpha2, Mp_r, Kr,
+                                                        Cr, Mr);
 
   for (double omega : {0.2, 1.5, 3.0})
   {
     const Eigen::MatrixXcd got =
         Kr + std::complex<double>(0.0, 1.0) * omega * Cr - omega * omega * Mr;
-    const Eigen::MatrixXcd want =
-        (alpha0 + alpha1 * omega + alpha2 * omega * omega) * Mp_r;
+    const Eigen::MatrixXcd want = (alpha0 + alpha1 * omega + alpha2 * omega * omega) * Mp_r;
     CHECK(((got - want).cwiseAbs().maxCoeff() < 1.0e-13));
   }
 }
@@ -1059,8 +1058,7 @@ TEST_CASE("RomOperator-AugmentedPencil-SchurComplement", "[romoperator][Serial]"
         std::complex<double>(2.4, 0.0)})
   {
     const Eigen::MatrixXcd A_aug =
-        aug.Kr + std::complex<double>(0.0, 1.0) * omega * aug.Cr -
-        omega * omega * aug.Mr;
+        aug.Kr + std::complex<double>(0.0, 1.0) * omega * aug.Cr - omega * omega * aug.Mr;
     const Eigen::MatrixXcd Avv = A_aug.topLeftCorner(2, 2);
     const Eigen::MatrixXcd Ava = A_aug.topRightCorner(2, 4);
     const Eigen::MatrixXcd Aav = A_aug.bottomLeftCorner(4, 2);

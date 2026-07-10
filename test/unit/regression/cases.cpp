@@ -496,8 +496,8 @@ TEST_CASE("adapter_driven_synth", "[Serial][Parallel][Regression]")
   // only reproducible where the PROM converged, so allow row-count drift and compare
   // the leading (sorted, in-band) modes.
   opts.skip_rowcount = true;
-  opts.excluded_files = {"rom-Linv", "rom-Rinv", "rom-C-",
-                         "rom-portload-", "rom-orthogonalization-matrix-R"};
+  opts.excluded_files = {"rom-Linv", "rom-Rinv", "rom-C-", "rom-portload-",
+                         "rom-orthogonalization-matrix-R"};
   // No field output is requested in the config.
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("adapter", "driven_synth.json", "driven_synth", opts);

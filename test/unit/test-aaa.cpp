@@ -97,9 +97,9 @@ TEST_CASE("AAA: pole-residue accuracy with complex poles + asymptote", "[aaa][Se
   const std::vector<std::complex<double>> poles = {std::complex<double>(2.0, 0.3),
                                                    std::complex<double>(-1.5, -0.2),
                                                    std::complex<double>(5.0, 0.8)};
-  const std::vector<std::complex<double>> residues = {
-      std::complex<double>(0.7, 0.4), std::complex<double>(-1.1, 0.2),
-      std::complex<double>(0.5, -0.3)};
+  const std::vector<std::complex<double>> residues = {std::complex<double>(0.7, 0.4),
+                                                      std::complex<double>(-1.1, 0.2),
+                                                      std::complex<double>(0.5, -0.3)};
   auto truth_fn = [&](std::complex<double> z)
   {
     std::complex<double> sum = d;
