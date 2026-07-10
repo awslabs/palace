@@ -48,6 +48,13 @@ struct RegressionOptions
   // gauge-dependent signed quantities whose sign is not reproducible
   // (e.g. near-zero κ_ext for high-Q eigenmodes).
   std::vector<std::string> abs_columns;
+  // Partial-match substrings on the CSV path relative to postpro/; matching files
+  // must exist in both the live output and the reference tree but are otherwise
+  // skipped entirely (no shape, header, or value comparison). Used for outputs whose
+  // representation is legitimately run-dependent, e.g. the raw synthesized circuit
+  // matrices (rom-Linv/Rinv/C), whose dimensions follow the adaptive sample count and
+  // whose entries depend on the orthogonalized basis.
+  std::vector<std::string> excluded_files;
   // Allow row-count mismatch (eigen / adaptive cases).
   bool skip_rowcount = false;
   // Compare at most this many leading rows. If unset for an Eigenmode case,
