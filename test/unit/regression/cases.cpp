@@ -476,6 +476,33 @@ TEST_CASE("adapter_hybrid", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("adapter", "hybrid.json", "hybrid", opts);
 }
 
+// Adaptive driven sweep + circuit synthesis with wave ports whose kn(ω) dispersion
+// forces the Augmented (rational + auxiliary state) synthesis regime. The raw
+// synthesized circuit matrices (rom-Linv/Rinv/C and per-port loads) are excluded from
+// comparison: their dimension follows the adaptive sample count and their entries
+// depend on the orthogonalized basis, so runs that represent the same physical system
+// can differ freely. The physically meaningful regression signal is
+// rom-eigenvalues.csv — the eigenvalues of the synthesized L⁻¹/R⁻¹/C system inside the
+// trained band (the adapter resonance at 10.526 GHz, Q 30.5, matches the eigenmode
+// reference of adapter_hybrid) — together with the S-parameters and the port
+// reference table. Omits [GPU] like cpw_wave_adaptive (wave-port adaptive sweeps are
+// skipped on GPU, awslabs/palace#375).
+TEST_CASE("adapter_driven_synth", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  // The synthesized-eigenvalue rows track the adaptive greedy sampling: modes are
+  // only reproducible where the PROM converged, so allow row-count drift and compare
+  // the leading (sorted, in-band) modes.
+  opts.skip_rowcount = true;
+  opts.excluded_files = {"rom-Linv", "rom-Rinv", "rom-C-",
+                         "rom-portload-", "rom-orthogonalization-matrix-R"};
+  // No field output is requested in the config.
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("adapter", "driven_synth.json", "driven_synth", opts);
+}
+
 // --- transmon: heavy eigen cases. Tagged `[Regression][Long]` so the
 // default `ctest -L "^regression$"` sweep skips them (the regression
 // block uses TEST_SPEC `[Regression]~[Long]`); CI exercises them via

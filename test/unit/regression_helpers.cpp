@@ -511,6 +511,16 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
         continue;
       }
 
+      // Presence in both trees is already established above; skip excluded files
+      // before any shape/header/value comparison.
+      const bool excluded = std::any_of(
+          effective_opts.excluded_files.begin(), effective_opts.excluded_files.end(),
+          [&rel](const std::string &pat) { return rel.find(pat) != std::string::npos; });
+      if (excluded)
+      {
+        continue;
+      }
+
       Table a = LoadTable(actual);
       Table r = LoadTable(reference);
 

@@ -30,6 +30,14 @@
 #include "utils/timer.hpp"
 #include "utils/units.hpp"
 
+extern "C"
+{
+  void zggev_(char *, char *, int *, std::complex<double> *, int *, std::complex<double> *,
+              int *, std::complex<double> *, std::complex<double> *, std::complex<double> *,
+              int *, std::complex<double> *, int *, std::complex<double> *, int *, double *,
+              int *);
+}
+
 namespace palace
 {
 
@@ -2087,6 +2095,156 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   print_table(orth_R_padded, "rom-orthogonalization-matrix-R.csv", labels);
 
   PrintPortReferenceData(units, post_dir, matrices);
+
+  // Eigenvalue estimates of the synthesized system.
+  const double fmin_GHz =
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_min) / (2.0 * M_PI);
+  const double fmax_GHz =
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_max) / (2.0 * M_PI);
+  auto eigs = ComputeEigenvalueEstimates(*matrices.L_inv, matrices.R_inv.get(),
+                                         *matrices.C, fmin_GHz, fmax_GHz);
+  if (!eigs.empty())
+  {
+    auto out = TableWithCSVFile(post_dir / "rom-eigenvalues.csv");
+    out.table.col_options.float_precision = 12;
+    out.table.reserve(eigs.size(), 3);
+    out.table.insert("re_f", "Re{f} (GHz)");
+    out.table.insert("im_f", "Im{f} (GHz)");
+    out.table.insert("Q", "Q");
+    for (const auto &e : eigs)
+    {
+      out.table["re_f"] << e.freq_re_GHz;
+      out.table["im_f"] << e.freq_im_GHz;
+      out.table["Q"] << e.Q;
+    }
+    out.WriteFullTableTrunc();
+    Mpi::Print("\n Synthesized-system eigenvalue estimates ({:d} modes in [{:.3f}, "
+               "{:.3f}] GHz):\n",
+               eigs.size(), fmin_GHz, fmax_GHz);
+    for (const auto &e : eigs)
+    {
+      Mpi::Print("   f = {:+.6e} {:+.6e}i GHz,  Q = {:.3e}\n", e.freq_re_GHz,
+                 e.freq_im_GHz, e.Q);
+    }
+  }
+}
+
+std::vector<RomOperator::EigenvalueEstimate>
+RomOperator::ComputeEigenvalueEstimates(const Eigen::MatrixXcd &L_inv,
+                                        const Eigen::MatrixXcd *R_inv,
+                                        const Eigen::MatrixXcd &C,
+                                        double fmin_GHz, double fmax_GHz)
+{
+  // Solve the quadratic eigenvalue problem (L⁻¹ + iωR⁻¹ − ω²C)v = 0 via companion
+  // linearization. SI matrices span ~28 orders of magnitude (L⁻¹ ~ 1e14, C ~ 1e-14), so
+  // we nondimensionalize first: substitute ω = ω₀·ω' with ω₀ = √(‖K‖/‖C‖), then divide
+  // through by ‖K‖, making both leading blocks O(1). Results are converted back to physical
+  // units.
+  const int n = static_cast<int>(L_inv.rows());
+  MFEM_VERIFY(n > 0 && C.rows() == n, "Empty synthesis matrices in eigenvalue estimate!");
+
+  const double norm_K = L_inv.cwiseAbs().maxCoeff();
+  const double norm_C = C.cwiseAbs().maxCoeff();
+  const double w0 = (norm_K > 0.0 && norm_C > 0.0) ? std::sqrt(norm_K / norm_C) : 1.0;
+  const double scale = (norm_K > 0.0) ? norm_K : 1.0;
+
+  Eigen::MatrixXcd Ks = L_inv / scale;
+  Eigen::MatrixXcd Cs = (w0 * w0 / scale) * C;
+  Eigen::MatrixXcd Gs = Eigen::MatrixXcd::Zero(n, n);
+  if (R_inv)
+  {
+    Gs = (w0 / scale) * (*R_inv);
+  }
+
+  // First-companion linearization in s = iω: substituting s into the physical pencil
+  // (L⁻¹ + iωR⁻¹ − ω²C) v = 0 gives P(s) = Ks + s·Gs + s²·Cs (all coefficient signs
+  // positive), so with x = [v; s·v]:
+  //   [0 I; -Ks -Gs] x = s [I 0; 0 Cs] x.
+  // The eigenvalue is s = iω, converted back below via ω = s / i.
+  Eigen::MatrixXcd A = Eigen::MatrixXcd::Zero(2 * n, 2 * n);
+  Eigen::MatrixXcd B = Eigen::MatrixXcd::Zero(2 * n, 2 * n);
+  A.topRightCorner(n, n) = Eigen::MatrixXcd::Identity(n, n);
+  A.bottomLeftCorner(n, n) = -Ks;
+  A.bottomRightCorner(n, n) = -Gs;
+  B.topLeftCorner(n, n) = Eigen::MatrixXcd::Identity(n, n);
+  B.bottomRightCorner(n, n) = Cs;
+
+  // Dense generalized eigenvalue solve via LAPACK zggev (complex QZ). B may be singular
+  // (augmented-state rows with zero capacitance → infinite eigenvalues), which a B⁻¹A
+  // standard-EVP approach cannot handle; the QZ factorization returns inf for those
+  // and finite values for physical modes.
+  int N2 = 2 * n;
+  Eigen::MatrixXcd A_col = A;  // zggev overwrites; column-major by default
+  Eigen::MatrixXcd B_col = B;
+  Eigen::VectorXcd alpha(N2), beta(N2);
+  Eigen::MatrixXcd vl_dummy(1, 1), vr_dummy(1, 1);
+  int ldvl = 1, ldvr = 1;
+  int lwork = 4 * N2;
+  Eigen::VectorXcd work(lwork);
+  Eigen::VectorXd rwork(8 * N2);
+  int info = 0;
+  char jobN = 'N';
+  zggev_(&jobN, &jobN, &N2, A_col.data(), &N2, B_col.data(), &N2, alpha.data(),
+         beta.data(), vl_dummy.data(), &ldvl, vr_dummy.data(), &ldvr, work.data(), &lwork,
+         rwork.data(), &info);
+  MFEM_VERIFY(info == 0, "zggev failed with info = " << info);
+
+  // Eigenvalues are alpha/beta; infinite when |beta| ≈ 0.
+  Eigen::VectorXcd s(N2);
+  for (int k = 0; k < N2; k++)
+  {
+    s(k) = (std::abs(beta(k)) > 1.0e-300) ? alpha(k) / beta(k)
+                                           : std::complex<double>(1.0e300, 0.0);
+  }
+
+  // Convert eigenvalues back to physical frequencies (GHz): the companion eigenvalue is
+  // s = iω' (nondimensional), so ω = w0 · s / i, then f = ω / (2π·1e9). The pencil is
+  // complex symmetric (not Hermitian), so roots do not come in conjugate pairs: each
+  // physical mode contributes one root whose Im{f} is positive for decay, matching the
+  // eigenmode solver's eig.csv convention directly. Filter to the trained band and
+  // Q > 0.5: the augmented realization's aux states (zero capacitance rows,
+  // cond(C) = ∞) produce spurious near-critically-damped roots at Q ≲ 0.5 that carry no
+  // physical content..
+  const std::complex<double> inv_i(0.0, -1.0);  // 1/i = -i
+  constexpr double Q_MIN = 0.5;
+  std::vector<EigenvalueEstimate> modes;
+  for (int k = 0; k < s.size(); k++)
+  {
+    if (!std::isfinite(s(k).real()) || !std::isfinite(s(k).imag()))
+    {
+      continue;
+    }
+    const std::complex<double> omega_phys = w0 * (s(k) * inv_i);
+    const double f_re = omega_phys.real() / (2.0 * M_PI * 1.0e9);
+    const double f_im = omega_phys.imag() / (2.0 * M_PI * 1.0e9);
+    if (f_re < fmin_GHz || f_re > fmax_GHz)
+    {
+      continue;
+    }
+    const double abs_omega_re = std::abs(omega_phys.real());
+    const double abs_omega_im = std::abs(omega_phys.imag());
+    const double Q = (abs_omega_im > 1.0e-20) ? abs_omega_re / (2.0 * abs_omega_im)
+                                               : std::numeric_limits<double>::infinity();
+    if (Q <= Q_MIN)
+    {
+      continue;
+    }
+    modes.push_back({f_re, f_im, Q});
+  }
+  std::sort(modes.begin(), modes.end(),
+            [](const auto &a, const auto &b) { return a.freq_re_GHz < b.freq_re_GHz; });
+
+  // Deduplicate near-identical modes (conjugate pairs or numerical duplicates).
+  std::vector<EigenvalueEstimate> deduped;
+  for (const auto &m : modes)
+  {
+    if (!deduped.empty() && std::abs(m.freq_re_GHz - deduped.back().freq_re_GHz) < 1.0e-4)
+    {
+      continue;
+    }
+    deduped.push_back(m);
+  }
+  return deduped;
 }
 
 }  // namespace palace

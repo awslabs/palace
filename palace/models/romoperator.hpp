@@ -509,6 +509,23 @@ public:
 
   // Print PROM matrices to file include in input (SI) units.
   void PrintPROMMatrices(const Units &units, const fs::path &post_dir) const;
+
+  // Compute eigenvalue estimates of the synthesized L⁻¹/R⁻¹/C system via the companion
+  // linearization (in s = iω) of the quadratic pencil (L⁻¹ + iωR⁻¹ − ω²C)v = 0. Returns
+  // modes whose Re(f) lies inside [fmin_GHz, fmax_GHz] with Q > 0.5 (spurious
+  // aux-state roots filtered). The complex-symmetric pencil yields decaying modes with
+  // positive Im{f}, the same sign convention as the eigenmode solver's eig.csv.
+  struct EigenvalueEstimate
+  {
+    double freq_re_GHz;  // Re(f): resonant frequency
+    double freq_im_GHz;  // Im(f): half-linewidth (positive = decaying)
+    double Q;            // quality factor = |Re(ω)| / (2|Im(ω)|)
+  };
+  static std::vector<EigenvalueEstimate>
+  ComputeEigenvalueEstimates(const Eigen::MatrixXcd &L_inv,
+                             const Eigen::MatrixXcd *R_inv,
+                             const Eigen::MatrixXcd &C,
+                             double fmin_GHz, double fmax_GHz);
 };
 
 }  // namespace palace
