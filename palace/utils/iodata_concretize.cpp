@@ -149,16 +149,15 @@ void ConcretizeTransient(const config::TransientSolverData &transient, json &j_t
 
 void ConcretizeDriven(const config::DrivenSolverData &driven, json &j_driven)
 {
-  ApplyEntries(
-      j_driven,
-      {{"Restart", driven.restart},
-       {"AdaptiveTol", driven.adaptive_tol},
-       {"AdaptiveMaxSamples", driven.adaptive_max_size},
-       {"AdaptiveConvergenceMemory", driven.adaptive_memory},
-       {"AdaptiveGSOrthogonalization", ToString(driven.adaptive_solver_gs_orthog_type)},
-       {"AdaptiveCircuitSynthesis", driven.adaptive_circuit_synthesis},
-       {"AdaptiveCircuitSynthesisDomainOrthogonalization",
-        ToString(driven.adaptive_circuit_synthesis_domain_orthog)}});
+  ApplyEntries(j_driven, {{"Restart", driven.restart},
+                          {"AdaptiveTol", driven.adaptive_tol},
+                          {"AdaptiveMaxSamples", driven.adaptive_max_size},
+                          {"AdaptiveConvergenceMemory", driven.adaptive_memory},
+                          {"AdaptiveGSOrthogonalization",
+                           ToString(driven.adaptive_solver_gs_orthog_type)},
+                          {"AdaptiveCircuitSynthesis", driven.adaptive_circuit_synthesis},
+                          {"AdaptiveCircuitSynthesisDomainOrthogonalization",
+                           ToString(driven.adaptive_circuit_synthesis_domain_orthog)}});
 }
 
 void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostatic,

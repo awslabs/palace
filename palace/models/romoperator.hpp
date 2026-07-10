@@ -374,9 +374,9 @@ protected:
   NormalizedMatrices CalculateNormalizedPROMMatrices(const Units &units) const;
 
   // Print the matched reference admittance used to convert synthesized port admittances to
-  // Palace/Kurokawa S-parameters. The L/R/C matrices remain loaded; downstream cascade tools
-  // should use the per-port rom-portload-* matrices for matrix-level port-load removal and
-  // this table for frequency-domain S-parameter normalization.
+  // Palace/Kurokawa S-parameters. The L/R/C matrices remain loaded; downstream cascade
+  // tools should use the per-port rom-portload-* matrices for matrix-level port-load
+  // removal and this table for frequency-domain S-parameter normalization.
   void PrintPortReferenceData(const Units &units, const fs::path &post_dir,
                               const NormalizedMatrices &matrices) const;
 
@@ -522,10 +522,8 @@ public:
     double Q;            // quality factor = |Re(ω)| / (2|Im(ω)|)
   };
   static std::vector<EigenvalueEstimate>
-  ComputeEigenvalueEstimates(const Eigen::MatrixXcd &L_inv,
-                             const Eigen::MatrixXcd *R_inv,
-                             const Eigen::MatrixXcd &C,
-                             double fmin_GHz, double fmax_GHz);
+  ComputeEigenvalueEstimates(const Eigen::MatrixXcd &L_inv, const Eigen::MatrixXcd *R_inv,
+                             const Eigen::MatrixXcd &C, double fmin_GHz, double fmax_GHz);
 };
 
 }  // namespace palace

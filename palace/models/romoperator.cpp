@@ -1103,8 +1103,7 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
   // Chebyshev interior nodes so its points are DISTINCT from the fit grid — the LSQ
   // residual is artificially small AT the fit points, so the residual must be measured
   // between them.
-  const int n_fit =
-      std::max(12, 2 * static_cast<int>(waveport_synthesis_order_max) + 4);
+  const int n_fit = std::max(12, 2 * static_cast<int>(waveport_synthesis_order_max) + 4);
   const int n_dense = 2 * n_fit;
   const double w_lo = sweep_omega_min;
   const double w_hi = sweep_omega_max;
@@ -1314,8 +1313,8 @@ void RomOperator::ApplyComplexPolynomialFitCorrections(
   Mr_corr += (-alpha2) * Mp_r;
 }
 
-bool RomOperator::AddAuxBlockDirections(WavePortAuxBlock &blk,
-                                        const Eigen::MatrixXcd &Mp_r, double rank_tol)
+bool RomOperator::AddAuxBlockDirections(WavePortAuxBlock &blk, const Eigen::MatrixXcd &Mp_r,
+                                        double rank_tol)
 {
   Eigen::MatrixXd M_proj = Mp_r.imag().eval();
   Eigen::JacobiSVD<Eigen::MatrixXd> svd(M_proj, Eigen::ComputeThinU);
@@ -1614,10 +1613,9 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       port_load.Cr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
       port_load.Mr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
       out.wave_port_fits.push_back(fit);
-      ApplyPolynomialFitCorrections(fit, Mp_r, Kr_total_corr, Cr_total_corr,
-                                    Mr_total_corr);
-      ApplyPolynomialFitCorrections(fit, Mp_r, port_load.Kr_corr,
-                                    port_load.Cr_corr, port_load.Mr_corr);
+      ApplyPolynomialFitCorrections(fit, Mp_r, Kr_total_corr, Cr_total_corr, Mr_total_corr);
+      ApplyPolynomialFitCorrections(fit, Mp_r, port_load.Kr_corr, port_load.Cr_corr,
+                                    port_load.Mr_corr);
       if (fit.aux)
       {
         aux_blocks_total.push_back(*fit.aux);
@@ -1685,8 +1683,8 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
     Cr_total += Cr;
   }
 
-  auto aug = BuildAugmentedPencil(Kr_total, Cr_total, Mr_total, aux_blocks_total,
-                                  out.aux_labels);
+  auto aug =
+      BuildAugmentedPencil(Kr_total, Cr_total, Mr_total, aux_blocks_total, out.aux_labels);
 
   // v_d port-row scaling: extend with 1's for aux rows (no port-impedance scaling on
   // aux states — they're internal circuit nodes).
@@ -1694,10 +1692,9 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   auto unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
   auto unit_ohm_inv = 1.0 / units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
 
-  auto normalize_augmented = [&](const AugmentedPencil &aug_in,
-                                 std::unique_ptr<mat_t> &L_inv,
-                                 std::unique_ptr<mat_t> &R_inv,
-                                 std::unique_ptr<mat_t> &C_out)
+  auto normalize_augmented =
+      [&](const AugmentedPencil &aug_in, std::unique_ptr<mat_t> &L_inv,
+          std::unique_ptr<mat_t> &R_inv, std::unique_ptr<mat_t> &C_out)
   {
     const long n_v = Kr.rows();
     const long n_aug = aug_in.Kr.rows();
@@ -1710,8 +1707,7 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
 
     L_inv =
         std::make_unique<mat_t>((unit_henry_inv * v_d_aug * aug_in.Kr * v_d_aug).eval());
-    C_out =
-        std::make_unique<mat_t>((unit_farad * v_d_aug * aug_in.Mr * v_d_aug).eval());
+    C_out = std::make_unique<mat_t>((unit_farad * v_d_aug * aug_in.Mr * v_d_aug).eval());
     // Emit R⁻¹ whenever there's any dissipative contribution: lumped resistance, surface
     // conductivity, wave-port α₁, or aux-state damping.
     if (aug_in.Cr.cwiseAbs().maxCoeff() > 0.0)
@@ -1785,9 +1781,8 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   for (const auto &pending : pending_port_loads)
   {
     std::vector<std::string> local_aux_labels;
-    auto local_aug = BuildAugmentedPencil(pending.Kr_corr, pending.Cr_corr,
-                                          pending.Mr_corr, pending.aux_blocks,
-                                          local_aux_labels);
+    auto local_aug = BuildAugmentedPencil(pending.Kr_corr, pending.Cr_corr, pending.Mr_corr,
+                                          pending.aux_blocks, local_aux_labels);
     auto full_aug = embed_augmented(local_aug, local_aux_labels);
 
     NormalizedMatrices::PortLoad load;
@@ -1907,13 +1902,16 @@ void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &pos
 
   auto wave_y_ref = [&](const RefPort &ref, double omega) -> std::complex<double>
   {
-    MFEM_VERIFY(ref.wave_fit != nullptr, "Missing wave-port fit for port reference output!");
+    MFEM_VERIFY(ref.wave_fit != nullptr,
+                "Missing wave-port fit for port reference output!");
     const auto Mp_it = Mwp_p_r.find(ref.port_idx);
     MFEM_VERIFY(Mp_it != Mwp_p_r.end(), "Missing wave-port boundary mass projection!");
 
     std::vector<long> rows;
-    const long re = label_index(v_node_label, fmt::format("waveport_{:d}_re", ref.port_idx));
-    const long im = label_index(v_node_label, fmt::format("waveport_{:d}_im", ref.port_idx));
+    const long re =
+        label_index(v_node_label, fmt::format("waveport_{:d}_re", ref.port_idx));
+    const long im =
+        label_index(v_node_label, fmt::format("waveport_{:d}_im", ref.port_idx));
     MFEM_VERIFY(re >= 0, "Missing wave-port real row for port reference output!");
     rows.push_back(re);
     if (im >= 0)
@@ -1928,9 +1926,9 @@ void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &pos
     {
       for (std::size_t j = 0; j < rows.size(); j++)
       {
-        A(static_cast<long>(i), static_cast<long>(j)) =
-            scalar * orth_R(rows[i], rows[i]) * Mp_it->second(rows[i], rows[j]) *
-            orth_R(rows[j], rows[j]);
+        A(static_cast<long>(i), static_cast<long>(j)) = scalar * orth_R(rows[i], rows[i]) *
+                                                        Mp_it->second(rows[i], rows[j]) *
+                                                        orth_R(rows[j], rows[j]);
       }
     }
 
@@ -1942,8 +1940,7 @@ void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &pos
       Eigen::FullPivLU<Eigen::MatrixXcd> lu(Aii);
       if (lu.rank() == ni)
       {
-        A_eff -=
-            (A.block(0, 1, 1, ni) * lu.solve(A.block(1, 0, ni, 1)))(0, 0);
+        A_eff -= (A.block(0, 1, 1, ni) * lu.solve(A.block(1, 0, ni, 1)))(0, 0);
       }
     }
 
@@ -2021,12 +2018,10 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   {
     labels.push_back(lab);
   }
-  auto print_table =
-      [post_dir](const Eigen::MatrixXd &mat, std::string_view filename,
-                 const std::vector<std::string> &table_labels)
+  auto print_table = [post_dir](const Eigen::MatrixXd &mat, std::string_view filename,
+                                const std::vector<std::string> &table_labels)
   {
-    MFEM_VERIFY((table_labels.size() == mat.cols()) &&
-                    (table_labels.size() == mat.rows()),
+    MFEM_VERIFY((table_labels.size() == mat.cols()) && (table_labels.size() == mat.rows()),
                 "Inconsistent PROM size!");
 
     auto out = TableWithCSVFile(post_dir / filename);
@@ -2101,8 +2096,8 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_min) / (2.0 * M_PI);
   const double fmax_GHz =
       units.Dimensionalize<Units::ValueType::FREQUENCY>(sweep_omega_max) / (2.0 * M_PI);
-  auto eigs = ComputeEigenvalueEstimates(*matrices.L_inv, matrices.R_inv.get(),
-                                         *matrices.C, fmin_GHz, fmax_GHz);
+  auto eigs = ComputeEigenvalueEstimates(*matrices.L_inv, matrices.R_inv.get(), *matrices.C,
+                                         fmin_GHz, fmax_GHz);
   if (!eigs.empty())
   {
     auto out = TableWithCSVFile(post_dir / "rom-eigenvalues.csv");
@@ -2123,17 +2118,15 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
                eigs.size(), fmin_GHz, fmax_GHz);
     for (const auto &e : eigs)
     {
-      Mpi::Print("   f = {:+.6e} {:+.6e}i GHz,  Q = {:.3e}\n", e.freq_re_GHz,
-                 e.freq_im_GHz, e.Q);
+      Mpi::Print("   f = {:+.6e} {:+.6e}i GHz,  Q = {:.3e}\n", e.freq_re_GHz, e.freq_im_GHz,
+                 e.Q);
     }
   }
 }
 
-std::vector<RomOperator::EigenvalueEstimate>
-RomOperator::ComputeEigenvalueEstimates(const Eigen::MatrixXcd &L_inv,
-                                        const Eigen::MatrixXcd *R_inv,
-                                        const Eigen::MatrixXcd &C,
-                                        double fmin_GHz, double fmax_GHz)
+std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstimates(
+    const Eigen::MatrixXcd &L_inv, const Eigen::MatrixXcd *R_inv, const Eigen::MatrixXcd &C,
+    double fmin_GHz, double fmax_GHz)
 {
   // Solve the quadratic eigenvalue problem (L⁻¹ + iωR⁻¹ − ω²C)v = 0 via companion
   // linearization. SI matrices span ~28 orders of magnitude (L⁻¹ ~ 1e14, C ~ 1e-14), so
@@ -2184,9 +2177,9 @@ RomOperator::ComputeEigenvalueEstimates(const Eigen::MatrixXcd &L_inv,
   Eigen::VectorXd rwork(8 * N2);
   int info = 0;
   char jobN = 'N';
-  zggev_(&jobN, &jobN, &N2, A_col.data(), &N2, B_col.data(), &N2, alpha.data(),
-         beta.data(), vl_dummy.data(), &ldvl, vr_dummy.data(), &ldvr, work.data(), &lwork,
-         rwork.data(), &info);
+  zggev_(&jobN, &jobN, &N2, A_col.data(), &N2, B_col.data(), &N2, alpha.data(), beta.data(),
+         vl_dummy.data(), &ldvl, vr_dummy.data(), &ldvr, work.data(), &lwork, rwork.data(),
+         &info);
   MFEM_VERIFY(info == 0, "zggev failed with info = " << info);
 
   // Eigenvalues are alpha/beta; infinite when |beta| ≈ 0.
@@ -2194,7 +2187,7 @@ RomOperator::ComputeEigenvalueEstimates(const Eigen::MatrixXcd &L_inv,
   for (int k = 0; k < N2; k++)
   {
     s(k) = (std::abs(beta(k)) > 1.0e-300) ? alpha(k) / beta(k)
-                                           : std::complex<double>(1.0e300, 0.0);
+                                          : std::complex<double>(1.0e300, 0.0);
   }
 
   // Convert eigenvalues back to physical frequencies (GHz): the companion eigenvalue is
@@ -2224,7 +2217,7 @@ RomOperator::ComputeEigenvalueEstimates(const Eigen::MatrixXcd &L_inv,
     const double abs_omega_re = std::abs(omega_phys.real());
     const double abs_omega_im = std::abs(omega_phys.imag());
     const double Q = (abs_omega_im > 1.0e-20) ? abs_omega_re / (2.0 * abs_omega_im)
-                                               : std::numeric_limits<double>::infinity();
+                                              : std::numeric_limits<double>::infinity();
     if (Q <= Q_MIN)
     {
       continue;
