@@ -107,7 +107,8 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
 
     // Parent boundary face types whose intersection with the cross-section should
     // become 2D boundary edges: BCs that pin the tangential E-field (PEC, auxpec,
-    // impedance, conductivity, farfield) plus other-waveports (relabeled to PEC below).
+    // impedance, conductivity, rational impedance, farfield) plus other-waveports
+    // (relabeled to PEC below).
     std::vector<int> internal_bdr_attrs;
     const auto &bdr = iodata.boundaries;
     auto append = [&](const auto &src)
@@ -119,6 +120,10 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
       append(d.attributes);
     }
     for (const auto &d : bdr.conductivity)
+    {
+      append(d.attributes);
+    }
+    for (const auto &d : bdr.rational_impedance)
     {
       append(d.attributes);
     }

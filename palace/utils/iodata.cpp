@@ -287,10 +287,12 @@ void IoData::CheckConfiguration()
     MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
                     (boundaries.auxpec.empty() && boundaries.waveport.empty() &&
                      (boundaries.farfield.empty() || boundaries.farfield.order == 1) &&
-                     boundaries.conductivity.empty()),
+                     boundaries.conductivity.empty() &&
+                     boundaries.rational_impedance.empty()),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) is not "
                 "supported in systems with any of: "
-                "WavePort, Absorbing (order > 1), or Conductivity boundary conditions!\n");
+                "WavePort, Absorbing (order > 1), Conductivity, or RationalImpedance "
+                "boundary conditions!\n");
   }
   else if (problem.type == ProblemType::EIGENMODE)
   {
@@ -312,6 +314,11 @@ void IoData::CheckConfiguration()
     {
       Mpi::Warning("Electrostatic problem type does not support surface impedance boundary "
                    "conditions!\n");
+    }
+    if (!boundaries.rational_impedance.empty())
+    {
+      Mpi::Warning("Electrostatic problem type does not support rational surface "
+                   "impedance boundary conditions!\n");
     }
     if (!boundaries.auxpec.empty() || !boundaries.waveport.empty())
     {
@@ -341,6 +348,11 @@ void IoData::CheckConfiguration()
       Mpi::Warning("Magnetostatic problem type does not support surface impedance boundary "
                    "conditions!\n");
     }
+    if (!boundaries.rational_impedance.empty())
+    {
+      Mpi::Warning("Magnetostatic problem type does not support rational surface "
+                   "impedance boundary conditions!\n");
+    }
     if (!boundaries.lumpedport.empty())
     {
       Mpi::Warning(
@@ -363,6 +375,11 @@ void IoData::CheckConfiguration()
     {
       Mpi::Warning("Transient problem type does not support surface conductivity boundary "
                    "conditions!\n");
+    }
+    if (!boundaries.rational_impedance.empty())
+    {
+      Mpi::Warning("Transient problem type does not support rational surface "
+                   "impedance boundary conditions!\n");
     }
     if (!boundaries.auxpec.empty() || !boundaries.waveport.empty())
     {
@@ -645,6 +662,10 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
 
   // Impedance boundaries and lumped ports.
   for (auto &data : boundaries.impedance)
+  {
+    config::Nondimensionalize(units, data);
+  }
+  for (auto &data : boundaries.rational_impedance)
   {
     config::Nondimensionalize(units, data);
   }

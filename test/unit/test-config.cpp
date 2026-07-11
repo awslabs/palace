@@ -1135,6 +1135,10 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
           {"Conductivity", {{{"Attributes", {3}}, {"Conductivity", 5.8e7}}}},
           {"Impedance",
            {{{"Attributes", {4}}, {"Rs", 50.0}, {"Ls", 1.0e-9}, {"Cs", 1.0e-12}}}},
+          {"RationalImpedance",
+           {{{"Attributes", {8}},
+             {"Numerator", {5.0e-8, 0.0}},
+             {"Denominator", {5.0e-20, 1.0e-9, 50.0}}}}},
           {"LumpedPort",
            {{{"Index", 1},
              {"Attributes", {5}},
@@ -1212,6 +1216,14 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata2.boundaries.impedance[0].Rs == iodata1.boundaries.impedance[0].Rs);
     CHECK(iodata2.boundaries.impedance[0].Ls == iodata1.boundaries.impedance[0].Ls);
     CHECK(iodata2.boundaries.impedance[0].Cs == iodata1.boundaries.impedance[0].Cs);
+    REQUIRE(iodata1.boundaries.rational_impedance.size() == 1);
+    REQUIRE(iodata2.boundaries.rational_impedance.size() == 1);
+    CHECK(iodata2.boundaries.rational_impedance[0].attributes ==
+          iodata1.boundaries.rational_impedance[0].attributes);
+    CHECK(iodata2.boundaries.rational_impedance[0].num ==
+          iodata1.boundaries.rational_impedance[0].num);
+    CHECK(iodata2.boundaries.rational_impedance[0].den ==
+          iodata1.boundaries.rational_impedance[0].den);
     REQUIRE(iodata2.boundaries.lumpedport.count(1) == 1);
     const auto &lp1 = iodata1.boundaries.lumpedport.at(1);
     const auto &lp2 = iodata2.boundaries.lumpedport.at(1);
@@ -1272,6 +1284,12 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                                        config["Boundaries"]["Impedance"][0]);
     INFO("Boundaries.Impedance[] missing keys: " << json(imp_gaps).dump());
     CHECK(imp_gaps.empty());
+
+    auto rz_gaps =
+        SchemaCoverageGaps("/properties/Boundaries/properties/RationalImpedance/items",
+                           config["Boundaries"]["RationalImpedance"][0]);
+    INFO("Boundaries.RationalImpedance[] missing keys: " << json(rz_gaps).dump());
+    CHECK(rz_gaps.empty());
 
     // LumpedPort: Direction/CoordinateSystem/Elements are opt-in alternatives to
     // Attributes for declaring the port geometry; concretize does not synthesize them.
