@@ -200,6 +200,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "mfem_pr5353.diff",
                 "mfem_pr4983.diff",
                 patch("mfem_pr5124_cudss.diff", when="@:4.9 +cudss"),
+                # mfem PR #5415 (node-local output directory creation); pulled
+                # directly from the PR head commit. Remove once merged upstream
+                # and mfem is bumped.
+                patch(
+                    "https://github.com/mfem/mfem/commit/9d1438d8a2502cc927c63e093cf8c855ff17918e.diff",
+                    sha256="482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f",
+                ),
             ],
         )
         depends_on("mfem+shared", when="+shared")

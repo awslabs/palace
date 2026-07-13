@@ -23,6 +23,7 @@
 #include "utils/constants.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/outputdir.hpp"
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
@@ -806,11 +807,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step)
 {
   BlockTimer bt(Timer::POSTPRO_GRIDFUNCTION);
 
-  // Create output directory if it doesn't exist.
-  if (Mpi::Root(fem_op->GetComm()))
-  {
-    fs::create_directories(gridfunction_output_dir);
-  }
+  // Create output directory if it doesn't exist (node-local filesystem aware).
+  EnsureDirectory(fs::path(gridfunction_output_dir), fem_op->GetComm());
 
   auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
 
@@ -980,11 +978,8 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
 
-  // Create output directory if it doesn't exist.
-  if (Mpi::Root(fem_op->GetComm()))
-  {
-    fs::create_directories(gridfunction_output_dir);
-  }
+  // Create output directory if it doesn't exist (node-local filesystem aware).
+  EnsureDirectory(fs::path(gridfunction_output_dir), fem_op->GetComm());
 
   // Create piecewise constant finite element space for rank and error indicator.
   mfem::L2_FECollection pwconst_fec(0, mesh.Dimension());
