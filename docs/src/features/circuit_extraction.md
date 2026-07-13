@@ -325,9 +325,7 @@ although most users should not need this.
 
 ### Synthesizing Frequency-Dependent Boundary Conditions
 
-The discussion so far assumed a purely quadratic ``\bm{A}(\omega) = \bm{K} + i\omega\bm{C} -
-\omega^2\bm{M}``. Several boundary conditions break this assumption: they add a term ``f(\omega)\,
-\bm{M}_b`` to the system matrix, where ``\bm{M}_b`` is an ``\omega``-independent boundary-mass
+The discussion so far assumed a purely quadratic ``\bm{A}(\omega) = \bm{K} + i\omega\bm{C} - \omega^2\bm{M}``. Several boundary conditions break this assumption: they add a term ``f(\omega)\, \bm{M}_b`` to the system matrix, where ``\bm{M}_b`` is an ``\omega``-independent boundary-mass
 operator and ``f(\omega)`` is a scalar *dispersion* that may not be quadratic in ``\omega``. The
 dispersion differs per boundary type:
 
@@ -349,8 +347,7 @@ dispersion differs per boundary type:
 For each such boundary, *Palace* fits ``f(\omega)`` on the sweep band and chooses one of two regimes
 automatically, by comparing the residual of an order-2 polynomial fit against `"AdaptiveTol"`:
 
-**Polynomial regime.** When a quadratic ``f(\omega) \approx \alpha_0 + \alpha_1\omega +
-\alpha_2\omega^2`` already meets the tolerance, the fit is folded directly into the synthesized
+**Polynomial regime.** When a quadratic ``f(\omega) \approx \alpha_0 + \alpha_1\omega + \alpha_2\omega^2`` already meets the tolerance, the fit is folded directly into the synthesized
 matrices and *no rows or columns are added*. With the projected boundary mass ``\bm{M}_b^r`` carried
 in the imaginary slot (``\bm{M}_b^r = i\,\bm{M}_{\mathrm{proj}}``), the three coefficients map as
 
@@ -374,8 +371,7 @@ d + \sum_{k} \frac{r_k}{\omega - p_k} ,
 
 with poles ``p_k`` and residues ``r_k``. The constant ``d`` is folded back into ``\alpha_0``, and
 each pole becomes a small set of *auxiliary states* appended to the synthesized matrices. Writing the
-projected boundary-mass coupling as a rank factorization ``r_k\,\bm{M}_{\mathrm{proj}} = \sum_j
-\sigma_{k,j}\, \bm{u}_{k,j}\bm{u}_{k,j}^{*}`` (a truncated SVD, keeping the directions ``j`` with
+projected boundary-mass coupling as a rank factorization ``r_k\,\bm{M}_{\mathrm{proj}} = \sum_j \sigma_{k,j}\, \bm{u}_{k,j}\bm{u}_{k,j}^{*}`` (a truncated SVD, keeping the directions ``j`` with
 significant singular value ``\sigma_{k,j}``), each kept direction ``(k,j)`` adds one auxiliary node.
 For that node the augmented pencil is populated as
 
@@ -387,11 +383,7 @@ For that node the augmented pencil is populated as
   \sqrt{-i\,\sigma_{k,j}}\;\bm{u}_{k,j} ,
 ```
 
-so that the auxiliary block contributes ``\widehat{\bm{K}}_{\mathrm{node},\mathrm{aux}}
-\big(\widehat{\bm{K}}_{\mathrm{aux},\mathrm{aux}} + i\omega\,
-\widehat{\bm{C}}_{\mathrm{aux},\mathrm{aux}}\big)^{-1}
-\widehat{\bm{K}}_{\mathrm{aux},\mathrm{node}} = \dfrac{\sigma_{k,j}\,
-\bm{u}_{k,j}\bm{u}_{k,j}^{*}}{\,\omega - p_k\,}``. Eliminating the auxiliary states by Schur
+so that the auxiliary block contributes ``\widehat{\bm{K}}_{\mathrm{node},\mathrm{aux}} \big(\widehat{\bm{K}}_{\mathrm{aux},\mathrm{aux}} + i\omega\, \widehat{\bm{C}}_{\mathrm{aux},\mathrm{aux}}\big)^{-1} \widehat{\bm{K}}_{\mathrm{aux},\mathrm{node}} = \dfrac{\sigma_{k,j}\, \bm{u}_{k,j}\bm{u}_{k,j}^{*}}{\,\omega - p_k\,}``. Eliminating the auxiliary states by Schur
 complement therefore recovers the rational term ``r_k/(\omega - p_k)\,\bm{M}_{\mathrm{proj}}``
 exactly. These nodes carry the `<prefix>_p<k>d<j>` labels described above, and the
 orthogonalization-``R`` matrix is identity-padded over them. The net effect is that the synthesized
