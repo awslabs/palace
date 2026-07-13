@@ -157,7 +157,11 @@ void ConcretizeDriven(const config::DrivenSolverData &driven, json &j_driven)
                            ToString(driven.adaptive_solver_gs_orthog_type)},
                           {"AdaptiveCircuitSynthesis", driven.adaptive_circuit_synthesis},
                           {"AdaptiveCircuitSynthesisDomainOrthogonalization",
-                           ToString(driven.adaptive_circuit_synthesis_domain_orthog)}});
+                           ToString(driven.adaptive_circuit_synthesis_domain_orthog)},
+                          {"AdaptiveCircuitSynthesisEigenmodes",
+                           driven.adaptive_circuit_synthesis_eigenmodes},
+                          {"AdaptiveCircuitSynthesisElectrostatic",
+                           driven.adaptive_circuit_synthesis_electrostatic}});
 }
 
 void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostatic,
