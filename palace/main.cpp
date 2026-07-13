@@ -168,6 +168,14 @@ int main(int argc, char *argv[])
   MPI_Comm world_comm = Mpi::World();
   bool world_root = Mpi::Root(world_comm);
   int world_size = Mpi::Size(world_comm);
+
+  // Barrier after Init ensures all ranks have fully established their MPI
+  // connections before any rank proceeds to the first real collective. Without
+  // this, fast-starting ranks can enter MPI_Bcast while slow-starting ranks are
+  // still completing endpoint setup, triggering a deadlock on ARM64 EFA at high
+  // rank counts (~192/node on Graviton).
+  MPI_Barrier(world_comm);
+
   Mpi::Print(world_comm, "\n");
 
   // Initialize the timer.
