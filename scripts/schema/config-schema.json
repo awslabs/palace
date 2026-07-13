@@ -2681,21 +2681,15 @@
         },
         "Tol": {
           "type": "number",
-          "description": "Relative residual convergence tolerance for the iterative linear solver. **Deprecated:** Use `\"RelTol\"` instead. For backward compatibility, `\"Tol\"` is still read if `\"RelTol\"` is not specified.",
-          "minimum": 0.0,
-          "deprecated": true
-        },
-        "RelTol": {
-          "type": "number",
-          "description": "Relative residual convergence tolerance for the iterative linear solver. If both `\"RelTol\"` and `\"Tol\"` are specified, `\"RelTol\"` takes precedence.",
+          "description": "Relative residual convergence tolerance for the iterative linear solver.",
           "minimum": 0.0,
           "default": 1e-06
         },
         "AbsTol": {
           "type": "number",
-          "description": "Absolute residual convergence tolerance for the iterative linear solver. The solver converges when `||r|| < max(RelTol * ||b||, AbsTol)`. A value of 1.0e-50 effectively disables the absolute tolerance unless it is set larger.",
+          "description": "Absolute residual convergence tolerance for the iterative linear solver. The solver converges when `||r|| < max(RelTol * ||b||, AbsTol)`. A value of 0.0 disables the absolute tolerance.",
           "minimum": 0.0,
-          "default": 1e-50
+          "default": 0.0
         },
         "MaxIts": {
           "type": "integer",
