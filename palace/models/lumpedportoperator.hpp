@@ -34,6 +34,8 @@ struct LumpedPortData;
 //
 class LumpedPortData
 {
+  friend class LumpedPortOperator;
+
 public:
   // Reference to material property data (not owned).
   const MaterialOperator &mat_op;
@@ -48,17 +50,21 @@ public:
   bool active;
   bool include_in_synthesis;
 
-protected:
+private:
   // Linear forms for postprocessing integrated quantities on the port.
   mutable std::unique_ptr<mfem::LinearForm> s, v;
 
-  // libCEED surface functionals for port power, voltage, and S-parameter computation,
-  // replacing host boundary LinearForm paths when supported.
+  // Per-port libCEED evaluators for port power and voltage.
   mutable std::unique_ptr<SurfaceFunctional> power_func, v_func;
 
   void InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespace) const;
   SurfaceModeCoefficient GetModeCoefficient(const LumpedElementData &elem,
                                             double coeff) const;
+  // Per-port evaluation used by LumpedPortOperator when a batched functional is not
+  // available for the requested port set.
+  std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
+  std::complex<double> GetPowerLegacy(GridFunction &E, GridFunction &B) const;
+  std::complex<double> GetVoltage(GridFunction &E) const;
 
 public:
   LumpedPortData(const config::LumpedPortData &data, const MaterialOperator &mat_op,
@@ -110,11 +116,6 @@ public:
 
   double GetExcitationPower() const;
   double GetExcitationVoltage() const;
-
-  std::complex<double> GetPower(GridFunction &E, GridFunction &B) const;
-  std::complex<double> GetPowerLegacy(GridFunction &E, GridFunction &B) const;
-  std::complex<double> GetSParameter(GridFunction &E) const;
-  std::complex<double> GetVoltage(GridFunction &E) const;
 };
 
 //
@@ -128,13 +129,19 @@ private:
   // ports.
   std::map<int, LumpedPortData> ports;
 
-  // Batched libCEED surface functional for lumped-port power. The per-port
-  // LumpedPortData fallback remains authoritative when batching is unavailable (for
-  // example, overlapping boundary attributes or unsupported surface-functional cases).
+  struct PortAttributeBins
+  {
+    mfem::Array<int> attr_to_port;
+    std::vector<int> port_indices;
+    bool unavailable = false;
+  };
+
+  // Batched libCEED surface functionals for lumped-port power and voltage. Individual
+  // LumpedPortData evaluation remains available for port sets that cannot be batched.
   mutable std::unique_ptr<SurfaceFunctional> batched_power_func;
-  mutable mfem::Array<int> batched_power_attr_to_port;
-  mutable std::vector<int> batched_power_port_indices;
-  mutable bool batched_power_unavailable = false;
+  mutable PortAttributeBins batched_power_bins;
+  mutable std::unique_ptr<SurfaceFunctional> batched_voltage_func;
+  mutable PortAttributeBins batched_voltage_bins;
 
   void SetUpBoundaryProperties(const std::map<int, config::LumpedPortData> &lumpedport,
                                const MaterialOperator &mat_op, const mfem::ParMesh &mesh);
@@ -158,6 +165,10 @@ public:
   // Compute port powers, batching disjoint libCEED surface-functional evaluations when
   // possible while preserving per-port scalar outputs.
   std::map<int, std::complex<double>> GetPowers(GridFunction &E, GridFunction &B) const;
+
+  // Compute port voltages, batching disjoint libCEED mode-overlap evaluations when
+  // possible while preserving per-port scalar outputs.
+  std::map<int, std::complex<double>> GetVoltages(GridFunction &E) const;
 
   // Returns array of lumped port attributes.
   mfem::Array<int> GetAttrList() const;

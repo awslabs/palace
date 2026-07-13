@@ -622,6 +622,39 @@ CEED_QFUNCTION(f_eval_bdr_field_2_32)(void *__restrict__ ctx_, CeedInt Q,
   return 0;
 }
 
+// Pointwise scalar H1 boundary field values. Inputs: grad_x_1, u_1; or grad_x_1,
+// grad_x_2, u_1, u_2. The geometry inputs keep the operator shape shared with other
+// boundary field kernels; the scalar VALUE basis already evaluates the physical value.
+CEED_QFUNCTION(f_eval_bdr_field_h1_1_32)(void *__restrict__ ctx_, CeedInt Q,
+                                         const CeedScalar *const *in,
+                                         CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *u = in[1];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    v[i] = ctx[1].second * u[i];
+  }
+  return 0;
+}
+
+CEED_QFUNCTION(f_eval_bdr_field_h1_2_32)(void *__restrict__ ctx_, CeedInt Q,
+                                         const CeedScalar *const *in,
+                                         CeedScalar *const *out)
+{
+  const CeedIntScalar *ctx = (const CeedIntScalar *)ctx_;
+  const CeedScalar *u_1 = in[2], *u_2 = in[3];
+  CeedScalar *v = out[0];
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    v[i] = ctx[1].second * 0.5 * (u_1[i] + u_2[i]);
+  }
+  return 0;
+}
+
 // Pointwise boundary surface charge, surface current, and energy density values at the
 // visualization lattice points, following BdrSurfaceFluxCoefficient<ELECTRIC>
 // (two-sided), BdrSurfaceCurrentVectorCoefficient, and EnergyDensityCoefficient

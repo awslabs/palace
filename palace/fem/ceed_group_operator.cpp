@@ -39,26 +39,46 @@ void DestroyGroupOperators(std::vector<CeedGroupOperator> &groups)
   groups.clear();
 }
 
+void CacheGroupOperatorFieldVectors(const CeedGroupOperator &group)
+{
+  if (group.field_vec_sources.size() == group.field_sources.size())
+  {
+    return;
+  }
+  group.field_vec_sources.clear();
+  group.field_vec_sources.reserve(group.field_sources.size());
+  for (const auto &[name, source] : group.field_sources)
+  {
+    CeedOperatorField field;
+    CeedVector field_vec;
+    PalaceCeedCall(group.ceed, CeedOperatorGetFieldByName(group.op, name.c_str(), &field));
+    PalaceCeedCall(group.ceed, CeedOperatorFieldGetVector(field, &field_vec));
+    group.field_vec_sources.emplace_back(field_vec, source);
+  }
+}
+
 void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
                             const std::array<const Vector *, 4> &srcs, const Vector &out,
                             const Vector *imported)
 {
+  if (groups.empty())
+  {
+    return;
+  }
+
+  CeedMemType out_mem;
+  PalaceCeedCall(groups.front().ceed,
+                 CeedGetPreferredMemType(groups.front().ceed, &out_mem));
+  if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && out_mem == CEED_MEM_DEVICE)
+  {
+    out_mem = CEED_MEM_HOST;
+  }
+  auto *out_data = const_cast<Vector &>(out).ReadWrite(out_mem == CEED_MEM_DEVICE);
+  const CeedSize out_size = out.Size();
+
   for (const auto &group : groups)
   {
-    if (group.field_vec_sources.size() != group.field_sources.size())
-    {
-      group.field_vec_sources.clear();
-      group.field_vec_sources.reserve(group.field_sources.size());
-      for (const auto &[name, source] : group.field_sources)
-      {
-        CeedOperatorField field;
-        CeedVector field_vec;
-        PalaceCeedCall(group.ceed,
-                       CeedOperatorGetFieldByName(group.op, name.c_str(), &field));
-        PalaceCeedCall(group.ceed, CeedOperatorFieldGetVector(field, &field_vec));
-        group.field_vec_sources.emplace_back(field_vec, source);
-      }
-    }
+    CacheGroupOperatorFieldVectors(group);
     for (auto &[field_vec, source] : group.field_vec_sources)
     {
       // Source index 4 selects an optional imported vector, used by surface reductions
@@ -68,14 +88,6 @@ void ApplyAddGroupOperators(const std::vector<CeedGroupOperator> &groups,
       MFEM_ASSERT(sv, "Missing source vector for libCEED field input!");
       ceed::InitCeedVector(*sv, group.ceed, &field_vec, false);
     }
-    CeedMemType out_mem;
-    PalaceCeedCall(group.ceed, CeedGetPreferredMemType(group.ceed, &out_mem));
-    if (!mfem::Device::Allows(mfem::Backend::DEVICE_MASK) && out_mem == CEED_MEM_DEVICE)
-    {
-      out_mem = CEED_MEM_HOST;
-    }
-    auto *out_data = const_cast<Vector &>(out).ReadWrite(out_mem == CEED_MEM_DEVICE);
-    const CeedSize out_size = out.Size();
     if (!group.out_vec || group.out_size != out_size)
     {
       if (group.out_vec)

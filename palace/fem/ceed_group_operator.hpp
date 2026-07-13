@@ -38,6 +38,12 @@ struct CeedGroupOperator
   mutable CeedSize out_size = 0;
 };
 
+// Populate cached libCEED vector handles for the named passive fields of a group
+// operator. Calling this right after assembly moves field-name lookup overhead out of
+// the first timed postprocessing apply; ApplyAddGroupOperators also calls it lazily for
+// older call sites or any groups assembled without explicit caching.
+void CacheGroupOperatorFieldVectors(const CeedGroupOperator &group);
+
 // Re-point the passive field inputs of each group operator at the given source vectors
 // and accumulate into the output vector with CeedOperatorApplyAdd. A field source index
 // of 4 (out of the srcs range) selects the optional imported vector instead, used to

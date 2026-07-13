@@ -11,8 +11,9 @@ namespace fem
 {
 
 // Central query for libCEED-backed postprocessing availability. Supported production
-// postprocessing paths use the libCEED backend directly; coefficient implementations are
-// retained only as reference semantics in tests and for explicitly unsupported features.
+// visualization/postprocessing paths use the libCEED backend directly; coefficient
+// implementations are retained only as reference semantics in tests and for explicitly
+// unsupported features.
 bool LibceedPostprocessingEnabled();
 
 }  // namespace fem

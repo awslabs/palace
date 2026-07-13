@@ -24,21 +24,6 @@ class Mesh;
 class PointFieldEvaluator;
 class FaceNbrFieldExchange;
 
-// Non-reducing boundary point field kinds. These are private SurfaceFunctional backend
-// hooks used by the ParaView/GridFunction follow-up; the output-functional PR keeps the
-// enum here so the reducing functional implementation is self-contained without pulling
-// in the point-field evaluator API.
-enum class PointFieldKind : char
-{
-  FIELD_E,    // H(curl) E field values
-  FIELD_B,    // H(div) B field values
-  FLUX_Q,     // Surface charge (eps E) . n
-  CURRENT_J,  // Surface current n x (mu^-1 B)
-  ENERGY_E,   // Electric energy density
-  ENERGY_M,   // Magnetic energy density
-  POYNTING    // Poynting vector E x (mu^-1 B)
-};
-
 // Description of a real vector-valued mode coefficient on a marked boundary surface.
 // UNIFORM represents scale * direction. COAXIAL represents scale * (x - origin) /
 // |x - origin|^2, matching CoaxialElementData::GetModeCoefficient.
@@ -64,13 +49,13 @@ struct SurfaceModeCoefficient
 // visualization point fields are exposed through PointFieldEvaluator, which uses private
 // boundary point-field assembly hooks here. This enables postprocessing measurements
 // (interface dielectric energy participation, surface fluxes, port powers, etc.) to
-// execute on the device, in contrast to the legacy mfem::Coefficient-based paths which
-// are host-only.
+// execute on the device instead of using host-only mfem::Coefficient evaluation for
+// supported paths.
 //
 // The key construction: for each boundary element, the field is evaluated from an
 // attached volume element (or both, with averaging or differencing, for interior
 // boundaries, following the conventions of BdrGridFunctionCoefficient and its derived
-// legacy coefficients). AtPoints-capable groups keep mapped reference points as runtime
+// coefficient semantics). AtPoints-capable groups keep mapped reference points as runtime
 // data; mapped-integration-rule groups use per-assembly integer identities rather than
 // rounded coordinate keys. Processor-boundary ghost values are requested through
 // FaceNbrFieldExchange with integer/topological reference-face orientation keys so point
@@ -104,6 +89,7 @@ private:
     MODE_OVERLAP,
     BDR_FIELD_E,
     BDR_FIELD_B,
+    BDR_FIELD_H1,
     BDR_FLUX_Q,
     BDR_CURRENT_J,
     BDR_ENERGY_E,
@@ -120,24 +106,25 @@ private:
   static bool IsBufferKind(KernelKind kind)
   {
     return kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B ||
-           kind == KernelKind::BDR_FLUX_Q || kind == KernelKind::BDR_CURRENT_J ||
-           kind == KernelKind::BDR_ENERGY_E || kind == KernelKind::BDR_ENERGY_M ||
-           kind == KernelKind::BDR_POYNTING;
+           kind == KernelKind::BDR_FIELD_H1 || kind == KernelKind::BDR_FLUX_Q ||
+           kind == KernelKind::BDR_CURRENT_J || kind == KernelKind::BDR_ENERGY_E ||
+           kind == KernelKind::BDR_ENERGY_M || kind == KernelKind::BDR_POYNTING;
   }
 
   // Number of components per visualization point for buffer kinds.
-  static int BufferNumComp(KernelKind kind)
+  static int BufferNumComp(KernelKind kind, int sdim)
   {
-    return (kind == KernelKind::BDR_FLUX_Q || kind == KernelKind::BDR_ENERGY_E ||
-            kind == KernelKind::BDR_ENERGY_M)
+    return (kind == KernelKind::BDR_FIELD_H1 || kind == KernelKind::BDR_FLUX_Q ||
+            kind == KernelKind::BDR_ENERGY_E || kind == KernelKind::BDR_ENERGY_M)
                ? 1
-               : 3;
+               : sdim;
   }
 
   // Total buffer size (all boundary elements, lattice points, components) and
   // per-element point-base offsets for the boundary visualization field kinds. Vector
-  // buffers are component-major: x[points], y[points], z[points].
+  // buffers are component-major: x[points], y[points], (z[points] in 3D).
   int BufferSize() const { return buffer_size; }
+  int BufferNumComp() const { return buffer_num_comp; }
   const std::vector<int> &BufferBases() const { return buffer_bases; }
 
   // Computation kind and integrand parameters.
@@ -157,21 +144,20 @@ private:
   int viz_lod = 0;
   double viz_scaling = 1.0;
   int buffer_size = 0;
+  int buffer_num_comp = 0;
   std::vector<int> buffer_bases;
-  std::vector<int> trace_bdr_indices;
 
-  // Field finite element spaces (not owned): nd_fespace for H(curl) fields (source index
-  // 0), rt_fespace for H(div) fields (source index 1). Either may be nullptr depending
-  // on the functional kind. Material operator (not owned) for material property lookups
-  // and side selection.
+  // Field finite element spaces (not owned): nd_fespace for H(curl)/H1 fields (source
+  // index 0), rt_fespace for H(div) fields (source index 1). Either may be nullptr
+  // depending on the functional kind. Material operator (not owned) for material property
+  // lookups and side selection.
   const mfem::ParFiniteElementSpace *nd_fespace;
   const mfem::ParFiniteElementSpace *rt_fespace;
   const MaterialOperator *mat_op;
 
   // Whether the functional could be assembled. False means the configuration is outside
-  // the current support matrix; model-level callers may explicitly use legacy code for
-  // those cases, but supported cases should treat invalid assembly as an error rather
-  // than silently falling back.
+  // the current support matrix; supported model-level paths treat invalid assembly as an
+  // error rather than silently selecting a different implementation.
   bool valid = true;
 
   // MPI communicator from the mesh.
@@ -202,6 +188,7 @@ private:
 
   void Assemble(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
   void AssembleLocal(const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker);
+  void WarmUpBufferOperators() const;
 
   // Apply all group operators with the field inputs pointed at the given source
   // vectors, accumulating into the local output vector.
@@ -209,6 +196,10 @@ private:
 
   // Zero the local output vector, apply, and return the local sum (no MPI reduction).
   double EvalLocal(const std::array<const Vector *, 4> &srcs) const;
+
+  // Add the current local_out element slots into per-attribute bins.
+  void BinLocalOutByAttribute(const mfem::Array<int> &attr_to_bin, int num_bins,
+                              std::vector<double> &bins, double scale) const;
 
   // Construct boundary point-field evaluators. These are intentionally private to keep
   // SurfaceFunctional reduction-oriented at call sites; PointFieldEvaluator owns the
@@ -227,17 +218,13 @@ private:
                     const MaterialOperator &mat_op, int lod, double scaling);
 
   // Fill boundary visualization buffers. Friend-only; non-reducing callers use
-  // PointFieldEvaluator. Continuous trace fields (E_t/B_n) use boundary/face DOFs
-  // directly on the MFEM boundary-element tessellation.
-  void EvalTraceFieldBuffer(const Vector &u, Vector &buffer) const;
+  // PointFieldEvaluator.
   void EvalBuffer(const Vector &u, Vector &buffer) const;
   void EvalBuffer(const GridFunction &u, Vector &buffer) const;
   void EvalBuffer(const GridFunction &E, const GridFunction &B, Vector &buffer) const;
 
 public:
-  // Returns false when libCEED surface functionals have been globally disabled via the
-  // PALACE_LEGACY_SURFACE_POSTPRO environment variable (legacy mfem::Coefficient paths
-  // are used instead, for debugging and benchmarking).
+  // Returns whether libCEED-backed surface functionals are available.
   static bool Enabled();
 
   // Construct a functional over the boundary elements with marked attributes (marker
@@ -282,9 +269,8 @@ public:
   SurfaceFunctional &operator=(const SurfaceFunctional &) = delete;
 
   // Whether the functional was successfully assembled. When false, evaluation is not
-  // possible. Supported model-level paths should error rather than silently falling back;
-  // explicit legacy/oracle paths remain available for unsupported configurations and
-  // validation.
+  // possible; supported model-level paths should error rather than silently selecting a
+  // different implementation.
   bool IsValid() const { return valid; }
 
   // Evaluate the functional for the given field (L-vector, e.g. the local vector of a
@@ -326,6 +312,13 @@ public:
   // Evaluate the linear mode-overlap functional, returning the complex integral when the
   // supplied field has real and imaginary parts.
   std::complex<double> EvalModeOverlap(const GridFunction &E) const;
+
+  // Same mode-overlap convention as EvalModeOverlap, but return one result per
+  // boundary-attribute bin. attr_to_bin is indexed by boundary attribute - 1 and uses -1
+  // for attributes not assigned to an output bin. Collective on the mesh communicator.
+  std::vector<std::complex<double>>
+  EvalModeOverlapByAttribute(const GridFunction &E, const mfem::Array<int> &attr_to_bin,
+                             int num_bins) const;
 };
 
 }  // namespace palace

@@ -76,19 +76,49 @@ bool CeedSupportsNonTensorAtPoints(Ceed ceed)
          std::strstr(resource, "/gpu/cuda/magma");
 }
 
-int TetNumModes(int degree)
+int SimplexNumModes(mfem::Geometry::Type geom, int degree)
 {
-  return (degree + 1) * (degree + 2) * (degree + 3) / 6;
+  switch (geom)
+  {
+    case mfem::Geometry::TRIANGLE:
+      return (degree + 1) * (degree + 2) / 2;
+    case mfem::Geometry::TETRAHEDRON:
+      return (degree + 1) * (degree + 2) * (degree + 3) / 6;
+    default:
+      MFEM_ABORT("FaceNbrFieldExchange AtPoints export only supports simplex volume "
+                 "elements!");
+      return 0;
+  }
 }
 
-mfem::IntegrationRule MakeTetLatticeRule(int degree)
+mfem::IntegrationRule MakeSimplexLatticeRule(mfem::Geometry::Type geom, int degree)
 {
-  mfem::IntegrationRule ir(TetNumModes(degree));
+  mfem::IntegrationRule ir(SimplexNumModes(geom, degree));
   int q = 0;
   if (degree == 0)
   {
-    ir.IntPoint(q).Set3(0.25, 0.25, 0.25);
+    if (geom == mfem::Geometry::TRIANGLE)
+    {
+      ir.IntPoint(q).Set2(1.0 / 3.0, 1.0 / 3.0);
+    }
+    else
+    {
+      ir.IntPoint(q).Set3(0.25, 0.25, 0.25);
+    }
     ir.IntPoint(q++).weight = 1.0;
+  }
+  else if (geom == mfem::Geometry::TRIANGLE)
+  {
+    for (int total = 0; total <= degree; total++)
+    {
+      for (int i = 0; i <= total; i++)
+      {
+        const int j = total - i;
+        ir.IntPoint(q).Set2(static_cast<double>(i) / degree,
+                            static_cast<double>(j) / degree);
+        ir.IntPoint(q++).weight = 1.0;
+      }
+    }
   }
   else
   {
@@ -110,21 +140,40 @@ mfem::IntegrationRule MakeTetLatticeRule(int degree)
   return ir;
 }
 
-void InitTetBasisForAtPoints(const mfem::FiniteElement &fe, bool grad_only,
-                             CeedInt num_comp, Ceed ceed, CeedBasis *basis)
+void InitSimplexBasisForAtPoints(const mfem::FiniteElement &fe, bool grad_only,
+                                 CeedInt num_comp, Ceed ceed, CeedBasis *basis)
 {
-  MFEM_VERIFY(fe.GetGeomType() == mfem::Geometry::TETRAHEDRON,
-              "FaceNbrFieldExchange AtPoints export currently supports tetrahedral "
-              "volume elements only!");
+  MFEM_VERIFY(fe.GetGeomType() == mfem::Geometry::TRIANGLE ||
+                  fe.GetGeomType() == mfem::Geometry::TETRAHEDRON,
+              "FaceNbrFieldExchange AtPoints export only supports simplex volume "
+              "elements!");
   // MAGMA's hardened non-tensor AtPoints basis construction (libCEED
   // cuda-nontensor-atpoints branch) requires tabulation points that overdetermine the
   // complete polynomial space for non-H1 spaces; square tabulations are rejected. Bump the
-  // lattice by one degree, matching the InitTetBasisForAtPoints copy in
-  // output_functionals.cpp, since this exchange builds bases for the same ND/RT field
-  // spaces.
+  // lattice by one degree, matching the simplex AtPoints helper in output_functionals.cpp,
+  // since this exchange builds bases for the same ND/RT field spaces.
   const int degree = std::max(0, fe.GetOrder() - (grad_only ? 1 : 0) + 1);
-  const mfem::IntegrationRule ir = MakeTetLatticeRule(degree);
+  const mfem::IntegrationRule ir = MakeSimplexLatticeRule(fe.GetGeomType(), degree);
   ceed::InitBasisAtPoints(fe, ir, num_comp, ceed, basis);
+}
+
+int FieldValueDim(const mfem::ParFiniteElementSpace &fespace, int space_dim)
+{
+  const auto map_type = fespace.FEColl()->GetMapType(fespace.GetParMesh()->Dimension());
+  if (map_type == mfem::FiniteElement::H_CURL || map_type == mfem::FiniteElement::H_DIV)
+  {
+    return space_dim;
+  }
+  if (map_type == mfem::FiniteElement::VALUE || map_type == mfem::FiniteElement::INTEGRAL)
+  {
+    MFEM_VERIFY(fespace.GetVDim() == 1,
+                "FaceNbrFieldExchange scalar source spaces must have one component!");
+    return 1;
+  }
+  MFEM_ABORT("FaceNbrFieldExchange requires H(curl), H(div), or scalar VALUE/INTEGRAL "
+             "source spaces (map type = "
+             << map_type << ")!");
+  return 0;
 }
 
 void CreateSequentialPointRestriction(Ceed ceed, std::size_t num_elem, int nq, int num_comp,
@@ -155,9 +204,17 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
 {
   const mfem::ParMesh &pmesh = mesh.Get();
   const int num_nbr = pmesh.GetNFaceNeighbors();
-  const int value_dim = pmesh.SpaceDimension();
-  MFEM_VERIFY(value_dim == 2 || value_dim == 3,
+  const int space_dim = pmesh.SpaceDimension();
+  MFEM_VERIFY(space_dim == 2 || space_dim == 3,
               "FaceNbrFieldExchange requires 2D or 3D physical-space fields!");
+  source_num_comp.fill(0);
+  for (int s = 0; s < MaxSources; s++)
+  {
+    if (fespaces[s])
+    {
+      source_num_comp[s] = FieldValueDim(*fespaces[s], space_dim);
+    }
+  }
   MFEM_VERIFY(requests.empty() || num_nbr > 0,
               "FaceNbrFieldExchange requires face neighbor data "
               "(ParMesh::ExchangeFaceNbrData)!");
@@ -229,7 +286,7 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
           MFEM_VERIFY(fespaces[s],
                       "Missing finite element space for requested source slot!");
           import_offsets[r][s] = import_size;
-          import_size += value_dim * nq;
+          import_size += source_num_comp[s] * nq;
         }
       }
     }
@@ -329,7 +386,9 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
         {
           MFEM_VERIFY(fespaces[s],
                       "Missing finite element space for received source slot!");
-          const bool at_points_group = use_at_points && geom == mfem::Geometry::TETRAHEDRON;
+          const bool at_points_group =
+              use_at_points &&
+              (geom == mfem::Geometry::TRIANGLE || geom == mfem::Geometry::TETRAHEDRON);
           PointConfigKey key;
           key.reserve(5 + point_key.size());
           key.push_back(s);
@@ -359,7 +418,7 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
           }
           group.elems.push_back(elem);
           group.bases.push_back(export_size);
-          export_size += value_dim * nq;
+          export_size += source_num_comp[s] * nq;
         }
       }
     }
@@ -380,9 +439,9 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     return;
   }
 
-  // Assemble a libCEED point evaluator for each export group, writing the
-  // physical-space field values (space-dimension components per point, point-major)
-  // into the exported vector at the assigned offsets.
+  // Assemble a libCEED point evaluator for each export group, writing point-major
+  // values into the exported vector at the assigned offsets. H(curl)/H(div) sources are
+  // physical-space vectors; VALUE sources are scalar fields.
   int max_vsize = 0;
   for (const auto *fespace : fespaces)
   {
@@ -397,6 +456,7 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     const int s = static_cast<int>(key[0]);
     const auto geom = static_cast<mfem::Geometry::Type>(key[1]);
     const int nq = static_cast<int>(key[2]);
+    const int value_dim = source_num_comp[s];
     const std::size_t num_elem = group.elems.size();
     const auto &fespace = *fespaces[s];
     MFEM_VERIFY(!group.at_points ||
@@ -435,8 +495,8 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     CeedBasis mesh_basis;
     if (group.at_points)
     {
-      InitTetBasisForAtPoints(*mesh_fe, /*grad_only*/ true, mesh_fespace.GetVDim(), ceed,
-                              &mesh_basis);
+      InitSimplexBasisForAtPoints(*mesh_fe, /*grad_only*/ true, mesh_fespace.GetVDim(),
+                                  ceed, &mesh_basis);
     }
     else
     {
@@ -453,8 +513,8 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     CeedBasis field_basis;
     if (group.at_points)
     {
-      InitTetBasisForAtPoints(*fe, /*grad_only*/ false, fespace.GetVDim(), ceed,
-                              &field_basis);
+      InitSimplexBasisForAtPoints(*fe, /*grad_only*/ false, fespace.GetVDim(), ceed,
+                                  &field_basis);
     }
     else
     {
@@ -481,17 +541,27 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
                                                    CEED_MEM_HOST, CEED_COPY_VALUES,
                                                    offsets.data(), &out_restr));
 
-    // The reply contains physical-space field values: the Piola transformation
-    // (H(curl) or H(div) depending on the source space) is applied here so the
-    // requester needs no neighbor element geometry.
+    // The reply contains physical-space field values for Piola-mapped spaces, and scalar
+    // values for H1/L2 spaces. The requester needs no neighbor element geometry.
     const auto map_type = fespace.FEColl()->GetMapType(pmesh.Dimension());
-    MFEM_VERIFY(map_type == mfem::FiniteElement::H_CURL ||
-                    map_type == mfem::FiniteElement::H_DIV,
-                "FaceNbrFieldExchange requires H(curl) or H(div) source spaces!");
     ceed::CeedQFunctionInfo info;
-    if (map_type == mfem::FiniteElement::H_CURL)
+    if (map_type == mfem::FiniteElement::VALUE || map_type == mfem::FiniteElement::INTEGRAL)
     {
-      if (value_dim == 2)
+      MFEM_VERIFY(value_dim == 1, "Scalar face neighbor fields must have one component!");
+      if (space_dim == 2)
+      {
+        info.apply_qf = f_eval_probe_l2_22;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_l2_22_loc);
+      }
+      else
+      {
+        info.apply_qf = f_eval_probe_l2_33;
+        info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_l2_33_loc);
+      }
+    }
+    else if (map_type == mfem::FiniteElement::H_CURL)
+    {
+      if (space_dim == 2)
       {
         info.apply_qf = f_eval_probe_hcurl_22;
         info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hcurl_22_loc);
@@ -502,9 +572,9 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
         info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hcurl_33_loc);
       }
     }
-    else
+    else if (map_type == mfem::FiniteElement::H_DIV)
     {
-      if (value_dim == 2)
+      if (space_dim == 2)
       {
         info.apply_qf = f_eval_probe_hdiv_22;
         info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hdiv_22_loc);
@@ -514,6 +584,10 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
         info.apply_qf = f_eval_probe_hdiv_33;
         info.apply_qf_path = PalaceQFunctionRelativePath(f_eval_probe_hdiv_33_loc);
       }
+    }
+    else
+    {
+      MFEM_ABORT("Unsupported face neighbor field map type!");
     }
     CeedOperator op;
     if (group.at_points)
@@ -527,6 +601,7 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
                                        &op);
     }
     export_groups.push_back({ceed, op, std::move(field_sources)});
+    fem::CacheGroupOperatorFieldVectors(export_groups.back());
 
     // Cleanup (the assembled operator holds its own references).
     if (points_vec)
