@@ -26,6 +26,7 @@
 #include "linalg/rap.hpp"
 #include "linalg/solver.hpp"
 #include "models/floquetportoperator.hpp"
+#include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/aaa.hpp"
@@ -1094,33 +1095,9 @@ int RomOperator::AddElectrostaticModesForSynthesis(const IoData &iodata,
                                                                 dbc_tdof_lists[l]);
   }
 
-  // Assemble the ε-weighted Laplace stiffness over the multigrid hierarchy, with the
-  // Dirichlet dofs eliminated (DIAG_ONE). Same pattern as the divergence-free projector's
-  // H1 operator.
-  MaterialPropertyCoefficient epsilon_func(
-      space_op.GetMaterialOp().GetAttributeToMaterial(),
-      space_op.GetMaterialOp().GetPermittivityReal());
-  std::unique_ptr<Operator> K_dc;
-  const ParOperator *K_dc_finest = nullptr;
-  {
-    constexpr bool skip_zeros = false;
-    BilinearForm k(h1_fespace);
-    k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
-    auto k_vec = k.Assemble(h1_fespaces, skip_zeros);
-    auto K_mg = std::make_unique<MultigridOperator>(h1_fespaces.GetNumLevels());
-    for (std::size_t l = 0; l < h1_fespaces.GetNumLevels(); l++)
-    {
-      const auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
-      auto K_l = std::make_unique<ParOperator>(std::move(k_vec[l]), h1_fespace_l);
-      K_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
-      if (l == h1_fespaces.GetNumLevels() - 1)
-      {
-        K_dc_finest = K_l.get();
-      }
-      K_mg->AddOperator(std::move(K_l));
-    }
-    K_dc = std::move(K_mg);
-  }
+  // Assemble the ε-weighted Laplace stiffness over SpaceOperator's existing H1 hierarchy.
+  auto K_dc = LaplaceOperator::AssembleStiffnessMatrix(
+      h1_fespaces, space_op.GetMaterialOp(), dbc_tdof_lists);
 
   // Real SPD solver: AMG-preconditioned CG (geometric multigrid over the hierarchy when
   // available), as in the divergence-free projector.
@@ -1163,17 +1140,7 @@ int RomOperator::AddElectrostaticModesForSynthesis(const IoData &iodata,
   u.UseDevice(true);
   for (const auto &[idx, data] : terminals)
   {
-    // Dirichlet lift: φ = 1 on this terminal, 0 elsewhere, then eliminate to get the RHS.
-    // Mirrors LaplaceOperator::GetExcitationVector.
-    mfem::ParGridFunction x(&h1_fespace.Get());
-    x = 0.0;
-    mfem::Array<int> source_marker = mesh::AttrToMarker(bdr_attr_max, data.attributes);
-    mfem::ConstantCoefficient one(1.0);
-    x.ProjectBdrCoefficient(one, source_marker);
-    X = 0.0;
-    RHS = 0.0;
-    x.ParallelProject(X);
-    K_dc_finest->EliminateRHS(X, RHS);
+    LaplaceOperator::GetExcitationVector(h1_fespace, data.attributes, *K_dc, X, RHS);
     ksp_dc->Mult(RHS, X);
 
     // Inject E = -∇φ into the PROM basis (real vector).
@@ -1185,52 +1152,13 @@ int RomOperator::AddElectrostaticModesForSynthesis(const IoData &iodata,
     phi_idx.push_back(idx);
   }
 
-  // Terminal capacitance matrix from field-energy inner products, C(i,j) = φⱼᵀ K φᵢ with
-  // unit voltages (same identity as ElectrostaticSolver::PostprocessTerminals, using the
-  // stiffness in place of the E-field mass matrix since φᵀK φ = ∫ ε |∇φ|² dV). The
-  // eliminated Dirichlet rows contribute (1·δᵢⱼ) per constrained dof through the DIAG_ONE
-  // policy, so use the energy computed from E = -∇φ with the ε-weighted ND inner product
-  // instead: Cᵢⱼ = ∫ ε Eᵢ·Eⱼ dV. Assemble the diagonal-free ε mass action via the
-  // un-eliminated finest-level operator applied to the lifted solutions.
-  {
-    // K φ with BCs eliminated gives the wrong energy on constrained dofs; recompute the
-    // bilinear form action without elimination.
-    constexpr bool skip_zeros = false;
-    BilinearForm k(h1_fespace);
-    k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
-    auto K_ne = std::make_unique<ParOperator>(k.PartialAssemble(), h1_fespace);
-    const auto n_term = static_cast<int>(phi.size());
-    mfem::DenseMatrix C(n_term);
-    Vector Kphi(h1_fespace.GetTrueVSize());
-    Kphi.UseDevice(true);
-    for (int i = 0; i < n_term; i++)
-    {
-      K_ne->Mult(phi[i], Kphi);
-      for (int j = i; j < n_term; j++)
-      {
-        C(i, j) = C(j, i) = linalg::Dot<Vector>(space_op.GetComm(), phi[j], Kphi);
-      }
-    }
-    if (Mpi::Root(space_op.GetComm()))
-    {
-      auto unit_farad = iodata.units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
-      auto out = TableWithCSVFile(post_dir / "terminal-C.csv");
-      out.table.col_options.float_precision = 12;
-      out.table.insert(Column("i", "i", 0, 0, 2, ""));
-      for (int j = 0; j < n_term; j++)
-      {
-        out.table.insert(fmt::format("i2{:d}", phi_idx[j]),
-                         fmt::format("C[i][{:d}] (F)", phi_idx[j]));
-        out.table["i"] << phi_idx[j];
-        auto &col = out.table[fmt::format("i2{:d}", phi_idx[j])];
-        for (int i = 0; i < n_term; i++)
-        {
-          col << C(i, j) * unit_farad;
-        }
-      }
-      out.WriteFullTableTrunc();
-    }
-  }
+  // Compute terminal capacitances with the unconstrained form retained by K_dc, then use
+  // the same indexed CSV writer as the standalone electrostatic solver.
+  auto energy_op = LaplaceOperator::GetUnconstrainedStiffnessOperator(*K_dc);
+  auto C = LaplaceOperator::ComputeCapacitanceMatrix(space_op.GetComm(), *energy_op, phi);
+  auto unit_farad = iodata.units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+  LaplaceOperator::WriteTerminalMatrix(space_op.GetComm(), post_dir, "terminal-C.csv", "C",
+                                       "(F)", phi_idx, C, unit_farad);
   return static_cast<int>(phi.size());
 }
 
