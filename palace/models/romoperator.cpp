@@ -1189,11 +1189,13 @@ int RomOperator::AddElectrostaticModesForSynthesis(const IoData &iodata,
       auto unit_farad = iodata.units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
       auto out = TableWithCSVFile(post_dir / "terminal-C.csv");
       out.table.col_options.float_precision = 12;
+      out.table.insert(Column("i", "i", 0, 0, 2, ""));
       for (int j = 0; j < n_term; j++)
       {
-        out.table.insert(fmt::format("t{:d}", phi_idx[j]),
-                         fmt::format("C[{:d}] (F)", phi_idx[j]));
-        auto &col = out.table[j];
+        out.table.insert(fmt::format("i2{:d}", phi_idx[j]),
+                         fmt::format("C[i][{:d}] (F)", phi_idx[j]));
+        out.table["i"] << phi_idx[j];
+        auto &col = out.table[fmt::format("i2{:d}", phi_idx[j])];
         for (int i = 0; i < n_term; i++)
         {
           col << C(i, j) * unit_farad;
