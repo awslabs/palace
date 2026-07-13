@@ -12,6 +12,14 @@ The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+#### New Features
+
+- Introduced ``"AbsTol"`` option for linear solvers, defaulting to 0.0 to allow
+  using an absolute tolerance when defining convergence.
+  SchemaVer 1-1-0 [PR 734](https://github.com/awslabs/palace/pull/734).
+
 ## [0.17.0] - 2026-06-28
 
 #### New Features

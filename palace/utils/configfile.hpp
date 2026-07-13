@@ -946,8 +946,8 @@ public:
   // Iterative solver relative tolerance.
   double tol = 1.0e-6;
 
-  // Iterative solver absolute tolerance.
-  double abs_tol = 1.0e-50;
+  // Absolute tolerance (0.0 = disabled).
+  double abs_tol = 0.0;
   
   // Maximum iterations for iterative solver.
   int max_it = 100;
