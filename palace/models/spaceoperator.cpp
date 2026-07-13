@@ -732,6 +732,46 @@ SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int idx,
   }
 }
 
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int port_idx,
+                                                 Operator::DiagonalPolicy diag_policy)
+{
+  // ω-independent µ⁻¹ boundary mass for a single Floquet port's Robin BC, on the
+  // IMAGINARY slot (matching the wave-port / farfield convention: the i in i·γ₀·M is baked
+  // in). The full online contribution is i·γ₀(ω)·M_floquet, with γ₀ the specular (0,0)
+  // propagation constant. Returns null if the port contributes no DoFs on this rank.
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  const auto &port = floquet_port_op.GetPort(port_idx);
+  MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
+  MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
+                                         mat_op.GetInvPermeability());
+  muinv_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(port.GetAttrList()));
+  fb.AddCoefficient(muinv_func.GetAttributeToMaterial(),
+                    muinv_func.GetMaterialProperties(), 1.0);
+  int empty = fb.empty();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto m =
+      AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+  else
+  {
+    auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+}
+
 template <typename OperType, typename ScalarType>
 std::unique_ptr<OperType>
 SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
@@ -1513,6 +1553,11 @@ template std::unique_ptr<Operator>
 SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy);
+
+template std::unique_ptr<Operator>
+SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int, Operator::DiagonalPolicy);
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, const Operator *,

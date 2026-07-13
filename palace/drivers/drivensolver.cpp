@@ -317,12 +317,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     prom_op.AddLumpedPortModesForSynthesis();
     if (space_op.GetWavePortOp().Size() > 0)
     {
-      // Use the band centre as the reference frequency for seeding wave-port modes.
-      // The choice rescales the basis vector but does not change correctness; band
-      // centre keeps the modal field representative across the sweep. Mode-shape drift
-      // is small in the regime where the polynomial fit converges (cf. prom-waveport
-      // empirical study), and the augmented state space (regime 2, future work) will
-      // capture larger drift via auxiliary states.
+      // Use the band center as the reference frequency for seeding wave-port modes.
+      // The choice rescales the basis vector but does not change correctness.
       const double omega_ref = 0.5 * (omega_sample.front() + omega_sample.back());
       prom_op.AddWavePortModesForSynthesis(omega_ref);
     }
@@ -438,13 +434,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     prom_op.PrintPROMMatrices(iodata.units, iodata.problem.output);
   }
 
-  // XX TODO: Add output of eigenvalue estimates from the PROM system (and nonlinear EVP
-  // in the general case with wave ports, etc.?)
-
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
-  // The online sweep evaluates wave-port modes with the per-frequency cross-section EVP
-  // so the modal post-processing state is current for S-parameters and power.
   space_op.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
   excitation_counter = 0;
   for (const auto &[excitation_idx, excitation_spec] : port_excitations)
