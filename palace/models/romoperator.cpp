@@ -33,6 +33,7 @@
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/prettyprint.hpp"
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 #include "utils/units.hpp"
@@ -1026,23 +1027,7 @@ int RomOperator::AddElectrostaticModesForSynthesis(const IoData &iodata,
   // make them PEC in the driven solve. An impedance surface listed as a Terminal is
   // excited like any other terminal instead.
   mfem::Array<int> dbc_attr;
-  for (int attr : iodata.boundaries.pec.attributes)
-  {
-    if (attr > 0 && attr <= bdr_attr_max)
-    {
-      dbc_attr.Append(attr);
-    }
-  }
-  for (const auto &data : iodata.boundaries.impedance)
-  {
-    for (int attr : data.attributes)
-    {
-      if (attr > 0 && attr <= bdr_attr_max)
-      {
-        dbc_attr.Append(attr);
-      }
-    }
-  }
+  mfem::Array<int> terminal_attr;
   for (const auto &[idx, data] : terminals)
   {
     for (int attr : data.attributes)
@@ -1051,14 +1036,56 @@ int RomOperator::AddElectrostaticModesForSynthesis(const IoData &iodata,
                   fmt::format("Terminal boundary attribute {:d} not found in mesh "
                               "boundary attributes!",
                               attr));
+      terminal_attr.Append(attr);
+    }
+  }
+  terminal_attr.Sort();
+  terminal_attr.Unique();
+
+  for (int attr : iodata.boundaries.pec.attributes)
+  {
+    if (attr > 0 && attr <= bdr_attr_max)
+    {
       dbc_attr.Append(attr);
     }
   }
+  mfem::Array<int> grounded_impedance_attr;
+  for (const auto &data : iodata.boundaries.impedance)
+  {
+    for (int attr : data.attributes)
+    {
+      if (attr > 0 && attr <= bdr_attr_max)
+      {
+        if (!std::binary_search(terminal_attr.begin(), terminal_attr.end(), attr))
+        {
+          dbc_attr.Append(attr);
+          grounded_impedance_attr.Append(attr);
+        }
+      }
+    }
+  }
+  grounded_impedance_attr.Sort();
+  grounded_impedance_attr.Unique();
+
+  dbc_attr.Append(terminal_attr);
   dbc_attr.Sort();
   dbc_attr.Unique();
   MFEM_VERIFY(dbc_attr.Size() > 0,
               "Electrostatic PROM enrichment is ill-posed without any Dirichlet "
               "boundaries!");
+
+  Mpi::Print("\nElectrostatic PROM boundary classification:\n");
+  utils::PrettyPrint(terminal_attr, " Terminal attributes:");
+  if (grounded_impedance_attr.Size() > 0)
+  {
+    utils::PrettyPrint(grounded_impedance_attr,
+                       " Automatically grounded impedance attributes:");
+  }
+  else
+  {
+    Mpi::Print(" Automatically grounded impedance attributes: None\n");
+  }
+
   mfem::Array<int> dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_attr);
   std::vector<mfem::Array<int>> dbc_tdof_lists(h1_fespaces.GetNumLevels());
   for (std::size_t l = 0; l < h1_fespaces.GetNumLevels(); l++)
