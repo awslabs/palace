@@ -14,6 +14,7 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/prettyprint.hpp"
+#include "utils/tablecsv.hpp"
 
 namespace palace
 {
@@ -144,6 +145,18 @@ LaplaceOperator::ConstructSources(const std::map<int, config::TerminalData> &ter
 namespace
 {
 
+const ParOperator &GetFinestParOperator(const Operator &K)
+{
+  const Operator *K_finest = &K;
+  if (const auto *K_mg = dynamic_cast<const MultigridOperator *>(&K))
+  {
+    K_finest = &K_mg->GetFinestOperator();
+  }
+  const auto *K_par = dynamic_cast<const ParOperator *>(K_finest);
+  MFEM_VERIFY(K_par, "LaplaceOperator requires a ParOperator at the finest level!");
+  return *K_par;
+}
+
 void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
                  const mfem::ParFiniteElementSpace &nd_fespace,
                  const mfem::ParFiniteElementSpace &rt_fespace, bool &print_hdr)
@@ -186,18 +199,28 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
   // When partially assembled, the coarse operators can reuse the fine operator quadrature
   // data if the spaces correspond to the same mesh.
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  auto K = AssembleStiffnessMatrix(GetH1Spaces(), mat_op, dbc_tdof_lists, print_hdr);
+  print_hdr = false;
+  return K;
+}
 
+std::unique_ptr<Operator> LaplaceOperator::AssembleStiffnessMatrix(
+    FiniteElementSpaceHierarchy &h1_fespaces, const MaterialOperator &mat_op,
+    const std::vector<mfem::Array<int>> &dbc_tdof_lists, bool print_hdr)
+{
+  MFEM_VERIFY(h1_fespaces.GetNumLevels() == dbc_tdof_lists.size(),
+              "Laplace operator requires one essential true dof list per H1 level!");
   constexpr bool skip_zeros = false;
   MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
                                            mat_op.GetPermittivityReal());
-  BilinearForm k(GetH1Space());
+  BilinearForm k(h1_fespaces.GetFinestFESpace());
   k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
   // k.AssembleQuadratureData();
-  auto k_vec = k.Assemble(GetH1Spaces(), skip_zeros);
-  auto K = std::make_unique<MultigridOperator>(GetH1Spaces().GetNumLevels());
-  for (std::size_t l = 0; l < GetH1Spaces().GetNumLevels(); l++)
+  auto k_vec = k.Assemble(h1_fespaces, skip_zeros);
+  auto K = std::make_unique<MultigridOperator>(h1_fespaces.GetNumLevels());
+  for (std::size_t l = 0; l < h1_fespaces.GetNumLevels(); l++)
   {
-    const auto &h1_fespace_l = GetH1Spaces().GetFESpaceAtLevel(l);
+    const auto &h1_fespace_l = h1_fespaces.GetFESpaceAtLevel(l);
     if (print_hdr)
     {
       Mpi::Print(" Level {:d} (p = {:d}): {:d} unknowns", l,
@@ -217,39 +240,122 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     K_l->SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
     K->AddOperator(std::move(K_l));
   }
-
-  print_hdr = false;
   return K;
+}
+
+std::unique_ptr<Operator>
+LaplaceOperator::GetUnconstrainedStiffnessOperator(const Operator &K)
+{
+  const auto &K_finest = GetFinestParOperator(K);
+  return std::make_unique<ParOperator>(K_finest.LocalOperator(),
+                                       K_finest.TrialFiniteElementSpace());
 }
 
 void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
                                           Vector &RHS)
 {
+  GetExcitationVector(GetH1Space(), source_attr_lists.at(idx), K, X, RHS);
+}
+
+void LaplaceOperator::GetExcitationVector(FiniteElementSpace &h1_fespace,
+                                          const mfem::Array<int> &source_attr,
+                                          const Operator &K, Vector &X, Vector &RHS)
+{
   // Apply the Dirichlet BCs to the solution vector: V = 1 on terminal boundaries with the
   // given index, V = 0 on all ground and other terminal boundaries.
-  mfem::ParGridFunction x(&GetH1Space().Get());
+  mfem::ParGridFunction x(&h1_fespace.Get());
   x = 0.0;
 
   // Get a marker of all boundary attributes with the given source surface index.
-  const mfem::ParMesh &mesh = GetMesh();
+  const mfem::ParMesh &mesh = h1_fespace.GetMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  mfem::Array<int> source_marker = mesh::AttrToMarker(bdr_attr_max, source_attr_lists[idx]);
+  mfem::Array<int> source_marker = mesh::AttrToMarker(bdr_attr_max, source_attr);
   mfem::ConstantCoefficient one(1.0);
   x.ProjectBdrCoefficient(one, source_marker);  // Values are only correct on master
 
   // Eliminate the essential BC to get the RHS vector.
-  X.SetSize(GetH1Space().GetTrueVSize());
-  RHS.SetSize(GetH1Space().GetTrueVSize());
+  X.SetSize(h1_fespace.GetTrueVSize());
+  RHS.SetSize(h1_fespace.GetTrueVSize());
   X.UseDevice(true);
   RHS.UseDevice(true);
   X = 0.0;
   RHS = 0.0;
   x.ParallelProject(X);  // Restrict to the true dofs
-  const auto *mg_K = dynamic_cast<const MultigridOperator *>(&K);
-  const auto *PtAP_K = mg_K ? dynamic_cast<const ParOperator *>(&mg_K->GetFinestOperator())
-                            : dynamic_cast<const ParOperator *>(&K);
-  MFEM_VERIFY(PtAP_K, "LaplaceOperator requires ParOperator for RHS elimination!");
-  PtAP_K->EliminateRHS(X, RHS);
+  GetFinestParOperator(K).EliminateRHS(X, RHS);
+}
+
+void LaplaceOperator::GetExcitationVector(FiniteElementSpace &h1_fespace,
+                                          const std::vector<int> &source_attr,
+                                          const Operator &K, Vector &X, Vector &RHS)
+{
+  mfem::Array<int> attr;
+  attr.Reserve(static_cast<int>(source_attr.size()));
+  for (int a : source_attr)
+  {
+    attr.Append(a);
+  }
+  GetExcitationVector(h1_fespace, attr, K, X, RHS);
+}
+
+mfem::DenseMatrix LaplaceOperator::ComputeCapacitanceMatrix(MPI_Comm comm,
+                                                            const Operator &energy_op,
+                                                            const std::vector<Vector> &V)
+{
+  const int n_term = static_cast<int>(V.size());
+  MFEM_VERIFY(n_term > 0,
+              "Cannot compute a capacitance matrix without terminal solutions!");
+  MFEM_VERIFY(energy_op.Height() == V.front().Size() &&
+                  energy_op.Width() == V.front().Size(),
+              "Invalid electrostatic energy operator dimensions!");
+
+  mfem::DenseMatrix C(n_term);
+  Vector KV(energy_op.Height());
+  KV.UseDevice(true);
+  for (int i = 0; i < n_term; i++)
+  {
+    MFEM_VERIFY(V[i].Size() == energy_op.Width(),
+                "Invalid terminal solution dimension for capacitance calculation!");
+    energy_op.Mult(V[i], KV);
+    for (int j = i; j < n_term; j++)
+    {
+      C(i, j) = C(j, i) = linalg::Dot<Vector>(comm, V[j], KV);
+    }
+  }
+  return C;
+}
+
+void LaplaceOperator::WriteTerminalMatrix(MPI_Comm comm, const fs::path &post_dir,
+                                          std::string_view file, std::string_view name,
+                                          std::string_view unit,
+                                          const std::vector<int> &terminal_indices,
+                                          const mfem::DenseMatrix &mat, double scale)
+{
+  MFEM_VERIFY(mat.Height() == static_cast<int>(terminal_indices.size()) &&
+                  mat.Width() == static_cast<int>(terminal_indices.size()),
+              "Terminal matrix dimensions do not match the number of terminal indices!");
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+
+  TableWithCSVFile output(post_dir / file);
+  output.table.insert(Column("i", "i", 0, 0, 2, ""));
+  for (int idx : terminal_indices)
+  {
+    output.table["i"] << idx;
+  }
+  for (int j = 0; j < mat.Width(); j++)
+  {
+    const int idx = terminal_indices[j];
+    const auto key = fmt::format("i2{}", idx);
+    output.table.insert(key, fmt::format("{}[i][{}] {}", name, idx, unit));
+    auto &col = output.table[key];
+    for (int i = 0; i < mat.Height(); i++)
+    {
+      col << mat(i, j) * scale;
+    }
+  }
+  output.WriteFullTableTrunc();
 }
 
 }  // namespace palace
