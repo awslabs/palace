@@ -211,10 +211,15 @@ protected:
   //   - Surface conductivity, one entry per attribute group g: f(ω) = ω/Z_g(ω) (the i is
   //     the implicit slot factor; surf_sigma_op.EvaluateScalar returns i·ω/Z, so the scalar
   //     used here is EvaluateScalar/i, generally complex), fit by poly+AAA.
+  //   - Floquet port Robin BC, one entry per port p: f(ω) = γ₀,p(ω) =
+  //     sqrt(max(0, ω²µε - |B₀₀+kF|²)), the specular (0,0) propagation constant.
+  //     Closed form, no fit. The i is the implicit slot factor (imaginary-slot mass).
   std::unique_ptr<ComplexOperator> M_ff_;
   Eigen::MatrixXcd M_ff_r;
   std::vector<std::unique_ptr<ComplexOperator>> Asig_g_;
   std::vector<Eigen::MatrixXcd> Asig_g_r;
+  std::map<int, std::unique_ptr<ComplexOperator>> M_floquet_p_;
+  std::map<int, Eigen::MatrixXcd> M_floquet_p_r;
 
   // Sweep band [ω_min, ω_max] (nondimensional, rad) captured from iodata at construction
   // time. Used to (a) sample kₙ,p(ω) for the synthesis polynomial fit, and (b) define the

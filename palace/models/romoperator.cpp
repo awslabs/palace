@@ -447,6 +447,18 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     }
   }
 
+  // Per-port Floquet Robin µ⁻¹ boundary mass (imaginary slot, matching the convention).
+  // The online scalar is γ₀,p(ω) = sqrt(max(0, ω²µε − kF²)), evaluated in closed form.
+  for (const auto &[port_idx, port] : space_op.GetFloquetPortOp())
+  {
+    auto Mp = space_op.GetFloquetRobinBoundaryMassMatrix<ComplexOperator>(
+        port_idx, Operator::DIAG_ZERO);
+    if (Mp)
+    {
+      M_floquet_p_.emplace(port_idx, std::move(Mp));
+    }
+  }
+
   // Capture sweep band and synthesis controls for later use in
   // CalculateNormalizedPROMMatrices. After config::Nondimensionalize, sample_f stores
   // 2π·f_nondim, i.e. ω in nondimensional units. Use AdaptiveTol for the scalar fit
@@ -673,7 +685,7 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
 {
   // Add the modal field of each wave port to the basis as a port mode for synthesis,
   // analogous to AddLumpedPortModesForSynthesis. The modal field is evaluated at a
-  // single reference frequency (typically the band centre) and projected onto the
+  // single reference frequency (typically the band center) and projected onto the
   // parent ND space, restricted to the port boundary attributes.
   //
   // The mode field is generally complex; UpdatePROM splits it into real and imaginary
@@ -818,6 +830,22 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
       ProjectMatInternal(comm, V, *Asig_g_[g], Asig_g_r[g], r, dim_V_old, true);
     }
   }
+  // Per-port Floquet Robin boundary mass projection (same pattern as wave-port masses).
+  for (auto &[port_idx, Mp_r] : M_floquet_p_r)
+  {
+    Mp_r.conservativeResize(dim_V_new, dim_V_new);
+    ProjectMatInternal(comm, V, *M_floquet_p_.at(port_idx), Mp_r, r, dim_V_old, true);
+  }
+  // Initialize map entries for new ports that haven't been projected yet (first call).
+  for (const auto &[port_idx, Mp_hdm] : M_floquet_p_)
+  {
+    if (M_floquet_p_r.find(port_idx) == M_floquet_p_r.end())
+    {
+      auto &Mp_r = M_floquet_p_r[port_idx];
+      Mp_r.resize(dim_V_new, dim_V_new);
+      ProjectMatInternal(comm, V, *Mp_hdm, Mp_r, r, 0, true);
+    }
+  }
   if (RHS1.Size())
   {
     RHS1r.conservativeResize(dim_V_new);
@@ -937,6 +965,19 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
         Ar += s * Asig_g_r[g];
       }
     }
+    // Factored Floquet port Robin BC: A2_floquet,p(ω) = i·γ₀,p(ω)·M_floquet_p.
+    // M_floquet_p_r carries the µ⁻¹ boundary mass on the imaginary slot (the i), so
+    // the scalar multiplier is γ₀ (real). FloquetPortData::Initialize(omega) must be
+    // called first to refresh gamma0.
+    space_op.GetFloquetPortOp().Initialize(omega);
+    for (const auto &[port_idx, Mp_r] : M_floquet_p_r)
+    {
+      if (Mp_r.rows() == static_cast<long>(V.size()))
+      {
+        const double gamma0 = space_op.GetFloquetPortOp().GetPort(port_idx).GetGamma0();
+        Ar += std::complex<double>(gamma0, 0.0) * Mp_r;
+      }
+    }
   };
 
   // Structural precondition for the factored path: every factored operator we hold must be
@@ -957,6 +998,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
       {
         (Asig_g_r[g].rows() == n) ? (any_factored = true) : (all_present = false);
       }
+    }
+    for (const auto &[port_idx, Mp_r] : M_floquet_p_r)
+    {
+      (Mp_r.rows() == n) ? (any_factored = true) : (all_present = false);
     }
     other_A2_factored = any_factored && all_present;
   }
@@ -1097,12 +1142,7 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
   // residual. n_fit is AAA's candidate pool (it greedily selects support points FROM these
   // samples — it does not sample new ω), so it must comfortably exceed the pole budget.
   //
-  // Both grids are Chebyshev–Gauss–Lobatto nodes on [w_lo, w_hi]: they cluster at the band
-  // edges where polynomial/rational interpolation error peaks, giving a tighter max-error
-  // bound per sample than a uniform grid. The dense (validation) grid is offset to the
-  // Chebyshev interior nodes so its points are DISTINCT from the fit grid — the LSQ
-  // residual is artificially small AT the fit points, so the residual must be measured
-  // between them.
+  // Both grids are Chebyshev–Gauss–Lobatto nodes on [w_lo, w_hi].
   const int n_fit = std::max(12, 2 * static_cast<int>(waveport_synthesis_order_max) + 4);
   const int n_dense = 2 * n_fit;
   const double w_lo = sweep_omega_min;

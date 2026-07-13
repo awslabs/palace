@@ -289,6 +289,12 @@ void IoData::CheckConfiguration()
                     boundaries.rational_impedance.empty(),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) is not "
                 "supported in systems with RationalImpedance boundary conditions!\n");
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
+                    boundaries.floquetport.empty(),
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
+                "yet support Floquet port boundaries. The Floquet Robin dispersion is "
+                "handled in the online PROM sweep but has not been folded into the "
+                "synthesised circuit pencil.\n");
     // Second-order absorbing (farfield) and surface-conductivity boundaries are now
     // supported in circuit synthesis: their frequency-dependent contributions are folded
     // into the synthesised pencil via the same auxiliary-state path as the wave ports (the

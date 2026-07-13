@@ -288,6 +288,14 @@ public:
   std::unique_ptr<OperType>
   GetRationalImpedanceBoundaryMassMatrix(int idx, Operator::DiagonalPolicy diag_policy);
 
+  // Construct the ω-independent µ⁻¹ boundary mass for a single Floquet port's Robin BC,
+  // placed on the imaginary slot. The full online term is i·γ₀,p(ω)·M_floquet_p with
+  // γ₀ the (0,0) specular propagation constant. Returns null if the port contributes no
+  // DoFs on this rank.
+  template <typename OperType>
+  std::unique_ptr<OperType>
+  GetFloquetRobinBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
+
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:
   //                     A = a0 K + a1 C + a2 (Mr + i Mi) + A2.
