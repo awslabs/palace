@@ -2516,7 +2516,7 @@
         },
         "AdaptiveCircuitSynthesisEigenmodes": {
           "type": "boolean",
-          "description": "Enrich the circuit-synthesis reduced-order basis with eigenmodes of the full system, computed by a shift-and-invert eigensolve before the adaptive offline sweep. The eigensolver parameters (`\"Target\"`, `\"N\"`, `\"Tol\"`, backend) are taken from [`config[\"Solver\"][\"Eigenmode\"]`](#config-solver-eigenmode), which must be present with a positive `\"Target\"`. This guarantees the in-band resonant subspace is represented in the basis independent of how strongly each mode couples to the driven ports. The eigenvectors appear as columns labeled `eigen_<k>` in the exported circuit matrices. Requires `\"AdaptiveCircuitSynthesis\"`. Default `false` (opt-in): the Eigenmode block has historically been ignored for driven problems.",
+          "description": "Enrich the circuit-synthesis reduced-order basis with eigenmodes of the full system, computed by a shift-and-invert eigensolve before the adaptive offline sweep. The eigensolver parameters (`\"Target\"`, `\"N\"`, `\"Tol\"`, backend) are taken from [`config[\"Solver\"][\"Eigenmode\"]`](#config-solver-eigenmode), which must be present with a positive `\"Target\"`. The eigensolve requests the user-specified number `\"N\"` of modes near `\"Target\"`; it does not attempt or guarantee complete coverage of any frequency band. The converged eigenvectors appear as columns labeled `eigen_<k>` in the exported circuit matrices. Requires `\"AdaptiveCircuitSynthesis\"`. Default `false` (opt-in): the Eigenmode block has historically been ignored for driven problems.",
           "default": false,
           "x-palace-advanced": true
         },

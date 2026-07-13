@@ -828,11 +828,11 @@ public:
   // Enrich the circuit-synthesis PROM basis with eigenmodes of the full K/C/M system,
   // computed by a shift-and-invert eigensolve before the adaptive offline sweep. The
   // eigensolver parameters (target, number of modes, tolerance, backend) are taken from
-  // config["Solver"]["Eigenmode"], which must be present when this flag is set. Guarantees
-  // that the in-band resonant subspace is represented in the basis independent of how
-  // strongly each mode couples to the driven ports. Opt-in (default false): the Eigenmode
-  // block has historically been ignored for driven problems, so enabling it implicitly
-  // would change existing configurations.
+  // config["Solver"]["Eigenmode"], which must be present when this flag is set. The
+  // eigensolve requests the configured number of modes near the target; it does not attempt
+  // or guarantee complete coverage of any frequency band. Opt-in (default false): the
+  // Eigenmode block has historically been ignored for driven problems, so enabling it
+  // implicitly would change existing configurations.
   bool adaptive_circuit_synthesis_eigenmodes = false;
 
   // Enrich the circuit-synthesis PROM basis with electrostatic (DC) solutions: one
