@@ -1318,15 +1318,11 @@ void PostOperator<solver_t>::MeasureSParameter() const
     using std::complex_literals::operator""i;
 
     // Don't measure S-Matrix unless there is only one excitation per port. Mixed
-    // lumped/wave S-parameters are supported, but Floquet ports use a different modal
-    // basis and are only handled when they are the sole port type.
-    bool has_lumped = fem_op->GetLumpedPortOp().Size() > 0;
-    bool has_wave = fem_op->GetWavePortOp().Size() > 0;
-    bool has_floquet = !fem_op->GetFloquetPortOp().Empty();
-    int active_port_type_count = static_cast<int>(has_lumped) + static_cast<int>(has_wave) +
-                                 static_cast<int>(has_floquet);
-    if (!fem_op->GetPortExcitations().IsMultipleSimple() ||
-        (has_floquet && active_port_type_count != 1))
+    // lumped/wave/Floquet S-parameters are supported with a power normalization bridge:
+    // lumped/wave ports normalize to unit peak power (∫E×H*·n dS = 1), while Floquet ports
+    // normalize to unit time-averaged power (½Re{∫E×H*·n dS} = 1). The √2 bridge factor
+    // accounts for this 2× difference in incident power convention.
+    if (!fem_op->GetPortExcitations().IsMultipleSimple())
     {
       return;
     }
@@ -1363,6 +1359,17 @@ void PostOperator<solver_t>::MeasureSParameter() const
                        fem_op->GetWavePortOp().GetPort(drive_port_idx).d_offset)
             : std::complex<double>{1.0, 0.0};
 
+    // Power normalization bridge factor for mixed Floquet + lumped/wave configurations.
+    // Floquet ports normalize incident waves to unit time-averaged power (P_avg = 1),
+    // while lumped/wave ports normalize to unit peak power (∫E×H*·n dS = 1, P_avg = ½).
+    // Cross-type observations require a √2 correction:
+    //   - Floquet drives, lumped/wave observes: lumped |b|² = 2×P_avg, divide by √2
+    //   - Lumped/wave drives, Floquet observes: Floquet |S|² = P_avg, multiply by √2
+    const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
+    const bool floquet_drives = (drive_port_type == PortType::FloquetPort);
+    const bool lumped_or_wave_drives =
+        (drive_port_type == PortType::LumpedPort || drive_port_type == PortType::WavePort);
+
     // Iterate over observation lumped ports.
     for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
     {
@@ -1373,6 +1380,10 @@ void PostOperator<solver_t>::MeasureSParameter() const
       }
       // Lumped observation has no d_offset — only the source-side factor applies.
       vi.S *= src_deembed;
+      if (floquet_drives)
+      {
+        vi.S *= inv_sqrt2;
+      }
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
                  format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
@@ -1390,17 +1401,26 @@ void PostOperator<solver_t>::MeasureSParameter() const
       // Apply both source and observation de-embedding factors.
       vi.S *= src_deembed;
       vi.S *= std::exp(1i * data.kn0 * data.d_offset);
+      if (floquet_drives)
+      {
+        vi.S *= inv_sqrt2;
+      }
 
       Mpi::Print(" {0} = {1:+.3e}{2:+.3e}i, |{0}| = {3:+.3e}, arg({0}) = {4:+.3e}\n",
                  format("S[{}][{}]", idx, drive_port_idx), vi.S.real(), vi.S.imag(),
                  Measurement::Magnitude(vi.S), Measurement::Phase(vi.S));
     }
 
-    // Floquet port S-parameters (already post-processed in MeasureFloquetPorts).
-    for (const auto &[port_idx, S_map] : measurement_cache.floquet_port_s)
+    // Floquet port S-parameters (already post-processed in MeasureFloquetPorts). Apply
+    // the reciprocal bridge factor when lumped/wave ports are driving.
+    for (auto &[port_idx, S_map] : measurement_cache.floquet_port_s)
     {
-      for (const auto &[key, S] : S_map)
+      for (auto &[key, S] : S_map)
       {
+        if (lumped_or_wave_drives)
+        {
+          S *= std::sqrt(2.0);
+        }
         auto [m, n, is_te] = key;
         auto pol = measurement_cache.floquet_circular_output ? (is_te ? "RHC" : "LHC")
                                                              : (is_te ? "TE" : "TM");

@@ -1,0 +1,84 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/floquet_lumped"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/floquet_lumped.msh",
+    "L0": 1.0e-2
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1, 2],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "Periodic":
+    {
+      "FloquetWaveVector": [0.0, 0.0, 0.0],
+      "BoundaryPairs":
+      [
+        {
+          "DonorAttributes": [1],
+          "ReceiverAttributes": [2]
+        },
+        {
+          "DonorAttributes": [3],
+          "ReceiverAttributes": [4]
+        }
+      ]
+    },
+    "PEC":
+    {
+      "Attributes": [8]
+    },
+    "FloquetPort":
+    [
+      {
+        "Index": 1,
+        "Attributes": [5],
+        "Excitation": 1,
+        "IncidentPolarization": "TM",
+        "MaxOrder": 0
+      }
+    ],
+    "LumpedPort":
+    [
+      {
+        "Index": 2,
+        "Attributes": [7],
+        "Excitation": 2,
+        "R": 377.0,
+        "Direction": "+X"
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Driven":
+    {
+      "MinFreq": 5.0,
+      "MaxFreq": 10.0,
+      "FreqStep": 5.0
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 200,
+      "ComplexCoarseSolve": true
+    }
+  }
+}

@@ -216,6 +216,13 @@
             "$ref": "#/$defs/Impedance"
           }
         },
+        "RationalImpedance": {
+          "type": "array",
+          "title": "Rational Impedance",
+          "description": "Array of rational surface impedance boundary conditions. The per-square surface impedance is an arbitrary rational function of frequency, Zs(s) = N(s)/D(s) with s = iω, specified by the numerator and denominator polynomial coefficients (its zeros and poles). This generalizes [Impedance](@ref config-boundaries-impedance) to any passive lumped-network response. Only available for frequency domain driven and boundary mode simulations.",
+          "additionalItems": false,
+          "items": { "$ref": "#/$defs/RationalImpedance" }
+        },
         "Absorbing": {
           "$ref": "#/$defs/Absorbing",
           "title": "Absorbing Boundary",
@@ -907,6 +914,33 @@
           "type": "number",
           "description": "Surface capacitance for this impedance boundary, F/sq.",
           "default": 0.0
+        }
+      }
+    },
+    "RationalImpedance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Attributes", "Numerator", "Denominator"],
+      "properties":
+      {
+        "Attributes":
+        {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes this object applies to."
+        },
+        "Numerator":
+        {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 1,
+          "description": "Real polynomial coefficients of the numerator N(s) of the rational surface impedance per square Zs(s) = N(s)/D(s), with s = iω, ordered from highest to lowest degree. The roots of N are the zeros of Zs. SI units (s in rad/s, Zs in Ω/sq); only the ratio N/D is physical."
+        },
+        "Denominator":
+        {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 1,
+          "description": "Real polynomial coefficients of the denominator D(s), ordered from highest to lowest degree. The roots of D are the poles of Zs."
         }
       }
     },
@@ -2379,7 +2413,7 @@
         },
         "AdaptiveCircuitSynthesis": {
           "type": "boolean",
-          "description": "Use the adaptive reduced-order model to print synthesized circuit-like matrices (L\u207b\u00b9, R\u207b\u00b9, C). Requires adaptive sweep to be enabled, all `LumpedPort` fields to be orthogonal, and only LRC-type frequency dependence (no `WavePort`, `Conductivity`, or second-order farfield BCs).",
+          "description": "Use the adaptive reduced-order model to print synthesized circuit-like matrices (L\u207b\u00b9, R\u207b\u00b9, C). Requires adaptive sweep to be enabled, all `LumpedPort` fields to be orthogonal, and only LRC-type frequency dependence (no `WavePort`, `Conductivity`, `RationalImpedance`, or second-order farfield BCs).",
           "default": false
         },
         "AdaptiveCircuitSynthesisDomainOrthogonalization": {

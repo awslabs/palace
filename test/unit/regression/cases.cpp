@@ -274,6 +274,34 @@ TEST_CASE("dielectric_grating_uniform", "[Serial][Parallel][GPU][Regression]")
                                   "uniform", opts);
 }
 
+// Mixed Floquet + lumped/wave port S-parameter tests: validate the sqrt(2) power
+// normalization bridge for cross-type observations. Use custom checks to verify power
+// balance (sum |S|^2 = 1 for the lossless structure). Floquet NaN and negligible
+// entries handled as in dielectric_grating.
+TEST_CASE("floquet_lumped", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-floquet-S.csv"] = TestFloquetSParams(opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("floquet_lumped", "floquet_lumped.json", "floquet_lumped",
+                                  opts);
+}
+
+TEST_CASE("floquet_wave", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-floquet-S.csv"] = TestFloquetSParams(opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("floquet_wave", "floquet_wave.json", "floquet_wave",
+                                  opts);
+}
+
 // --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all three ---
 
 TEST_CASE("antenna_halfwave_dipole", "[Serial][Parallel][GPU][Regression]")
@@ -336,6 +364,16 @@ TEST_CASE("coaxial_lumped_wave", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = {"Maximum", "Minimum"};
   palace::test::RunRegressionCase("coaxial", "coaxial_lumped_wave.json", "lumped_wave",
                                   opts);
+}
+
+TEST_CASE("rational_impedance", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  palace::test::RunRegressionCase("rational_impedance", "parallel_rlc_rational.json",
+                                  "rational", opts);
 }
 
 TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")

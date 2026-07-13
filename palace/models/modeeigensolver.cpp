@@ -25,6 +25,7 @@
 #include "models/materialoperator.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
+#include "models/surfacerationalimpedanceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
@@ -68,7 +69,8 @@ ComplexHypreParMatrix
 AssembleAtt(const FiniteElementSpace &nd_fespace, const MaterialOperator &mat_op,
             const mfem::Vector *normal, SurfaceImpedanceOperator &surf_z_op,
             FarfieldBoundaryOperator &farfield_op,
-            SurfaceConductivityOperator &surf_sigma_op, double omega, double sigma)
+            SurfaceConductivityOperator &surf_sigma_op,
+            SurfaceRationalImpedanceOperator &surf_rz_op, double omega, double sigma)
 {
   MaterialPropertyCoefficient muinv_cc_func(mat_op.GetAttributeToMaterial(),
                                             normal ? mat_op.GetInvPermeability()
@@ -95,6 +97,7 @@ AssembleAtt(const FiniteElementSpace &nd_fespace, const MaterialOperator &mat_op
   surf_z_op.AddMassBdrCoefficients(-omega * omega, fbr);
   farfield_op.AddDampingBdrCoefficients(omega, fbi);
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+  surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
 
   BilinearForm att(nd_fespace);
   att.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_cc_func, eps_shifted_func);
@@ -145,12 +148,12 @@ AssembleAtt(const FiniteElementSpace &nd_fespace, const MaterialOperator &mat_op
   return {std::move(Attr_assembled), std::move(Atti_assembled)};
 }
 
-ComplexHypreParMatrix AssembleAnn(const FiniteElementSpace &h1_fespace,
-                                  const MaterialOperator &mat_op,
-                                  const mfem::Vector *normal,
-                                  SurfaceImpedanceOperator &surf_z_op,
-                                  FarfieldBoundaryOperator &farfield_op,
-                                  SurfaceConductivityOperator &surf_sigma_op, double omega)
+ComplexHypreParMatrix
+AssembleAnn(const FiniteElementSpace &h1_fespace, const MaterialOperator &mat_op,
+            const mfem::Vector *normal, SurfaceImpedanceOperator &surf_z_op,
+            FarfieldBoundaryOperator &farfield_op,
+            SurfaceConductivityOperator &surf_sigma_op,
+            SurfaceRationalImpedanceOperator &surf_rz_op, double omega)
 {
   MaterialPropertyCoefficient neg_muinv_func(mat_op.GetAttributeToMaterial(),
                                              mat_op.GetInvPermeability(), -1.0);
@@ -213,6 +216,7 @@ ComplexHypreParMatrix AssembleAnn(const FiniteElementSpace &h1_fespace,
   {
     MaterialPropertyCoefficient cond_r(max_bdr_attr), cond_i(max_bdr_attr);
     surf_sigma_op.AddExtraSystemBdrCoefficients(omega, cond_r, cond_i);
+    surf_rz_op.AddExtraSystemBdrCoefficients(omega, cond_r, cond_i);
     if (!cond_r.empty())
     {
       cond_r *= -1.0;
@@ -298,7 +302,8 @@ constexpr bool skip_zeros = false;
 ModeEigenSolver::ModeEigenSolver(
     const MaterialOperator &mat_op, const mfem::Vector *normal,
     SurfaceImpedanceOperator &surf_z_op, FarfieldBoundaryOperator &farfield_op,
-    SurfaceConductivityOperator &surf_sigma_op, const FiniteElementSpace &nd_fespace,
+    SurfaceConductivityOperator &surf_sigma_op,
+    SurfaceRationalImpedanceOperator &surf_rz_op, const FiniteElementSpace &nd_fespace,
     const FiniteElementSpace &h1_fespace, const mfem::Array<int> &dbc_tdof_list,
     int num_modes, int num_vec, double eig_tol, EigenvalueSolver::WhichType which_eig,
     const config::LinearSolverData &linear, EigenSolverBackend eigen_backend, int verbose,
@@ -306,8 +311,8 @@ ModeEigenSolver::ModeEigenSolver(
   : num_modes(num_modes), num_vec(num_vec), eig_tol(eig_tol), which_eig(which_eig),
     linear(linear), eigen_backend(eigen_backend), verbose(verbose), mat_op(mat_op),
     normal(normal), surf_z_op(surf_z_op), farfield_op(farfield_op),
-    surf_sigma_op(surf_sigma_op), nd_fespace(nd_fespace), h1_fespace(h1_fespace),
-    dbc_tdof_list(dbc_tdof_list)
+    surf_sigma_op(surf_sigma_op), surf_rz_op(surf_rz_op), nd_fespace(nd_fespace),
+    h1_fespace(h1_fespace), dbc_tdof_list(dbc_tdof_list)
 {
   // Assemble Atn, Btn = -Atn^T, Btt locally (no BMO available on this path).
   std::tie(owned_Atnr, owned_Atni) =
@@ -341,8 +346,8 @@ ModeEigenSolver::ModeEigenSolver(BoundaryModeOperator &bmo,
     linear(linear), eigen_backend(eigen_backend), verbose(verbose),
     mat_op(bmo.GetMaterialOp()), normal(nullptr), surf_z_op(bmo.GetSurfZOp()),
     farfield_op(bmo.GetFarfieldOp()), surf_sigma_op(bmo.GetSurfSigmaOp()),
-    nd_fespace(bmo.GetNDSpace()), h1_fespace(bmo.GetH1Space()), bmo(&bmo),
-    dbc_tdof_list(dbc_tdof_list)
+    surf_rz_op(bmo.GetSurfRZOp()), nd_fespace(bmo.GetNDSpace()),
+    h1_fespace(bmo.GetH1Space()), bmo(&bmo), dbc_tdof_list(dbc_tdof_list)
 {
   // Alias BMO-owned frequency-independent matrices; no local assembly.
   Atnr = bmo.GetAtnr();
@@ -404,10 +409,12 @@ void ModeEigenSolver::AssembleFrequencyDependent(double omega, double sigma)
   }
   else
   {
-    std::tie(Attr, Atti) = mode_assembly::AssembleAtt(
-        nd_fespace, mat_op, normal, surf_z_op, farfield_op, surf_sigma_op, omega, sigma);
-    std::tie(Annr_local, Anni_local) = mode_assembly::AssembleAnn(
-        h1_fespace, mat_op, normal, surf_z_op, farfield_op, surf_sigma_op, omega);
+    std::tie(Attr, Atti) =
+        mode_assembly::AssembleAtt(nd_fespace, mat_op, normal, surf_z_op, farfield_op,
+                                   surf_sigma_op, surf_rz_op, omega, sigma);
+    std::tie(Annr_local, Anni_local) =
+        mode_assembly::AssembleAnn(h1_fespace, mat_op, normal, surf_z_op, farfield_op,
+                                   surf_sigma_op, surf_rz_op, omega);
   }
 
   // Shifted (1,0) block: -sigma * Btn_r (real-only).
@@ -882,6 +889,7 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
                                    fbr);
   farfield_op.AddDampingBdrCoefficients(omega, fbr);
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbr);
+  surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbr);
 
   // Assemble ND operators at all levels using the hierarchy-aware assembly pattern
   // (matching SpaceOperator::AssembleOperators). Creates a BilinearForm on the finest
@@ -962,6 +970,7 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   {
     MaterialPropertyCoefficient cond_r(max_bdr_attr);
     surf_sigma_op.AddExtraSystemBdrCoefficients(omega, cond_r, cond_r);
+    surf_rz_op.AddExtraSystemBdrCoefficients(omega, cond_r, cond_r);
     if (!cond_r.empty())
     {
       cond_r *= -1.0;

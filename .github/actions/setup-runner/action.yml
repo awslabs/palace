@@ -5,9 +5,9 @@ name: 'Setup Runners'
 description: 'Common steps to prepare the environment to run Palace tests'
 inputs:
   spack-version:
-    description: 'Spack git tag to use'
+    description: 'Spack git ref to use (e.g. develop, releases/v1.2)'
     required: false
-    default: 'develop'
+    default: 'releases/v1.2'
   llvm-version:
     description: 'Version of LLVM to use (only major version supported, e.g. "19")'
     required: false
