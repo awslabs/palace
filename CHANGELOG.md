@@ -34,11 +34,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     normalization factor, restoring S-matrix unitarity and reciprocity for the mixed
     case [PR 804](https://github.com/awslabs/palace/pull/804).
   - Fixed a bug where a mesh saved with `"SaveAdaptMesh"` during nonconformal AMR on a
-    periodic problem could not be used as the input mesh for a subsequent solve. The saved
-    mesh is already periodic and retains only one of the two periodic boundary attributes,
-    so rebuilding the periodic vertex mapping from the configuration aborted with a
-    donor/receiver vertex count mismatch. Loading now detects the already-periodic mesh
-    and skips the periodicity construction.
+    periodic problem could not be used as the input mesh for a subsequent solve. Loading now
+    detects the already-periodic mesh and skips the periodicity construction.
+    [PR 810](https://github.com/awslabs/palace/pull/810).
 
 ## [0.17.0] - 2026-06-28
 
