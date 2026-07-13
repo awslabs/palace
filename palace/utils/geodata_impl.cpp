@@ -978,8 +978,8 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
   }
 
   // A periodic mesh saved after nonconformal AMR retains only one of the two periodic
-  // boundary ttributes. Exactly one of the two sets being empty is thus the signature of an
-  // already-periodic mesh: skip MakePeriodic by returning an  empty mapping. Both sets
+  // boundary attributes. Exactly one of the two sets being empty is thus the signature of
+  // an already-periodic mesh: skip MakePeriodic by returning an empty mapping. Both sets
   // empty means the config names attributes not present in the mesh at all.
   MFEM_VERIFY(!bdr_v_donor.empty() || !bdr_v_receiver.empty(),
               "No boundary elements found for donor or receiver attributes of a periodic "
