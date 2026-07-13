@@ -15,25 +15,54 @@ namespace palace::ceed
 namespace
 {
 
-int TetNumModes(int degree)
+int SimplexNumModes(mfem::Geometry::Type geom, int degree)
 {
+  if (geom == mfem::Geometry::TRIANGLE)
+  {
+    return (degree + 1) * (degree + 2) / 2;
+  }
+  MFEM_VERIFY(geom == mfem::Geometry::TETRAHEDRON,
+              "AtPoints lattice requested for a non-simplex element!");
   return (degree + 1) * (degree + 2) * (degree + 3) / 6;
 }
 
-const mfem::IntegrationRule &GetRegisteredTetLatticeRule(int degree)
+const mfem::IntegrationRule &GetRegisteredSimplexLatticeRule(mfem::Geometry::Type geom,
+                                                             int degree)
 {
-  static std::map<int, std::unique_ptr<mfem::IntegrationRule>> registry;
+  using RuleKey = std::pair<int, int>;
+  static std::map<RuleKey, std::unique_ptr<mfem::IntegrationRule>> registry;
   static std::mutex registry_mutex;
+  const RuleKey key{static_cast<int>(geom), degree};
   std::lock_guard<std::mutex> lock(registry_mutex);
-  auto it = registry.find(degree);
+  auto it = registry.find(key);
   if (it == registry.end())
   {
-    auto ir = std::make_unique<mfem::IntegrationRule>(TetNumModes(degree));
+    auto ir = std::make_unique<mfem::IntegrationRule>(SimplexNumModes(geom, degree));
     int q = 0;
     if (degree == 0)
     {
-      ir->IntPoint(q).Set3(0.25, 0.25, 0.25);
+      if (geom == mfem::Geometry::TRIANGLE)
+      {
+        ir->IntPoint(q).Set2(1.0 / 3.0, 1.0 / 3.0);
+      }
+      else
+      {
+        ir->IntPoint(q).Set3(0.25, 0.25, 0.25);
+      }
       ir->IntPoint(q++).weight = 1.0;
+    }
+    else if (geom == mfem::Geometry::TRIANGLE)
+    {
+      for (int total = 0; total <= degree; total++)
+      {
+        for (int i = 0; i <= total; i++)
+        {
+          const int j = total - i;
+          ir->IntPoint(q).Set2(static_cast<double>(i) / degree,
+                               static_cast<double>(j) / degree);
+          ir->IntPoint(q++).weight = 1.0;
+        }
+      }
     }
     else
     {
@@ -52,8 +81,8 @@ const mfem::IntegrationRule &GetRegisteredTetLatticeRule(int degree)
         }
       }
     }
-    MFEM_ASSERT(q == ir->GetNPoints(), "Invalid tetrahedral lattice rule size!");
-    it = registry.emplace(degree, std::move(ir)).first;
+    MFEM_ASSERT(q == ir->GetNPoints(), "Invalid simplex lattice rule size!");
+    it = registry.emplace(key, std::move(ir)).first;
   }
   return *it->second;
 }
@@ -245,17 +274,27 @@ void InitBasisAtPoints(const mfem::FiniteElement &fe, const mfem::IntegrationRul
   InitNonTensorBasis(fe, ir, num_comp, ceed, basis);
 }
 
-void InitTetBasisAtPoints(const mfem::FiniteElement &fe, bool grad_only, CeedInt num_comp,
-                          Ceed ceed, CeedBasis *basis)
+void InitSimplexBasisAtPoints(const mfem::FiniteElement &fe, bool grad_only,
+                              CeedInt num_comp, Ceed ceed, CeedBasis *basis)
 {
-  MFEM_VERIFY(fe.GetGeomType() == mfem::Geometry::TETRAHEDRON,
-              "Tetrahedral AtPoints basis requested for a non-tetrahedral element!");
+  const auto geom = fe.GetGeomType();
+  MFEM_VERIFY(geom == mfem::Geometry::TRIANGLE || geom == mfem::Geometry::TETRAHEDRON,
+              "Simplex AtPoints basis requested for a non-simplex element!");
   // MAGMA's non-tensor AtPoints basis construction requires tabulation points that
   // overdetermine the complete polynomial space. One extra lattice degree provides a
   // deterministic overdetermined reconstruction. The registered rule has application
   // lifetime to satisfy MFEM's pointer-keyed DofToQuad cache.
   const int degree = std::max(0, fe.GetOrder() - (grad_only ? 1 : 0) + 1);
-  InitBasisAtPoints(fe, GetRegisteredTetLatticeRule(degree), num_comp, ceed, basis);
+  InitBasisAtPoints(fe, GetRegisteredSimplexLatticeRule(geom, degree), num_comp, ceed,
+                    basis);
+}
+
+void InitTetBasisAtPoints(const mfem::FiniteElement &fe, bool grad_only, CeedInt num_comp,
+                          Ceed ceed, CeedBasis *basis)
+{
+  MFEM_VERIFY(fe.GetGeomType() == mfem::Geometry::TETRAHEDRON,
+              "Tetrahedral AtPoints basis requested for a non-tetrahedral element!");
+  InitSimplexBasisAtPoints(fe, grad_only, num_comp, ceed, basis);
 }
 
 void InitInterpolatorBasis(const mfem::FiniteElement &trial_fe,
