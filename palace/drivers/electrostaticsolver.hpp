@@ -8,6 +8,7 @@
 #include <memory>
 #include <vector>
 #include "drivers/basesolver.hpp"
+#include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "utils/configfile.hpp"
 
@@ -23,9 +24,8 @@ namespace palace
 {
 
 class ErrorIndicator;
+class LaplaceOperator;
 class Mesh;
-template <ProblemType>
-class PostOperator;
 
 //
 // Driver class for electrostatic simulations.
@@ -33,7 +33,7 @@ class PostOperator;
 class ElectrostaticSolver : public BaseSolver
 {
 private:
-  void PostprocessTerminals(PostOperator<ProblemType::ELECTROSTATIC> &post_op,
+  void PostprocessTerminals(const LaplaceOperator &laplace_op, const Operator &K,
                             const std::map<int, mfem::Array<int>> &terminal_sources,
                             const std::vector<Vector> &V) const;
 

@@ -6,12 +6,14 @@
 
 #include <map>
 #include <memory>
+#include <string_view>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
+#include "utils/filesystem.hpp"
 
 namespace palace
 {
@@ -102,6 +104,15 @@ public:
   // Gauss's law.
   std::unique_ptr<Operator> GetStiffnessMatrix();
 
+  // Assemble an ε-weighted Laplace operator on an existing H1 hierarchy.
+  static std::unique_ptr<Operator> AssembleStiffnessMatrix(
+      FiniteElementSpaceHierarchy &h1_fespaces, const MaterialOperator &mat_op,
+      const std::vector<mfem::Array<int>> &dbc_tdof_lists, bool print_hdr = false);
+
+  // Return a parallel wrapper around the unconstrained finest-level bilinear form stored
+  // in a Laplace operator. The returned operator borrows its local operator data from K.
+  static std::unique_ptr<Operator> GetUnconstrainedStiffnessOperator(const Operator &K);
+
   // Construct and return the discrete gradient matrix.
   const Operator &GetGradMatrix() const
   {
@@ -111,6 +122,27 @@ public:
   // Assemble the solution boundary conditions and right-hand side vector for a nonzero
   // prescribed voltage on the specified surface index.
   void GetExcitationVector(int idx, const Operator &K, Vector &X, Vector &RHS);
+
+  // As above, using an externally owned H1 space and terminal attribute list.
+  static void GetExcitationVector(FiniteElementSpace &h1_fespace,
+                                  const mfem::Array<int> &source_attr, const Operator &K,
+                                  Vector &X, Vector &RHS);
+  static void GetExcitationVector(FiniteElementSpace &h1_fespace,
+                                  const std::vector<int> &source_attr, const Operator &K,
+                                  Vector &X, Vector &RHS);
+
+  // Compute the Maxwell capacitance matrix from unit-voltage terminal solutions and an
+  // unconstrained ε-weighted energy operator.
+  static mfem::DenseMatrix ComputeCapacitanceMatrix(MPI_Comm comm,
+                                                    const Operator &energy_op,
+                                                    const std::vector<Vector> &V);
+
+  // Write an indexed terminal matrix in the format used by the electrostatic driver.
+  static void WriteTerminalMatrix(MPI_Comm comm, const fs::path &post_dir,
+                                  std::string_view file, std::string_view name,
+                                  std::string_view unit,
+                                  const std::vector<int> &terminal_indices,
+                                  const mfem::DenseMatrix &mat, double scale);
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return GetH1Space().GetComm(); }
