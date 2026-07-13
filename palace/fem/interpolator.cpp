@@ -195,6 +195,9 @@ public:
         ceed::AssembleCeedPointEvaluator(info, nullptr, 0, ceed, inputs, 3, out_restr,
                                          &point_op);
         groups.push_back({ceed, point_op, std::move(field_sources)});
+        groups.back().mesh_nodes = mesh.GetNodes();
+        groups.back().mesh_node_fields = {"grad_x"};
+        fem::CacheGroupOperatorFieldVectors(groups.back());
 
         PalaceCeedCall(ceed, CeedVectorDestroy(&mesh_nodes_vec));
         PalaceCeedCall(ceed, CeedVectorDestroy(&field_vec));

@@ -28,15 +28,34 @@ struct CeedGroupOperator
   // far-field frequency) without reassembly; nullptr if the operator has no context or
   // the context is not updated. Owned by the group (destroyed with it).
   CeedQFunctionContext ctx = nullptr;
+  // Optional mesh-node source and operator input names. Unlike fixed coefficient data,
+  // mesh coordinates may be scaled in place between applies for dimensional output, so
+  // every listed libCEED vector is re-pointed at current MFEM memory on each evaluation.
+  const Vector *mesh_nodes = nullptr;
+  std::vector<std::string> mesh_node_fields;
+  mutable std::vector<CeedVector> mesh_node_vecs;
   // Cached passive field vectors for field_sources, populated on first apply to avoid
   // repeated string lookups in libCEED during ParaView point-field output.
   mutable std::vector<std::pair<CeedVector, int>> field_vec_sources;
+  // True after construction storage has been detached from the cached vectors. The next
+  // apply sets arrays directly instead of first taking a nonexistent borrowed array.
+  mutable bool field_vectors_detached = false;
   // Reusable output vector wrapper. The pointed-to MFEM Vector data is supplied at
   // apply time, but the libCEED vector object itself can be retained across repeated
   // postprocessing evaluations instead of being created/destroyed for every group apply.
   mutable CeedVector out_vec = nullptr;
   mutable CeedSize out_size = 0;
 };
+
+// Populate cached libCEED vector handles for the named passive fields of a group
+// operator. Calling this right after assembly moves field-name lookup overhead out of
+// the first timed postprocessing apply; ApplyAddGroupOperators also calls it lazily for
+// older call sites or any groups assembled without explicit caching.
+void CacheGroupOperatorFieldVectors(const CeedGroupOperator &group);
+
+// Detach borrowed arrays from cached passive field vectors before releasing their
+// construction storage. The next apply reattaches caller-owned arrays.
+void DetachGroupOperatorFieldVectors(const std::vector<CeedGroupOperator> &groups);
 
 // Re-point the passive field inputs of each group operator at the given source vectors
 // and accumulate into the output vector with CeedOperatorApplyAdd. A field source index
