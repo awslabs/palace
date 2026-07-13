@@ -34,7 +34,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     rational impedance boundary conditions. [PR 792](https://github.com/awslabs/palace/pull/792).
   - Enable circuit synthesis with frequency-dependent boundary conditions, including
     wave ports with a new optional `IncludeInSynthesis` wave-port flag. SchemaVer 1-4-0
-    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
+    [PR 811](https://github.com/awslabs/palace/pull/811).
 
 #### Interface Changes
 
