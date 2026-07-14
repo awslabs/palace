@@ -303,13 +303,12 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
     K_op->AddOperator(std::move(K_l));
   }
 
-  // Compute boundary-interior coupling before applying boundary conditions
+  // Compute boundary-interior coupling before applying boundary conditions.
+  // Keep vectors on host: the submesh solver uses host-side operations (direct indexing,
+  // GroupCommunicator reductions) that are incompatible with device memory.
   Vector RHS(submesh_nd_fespaces.GetFinestFESpace().GetTrueVSize());
   Vector X(submesh_nd_fespaces.GetFinestFESpace().GetTrueVSize());
   Vector boundary_vals(submesh_nd_fespaces.GetFinestFESpace().GetTrueVSize());
-  RHS.UseDevice(true);
-  X.UseDevice(true);
-  boundary_vals.UseDevice(true);
 
   // Get boundary values directly from MFEM GridFunction
   A.GetTrueDofs(boundary_vals);
