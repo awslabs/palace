@@ -4,7 +4,10 @@
 #ifndef PALACE_UTILS_COMMUNICATION_HPP
 #define PALACE_UTILS_COMMUNICATION_HPP
 
+#include <algorithm>
 #include <complex>
+#include <cstdint>
+#include <limits>
 #include <fmt/color.h>
 #include <fmt/format.h>
 #include <fmt/printf.h>
@@ -322,6 +325,22 @@ public:
   static void Broadcast(int len, T *buff, int root, MPI_Comm comm)
   {
     MPI_Bcast(buff, len, mpi::DataType<T>(), root, comm);
+  }
+
+  // Global broadcast from root for buffers whose length may exceed INT_MAX (e.g. a
+  // serialized multi-GB mesh). Chunks the transfer to respect the int count limit of the
+  // classic MPI interface. The chunk length is exposed for testing the chunking logic
+  // with small buffers.
+  template <typename T>
+  static void BroadcastLarge(std::int64_t len, T *buff, int root, MPI_Comm comm,
+                             std::int64_t max_chunk = std::numeric_limits<int>::max())
+  {
+    MFEM_ASSERT(len >= 0 && max_chunk > 0, "Invalid BroadcastLarge lengths!");
+    for (std::int64_t offset = 0; offset < len; offset += max_chunk)
+    {
+      const int n = static_cast<int>(std::min(max_chunk, len - offset));
+      MPI_Bcast(buff + offset, n, mpi::DataType<T>(), root, comm);
+    }
   }
 
   // Allgather a fixed count of items per rank; every rank ends up with the concatenated

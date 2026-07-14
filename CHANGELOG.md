@@ -37,6 +37,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     periodic problem could not be used as the input mesh for a subsequent solve. Loading now
     detects the already-periodic mesh and skips the periodicity construction.
     [PR 810](https://github.com/awslabs/palace/pull/810).
+  - Fixed an overflow in the mesh broadcast path used when loading nonconformal meshes. The
+    serialized mesh text can exceed 2 GiB for large meshes; the broadcast now uses a 64-bit
+    length and chunked `MPI_Bcast` calls to handle arbitrarily large payloads.
 
 ## [0.17.0] - 2026-06-28
 
