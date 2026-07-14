@@ -1,0 +1,213 @@
+--- a/prov/shm/src/smr_av.c	2026-07-14 14:52:07
++++ b/prov/shm/src/smr_av.c	2026-07-14 14:58:04
+@@ -32,7 +32,29 @@
+ 
+ #include "smr.h"
+ #include <sys/stat.h>
++#include <stdio.h>
++#include <stdarg.h>
++#include <unistd.h>
++#include <errno.h>
+ 
++/* DIAG (ofiwg/libfabric#12542): append-only per-process log of shm
++ * handshake failures, written to /tmp/smr_diag_<pid>.log. */
++static void _smr_diag_log(const char *fmt, ...)
++{
++	char path[64];
++	FILE *f;
++	va_list args;
++
++	snprintf(path, sizeof(path), "/tmp/smr_diag_%d.log", (int) getpid());
++	f = fopen(path, "a");
++	if (!f)
++		return;
++	va_start(args, fmt);
++	vfprintf(f, fmt, args);
++	va_end(args);
++	fclose(f);
++}
++
+ void smr_map_to_endpoint(struct smr_ep *ep, int64_t id)
+ {
+ 	int ret;
+@@ -111,6 +133,10 @@
+ 	if (fd < 0) {
+ 		FI_WARN_ONCE(&smr_prov, FI_LOG_AV,
+ 			     "shm_open error: name %s errno %d\n", name, errno);
++		/* DIAG check 1: shm_open failed -> return -errno */
++		_smr_diag_log("map_to_region: pid=%d id=%ld CHECK=shm_open "
++			      "name=%s errno=%d ret=%d\n",
++			      (int) getpid(), (long) id, name, errno, -errno);
+ 		return -errno;
+ 	}
+ 
+@@ -118,11 +144,23 @@
+ 	snprintf(tmp, sizeof(tmp), "%s%s", SMR_DIR, name);
+ 	if (stat(tmp, &sts) == -1) {
+ 		ret = -errno;
++		/* DIAG check 2: stat(/dev/shm/<name>) failed -> -errno */
++		_smr_diag_log("map_to_region: pid=%d id=%ld CHECK=stat "
++			      "path=%s errno=%d ret=%d\n",
++			      (int) getpid(), (long) id, tmp, errno, ret);
+ 		goto out;
+ 	}
+ 
+ 	if (sts.st_size < sizeof(*peer)) {
+ 		ret = -FI_ENOENT;
++		/* DIAG check 3: file exists but is smaller than the region
++		 * header (peer created it but has not ftruncate'd yet)
++		 * -> -FI_ENOENT */
++		_smr_diag_log("map_to_region: pid=%d id=%ld CHECK=st_size "
++			      "name=%s st_size=%lld need>=%zu ret=%d "
++			      "(-FI_ENOENT)\n",
++			      (int) getpid(), (long) id, name,
++			      (long long) sts.st_size, sizeof(*peer), ret);
+ 		goto out;
+ 	}
+ 
+@@ -131,6 +169,10 @@
+ 	if (peer == MAP_FAILED) {
+ 		FI_WARN(&smr_prov, FI_LOG_AV, "mmap error\n");
+ 		ret = -errno;
++		/* DIAG check 4: mmap of header failed -> -errno */
++		_smr_diag_log("map_to_region: pid=%d id=%ld CHECK=mmap "
++			      "name=%s errno=%d ret=%d\n",
++			      (int) getpid(), (long) id, name, errno, ret);
+ 		goto out;
+ 	}
+ 
+@@ -138,6 +180,11 @@
+ 
+ 	if (!peer->pid) {
+ 		FI_WARN(&smr_prov, FI_LOG_AV, "peer not initialized\n");
++		/* DIAG check 5: mapped OK but region->pid still 0 (peer has
++		 * not finished smr_create yet) -> -FI_ENOENT */
++		_smr_diag_log("map_to_region: pid=%d id=%ld CHECK=peer_pid "
++			      "name=%s pid_field=0 ret=%d (-FI_ENOENT)\n",
++			      (int) getpid(), (long) id, name, -FI_ENOENT);
+ 		munmap(peer, sizeof(*peer));
+ 		ret = -FI_ENOENT;
+ 		goto out;
+--- a/prov/shm/src/smr_ep.c	2026-07-14 14:52:07
++++ b/prov/shm/src/smr_ep.c	2026-07-14 15:01:34
+@@ -34,7 +34,32 @@
+ #include "smr_dsa.h"
+ #include "smr_signal.h"
+ #include "ofi_mb.h"
++#include <stdio.h>
++#include <stdarg.h>
++#include <unistd.h>
++#include <errno.h>
+ 
++/* DIAG (ofiwg/libfabric#12542): append-only per-process log of shm
++ * handshake failures, written to /tmp/smr_diag_<pid>.log. */
++static void _smr_diag_log(const char *fmt, ...)
++{
++	char path[64];
++	FILE *f;
++	va_list args;
++
++	snprintf(path, sizeof(path), "/tmp/smr_diag_%d.log", (int) getpid());
++	f = fopen(path, "a");
++	if (!f)
++		return;
++	va_start(args, fmt);
++	vfprintf(f, fmt, args);
++	va_end(args);
++	fclose(f);
++}
++
++/* DIAG: per-peer count of smr_verify_peer() calls that returned -1 */
++static uint64_t _smr_verify_fail[SMR_MAX_PEERS];
++
+ extern struct fi_ops_msg smr_msg_ops, smr_no_recv_msg_ops;
+ extern struct fi_ops_tagged smr_tag_ops, smr_no_recv_tag_ops;
+ extern struct fi_ops_rma smr_rma_ops;
+@@ -214,12 +239,34 @@
+ 		ofi_genlock_lock(&ep->util_ep.av->lock);
+ 		ret = smr_map_to_region(ep->map, id);
+ 		ofi_genlock_unlock(&ep->util_ep.av->lock);
+-		if (ret)
++		if (ret) {
++			/* DIAG: sender side cannot even map the peer, keep
++			 * counting so a permanently failing map shows up. */
++			if (++_smr_verify_fail[id] == 1000000)
++				_smr_diag_log("verify_peer: pid=%d peer=%ld "
++					      "STUCK (map_to_region ret=%d "
++					      "after 1M attempts, "
++					      "name_sent=%d peer_id=%ld)\n",
++					      (int) getpid(), (long) id, ret,
++					      (int) smr_peer_data(ep->region)[id].name_sent,
++					      (long) smr_peer_data(ep->region)[id].id);
+ 			return -1;
++		}
+ 	}
+ 
+ 	smr_send_name(ep, id);
+ 
++	/* DIAG: peer region is mapped and our connreq was (already) sent,
++	 * but the peer never wrote back our id. After 1M spins this is the
++	 * receiver-dropped-connreq deadlock: name_sent=1, peer_id=-1. */
++	if (++_smr_verify_fail[id] == 1000000)
++		_smr_diag_log("verify_peer: pid=%d peer=%ld STUCK 1M attempts: "
++			      "name_sent=%d peer_id=%ld region_mapped=%d\n",
++			      (int) getpid(), (long) id,
++			      (int) smr_peer_data(ep->region)[id].name_sent,
++			      (long) smr_peer_data(ep->region)[id].id,
++			      ep->map->peers[id].region != NULL);
++
+ 	return -1;
+ }
+ 
+--- a/prov/shm/src/smr_progress.c	2026-07-14 14:52:07
++++ b/prov/shm/src/smr_progress.c	2026-07-14 15:01:02
+@@ -34,7 +34,29 @@
+ #include "smr_dsa.h"
+ #include "ofi_atomic.h"
+ #include "ofi_mb.h"
++#include <stdio.h>
++#include <stdarg.h>
++#include <unistd.h>
++#include <errno.h>
+ 
++/* DIAG (ofiwg/libfabric#12542): append-only per-process log of shm
++ * handshake failures, written to /tmp/smr_diag_<pid>.log. */
++static void _smr_diag_log(const char *fmt, ...)
++{
++	char path[64];
++	FILE *f;
++	va_list args;
++
++	snprintf(path, sizeof(path), "/tmp/smr_diag_%d.log", (int) getpid());
++	f = fopen(path, "a");
++	if (!f)
++		return;
++	va_start(args, fmt);
++	vfprintf(f, fmt, args);
++	va_end(args);
++	fclose(f);
++}
++
+ static void smr_progress_overflow(struct smr_ep *ep)
+ {
+ 	struct smr_cmd_entry *ce;
+@@ -839,6 +861,19 @@
+ 		if (ret) {
+ 			FI_WARN(&smr_prov, FI_LOG_EP_CTRL,
+ 				"Could not map peer region\n");
++			/* DIAG: the connreq from peer <idx> was consumed from
++			 * our cmd queue, but mapping its region failed, so
++			 * the response write below
++			 * (smr_peer_data(peer_smr)[tx_id].id = idx) is
++			 * skipped. The sender's name_sent=1 latch prevents a
++			 * resend: handshake is permanently lost. Note the
++			 * assert(peer_smr) below is unreachable in this case
++			 * because of this goto. */
++			_smr_diag_log("connreq: pid=%d DROPPED connreq from "
++				      "peer name=%s tx_id=%d idx=%ld "
++				      "map_to_region_ret=%d\n",
++				      (int) getpid(), (char *) cmd->data.msg,
++				      (int) cmd->hdr.tx_id, (long) idx, ret);
+ 			goto out;
+ 		}
+ 		peer_smr = smr_peer_region(ep, idx);

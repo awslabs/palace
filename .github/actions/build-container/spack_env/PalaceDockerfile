@@ -46,6 +46,18 @@ RUN mkdir -p /opt/spack-environment && \
           echo "Cannot apply $patch (may already be merged)"; \
         fi; \
       fi; \
+    done && \
+    # Copy libfabric source patches into the builtin package dir so Spack applies them
+    LIBFAB_PKG="$(spack location --repo builtin)/packages/libfabric" && \
+    for p in /opt/palace/spack_repo/libfabric_patches/*.diff; do \
+      if [ -f "$p" ]; then \
+        echo "Installing libfabric source patch: $p"; \
+        cp "$p" "$LIBFAB_PKG/"; \
+        PNAME=$(basename "$p"); \
+        if ! grep -q "$PNAME" "$LIBFAB_PKG/package.py"; then \
+          sed -i "/patch(\"nvhpc-symver.patch\"/a\\    patch(\"$PNAME\", when=\"@2.5.1\")" "$LIBFAB_PKG/package.py"; \
+        fi; \
+      fi; \
     done
 
 # What we want to install and how we want to install it
