@@ -462,6 +462,23 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     config::BoundaryData boundary_data(boundaries);
     CHECK(config::Validate(boundary_data).has_value());
   }
+
+  SECTION("SurfaceCurrent and FluxLoop combination fails validation")
+  {
+    json boundaries = {
+        {"SurfaceCurrent", {{{"Attributes", {6}}, {"Index", 1}, {"Direction", "+X"}}}},
+        {"FluxLoop",
+         {{{"Index", 2},
+           {"FluxLoopPEC", {8}},
+           {"HoleAttributes", {9}},
+           {"FluxAmounts", {1.0}},
+           {"Direction", "+Z"}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    auto err = config::Validate(boundary_data);
+    REQUIRE(err.has_value());
+    CHECK(err->find("SurfaceCurrent") != std::string::npos);
+    CHECK(err->find("FluxLoop") != std::string::npos);
+  }
 }
 
 TEST_CASE("Config Driven Solver", "[config][Serial]")

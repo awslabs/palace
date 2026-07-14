@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include "units.hpp"
+#include "utils/constants.hpp"
 #include "utils/enum_string.hpp"
 
 // This is similar to NLOHMANN_JSON_SERIALIZE_ENUM, but delegates to the single
@@ -834,6 +835,10 @@ FluxLoopData::FluxLoopData(const json &fluxloop)
   MFEM_VERIFY(hole_attributes.size() == flux_amounts.size(),
               "\"HoleAttributes\" and \"FluxAmounts\" arrays must have the same size!");
 
+  regularization = fluxloop.value("Regularization", regularization);
+  MFEM_VERIFY(regularization > 0.0,
+              "\"Regularization\" for \"FluxLoop\" boundary must be positive!");
+
   auto direction_it = fluxloop.find("Direction");
   if (direction_it != fluxloop.end())
   {
@@ -1456,8 +1461,15 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
 {
   std::ostringstream errors;
 
+  // Check for unsupported boundary combinations.
+  if (!boundaries.current.empty() && !boundaries.fluxloop.empty())
+  {
+    errors << "Combining \"SurfaceCurrent\" and \"FluxLoop\" excitations in the same "
+              "magnetostatic simulation is not yet supported\n";
+  }
+
   // Check for duplicate indices across LumpedPort, WavePort, FloquetPort,
-  // SurfaceCurrent, Terminal.
+  // SurfaceCurrent, FluxLoop, Terminal.
   std::map<int, std::string> index_map;
   for (const auto &[idx, data] : boundaries.lumpedport)
   {
@@ -1483,6 +1495,14 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
     {
       errors << "Duplicate \"Index\": " << idx << " in " << it->second
              << " and SurfaceCurrent\n";
+    }
+  }
+  for (const auto &[idx, data] : boundaries.fluxloop)
+  {
+    auto [it, inserted] = index_map.try_emplace(idx, "FluxLoop");
+    if (!inserted)
+    {
+      errors << "Duplicate \"Index\": " << idx << " in " << it->second << " and FluxLoop\n";
     }
   }
   for (const auto &[idx, data] : boundaries.floquetport)

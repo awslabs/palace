@@ -325,49 +325,12 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
   KspSolver ksp(iodata, submesh_nd_fespaces, &submesh_h1_fespaces);
   ksp.SetOperators(*K_op, *K_op);
 
-  // Solve the 2D surface curl problem
-  if constexpr (true)
-  {
-    // Use Palace's KSP solver (production approach)
-    X = 0.0;
-    ksp.Mult(RHS, X);
+  // Solve the 2D surface curl problem.
+  X = 0.0;
+  ksp.Mult(RHS, X);
 
-    // Set solution directly in MFEM GridFunction
-    A.SetFromTrueDofs(X);
-  }
-  else
-  {
-    // Alternative debugging approach using direct MFEM solver
-    // Set up and solve system
-    mfem::ParBilinearForm a(&nd_fespace_submesh);
-
-    // Add curl term: ∫ (curl A) · (curl v) dΩ
-    mfem::ConstantCoefficient curl_reg(1.0);
-    a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(curl_reg));
-
-    // Add small regularization for stability
-    mfem::ConstantCoefficient reg_param(1e-6);
-    a.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(reg_param));
-
-    nd_fespace_submesh.GetEssentialTrueDofs(combined_inner_bdr_marker,
-                                            submesh_ess_tdof_list);
-    a.Assemble();
-    mfem::ParLinearForm b(&nd_fespace_submesh);
-    b.Assemble();
-
-    mfem::HypreParMatrix A_mat;
-    Vector B, X;
-    a.FormLinearSystem(submesh_ess_tdof_list, A, b, A_mat, X, B);
-
-    mfem::GMRESSolver gmres(MPI_COMM_WORLD);
-    gmres.SetOperator(A_mat);
-    gmres.SetRelTol(1e-8);
-    gmres.SetMaxIter(1000);
-    gmres.SetPrintLevel(0);
-    gmres.Mult(B, X);
-
-    a.RecoverFEMSolution(X, b, A);
-  }
+  // Set solution directly in MFEM GridFunction.
+  A.SetFromTrueDofs(X);
 
   // Transfer to parent mesh
   auto &A_3d = post_op.GetAGridFunction().Real();

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-1-0",
+  "$id": "urn:palace:schema:1-2-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1507,7 +1507,7 @@
         },
         "FluxAmounts": {
           "type": "array",
-          "description": "Prescribed flux through each hole in units of the flux quantum. Must have the same length as HoleAttributes.",
+          "description": "Prescribed nondimensional flux-loop excitation amplitude through each hole. Must have the same length as HoleAttributes.",
           "additionalItems": false,
           "items": {
             "type": "number"

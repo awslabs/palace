@@ -244,7 +244,7 @@ affects the source term on the right hand side.
 ## Flux boundary
 
 Flux loop boundary conditions are available for magnetostatic simulations and are specified
-using the [`"FluxLoop"`](../config/reference.md#config-boundaries) boundary
+using the [`"FluxLoop"`](../config/reference.md#config-boundaries-fluxloop) boundary
 keyword. This boundary condition prescribes magnetic flux through specified holes in
 conducting surfaces, enabling inductance matrix extraction for flux-based excitations. The
 flux loop boundary condition works by:
@@ -252,11 +252,16 @@ flux loop boundary condition works by:
  1. **Identifying holes**: Mesh boundary attributes specify holes through which flux is
     prescribed
  2. **Constraining flux**: The total magnetic flux through each hole is set to the specified
-    value (in flux quantum units, i.e. 2.0678e-15 Wb)
+    nondimensional excitation amplitude
  3. **Solving surface problem**: A 3D surface curl problem that determines the required boundary
     conditions on specific 2D boundaries connected to the hole regions
  4. **Computing inductance**: The resulting 3D field solutions enable inductance matrix
     extraction
+
+Flux-loop excitations cannot currently be combined with surface-current excitations in the
+same magnetostatic simulation. The `"FluxAmounts"` entries are nondimensional internal
+excitation amplitudes, analogous to unit-current excitations for current-driven
+magnetostatic solves. Palace reports `terminal-Phi.csv` in physical webers.
 
 !!! note "Flux loop requirements"
 

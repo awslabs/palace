@@ -235,7 +235,7 @@ function generate_two_square_sheets_mesh(;
 
     # Left sheet edges
     l13 = gmsh.model.geo.addLine(p9, p10)  # Bottom edge
-    l14 = gmsh.model.geo.addLine(p10, p11) # Right edge  
+    l14 = gmsh.model.geo.addLine(p10, p11) # Right edge
     l15 = gmsh.model.geo.addLine(p11, p12) # Top edge
     l16 = gmsh.model.geo.addLine(p12, p9)  # Left edge
 

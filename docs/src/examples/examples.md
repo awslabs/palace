@@ -27,3 +27,4 @@ installed test data is self-contained and does not depend on source-tree example
   - [Crosstalk Between Coplanar Waveguides](cpw.md)
   - [2D Coplanar Waveguide Mode Analysis](cpw2d.md)
   - [Floquet Ports for a Dielectric Grating](dielectric_grating.md)
+  - [Flux Trapping Analysis](circular_hole.md)

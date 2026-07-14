@@ -76,15 +76,14 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(
 {
   // Check that boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  mfem::Array<int> bdr_attr_marker;
+  mfem::Array<int> bdr_attr_marker(bdr_attr_max);
+  bdr_attr_marker = 0;
+  for (auto attr : mesh.bdr_attributes)
+  {
+    bdr_attr_marker[attr - 1] = 1;
+  }
   if (!pec.empty())
   {
-    bdr_attr_marker.SetSize(bdr_attr_max);
-    bdr_attr_marker = 0;
-    for (auto attr : mesh.bdr_attributes)
-    {
-      bdr_attr_marker[attr - 1] = 1;
-    }
     std::set<int> bdr_warn_list;
     for (auto attr : pec.attributes)
     {
@@ -113,16 +112,22 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(
     }
     dbc_bcs.Append(attr);
   }
-  // Add flux loop boundary attributes as essential boundaries
+  // Add flux loop boundary attributes as essential boundaries.
   std::set<int> flux_attrs;
   for (const auto &[idx, data] : fluxloop)
   {
     for (auto attr : data.fluxloop_pec)
     {
-      if (attr > 0 && attr <= bdr_attr_max && bdr_attr_marker[attr - 1])
-      {
-        flux_attrs.insert(attr);
-      }
+      MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max && bdr_attr_marker[attr - 1],
+                  "Unknown FluxLoopPEC boundary attribute "
+                      << attr << " for FluxLoop index " << idx << "!");
+      flux_attrs.insert(attr);
+    }
+    for (auto attr : data.hole_attributes)
+    {
+      MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max && bdr_attr_marker[attr - 1],
+                  "Unknown FluxLoop HoleAttributes boundary attribute "
+                      << attr << " for FluxLoop index " << idx << "!");
     }
   }
   for (auto attr : flux_attrs)

@@ -153,13 +153,13 @@ prescribes a zero magnetic flux, or
 [magnetic insulation](https://doc.comsol.com/5.5/doc/com.comsol.help.comsol/comsol_ref_acdc.17.74.html),
 boundary condition.
 
-**Flux loop boundaries** ([`config["Boundaries"]["FluxLoop"]`](../config/reference.md#config-boundaries)):
+**Flux loop boundaries** ([`config["Boundaries"]["FluxLoop"]`](../config/reference.md#config-boundaries-fluxloop)):
 Prescribe magnetic flux through specified holes in conducting surfaces. For each flux loop, a
 magnetostatic field is computed by applying flux through the loop of interest, leaving all
 other flux loops with zero flux.
 
-Both excitation types can be used together in the same simulation for mixed current-flux
-systems.
+Surface-current and flux-loop excitations cannot currently be combined in the same
+magnetostatic simulation.
 
 The resulting fields are used to compute the inductance matrix and its inverse, which are
 written to an ASCII file named `terminal-M.csv` and `terminal-Minv.csv`, respectively, in

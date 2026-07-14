@@ -45,6 +45,9 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   MFEM_VERIFY(n_step > 0, "No surface current boundaries or flux loops specified for "
                           "magnetostatic simulation!");
+  MFEM_VERIFY(n_current_steps == 0 || n_flux_steps == 0,
+              "Combining SurfaceCurrent and FluxLoop excitations in the same "
+              "magnetostatic simulation is not yet supported!");
   MFEM_VERIFY(
       n_flux_steps == 0 || iodata.model.refinement.max_it == 0 ||
           !iodata.model.refinement.nonconformal,
@@ -174,15 +177,10 @@ void MagnetostaticSolver::PostprocessTerminals(
   // If flux excitation is employed, inductance matrix is computed by first computing
   // the reluctance:
   //                          R_ij = (A_j^T*K*A_i)/(Φ_i*Φ_j)
-  // and then M = R^-1. In a mixed current-flux setup, we solve for all entries of
-  // M and R simultaneously by using the constraint MR= I.
+  // and then M = R^-1. Mixed current/flux excitation is rejected before solving.
   int n_current = static_cast<int>(surf_j_op.Size());
   int n_flux = static_cast<int>(surf_flux_op.Size());
   int n = A.size();
-  std::vector<bool> is_flux_loop(n, false);
-  for (int i = n_current; i < n; i++)
-    is_flux_loop[i] = true;
-
   // Allocate final result matrices
   mfem::DenseMatrix M(n), Minv(n), Mm(n);
 
@@ -205,72 +203,7 @@ void MagnetostaticSolver::PostprocessTerminals(
     }
   }
 
-  if (n_current > 0 && n_flux > 0)
-  {
-    // Mixed current-flux case: use constraint system M×R = I
-    mfem::DenseMatrix R(n);
-
-    // Diagonal terms from energy
-    for (int i = 0; i < n; i++)
-    {
-      if (is_flux_loop[i])
-        R(i, i) = cross_energy(i, i) / (Phi_inc[i] * Phi_inc[i]);
-      else
-        M(i, i) = cross_energy(i, i) / (I_inc[i] * I_inc[i]);
-    }
-
-    int n_off = n * (n - 1) / 2;  // Number of off-diagonal elements
-    mfem::DenseMatrix A_sys(n * n, 2 * n_off);
-    mfem::Vector b_sys(n * n), x_sol(2 * n_off);
-    A_sys = 0.0;
-    b_sys = 0.0;
-
-    // Set up M×R = I constraint equations
-    for (int i = 0; i < n; i++)
-    {
-      for (int j = 0; j < n; j++)
-      {
-        int eq = i * n + j;
-        b_sys[eq] = (i == j) ? 1.0 : 0.0;
-
-        for (int k = 0; k < n; k++)
-        {
-          if (i != k && k != j)  // Off-diagonal terms
-          {
-            int M_idx = (i < k) ? i * n + k - (i + 1) * (i + 2) / 2
-                                : k * n + i - (k + 1) * (k + 2) / 2;
-            int R_idx = (k < j) ? k * n + j - (k + 1) * (k + 2) / 2
-                                : j * n + k - (j + 1) * (j + 2) / 2;
-            A_sys(eq, M_idx) += (k == j) ? 1.0 : 0.0;
-            A_sys(eq, n_off + R_idx) += (i == k) ? 1.0 : 0.0;
-          }
-        }
-        // Diagonal contributions
-        if (i == j)
-          b_sys[eq] -= M(i, i) * R(j, j);
-      }
-    }
-
-    // Solve system
-    mfem::DenseMatrixInverse A_inv(A_sys);
-    A_inv.Mult(b_sys, x_sol);
-
-    // Extract off-diagonal elements
-    int idx = 0;
-    for (int i = 0; i < n; i++)
-    {
-      for (int j = i + 1; j < n; j++)
-      {
-        M(i, j) = M(j, i) = x_sol[idx];
-        R(i, j) = R(j, i) = x_sol[n_off + idx];
-        idx++;
-      }
-    }
-
-    // Compute Minv = R
-    Minv = R;
-  }
-  else if (n_flux == n)
+  if (n_flux == n)
   {
     // Pure flux case: compute reluctance first, then get inductance by inversion
     for (int i = 0; i < n; i++)
@@ -381,12 +314,15 @@ void MagnetostaticSolver::PostprocessTerminals(
   {
     TableWithCSVFile terminal_Phi(post_dir / "terminal-Phi.csv");
     terminal_Phi.table.insert(Column("i", "i", 0, 0, 2, ""));
-    terminal_Phi.table.insert("Phiinc", "Phi_inc[i] (flux quantum units)");
+    terminal_Phi.table.insert("Phiinc", "Phi_inc[i] (Wb)");
+    const double magnetic_flux_scale =
+        iodata.units.GetScaleFactor<Units::ValueType::INDUCTANCE>() *
+        iodata.units.GetScaleFactor<Units::ValueType::CURRENT>();
     int i = n_current;
     for (const auto &[idx, data] : surf_flux_op)
     {
       terminal_Phi.table["i"] << double(idx);
-      terminal_Phi.table["Phiinc"] << Phi_inc[i];  // in flux quantum units
+      terminal_Phi.table["Phiinc"] << Phi_inc[i] * magnetic_flux_scale;
       i++;
     }
     terminal_Phi.WriteFullTableTrunc();
