@@ -358,6 +358,9 @@ void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,
     hole_marker = 0;
     hole_marker[hole_attr - 1] = 1;
 
+    // Ensure face neighbor data is available for shared boundary evaluation.
+    const_cast<mfem::ParGridFunction &>(B_gf).ExchangeFaceNbrData();
+
     // Create magnetic flux coefficient with direction-based orientation
     BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC> flux_coeff(
         nullptr, &B_gf, mat_op, false, flux_direction,
