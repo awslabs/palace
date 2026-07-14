@@ -36,7 +36,10 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const bool short_mode =
       iodata.solver.magnetostatic.inactive_port_mode == InactivePortMode::SHORT;
   KspSolver ksp(iodata, curlcurl_op.GetNDSpaces(), &curlcurl_op.GetH1Spaces());
-  ksp.SetOperators(*K, *K);
+  if (!short_mode)
+  {
+    ksp.SetOperators(*K, *K);
+  }
 
   // Surface current source indices define the boundaries over which to compute the
   // inductance matrix.
