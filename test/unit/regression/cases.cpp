@@ -204,6 +204,16 @@ TEST_CASE("rings", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("rings", "rings.json", "", opts);
 }
 
+TEST_CASE("circular_hole_flux_loop", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.linear_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("circular_hole", "circular_hole.json", "", opts);
+}
+
 // --- cylinder: reltol=1e-4, abstol=1e-16 for the four eigen-style cases ---
 
 TEST_CASE("cylinder_cavity_pec", "[Serial][Parallel][GPU][Regression]")
