@@ -56,6 +56,7 @@ PALACE_JSON_SERIALIZE_ENUM(SparseCompression)
 PALACE_JSON_SERIALIZE_ENUM(Orthogonalization)
 PALACE_JSON_SERIALIZE_ENUM(DomainOrthogonalizationWeight)
 PALACE_JSON_SERIALIZE_ENUM(Device)
+PALACE_JSON_SERIALIZE_ENUM(InactivePortMode)
 }  // namespace palace
 
 namespace palace::config
@@ -1295,6 +1296,7 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
 MagnetostaticSolverData::MagnetostaticSolverData(const json &magnetostatic)
 {
   n_post = magnetostatic.value("Save", n_post);
+  inactive_port_mode = magnetostatic.value("InactivePorts", inactive_port_mode);
 }
 
 TransientSolverData::TransientSolverData(const json &transient)

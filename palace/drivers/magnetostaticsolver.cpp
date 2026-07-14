@@ -33,6 +33,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(curlcurl_op.GetNDSpaces());
 
   // Set up the linear solver.
+  const bool short_mode =
+      iodata.solver.magnetostatic.inactive_port_mode == InactivePortMode::SHORT;
   KspSolver ksp(iodata, curlcurl_op.GetNDSpaces(), &curlcurl_op.GetH1Spaces());
   ksp.SetOperators(*K, *K);
 
@@ -104,6 +106,36 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       curlcurl_op.GetCurrentExcitationVector(idx, RHS);
       I_inc[step] = data.GetExcitationCurrent();
       Phi_inc[step] = 0.0;  // Zero flux for current sources
+
+      if (short_mode)
+      {
+        // Short mode: rebuild the operator with all inactive current ports treated as
+        // PEC (essential Dirichlet) for this excitation step.
+        mfem::Array<int> inactive_attrs;
+        for (const auto &[other_idx, other_data] : curlcurl_op.GetSurfaceCurrentOp())
+        {
+          if (other_idx != idx)
+          {
+            for (const auto &elem : other_data.elems)
+            {
+              inactive_attrs.Append(elem->GetAttrList());
+            }
+          }
+        }
+        CurlCurlOperator curlcurl_step(iodata.boundaries, iodata.solver,
+                                       iodata.domains.materials, iodata.problem.type, mesh,
+                                       inactive_attrs);
+        auto K_step = curlcurl_step.GetStiffnessMatrix();
+        KspSolver ksp_step(iodata, curlcurl_step.GetNDSpaces(),
+                           &curlcurl_step.GetH1Spaces());
+        ksp_step.SetOperators(*K_step, *K_step);
+        ksp_step.Mult(RHS, A[step]);
+      }
+      else
+      {
+        // Solve 3D magnetostatic problem (inactive ports open).
+        ksp.Mult(RHS, A[step]);
+      }
     }
     else
     {
@@ -117,10 +149,11 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       curlcurl_op.GetFluxExcitationVector(idx, RHS, post_op, &boundary_values);
       I_inc[step] = 0.0;                         // Zero current for flux loops
       Phi_inc[step] = data.GetExcitationFlux();  // Store prescribed flux
+
+      // Solve 3D magnetostatic problem.
+      ksp.Mult(RHS, A[step]);
     }
 
-    // Solve 3D magnetostatic problem.
-    ksp.Mult(RHS, A[step]);
     Curl.Mult(A[step], B);
 
     // Flux verification for flux loops.

@@ -899,6 +899,9 @@ public:
   // Number of fields to write to disk.
   int n_post = 0;
 
+  // Boundary condition applied to inactive surface current ports during sweeps.
+  InactivePortMode inactive_port_mode = InactivePortMode::DEFAULT;
+
   MagnetostaticSolverData() = default;
   MagnetostaticSolverData(const json &magnetostatic);
 };

@@ -2755,6 +2755,12 @@
           "description": "Number of computed magnetic field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the entries in the computed inductance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
           "minimum": 0,
           "default": 0
+        },
+        "InactivePorts": {
+          "type": "string",
+          "description": "Boundary condition applied to inactive surface current ports during the inductance matrix sweep. `\"Open\"` applies a natural (zero current) boundary condition; `\"Short\"` applies a PEC (zero tangential vector potential) condition, blocking flux from threading through inactive ports.",
+          "enum": ["Open", "Short"],
+          "default": "Open"
         }
       }
     },

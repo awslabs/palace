@@ -46,6 +46,9 @@ private:
   // Helper variable for log file printing.
   bool print_hdr;
 
+  // Skip boundary check when additional DBC attrs overlap with surface current.
+  bool skip_bc_check = false;
+
   // Essential boundary condition attributes.
   mfem::Array<int> dbc_attr;
   std::vector<mfem::Array<int>> dbc_tdof_lists;
@@ -76,14 +79,16 @@ private:
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                           const std::map<int, config::FluxLoopData> &fluxloop,
-                          const mfem::ParMesh &mesh);
+                          const mfem::ParMesh &mesh,
+                          const mfem::Array<int> &additional_dbc = {});
   void CheckBoundaryProperties();
 
 public:
   CurlCurlOperator(const config::BoundaryData &boundaries, const config::SolverData &solver,
                    const std::vector<config::MaterialData> &materials,
                    ProblemType problem_type,
-                   const std::vector<std::unique_ptr<Mesh>> &mesh);
+                   const std::vector<std::unique_ptr<Mesh>> &mesh,
+                   const mfem::Array<int> &additional_dbc = {});
   CurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
   // Return material operator for postprocessing.
@@ -120,6 +125,10 @@ public:
   // Construct and return system matrix representing discretized curl-curl operator for
   // Ampere's law.
   std::unique_ptr<Operator> GetStiffnessMatrix();
+
+  // Construct stiffness matrix with additional essential (PEC) boundary attributes beyond
+  // those specified at construction. Used in Short mode to add inactive port boundaries.
+  std::unique_ptr<Operator> GetStiffnessMatrix(const mfem::Array<int> &extra_dbc_attr);
 
   // Construct and return the discrete curl matrix.
   const Operator &GetCurlMatrix() const

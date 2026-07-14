@@ -38,6 +38,7 @@ PALACE_ENUM_STRING_DECL(SparseCompression)
 PALACE_ENUM_STRING_DECL(Orthogonalization)
 PALACE_ENUM_STRING_DECL(DomainOrthogonalizationWeight)
 PALACE_ENUM_STRING_DECL(Device)
+PALACE_ENUM_STRING_DECL(InactivePortMode)
 
 #undef PALACE_ENUM_STRING_DECL
 
