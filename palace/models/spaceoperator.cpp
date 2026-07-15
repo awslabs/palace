@@ -57,6 +57,8 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     surf_sigma_op(boundaries.conductivity, problem_type, units, mat_op, *mesh.back()),
     surf_z_op(boundaries.impedance, boundaries.cracked_attributes, units, mat_op,
               *mesh.back()),
+    surf_rz_op(boundaries.rational_impedance, boundaries.cracked_attributes, problem_type,
+               units, mat_op, *mesh.back()),
     lumped_port_op(boundaries.lumpedport, units, mat_op, *mesh.back()),
     wave_port_op(boundaries, domains, solver, problem_type, units, mat_op, GetNDSpace(),
                  GetH1Space()),
@@ -182,6 +184,7 @@ void SpaceOperator::CheckBoundaryProperties()
       mesh::AttrToMarker(bdr_attr_max, surf_sigma_op.GetAttrList());
   const auto surf_z_Rs_marker = mesh::AttrToMarker(bdr_attr_max, surf_z_op.GetRsAttrList());
   const auto surf_z_Ls_marker = mesh::AttrToMarker(bdr_attr_max, surf_z_op.GetLsAttrList());
+  const auto surf_rz_marker = mesh::AttrToMarker(bdr_attr_max, surf_rz_op.GetAttrList());
   const auto lumped_port_Rs_marker =
       mesh::AttrToMarker(bdr_attr_max, lumped_port_op.GetRsAttrList());
   const auto lumped_port_Ls_marker =
@@ -193,10 +196,10 @@ void SpaceOperator::CheckBoundaryProperties()
   mfem::Array<int> aux_bdr_marker(dbc_marker.Size());
   for (int i = 0; i < dbc_marker.Size(); i++)
   {
-    aux_bdr_marker[i] =
-        (dbc_marker[i] || farfield_marker[i] || surf_sigma_marker[i] ||
-         surf_z_Rs_marker[i] || surf_z_Ls_marker[i] || lumped_port_Rs_marker[i] ||
-         lumped_port_Ls_marker[i] || wave_port_marker[i] || floquet_port_marker[i]);
+    aux_bdr_marker[i] = (dbc_marker[i] || farfield_marker[i] || surf_sigma_marker[i] ||
+                         surf_z_Rs_marker[i] || surf_rz_marker[i] || surf_z_Ls_marker[i] ||
+                         lumped_port_Rs_marker[i] || lumped_port_Ls_marker[i] ||
+                         wave_port_marker[i] || floquet_port_marker[i]);
     if (aux_bdr_marker[i])
     {
       aux_bdr_attr.Append(i + 1);
@@ -219,8 +222,8 @@ void SpaceOperator::CheckBoundaryProperties()
   for (int i = 0; i < dbc_marker.Size(); i++)
   {
     MFEM_VERIFY(dbc_marker[i] + farfield_marker[i] + surf_sigma_marker[i] +
-                        surf_z_marker[i] + lumped_port_marker[i] + wave_port_marker[i] +
-                        floquet_port_marker[i] + surf_j_marker[i] <=
+                        surf_z_marker[i] + surf_rz_marker[i] + lumped_port_marker[i] +
+                        wave_port_marker[i] + floquet_port_marker[i] + surf_j_marker[i] <=
                     1,
                 "Boundary attributes should not be specified with multiple BC!");
   }
@@ -1023,6 +1026,7 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(double omega,
   // Contribution for second-order farfield boundaries and finite conductivity boundaries.
   farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi);
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+  surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
 
   // Contribution for numeric wave ports. Skipped when the caller will apply the wave-port
   // contribution separately via per-port operators (see GetWavePortBoundaryMassMatrix).

@@ -43,6 +43,20 @@ The surface impedance relating the tangential electric and magnetic fields on th
 is computed from the parallel impedances due to the specified resistance, inductance, and
 capacitance per square.
 
+## Rational impedance boundary
+
+A surface impedance boundary whose per-square impedance is an arbitrary rational function
+of frequency can be specified using the
+[`"RationalImpedance"`](../config/reference.md#config-boundaries-rationalimpedance)
+boundary keyword. The surface impedance ``Z_s(s) = N(s)/D(s)``, with ``s = i\omega``, is
+given by the real coefficients of the numerator and denominator polynomials, ordered from
+highest to lowest degree (the roots of ``N`` and ``D`` are the zeros and poles of ``Z_s``).
+This generalizes the parallel-RLC [impedance boundary](#Impedance-boundary) to any passive
+lumped-network response, for example a fitted rational approximation of a measured or
+synthesized surface impedance. Warnings are emitted for inputs that cannot correspond to a
+passive (positive-real) impedance. It is available only for frequency domain driven
+and boundary mode simulations.
+
 ## Absorbing (scattering) boundary
 
 Absorbing boundary conditions at farfield boundaries, also referred to as scattering

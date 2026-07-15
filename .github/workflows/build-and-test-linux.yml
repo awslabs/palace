@@ -386,8 +386,12 @@ jobs:
             ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -LE "^(regression|long)$"
           fi
 
+      # NOTE: Fork PRs get a read-only GITHUB_TOKEN and cannot push to gh-pages;
+      # for those the coverage report is still available via the artifact below.
       - name: Deploy coverage to gh-pages
-        if: needs.filter.outputs.test == 'true' && matrix.with-coverage
+        if: |
+          needs.filter.outputs.test == 'true' && matrix.with-coverage &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -396,7 +400,9 @@ jobs:
           keep_files: true
 
       - name: Add coverage link to summary
-        if: needs.filter.outputs.test == 'true' && matrix.with-coverage
+        if: |
+          needs.filter.outputs.test == 'true' && matrix.with-coverage &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

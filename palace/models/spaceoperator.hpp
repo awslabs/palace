@@ -20,6 +20,7 @@
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
+#include "models/surfacerationalimpedanceoperator.hpp"
 #include "models/waveportoperator.hpp"
 
 namespace palace
@@ -74,6 +75,7 @@ private:
   FarfieldBoundaryOperator farfield_op;
   SurfaceConductivityOperator surf_sigma_op;
   SurfaceImpedanceOperator surf_z_op;
+  SurfaceRationalImpedanceOperator surf_rz_op;
   LumpedPortOperator lumped_port_op;
   WavePortOperator wave_port_op;
   FloquetPortOperator floquet_port_op;

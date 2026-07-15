@@ -30,6 +30,7 @@ class MaterialOperator;
 class MaterialPropertyCoefficient;
 class SumVectorCoefficient;
 class SurfaceConductivityOperator;
+class SurfaceRationalImpedanceOperator;
 class SurfaceImpedanceOperator;
 class Units;
 
@@ -86,6 +87,7 @@ private:
   std::unique_ptr<SurfaceImpedanceOperator> port_surf_z_op;
   std::unique_ptr<FarfieldBoundaryOperator> port_farfield_op;
   std::unique_ptr<SurfaceConductivityOperator> port_surf_sigma_op;
+  std::unique_ptr<SurfaceRationalImpedanceOperator> port_surf_rz_op;
 
   // Boundary mode eigenvalue problem solver.
   std::unique_ptr<ModeEigenSolver> mode_solver;
