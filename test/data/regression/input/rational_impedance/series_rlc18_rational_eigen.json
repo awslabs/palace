@@ -43,8 +43,7 @@
         // Q = w0 L / R = 6. The Robin coefficient s*D/N has a complex pole pair (the
         // zeros of Zs) inside the interpolation window [Target, 3*Target] = [9, 27] GHz,
         // which ruins the quadratic NLEPS seed fit and exercises the freeze branch of
-        // the fit-or-freeze seed strategy (the run log prints "Freezing rational
-        // impedance boundary (attribute 5) ...").
+        // the fit-or-freeze seed strategy
         "Numerator":   [7.817992564995199e-23, 1.4726373956323666e-12, 1.0],
         "Denominator": [3.908996282497599e-15, 0.0]
       }

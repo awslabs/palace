@@ -386,11 +386,7 @@ TEST_CASE("rational_impedance", "[Serial][Parallel][GPU][Regression]")
                                   "rational", opts);
 }
 
-// Eigenmode with a series-RLC rational impedance whose resonance (a pole of the Robin
-// coefficient) sits inside the NLEPS seed interpolation window, exercising the freeze
-// branch of the HYBRID fit-or-freeze seed strategy plus the quasi-Newton refinement.
-// Reference eigenvalues validated against the analytic plate dispersion relation
-// tan(kd) = i*eta0/Zs.
+// Eigenmode with a series-RLC rational impedance.
 TEST_CASE("rational_impedance_eigen", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
