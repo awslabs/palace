@@ -1,0 +1,74 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/series_rlc18_eigen"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/parallel_plate.msh",
+    "L0": 1.0e-3  // mm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],  // Vacuum fill
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "LossTan": 0.0
+      }
+    ]
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2]  // Parallel plates (conductors)
+    },
+    "PMC":
+    {
+      "Attributes": [3]  // Side walls (magnetic walls -> clean TEM)
+    },
+    "RationalImpedance":
+    [
+      {
+        "Attributes": [5],   // Termination under test (z = L)
+        // Zs(s) = N(s)/D(s), s = i*omega [rad/s], coefficients highest-degree-first.
+        // Series RLC: Zs = R + sL + 1/(sC) = (s^2 LC + s RC + 1)/(sC) with
+        //   R = 376.730313668 Ω/sq, L = 2.0e-8 H/sq, C = 3.908996282497599e-15 F/sq,
+        // a notch resonant at 18 GHz (Zs -> R = eta0, matched absorber) with
+        // Q = w0 L / R = 6. The Robin coefficient s*D/N has a complex pole pair (the
+        // zeros of Zs) inside the interpolation window [Target, 3*Target] = [9, 27] GHz,
+        // which ruins the quadratic NLEPS seed fit and exercises the freeze branch of
+        // the fit-or-freeze seed strategy (the run log prints "Freezing rational
+        // impedance boundary (attribute 5) ...").
+        "Numerator":   [7.817992564995199e-23, 1.4726373956323666e-12, 1.0],
+        "Denominator": [3.908996282497599e-15, 0.0]
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Eigenmode":
+    {
+      "N": 2,
+      "Target": 9.0,  // GHz; modes at ~9.60 + 0.045i and ~21.31 + 0.43i GHz, validated
+                      // against the analytic dispersion relation tan(kd) = i*eta0/Zs
+      "Tol": 1.0e-6
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-10,
+      "MaxIts": 100,
+      "ComplexCoarseSolve": true,
+      "MGMaxLevels": 1
+    }
+  }
+}
