@@ -114,9 +114,10 @@ void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(
   // In boundary mode (and the wave port 2D eigenproblem) the operating frequency is fixed,
   // so Zs(iω) is simply evaluated there.
   MFEM_VERIFY(impedance.empty() || problem_type == ProblemType::DRIVEN ||
+                  problem_type == ProblemType::EIGENMODE ||
                   problem_type == ProblemType::BOUNDARYMODE,
               "Rational impedance boundaries are only available for frequency-domain "
-              "driven and boundary mode simulation types!");
+              "simulation types!");
 
   boundaries.reserve(impedance.size());
   for (const auto &data : impedance)

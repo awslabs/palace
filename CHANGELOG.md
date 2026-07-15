@@ -53,6 +53,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the true complex frequency/eigenmode. Previously, the boundary conditions were
     evaluated using only the real component of the eigenmode.
     [PR 778](https://github.com/awslabs/palace/pull/778).
+  - Enabled the `RationalImpedance` boundary condition in eigenmode simulations, handled
+    by the nonlinear eigenvalue solver and evaluated at the complex eigenfrequency.
+    SchemaVer 1-3-1 [PR 778](https://github.com/awslabs/palace/pull/778).
 
 #### Bug Fixes
 
