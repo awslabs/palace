@@ -230,6 +230,61 @@ each schema version; a schema version applies to that release and all later ones
 |:--------------:|:----------------------:|:---------------------------------- |
 | `1-0-0`        | `0.17`                 | First explicitly-versioned schema. |
 
+#### When and how to bump (PR checklist)
+
+Any pull request that modifies `scripts/schema/config-schema.json` must include the
+schema version bump in that same PR. This means the repository will accumulate many
+`0-x-0` and `0-0-y` bumps, but it makes every schema change individually trackable.
+
+ 1. Determine the bump size. Classify your schema change using the table above:
+
+      + MODEL: removing/renaming a field, tightening validation, changing defaults or
+        semantics (breaking).
+      + REVISION: new optional field, new enum value, relaxing a constraint
+        (backward-compatible extension).
+      + ADDITION: updating a `description`, `title`, or other annotation (no effect on
+        accepted configurations).
+
+ 2. Bump the `"$id"` version in `scripts/schema/config-schema.json`.
+    For example, going from `1-0-0` to `1-1-0`:
+
+    ```json
+    "$id": "urn:palace:schema:1-1-0",
+    ```
+
+ 3. Add a changelog entry in
+    [`CHANGELOG.md`](https://github.com/awslabs/palace/blob/main/CHANGELOG.md) under the
+    appropriate section for the current development version. The entry must include the
+    `SchemaVer` tag at the end, in the format:
+
+    ```
+    - <description of the change>. SchemaVer X-Y-Z [PR NNN](https://github.com/awslabs/palace/pull/NNN).
+    ```
+
+    Place the entry in the section that best describes the *motivation* (typically `New Features` for additions, `Interface Changes` for breaking changes).
+
+ 4. Do NOT update the version table in this file (`docs/src/developer/notes.md`).
+    The table maps schema versions to *Palace* releases and is updated only when a release
+    is cut, not per-PR.
+
+##### Example changelog entry
+
+```markdown
+  - Introduced `"AbsTol"` option for linear solvers, defaulting to 0.0 to allow using an
+    absolute tolerance when defining convergence. SchemaVer 1-1-0
+    [PR 734](https://github.com/awslabs/palace/pull/734).
+```
+
+##### Handling merge conflicts on the version
+
+Multiple PRs bumping the schema version concurrently will conflict on the `"$id"` line.
+The last PR to merge must rebase and re-bump on top of the already-merged version. If
+several schema-changing PRs cluster together:
+
+  - Prefer rebasing quickly once the prior PR lands.
+  - Alternatively, land a single follow-up PR that consolidates the version bump and
+    changelog entries for the batch.
+
 #### Enforcement
 
 A CI check (the `check-schema-version` job in
@@ -440,4 +495,7 @@ compare with the one for `builtin.palace@develop`.
 ## Changelog
 
 Code contributions should generally be accompanied by an entry in the
-[changelog](https://github.com/awslabs/palace/blob/main/CHANGELOG.md).
+[changelog](https://github.com/awslabs/palace/blob/main/CHANGELOG.md). If your PR
+modifies the configuration schema, the changelog entry **must** include the `SchemaVer`
+tag — see [When and how to bump](#when-and-how-to-bump-pr-checklist) above for the
+format and workflow.

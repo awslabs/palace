@@ -10,7 +10,10 @@ SPDX-License-Identifier: Apache-2.0
 
 The format of this changelog is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to
-[Semantic Versioning](https://semver.org/).
+[Semantic Versioning](https://semver.org/). Configuration files follow
+[Schema Versioning](https://docs.snowplow.io/docs/pipeline-components-and-non-pipeline-components/iglu/common-architecture/schemaver/).
+
+See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
 ## In progress
 
