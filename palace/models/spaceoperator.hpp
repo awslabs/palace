@@ -286,7 +286,8 @@ public:
   // fit-or-freeze seed strategy.
   template <typename OperType>
   std::unique_ptr<OperType>
-  GetRationalImpedanceBoundaryMassMatrix(int idx, Operator::DiagonalPolicy diag_policy);
+  GetRationalImpedanceBoundaryMassMatrix(int idx, Operator::DiagonalPolicy diag_policy,
+                                         bool imag_slot = false);
 
   // Construct the ω-independent µ⁻¹ boundary mass for a single Floquet port's Robin BC,
   // placed on the imaginary slot. The full online term is i·γ₀,p(ω)·M_floquet_p with
