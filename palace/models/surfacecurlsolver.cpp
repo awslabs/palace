@@ -205,6 +205,7 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
   mfem::Array<int> ldof_marker_submesh(nd_fespace_submesh.GetVSize());
   ldof_marker_submesh = 0;
   mfem::ParGridFunction A(&nd_fespace_submesh);
+  A.UseDevice(false);
   A = 0.0;
 
   // Directly apply loop BC by computing the integration of 1D Nedelec elements on boundary
@@ -279,6 +280,8 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
   gc->ReduceMarked<double>(values.GetData(), global_marker, 0,
                            mfem::GroupCommunicator::MaxAbs<double>);
   gc->Bcast(values.GetData());
+  A.HostReadWrite();
+  A.SetTrueVector();
 
   // Create unit coefficient for curl-curl term and the regularization coefficient
   MaterialPropertyCoefficient reg_coeff(boundary_submesh.attributes.Max());
@@ -289,12 +292,22 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
     reg_coeff.AddMaterialProperty(attr, flux_data.regularization);
   }
 
-  // Use Palace's BilinearForm and assemble system matrix
+  // Use Palace's BilinearForm with forced full assembly for the submesh solve.
+  // The 2D submesh is small and must stay on host (GroupCommunicator and direct DOF
+  // indexing are incompatible with device memory).
   BilinearForm a(submesh_nd_fespaces.GetFinestFESpace());
   a.AddDomainIntegrator<CurlCurlIntegrator>(unit_coeff);
   a.AddDomainIntegrator<VectorFEMassIntegrator>(reg_coeff);
 
-  auto k_vec = a.Assemble(submesh_nd_fespaces, false);
+  std::vector<std::unique_ptr<Operator>> k_vec;
+  k_vec.reserve(submesh_nd_fespaces.GetNumLevels());
+  for (std::size_t l = 0; l < submesh_nd_fespaces.GetNumLevels(); l++)
+  {
+    BilinearForm a_l(submesh_nd_fespaces.GetFESpaceAtLevel(l));
+    a_l.AddDomainIntegrator<CurlCurlIntegrator>(unit_coeff);
+    a_l.AddDomainIntegrator<VectorFEMassIntegrator>(reg_coeff);
+    k_vec.push_back(a_l.FullAssemble(false));
+  }
   auto K_op = std::make_unique<MultigridOperator>(submesh_nd_fespaces.GetNumLevels());
 
   // Add operators for each level using pre-computed essential DoF lists
@@ -308,8 +321,8 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
   }
 
   // Compute boundary-interior coupling before applying boundary conditions.
-  // Keep vectors on host: the submesh solver uses host-side operations (direct indexing,
-  // GroupCommunicator reductions) that are incompatible with device memory.
+  // Keep all submesh vectors on host — the 2D solve is small and uses host-side
+  // operations (GroupCommunicator, direct DOF indexing) incompatible with device memory.
   Vector RHS(submesh_nd_fespaces.GetFinestFESpace().GetTrueVSize());
   Vector X(submesh_nd_fespaces.GetFinestFESpace().GetTrueVSize());
   Vector boundary_vals(submesh_nd_fespaces.GetFinestFESpace().GetTrueVSize());
