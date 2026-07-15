@@ -35,9 +35,9 @@ function generate_circular_hole_mesh(;
     L_outer::Real=15.0,
     R::Real=3.0,
     r::Real=1.0,
-    mesh_size_coarse::Real=2.0,
-    mesh_size_medium::Real=0.4,
-    mesh_size_fine::Real=0.2,
+    mesh_size_coarse::Real=1.6,
+    mesh_size_medium::Real=0.32,
+    mesh_size_fine::Real=0.1,
     verbose::Integer=5,
     gui::Bool=false
 )
