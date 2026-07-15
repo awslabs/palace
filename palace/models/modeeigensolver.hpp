@@ -73,13 +73,11 @@ ComplexHypreParMatrix AssembleBtt(const FiniteElementSpace &nd_fespace,
 // (impedance / absorbing / conductivity / rational impedance). Frequency- and
 // shift-dependent. omega may be complex (eigenmode nonlinear solve); for real omega
 // (imag = 0) the assembly reduces bit-for-bit to the real-frequency form.
-ComplexHypreParMatrix
-AssembleAtt(const FiniteElementSpace &nd_fespace, const MaterialOperator &mat_op,
-            const mfem::Vector *normal, SurfaceImpedanceOperator &surf_z_op,
-            FarfieldBoundaryOperator &farfield_op,
-            SurfaceConductivityOperator &surf_sigma_op,
-            SurfaceRationalImpedanceOperator &surf_rz_op, std::complex<double> omega,
-            double sigma);
+ComplexHypreParMatrix AssembleAtt(
+    const FiniteElementSpace &nd_fespace, const MaterialOperator &mat_op,
+    const mfem::Vector *normal, SurfaceImpedanceOperator &surf_z_op,
+    FarfieldBoundaryOperator &farfield_op, SurfaceConductivityOperator &surf_sigma_op,
+    SurfaceRationalImpedanceOperator &surf_rz_op, std::complex<double> omega, double sigma);
 
 // Ann = -(mu^{-1} grad u, grad v) + omega^2 (eps u, v) + BC-n. Frequency-dependent.
 // farfield_op and surf_sigma_op contribute impedance / loss terms on the H1 block. omega

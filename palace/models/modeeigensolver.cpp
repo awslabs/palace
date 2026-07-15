@@ -66,13 +66,11 @@ ComplexHypreParMatrix AssembleBtt(const FiniteElementSpace &nd_fespace,
           nullptr};
 }
 
-ComplexHypreParMatrix
-AssembleAtt(const FiniteElementSpace &nd_fespace, const MaterialOperator &mat_op,
-            const mfem::Vector *normal, SurfaceImpedanceOperator &surf_z_op,
-            FarfieldBoundaryOperator &farfield_op,
-            SurfaceConductivityOperator &surf_sigma_op,
-            SurfaceRationalImpedanceOperator &surf_rz_op, std::complex<double> omega,
-            double sigma)
+ComplexHypreParMatrix AssembleAtt(
+    const FiniteElementSpace &nd_fespace, const MaterialOperator &mat_op,
+    const mfem::Vector *normal, SurfaceImpedanceOperator &surf_z_op,
+    FarfieldBoundaryOperator &farfield_op, SurfaceConductivityOperator &surf_sigma_op,
+    SurfaceRationalImpedanceOperator &surf_rz_op, std::complex<double> omega, double sigma)
 {
   // Complex-ω decomposition. The transverse block carries the second-order operator
   // K + iωC - ω²M (domain + boundary). For real ω the imaginary parts below are all
