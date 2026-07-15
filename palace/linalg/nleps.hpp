@@ -263,11 +263,16 @@ private:
   // Divided difference operators.
   std::vector<std::vector<std::unique_ptr<ComplexOperator>>> ops;
 
-  // Optional frozen-pole correction (NLEPS frozen-ABC seed). When set via AddFrozenPole,
-  // GetInterpolationOperator folds frozen_corr[order]·frozen_M into each returned
-  // coefficient. frozen_M_ff is owned here so it outlives the returned operators.
-  std::unique_ptr<ComplexOperator> frozen_M;
-  std::vector<std::complex<double>> frozen_corr;
+  // Optional frozen-pole corrections (NLEPS frozen seed strategy). Each term added via
+  // AddFrozenPole contributes corr[order]·M to the operator returned by
+  // GetInterpolationOperator for every order. The M operators are owned here so they
+  // outlive the returned operators.
+  struct FrozenTerm
+  {
+    std::unique_ptr<ComplexOperator> M;
+    std::vector<std::complex<double>> corr;
+  };
+  std::vector<FrozenTerm> frozen_terms;
 
   // Workspace objects for solver application.
   mutable ComplexVector rhs;
@@ -288,11 +293,26 @@ public:
   // interpolated contribution (the scalar interpolant of f at the nodes, times the constant
   // M) from every order, and re-add the pole frozen at lambda_target into the order-0
   // coefficient. Takes ownership of M; a null M is a no-op. Must be called after
-  // Interpolate(). Subsequent GetInterpolationOperator calls return the corrected
-  // operators.
+  // Interpolate(); may be called multiple times to freeze independent terms. Subsequent
+  // GetInterpolationOperator calls return the corrected operators.
   void AddFrozenPole(std::unique_ptr<ComplexOperator> M,
                      const std::function<std::complex<double>(std::complex<double>)> &f,
                      std::complex<double> lambda_target);
+
+  // Decide between fitting and freezing a scalar coefficient f_full(λ) of a term
+  // f_full(λ)·M of A2, where f_full = P + f_frozen with P a polynomial of degree ≤ 2
+  // (exactly representable in the seed pencil, so only f_frozen would be frozen). Compares
+  // the maximum relative error over a dense sample of the interpolation window of (a) the
+  // polynomial Newton interpolant of f_full through the nodes and (b) P + f_frozen frozen
+  // at lambda_target, both normalized pointwise by |f_full|. Returns true if freezing is
+  // more accurate (an f_full with a pole near or inside the window cannot be fit by a
+  // polynomial), and reports both errors. Pass f_frozen = f_full to evaluate freezing the
+  // whole coefficient. Must be called after Interpolate() (uses the same node set).
+  bool
+  PreferFrozen(const std::function<std::complex<double>(std::complex<double>)> &f_full,
+               const std::function<std::complex<double>(std::complex<double>)> &f_frozen,
+               std::complex<double> lambda_target, double &fit_err,
+               double &freeze_err) const;
 
   // Perform multiplication with interpolation operator of specified order.
   void Mult(int order, const ComplexVector &x, ComplexVector &y) const;

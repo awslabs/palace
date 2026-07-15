@@ -651,6 +651,42 @@ SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy diag_poli
   }
 }
 
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int idx,
+                                                      Operator::DiagonalPolicy diag_policy)
+{
+  // λ-independent boundary mass matrix M_b for rational impedance boundary idx, with unit
+  // coefficient (including crack scaling), stored on the REAL slot so that downstream
+  // BuildParSumOperator can scale it by the arbitrary complex Robin coefficient g(λ) from
+  // GetRationalImpedanceOp().EvalRobinCoef(idx, λ). Returns null if the boundary
+  // contributes no DoFs on this rank. Used by the NLEPS HYBRID fit-or-freeze seed strategy.
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
+  surf_rz_op.AddUnitBdrCoefficient(idx, fb);
+  int empty = fb.empty();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto m =
+      AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto M_op = std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+  else
+  {
+    auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+}
+
 template <typename OperType, typename ScalarType>
 std::unique_ptr<OperType>
 SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
@@ -1391,6 +1427,11 @@ template std::unique_ptr<Operator>
     SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
     SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy);
+
+template std::unique_ptr<Operator>
+SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy);
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, const Operator *,
