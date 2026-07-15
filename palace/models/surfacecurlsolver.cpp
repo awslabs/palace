@@ -105,13 +105,14 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
                            submesh_to_parent_bdr_edge_map, hole_dof_to_edge_maps,
                            hole_boundary_edges);
 
-  // Assign boundary attributes and create edge sets
-  // Find the maximum existing boundary attribute to avoid conflicts
+  // Assign boundary attributes and create edge sets.
+  // Find the maximum existing boundary attribute across ALL ranks to avoid conflicts.
   int current_attr = 1;
   if (boundary_submesh.bdr_attributes.Size() > 0)
   {
     current_attr = boundary_submesh.bdr_attributes.Max();
   }
+  Mpi::GlobalMax(1, &current_attr, boundary_submesh.GetComm());
   std::vector<int> hole_boundary_attrs(num_holes);
   std::vector<std::unordered_set<int>> hole_edge_sets(num_holes);
   for (int h = 0; h < num_holes; h++)
@@ -144,7 +145,10 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
   }
   boundary_submesh.SetAttributes();
 
-  // Compute hole properties using input flux values
+  // Compute hole properties using input flux values.
+  // Use the maximum hole boundary attribute for marker sizing since local
+  // bdr_attributes.Max() may be smaller on ranks without hole boundary elements.
+  int marker_size = hole_boundary_attrs.back();
   std::vector<mfem::Array<int>> hole_bdr_markers(num_holes);
   std::vector<double> hole_perimeters(num_holes);
   std::vector<double> hole_field_values(num_holes);
@@ -160,7 +164,7 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
 
   for (int h = 0; h < num_holes; h++)
   {
-    hole_bdr_markers[h].SetSize(boundary_submesh.bdr_attributes.Max());
+    hole_bdr_markers[h].SetSize(marker_size);
     hole_bdr_markers[h] = 0;
     hole_bdr_markers[h][hole_boundary_attrs[h] - 1] = 1;
 
@@ -196,7 +200,7 @@ void SolveSurfaceCurlProblem(const SurfaceFluxData &flux_data, const IoData &iod
     }
   }
 
-  mfem::Array<int> combined_inner_bdr_marker(boundary_submesh.bdr_attributes.Max());
+  mfem::Array<int> combined_inner_bdr_marker(marker_size);
   combined_inner_bdr_marker = 0;
   mfem::Array<int> ldof_marker_submesh(nd_fespace_submesh.GetVSize());
   ldof_marker_submesh = 0;
@@ -357,6 +361,9 @@ void VerifyFluxThroughHoles(const mfem::ParGridFunction &B_gf,
     mfem::Array<int> hole_marker(mesh.Get().bdr_attributes.Max());
     hole_marker = 0;
     hole_marker[hole_attr - 1] = 1;
+
+    // Ensure face neighbor data is available for shared boundary evaluation.
+    const_cast<mfem::ParGridFunction &>(B_gf).ExchangeFaceNbrData();
 
     // Ensure face neighbor data is available for shared boundary evaluation.
     const_cast<mfem::ParGridFunction &>(B_gf).ExchangeFaceNbrData();
