@@ -965,13 +965,13 @@ void NewtonInterpolationOperator::AddFrozenPole(
   term.M = std::move(M);
 }
 
-bool NewtonInterpolationOperator::PreferFrozen(
+bool NewtonInterpolationOperator::DetermineFrozen(
     const std::function<std::complex<double>(std::complex<double>)> &f_full,
     const std::function<std::complex<double>(std::complex<double>)> &f_frozen,
     std::complex<double> lambda_target, double &fit_err, double &freeze_err) const
 {
   MFEM_VERIFY(!points.empty() && !coeffs.empty(),
-              "PreferFrozen requires a prior Interpolate() call!");
+              "DetermineFrozen requires a prior Interpolate() call!");
 
   // Polynomial Newton interpolant through the same nodes as the operator path: leading
   // scalar divided differences dd_j, then the monomial basis via the shared

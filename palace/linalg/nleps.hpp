@@ -305,14 +305,13 @@ public:
   // the maximum relative error over a dense sample of the interpolation window of (a) the
   // polynomial Newton interpolant of f_full through the nodes and (b) P + f_frozen frozen
   // at lambda_target, both normalized pointwise by |f_full|. Returns true if freezing is
-  // more accurate (an f_full with a pole near or inside the window cannot be fit by a
-  // polynomial), and reports both errors. Pass f_frozen = f_full to evaluate freezing the
-  // whole coefficient. Must be called after Interpolate() (uses the same node set).
+  // more accurate, and reports both errors. Pass f_frozen = f_full to evaluate freezing the
+  // whole coefficient. Must be called after Interpolate().
   bool
-  PreferFrozen(const std::function<std::complex<double>(std::complex<double>)> &f_full,
-               const std::function<std::complex<double>(std::complex<double>)> &f_frozen,
-               std::complex<double> lambda_target, double &fit_err,
-               double &freeze_err) const;
+  DetermineFrozen(const std::function<std::complex<double>(std::complex<double>)> &f_full,
+                  const std::function<std::complex<double>(std::complex<double>)> &f_frozen,
+                  std::complex<double> lambda_target, double &fit_err,
+                  double &freeze_err) const;
 
   // Perform multiplication with interpolation operator of specified order.
   void Mult(int order, const ComplexVector &x, ComplexVector &y) const;

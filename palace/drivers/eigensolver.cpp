@@ -80,14 +80,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           1i * target);
     }
     // Fit-or-freeze seed for rational impedance boundaries. Each boundary contributes
-    // g(λ)·M_b to A2(λ) with g(λ) = λ·D(λ)/N(λ) = P(λ) + R(λ)/N(λ) (long division). The
-    // polynomial part P is exactly representable in the seed pencil when deg(P) <= 2, so
-    // only the strictly proper pole part R/N is a candidate for freezing. Freeze it at the
-    // target when that approximates g over the interpolation window better than the
-    // polynomial interpolant does (a pole of g — a transmission zero of Zs — near or
-    // inside the window ruins the polynomial fit globally, while freezing errs only
-    // locally near the pole); otherwise keep the fit. With deg(P) > 2 the polynomial part
-    // itself exceeds the pencil order, so the comparison freezes all of g instead.
+    // g(λ)·M_b to A2(λ) with g(λ) = λ·D(λ)/N(λ) = P(λ) + R(λ)/N(λ). The polynomial part
+    // P is exactly representable in the seed pencil when deg(P) <= 2, so only the strictly
+    // proper pole part R/N is a candidate for freezing. We freeze it at the target when
+    // that approximates g over the interpolation window better than the polynomial
+    // interpolant does; otherwise keep the fit.
     const auto &surf_rz_op = space_op.GetRationalImpedanceOp();
     for (int idx = 0; idx < surf_rz_op.GetNumBoundaries(); idx++)
     {
@@ -100,11 +97,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                             : surf_rz_op.EvalRobinCoef(idx, lambda);
       };
       double fit_err, freeze_err;
-      if (interp->PreferFrozen(f_full, f_frozen, 1i * target, fit_err, freeze_err))
+      if (interp->DetermineFrozen(f_full, f_frozen, 1i * target, fit_err, freeze_err))
       {
-        Mpi::Print(" Freezing rational impedance boundary {:d} pole part in the NLEPS "
-                   "seed (fit error {:.2e} > freeze error {:.2e})\n",
-                   idx, fit_err, freeze_err);
+        Mpi::Print(" Freezing rational impedance boundary (attribute {}) pole part in the "
+                   "NLEPS seed (fit error {:.2e} > freeze error {:.2e})\n",
+                   fmt::join(surf_rz_op.GetAttrList(idx), ", "), fit_err, freeze_err);
         auto M_b = space_op.GetRationalImpedanceBoundaryMassMatrix<ComplexOperator>(
             idx, Operator::DIAG_ZERO);
         interp->AddFrozenPole(std::move(M_b), f_frozen, 1i * target);

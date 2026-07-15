@@ -81,6 +81,9 @@ public:
   // Number of configured rational impedance boundaries.
   int GetNumBoundaries() const { return static_cast<int>(boundaries.size()); }
 
+  // Mesh boundary attributes of boundary index idx (as given in the configuration file).
+  const mfem::Array<int> &GetAttrList(int idx) const { return boundaries[idx].attr_list; }
+
   // Stamp a unit coefficient (including the per-attribute crack scaling) for boundary
   // index idx, so that the assembled boundary mass matrix M_b satisfies: contribution of
   // boundary idx to A2(λ) = g(λ)·M_b with g = EvalRobinCoef(idx, ·). Used by the nonlinear

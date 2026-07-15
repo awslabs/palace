@@ -19,8 +19,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
-  - Improve hybrid nonlinear eigensolver convergence when using 2nd-order absorbing boundary
-    conditions. [PR 792](https://github.com/awslabs/palace/pull/792).
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial
@@ -32,6 +30,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `config["Solver"]["Linear"]["Type"] = "cuDSS"` for the KSP and wave port solvers.
     Enable at build time with `PALACE_WITH_CUDSS=ON` (requires `PALACE_WITH_CUDA=ON`).
     SchemaVer 1-3-0 [PR 717](https://github.com/awslabs/palace/pull/717).
+  - Improve hybrid nonlinear eigensolver convergence when using 2nd-order absorbing and
+    rational impedance boundary conditions. [PR 792](https://github.com/awslabs/palace/pull/792).
 
 #### Interface Changes
 
