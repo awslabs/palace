@@ -159,7 +159,9 @@ magnetostatic field is computed by applying flux through the loop of interest, l
 other flux loops with zero flux.
 
 Surface-current and flux-loop excitations cannot currently be combined in the same
-magnetostatic simulation.
+magnetostatic simulation. When running on GPU, the 2D surface curl solve for flux loop
+boundary conditions is performed on the host while the main 3D magnetostatic solve uses
+GPU acceleration.
 
 The resulting fields are used to compute the inductance matrix and its inverse, which are
 written to an ASCII file named `terminal-M.csv` and `terminal-Minv.csv`, respectively, in
