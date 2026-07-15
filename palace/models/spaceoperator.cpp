@@ -697,15 +697,17 @@ SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,
 }
 
 template <typename OperType>
-std::unique_ptr<OperType>
-SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int idx,
-                                                      Operator::DiagonalPolicy diag_policy)
+std::unique_ptr<OperType> SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(
+    int idx, Operator::DiagonalPolicy diag_policy, bool imag_slot)
 {
   // λ-independent boundary mass matrix M_b for rational impedance boundary idx, with unit
-  // coefficient (including crack scaling), stored on the REAL slot so that downstream
-  // BuildParSumOperator can scale it by the arbitrary complex Robin coefficient g(λ) from
-  // GetRationalImpedanceOp().EvalRobinCoefficient(idx, λ). Returns null if the boundary
-  // contributes no DoFs on this rank. Used by the NLEPS HYBRID fit-or-freeze seed strategy.
+  // coefficient (including crack scaling). By default stored on the REAL slot so that
+  // downstream BuildParSumOperator can scale it by the arbitrary complex Robin coefficient
+  // g(λ) from GetRationalImpedanceOp().EvalRobinCoefficient(idx, λ) (the NLEPS HYBRID
+  // fit-or-freeze seed strategy). With imag_slot=true it is placed on the IMAGINARY slot,
+  // matching the wave-port boundary-mass convention (the i in i·f(ω)·M baked in, with
+  // f(ω) = g(iω)/i) so circuit synthesis can fold it in uniformly. Returns null if the
+  // boundary contributes no DoFs on this rank.
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
   surf_rz_op.AddUnitBdrCoefficients(idx, fb);
@@ -720,12 +722,18 @@ SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int idx,
       AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
-    auto M_op = std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
+    auto M_op =
+        imag_slot
+            ? std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace())
+            : std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
     M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     return M_op;
   }
   else
   {
+    MFEM_VERIFY(!imag_slot,
+                "imag_slot is only meaningful for the ComplexOperator instantiation of "
+                "GetRationalImpedanceBoundaryMassMatrix!");
     auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
     M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     return M_op;
@@ -747,8 +755,8 @@ SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int port_idx,
   MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
                                          mat_op.GetInvPermeability());
   muinv_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(port.GetAttrList()));
-  fb.AddCoefficient(muinv_func.GetAttributeToMaterial(),
-                    muinv_func.GetMaterialProperties(), 1.0);
+  fb.AddCoefficient(muinv_func.GetAttributeToMaterial(), muinv_func.GetMaterialProperties(),
+                    1.0);
   int empty = fb.empty();
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
@@ -1550,9 +1558,9 @@ template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
-SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy);
+SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy, bool);
 template std::unique_ptr<ComplexOperator>
-SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy);
+SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy, bool);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int, Operator::DiagonalPolicy);

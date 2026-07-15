@@ -459,6 +459,20 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     }
   }
 
+  // Per-boundary rational surface impedance mass (imaginary slot, matching the
+  // convention). The online scalar is f(ω) = g(iω)/i with g(s) = s·D(s)/N(s) the Robin
+  // coefficient, evaluated in closed form; the synthesis fit is poly+AAA.
+  {
+    const auto &surf_rz_op = space_op.GetRationalImpedanceOp();
+    Arz_b_.resize(surf_rz_op.GetNumBoundaries());
+    Arz_b_r.resize(surf_rz_op.GetNumBoundaries());
+    for (int b = 0; b < surf_rz_op.GetNumBoundaries(); b++)
+    {
+      Arz_b_[b] = space_op.GetRationalImpedanceBoundaryMassMatrix<ComplexOperator>(
+          b, Operator::DIAG_ZERO, /*imag_slot=*/true);
+    }
+  }
+
   // Capture sweep band and synthesis controls for later use in
   // CalculateNormalizedPROMMatrices. After config::Nondimensionalize, sample_f stores
   // 2π·f_nondim, i.e. ω in nondimensional units. Use AdaptiveTol for the scalar fit
@@ -830,6 +844,14 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
       ProjectMatInternal(comm, V, *Asig_g_[g], Asig_g_r[g], r, dim_V_old, true);
     }
   }
+  for (std::size_t b = 0; b < Arz_b_.size(); b++)
+  {
+    if (Arz_b_[b])
+    {
+      Arz_b_r[b].conservativeResize(dim_V_new, dim_V_new);
+      ProjectMatInternal(comm, V, *Arz_b_[b], Arz_b_r[b], r, dim_V_old, true);
+    }
+  }
   // Per-port Floquet Robin boundary mass projection (same pattern as wave-port masses).
   for (auto &[port_idx, Mp_r] : M_floquet_p_r)
   {
@@ -965,6 +987,22 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
         Ar += s * Asig_g_r[g];
       }
     }
+    // Factored rational surface impedance, per boundary: A2_rz,b(ω) = g(iω)·M_b =
+    // i·(g(iω)/i)·M_b. Arz_b_r[b] carries M_b on the imaginary slot, so the scalar here
+    // is EvalRobinCoefficient/i (matching the synthesis convention). Closed form (two
+    // Horner evaluations per boundary), no AAA needed online.
+    const auto &surf_rz_op = space_op.GetRationalImpedanceOp();
+    for (std::size_t b = 0; b < Arz_b_.size(); b++)
+    {
+      if (Arz_b_[b] && Arz_b_r[b].rows() == static_cast<long>(V.size()))
+      {
+        const std::complex<double> s =
+            surf_rz_op.EvalRobinCoefficient(static_cast<int>(b),
+                                            std::complex<double>(0.0, omega)) /
+            std::complex<double>(0.0, 1.0);
+        Ar += s * Arz_b_r[b];
+      }
+    }
     // Factored Floquet port Robin BC: A2_floquet,p(ω) = i·γ₀,p(ω)·M_floquet_p.
     // M_floquet_p_r carries the µ⁻¹ boundary mass on the imaginary slot (the i), so
     // the scalar multiplier is γ₀ (real). FloquetPortData::Initialize(omega) must be
@@ -997,6 +1035,13 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
       if (Asig_g_[g])
       {
         (Asig_g_r[g].rows() == n) ? (any_factored = true) : (all_present = false);
+      }
+    }
+    for (std::size_t b = 0; b < Arz_b_.size(); b++)
+    {
+      if (Arz_b_[b])
+      {
+        (Arz_b_r[b].rows() == n) ? (any_factored = true) : (all_present = false);
       }
     }
     for (const auto &[port_idx, Mp_r] : M_floquet_p_r)
@@ -1517,6 +1562,109 @@ RomOperator::WavePortDispersionFit RomOperator::FitScalarDispersion(
   return fit;
 }
 
+RomOperator::WavePortDispersionFit
+RomOperator::FitRationalImpedanceDispersion(const std::string &label,
+                                            const Eigen::MatrixXcd &Mp_r, int idx) const
+{
+  // Exact split of the rational Robin coefficient g(s) = s·D(s)/N(s) = P(s) + R(s)/N(s)
+  // (long division, precomputed by SurfaceRationalImpedanceOperator). The full term is
+  // g(iω)·M_b = i·f(ω)·M_b with f(ω) = g(iω)/i, so the polynomial part contributes
+  // f_P(ω) = P(iω)/i = P₀/i + P₁ω + i·P₂ω² + ... — exactly representable in the pencil
+  // for deg(P) <= 2 (guaranteed for any passive N/D). The strictly proper remainder
+  // f_R(ω) = (R/N)(iω)/i is itself rational in ω with the poles of g (the zeros of Zs
+  // mapped to the ω plane), so AAA on f_R directly reproduces it to rounding.
+  const auto &surf_rz_op = space_op.GetRationalImpedanceOp();
+  const int deg_P = surf_rz_op.GetRobinQuotientDegree(idx);
+  if (deg_P > 2)
+  {
+    // Non-passive input (|deg N - deg D| > 1); fall back to the generic recipe.
+    auto f = [&surf_rz_op, idx](std::complex<double> omega) -> std::complex<double>
+    {
+      return surf_rz_op.EvalRobinCoefficient(idx, std::complex<double>(0.0, 1.0) * omega) /
+             std::complex<double>(0.0, 1.0);
+    };
+    return FitScalarDispersion(label, Mp_r, f, /*allow_augment=*/true);
+  }
+
+  WavePortDispersionFit fit;
+  fit.port_idx = -1;
+
+  // Polynomial part, exact: with P(s) = Σ_k P_k s^k, f_P(ω) = Σ_k P_k i^{k-1} ω^k.
+  const auto &P = surf_rz_op.GetRobinQuotient(idx);
+  const auto n_P = static_cast<int>(P.size());
+  auto P_coeff = [&](int k) -> double  // P_k, coefficient of s^k (stored high-first)
+  { return (k < n_P) ? P[n_P - 1 - k] : 0.0; };
+  fit.alpha0c = P_coeff(0) / std::complex<double>(0.0, 1.0);
+  fit.alpha1c = P_coeff(1);
+  fit.alpha2c = P_coeff(2) * std::complex<double>(0.0, 1.0);
+
+  constexpr int n_fit = 30;
+  constexpr int n_dense = 200;
+  const double w_lo = sweep_omega_min;
+  const double w_hi = sweep_omega_max;
+  auto f_rem = [&surf_rz_op, idx](double w) -> std::complex<double>
+  {
+    return surf_rz_op.EvalRobinRemainder(idx, std::complex<double>(0.0, w)) /
+           std::complex<double>(0.0, 1.0);
+  };
+  auto f_full = [&surf_rz_op, idx](double w) -> std::complex<double>
+  {
+    return surf_rz_op.EvalRobinCoefficient(idx, std::complex<double>(0.0, w)) /
+           std::complex<double>(0.0, 1.0);
+  };
+
+  // AAA directly on the strictly proper remainder.
+  Eigen::VectorXcd z_aaa(n_fit), F_aaa(n_fit);
+  double max_abs_truth = 0.0;
+  for (int i = 0; i < n_fit; i++)
+  {
+    const double w = w_lo + (w_hi - w_lo) * i / std::max(n_fit - 1, 1);
+    z_aaa(i) = w;
+    F_aaa(i) = f_rem(w);
+    max_abs_truth = std::max(max_abs_truth, std::abs(f_full(w)));
+  }
+  const double aaa_tol_rel = waveport_synthesis_tol * max_abs_truth /
+                             std::max(F_aaa.cwiseAbs().maxCoeff(), 1.0e-300);
+  auto aaa = utils::RunAAA(z_aaa, F_aaa, aaa_tol_rel,
+                           std::max<std::size_t>(waveport_synthesis_order_max, 1));
+  auto pr = utils::AAAToPoleResidue(aaa);
+  fit.alpha0c += pr.d;  // strictly proper remainder: d ≈ 0, but fold in any AAA leftover
+
+  // Dense-grid residual of the full reconstruction (polynomial part + pole-residue).
+  double max_rel = 0.0;
+  for (int i = 0; i < n_dense; i++)
+  {
+    const double w = w_lo + (w_hi - w_lo) * i / (n_dense - 1);
+    std::complex<double> aug = fit.alpha0c + fit.alpha1c * w + fit.alpha2c * w * w;
+    for (long k = 0; k < pr.poles.size(); k++)
+    {
+      aug += pr.residues(k) / (std::complex<double>(w, 0.0) - pr.poles(k));
+    }
+    max_rel = std::max(max_rel, std::abs(aug - f_full(w)));
+  }
+  fit.rel_err_polynomial = fit.rel_err_augmented =
+      (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
+
+  std::vector<std::complex<double>> poles, residues;
+  for (long k = 0; k < pr.poles.size(); k++)
+  {
+    poles.push_back(pr.poles(k));
+    residues.push_back(pr.residues(k));
+  }
+  fit.aux = MakeAuxBlock(-1, Mp_r, poles, residues, waveport_synthesis_rank_tol);
+  fit.regime = fit.aux ? WavePortRegime::Augmented : WavePortRegime::Polynomial;
+  Mpi::Print(" {}: exact-split synthesis residual {:.3e} (tol {:.3e}, {:d} pole{})\n",
+             label, fit.rel_err_augmented, waveport_synthesis_tol, pr.poles.size(),
+             pr.poles.size() == 1 ? "" : "s");
+  if (fit.rel_err_augmented > waveport_synthesis_tol)
+  {
+    Mpi::Warning("{}: rational impedance synthesis residual {:.3e} exceeds tolerance "
+                 "{:.3e}!\n",
+                 label, fit.rel_err_augmented, waveport_synthesis_tol);
+  }
+  return fit;
+}
+
 RomOperator::AugmentedPencil RomOperator::BuildAugmentedPencil(
     const Eigen::MatrixXcd &Kr_total, const Eigen::MatrixXcd &Cr_total,
     const Eigen::MatrixXcd &Mr_total, const std::vector<WavePortAuxBlock> &aux_blocks,
@@ -1702,6 +1850,27 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       auto fit = FitScalarDispersion(label, Asig_g_r[g], f, /*allow_augment=*/true);
       ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c,
                                            Asig_g_r[g], Kr_total_corr, Cr_total_corr,
+                                           Mr_total_corr);
+      if (fit.aux)
+      {
+        fit.aux->label = label;
+        aux_blocks_total.push_back(*fit.aux);
+      }
+    }
+    // Rational surface impedance, one boundary at a time: the full Robin term is
+    // g(iω)·M_b = i·f_b(ω)·M_b with f_b(ω) = g(iω)/i and g(s) = s·D(s)/N(s). The exact
+    // long-division split (polynomial part into the pencil, AAA directly on the strictly
+    // proper remainder) reproduces the rational coefficient to rounding.
+    for (std::size_t b = 0; b < Arz_b_.size(); b++)
+    {
+      if (!Arz_b_[b] || Arz_b_r[b].rows() != Kr.rows())
+      {
+        continue;
+      }
+      const auto label = fmt::format("rationalz_{:d}", b);
+      auto fit = FitRationalImpedanceDispersion(label, Arz_b_r[b], static_cast<int>(b));
+      ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c,
+                                           Arz_b_r[b], Kr_total_corr, Cr_total_corr,
                                            Mr_total_corr);
       if (fit.aux)
       {

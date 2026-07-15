@@ -285,21 +285,17 @@ void IoData::CheckConfiguration()
                     !boundaries.lumpedport.empty() || !boundaries.waveport.empty(),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
                 "at least one port (LumpedPort or WavePort) boundary condition!\n");
-    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
-                    boundaries.rational_impedance.empty(),
-                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) is not "
-                "supported in systems with RationalImpedance boundary conditions!\n");
-    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
-                    boundaries.floquetport.empty(),
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis || boundaries.floquetport.empty(),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
                 "yet support Floquet port boundaries. The Floquet Robin dispersion is "
                 "handled in the online PROM sweep but has not been folded into the "
                 "synthesised circuit pencil.\n");
-    // Second-order absorbing (farfield) and surface-conductivity boundaries are now
-    // supported in circuit synthesis: their frequency-dependent contributions are folded
-    // into the synthesised pencil via the same auxiliary-state path as the wave ports (the
-    // 2nd-order ABC's 0.5/ω as an exact pole at ω=0; surface conductivity's iω/Z(ω) by a
-    // polynomial + AAA fit). See RomOperator::CalculateNormalizedPROMMatrices.
+    // Second-order absorbing (farfield), surface-conductivity, and rational surface
+    // impedance boundaries are supported in circuit synthesis: their frequency-dependent
+    // contributions are folded into the synthesised pencil via the same auxiliary-state
+    // path as the wave ports (the 2nd-order ABC's 0.5/ω as an exact pole at ω=0; surface
+    // conductivity's iω/Z(ω) and the rational impedance's Robin coefficient s·D(s)/N(s)
+    // by a polynomial + AAA fit). See RomOperator::CalculateNormalizedPROMMatrices.
     // Wave ports are supported via an automatic polynomial fit of the modal dispersion,
     // augmented with AAA residual poles when the polynomial residual exceeds AdaptiveTol.
     // The runtime check is in RomOperator::CalculateNormalizedPROMMatrices.

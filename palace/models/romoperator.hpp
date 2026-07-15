@@ -214,12 +214,18 @@ protected:
   //   - Floquet port Robin BC, one entry per port p: f(ω) = γ₀,p(ω) =
   //     sqrt(max(0, ω²µε - |B₀₀+kF|²)), the specular (0,0) propagation constant.
   //     Closed form, no fit. The i is the implicit slot factor (imaginary-slot mass).
+  //   - Rational surface impedance, one entry per boundary b: f(ω) = g(iω)/i with
+  //     g(s) = s·D(s)/N(s) the Robin coefficient (the i is the implicit slot factor;
+  //     the full term is i·f(ω)·M_b = g(iω)·M_b), generally complex, fit by poly+AAA.
+  //     Since g is rational in ω the poly+AAA fit is typically exact to rounding.
   std::unique_ptr<ComplexOperator> M_ff_;
   Eigen::MatrixXcd M_ff_r;
   std::vector<std::unique_ptr<ComplexOperator>> Asig_g_;
   std::vector<Eigen::MatrixXcd> Asig_g_r;
   std::map<int, std::unique_ptr<ComplexOperator>> M_floquet_p_;
   std::map<int, Eigen::MatrixXcd> M_floquet_p_r;
+  std::vector<std::unique_ptr<ComplexOperator>> Arz_b_;
+  std::vector<Eigen::MatrixXcd> Arz_b_r;
 
   // Sweep band [ω_min, ω_max] (nondimensional, rad) captured from iodata at construction
   // time. Used to (a) sample kₙ,p(ω) for the synthesis polynomial fit, and (b) define the
@@ -418,6 +424,14 @@ protected:
   FitScalarDispersion(const std::string &label, const Eigen::MatrixXcd &Mp_r,
                       const std::function<std::complex<double>(std::complex<double>)> &f,
                       bool allow_augment) const;
+
+  // Exact-split fit for a rational surface impedance boundary: the Robin coefficient
+  // g(s) = s·D(s)/N(s) = P(s) + R(s)/N(s) (long division) has a polynomial part P that is
+  // exactly representable in the pencil (deg(P) <= 2 for any passive input), so only the
+  // strictly proper remainder R/N is AAA-fit — directly.
+  WavePortDispersionFit FitRationalImpedanceDispersion(const std::string &label,
+                                                       const Eigen::MatrixXcd &Mp_r,
+                                                       int idx) const;
 
   // Complex-coefficient variant of ApplyPolynomialFitCorrections for the other BCs: folds
   // α₀·Mp_r into Kr, -i·α₁·Mp_r into Cr, -α₂·Mp_r into Mr with COMPLEX α (the wave-port
