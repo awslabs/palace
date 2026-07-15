@@ -51,9 +51,25 @@ runs:
 
     - name: Prepare spack.yaml
       shell: bash
+      env:
+        SPACK_VERSION: ${{ inputs.spack-version }}
       run: |
         source /tmp/timing_functions.sh
         start_timer
+
+        # All jobs consume the same cache, but only the pinned Spack release
+        # may publish to it. A Spack develop job can otherwise repack and
+        # overwrite the same DAG-hash tag in a format the release cannot use.
+        # When changing the pinned release, clear the cache before enabling the
+        # new writer.
+        if [[ "${SPACK_VERSION}" == "releases/v1.2" ]]; then
+          echo "PALACE_BUILD_CACHE_WRITE=true" >> "${GITHUB_ENV}"
+          echo "GHCR buildcache access: read/write"
+        else
+          echo "PALACE_BUILD_CACHE_WRITE=false" >> "${GITHUB_ENV}"
+          echo "GHCR buildcache access: read-only for Spack ${SPACK_VERSION}"
+        fi
+
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
           CUDA_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.')
           CUDA_ARGS="cuda_arch=${CUDA_ARCH}"
@@ -247,7 +263,11 @@ runs:
         # non-redistributable specs (the autopush hook does not, so it is not
         # used); skip --update-index since installs probe OCI tags directly.
         bank_progress() {
-          spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
+          if [[ "${PALACE_BUILD_CACHE_WRITE:-false}" == "true" ]]; then
+            spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
+          else
+            echo "Skipping buildcache publish from non-canonical Spack version."
+          fi
         }
         # No --fail-fast: build (and bank) everything possible; retry to ride
         # out transient source-fetch failures.
@@ -355,8 +375,15 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        # Push deps only; Palace itself is branch-specific (same reason as the container build).
-        spack -e . buildcache push --force --with-build-dependencies --only dependencies --unsigned --update-index local-buildcache || true
+        # Push deps only; Palace itself is branch-specific (same reason as the
+        # container build). Do not force-overwrite existing spec tags: OCI
+        # installs probe tags directly, and replacing a tag from another build
+        # can invalidate consumers even when the Spack DAG hash is unchanged.
+        if [[ "${PALACE_BUILD_CACHE_WRITE:-false}" == "true" ]]; then
+          spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
+        else
+          echo "Skipping buildcache publish from non-canonical Spack version."
+        fi
         end_timer "Push to GHCR cache"
 
     - name: Run Regression Tests

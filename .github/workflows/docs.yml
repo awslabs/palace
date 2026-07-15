@@ -24,8 +24,8 @@ concurrency:
 
 # We need spack so that we can install palace for the tutorials
 env:
-  SPACK_VERSION: develop
-  REGISTRY: ghcr.io/awslabs/palace
+  # Must match the sole buildcache writer configured in palace-ci/action.yml.
+  SPACK_VERSION: releases/v1.2
   GITHUB_USER: ${{ github.actor }}
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -80,7 +80,7 @@ jobs:
           # Pin to the Spack 1.2 release series (matching the self-hosted
           # runners) instead of the moving `develop` branch. spack@1.2 pairs
           # with the spack-packages releases/v2026.06 repo (see repos.yaml).
-          spack_ref: releases/v1.2
+          spack_ref: ${{ env.SPACK_VERSION }}
           packages_ref: releases/v2026.06
           buildcache: true
           color: true
@@ -133,10 +133,10 @@ jobs:
             mirrors:
               spack:
                 binary: true
-                url: https://binaries.spack.io/${SPACK_VERSION}
+                url: https://binaries.spack.io/develop
               local-buildcache:
                 binary: true
-                url: oci://${{ env.REGISTRY }}-${SPACK_VERSION}
+                url: oci://ghcr.io/awslabs/palace-develop-testing
                 signed: false
                 access_pair:
                   id_variable: GITHUB_USER
@@ -251,4 +251,11 @@ jobs:
           needs.filter.outputs.should_build == 'true' &&
           !cancelled() &&
           (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        run: spack -e . buildcache push --force --with-build-dependencies --unsigned --update-index local-buildcache || true
+        run: |
+          if [[ "${SPACK_VERSION}" != "releases/v1.2" ]]; then
+            echo "Skipping buildcache publish from non-canonical Spack version."
+            exit 0
+          fi
+          # Palace itself is branch-specific; publish dependencies only and do
+          # not replace an existing DAG-hash tag.
+          spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
