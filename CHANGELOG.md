@@ -15,24 +15,27 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
-## In progress
+## [Unreleased]
 
 #### Bug Fixes
 
-  - Fixed S-parameter post-processing for mixed Floquet + lumped/wave port configurations.
-    Previously, `MeasureSParameter()` skipped processing when Floquet ports coexisted with
-    lumped or wave ports, leaving `port-S.csv` with incorrect values. The fix applies a power
-    normalization factor, restoring S-matrix unitarity and reciprocity for the mixed
-    case [PR 804](https://github.com/awslabs/palace/pull/804).
+- Fixed S-parameter post-processing for mixed Floquet + lumped/wave port configurations.
+  Previously, `MeasureSParameter()` skipped processing when Floquet ports coexisted with
+  lumped or wave ports, leaving `port-S.csv` with incorrect values. The fix applies a power
+  normalization factor, restoring S-matrix unitarity and reciprocity for the mixed
+  case [PR 804](https://github.com/awslabs/palace/pull/804).
 
 #### New Features
 
-  - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
-    whose per-square impedance is an arbitrary rational function of frequency,
-    `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial
-    coefficients (its zeros and poles), generalizing the parallel-RLC `Impedance` boundary
-    to any passive lumped-network response. SchemaVer 1-1-0
-    [PR 770](https://github.com/awslabs/palace/pull/770).
+- Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
+  whose per-square impedance is an arbitrary rational function of frequency,
+  `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial
+  coefficients (its zeros and poles), generalizing the parallel-RLC `Impedance` boundary
+  to any passive lumped-network response. SchemaVer 1-1-0
+  [PR 770](https://github.com/awslabs/palace/pull/770).
+- Introduced ``"AbsTol"`` option for linear solvers, defaulting to 0.0 to allow
+  using an absolute tolerance when defining convergence.
+  SchemaVer 1-1-0 [PR 734](https://github.com/awslabs/palace/pull/734).
 
 ## [0.17.0] - 2026-06-28
 
