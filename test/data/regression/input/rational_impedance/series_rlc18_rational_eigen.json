@@ -55,9 +55,12 @@
     "Device": "CPU",
     "Eigenmode":
     {
-      "N": 2,
-      "Target": 9.0,  // GHz; modes at ~9.60 + 0.045i and ~21.31 + 0.43i GHz, validated
-                      // against the analytic dispersion relation tan(kd) = i*eta0/Zs
+      "N": 1,
+      "Target": 9.0,  // GHz; mode at ~9.60 + 0.045i GHz, validated against the analytic
+                      // dispersion relation tan(kd) = i*eta0/Zs. Solve for a single mode:
+                      // the second mode (~21.31 GHz) is far above the target and the
+                      // quasi-Newton refinement can land on different modes there
+                      // depending on the MPI partition.
       "Tol": 1.0e-6
     },
     "Linear":
