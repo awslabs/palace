@@ -3,6 +3,7 @@
 
 #include <array>
 #include <memory>
+#include <sstream>
 #include <utility>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
@@ -448,6 +449,20 @@ TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
     auto periodic_mapping = mesh::DeterminePeriodicVertexMapping(mesh, data);
     REQUIRE(periodic_mapping.empty());
   }
+
+  // Round-trip the periodic mesh through the nonconformal (AMR) save format. The NCMesh
+  // conversion stores a single boundary attribute per face, so the donor/receiver pair
+  // sharing each seam face collapses to one attribute; the reloaded mesh must still be
+  // detected as already periodic.
+  mesh->EnsureNCMesh(true);
+  std::stringstream buffer;
+  mesh->Print(buffer);
+  buffer.seekg(0);
+  mesh = std::make_unique<mfem::Mesh>(buffer, false, true, false);
+  REQUIRE((mesh->bdr_attributes.Find(1) >= 0) != (mesh->bdr_attributes.Find(2) >= 0));
+  REQUIRE(mesh::DeterminePeriodicVertexMapping(
+              mesh, boundary_torus.periodic.boundary_pairs.front())
+              .empty());
 }
 
 TEST_CASE("Default IOData", "[iodata][Serial]")

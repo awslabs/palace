@@ -9,7 +9,7 @@
 
 using namespace palace;
 
-TEST_CASE("BroadcastLarge", "[communication][Serial][Parallel]")
+TEST_CASE("BroadcastLarge", "[communication][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
   const int root = 0;
