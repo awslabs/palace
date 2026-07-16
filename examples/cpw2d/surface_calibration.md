@@ -55,3 +55,30 @@ The reducer writes the final-radius sweep to
 `postpro/surface-calibration.csv`, the thin-metal AMR history to
 `postpro/surface-calibration-convergence.csv`, and the blind transfer result to
 `postpro/surface-calibration-validation.csv`.
+
+## Applying the calibration to 3D geometries
+
+The calibrated coefficients depend on the local fabrication cross-section, not
+on the global CPW layout. In 3D, `surface-Q-edge.csv` integrates the outside and
+annular energies over the complete metal perimeter. The local field amplitude
+may vary along that perimeter, but the same cross-sectional coefficients can be
+applied to each local contribution and therefore to the integrated energies.
+
+Apply the coefficient table to any thin-metal Palace output with matching
+interface indices, dielectric properties, edge radii, and fabrication stack:
+
+```text
+python3 apply_surface_calibration.py \
+  --calibration postpro/surface-calibration.csv \
+  --input ../transmon/postpro/transmon_surface_coarse \
+  --output ../transmon/postpro/transmon_surface_coarse/surface-Q-corrected.csv
+```
+
+The result contains corrected participation ratios and quality factors for every
+calibrated radius. A 3D mesh still needs enough resolution in the matching
+annulus `R <= d < 2R`; a zero or abruptly changing annular energy indicates that
+the selected radius is under-resolved. Corners, edge junctions, and nearby
+features also violate the locally extruded cross-section assumption, so the
+radius sweep should show a stable interval between the fabrication scale and
+the next geometric feature. Components with multiple fabrication stacks should
+use separate dielectric entries and edge-attribute sets for each stack.

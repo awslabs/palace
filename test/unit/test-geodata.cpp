@@ -56,6 +56,31 @@ std::unique_ptr<mfem::Mesh> TwoEdgeFanTetMesh()
   return mesh;
 }
 
+std::unique_ptr<mfem::Mesh> CrackedSquareSheetTetMesh()
+{
+  auto mesh = std::make_unique<mfem::Mesh>(3, 8, 8, 8, 3);
+
+  mesh->AddVertex(0.0, 0.0, 0.0);
+  mesh->AddVertex(1.0, 0.0, 0.0);
+  mesh->AddVertex(1.0, 1.0, 0.0);
+  mesh->AddVertex(0.0, 1.0, 0.0);
+  mesh->AddVertex(0.5, 0.5, 0.0);
+  mesh->AddVertex(0.5, 0.5, 0.0);
+  mesh->AddVertex(0.5, 0.5, 1.0);
+  mesh->AddVertex(0.5, 0.5, -1.0);
+
+  for (int i = 0; i < 4; i++)
+  {
+    const int j = (i + 1) % 4;
+    mesh->AddTet(i, j, 4, 6, 2);
+    mesh->AddTet(i, 5, j, 7, 1);
+    mesh->AddBdrTriangle(i, j, 4, 5);
+    mesh->AddBdrTriangle(i, 5, j, 5);
+  }
+  mesh->FinalizeTopology(false);
+  return mesh;
+}
+
 bool ElementContainsEdge(const mfem::Element &el, int v0, int v1)
 {
   bool has_v0 = false, has_v1 = false;
@@ -478,6 +503,30 @@ TEST_CASE("Boundary edge extraction", "[geodata][Parallel]")
     }
     CHECK_THAT(length, WithinAbs(10.0, 1.0e-12));
   }
+}
+
+TEST_CASE("Boundary edge extraction on cracked 3D sheet", "[geodata][Serial][Parallel]")
+{
+  auto serial_mesh = CrackedSquareSheetTetMesh();
+  mfem::ParMesh mesh(Mpi::World(), *serial_mesh);
+  auto marker = mesh::AttrToMarker(mesh.bdr_attributes.Max(), std::vector<int>{5});
+  auto edges = mesh::GetBoundaryEdgeSegments(mesh, marker);
+
+  REQUIRE(edges.size() == 4);
+  double length = 0.0;
+  for (const auto &edge : edges)
+  {
+    double length_squared = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      const double delta = edge.p1[d] - edge.p0[d];
+      length_squared += delta * delta;
+    }
+    length += std::sqrt(length_squared);
+    CHECK_THAT(edge.p0[2], WithinAbs(0.0, 1.0e-12));
+    CHECK_THAT(edge.p1[2], WithinAbs(0.0, 1.0e-12));
+  }
+  CHECK_THAT(length, WithinAbs(4.0, 1.0e-12));
 }
 
 TEST_CASE("Boundary edge extraction ignores coincident crack copies", "[geodata][Serial]")
