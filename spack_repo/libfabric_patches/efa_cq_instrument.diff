@@ -250,3 +250,54 @@ index 0cb8b9d50..3cfb42e1f 100644
  out:
  	ofi_genlock_unlock(&ep->util_ep.av->lock);
  }
+diff --git a/prov/shm/src/smr_util.c b/prov/shm/src/smr_util.c
+index 71340bdf1..ba077a1c2 100644
+--- a/prov/shm/src/smr_util.c
++++ b/prov/shm/src/smr_util.c
+@@ -31,6 +31,30 @@
+  */
+ 
+ #include "smr_util.h"
++#include <stdio.h>
++#include <stdarg.h>
++#include <unistd.h>
++#include <time.h>
++#include <stdlib.h>
++#include <execinfo.h>
++static int _smr_life_on = -1;
++static int _smr_life_enabled(void) {
++	if (_smr_life_on < 0) { const char *v = getenv("FI_SHM_DIAG"); _smr_life_on = (v && v[0]=='1') ? 1 : 0; }
++	return _smr_life_on;
++}
++static void _smr_life(const char *fmt, ...) {
++	char path[64]; FILE *f; va_list ap; struct timespec ts;
++	if (!_smr_life_enabled()) return;
++	snprintf(path, sizeof(path), "/tmp/smr_dbg_%d.log", (int) getpid());
++	f = fopen(path, "a"); if (!f) return;
++	clock_gettime(CLOCK_REALTIME, &ts);
++	fprintf(f, "[%lld.%06ld] ", (long long) ts.tv_sec, ts.tv_nsec/1000);
++	va_start(ap, fmt); vfprintf(f, fmt, ap); va_end(ap);
++	/* backtrace: WHO called (esp. for smr_free) */
++	void *bt[20]; int nb = backtrace(bt, 20); char **sy = backtrace_symbols(bt, nb);
++	if (sy) { for (int i = 1; i < nb && i < 12; i++) fprintf(f, "    %s\n", sy[i]); free(sy); }
++	fclose(f);
++}
+ #include "ofi_shm_p2p.h"
+ #include <sys/stat.h>
+ 
+@@ -304,6 +328,7 @@ int smr_create(const struct fi_provider *prov, const struct smr_attr *attr,
+ 
+ 	/* Must be set last to signal full initialization to peers */
+ 	(*smr)->pid = getpid();
++	_smr_life("CREATE pid=%d name=%s\n", (int) getpid(), (char *) attr->name);
+ 	return 0;
+ 
+ remove:
+@@ -318,6 +343,7 @@ close:
+ 
+ void smr_free(struct smr_region *smr)
+ {
++	_smr_life("FREE pid=%d name=%s\n", (int) getpid(), smr_name(smr));
+ 	if (smr->flags & SMR_FLAG_HMEM_ENABLED)
+ 		(void) ofi_hmem_host_unregister(smr);
+ 	shm_unlink(smr_name(smr));
