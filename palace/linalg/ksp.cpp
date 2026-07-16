@@ -193,9 +193,8 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       break;
     case LinearSolver::CUDSS:
 #if defined(MFEM_USE_CUDSS)
-      pc = MakeWrapperSolver<OperType, CuDSSSolver>(linear, comm, pc_mat_sym,
-                                                    linear.sym_factorization,
-                                                    linear.reorder_reuse, print);
+      pc = MakeWrapperSolver<OperType, CuDSSSolver>(
+          linear, comm, pc_mat_sym, linear.sym_factorization, linear.reorder_reuse, print);
 #endif
       break;
     case LinearSolver::DEFAULT:

@@ -712,8 +712,7 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
         {
 #if defined(MFEM_USE_CUDSS)
           return std::make_unique<CuDSSSolver>(comm, MatrixSymmetry::UNSYMMETRIC,
-                                               linear.sym_factorization,
-                                               true, verbose - 1);
+                                               linear.sym_factorization, true, verbose - 1);
 #endif
         }
         MFEM_ABORT("Unsupported linear solver type for boundary mode solver!");
@@ -810,8 +809,7 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
 #if defined(MFEM_USE_CUDSS)
         return std::make_unique<MfemWrapperSolver<ComplexOperator>>(
             std::make_unique<CuDSSSolver>(comm, MatrixSymmetry::UNSYMMETRIC,
-                                          linear.sym_factorization,
-                                          true, print),
+                                          linear.sym_factorization, true, print),
             false, linear.complex_coarse_solve, linear.drop_small_entries,
             linear.reorder_reuse);
 #else
