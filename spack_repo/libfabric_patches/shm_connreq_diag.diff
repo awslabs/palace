@@ -1,0 +1,245 @@
+--- a/prov/shm/src/smr_av.c	2026-07-16 10:43:12
++++ b/prov/shm/src/smr_av.c	2026-07-16 10:45:42
+@@ -33,6 +33,9 @@
+ #include "smr.h"
+ #include <sys/stat.h>
+ 
++/* DIAG(#12542): site of last map_to_region failure (see smr_ep.c). */
++int _smr_dbg_map_site = 0;
++
+ void smr_map_to_endpoint(struct smr_ep *ep, int64_t id)
+ {
+ 	int ret;
+@@ -111,6 +114,7 @@
+ 	if (fd < 0) {
+ 		FI_WARN_ONCE(&smr_prov, FI_LOG_AV,
+ 			     "shm_open error: name %s errno %d\n", name, errno);
++		_smr_dbg_map_site = 1;
+ 		return -errno;
+ 	}
+ 
+@@ -118,11 +122,13 @@
+ 	snprintf(tmp, sizeof(tmp), "%s%s", SMR_DIR, name);
+ 	if (stat(tmp, &sts) == -1) {
+ 		ret = -errno;
++		_smr_dbg_map_site = 2;
+ 		goto out;
+ 	}
+ 
+ 	if (sts.st_size < sizeof(*peer)) {
+ 		ret = -FI_ENOENT;
++		_smr_dbg_map_site = 3;
+ 		goto out;
+ 	}
+ 
+@@ -131,6 +137,7 @@
+ 	if (peer == MAP_FAILED) {
+ 		FI_WARN(&smr_prov, FI_LOG_AV, "mmap error\n");
+ 		ret = -errno;
++		_smr_dbg_map_site = 4;
+ 		goto out;
+ 	}
+ 
+@@ -140,6 +147,7 @@
+ 		FI_WARN(&smr_prov, FI_LOG_AV, "peer not initialized\n");
+ 		munmap(peer, sizeof(*peer));
+ 		ret = -FI_ENOENT;
++		_smr_dbg_map_site = 5;
+ 		goto out;
+ 	}
+ 
+--- a/prov/shm/src/smr_ep.c	2026-07-16 10:43:12
++++ b/prov/shm/src/smr_ep.c	2026-07-16 10:45:42
+@@ -35,6 +35,53 @@
+ #include "smr_signal.h"
+ #include "ofi_mb.h"
+ 
++#include <stdio.h>
++#include <stdarg.h>
++#include <unistd.h>
++#include <errno.h>
++#include <time.h>
++/* DIAG(#12542): global site of the last smr_map_to_region failure.
++ * 0=ok 1=shm_open 2=stat 3=st_size 4=mmap 5=!peer->pid. Set in smr_av.c;
++ * the av->lock serializes map_to_region so a plain global is safe. */
++extern int _smr_dbg_map_site;
++/* DIAG(#12542) build marker (assert its presence in the shipped .so).
++ * static + used so each TU keeps its own copy (no multiple-definition at link)
++ * while the literal still lands in .rodata for `strings` verification. */
++static char _smr_dbg_build_marker[] __attribute__((used)) = "SMR_DIAG_12542_BUILD_MARKER_v1";
++/* Env gate: FI_SHM_DIAG=1 turns logging on. Cached; -1 = uninitialized. */
++static int _smr_dbg_on = -1;
++static int _smr_dbg_enabled(void)
++{
++	if (_smr_dbg_on < 0) {
++		const char *v = getenv("FI_SHM_DIAG");
++		_smr_dbg_on = (v && v[0] == '1') ? 1 : 0;
++	}
++	return _smr_dbg_on;
++}
++static void _smr_dbg(const char *fmt, ...)
++{
++	char path[64];
++	FILE *f;
++	va_list ap;
++	struct timespec ts;
++	if (!_smr_dbg_enabled())
++		return;
++	snprintf(path, sizeof(path), "/tmp/smr_dbg_%d.log", (int) getpid());
++	f = fopen(path, "a");
++	if (!f)
++		return;
++	clock_gettime(CLOCK_REALTIME, &ts);
++	fprintf(f, "[%lld.%06ld] ", (long long) ts.tv_sec, ts.tv_nsec / 1000);
++	va_start(ap, fmt);
++	vfprintf(f, fmt, ap);
++	va_end(ap);
++	fclose(f);
++}
++
++/* DIAG(#12542): per-peer count of verify_peer() EAGAIN spins; dump once at threshold. */
++static uint64_t _smr_eagain[SMR_MAX_PEERS];
++static int _smr_connreq_retry = -1;
++
+ extern struct fi_ops_msg smr_msg_ops, smr_no_recv_msg_ops;
+ extern struct fi_ops_tagged smr_tag_ops, smr_no_recv_tag_ops;
+ extern struct fi_ops_rma smr_rma_ops;
+@@ -210,15 +257,53 @@
+ 	if (smr_peer_data(ep->region)[id].id >= 0)
+ 		return id;
+ 
++	if (_smr_connreq_retry < 0) {
++		const char *v = getenv("FI_SHM_CONNREQ_RETRY");
++		_smr_connreq_retry = (v && v[0] == '1') ? 1 : 0;
++	}
++
+ 	if (!ep->map->peers[id].region) {
+ 		ofi_genlock_lock(&ep->util_ep.av->lock);
++		_smr_dbg_map_site = 0;
+ 		ret = smr_map_to_region(ep->map, id);
+ 		ofi_genlock_unlock(&ep->util_ep.av->lock);
+-		if (ret)
++		if (ret) {
++			/* SENDER-side map fail: this is SELF-HEALING (retried
++			 * every cycle). Record but do not treat as fatal. */
++			if (++_smr_eagain[id] == 1000000)
++				_smr_dbg("verify_peer: pid=%d STUCK-on-map self=%s "
++					 "peer_id=%ld peer_name=%s map_site=%d "
++					 "(sender-side map, self-healing)\n",
++					 (int) getpid(), ep->name, (long) id,
++					 ep->map->peers[id].name,
++					 _smr_dbg_map_site);
+ 			return -1;
++		}
+ 	}
+ 
+ 	smr_send_name(ep, id);
++
++	/* SENDER waiting for the receiver to ack our connreq. peer_data.id<0
++	 * means no ack yet. Dump full row ONCE at the stuck threshold, keyed by
++	 * NAME so it can be matched to a receiver drop/accept. */
++	if (++_smr_eagain[id] == 1000000) {
++		_smr_dbg("verify_peer: pid=%d STUCK self=%s peer_id=%ld "
++			 "peer_name=%s name_sent=%d peer_data_id=%ld "
++			 "region_mapped=%d\n",
++			 (int) getpid(), ep->name, (long) id,
++			 ep->map->peers[id].name,
++			 (int) smr_peer_data(ep->region)[id].name_sent,
++			 (long) smr_peer_data(ep->region)[id].id,
++			 ep->map->peers[id].region != NULL);
++		if (_smr_connreq_retry) {
++			/* CANDIDATE FIX (Exp 2): clear name_sent to force resend. */
++			smr_peer_data(ep->region)[id].name_sent = 0;
++			_smr_eagain[id] = 0;
++			_smr_dbg("verify_peer: pid=%d RETRY self=%s peer_name=%s "
++				 "cleared name_sent\n", (int) getpid(),
++				 ep->name, ep->map->peers[id].name);
++		}
++	}
+ 
+ 	return -1;
+ }
+--- a/prov/shm/src/smr_progress.c	2026-07-16 10:43:12
++++ b/prov/shm/src/smr_progress.c	2026-07-16 10:45:42
+@@ -33,6 +33,50 @@
+ #include "smr.h"
+ #include "smr_dsa.h"
+ #include "ofi_atomic.h"
++
++#include <stdio.h>
++#include <stdarg.h>
++#include <unistd.h>
++#include <errno.h>
++#include <time.h>
++/* DIAG(#12542): global site of the last smr_map_to_region failure.
++ * 0=ok 1=shm_open 2=stat 3=st_size 4=mmap 5=!peer->pid. Set in smr_av.c;
++ * the av->lock serializes map_to_region so a plain global is safe. */
++extern int _smr_dbg_map_site;
++/* DIAG(#12542) build marker (assert its presence in the shipped .so).
++ * static + used so each TU keeps its own copy (no multiple-definition at link)
++ * while the literal still lands in .rodata for `strings` verification. */
++static char _smr_dbg_build_marker[] __attribute__((used)) = "SMR_DIAG_12542_BUILD_MARKER_v1";
++/* Env gate: FI_SHM_DIAG=1 turns logging on. Cached; -1 = uninitialized. */
++static int _smr_dbg_on = -1;
++static int _smr_dbg_enabled(void)
++{
++	if (_smr_dbg_on < 0) {
++		const char *v = getenv("FI_SHM_DIAG");
++		_smr_dbg_on = (v && v[0] == '1') ? 1 : 0;
++	}
++	return _smr_dbg_on;
++}
++static void _smr_dbg(const char *fmt, ...)
++{
++	char path[64];
++	FILE *f;
++	va_list ap;
++	struct timespec ts;
++	if (!_smr_dbg_enabled())
++		return;
++	snprintf(path, sizeof(path), "/tmp/smr_dbg_%d.log", (int) getpid());
++	f = fopen(path, "a");
++	if (!f)
++		return;
++	clock_gettime(CLOCK_REALTIME, &ts);
++	fprintf(f, "[%lld.%06ld] ", (long long) ts.tv_sec, ts.tv_nsec / 1000);
++	va_start(ap, fmt);
++	vfprintf(f, fmt, ap);
++	va_end(ap);
++	fclose(f);
++}
++
+ #include "ofi_mb.h"
+ 
+ static void smr_progress_overflow(struct smr_ep *ep)
+@@ -847,10 +891,20 @@
+ 
+ 	peer_smr = smr_peer_region(ep, idx);
+ 	if (!peer_smr) {
++		_smr_dbg_map_site = 0;
+ 		ret = smr_map_to_region(ep->map, idx);
+ 		if (ret) {
+ 			FI_WARN(&smr_prov, FI_LOG_EP_CTRL,
+ 				"Could not map peer region\n");
++			/* RECEIVER-side DROP (fatal): connreq consumed, ack
++			 * (peer_data[tx_id].id=idx below) NOT written. Sender's
++			 * name_sent latch => never resent => permanent stall.
++			 * Keyed by NAME + exact ENOENT site. */
++			_smr_dbg("connreq: pid=%d DROPPED from name=%s "
++				 "tx_id=%ld idx=%ld map_ret=%d map_site=%d "
++				 "-> SENDER STUCK\n", (int) getpid(),
++				 (char *) cmd->data.msg, (long) cmd->hdr.tx_id,
++				 (long) idx, ret, _smr_dbg_map_site);
+ 			goto out;
+ 		}
+ 		peer_smr = smr_peer_region(ep, idx);
+@@ -879,6 +933,9 @@
+ 
+ 	//set last to indicate to peer that setup is complete
+ 	smr_peer_data(peer_smr)[cmd->hdr.tx_id].id = idx;
++	_smr_dbg("connreq: pid=%d ACCEPTED from name=%s tx_id=%ld idx=%ld\n",
++		 (int) getpid(), (char *) cmd->data.msg,
++		 (long) cmd->hdr.tx_id, (long) idx);
+ out:
+ 	ofi_genlock_unlock(&ep->util_ep.av->lock);
+ }

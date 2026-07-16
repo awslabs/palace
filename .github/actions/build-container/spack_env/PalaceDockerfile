@@ -55,7 +55,7 @@ RUN mkdir -p /opt/spack-environment && \
         cp "$p" "$LIBFAB_PKG/"; \
         PNAME=$(basename "$p"); \
         if ! grep -q "$PNAME" "$LIBFAB_PKG/package.py"; then \
-          sed -i "/patch(\"nvhpc-symver.patch\"/a\\    patch(\"$PNAME\", when=\"@2.5.1\")" "$LIBFAB_PKG/package.py"; \
+          sed -i "/patch(\"nvhpc-symver.patch\"/a\\    patch(\"$PNAME\", when=\"@2.6.0\")" "$LIBFAB_PKG/package.py"; \
         fi; \
       fi; \
     done
@@ -78,15 +78,27 @@ RUN cd {{ paths.environment }} && spack env activate . && \
       echo "WARNING: Binary cache is not reachable, all packages will be built from source"; \
     fi
 
+# Concretize the environment, then build the env's own libfabric spec from source
+# (--no-cache) so the binary mirror can't serve a pristine (unpatched) 2.6.0 for
+# the patched spec. Assert the diagnostic build marker is actually in the shipped
+# .so — a silently unpatched libfabric is the exact failure mode we guard against.
+RUN cd {{ paths.environment }} && spack env activate . && \
+    spack concretize -f && \
+    spack install --no-cache -j$(nproc) --fail-fast libfabric && \
+    LF="$(spack location -i libfabric)/lib/libfabric.so.1" && \
+    strings "$LF" | grep -q "SMR_DIAG_12542_BUILD_MARKER" \
+      || { echo "ERROR: libfabric built WITHOUT the shm connreq diagnostic patch"; exit 1; } && \
+    echo "OK: instrumented libfabric carries the diagnostic marker"
+
 # palace@develop is pinned to branch="main", so every branch shares a spec
 # hash with different source. Build Palace --no-cache and push only deps.
 RUN cd {{ paths.environment }} && spack env activate . && \
     spack install --include-build-deps --only dependencies -j$(nproc) --fail-fast && \
     spack install --only package --no-cache -j$(nproc) --fail-fast
 
-# Push deps only; Palace itself is branch-specific (see above).
-RUN cd {{ paths.environment }} && spack env activate . && \
-    spack buildcache push --only dependencies --unsigned local-buildcache
+# Diagnostic branch: do NOT push to the shared buildcache. This image carries an
+# instrumented libfabric (shm connreq diagnostics); pushing it would serve the
+# patched binary to unrelated builds. Skip the push entirely on this branch.
 
 # Remove unnecessary deps
 # TODO: Remove gcc and build-only dependencies to reduce image size.
