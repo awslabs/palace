@@ -977,6 +977,25 @@ DeterminePeriodicVertexMapping(std::unique_ptr<mfem::Mesh> &mesh,
     }
   }
 
+  // A periodic mesh saved after nonconformal AMR retains only one of the two periodic
+  // boundary attributes, so one of the two sets being empty is expected for an
+  // already-periodic mesh: skip MakePeriodic by returning an empty mapping. Warn since an
+  // accidentally empty donor or receiver attribute set (previously an error) takes the
+  // same path. Both sets empty means the config names attributes not present in the mesh
+  // at all.
+  MFEM_VERIFY(!bdr_v_donor.empty() || !bdr_v_receiver.empty(),
+              "No boundary elements found for donor or receiver attributes of a periodic "
+              "boundary pair!");
+  if (bdr_v_donor.empty() || bdr_v_receiver.empty())
+  {
+    Mpi::Warning("No boundary elements found for {} attributes [{}] of a periodic "
+                 "boundary pair: assuming the mesh is already periodic and skipping "
+                 "periodic vertex matching!",
+                 bdr_v_donor.empty() ? "donor" : "receiver",
+                 fmt::join(bdr_v_donor.empty() ? da : ra, ", "));
+    return {};
+  }
+
   MFEM_VERIFY(bdr_v_donor.size() == bdr_v_receiver.size(),
               "Different number of "
               "vertices on donor and receiver boundaries. Cannot create periodic mesh.");

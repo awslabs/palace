@@ -17,14 +17,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
-#### Bug Fixes
-
-  - Fixed S-parameter post-processing for mixed Floquet + lumped/wave port configurations.
-    Previously, `MeasureSParameter()` skipped processing when Floquet ports coexisted with
-    lumped or wave ports, leaving `port-S.csv` with incorrect values. The fix applies a power
-    normalization factor, restoring S-matrix unitarity and reciprocity for the mixed
-    case [PR 804](https://github.com/awslabs/palace/pull/804).
-
 #### New Features
 
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
@@ -33,6 +25,21 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     coefficients (its zeros and poles), generalizing the parallel-RLC `Impedance` boundary
     to any passive lumped-network response. SchemaVer 1-1-0
     [PR 770](https://github.com/awslabs/palace/pull/770).
+
+#### Bug Fixes
+
+  - Fixed S-parameter post-processing for mixed Floquet + lumped/wave port configurations.
+    Previously, `MeasureSParameter()` skipped processing when Floquet ports coexisted with
+    lumped or wave ports, leaving `port-S.csv` with incorrect values. The fix applies a power
+    normalization factor, restoring S-matrix unitarity and reciprocity for the mixed
+    case [PR 804](https://github.com/awslabs/palace/pull/804).
+  - Fixed a bug where a mesh saved with `"SaveAdaptMesh"` during nonconformal AMR on a
+    periodic problem could not be used as the input mesh for a subsequent solve. Loading now
+    detects the already-periodic mesh and skips the periodicity construction.
+    [PR 810](https://github.com/awslabs/palace/pull/810).
+  - Fixed an overflow in the mesh broadcast path used when loading nonconformal meshes by
+    introducing a chunked MPI broadcast call handle arbitrarily large meshes.
+    [PR 810](https://github.com/awslabs/palace/pull/810).
 
 ## [0.17.0] - 2026-06-28
 

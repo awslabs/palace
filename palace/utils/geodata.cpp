@@ -324,13 +324,15 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
   }
   else
   {
-    // Send the preprocessed serial mesh and partitioning as a byte string.
+    // Send the preprocessed serial mesh and partitioning as a byte string. The
+    // serialized mesh can exceed INT_MAX bytes for large meshes, so use a 64-bit
+    // length and a chunked broadcast.
     MPI_Comm node_comm;
     MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
                         &node_comm);
     constexpr bool generate_edges = false, refine = true, fix_orientation = false;
     std::string so;
-    int slen = 0;
+    std::int64_t slen = 0;
     if (smesh)
     {
       std::ostringstream fo(std::stringstream::out);
@@ -340,15 +342,14 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
       smesh.reset();  // Root process needs to rebuild the mesh to ensure consistency
                       // with the saved serial mesh (refinement marking, for example)
       so = fo.str();
-      slen = static_cast<int>(so.size());
-      MFEM_VERIFY(so.size() == (std::size_t)slen, "Overflow in stringbuffer size!");
+      slen = static_cast<std::int64_t>(so.size());
     }
     Mpi::Broadcast(1, &slen, 0, node_comm);
     if (so.empty())
     {
       so.resize(slen);
     }
-    Mpi::Broadcast(slen, so.data(), 0, node_comm);
+    Mpi::BroadcastLarge(slen, so.data(), 0, node_comm);
     {
       std::istringstream fi(so);
       smesh = std::make_unique<mfem::Mesh>(fi, generate_edges, refine, fix_orientation);
