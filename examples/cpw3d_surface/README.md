@@ -37,3 +37,27 @@ python3 examples/cpw2d/apply_surface_calibration.py \
 
 Compare the corrected thin result against both the 3D fabricated result and
 `examples/cpw2d/postpro/surface_validation_fabricated/surface-Q.csv`.
+
+The generated base thin mesh is intended to exercise the 3D diagnostics, not
+to provide a mesh-converged thin reference. With order 3 and no AMR, its
+edge-decomposed MS and MA energies agree with the first 2D AMR level rather
+than the final 2D result. At `R = 0.2 um`, the raw thin SA/MS/MA errors relative
+to the 3D fabrication-resolved result are approximately
+`+17.5%/+18.3%/-42.2%`; the corrected errors are
+`+2.6%/+16.8%/+14.8%`. Refine the thin mesh until the corrected result at the
+physically selected matching radius is stable. Do not select a different
+radius for each interface or tune the radius using the fabrication-resolved
+reference.
+
+The extrusion checks are independent of this cross-section refinement:
+
+- The 3D fabrication-resolved SA/MS/MA values agree with the converged 2D
+  values within `0.12%/0.84%/1.50%`.
+- The thin 50 and 200 um extrusions agree within `0.0041%` for all raw,
+  edge-decomposed, and corrected participation values. This verifies that
+  `EdgeExcludeAttributes` removes the artificial extrusion-end edges.
+
+Both committed configurations use `Refinement.MaxIts = 0`, so their error
+indicators are diagnostic only. They use a relaxed `EstimatorTol` to avoid
+oversolving an estimator that does not drive AMR. Restore a strict estimator
+tolerance before enabling refinement.

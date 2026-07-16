@@ -582,10 +582,10 @@ TEST_CASE("Boundary edge extraction on cracked 3D sheet", "[geodata][Serial][Par
   auto marker = mesh::AttrToMarker(mesh.bdr_attributes.Max(), std::vector<int>{5});
   auto edges = mesh::GetBoundaryEdgeSegments(mesh, marker);
 
-  REQUIRE(edges.size() == 4);
   double length = 0.0;
   for (const auto &edge : edges)
   {
+    CAPTURE(edge.p0[0], edge.p0[1], edge.p1[0], edge.p1[1]);
     double length_squared = 0.0;
     for (int d = 0; d < 3; d++)
     {
@@ -595,7 +595,14 @@ TEST_CASE("Boundary edge extraction on cracked 3D sheet", "[geodata][Serial][Par
     length += std::sqrt(length_squared);
     CHECK_THAT(edge.p0[2], WithinAbs(0.0, 1.0e-12));
     CHECK_THAT(edge.p1[2], WithinAbs(0.0, 1.0e-12));
+    const bool on_boundary =
+        (std::abs(edge.p0[0]) < 1.0e-12 && std::abs(edge.p1[0]) < 1.0e-12) ||
+        (std::abs(edge.p0[0] - 1.0) < 1.0e-12 && std::abs(edge.p1[0] - 1.0) < 1.0e-12) ||
+        (std::abs(edge.p0[1]) < 1.0e-12 && std::abs(edge.p1[1]) < 1.0e-12) ||
+        (std::abs(edge.p0[1] - 1.0) < 1.0e-12 && std::abs(edge.p1[1] - 1.0) < 1.0e-12);
+    CHECK(on_boundary);
   }
+  REQUIRE(edges.size() == 4);
   CHECK_THAT(length, WithinAbs(4.0, 1.0e-12));
 }
 
@@ -621,8 +628,8 @@ TEST_CASE("Boundary edge extraction ignores coincident crack copies", "[geodata]
   mfem::Vector midpoint(2);
   for (int d = 0; d < 2; d++)
   {
-    midpoint[d] = 0.5 * (mesh.GetVertex(first_vertices[0])[d] +
-                         mesh.GetVertex(first_vertices[1])[d]);
+    midpoint[d] =
+        0.5 * (mesh.GetVertex(first_vertices[0])[d] + mesh.GetVertex(first_vertices[1])[d]);
   }
   const int mid = mesh.AddVertex(midpoint);
   mesh.AddBdrElement(new mfem::Segment(first_vertices[0], mid, 1));
@@ -661,6 +668,65 @@ TEST_CASE("Boundary edge extraction on cracked CPW mesh", "[geodata][Serial]")
   {
     CHECK_THAT(x[i], WithinAbs(expected[i], 1.0e-12));
   }
+}
+
+TEST_CASE("Boundary edge extraction on NC 3D CPW mesh", "[geodata][Serial][Parallel]")
+{
+  const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
+                           "examples/cpw3d_surface/cpw3d_surface_validation_thin.json";
+  auto ExtractEdges = [&](bool use_amr)
+  {
+    IoData iodata(config_path.c_str(), false);
+    iodata.model.mesh = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
+    iodata.model.refinement.max_it = use_amr ? 1 : 0;
+    auto mesh = mesh::ReadMesh(iodata, Mpi::World());
+    auto marker = mesh::AttrToMarker(mesh->bdr_attributes.Max(), std::vector<int>{1, 2});
+    return mesh::GetBoundaryEdgeSegments(*mesh, marker);
+  };
+
+  auto conforming_edges = ExtractEdges(false);
+  auto nc_edges = ExtractEdges(true);
+  auto TotalLength = [](const auto &edges)
+  {
+    double length = 0.0;
+    for (const auto &edge : edges)
+    {
+      double length_squared = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        const double delta = edge.p1[d] - edge.p0[d];
+        length_squared += delta * delta;
+      }
+      length += std::sqrt(length_squared);
+    }
+    return length;
+  };
+
+  CAPTURE(conforming_edges.size(), nc_edges.size(), TotalLength(conforming_edges),
+          TotalLength(nc_edges));
+  REQUIRE(conforming_edges.size() == 92);
+  CHECK_THAT(TotalLength(conforming_edges), WithinAbs(320.0, 1.0e-10));
+  for (const auto &nc_edge : nc_edges)
+  {
+    bool found = false;
+    for (const auto &edge : conforming_edges)
+    {
+      double direct = 0.0, reverse = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        direct = std::max(direct, std::abs(nc_edge.p0[d] - edge.p0[d]));
+        direct = std::max(direct, std::abs(nc_edge.p1[d] - edge.p1[d]));
+        reverse = std::max(reverse, std::abs(nc_edge.p0[d] - edge.p1[d]));
+        reverse = std::max(reverse, std::abs(nc_edge.p1[d] - edge.p0[d]));
+      }
+      found = found || std::min(direct, reverse) < 1.0e-10;
+    }
+    CAPTURE(nc_edge.p0[0], nc_edge.p0[1], nc_edge.p0[2], nc_edge.p1[0], nc_edge.p1[1],
+            nc_edge.p1[2]);
+    CHECK(found);
+  }
+  CHECK(nc_edges.size() == conforming_edges.size());
+  CHECK_THAT(TotalLength(nc_edges), WithinAbs(TotalLength(conforming_edges), 1.0e-10));
 }
 
 TEST_CASE("Boundary edge extraction on NC mesh", "[geodata][Serial]")

@@ -1425,33 +1425,58 @@ inline void GetParentGlobalVertexIndices(const mfem::Mesh &parent,
 inline void GetParentGlobalVertexIndices(const mfem::ParMesh &parent,
                                          mfem::Array<HYPRE_BigInt> &gi)
 {
-  // For an NC parmesh, parent.GetGlobalVertexIndices internally builds an order-1 H1
-  // ParFiniteElementSpace and calls GetGlobalTDofNumber on every vertex DoF. NC parmesh
-  // GetGlobalTDofNumber asserts that the ldof is a true DoF, which is not guaranteed
-  // for vertices that are shared / not owned by this rank (and is reliably broken when
-  // the parent has cracked-boundary duplicate vertices). Use the NCMesh node-id table
-  // directly: NCMesh nodes are replicated across ranks with rank-consistent ids, and
-  // every local vertex is the vert_index of exactly one node.
+  // ParMesh::GetGlobalVertexIndices does not support NC meshes because a hanging vertex
+  // is not necessarily a true H1 DoF. Instead, use the same shared-vertex identification
+  // as ParMesh::ReorientTetMesh: the group master broadcasts its local vertex index.
+  // Combining that index with disjoint per-rank vertex offsets gives every local copy of
+  // a shared vertex the same global identifier.
   gi.SetSize(parent.GetNV());
-  if (parent.Nonconforming())
+  if (!parent.Nonconforming())
   {
-    gi = -1;
-    const auto &ncmesh = *parent.ncmesh;
-    for (int n = 0; n < ncmesh.GetNumNodes(); n++)
-    {
-      const auto &node = ncmesh.GetNode(n);
-      if (node.HasVertex())
-      {
-        const int v = node.vert_index;
-        if (v >= 0 && v < parent.GetNV())
-        {
-          gi[v] = n;
-        }
-      }
-    }
+    parent.GetGlobalVertexIndices(gi);
     return;
   }
-  parent.GetGlobalVertexIndices(gi);
+
+  const int nranks = Mpi::Size(parent.GetComm());
+  HYPRE_BigInt local_nv = parent.GetNV();
+  std::vector<HYPRE_BigInt> rank_offsets(nranks + 1);
+  Mpi::Allgather(1, &local_nv, rank_offsets.data(), parent.GetComm());
+  for (int rank = 0; rank < nranks; rank++)
+  {
+    rank_offsets[rank + 1] += rank_offsets[rank];
+  }
+
+  mfem::GroupCommunicator shared_vertex_comm(parent.gtopo);
+  parent.GetSharedVertexCommunicator(shared_vertex_comm);
+  const int nshared = shared_vertex_comm.GroupLDofTable().Size_of_connections();
+  mfem::Array<int> shared_master_rank(nshared), shared_master_index(nshared);
+  mfem::Array<int> vertex_shared_index(parent.GetNV());
+  vertex_shared_index = -1;
+  const mfem::Table &group_shared_vertices = shared_vertex_comm.GroupLDofTable();
+  for (int group = 1; group < parent.GetNGroups(); group++)
+  {
+    const int master_rank = parent.gtopo.GetGroupMasterRank(group);
+    MFEM_ASSERT(group_shared_vertices.RowSize(group) == parent.GroupNVertices(group),
+                "Invalid shared vertex group!");
+    for (int j = 0; j < parent.GroupNVertices(group); j++)
+    {
+      const int shared = group_shared_vertices.GetRow(group)[j];
+      const int vertex = parent.GroupVertex(group, j);
+      shared_master_rank[shared] = master_rank;
+      shared_master_index[shared] = vertex;
+      vertex_shared_index[vertex] = shared;
+    }
+  }
+  shared_vertex_comm.Bcast(shared_master_index);
+
+  const int rank = Mpi::Rank(parent.GetComm());
+  for (int vertex = 0; vertex < parent.GetNV(); vertex++)
+  {
+    const int shared = vertex_shared_index[vertex];
+    const int master_rank = shared >= 0 ? shared_master_rank[shared] : rank;
+    const int master_index = shared >= 0 ? shared_master_index[shared] : vertex;
+    gi[vertex] = rank_offsets[master_rank] + master_index;
+  }
 }
 
 // Parent neighbor-transformation lookup. ParMesh delegates to the Palace helper that
@@ -1625,6 +1650,20 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
     // Work directly with parent boundary faces. A boundary submesh cannot represent the
     // coincident crack copies of an internal metal sheet because their combined topology
     // is nonmanifold.
+    auto &par_mesh = const_cast<mfem::ParMesh &>(mesh);
+    par_mesh.ExchangeFaceNbrData();
+    mfem::L2_FECollection material_fec(0, mesh.Dimension());
+    mfem::ParFiniteElementSpace material_fespace(&par_mesh, &material_fec);
+    mfem::ParGridFunction material_attribute(&material_fespace);
+    mfem::Array<int> dofs;
+    for (int element = 0; element < mesh.GetNE(); element++)
+    {
+      material_fespace.GetElementDofs(element, dofs);
+      MFEM_ASSERT(dofs.Size() == 1, "Unexpected material attribute space!");
+      material_attribute[dofs[0]] = mesh.GetAttribute(element);
+    }
+    material_attribute.ExchangeFaceNbrData();
+
     mfem::Array<HYPRE_BigInt> vertex_gi;
     GetParentGlobalVertexIndices(mesh, vertex_gi);
     mfem::Array<int> edges, orientations, vertices;
@@ -1635,15 +1674,32 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
       {
         continue;
       }
-      int element, info;
-      mesh.GetBdrElementAdjacentElement(be, element, info);
-      const int side_attribute = mesh.GetAttribute(element);
+      const int face = mesh.GetBdrElementFaceIndex(be);
+      const auto face_info = mesh.GetFaceInformation(face);
+      int side_attribute = mesh.GetAttribute(face_info.element[0].index);
+      int side_attribute_2 = -1;
+      if (face_info.element[1].location == mfem::Mesh::ElementLocation::Local)
+      {
+        side_attribute_2 = mesh.GetAttribute(face_info.element[1].index);
+      }
+      else if (face_info.element[1].location == mfem::Mesh::ElementLocation::FaceNbr)
+      {
+        material_fespace.GetFaceNbrElementVDofs(face_info.element[1].index, dofs);
+        MFEM_ASSERT(dofs.Size() == 1, "Unexpected face-neighbor material attribute!");
+        side_attribute_2 = static_cast<int>(material_attribute.FaceNbrData()[dofs[0]]);
+      }
+      if (side_attribute_2 > 0)
+      {
+        // A crack face whose vertices all lie on the crack seam is represented by one
+        // topological face in MFEM's NC mesh. Its owner can be either adjacent material
+        // depending on the partitioning, so use a canonical material-side label.
+        side_attribute = std::min(side_attribute, side_attribute_2);
+      }
       mesh.GetBdrElementEdges(be, edges, orientations);
       for (int edge : edges)
       {
         mesh.GetEdgeVertices(edge, vertices);
-        MFEM_ASSERT(vertices.Size() == 2,
-                    "Unexpected boundary face edge geometry!");
+        MFEM_ASSERT(vertices.Size() == 2, "Unexpected boundary face edge geometry!");
         HYPRE_BigInt gv0 = vertex_gi[vertices[0]];
         HYPRE_BigInt gv1 = vertex_gi[vertices[1]];
         if (gv1 < gv0)
@@ -1671,8 +1727,7 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
   Mpi::Allgather(1, &local_count, entity_counts.data(), mesh.GetComm());
 
   std::vector<int> entity_displacements(entity_counts.size()),
-      key_counts(entity_counts.size()),
-      key_displacements(entity_counts.size());
+      key_counts(entity_counts.size()), key_displacements(entity_counts.size());
   std::vector<int> coordinate_counts(entity_counts.size()),
       coordinate_displacements(entity_counts.size());
   int total_entities = 0;
@@ -1692,9 +1747,8 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
   Mpi::Allgatherv(static_cast<int>(local_keys.size()), local_keys.data(),
                   global_keys.data(), key_counts.data(), key_displacements.data(),
                   mesh.GetComm());
-  Mpi::Allgatherv(local_count, local_side_attributes.data(),
-                  global_side_attributes.data(), entity_counts.data(),
-                  entity_displacements.data(), mesh.GetComm());
+  Mpi::Allgatherv(local_count, local_side_attributes.data(), global_side_attributes.data(),
+                  entity_counts.data(), entity_displacements.data(), mesh.GetComm());
   Mpi::Allgatherv(static_cast<int>(local_coordinates.size()), local_coordinates.data(),
                   global_coordinates.data(), coordinate_counts.data(),
                   coordinate_displacements.data(), mesh.GetComm());
@@ -1750,9 +1804,8 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
       std::copy_n(global_coordinates.data() + 6 * i + 3, 3, p1.begin());
       PointKey k0 = GetPointKey(p0);
       PointKey k1 = GetPointKey(p1);
-      for (const auto &[key, point] :
-           {std::pair<const PointKey &, const Point &>{k0, p0},
-            std::pair<const PointKey &, const Point &>{k1, p1}})
+      for (const auto &[key, point] : {std::pair<const PointKey &, const Point &>{k0, p0},
+                                       std::pair<const PointKey &, const Point &>{k1, p1}})
       {
         auto &data = points[key];
         for (int d = 0; d < 3; d++)
@@ -1900,8 +1953,8 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
   std::vector<int> parents, ranks;
   auto GetVertexIndex = [&](int side_attribute, HYPRE_BigInt vertex)
   {
-    auto [it, inserted] = vertex_indices.try_emplace(
-        VertexKey{side_attribute, vertex}, static_cast<int>(parents.size()));
+    auto [it, inserted] = vertex_indices.try_emplace(VertexKey{side_attribute, vertex},
+                                                     static_cast<int>(parents.size()));
     if (inserted)
     {
       parents.push_back(it->second);
@@ -1966,9 +2019,8 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
     std::copy_n(global_coordinates.data() + 6 * i + 3, 3, p1.begin());
     PointKey k0 = GetPointKey(p0);
     PointKey k1 = GetPointKey(p1);
-    for (const auto &[key, point] :
-         {std::pair<const PointKey &, const Point &>{k0, p0},
-          std::pair<const PointKey &, const Point &>{k1, p1}})
+    for (const auto &[key, point] : {std::pair<const PointKey &, const Point &>{k0, p0},
+                                     std::pair<const PointKey &, const Point &>{k1, p1}})
     {
       auto &point_data = data.points[key];
       for (int d = 0; d < 3; d++)

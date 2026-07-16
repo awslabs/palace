@@ -104,6 +104,7 @@
       "KSPType": "CG",
       "Tol": 1.0e-10,
       "MaxIts": 1000,
+      "EstimatorTol": 1.0e-1,
       "EstimatorMG": true
     }
   }
