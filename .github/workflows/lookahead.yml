@@ -73,13 +73,15 @@ jobs:
   # Build against the tip of Spack (develop) rather than the pinned 1.2 release
   # series, to catch upstream Spack/spack-packages changes that break Palace.
   # Dependencies stay at their pinned versions so a failure points at Spack.
+  # This job writes only to the isolated palace-develop buildcache, never the
+  # pinned Spack 1.2 cache used by required CI.
   build-test-x64-gcc-spack-develop:
     needs: filter
     if: needs.filter.outputs.test == 'true'
     runs-on: [self-hosted, x64]
     permissions:
       contents: read
-      packages: read
+      packages: write
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/palace-ci

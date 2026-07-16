@@ -47,7 +47,7 @@ spack:
       url: https://binaries.spack.io/develop
     local-buildcache:
       binary: true
-      url: oci://ghcr.io/awslabs/palace
+      url: oci://ghcr.io/awslabs/palace-1.2
       signed: false
       access_pair:
         id_variable: GITHUB_USER

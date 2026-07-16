@@ -57,18 +57,18 @@ runs:
         source /tmp/timing_functions.sh
         start_timer
 
-        # All jobs consume the same cache, but only the pinned Spack release
-        # may publish to it. A Spack develop job can otherwise repack and
-        # overwrite the same DAG-hash tag in a format the release cannot use.
-        # When changing the pinned release, clear the cache before enabling the
-        # new writer.
-        if [[ "${SPACK_VERSION}" == "releases/v1.2" ]]; then
-          echo "PALACE_BUILD_CACHE_WRITE=true" >> "${GITHUB_ENV}"
-          echo "GHCR buildcache access: read/write"
-        else
-          echo "PALACE_BUILD_CACHE_WRITE=false" >> "${GITHUB_ENV}"
-          echo "GHCR buildcache access: read-only for Spack ${SPACK_VERSION}"
-        fi
+        # Isolate GHCR buildcaches by Spack version. Spack DAG hashes do not
+        # identify the Spack version or buildcache representation that produced
+        # an OCI artifact, so different Spack versions must never write the same
+        # package. They can still each have their own warm cache.
+        CACHE_SUFFIX="${SPACK_VERSION#releases/v}"
+        CACHE_SUFFIX="${CACHE_SUFFIX#v}"
+        CACHE_SUFFIX="$(printf '%s' "${CACHE_SUFFIX}" | tr '[:upper:]/' '[:lower:]-' | tr -c 'a-z0-9._-' '-')"
+        PALACE_BUILD_CACHE_NAME="palace-${CACHE_SUFFIX}"
+        echo "PALACE_BUILD_CACHE_NAME=${PALACE_BUILD_CACHE_NAME}" >> "${GITHUB_ENV}"
+        echo "PALACE_BUILD_CACHE_WRITE=true" >> "${GITHUB_ENV}"
+        echo "GHCR buildcache package: ghcr.io/awslabs/${PALACE_BUILD_CACHE_NAME}"
+        echo "GHCR buildcache access: read/write"
 
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
           CUDA_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.')
@@ -201,7 +201,7 @@ runs:
               url: https://binaries.spack.io/develop
             local-buildcache:
               binary: true
-              url: oci://ghcr.io/awslabs/palace
+              url: oci://ghcr.io/awslabs/${PALACE_BUILD_CACHE_NAME}
               signed: false
               access_pair:
                 id_variable: GITHUB_USER
