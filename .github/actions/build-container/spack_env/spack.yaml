@@ -31,6 +31,9 @@ spack:
   container:
     format: docker
     template: PalaceDockerfile
+    # Keep symbols (do not strip): this diagnostic image needs readable gdb
+    # backtraces on hung ranks and the shm connreq instrumentation intact.
+    strip: false
     images:
       os: "ubuntu:24.04"
       spack: develop
