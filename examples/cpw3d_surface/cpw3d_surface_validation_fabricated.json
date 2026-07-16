@@ -1,0 +1,110 @@
+{
+  "Problem": {
+    "Type": "Electrostatic",
+    "Verbose": 2,
+    "Output": "postpro/surface_validation_fabricated_L50"
+  },
+  "Model": {
+    "Mesh": "mesh/cpw3d_surface_validation_fabricated_L50.msh",
+    "L0": 1.0e-6,
+    "Refinement": {
+      "MaxIts": 0
+    }
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1
+        ],
+        "Permittivity": 11.47
+      },
+      {
+        "Attributes": [
+          2
+        ],
+        "Permittivity": 1.0
+      }
+    ],
+    "Postprocessing": {
+      "Energy": [
+        {
+          "Index": 1,
+          "Attributes": [
+            1
+          ]
+        },
+        {
+          "Index": 2,
+          "Attributes": [
+            2
+          ]
+        }
+      ]
+    }
+  },
+  "Boundaries": {
+    "Ground": {
+      "Attributes": [
+        2
+      ]
+    },
+    "Terminal": [
+      {
+        "Index": 1,
+        "Attributes": [
+          1
+        ]
+      }
+    ],
+    "Postprocessing": {
+      "Dielectric": [
+        {
+          "Index": 1,
+          "Attributes": [
+            3
+          ],
+          "Type": "SA",
+          "Thickness": 2.0e-3,
+          "Permittivity": 4.0,
+          "LossTan": 2.0e-3
+        },
+        {
+          "Index": 2,
+          "Attributes": [
+            1,
+            2
+          ],
+          "Type": "MS",
+          "Thickness": 2.0e-3,
+          "Permittivity": 11.47,
+          "LossTan": 3.0e-4
+        },
+        {
+          "Index": 3,
+          "Attributes": [
+            1,
+            2
+          ],
+          "Type": "MA",
+          "Thickness": 2.0e-3,
+          "Permittivity": 10.0,
+          "LossTan": 3.0e-2
+        }
+      ]
+    }
+  },
+  "Solver": {
+    "Order": 3,
+    "Electrostatic": {
+      "Save": 1
+    },
+    "Linear": {
+      "Type": "BoomerAMG",
+      "KSPType": "CG",
+      "Tol": 1.0e-10,
+      "MaxIts": 1000,
+      "EstimatorMG": true
+    }
+  }
+}

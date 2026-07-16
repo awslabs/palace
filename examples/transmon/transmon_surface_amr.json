@@ -1,0 +1,194 @@
+{
+  "Problem": {
+    "Verbose": 2,
+    "Output": "postpro/transmon_surface_amr",
+    "Type": "Eigenmode"
+  },
+  "Boundaries": {
+    "LumpedPort": [
+      {
+        "Attributes": [
+          6
+        ],
+        "Index": 1,
+        "R": 50,
+        "Direction": "+X"
+      },
+      {
+        "Attributes": [
+          7
+        ],
+        "Index": 2,
+        "R": 50,
+        "Direction": "+X"
+      },
+      {
+        "C": 5.5e-15,
+        "Attributes": [
+          4
+        ],
+        "Index": 3,
+        "L": 1.486e-8,
+        "Direction": "+Y"
+      }
+    ],
+    "PEC": {
+      "Attributes": [
+        5
+      ]
+    },
+    "Absorbing": {
+      "Order": 1,
+      "Attributes": [
+        3
+      ]
+    },
+    "Postprocessing": {
+      "Dielectric": [
+        {
+          "Index": 1,
+          "Attributes": [
+            8
+          ],
+          "Type": "SA",
+          "Thickness": 2.0e-3,
+          "Permittivity": 4.0,
+          "LossTan": 2.0e-3,
+          "EdgeAttributes": [
+            5
+          ],
+          "EdgeDistances": [
+            0.2,
+            0.3,
+            0.5,
+            1.0,
+            2.0
+          ]
+        },
+        {
+          "Index": 2,
+          "Attributes": [
+            5
+          ],
+          "Type": "MS",
+          "Thickness": 2.0e-3,
+          "Permittivity": 11.47,
+          "LossTan": 3.0e-4,
+          "EdgeAttributes": [
+            5
+          ],
+          "EdgeDistances": [
+            0.2,
+            0.3,
+            0.5,
+            1.0,
+            2.0
+          ]
+        },
+        {
+          "Index": 3,
+          "Attributes": [
+            5
+          ],
+          "Type": "MA",
+          "Thickness": 2.0e-3,
+          "Permittivity": 10.0,
+          "LossTan": 3.0e-2,
+          "EdgeAttributes": [
+            5
+          ],
+          "EdgeDistances": [
+            0.2,
+            0.3,
+            0.5,
+            1.0,
+            2.0
+          ]
+        }
+      ]
+    }
+  },
+  "Model": {
+    "Refinement": {
+      "Tol": 1.0e-12,
+      "MaxIts": 5,
+      "MaxSize": 12000000,
+      "UpdateFraction": 0.7,
+      "SaveAdaptIterations": true
+    },
+    "Mesh": "mesh/transmon_surface_p1.msh2",
+    "L0": 1.0e-6
+  },
+  "Domains": {
+    "Postprocessing": {
+      "Energy": [
+        {
+          "Attributes": [
+            1
+          ],
+          "Index": 1
+        }
+      ]
+    },
+    "Materials": [
+      {
+        "Permittivity": 1.0,
+        "Attributes": [
+          2
+        ],
+        "Permeability": 1.0
+      },
+      {
+        "LossTan": [
+          3.0e-5,
+          3.0e-5,
+          8.6e-5
+        ],
+        "Permittivity": [
+          9.3,
+          9.3,
+          11.5
+        ],
+        "Attributes": [
+          1
+        ],
+        "Permeability": [
+          0.99999975,
+          0.99999975,
+          0.99999979
+        ],
+        "MaterialAxes": [
+          [
+            0.8,
+            0.6,
+            0.0
+          ],
+          [
+            -0.6,
+            0.8,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      }
+    ]
+  },
+  "Solver": {
+    "Eigenmode": {
+      "N": 2,
+      "Save": 2,
+      "Tol": 1.0e-8,
+      "Target": 2.5
+    },
+    "Order": 1,
+    "Linear": {
+      "Type": "STRUMPACK",
+      "Tol": 1.0e-12,
+      "MaxIts": 500
+    }
+  }
+}
