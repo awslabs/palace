@@ -78,10 +78,9 @@ spack:
     - palace@develop+libxsmm+superlu-dist+mumps+sundials+strumpack+slepc+arpack+int64 %gcc@16 ^openblas ^openmpi schedulers=none fabrics=ofi
     override:
       packages:
-        # Enable AWS EFA. Pin @main so the shm connreq diagnostic patch
-        # (gated when="@main") deterministically applies.
+        # Enable AWS EFA
         libfabric:
-          require: "@main fabrics=efa,lnx,mrail,rxm,shm,sockets,tcp,udp"
+          require: fabrics=efa,lnx,mrail,rxm,shm,sockets,tcp,udp
         # We do not want to include the full Python stack in the container
         rdma-core:
           require: ~pyverbs

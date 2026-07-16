@@ -46,6 +46,18 @@ RUN mkdir -p /opt/spack-environment && \
           echo "Cannot apply $patch (may already be merged)"; \
         fi; \
       fi; \
+    done && \
+    # Copy libfabric source patches into the builtin package dir so Spack applies them
+    LIBFAB_PKG="$(spack location --repo builtin)/packages/libfabric" && \
+    for p in /opt/palace/spack_repo/libfabric_patches/*.diff; do \
+      if [ -f "$p" ]; then \
+        echo "Installing libfabric source patch: $p"; \
+        cp "$p" "$LIBFAB_PKG/"; \
+        PNAME=$(basename "$p"); \
+        if ! grep -q "$PNAME" "$LIBFAB_PKG/package.py"; then \
+          sed -i "/patch(\"nvhpc-symver.patch\"/a\\    patch(\"$PNAME\", when=\"@2.5.1\")" "$LIBFAB_PKG/package.py"; \
+        fi; \
+      fi; \
     done
 
 # What we want to install and how we want to install it
@@ -72,19 +84,9 @@ RUN cd {{ paths.environment }} && spack env activate . && \
     spack install --include-build-deps --only dependencies -j$(nproc) --fail-fast && \
     spack install --only package --no-cache -j$(nproc) --fail-fast
 
-# Assert the shm connreq diagnostic patch is actually in the INSTALLED libfabric
-# (the shm_connreq_diag.patch directive changes the spec hash, so the buildcache
-# cannot serve a pristine binary — but verify the shipped .so anyway, since a
-# silently-unpatched libfabric is the exact failure mode we are guarding against).
+# Push deps only; Palace itself is branch-specific (see above).
 RUN cd {{ paths.environment }} && spack env activate . && \
-    LF="$(spack location -i libfabric)/lib/libfabric.so.1" && \
-    strings "$LF" | grep -q "SMR_DIAG_12542_BUILD_MARKER" \
-      || { echo "ERROR: installed libfabric lacks the shm connreq diagnostic patch"; exit 1; } && \
-    echo "OK: installed libfabric carries the diagnostic marker"
-
-# Diagnostic branch: do NOT push to the shared buildcache. This image carries an
-# instrumented libfabric (shm connreq diagnostics); pushing it would serve the
-# patched binary to unrelated builds. Skip the push entirely on this branch.
+    spack buildcache push --only dependencies --unsigned local-buildcache
 
 # Remove unnecessary deps
 # TODO: Remove gcc and build-only dependencies to reduce image size.
