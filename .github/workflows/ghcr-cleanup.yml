@@ -1,7 +1,7 @@
 # GHCR Buildcache Cleanup
 #
 # The Spack CI (spack.yml) pushes binary packages to an OCI buildcache at
-# ghcr.io/awslabs/palace-develop-testing. Over time, this accumulates stale
+# ghcr.io/awslabs/palace. Over time, this accumulates stale
 # versions as dependencies get rebuilt with new hashes.
 #
 # This workflow periodically prunes old versions, keeping the most recent ones
@@ -27,10 +27,10 @@
 #   1. Install crane: https://github.com/google/go-containerregistry
 #   2. Authenticate: echo $TOKEN | crane auth login ghcr.io -u USER --password-stdin
 #   3. Label any tag:
-#        crane mutate ghcr.io/awslabs/palace-develop-testing:index.spack \
+#        crane mutate ghcr.io/awslabs/palace:index.spack \
 #          --label org.opencontainers.image.source=https://github.com/awslabs/palace
 #   4. Verify the link:
-#        gh api orgs/awslabs/packages/container/palace-develop-testing \
+#        gh api orgs/awslabs/packages/container/palace \
 #          --jq '.repository.full_name'
 #
 # Or as a GitHub Actions step:
@@ -43,7 +43,7 @@
 #   - name: Link GHCR package to repository
 #     run: |
 #       echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login ghcr.io -u ${{ github.actor }} --password-stdin
-#       crane mutate ghcr.io/awslabs/palace-develop-testing:index.spack \
+#       crane mutate ghcr.io/awslabs/palace:index.spack \
 #         --label org.opencontainers.image.source=https://github.com/${{ github.repository }}
 name: Cleanup GHCR Buildcache
 
@@ -66,8 +66,8 @@ jobs:
           REPO_OWNER: ${{ github.repository_owner }}
         shell: bash
         run: |
-          gh api "/orgs/${REPO_OWNER}/packages/container/palace-develop-testing" \
-            --jq '"palace-develop-testing versions before cleanup: \(.version_count)"'
+          gh api "/orgs/${REPO_OWNER}/packages/container/palace" \
+            --jq '"palace versions before cleanup: \(.version_count)"'
 
       # Each Spack spec is a tagged version in the container package. We keep
       # the most recent 500 versions (roughly 5-10 full build sets) and delete
@@ -77,7 +77,7 @@ jobs:
         continue-on-error: true
         uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5
         with: &delete-package-versions-inputs
-          package-name: palace-develop-testing
+          package-name: palace
           package-type: container
           owner: awslabs
           min-versions-to-keep: 500
@@ -96,5 +96,5 @@ jobs:
           REPO_OWNER: ${{ github.repository_owner }}
         shell: bash
         run: |
-          gh api "/orgs/${REPO_OWNER}/packages/container/palace-develop-testing" \
-            --jq '"palace-develop-testing versions after cleanup: \(.version_count)"'
+          gh api "/orgs/${REPO_OWNER}/packages/container/palace" \
+            --jq '"palace versions after cleanup: \(.version_count)"'

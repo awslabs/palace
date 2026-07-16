@@ -136,7 +136,7 @@ jobs:
                 url: https://binaries.spack.io/develop
               local-buildcache:
                 binary: true
-                url: oci://ghcr.io/awslabs/palace-develop-testing
+                url: oci://ghcr.io/awslabs/palace
                 signed: false
                 access_pair:
                   id_variable: GITHUB_USER
@@ -165,7 +165,12 @@ jobs:
 
       - name: Configure Binary Mirror Keys for Spack
         if: needs.filter.outputs.should_build == 'true'
-        run: spack -e . buildcache keys -y --install --trust
+        run: |
+          # The local GHCR buildcache is unsigned and may not exist yet when a
+          # new cache package is bootstrapped. Only install/trust keys from
+          # Spack's public binary mirror; installs will still use GHCR binaries
+          # opportunistically and fall back to source builds on cache misses.
+          spack -e . buildcache keys -y --install --trust spack
 
       - name: Bootstrap Spack
         if: needs.filter.outputs.should_build == 'true'
