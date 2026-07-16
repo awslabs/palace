@@ -1,5 +1,7 @@
---- a/prov/shm/src/smr_av.c	2026-07-16 12:00:39
-+++ b/prov/shm/src/smr_av.c	2026-07-16 12:00:39
+diff --git a/prov/shm/src/smr_av.c b/prov/shm/src/smr_av.c
+index 9977ed056..0ae15011d 100644
+--- a/prov/shm/src/smr_av.c
++++ b/prov/shm/src/smr_av.c
 @@ -33,6 +33,9 @@
  #include "smr.h"
  #include <sys/stat.h>
@@ -10,7 +12,7 @@
  void smr_map_to_endpoint(struct smr_ep *ep, int64_t id)
  {
  	int ret;
-@@ -111,6 +114,7 @@
+@@ -111,6 +114,7 @@ int smr_map_to_region(struct smr_map *map, int64_t id)
  	if (fd < 0) {
  		FI_WARN_ONCE(&smr_prov, FI_LOG_AV,
  			     "shm_open error: name %s errno %d\n", name, errno);
@@ -18,7 +20,7 @@
  		return -errno;
  	}
  
-@@ -118,11 +122,13 @@
+@@ -118,11 +122,13 @@ int smr_map_to_region(struct smr_map *map, int64_t id)
  	snprintf(tmp, sizeof(tmp), "%s%s", SMR_DIR, name);
  	if (stat(tmp, &sts) == -1) {
  		ret = -errno;
@@ -32,7 +34,7 @@
  		goto out;
  	}
  
-@@ -131,6 +137,7 @@
+@@ -131,6 +137,7 @@ int smr_map_to_region(struct smr_map *map, int64_t id)
  	if (peer == MAP_FAILED) {
  		FI_WARN(&smr_prov, FI_LOG_AV, "mmap error\n");
  		ret = -errno;
@@ -40,7 +42,7 @@
  		goto out;
  	}
  
-@@ -140,6 +147,7 @@
+@@ -140,6 +147,7 @@ int smr_map_to_region(struct smr_map *map, int64_t id)
  		FI_WARN(&smr_prov, FI_LOG_AV, "peer not initialized\n");
  		munmap(peer, sizeof(*peer));
  		ret = -FI_ENOENT;
@@ -48,8 +50,10 @@
  		goto out;
  	}
  
---- a/prov/shm/src/smr_ep.c	2026-07-16 12:00:39
-+++ b/prov/shm/src/smr_ep.c	2026-07-16 12:00:39
+diff --git a/prov/shm/src/smr_ep.c b/prov/shm/src/smr_ep.c
+index 2e1c64a56..2ae904ff4 100644
+--- a/prov/shm/src/smr_ep.c
++++ b/prov/shm/src/smr_ep.c
 @@ -35,6 +35,53 @@
  #include "smr_signal.h"
  #include "ofi_mb.h"
@@ -104,7 +108,7 @@
  extern struct fi_ops_msg smr_msg_ops, smr_no_recv_msg_ops;
  extern struct fi_ops_tagged smr_tag_ops, smr_no_recv_tag_ops;
  extern struct fi_ops_rma smr_rma_ops;
-@@ -210,15 +257,53 @@
+@@ -210,16 +257,54 @@ int64_t smr_verify_peer(struct smr_ep *ep, fi_addr_t fi_addr)
  	if (smr_peer_data(ep->region)[id].id >= 0)
  		return id;
  
@@ -134,7 +138,7 @@
  	}
  
  	smr_send_name(ep, id);
-+
+ 
 +	/* SENDER waiting for the receiver to ack our connreq. peer_data.id<0
 +	 * means no ack yet. Dump full row ONCE at the stuck threshold, keyed by
 +	 * NAME so it can be matched to a receiver drop/accept. */
@@ -156,11 +160,14 @@
 +				 ep->name, ep->map->peers[id].name);
 +		}
 +	}
- 
++
  	return -1;
  }
---- a/prov/shm/src/smr_progress.c	2026-07-16 12:00:39
-+++ b/prov/shm/src/smr_progress.c	2026-07-16 12:00:39
+ 
+diff --git a/prov/shm/src/smr_progress.c b/prov/shm/src/smr_progress.c
+index 0cb8b9d50..3cfb42e1f 100644
+--- a/prov/shm/src/smr_progress.c
++++ b/prov/shm/src/smr_progress.c
 @@ -33,6 +33,50 @@
  #include "smr.h"
  #include "smr_dsa.h"
@@ -212,7 +219,7 @@
  #include "ofi_mb.h"
  
  static void smr_progress_overflow(struct smr_ep *ep)
-@@ -835,10 +879,20 @@
+@@ -835,10 +879,20 @@ static void smr_progress_connreq(struct smr_ep *ep, struct smr_cmd *cmd)
  
  	peer_smr = smr_peer_region(ep, idx);
  	if (!peer_smr) {
@@ -233,7 +240,7 @@
  			goto out;
  		}
  		peer_smr = smr_peer_region(ep, idx);
-@@ -867,6 +921,9 @@
+@@ -867,6 +921,9 @@ static void smr_progress_connreq(struct smr_ep *ep, struct smr_cmd *cmd)
  
  	//set last to indicate to peer that setup is complete
  	smr_peer_data(peer_smr)[cmd->hdr.tx_id].id = idx;

@@ -78,15 +78,35 @@ RUN cd {{ paths.environment }} && spack env activate . && \
       echo "WARNING: Binary cache is not reachable, all packages will be built from source"; \
     fi
 
+# Build the instrumented libfabric FROM SOURCE (--no-cache): the shared binary
+# mirror holds a stale/pristine artifact under this patched spec hash, so a
+# cache fetch would ship an UNINSTRUMENTED libfabric. Force a source build, then
+# assert the diagnostic marker is in the installed .so (fail loudly otherwise).
+RUN cd {{ paths.environment }} && spack env activate . && \
+    spack install --no-cache -j$(nproc) --fail-fast libfabric && \
+    LF="$(spack location -i libfabric)/lib/libfabric.so.1" && \
+    strings "$LF" | grep -q "SMR_DIAG_12542_BUILD_MARKER" \
+      || { echo "ERROR: installed libfabric lacks the shm connreq diagnostic patch"; exit 1; } && \
+    echo "OK: installed libfabric carries the diagnostic marker"
+
 # palace@develop is pinned to branch="main", so every branch shares a spec
 # hash with different source. Build Palace --no-cache and push only deps.
 RUN cd {{ paths.environment }} && spack env activate . && \
     spack install --include-build-deps --only dependencies -j$(nproc) --fail-fast && \
     spack install --only package --no-cache -j$(nproc) --fail-fast
 
-# Push deps only; Palace itself is branch-specific (see above).
+# Final gate: re-assert the marker AFTER the full install, since the dependency
+# solve above could otherwise re-fetch a pristine libfabric from the cache and
+# clobber the source-built one. This is what the shipped SIF actually contains.
 RUN cd {{ paths.environment }} && spack env activate . && \
-    spack buildcache push --only dependencies --unsigned local-buildcache
+    LF="$(spack location -i libfabric)/lib/libfabric.so.1" && \
+    strings "$LF" | grep -q "SMR_DIAG_12542_BUILD_MARKER" \
+      || { echo "ERROR: shipped libfabric lacks the shm connreq diagnostic patch"; exit 1; } && \
+    echo "OK: shipped libfabric carries the diagnostic marker"
+
+# Diagnostic branch: do NOT push to the shared buildcache. This image carries an
+# instrumented libfabric; pushing it (or a mis-built artifact under its hash)
+# would poison the shared cache for other builds — the failure mode we just hit.
 
 # Remove unnecessary deps
 # TODO: Remove gcc and build-only dependencies to reduce image size.
