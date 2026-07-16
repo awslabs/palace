@@ -55,7 +55,7 @@ RUN mkdir -p /opt/spack-environment && \
         cp "$p" "$LIBFAB_PKG/"; \
         PNAME=$(basename "$p"); \
         if ! grep -q "$PNAME" "$LIBFAB_PKG/package.py"; then \
-          sed -i "/patch(\"nvhpc-symver.patch\"/a\\    patch(\"$PNAME\", when=\"@2.6.0\")" "$LIBFAB_PKG/package.py"; \
+          sed -i "/patch(\"nvhpc-symver.patch\"/a\\    patch(\"$PNAME\", when=\"@main\")" "$LIBFAB_PKG/package.py"; \
         fi; \
       fi; \
     done
@@ -79,7 +79,7 @@ RUN cd {{ paths.environment }} && spack env activate . && \
     fi
 
 # Concretize the environment, then build the env's own libfabric spec from source
-# (--no-cache) so the binary mirror can't serve a pristine (unpatched) 2.6.0 for
+# (--no-cache) so the binary mirror can't serve a pristine (unpatched) libfabric for
 # the patched spec. Assert the diagnostic build marker is actually in the shipped
 # .so — a silently unpatched libfabric is the exact failure mode we guard against.
 RUN cd {{ paths.environment }} && spack env activate . && \
