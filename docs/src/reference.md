@@ -603,9 +603,11 @@ quantities expose a matching region that is separated from the unresolved singul
 They are diagnostics for constructing an edge subgrid correction; they do not by
 themselves replace the raw participation in `surface-Q.csv`. The matching radii should be
 large compared with the local surface mesh size and small compared with nearby geometric
-features. In 3D, the perimeter is represented by straight segments joining the endpoints
-of the selected surface mesh edges; curved high-order edges are therefore approximated by
-their piecewise-linear mesh geometry.
+features. `EdgeExcludeAttributes` may be used to remove perimeter segments that lie on
+artificial boundaries, such as the front and back faces of an extruded geometry. In 3D,
+the perimeter is represented by straight segments joining the endpoints of the selected
+surface mesh edges; curved high-order edges are therefore approximated by their
+piecewise-linear mesh geometry.
 
 ## Lumped parameter extraction
 

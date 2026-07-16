@@ -347,6 +347,7 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
                        {"Thickness", 2.0e-3},
                        {"Permittivity", 4.0},
                        {"EdgeAttributes", {1, 2}},
+                       {"EdgeExcludeAttributes", {5, 6}},
                        {"EdgeDistances", {0.5, 1.0}}};
     CHECK(ValidateConfig(dielectric, "Dielectric").empty());
 
@@ -357,6 +358,10 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     auto missing_attributes = dielectric;
     missing_attributes.erase("EdgeAttributes");
     CHECK(!ValidateConfig(missing_attributes, "Dielectric").empty());
+
+    auto exclusions_without_distances = dielectric;
+    exclusions_without_distances.erase("EdgeDistances");
+    CHECK(!ValidateConfig(exclusions_without_distances, "Dielectric").empty());
 
     auto duplicate_distances = dielectric;
     duplicate_distances["EdgeDistances"] = {0.5, 0.5};

@@ -659,6 +659,10 @@ public:
   // edge-distance postprocessing.
   std::vector<int> edge_attributes = {};
 
+  // Boundary attributes whose geometric edge segments are excluded from the metal
+  // perimeter used for edge-distance postprocessing.
+  std::vector<int> edge_exclude_attributes = {};
+
   // Matching radii for edge-distance postprocessing [m].
   std::vector<double> edge_distances = {};
 

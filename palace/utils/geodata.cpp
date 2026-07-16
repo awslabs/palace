@@ -1476,6 +1476,96 @@ inline void GetBdrElementNeighborTransforms(int i, const mfem::ParMesh &mesh,
 
 }  // namespace
 
+std::vector<BoundaryEdgeSegment>
+GetBoundaryElementEdgeSegments(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
+{
+  MFEM_VERIFY(mesh.Dimension() == 2 || mesh.Dimension() == 3,
+              "Boundary element edge extraction is only supported for 2D and 3D meshes!");
+  MFEM_VERIFY(marker.Size() >= (mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0),
+              "Invalid boundary attribute marker for boundary element edge extraction!");
+
+  std::vector<double> local_coordinates;
+  mfem::Array<int> edges, orientations, vertices;
+  auto AddSegment = [&](int v0, int v1)
+  {
+    for (const int vertex : {v0, v1})
+    {
+      const double *x = mesh.GetVertex(vertex);
+      for (int d = 0; d < 3; d++)
+      {
+        local_coordinates.push_back(d < mesh.SpaceDimension() ? x[d] : 0.0);
+      }
+    }
+  };
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    const int attr = mesh.GetBdrAttribute(be);
+    if (attr <= 0 || attr > marker.Size() || !marker[attr - 1])
+    {
+      continue;
+    }
+    if (mesh.Dimension() == 2)
+    {
+      mesh.GetBdrElementVertices(be, vertices);
+      MFEM_ASSERT(vertices.Size() == 2,
+                  "Unexpected boundary element geometry in 2D edge extraction!");
+      AddSegment(vertices[0], vertices[1]);
+    }
+    else
+    {
+      mesh.GetBdrElementEdges(be, edges, orientations);
+      for (int edge : edges)
+      {
+        mesh.GetEdgeVertices(edge, vertices);
+        MFEM_ASSERT(vertices.Size() == 2, "Unexpected boundary face edge geometry!");
+        AddSegment(vertices[0], vertices[1]);
+      }
+    }
+  }
+
+  const int local_count = static_cast<int>(local_coordinates.size() / 6);
+  std::vector<int> entity_counts(Mpi::Size(mesh.GetComm()));
+  Mpi::Allgather(1, &local_count, entity_counts.data(), mesh.GetComm());
+
+  std::vector<int> coordinate_counts(entity_counts.size()),
+      coordinate_displacements(entity_counts.size());
+  int total_entities = 0;
+  for (std::size_t rank = 0; rank < entity_counts.size(); rank++)
+  {
+    coordinate_counts[rank] = 6 * entity_counts[rank];
+    coordinate_displacements[rank] = 6 * total_entities;
+    total_entities += entity_counts[rank];
+  }
+
+  std::vector<double> global_coordinates(6 * total_entities);
+  Mpi::Allgatherv(static_cast<int>(local_coordinates.size()), local_coordinates.data(),
+                  global_coordinates.data(), coordinate_counts.data(),
+                  coordinate_displacements.data(), mesh.GetComm());
+
+  using Point = std::array<double, 3>;
+  using SegmentKey = std::pair<Point, Point>;
+  std::map<SegmentKey, BoundaryEdgeSegment> unique_segments;
+  for (int i = 0; i < total_entities; i++)
+  {
+    BoundaryEdgeSegment segment;
+    std::copy_n(global_coordinates.data() + 6 * i, 3, segment.p0.begin());
+    std::copy_n(global_coordinates.data() + 6 * i + 3, 3, segment.p1.begin());
+    if (segment.p1 < segment.p0)
+    {
+      std::swap(segment.p0, segment.p1);
+    }
+    unique_segments.try_emplace(SegmentKey{segment.p0, segment.p1}, segment);
+  }
+
+  std::vector<BoundaryEdgeSegment> segments;
+  segments.reserve(unique_segments.size());
+  for (const auto &[key, segment] : unique_segments)
+  {
+    segments.push_back(segment);
+  }
+  return segments;
+}
+
 std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &mesh,
                                                          const mfem::Array<int> &marker)
 {

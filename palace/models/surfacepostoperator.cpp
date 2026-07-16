@@ -242,6 +242,26 @@ public:
   }
 };
 
+bool IsCoincidentWithExcludedBoundary(const mesh::BoundaryEdgeSegment &segment,
+                                      const EdgeDistanceTree &excluded_edge_distance_tree,
+                                      int space_dimension,
+                                      double distance_tolerance_squared)
+{
+  mfem::Vector point(space_dimension);
+  for (const double t : {0.0, 0.5, 1.0})
+  {
+    for (int d = 0; d < space_dimension; d++)
+    {
+      point[d] = (1.0 - t) * segment.p0[d] + t * segment.p1[d];
+    }
+    if (excluded_edge_distance_tree.DistanceSquared(point) > distance_tolerance_squared)
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
@@ -420,7 +440,9 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
   MFEM_VERIFY(postpro.dielectric.empty() || problem_type != ProblemType::MAGNETOSTATIC,
               "Interface dielectric loss postprocessing is not available for "
               "magnetostatic problems!");
-  std::map<std::vector<int>, std::shared_ptr<const EdgeDistanceTree>> edge_distance_trees;
+  using EdgeDistanceTreeKey = std::pair<std::vector<int>, std::vector<int>>;
+  std::map<EdgeDistanceTreeKey, std::shared_ptr<const EdgeDistanceTree>>
+      edge_distance_trees;
   for (const auto &[idx, data] : postpro.dielectric)
   {
     auto it = eps_surfs.try_emplace(idx, data, bdr_attr_marker).first;
@@ -429,7 +451,8 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
       continue;
     }
 
-    auto tree_it = edge_distance_trees.find(data.edge_attributes);
+    const EdgeDistanceTreeKey tree_key{data.edge_attributes, data.edge_exclude_attributes};
+    auto tree_it = edge_distance_trees.find(tree_key);
     if (tree_it == edge_distance_trees.end())
     {
       struct EdgeProperties
@@ -443,9 +466,45 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
       auto edge_segments = mesh::GetBoundaryEdgeSegments(mesh, edge_attr_marker);
       MFEM_VERIFY(!edge_segments.empty(),
                   "No perimeter was found for interface dielectric edge attributes!");
+      if (!data.edge_exclude_attributes.empty())
+      {
+        const auto edge_exclude_attr_list = SetUpBoundaryProperties(
+            EdgeProperties{data.edge_exclude_attributes}, bdr_attr_marker);
+        const auto edge_exclude_attr_marker =
+            mesh::AttrToMarker(bdr_attr_marker.Size(), edge_exclude_attr_list);
+        auto excluded_edge_segments =
+            mesh::GetBoundaryElementEdgeSegments(mesh, edge_exclude_attr_marker);
+        MFEM_VERIFY(!excluded_edge_segments.empty(),
+                    "No boundary geometry was found for interface dielectric edge "
+                    "exclusion attributes!");
+
+        const EdgeDistanceTree excluded_edge_distance_tree(
+            std::move(excluded_edge_segments));
+        mfem::Vector bbmin, bbmax;
+        mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
+        double extent = 0.0;
+        for (int d = 0; d < mesh.SpaceDimension(); d++)
+        {
+          extent = std::max(extent, bbmax[d] - bbmin[d]);
+        }
+        MFEM_VERIFY(extent > 0.0,
+                    "Degenerate mesh geometry for interface dielectric edge exclusion!");
+        const double distance_tolerance_squared = 1.0e-20 * extent * extent;
+        edge_segments.erase(std::remove_if(edge_segments.begin(), edge_segments.end(),
+                                           [&](const auto &segment)
+                                           {
+                                             return IsCoincidentWithExcludedBoundary(
+                                                 segment, excluded_edge_distance_tree,
+                                                 mesh.SpaceDimension(),
+                                                 distance_tolerance_squared);
+                                           }),
+                            edge_segments.end());
+        MFEM_VERIFY(!edge_segments.empty(),
+                    "Interface dielectric edge exclusion removed the entire perimeter!");
+      }
       tree_it =
           edge_distance_trees
-              .try_emplace(data.edge_attributes,
+              .try_emplace(tree_key,
                            std::make_shared<EdgeDistanceTree>(std::move(edge_segments)))
               .first;
     }

@@ -110,7 +110,8 @@ file. These include:
     diagnostics to `surface-Q-edge.csv`. For each matching radius ``R``, these contain the
     interface energy and participation outside ``R`` and in the annulus
     ``R \leq d < 2R``, where ``d`` is the distance to the geometric perimeter of the
-    selected edge attributes.
+    selected edge attributes. `EdgeExcludeAttributes` can remove perimeter segments on
+    artificial boundaries such as extrusion end faces.
 
 ## Visualization
 

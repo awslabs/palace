@@ -14,11 +14,13 @@
 
 #include "test-helpers.hpp"
 
+#include "fem/fespace.hpp"
 #include "utils/geodata.hpp"
 #include "utils/geodata_impl.hpp"
 
 #include "fem/interpolator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
@@ -503,6 +505,74 @@ TEST_CASE("Boundary edge extraction", "[geodata][Parallel]")
     }
     CHECK_THAT(length, WithinAbs(10.0, 1.0e-12));
   }
+}
+
+TEST_CASE("Boundary element edge extraction", "[geodata][Parallel]")
+{
+  SECTION("2D boundary segments")
+  {
+    auto serial_mesh =
+        mfem::Mesh::MakeCartesian2D(4, 2, mfem::Element::TRIANGLE, false, 2.0, 1.0);
+    mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+    auto marker = mesh::AttrToMarker(mesh.bdr_attributes.Max(), std::vector<int>{1});
+    auto segments = mesh::GetBoundaryElementEdgeSegments(mesh, marker);
+
+    REQUIRE(segments.size() == 4);
+    double length = 0.0;
+    for (const auto &segment : segments)
+    {
+      length += std::abs(segment.p1[0] - segment.p0[0]);
+      CHECK_THAT(segment.p0[1], WithinAbs(0.0, 1.0e-12));
+      CHECK_THAT(segment.p1[1], WithinAbs(0.0, 1.0e-12));
+    }
+    CHECK_THAT(length, WithinAbs(2.0, 1.0e-12));
+  }
+
+  SECTION("3D boundary face edges")
+  {
+    auto serial_mesh =
+        mfem::Mesh::MakeCartesian3D(2, 3, 1, mfem::Element::TETRAHEDRON, 2.0, 3.0, 1.0);
+    mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+    auto marker = mesh::AttrToMarker(mesh.bdr_attributes.Max(), std::vector<int>{1});
+    auto segments = mesh::GetBoundaryElementEdgeSegments(mesh, marker);
+
+    REQUIRE(!segments.empty());
+    for (const auto &segment : segments)
+    {
+      CHECK_THAT(segment.p0[2], WithinAbs(0.0, 1.0e-12));
+      CHECK_THAT(segment.p1[2], WithinAbs(0.0, 1.0e-12));
+    }
+  }
+}
+
+TEST_CASE("Boundary edge exclusion", "[geodata][Serial]")
+{
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(2, 2, 1, mfem::Element::TETRAHEDRON));
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+  const int dim = par_mesh->Dimension();
+  Mesh palace_mesh(std::move(par_mesh));
+
+  mfem::H1_FECollection h1_fec(1, dim);
+  mfem::ND_FECollection nd_fec(1, dim);
+  FiniteElementSpace h1_fespace(palace_mesh, &h1_fec);
+  FiniteElementSpace nd_fespace(palace_mesh, &nd_fec);
+
+  config::MaterialData material;
+  material.attributes = {1};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({material}, periodic, ProblemType::ELECTROSTATIC, palace_mesh);
+
+  config::InterfaceDielectricData dielectric;
+  dielectric.attributes = {1};
+  dielectric.edge_attributes = {1};
+  dielectric.edge_exclude_attributes = {1};
+  dielectric.edge_distances = {0.1};
+  config::BoundaryPostData postpro;
+  postpro.dielectric.try_emplace(1, std::move(dielectric));
+
+  CHECK_THROWS(SurfacePostOperator(postpro, ProblemType::ELECTROSTATIC, mat_op, h1_fespace,
+                                   nd_fespace));
 }
 
 TEST_CASE("Boundary edge extraction on cracked 3D sheet", "[geodata][Serial][Parallel]")

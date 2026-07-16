@@ -82,3 +82,5 @@ features also violate the locally extruded cross-section assumption, so the
 radius sweep should show a stable interval between the fabrication scale and
 the next geometric feature. Components with multiple fabrication stacks should
 use separate dielectric entries and edge-attribute sets for each stack.
+For truncated or extruded models, use `EdgeExcludeAttributes` to omit artificial
+cut-plane boundaries from the physical metal perimeter.

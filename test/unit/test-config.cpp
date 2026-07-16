@@ -1280,6 +1280,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                {"Permittivity", 4.0},
                {"LossTan", 0.002},
                {"EdgeAttributes", {5}},
+               {"EdgeExcludeAttributes", {6, 7}},
                {"EdgeDistances", {1.0e-6, 2.0e-6}}}}}}}}},
         {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
 
@@ -1322,6 +1323,10 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(r2.uniform_ref_levels == r1.uniform_ref_levels);
     CHECK(r2.ser_uniform_ref_levels == r1.ser_uniform_ref_levels);
     CHECK(iodata2.boundaries.farfield.order == iodata1.boundaries.farfield.order);
+    REQUIRE(iodata1.boundaries.postpro.dielectric.count(1) == 1);
+    REQUIRE(iodata2.boundaries.postpro.dielectric.count(1) == 1);
+    CHECK(iodata2.boundaries.postpro.dielectric.at(1).edge_exclude_attributes ==
+          iodata1.boundaries.postpro.dielectric.at(1).edge_exclude_attributes);
     REQUIRE(iodata1.boundaries.conductivity.size() == 1);
     REQUIRE(iodata2.boundaries.conductivity.size() == 1);
     CHECK(iodata2.boundaries.conductivity[0].h == iodata1.boundaries.conductivity[0].h);

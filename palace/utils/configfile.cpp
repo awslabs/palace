@@ -624,11 +624,16 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
   std::sort(attributes.begin(), attributes.end());
   edge_attributes = dielectric.value("EdgeAttributes", std::vector<int>{});
   std::sort(edge_attributes.begin(), edge_attributes.end());
+  edge_exclude_attributes = dielectric.value("EdgeExcludeAttributes", std::vector<int>{});
+  std::sort(edge_exclude_attributes.begin(), edge_exclude_attributes.end());
   edge_distances = dielectric.value("EdgeDistances", std::vector<double>{});
   std::sort(edge_distances.begin(), edge_distances.end());
   MFEM_VERIFY(edge_attributes.empty() == edge_distances.empty(),
               "\"EdgeAttributes\" and \"EdgeDistances\" must be specified together for "
               "interface dielectric postprocessing!");
+  MFEM_VERIFY(edge_exclude_attributes.empty() || !edge_attributes.empty(),
+              "\"EdgeExcludeAttributes\" requires \"EdgeAttributes\" and "
+              "\"EdgeDistances\" for interface dielectric postprocessing!");
   MFEM_VERIFY(std::all_of(edge_distances.begin(), edge_distances.end(), [](double distance)
                           { return std::isfinite(distance) && distance > 0.0; }),
               "Interface dielectric \"EdgeDistances\" must be finite and positive!");
