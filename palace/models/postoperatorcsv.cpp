@@ -125,6 +125,15 @@ Measurement Measurement::Dimensionalize(const Units &units,
     auto &eps = measurement_cache.interface_eps_i.emplace_back(data);
     eps.energy = units.Dimensionalize<Units::ValueType::ENERGY>(data.energy);
   }
+  for (const auto &data : nondim_measurement_cache.interface_edge_i)
+  {
+    auto &edge = measurement_cache.interface_edge_i.emplace_back(data);
+    edge.distance = units.Dimensionalize<Units::ValueType::LENGTH>(data.distance);
+    edge.energy_outside =
+        units.Dimensionalize<Units::ValueType::ENERGY>(data.energy_outside);
+    edge.energy_annulus =
+        units.Dimensionalize<Units::ValueType::ENERGY>(data.energy_annulus);
+  }
 
   measurement_cache.farfield.thetaphis =
       nondim_measurement_cache.farfield.thetaphis;  // NONE
@@ -267,6 +276,15 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   {
     auto &eps = measurement_cache.interface_eps_i.emplace_back(data);
     eps.energy = units.Nondimensionalize<Units::ValueType::ENERGY>(data.energy);
+  }
+  for (const auto &data : dim_measurement_cache.interface_edge_i)
+  {
+    auto &edge = measurement_cache.interface_edge_i.emplace_back(data);
+    edge.distance = units.Nondimensionalize<Units::ValueType::LENGTH>(data.distance);
+    edge.energy_outside =
+        units.Nondimensionalize<Units::ValueType::ENERGY>(data.energy_outside);
+    edge.energy_annulus =
+        units.Nondimensionalize<Units::ValueType::ENERGY>(data.energy_annulus);
   }
 
   measurement_cache.farfield.thetaphis = dim_measurement_cache.farfield.thetaphis;  // NONE
@@ -649,6 +667,99 @@ void PostOperatorCSV<solver_t>::PrintSurfaceQ()
     surface_Q->table[fmt::format("Q_{}_{}", data.idx, m_ex_idx)] << data.quality_factor;
   }
   surface_Q->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::InitializeSurfaceQEdge(
+    const SurfacePostOperator &surf_post_op)
+{
+  InitializeSurfaceQEdge(surf_post_op.GetNInterfaceEdgeEntries());
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::InitializeSurfaceQEdge(std::size_t nr_entries)
+{
+  nr_interface_edge_entries = nr_entries;
+  if (nr_interface_edge_entries == 0)
+  {
+    return;
+  }
+
+  surface_Q_edge = TableWithCSVFile(post_dir / "surface-Q-edge.csv", reload_table);
+  Table reference;
+  reference.reserve(
+      nr_expected_measurement_rows * ex_idx_v_all.size() * nr_interface_edge_entries, 8);
+  reference.insert("idx", LabelIndexCol(solver_t), 0, 0, PrecIndexCol(solver_t), "");
+  reference.insert(Column("exc", "exc", 0, 0, 0, ""));
+  reference["exc"].print_as_int = true;
+  reference.insert(Column("interface", "interface", 0, 0, 0, ""));
+  reference["interface"].print_as_int = true;
+  reference.insert("distance", "R (m)");
+  reference.insert("energy_outside", "E_out (J)");
+  reference.insert("participation_outside", "p_out");
+  reference.insert("energy_annulus", "E_ann (J)");
+  reference.insert("participation_annulus", "p_ann");
+
+  if (!reload_table)
+  {
+    surface_Q_edge->table = std::move(reference);
+    return;
+  }
+
+  Table &loaded = surface_Q_edge->table;
+  const auto file = surface_Q_edge->get_csv_filepath();
+  MFEM_VERIFY(!loaded.empty(),
+              fmt::format("The edge diagnostics table loaded from path {} was empty, but "
+                          "the simulation expected a restart with existing data!",
+                          file));
+  MFEM_VERIFY(
+      loaded.n_cols() == reference.n_cols(),
+      fmt::format("The edge diagnostics table loaded from path {} has an incompatible "
+                  "number of columns!",
+                  file));
+  const std::size_t expected_rows =
+      (ex_idx_i * nr_expected_measurement_rows + row_i) * nr_interface_edge_entries;
+  for (std::size_t i = 0; i < loaded.n_cols(); i++)
+  {
+    MFEM_VERIFY(loaded[i].header_text == reference[i].header_text,
+                fmt::format("The edge diagnostics table loaded from path {} has an "
+                            "incompatible column header!",
+                            file));
+    MFEM_VERIFY(loaded[i].n_rows() == expected_rows,
+                fmt::format("The edge diagnostics table loaded from path {} has {} rows, "
+                            "but {} rows were expected at the restart position!",
+                            file, loaded[i].n_rows(), expected_rows));
+    loaded[i].name = reference[i].name;
+    loaded[i].column_group_idx = reference[i].column_group_idx;
+    loaded[i].min_left_padding = reference[i].min_left_padding;
+    loaded[i].float_precision = reference[i].float_precision;
+    loaded[i].fmt_sign = reference[i].fmt_sign;
+    loaded[i].print_as_int = reference[i].print_as_int;
+  }
+  loaded.col_options = reference.col_options;
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::PrintSurfaceQEdge()
+{
+  if (!surface_Q_edge)
+  {
+    return;
+  }
+  MFEM_VERIFY(measurement_cache.interface_edge_i.size() == nr_interface_edge_entries,
+              "Unexpected number of interface edge diagnostics!");
+  for (const auto &data : measurement_cache.interface_edge_i)
+  {
+    surface_Q_edge->table[0] << row_idx_v;
+    surface_Q_edge->table[1] << static_cast<double>(m_ex_idx);
+    surface_Q_edge->table[2] << static_cast<double>(data.idx);
+    surface_Q_edge->table[3] << data.distance;
+    surface_Q_edge->table[4] << data.energy_outside;
+    surface_Q_edge->table[5] << data.participation_outside;
+    surface_Q_edge->table[6] << data.energy_annulus;
+    surface_Q_edge->table[7] << data.participation_annulus;
+  }
+  surface_Q_edge->WriteFullTableTrunc();
 }
 
 template <ProblemType solver_t>
@@ -1654,6 +1765,7 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   InitializeDomainE(post_op.dom_post_op);
   InitializeSurfaceF(post_op.surf_post_op);
   InitializeSurfaceQ(post_op.surf_post_op);
+  InitializeSurfaceQEdge(post_op.surf_post_op);
 
 #if defined(MFEM_USE_GSLIB)
   {
@@ -1733,6 +1845,7 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   PrintDomainE();
   PrintSurfaceF();
   PrintSurfaceQ();
+  PrintSurfaceQEdge();
 
 #if defined(MFEM_USE_GSLIB)
   {

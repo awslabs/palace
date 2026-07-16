@@ -105,7 +105,12 @@ file. These include:
     [https://arxiv.org/pdf/1509.01854.pdf](https://arxiv.org/pdf/1509.01854.pdf) or
     [https://aip.scitation.org/doi/10.1063/1.3637047](https://aip.scitation.org/doi/10.1063/1.3637047)
     for more information. The participation ratios and associated quality factors are
-    written to the file `surface-Q.csv` in the specified output directory.
+    written to the file `surface-Q.csv` in the specified output directory. When
+    `EdgeAttributes` and `EdgeDistances` are specified, Palace also writes edge-distance
+    diagnostics to `surface-Q-edge.csv`. For each matching radius ``R``, these contain the
+    interface energy and participation outside ``R`` and in the annulus
+    ``R \leq d < 2R``, where ``d`` is the distance to the geometric perimeter of the
+    selected edge attributes.
 
 ## Visualization
 

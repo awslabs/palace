@@ -655,6 +655,13 @@ public:
   // List of boundary attributes for this interface dielectric postprocessing index.
   std::vector<int> attributes = {};
 
+  // Boundary attributes whose geometric perimeter defines the metal edges used for
+  // edge-distance postprocessing.
+  std::vector<int> edge_attributes = {};
+
+  // Matching radii for edge-distance postprocessing [m].
+  std::vector<double> edge_distances = {};
+
   InterfaceDielectricData() = default;
   InterfaceDielectricData(const json &dielectric);
 };

@@ -16,6 +16,7 @@ namespace palace
 class GridFunction;
 class IoData;
 class MaterialOperator;
+class EdgeDistanceTree;
 
 namespace config
 {
@@ -60,9 +61,10 @@ private:
   {
     InterfaceDielectric type;
     double t, epsilon, tandelta;
+    std::vector<double> edge_distances;
+    std::shared_ptr<const EdgeDistanceTree> edge_distance_tree;
 
     InterfaceDielectricData(const config::InterfaceDielectricData &data,
-                            const mfem::ParMesh &mesh,
                             const mfem::Array<int> &bdr_attr_marker);
 
     std::unique_ptr<mfem::Coefficient> GetCoefficient(const GridFunction &E,
@@ -94,6 +96,13 @@ private:
                                  const mfem::Array<int> &attr_marker) const;
 
 public:
+  struct InterfaceEdgeEnergy
+  {
+    double distance;
+    double energy_outside;
+    double energy_annulus;
+  };
+
   // Data structures for postprocessing the surface with the given type.
   std::map<int, SurfaceFluxData> flux_surfs;
   std::map<int, InterfaceDielectricData> eps_surfs;
@@ -120,6 +129,10 @@ public:
   // Get surface integrals computing interface dielectric energy.
   double GetInterfaceLossTangent(int idx) const;
   double GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E) const;
+  std::vector<InterfaceEdgeEnergy>
+  GetInterfaceEdgeElectricFieldEnergies(int idx, const GridFunction &E) const;
+
+  std::size_t GetNInterfaceEdgeEntries() const;
 
   int GetVDim() const { return mat_op.SpaceDimension(); };
 };

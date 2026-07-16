@@ -4,6 +4,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/mesh.hpp"
+#include "fixtures.hpp"
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
 #include "models/spaceoperator.hpp"
@@ -439,6 +440,76 @@ public:
       }
     }
   }
+
+  void surface_edge_table(const fs::path &output)
+  {
+    iodata.problem.output = output;
+    const auto csv_path = output / "surface-Q-edge.csv";
+
+    // Write one frequency sample containing two edge diagnostics.
+    iodata.solver.driven.restart = 1;
+    {
+      PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+      REQUIRE_NOTHROW(post_op_csv.InitializeSurfaceQEdge(2));
+      REQUIRE(post_op_csv.surface_Q_edge.has_value());
+      REQUIRE(post_op_csv.surface_Q_edge->table.n_cols() == 8);
+      CHECK(post_op_csv.surface_Q_edge->table.n_rows() == 0);
+      CHECK(post_op_csv.surface_Q_edge->table[0].header_text == "f (GHz)");
+      CHECK(post_op_csv.surface_Q_edge->table[1].header_text == "exc");
+      CHECK(post_op_csv.surface_Q_edge->table[2].header_text == "interface");
+      CHECK(post_op_csv.surface_Q_edge->table[3].header_text == "R (m)");
+      CHECK(post_op_csv.surface_Q_edge->table[4].header_text == "E_out (J)");
+      CHECK(post_op_csv.surface_Q_edge->table[5].header_text == "p_out");
+      CHECK(post_op_csv.surface_Q_edge->table[6].header_text == "E_ann (J)");
+      CHECK(post_op_csv.surface_Q_edge->table[7].header_text == "p_ann");
+
+      post_op_csv.row_idx_v = 2.0;
+      post_op_csv.measurement_cache.interface_edge_i = {
+          {1, 1.0e-6, 2.0e-18, 3.0e-6, 4.0e-18, 5.0e-6},
+          {2, 2.0e-6, 6.0e-18, 7.0e-6, 8.0e-18, 9.0e-6}};
+      REQUIRE_NOTHROW(post_op_csv.PrintSurfaceQEdge());
+    }
+
+    TableWithCSVFile written(csv_path.string(), true);
+    REQUIRE(written.table.n_cols() == 8);
+    REQUIRE(written.table.n_rows() == 2);
+    CHECK(written.table[0].data == std::vector<double>{2.0, 2.0});
+    CHECK(written.table[1].data == std::vector<double>{1.0, 1.0});
+    CHECK(written.table[2].data == std::vector<double>{1.0, 2.0});
+
+    // A restart at the next sample accepts exactly the two existing long-form rows.
+    iodata.solver.driven.restart = 2;
+    {
+      PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+      REQUIRE_NOTHROW(post_op_csv.InitializeSurfaceQEdge(2));
+      REQUIRE(post_op_csv.surface_Q_edge.has_value());
+      CHECK(post_op_csv.surface_Q_edge->table.n_rows() == 2);
+      CHECK(post_op_csv.surface_Q_edge->table[1].name == "exc");
+      CHECK(post_op_csv.surface_Q_edge->table[1].print_as_int);
+      CHECK(post_op_csv.surface_Q_edge->table[2].print_as_int);
+    }
+
+    // A later restart expects another complete pair of rows.
+    iodata.solver.driven.restart = 3;
+    {
+      PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+      CHECK_THROWS_WITH(
+          post_op_csv.InitializeSurfaceQEdge(2),
+          Catch::Matchers::ContainsSubstring(
+              "has 2 rows, but 4 rows were expected at the restart position"));
+    }
+
+    // Header changes are rejected even when the row count is compatible.
+    written.table[4].header_text = "wrong energy header";
+    written.WriteFullTableTrunc();
+    iodata.solver.driven.restart = 2;
+    {
+      PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+      CHECK_THROWS_WITH(
+          post_op_csv.InitializeSurfaceQEdge(2),
+          Catch::Matchers::ContainsSubstring("has an incompatible column header"));
+    }
+  }
 };
 
 TEST_CASE("PostOperatorCSV_Restart_Helper_ExpectedFilling", "[postoperatorcsv][Serial]")
@@ -496,6 +567,13 @@ TEST_CASE("PostOperatorCSV_Restart_TwoExcitation", "[postoperatorcsv][Serial]")
   {
     fixture.restart2_restart_in_middle_ex2();
   }
+}
+
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "PostOperatorCSV_SurfaceQEdge",
+                 "[postoperatorcsv][Serial]")
+{
+  PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart1.json"};
+  fixture.surface_edge_table(temp_dir);
 }
 
 // NOLINTEND(cppcoreguidelines-avoid-do-while)

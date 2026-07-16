@@ -588,6 +588,25 @@ quality factor for interface ``j`` is given by
 where ``\bm{E}_n`` denotes the normal field to the interface and
 ``\bm{E}_t = \bm{E}-\bm{E}_n`` denotes the tangential field.
 
+For an infinitely thin metal model, the fields in these integrals are singular at the
+metal perimeter. Interface dielectric entries may specify `EdgeAttributes` to identify
+the metal sheets whose geometric perimeter defines those edges, together with one or more
+`EdgeDistances`. Palace then evaluates, for each matching radius ``R``,
+
+```math
+\mathcal{E}^{surf}_j(d \geq R), \qquad
+\mathcal{E}^{surf}_j(R \leq d < 2R),
+```
+
+and writes both energies and their participation ratios to `surface-Q-edge.csv`. These
+quantities expose a matching region that is separated from the unresolved singular edge.
+They are diagnostics for constructing an edge subgrid correction; they do not by
+themselves replace the raw participation in `surface-Q.csv`. The matching radii should be
+large compared with the local surface mesh size and small compared with nearby geometric
+features. In 3D, the perimeter is represented by straight segments joining the endpoints
+of the selected surface mesh edges; curved high-order edges are therefore approximated by
+their piecewise-linear mesh geometry.
+
 ## Lumped parameter extraction
 
 For electrostatic simulations, the Maxwell capacitance matrix is computed in the following

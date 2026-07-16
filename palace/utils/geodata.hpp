@@ -4,6 +4,7 @@
 #ifndef PALACE_UTILS_GEODATA_HPP
 #define PALACE_UTILS_GEODATA_HPP
 
+#include <array>
 #include <cmath>
 #include <memory>
 #include <unordered_map>
@@ -319,6 +320,20 @@ inline mfem::Vector Project3Dto2D(const mfem::Vector &p3d, const mfem::Vector &c
 // Helper functions to compute the volume or area for all domain or boundary elements with
 // the given attributes.
 double GetSurfaceArea(const mfem::ParMesh &mesh, const mfem::Array<int> &marker);
+
+// A straight segment describing part of the codimension-two perimeter of a selected set
+// of boundary elements. In 2D, perimeter vertices are represented by zero-length segments.
+struct BoundaryEdgeSegment
+{
+  std::array<double, 3> p0{};
+  std::array<double, 3> p1{};
+};
+
+// Extract the global geometric perimeter of the boundary elements selected by marker.
+// The returned geometry is replicated on every rank. Coincident crack copies and
+// partition interfaces within the selected surface are removed.
+std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &mesh,
+                                                         const mfem::Array<int> &marker);
 
 inline double GetSurfaceArea(const mfem::ParMesh &mesh, int attr)
 {

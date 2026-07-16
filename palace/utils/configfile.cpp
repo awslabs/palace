@@ -4,6 +4,7 @@
 #include "configfile.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 #include <sstream>
 #include <string_view>
@@ -621,6 +622,19 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
 {
   attributes = dielectric.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
+  edge_attributes = dielectric.value("EdgeAttributes", std::vector<int>{});
+  std::sort(edge_attributes.begin(), edge_attributes.end());
+  edge_distances = dielectric.value("EdgeDistances", std::vector<double>{});
+  std::sort(edge_distances.begin(), edge_distances.end());
+  MFEM_VERIFY(edge_attributes.empty() == edge_distances.empty(),
+              "\"EdgeAttributes\" and \"EdgeDistances\" must be specified together for "
+              "interface dielectric postprocessing!");
+  MFEM_VERIFY(std::all_of(edge_distances.begin(), edge_distances.end(), [](double distance)
+                          { return std::isfinite(distance) && distance > 0.0; }),
+              "Interface dielectric \"EdgeDistances\" must be finite and positive!");
+  MFEM_VERIFY(std::adjacent_find(edge_distances.begin(), edge_distances.end()) ==
+                  edge_distances.end(),
+              "Interface dielectric \"EdgeDistances\" must be unique!");
   type = dielectric.value("Type", type);
   t = dielectric.at("Thickness");             // Required
   epsilon_r = dielectric.at("Permittivity");  // Required
@@ -885,6 +899,8 @@ BoundaryPostData::BoundaryPostData(const json &postpro)
   for (const auto &[idx, data] : dielectric)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
+    attributes.insert(attributes.end(), data.edge_attributes.begin(),
+                      data.edge_attributes.end());
   }
   for (const auto &[idx, data] : impedance)
   {
@@ -1686,6 +1702,8 @@ void Nondimensionalize(const Units &units, SurfaceFluxData &data)
 void Nondimensionalize(const Units &units, InterfaceDielectricData &data)
 {
   data.t /= units.GetMeshLengthRelativeScale();
+  std::transform(data.edge_distances.begin(), data.edge_distances.end(),
+                 data.edge_distances.begin(), LengthScaler(units));
 }
 
 void Nondimensionalize(const Units &units, EigenSolverData &data)

@@ -1801,7 +1801,29 @@
           "type": "number",
           "description": "Loss tangent of this dielectric interface.",
           "default": 0.0
+        },
+        "EdgeAttributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Boundary attributes whose geometric perimeter defines the singular metal edges for edge-distance diagnostics. This is opt-in and must be specified together with `EdgeDistances`."
+        },
+        "EdgeDistances": {
+          "type": "array",
+          "description": "Matching radii, in mesh length units, used for edge-distance diagnostics. For every radius R, Palace integrates the interface energy outside R and in the annulus R <= d < 2R. This is opt-in and must be specified together with `EdgeAttributes`.",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0.0
+          },
+          "minItems": 1,
+          "uniqueItems": true
         }
+      },
+      "dependencies": {
+        "EdgeAttributes": [
+          "EdgeDistances"
+        ],
+        "EdgeDistances": [
+          "EdgeAttributes"
+        ]
       }
     },
     "FarField": {

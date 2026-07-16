@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <sstream>
@@ -21,6 +22,7 @@
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
+#include "utils/iodata.hpp"
 
 namespace palace
 {
@@ -431,6 +433,169 @@ TEST_CASE("LocalEdgeSplit", "[geodata][Serial]")
 
   CHECK(mesh->CheckElementOrientation(false) == 0);
   CHECK(mesh->CheckBdrElementOrientation(false) == 0);
+}
+
+TEST_CASE("Boundary edge extraction", "[geodata][Parallel]")
+{
+  SECTION("2D endpoints")
+  {
+    auto serial_mesh =
+        mfem::Mesh::MakeCartesian2D(4, 2, mfem::Element::TRIANGLE, false, 2.0, 1.0);
+    mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+    auto marker = mesh::AttrToMarker(mesh.bdr_attributes.Max(), std::vector<int>{1});
+    auto edges = mesh::GetBoundaryEdgeSegments(mesh, marker);
+
+    REQUIRE(edges.size() == 2);
+    for (const auto &edge : edges)
+    {
+      CHECK(edge.p0 == edge.p1);
+      CHECK_THAT(edge.p0[1], WithinAbs(0.0, 1.0e-12));
+      CHECK_THAT(edge.p0[2], WithinAbs(0.0, 1.0e-12));
+    }
+    CHECK_THAT(edges[0].p0[0] + edges[1].p0[0], WithinAbs(2.0, 1.0e-12));
+  }
+
+  SECTION("3D perimeter")
+  {
+    auto serial_mesh =
+        mfem::Mesh::MakeCartesian3D(2, 3, 1, mfem::Element::TETRAHEDRON, 2.0, 3.0, 1.0);
+    mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+    auto marker = mesh::AttrToMarker(mesh.bdr_attributes.Max(), std::vector<int>{1});
+    auto edges = mesh::GetBoundaryEdgeSegments(mesh, marker);
+
+    double length = 0.0;
+    for (const auto &edge : edges)
+    {
+      double length_squared = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        const double delta = edge.p1[d] - edge.p0[d];
+        length_squared += delta * delta;
+      }
+      length += std::sqrt(length_squared);
+      CHECK_THAT(edge.p0[2], WithinAbs(0.0, 1.0e-12));
+      CHECK_THAT(edge.p1[2], WithinAbs(0.0, 1.0e-12));
+    }
+    CHECK_THAT(length, WithinAbs(10.0, 1.0e-12));
+  }
+}
+
+TEST_CASE("Boundary edge extraction ignores coincident crack copies", "[geodata][Serial]")
+{
+  auto serial_mesh =
+      mfem::Mesh::MakeCartesian2D(4, 2, mfem::Element::TRIANGLE, false, 2.0, 1.0);
+  mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+  const int original_nbe = mesh.GetNBE();
+  mfem::Array<int> first_vertices;
+  for (int be = 0; be < original_nbe; be++)
+  {
+    if (mesh.GetBdrAttribute(be) != 1)
+    {
+      continue;
+    }
+    mesh.AddBdrElement(mesh.GetBdrElement(be)->Duplicate(&mesh));
+    if (first_vertices.IsEmpty())
+    {
+      mesh.GetBdrElementVertices(be, first_vertices);
+    }
+  }
+  mfem::Vector midpoint(2);
+  for (int d = 0; d < 2; d++)
+  {
+    midpoint[d] = 0.5 * (mesh.GetVertex(first_vertices[0])[d] +
+                         mesh.GetVertex(first_vertices[1])[d]);
+  }
+  const int mid = mesh.AddVertex(midpoint);
+  mesh.AddBdrElement(new mfem::Segment(first_vertices[0], mid, 1));
+  mesh.AddBdrElement(new mfem::Segment(mid, first_vertices[1], 1));
+
+  auto marker = mesh::AttrToMarker(mesh.bdr_attributes.Max(), std::vector<int>{1});
+  auto edges = mesh::GetBoundaryEdgeSegments(mesh, marker);
+
+  REQUIRE(edges.size() == 2);
+  CHECK_THAT(edges[0].p0[0] + edges[1].p0[0], WithinAbs(2.0, 1.0e-12));
+}
+
+TEST_CASE("Boundary edge extraction on cracked CPW mesh", "[geodata][Serial]")
+{
+  const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
+                           "examples/cpw2d/cpw2d_thin_electrostatic.json";
+  IoData iodata(config_path.c_str(), false);
+  iodata.model.mesh = config_path.parent_path() / iodata.model.mesh;
+  auto mesh = mesh::ReadMesh(iodata, Mpi::World());
+
+  auto marker = mesh::AttrToMarker(mesh->bdr_attributes.Max(), std::vector<int>{1, 2});
+  auto edges = mesh::GetBoundaryEdgeSegments(*mesh, marker);
+  std::vector<double> x;
+  x.reserve(edges.size());
+  for (const auto &edge : edges)
+  {
+    CHECK(edge.p0 == edge.p1);
+    CHECK_THAT(edge.p0[1], WithinAbs(0.0, 1.0e-12));
+    x.push_back(edge.p0[0]);
+  }
+  std::sort(x.begin(), x.end());
+
+  REQUIRE(x.size() == 6);
+  const std::array<double, 6> expected = {0.0, 500.0, 503.5, 518.5, 522.0, 1022.0};
+  for (std::size_t i = 0; i < x.size(); i++)
+  {
+    CHECK_THAT(x[i], WithinAbs(expected[i], 1.0e-12));
+  }
+}
+
+TEST_CASE("Boundary edge extraction on NC mesh", "[geodata][Serial]")
+{
+  SECTION("2D endpoints")
+  {
+    auto serial_mesh =
+        mfem::Mesh::MakeCartesian2D(4, 2, mfem::Element::TRIANGLE, false, 2.0, 1.0);
+    serial_mesh.EnsureNCMesh(true);
+    mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+    mfem::Array<int> marked_elements(1);
+    marked_elements[0] = 0;
+    mesh.GeneralRefinement(marked_elements);
+
+    REQUIRE(mesh.Nonconforming());
+    auto marker = mesh::AttrToMarker(mesh.bdr_attributes.Max(), std::vector<int>{1});
+    auto edges = mesh::GetBoundaryEdgeSegments(mesh, marker);
+
+    REQUIRE(edges.size() == 2);
+    for (const auto &edge : edges)
+    {
+      CHECK(edge.p0 == edge.p1);
+      CHECK_THAT(edge.p0[1], WithinAbs(0.0, 1.0e-12));
+      CHECK_THAT(edge.p0[2], WithinAbs(0.0, 1.0e-12));
+    }
+    CHECK_THAT(edges[0].p0[0] + edges[1].p0[0], WithinAbs(2.0, 1.0e-12));
+  }
+
+  SECTION("3D perimeter")
+  {
+    auto serial_mesh =
+        mfem::Mesh::MakeCartesian3D(2, 2, 1, mfem::Element::HEXAHEDRON, 2.0, 2.0, 1.0);
+    serial_mesh.EnsureNCMesh(true);
+    mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+    mfem::Array<int> marked_elements(1);
+    marked_elements[0] = 0;
+    mesh.GeneralRefinement(marked_elements);
+
+    REQUIRE(mesh.Nonconforming());
+    auto marker = mesh::AttrToMarker(mesh.bdr_attributes.Max(), std::vector<int>{1});
+    auto edges = mesh::GetBoundaryEdgeSegments(mesh, marker);
+    double length = 0.0;
+    for (const auto &edge : edges)
+    {
+      double length_squared = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        const double delta = edge.p1[d] - edge.p0[d];
+        length_squared += delta * delta;
+      }
+      length += std::sqrt(length_squared);
+    }
+    CHECK_THAT(length, WithinAbs(8.0, 1.0e-12));
+  }
 }
 
 TEST_CASE("PeriodicGmsh", "[geodata][Serial]")

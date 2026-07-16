@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -1475,6 +1476,302 @@ inline void GetBdrElementNeighborTransforms(int i, const mfem::ParMesh &mesh,
 
 }  // namespace
 
+std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &mesh,
+                                                         const mfem::Array<int> &marker)
+{
+  MFEM_VERIFY(mesh.Dimension() == 2 || mesh.Dimension() == 3,
+              "Boundary edge extraction is only supported for 2D and 3D meshes!");
+  MFEM_VERIFY(marker.Size() >= (mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0),
+              "Invalid boundary attribute marker for edge extraction!");
+
+  mfem::Array<int> attributes;
+  for (int i = 0; i < marker.Size(); i++)
+  {
+    if (marker[i])
+    {
+      attributes.Append(i + 1);
+    }
+  }
+  if (attributes.IsEmpty())
+  {
+    return {};
+  }
+
+  std::vector<HYPRE_BigInt> local_keys;
+  std::vector<double> local_coordinates;
+  if (mesh.Dimension() == 2)
+  {
+    // MFEM does not generate point boundary elements for every cracked internal 1D
+    // boundary submesh. Gather the selected segments instead and form their geometric
+    // union below. Geometric deduplication is required because cracking an internal metal
+    // sheet creates coincident boundary elements with distinct vertex identifiers.
+    mfem::Array<int> vertices;
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      const int attr = mesh.GetBdrAttribute(be);
+      if (attr <= 0 || attr > marker.Size() || !marker[attr - 1])
+      {
+        continue;
+      }
+      mesh.GetBdrElementVertices(be, vertices);
+      MFEM_ASSERT(vertices.Size() == 2,
+                  "Unexpected boundary element geometry in 2D edge extraction!");
+      local_keys.push_back(0);
+      local_keys.push_back(0);
+      for (const int vertex : vertices)
+      {
+        const double *x = mesh.GetVertex(vertex);
+        for (int d = 0; d < 3; d++)
+        {
+          local_coordinates.push_back(d < mesh.SpaceDimension() ? x[d] : 0.0);
+        }
+      }
+    }
+  }
+  else
+  {
+    // Creating a boundary submesh lets MFEM resolve the selected surface topology across
+    // both processor and nonconforming interfaces. Its boundary elements are exactly the
+    // codimension-two perimeter sought here.
+    auto edge_mesh = mfem::ParSubMesh::CreateFromBoundary(mesh, attributes);
+    mfem::Array<HYPRE_BigInt> vertex_gi;
+    GetParentGlobalVertexIndices(edge_mesh, vertex_gi);
+    mfem::Array<int> vertices;
+    for (int be = 0; be < edge_mesh.GetNBE(); be++)
+    {
+      edge_mesh.GetBdrElementVertices(be, vertices);
+      MFEM_ASSERT(vertices.Size() == 2,
+                  "Unexpected boundary element geometry in edge submesh!");
+      HYPRE_BigInt gv0 = vertex_gi[vertices[0]];
+      HYPRE_BigInt gv1 = vertex_gi[vertices[1]];
+      if (gv1 < gv0)
+      {
+        std::swap(gv0, gv1);
+        std::swap(vertices[0], vertices[1]);
+      }
+      local_keys.push_back(gv0);
+      local_keys.push_back(gv1);
+      for (int endpoint = 0; endpoint < 2; endpoint++)
+      {
+        const double *x = edge_mesh.GetVertex(vertices[endpoint]);
+        for (int d = 0; d < 3; d++)
+        {
+          local_coordinates.push_back(d < edge_mesh.SpaceDimension() ? x[d] : 0.0);
+        }
+      }
+    }
+  }
+
+  const int local_count = static_cast<int>(local_keys.size() / 2);
+  std::vector<int> entity_counts(Mpi::Size(mesh.GetComm()));
+  Mpi::Allgather(1, &local_count, entity_counts.data(), mesh.GetComm());
+
+  std::vector<int> key_counts(entity_counts.size()),
+      key_displacements(entity_counts.size());
+  std::vector<int> coordinate_counts(entity_counts.size()),
+      coordinate_displacements(entity_counts.size());
+  int total_entities = 0;
+  for (std::size_t rank = 0; rank < entity_counts.size(); rank++)
+  {
+    key_counts[rank] = 2 * entity_counts[rank];
+    key_displacements[rank] = 2 * total_entities;
+    coordinate_counts[rank] = 6 * entity_counts[rank];
+    coordinate_displacements[rank] = 6 * total_entities;
+    total_entities += entity_counts[rank];
+  }
+
+  std::vector<HYPRE_BigInt> global_keys(2 * total_entities);
+  std::vector<double> global_coordinates(6 * total_entities);
+  Mpi::Allgatherv(static_cast<int>(local_keys.size()), local_keys.data(),
+                  global_keys.data(), key_counts.data(), key_displacements.data(),
+                  mesh.GetComm());
+  Mpi::Allgatherv(static_cast<int>(local_coordinates.size()), local_coordinates.data(),
+                  global_coordinates.data(), coordinate_counts.data(),
+                  coordinate_displacements.data(), mesh.GetComm());
+
+  if (mesh.Dimension() == 2)
+  {
+    using Point = std::array<double, 3>;
+    using PointKey = std::array<std::int64_t, 3>;
+    using SegmentKey = std::pair<PointKey, PointKey>;
+
+    Point xyz_min = {mfem::infinity(), mfem::infinity(), mfem::infinity()};
+    Point xyz_max = {-mfem::infinity(), -mfem::infinity(), -mfem::infinity()};
+    for (int i = 0; i < total_entities; i++)
+    {
+      for (int endpoint = 0; endpoint < 2; endpoint++)
+      {
+        for (int d = 0; d < 3; d++)
+        {
+          const double x = global_coordinates[6 * i + 3 * endpoint + d];
+          xyz_min[d] = std::min(xyz_min[d], x);
+          xyz_max[d] = std::max(xyz_max[d], x);
+        }
+      }
+    }
+    double extent = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      extent = std::max(extent, xyz_max[d] - xyz_min[d]);
+    }
+    MFEM_VERIFY(extent > 0.0, "Degenerate geometry in 2D edge extraction!");
+    const double coordinate_tolerance = 1.0e-10 * extent;
+    auto GetPointKey = [&](const Point &point)
+    {
+      PointKey key;
+      for (int d = 0; d < 3; d++)
+      {
+        key[d] = std::llround((point[d] - xyz_min[d]) / coordinate_tolerance);
+      }
+      return key;
+    };
+
+    struct PointData
+    {
+      Point coordinate{};
+      int count = 0;
+    };
+    std::map<PointKey, PointData> points;
+    std::set<SegmentKey> unique_segments;
+    for (int i = 0; i < total_entities; i++)
+    {
+      Point p0, p1;
+      std::copy_n(global_coordinates.data() + 6 * i, 3, p0.begin());
+      std::copy_n(global_coordinates.data() + 6 * i + 3, 3, p1.begin());
+      PointKey k0 = GetPointKey(p0);
+      PointKey k1 = GetPointKey(p1);
+      for (const auto &[key, point] :
+           {std::pair<const PointKey &, const Point &>{k0, p0},
+            std::pair<const PointKey &, const Point &>{k1, p1}})
+      {
+        auto &data = points[key];
+        for (int d = 0; d < 3; d++)
+        {
+          data.coordinate[d] += point[d];
+        }
+        data.count++;
+      }
+      if (k1 < k0)
+      {
+        std::swap(k0, k1);
+      }
+      unique_segments.emplace(k0, k1);
+    }
+
+    for (auto &[key, data] : points)
+    {
+      for (double &x : data.coordinate)
+      {
+        x /= data.count;
+      }
+    }
+
+    // Cracked sides can acquire different nonconforming subdivisions. Split every
+    // gathered segment at all canonical vertices which lie on it, then deduplicate the
+    // resulting atomic segments. This turns a coarse segment on one side and matching
+    // fine segments on the other into the same geometric chain.
+    std::set<SegmentKey> atomic_segments;
+    for (const auto &[k0, k1] : unique_segments)
+    {
+      const auto &p0 = points.at(k0).coordinate;
+      const auto &p1 = points.at(k1).coordinate;
+      Point direction;
+      double length_squared = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        direction[d] = p1[d] - p0[d];
+        length_squared += direction[d] * direction[d];
+      }
+      MFEM_VERIFY(length_squared > 0.0, "Degenerate segment in 2D edge extraction!");
+
+      std::vector<std::pair<double, PointKey>> segment_points;
+      segment_points.reserve(points.size());
+      for (const auto &[key, data] : points)
+      {
+        double projection = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          projection += (data.coordinate[d] - p0[d]) * direction[d];
+        }
+        const double t = projection / length_squared;
+        if (t < 0.0 || t > 1.0)
+        {
+          continue;
+        }
+        double distance_squared = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          const double delta = data.coordinate[d] - p0[d] - t * direction[d];
+          distance_squared += delta * delta;
+        }
+        if (distance_squared <= coordinate_tolerance * coordinate_tolerance)
+        {
+          segment_points.emplace_back(t, key);
+        }
+      }
+      std::sort(segment_points.begin(), segment_points.end(),
+                [](const auto &a, const auto &b) { return a.first < b.first; });
+      for (std::size_t i = 1; i < segment_points.size(); i++)
+      {
+        PointKey ka = segment_points[i - 1].second;
+        PointKey kb = segment_points[i].second;
+        if (ka == kb)
+        {
+          continue;
+        }
+        if (kb < ka)
+        {
+          std::swap(ka, kb);
+        }
+        atomic_segments.emplace(ka, kb);
+      }
+    }
+
+    std::map<PointKey, int> vertex_incidence;
+    for (const auto &[k0, k1] : atomic_segments)
+    {
+      vertex_incidence[k0]++;
+      vertex_incidence[k1]++;
+    }
+
+    std::vector<BoundaryEdgeSegment> perimeter;
+    perimeter.reserve(vertex_incidence.size());
+    for (const auto &[key, incidence] : vertex_incidence)
+    {
+      if (incidence == 1)
+      {
+        const Point &point = points.at(key).coordinate;
+        perimeter.push_back({point, point});
+      }
+    }
+    return perimeter;
+  }
+
+  struct EntityData
+  {
+    BoundaryEdgeSegment segment;
+  };
+  std::map<std::pair<HYPRE_BigInt, HYPRE_BigInt>, EntityData> entities_by_key;
+  for (int i = 0; i < total_entities; i++)
+  {
+    auto [it, inserted] = entities_by_key.try_emplace(
+        std::make_pair(global_keys[2 * i], global_keys[2 * i + 1]));
+    if (inserted)
+    {
+      std::copy_n(global_coordinates.data() + 6 * i, 3, it->second.segment.p0.begin());
+      std::copy_n(global_coordinates.data() + 6 * i + 3, 3, it->second.segment.p1.begin());
+    }
+  }
+
+  std::vector<BoundaryEdgeSegment> perimeter;
+  perimeter.reserve(entities_by_key.size());
+  for (const auto &[key, entity] : entities_by_key)
+  {
+    perimeter.push_back(entity.segment);
+  }
+  return perimeter;
+}
+
 template <class SubMeshT>
 void RemapSubMeshAttributes(SubMeshT &submesh)
 {
@@ -2389,7 +2686,7 @@ int LocalEdgeSplit(std::unique_ptr<mfem::Mesh> &orig_mesh,
 
   // For each element / boundary element, find the (at most one, by independence) split edge
   // it contains, returning the matching midpoint id and the local endpoint vertices, or -1.
-  auto find_split_edge = [&edge_midpoint](const int *v, int nv, const int(*edge_vert)[2],
+  auto find_split_edge = [&edge_midpoint](const int *v, int nv, const int (*edge_vert)[2],
                                           int nedge, int &lv0, int &lv1)
   {
     for (int le = 0; le < nedge; le++)

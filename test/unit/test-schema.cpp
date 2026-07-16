@@ -340,6 +340,29 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     CHECK(err.empty());
   }
 
+  SECTION("Dielectric edge diagnostics require attributes and distances together")
+  {
+    json dielectric = {{"Index", 1},
+                       {"Attributes", {4}},
+                       {"Thickness", 2.0e-3},
+                       {"Permittivity", 4.0},
+                       {"EdgeAttributes", {1, 2}},
+                       {"EdgeDistances", {0.5, 1.0}}};
+    CHECK(ValidateConfig(dielectric, "Dielectric").empty());
+
+    auto missing_distances = dielectric;
+    missing_distances.erase("EdgeDistances");
+    CHECK(!ValidateConfig(missing_distances, "Dielectric").empty());
+
+    auto missing_attributes = dielectric;
+    missing_attributes.erase("EdgeAttributes");
+    CHECK(!ValidateConfig(missing_attributes, "Dielectric").empty());
+
+    auto duplicate_distances = dielectric;
+    duplicate_distances["EdgeDistances"] = {0.5, 0.5};
+    CHECK(!ValidateConfig(duplicate_distances, "Dielectric").empty());
+  }
+
   SECTION("Invalid Material - bad Permittivity type")
   {
     json mat = {{"Attributes", {1}}, {"Permittivity", "not a number"}};

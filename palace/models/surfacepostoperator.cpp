@@ -3,8 +3,12 @@
 
 #include "surfacepostoperator.hpp"
 
+#include <algorithm>
+#include <array>
 #include <complex>
+#include <numeric>
 #include <set>
+#include <utility>
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/vector.hpp"
@@ -18,6 +22,157 @@
 
 namespace palace
 {
+
+class EdgeDistanceTree
+{
+private:
+  static constexpr std::size_t leaf_size = 8;
+
+  struct Node
+  {
+    std::array<double, 3> min;
+    std::array<double, 3> max;
+    std::size_t begin = 0;
+    std::size_t end = 0;
+    int left = -1;
+    int right = -1;
+
+    bool IsLeaf() const { return left < 0; }
+  };
+
+  std::vector<mesh::BoundaryEdgeSegment> segments;
+  std::vector<std::size_t> indices;
+  std::vector<Node> nodes;
+
+  static double DistanceSquaredToSegment(const mfem::Vector &point,
+                                         const mesh::BoundaryEdgeSegment &segment)
+  {
+    double direction[3], offset[3];
+    double length_squared = 0.0;
+    double projection = 0.0;
+    for (int d = 0; d < point.Size(); d++)
+    {
+      direction[d] = segment.p1[d] - segment.p0[d];
+      offset[d] = point[d] - segment.p0[d];
+      length_squared += direction[d] * direction[d];
+      projection += offset[d] * direction[d];
+    }
+    const double t =
+        (length_squared > 0.0) ? std::clamp(projection / length_squared, 0.0, 1.0) : 0.0;
+    double distance_squared = 0.0;
+    for (int d = 0; d < point.Size(); d++)
+    {
+      const double delta = offset[d] - t * direction[d];
+      distance_squared += delta * delta;
+    }
+    return distance_squared;
+  }
+
+  static double DistanceSquaredToBox(const mfem::Vector &point, const Node &node)
+  {
+    double distance_squared = 0.0;
+    for (int d = 0; d < point.Size(); d++)
+    {
+      const double delta =
+          (point[d] < node.min[d])
+              ? node.min[d] - point[d]
+              : ((point[d] > node.max[d]) ? point[d] - node.max[d] : 0.0);
+      distance_squared += delta * delta;
+    }
+    return distance_squared;
+  }
+
+  int Build(std::size_t begin, std::size_t end)
+  {
+    Node node;
+    node.begin = begin;
+    node.end = end;
+    node.min.fill(mfem::infinity());
+    node.max.fill(-mfem::infinity());
+    for (std::size_t i = begin; i < end; i++)
+    {
+      const auto &segment = segments[indices[i]];
+      for (int d = 0; d < 3; d++)
+      {
+        node.min[d] = std::min({node.min[d], segment.p0[d], segment.p1[d]});
+        node.max[d] = std::max({node.max[d], segment.p0[d], segment.p1[d]});
+      }
+    }
+
+    const int node_index = static_cast<int>(nodes.size());
+    nodes.push_back(node);
+    if (end - begin <= leaf_size)
+    {
+      return node_index;
+    }
+
+    int axis = 0;
+    for (int d = 1; d < 3; d++)
+    {
+      if (node.max[d] - node.min[d] > node.max[axis] - node.min[axis])
+      {
+        axis = d;
+      }
+    }
+    const std::size_t mid = begin + (end - begin) / 2;
+    std::nth_element(
+        indices.begin() + begin, indices.begin() + mid, indices.begin() + end,
+        [this, axis](std::size_t a, std::size_t b)
+        {
+          const auto &sa = segments[a];
+          const auto &sb = segments[b];
+          return sa.p0[axis] + sa.p1[axis] < sb.p0[axis] + sb.p1[axis];
+        });
+    const int left = Build(begin, mid);
+    const int right = Build(mid, end);
+    nodes[node_index].left = left;
+    nodes[node_index].right = right;
+    return node_index;
+  }
+
+  double Search(int node_index, const mfem::Vector &point, double best) const
+  {
+    const Node &node = nodes[node_index];
+    if (DistanceSquaredToBox(point, node) >= best)
+    {
+      return best;
+    }
+    if (node.IsLeaf())
+    {
+      for (std::size_t i = node.begin; i < node.end; i++)
+      {
+        best =
+            std::min(best, DistanceSquaredToSegment(point, segments[indices[i]]));
+      }
+      return best;
+    }
+
+    const double left_distance = DistanceSquaredToBox(point, nodes[node.left]);
+    const double right_distance = DistanceSquaredToBox(point, nodes[node.right]);
+    if (left_distance < right_distance)
+    {
+      best = Search(node.left, point, best);
+      return Search(node.right, point, best);
+    }
+    best = Search(node.right, point, best);
+    return Search(node.left, point, best);
+  }
+
+public:
+  explicit EdgeDistanceTree(std::vector<mesh::BoundaryEdgeSegment> segments_)
+    : segments(std::move(segments_)), indices(segments.size())
+  {
+    MFEM_VERIFY(!segments.empty(), "Cannot build an empty edge-distance tree!");
+    std::iota(indices.begin(), indices.end(), 0);
+    nodes.reserve(2 * segments.size());
+    Build(0, segments.size());
+  }
+
+  double DistanceSquared(const mfem::Vector &point) const
+  {
+    return Search(0, point, mfem::infinity());
+  }
+};
 
 namespace
 {
@@ -55,6 +210,37 @@ mfem::Array<int> SetUpBoundaryProperties(const T &data,
   }
   return attr_list;
 }
+
+class EdgeDistanceCoefficient : public mfem::Coefficient
+{
+private:
+  mfem::Coefficient &coefficient;
+  const EdgeDistanceTree &edge_distance_tree;
+  const double distance_min_squared;
+  const double distance_max_squared;
+
+public:
+  EdgeDistanceCoefficient(mfem::Coefficient &coefficient,
+                          const EdgeDistanceTree &edge_distance_tree,
+                          double distance_min, double distance_max)
+    : coefficient(coefficient), edge_distance_tree(edge_distance_tree),
+      distance_min_squared(distance_min * distance_min),
+      distance_max_squared(distance_max * distance_max)
+  {
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    mfem::Vector point(T.GetSpaceDim());
+    T.Transform(ip, point);
+    const double distance_squared = edge_distance_tree.DistanceSquared(point);
+    if (distance_squared < distance_min_squared || distance_squared >= distance_max_squared)
+    {
+      return 0.0;
+    }
+    return coefficient.Eval(T, ip);
+  }
+};
 
 }  // namespace
 
@@ -128,11 +314,11 @@ SurfacePostOperator::SurfaceFluxData::GetCoefficient(const mfem::ParGridFunction
 }
 
 SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
-    const config::InterfaceDielectricData &data, const mfem::ParMesh &mesh,
-    const mfem::Array<int> &bdr_attr_marker)
+    const config::InterfaceDielectricData &data, const mfem::Array<int> &bdr_attr_marker)
 {
   // Store boundary attributes for this postprocessing boundary.
   attr_list = SetUpBoundaryProperties(data, bdr_attr_marker);
+  edge_distances = data.edge_distances;
 
   // Calculate surface dielectric loss according to the formulas from J. Wenner et al.,
   // Surface loss simulations of superconducting coplanar waveguide resonators, Appl. Phys.
@@ -234,9 +420,36 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
   MFEM_VERIFY(postpro.dielectric.empty() || problem_type != ProblemType::MAGNETOSTATIC,
               "Interface dielectric loss postprocessing is not available for "
               "magnetostatic problems!");
+  std::map<std::vector<int>, std::shared_ptr<const EdgeDistanceTree>> edge_distance_trees;
   for (const auto &[idx, data] : postpro.dielectric)
   {
-    eps_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh(), bdr_attr_marker);
+    auto it = eps_surfs.try_emplace(idx, data, bdr_attr_marker).first;
+    if (data.edge_distances.empty())
+    {
+      continue;
+    }
+
+    auto tree_it = edge_distance_trees.find(data.edge_attributes);
+    if (tree_it == edge_distance_trees.end())
+    {
+      struct EdgeProperties
+      {
+        const std::vector<int> &attributes;
+      };
+      const auto edge_attr_list =
+          SetUpBoundaryProperties(EdgeProperties{data.edge_attributes}, bdr_attr_marker);
+      const auto edge_attr_marker =
+          mesh::AttrToMarker(bdr_attr_marker.Size(), edge_attr_list);
+      auto edge_segments = mesh::GetBoundaryEdgeSegments(mesh, edge_attr_marker);
+      MFEM_VERIFY(!edge_segments.empty(),
+                  "No perimeter was found for interface dielectric edge attributes!");
+      tree_it =
+          edge_distance_trees
+              .try_emplace(data.edge_attributes,
+                           std::make_shared<EdgeDistanceTree>(std::move(edge_segments)))
+              .first;
+    }
+    it->second.edge_distance_tree = tree_it->second;
   }
 
   // FarField postprocessing.
@@ -342,6 +555,56 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
   double dot = GetLocalSurfaceIntegral(*f, attr_marker);
   Mpi::GlobalSum(1, &dot, E.GetComm());
   return dot;
+}
+
+std::vector<SurfacePostOperator::InterfaceEdgeEnergy>
+SurfacePostOperator::GetInterfaceEdgeElectricFieldEnergies(int idx,
+                                                           const GridFunction &E) const
+{
+  auto it = eps_surfs.find(idx);
+  MFEM_VERIFY(it != eps_surfs.end(),
+              "Unknown interface dielectric postprocessing index requested!");
+  const auto &data = it->second;
+  if (data.edge_distances.empty())
+  {
+    return {};
+  }
+
+  const auto &mesh = *h1_fespace.GetParMesh();
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
+  auto coefficient = data.GetCoefficient(E, mat_op);
+
+  std::vector<InterfaceEdgeEnergy> energies;
+  energies.reserve(data.edge_distances.size());
+  std::vector<double> local_energy(2 * data.edge_distances.size());
+  for (std::size_t i = 0; i < data.edge_distances.size(); i++)
+  {
+    const double distance = data.edge_distances[i];
+    EdgeDistanceCoefficient outside(*coefficient, *data.edge_distance_tree, distance,
+                                    mfem::infinity());
+    EdgeDistanceCoefficient annulus(*coefficient, *data.edge_distance_tree, distance,
+                                    2.0 * distance);
+    local_energy[2 * i] = GetLocalSurfaceIntegral(outside, attr_marker);
+    local_energy[2 * i + 1] = GetLocalSurfaceIntegral(annulus, attr_marker);
+  }
+  Mpi::GlobalSum(static_cast<int>(local_energy.size()), local_energy.data(), E.GetComm());
+  for (std::size_t i = 0; i < data.edge_distances.size(); i++)
+  {
+    energies.push_back(
+        {data.edge_distances[i], local_energy[2 * i], local_energy[2 * i + 1]});
+  }
+  return energies;
+}
+
+std::size_t SurfacePostOperator::GetNInterfaceEdgeEntries() const
+{
+  std::size_t size = 0;
+  for (const auto &[idx, data] : eps_surfs)
+  {
+    size += data.edge_distances.size();
+  }
+  return size;
 }
 
 double

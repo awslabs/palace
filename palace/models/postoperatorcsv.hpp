@@ -95,6 +95,16 @@ struct Measurement
     double quality_factor;        // 1 / (energy_participation * tan δ)
   };
 
+  struct InterfaceEdgeData
+  {
+    int idx;                       // Interface index
+    double distance;               // Matching radius
+    double energy_outside;         // Interface energy for d >= distance
+    double participation_outside;  // energy_outside / total_energy
+    double energy_annulus;         // Interface energy for distance <= d < 2 distance
+    double participation_annulus;  // energy_annulus / total_energy
+  };
+
   struct FarFieldData
   {
     // Theta: polar angle (0 to pi radians).
@@ -204,6 +214,7 @@ struct Measurement
 
   std::vector<FluxData> surface_flux_i;
   std::vector<InterfaceData> interface_eps_i;
+  std::vector<InterfaceEdgeData> interface_edge_i;
   FarFieldData farfield;
 
   // Floquet port S-parameters: port_idx -> {(m, n, is_te/is_rhc) -> S}.
@@ -285,6 +296,12 @@ protected:
   std::optional<TableWithCSVFile> surface_Q;
   void InitializeSurfaceQ(const SurfacePostOperator &surf_post_op);
   void PrintSurfaceQ();
+
+  std::optional<TableWithCSVFile> surface_Q_edge;
+  std::size_t nr_interface_edge_entries = 0;
+  void InitializeSurfaceQEdge(const SurfacePostOperator &surf_post_op);
+  void InitializeSurfaceQEdge(std::size_t nr_entries);
+  void PrintSurfaceQEdge();
 
   std::optional<TableWithCSVFile> probe_E;
   std::optional<TableWithCSVFile> probe_En;

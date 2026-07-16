@@ -140,6 +140,10 @@ auto RandomMeasurement(int ndomain = 5)
     cache.interface_eps_i.emplace_back(
         Measurement::InterfaceData{i, 1 + randd(100), (1 + randd(9999)) / 10000,
                                    (1 + randd(9999) / 10000), 1e9 / (1 + randd(9999))});
+    cache.interface_edge_i.emplace_back(
+        Measurement::InterfaceEdgeData{i, 1 + randd(100), 1 + randd(100),
+                                       (1 + randd(9999)) / 10000, 1 + randd(100),
+                                       (1 + randd(9999)) / 10000});
   }
 
   return cache;
@@ -343,6 +347,30 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
     CHECK_THAT(c.tandelta, Catch::Matchers::WithinRel(dc.tandelta));
     CHECK_THAT(c.energy_participation, Catch::Matchers::WithinRel(dc.energy_participation));
     CHECK_THAT(c.quality_factor, Catch::Matchers::WithinRel(dc.quality_factor));
+  }
+
+  for (std::size_t i = 0; i < cache.interface_edge_i.size(); i++)
+  {
+    auto &c = cache.interface_edge_i[i];
+    auto &ndc = non_dim_cache.interface_edge_i[i];
+    CHECK(c.idx == ndc.idx);
+    CHECK_THAT(c.distance, Catch::Matchers::WithinRel(ndc.distance));
+    CHECK_THAT(c.energy_outside, Catch::Matchers::WithinRel(ndc.energy_outside));
+    CHECK_THAT(c.participation_outside,
+               Catch::Matchers::WithinRel(ndc.participation_outside));
+    CHECK_THAT(c.energy_annulus, Catch::Matchers::WithinRel(ndc.energy_annulus));
+    CHECK_THAT(c.participation_annulus,
+               Catch::Matchers::WithinRel(ndc.participation_annulus));
+
+    auto &dc = dim_cache.interface_edge_i[i];
+    CHECK(c.idx == dc.idx);
+    CHECK_THAT(c.distance, !Catch::Matchers::WithinRel(dc.distance));
+    CHECK_THAT(c.energy_outside, !Catch::Matchers::WithinRel(dc.energy_outside));
+    CHECK_THAT(c.participation_outside,
+               Catch::Matchers::WithinRel(dc.participation_outside));
+    CHECK_THAT(c.energy_annulus, !Catch::Matchers::WithinRel(dc.energy_annulus));
+    CHECK_THAT(c.participation_annulus,
+               Catch::Matchers::WithinRel(dc.participation_annulus));
   }
 }
 

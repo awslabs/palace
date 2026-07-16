@@ -1278,7 +1278,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                {"Type", "MA"},
                {"Thickness", 1.0e-9},
                {"Permittivity", 4.0},
-               {"LossTan", 0.002}}}}}}}},
+               {"LossTan", 0.002},
+               {"EdgeAttributes", {5}},
+               {"EdgeDistances", {1.0e-6, 2.0e-6}}}}}}}}},
         {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
 
     IoData iodata1(config, false);
@@ -1367,6 +1369,10 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
           iodata1.boundaries.postpro.dielectric.at(1).type);
     CHECK(iodata2.boundaries.postpro.dielectric.at(1).tandelta ==
           iodata1.boundaries.postpro.dielectric.at(1).tandelta);
+    CHECK(iodata2.boundaries.postpro.dielectric.at(1).edge_attributes ==
+          iodata1.boundaries.postpro.dielectric.at(1).edge_attributes);
+    CHECK(iodata2.boundaries.postpro.dielectric.at(1).edge_distances ==
+          iodata1.boundaries.postpro.dielectric.at(1).edge_distances);
 
     // Coverage gates. Each schema scope this fixture exercises is checked here so a
     // future schema addition without matching Concretize emission fails this section.
@@ -1423,6 +1429,13 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                                        config["Boundaries"]["Periodic"]);
     INFO("Boundaries.Periodic missing keys: " << json(per_gaps).dump());
     CHECK(per_gaps.empty());
+
+    auto dielectric_gaps =
+        SchemaCoverageGaps("/$defs/Dielectric",
+                           config["Boundaries"]["Postprocessing"]["Dielectric"][0]);
+    INFO("Boundaries.Postprocessing.Dielectric[] missing keys: "
+         << json(dielectric_gaps).dump());
+    CHECK(dielectric_gaps.empty());
   }
 
   SECTION("User-written \"Default\" is replaced with the resolved concrete value")

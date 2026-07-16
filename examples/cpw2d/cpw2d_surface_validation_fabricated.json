@@ -1,0 +1,108 @@
+{
+  "Problem":
+  {
+    "Type": "Electrostatic",
+    "Verbose": 1,
+    "Output": "postpro/surface_validation_fabricated"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/cpw2d_surface_validation_fabricated.msh",
+    "L0": 1.0e-6,
+    "Refinement":
+    {
+      "Tol": 1.0e-10,
+      "MaxIts": 8,
+      "MaxSize": 1000000,
+      "UpdateFraction": 0.7
+    }
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permittivity": 11.47
+      },
+      {
+        "Attributes": [2],
+        "Permittivity": 1.0
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        { "Index": 1, "Attributes": [1] },
+        { "Index": 2, "Attributes": [2] }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "Ground":
+    {
+      "Attributes": [3, 4]
+    },
+    "Terminal":
+    [
+      {
+        "Index": 1,
+        "Attributes": [1, 2]
+      }
+    ],
+    "Postprocessing":
+    {
+      "Dielectric":
+      [
+        {
+          "Index": 1,
+          "Attributes": [5],
+          "Type": "SA",
+          "Thickness": 2.0e-3,
+          "Permittivity": 4.0,
+          "LossTan": 2.0e-3,
+          "EdgeAttributes": [1, 3],
+          "EdgeDistances": [0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0]
+        },
+        {
+          "Index": 2,
+          "Attributes": [1, 3],
+          "Type": "MS",
+          "Thickness": 2.0e-3,
+          "Permittivity": 11.47,
+          "LossTan": 3.0e-4,
+          "EdgeAttributes": [1, 3],
+          "EdgeDistances": [0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0]
+        },
+        {
+          "Index": 3,
+          "Attributes": [2, 4],
+          "Type": "MA",
+          "Thickness": 2.0e-3,
+          "Permittivity": 10.0,
+          "LossTan": 3.0e-2,
+          "EdgeAttributes": [1, 3],
+          "EdgeDistances": [0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0]
+        }
+      ]
+    }
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Electrostatic":
+    {
+      "Save": 1
+    },
+    "Linear":
+    {
+      "Type": "BoomerAMG",
+      "KSPType": "CG",
+      "Tol": 1.0e-10,
+      "MaxIts": 500
+    }
+  }
+}

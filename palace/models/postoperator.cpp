@@ -1451,6 +1451,7 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
   // with:
   //          p_mj = 1/2 t_j Re{∫_{Γ_j} (ε_j E_m)ᴴ E_m dS} / (E_elec + E_cap).
   measurement_cache.interface_eps_i.clear();
+  measurement_cache.interface_edge_i.clear();
   if constexpr (HasEGridFunction<solver_t>())
   {
     // Domain and port energies must have been measured first. E_cap returns zero if the
@@ -1461,6 +1462,7 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
                                measurement_cache.lumped_port_capacitor_energy;
 
     measurement_cache.interface_eps_i.reserve(surf_post_op.eps_surfs.size());
+    measurement_cache.interface_edge_i.reserve(surf_post_op.GetNInterfaceEdgeEntries());
     for (const auto &[idx, data] : surf_post_op.eps_surfs)
     {
       auto energy = surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E);
@@ -1473,6 +1475,14 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
 
       measurement_cache.interface_eps_i.emplace_back(Measurement::InterfaceData{
           idx, energy, loss_tangent_delta, energy_participation_p, quality_factor_Q});
+
+      for (const auto &edge : surf_post_op.GetInterfaceEdgeElectricFieldEnergies(idx, *E))
+      {
+        measurement_cache.interface_edge_i.emplace_back(Measurement::InterfaceEdgeData{
+            idx, edge.distance, edge.energy_outside,
+            edge.energy_outside / energy_electric_all, edge.energy_annulus,
+            edge.energy_annulus / energy_electric_all});
+      }
     }
   }
 }
