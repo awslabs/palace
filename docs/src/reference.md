@@ -311,9 +311,8 @@ surface-current source is normalized to unit current and only drives the right-h
 prescribes no boundary condition and provides no termination or dissipation. A lumped port is
 normalized to the unit incident power described above and also imposes its impedance (Robin)
 boundary condition, so a nonzero resistance allows energy to leave the model through the port. Thus,
-use a surface current for an ideal nondissipative drive and a lumped port when a terminating
-impedance is part of the physical model. Without any other loss, the driven system can become
-ill-conditioned near an eigenfrequency.
+surface current should be used for an ideal nondissipative drive and a lumped port when a terminating
+impedance is part of the physical model.
 
 ### Wave ports
 
