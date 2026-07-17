@@ -305,6 +305,16 @@ where ``\bm{E}^{inc}(\bm{x})`` is identical to the spatial excitation in the fre
 formulation, and ``p(t)`` describes the temporal shape of the excitation. Possible options include a
 sinusoidal, Gaussian, modulated Gaussian, or step excitation.
 
+For AC simulations, a surface-current source and a resistive lumped port with the same geometry
+produce right-hand-side source terms with the same spatial form, up to an overall normalization. A
+surface-current source is normalized to unit current and only drives the right-hand side: it
+prescribes no boundary condition and provides no termination or dissipation. A lumped port is
+normalized to the unit incident power described above and also imposes its impedance (Robin)
+boundary condition, so a nonzero resistance allows energy to leave the model through the port. Thus,
+use a surface current for an ideal nondissipative drive and a lumped port when a terminating
+impedance is part of the physical model. Without any other loss, the driven system can become
+ill-conditioned near an eigenfrequency.
+
 ### Wave ports
 
 Numeric wave ports assume a field with known normal-direction dependence
