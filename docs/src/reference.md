@@ -259,7 +259,7 @@ respectively. If ``Z`` is a combination of LRC responses, these add in parallel
 Specifically, ``R_s = \alpha R``, ``L_s = \alpha L``, and ``C_s = C/\alpha``.
 
 In the configuration file, a user specifies either ``L``, ``R``, ``C``, corresponding to ``Z``, or
-``Ls``, ``Rs``, ``Cs`` corresponding to ``Z_s``. For a single-element port, these will just be
+``L_s``, ``R_s``, ``C_s`` corresponding to ``Z_s``. For a single-element port, these will just be
 converted using the single scale factor ``\alpha``. For a multi-element port, we require impedances
 to add in parallel ``{1}/{Z} = \sum_e {1}/{Z_e}``, so that each element sees the same voltage.
 Specifying a lumped ``Z`` in the config means that each element ``e`` can have a different physical
@@ -270,9 +270,6 @@ Z_{s, e} = n_\mathrm{elem} \alpha_{e} Z.
 ```
 
 Conversely, specifying ``Z_s`` means elements of different shape will have different ``Z_e``.
-
-An excited lumped port must be purely resistive, with nonzero ``R`` or ``Rs`` and zero inductance
-and capacitance.
 
 The source term ``\bm{U}^{inc}`` in a driven frequency-response problem is related to the
 tangential component of the incident field at an excited port boundary by
@@ -323,8 +320,8 @@ For more information on the implementation of numeric wave ports, see [[3]](#Ref
 For a general waveguide mode, the circuit quantities ``V``, ``I``, and ``Z`` are not uniquely
 determined by the electromagnetic fields and must be fixed by convention [[11,12]](#References). In contrast
 to lumped ports, where the voltage is defined as an area-averaged integral with a specific analytic
-form, wave port ``V`` and ``I`` are obtained from line integrals on the port cross-section. A 3D
-wave port uses [`"VoltagePath"`](config/reference.md#config-boundaries-waveport-voltagepath) for
+form, wave port ``V`` and ``I`` are obtained from line integrals on the port cross-section. The
+wave port configuration uses [`"VoltagePath"`](config/reference.md#config-boundaries-waveport-voltagepath) for
 ``V`` and mode polarity, while
 [boundary-mode impedance postprocessing](config/reference.md#config-boundaries-postprocessing-impedance)
 can additionally define a current path for ``I``.
@@ -356,9 +353,7 @@ magnetic field ``\bm{H}_t = \mu_r^{-1}\bm{B}_t`` is obtained from the mode field
 
 where ``\hat{\bm{n}}`` is the port normal (propagation direction), ``k_n`` is the propagation
 constant, ``\bm{E}_t`` the transverse electric field, and ``E_n`` the normal (longitudinal) electric
-field component on the port. The current path is a postprocessing convention and does not set the
-3D wave-port polarity. The current postprocessor currently integrates ``\bm{B}_t`` directly, so
-``Z_{VI}`` follows this ``\bm{H}_t`` definition when ``\mu_r = 1`` along the contour.
+field component on the port.
 
 **Impedance.** The *power-voltage* characteristic impedance is defined as
 
@@ -369,7 +364,7 @@ Z_{PV} = \frac{|V|^2}{P}
 where ``P = \int_\Gamma\text{Re}\{(\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\}\,dS`` is the
 peak-phasor power flux through the port cross-section, equal to twice the time-averaged power. For
 TEM modes with a voltage path between the two conductors, ``Z_{PV}`` reduces to the conventional TEM
-characteristic impedance. For 3D wave ports, ``Z_{PV}`` is reported when `"VoltagePath"` is
+characteristic impedance. For wave ports, ``Z_{PV}`` is reported when `"VoltagePath"` is
 specified.
 
 As a diagnostic, boundary-mode impedance postprocessing also reports the *voltage-current*
