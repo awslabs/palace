@@ -7,13 +7,14 @@ SPDX-License-Identifier: Apache-2.0
 
 # Reference
 
-*Palace* calculates solutions of Maxwell's equation for five different "Problem Types":
+*Palace* calculates solutions of Maxwell's equation for six different "Problem Types":
 
   - Electrostatics: time-independent voltage sources,
   - Magnetostatics: time-independent current sources,
   - Driven: monochromatic excitations ``\bm{U}^{inc}(f)``,
   - Eigenmode: resonances of the system,
-  - Transient: time-dependant excitations ``\bm{U}^{inc}(t)``.
+  - Transient: time-dependent excitations ``\bm{U}^{inc}(t)``,
+  - Boundary mode: guided modes on a waveguide cross section.
 
 Here, we will summarize the mathematics of each, provide a description of boundary conditions, and
 specify convention choices. This should be read in conjunction with the "User Guide" and
@@ -188,7 +189,7 @@ system with an incident field.
 
 For lumped ports, the boundary condition is an impedance condition as described above — tangential
 fields satisfy ``\bm{E}_t = Z_s \bm{H}_t \times \bm{n}``. Here ``Z_s`` is the physical surface
-impedance (per unit area) and ``\bm{n}`` the port normal. The excitation modes ``\bm{E}^{inc}`` are
+impedance (per square) and ``\bm{n}`` the port normal. The excitation modes ``\bm{E}^{inc}`` are
 analytically specified.
 
 For wave ports, a solver performs eigenmode simulations on the boundary to find supported modes of a
@@ -198,8 +199,8 @@ users can choose which of the found modes to excite.
 
 We normalize port fields so the total power flow is ``\vert P^{inc} \vert = 1~\mathrm{W}``, where
 
-[TODO: Right now this is peak power, not the average. This is the Palace convention, but needs
-adjusting].
+*Palace* uses peak phasors for this convention, so ``P^{inc}`` is twice the time-averaged power for
+a propagating mode.
 
 ```math
 P^{inc} = V^{inc} [I^{inc}]^*  = \sum_e \int_{\Gamma_e} dS_e \,  \bm{n}_e \cdot (\bm{E}_e^{inc} \times [\bm{H}_e^{inc}]^*).
@@ -258,7 +259,7 @@ respectively. If ``Z`` is a combination of LRC responses, these add in parallel
 Specifically, ``R_s = \alpha R``, ``L_s = \alpha L``, and ``C_s = C/\alpha``.
 
 In the configuration file, a user specifies either ``L``, ``R``, ``C``, corresponding to ``Z``, or
-``L_s`` ,``R_s``, ``C_s`` corresponding to ``Z_s``. For a single-element port, these will just be
+``Ls``, ``Rs``, ``Cs`` corresponding to ``Z_s``. For a single-element port, these will just be
 converted using the single scale factor ``\alpha``. For a multi-element port, we require impedances
 to add in parallel ``{1}/{Z} = \sum_e {1}/{Z_e}``, so that each element sees the same voltage.
 Specifying a lumped ``Z`` in the config means that each element ``e`` can have a different physical
@@ -269,6 +270,9 @@ Z_{s, e} = n_\mathrm{elem} \alpha_{e} Z.
 ```
 
 Conversely, specifying ``Z_s`` means elements of different shape will have different ``Z_e``.
+
+An excited lumped port must be purely resistive, with nonzero ``R`` or ``Rs`` and zero inductance
+and capacitance.
 
 The source term ``\bm{U}^{inc}`` in a driven frequency-response problem is related to the
 tangential component of the incident field at an excited port boundary by
@@ -319,8 +323,11 @@ For more information on the implementation of numeric wave ports, see [[3]](#Ref
 For a general waveguide mode, the circuit quantities ``V``, ``I``, and ``Z`` are not uniquely
 determined by the electromagnetic fields and must be fixed by convention [[11,12]](#References). In contrast
 to lumped ports, where the voltage is defined as an area-averaged integral with a specific analytic
-form, wave port ``V`` and ``I`` are obtained from path integrals along user-specified paths on the
-port cross-section.
+form, wave port ``V`` and ``I`` are obtained from line integrals on the port cross-section. A 3D
+wave port uses [`"VoltagePath"`](config/reference.md#config-boundaries-waveport-voltagepath) for
+``V`` and mode polarity, while
+[boundary-mode impedance postprocessing](config/reference.md#config-boundaries-postprocessing-impedance)
+can additionally define a current path for ``I``.
 
 **Voltage.** The mode voltage is defined as a path integral of the electric field:
 
@@ -349,20 +356,24 @@ magnetic field ``\bm{H}_t = \mu_r^{-1}\bm{B}_t`` is obtained from the mode field
 
 where ``\hat{\bm{n}}`` is the port normal (propagation direction), ``k_n`` is the propagation
 constant, ``\bm{E}_t`` the transverse electric field, and ``E_n`` the normal (longitudinal) electric
-field component on the port.
+field component on the port. The current path is a postprocessing convention and does not set the
+3D wave-port polarity. The current postprocessor currently integrates ``\bm{B}_t`` directly, so
+``Z_{VI}`` follows this ``\bm{H}_t`` definition when ``\mu_r = 1`` along the contour.
 
-**Impedance.** Two impedance quantities are reported. The *power-voltage* characteristic impedance
-is defined as
+**Impedance.** The *power-voltage* characteristic impedance is defined as
 
 ```math
 Z_{PV} = \frac{|V|^2}{P}
 ```
 
 where ``P = \int_\Gamma\text{Re}\{(\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\}\,dS`` is the
-time-averaged power flux through the port cross-section. For TEM modes with a voltage path between the
-two conductors, ``Z_{PV}`` reduces to the conventional TEM characteristic impedance.
+peak-phasor power flux through the port cross-section, equal to twice the time-averaged power. For
+TEM modes with a voltage path between the two conductors, ``Z_{PV}`` reduces to the conventional TEM
+characteristic impedance. For 3D wave ports, ``Z_{PV}`` is reported when `"VoltagePath"` is
+specified.
 
-As a diagnostic, the *voltage-current* impedance magnitude is also reported:
+As a diagnostic, boundary-mode impedance postprocessing also reports the *voltage-current*
+impedance magnitude when a current path is specified:
 
 ```math
 Z_{VI} = |V| / |I|
@@ -372,16 +383,10 @@ where ``V`` and ``I`` are computed independently from different paths. Note that
 specifying both voltage and current does not in general define a valid characteristic impedance [[11]](#References).
 For TEM modes ``Z_{VI} = Z_{PV}``; for other modes they will generally differ.
 
-To Do:
-
-  - Fix dembedding sign and normal sign convention (outward vs inward normal):
-    In the boundarymode-2d branch, the normal sign convention: ``+\hat{\bm{n}}`` is the outward mesh normal.
-    The mode eigenvalue gives ``\text{Re}\{k_n\}\ge 0``, corresponding to forward propagation in the
-    ``+\hat{\bm{n}}`` direction. De-embedding
-    ``\tilde{S}_{ij} = S_{ij}e^{ik_{n,i}d_i}e^{ik_{n,j}d_j}`` uses positive ``d`` to shift the
-    reference plane toward the device (removing waveguide), consistent with [[8]](#References).
-  - Update with 1/2 factors if we move to average power definition
-  - link to impedance post-processing docs section once available.
+The normal convention ``+\hat{\bm{n}}`` is the outward mesh normal. The mode eigenvalue gives
+``\text{Re}\{k_n\}\ge 0``, corresponding to forward propagation in the ``+\hat{\bm{n}}`` direction.
+De-embedding ``\tilde{S}_{ij} = S_{ij}e^{ik_{n,i}d_i}e^{ik_{n,j}d_j}`` uses positive ``d`` to shift
+the reference plane toward the device (removing waveguide), consistent with [[12]](#References).
 
 ### Scattering Parameters
 
