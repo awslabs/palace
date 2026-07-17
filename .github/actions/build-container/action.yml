@@ -36,9 +36,13 @@ runs:
         EVENT_NAME: ${{ github.event_name }}
         # The PR's source branch (pull_request events) or the dispatched branch.
         HEAD_BRANCH: ${{ github.head_ref || github.ref_name }}
+        # Empty outside pull_request events. For pull requests, missing head
+        # repository metadata must fail closed rather than imply base-repo trust.
+        HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
         # 'true' iff a same-repo PR carries the push-containers label. Fork PRs
-        # resolve head.repo to the fork, so this stays false for them — they must
-        # never reach the instance-role push credentials on the public repo.
+        # resolve head.repo to the fork, so the workflow never selects its
+        # publication steps for them. Maintainer approval is the trust boundary
+        # for running fork code on these self-hosted workers.
         LABEL_PUSH: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'push-containers') && github.event.pull_request.head.repo.full_name == github.repository }}
       run: |
         ARCH_LABEL=$(spack arch -t)
@@ -68,15 +72,30 @@ runs:
           VERSION="dev-${BRANCH_SLUG}"; S3_PREFIX="dev/${BRANCH_SLUG}"; PUSH=false
         fi
 
-        echo "arch_label=${ARCH_LABEL}" >> "$GITHUB_OUTPUT"
-        echo "version=${VERSION}"       >> "$GITHUB_OUTPUT"
-        echo "s3_prefix=${S3_PREFIX}"   >> "$GITHUB_OUTPUT"
-        echo "push=${PUSH}"             >> "$GITHUB_OUTPUT"
+        # Maintainer approval lets a fork pull_request workflow run, but its
+        # GITHUB_TOKEN remains packages: read. Cache publication therefore has
+        # its own trust decision, independent of final image publication.
+        if [ "$EVENT_NAME" = "pull_request" ]; then
+          if [ -n "$HEAD_REPOSITORY" ] && [ "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY" ]; then
+            CACHE_WRITE=true
+          else
+            CACHE_WRITE=false
+          fi
+        else
+          CACHE_WRITE=true
+        fi
 
-        echo "Arch label: ${ARCH_LABEL}"
-        echo "Version:    ${VERSION}"
-        echo "S3 prefix:  ${S3_PREFIX}"
-        echo "Push:       ${PUSH}"
+        echo "arch_label=${ARCH_LABEL}"   >> "$GITHUB_OUTPUT"
+        echo "version=${VERSION}"         >> "$GITHUB_OUTPUT"
+        echo "s3_prefix=${S3_PREFIX}"     >> "$GITHUB_OUTPUT"
+        echo "push=${PUSH}"               >> "$GITHUB_OUTPUT"
+        echo "cache_write=${CACHE_WRITE}" >> "$GITHUB_OUTPUT"
+
+        echo "Arch label:       ${ARCH_LABEL}"
+        echo "Version:          ${VERSION}"
+        echo "S3 prefix:        ${S3_PREFIX}"
+        echo "Publish image:    ${PUSH}"
+        echo "Publish cache:    ${CACHE_WRITE}"
 
     - name: Compute image name
       id: name
@@ -92,7 +111,19 @@ runs:
     - name: Generate Dockerfile
       shell: bash
       run: |
-        cd .github/actions/build-container/spack_env && spack -e . containerize > $GITHUB_WORKSPACE/Dockerfile
+        cd .github/actions/build-container/spack_env
+        spack -e . containerize > "$GITHUB_WORKSPACE/Dockerfile"
+
+        # PalaceDockerfile branches to runtime-builder before destructive image
+        # pruning, leaving builder as the complete cache-publication snapshot.
+        # Spack's base template hard-codes three final-image copies from builder;
+        # point exactly those copies at the pruned runtime stage.
+        COPY_COUNT=$(grep -c '^COPY --from=builder ' "$GITHUB_WORKSPACE/Dockerfile")
+        if [ "$COPY_COUNT" -ne 3 ]; then
+          echo "::error::Expected 3 final-image copies from builder, found $COPY_COUNT"
+          exit 1
+        fi
+        sed -i 's/^COPY --from=builder /COPY --from=runtime-builder /' "$GITHUB_WORKSPACE/Dockerfile"
 
     - name: Check Dockerfile
       shell: bash
@@ -111,6 +142,36 @@ runs:
           -t ${{ steps.name.outputs.image_name }} .
 
         end_timer "Build OCI container"
+
+    - name: Publish dependencies to GHCR buildcache
+      # Bank a complete builder stage even if later runtime pruning or final
+      # image assembly failed. Forks remain excluded by cache_write.
+      if: |
+        !cancelled() &&
+        steps.meta.outputs.cache_write == 'true'
+      shell: bash
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+
+        # The generated Dockerfile's builder stage contains Spack and the
+        # concrete install tree. Tagging it reuses the layers from the full
+        # image build above; it does not rebuild Palace. Keep cache mutation
+        # out of the Dockerfile so fork builds follow the same build path
+        # without attempting a forbidden GHCR upload.
+        sudo podman build --format docker --target builder \
+          --build-arg GITHUB_USER=$GITHUB_USER \
+          --build-arg GITHUB_TOKEN=$GITHUB_TOKEN \
+          -t ${{ steps.name.outputs.image_name }}-builder .
+        # The Spack base image entrypoint treats its arguments as a Spack CLI
+        # invocation and initializes SPACK_ROOT/PATH before executing it.
+        sudo podman run --rm \
+          --env GITHUB_USER="$GITHUB_USER" \
+          --env GITHUB_TOKEN="$GITHUB_TOKEN" \
+          "${{ steps.name.outputs.image_name }}-builder" \
+          -e /opt/spack-environment buildcache push --only dependencies --unsigned local-buildcache
+
+        end_timer "Publish dependencies to GHCR buildcache"
 
     - name: Save OCI image as tar
       shell: bash
