@@ -183,6 +183,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 patch("mfem_pr5246.diff", when="@:4.9"),
                 # mfem PR #5353; remove once merged upstream and mfem is bumped.
                 "mfem_pr5353.diff",
+                "mfem_pr4983.diff",
             ],
         )
         depends_on("mfem+shared", when="+shared")

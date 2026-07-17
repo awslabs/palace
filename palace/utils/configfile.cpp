@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include "units.hpp"
+#include "utils/constants.hpp"
 #include "utils/enum_string.hpp"
 
 // This is similar to NLOHMANN_JSON_SERIALIZE_ENUM, but delegates to the single
@@ -816,6 +817,43 @@ FarFieldPostData::FarFieldPostData(const json &farfield)
     MFEM_WARNING("No target points specified under farfield \"FarField\"!\n");
   }
 }
+FluxLoopData::FluxLoopData(const json &fluxloop)
+{
+  MFEM_VERIFY(fluxloop.find("FluxLoopPEC") != fluxloop.end(),
+              "Missing \"FluxLoopPEC\" for \"FluxLoop\" boundary!");
+  fluxloop_pec = fluxloop.at("FluxLoopPEC").get<std::vector<int>>();
+  std::sort(fluxloop_pec.begin(), fluxloop_pec.end());
+
+  MFEM_VERIFY(fluxloop.find("HoleAttributes") != fluxloop.end(),
+              "Missing \"HoleAttributes\" for \"FluxLoop\" boundary!");
+  hole_attributes = fluxloop.at("HoleAttributes").get<std::vector<int>>();
+
+  MFEM_VERIFY(fluxloop.find("FluxAmounts") != fluxloop.end(),
+              "Missing \"FluxAmounts\" for \"FluxLoop\" boundary!");
+  flux_amounts = fluxloop.at("FluxAmounts").get<std::vector<double>>();
+
+  MFEM_VERIFY(hole_attributes.size() == flux_amounts.size(),
+              "\"HoleAttributes\" and \"FluxAmounts\" arrays must have the same size!");
+
+  regularization = fluxloop.value("Regularization", regularization);
+  MFEM_VERIFY(regularization > 0.0,
+              "\"Regularization\" for \"FluxLoop\" boundary must be positive!");
+
+  auto direction_it = fluxloop.find("Direction");
+  if (direction_it != fluxloop.end())
+  {
+    if (direction_it->is_array())
+    {
+      direction = direction_it->get<std::array<double, 3>>();
+    }
+    else
+    {
+      auto [dir, coord] = ParseStringAsDirection(direction_it->get<std::string>());
+      direction = dir;
+    }
+  }
+}
+
 BoundaryPostData::BoundaryPostData(const json &postpro)
 {
   flux =
@@ -897,6 +935,7 @@ BoundaryData::BoundaryData(const json &boundaries)
       ParseOptionalMap<FloquetPortData>(boundaries, "FloquetPort", "\"FloquetPort\"");
   current = ParseOptionalMap<SurfaceCurrentData>(boundaries, "SurfaceCurrent",
                                                  "\"SurfaceCurrent\"");
+  fluxloop = ParseOptionalMap<FluxLoopData>(boundaries, "FluxLoop", "\"FluxLoop\"");
   postpro = ParseOptional<BoundaryPostData>(boundaries, "Postprocessing");
 
   // Normalize excitation indices: upgrade excitation=1 to excitation=port_idx when
@@ -1422,8 +1461,15 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
 {
   std::ostringstream errors;
 
+  // Check for unsupported boundary combinations.
+  if (!boundaries.current.empty() && !boundaries.fluxloop.empty())
+  {
+    errors << "Combining \"SurfaceCurrent\" and \"FluxLoop\" excitations in the same "
+              "magnetostatic simulation is not yet supported\n";
+  }
+
   // Check for duplicate indices across LumpedPort, WavePort, FloquetPort,
-  // SurfaceCurrent, Terminal.
+  // SurfaceCurrent, FluxLoop, Terminal.
   std::map<int, std::string> index_map;
   for (const auto &[idx, data] : boundaries.lumpedport)
   {
@@ -1449,6 +1495,14 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
     {
       errors << "Duplicate \"Index\": " << idx << " in " << it->second
              << " and SurfaceCurrent\n";
+    }
+  }
+  for (const auto &[idx, data] : boundaries.fluxloop)
+  {
+    auto [it, inserted] = index_map.try_emplace(idx, "FluxLoop");
+    if (!inserted)
+    {
+      errors << "Duplicate \"Index\": " << idx << " in " << it->second << " and FluxLoop\n";
     }
   }
   for (const auto &[idx, data] : boundaries.floquetport)
