@@ -251,7 +251,7 @@ index 0cb8b9d50..3cfb42e1f 100644
  	ofi_genlock_unlock(&ep->util_ep.av->lock);
  }
 diff --git a/prov/shm/src/smr_util.c b/prov/shm/src/smr_util.c
-index 71340bdf1..ba077a1c2 100644
+index 71340bdf1..81046dd51 100644
 --- a/prov/shm/src/smr_util.c
 +++ b/prov/shm/src/smr_util.c
 @@ -31,6 +31,30 @@
@@ -285,7 +285,15 @@ index 71340bdf1..ba077a1c2 100644
  #include "ofi_shm_p2p.h"
  #include <sys/stat.h>
  
-@@ -304,6 +328,7 @@ int smr_create(const struct fi_provider *prov, const struct smr_attr *attr,
+@@ -173,6 +197,7 @@ static int smr_retry_map(const char *name, int *fd)
+ 
+ err:
+ 	close(*fd);
++	_smr_life("RETRYMAP_UNLINK pid=%d name=%s\n", (int) getpid(), name);
+ 	shm_unlink(name);
+ 	return -FI_EBUSY;
+ }
+@@ -304,6 +329,7 @@ int smr_create(const struct fi_provider *prov, const struct smr_attr *attr,
  
  	/* Must be set last to signal full initialization to peers */
  	(*smr)->pid = getpid();
@@ -293,7 +301,14 @@ index 71340bdf1..ba077a1c2 100644
  	return 0;
  
  remove:
-@@ -318,6 +343,7 @@ close:
+@@ -312,12 +338,14 @@ remove:
+ 	free(ep_name);
+ close:
+ 	close(fd);
++	_smr_life("CREATEFAIL_UNLINK pid=%d name=%s ret=%d\n", (int) getpid(), (char *) attr->name, ret);
+ 	shm_unlink(attr->name);
+ 	return ret;
+ }
  
  void smr_free(struct smr_region *smr)
  {
