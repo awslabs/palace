@@ -27,9 +27,20 @@ fabrication feature size << R
 2 R < distance to the next geometric feature
 ```
 
-For this fabrication stack, the cross-geometry validation favors
-approximately 0.2-0.3 um. Larger radii are retained in the sweep to show the
-breakdown as the annulus begins to sample the macroscopic CPW geometry.
+The matching radius is a numerical regularization parameter and does not have
+to be shared by SA, MS, and MA. Select and freeze one radius per interface
+using independent 2D calibration and validation geometries. The calibration
+and target simulations should use the same FEM order and comparable AMR
+convergence because the finite-resolution surface traces, especially MS, can
+otherwise shift the fitted coefficients. Never tune the radii against the 3D
+fabrication-resolved result being used as a validation target.
+
+For the order-2 study in this directory, the cross-geometry validation favors
+approximately 0.2-0.3 um for all three interfaces. Larger radii are retained
+in the sweep to show the breakdown as the annulus begins to sample the
+macroscopic CPW geometry. An order-3 calibration can favor different frozen
+radii for the three interfaces because the MS surface trace converges more
+slowly than the shared SA annulus proxy.
 
 At `R = 0.2 um`, applying the 10/6 um coefficients unchanged to the 20/12 um
 CPW changes the SA/MS/MA errors from `+63%/+40%/-37%` to approximately
@@ -71,16 +82,20 @@ interface indices, dielectric properties, edge radii, and fabrication stack:
 python3 apply_surface_calibration.py \
   --calibration postpro/surface-calibration.csv \
   --input ../transmon/postpro/transmon_surface_coarse \
+  --radius SA=0.2 \
+  --radius MS=0.2 \
+  --radius MA=0.2 \
   --output ../transmon/postpro/transmon_surface_coarse/surface-Q-corrected.csv
 ```
 
-The result contains corrected participation ratios and quality factors for every
-calibrated radius. A 3D mesh still needs enough resolution in the matching
-annulus `R <= d < 2R`; a zero or abruptly changing annular energy indicates that
-the selected radius is under-resolved. Corners, edge junctions, and nearby
-features also violate the locally extruded cross-section assumption, so the
-radius sweep should show a stable interval between the fabrication scale and
-the next geometric feature. Components with multiple fabrication stacks should
-use separate dielectric entries and edge-attribute sets for each stack.
-For truncated or extruded models, use `EdgeExcludeAttributes` to omit artificial
+With `--radius`, the result contains one corrected participation ratio and
+quality factor per interface. Omitting the option retains the complete radius
+sweep. A 3D mesh still needs enough resolution in each matching annulus
+`R <= d < 2R`; a zero or abruptly changing annular energy indicates that the
+selected radius is under-resolved. Corners, edge junctions, and nearby features
+also violate the locally extruded cross-section assumption, so the radius sweep
+should show a stable interval between the fabrication scale and the next
+geometric feature. Components with multiple fabrication stacks should use
+separate dielectric entries and edge-attribute sets for each stack. For
+truncated or extruded models, use `EdgeExcludeAttributes` to omit artificial
 cut-plane boundaries from the physical metal perimeter.

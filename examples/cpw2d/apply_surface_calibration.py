@@ -84,6 +84,64 @@ def read_calibration(path):
     return rows
 
 
+def parse_radius_selection(value):
+    try:
+        interface, radius = value.split("=", 1)
+        radius = float(radius)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"Expected INTERFACE=RADIUS_UM, got {value!r}"
+        ) from exc
+    interface = interface.strip()
+    if not interface or not math.isfinite(radius) or radius <= 0.0:
+        raise argparse.ArgumentTypeError(
+            f"Expected INTERFACE=RADIUS_UM with a positive radius, got {value!r}"
+        )
+    return interface, radius
+
+
+def select_calibration_radii(calibration, selections):
+    if not selections:
+        return calibration
+
+    requested = {}
+    for interface, radius in selections:
+        if interface in requested:
+            raise RuntimeError(f"Duplicate radius selection for interface {interface!r}")
+        requested[interface] = radius
+
+    available = {row["interface"] for row in calibration}
+    unknown = requested.keys() - available
+    missing = available - requested.keys()
+    if unknown:
+        raise RuntimeError(f"Unknown calibration interfaces: {sorted(unknown)}")
+    if missing:
+        raise RuntimeError(f"Missing radius selections for interfaces: {sorted(missing)}")
+
+    selected = []
+    for interface, radius in requested.items():
+        candidates = [
+            row
+            for row in calibration
+            if row["interface"] == interface
+            and math.isclose(
+                float(row["radius_um"]), radius, rel_tol=1.0e-8, abs_tol=1.0e-12
+            )
+        ]
+        if not candidates:
+            radii = sorted(
+                float(row["radius_um"])
+                for row in calibration
+                if row["interface"] == interface
+            )
+            raise RuntimeError(
+                f"No calibration radius {radius:g} um for interface {interface!r}; "
+                f"available radii: {radii}"
+            )
+        selected.append(candidates[0])
+    return selected
+
+
 def matching_edge_key(edge_values, interface, radius):
     candidates = [key for key in edge_values if key[0] == interface]
     if not candidates:
@@ -215,9 +273,21 @@ def main():
         required=True,
         help="Corrected participation CSV to write.",
     )
+    parser.add_argument(
+        "--radius",
+        action="append",
+        type=parse_radius_selection,
+        default=[],
+        metavar="INTERFACE=RADIUS_UM",
+        help=(
+            "Select one frozen calibration radius for each interface. Repeat for every "
+            "interface; omit to retain the complete radius sweep."
+        ),
+    )
     args = parser.parse_args()
 
-    results = apply_calibration(read_calibration(args.calibration), args.input)
+    calibration = select_calibration_radii(read_calibration(args.calibration), args.radius)
+    results = apply_calibration(calibration, args.input)
     write_results(args.output, results)
     print_results(results)
     print(f"\nWrote {args.output}")

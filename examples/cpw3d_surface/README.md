@@ -32,6 +32,9 @@ build/bin/palace -np 4 examples/cpw3d_surface/cpw3d_surface_validation_fabricate
 python3 examples/cpw2d/apply_surface_calibration.py \
   --calibration examples/cpw2d/postpro/surface-calibration.csv \
   --input examples/cpw3d_surface/postpro/surface_validation_thin_L50 \
+  --radius SA=0.2 \
+  --radius MS=0.2 \
+  --radius MA=0.2 \
   --output examples/cpw3d_surface/postpro/surface_validation_thin_L50/surface-Q-corrected.csv
 ```
 
@@ -44,10 +47,11 @@ edge-decomposed MS and MA energies agree with the first 2D AMR level rather
 than the final 2D result. At `R = 0.2 um`, the raw thin SA/MS/MA errors relative
 to the 3D fabrication-resolved result are approximately
 `+17.5%/+18.3%/-42.2%`; the corrected errors are
-`+2.6%/+16.8%/+14.8%`. Refine the thin mesh until the corrected result at the
-physically selected matching radius is stable. Do not select a different
-radius for each interface or tune the radius using the fabrication-resolved
-reference.
+`+2.6%/+16.8%/+14.8%`. Refine the thin mesh until the corrected result at each
+preselected matching radius is stable. Radius selection may differ by
+interface, but it must be frozen using an independent 2D cross-geometry
+validation at the same FEM order. Do not tune any radius using this 3D
+fabrication-resolved reference.
 
 The extrusion checks are independent of this cross-section refinement:
 
