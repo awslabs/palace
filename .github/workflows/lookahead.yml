@@ -89,3 +89,21 @@ jobs:
           toolchain: gcc
           run-regression-tests: 'true'
           spack-version: 'develop'
+
+      # This is the only Spack develop writer, so it can refresh its index
+      # directly without racing another writer. Run after Palace CI so the
+      # index includes dependencies banked by this job, even if a later test
+      # failed; readers continue using the previous complete index meanwhile.
+      - name: Refresh Spack develop buildcache index
+        if: |
+          !cancelled() &&
+          hashFiles('spack.yaml') != '' &&
+          (
+            github.event_name != 'pull_request' ||
+            github.event.pull_request.head.repo.full_name == github.repository
+          )
+        shell: bash
+        run: |
+          START_TIME=${SECONDS}
+          spack -e . buildcache update-index local-buildcache
+          echo "Spack develop buildcache index refresh: $((SECONDS - START_TIME))s"
