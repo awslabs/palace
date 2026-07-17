@@ -499,8 +499,16 @@ TEST_CASE("adapter_driven_synth", "[Serial][Parallel][Regression]")
   // exclusion as the eigenmode cases).
   opts.skip_rowcount = true;
   opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
-  opts.excluded_files = {"rom-Linv", "rom-Rinv", "rom-C-", "rom-portload-",
-                         "rom-orthogonalization-matrix-R"};
+  // The raw synthesis matrices and the eigenvectors (which live in the same
+  // basis-dependent node coordinates) vary with the greedy sampling and MPI partition;
+  // only their presence is checked. The eigenvalues are partition-independent and are
+  // compared numerically.
+  opts.excluded_files = {"rom-Linv",
+                         "rom-Rinv",
+                         "rom-C-",
+                         "rom-portload-",
+                         "rom-orthogonalization-matrix-R",
+                         "rom-eigenvectors"};
   // No field output is requested in the config.
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("adapter", "driven_synth.json", "driven_synth", opts);
