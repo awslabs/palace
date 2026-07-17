@@ -35,6 +35,10 @@ inputs:
     description: 'Additional test cases to run after default tests (space-separated list)'
     required: false
     default: ''
+  publish-buildcache:
+    description: 'Publish built dependencies; caller must grant packages: write'
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -53,6 +57,8 @@ runs:
       shell: bash
       env:
         SPACK_VERSION: ${{ inputs.spack-version }}
+        CACHE_WRITE_REQUESTED: ${{ inputs.publish-buildcache }}
+        CACHE_WRITE_TRUSTED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
       run: |
         source /tmp/timing_functions.sh
         start_timer
@@ -66,9 +72,12 @@ runs:
         CACHE_SUFFIX="$(printf '%s' "${CACHE_SUFFIX}" | tr '[:upper:]/' '[:lower:]-' | tr -c 'a-z0-9._-' '-')"
         PALACE_BUILD_CACHE_NAME="palace-${CACHE_SUFFIX}"
         echo "PALACE_BUILD_CACHE_NAME=${PALACE_BUILD_CACHE_NAME}" >> "${GITHUB_ENV}"
-        echo "PALACE_BUILD_CACHE_WRITE=true" >> "${GITHUB_ENV}"
         echo "GHCR buildcache package: ghcr.io/awslabs/${PALACE_BUILD_CACHE_NAME}"
-        echo "GHCR buildcache access: read/write"
+        if [[ "${CACHE_WRITE_REQUESTED}" == "true" && "${CACHE_WRITE_TRUSTED}" == "true" ]]; then
+          echo "GHCR buildcache access: read/write"
+        else
+          echo "GHCR buildcache access: read-only"
+        fi
 
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
           CUDA_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.')
@@ -263,25 +272,15 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        # Bank built deps even if the install later fails. The CLI push skips
-        # non-redistributable specs (the autopush hook does not, so it is not
-        # used); skip --update-index since installs probe OCI tags directly.
-        bank_progress() {
-          if [[ "${PALACE_BUILD_CACHE_WRITE:-false}" == "true" ]]; then
-            spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
-          else
-            echo "Skipping buildcache publish from non-canonical Spack version."
-          fi
-        }
-        # No --fail-fast: build (and bank) everything possible; retry to ride
-        # out transient source-fetch failures.
+        # No --fail-fast: build everything possible and retry to ride out
+        # transient source-fetch failures. Cache publication is a separate,
+        # permission-gated step below; it can also bank partial progress after
+        # this step fails.
         attempts=3
         for attempt in $(seq 1 "$attempts"); do
           if spack -e . install --only-concrete --no-check-signature --show-log-on-error --include-build-deps --only dependencies --test root -j $(nproc); then
-            bank_progress
             break
           fi
-          bank_progress
           if [ "$attempt" -eq "$attempts" ]; then
             echo "Dependency installation failed after ${attempts} attempts."
             exit 1
@@ -374,7 +373,19 @@ runs:
           spack.lock
         retention-days: 7
 
-    - name: Push to GHCR cache
+    # Keep publication out of build/test steps. Fork pull_request tokens are
+    # read-only even when a maintainer approves the run, so they must consume
+    # the cache without attempting to mutate it. !cancelled() lets trusted runs
+    # bank partial dependency progress after a preceding build/test failure.
+    - name: Publish dependencies to GHCR buildcache
+      if: |
+        !cancelled() &&
+        hashFiles('spack.lock') != '' &&
+        inputs.publish-buildcache == 'true' &&
+        (
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        )
       shell: bash
       run: |
         source /tmp/timing_functions.sh
@@ -383,12 +394,8 @@ runs:
         # container build). Do not force-overwrite existing spec tags: OCI
         # installs probe tags directly, and replacing a tag from another build
         # can invalidate consumers even when the Spack DAG hash is unchanged.
-        if [[ "${PALACE_BUILD_CACHE_WRITE:-false}" == "true" ]]; then
-          spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
-        else
-          echo "Skipping buildcache publish from non-canonical Spack version."
-        fi
-        end_timer "Push to GHCR cache"
+        spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
+        end_timer "Publish dependencies to GHCR buildcache"
 
     - name: Run Regression Tests
       if: inputs.run-regression-tests == 'true'

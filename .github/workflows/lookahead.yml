@@ -53,6 +53,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/palace-ci
         with:
+          publish-buildcache: 'true'
           toolchain: gcc
           run-regression-tests: 'true'
           use-develop-deps: 'true'
@@ -65,6 +66,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/palace-ci
         with:
+          publish-buildcache: 'true'
           toolchain: gcc
           variant: +cuda
           run-regression-tests: 'true'
@@ -86,24 +88,61 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/palace-ci
         with:
+          publish-buildcache: 'true'
           toolchain: gcc
           run-regression-tests: 'true'
           spack-version: 'develop'
 
-      # This is the only Spack develop writer, so it can refresh its index
-      # directly without racing another writer. Run after Palace CI so the
-      # index includes dependencies banked by this job, even if a later test
-      # failed; readers continue using the previous complete index meanwhile.
+  # Refresh the develop index after its cache-producing job. Keep this separate
+  # from the build so fork runs can skip the mutation stage entirely and use a
+  # stable concurrency group to serialize index writers across all PRs.
+  refresh-develop-buildcache-index:
+    needs:
+      - filter
+      - build-test-x64-gcc-spack-develop
+    if: |
+      !cancelled() &&
+      needs.filter.outputs.test == 'true' &&
+      (
+        github.event_name != 'pull_request' ||
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    # Serialize writers from different PR refs. A newer run on the same ref may
+    # cancel the parent workflow, but the prior complete OCI tag remains visible
+    # until a replacement index upload finishes.
+    concurrency:
+      group: palace-develop-buildcache-index
+      cancel-in-progress: false
+    steps:
+      - name: Install Spack develop
+        uses: actions/checkout@v6
+        with:
+          repository: spack/spack
+          path: spack
+          ref: develop
+
       - name: Refresh Spack develop buildcache index
-        if: |
-          !cancelled() &&
-          hashFiles('spack.yaml') != '' &&
-          (
-            github.event_name != 'pull_request' ||
-            github.event.pull_request.head.repo.full_name == github.repository
-          )
         shell: bash
         run: |
+          INDEX_ENV="${RUNNER_TEMP}/spack-buildcache-index"
+          mkdir -p "${INDEX_ENV}"
+          cat > "${INDEX_ENV}/spack.yaml" << 'EOF'
+          spack:
+            specs: []
+            mirrors:
+              local-buildcache:
+                binary: true
+                url: oci://ghcr.io/awslabs/palace-develop
+                signed: false
+                access_pair:
+                  id_variable: GITHUB_USER
+                  secret_variable: GITHUB_TOKEN
+          EOF
           START_TIME=${SECONDS}
-          spack -e . buildcache update-index local-buildcache
+          SPACK_DISABLE_LOCAL_CONFIG=1 spack/bin/spack -e "${INDEX_ENV}" \
+            buildcache update-index local-buildcache
           echo "Spack develop buildcache index refresh: $((SECONDS - START_TIME))s"
