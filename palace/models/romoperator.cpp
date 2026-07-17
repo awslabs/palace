@@ -2333,6 +2333,34 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       out.table["err_abs"] << e.error_abs;
     }
     out.WriteFullTableTrunc();
+
+    // Write the matching eigenvectors in the synthesized node space: one column per node
+    // (basis + aux, same labels and order as the rom-Linv/Rinv/C matrix columns), one row
+    // per mode (row k is the eigenvector of row k in rom-eigenvalues.csv). Unit 2-norm,
+    // phase fixed so the largest-magnitude entry is real-positive. A consumer can check
+    // (L⁻¹ + iωR⁻¹ − ω²C)·y ≈ 0 directly from the printed artifacts.
+    auto print_eigvecs = [&](auto accessor, std::string_view filename)
+    {
+      auto vec_out = TableWithCSVFile(post_dir / filename);
+      vec_out.table.col_options.float_precision = 17;
+      vec_out.table.reserve(eigs.size(), labels.size());
+      for (std::size_t i = 0; i < labels.size(); i++)
+      {
+        vec_out.table.insert(labels[i], labels[i]);
+        auto &col = vec_out.table[static_cast<long>(i)];
+        for (const auto &e : eigs)
+        {
+          col << ((static_cast<Eigen::Index>(i) < e.eigvec.size())
+                      ? accessor(e.eigvec(static_cast<Eigen::Index>(i)))
+                      : 0.0);
+        }
+      }
+      vec_out.WriteFullTableTrunc();
+    };
+    print_eigvecs([](std::complex<double> v) { return v.real(); },
+                  "rom-eigenvectors-re.csv");
+    print_eigvecs([](std::complex<double> v) { return v.imag(); },
+                  "rom-eigenvectors-im.csv");
     Mpi::Print("\n Synthesized-system eigenvalue estimates ({:d} modes in [{:.3f}, "
                "{:.3f}] GHz):\n",
                eigs.size(), fmin_GHz, fmax_GHz);
@@ -2447,12 +2475,22 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
     est.freq_im_GHz = f_im;
     est.Q = Q;
     // The companion eigenvector is x = [v; s·v]; keep the "v" block (the synthesized
-    // pencil's node coordinates: basis + aux rows), normalized to unit 2-norm.
+    // pencil's node coordinates: basis + aux rows), normalized to unit 2-norm with the
+    // largest-magnitude entry rotated to be real and positive. The LAPACK phase is
+    // arbitrary (and MPI-partition dependent), so fixing it makes the printed
+    // eigenvectors reproducible across runs.
     est.eigvec = vr.col(k).head(n);
     const double vnorm = est.eigvec.norm();
     if (vnorm > 0.0)
     {
       est.eigvec /= vnorm;
+      Eigen::Index i_max;
+      est.eigvec.cwiseAbs().maxCoeff(&i_max);
+      const std::complex<double> pivot = est.eigvec(i_max);
+      if (std::abs(pivot) > 0.0)
+      {
+        est.eigvec *= std::abs(pivot) / pivot;
+      }
     }
     modes.push_back(std::move(est));
   }
