@@ -81,7 +81,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Check changelog SchemaVer entries
-        run: ./scripts/check-changelog-schema-versions
+        run: |
+          ./scripts/check-changelog-schema-versions --self-test
+          ./scripts/check-changelog-schema-versions
 
   check-tests-tags:
     runs-on: ubuntu-latest

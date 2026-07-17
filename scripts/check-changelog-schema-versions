@@ -11,10 +11,47 @@ Fail if CHANGELOG contains duplicate SchemaVer X-Y-Z entries.
 
 Options:
   -h, --help                       Show this help message and exit
+      --self-test                  Run built-in self-tests and exit
 
 Arguments:
   CHANGELOG                        Changelog file to scan (default: CHANGELOG.md)
 "
+}
+
+self_test()
+{
+    local tmpdir unique duplicate output script
+
+    script="${BASH_SOURCE[0]}"
+    tmpdir=$(mktemp -d) || return 1
+    unique="${tmpdir}/unique.md"
+    duplicate="${tmpdir}/duplicate.md"
+
+    printf '%s\n' 'SchemaVer 1-0-0' 'SchemaVer 1-1-0' > "${unique}"
+    if ! output=$(bash "${script}" "${unique}" 2>&1); then
+        echo "Self-test failed: unique SchemaVer entries were rejected"
+        echo "${output}"
+        rm -rf "${tmpdir}"
+        return 1
+    fi
+
+    printf '%s\n' 'SchemaVer 2-0-0' 'SchemaVer 2-0-0' > "${duplicate}"
+    if output=$(bash "${script}" "${duplicate}" 2>&1); then
+        echo "Self-test failed: duplicate SchemaVer entries were accepted"
+        echo "${output}"
+        rm -rf "${tmpdir}"
+        return 1
+    fi
+    if ! grep -q 'SchemaVer 2-0-0' <<< "${output}"; then
+        echo "Self-test failed: duplicate SchemaVer version was not reported"
+        echo "${output}"
+        rm -rf "${tmpdir}"
+        return 1
+    fi
+
+    rm -rf "${tmpdir}"
+    echo "check-changelog-schema-versions self-test passed"
+    return 0
 }
 
 POSITIONAL=()
@@ -23,6 +60,10 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             help
             exit 0
+            ;;
+        --self-test)
+            self_test
+            exit $?
             ;;
         *)
             POSITIONAL+=("$1")
