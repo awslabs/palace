@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+CHANGELOG="${1:-CHANGELOG.md}"
+
+if [[ ! -f "${CHANGELOG}" ]]; then
+    echo "Error: Changelog '${CHANGELOG}' does not exist"
+    exit 1
+fi
+
+DUPLICATES=$(grep -oE 'SchemaVer [0-9]+-[0-9]+-[0-9]+' "${CHANGELOG}" | sort | uniq -d)
+
+if [[ -n "${DUPLICATES}" ]]; then
+    echo "Error: Duplicate schema versions found in ${CHANGELOG}:"
+    echo "${DUPLICATES}"
+    exit 1
+fi
+
+echo "All schema versions in ${CHANGELOG} are unique"
+exit 0
