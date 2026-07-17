@@ -51,9 +51,25 @@ runs:
 
     - name: Prepare spack.yaml
       shell: bash
+      env:
+        SPACK_VERSION: ${{ inputs.spack-version }}
       run: |
         source /tmp/timing_functions.sh
         start_timer
+
+        # Isolate GHCR buildcaches by Spack version. Spack DAG hashes do not
+        # identify the Spack version or buildcache representation that produced
+        # an OCI artifact, so different Spack versions must never write the same
+        # package. They can still each have their own warm cache.
+        CACHE_SUFFIX="${SPACK_VERSION#releases/v}"
+        CACHE_SUFFIX="${CACHE_SUFFIX#v}"
+        CACHE_SUFFIX="$(printf '%s' "${CACHE_SUFFIX}" | tr '[:upper:]/' '[:lower:]-' | tr -c 'a-z0-9._-' '-')"
+        PALACE_BUILD_CACHE_NAME="palace-${CACHE_SUFFIX}"
+        echo "PALACE_BUILD_CACHE_NAME=${PALACE_BUILD_CACHE_NAME}" >> "${GITHUB_ENV}"
+        echo "PALACE_BUILD_CACHE_WRITE=true" >> "${GITHUB_ENV}"
+        echo "GHCR buildcache package: ghcr.io/awslabs/${PALACE_BUILD_CACHE_NAME}"
+        echo "GHCR buildcache access: read/write"
+
         if [[ "${{ inputs.variant }}" == *"+cuda"* ]]; then
           CUDA_ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader | head -1 | tr -d '.')
           CUDA_ARGS="cuda_arch=${CUDA_ARCH}"
@@ -185,7 +201,7 @@ runs:
               url: https://binaries.spack.io/develop
             local-buildcache:
               binary: true
-              url: oci://ghcr.io/awslabs/palace-develop-testing
+              url: oci://ghcr.io/awslabs/${PALACE_BUILD_CACHE_NAME}
               signed: false
               access_pair:
                 id_variable: GITHUB_USER
@@ -215,7 +231,11 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        spack -e . buildcache keys -y --install --trust
+        # The local GHCR buildcache is unsigned and may not exist yet when a new
+        # cache package is bootstrapped. Only install/trust keys from Spack's
+        # public binary mirror; package installs will still use GHCR binaries
+        # opportunistically and fall back to source builds on cache misses.
+        spack -e . buildcache keys -y --install --trust spack
         end_timer "Configure Binary Mirror Keys"
 
     - name: Bootstrap
@@ -247,7 +267,11 @@ runs:
         # non-redistributable specs (the autopush hook does not, so it is not
         # used); skip --update-index since installs probe OCI tags directly.
         bank_progress() {
-          spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
+          if [[ "${PALACE_BUILD_CACHE_WRITE:-false}" == "true" ]]; then
+            spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
+          else
+            echo "Skipping buildcache publish from non-canonical Spack version."
+          fi
         }
         # No --fail-fast: build (and bank) everything possible; retry to ride
         # out transient source-fetch failures.
@@ -355,8 +379,15 @@ runs:
       run: |
         source /tmp/timing_functions.sh
         start_timer
-        # Push deps only; Palace itself is branch-specific (same reason as the container build).
-        spack -e . buildcache push --force --with-build-dependencies --only dependencies --unsigned --update-index local-buildcache || true
+        # Push deps only; Palace itself is branch-specific (same reason as the
+        # container build). Do not force-overwrite existing spec tags: OCI
+        # installs probe tags directly, and replacing a tag from another build
+        # can invalidate consumers even when the Spack DAG hash is unchanged.
+        if [[ "${PALACE_BUILD_CACHE_WRITE:-false}" == "true" ]]; then
+          spack -e . buildcache push --allow-missing --with-build-dependencies --only dependencies --unsigned local-buildcache || true
+        else
+          echo "Skipping buildcache publish from non-canonical Spack version."
+        fi
         end_timer "Push to GHCR cache"
 
     - name: Run Regression Tests

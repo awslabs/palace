@@ -146,6 +146,59 @@ jobs:
           math-libs: armpl-gcc
           additional-test-cases: transmon_coarse
 
+  # Refresh the shared Spack 1.2 buildcache index once all cache writers have
+  # finished. Regression jobs can start as soon as their own build completes,
+  # so this full index rebuild is not on their critical path. The index is
+  # best-effort: binaries pushed concurrently remain available through Spack's
+  # direct OCI-tag fallback and will be included by the next refresh.
+  refresh-buildcache-index:
+    needs:
+      - filter
+      - build-x64-gcc
+      - build-gpu-gcc
+      - build-x64-gcc-openmp
+      - build-x64-gcc-cxx20
+      - build-test-x64-llvm
+      - build-test-x64-intel
+      - build-test-arm64-gcc
+      - build-test-arm64-llvm
+      - build-test-arm64-gcc-armpl
+    if: |
+      !cancelled() &&
+      needs.filter.outputs.test == 'true' &&
+      (
+        github.event_name != 'pull_request' ||
+        github.event.pull_request.head.repo.full_name == github.repository
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Spack 1.2
+        uses: actions/checkout@v6
+        with:
+          repository: spack/spack
+          path: spack
+          ref: releases/v1.2
+
+      - name: Refresh GHCR buildcache index
+        shell: bash
+        run: |
+          INDEX_ENV="${RUNNER_TEMP}/spack-buildcache-index"
+          mkdir -p "${INDEX_ENV}"
+          cat > "${INDEX_ENV}/spack.yaml" << 'EOF'
+          spack:
+            specs: []
+            mirrors:
+              local-buildcache:
+                binary: true
+                url: oci://ghcr.io/awslabs/palace-1.2
+                signed: false
+                access_pair:
+                  id_variable: GITHUB_USER
+                  secret_variable: GITHUB_TOKEN
+          EOF
+          SPACK_DISABLE_LOCAL_CONFIG=1 spack/bin/spack -e "${INDEX_ENV}" \
+            buildcache update-index local-buildcache
+
   # Test jobs
   test-x64-gcc:
     needs: [filter, build-x64-gcc]
