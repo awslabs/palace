@@ -1,121 +1,148 @@
-# Manages long test status for PRs based on labels and file changes.
-#
-# 1. Label-based bypass:
-#    - When 'no-long-tests' label is added: sets long-tests status to success
-#    - When 'no-long-tests' label is removed: sets status to pending
-#
-# 2. Automatic bypass for trivial changes:
-#    - When PR only modifies non-code files (docs, README, etc.), automatically
-#      sets long-tests status to success without running expensive tests
-
+# Reconcile the long-tests commit status with a trusted token. The privileged
+# jobs in this workflow only inspect GitHub metadata; they never check out or
+# execute a pull request's code.
 name: Long Test Status Manager
 
 on:
-  pull_request:
+  # Label and file-change decisions need the base repository's status-write
+  # permission, which fork pull_request tokens never receive.
+  pull_request_target:
     types: [labeled, unlabeled, opened, synchronize, reopened]
+  # Long Tests itself remains an ordinary, read-only pull_request workflow.
+  workflow_run:
+    workflows: [Long Tests]
+    # in_progress is required for reruns: GitHub does not emit requested when
+    # an existing workflow run is rerun, but its old success must become pending.
+    types: [requested, in_progress, completed]
 
 permissions:
+  actions: read
   statuses: write
   pull-requests: read
-  contents: read
+
+# Every surviving job recomputes the complete current state. If GitHub replaces
+# a pending member of this group, the newer reconciliation reaches the same or
+# a newer state instead of depending on FIFO delivery.
+concurrency:
+  group: long-test-status-${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
 
 jobs:
-  # Filter to detect if PR contains non-trivial changes requiring long tests
-  filter:
-    runs-on: ubuntu-latest
+  reconcile:
     if: |
-      github.event.action == 'opened' ||
-      github.event.action == 'synchronize' ||
-      github.event.action == 'reopened'
-    outputs:
-      needs_long: ${{ steps.filter.outputs.test }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v4
-        id: filter
-        with:
-          filters: |
-            test:
-              - 'palace/**'
-              - 'cmake/**'
-              - 'extern/**'
-              - 'examples/**'
-              - 'test/unit/**'
-              - 'test/data/**'
-              - 'spack_repo/**'
-              - '.github/actions/**'
-              - '.github/workflows/long-test*.yml'
-
-  # Automatically bypass long tests for trivial changes
-  handle-trivial-changes:
-    needs: filter
-    if: |
-      needs.filter.outputs.needs_long == 'false' &&
-      !contains(github.event.pull_request.labels.*.name, 'trigger-long-tests') &&
-      !contains(github.event.pull_request.labels.*.name, 'no-long-tests')
+      github.event_name == 'pull_request_target' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request')
     runs-on: ubuntu-latest
     steps:
-      - name: Set bypass status for trivial changes
+      - name: Reconcile long-test status
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
         run: |
-          gh api "repos/$REPO/statuses/$HEAD_SHA" \
-            --method POST \
-            --field state=success \
-            --field context=long-tests \
-            --field description="Long tests bypassed (trivial changes)"
+          set -euo pipefail
 
-  # Require long tests when non-trivial changes are detected
-  handle-non-trivial-changes:
-    needs: filter
-    if: |
-      needs.filter.outputs.needs_long == 'true' &&
-      !contains(github.event.pull_request.labels.*.name, 'no-long-tests')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Set pending status for non-trivial changes
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          gh api "repos/$REPO/statuses/$HEAD_SHA" \
-            --method POST \
-            --field state=pending \
-            --field context=long-tests \
-            --field description="Waiting for long tests (add 'trigger-long-tests' label to run)"
+          # workflow_run.pull_requests is often empty for forks. Resolve the PR
+          # from the GitHub-authored head SHA when necessary.
+          if [[ -z "$PR_NUMBER" ]]; then
+            # A force-pushed commit or deleted fork can make this endpoint
+            # return 404/422. Fall through to the open-PR scan in that case.
+            ASSOCIATED_PRS=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" 2>/dev/null || printf '[]')
+            PR_NUMBER=$(jq -r --arg repo "$REPO" --arg sha "$HEAD_SHA" \
+              '[.[] | select(.base.repo.full_name == $repo and .head.sha == $sha)][0].number // empty' \
+              <<< "$ASSOCIATED_PRS")
+          fi
+          if [[ -z "$PR_NUMBER" ]]; then
+            PR_NUMBER=$(gh api --paginate "repos/$REPO/pulls?state=open&per_page=100" | \
+              jq -sr --arg repo "$REPO" --arg sha "$HEAD_SHA" \
+              '[.[][] | select(.base.repo.full_name == $repo and .head.sha == $sha)][0].number // empty')
+          fi
+          if [[ -z "$PR_NUMBER" ]]; then
+            echo "::warning::Could not identify an open PR for head $HEAD_SHA"
+            exit 0
+          fi
 
-  # Handle adding/removing 'no-long-tests' label
-  handle-no-long-tests:
-    if: github.event.label.name == 'no-long-tests'
-    runs-on: ubuntu-latest
-    steps:
-      # When label is added: bypass long test requirement
-      - name: Set bypass status
-        if: github.event.action == 'labeled'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          gh api "repos/$REPO/statuses/$HEAD_SHA" \
-            --method POST \
-            --field state=success \
-            --field context=long-tests \
-            --field description="Long tests bypassed"
+          PR_JSON=$(gh api "repos/$REPO/pulls/$PR_NUMBER")
+          CURRENT_HEAD=$(jq -r '.head.sha' <<< "$PR_JSON")
+          PR_STATE=$(jq -r '.state' <<< "$PR_JSON")
+          if [[ "$PR_STATE" != "open" || "$CURRENT_HEAD" != "$HEAD_SHA" ]]; then
+            echo "Ignoring stale status reconciliation for PR #$PR_NUMBER at $HEAD_SHA"
+            exit 0
+          fi
 
-      # When label is removed: require long tests again
-      - name: Remove bypass status
-        if: github.event.action == 'unlabeled'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
+          LABELS=$(jq -r '.labels[].name' <<< "$PR_JSON")
+          if grep -Fxq 'no-long-tests' <<< "$LABELS"; then
+            STATE=success
+            DESCRIPTION="Long tests bypassed"
+          else
+            # Unrelated label events also create Long Tests workflow runs. Its
+            # run-name marks real requests so they cannot affect the status.
+            RUN_PAGES=$(gh api --paginate \
+              "repos/$REPO/actions/workflows/long-tests.yml/runs?event=pull_request&head_sha=$HEAD_SHA&per_page=100")
+            LATEST_RUN=$(jq -sc \
+              '[.[].workflow_runs[] | select(.display_title == "Long Tests requested")] | if length == 0 then empty else max_by(.id) end' \
+              <<< "$RUN_PAGES")
+
+            if [[ -n "$LATEST_RUN" ]]; then
+              RUN_ID=$(jq -r '.id' <<< "$LATEST_RUN")
+              RUN_STATUS=$(jq -r '.status' <<< "$LATEST_RUN")
+              RUN_CONCLUSION=$(jq -r '.conclusion // empty' <<< "$LATEST_RUN")
+
+              if [[ "$RUN_STATUS" != "completed" ]]; then
+                STATE=pending
+                DESCRIPTION="Waiting for long tests"
+              else
+                JOB_CONCLUSION=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" \
+                  --jq '.jobs[] | select(.name == "long-tests") | .conclusion' | tail -1)
+                CONCLUSION=${JOB_CONCLUSION:-$RUN_CONCLUSION}
+                case "$CONCLUSION" in
+                  success)
+                    STATE=success
+                    DESCRIPTION="Long tests passed"
+                    ;;
+                  failure|cancelled|timed_out|startup_failure|stale)
+                    STATE=failure
+                    DESCRIPTION="Long tests failed ($CONCLUSION)"
+                    ;;
+                  action_required|skipped|neutral|"")
+                    STATE=pending
+                    DESCRIPTION="Waiting for long tests"
+                    ;;
+                  *)
+                    echo "::error::Unknown Long Tests conclusion: $CONCLUSION"
+                    exit 1
+                    ;;
+                esac
+              fi
+            else
+              NEEDS_LONG=false
+              FILES=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" --jq '.[].filename')
+              while IFS= read -r FILE; do
+                case "$FILE" in
+                  palace/*|cmake/*|extern/*|examples/*|test/unit/*|test/data/*|spack_repo/*|.github/actions/*|.github/workflows/long-test*.yml)
+                    NEEDS_LONG=true
+                    break
+                    ;;
+                esac
+              done <<< "$FILES"
+
+              if grep -Fxq 'trigger-long-tests' <<< "$LABELS"; then
+                STATE=pending
+                DESCRIPTION="Waiting for long tests"
+              elif [[ "$NEEDS_LONG" == "true" ]]; then
+                STATE=pending
+                DESCRIPTION="Waiting for long tests (add 'trigger-long-tests' label to run)"
+              else
+                STATE=success
+                DESCRIPTION="Long tests bypassed (trivial changes)"
+              fi
+            fi
+          fi
+
+          echo "PR #$PR_NUMBER @ $HEAD_SHA: $STATE — $DESCRIPTION"
           gh api "repos/$REPO/statuses/$HEAD_SHA" \
             --method POST \
-            --field state=pending \
+            --field state="$STATE" \
             --field context=long-tests \
-            --field description="Waiting for long tests (add 'trigger-long-tests' label to run)"
+            --field description="$DESCRIPTION"

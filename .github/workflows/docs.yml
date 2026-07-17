@@ -24,7 +24,7 @@ concurrency:
 
 # We need spack so that we can install palace for the tutorials
 env:
-  # Must match the sole buildcache writer configured in palace-ci/action.yml.
+  # Must match the canonical Spack version used by the Palace 1.2 buildcache.
   SPACK_VERSION: releases/v1.2
   GITHUB_USER: ${{ github.actor }}
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

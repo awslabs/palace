@@ -9,21 +9,41 @@
 # If the PR is updated while the label is present, the tests re-run
 # automatically. It can also be run manually from the GitHub Actions UI.
 name: Long Tests
+run-name: >-
+  Long Tests ${{
+    (
+      github.event_name == 'workflow_dispatch' ||
+      (
+        !contains(github.event.pull_request.labels.*.name, 'no-long-tests') &&
+        (
+          (github.event.action == 'labeled' && github.event.label.name == 'trigger-long-tests') ||
+          (
+            github.event.action == 'unlabeled' &&
+            github.event.label.name == 'no-long-tests' &&
+            contains(github.event.pull_request.labels.*.name, 'trigger-long-tests')
+          ) ||
+          (
+            (github.event.action == 'opened' || github.event.action == 'reopened') &&
+            contains(github.event.pull_request.labels.*.name, 'trigger-long-tests')
+          ) ||
+          (
+            github.event.action == 'synchronize' &&
+            contains(github.event.pull_request.labels.*.name, 'trigger-long-tests')
+          )
+        )
+      )
+    ) && 'requested' || 'not-requested'
+  }}
 
 on:
   workflow_dispatch:
   pull_request:
-    types: [labeled, synchronize]
+    types: [labeled, unlabeled, opened, synchronize, reopened]
 
 permissions:
   packages: read
-  statuses: write
   contents: read
   pull-requests: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   GITHUB_USER: ${{ github.actor }}
@@ -36,14 +56,31 @@ jobs:
     # - manually triggered from the Actions UI, OR
     # - the 'trigger-long-tests' label was just added, OR
     # - the PR was updated and already has the 'trigger-long-tests' label
-    # Do not run from forks.
+    # Fork code still requires the repository's normal maintainer approval.
+    # Its token and Spack cache access remain read-only.
     if: |
-      github.repository == 'awslabs/palace' &&
+      github.event_name == 'workflow_dispatch' ||
       (
-        github.event_name == 'workflow_dispatch' ||
-        (github.event.action == 'labeled' && github.event.label.name == 'trigger-long-tests') ||
-        (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'trigger-long-tests'))
+        !contains(github.event.pull_request.labels.*.name, 'no-long-tests') &&
+        (
+          (github.event.action == 'labeled' && github.event.label.name == 'trigger-long-tests') ||
+          (
+            github.event.action == 'unlabeled' &&
+            github.event.label.name == 'no-long-tests' &&
+            contains(github.event.pull_request.labels.*.name, 'trigger-long-tests')
+          ) ||
+          (
+            (github.event.action == 'opened' || github.event.action == 'reopened') &&
+            contains(github.event.pull_request.labels.*.name, 'trigger-long-tests')
+          ) ||
+          (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'trigger-long-tests'))
+        )
       )
+    # Apply cancellation only to jobs that actually run. An unrelated label
+    # event creates a skipped job and must not cancel active long tests.
+    concurrency:
+      group: long-tests-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v6
 
@@ -52,28 +89,5 @@ jobs:
           toolchain: gcc
           test-cases: long
 
-      - name: Set success status
-        if: github.event_name == 'pull_request' && success()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          gh api "repos/$REPO/statuses/$HEAD_SHA" \
-            --method POST \
-            --field state=success \
-            --field context=long-tests \
-            --field description="Long tests passed"
-
-      - name: Set failure status
-        if: github.event_name == 'pull_request' && (failure() || cancelled())
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          gh api "repos/$REPO/statuses/$HEAD_SHA" \
-            --method POST \
-            --field state=failure \
-            --field context=long-tests \
-            --field description="Long tests failed"
+  # The trusted workflow_run path in Long Test Status Manager reports this
+  # result. The pull_request token is read-only for forks, even after approval.
