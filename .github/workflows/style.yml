@@ -75,6 +75,14 @@ jobs:
           git fetch --no-tags --depth=1 origin "${GITHUB_BASE_REF}"
           ./scripts/check-schema-version "origin/${GITHUB_BASE_REF}"
 
+  check-changelog-schema-versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check changelog SchemaVer entries
+        run: ./scripts/check-changelog-schema-versions
+
   check-tests-tags:
     runs-on: ubuntu-latest
     steps:

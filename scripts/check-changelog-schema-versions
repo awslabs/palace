@@ -1,0 +1,57 @@
+#!/bin/bash
+
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+help()
+{
+    echo "Usage: check-changelog-schema-versions [OPTIONS] [CHANGELOG]
+
+Fail if CHANGELOG contains duplicate SchemaVer X-Y-Z entries.
+
+Options:
+  -h, --help                       Show this help message and exit
+
+Arguments:
+  CHANGELOG                        Changelog file to scan (default: CHANGELOG.md)
+"
+}
+
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            help
+            exit 0
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"
+
+CHANGELOG="${1:-CHANGELOG.md}"
+
+if [[ ! -f "${CHANGELOG}" ]]; then
+    echo "Error: changelog file '${CHANGELOG}' does not exist"
+    exit 1
+fi
+
+VERSIONS=$(grep -Eo 'SchemaVer[[:space:]]+[0-9]+-[0-9]+-[0-9]+' "${CHANGELOG}" |
+    awk '{ print $2 }' || true)
+DUPLICATES=$(printf '%s\n' "${VERSIONS}" | sed '/^$/d' | sort | uniq -d)
+
+if [[ -n "${DUPLICATES}" ]]; then
+    echo "Error: Found duplicate SchemaVer entries in ${CHANGELOG}:"
+    while IFS= read -r version; do
+        lines=$(grep -En "SchemaVer[[:space:]]+${version}([^0-9-]|$)" "${CHANGELOG}" |
+            cut -d: -f1 | paste -sd, -)
+        echo "  SchemaVer ${version} (lines ${lines})"
+    done <<< "${DUPLICATES}"
+    exit 1
+fi
+
+echo "All SchemaVer entries in ${CHANGELOG} are unique"
+exit 0
