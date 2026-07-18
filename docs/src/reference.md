@@ -211,7 +211,7 @@ which separately contribute to the Poynting vector.
 
 There is an additional normalization related to voltages and currents. For AC simulations of
 microwave networks, circuit ``V`` and ``I`` are not generally well defined and have to be fixed by
-convention [11,12]. This is tantamount to relating the circuit characteristic impedance
+convention [[11, 12]](#References). This is tantamount to relating the circuit characteristic impedance
 
 ```math
 Z = \frac{V^{inc}}{I^{inc}} = \frac{\vert V^{inc} \vert^2}{[P^{inc}]^*},
@@ -327,7 +327,7 @@ source term ``\bm{U}^{inc}`` at excited ports.
 For more information on the implementation of numeric wave ports, see [[3]](#References).
 
 For a general waveguide mode, the circuit quantities ``V``, ``I``, and ``Z`` are not uniquely
-determined by the electromagnetic fields and must be fixed by convention [[11,12]](#References). In contrast
+determined by the electromagnetic fields and must be fixed by convention [[11, 12]](#References). In contrast
 to lumped ports, where the voltage is defined as an area-averaged integral with a specific analytic
 form, wave port ``V`` and ``I`` are obtained from line integrals on the port cross-section. The
 wave port configuration uses [`"VoltagePath"`](config/reference.md#config-boundaries-waveport-voltagepath) for
@@ -915,8 +915,8 @@ Waves, *Physical Review*, 56, 1, (1939), 99-107.\
 [7] P. Benner, D. C. Sorensen, and V. Mehrmann, Eds., _Dimension Reduction of
 Large-Scale Systems_, Lecture Notes in Computational Science and Engineering,
 vol. 45, Springer, 2005. doi: [10.1007/3-540-27909-1](https://doi.org/10.1007/3-540-27909-1).\
-[8] A. C. Antoulas, _Approximation of Large-Scale Dynamical Systems_, SIAM,
-2005. doi: [10.1137/1.9780898718713](https://doi.org/10.1137/1.9780898718713).\
+[8] A. C. Antoulas, _Approximation of Large-Scale Dynamical Systems_, SIAM, (2005). doi:
+[10.1137/1.9780898718713](https://doi.org/10.1137/1.9780898718713).\
 [9] D. Pradovera, Toward a certified greedy Loewner framework with minimal
 sampling, _Advances in Computational Mathematics_ 49, 92 (2023). doi:
 [10.1007/s10444-023-10091-7](https://doi.org/10.1007/s10444-023-10091-7).\
