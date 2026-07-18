@@ -4,6 +4,8 @@
 #ifndef PALACE_UTILS_OUTPUTDIR_HPP
 #define PALACE_UTILS_OUTPUTDIR_HPP
 
+#include <exception>
+#include <string>
 #include <system_error>
 #include <fmt/format.h>
 #include "communication.hpp"
@@ -14,6 +16,75 @@
 namespace palace
 {
 
+namespace internal
+{
+
+inline void AbortOnNodeFilesystemError(MPI_Comm comm, const std::string &operation,
+                                       const std::string &local_error)
+{
+  int error_rank = local_error.empty() ? Mpi::Size(comm) : Mpi::Rank(comm);
+  Mpi::GlobalMin(1, &error_rank, comm);
+  if (error_rank == Mpi::Size(comm))
+  {
+    return;
+  }
+
+  std::string error = Mpi::Rank(comm) == error_rank ? local_error : std::string();
+  int error_size = static_cast<int>(error.size());
+  Mpi::Broadcast(1, &error_size, error_rank, comm);
+  error.resize(error_size);
+  if (error_size > 0)
+  {
+    Mpi::Broadcast(error_size, error.data(), error_rank, comm);
+  }
+  MFEM_ABORT(operation << " failed on MPI rank " << error_rank << ": " << error);
+}
+
+}  // namespace internal
+
+// Apply an operation once to each node's view of the filesystem. The global root runs
+// first so that shared filesystems are updated before the remaining node roots inspect
+// them. Filesystem exceptions are reported only after every rank has completed the same
+// MPI collectives, avoiding partial-rank failures and deadlocks.
+template <typename Func>
+inline void ApplyOnEachNodeFilesystem(MPI_Comm comm, const std::string &operation,
+                                      Func &&func)
+{
+  std::string local_error;
+  auto apply_here = [&]()
+  {
+    try
+    {
+      func();
+    }
+    catch (const std::exception &e)
+    {
+      local_error = e.what();
+    }
+    catch (...)
+    {
+      local_error = "Unknown filesystem error";
+    }
+  };
+
+  if (Mpi::Root(comm))
+  {
+    apply_here();
+  }
+  Mpi::Barrier(comm);
+
+  MPI_Comm node_comm = MPI_COMM_NULL;
+  MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
+                      &node_comm);
+  if (Mpi::Root(node_comm) && !Mpi::Root(comm))
+  {
+    apply_here();
+  }
+  MPI_Comm_free(&node_comm);
+
+  internal::AbortOnNodeFilesystemError(comm, operation, local_error);
+}
+
 // Ensure an output directory exists on every node's filesystem. This is
 // node-local-filesystem aware: on a shared filesystem only the global root creates the
 // directory (all other creations hit an already-existing directory harmlessly), while on
@@ -23,35 +94,17 @@ namespace palace
 inline void EnsureDirectory(const fs::path &dir, MPI_Comm comm)
 {
   BlockTimer bt(Timer::IO);
-  // Global root creates the directory. Use the non-throwing overload and ignore both the
-  // error code and the bool return: neither is a reliable success signal (the bool is
-  // false for an already-existing directory, and a benign EEXIST race may populate the
-  // error code). A genuine write failure surfaces at the first real write.
-  if (Mpi::Root(comm))
-  {
-    std::error_code ec;
-    fs::create_directories(dir, ec);
-  }
-  Mpi::Barrier(comm);
-
-  // Split off a node-local communicator so one process per node can ensure the directory
-  // exists on that node's filesystem.
-  MPI_Comm node_comm = MPI_COMM_NULL;
-  MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
-                      &node_comm);
-
-  // On a node-local filesystem this is the real create. On a shared filesystem it
-  // is a harmless EEXIST no-op that, on typical network filesystems, also refreshes
-  // this node's metadata cache so ranks here are less likely to hit a stale
-  // "not found" before their first write (not guaranteed by POSIX).
-  if (Mpi::Root(node_comm) && !Mpi::Root(comm))
-  {
-    std::error_code ec;
-    fs::create_directories(dir, ec);
-  }
-
-  MPI_Comm_free(&node_comm);
-  Mpi::Barrier(comm);
+  ApplyOnEachNodeFilesystem(
+      comm, fmt::format("Creating output directory \"{}\"", dir.string()),
+      [&]()
+      {
+        fs::create_directories(dir);
+        if (!fs::is_directory(dir))
+        {
+          throw fs::filesystem_error("Path is not a directory", dir,
+                                     std::make_error_code(std::errc::not_a_directory));
+        }
+      });
 }
 
 // Remove a previous run's output root (a directory, or a symlink standing in for one that
@@ -63,38 +116,10 @@ inline void EnsureDirectory(const fs::path &dir, MPI_Comm comm)
 inline void RemovePreviousOutput(const fs::path &dir, MPI_Comm comm)
 {
   BlockTimer bt(Timer::IO);
-  auto remove_here = [&dir]()
-  {
-    std::error_code ec;
-    // A symlink standing in for the directory (left by a previous save) must be removed as
-    // a link, not followed; otherwise remove_all would delete the link target's contents.
-    if (fs::is_symlink(dir))
-    {
-      fs::remove(dir, ec);
-    }
-    else
-    {
-      fs::remove_all(dir, ec);
-    }
-  };
-
-  // Global root removes first.
-  if (Mpi::Root(comm))
-  {
-    remove_here();
-  }
-  Mpi::Barrier(comm);
-
-  // One rank per shared-memory node removes the node's own copy.
-  MPI_Comm node_comm = MPI_COMM_NULL;
-  MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
-                      &node_comm);
-  if (Mpi::Root(node_comm) && !Mpi::Root(comm))
-  {
-    remove_here();
-  }
-  MPI_Comm_free(&node_comm);
-  Mpi::Barrier(comm);
+  // std::filesystem::remove_all removes a directory symlink itself without following it.
+  ApplyOnEachNodeFilesystem(comm,
+                            fmt::format("Removing previous output \"{}\"", dir.string()),
+                            [&]() { fs::remove_all(dir); });
 }
 
 inline void MakeOutputFolder(IoData &iodata, MPI_Comm &comm)

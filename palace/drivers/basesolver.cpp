@@ -21,6 +21,7 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
+#include "utils/outputdir.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -32,54 +33,59 @@ void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int widt
 {
   BlockTimer bt(Timer::IO);
   Mpi::Barrier(comm);  // Wait for all processes to write postprocessing files
-  if (Mpi::Root(comm))
-  {
-    // Create a subfolder for the results of this adaptation by moving (renaming) files.
-    auto step_output = output_dir / fmt::format("iteration{:0{}d}", step, width);
-    if (!fs::exists(step_output))
-    {
-      fs::create_directories(step_output);
-    }
-    auto rel_step = step_output.filename();
-    for (const auto &f : fs::directory_iterator(output_dir))
-    {
-      const auto &fname = f.path().filename().string();
-      if (fname.rfind("iteration") == 0)
+  auto step_output = output_dir / fmt::format("iteration{:0{}d}", step, width);
+  auto rel_step = step_output.filename();
+  ApplyOnEachNodeFilesystem(
+      comm,
+      fmt::format("Archiving adaptive iteration output in \"{}\"", step_output.string()),
+      [&]()
       {
-        continue;
-      }
-      auto dest = step_output / f.path().filename();
-      if (f.is_symlink())
-      {
-        // Skip symlinks left from a previous iteration's save. They still point
-        // to valid data and will be overwritten by the next solve.
-        continue;
-      }
-      else if (fname == "palace.json")
-      {
-        // Copy metadata file since it is needed by subsequent iterations.
-        fs::copy(f, dest, fs::copy_options::overwrite_existing);
-      }
-      else if (fname.size() >= 14 &&
-               fname.compare(fname.size() - 14, 14, "_resolved.json") == 0)
-      {
-        // The resolved configuration is a global record of the run, not per-iteration
-        // output. Leave it in the top-level output folder rather than moving it into an
-        // iteration subfolder and symlinking back.
-        continue;
-      }
-      else
-      {
-        // Move to the iteration subfolder and leave a relative symlink behind
-        // so that the output directory always has accessible results. Remove
-        // any existing destination first (e.g. from a previous run).
-        fs::remove_all(dest);
-        fs::rename(f, dest);
-        fs::create_symlink(rel_step / f.path().filename(), f.path());
-      }
-    }
-  }
-  Mpi::Barrier(comm);
+        // On a shared filesystem, the global root moves the output before the other node
+        // roots inspect it, so they see symlinks and have nothing left to move. On a
+        // node-local filesystem, each node root archives that node's rank files.
+        fs::create_directories(step_output);
+        for (const auto &f : fs::directory_iterator(output_dir))
+        {
+          const auto &fname = f.path().filename().string();
+          if (fname.rfind("iteration") == 0)
+          {
+            continue;
+          }
+          auto dest = step_output / f.path().filename();
+          if (f.is_symlink())
+          {
+            // Skip symlinks left from a previous iteration's save. They still point
+            // to valid data and will be overwritten by the next solve.
+            continue;
+          }
+          else if (fname == "palace.json")
+          {
+            // Metadata is written only by the global root. Copy it only there to avoid
+            // concurrent copies when the output directory is shared.
+            if (Mpi::Root(comm))
+            {
+              fs::copy(f, dest, fs::copy_options::overwrite_existing);
+            }
+          }
+          else if (fname.size() >= 14 &&
+                   fname.compare(fname.size() - 14, 14, "_resolved.json") == 0)
+          {
+            // The resolved configuration is a global record of the run, not per-iteration
+            // output. Leave it in the top-level output folder rather than moving it into an
+            // iteration subfolder and symlinking back.
+            continue;
+          }
+          else
+          {
+            // Move to the iteration subfolder and leave a relative symlink behind
+            // so that the output directory always has accessible results. Remove
+            // any existing destination first (e.g. from a previous run).
+            fs::remove_all(dest);
+            fs::rename(f, dest);
+            fs::create_symlink(rel_step / f.path().filename(), f.path());
+          }
+        }
+      });
 }
 
 namespace

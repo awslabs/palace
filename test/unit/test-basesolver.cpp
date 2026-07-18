@@ -243,3 +243,27 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SaveIteration skips iteration sub
     CHECK(ReadFile(temp_dir / "iteration2" / "domain-E.csv") == "data");
   }
 }
+
+TEST_CASE_METHOD(palace::test::SharedTempDir, "SaveIteration is MPI collective",
+                 "[basesolver][Parallel]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  if (Mpi::Root(comm))
+  {
+    CreateFile(temp_dir / "palace.json", "{}");
+    fs::create_directories(temp_dir / "gridfunction" / "electrostatic");
+    CreateFile(temp_dir / "gridfunction" / "electrostatic" / "V.gf.000000", "field");
+  }
+  Mpi::Barrier(comm);
+
+  bool setup_complete =
+      fs::is_regular_file(temp_dir / "gridfunction" / "electrostatic" / "V.gf.000000");
+  Mpi::GlobalAnd(1, &setup_complete, comm);
+  REQUIRE(setup_complete);
+
+  SaveIteration(comm, temp_dir, 1, 1);
+
+  CHECK(fs::is_symlink(temp_dir / "gridfunction"));
+  CHECK(fs::is_regular_file(temp_dir / "iteration1" / "gridfunction" / "electrostatic" /
+                            "V.gf.000000"));
+}
