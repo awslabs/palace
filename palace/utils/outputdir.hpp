@@ -54,6 +54,49 @@ inline void EnsureDirectory(const fs::path &dir, MPI_Comm comm)
   Mpi::Barrier(comm);
 }
 
+// Remove a previous run's output root (a directory, or a symlink standing in for one that
+// was left by an earlier save) on every node's filesystem, so fresh output does not mix
+// with stale artifacts. This is the cleanup counterpart of EnsureDirectory and mirrors
+// its node-local awareness: on a node-local (non-shared) filesystem each node holds its
+// own copy of the previous run's output, so removal runs once per node rather than only
+// on the global root.
+inline void RemovePreviousOutput(const fs::path &dir, MPI_Comm comm)
+{
+  BlockTimer bt(Timer::IO);
+  auto remove_here = [&dir]()
+  {
+    std::error_code ec;
+    // A symlink standing in for the directory (left by a previous save) must be removed as
+    // a link, not followed; otherwise remove_all would delete the link target's contents.
+    if (fs::is_symlink(dir))
+    {
+      fs::remove(dir, ec);
+    }
+    else
+    {
+      fs::remove_all(dir, ec);
+    }
+  };
+
+  // Global root removes first.
+  if (Mpi::Root(comm))
+  {
+    remove_here();
+  }
+  Mpi::Barrier(comm);
+
+  // One rank per shared-memory node removes the node's own copy.
+  MPI_Comm node_comm = MPI_COMM_NULL;
+  MPI_Comm_split_type(comm, MPI_COMM_TYPE_SHARED, Mpi::Rank(comm), MPI_INFO_NULL,
+                      &node_comm);
+  if (Mpi::Root(node_comm) && !Mpi::Root(comm))
+  {
+    remove_here();
+  }
+  MPI_Comm_free(&node_comm);
+  Mpi::Barrier(comm);
+}
+
 inline void MakeOutputFolder(IoData &iodata, MPI_Comm &comm)
 {
   BlockTimer bt(Timer::IO);

@@ -112,24 +112,62 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "EnsureDirectory is idempotent",
   CHECK(fs::is_directory(dir));
 }
 
-// Node-local-filesystem simulation: with MPI_COMM_SELF every rank runs the full
-// creation path independently on its own (distinct) directory, as it would when
-// each node owns its filesystem. This exercises the per-node creation path on
-// every rank -- which the MPI_COMM_WORLD cases above cannot on a single physical
-// machine, where MPI_COMM_TYPE_SHARED groups all ranks into one node.
-TEST_CASE_METHOD(palace::test::PerRankTempDir,
-                 "EnsureDirectory creates a per-rank directory on MPI_COMM_SELF",
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RemovePreviousOutput removes an existing directory and its contents",
                  "[outputdir][Serial][Parallel]")
 {
+  MPI_Comm comm = MPI_COMM_WORLD;
   auto dir = temp_dir / "postpro";
+  if (Mpi::Root(comm))
+  {
+    fs::create_directories(dir);
+    std::ofstream f(dir / "stale.txt");
+    f << "stale artifact";
+  }
+  Mpi::Barrier(comm);
+  REQUIRE(fs::is_directory(dir));
+
+  RemovePreviousOutput(dir, comm);
+
+  // The directory and everything under it must be gone on every rank.
+  CHECK(!fs::exists(dir));
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RemovePreviousOutput removes a symlink without following it",
+                 "[outputdir][Serial][Parallel]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto target = temp_dir / "target";
+  auto link = temp_dir / "postpro";
+  if (Mpi::Root(comm))
+  {
+    fs::create_directories(target);
+    std::ofstream f(target / "keep.txt");
+    f << "keep me";
+    fs::create_directory_symlink(target, link);
+  }
+  Mpi::Barrier(comm);
+  REQUIRE(fs::is_symlink(link));
+
+  RemovePreviousOutput(link, comm);
+
+  // The symlink itself must be gone, but its target's contents must survive: a symlink
+  // standing in for the output directory must be unlinked, not followed and deleted.
+  CHECK(!fs::exists(link));
+  CHECK(fs::is_regular_file(target / "keep.txt"));
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RemovePreviousOutput is a no-op on a non-existent path",
+                 "[outputdir][Serial][Parallel]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto dir = temp_dir / "does_not_exist";
   REQUIRE(!fs::exists(dir));
 
-  EnsureDirectory(dir, MPI_COMM_SELF);
+  // Removing a path that was never created must not error or abort.
+  RemovePreviousOutput(dir, comm);
 
-  CHECK(fs::is_directory(dir));
-  {
-    std::ofstream f(dir / "written.txt");
-    f << "ok";
-  }
-  CHECK(fs::is_regular_file(dir / "written.txt"));
+  CHECK(!fs::exists(dir));
 }

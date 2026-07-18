@@ -230,21 +230,11 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
     }
   }
 
-  // Remove previous symlink/directory before writing. Removing directory only
-  // happens when the output folder is dirty.
+  // Remove previous symlink/directory before writing (node-local filesystem aware, so
+  // stale artifacts are cleared on every node rather than only where the global root
+  // lives). Removing directory only happens when the output folder is dirty.
   auto gridfunction_root = post_dir / "gridfunction";
-  if (Mpi::Root(fem_op->GetComm()))
-  {
-    if (fs::is_symlink(gridfunction_root))
-    {
-      fs::remove(gridfunction_root);
-    }
-    else
-    {
-      fs::remove_all(gridfunction_root);
-    }
-  }
-  Mpi::Barrier(fem_op->GetComm());
+  RemovePreviousOutput(gridfunction_root, fem_op->GetComm());
   gridfunction_output_dir = (gridfunction_root / OutputFolderName(solver_t)).string();
 
   SetupFieldCoefficients();
@@ -390,21 +380,11 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   {
     return;
   }
-  // Remove previous symlink/directory before writing. Removing directory only
-  // happens when the output folder is dirty.
+  // Remove previous symlink/directory before writing (node-local filesystem aware, so
+  // stale artifacts are cleared on every node rather than only where the global root
+  // lives). Removing directory only happens when the output folder is dirty.
   auto paraview_root = post_dir / "paraview";
-  if (Mpi::Root(fem_op->GetComm()))
-  {
-    if (fs::is_symlink(paraview_root))
-    {
-      fs::remove(paraview_root);
-    }
-    else
-    {
-      fs::remove_all(paraview_root);
-    }
-  }
-  Mpi::Barrier(fem_op->GetComm());
+  RemovePreviousOutput(paraview_root, fem_op->GetComm());
   fs::path paraview_dir_v = paraview_root / OutputFolderName(solver_t);
   fs::path paraview_dir_b =
       paraview_root / fmt::format("{}_boundary", OutputFolderName(solver_t));
