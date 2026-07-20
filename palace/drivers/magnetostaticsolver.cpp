@@ -32,14 +32,18 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const auto &Curl = curlcurl_op.GetCurlMatrix();
   SaveMetadata(curlcurl_op.GetNDSpaces());
 
-  // Set up the linear solver.
-  const bool short_mode =
-      iodata.solver.magnetostatic.inactive_port_mode == InactivePortMode::SHORT;
-  KspSolver ksp(iodata, curlcurl_op.GetNDSpaces(), &curlcurl_op.GetH1Spaces());
-  if (!short_mode)
+  // Set up the linear solver. Each inactive surface current port is treated during the
+  // sweep either as Open (natural BC, no current across it) or Short (PEC, screening
+  // current allowed). The mode is resolved per port: a port's own "InactiveMode" overrides
+  // the global "/Solver/Magnetostatic/InactivePorts" default when set.
+  const InactivePortMode global_mode = iodata.solver.magnetostatic.inactive_port_mode;
+  auto port_is_short = [&](int port_idx)
   {
-    ksp.SetOperators(*K, *K);
-  }
+    const auto &port_data = iodata.boundaries.current.at(port_idx);
+    return port_data.inactive_port_mode.value_or(global_mode) == InactivePortMode::SHORT;
+  };
+  KspSolver ksp(iodata, curlcurl_op.GetNDSpaces(), &curlcurl_op.GetH1Spaces());
+  ksp.SetOperators(*K, *K);
 
   // Surface current source indices define the boundaries over which to compute the
   // inductance matrix.
@@ -110,24 +114,27 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       I_inc[step] = data.GetExcitationCurrent();
       Phi_inc[step] = 0.0;  // Zero flux for current sources
 
-      if (short_mode)
+      // Collect the boundary attributes of every inactive port that should be shorted
+      // (PEC) for this excitation step. Ports resolving to Open are left as natural BCs.
+      mfem::Array<int> short_attrs;
+      for (const auto &[other_idx, other_data] : curlcurl_op.GetSurfaceCurrentOp())
       {
-        // Short mode: rebuild the operator with all inactive current ports treated as
-        // PEC (essential Dirichlet) for this excitation step.
-        mfem::Array<int> inactive_attrs;
-        for (const auto &[other_idx, other_data] : curlcurl_op.GetSurfaceCurrentOp())
+        if (other_idx != idx && port_is_short(other_idx))
         {
-          if (other_idx != idx)
+          for (const auto &elem : other_data.elems)
           {
-            for (const auto &elem : other_data.elems)
-            {
-              inactive_attrs.Append(elem->GetAttrList());
-            }
+            short_attrs.Append(elem->GetAttrList());
           }
         }
+      }
+
+      if (short_attrs.Size() > 0)
+      {
+        // Rebuild the operator with the shorted inactive ports as essential (PEC)
+        // boundaries for this excitation step.
         CurlCurlOperator curlcurl_step(iodata.boundaries, iodata.solver,
                                        iodata.domains.materials, iodata.problem.type, mesh,
-                                       inactive_attrs);
+                                       short_attrs);
         auto K_step = curlcurl_step.GetStiffnessMatrix();
         KspSolver ksp_step(iodata, curlcurl_step.GetNDSpaces(),
                            &curlcurl_step.GetH1Spaces());
@@ -136,7 +143,7 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       else
       {
-        // Solve 3D magnetostatic problem (inactive ports open).
+        // No inactive ports shorted for this step: all inactive ports are open.
         ksp.Mult(RHS, A[step]);
       }
     }

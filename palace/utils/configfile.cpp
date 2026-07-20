@@ -590,6 +590,10 @@ SurfaceCurrentData::SurfaceCurrentData(const json &source)
       ParseElementData(e, true, elem);
     }
   }
+  if (source.find("InactiveMode") != source.end())
+  {
+    inactive_port_mode = source.at("InactiveMode").get<InactivePortMode>();
+  }
 }
 
 SurfaceFluxData::SurfaceFluxData(const json &flux)
