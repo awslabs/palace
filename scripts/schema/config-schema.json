@@ -2758,9 +2758,18 @@
         },
         "InactivePorts": {
           "type": "string",
-          "description": "Boundary condition applied to inactive surface current ports during the inductance matrix sweep. `\"Open\"` applies a natural (zero current) boundary condition; `\"Short\"` applies a PEC (zero tangential vector potential) condition, blocking flux from threading through inactive ports.",
-          "enum": ["Open", "Short"],
-          "default": "Open"
+          "description": "Boundary condition applied to inactive surface current ports during the inductance matrix sweep. During the sweep each surface current port is excited one at a time; this option controls how the remaining (inactive) ports are treated.",
+          "default": "Open",
+          "oneOf": [
+            {
+              "const": "Open",
+              "description": "Apply a natural (zero surface current) boundary condition, so no induced current flows across an inactive port."
+            },
+            {
+              "const": "Short",
+              "description": "Treat an inactive port as a perfect conductor (PEC, zero tangential vector potential), allowing induced screening currents to flow across it."
+            }
+          ]
         }
       }
     },
