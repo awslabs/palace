@@ -147,11 +147,20 @@ boundaries.
 
 **Surface current boundaries**: Specify a number of source current boundaries to apply unit
 currents to specified surfaces. For each current source, a magnetostatic field is computed by
-applying a unit current to the source of interest, leaving all other sources open. Surfaces
+applying a unit current to the source of interest. Surfaces
 which are expected to carry current should be labeled as perfectly conducting (PEC), which
 prescribes a zero magnetic flux, or
 [magnetic insulation](https://doc.comsol.com/5.5/doc/com.comsol.help.comsol/comsol_ref_acdc.17.74.html),
 boundary condition.
+
+The treatment of the *inactive* current ports during each step of the sweep is controlled
+by [`config["Solver"]["Magnetostatic"]["InactivePorts"]`](../config/reference.md#config-solver-magnetostatic).
+The default, `"Open"`, applies a natural (zero surface current) boundary condition so that
+no current flows across an inactive port. Setting `"Short"` instead treats inactive ports as
+perfect conductors (PEC), allowing induced screening currents to flow across them. The mode
+can be overridden on a per-port basis using
+[`config["Boundaries"]["SurfaceCurrent"]["InactiveMode"]`](../config/reference.md#config-boundaries-surfacecurrent),
+which takes precedence over the global default for that port.
 
 **Flux loop boundaries** ([`config["Boundaries"]["FluxLoop"]`](../config/reference.md#config-boundaries-fluxloop)):
 Prescribe magnetic flux through specified holes in conducting surfaces. For each flux loop, a
