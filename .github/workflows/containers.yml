@@ -1,9 +1,18 @@
 name: Containers
 
-# Build OCI/SIF containers for:
-# - sapphirerapids   (x64,       c7i)        — every publish event
-# - neoverse_v1      (arm64,     c7g)        — every publish event
-# - neoverse_v2      (arm64-8g,  c8g)        — release tags only
+# Build OCI/SIF containers.
+#
+# Non-tag events (push to main, PRs, manual dispatch) build the runner's native
+# microarchitecture:
+# - sapphirerapids   (x64,       c7i)
+# - neoverse_v1      (arm64,     c7g)
+#
+# Release tags (vX.Y.Z) build a full microarchitecture matrix instead
+# (build-containers-release):
+# - x86_64_v3, x86_64_v4, sapphirerapids   on the x64 (sapphirerapids) host
+# - aarch64, neoverse_v1, neoverse_v2      on the arm64-8g (neoverse_v2) host
+# Each target is at or below its host's native ISA, so build-time binaries run
+# on the host (no cross-compile-up).
 
 on:
   push:
@@ -49,34 +58,45 @@ jobs:
               - '.github/actions/**'
               - '.github/workflows/containers.yml'
 
+  # Non-tag events (push to main, PRs, manual dispatch): build the runner's
+  # native microarchitecture. Release tags are handled by build-containers-
+  # release below, so this job is gated off for them to avoid double builds.
   build-containers:
     needs: filter
+    if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
     strategy:
       fail-fast: false
       matrix:
         arch: [arm64, x64]
     runs-on: [self-hosted, '${{ matrix.arch }}']
     steps:
-      # Release tags bypass the paths-filter: a tag is usually cut on a commit
-      # already on main, so the diff is empty and the filter would skip — which
-      # would silently drop the versioned ECR/S3 publish. Tags must always build.
       - uses: actions/checkout@v6
-        if: needs.filter.outputs.test == 'true' || startsWith(github.ref, 'refs/tags/v')
-        with:
-          # Fetch tags so the release channel can derive the version from the
-          # git ref (and `git describe` works if ever needed).
-          fetch-depth: 0
+        if: needs.filter.outputs.test == 'true'
       - uses: ./.github/actions/build-container
-        if: needs.filter.outputs.test == 'true' || startsWith(github.ref, 'refs/tags/v')
+        if: needs.filter.outputs.test == 'true'
 
-  # neoverse_v2 (Graviton4 / c8g) is a release-only performance build
-  build-containers-neoverse-v2:
-    needs: filter
+  # Release tags (vX.Y.Z): build the full microarchitecture matrix. No paths-
+  # filter — a tag is usually cut on a commit already on main, so the diff is
+  # empty and the filter would skip, silently dropping the versioned publish.
+  # Each target is at or below its host's native ISA (see header comment).
+  build-containers-release:
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: [self-hosted, arm64-8g]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: x64,      target: x86_64_v3}
+          - {runner: x64,      target: x86_64_v4}
+          - {runner: x64,      target: sapphirerapids}
+          - {runner: arm64-8g, target: aarch64}
+          - {runner: arm64-8g, target: neoverse_v1}
+          - {runner: arm64-8g, target: neoverse_v2}
+    runs-on: [self-hosted, '${{ matrix.runner }}']
     steps:
       - uses: actions/checkout@v6
         with:
           # Fetch tags so the release channel can derive the version from the ref.
           fetch-depth: 0
       - uses: ./.github/actions/build-container
+        with:
+          target: ${{ matrix.target }}
