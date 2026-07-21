@@ -95,6 +95,21 @@ struct SphereRefinementData
   std::array<double, 3> center{{0.0, 0.0, 0.0}};
 };
 
+struct EdgeRefinementData
+{
+  // Matching radius used by the edge correction [m].
+  double radius = 0.0;
+
+  // Required number of element diameters across the matching radius.
+  int elements_per_radius = 0;
+
+  // Extent of the refined tube as a multiple of the matching radius.
+  double outer_radius_factor = 2.0;
+
+  // Relative AMR indicator weight for elements entirely inside the replaced core.
+  double core_indicator_weight = 0.0;
+};
+
 struct RefinementData
 {
 public:
@@ -480,6 +495,20 @@ public:
   TerminalData(const json &terminal);
 };
 
+struct PrescribedPotentialData
+{
+public:
+  // List of boundary attributes on which to impose the spatially varying potential.
+  std::vector<int> attributes = {};
+
+  // CSV file containing an ordered closed polyline as x,y,z,V rows. Coordinates are in
+  // mesh units and potential is in volts.
+  std::string data_file = {};
+
+  PrescribedPotentialData() = default;
+  PrescribedPotentialData(const json &potential);
+};
+
 struct PeriodicData
 {
 public:
@@ -659,12 +688,34 @@ public:
   // edge-distance postprocessing.
   std::vector<int> edge_attributes = {};
 
+  // Whether to automatically extract the physical metal perimeter associated with this
+  // interface from the configured metal boundary conditions.
+  bool automatic_edges = false;
+
   // Boundary attributes whose geometric edge segments are excluded from the metal
   // perimeter used for edge-distance postprocessing.
   std::vector<int> edge_exclude_attributes = {};
 
   // Matching radii for edge-distance postprocessing [m].
   std::vector<double> edge_distances = {};
+
+  // Relative half-width of the smooth transition at each matching radius.
+  double edge_distance_smoothing = 0.0;
+
+  // Whether to resolve annular interface energies by physical edge segment.
+  bool localize_edge_energy = false;
+
+  // Unit normal defining the positive and negative sides and polarization frame for local
+  // edge diagnostics. The positive side points from the substrate/process side toward
+  // air or vacuum.
+  std::optional<std::array<double, 3>> edge_frame_normal = std::nullopt;
+
+  // Whether to evaluate normal electric flux using a recovered H(div) field. This is not
+  // supported for cracked internal boundaries.
+  bool flux_recovery = false;
+
+  // Optional geometry-driven refinement around the physical metal perimeter.
+  std::optional<EdgeRefinementData> edge_refinement = std::nullopt;
 
   InterfaceDielectricData() = default;
   InterfaceDielectricData(const json &dielectric);
@@ -787,6 +838,7 @@ public:
   std::vector<RationalImpedanceData> rational_impedance = {};
   std::map<int, LumpedPortData> lumpedport = {};
   std::map<int, TerminalData> terminal = {};
+  std::map<int, PrescribedPotentialData> prescribed_potential = {};
   std::map<int, WavePortData> waveport = {};
   std::map<int, FloquetPortData> floquetport = {};
   std::map<int, SurfaceCurrentData> current = {};
@@ -911,8 +963,93 @@ public:
 struct ElectrostaticSolverData
 {
 public:
+  struct ResponseCorrectionPatchData
+  {
+    // Coupon-model index and origin of its local frame, in mesh length units.
+    int model = 0;
+    std::array<double, 3> origin = {};
+
+    // Local coupon coordinate directions in the global frame. AxisU points from the metal
+    // into the gap, while AxisV points from the substrate/process side toward vacuum in
+    // the canonical coupon.
+    std::array<double, 3> axis_u = {};
+    std::array<double, 3> axis_v = {};
+
+    // Location of the coupon's reference conductor in its local frame, in mesh length
+    // units. The default preserves the original one-edge convention.
+    std::array<double, 3> reference = {};
+
+    // Internal longitudinal quadrature weight for automatically generated 3D patches.
+    // Explicit configuration syntax always uses the default unit weight.
+    double weight = 1.0;
+
+    // Internal global PEC anchor used to fix the gauge of Maxwell contour voltages.
+    // Automatic 3D matching places this away from the singular metal edge.
+    std::optional<std::array<double, 3>> maxwell_anchor = std::nullopt;
+  };
+
+  struct ResponseCorrectionInterfaceData
+  {
+    int target = 0;
+    int coupon = 0;
+  };
+
+  struct ResponseCorrectionModelData
+  {
+    int idx = 0;
+
+    // Matched fabricated- and thin-coupon domain response matrices and optional surface
+    // response matrices. Surface matrices are required to emit corrected participations.
+    std::string fabricated_matrix;
+    std::string thin_matrix;
+    std::string fabricated_surface_matrix;
+    std::string thin_surface_matrix;
+
+    // Local coupon contour knot coordinates, in mesh length units.
+    std::string basis_points;
+
+    // Mapping from global target interface index to coupon interface index.
+    std::vector<ResponseCorrectionInterfaceData> interfaces;
+  };
+
+  struct ResponseCorrectionData
+  {
+    enum class UnmatchedPolicy : char
+    {
+      WARN,
+      ERROR
+    };
+
+    // Optional fabrication-process response library. When specified, Palace extracts and
+    // classifies the target edges and constructs models and patches automatically.
+    std::string library;
+
+    // Optional interface filter for automatic library matching. An empty list selects all
+    // typed dielectric interfaces with edge-distance postprocessing enabled.
+    std::vector<int> target_interfaces;
+
+    // Behavior when the process library does not contain a model for a detected local
+    // edge topology.
+    UnmatchedPolicy unmatched_policy = UnmatchedPolicy::WARN;
+
+    // Reusable local coupon models and their nonoverlapping global placements. A placement
+    // may represent one isolated edge or a coupled cluster of nearby edges.
+    std::vector<ResponseCorrectionModelData> models;
+    std::vector<ResponseCorrectionPatchData> patches;
+
+    bool IsAutomatic() const { return !library.empty(); }
+  };
+
   // Number of fields to write to disk.
   int n_post = 0;
+
+  // Whether to assemble localized interface core-energy response matrices from
+  // prescribed-potential basis excitations.
+  bool response_matrix = false;
+
+  // Optional global Schur-complement correction assembled from a matched pair of local
+  // fabricated- and thin-metal coupon response matrices.
+  std::optional<ResponseCorrectionData> response_correction = std::nullopt;
 
   ElectrostaticSolverData() = default;
   ElectrostaticSolverData(const json &electrostatic);
@@ -1153,6 +1290,12 @@ public:
 
   // Backend for libCEED (https://libceed.org/en/latest/gettingstarted/#backends).
   std::string ceed_backend = "";
+
+  // Optional postprocessing-only surface response correction for driven and eigenmode
+  // Maxwell simulations. The first Maxwell implementation requires automatic
+  // fabrication-process library matching.
+  std::optional<ElectrostaticSolverData::ResponseCorrectionData>
+      surface_response_correction = std::nullopt;
 
   // Solver objects.
   DrivenSolverData driven = {};

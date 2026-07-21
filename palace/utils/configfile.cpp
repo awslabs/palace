@@ -485,6 +485,13 @@ TerminalData::TerminalData(const json &terminal)
   std::sort(attributes.begin(), attributes.end());
 }
 
+PrescribedPotentialData::PrescribedPotentialData(const json &potential)
+{
+  attributes = potential.at("Attributes").get<std::vector<int>>();  // Required
+  std::sort(attributes.begin(), attributes.end());
+  data_file = potential.at("DataFile").get<std::string>();  // Required
+}
+
 PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
 {
   auto floquet = periodic.find("FloquetWaveVector");
@@ -624,13 +631,42 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
   std::sort(attributes.begin(), attributes.end());
   edge_attributes = dielectric.value("EdgeAttributes", std::vector<int>{});
   std::sort(edge_attributes.begin(), edge_attributes.end());
+  automatic_edges = dielectric.value("AutomaticEdges", automatic_edges);
   edge_exclude_attributes = dielectric.value("EdgeExcludeAttributes", std::vector<int>{});
   std::sort(edge_exclude_attributes.begin(), edge_exclude_attributes.end());
   edge_distances = dielectric.value("EdgeDistances", std::vector<double>{});
   std::sort(edge_distances.begin(), edge_distances.end());
-  MFEM_VERIFY(edge_attributes.empty() == edge_distances.empty(),
-              "\"EdgeAttributes\" and \"EdgeDistances\" must be specified together for "
-              "interface dielectric postprocessing!");
+  edge_distance_smoothing =
+      dielectric.value("EdgeDistanceSmoothing", edge_distance_smoothing);
+  localize_edge_energy = dielectric.value("LocalizeEdgeEnergy", localize_edge_energy);
+  if (auto it = dielectric.find("EdgeFrameNormal"); it != dielectric.end())
+  {
+    edge_frame_normal = it->get<std::array<double, 3>>();
+  }
+  flux_recovery = dielectric.value("FluxRecovery", flux_recovery);
+  if (auto it = dielectric.find("EdgeRefinement"); it != dielectric.end())
+  {
+    edge_refinement.emplace();
+    edge_refinement->radius = it->at("Radius");
+    edge_refinement->elements_per_radius = it->at("ElementsPerRadius");
+    edge_refinement->outer_radius_factor =
+        it->value("OuterRadiusFactor", edge_refinement->outer_radius_factor);
+    edge_refinement->core_indicator_weight =
+        it->value("CoreIndicatorWeight", edge_refinement->core_indicator_weight);
+  }
+  type = dielectric.value("Type", type);
+  MFEM_VERIFY(!automatic_edges || edge_attributes.empty(),
+              "Interface dielectric \"AutomaticEdges\" cannot be combined with "
+              "\"EdgeAttributes\"!");
+  MFEM_VERIFY(!automatic_edges || edge_exclude_attributes.empty(),
+              "Interface dielectric \"AutomaticEdges\" cannot be combined with "
+              "\"EdgeExcludeAttributes\"!");
+  MFEM_VERIFY(edge_distances.empty() == (!automatic_edges && edge_attributes.empty()),
+              "Interface dielectric \"EdgeDistances\" requires exactly one of "
+              "\"EdgeAttributes\" or \"AutomaticEdges\"!");
+  MFEM_VERIFY(!automatic_edges || type != InterfaceDielectric::DEFAULT,
+              "Interface dielectric \"AutomaticEdges\" requires \"Type\" to be "
+              "\"MA\", \"MS\", or \"SA\"!");
   MFEM_VERIFY(edge_exclude_attributes.empty() || !edge_attributes.empty(),
               "\"EdgeExcludeAttributes\" requires \"EdgeAttributes\" and "
               "\"EdgeDistances\" for interface dielectric postprocessing!");
@@ -640,7 +676,71 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
   MFEM_VERIFY(std::adjacent_find(edge_distances.begin(), edge_distances.end()) ==
                   edge_distances.end(),
               "Interface dielectric \"EdgeDistances\" must be unique!");
-  type = dielectric.value("Type", type);
+  MFEM_VERIFY(std::isfinite(edge_distance_smoothing) && edge_distance_smoothing >= 0.0 &&
+                  edge_distance_smoothing < 1.0,
+              "Interface dielectric \"EdgeDistanceSmoothing\" must be finite and in "
+              "the interval [0, 1)!");
+  MFEM_VERIFY(edge_distance_smoothing == 0.0 || !edge_distances.empty(),
+              "Interface dielectric \"EdgeDistanceSmoothing\" requires "
+              "\"EdgeDistances\"!");
+  MFEM_VERIFY(!localize_edge_energy || !edge_distances.empty(),
+              "Interface dielectric \"LocalizeEdgeEnergy\" requires "
+              "\"EdgeDistances\"!");
+  MFEM_VERIFY(!localize_edge_energy || automatic_edges || edge_frame_normal,
+              "Interface dielectric \"LocalizeEdgeEnergy\" requires "
+              "\"EdgeFrameNormal\" unless \"AutomaticEdges\" is enabled!");
+  MFEM_VERIFY(!edge_frame_normal || !edge_distances.empty(),
+              "Interface dielectric \"EdgeFrameNormal\" requires "
+              "\"EdgeDistances\"!");
+  if (edge_frame_normal)
+  {
+    double norm_squared = 0.0;
+    for (double value : *edge_frame_normal)
+    {
+      MFEM_VERIFY(std::isfinite(value),
+                  "Interface dielectric \"EdgeFrameNormal\" entries must be finite!");
+      norm_squared += value * value;
+    }
+    MFEM_VERIFY(norm_squared > 0.0,
+                "Interface dielectric \"EdgeFrameNormal\" must be nonzero!");
+    const double inverse_norm = 1.0 / std::sqrt(norm_squared);
+    for (double &value : *edge_frame_normal)
+    {
+      value *= inverse_norm;
+    }
+  }
+  MFEM_VERIFY(!edge_refinement || !edge_distances.empty(),
+              "Interface dielectric \"EdgeRefinement\" requires \"EdgeDistances\"!");
+  MFEM_VERIFY(!edge_refinement ||
+                  (std::isfinite(edge_refinement->radius) && edge_refinement->radius > 0.0),
+              "Interface dielectric \"EdgeRefinement\" radius must be finite and "
+              "positive!");
+  MFEM_VERIFY(!edge_refinement ||
+                  std::any_of(edge_distances.begin(), edge_distances.end(),
+                              [&](double distance)
+                              {
+                                return std::abs(distance - edge_refinement->radius) <=
+                                       1.0e-12 *
+                                           std::max(std::abs(distance),
+                                                    std::abs(edge_refinement->radius));
+                              }),
+              "Interface dielectric \"EdgeRefinement\" radius must match one of the "
+              "\"EdgeDistances\"!");
+  MFEM_VERIFY(!edge_refinement || edge_refinement->elements_per_radius > 0,
+              "Interface dielectric \"EdgeRefinement\" elements per radius must be "
+              "positive!");
+  MFEM_VERIFY(!edge_refinement || (std::isfinite(edge_refinement->outer_radius_factor) &&
+                                   edge_refinement->outer_radius_factor >= 1.0),
+              "Interface dielectric \"EdgeRefinement\" outer radius factor must be finite "
+              "and at least one!");
+  MFEM_VERIFY(!edge_refinement || (std::isfinite(edge_refinement->core_indicator_weight) &&
+                                   edge_refinement->core_indicator_weight >= 0.0 &&
+                                   edge_refinement->core_indicator_weight <= 1.0),
+              "Interface dielectric \"EdgeRefinement\" core indicator weight must be "
+              "finite and in the interval [0, 1]!");
+  MFEM_VERIFY(!flux_recovery || type != InterfaceDielectric::DEFAULT,
+              "Interface dielectric \"FluxRecovery\" requires \"Type\" to be "
+              "\"MA\", \"MS\", or \"SA\"!");
   t = dielectric.at("Thickness");             // Required
   epsilon_r = dielectric.at("Permittivity");  // Required
   tandelta = dielectric.value("LossTan", tandelta);
@@ -962,6 +1062,8 @@ BoundaryData::BoundaryData(const json &boundaries)
       ParseOptionalVector<RationalImpedanceData>(boundaries, "RationalImpedance");
   lumpedport = ParseOptionalMap<LumpedPortData>(boundaries, "LumpedPort", "\"LumpedPort\"");
   terminal = ParseOptionalMap<TerminalData>(boundaries, "Terminal", "\"Terminal\"");
+  prescribed_potential = ParseOptionalMap<PrescribedPotentialData>(
+      boundaries, "PrescribedPotential", "\"PrescribedPotential\"");
   periodic = ParseOptional<PeriodicBoundaryData>(boundaries, "Periodic");
   waveport = ParseOptionalMap<WavePortData>(boundaries, "WavePort", "\"WavePort\"");
   floquetport =
@@ -1051,6 +1153,10 @@ BoundaryData::BoundaryData(const json &boundaries)
     }
   }
   for (const auto &[idx, data] : waveport)
+  {
+    attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
+  }
+  for (const auto &[idx, data] : prescribed_potential)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
   }
@@ -1323,6 +1429,93 @@ EigenSolverData::EigenSolverData(const json &eigenmode)
 ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
 {
   n_post = electrostatic.value("Save", n_post);
+  response_matrix = electrostatic.value("ResponseMatrix", response_matrix);
+  if (auto it = electrostatic.find("ResponseCorrection"); it != electrostatic.end())
+  {
+    const auto &correction = *it;
+    ResponseCorrectionData data;
+    if (auto library = correction.find("Library"); library != correction.end())
+    {
+      data.library = library->get<std::string>();
+      data.target_interfaces =
+          correction.value("TargetInterfaces", std::vector<int>{});
+      std::sort(data.target_interfaces.begin(), data.target_interfaces.end());
+      MFEM_VERIFY(std::adjacent_find(data.target_interfaces.begin(),
+                                    data.target_interfaces.end()) ==
+                      data.target_interfaces.end(),
+                  "Electrostatic response-correction target interfaces must be unique!");
+      const std::string policy = correction.value("UnmatchedPolicy", "Warn");
+      if (policy == "Warn")
+      {
+        data.unmatched_policy = ResponseCorrectionData::UnmatchedPolicy::WARN;
+      }
+      else if (policy == "Error")
+      {
+        data.unmatched_policy = ResponseCorrectionData::UnmatchedPolicy::ERROR;
+      }
+      else
+      {
+        MFEM_ABORT("Electrostatic response-correction \"UnmatchedPolicy\" must be "
+                   "\"Warn\" or \"Error\"!");
+      }
+      response_correction = std::move(data);
+      return;
+    }
+
+    auto ParseModel = [](const json &model, int default_idx)
+    {
+      ResponseCorrectionModelData model_data;
+      model_data.idx = model.value("Index", default_idx);
+      model_data.fabricated_matrix = model.at("FabricatedMatrix");
+      model_data.thin_matrix = model.at("ThinMatrix");
+      model_data.fabricated_surface_matrix =
+          model.value("FabricatedSurfaceMatrix", std::string{});
+      model_data.thin_surface_matrix = model.value("ThinSurfaceMatrix", std::string{});
+      model_data.basis_points = model.at("BasisPoints");
+      if (auto interfaces = model.find("Interfaces"); interfaces != model.end())
+      {
+        for (const auto &interface : *interfaces)
+        {
+          model_data.interfaces.push_back(ResponseCorrectionInterfaceData{
+              interface.at("Target"), interface.at("Coupon")});
+        }
+      }
+      return model_data;
+    };
+    auto ParsePatch = [](const json &patch, int default_model)
+    {
+      ResponseCorrectionPatchData patch_data;
+      patch_data.model = patch.value("Model", default_model);
+      patch_data.origin = patch.at("Origin");
+      patch_data.axis_u = patch.at("AxisU");
+      patch_data.axis_v = patch.at("AxisV");
+      patch_data.reference =
+          patch.value("Reference", std::array<double, 3>{0.0, 0.0, 0.0});
+      return patch_data;
+    };
+
+    if (auto models = correction.find("Models"); models != correction.end())
+    {
+      for (const auto &model : *models)
+      {
+        data.models.push_back(ParseModel(model, 0));
+      }
+      for (const auto &patch : correction.at("Patches"))
+      {
+        data.patches.push_back(ParsePatch(patch, 0));
+      }
+    }
+    else
+    {
+      // Backward-compatible one-model syntax used by the initial prototype.
+      data.models.push_back(ParseModel(correction, 1));
+      for (const auto &edge : correction.at("Edges"))
+      {
+        data.patches.push_back(ParsePatch(edge, 1));
+      }
+    }
+    response_correction = std::move(data);
+  }
 }
 
 MagnetostaticSolverData::MagnetostaticSolverData(const json &magnetostatic)
@@ -1442,6 +1635,13 @@ SolverData::SolverData(const json &solver)
   device = solver.value("Device", device);
   ceed_backend = solver.value("Backend", ceed_backend);
 
+  if (auto it = solver.find("SurfaceResponseCorrection"); it != solver.end())
+  {
+    ElectrostaticSolverData response_parser(
+        json{{"ResponseCorrection", *it}});
+    surface_response_correction = std::move(response_parser.response_correction);
+  }
+
   driven = ParseOptional<DrivenSolverData>(solver, "Driven");
   eigenmode = ParseOptional<EigenSolverData>(solver, "Eigenmode");
   electrostatic = ParseOptional<ElectrostaticSolverData>(solver, "Electrostatic");
@@ -1501,9 +1701,13 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
     errors << "Combining \"SurfaceCurrent\" and \"FluxLoop\" excitations in the same "
               "magnetostatic simulation is not yet supported\n";
   }
+  if (!boundaries.terminal.empty() && !boundaries.prescribed_potential.empty())
+  {
+    errors << "\"Terminal\" and \"PrescribedPotential\" cannot both be specified\n";
+  }
 
   // Check for duplicate indices across LumpedPort, WavePort, FloquetPort,
-  // SurfaceCurrent, FluxLoop, Terminal.
+  // SurfaceCurrent, FluxLoop, Terminal, PrescribedPotential.
   std::map<int, std::string> index_map;
   for (const auto &[idx, data] : boundaries.lumpedport)
   {
@@ -1554,6 +1758,15 @@ std::optional<std::string> Validate(const BoundaryData &boundaries)
     if (!inserted)
     {
       errors << "Duplicate \"Index\": " << idx << " in " << it->second << " and Terminal\n";
+    }
+  }
+  for (const auto &[idx, data] : boundaries.prescribed_potential)
+  {
+    auto [it, inserted] = index_map.try_emplace(idx, "PrescribedPotential");
+    if (!inserted)
+    {
+      errors << "Duplicate \"Index\": " << idx << " in " << it->second
+             << " and PrescribedPotential\n";
     }
   }
 
@@ -1709,6 +1922,10 @@ void Nondimensionalize(const Units &units, InterfaceDielectricData &data)
   data.t /= units.GetMeshLengthRelativeScale();
   std::transform(data.edge_distances.begin(), data.edge_distances.end(),
                  data.edge_distances.begin(), LengthScaler(units));
+  if (data.edge_refinement)
+  {
+    data.edge_refinement->radius /= units.GetMeshLengthRelativeScale();
+  }
 }
 
 void Nondimensionalize(const Units &units, EigenSolverData &data)

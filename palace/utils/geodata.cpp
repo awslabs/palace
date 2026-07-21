@@ -94,9 +94,10 @@ namespace mesh
 namespace
 {
 
-// True if the input file requests any h-refinement — adaptive, box, or sphere.
-bool UseAmr(const config::RefinementData &refinement)
+// True if the input file requests any h-refinement.
+bool UseAmr(const IoData &iodata)
 {
+  const auto &refinement = iodata.model.refinement;
   if (refinement.max_it > 0)
   {
     return true;
@@ -115,6 +116,14 @@ bool UseAmr(const config::RefinementData &refinement)
       return true;
     }
   }
+  for (const auto &[index, dielectric] : iodata.boundaries.postpro.dielectric)
+  {
+    (void)index;
+    if (dielectric.edge_refinement)
+    {
+      return true;
+    }
+  }
   return false;
 }
 
@@ -125,7 +134,7 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
   BlockTimer bt0(Timer::MESH_PREPROCESS);
 
   const auto &refinement = iodata.model.refinement;
-  const bool use_amr = UseAmr(refinement);
+  const bool use_amr = UseAmr(iodata);
 
   // Root loads first so conformality of the input mesh can be factored into the
   // distribution-path decision. Non-conformal AMR on an already-nonconforming mesh
@@ -269,7 +278,7 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
 {
   BlockTimer bt0(Timer::MESH_PREPROCESS);
   const auto &refinement = iodata.model.refinement;
-  const bool use_amr = UseAmr(refinement);
+  const bool use_amr = UseAmr(iodata);
 
   // Re-derive the distribution-path decision that Load already used. Both halves of the
   // pipeline run on the same iodata + the same initial mesh, so the result is identical.
@@ -463,8 +472,7 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
   // Simplex meshes need to be re-finalized in order to use local refinement (see
   // the docstring for mfem::Mesh::UniformRefinement).
   const auto element_types = mesh::CheckElements(*mesh.back());
-  if (element_types.has_simplices && uniform_ref_levels > 0 &&
-      iodata.model.refinement.max_it > 0)
+  if (element_types.has_simplices && uniform_ref_levels > 0 && UseAmr(iodata))
   {
     constexpr bool refine = true, fix_orientation = false;
     Mpi::Print("\nFlattening mesh sequence:\n Local mesh refinement will start from the "
@@ -1502,7 +1510,8 @@ inline void GetBdrElementNeighborTransforms(int i, const mfem::ParMesh &mesh,
 }  // namespace
 
 std::vector<BoundaryEdgeSegment>
-GetBoundaryElementEdgeSegments(const mfem::ParMesh &mesh, const mfem::Array<int> &marker)
+GetBoundaryElementEdgeSegments(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                               bool exterior_only)
 {
   MFEM_VERIFY(mesh.Dimension() == 2 || mesh.Dimension() == 3,
               "Boundary element edge extraction is only supported for 2D and 3D meshes!");
@@ -1528,6 +1537,14 @@ GetBoundaryElementEdgeSegments(const mfem::ParMesh &mesh, const mfem::Array<int>
     if (attr <= 0 || attr > marker.Size() || !marker[attr - 1])
     {
       continue;
+    }
+    if (exterior_only)
+    {
+      const int face = mesh.GetBdrElementFaceIndex(be);
+      if (!mesh.GetFaceInformation(face).IsBoundary())
+      {
+        continue;
+      }
     }
     if (mesh.Dimension() == 2)
     {
@@ -3047,7 +3064,7 @@ int LocalEdgeSplit(std::unique_ptr<mfem::Mesh> &orig_mesh,
 
   // For each element / boundary element, find the (at most one, by independence) split edge
   // it contains, returning the matching midpoint id and the local endpoint vertices, or -1.
-  auto find_split_edge = [&edge_midpoint](const int *v, int nv, const int (*edge_vert)[2],
+  auto find_split_edge = [&edge_midpoint](const int *v, int nv, const int(*edge_vert)[2],
                                           int nedge, int &lv0, int &lv1)
   {
     for (int le = 0; le < nedge; le++)

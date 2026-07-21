@@ -25,6 +25,7 @@ namespace config
 struct BoundaryData;
 struct MaterialData;
 struct PecBoundaryData;
+struct PrescribedPotentialData;
 struct SolverData;
 struct TerminalData;
 
@@ -61,12 +62,21 @@ private:
   // Boundary attributes for each terminal index.
   std::map<int, mfem::Array<int>> source_attr_lists;
 
+  // CSV potential trace file for prescribed-potential sources.
+  std::map<int, std::string> source_data_files;
+  double mesh_coordinate_scale;
+  double voltage_scale;
+
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                           const std::map<int, config::TerminalData> &terminal,
+                          const std::map<int, config::PrescribedPotentialData> &potential,
                           const mfem::ParMesh &mesh);
   std::map<int, mfem::Array<int>>
-  ConstructSources(const std::map<int, config::TerminalData> &terminal);
+  ConstructSources(const std::map<int, config::TerminalData> &terminal,
+                   const std::map<int, config::PrescribedPotentialData> &potential);
+  std::map<int, std::string>
+  ConstructSourceDataFiles(const std::map<int, config::PrescribedPotentialData> &potential);
 
 public:
   LaplaceOperator(const config::BoundaryData &boundaries, const config::SolverData &solver,
@@ -91,6 +101,9 @@ public:
   const auto &GetRTSpaces() const { return rt_fespaces; }
   auto &GetRTSpace() { return rt_fespaces.GetFinestFESpace(); }
   const auto &GetRTSpace() const { return rt_fespaces.GetFinestFESpace(); }
+
+  // Return the essential true dofs on the finest H1 space.
+  const auto &GetDbcTDofList() const { return dbc_tdof_lists.back(); }
 
   // Access the underlying mesh object.
   const auto &GetMesh() const { return GetH1Space().GetMesh(); }

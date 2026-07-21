@@ -510,6 +510,154 @@ public:
           Catch::Matchers::ContainsSubstring("has an incompatible column header"));
     }
   }
+
+  void surface_local_edge_table(const fs::path &output)
+  {
+    iodata.problem.output = output;
+    const auto csv_path = output / "surface-Q-edge-local.csv";
+
+    iodata.solver.driven.restart = 1;
+    {
+      PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+      REQUIRE_NOTHROW(post_op_csv.InitializeSurfaceQEdgeLocal(2));
+      REQUIRE(post_op_csv.surface_Q_edge_local.has_value());
+      REQUIRE(post_op_csv.surface_Q_edge_local->table.n_cols() == 56);
+      CHECK(post_op_csv.surface_Q_edge_local->table.n_rows() == 0);
+      CHECK(post_op_csv.surface_Q_edge_local->table[0].header_text == "f (GHz)");
+      CHECK(post_op_csv.surface_Q_edge_local->table[1].header_text == "exc");
+      CHECK(post_op_csv.surface_Q_edge_local->table[2].header_text == "interface");
+      CHECK(post_op_csv.surface_Q_edge_local->table[3].header_text == "edge");
+      CHECK(post_op_csv.surface_Q_edge_local->table[4].header_text == "R (m)");
+      CHECK(post_op_csv.surface_Q_edge_local->table[11].header_text == "L_edge (m)");
+      CHECK(post_op_csv.surface_Q_edge_local->table[12].header_text == "E_total (J)");
+      CHECK(post_op_csv.surface_Q_edge_local->table[13].header_text == "p_total");
+      CHECK(post_op_csv.surface_Q_edge_local->table[14].header_text == "E_in (J)");
+      CHECK(post_op_csv.surface_Q_edge_local->table[15].header_text == "p_in");
+      CHECK(post_op_csv.surface_Q_edge_local->table[16].header_text == "E_ann (J)");
+      CHECK(post_op_csv.surface_Q_edge_local->table[17].header_text == "p_ann");
+      CHECK(post_op_csv.surface_Q_edge_local->table[18].header_text == "E_bulk_ann (J)");
+      CHECK(post_op_csv.surface_Q_edge_local->table[19].header_text == "p_bulk_ann");
+      CHECK(post_op_csv.surface_Q_edge_local->table[20].header_text == "E_vertex_in (J)");
+      CHECK(post_op_csv.surface_Q_edge_local->table[21].header_text == "p_vertex_in");
+      CHECK(post_op_csv.surface_Q_edge_local->table[22].header_text ==
+            "E_bulk_vertex_ann (J)");
+      CHECK(post_op_csv.surface_Q_edge_local->table[23].header_text == "p_bulk_vertex_ann");
+      CHECK(post_op_csv.surface_Q_edge_local->table[25].header_text == "p_total_n");
+      CHECK(post_op_csv.surface_Q_edge_local->table[31].header_text == "p_in_t");
+      CHECK(post_op_csv.surface_Q_edge_local->table[33].header_text == "p_ann_n");
+      CHECK(post_op_csv.surface_Q_edge_local->table[37].header_text == "p_bulk_top_n_ann");
+      CHECK(post_op_csv.surface_Q_edge_local->table[47].header_text ==
+            "p_bulk_bottom_l_ann");
+      CHECK(post_op_csv.surface_Q_edge_local->table[48].header_text == "automatic");
+      CHECK(post_op_csv.surface_Q_edge_local->table[49].header_text == "component");
+      CHECK(post_op_csv.surface_Q_edge_local->table[50].header_text == "chain");
+      CHECK(post_op_csv.surface_Q_edge_local->table[51].header_text == "v0_type");
+      CHECK(post_op_csv.surface_Q_edge_local->table[52].header_text == "v1_type");
+      CHECK(post_op_csv.surface_Q_edge_local->table[53].header_text == "process_nx");
+      CHECK(post_op_csv.surface_Q_edge_local->table[55].header_text == "process_nz");
+
+      post_op_csv.row_idx_v = 2.0;
+      post_op_csv.measurement_cache.interface_local_edge_i = {
+          {1,
+           1,
+           true,
+           2,
+           3,
+           {1, 2},
+           {0.0, 0.0, 1.0},
+           {1.0e-6, 2.0e-6, 3.0e-6},
+           {4.0e-6, 5.0e-6, 6.0e-6},
+           7.0e-6,
+           8.0e-6,
+           9.0e-18,
+           1.0e-5,
+           {31.0e-18, 33.0e-18},
+           {3.2e-5, 3.4e-5},
+           11.0e-18,
+           1.2e-5,
+           {35.0e-18, 37.0e-18},
+           {3.6e-5, 3.8e-5},
+           13.0e-18,
+           1.4e-5,
+           {39.0e-18, 41.0e-18},
+           {4.0e-5, 4.2e-5},
+           14.0e-18,
+           1.5e-5,
+           15.0e-18,
+           1.6e-5,
+           16.0e-18,
+           1.7e-5,
+           {43.0e-18, 45.0e-18, 47.0e-18, 49.0e-18, 51.0e-18, 53.0e-18},
+           {4.4e-5, 4.6e-5, 4.8e-5, 5.0e-5, 5.2e-5, 5.4e-5}},
+          {2,
+           3,
+           false,
+           -1,
+           -1,
+           {-1, -1},
+           {0.0, 1.0, 0.0},
+           {11.0e-6, 12.0e-6, 13.0e-6},
+           {14.0e-6, 15.0e-6, 16.0e-6},
+           17.0e-6,
+           18.0e-6,
+           19.0e-18,
+           2.0e-5,
+           {131.0e-18, 133.0e-18},
+           {13.2e-5, 13.4e-5},
+           21.0e-18,
+           2.2e-5,
+           {135.0e-18, 137.0e-18},
+           {13.6e-5, 13.8e-5},
+           23.0e-18,
+           2.4e-5,
+           {139.0e-18, 141.0e-18},
+           {14.0e-5, 14.2e-5},
+           24.0e-18,
+           2.5e-5,
+           25.0e-18,
+           2.6e-5,
+           26.0e-18,
+           2.7e-5,
+           {143.0e-18, 145.0e-18, 147.0e-18, 149.0e-18, 151.0e-18, 153.0e-18},
+           {14.4e-5, 14.6e-5, 14.8e-5, 15.0e-5, 15.2e-5, 15.4e-5}}};
+      REQUIRE_NOTHROW(post_op_csv.PrintSurfaceQEdgeLocal());
+    }
+
+    TableWithCSVFile written(csv_path.string(), true);
+    REQUIRE(written.table.n_cols() == 56);
+    REQUIRE(written.table.n_rows() == 2);
+    CHECK(written.table[0].data == std::vector<double>{2.0, 2.0});
+    CHECK(written.table[2].data == std::vector<double>{1.0, 2.0});
+    CHECK(written.table[3].data == std::vector<double>{1.0, 3.0});
+    CHECK(written.table[11].data == std::vector<double>{7.0e-6, 17.0e-6});
+    CHECK(written.table[12].data == std::vector<double>{9.0e-18, 19.0e-18});
+    CHECK(written.table[14].data == std::vector<double>{11.0e-18, 21.0e-18});
+    CHECK(written.table[18].data == std::vector<double>{15.0e-18, 25.0e-18});
+    CHECK(written.table[20].data == std::vector<double>{14.0e-18, 24.0e-18});
+    CHECK(written.table[22].data == std::vector<double>{16.0e-18, 26.0e-18});
+    CHECK(written.table[24].data == std::vector<double>{31.0e-18, 131.0e-18});
+    CHECK(written.table[28].data == std::vector<double>{35.0e-18, 135.0e-18});
+    CHECK(written.table[32].data == std::vector<double>{39.0e-18, 139.0e-18});
+    CHECK(written.table[36].data == std::vector<double>{43.0e-18, 143.0e-18});
+    CHECK(written.table[46].data == std::vector<double>{53.0e-18, 153.0e-18});
+    CHECK(written.table[48].data == std::vector<double>{1.0, 0.0});
+    CHECK(written.table[49].data == std::vector<double>{2.0, -1.0});
+    CHECK(written.table[50].data == std::vector<double>{3.0, -1.0});
+    CHECK(written.table[51].data == std::vector<double>{1.0, -1.0});
+    CHECK(written.table[52].data == std::vector<double>{2.0, -1.0});
+    CHECK(written.table[53].data == std::vector<double>{0.0, 0.0});
+    CHECK(written.table[54].data == std::vector<double>{0.0, 1.0});
+    CHECK(written.table[55].data == std::vector<double>{1.0, 0.0});
+
+    iodata.solver.driven.restart = 2;
+    {
+      PostOperatorCSVManualTest post_op_csv{iodata, space_op};
+      REQUIRE_NOTHROW(post_op_csv.InitializeSurfaceQEdgeLocal(2));
+      REQUIRE(post_op_csv.surface_Q_edge_local.has_value());
+      CHECK(post_op_csv.surface_Q_edge_local->table.n_rows() == 2);
+      CHECK(post_op_csv.surface_Q_edge_local->table[3].print_as_int);
+    }
+  }
 };
 
 TEST_CASE("PostOperatorCSV_Restart_Helper_ExpectedFilling", "[postoperatorcsv][Serial]")
@@ -574,6 +722,13 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "PostOperatorCSV_SurfaceQEdge",
 {
   PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart1.json"};
   fixture.surface_edge_table(temp_dir);
+}
+
+TEST_CASE_METHOD(palace::test::PerRankTempDir, "PostOperatorCSV_SurfaceQEdgeLocal",
+                 "[postoperatorcsv][Serial]")
+{
+  PostOperatorCSVFixture fixture{"postoperatorcsv_restart/restart1.json"};
+  fixture.surface_local_edge_table(temp_dir);
 }
 
 // NOLINTEND(cppcoreguidelines-avoid-do-while)

@@ -54,9 +54,8 @@
           "Thickness": 2.0e-3,
           "Permittivity": 4.0,
           "LossTan": 2.0e-3,
-          "EdgeAttributes": [
-            5
-          ],
+          "AutomaticEdges": true,
+          "LocalizeEdgeEnergy": true,
           "EdgeDistances": [
             0.2,
             0.3,
@@ -74,9 +73,8 @@
           "Thickness": 2.0e-3,
           "Permittivity": 11.47,
           "LossTan": 3.0e-4,
-          "EdgeAttributes": [
-            5
-          ],
+          "AutomaticEdges": true,
+          "LocalizeEdgeEnergy": true,
           "EdgeDistances": [
             0.2,
             0.3,
@@ -94,9 +92,8 @@
           "Thickness": 2.0e-3,
           "Permittivity": 10.0,
           "LossTan": 3.0e-2,
-          "EdgeAttributes": [
-            5
-          ],
+          "AutomaticEdges": true,
+          "LocalizeEdgeEnergy": true,
           "EdgeDistances": [
             0.2,
             0.3,
@@ -182,9 +179,11 @@
     },
     "Order": 1,
     "Linear": {
-      "Type": "Default",
+      "Type": "STRUMPACK",
       "Tol": 1.0e-12,
-      "MaxIts": 500
+      "MaxIts": 500,
+      "EstimatorTol": 1.0e-1,
+      "EstimatorMG": true
     }
   }
 }

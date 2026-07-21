@@ -6,6 +6,7 @@
 
 #include <map>
 #include <memory>
+#include <unordered_set>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
@@ -22,6 +23,7 @@ namespace config
 {
 
 struct BoundaryPostData;
+struct BoundaryData;
 struct SurfaceFluxData;
 struct InterfaceDielectricData;
 struct FarFieldPostData;
@@ -61,14 +63,19 @@ private:
   {
     InterfaceDielectric type;
     double t, epsilon, tandelta;
+    bool flux_recovery;
     std::vector<double> edge_distances;
+    double edge_distance_smoothing;
+    bool localize_edge_energy;
+    std::array<double, 3> edge_frame_normal;
     std::shared_ptr<const EdgeDistanceTree> edge_distance_tree;
 
     InterfaceDielectricData(const config::InterfaceDielectricData &data,
                             const mfem::Array<int> &bdr_attr_marker);
 
-    std::unique_ptr<mfem::Coefficient> GetCoefficient(const GridFunction &E,
-                                                      const MaterialOperator &mat_op) const;
+    std::unique_ptr<mfem::Coefficient> GetCoefficient(
+        const GridFunction &E, const GridFunction *D, const MaterialOperator &mat_op,
+        InterfaceDielectricComponent component = InterfaceDielectricComponent::TOTAL) const;
   };
   struct FarFieldData : public SurfaceData
   {
@@ -92,8 +99,23 @@ private:
   // owned).
   mfem::ParFiniteElementSpace &nd_fespace;
 
+  struct LocalVolumeEdgeEnergyCache
+  {
+    const EdgeDistanceTree *edge_distance_tree;
+    std::vector<double> edge_distances;
+    double edge_distance_smoothing;
+    std::array<double, 3> edge_frame_normal;
+    std::vector<double> energies;
+    std::vector<double> vertex_energies;
+    std::array<std::vector<double>, 6> polarized_energies;
+  };
+  mutable std::vector<LocalVolumeEdgeEnergyCache> local_volume_edge_energy_cache;
+
   double GetLocalSurfaceIntegral(mfem::Coefficient &f,
                                  const mfem::Array<int> &attr_marker) const;
+  const LocalVolumeEdgeEnergyCache &
+  GetLocalVolumeEdgeElectricFieldEnergies(const InterfaceDielectricData &data,
+                                          const GridFunction &E) const;
 
 public:
   struct InterfaceEdgeEnergy
@@ -101,6 +123,29 @@ public:
     double distance;
     double energy_outside;
     double energy_annulus;
+  };
+  struct InterfaceLocalEdgeEnergy
+  {
+    int edge;
+    bool automatic;
+    int component;
+    int chain;
+    std::array<int, 2> vertex_types;
+    std::array<double, 3> process_normal;
+    std::array<double, 3> p0;
+    std::array<double, 3> p1;
+    double length;
+    double distance;
+    double energy_total;
+    double energy_inside;
+    double energy_annulus;
+    double energy_vertex_inside;
+    std::array<double, 2> energy_total_polarized;
+    std::array<double, 2> energy_inside_polarized;
+    std::array<double, 2> energy_annulus_polarized;
+    double energy_volume_annulus;
+    double energy_volume_vertex_annulus;
+    std::array<double, 6> energy_volume_annulus_polarized;
   };
 
   // Data structures for postprocessing the surface with the given type.
@@ -111,7 +156,9 @@ public:
   SurfacePostOperator(const config::BoundaryPostData &postpro, ProblemType problem_type,
                       const MaterialOperator &mat_op,
                       mfem::ParFiniteElementSpace &h1_fespace,
-                      mfem::ParFiniteElementSpace &nd_fespace);
+                      mfem::ParFiniteElementSpace &nd_fespace,
+                      const std::unordered_set<int> *cracked_attributes = nullptr,
+                      const config::BoundaryData *boundaries = nullptr);
   SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                       mfem::ParFiniteElementSpace &h1_fespace,
                       mfem::ParFiniteElementSpace &nd_fespace);
@@ -128,11 +175,20 @@ public:
 
   // Get surface integrals computing interface dielectric energy.
   double GetInterfaceLossTangent(int idx) const;
-  double GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E) const;
+  double GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E,
+                                         const GridFunction *D = nullptr) const;
   std::vector<InterfaceEdgeEnergy>
-  GetInterfaceEdgeElectricFieldEnergies(int idx, const GridFunction &E) const;
+  GetInterfaceEdgeElectricFieldEnergies(int idx, const GridFunction &E,
+                                        const GridFunction *D = nullptr) const;
+  std::vector<InterfaceLocalEdgeEnergy>
+  GetInterfaceLocalEdgeElectricFieldEnergies(int idx, const GridFunction &E,
+                                             const GridFunction *D = nullptr,
+                                             bool include_volume = true) const;
 
   std::size_t GetNInterfaceEdgeEntries() const;
+  std::size_t GetNInterfaceLocalEdgeEntries() const;
+  bool NeedsFluxRecovery() const;
+  void ResetInterfaceLocalEdgeEnergyCache() const;
 
   int GetVDim() const { return mat_op.SpaceDimension(); };
 };

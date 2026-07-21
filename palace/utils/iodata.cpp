@@ -271,6 +271,35 @@ IoData::IoData(const char *filename, bool print) : IoData(ParseAndValidate(filen
 
 void IoData::CheckConfiguration()
 {
+  MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC ||
+                  boundaries.prescribed_potential.empty(),
+              "\"PrescribedPotential\" boundary conditions are only supported for "
+              "electrostatic simulations!");
+  MFEM_VERIFY(!solver.electrostatic.response_matrix ||
+                  !boundaries.prescribed_potential.empty(),
+              "Electrostatic \"ResponseMatrix\" requires \"PrescribedPotential\" basis "
+              "excitations!");
+  MFEM_VERIFY(
+      !solver.electrostatic.response_matrix ||
+          std::any_of(boundaries.postpro.dielectric.begin(),
+                      boundaries.postpro.dielectric.end(),
+                      [](const auto &entry) { return entry.second.localize_edge_energy; }),
+      "Electrostatic \"ResponseMatrix\" requires at least one interface dielectric with "
+      "\"LocalizeEdgeEnergy\" enabled!");
+  MFEM_VERIFY(!solver.electrostatic.response_correction ||
+                  problem.type == ProblemType::ELECTROSTATIC,
+              "Electrostatic \"ResponseCorrection\" is only supported for electrostatic "
+              "simulations!");
+  MFEM_VERIFY(!solver.surface_response_correction ||
+                  problem.type == ProblemType::DRIVEN ||
+                  problem.type == ProblemType::EIGENMODE,
+              "\"SurfaceResponseCorrection\" is only supported for driven and eigenmode "
+              "simulations!");
+  MFEM_VERIFY(!solver.surface_response_correction ||
+                  solver.surface_response_correction->IsAutomatic(),
+              "Maxwell \"SurfaceResponseCorrection\" requires automatic fabrication-"
+              "process library matching!");
+
   // Check that the provided domain and boundary objects are all supported by the requested
   // problem type.
   if (problem.type == ProblemType::DRIVEN)
@@ -744,6 +773,25 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
   config::Nondimensionalize(units, solver.eigenmode);
   config::Nondimensionalize(units, solver.driven);
   config::Nondimensionalize(units, solver.transient);
+
+  // Surface-response correction patch origins and local reference points are specified in
+  // mesh length units. The local basis-point file is converted when it is read by the
+  // response operator.
+  if (solver.electrostatic.response_correction)
+  {
+    const double scale = units.GetMeshLengthRelativeScale();
+    for (auto &patch : solver.electrostatic.response_correction->patches)
+    {
+      for (auto &x : patch.origin)
+      {
+        x /= scale;
+      }
+      for (auto &x : patch.reference)
+      {
+        x /= scale;
+      }
+    }
+  }
 
   // Nondimensionalize Floquet reference frequency (GHz -> nondimensional angular
   // frequency).

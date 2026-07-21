@@ -105,6 +105,41 @@ struct Measurement
     double participation_annulus;  // energy_annulus / total_energy
   };
 
+  struct InterfaceLocalEdgeData
+  {
+    int idx;  // Interface index
+    int edge;
+    bool automatic;
+    int component;
+    int chain;
+    std::array<int, 2> vertex_types;
+    std::array<double, 3> process_normal;
+    std::array<double, 3> p0;
+    std::array<double, 3> p1;
+    double length;
+    double distance;
+    double energy_total;
+    double participation_total;
+    std::array<double, 2> energy_total_polarized;
+    std::array<double, 2> participation_total_polarized;
+    double energy_inside;
+    double participation_inside;
+    std::array<double, 2> energy_inside_polarized;
+    std::array<double, 2> participation_inside_polarized;
+    double energy_annulus;
+    double participation_annulus;
+    std::array<double, 2> energy_annulus_polarized;
+    std::array<double, 2> participation_annulus_polarized;
+    double energy_vertex_inside;
+    double participation_vertex_inside;
+    double energy_volume_annulus;
+    double participation_volume_annulus;
+    double energy_volume_vertex_annulus;
+    double participation_volume_vertex_annulus;
+    std::array<double, 6> energy_volume_annulus_polarized;
+    std::array<double, 6> participation_volume_annulus_polarized;
+  };
+
   struct FarFieldData
   {
     // Theta: polar angle (0 to pi radians).
@@ -215,6 +250,7 @@ struct Measurement
   std::vector<FluxData> surface_flux_i;
   std::vector<InterfaceData> interface_eps_i;
   std::vector<InterfaceEdgeData> interface_edge_i;
+  std::vector<InterfaceLocalEdgeData> interface_local_edge_i;
   FarFieldData farfield;
 
   // Floquet port S-parameters: port_idx -> {(m, n, is_te/is_rhc) -> S}.
@@ -302,6 +338,12 @@ protected:
   void InitializeSurfaceQEdge(const SurfacePostOperator &surf_post_op);
   void InitializeSurfaceQEdge(std::size_t nr_entries);
   void PrintSurfaceQEdge();
+
+  std::optional<TableWithCSVFile> surface_Q_edge_local;
+  std::size_t nr_interface_local_edge_entries = 0;
+  void InitializeSurfaceQEdgeLocal(const SurfacePostOperator &surf_post_op);
+  void InitializeSurfaceQEdgeLocal(std::size_t nr_entries);
+  void PrintSurfaceQEdgeLocal();
 
   std::optional<TableWithCSVFile> probe_E;
   std::optional<TableWithCSVFile> probe_En;

@@ -488,6 +488,22 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     CHECK(config::Validate(boundary_data).has_value());
   }
 
+  SECTION("PrescribedPotential duplicate index and terminal mixing fail validation")
+  {
+    json boundaries = {
+        {"LumpedPort",
+         {{{"Attributes", {5}}, {"Index", 1}, {"R", 50}, {"Direction", "+Y"}}}},
+        {"PrescribedPotential",
+         {{{"Attributes", {6}}, {"Index", 1}, {"DataFile", "trace.csv"}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(config::Validate(boundary_data).has_value());
+
+    boundaries.erase("LumpedPort");
+    boundaries["Terminal"] = {{{"Attributes", {7}}, {"Index", 2}}};
+    boundary_data = config::BoundaryData(boundaries);
+    CHECK(config::Validate(boundary_data).has_value());
+  }
+
   SECTION("SurfaceCurrent duplicate index fails validation")
   {
     json boundaries = {
@@ -537,6 +553,234 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     CHECK(boundary_data.current.at(3).inactive_port_mode.value() ==
           InactivePortMode::SHORT);
   }
+}
+
+TEST_CASE("Config interface dielectric flux recovery", "[config][Serial]")
+{
+  json dielectric = {{"Attributes", {1}},
+                     {"Thickness", 2.0e-3},
+                     {"Permittivity", 4.0},
+                     {"FluxRecovery", true}};
+  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
+
+  dielectric["Type"] = "SA";
+  CHECK_NOTHROW(config::InterfaceDielectricData(dielectric));
+}
+
+TEST_CASE("Config electrostatic response matrix", "[config][Serial]")
+{
+  json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                 {"Model", {{"Mesh", "test.msh"}}},
+                 {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                 {"Boundaries", json::object()},
+                 {"Solver", {{"Electrostatic", {{"ResponseMatrix", true}}}}}};
+  CHECK_THROWS(IoData(config, false));
+
+  config["Boundaries"]["PrescribedPotential"] = {
+      {{"Index", 1}, {"Attributes", {1}}, {"DataFile", "basis.csv"}}};
+  CHECK_THROWS(IoData(config, false));
+
+  config["Boundaries"]["Postprocessing"]["Dielectric"] = {
+      {{"Index", 1},
+       {"Attributes", {2}},
+       {"Thickness", 2.0e-3},
+       {"Permittivity", 4.0},
+       {"EdgeAttributes", {1}},
+       {"EdgeDistances", {0.2}},
+       {"LocalizeEdgeEnergy", true},
+       {"EdgeFrameNormal", {0.0, 1.0, 0.0}}}};
+  CHECK_NOTHROW(IoData(config, false));
+}
+
+TEST_CASE("Config electrostatic response correction", "[config][Serial]")
+{
+  const json correction = {{"FabricatedMatrix", "fabricated.csv"},
+                           {"ThinMatrix", "thin.csv"},
+                           {"BasisPoints", "points.csv"},
+                           {"Edges",
+                            {{{"Origin", {1.0, 2.0, 0.0}},
+                              {"AxisU", {1.0, 0.0, 0.0}},
+                              {"AxisV", {0.0, 1.0, 0.0}}}}}};
+  const config::ElectrostaticSolverData electrostatic(
+      json{{"ResponseCorrection", correction}});
+  REQUIRE(electrostatic.response_correction);
+  REQUIRE(electrostatic.response_correction->models.size() == 1);
+  CHECK(electrostatic.response_correction->models[0].idx == 1);
+  CHECK(electrostatic.response_correction->models[0].fabricated_matrix ==
+        "fabricated.csv");
+  CHECK(electrostatic.response_correction->models[0].thin_matrix == "thin.csv");
+  CHECK(electrostatic.response_correction->models[0].basis_points == "points.csv");
+  REQUIRE(electrostatic.response_correction->patches.size() == 1);
+  CHECK(electrostatic.response_correction->patches[0].model == 1);
+  CHECK(electrostatic.response_correction->patches[0].origin ==
+        std::array<double, 3>{1.0, 2.0, 0.0});
+
+  json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                 {"Model", {{"Mesh", "test.msh"}}},
+                 {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                 {"Boundaries", json::object()},
+                 {"Solver", {{"Electrostatic", {{"ResponseCorrection", correction}}}}}};
+  const IoData iodata(config, false);
+
+  // Concretization must also work when the raw JSON does not already contain the nested
+  // correction object, as happens for programmatically assembled configurations.
+  json sparse = config;
+  sparse["Solver"]["Electrostatic"].erase("ResponseCorrection");
+  sparse = IoData::ConcretizeDefaults(iodata, sparse);
+  CHECK(sparse["Solver"]["Electrostatic"]["ResponseCorrection"] == correction);
+
+  config["Problem"]["Type"] = "Magnetostatic";
+  CHECK_THROWS(IoData(config, false));
+
+  const json multi_model = {
+      {"Models",
+       {{{"Index", 7},
+         {"FabricatedMatrix", "fabricated-domain.csv"},
+         {"ThinMatrix", "thin-domain.csv"},
+         {"FabricatedSurfaceMatrix", "fabricated-surface.csv"},
+         {"ThinSurfaceMatrix", "thin-surface.csv"},
+         {"BasisPoints", "pair-points.csv"},
+         {"Interfaces", {{{"Target", 4}, {"Coupon", 1}}}}}}},
+      {"Patches",
+       {{{"Model", 7},
+         {"Origin", {3.0, 4.0, 0.0}},
+         {"AxisU", {1.0, 0.0, 0.0}},
+         {"AxisV", {0.0, 1.0, 0.0}},
+         {"Reference", {-1.0, 0.0, 0.0}}}}}};
+  const config::ElectrostaticSolverData modern(
+      json{{"ResponseCorrection", multi_model}});
+  REQUIRE(modern.response_correction);
+  REQUIRE(modern.response_correction->models.size() == 1);
+  CHECK(modern.response_correction->models[0].idx == 7);
+  REQUIRE(modern.response_correction->models[0].interfaces.size() == 1);
+  CHECK(modern.response_correction->models[0].interfaces[0].target == 4);
+  CHECK(modern.response_correction->models[0].interfaces[0].coupon == 1);
+  REQUIRE(modern.response_correction->patches.size() == 1);
+  CHECK(modern.response_correction->patches[0].model == 7);
+  CHECK(modern.response_correction->patches[0].reference ==
+        std::array<double, 3>{-1.0, 0.0, 0.0});
+
+  const json automatic_correction = {
+      {"Library", "fabrication-process.json"},
+      {"TargetInterfaces", {4, 5, 6}},
+      {"UnmatchedPolicy", "Error"}};
+  const config::ElectrostaticSolverData automatic(
+      json{{"ResponseCorrection", automatic_correction}});
+  REQUIRE(automatic.response_correction);
+  CHECK(automatic.response_correction->IsAutomatic());
+  CHECK(automatic.response_correction->library == "fabrication-process.json");
+  CHECK(automatic.response_correction->target_interfaces ==
+        std::vector<int>{4, 5, 6});
+  CHECK(automatic.response_correction->unmatched_policy ==
+        config::ElectrostaticSolverData::ResponseCorrectionData::UnmatchedPolicy::ERROR);
+  CHECK(automatic.response_correction->models.empty());
+  CHECK(automatic.response_correction->patches.empty());
+
+  auto duplicate_targets = automatic_correction;
+  duplicate_targets["TargetInterfaces"] = {4, 4};
+  CHECK_THROWS(config::ElectrostaticSolverData(
+      json{{"ResponseCorrection", duplicate_targets}}));
+
+  auto invalid_policy = automatic_correction;
+  invalid_policy["UnmatchedPolicy"] = "Ignore";
+  CHECK_THROWS(config::ElectrostaticSolverData(
+      json{{"ResponseCorrection", invalid_policy}}));
+
+  const config::SolverData maxwell_solver(
+      json{{"SurfaceResponseCorrection", automatic_correction}});
+  REQUIRE(maxwell_solver.surface_response_correction);
+  CHECK(maxwell_solver.surface_response_correction->IsAutomatic());
+  CHECK(maxwell_solver.surface_response_correction->library ==
+        "fabrication-process.json");
+
+  json maxwell_config = {
+      {"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+      {"Boundaries", json::object()},
+      {"Solver",
+       {{"Eigenmode", {{"Target", 1.0}}},
+        {"SurfaceResponseCorrection", automatic_correction}}}};
+  CHECK_NOTHROW(IoData(maxwell_config, false));
+  maxwell_config["Problem"]["Type"] = "Electrostatic";
+  maxwell_config["Solver"].erase("Eigenmode");
+  maxwell_config["Solver"]["Electrostatic"] = json::object();
+  CHECK_THROWS(IoData(maxwell_config, false));
+
+  auto explicit_maxwell = maxwell_config;
+  explicit_maxwell["Problem"]["Type"] = "Eigenmode";
+  explicit_maxwell["Solver"].erase("Electrostatic");
+  explicit_maxwell["Solver"]["Eigenmode"] = {{"Target", 1.0}};
+  explicit_maxwell["Solver"]["SurfaceResponseCorrection"] = multi_model;
+  CHECK_THROWS(IoData(explicit_maxwell, false));
+}
+
+TEST_CASE("Config interface dielectric edge refinement", "[config][Serial]")
+{
+  json dielectric = {{"Attributes", {1}},
+                     {"Thickness", 2.0e-3},
+                     {"Permittivity", 4.0},
+                     {"EdgeAttributes", {2}},
+                     {"EdgeDistances", {0.2, 0.5}},
+                     {"EdgeRefinement", {{"Radius", 0.2}, {"ElementsPerRadius", 3}}}};
+  CHECK_NOTHROW(config::InterfaceDielectricData(dielectric));
+
+  dielectric["EdgeRefinement"]["Radius"] = 0.3;
+  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
+}
+
+TEST_CASE("Config automatic interface dielectric edges", "[config][Serial]")
+{
+  json dielectric = {{"Attributes", {1}},
+                     {"Type", "SA"},
+                     {"Thickness", 2.0e-3},
+                     {"Permittivity", 4.0},
+                     {"AutomaticEdges", true},
+                     {"EdgeDistances", {0.2, 0.5}},
+                     {"LocalizeEdgeEnergy", true},
+                     {"EdgeRefinement", {{"Radius", 0.2}, {"ElementsPerRadius", 3}}}};
+  const config::InterfaceDielectricData automatic(dielectric);
+  CHECK(automatic.automatic_edges);
+  CHECK(automatic.edge_attributes.empty());
+
+  dielectric["EdgeAttributes"] = {2};
+  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
+  dielectric.erase("EdgeAttributes");
+
+  dielectric["EdgeExcludeAttributes"] = {3};
+  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
+  dielectric.erase("EdgeExcludeAttributes");
+
+  dielectric["Type"] = "Default";
+  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
+  dielectric["Type"] = "SA";
+
+  dielectric.erase("EdgeDistances");
+  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
+}
+
+TEST_CASE("Config interface dielectric edge frame", "[config][Serial]")
+{
+  json dielectric = {{"Attributes", {1}},      {"Thickness", 2.0e-3},
+                     {"Permittivity", 4.0},    {"EdgeAttributes", {2}},
+                     {"EdgeDistances", {0.2}}, {"LocalizeEdgeEnergy", true}};
+  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
+
+  dielectric["EdgeFrameNormal"] = {0.0, 3.0, 4.0};
+  const config::InterfaceDielectricData data(dielectric);
+  REQUIRE(data.edge_frame_normal);
+  CHECK_THAT((*data.edge_frame_normal)[0], Catch::Matchers::WithinAbs(0.0, 1.0e-12));
+  CHECK_THAT((*data.edge_frame_normal)[1], Catch::Matchers::WithinAbs(0.6, 1.0e-12));
+  CHECK_THAT((*data.edge_frame_normal)[2], Catch::Matchers::WithinAbs(0.8, 1.0e-12));
+
+  dielectric["EdgeFrameNormal"] = {0.0, 0.0, 0.0};
+  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
+
+  dielectric.erase("EdgeAttributes");
+  dielectric.erase("EdgeDistances");
+  dielectric["LocalizeEdgeEnergy"] = false;
+  dielectric["EdgeFrameNormal"] = {0.0, 1.0, 0.0};
+  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
 }
 
 TEST_CASE("Config Driven Solver", "[config][Serial]")
@@ -959,6 +1203,17 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_linear["AMGAggressiveCoarsening"].get<int>() == 1);
     CHECK(j_linear["AMSMaxIts"].get<int>() == 1);
     CHECK(j_linear["MGCycleIts"].get<int>() == 1);
+    CHECK(config["Solver"]["Electrostatic"]["ResponseMatrix"].get<bool>() == false);
+  }
+
+  SECTION("Electrostatic response matrix option")
+  {
+    const config::ElectrostaticSolverData defaults(json::object());
+    CHECK_FALSE(defaults.response_matrix);
+
+    const json electrostatic = {{"ResponseMatrix", true}};
+    const config::ElectrostaticSolverData enabled(electrostatic);
+    CHECK(enabled.response_matrix);
   }
 
   SECTION("Omitted Output resolves to default and concretizes (issue #745)")
@@ -1281,7 +1536,16 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                {"LossTan", 0.002},
                {"EdgeAttributes", {5}},
                {"EdgeExcludeAttributes", {6, 7}},
-               {"EdgeDistances", {1.0e-6, 2.0e-6}}}}}}}}},
+               {"EdgeDistances", {1.0e-6, 2.0e-6}},
+               {"EdgeDistanceSmoothing", 0.2},
+               {"LocalizeEdgeEnergy", true},
+               {"EdgeFrameNormal", {0.0, 0.0, 1.0}},
+               {"EdgeRefinement",
+                {{"Radius", 1.0e-6},
+                 {"ElementsPerRadius", 3},
+                 {"OuterRadiusFactor", 2.5},
+                 {"CoreIndicatorWeight", 0.1}}},
+               {"FluxRecovery", true}}}}}}}},
         {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}}}};
 
     IoData iodata1(config, false);
@@ -1327,6 +1591,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     REQUIRE(iodata2.boundaries.postpro.dielectric.count(1) == 1);
     CHECK(iodata2.boundaries.postpro.dielectric.at(1).edge_exclude_attributes ==
           iodata1.boundaries.postpro.dielectric.at(1).edge_exclude_attributes);
+    CHECK(iodata2.boundaries.postpro.dielectric.at(1).automatic_edges ==
+          iodata1.boundaries.postpro.dielectric.at(1).automatic_edges);
     REQUIRE(iodata1.boundaries.conductivity.size() == 1);
     REQUIRE(iodata2.boundaries.conductivity.size() == 1);
     CHECK(iodata2.boundaries.conductivity[0].h == iodata1.boundaries.conductivity[0].h);
@@ -1378,6 +1644,26 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
           iodata1.boundaries.postpro.dielectric.at(1).edge_attributes);
     CHECK(iodata2.boundaries.postpro.dielectric.at(1).edge_distances ==
           iodata1.boundaries.postpro.dielectric.at(1).edge_distances);
+    CHECK(iodata2.boundaries.postpro.dielectric.at(1).edge_distance_smoothing ==
+          iodata1.boundaries.postpro.dielectric.at(1).edge_distance_smoothing);
+    CHECK(iodata2.boundaries.postpro.dielectric.at(1).localize_edge_energy ==
+          iodata1.boundaries.postpro.dielectric.at(1).localize_edge_energy);
+    REQUIRE(iodata2.boundaries.postpro.dielectric.at(1).edge_refinement);
+    REQUIRE(iodata1.boundaries.postpro.dielectric.at(1).edge_refinement);
+    CHECK(iodata2.boundaries.postpro.dielectric.at(1).edge_refinement->radius ==
+          iodata1.boundaries.postpro.dielectric.at(1).edge_refinement->radius);
+    CHECK(
+        iodata2.boundaries.postpro.dielectric.at(1).edge_refinement->elements_per_radius ==
+        iodata1.boundaries.postpro.dielectric.at(1).edge_refinement->elements_per_radius);
+    CHECK(
+        iodata2.boundaries.postpro.dielectric.at(1).edge_refinement->outer_radius_factor ==
+        iodata1.boundaries.postpro.dielectric.at(1).edge_refinement->outer_radius_factor);
+    CHECK(
+        iodata2.boundaries.postpro.dielectric.at(1)
+            .edge_refinement->core_indicator_weight ==
+        iodata1.boundaries.postpro.dielectric.at(1).edge_refinement->core_indicator_weight);
+    CHECK(iodata2.boundaries.postpro.dielectric.at(1).flux_recovery ==
+          iodata1.boundaries.postpro.dielectric.at(1).flux_recovery);
 
     // Coverage gates. Each schema scope this fixture exercises is checked here so a
     // future schema addition without matching Concretize emission fails this section.
@@ -1435,12 +1721,18 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     INFO("Boundaries.Periodic missing keys: " << json(per_gaps).dump());
     CHECK(per_gaps.empty());
 
-    auto dielectric_gaps =
-        SchemaCoverageGaps("/$defs/Dielectric",
-                           config["Boundaries"]["Postprocessing"]["Dielectric"][0]);
+    auto dielectric_gaps = SchemaCoverageGaps(
+        "/$defs/Dielectric", config["Boundaries"]["Postprocessing"]["Dielectric"][0]);
     INFO("Boundaries.Postprocessing.Dielectric[] missing keys: "
          << json(dielectric_gaps).dump());
     CHECK(dielectric_gaps.empty());
+
+    auto edge_refinement_gaps = SchemaCoverageGaps(
+        "/$defs/EdgeRefinement",
+        config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeRefinement"]);
+    INFO("Boundaries.Postprocessing.Dielectric[].EdgeRefinement missing keys: "
+         << json(edge_refinement_gaps).dump());
+    CHECK(edge_refinement_gaps.empty());
   }
 
   SECTION("User-written \"Default\" is replaced with the resolved concrete value")

@@ -63,7 +63,8 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
                                      const config::SolverData &solver,
                                      const config::DomainData &domains,
                                      const config::BoundaryData &boundaries,
-                                     const Units &units_, fem_op_t<solver_t> &fem_op_)
+                                     const Units &units_, fem_op_t<solver_t> &fem_op_,
+                                     const std::unordered_set<int> *cracked_attributes)
   : fem_op(&fem_op_), units(units_), post_dir(problem.output),
     post_op_csv(problem, solver, boundaries, units_, fem_op_),
     // dom_post_op does not have a default ctor so specialize via immediate lambda.
@@ -93,7 +94,8 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
           }
         }())),
     surf_post_op(boundaries.postpro, solver_t, fem_op->GetMaterialOp(),
-                 fem_op->GetH1Space(), fem_op->GetNDSpace()),
+                 fem_op->GetH1Space(), fem_op->GetNDSpace(), cracked_attributes,
+                 &boundaries),
     interp_op(domains.postpro.probe, units_, fem_op->GetNDSpace())
 {
   // Define primary grid-functions.
@@ -109,6 +111,11 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
   {
     E = std::make_unique<GridFunction>(fem_op->GetNDSpace(),
                                        HasComplexGridFunction<solver_t>());
+    if (surf_post_op.NeedsFluxRecovery())
+    {
+      D_recovered = std::make_unique<GridFunction>(fem_op->GetRTSpace(),
+                                                   HasComplexGridFunction<solver_t>());
+    }
   }
   if constexpr (HasBGridFunction<solver_t>())
   {
@@ -247,8 +254,19 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
 template <ProblemType solver_t>
 PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op_)
   : PostOperator(iodata.problem, iodata.solver, iodata.domains, iodata.boundaries,
-                 iodata.units, fem_op_)
+                 iodata.units, fem_op_, &iodata.boundaries.cracked_attributes)
 {
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
+  {
+    if (iodata.solver.surface_response_correction)
+    {
+      surface_response_op =
+          std::make_unique<SurfaceResponseOperator>(iodata, fem_op_);
+      MFEM_VERIFY(surface_response_op->HasSurfaceResponse(),
+                  "Maxwell surface response correction requires fabricated and thin "
+                  "surface response matrices in the selected coupon models!");
+    }
+  }
 }
 
 template <ProblemType solver_t>
@@ -1452,6 +1470,7 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
   //          p_mj = 1/2 t_j Re{∫_{Γ_j} (ε_j E_m)ᴴ E_m dS} / (E_elec + E_cap).
   measurement_cache.interface_eps_i.clear();
   measurement_cache.interface_edge_i.clear();
+  measurement_cache.interface_local_edge_i.clear();
   if constexpr (HasEGridFunction<solver_t>())
   {
     // Domain and port energies must have been measured first. E_cap returns zero if the
@@ -1463,9 +1482,13 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
 
     measurement_cache.interface_eps_i.reserve(surf_post_op.eps_surfs.size());
     measurement_cache.interface_edge_i.reserve(surf_post_op.GetNInterfaceEdgeEntries());
+    measurement_cache.interface_local_edge_i.reserve(
+        surf_post_op.GetNInterfaceLocalEdgeEntries());
+    surf_post_op.ResetInterfaceLocalEdgeEnergyCache();
     for (const auto &[idx, data] : surf_post_op.eps_surfs)
     {
-      auto energy = surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E);
+      auto energy =
+          surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E, D_recovered.get());
 
       auto energy_participation_p = energy / energy_electric_all;
       auto loss_tangent_delta = surf_post_op.GetInterfaceLossTangent(idx);
@@ -1476,15 +1499,245 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
       measurement_cache.interface_eps_i.emplace_back(Measurement::InterfaceData{
           idx, energy, loss_tangent_delta, energy_participation_p, quality_factor_Q});
 
-      for (const auto &edge : surf_post_op.GetInterfaceEdgeElectricFieldEnergies(idx, *E))
+      for (const auto &edge :
+           surf_post_op.GetInterfaceEdgeElectricFieldEnergies(idx, *E, D_recovered.get()))
       {
         measurement_cache.interface_edge_i.emplace_back(Measurement::InterfaceEdgeData{
             idx, edge.distance, edge.energy_outside,
             edge.energy_outside / energy_electric_all, edge.energy_annulus,
             edge.energy_annulus / energy_electric_all});
       }
+      for (const auto &edge : surf_post_op.GetInterfaceLocalEdgeElectricFieldEnergies(
+               idx, *E, D_recovered.get()))
+      {
+        measurement_cache.interface_local_edge_i.emplace_back(
+            Measurement::InterfaceLocalEdgeData{
+                idx,
+                edge.edge,
+                edge.automatic,
+                edge.component,
+                edge.chain,
+                edge.vertex_types,
+                edge.process_normal,
+                edge.p0,
+                edge.p1,
+                edge.length,
+                edge.distance,
+                edge.energy_total,
+                edge.energy_total / energy_electric_all,
+                edge.energy_total_polarized,
+                {edge.energy_total_polarized[0] / energy_electric_all,
+                 edge.energy_total_polarized[1] / energy_electric_all},
+                edge.energy_inside,
+                edge.energy_inside / energy_electric_all,
+                edge.energy_inside_polarized,
+                {edge.energy_inside_polarized[0] / energy_electric_all,
+                 edge.energy_inside_polarized[1] / energy_electric_all},
+                edge.energy_annulus,
+                edge.energy_annulus / energy_electric_all,
+                edge.energy_annulus_polarized,
+                {edge.energy_annulus_polarized[0] / energy_electric_all,
+                 edge.energy_annulus_polarized[1] / energy_electric_all},
+                edge.energy_vertex_inside,
+                edge.energy_vertex_inside / energy_electric_all,
+                edge.energy_volume_annulus,
+                edge.energy_volume_annulus / energy_electric_all,
+                edge.energy_volume_vertex_annulus,
+                edge.energy_volume_vertex_annulus / energy_electric_all,
+                edge.energy_volume_annulus_polarized,
+                {edge.energy_volume_annulus_polarized[0] / energy_electric_all,
+                 edge.energy_volume_annulus_polarized[1] / energy_electric_all,
+                 edge.energy_volume_annulus_polarized[2] / energy_electric_all,
+                 edge.energy_volume_annulus_polarized[3] / energy_electric_all,
+                 edge.energy_volume_annulus_polarized[4] / energy_electric_all,
+                 edge.energy_volume_annulus_polarized[5] / energy_electric_all}});
+      }
     }
   }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
+{
+  surface_response_measurement.reset();
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
+  {
+    if (!surface_response_op)
+    {
+      return;
+    }
+
+    MaxwellSurfaceResponseMeasurement result;
+    result.raw_normalization_energy =
+        measurement_cache.domain_E_field_energy_all +
+        measurement_cache.lumped_port_capacitor_energy;
+    result.confidence =
+        surface_response_op->GetMaxwellResponse(*E, measurement_cache.freq);
+    result.corrected_normalization_energy =
+        result.raw_normalization_energy + result.confidence.domain_correction;
+    MFEM_VERIFY(result.raw_normalization_energy > 0.0 &&
+                    result.corrected_normalization_energy > 0.0,
+                "Maxwell surface-response normalization energy must be positive!");
+
+    const auto target_interfaces = surface_response_op->GetTargetInterfaces();
+    for (const auto &raw : measurement_cache.interface_eps_i)
+    {
+      auto &interface = result.interfaces[raw.idx];
+      interface.raw_energy = raw.energy;
+      interface.corrected_energy = raw.energy;
+      interface.loss_tangent = raw.tandelta;
+    }
+    for (const int target : target_interfaces)
+    {
+      auto interface = result.interfaces.find(target);
+      MFEM_VERIFY(interface != result.interfaces.end(),
+                  "Maxwell surface response refers to target interface "
+                      << target << " which is not configured for postprocessing!");
+      auto fabricated = result.confidence.fabricated_surface_energy.find(target);
+      MFEM_VERIFY(fabricated !=
+                      result.confidence.fabricated_surface_energy.end(),
+                  "Maxwell surface response produced no fabricated energy for target "
+                      << target << "!");
+
+      const double radius = surface_response_op->GetMatchingRadius();
+      auto outside = std::find_if(
+          measurement_cache.interface_edge_i.begin(),
+          measurement_cache.interface_edge_i.end(),
+          [&](const auto &edge)
+          {
+            return edge.idx == target &&
+                   std::abs(edge.distance - radius) <=
+                       1.0e-10 * std::max(edge.distance, radius);
+          });
+      MFEM_VERIFY(
+          outside != measurement_cache.interface_edge_i.end(),
+          "Maxwell response-corrected target interface "
+              << target
+              << " requires EdgeDistances containing the coupon matching radius!");
+      interface->second.corrected_energy =
+          outside->energy_outside + fabricated->second;
+    }
+
+    if (!result.confidence.confident && !surface_response_warning_printed)
+    {
+      Mpi::Warning(
+          "PEC Maxwell surface-response confidence limits were exceeded: "
+          "kR = {:.3e}, loop residual = {:.3e}, matched fraction = {:.6f}, "
+          "corner fraction = {:.3e}, max R/rho = {:.3e}, library distance = {:.3e}. "
+          "Corrected values are reported but should not be treated as validated.\n",
+          result.confidence.kR, result.confidence.loop_residual,
+          result.confidence.matched_length_fraction,
+          result.confidence.corner_neighborhood_fraction,
+          result.confidence.maximum_curvature_ratio,
+          result.confidence.maximum_library_distance);
+      surface_response_warning_printed = true;
+    }
+    surface_response_measurement = std::move(result);
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
+                                                            int excitation) const
+{
+  if (!surface_response_measurement || !Mpi::Root(fem_op->GetComm()))
+  {
+    return;
+  }
+  if (!surface_Q_corrected)
+  {
+    surface_Q_corrected =
+        std::make_unique<TableWithCSVFile>(post_dir / "surface-Q-corrected.csv");
+    auto &table = surface_Q_corrected->table;
+    table.insert("idx", solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m");
+    table.insert("excitation", "exc");
+    table.insert("interface", "interface");
+    table.insert("domain_raw", "E_norm raw (J)");
+    table.insert("domain_corrected", "E_norm corrected (J)");
+    table.insert("energy_raw", "E_surf raw (J)");
+    table.insert("participation_raw", "p_surf raw");
+    table.insert("quality_raw", "Q_surf raw");
+    table.insert("energy_corrected", "E_surf corrected (J)");
+    table.insert("participation_corrected", "p_surf corrected");
+    table.insert("quality_corrected", "Q_surf corrected");
+    table["excitation"].print_as_int = true;
+    table["interface"].print_as_int = true;
+    if constexpr (solver_t == ProblemType::EIGENMODE)
+    {
+      table["idx"].print_as_int = true;
+    }
+  }
+  if (!surface_response_confidence)
+  {
+    surface_response_confidence =
+        std::make_unique<TableWithCSVFile>(post_dir /
+                                           "surface-response-confidence.csv");
+    auto &table = surface_response_confidence->table;
+    table.insert("idx", solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m");
+    table.insert("excitation", "exc");
+    table.insert("kR", "kR");
+    table.insert("loop_residual", "loop residual");
+    table.insert("matched_fraction", "matched edge fraction");
+    table.insert("corner_fraction", "corner neighborhood fraction");
+    table.insert("curvature", "max R/rho");
+    table.insert("library_distance", "max library distance");
+    table.insert("confident", "confidence pass");
+    table["excitation"].print_as_int = true;
+    table["confident"].print_as_int = true;
+    if constexpr (solver_t == ProblemType::EIGENMODE)
+    {
+      table["idx"].print_as_int = true;
+    }
+  }
+
+  using VT = Units::ValueType;
+  const auto &result = *surface_response_measurement;
+  for (const auto &[interface_index, interface] : result.interfaces)
+  {
+    const double p_raw =
+        interface.raw_energy / result.raw_normalization_energy;
+    const double p_corrected =
+        interface.corrected_energy / result.corrected_normalization_energy;
+    const double q_raw =
+        p_raw == 0.0 || interface.loss_tangent == 0.0
+            ? mfem::infinity()
+            : 1.0 / (p_raw * interface.loss_tangent);
+    const double q_corrected =
+        p_corrected == 0.0 || interface.loss_tangent == 0.0
+            ? mfem::infinity()
+            : 1.0 / (p_corrected * interface.loss_tangent);
+    auto &table = surface_Q_corrected->table;
+    table["idx"] << output_index;
+    table["excitation"] << excitation;
+    table["interface"] << interface_index;
+    table["domain_raw"]
+        << units.Dimensionalize<VT::ENERGY>(result.raw_normalization_energy);
+    table["domain_corrected"]
+        << units.Dimensionalize<VT::ENERGY>(
+               result.corrected_normalization_energy);
+    table["energy_raw"]
+        << units.Dimensionalize<VT::ENERGY>(interface.raw_energy);
+    table["participation_raw"] << p_raw;
+    table["quality_raw"] << q_raw;
+    table["energy_corrected"]
+        << units.Dimensionalize<VT::ENERGY>(interface.corrected_energy);
+    table["participation_corrected"] << p_corrected;
+    table["quality_corrected"] << q_corrected;
+  }
+  surface_Q_corrected->WriteFullTableTrunc();
+
+  const auto &confidence = result.confidence;
+  auto &table = surface_response_confidence->table;
+  table["idx"] << output_index;
+  table["excitation"] << excitation;
+  table["kR"] << confidence.kR;
+  table["loop_residual"] << confidence.loop_residual;
+  table["matched_fraction"] << confidence.matched_length_fraction;
+  table["corner_fraction"] << confidence.corner_neighborhood_fraction;
+  table["curvature"] << confidence.maximum_curvature_ratio;
+  table["library_distance"] << confidence.maximum_library_distance;
+  table["confident"] << (confidence.confident ? 1.0 : 0.0);
+  surface_response_confidence->WriteFullTableTrunc();
 }
 
 template <ProblemType solver_t>
@@ -1543,6 +1796,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   std::complex<double> freq =
       units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
   post_op_csv.PrintAllCSVData(*this, measurement_cache, freq.real(), step, ex_idx);
+  PrintSurfaceResponseCorrection(freq.real(), ex_idx);
   if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
@@ -1609,6 +1863,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
+  PrintSurfaceResponseCorrection(print_idx, 0);
   if (ShouldWriteParaviewFields(step))
   {
     WriteParaviewFields(step, print_idx);

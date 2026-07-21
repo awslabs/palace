@@ -19,12 +19,16 @@
 #include "utils/geodata_impl.hpp"
 
 #include "fem/interpolator.hpp"
+#include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/postoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
+#include "utils/edgedistance.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/iodata.hpp"
+#include "utils/metaledge.hpp"
 
 namespace palace
 {
@@ -58,7 +62,7 @@ std::unique_ptr<mfem::Mesh> TwoEdgeFanTetMesh()
   return mesh;
 }
 
-std::unique_ptr<mfem::Mesh> CrackedSquareSheetTetMesh()
+std::unique_ptr<mfem::Mesh> CrackedSquareSheetTetMesh(bool add_truncation = false)
 {
   auto mesh = std::make_unique<mfem::Mesh>(3, 8, 8, 8, 3);
 
@@ -78,6 +82,11 @@ std::unique_ptr<mfem::Mesh> CrackedSquareSheetTetMesh()
     mesh->AddTet(i, 5, j, 7, 1);
     mesh->AddBdrTriangle(i, j, 4, 5);
     mesh->AddBdrTriangle(i, 5, j, 5);
+    if (add_truncation && i == 0)
+    {
+      mesh->AddBdrTriangle(i, j, 6, 6);
+      mesh->AddBdrTriangle(i, 7, j, 6);
+    }
   }
   mesh->FinalizeTopology(false);
   return mesh;
@@ -545,6 +554,72 @@ TEST_CASE("Boundary element edge extraction", "[geodata][Parallel]")
   }
 }
 
+TEST_CASE("Edge distance tree and correction-tube marking", "[geodata][Serial]")
+{
+  mesh::BoundaryEdgeSegment segment{{2.0, 1.0, 0.0}, {2.0, 3.0, 0.0}};
+  auto tree =
+      std::make_shared<EdgeDistanceTree>(std::vector<mesh::BoundaryEdgeSegment>{segment});
+
+  mfem::Vector point(2);
+  point[0] = 3.0;
+  point[1] = 2.0;
+  CHECK_THAT(tree->DistanceSquared(point), WithinAbs(1.0, 1.0e-12));
+  point[0] = 2.0;
+  point[1] = 4.0;
+  CHECK_THAT(tree->DistanceSquared(point), WithinAbs(1.0, 1.0e-12));
+
+  auto serial_mesh =
+      mfem::Mesh::MakeCartesian2D(4, 4, mfem::Element::QUADRILATERAL, false, 4.0, 4.0);
+  mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+
+  const EdgeRefinementContext marking_context{tree, 0.2, 0.5, 0.25, 0.0};
+  auto marked = MarkEdgeRefinementElements(mesh, {marking_context});
+  CHECK(marked.Size() == 8);
+
+  mfem::Vector indicators(mesh.GetNE());
+  indicators = 1.0;
+  const EdgeRefinementContext weighting_context{tree, 1.3, 0.5, 2.6, 0.25};
+  CHECK(WeightEdgeCoreIndicators(mesh, {weighting_context}, indicators) == 4);
+  int downweighted = 0;
+  for (int i = 0; i < indicators.Size(); i++)
+  {
+    const double value = indicators[i];
+    CHECK((value == 1.0 || value == 0.25));
+    downweighted += (value == 0.25);
+  }
+  CHECK(downweighted == 4);
+}
+
+TEST_CASE("Polarized edge energy frame", "[geodata][Serial]")
+{
+  const mesh::BoundaryEdgeSegment segment{{0.0, 0.0, 0.0}, {2.0, 0.0, 0.0}};
+  const auto top_frame = BuildEdgeFrame(segment, {0.0, 0.0, 1.0}, 3);
+  const auto bottom_frame = BuildEdgeFrame(segment, {0.0, 0.0, -1.0}, 3);
+
+  double point_data[] = {1.0, 0.5, 0.25};
+  double field_data[] = {2.0, 3.0, 5.0};
+  double displacement_data[] = {7.0, 11.0, 13.0};
+  mfem::Vector point(point_data, 3);
+  mfem::Vector field(field_data, 3);
+  mfem::Vector displacement(displacement_data, 3);
+
+  const auto top =
+      GetPolarizedEdgeEnergyDensity(point, segment, top_frame, field, displacement);
+  const auto reversed =
+      GetPolarizedEdgeEnergyDensity(point, segment, bottom_frame, field, displacement);
+  CHECK_THAT(top[0], WithinAbs(0.5 * 5.0 * 13.0, 1.0e-12));
+  CHECK_THAT(top[1], WithinAbs(0.5 * 3.0 * 11.0, 1.0e-12));
+  CHECK_THAT(top[2], WithinAbs(0.5 * 2.0 * 7.0, 1.0e-12));
+  CHECK_THAT(top[3] + top[4] + top[5], WithinAbs(0.0, 1.0e-12));
+  CHECK_THAT(top[0] + top[1] + top[2],
+             WithinAbs(0.5 * (2.0 * 7.0 + 3.0 * 11.0 + 5.0 * 13.0), 1.0e-12));
+  for (std::size_t component = 0; component < 3; component++)
+  {
+    CHECK_THAT(reversed[component], WithinAbs(0.0, 1.0e-12));
+    CHECK_THAT(reversed[3 + component], WithinAbs(top[component], 1.0e-12));
+  }
+}
+
 TEST_CASE("Boundary edge exclusion", "[geodata][Serial]")
 {
   auto serial_mesh = std::make_unique<mfem::Mesh>(
@@ -573,6 +648,36 @@ TEST_CASE("Boundary edge exclusion", "[geodata][Serial]")
 
   CHECK_THROWS(SurfacePostOperator(postpro, ProblemType::ELECTROSTATIC, mat_op, h1_fespace,
                                    nd_fespace));
+}
+
+TEST_CASE("Flux recovery rejects cracked interfaces", "[geodata][Serial]")
+{
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian2D(1, 1, mfem::Element::TRIANGLE));
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+  const int dim = par_mesh->Dimension();
+  Mesh palace_mesh(std::move(par_mesh));
+
+  mfem::H1_FECollection h1_fec(1, dim);
+  mfem::ND_FECollection nd_fec(1, dim);
+  FiniteElementSpace h1_fespace(palace_mesh, &h1_fec);
+  FiniteElementSpace nd_fespace(palace_mesh, &nd_fec);
+
+  config::MaterialData material;
+  material.attributes = {1};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({material}, periodic, ProblemType::ELECTROSTATIC, palace_mesh);
+
+  config::InterfaceDielectricData dielectric;
+  dielectric.attributes = {1};
+  dielectric.type = InterfaceDielectric::MA;
+  dielectric.flux_recovery = true;
+  config::BoundaryPostData postpro;
+  postpro.dielectric.try_emplace(1, std::move(dielectric));
+  const std::unordered_set<int> cracked_attributes = {1};
+
+  CHECK_THROWS(SurfacePostOperator(postpro, ProblemType::ELECTROSTATIC, mat_op, h1_fespace,
+                                   nd_fespace, &cracked_attributes));
 }
 
 TEST_CASE("Boundary edge extraction on cracked 3D sheet", "[geodata][Serial][Parallel]")
@@ -604,6 +709,465 @@ TEST_CASE("Boundary edge extraction on cracked 3D sheet", "[geodata][Serial][Par
   }
   REQUIRE(edges.size() == 4);
   CHECK_THAT(length, WithinAbs(4.0, 1.0e-12));
+}
+
+TEST_CASE("Automatic metal edge extraction and classification",
+          "[geodata][metaledge][Serial][Parallel]")
+{
+  auto serial_mesh = CrackedSquareSheetTetMesh(true);
+  mfem::ParMesh mesh(Mpi::World(), *serial_mesh);
+
+  auto MakeDielectric = [](InterfaceDielectric type)
+  {
+    config::InterfaceDielectricData dielectric;
+    dielectric.type = type;
+    dielectric.attributes = {5};
+    return dielectric;
+  };
+
+  config::BoundaryData boundaries;
+  boundaries.pec.attributes = {5};
+  boundaries.postpro.dielectric.emplace(11, MakeDielectric(InterfaceDielectric::SA));
+  boundaries.postpro.dielectric.emplace(12, MakeDielectric(InterfaceDielectric::MS));
+  boundaries.postpro.dielectric.emplace(13, MakeDielectric(InterfaceDielectric::MA));
+
+  auto geometry = ExtractMetalEdgeGeometry(mesh, boundaries);
+  REQUIRE(geometry.components == 1);
+  REQUIRE(geometry.physical_components == 1);
+  REQUIRE(geometry.vertices.size() == 4);
+  REQUIRE(geometry.segments.size() == 4);
+  int truncated_vertices = 0;
+  int physical_endpoints = 0;
+  for (const auto &vertex : geometry.vertices)
+  {
+    CHECK(vertex.type == MetalEdgeVertexType::CORNER);
+    CHECK(vertex.segments.size() == 2);
+    truncated_vertices += vertex.on_truncation_boundary;
+    physical_endpoints +=
+        vertex.physical_type == std::optional{MetalEdgeVertexType::ENDPOINT};
+  }
+  CHECK(truncated_vertices == 2);
+  CHECK(physical_endpoints == 2);
+  int truncation_segments = 0;
+  for (const auto &segment : geometry.segments)
+  {
+    CHECK(segment.component == 0);
+    CHECK(segment.metal_attributes == std::vector<int>{5});
+    REQUIRE(segment.conditions.size() == 1);
+    CHECK(segment.conditions[0].type == MetalBoundaryConditionType::PEC);
+    CHECK(segment.conditions[0].index == 0);
+    CHECK(segment.sa_interfaces == std::vector<int>{11});
+    CHECK(segment.ms_interfaces == std::vector<int>{12});
+    CHECK(segment.ma_interfaces == std::vector<int>{13});
+    if (segment.type == MetalEdgeSegmentType::TRUNCATION)
+    {
+      truncation_segments++;
+      CHECK(segment.physical_component == -1);
+      CHECK(segment.truncation_attributes == std::vector<int>{6});
+    }
+    else
+    {
+      CHECK(segment.physical_component == 0);
+      CHECK(segment.truncation_attributes.empty());
+    }
+  }
+  CHECK(truncation_segments == 1);
+  CHECK(geometry.physical_chains == 3);
+  std::set<int> physical_chains;
+  for (const auto &segment : geometry.segments)
+  {
+    if (segment.type == MetalEdgeSegmentType::PHYSICAL)
+    {
+      CHECK(segment.physical_chain >= 0);
+      physical_chains.insert(segment.physical_chain);
+    }
+    else
+    {
+      CHECK(segment.physical_chain == -1);
+    }
+  }
+  CHECK(physical_chains.size() == 3);
+
+  const auto physical_segments =
+      GetInterfaceMetalEdgeSegmentIndices(geometry, 11, InterfaceDielectric::SA);
+  const auto process_normals = BuildMetalEdgeProcessNormals(
+      mesh, geometry, physical_segments,
+      [](int material_attribute) { return material_attribute == 2 ? 1.0 : 0.0; });
+  REQUIRE(process_normals.size() == 3);
+  for (const auto &normal : process_normals)
+  {
+    CHECK_THAT(normal[0], WithinAbs(0.0, 1.0e-12));
+    CHECK_THAT(normal[1], WithinAbs(0.0, 1.0e-12));
+    CHECK_THAT(normal[2], WithinAbs(1.0, 1.0e-12));
+  }
+  auto process_tree = BuildEdgeDistanceTree(geometry, physical_segments, process_normals);
+  REQUIRE(process_tree->HasProcessNormals());
+  REQUIRE(process_tree->HasMetadata());
+  CHECK(process_tree->GetProcessNormal(0) == process_normals[0]);
+  int metadata_endpoints = 0;
+  for (std::size_t i = 0; i < process_tree->Size(); i++)
+  {
+    const auto &metadata = process_tree->GetMetadata(i);
+    CHECK(metadata.component == 0);
+    CHECK(metadata.chain >= 0);
+    for (const int type : metadata.vertex_types)
+    {
+      CHECK((type == static_cast<int>(MetalEdgeVertexType::CORNER) ||
+             type == static_cast<int>(MetalEdgeVertexType::ENDPOINT)));
+      metadata_endpoints += type == static_cast<int>(MetalEdgeVertexType::ENDPOINT);
+    }
+  }
+  CHECK(metadata_endpoints == 2);
+
+  const auto fallback_normals = BuildMetalEdgeProcessNormals(
+      mesh, geometry, physical_segments, [](int) { return 1.0; },
+      std::array<double, 3>{0.0, 0.0, -1.0});
+  for (const auto &normal : fallback_normals)
+  {
+    CHECK_THAT(normal[2], WithinAbs(-1.0, 1.0e-12));
+  }
+
+  boundaries.pec.attributes.clear();
+  config::ImpedanceData impedance;
+  impedance.attributes = {5};
+  boundaries.impedance.push_back(std::move(impedance));
+  geometry = ExtractMetalEdgeGeometry(mesh, boundaries);
+  REQUIRE(geometry.segments.size() == 4);
+  for (const auto &segment : geometry.segments)
+  {
+    REQUIRE(segment.conditions.size() == 1);
+    CHECK(segment.conditions[0].type == MetalBoundaryConditionType::IMPEDANCE);
+    CHECK(segment.conditions[0].index == 0);
+  }
+  const auto impedance_segments =
+      GetInterfaceMetalEdgeSegmentIndices(geometry, 11, InterfaceDielectric::SA);
+  const auto impedance_normals = BuildMetalEdgeProcessNormals(
+      mesh, geometry, impedance_segments,
+      [](int material_attribute) { return material_attribute == 2 ? 1.0 : 0.0; });
+  CHECK(impedance_normals == process_normals);
+}
+
+TEST_CASE("Automatic edge distance to nonregular vertex crosses mesh segments",
+          "[geodata][metaledge][Serial][Parallel]")
+{
+  MetalEdgeGeometry geometry;
+  geometry.vertices.resize(4);
+  geometry.segments.resize(3);
+  for (std::size_t vertex = 0; vertex < geometry.vertices.size(); vertex++)
+  {
+    geometry.vertices[vertex].coordinate = {static_cast<double>(vertex), 0.0, 0.0};
+    geometry.vertices[vertex].physical_type =
+        vertex == 0 || vertex + 1 == geometry.vertices.size()
+            ? MetalEdgeVertexType::ENDPOINT
+            : MetalEdgeVertexType::REGULAR;
+  }
+  for (std::size_t segment = 0; segment < geometry.segments.size(); segment++)
+  {
+    geometry.segments[segment].vertices = {segment, segment + 1};
+    geometry.segments[segment].physical_component = 0;
+    geometry.segments[segment].physical_chain = 0;
+    geometry.vertices[segment].segments.push_back(segment);
+    geometry.vertices[segment + 1].segments.push_back(segment);
+  }
+
+  const auto tree = BuildEdgeDistanceTree(geometry, {0, 1, 2});
+  CHECK(tree->GetMetadata(0).vertex_distances == std::array<double, 2>{0.0, 1.0});
+  CHECK(tree->GetMetadata(1).vertex_distances == std::array<double, 2>{1.0, 1.0});
+  CHECK(tree->GetMetadata(2).vertex_distances == std::array<double, 2>{1.0, 0.0});
+
+  mfem::Vector point(3);
+  point = 0.0;
+  point[0] = 1.5;
+  const auto middle = tree->Nearest(point);
+  REQUIRE(middle.segment == 1);
+  CHECK_THAT(tree->DistanceAlongEdgeToNonregularVertex(point, middle.segment),
+             WithinAbs(1.5, 1.0e-12));
+
+  point[0] = 0.25;
+  const auto endpoint = tree->Nearest(point);
+  REQUIRE(endpoint.segment == 0);
+  CHECK_THAT(tree->DistanceAlongEdgeToNonregularVertex(point, endpoint.segment),
+             WithinAbs(0.25, 1.0e-12));
+
+  const EdgeDistanceTree manual_tree(
+      std::vector<mesh::BoundaryEdgeSegment>{{{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}});
+  CHECK(std::isinf(manual_tree.DistanceAlongEdgeToNonregularVertex(point, 0)));
+
+  for (auto &vertex : geometry.vertices)
+  {
+    vertex.physical_type = MetalEdgeVertexType::REGULAR;
+  }
+  const auto regular_loop_tree = BuildEdgeDistanceTree(geometry, {0, 1, 2});
+  CHECK(std::isinf(
+      regular_loop_tree->DistanceAlongEdgeToNonregularVertex(point, endpoint.segment)));
+}
+
+TEST_CASE("Automatic metal edge extraction on 3D CPW",
+          "[geodata][metaledge][Serial][Parallel]")
+{
+  const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
+                           "examples/cpw3d_surface/cpw3d_surface_validation_thin.json";
+  IoData iodata(config_path.c_str(), false);
+  iodata.model.mesh = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
+  iodata.model.refinement.max_it = 0;
+  auto mesh = mesh::ReadMesh(iodata, Mpi::World());
+
+  for (const auto &[index, dielectric] : iodata.boundaries.postpro.dielectric)
+  {
+    (void)index;
+    CHECK(dielectric.automatic_edges);
+    CHECK(dielectric.edge_attributes.empty());
+    CHECK(dielectric.edge_exclude_attributes.empty());
+    CHECK_FALSE(dielectric.edge_frame_normal);
+  }
+
+  const auto geometry = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries);
+  REQUIRE(geometry.components == 3);
+  REQUIRE(geometry.segments.size() == 92);
+  int sa_segments = 0;
+  int physical_segments = 0;
+  int truncation_segments = 0;
+  std::set<int> truncation_attributes;
+  for (const auto &segment : geometry.segments)
+  {
+    REQUIRE(segment.conditions.size() == 1);
+    CHECK(segment.conditions[0].type == MetalBoundaryConditionType::PEC);
+    CHECK((segment.metal_attributes == std::vector<int>{1} ||
+           segment.metal_attributes == std::vector<int>{2}));
+    CHECK(segment.ms_interfaces == std::vector<int>{2});
+    CHECK(segment.ma_interfaces == std::vector<int>{3});
+    sa_segments += !segment.sa_interfaces.empty();
+    physical_segments += segment.type == MetalEdgeSegmentType::PHYSICAL;
+    truncation_segments += segment.type == MetalEdgeSegmentType::TRUNCATION;
+    truncation_attributes.insert(segment.truncation_attributes.begin(),
+                                 segment.truncation_attributes.end());
+  }
+  CHECK(sa_segments > 0);
+  CHECK(geometry.physical_components == 4);
+  CHECK(geometry.physical_chains == 4);
+  CHECK(physical_segments == 8);
+  CHECK(truncation_segments == 84);
+  CHECK(truncation_attributes == std::set<int>{4, 5, 6});
+
+  const auto sa_indices =
+      GetInterfaceMetalEdgeSegmentIndices(geometry, 1, InterfaceDielectric::SA);
+  const auto ms_indices =
+      GetInterfaceMetalEdgeSegmentIndices(geometry, 2, InterfaceDielectric::MS);
+  const auto ma_indices =
+      GetInterfaceMetalEdgeSegmentIndices(geometry, 3, InterfaceDielectric::MA);
+  CHECK(sa_indices.size() == 8);
+  CHECK(ms_indices.size() == 8);
+  CHECK(ma_indices.size() == 8);
+  const auto sa_tree = BuildEdgeDistanceTree(geometry, sa_indices);
+  CHECK(sa_tree->Size() == 8);
+  CHECK(sa_tree->HasMetadata());
+  for (std::size_t i = 0; i < sa_tree->Size(); i++)
+  {
+    CHECK(sa_tree->GetMetadata(i).component >= 0);
+    CHECK(sa_tree->GetMetadata(i).chain >= 0);
+  }
+  const auto process_normals =
+      BuildMetalEdgeProcessNormals(*mesh, geometry, sa_indices, [](int material_attribute)
+                                   { return material_attribute == 2 ? 1.0 : 0.0; });
+  for (const auto &normal : process_normals)
+  {
+    CHECK_THAT(normal[0], WithinAbs(0.0, 1.0e-12));
+    CHECK_THAT(normal[1], WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(normal[2], WithinAbs(0.0, 1.0e-12));
+  }
+  const auto gap_directions =
+      BuildMetalEdgeGapDirections(*mesh, geometry, sa_indices, process_normals);
+  REQUIRE(gap_directions.size() == sa_indices.size());
+  for (std::size_t i = 0; i < gap_directions.size(); i++)
+  {
+    const auto &segment = geometry.segments[sa_indices[i]];
+    const double x = 0.5 * (geometry.vertices[segment.vertices[0]].coordinate[0] +
+                            geometry.vertices[segment.vertices[1]].coordinate[0]);
+    const double expected_x =
+        (x < 46.0 || (x > 62.0 && x < 78.0))
+            ? 1.0
+            : -1.0;
+    CHECK_THAT(gap_directions[i][0], WithinAbs(expected_x, 1.0e-12));
+    CHECK_THAT(gap_directions[i][1], WithinAbs(0.0, 1.0e-12));
+    CHECK_THAT(gap_directions[i][2], WithinAbs(0.0, 1.0e-12));
+  }
+
+  const auto contexts = BuildEdgeRefinementContexts(*mesh, iodata.boundaries);
+  REQUIRE(contexts.size() == 1);
+  CHECK(contexts[0].distance_tree->Size() == 8);
+
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(std::move(mesh)));
+  LaplaceOperator laplace_op(iodata, meshes);
+  CHECK_NOTHROW((PostOperator<ProblemType::ELECTROSTATIC>(iodata, laplace_op)));
+}
+
+TEST_CASE("Automatic metal edge chains survive local refinement",
+          "[geodata][metaledge][Serial][Parallel]")
+{
+  const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
+                           "examples/cpw3d_surface/cpw3d_surface_validation_thin.json";
+  IoData iodata(config_path.c_str(), false);
+  iodata.model.mesh = fs::path(PALACE_TEST_DATA_DIR) / "mesh/cpw3d-surface-nc.msh";
+  iodata.model.refinement.max_it = 1;
+  auto mesh = mesh::ReadMesh(iodata, Mpi::World());
+
+  const auto coarse = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries);
+  REQUIRE(coarse.physical_chains == 4);
+
+  std::set<int> adjacent_elements;
+  for (int be = 0; be < mesh->GetNBE(); be++)
+  {
+    const int attribute = mesh->GetBdrAttribute(be);
+    if (attribute != 1 && attribute != 2)
+    {
+      continue;
+    }
+    int element, info;
+    mesh->GetBdrElementAdjacentElement(be, element, info);
+    adjacent_elements.insert(element);
+  }
+  REQUIRE_FALSE(adjacent_elements.empty());
+  mfem::Array<int> marked_elements(static_cast<int>(adjacent_elements.size()));
+  std::copy(adjacent_elements.begin(), adjacent_elements.end(), marked_elements.begin());
+  mesh->GeneralRefinement(marked_elements);
+
+  const auto refined = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries);
+  CHECK(refined.physical_components == coarse.physical_components);
+  CHECK(refined.physical_chains == coarse.physical_chains);
+  CHECK(refined.segments.size() > coarse.segments.size());
+
+  auto GetPhysicalChainLengths = [](const MetalEdgeGeometry &geometry)
+  {
+    std::vector<double> lengths(geometry.physical_chains);
+    for (const auto &segment : geometry.segments)
+    {
+      if (segment.type != MetalEdgeSegmentType::PHYSICAL)
+      {
+        continue;
+      }
+      const auto &p0 = geometry.vertices[segment.vertices[0]].coordinate;
+      const auto &p1 = geometry.vertices[segment.vertices[1]].coordinate;
+      double length_squared = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        length_squared += (p1[d] - p0[d]) * (p1[d] - p0[d]);
+      }
+      lengths[segment.physical_chain] += std::sqrt(length_squared);
+    }
+    std::sort(lengths.begin(), lengths.end());
+    return lengths;
+  };
+  const auto coarse_lengths = GetPhysicalChainLengths(coarse);
+  const auto refined_lengths = GetPhysicalChainLengths(refined);
+  REQUIRE(refined_lengths.size() == coarse_lengths.size());
+  for (std::size_t i = 0; i < coarse_lengths.size(); i++)
+  {
+    CHECK_THAT(refined_lengths[i], WithinAbs(coarse_lengths[i], 1.0e-10));
+  }
+
+  auto CountPhysicalVertexTypes = [](const MetalEdgeGeometry &geometry)
+  {
+    std::array<int, 4> counts{};
+    for (const auto &vertex : geometry.vertices)
+    {
+      if (vertex.physical_type)
+      {
+        counts[static_cast<std::size_t>(*vertex.physical_type)]++;
+      }
+    }
+    return counts;
+  };
+  const auto coarse_vertex_types = CountPhysicalVertexTypes(coarse);
+  const auto refined_vertex_types = CountPhysicalVertexTypes(refined);
+  for (std::size_t i = static_cast<std::size_t>(MetalEdgeVertexType::CORNER);
+       i < coarse_vertex_types.size(); i++)
+  {
+    CHECK(refined_vertex_types[i] == coarse_vertex_types[i]);
+  }
+}
+
+TEST_CASE("Automatic metal edge extraction on 3D transmon",
+          "[geodata][metaledge][Serial][Parallel]")
+{
+  const auto config_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
+                           "examples/transmon/transmon_surface_coarse.json";
+  IoData iodata(config_path.c_str(), false);
+  iodata.model.mesh = config_path.parent_path() / iodata.model.mesh;
+  iodata.model.refinement.max_it = 0;
+  auto mesh = mesh::ReadMesh(iodata, Mpi::World());
+
+  for (const auto &[index, dielectric] : iodata.boundaries.postpro.dielectric)
+  {
+    (void)index;
+    CHECK(dielectric.automatic_edges);
+    CHECK(dielectric.edge_attributes.empty());
+    CHECK(dielectric.edge_exclude_attributes.empty());
+    CHECK_FALSE(dielectric.edge_frame_normal);
+  }
+
+  const auto geometry = ExtractMetalEdgeGeometry(*mesh, iodata.boundaries);
+  REQUIRE_FALSE(geometry.Empty());
+  int physical_segments = 0;
+  int truncation_segments = 0;
+  int corners = 0;
+  int sa_segments = 0;
+  std::set<int> truncation_attributes;
+  for (const auto &segment : geometry.segments)
+  {
+    CHECK(segment.metal_attributes == std::vector<int>{5});
+    REQUIRE(segment.conditions.size() == 1);
+    CHECK(segment.conditions[0].type == MetalBoundaryConditionType::PEC);
+    CHECK(segment.ms_interfaces == std::vector<int>{2});
+    CHECK(segment.ma_interfaces == std::vector<int>{3});
+    physical_segments += segment.type == MetalEdgeSegmentType::PHYSICAL;
+    truncation_segments += segment.type == MetalEdgeSegmentType::TRUNCATION;
+    sa_segments += !segment.sa_interfaces.empty();
+    truncation_attributes.insert(segment.truncation_attributes.begin(),
+                                 segment.truncation_attributes.end());
+    if (!segment.sa_interfaces.empty())
+    {
+      CHECK(segment.type == MetalEdgeSegmentType::PHYSICAL);
+    }
+  }
+  for (const auto &vertex : geometry.vertices)
+  {
+    corners += vertex.physical_type == std::optional{MetalEdgeVertexType::CORNER};
+  }
+  CAPTURE(geometry.components, geometry.physical_components, geometry.segments.size(),
+          physical_segments, truncation_segments, corners, sa_segments,
+          truncation_attributes);
+  CHECK(geometry.components == 6);
+  CHECK(geometry.physical_components == 5);
+  CHECK(physical_segments + truncation_segments ==
+        static_cast<int>(geometry.segments.size()));
+  CHECK(physical_segments > 0);
+  CHECK(geometry.physical_chains == 56);
+  CHECK(truncation_segments > 0);
+  CHECK(truncation_attributes == std::set<int>{3});
+  CHECK(corners == 56);
+  CHECK(sa_segments > 0);
+
+  const auto sa_indices =
+      GetInterfaceMetalEdgeSegmentIndices(geometry, 1, InterfaceDielectric::SA);
+  const auto ms_indices =
+      GetInterfaceMetalEdgeSegmentIndices(geometry, 2, InterfaceDielectric::MS);
+  const auto ma_indices =
+      GetInterfaceMetalEdgeSegmentIndices(geometry, 3, InterfaceDielectric::MA);
+  CHECK(sa_indices.size() == 3082);
+  CHECK(ms_indices.size() == 3088);
+  CHECK(ma_indices.size() == 3088);
+
+  const auto process_normals =
+      BuildMetalEdgeProcessNormals(*mesh, geometry, ms_indices, [](int material_attribute)
+                                   { return material_attribute == 2 ? 1.0 : 0.0; });
+  REQUIRE(process_normals.size() == ms_indices.size());
+  for (const auto &normal : process_normals)
+  {
+    CHECK_THAT(normal[0], WithinAbs(0.0, 1.0e-12));
+    CHECK_THAT(normal[1], WithinAbs(0.0, 1.0e-12));
+    CHECK_THAT(normal[2], WithinAbs(1.0, 1.0e-12));
+  }
 }
 
 TEST_CASE("Boundary edge extraction ignores coincident crack copies", "[geodata][Serial]")

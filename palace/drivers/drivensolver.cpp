@@ -100,10 +100,12 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
   // Set up RHS vector for the incident field at port boundaries, and the vector for the
   // first frequency step.
-  ComplexVector RHS(Curl.Width()), E(Curl.Width()), B(Curl.Height());
+  ComplexVector RHS(Curl.Width()), E(Curl.Width()), B(Curl.Height()),
+      D(space_op.GetRTSpace().GetTrueVSize());
   RHS.UseDevice(true);
   E.UseDevice(true);
   B.UseDevice(true);
+  D.UseDevice(true);
   E = 0.0;
   B = 0.0;
 
@@ -125,13 +127,30 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
         iodata.solver.linear.estimator_mg);
   }
-  auto AddEstimate =
-      [&](const ComplexVector &E, const ComplexVector &B, double Et, ErrorIndicator &ind)
+  auto AddEstimate = [&](const ComplexVector &E, const ComplexVector &B,
+                         const ComplexVector *D, double Et, ErrorIndicator &ind)
   {
     if (is_2d)
-      estimator_2d->AddErrorIndicator(E, B, Et, ind);
+    {
+      if (D)
+        estimator_2d->AddErrorIndicator(E, B, *D, Et, ind);
+      else
+        estimator_2d->AddErrorIndicator(E, B, Et, ind);
+    }
     else
-      estimator_3d->AddErrorIndicator(E, B, Et, ind);
+    {
+      if (D)
+        estimator_3d->AddErrorIndicator(E, B, *D, Et, ind);
+      else
+        estimator_3d->AddErrorIndicator(E, B, Et, ind);
+    }
+  };
+  auto RecoverElectricFlux = [&](const ComplexVector &E, ComplexVector &D)
+  {
+    if (is_2d)
+      estimator_2d->RecoverElectricFlux(E, D);
+    else
+      estimator_3d->RecoverElectricFlux(E, D);
   };
   ErrorIndicator indicator;
 
@@ -216,12 +235,20 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
             space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
       }
 
+      const ComplexVector *recovered_flux = nullptr;
+      if (post_op.NeedsRecoveredElectricFlux())
+      {
+        Mpi::Print(" Recovering electric flux for interface postprocessing\n");
+        RecoverElectricFlux(E, D);
+        post_op.SetRecoveredElectricFlux(D);
+        recovered_flux = &D;
+      }
       auto total_domain_energy =
           post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
 
       // Calculate and record the error indicators.
       Mpi::Print(" Updating solution error estimates\n");
-      AddEstimate(E, B, total_domain_energy, indicator);
+      AddEstimate(E, B, recovered_flux, total_domain_energy, indicator);
     }
 
     // Final postprocessing & printing.
@@ -253,10 +280,12 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // Allocate negative curl matrix for postprocessing the B-field and vectors for the
   // high-dimensional field solution.
   const auto &Curl = space_op.GetCurlMatrix();
-  ComplexVector E(Curl.Width()), Eh(Curl.Width()), B(Curl.Height());
+  ComplexVector E(Curl.Width()), Eh(Curl.Width()), B(Curl.Height()),
+      D(space_op.GetRTSpace().GetTrueVSize());
   E.UseDevice(true);
   Eh.UseDevice(true);
   B.UseDevice(true);
+  D.UseDevice(true);
   E = 0.0;
   Eh = 0.0;
   B = 0.0;
@@ -279,13 +308,30 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
         iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
         iodata.solver.linear.estimator_mg);
   }
-  auto AddEstimate =
-      [&](const ComplexVector &E, const ComplexVector &B, double Et, ErrorIndicator &ind)
+  auto AddEstimate = [&](const ComplexVector &E, const ComplexVector &B,
+                         const ComplexVector *D, double Et, ErrorIndicator &ind)
   {
     if (is_2d)
-      estimator_2d->AddErrorIndicator(E, B, Et, ind);
+    {
+      if (D)
+        estimator_2d->AddErrorIndicator(E, B, *D, Et, ind);
+      else
+        estimator_2d->AddErrorIndicator(E, B, Et, ind);
+    }
     else
-      estimator_3d->AddErrorIndicator(E, B, Et, ind);
+    {
+      if (D)
+        estimator_3d->AddErrorIndicator(E, B, *D, Et, ind);
+      else
+        estimator_3d->AddErrorIndicator(E, B, Et, ind);
+    }
+  };
+  auto RecoverElectricFlux = [&](const ComplexVector &E, ComplexVector &D)
+  {
+    if (is_2d)
+      estimator_2d->RecoverElectricFlux(E, D);
+    else
+      estimator_3d->RecoverElectricFlux(E, D);
   };
   ErrorIndicator indicator;
 
@@ -351,7 +397,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // Measure domain energies for the error indicator only. Don't exchange face_nbr_data,
     // unless printing paraview fields.
     auto total_domain_energy = post_op.MeasureDomainFieldEnergyOnly(E, B);
-    AddEstimate(E, B, total_domain_energy, indicator);
+    AddEstimate(E, B, nullptr, total_domain_energy, indicator);
   };
 
   // Loop excitations to add to PROM.
@@ -477,6 +523,12 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
         floquet_corr->AddMult(
             E, B,
             space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
+      }
+      if (post_op.NeedsRecoveredElectricFlux())
+      {
+        Mpi::Print(" Recovering electric flux for interface postprocessing\n");
+        RecoverElectricFlux(E, D);
+        post_op.SetRecoveredElectricFlux(D);
       }
       post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
     }

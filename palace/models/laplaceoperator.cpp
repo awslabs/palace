@@ -3,7 +3,15 @@
 
 #include "laplaceoperator.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <fstream>
+#include <limits>
 #include <set>
+#include <sstream>
+#include <string>
+#include <vector>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
@@ -18,13 +26,114 @@
 namespace palace
 {
 
+namespace
+{
+
+class TracePotentialCoefficient : public mfem::Coefficient
+{
+private:
+  std::vector<std::array<double, 3>> points;
+  std::vector<double> values;
+  int dimension;
+
+public:
+  TracePotentialCoefficient(const std::string &path, int dimension_,
+                            double mesh_coordinate_scale, double voltage_scale)
+    : dimension(dimension_)
+  {
+    std::ifstream input(path);
+    MFEM_VERIFY(input,
+                "Unable to open prescribed potential trace file \"" << path << "\"!");
+
+    std::string line;
+    bool have_data = false;
+    int line_number = 0;
+    while (std::getline(input, line))
+    {
+      line_number++;
+      auto first = line.find_first_not_of(" \t\r");
+      if (first == std::string::npos || line[first] == '#')
+      {
+        continue;
+      }
+      std::replace(line.begin(), line.end(), ',', ' ');
+      std::istringstream row(line);
+      std::array<double, 3> point;
+      double value;
+      if (!(row >> point[0] >> point[1] >> point[2] >> value))
+      {
+        MFEM_VERIFY(!have_data, "Could not parse prescribed potential trace file \""
+                                    << path << "\" at line " << line_number << "!");
+        continue;  // Optional header before the first data row.
+      }
+      MFEM_VERIFY(std::isfinite(point[0]) && std::isfinite(point[1]) &&
+                      std::isfinite(point[2]) && std::isfinite(value),
+                  "Non-finite value in prescribed potential trace file \""
+                      << path << "\" at line " << line_number << "!");
+      for (auto &x : point)
+      {
+        x /= mesh_coordinate_scale;
+      }
+      points.push_back(point);
+      values.push_back(value / voltage_scale);
+      have_data = true;
+    }
+    MFEM_VERIFY(points.size() >= 3, "Prescribed potential trace file \""
+                                        << path << "\" must contain at least 3 points!");
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    double x_data[3] = {0.0, 0.0, 0.0};
+    mfem::Vector x(x_data, dimension);
+    T.Transform(ip, x);
+
+    double closest_distance_sq = std::numeric_limits<double>::infinity();
+    double closest_value = 0.0;
+    for (std::size_t i = 0; i < points.size(); i++)
+    {
+      const std::size_t j = (i + 1) % points.size();
+      double length_sq = 0.0;
+      double projection = 0.0;
+      for (int d = 0; d < dimension; d++)
+      {
+        const double delta = points[j][d] - points[i][d];
+        length_sq += delta * delta;
+        projection += (x[d] - points[i][d]) * delta;
+      }
+      if (length_sq <= 0.0)
+      {
+        continue;
+      }
+      const double t = std::clamp(projection / length_sq, 0.0, 1.0);
+      double distance_sq = 0.0;
+      for (int d = 0; d < dimension; d++)
+      {
+        const double delta = x[d] - (points[i][d] + t * (points[j][d] - points[i][d]));
+        distance_sq += delta * delta;
+      }
+      if (distance_sq < closest_distance_sq)
+      {
+        closest_distance_sq = distance_sq;
+        closest_value = values[i] + t * (values[j] - values[i]);
+      }
+    }
+    MFEM_VERIFY(std::isfinite(closest_distance_sq),
+                "Prescribed potential trace contains no nonzero-length segments!");
+    return closest_value;
+  }
+};
+
+}  // namespace
+
 LaplaceOperator::LaplaceOperator(const config::BoundaryData &boundaries,
                                  const config::SolverData &solver,
                                  const std::vector<config::MaterialData> &materials,
                                  ProblemType problem_type,
                                  const std::vector<std::unique_ptr<Mesh>> &mesh)
   : print_hdr(true),
-    dbc_attr(SetUpBoundaryProperties(boundaries.pec, boundaries.terminal, *mesh.back())),
+    dbc_attr(SetUpBoundaryProperties(boundaries.pec, boundaries.terminal,
+                                     boundaries.prescribed_potential, *mesh.back())),
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
         solver.order, mesh.back()->Dimension(), solver.linear.mg_max_levels,
         solver.linear.mg_coarsening, false)),
@@ -39,7 +148,10 @@ LaplaceOperator::LaplaceOperator(const config::BoundaryData &boundaries,
     rt_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
         solver.linear.estimator_mg ? solver.linear.mg_max_levels : 1, mesh, rt_fecs)),
     mat_op(materials, boundaries.periodic, problem_type, *mesh.back()),
-    source_attr_lists(ConstructSources(boundaries.terminal))
+    source_attr_lists(
+        ConstructSources(boundaries.terminal, boundaries.prescribed_potential)),
+    source_data_files(ConstructSourceDataFiles(boundaries.prescribed_potential)),
+    mesh_coordinate_scale(1.0), voltage_scale(1.0)
 {
   // Print essential BC information.
   if (dbc_attr.Size())
@@ -54,16 +166,19 @@ LaplaceOperator::LaplaceOperator(const IoData &iodata,
   : LaplaceOperator(iodata.boundaries, iodata.solver, iodata.domains.materials,
                     iodata.problem.type, mesh)
 {
+  mesh_coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
+  voltage_scale = iodata.units.GetScaleFactor<Units::ValueType::VOLTAGE>();
 }
 
 mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(
     const config::PecBoundaryData &pec, const std::map<int, config::TerminalData> &terminal,
+    const std::map<int, config::PrescribedPotentialData> &potential,
     const mfem::ParMesh &mesh)
 {
   // Check that boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> bdr_attr_marker;
-  if (!pec.empty() || !terminal.empty())
+  if (!pec.empty() || !terminal.empty() || !potential.empty())
   {
     bdr_attr_marker.SetSize(bdr_attr_max);
     bdr_attr_marker = 0;
@@ -98,6 +213,17 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(
                     "Unknown terminal boundary attribute " << attr << "!");
       }
     }
+    for (const auto &[idx, data] : potential)
+    {
+      for (auto attr : data.attributes)
+      {
+        MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
+                    "Prescribed potential boundary attribute tags must be non-negative and "
+                    "correspond to attributes in the mesh!");
+        MFEM_VERIFY(bdr_attr_marker[attr - 1] > 0,
+                    "Unknown prescribed potential boundary attribute " << attr << "!");
+      }
+    }
   }
 
   // Mark selected boundary attributes from the mesh as essential (Dirichlet).
@@ -119,13 +245,23 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(
       dbc_bcs.Append(attr);
     }
   }
+  for (const auto &[idx, data] : potential)
+  {
+    for (auto attr : data.attributes)
+    {
+      dbc_bcs.Append(attr);
+    }
+  }
+  dbc_bcs.Sort();
+  dbc_bcs.Unique();
   MFEM_VERIFY(dbc_bcs.Size() > 0,
               "Electrostatic problem is ill-posed without any Dirichlet boundaries!");
   return dbc_bcs;
 }
 
-std::map<int, mfem::Array<int>>
-LaplaceOperator::ConstructSources(const std::map<int, config::TerminalData> &terminal)
+std::map<int, mfem::Array<int>> LaplaceOperator::ConstructSources(
+    const std::map<int, config::TerminalData> &terminal,
+    const std::map<int, config::PrescribedPotentialData> &potential)
 {
   // Construct mapping from terminal index to list of associated attributes.
   std::map<int, mfem::Array<int>> attr_lists;
@@ -138,12 +274,31 @@ LaplaceOperator::ConstructSources(const std::map<int, config::TerminalData> &ter
       attr_list.Append(attr);
     }
   }
+  for (const auto &[idx, data] : potential)
+  {
+    mfem::Array<int> &attr_list = attr_lists[idx];
+    attr_list.Reserve(static_cast<int>(data.attributes.size()));
+    for (auto attr : data.attributes)
+    {
+      attr_list.Append(attr);
+    }
+  }
   return attr_lists;
+}
+
+std::map<int, std::string> LaplaceOperator::ConstructSourceDataFiles(
+    const std::map<int, config::PrescribedPotentialData> &potential)
+{
+  std::map<int, std::string> data_files;
+  for (const auto &[idx, data] : potential)
+  {
+    data_files.emplace(idx, data.data_file);
+  }
+  return data_files;
 }
 
 namespace
 {
-
 void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
                  const mfem::ParFiniteElementSpace &nd_fespace,
                  const mfem::ParFiniteElementSpace &rt_fespace, bool &print_hdr)
@@ -234,8 +389,17 @@ void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
   const mfem::ParMesh &mesh = GetMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> source_marker = mesh::AttrToMarker(bdr_attr_max, source_attr_lists[idx]);
-  mfem::ConstantCoefficient one(1.0);
-  x.ProjectBdrCoefficient(one, source_marker);  // Values are only correct on master
+  if (auto it = source_data_files.find(idx); it != source_data_files.end())
+  {
+    TracePotentialCoefficient trace(it->second, mesh.SpaceDimension(),
+                                    mesh_coordinate_scale, voltage_scale);
+    x.ProjectBdrCoefficient(trace, source_marker);  // Values only correct on master
+  }
+  else
+  {
+    mfem::ConstantCoefficient one(1.0);
+    x.ProjectBdrCoefficient(one, source_marker);  // Values only correct on master
+  }
 
   // Eliminate the essential BC to get the RHS vector.
   X.SetSize(GetH1Space().GetTrueVSize());

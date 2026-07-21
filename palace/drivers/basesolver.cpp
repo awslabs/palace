@@ -17,6 +17,7 @@
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/dorfler.hpp"
+#include "utils/edgedistance.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -128,6 +129,73 @@ mfem::Array<int> MarkedElements(const Vector &e, double threshold)
   return ind;
 }
 
+bool HasEdgeRefinement(const config::BoundaryPostData &postpro)
+{
+  return std::any_of(postpro.dielectric.begin(), postpro.dielectric.end(),
+                     [](const auto &entry)
+                     { return entry.second.edge_refinement.has_value(); });
+}
+
+void RefineEdgeTubes(const IoData &iodata, Mesh &mesh)
+{
+  if (!HasEdgeRefinement(iodata.boundaries.postpro))
+  {
+    return;
+  }
+
+  auto &par_mesh = mesh.Get();
+  MPI_Comm comm = par_mesh.GetComm();
+  constexpr int max_passes = 32;
+  int pass = 0;
+  while (true)
+  {
+    const auto contexts = BuildEdgeRefinementContexts(par_mesh, iodata.boundaries);
+    const auto marked = MarkEdgeRefinementElements(par_mesh, contexts);
+    long long int global_marked = marked.Size();
+    Mpi::GlobalSum(1, &global_marked, comm);
+    if (global_marked == 0)
+    {
+      break;
+    }
+    MFEM_VERIFY(pass++ < max_passes,
+                "Geometry-driven edge refinement failed to reach its target after "
+                    << max_passes << " passes!");
+
+    const auto initial_elements = par_mesh.GetGlobalNE();
+    par_mesh.GeneralRefinement(marked, -1, iodata.model.refinement.max_nc_levels);
+    mesh.Update();
+    const auto final_elements = par_mesh.GetGlobalNE();
+    Mpi::Print(" Edge-tube refinement pass {:d}: marked {:d} elements and added {:d} "
+               "(initial = {:d}, final = {:d})\n",
+               pass, global_marked, final_elements - initial_elements, initial_elements,
+               final_elements);
+  }
+  if (pass > 0)
+  {
+    mesh::RebalanceMesh(iodata, mesh);
+    mesh.Update();
+    mesh::PrintMeshInfo(par_mesh, iodata, /*full=*/false, "Edge-refined ");
+  }
+}
+
+Vector BuildMarkingIndicators(const ErrorIndicator &indicators, const mfem::ParMesh &mesh,
+                              const config::BoundaryData &boundaries)
+{
+  Vector marking(indicators.Local());
+  const auto contexts = BuildEdgeRefinementContexts(mesh, boundaries);
+  if (!contexts.empty())
+  {
+    long long int weighted = WeightEdgeCoreIndicators(mesh, contexts, marking);
+    Mpi::GlobalSum(1, &weighted, mesh.GetComm());
+    if (weighted > 0)
+    {
+      Mpi::Print(" Downweighted {:d} elements wholly inside corrected edge cores\n",
+                 weighted);
+    }
+  }
+  return marking;
+}
+
 }  // namespace
 
 BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread,
@@ -182,11 +250,23 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                "the sequence of a priori refinements\n");
     mesh.erase(mesh.begin(), mesh.end() - 1);
   }
+  if (HasEdgeRefinement(iodata.boundaries.postpro) && mesh.size() > 1)
+  {
+    Mpi::Print("\nFlattening mesh sequence:\n Edge-tube refinement will start from the "
+               "final mesh in the sequence of a priori refinements\n");
+    mesh.erase(mesh.begin(), mesh.end() - 1);
+  }
   MPI_Comm comm = mesh.back()->GetComm();
+
+  // Resolve every configured correction tube before the first field solve, independent of
+  // the relative field energy around each edge.
+  RefineEdgeTubes(iodata, *mesh.back());
 
   // Perform initial solve and estimation.
   auto [indicators, ntdof] = Solve(mesh);
-  double err = indicators.Norml2(comm);
+  auto marking_indicators =
+      BuildMarkingIndicators(indicators, mesh.back()->Get(), iodata.boundaries);
+  double err = linalg::Norml2(comm, marking_indicators);
 
   // Collection of all tests that might exhaust resources.
   auto ExhaustedResources = [&refinement](auto it, auto ntdof)
@@ -232,19 +312,19 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     }
 
     // Mark.
-    const auto marked_elements = [&comm, &refinement](const auto &indicators)
+    const auto marked_elements = [&comm, &refinement](const auto &marking_indicators)
     {
       const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
-          comm, indicators.Local(), refinement.update_fraction);
-      const auto marked_elements = MarkedElements(indicators.Local(), threshold);
+          comm, marking_indicators, refinement.update_fraction);
+      const auto marked_elements = MarkedElements(marking_indicators, threshold);
       const auto [glob_marked_elements, glob_elements] =
-          linalg::GlobalSize2(comm, marked_elements, indicators.Local());
+          linalg::GlobalSize2(comm, marked_elements, marking_indicators);
       Mpi::Print(
           " Marked {:d}/{:d} elements for refinement ({:.2f}% of the error, θ = {:.2f})\n",
           glob_marked_elements, glob_elements, 100 * marked_error,
           refinement.update_fraction);
       return marked_elements;
-    }(indicators);
+    }(marking_indicators);
 
     // Refine.
     {
@@ -282,7 +362,9 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
     std::tie(indicators, ntdof) = Solve(mesh);
-    err = indicators.Norml2(comm);
+    marking_indicators =
+        BuildMarkingIndicators(indicators, mesh.back()->Get(), iodata.boundaries);
+    err = linalg::Norml2(comm, marking_indicators);
   }
   Mpi::Print("\nCompleted {:d} iteration{} of adaptive mesh refinement (AMR):\n"
              " Indicator norm = {:.3e}, global unknowns = {:d}\n"

@@ -589,9 +589,11 @@ where ``\bm{E}_n`` denotes the normal field to the interface and
 ``\bm{E}_t = \bm{E}-\bm{E}_n`` denotes the tangential field.
 
 For an infinitely thin metal model, the fields in these integrals are singular at the
-metal perimeter. Interface dielectric entries may specify `EdgeAttributes` to identify
-the metal sheets whose geometric perimeter defines those edges, together with one or more
-`EdgeDistances`. Palace then evaluates, for each matching radius ``R``,
+metal perimeter. Interface dielectric entries may specify one or more `EdgeDistances`
+together with exactly one edge source. `EdgeAttributes` manually identifies boundary
+surfaces whose geometric perimeter defines the edges. Alternatively, `AutomaticEdges`
+extracts the physical perimeter associated with that interface from the configured metal
+boundary conditions. Palace then evaluates, for each matching radius ``R``,
 
 ```math
 \mathcal{E}^{surf}_j(d \geq R), \qquad
@@ -603,11 +605,421 @@ quantities expose a matching region that is separated from the unresolved singul
 They are diagnostics for constructing an edge subgrid correction; they do not by
 themselves replace the raw participation in `surface-Q.csv`. The matching radii should be
 large compared with the local surface mesh size and small compared with nearby geometric
-features. `EdgeExcludeAttributes` may be used to remove perimeter segments that lie on
-artificial boundaries, such as the front and back faces of an extruded geometry. In 3D,
-the perimeter is represented by straight segments joining the endpoints of the selected
+features.
+
+`AutomaticEdges` is currently supported on 3D meshes for interfaces with explicit `SA`,
+`MS`, or `MA` type. It recognizes PEC, terminal or prescribed-potential, conductivity,
+impedance, and rational-impedance metal surfaces. Palace forms their global perimeter
+graph, removes segments supported by exterior simulation cut surfaces, and selects the
+remaining physical segments that geometrically coincide with the requested interface.
+This does not require additional boundary splitting beyond the existing interface
+attributes. Manual `EdgeAttributes` and automatic extraction are mutually exclusive.
+
+An optional `EdgeDistanceSmoothing` value ``f`` replaces each hard indicator at ``R`` by
+a cubic transition from zero to one over
+``R(1-f) \leq d \leq R(1+f)``. The reported outside energy uses this smooth indicator,
+the inside energy uses its complement, and the annular energy uses the difference
+between the indicators at ``R`` and ``2R``. This preserves the inside/outside partition
+while reducing changes caused by quadrature points crossing a hard cutoff during mesh
+refinement. The default ``f=0`` retains the hard partition.
+
+Setting `LocalizeEdgeEnergy` writes `surface-Q-edge-local.csv`. For every physical
+perimeter segment and matching radius, this table reports the segment endpoints and
+length, the total surface energy assigned to its nearest-segment region, surface energy
+inside ``R``, surface energy in the matching annulus, and electric energy in the
+surrounding volume annulus. The latter scales approximately as ``R`` near an ideal
+thin-sheet edge and provides an interface-independent local singular-amplitude proxy.
+Localized volume integration adds postprocessing cost and can produce large tables on
+detailed 3D perimeters.
+
+For automatically extracted edges, the table also reports `p_vertex_in` and
+`p_bulk_vertex_ann`. The first is the surface-core participation at points with
+``d_{edge}<R`` whose graph distance along the physical edge chain to a non-regular
+vertex is less than ``R``. The second applies the same along-edge condition to the
+volume annulus ``R \leq d_{edge}<2R``. Non-regular vertices are corners, open endpoints,
+and junctions. The graph distance continues across regular mesh vertices, so the
+neighborhood does not depend on how a physical chain is subdivided into mesh segments.
+These quantities measure how much of the correction input lies near topology which is
+not represented by a locally straight, translation-invariant edge coupon. Automatic
+closed loops with no non-regular vertices and manual edge selections report zero for
+both quantities. When `EdgeDistanceSmoothing` is nonzero, its cubic transition is
+applied to both the radial and along-edge cutoffs.
+
+The local table also records the edge geometry used by the automatic path. `component`
+labels a connected physical perimeter and `chain` labels a maximal path which continues
+through locally straight vertices but stops at corners, endpoints, and junctions.
+`v0_type` and `v1_type` classify the segment endpoints as regular (0), corner (1),
+endpoint (2), or junction (3). `process_nx`, `process_ny`, and `process_nz` contain the
+unit process normal used for polarization, and `automatic` is one when this metadata was
+inferred. Manual edge selections use `-1` for unavailable topology labels but still
+report their configured, edge-projected process normal. These columns allow correction
+postprocessing to pool short mesh segments on one physical edge chain and to treat
+corner or junction neighborhoods separately.
+
+Corner classification is necessarily a mesh-geometry heuristic because the finite-element
+mesh does not retain whether a polygonal turn came from a sharp CAD vertex or a tessellated
+smooth curve. Palace treats local turns below 30 degrees as smooth curve faceting and larger
+turns as corners. This removes dependence on ordinary curve tessellation and preserves common
+45- and 90-degree layout corners, but a very coarsely faceted curve or an intentional shallow
+corner may require inspection of the local table.
+
+For manual edge selection, `LocalizeEdgeEnergy` also requires `EdgeFrameNormal`, a vector
+which points from the substrate or fabrication-process side of the metal toward air or
+vacuum. With `AutomaticEdges`, Palace instead infers a separate process normal for every
+segment from its supporting metal faces. Adjacent material wave speeds orient the normal
+from the process or substrate side toward the air or vacuum side, so opposing flip-chip
+layers acquire opposite directions without additional boundary splitting.
+`EdgeFrameNormal` is optional in this mode and acts as a fallback where the adjacent
+materials do not distinguish the two sides.
+
+Palace projects the selected or inferred normal perpendicular to each physical edge
+segment and constructs a local right-handed frame: `n` is the projected process normal,
+`l` follows the edge, and `m = n x l` is transverse to the edge in the metal plane. In
+2D, `l` is the out-of-plane direction. A configured fallback must therefore not be
+parallel to any selected 3D edge segment.
+
+The local table resolves surface energy into normal and tangential terms with columns
+such as `p_total_n`, `p_in_n`, and `p_ann_n` (and corresponding `_t` columns). It also
+resolves volume-annulus energy into
+`p_bulk_top_n_ann`, `p_bulk_top_m_ann`, `p_bulk_top_l_ann` and matching `bottom`
+columns. `top` is the side toward the configured or inferred process normal; reversing a
+configured normal swaps the top and bottom channels. The polarized terms sum exactly to their
+unpolarized surface or volume quantity. These channels allow a process calibration to
+distinguish fields on the two sides of a zero-thickness sheet and to separate
+cross-sectional from edge-longitudinal polarization.
+
+Setting `EdgeRefinement` resolves a correction tube independently of the field-based
+error indicator. Before the first field solve, Palace refines every element whose
+bounding sphere intersects ``d \leq \alpha R`` until its diameter is at most ``R/N``.
+Here ``R`` is `Radius`, ``N`` is `ElementsPerRadius`, and ``\alpha`` is
+`OuterRadiusFactor` (default 2). This refinement also occurs when the configured number
+of AMR iterations is zero. Identical requests shared by several interface entries are
+deduplicated. `Radius` must match one of the entry's `EdgeDistances`, ensuring the
+geometrically resolved and suppressed core is the same core used by postprocessing.
+
+After the tube is resolved, `CoreIndicatorWeight` multiplies the field-based AMR
+indicator for elements wholly inside ``d<R``. The default value zero prevents the
+thin-sheet singular core, which is replaced by the subgrid correction, from dominating
+subsequent marking and the AMR stopping criterion. Elements crossing ``R`` retain full
+weight so the inside/outside partition remains resolved. This weighting changes mesh
+selection only; the field solve and raw participation still use the complete domain.
+
+For MA, MS, and SA interfaces, setting `FluxRecovery` evaluates the normal
+electric displacement using the same H(div)-conforming flux recovery used by the
+finite-element error estimator. This supplies a single-valued normal trace and can
+improve convergence of the outside and annular interface energies. The tangential
+SA contribution remains evaluated from the native H(curl) electric field.
+`FluxRecovery` is not supported on cracked internal boundaries, including the
+zero-thickness PEC sheets used for thin-metal simulations. The recovery is a volume
+L2 projection and its boundary trace is not controlled for the singular thin-sheet
+field.
+
+### Local fabrication response matrices
+
+An electrostatic fabrication-resolved coupon can be driven by a set of
+`PrescribedPotential` boundary traces. Enabling
+`Solver.Electrostatic.ResponseMatrix` treats these traces as basis functions
+``\phi_i`` and writes `surface-response-matrix.csv`. For every dielectric interface,
+physical edge, and matching radius, the file contains the upper triangle of symmetric
+matrices ``Q`` such that the interface energy inside the matching radius is
+
+```math
+\mathcal{E}^{surf}_{in}(\bm{a}) =
+\sum_i a_i^2 Q_{ii} + 2 \sum_{i<j} a_i a_j Q_{ij}
+= \bm{a}^T Q \bm{a}.
+```
+
+Here ``\sum_i a_i\phi_i`` is the imposed coupon potential trace. The coefficients
+``a_i`` scale the voltages stored in the corresponding trace files, and the reported
+matrix entries are dimensional energies in joules. Separate `Q_ij normal` and
+`Q_ij tangential` columns provide the same operator for the polarized interface terms.
+The `Q_total_ij` columns provide total surface energy assigned to the edge's
+nearest-segment patch, without the matching-radius cutoff, and its normal and tangential
+components. These full-patch operators can be differenced between matched fabricated and
+thin coupons to obtain a process-local surface-energy defect operator.
+The basis indices are the `Index` values of the `PrescribedPotential` entries.
+
+Palace also writes `domain-response-matrix.csv`. Its matrix ``Q_domain`` satisfies
+
+```math
+\mathcal{E}^{domain}(\bm{a}) = \bm{a}^T Q_{domain} \bm{a}
+```
+
+for the complete coupon electric-field energy. Equivalently, ``2 Q_domain`` is the
+energy-form Dirichlet-to-Neumann operator on the matching contour. Differencing this
+matrix between geometrically matched fabricated and thin coupons measures how the
+fabrication details change the local contour response independently of the surrounding
+device geometry.
+
+This mode requires at least one dielectric entry with `LocalizeEdgeEnergy`. Palace
+performs one electrostatic solve for each of the ``N`` basis traces. It obtains cross
+terms by applying the existing surface postprocessor to summed basis fields, so no
+pairwise PDE solves are required; the remaining surface-integration work scales as
+``N^2``. Only the upper triangle is written because ``Q`` is symmetric.
+
+The basis must be converged in the induced interface-energy norm, not only in an L2 norm
+of the potential trace. Small trace errors can produce large relative errors in a weak
+SA, MS, or MA channel. Local finite-element or spline bases on the matching contour are
+therefore generally safer than assuming that a low-order global Fourier truncation is
+adequate. Validate the reconstructed trace against direct coupon solves before reusing a
+process matrix.
+
+When any participating interface sets `FluxRecovery`, the recovered normal flux also
+enters the response matrix. In that case `Solver.Linear.EstimatorTol` controls a physical
+postprocessing solve and must remain tight even if the simulation performs no AMR.
+
+### Self-consistent thin-metal response correction
+
+The experimental `Solver.Electrostatic.ResponseCorrection` option uses matched
+fabricated- and thin-coupon domain response matrices to alter the global thin-metal
+field solve:
+
+```math
+K_{corr} = K_{thin} + P^T (S_{fabricated} - S_{thin}) P,
+\qquad S = 2 Q_{domain}.
+```
+
+Here ``P`` samples the global potential at the coupon contour knots relative to the
+potential at `Reference`. Each `Models` entry defines one reusable coupon response, and
+each `Patches` entry places that model in the global mesh. `Origin`, `AxisU`, and
+`AxisV` map the coupon coordinates into the global frame. For a one-edge coupon,
+`AxisU` points from metal into the gap and `AxisV` points from the process side toward
+vacuum. The fabricated and thin response matrices must use the same ordered basis as
+`BasisPoints`.
+
+For repeated use of one fabrication process, `Library` replaces the explicit `Models`
+and `Patches` lists:
+
+```json
+"ResponseCorrection": {
+  "Library": "process-library.json",
+  "TargetInterfaces": [1, 2, 3],
+  "UnmatchedPolicy": "Warn"
+}
+```
+
+`TargetInterfaces` is optional. If omitted, Palace considers every typed MA, MS, and SA
+interface with edge-distance postprocessing. In 2D, all targets with the same
+`EdgeAttributes` form one physical interface group and must use the same
+`EdgeFrameNormal`. The largest `EdgeDistances` value must equal the library matching
+radius. Palace intersects the perimeter of each group with the perimeter of the union
+of all configured metal boundary conditions. This removes points introduced only by a
+change in boundary attribute, such as a ground plane continuing into a bump bond. It
+also removes endpoints on exterior simulation-domain truncations.
+
+The remaining sites are assigned to their electrostatic conductor and clustered when
+their separation is less than ``2R``. A one-site cluster uses an `IsolatedEdge` model.
+A two-site cluster is classified as `SameConductorGap`, `DifferentConductorGap`, or
+`SameConductorStrip` from its conductor ownership and the directions in which the metal
+continues. Larger clusters, noncanonical orientations, opposing process normals, and
+missing separation entries are unsupported. With `UnmatchedPolicy` set to `Warn`,
+Palace reports the unsupported topology and disables correction for the complete
+interface group, avoiding a partial correction. `Error` instead terminates the run.
+
+In 3D, targets selecting the same automatically extracted physical metal segments form
+one interface group. Palace infers the process normal and the in-plane direction from
+metal toward gap directly from the supporting metal faces. It partitions straight,
+parallel edge segments wherever a second edge lies within ``2R``. Longitudinally
+overlapping pairs use the same three coupled topologies as 2D; the remaining intervals
+use `IsolatedEdge`. The 2D coupon response is integrated along each interval using a
+Gauss rule selected from the global FEM order. Nonparallel nearby edges, cross-layer
+offsets, more than two interacting edges, a nearby edge outside the interface group, and
+partially overlapping interface groups fail closed. This prevents Palace from silently
+combining incompatible local responses.
+
+A version-1 process library has the following form:
+
+```json
+{
+  "Version": 1,
+  "Name": "100nm-Al-50nm-overetch",
+  "MatchingRadius": 2.0,
+  "CouponDepth": 1055.0,
+  "Models": [
+    {
+      "Name": "isolated-edge",
+      "Topology": "IsolatedEdge",
+      "FabricatedMatrix": "isolated/fabricated/domain-response-matrix.csv",
+      "ThinMatrix": "isolated/thin/domain-response-matrix.csv",
+      "FabricatedSurfaceMatrix":
+        "isolated/fabricated/surface-response-matrix.csv",
+      "ThinSurfaceMatrix": "isolated/thin/surface-response-matrix.csv",
+      "BasisPoints": "isolated/basis-points.csv",
+      "Interfaces": [
+        {"Type": "SA", "Coupon": 1},
+        {"Type": "MS", "Coupon": 2},
+        {"Type": "MA", "Coupon": 3}
+      ]
+    },
+    {
+      "Name": "same-conductor-gap-2um",
+      "Topology": "SameConductorGap",
+      "Separation": 2.0,
+      "SeparationTolerance": 0.01,
+      "Reference": [-1.0, 0.0, 0.0],
+      "FabricatedMatrix": "gap-2um/fabricated/domain-response-matrix.csv",
+      "ThinMatrix": "gap-2um/thin/domain-response-matrix.csv",
+      "BasisPoints": "gap-2um/basis-points.csv"
+    }
+  ]
+}
+```
+
+All lengths use the mesh coordinate unit of the application config. Matrix and basis
+paths are resolved relative to the library file. `CouponDepth` is the implicit extrusion
+depth represented by each 2D response matrix and should equal `Model.Lc` from the coupon
+simulation. Palace divides longitudinal 3D quadrature weights by this depth. It also
+uses the value to transfer a 2D coupon between applications with different
+characteristic lengths. `CouponDepth` is required for 3D; a model-level value overrides
+the library default. Omitting it preserves the legacy 2D assumption that coupon and
+application use the same `Lc`.
+
+Paired-edge models require a positive `Separation`; Palace selects the closest model
+within its nonnegative `SeparationTolerance`. `Reference` is the local coupon point whose
+sampled potential is subtracted from every contour coefficient. Surface matrices and
+`Interfaces` are optional as a set, but are required for corrected participation output.
+
+A model may contain more than one interacting edge. This is required when two one-edge
+matching regions would overlap, for example when the width between two edges is less
+than ``2R`` for matching radius ``R``. Palace rejects overlapping patch contours instead
+of adding two independent corrections over the same region. In that case, generate one
+coupled coupon whose contour encloses all interacting edges and place it as a single
+patch. Independent one-edge coupons remain reusable wherever their patch contours do not
+overlap.
+
+The correction is applied matrix-free, while the assembled thin-metal Laplace operator
+remains the preconditioner. Prescribed terminal values are included through consistent
+right-hand-side elimination. Explicit `Models` and `Patches` placement supports 2D
+electrostatic meshes. Automatic `Library` matching supports both 2D and 3D electrostatic
+meshes. In 3D, every quadrature patch contributes
+
+```math
+\frac{ds}{L_{coupon}}\,
+P(s)^T (S_{fabricated} - S_{thin}) P(s),
+```
+
+where ``L_{coupon}`` is `CouponDepth`.
+
+The current library contains straight-edge responses only. Palace reports every 3D
+corner, endpoint, or junction and integrates the straight-edge response through that
+neighborhood so that the complete thin core is replaced consistently. This is not a
+corner model. Validate the reported vertex-neighborhood fraction from the edge-local
+diagnostics, and add a 3D corner-response model when that contribution is significant.
+
+Palace solves both the original thin-metal system and the response-corrected system.
+The standard saved fields, terminal matrices, `domain-E.csv`, `surface-Q.csv`, and AMR
+indicator retain the original thin-metal solution. Enabling response correction
+therefore does not change the historical raw result or mesh-refinement sequence.
+
+When the models provide `FabricatedSurfaceMatrix`, `ThinSurfaceMatrix`, and `Interfaces`,
+Palace additionally writes `surface-Q-corrected.csv`. This file contains the raw and
+corrected total electric energies and, for every configured interface, both raw and
+corrected surface energies, participation ratios, and quality factors. The raw columns
+are the same quantities reported by the standard output. The corrected interface energy
+replaces the complete thin coupon patch:
+
+```math
+\mathcal{E}^{surf}_{corr}
+= \mathcal{E}^{surf}_{thin,outside\ coupon}
++ \bm{a}^T Q^{surf}_{fabricated,total} \bm{a},
+```
+
+where Palace uses the largest configured `EdgeDistances` value as ``R``. Each target
+interface therefore requires an edge source and `EdgeDistances` containing the coupon
+matching radius. The corrected total electric energy adds the matched
+fabricated-minus-thin domain-response defect.
+
+`EdgeExcludeAttributes` may be used to remove perimeter segments that lie on artificial
+boundaries, such as the front and back faces of an extruded geometry. In 3D, the
+perimeter is represented by straight segments joining the endpoints of the selected
 surface mesh edges; curved high-order edges are therefore approximated by their
 piecewise-linear mesh geometry.
+
+### Postprocessing-only Maxwell response correction
+
+Driven and eigenmode simulations can apply the same fabrication-process library to a
+complex Maxwell field:
+
+```json
+"Solver": {
+  "SurfaceResponseCorrection": {
+    "Library": "process-library.json",
+    "TargetInterfaces": [1, 2, 3],
+    "UnmatchedPolicy": "Error"
+  }
+}
+```
+
+This correction is postprocessing only. It does not modify the Maxwell operator,
+right-hand side, eigensolve, field, error indicator, or AMR sequence. The standard
+`surface-Q.csv` and saved fields remain the raw thin-metal result.
+`surface-Q-corrected.csv` is an additional long-form table containing raw and corrected
+normalization energies, interface energies, participations, and quality factors for each
+frequency and excitation or eigenmode.
+
+For every longitudinal edge quadrature point, Palace maps the selected coupon contour
+into the plane transverse to the physical edge. It reconstructs the complex
+quasi-electrostatic contour voltage from the Nedelec electric field. The first contour
+knot is referenced to an automatically placed point on the PEC:
+
+```math
+a_i = -\int_{\bm{x}_{PEC}}^{\bm{x}_i} \bm{E}\cdot d\bm{l}.
+```
+
+For an isolated edge or gap, the anchor lies one matching radius inside the metal. For a
+same-conductor strip model it lies inside the strip. Palace obtains the remaining
+coefficients by integrating around the coupon contour. Fixing this PEC reference is
+essential: contour differences alone leave an arbitrary constant which changes the
+coupon response. The complex coefficients are evaluated with Hermitian domain- and
+surface-response quadratic forms.
+
+The corrected interface energy keeps the resolved raw energy outside the matching
+radius and replaces the complete thin core with the fabricated coupon response. The
+normalization energy receives the corresponding fabricated-minus-thin domain-response
+defect. Every target interface must therefore enable `AutomaticEdges` and include the
+library `MatchingRadius` in `EdgeDistances`.
+
+The initial Maxwell implementation requires:
+
+  - a three-dimensional driven or eigenmode simulation,
+  - PEC metal for every selected target edge,
+  - one planar fabrication layer with a common process normal, and
+  - automatic library matches for isolated edges or longitudinally overlapping,
+    parallel two-edge coupons.
+
+The paired-edge topology and conductor ownership are inferred without additional user
+boundary splitting. `SameConductorGap`, `SameConductorStrip`, and
+`DifferentConductorGap` library entries use the same separation matching as the
+electrostatic path. Nonparallel close edges, more than two interacting edges, cross-layer
+pairs, and missing library separations follow `UnmatchedPolicy`. Impedance metal,
+multiple fabrication layers, and explicit `Models` or `Patches` are not supported by the
+Maxwell path.
+
+A version-1 different-conductor coupon has one PEC reference and no independent
+coefficient for the second conductor voltage. Its use should therefore be validated for
+the intended field family; strongly coupled different-conductor pairs require a future
+two-conductor trace basis. Same-conductor pairs and isolated PEC edges do not have this
+additional state.
+
+Palace writes one row per frequency and excitation or eigenmode to
+`surface-response-confidence.csv`. `confidence pass` is one only when all of the
+following limits hold:
+
+| Column | Meaning | Current limit |
+|:---|:---|:---|
+| `kR` | Electrical size of the coupon, ``|\omega|R/v_{min}`` | ``\leq 0.1`` |
+| `loop residual` | ``|\oint \bm{E}\cdot d\bm{l}|`` divided by the sum of absolute contour-segment integrals | ``\leq 0.05`` |
+| `matched edge fraction` | Fraction of selected physical edge length assigned a library model | effectively 1 |
+| `corner neighborhood fraction` | Fraction of matched edge length within ``R`` of a corner, endpoint, or junction | ``\leq 0.1`` |
+| `max R/rho` | Largest matching-radius to local-curvature-radius ratio | ``\leq 0.25`` |
+| `max library distance` | Largest normalized paired-edge separation mismatch | ``\leq 0.8`` |
+
+The loop residual tests the local quasi-electrostatic approximation and contour
+resolution. The remaining columns test whether the geometry is represented by the
+straight isolated- or paired-edge library. Corrected values are still written when a
+limit fails, but Palace warns that they are not validated. The corner fraction is a
+geometric length fraction, not a corner correction or a statistical confidence
+interval.
 
 ## Lumped parameter extraction
 

@@ -89,6 +89,11 @@ public:
   // and fold into an existing indicator. The indicators are nondimensionalized using the
   // total field energy.
   void AddErrorIndicator(const VecType &E, double Et, ErrorIndicator &indicator) const;
+  void AddErrorIndicator(const VecType &E, const VecType &D, double Et,
+                         ErrorIndicator &indicator) const;
+
+  // Recover D = epsilon E in the H(div)-conforming flux space.
+  void RecoverFlux(const VecType &E, VecType &D) const;
 };
 
 // Class used for computing curl flux error estimate, η_K = || μ⁻¹ Bₕ - H ||_K where H
@@ -143,6 +148,9 @@ public:
 
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
                          ErrorIndicator &indicator) const;
+  void AddErrorIndicator(const VecType &E, const VecType &B, const VecType &D, double Et,
+                         ErrorIndicator &indicator) const;
+  void RecoverElectricFlux(const VecType &E, VecType &D) const;
 };
 
 // 2D boundary mode error estimator. Owns its own single-level FE spaces for flux
@@ -165,6 +173,9 @@ public:
 
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
                          ErrorIndicator &indicator) const;
+  void AddErrorIndicator(const VecType &E, const VecType &B, const VecType &D, double Et,
+                         ErrorIndicator &indicator) const;
+  void RecoverElectricFlux(const VecType &E, VecType &D) const;
 };
 
 }  // namespace palace

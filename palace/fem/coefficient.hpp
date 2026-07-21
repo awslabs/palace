@@ -335,14 +335,23 @@ BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>::GetLocalFlux(mfem::ElementTransfo
 // and substrate-air interfaces following:
 //   J. Wenner et al., Surface loss simulations of superconducting coplanar waveguide
 //     resonators, Appl. Phys. Lett. (2011).
+enum class InterfaceDielectricComponent
+{
+  TOTAL,
+  NORMAL,
+  TANGENTIAL
+};
+
 template <InterfaceDielectric Type>
 class InterfaceDielectricCoefficient : public mfem::Coefficient,
                                        public BdrGridFunctionCoefficient
 {
 private:
   const GridFunction &E;
+  const GridFunction *D;
   const MaterialOperator &mat_op;
   const double t_i, epsilon_i;
+  const InterfaceDielectricComponent component;
 
   void Initialize(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
                   mfem::Vector *normal)
@@ -393,11 +402,18 @@ private:
   }
 
 public:
-  InterfaceDielectricCoefficient(const GridFunction &E, const MaterialOperator &mat_op,
-                                 double t_i, double epsilon_i)
+  InterfaceDielectricCoefficient(
+      const GridFunction &E, const MaterialOperator &mat_op, double t_i, double epsilon_i,
+      const GridFunction *D = nullptr,
+      InterfaceDielectricComponent component = InterfaceDielectricComponent::TOTAL)
     : mfem::Coefficient(), BdrGridFunctionCoefficient(*E.ParFESpace()->GetParMesh()), E(E),
-      mat_op(mat_op), t_i(t_i), epsilon_i(epsilon_i)
+      D(D), mat_op(mat_op), t_i(t_i), epsilon_i(epsilon_i), component(component)
   {
+    MFEM_ASSERT(!D || D->ParFESpace()->GetParMesh() == E.ParFESpace()->GetParMesh(),
+                "Recovered electric flux must use the electric-field mesh!");
+    MFEM_ASSERT(!D || D->HasImag() == E.HasImag(),
+                "Recovered electric flux and electric field must have matching value "
+                "types!");
   }
 
   double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override;
@@ -432,6 +448,8 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>::Eval
   }
 
   // No specific interface, use full field evaluation: 0.5 * t * ε * |E|² .
+  MFEM_VERIFY(component == InterfaceDielectricComponent::TOTAL,
+              "Polarized interface energy is unavailable for a generic dielectric!");
   return 0.5 * t_i * epsilon_i * V2;
 }
 
@@ -443,21 +461,26 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::MA>::Eval(
   double V_data[3], normal_data[3];
   mfem::Vector V(V_data, T.GetSpaceDim()), normal(normal_data, T.GetSpaceDim());
   Initialize(T, ip, &normal);
-  int attr = GetLocalVectorValue(E.Real(), V, true);
+  const GridFunction &normal_field = D ? *D : E;
+  int attr = GetLocalVectorValue(normal_field.Real(), V, true);
   if (attr <= 0)
   {
     return 0.0;
   }
   double Vn = V * normal;
   double Vn2 = Vn * Vn;
-  if (E.HasImag())
+  if (normal_field.HasImag())
   {
-    GetLocalVectorValue(E.Imag(), V, true);
+    GetLocalVectorValue(normal_field.Imag(), V, true);
     Vn = V * normal;
     Vn2 += Vn * Vn;
   }
 
   // Metal-air interface: 0.5 * t / ε_MA * |E_n|² .
+  if (component == InterfaceDielectricComponent::TANGENTIAL)
+  {
+    return 0.0;
+  }
   return 0.5 * (t_i / epsilon_i) * Vn2;
 }
 
@@ -470,23 +493,42 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::MS>::Eval(
   mfem::Vector V(V_data, T.GetSpaceDim()), W(W_data, T.GetSpaceDim()),
       normal(normal_data, T.GetSpaceDim());
   Initialize(T, ip, &normal);
-  int attr = GetLocalVectorValue(E.Real(), V, false);
+  const GridFunction &normal_field = D ? *D : E;
+  int attr = GetLocalVectorValue(normal_field.Real(), V, false);
   if (attr <= 0)
   {
     return 0.0;
   }
-  mat_op.GetPermittivityReal(attr).Mult(V, W);
+  if (D)
+  {
+    W = V;
+  }
+  else
+  {
+    mat_op.GetPermittivityReal(attr).Mult(V, W);
+  }
   double Vn = W * normal;
   double Vn2 = Vn * Vn;
-  if (E.HasImag())
+  if (normal_field.HasImag())
   {
-    GetLocalVectorValue(E.Imag(), V, false);
-    mat_op.GetPermittivityReal(attr).Mult(V, W);
+    GetLocalVectorValue(normal_field.Imag(), V, false);
+    if (D)
+    {
+      W = V;
+    }
+    else
+    {
+      mat_op.GetPermittivityReal(attr).Mult(V, W);
+    }
     Vn = W * normal;
     Vn2 += Vn * Vn;
   }
 
   // Metal-substrate interface: 0.5 * t / ε_MS * |(ε_S E)_n|² .
+  if (component == InterfaceDielectricComponent::TANGENTIAL)
+  {
+    return 0.0;
+  }
   return 0.5 * (t_i / epsilon_i) * Vn2;
 }
 
@@ -495,8 +537,9 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::SA>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
   // Get single-sided solution on air side and neighboring element attribute.
-  double V_data[3], normal_data[3];
-  mfem::Vector V(V_data, T.GetSpaceDim()), normal(normal_data, T.GetSpaceDim());
+  double V_data[3], W_data[3], normal_data[3];
+  mfem::Vector V(V_data, T.GetSpaceDim()), W(W_data, T.GetSpaceDim()),
+      normal(normal_data, T.GetSpaceDim());
   Initialize(T, ip, &normal);
   int attr = GetLocalVectorValue(E.Real(), V, true);
   if (attr <= 0)
@@ -507,17 +550,42 @@ inline double InterfaceDielectricCoefficient<InterfaceDielectric::SA>::Eval(
   V.Add(-Vn, normal);
   double Vn2 = Vn * Vn;
   double Vt2 = V * V;
+  if (D)
+  {
+    GetLocalVectorValue(D->Real(), W, true);
+    Vn = W * normal;
+    Vn2 = Vn * Vn;
+  }
   if (E.HasImag())
   {
     GetLocalVectorValue(E.Imag(), V, true);
     Vn = V * normal;
     V.Add(-Vn, normal);
-    Vn2 += Vn * Vn;
+    if (!D)
+    {
+      Vn2 += Vn * Vn;
+    }
     Vt2 += V * V;
+    if (D)
+    {
+      GetLocalVectorValue(D->Imag(), W, true);
+      Vn = W * normal;
+      Vn2 += Vn * Vn;
+    }
   }
 
   // Substrate-air interface: 0.5 * t * (ε_SA * |E_t|² + 1 / ε_SA * |E_n|²) .
-  return 0.5 * t_i * ((epsilon_i * Vt2) + (Vn2 / epsilon_i));
+  const double normal_energy = 0.5 * t_i * Vn2 / epsilon_i;
+  const double tangential_energy = 0.5 * t_i * epsilon_i * Vt2;
+  if (component == InterfaceDielectricComponent::NORMAL)
+  {
+    return normal_energy;
+  }
+  if (component == InterfaceDielectricComponent::TANGENTIAL)
+  {
+    return tangential_energy;
+  }
+  return normal_energy + tangential_energy;
 }
 
 // Helper for EnergyDensityCoefficient.

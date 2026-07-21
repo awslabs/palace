@@ -181,16 +181,13 @@ namespace
 {
 
 template <typename VecType>
-Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecType &G_gf,
-                             const FiniteElementSpace &fespace,
-                             const FiniteElementSpace &smooth_fespace,
-                             const FluxProjector<VecType> &projector,
-                             const ceed::Operator &integ_op)
+Vector IntegrateErrorEstimates(const VecType &F, VecType &F_gf, const VecType &G,
+                               VecType &G_gf, const FiniteElementSpace &fespace,
+                               const FiniteElementSpace &smooth_fespace,
+                               const ceed::Operator &integ_op)
 {
-  // Compute the projection of the discontinuous flux onto the smooth finite element space
-  // (recovery) and populate the corresponding grid functions.
+  // Populate the discontinuous and recovered flux grid functions.
   BlockTimer bt(Timer::ESTIMATION);
-  projector.Mult(F, G);
   if constexpr (std::is_same<VecType, ComplexVector>::value)
   {
     fespace.GetProlongationMatrix()->Mult(F.Real(), F_gf.Real());
@@ -265,6 +262,17 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   }
 
   return estimates;
+}
+
+template <typename VecType>
+Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecType &G_gf,
+                             const FiniteElementSpace &fespace,
+                             const FiniteElementSpace &smooth_fespace,
+                             const FluxProjector<VecType> &projector,
+                             const ceed::Operator &integ_op)
+{
+  projector.Mult(F, G);
+  return IntegrateErrorEstimates(F, F_gf, G, G_gf, fespace, smooth_fespace, integ_op);
 }
 
 }  // namespace
@@ -385,6 +393,23 @@ void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double
       ComputeErrorEstimates(E, E_gf, D, D_gf, nd_fespace, rt_fespace, projector, integ_op);
   linalg::Sqrt(estimates, (Et > 0.0) ? 0.5 / Et : 1.0);  // Correct factor of 1/2 in energy
   indicator.AddIndicator(estimates);
+}
+
+template <typename VecType>
+void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, const VecType &D,
+                                                        double Et,
+                                                        ErrorIndicator &indicator) const
+{
+  auto estimates =
+      IntegrateErrorEstimates(E, E_gf, D, D_gf, nd_fespace, rt_fespace, integ_op);
+  linalg::Sqrt(estimates, (Et > 0.0) ? 0.5 / Et : 1.0);
+  indicator.AddIndicator(estimates);
+}
+
+template <typename VecType>
+void GradFluxErrorEstimator<VecType>::RecoverFlux(const VecType &E, VecType &D) const
+{
+  projector.Mult(E, D);
 }
 
 template <typename VecType>
@@ -540,6 +565,30 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
 }
 
 template <typename VecType>
+void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
+    const VecType &E, const VecType &B, const VecType &D, double Et,
+    ErrorIndicator &indicator) const
+{
+  auto grad_estimates = IntegrateErrorEstimates(
+      E, grad_estimator.E_gf, D, grad_estimator.D_gf, grad_estimator.nd_fespace,
+      grad_estimator.rt_fespace, grad_estimator.integ_op);
+  auto curl_estimates =
+      ComputeErrorEstimates(B, curl_estimator.B_gf, curl_estimator.H, curl_estimator.H_gf,
+                            curl_estimator.rt_fespace, curl_estimator.nd_fespace,
+                            curl_estimator.projector, curl_estimator.integ_op);
+  grad_estimates += curl_estimates;
+  linalg::Sqrt(grad_estimates, (Et > 0.0) ? 0.5 / Et : 1.0);
+  indicator.AddIndicator(grad_estimates);
+}
+
+template <typename VecType>
+void TimeDependentFluxErrorEstimator<VecType>::RecoverElectricFlux(const VecType &E,
+                                                                   VecType &D) const
+{
+  grad_estimator.RecoverFlux(E, D);
+}
+
+template <typename VecType>
 BoundaryModeFluxErrorEstimator<VecType>::BoundaryModeFluxErrorEstimator(
     const MaterialOperator &mat_op, FiniteElementSpaceHierarchy &nd_fespaces,
     FiniteElementSpaceHierarchy &rt_fespaces, FiniteElementSpace &curl_fespace,
@@ -566,6 +615,30 @@ void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
   grad_estimates += curl_estimates;
   linalg::Sqrt(grad_estimates, (Et > 0.0) ? 0.5 / Et : 1.0);
   indicator.AddIndicator(grad_estimates);
+}
+
+template <typename VecType>
+void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
+    const VecType &E, const VecType &B, const VecType &D, double Et,
+    ErrorIndicator &indicator) const
+{
+  auto grad_estimates = IntegrateErrorEstimates(
+      E, grad_estimator.E_gf, D, grad_estimator.D_gf, grad_estimator.nd_fespace,
+      grad_estimator.rt_fespace, grad_estimator.integ_op);
+  auto curl_estimates =
+      ComputeErrorEstimates(B, curl_estimator.B_gf, curl_estimator.H, curl_estimator.H_gf,
+                            curl_estimator.rt_fespace, curl_estimator.nd_fespace,
+                            curl_estimator.projector, curl_estimator.integ_op);
+  grad_estimates += curl_estimates;
+  linalg::Sqrt(grad_estimates, (Et > 0.0) ? 0.5 / Et : 1.0);
+  indicator.AddIndicator(grad_estimates);
+}
+
+template <typename VecType>
+void BoundaryModeFluxErrorEstimator<VecType>::RecoverElectricFlux(const VecType &E,
+                                                                  VecType &D) const
+{
+  grad_estimator.RecoverFlux(E, D);
 }
 
 template class FluxProjector<Vector>;

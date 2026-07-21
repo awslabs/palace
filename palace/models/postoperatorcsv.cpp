@@ -134,6 +134,45 @@ Measurement Measurement::Dimensionalize(const Units &units,
     edge.energy_annulus =
         units.Dimensionalize<Units::ValueType::ENERGY>(data.energy_annulus);
   }
+  for (const auto &data : nondim_measurement_cache.interface_local_edge_i)
+  {
+    auto &edge = measurement_cache.interface_local_edge_i.emplace_back(data);
+    for (int d = 0; d < 3; d++)
+    {
+      edge.p0[d] = units.Dimensionalize<Units::ValueType::LENGTH>(data.p0[d]);
+      edge.p1[d] = units.Dimensionalize<Units::ValueType::LENGTH>(data.p1[d]);
+    }
+    edge.length = units.Dimensionalize<Units::ValueType::LENGTH>(data.length);
+    edge.distance = units.Dimensionalize<Units::ValueType::LENGTH>(data.distance);
+    edge.energy_total = units.Dimensionalize<Units::ValueType::ENERGY>(data.energy_total);
+    for (std::size_t component = 0; component < 2; component++)
+    {
+      edge.energy_total_polarized[component] =
+          units.Dimensionalize<Units::ValueType::ENERGY>(
+              data.energy_total_polarized[component]);
+      edge.energy_inside_polarized[component] =
+          units.Dimensionalize<Units::ValueType::ENERGY>(
+              data.energy_inside_polarized[component]);
+      edge.energy_annulus_polarized[component] =
+          units.Dimensionalize<Units::ValueType::ENERGY>(
+              data.energy_annulus_polarized[component]);
+    }
+    edge.energy_inside = units.Dimensionalize<Units::ValueType::ENERGY>(data.energy_inside);
+    edge.energy_annulus =
+        units.Dimensionalize<Units::ValueType::ENERGY>(data.energy_annulus);
+    edge.energy_vertex_inside =
+        units.Dimensionalize<Units::ValueType::ENERGY>(data.energy_vertex_inside);
+    edge.energy_volume_annulus =
+        units.Dimensionalize<Units::ValueType::ENERGY>(data.energy_volume_annulus);
+    edge.energy_volume_vertex_annulus =
+        units.Dimensionalize<Units::ValueType::ENERGY>(data.energy_volume_vertex_annulus);
+    for (std::size_t component = 0; component < 6; component++)
+    {
+      edge.energy_volume_annulus_polarized[component] =
+          units.Dimensionalize<Units::ValueType::ENERGY>(
+              data.energy_volume_annulus_polarized[component]);
+    }
+  }
 
   measurement_cache.farfield.thetaphis =
       nondim_measurement_cache.farfield.thetaphis;  // NONE
@@ -285,6 +324,47 @@ Measurement Measurement::Nondimensionalize(const Units &units,
         units.Nondimensionalize<Units::ValueType::ENERGY>(data.energy_outside);
     edge.energy_annulus =
         units.Nondimensionalize<Units::ValueType::ENERGY>(data.energy_annulus);
+  }
+  for (const auto &data : dim_measurement_cache.interface_local_edge_i)
+  {
+    auto &edge = measurement_cache.interface_local_edge_i.emplace_back(data);
+    for (int d = 0; d < 3; d++)
+    {
+      edge.p0[d] = units.Nondimensionalize<Units::ValueType::LENGTH>(data.p0[d]);
+      edge.p1[d] = units.Nondimensionalize<Units::ValueType::LENGTH>(data.p1[d]);
+    }
+    edge.length = units.Nondimensionalize<Units::ValueType::LENGTH>(data.length);
+    edge.distance = units.Nondimensionalize<Units::ValueType::LENGTH>(data.distance);
+    edge.energy_total =
+        units.Nondimensionalize<Units::ValueType::ENERGY>(data.energy_total);
+    for (std::size_t component = 0; component < 2; component++)
+    {
+      edge.energy_total_polarized[component] =
+          units.Nondimensionalize<Units::ValueType::ENERGY>(
+              data.energy_total_polarized[component]);
+      edge.energy_inside_polarized[component] =
+          units.Nondimensionalize<Units::ValueType::ENERGY>(
+              data.energy_inside_polarized[component]);
+      edge.energy_annulus_polarized[component] =
+          units.Nondimensionalize<Units::ValueType::ENERGY>(
+              data.energy_annulus_polarized[component]);
+    }
+    edge.energy_inside =
+        units.Nondimensionalize<Units::ValueType::ENERGY>(data.energy_inside);
+    edge.energy_annulus =
+        units.Nondimensionalize<Units::ValueType::ENERGY>(data.energy_annulus);
+    edge.energy_vertex_inside =
+        units.Nondimensionalize<Units::ValueType::ENERGY>(data.energy_vertex_inside);
+    edge.energy_volume_annulus =
+        units.Nondimensionalize<Units::ValueType::ENERGY>(data.energy_volume_annulus);
+    edge.energy_volume_vertex_annulus = units.Nondimensionalize<Units::ValueType::ENERGY>(
+        data.energy_volume_vertex_annulus);
+    for (std::size_t component = 0; component < 6; component++)
+    {
+      edge.energy_volume_annulus_polarized[component] =
+          units.Nondimensionalize<Units::ValueType::ENERGY>(
+              data.energy_volume_annulus_polarized[component]);
+    }
   }
 
   measurement_cache.farfield.thetaphis = dim_measurement_cache.farfield.thetaphis;  // NONE
@@ -760,6 +840,200 @@ void PostOperatorCSV<solver_t>::PrintSurfaceQEdge()
     surface_Q_edge->table[7] << data.participation_annulus;
   }
   surface_Q_edge->WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::InitializeSurfaceQEdgeLocal(
+    const SurfacePostOperator &surf_post_op)
+{
+  InitializeSurfaceQEdgeLocal(surf_post_op.GetNInterfaceLocalEdgeEntries());
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::InitializeSurfaceQEdgeLocal(std::size_t nr_entries)
+{
+  nr_interface_local_edge_entries = nr_entries;
+  if (nr_interface_local_edge_entries == 0)
+  {
+    return;
+  }
+
+  surface_Q_edge_local =
+      TableWithCSVFile(post_dir / "surface-Q-edge-local.csv", reload_table);
+  Table reference;
+  reference.reserve(nr_expected_measurement_rows * ex_idx_v_all.size() *
+                        nr_interface_local_edge_entries,
+                    56);
+  reference.insert("idx", LabelIndexCol(solver_t), 0, 0, PrecIndexCol(solver_t), "");
+  reference.insert(Column("exc", "exc", 0, 0, 0, ""));
+  reference["exc"].print_as_int = true;
+  reference.insert(Column("interface", "interface", 0, 0, 0, ""));
+  reference["interface"].print_as_int = true;
+  reference.insert(Column("edge", "edge", 0, 0, 0, ""));
+  reference["edge"].print_as_int = true;
+  reference.insert("distance", "R (m)");
+  reference.insert("x0", "x0 (m)");
+  reference.insert("y0", "y0 (m)");
+  reference.insert("z0", "z0 (m)");
+  reference.insert("x1", "x1 (m)");
+  reference.insert("y1", "y1 (m)");
+  reference.insert("z1", "z1 (m)");
+  reference.insert("length", "L_edge (m)");
+  reference.insert("energy_total", "E_total (J)");
+  reference.insert("participation_total", "p_total");
+  reference.insert("energy_inside", "E_in (J)");
+  reference.insert("participation_inside", "p_in");
+  reference.insert("energy_annulus", "E_ann (J)");
+  reference.insert("participation_annulus", "p_ann");
+  reference.insert("energy_volume_annulus", "E_bulk_ann (J)");
+  reference.insert("participation_volume_annulus", "p_bulk_ann");
+  reference.insert("energy_vertex_inside", "E_vertex_in (J)");
+  reference.insert("participation_vertex_inside", "p_vertex_in");
+  reference.insert("energy_volume_vertex_annulus", "E_bulk_vertex_ann (J)");
+  reference.insert("participation_volume_vertex_annulus", "p_bulk_vertex_ann");
+  reference.insert("energy_total_normal", "E_total_n (J)");
+  reference.insert("participation_total_normal", "p_total_n");
+  reference.insert("energy_total_tangential", "E_total_t (J)");
+  reference.insert("participation_total_tangential", "p_total_t");
+  reference.insert("energy_inside_normal", "E_in_n (J)");
+  reference.insert("participation_inside_normal", "p_in_n");
+  reference.insert("energy_inside_tangential", "E_in_t (J)");
+  reference.insert("participation_inside_tangential", "p_in_t");
+  reference.insert("energy_annulus_normal", "E_ann_n (J)");
+  reference.insert("participation_annulus_normal", "p_ann_n");
+  reference.insert("energy_annulus_tangential", "E_ann_t (J)");
+  reference.insert("participation_annulus_tangential", "p_ann_t");
+  for (const auto &[name, label] : std::array<std::pair<const char *, const char *>, 6>{
+           {{"top_normal", "top_n"},
+            {"top_transverse", "top_m"},
+            {"top_longitudinal", "top_l"},
+            {"bottom_normal", "bottom_n"},
+            {"bottom_transverse", "bottom_m"},
+            {"bottom_longitudinal", "bottom_l"}}})
+  {
+    reference.insert(fmt::format("energy_volume_annulus_{}", name),
+                     fmt::format("E_bulk_{}_ann (J)", label));
+    reference.insert(fmt::format("participation_volume_annulus_{}", name),
+                     fmt::format("p_bulk_{}_ann", label));
+  }
+  reference.insert(Column("automatic", "automatic", 0, 0, 0, ""));
+  reference["automatic"].print_as_int = true;
+  reference.insert(Column("component", "component", 0, 0, 0, ""));
+  reference["component"].print_as_int = true;
+  reference.insert(Column("chain", "chain", 0, 0, 0, ""));
+  reference["chain"].print_as_int = true;
+  reference.insert(Column("vertex_type_0", "v0_type", 0, 0, 0, ""));
+  reference["vertex_type_0"].print_as_int = true;
+  reference.insert(Column("vertex_type_1", "v1_type", 0, 0, 0, ""));
+  reference["vertex_type_1"].print_as_int = true;
+  reference.insert("process_normal_x", "process_nx");
+  reference.insert("process_normal_y", "process_ny");
+  reference.insert("process_normal_z", "process_nz");
+
+  if (!reload_table)
+  {
+    surface_Q_edge_local->table = std::move(reference);
+    return;
+  }
+
+  Table &loaded = surface_Q_edge_local->table;
+  const auto file = surface_Q_edge_local->get_csv_filepath();
+  MFEM_VERIFY(!loaded.empty(),
+              fmt::format("The local edge diagnostics table loaded from path {} was "
+                          "empty, but the simulation expected a restart with existing "
+                          "data!",
+                          file));
+  MFEM_VERIFY(loaded.n_cols() == reference.n_cols(),
+              fmt::format("The local edge diagnostics table loaded from path {} has an "
+                          "incompatible number of columns!",
+                          file));
+  const std::size_t expected_rows =
+      (ex_idx_i * nr_expected_measurement_rows + row_i) * nr_interface_local_edge_entries;
+  for (std::size_t i = 0; i < loaded.n_cols(); i++)
+  {
+    MFEM_VERIFY(loaded[i].header_text == reference[i].header_text,
+                fmt::format("The local edge diagnostics table loaded from path {} has an "
+                            "incompatible column header!",
+                            file));
+    MFEM_VERIFY(loaded[i].n_rows() == expected_rows,
+                fmt::format("The local edge diagnostics table loaded from path {} has {} "
+                            "rows, but {} rows were expected at the restart position!",
+                            file, loaded[i].n_rows(), expected_rows));
+    loaded[i].name = reference[i].name;
+    loaded[i].column_group_idx = reference[i].column_group_idx;
+    loaded[i].min_left_padding = reference[i].min_left_padding;
+    loaded[i].float_precision = reference[i].float_precision;
+    loaded[i].fmt_sign = reference[i].fmt_sign;
+    loaded[i].print_as_int = reference[i].print_as_int;
+  }
+  loaded.col_options = reference.col_options;
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::PrintSurfaceQEdgeLocal()
+{
+  if (!surface_Q_edge_local)
+  {
+    return;
+  }
+  MFEM_VERIFY(measurement_cache.interface_local_edge_i.size() ==
+                  nr_interface_local_edge_entries,
+              "Unexpected number of local interface edge diagnostics!");
+  for (const auto &data : measurement_cache.interface_local_edge_i)
+  {
+    surface_Q_edge_local->table[0] << row_idx_v;
+    surface_Q_edge_local->table[1] << static_cast<double>(m_ex_idx);
+    surface_Q_edge_local->table[2] << static_cast<double>(data.idx);
+    surface_Q_edge_local->table[3] << static_cast<double>(data.edge);
+    surface_Q_edge_local->table[4] << data.distance;
+    surface_Q_edge_local->table[5] << data.p0[0];
+    surface_Q_edge_local->table[6] << data.p0[1];
+    surface_Q_edge_local->table[7] << data.p0[2];
+    surface_Q_edge_local->table[8] << data.p1[0];
+    surface_Q_edge_local->table[9] << data.p1[1];
+    surface_Q_edge_local->table[10] << data.p1[2];
+    surface_Q_edge_local->table[11] << data.length;
+    surface_Q_edge_local->table[12] << data.energy_total;
+    surface_Q_edge_local->table[13] << data.participation_total;
+    surface_Q_edge_local->table[14] << data.energy_inside;
+    surface_Q_edge_local->table[15] << data.participation_inside;
+    surface_Q_edge_local->table[16] << data.energy_annulus;
+    surface_Q_edge_local->table[17] << data.participation_annulus;
+    surface_Q_edge_local->table[18] << data.energy_volume_annulus;
+    surface_Q_edge_local->table[19] << data.participation_volume_annulus;
+    surface_Q_edge_local->table[20] << data.energy_vertex_inside;
+    surface_Q_edge_local->table[21] << data.participation_vertex_inside;
+    surface_Q_edge_local->table[22] << data.energy_volume_vertex_annulus;
+    surface_Q_edge_local->table[23] << data.participation_volume_vertex_annulus;
+    surface_Q_edge_local->table[24] << data.energy_total_polarized[0];
+    surface_Q_edge_local->table[25] << data.participation_total_polarized[0];
+    surface_Q_edge_local->table[26] << data.energy_total_polarized[1];
+    surface_Q_edge_local->table[27] << data.participation_total_polarized[1];
+    surface_Q_edge_local->table[28] << data.energy_inside_polarized[0];
+    surface_Q_edge_local->table[29] << data.participation_inside_polarized[0];
+    surface_Q_edge_local->table[30] << data.energy_inside_polarized[1];
+    surface_Q_edge_local->table[31] << data.participation_inside_polarized[1];
+    surface_Q_edge_local->table[32] << data.energy_annulus_polarized[0];
+    surface_Q_edge_local->table[33] << data.participation_annulus_polarized[0];
+    surface_Q_edge_local->table[34] << data.energy_annulus_polarized[1];
+    surface_Q_edge_local->table[35] << data.participation_annulus_polarized[1];
+    for (std::size_t component = 0; component < 6; component++)
+    {
+      surface_Q_edge_local->table[36 + 2 * component]
+          << data.energy_volume_annulus_polarized[component];
+      surface_Q_edge_local->table[37 + 2 * component]
+          << data.participation_volume_annulus_polarized[component];
+    }
+    surface_Q_edge_local->table[48] << static_cast<double>(data.automatic);
+    surface_Q_edge_local->table[49] << static_cast<double>(data.component);
+    surface_Q_edge_local->table[50] << static_cast<double>(data.chain);
+    surface_Q_edge_local->table[51] << static_cast<double>(data.vertex_types[0]);
+    surface_Q_edge_local->table[52] << static_cast<double>(data.vertex_types[1]);
+    surface_Q_edge_local->table[53] << data.process_normal[0];
+    surface_Q_edge_local->table[54] << data.process_normal[1];
+    surface_Q_edge_local->table[55] << data.process_normal[2];
+  }
+  surface_Q_edge_local->WriteFullTableTrunc();
 }
 
 template <ProblemType solver_t>
@@ -1766,6 +2040,7 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   InitializeSurfaceF(post_op.surf_post_op);
   InitializeSurfaceQ(post_op.surf_post_op);
   InitializeSurfaceQEdge(post_op.surf_post_op);
+  InitializeSurfaceQEdgeLocal(post_op.surf_post_op);
 
 #if defined(MFEM_USE_GSLIB)
   {
@@ -1846,6 +2121,7 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
   PrintSurfaceF();
   PrintSurfaceQ();
   PrintSurfaceQEdge();
+  PrintSurfaceQEdgeLocal();
 
 #if defined(MFEM_USE_GSLIB)
   {

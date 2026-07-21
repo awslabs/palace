@@ -195,6 +195,14 @@
               "ZeroCharge"
             ]
           }
+        },
+        {
+          "not": {
+            "required": [
+              "Terminal",
+              "PrescribedPotential"
+            ]
+          }
         }
       ],
       "properties": {
@@ -318,6 +326,14 @@
             "$ref": "#/$defs/Terminal"
           }
         },
+        "PrescribedPotential": {
+          "type": "array",
+          "description": "Array of spatially varying Dirichlet potential boundaries for electrostatic simulations. Each source is read from an ordered closed-polyline CSV trace and solved independently. This is mutually exclusive with `Terminal` because the boundary is not equipotential and does not define a capacitance-matrix terminal.",
+          "additionalItems": false,
+          "items": {
+            "$ref": "#/$defs/PrescribedPotential"
+          }
+        },
         "Periodic": {
           "$ref": "#/$defs/Periodic",
           "title": "Periodic Boundary",
@@ -370,6 +386,10 @@
           "type": "string",
           "description": "Specifies the [libCEED backend](https://libceed.org/en/latest/gettingstarted/#backends) to use. If omitted, Palace selects a suitable backend based on [Device](@ref config-solver-device).",
           "minLength": 1
+        },
+        "SurfaceResponseCorrection": {
+          "$ref": "#/$defs/Electrostatic/properties/ResponseCorrection",
+          "description": "Apply a postprocessing-only fabrication-process surface response correction to a three-dimensional driven or eigenmode PEC Maxwell field. The initial Maxwell implementation requires one planar fabrication layer and automatic `Library` matching to isolated or parallel paired-edge coupons. Standard fields, AMR, and `surface-Q.csv` remain the raw thin-metal result; corrected values and confidence diagnostics are written separately."
         },
         "Eigenmode": {
           "$ref": "#/$defs/Eigenmode",
@@ -1567,6 +1587,30 @@
         }
       }
     },
+    "PrescribedPotential": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Index",
+        "Attributes",
+        "DataFile"
+      ],
+      "properties": {
+        "Index": {
+          "type": "integer",
+          "description": "Index of this prescribed-potential excitation, used in postprocessing output columns.",
+          "exclusiveMinimum": 0
+        },
+        "Attributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Integer array of mesh boundary attributes on which the potential trace is imposed."
+        },
+        "DataFile": {
+          "type": "string",
+          "description": "CSV file containing an ordered closed polyline with columns `x,y,z,V`. Coordinates use the input mesh coordinate unit and potential is in volts. A header row is optional."
+        }
+      }
+    },
     "Periodic": {
       "type": "object",
       "title": "Periodic Boundary",
@@ -1804,7 +1848,12 @@
         },
         "EdgeAttributes": {
           "$ref": "#/$defs/Attributes",
-          "description": "Boundary attributes whose geometric perimeter defines the singular metal edges for edge-distance diagnostics. This is opt-in and must be specified together with `EdgeDistances`."
+          "description": "Boundary attributes whose geometric perimeter defines the singular metal edges for edge-distance diagnostics. This manual option is mutually exclusive with `AutomaticEdges` and must be specified together with `EdgeDistances`."
+        },
+        "AutomaticEdges": {
+          "type": "boolean",
+          "description": "Automatically extract the physical metal perimeter associated with this interface from PEC, terminal, conductivity, and impedance boundary conditions. This is supported for explicit MA, MS, or SA interfaces in 3D and is mutually exclusive with `EdgeAttributes`.",
+          "default": false
         },
         "EdgeExcludeAttributes": {
           "$ref": "#/$defs/Attributes",
@@ -1812,26 +1861,179 @@
         },
         "EdgeDistances": {
           "type": "array",
-          "description": "Matching radii, in mesh length units, used for edge-distance diagnostics. For every radius R, Palace integrates the interface energy outside R and in the annulus R <= d < 2R. This is opt-in and must be specified together with `EdgeAttributes`.",
+          "description": "Matching radii, in mesh length units, used for edge-distance diagnostics. For every radius R, Palace integrates the interface energy outside R and in the annulus R <= d < 2R. This is opt-in and requires exactly one of `EdgeAttributes` or `AutomaticEdges`.",
           "items": {
             "type": "number",
             "exclusiveMinimum": 0.0
           },
           "minItems": 1,
           "uniqueItems": true
+        },
+        "EdgeDistanceSmoothing": {
+          "type": "number",
+          "description": "Relative half-width of a cubic smooth transition at each edge-distance radius. A value f replaces the hard cutoff at R with a transition over R(1-f) <= d <= R(1+f).",
+          "minimum": 0.0,
+          "exclusiveMaximum": 1.0,
+          "default": 0.0
+        },
+        "LocalizeEdgeEnergy": {
+          "type": "boolean",
+          "description": "Resolve each matching-annulus energy by nearest physical edge segment and write `surface-Q-edge-local.csv`. With `AutomaticEdges`, Palace infers a process normal for every segment; otherwise `EdgeFrameNormal` is required. This is intended for local edge-correction models and can produce large output tables in 3D.",
+          "default": false
+        },
+        "EdgeFrameNormal": {
+          "type": "array",
+          "description": "Normal defining the positive and negative sides and the polarization frame for manual localized edge diagnostics. With `AutomaticEdges`, this is an optional fallback for materially ambiguous surfaces. The positive direction should point from the substrate or process side toward air or vacuum.",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "EdgeRefinement": {
+          "$ref": "#/$defs/EdgeRefinement",
+          "description": "Geometry-driven mesh refinement around the physical metal perimeter. This resolves the matching tube independently of local field energy and downweights error indicators wholly inside the fabrication-corrected core."
+        },
+        "FluxRecovery": {
+          "type": "boolean",
+          "description": "For MA, MS, and SA interfaces, evaluate the normal electric displacement entering interface dielectric loss from an H(div)-conforming recovered flux. This improves normal-trace convergence while retaining the native electric field for tangential components.",
+          "default": false
         }
       },
       "dependencies": {
         "EdgeAttributes": [
           "EdgeDistances"
         ],
-        "EdgeDistances": [
-          "EdgeAttributes"
-        ],
+        "AutomaticEdges": {
+          "if": {
+            "properties": {
+              "AutomaticEdges": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "EdgeDistances",
+              "Type"
+            ],
+            "properties": {
+              "Type": {
+                "enum": [
+                  "MA",
+                  "MS",
+                  "SA"
+                ]
+              }
+            }
+          }
+        },
+        "EdgeDistances": {
+          "oneOf": [
+            {
+              "required": [
+                "EdgeAttributes"
+              ],
+              "properties": {
+                "AutomaticEdges": {
+                  "const": false
+                }
+              }
+            },
+            {
+              "required": [
+                "AutomaticEdges"
+              ],
+              "properties": {
+                "AutomaticEdges": {
+                  "const": true
+                }
+              },
+              "not": {
+                "required": [
+                  "EdgeAttributes"
+                ]
+              }
+            }
+          ]
+        },
         "EdgeExcludeAttributes": [
           "EdgeAttributes",
           "EdgeDistances"
+        ],
+        "EdgeDistanceSmoothing": [
+          "EdgeDistances"
+        ],
+        "LocalizeEdgeEnergy": {
+          "if": {
+            "properties": {
+              "LocalizeEdgeEnergy": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "EdgeDistances"
+            ],
+            "anyOf": [
+              {
+                "required": [
+                  "EdgeFrameNormal"
+                ]
+              },
+              {
+                "required": [
+                  "AutomaticEdges"
+                ],
+                "properties": {
+                  "AutomaticEdges": {
+                    "const": true
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "EdgeFrameNormal": [
+          "EdgeDistances"
+        ],
+        "EdgeRefinement": [
+          "EdgeDistances"
         ]
+      }
+    },
+    "EdgeRefinement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Radius",
+        "ElementsPerRadius"
+      ],
+      "properties": {
+        "Radius": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Matching radius R to resolve, in mesh length units. This value must also appear in `EdgeDistances`."
+        },
+        "ElementsPerRadius": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum number of element diameters across R within the edge tube."
+        },
+        "OuterRadiusFactor": {
+          "type": "number",
+          "minimum": 1.0,
+          "default": 2.0,
+          "description": "Outer tube radius as a multiple of R."
+        },
+        "CoreIndicatorWeight": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.0,
+          "description": "Relative physics-based AMR indicator weight for elements entirely inside d < R after the tube resolution target is met."
+        }
       }
     },
     "FarField": {
@@ -2804,6 +3006,313 @@
           "description": "Number of computed electric field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the entries in the computed capacitance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
           "minimum": 0,
           "default": 0
+        },
+        "ResponseMatrix": {
+          "type": "boolean",
+          "description": "Assemble `surface-response-matrix.csv` from prescribed-potential basis excitations. For every localized dielectric interface, physical edge, and matching radius, the output stores the upper triangle of the quadratic core-energy response operator, including normal and tangential polarization components.",
+          "default": false
+        },
+        "ResponseCorrection": {
+          "type": "object",
+          "description": "Apply a global thin-metal Schur-complement correction using matched fabricated- and thin-coupon response matrices. The legacy one-model syntax remains supported for explicit 2D placement. A fabrication-process `Library` automatically selects one-edge or coupled multi-edge coupons in 2D and integrates them along extracted physical metal edges in 3D. Standard output remains the raw thin-metal result, while surface response matrices enable `surface-Q-corrected.csv`.",
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "required": [
+                "FabricatedMatrix",
+                "ThinMatrix",
+                "BasisPoints",
+                "Edges"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "Models"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "Patches"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "Library"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "Models",
+                "Patches"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "FabricatedMatrix"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "ThinMatrix"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "BasisPoints"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "Edges"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "Library"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "Library"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "FabricatedMatrix"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "ThinMatrix"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "BasisPoints"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "Edges"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "Models"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "Patches"
+                    ]
+                  }
+                ]
+              }
+            }
+          ],
+          "properties": {
+            "Library": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Path to a fabrication-process response library. Palace automatically extracts and classifies edge neighborhoods and selects compatible coupon models from this library."
+            },
+            "TargetInterfaces": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "description": "Optional dielectric-interface indices to correct with the process library. If omitted, all typed interfaces with edge-distance postprocessing are considered."
+            },
+            "UnmatchedPolicy": {
+              "type": "string",
+              "enum": [
+                "Warn",
+                "Error"
+              ],
+              "description": "Behavior when a detected edge cluster has no compatible coupon model. `Warn` disables correction for the affected interface group; `Error` terminates the simulation.",
+              "default": "Warn"
+            },
+            "FabricatedMatrix": {
+              "type": "string",
+              "description": "Path to the fabricated coupon `domain-response-matrix.csv` file."
+            },
+            "ThinMatrix": {
+              "type": "string",
+              "description": "Path to the geometrically matched thin-coupon `domain-response-matrix.csv` file."
+            },
+            "BasisPoints": {
+              "type": "string",
+              "description": "CSV file containing the local coupon contour knot coordinates, one x,y,z point for each response-matrix basis function."
+            },
+            "Edges": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "Origin",
+                  "AxisU",
+                  "AxisV"
+                ],
+                "properties": {
+                  "Origin": {
+                    "$ref": "#/$defs/Vector3",
+                    "description": "Global location of the thin-metal edge in mesh length units."
+                  },
+                  "AxisU": {
+                    "$ref": "#/$defs/Vector3",
+                    "description": "Global unit direction corresponding to the coupon coordinate pointing from metal into the gap."
+                  },
+                  "AxisV": {
+                    "$ref": "#/$defs/Vector3",
+                    "description": "Global unit direction corresponding to the coupon coordinate pointing from the process side toward vacuum."
+                  }
+                }
+              }
+            },
+            "Models": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "Index",
+                  "FabricatedMatrix",
+                  "ThinMatrix",
+                  "BasisPoints"
+                ],
+                "properties": {
+                  "Index": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "description": "Unique coupon-model index."
+                  },
+                  "FabricatedMatrix": {
+                    "type": "string",
+                    "description": "Path to the fabricated coupon `domain-response-matrix.csv` file."
+                  },
+                  "ThinMatrix": {
+                    "type": "string",
+                    "description": "Path to the geometrically matched thin-coupon `domain-response-matrix.csv` file."
+                  },
+                  "FabricatedSurfaceMatrix": {
+                    "type": "string",
+                    "description": "Path to the fabricated coupon `surface-response-matrix.csv` file."
+                  },
+                  "ThinSurfaceMatrix": {
+                    "type": "string",
+                    "description": "Path to the geometrically matched thin-coupon `surface-response-matrix.csv` file."
+                  },
+                  "BasisPoints": {
+                    "type": "string",
+                    "description": "CSV file containing the ordered local coupon contour knots, one x,y,z point for each response-matrix basis function."
+                  },
+                  "Interfaces": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "Target",
+                        "Coupon"
+                      ],
+                      "properties": {
+                        "Target": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "description": "Interface index in the global thin-metal simulation."
+                        },
+                        "Coupon": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "description": "Corresponding interface index in the coupon surface response matrix."
+                        }
+                      }
+                    }
+                  }
+                },
+                "dependencies": {
+                  "FabricatedSurfaceMatrix": [
+                    "ThinSurfaceMatrix",
+                    "Interfaces"
+                  ],
+                  "ThinSurfaceMatrix": [
+                    "FabricatedSurfaceMatrix",
+                    "Interfaces"
+                  ],
+                  "Interfaces": [
+                    "FabricatedSurfaceMatrix",
+                    "ThinSurfaceMatrix"
+                  ]
+                }
+              }
+            },
+            "Patches": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "Model",
+                  "Origin",
+                  "AxisU",
+                  "AxisV"
+                ],
+                "properties": {
+                  "Model": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "description": "Index of the reusable coupon model placed by this patch."
+                  },
+                  "Origin": {
+                    "$ref": "#/$defs/Vector3",
+                    "description": "Global origin of the coupon frame in mesh length units."
+                  },
+                  "AxisU": {
+                    "$ref": "#/$defs/Vector3",
+                    "description": "Global unit direction corresponding to the coupon local x coordinate."
+                  },
+                  "AxisV": {
+                    "$ref": "#/$defs/Vector3",
+                    "description": "Global unit direction corresponding to the coupon local y coordinate."
+                  },
+                  "Reference": {
+                    "$ref": "#/$defs/Vector3",
+                    "description": "Local coupon coordinate of the reference conductor whose potential is subtracted from every contour coefficient. Defaults to the frame origin.",
+                    "default": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "dependencies": {
+            "TargetInterfaces": [
+              "Library"
+            ],
+            "UnmatchedPolicy": [
+              "Library"
+            ]
+          }
         }
       }
     },

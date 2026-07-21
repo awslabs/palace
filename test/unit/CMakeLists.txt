@@ -51,6 +51,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-schema.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceimpedanceoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponseoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacerationalimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
@@ -292,4 +293,3 @@ endif()
 
 # Enable testing
 enable_testing()
-

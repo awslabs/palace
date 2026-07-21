@@ -348,8 +348,42 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
                        {"Permittivity", 4.0},
                        {"EdgeAttributes", {1, 2}},
                        {"EdgeExcludeAttributes", {5, 6}},
-                       {"EdgeDistances", {0.5, 1.0}}};
+                       {"EdgeDistances", {0.5, 1.0}},
+                       {"EdgeDistanceSmoothing", 0.2},
+                       {"LocalizeEdgeEnergy", true},
+                       {"EdgeFrameNormal", {0.0, 1.0, 0.0}},
+                       {"EdgeRefinement",
+                        {{"Radius", 0.5},
+                         {"ElementsPerRadius", 3},
+                         {"OuterRadiusFactor", 2.0},
+                         {"CoreIndicatorWeight", 0.0}}},
+                       {"FluxRecovery", true}};
     CHECK(ValidateConfig(dielectric, "Dielectric").empty());
+
+    auto automatic = dielectric;
+    automatic.erase("EdgeAttributes");
+    automatic.erase("EdgeExcludeAttributes");
+    automatic.erase("EdgeFrameNormal");
+    automatic["AutomaticEdges"] = true;
+    automatic["Type"] = "SA";
+    CHECK(ValidateConfig(automatic, "Dielectric").empty());
+
+    auto automatic_without_distances = automatic;
+    automatic_without_distances.erase("EdgeDistances");
+    CHECK(!ValidateConfig(automatic_without_distances, "Dielectric").empty());
+
+    auto automatic_default_type = automatic;
+    automatic_default_type["Type"] = "Default";
+    CHECK(!ValidateConfig(automatic_default_type, "Dielectric").empty());
+
+    auto mixed_edge_sources = dielectric;
+    mixed_edge_sources["AutomaticEdges"] = true;
+    mixed_edge_sources["Type"] = "SA";
+    CHECK(!ValidateConfig(mixed_edge_sources, "Dielectric").empty());
+
+    auto explicit_manual = dielectric;
+    explicit_manual["AutomaticEdges"] = false;
+    CHECK(ValidateConfig(explicit_manual, "Dielectric").empty());
 
     auto missing_distances = dielectric;
     missing_distances.erase("EdgeDistances");
@@ -366,6 +400,70 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     auto duplicate_distances = dielectric;
     duplicate_distances["EdgeDistances"] = {0.5, 0.5};
     CHECK(!ValidateConfig(duplicate_distances, "Dielectric").empty());
+
+    auto negative_smoothing = dielectric;
+    negative_smoothing["EdgeDistanceSmoothing"] = -0.1;
+    CHECK(!ValidateConfig(negative_smoothing, "Dielectric").empty());
+
+    auto excessive_smoothing = dielectric;
+    excessive_smoothing["EdgeDistanceSmoothing"] = 1.0;
+    CHECK(!ValidateConfig(excessive_smoothing, "Dielectric").empty());
+
+    json smoothing_without_edges = {{"Index", 1},
+                                    {"Attributes", {4}},
+                                    {"Thickness", 2.0e-3},
+                                    {"Permittivity", 4.0},
+                                    {"EdgeDistanceSmoothing", 0.2}};
+    CHECK(!ValidateConfig(smoothing_without_edges, "Dielectric").empty());
+
+    json localization_without_edges = {{"Index", 1},
+                                       {"Attributes", {4}},
+                                       {"Thickness", 2.0e-3},
+                                       {"Permittivity", 4.0},
+                                       {"LocalizeEdgeEnergy", true}};
+    CHECK(!ValidateConfig(localization_without_edges, "Dielectric").empty());
+
+    auto localization_without_normal = dielectric;
+    localization_without_normal.erase("EdgeFrameNormal");
+    CHECK(!ValidateConfig(localization_without_normal, "Dielectric").empty());
+
+    auto zero_normal = dielectric;
+    zero_normal["EdgeFrameNormal"] = {0.0, 0.0, 0.0};
+    CHECK(ValidateConfig(zero_normal, "Dielectric").empty());
+    CHECK_THROWS(config::InterfaceDielectricData(zero_normal));
+
+    auto wrong_size_normal = dielectric;
+    wrong_size_normal["EdgeFrameNormal"] = {0.0, 1.0};
+    CHECK(!ValidateConfig(wrong_size_normal, "Dielectric").empty());
+
+    auto zero_refinement_radius = dielectric;
+    zero_refinement_radius["EdgeRefinement"]["Radius"] = 0.0;
+    CHECK(!ValidateConfig(zero_refinement_radius, "Dielectric").empty());
+
+    auto zero_elements_per_radius = dielectric;
+    zero_elements_per_radius["EdgeRefinement"]["ElementsPerRadius"] = 0;
+    CHECK(!ValidateConfig(zero_elements_per_radius, "Dielectric").empty());
+
+    auto small_outer_radius = dielectric;
+    small_outer_radius["EdgeRefinement"]["OuterRadiusFactor"] = 0.5;
+    CHECK(!ValidateConfig(small_outer_radius, "Dielectric").empty());
+
+    auto invalid_core_weight = dielectric;
+    invalid_core_weight["EdgeRefinement"]["CoreIndicatorWeight"] = 1.1;
+    CHECK(!ValidateConfig(invalid_core_weight, "Dielectric").empty());
+
+    json refinement_without_edges = {
+        {"Index", 1},
+        {"Attributes", {4}},
+        {"Thickness", 2.0e-3},
+        {"Permittivity", 4.0},
+        {"EdgeRefinement", {{"Radius", 0.5}, {"ElementsPerRadius", 3}}}};
+    CHECK(!ValidateConfig(refinement_without_edges, "Dielectric").empty());
+
+    json recovery_without_edges = {{"Index", 1},          {"Attributes", {4}},
+                                   {"Type", "MA"},        {"Thickness", 2.0e-3},
+                                   {"Permittivity", 4.0}, {"FluxRecovery", true}};
+    CHECK(ValidateConfig(recovery_without_edges, "Dielectric").empty());
   }
 
   SECTION("Invalid Material - bad Permittivity type")
@@ -760,6 +858,89 @@ TEST_CASE("Schema Validation - Error Message Format", "[schema][Serial]")
 
 TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
 {
+  SECTION("Electrostatic response correction")
+  {
+    json electrostatic = {{"ResponseCorrection",
+                           {{"FabricatedMatrix", "fabricated.csv"},
+                            {"ThinMatrix", "thin.csv"},
+                            {"BasisPoints", "points.csv"},
+                            {"Edges",
+                             {{{"Origin", {1.0, 2.0, 0.0}},
+                               {"AxisU", {1.0, 0.0, 0.0}},
+                               {"AxisV", {0.0, 1.0, 0.0}}}}}}}};
+    CHECK(ValidateConfig(electrostatic, "Electrostatic").empty());
+
+    auto missing_edges = electrostatic;
+    missing_edges["ResponseCorrection"].erase("Edges");
+    CHECK(!ValidateConfig(missing_edges, "Electrostatic").empty());
+
+    auto empty_edges = electrostatic;
+    empty_edges["ResponseCorrection"]["Edges"] = json::array();
+    CHECK(!ValidateConfig(empty_edges, "Electrostatic").empty());
+
+    auto malformed_axis = electrostatic;
+    malformed_axis["ResponseCorrection"]["Edges"][0]["AxisU"] = {1.0, 0.0};
+    CHECK(!ValidateConfig(malformed_axis, "Electrostatic").empty());
+
+    json modern = {
+        {"ResponseCorrection",
+         {{"Models",
+           {{{"Index", 1},
+             {"FabricatedMatrix", "fabricated-domain.csv"},
+             {"ThinMatrix", "thin-domain.csv"},
+             {"FabricatedSurfaceMatrix", "fabricated-surface.csv"},
+             {"ThinSurfaceMatrix", "thin-surface.csv"},
+             {"BasisPoints", "points.csv"},
+             {"Interfaces", {{{"Target", 4}, {"Coupon", 1}}}}}}},
+          {"Patches",
+           {{{"Model", 1},
+             {"Origin", {1.0, 2.0, 0.0}},
+             {"AxisU", {1.0, 0.0, 0.0}},
+             {"AxisV", {0.0, 1.0, 0.0}},
+             {"Reference", {-1.0, 0.0, 0.0}}}}}}}};
+    CHECK(ValidateConfig(modern, "Electrostatic").empty());
+
+    auto missing_surface_pair = modern;
+    missing_surface_pair["ResponseCorrection"]["Models"][0].erase(
+        "ThinSurfaceMatrix");
+    CHECK(!ValidateConfig(missing_surface_pair, "Electrostatic").empty());
+
+    auto mixed_syntax = modern;
+    mixed_syntax["ResponseCorrection"]["FabricatedMatrix"] = "legacy.csv";
+    CHECK(!ValidateConfig(mixed_syntax, "Electrostatic").empty());
+
+    json automatic = {
+        {"ResponseCorrection",
+         {{"Library", "fabrication-process.json"},
+          {"TargetInterfaces", {1, 2, 3}},
+          {"UnmatchedPolicy", "Warn"}}}};
+    CHECK(ValidateConfig(automatic, "Electrostatic").empty());
+
+    auto duplicate_targets = automatic;
+    duplicate_targets["ResponseCorrection"]["TargetInterfaces"] = {1, 1};
+    CHECK(!ValidateConfig(duplicate_targets, "Electrostatic").empty());
+
+    auto mixed_automatic = automatic;
+    mixed_automatic["ResponseCorrection"]["Models"] = json::array();
+    CHECK(!ValidateConfig(mixed_automatic, "Electrostatic").empty());
+
+    auto automatic_option_without_library = modern;
+    automatic_option_without_library["ResponseCorrection"]["UnmatchedPolicy"] = "Warn";
+    CHECK(!ValidateConfig(automatic_option_without_library, "Electrostatic").empty());
+
+    json maxwell_config = {
+        {"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Eigenmode", {{"Target", 1.0}}},
+          {"SurfaceResponseCorrection", automatic["ResponseCorrection"]}}}};
+    CHECK(ValidateConfig(maxwell_config).empty());
+    maxwell_config["Solver"]["SurfaceResponseCorrection"]["Models"] = json::array();
+    CHECK(!ValidateConfig(maxwell_config).empty());
+  }
+
   SECTION("Numeric bounds - Linear.MaxIts")
   {
     CHECK(!ValidateConfig(json{{"MaxIts", 0}}, "Linear").empty());

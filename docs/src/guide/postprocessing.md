@@ -106,12 +106,52 @@ file. These include:
     [https://aip.scitation.org/doi/10.1063/1.3637047](https://aip.scitation.org/doi/10.1063/1.3637047)
     for more information. The participation ratios and associated quality factors are
     written to the file `surface-Q.csv` in the specified output directory. When
-    `EdgeAttributes` and `EdgeDistances` are specified, Palace also writes edge-distance
-    diagnostics to `surface-Q-edge.csv`. For each matching radius ``R``, these contain the
-    interface energy and participation outside ``R`` and in the annulus
-    ``R \leq d < 2R``, where ``d`` is the distance to the geometric perimeter of the
-    selected edge attributes. `EdgeExcludeAttributes` can remove perimeter segments on
-    artificial boundaries such as extrusion end faces.
+    `EdgeDistances` and either `EdgeAttributes` or `AutomaticEdges` are specified, Palace
+    also writes edge-distance diagnostics to `surface-Q-edge.csv`. For each matching
+    radius ``R``, these contain the interface energy and participation outside ``R`` and
+    in the annulus ``R \leq d < 2R``, where ``d`` is the distance to the selected metal
+    perimeter. In 3D, `AutomaticEdges` discovers PEC, terminal, conductivity, and
+    impedance metal surfaces, removes perimeter segments caused by simulation-domain
+    truncation, and associates the remaining physical segments with each explicit SA,
+    MS, or MA interface. The manual `EdgeAttributes` path remains available;
+    `EdgeExcludeAttributes` can remove its perimeter segments on artificial boundaries
+    such as extrusion end faces. For localized automatic diagnostics, Palace infers each
+    segment's process normal from its supporting metal faces and orients it from the
+    lower-wave-speed substrate side toward the higher-wave-speed air side.
+    `EdgeFrameNormal` remains an optional fallback for materially ambiguous surfaces.
+    `EdgeDistanceSmoothing` can
+    replace the hard distance indicators with complementary cubic transitions to reduce
+    mesh-to-mesh cutoff noise while preserving the inside/outside partition. With
+    `LocalizeEdgeEnergy`, Palace additionally writes `surface-Q-edge-local.csv`, which
+    assigns the total interface energy and resolves the inside, annular, and surrounding
+    volume-tube energies by nearest physical perimeter segment for use in geometry-aware
+    edge corrections. For automatically extracted edges, it also integrates the portions
+    of the surface core and volume annulus within an along-edge distance ``R`` of a
+    corner, endpoint, or junction. These exact vertex-neighborhood energies support
+    confidence estimates for geometry not represented by a straight-edge calibration.
+    `EdgeRefinement` can enforce a geometry-based element-size target
+    throughout the correction tube before the first solve and downweight field-error
+    indicators wholly inside the replaced singular core during later AMR. For MA, MS,
+    and SA interfaces on uncracked boundaries,
+    `FluxRecovery` evaluates the normal displacement field using an H(div)-conforming
+    recovered flux; the SA tangential term continues to use the native electric field.
+    This option is rejected on cracked internal boundaries used for zero-thickness metal
+    because a volume L2 projection does not provide a controlled normal trace on the
+    singular PEC surface.
+    Electrostatic fabrication-coupon simulations can combine `LocalizeEdgeEnergy` with
+    prescribed-potential basis excitations and
+    [`ResponseMatrix`](../config/reference.md#config-solver-electrostatic-responsematrix).
+    Palace then writes `surface-response-matrix.csv`, the upper triangles of the localized
+    quadratic core- and full-patch surface-energy operators for every interface, edge, and
+    matching radius. It also writes `domain-response-matrix.csv`, the domain-energy
+    response over the same prescribed-potential basis. Driven and eigenmode simulations
+    can apply a compatible fabrication-process library with
+    [`Solver.SurfaceResponseCorrection`](../config/reference.md#config-solver-surfaceresponsecorrection).
+    This postprocessing-only PEC correction writes `surface-Q-corrected.csv` and
+    `surface-response-confidence.csv`; the solved field, AMR sequence, and standard
+    `surface-Q.csv` remain the uncorrected thin-metal result. See
+    [Postprocessing-only Maxwell response correction](../reference.md#postprocessing-only-maxwell-response-correction)
+    for the supported geometry and confidence limits.
 
 ## Visualization
 

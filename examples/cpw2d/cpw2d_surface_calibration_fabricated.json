@@ -64,6 +64,8 @@
           "Permittivity": 4.0,
           "LossTan": 2.0e-3,
           "EdgeAttributes": [1, 3],
+          "LocalizeEdgeEnergy": true,
+          "EdgeFrameNormal": [0.0, 1.0, 0.0],
           "EdgeDistances": [0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0]
         },
         {
@@ -74,6 +76,8 @@
           "Permittivity": 11.47,
           "LossTan": 3.0e-4,
           "EdgeAttributes": [1, 3],
+          "LocalizeEdgeEnergy": true,
+          "EdgeFrameNormal": [0.0, 1.0, 0.0],
           "EdgeDistances": [0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0]
         },
         {
@@ -84,6 +88,8 @@
           "Permittivity": 10.0,
           "LossTan": 3.0e-2,
           "EdgeAttributes": [1, 3],
+          "LocalizeEdgeEnergy": true,
+          "EdgeFrameNormal": [0.0, 1.0, 0.0],
           "EdgeDistances": [0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0]
         }
       ]

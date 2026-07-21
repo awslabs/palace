@@ -4,23 +4,43 @@ This study compares an infinitely thin CPW model with a matched
 fabrication-resolved model containing 100 nm metal, 50 nm substrate overetch,
 80 degree sidewalls, and 10 nm corner radii.
 
-For interface `j` and matching radius `R`, define
+For each physical edge segment `e`, fit the thin-metal bulk and surface annuli
+at the smallest radii to
 
 ```text
-p_fab,inside,j(R) = p_fab,raw,j - p_fab,out,j(R)
-S_j(R) = p_fab,out,j(R) / p_thin,out,j(R)
-C_j(R) = p_fab,inside,j(R) / p_thin,ann,SA(R)
-p_corrected,j(R) =
-    S_j(R) p_thin,out,j(R) + C_j(R) p_thin,ann,SA(R)
+p_bulk,ann,e(R) / R = A_e + B_e R
+p_surf,ann,e(R)     = a_e + b_e R.
 ```
 
-The thin-model SA annulus is used as a shared local edge-amplitude proxy for
-SA, MS, and MA. The MS and MA surface-field traces themselves converge too
-irregularly under AMR to be good amplitude proxies.
+`A_e` is the local thin-sheet singular amplitude. The surface-annulus slope
+gives the smooth contribution inside the matching radius,
+`p_smooth,in,e(R) = max(0, b_e R)`. For interface `j`, a matched thin and
+fabrication-resolved 2D pair defines the additive process coefficients
 
-The two coefficients are calibrated on the 10/6 um CPW and applied unchanged
-to a separate 20/12 um CPW. Choose `R` where both coefficient tables vary
-slowly, subject to both:
+```text
+A = sum_e A_e
+C_in,j(R)  = (p_fab,in,j(R) - p_thin,smooth,in,j(R)) / A
+C_out,j(R) = (p_fab,out,j(R) - p_thin,out,j(R)) / A.
+```
+
+The corrected target participation is
+
+```text
+p_corrected,j(R) =
+    p_thin,out,j(R) + p_thin,smooth,in,j(R)
+    + C_in,j(R) sum_e A_e + C_out,j(R) sum_e A_e.
+```
+
+The mesh-sensitive raw inside energy is used only to obtain the complementary
+outside integral, `p_out = p_total - p_in`. It is never blended into the
+corrected inside term. Refinement-driven growth of the unresolved raw
+singular core therefore cannot leak back into the corrected result. `C_out`
+is an additive fabrication correction, not a scale applied to all outside
+energy.
+
+The coefficients are calibrated on the 10/6 um CPW and can be applied
+unchanged to other geometries made with the same process. Choose `R` where the
+fits and coefficient tables vary slowly, subject to both:
 
 ```text
 fabrication feature size << R
@@ -28,26 +48,11 @@ fabrication feature size << R
 ```
 
 The matching radius is a numerical regularization parameter and does not have
-to be shared by SA, MS, and MA. Select and freeze one radius per interface
-using independent 2D calibration and validation geometries. The calibration
-and target simulations should use the same FEM order and comparable AMR
-convergence because the finite-resolution surface traces, especially MS, can
-otherwise shift the fitted coefficients. Never tune the radii against the 3D
-fabrication-resolved result being used as a validation target.
-
-For the order-2 study in this directory, the cross-geometry validation favors
-approximately 0.2-0.3 um for all three interfaces. Larger radii are retained
-in the sweep to show the breakdown as the annulus begins to sample the
-macroscopic CPW geometry. An order-3 calibration can favor different frozen
-radii for the three interfaces because the MS surface trace converges more
-slowly than the shared SA annulus proxy.
-
-At `R = 0.2 um`, applying the 10/6 um coefficients unchanged to the 20/12 um
-CPW changes the SA/MS/MA errors from `+63%/+40%/-37%` to approximately
-`-1.2%/-3.2%/-3.7%`. Over the complete thin-model AMR history, the
-corresponding participation spreads change from `63%/57%/25%` to
-`0.8%/19%/16%`. Restricting the comparison to the last four refinements gives
-corrected spreads below 6.3% for all interfaces.
+to be shared by SA, MS, and MA. Select and freeze one radius window per
+interface using independent 2D calibration and validation geometries. The
+calibration and target simulations should use the same FEM order and comparable
+matching-tube resolution. Never tune the radii against the
+fabrication-resolved result being used as a blind validation target.
 
 Generate and run the study from this directory:
 
@@ -59,13 +64,77 @@ cd ..
 ../../build/bin/palace -np 4 cpw2d_surface_calibration_fabricated.json
 ../../build/bin/palace -np 4 cpw2d_surface_validation_thin.json
 ../../build/bin/palace -np 4 cpw2d_surface_validation_fabricated.json
-python3 surface_calibration.py
+python3 local_edge_correction.py calibrate \
+  --thin postpro/surface_calibration_thin \
+  --fabricated postpro/surface_calibration_fabricated \
+  --output postpro/local-edge-process.csv
+python3 local_edge_correction.py apply \
+  --calibration postpro/local-edge-process.csv \
+  --input postpro/surface_validation_thin \
+  --reference postpro/surface_validation_fabricated \
+  --output postpro/surface-validation-local-corrected.csv
 ```
 
-The reducer writes the final-radius sweep to
-`postpro/surface-calibration.csv`, the thin-metal AMR history to
-`postpro/surface-calibration-convergence.csv`, and the blind transfer result to
-`postpro/surface-calibration-validation.csv`.
+The first command writes the process coefficients. The second writes each
+radius result and the selected multi-radius summary, including the four
+additive terms, fit diagnostics, AMR spreads, and reference error.
+
+## Coupled response for nearby edges
+
+The self-consistent response-matrix correction uses an isolated one-edge
+coupon only while its matching patch is disjoint from every other patch. For
+two edges separated by width `w` and matching radius `R`, use a coupled
+two-edge coupon when `w < 2R`. At `w = 2R` the contours touch but do not
+overlap, so either representation is geometrically admissible.
+
+`mesh/mesh_edge_pair_coupon.jl` creates matched thin and fabricated coupons for
+the two equipotential edges bounding a ground-plane cutout. For example, for a
+2 um cutout and `R = 2 um`:
+
+```text
+mkdir -p /tmp/edge-pair
+julia mesh/mesh_edge_pair_coupon.jl thin 2.0 /tmp/edge-pair/edge_pair_thin.msh
+julia mesh/mesh_edge_pair_coupon.jl fabricated 2.0 \
+  /tmp/edge-pair/edge_pair_fabricated.msh
+python3 generate_edge_pair_response.py \
+  --cutout-width 2.0 --radius 2.0 --output /tmp/edge-pair
+../../build/bin/palace -np 4 /tmp/edge-pair/edge_pair_thin.json
+../../build/bin/palace -np 4 /tmp/edge-pair/edge_pair_fabricated.json
+```
+
+The generator phase-aligns the periodic contour basis so both points where the
+matching contour meets grounded metal are exact knots. This is required: a
+basis which interpolates across either zero-potential junction can create a
+spurious singular MS response.
+
+Configure the resulting matrices as one `ResponseCorrection.Models` entry and
+place one patch at the midpoint of the edge pair. A separate one-edge model can
+still be reused for other nonoverlapping edges in the same simulation. Every
+patch contributes to every target in its model's `Interfaces` mapping. If the
+same coupon files are used for distinct interface groups, use separate model
+entries so that each patch contributes only to its intended targets.
+
+The paired generator assumes both enclosed edges are on the same equipotential
+conductor. It is not valid for nearby edges belonging to different terminals.
+That case requires a coupled coupon basis which also represents the independent
+conductor potentials.
+
+A flip-chip CPW sweep using 100 nm metal, 50 nm overetch, 80 degree sidewalls,
+10 nm rounding, and `R = 2 um` tested cutout widths
+`1, 2, 3, 4, 6, 10, 20, 50 um`. Widths below 4 um used coupled coupons and the
+others used independent one-edge coupons. Against fabrication-resolved
+references, the maximum absolute corrected errors over the sweep were:
+
+| Interface | L1 | L2 |
+|-----------|---:|---:|
+| SA | 5.41% | 0.30% |
+| MS | 2.19% | 0.32% |
+| MA | 9.11% | 4.24% |
+
+The corresponding raw thin-metal errors reached 169% for L1 MS and 61% for MA.
+The weakest width-1 L1 MS thick reference required nine AMR iterations; using
+only three iterations overstated its correction error by more than a factor of
+four.
 
 ## Applying the calibration to 3D geometries
 
@@ -75,22 +144,19 @@ annular energies over the complete metal perimeter. The local field amplitude
 may vary along that perimeter, but the same cross-sectional coefficients can be
 applied to each local contribution and therefore to the integrated energies.
 
-Apply the coefficient table to any thin-metal Palace output with matching
-interface indices, dielectric properties, edge radii, and fabrication stack:
+Apply the process table to any thin-metal Palace output with matching
+interface properties, edge radii, fabrication stack, and FEM order:
 
 ```text
-python3 apply_surface_calibration.py \
-  --calibration postpro/surface-calibration.csv \
-  --input ../transmon/postpro/transmon_surface_coarse \
-  --radius SA=0.2 \
-  --radius MS=0.2 \
-  --radius MA=0.2 \
-  --output ../transmon/postpro/transmon_surface_coarse/surface-Q-corrected.csv
+python3 local_edge_correction.py apply \
+  --calibration postpro/local-edge-process.csv \
+  --input ../transmon/postpro/transmon_surface_amr \
+  --output ../transmon/postpro/transmon_surface_amr/surface-Q-local-corrected.csv
 ```
 
-With `--radius`, the result contains one corrected participation ratio and
-quality factor per interface. Omitting the option retains the complete radius
-sweep. A 3D mesh still needs enough resolution in each matching annulus
+Repeated `--radius R_UM` options select an explicit averaging window. Omitting
+them lets the script select the smallest AMR-stable window and retains the
+complete radius sweep. A 3D mesh still needs enough resolution in each matching annulus
 `R <= d < 2R`; a zero or abruptly changing annular energy indicates that the
 selected radius is under-resolved. Corners, edge junctions, and nearby features
 also violate the locally extruded cross-section assumption, so the radius sweep
@@ -99,3 +165,236 @@ geometric feature. Components with multiple fabrication stacks should use
 separate dielectric entries and edge-attribute sets for each stack. For
 truncated or extruded models, use `EdgeExcludeAttributes` to omit artificial
 cut-plane boundaries from the physical metal perimeter.
+
+`"EdgeRefinement"` enforces matching-tube resolution geometrically:
+
+```json
+"EdgeRefinement": {
+  "Radius": 0.2,
+  "ElementsPerRadius": 3,
+  "OuterRadiusFactor": 2.0,
+  "CoreIndicatorWeight": 0.0
+}
+```
+
+Before the first solve, Palace refines every element intersecting the `2R`
+tube until its diameter is at most `R/3`. During later AMR, elements wholly
+inside `d<R` receive zero field-error weight because this core is replaced by
+the calibrated model. Elements crossing `R` keep full weight. This prevents
+high-energy edges or layers from monopolizing refinement while weak edges
+remain too coarse. The field solution and raw postprocessing are unchanged;
+only mesh selection and the AMR stopping norm use the weighted indicator.
+`Radius` must also be one of the interface's `EdgeDistances`.
+
+## Local edge diagnostics
+
+For geometry-aware corrections, add `"LocalizeEdgeEnergy": true` to an
+interface dielectric entry which already specifies `EdgeAttributes` and
+`EdgeDistances`. Palace then writes `surface-Q-edge-local.csv`. Each row assigns
+the annular energy to the nearest physical perimeter segment and records its
+one-based edge index, endpoints, and length. Each row contains both the
+interface energy assigned to the edge's nearest-segment region (`p_total`), the
+energy inside the matching radius (`p_in`), the interface annular energy
+(`p_ann`), and electric energy in the volume tube with the same radius
+(`p_bulk_ann`). Summing all local `p_total` rows for a fixed state, excitation,
+interface, and radius recovers `p_surf`. Summing `p_in` recovers
+`p_surf - p_out`, and summing `p_ann` recovers the corresponding value in
+`surface-Q-edge.csv`.
+
+For automatically extracted 3D edges, `p_vertex_in` is the part of `p_in` within
+an along-edge distance `R` of a corner, endpoint, or junction, and
+`p_bulk_vertex_ann` is the corresponding part of `p_bulk_ann`. The correction scripts
+use these directly when reporting surface- and bulk-weighted unmodeled vertex fractions.
+They continue to accept older CSV files and estimate those fractions from endpoint
+counts and segment lengths when the exact columns are absent.
+
+`"EdgeDistanceSmoothing": f` optionally replaces the hard cutoffs at `R` and
+`2R` with cubic transitions whose relative half-width is `f`. The local and
+aggregate tables use the same weights, and the sum of local `p_in` values still
+recovers `p_surf - p_out`. A modest value such as `0.2` can reduce AMR
+oscillation caused by quadrature points moving across a hard cutoff. The
+default is `0.0`. In the CPW studies this reduction was modest compared with
+the benefit of selecting an AMR-stable multi-radius window. Smoothing is
+therefore optional; it does not replace choosing a matching region which is
+resolved by the target mesh.
+
+For an ideal thin-sheet edge, `|E|^2` scales as `1/r`. The volume-tube energy
+therefore scales as `R`, so `p_bulk_ann / R` is a common local singular-amplitude
+proxy. Unlike the interface annulus, it samples both sides of the sheet and
+does not depend on selecting SA, MS, or MA as the proxy trace. Palace reuses
+this volume integral when multiple dielectric entries have the same perimeter
+and radius list.
+
+For a two-sided, polarization-aware diagnostic, also set
+`"EdgeFrameNormal"` from the substrate or process side toward vacuum. The
+localized bulk tube is then split into `top` and `bottom` sides and local
+`n`, `m`, and `l` polarizations. The experimental polarized reducer uses:
+
+```text
+MA normal       <- top_n
+MS normal       <- bottom_n
+SA normal       <- top_n
+SA tangential   <- top_m
+```
+
+The `top_l` channel is electric field parallel to a 3D edge. It is absent from
+the 2D calibration and is reported as an unmodeled fraction when applying the
+calibration in 3D. A large longitudinal fraction or a target channel mixture
+which differs strongly from the 2D calibration identifies a geometry where a
+locally extruded 2D correction is not trustworthy. The reducer reports
+`descriptor_mismatch` as the total-variation distance between the normalized
+six-channel calibration and target descriptors. It is zero for identical
+mixtures and approaches one for disjoint mixtures, and directly reduces the
+reported model confidence.
+
+Create and apply the experimental polarized calibration with:
+
+```text
+python3 local_edge_polarized_correction.py calibrate \
+  --thin postpro/surface_calibration_thin \
+  --fabricated postpro/surface_calibration_fabricated \
+  --output postpro/local-edge-polarized-process.csv
+python3 local_edge_polarized_correction.py apply \
+  --calibration postpro/local-edge-polarized-process.csv \
+  --input postpro/surface_validation_thin \
+  --reference postpro/surface_validation_fabricated \
+  --output postpro/surface-validation-polarized-corrected.csv
+```
+
+This decomposition does not make an inapplicable 2D edge model valid. It
+reduces cross-coupling between physically different field components and
+provides a sharper confidence diagnostic when a nearby conductor changes the
+local field. The scalar and polarized models should both be retained during
+validation until the polarized transfer has been tested on genuinely 3D
+corners and junctions.
+
+The segment ordering is deterministic for a fixed mesh, but AMR can subdivide a
+geometric edge and therefore change numeric segment indices. Coordinates should
+be used when matching individual segments across meshes or AMR states. For
+automatic 3D extraction, `component` and `chain` provide the physical topology:
+a chain joins locally straight segments and stops at a corner, endpoint, or
+junction. In 2D, physical edges are points and therefore have zero segment
+length. In 3D, `p_ann / L_edge` is the annular participation per unit edge
+length.
+
+The correction reducers pool automatic 3D segments with the same component
+and chain before fitting. This makes the fitted response insensitive to AMR
+subdivision of a physical edge and gives short segments enough samples to
+identify a singular amplitude. Manual selections and legacy tables continue
+to fit each numeric edge independently. Because the available process coupon
+is a straight-edge model, the reducers also report
+`unmodeled_vertex_length_fraction`: the fraction of total automatic chain
+length within one matching radius of a corner, endpoint, or junction. The
+reducers also weight this local fraction by each segment's assigned surface
+energy and bulk-annulus energy. `unmodeled_vertex_fraction` is the largest of
+the geometric, surface-weighted, and bulk-weighted estimates and reduces model
+confidence. It does not supply a corner correction; a nonzero value means the
+reported participation still applies a straight-edge response in a
+geometrically unsupported neighborhood.
+
+Validate the partition and create a compact line-density table with:
+
+```text
+python3 local_edge_diagnostics.py \
+  --input ../cpw3d_surface/postpro/surface_validation_thin_L50
+```
+
+The reduced table also reports the fitted singular amplitude, smooth surface
+density, separate bulk and surface fit residuals, singular fraction, and model
+confidence for every physical edge segment.
+Inspect their spatial distribution before trusting an aggregate correction:
+isolated low-confidence segments identify corners, junctions, under-resolved
+short segments, or nearby features which violate the locally straight edge
+model. Legacy local tables without `p_in` can still produce this fit report,
+but cannot validate the inside-energy partition.
+
+## Geometry-aware local correction
+
+The local bulk proxy distinguishes a true thin-sheet edge singularity from a
+large smooth field caused by nearby conductors. The surface-annulus fit
+separately estimates the smooth interface energy:
+
+```text
+p_bulk_ann,e(R) / R = A_e + B_e R.
+p_surf_ann,e(R)     = a_e + b_e R.
+```
+
+Here `A_e` estimates the singular edge amplitude, while the term proportional
+to `R` in the bulk fit is the leading smooth-volume contamination. The local
+singular fraction is
+`f_e(R) = clamp(A_e / (p_bulk_ann,e(R) / R), 0, 1)` and is diagnostic only.
+The local fit confidence depends on the bulk and surface residuals, not on
+`f_e`: a smooth-dominated edge can still have a well-resolved smooth
+decomposition.
+
+For each fabrication interface, the 2D calibration stores additive
+inside-singular and outside-delta coefficients. Application replaces the raw
+inside term with `max(0,b_e R) + C_in A_e` and adds `C_out A_e` to the resolved
+outside term. A failed fit therefore produces a large uncertainty instead of
+falling back to the divergent raw inside energy. The aggregate confidence is
+correction-weighted. It combines fit confidence with singular identifiability
+`f_e * q_fit` and the fraction of the reported participation contributed by
+the calibrated singular terms. Thus a smooth-dominated region remains
+high-confidence when its answer is mostly resolved outside/smooth energy, but
+is marked low-confidence when an ill-conditioned singular intercept controls
+the correction. The output records `fit_confidence`,
+`singular_identifiability`, and `modeled_fraction` separately.
+
+Create one process calibration from matched thin and fabrication-resolved 2D
+simulations:
+
+```text
+python3 local_edge_correction.py calibrate \
+  --thin postpro/surface_calibration_thin \
+  --fabricated postpro/surface_calibration_fabricated \
+  --output postpro/local-edge-process.csv
+```
+
+Apply it to a thin-metal target:
+
+```text
+python3 local_edge_correction.py apply \
+  --calibration postpro/local-edge-process.csv \
+  --input ../transmon/postpro/transmon_surface_amr \
+  --output ../transmon/postpro/transmon_surface_amr/surface-Q-local-corrected.csv
+```
+
+Target interface indices which differ from the 2D calibration use mappings
+such as `--interface-map 4=1`. Repeat the option for every nonidentity mapping.
+The calibration records the FEM order and number of radii used to fit the edge
+amplitude. Application rejects mismatches because the unresolved finite-element
+trace, especially for MS, can depend appreciably on both choices. It also
+records and validates the interface type, physical layer thickness, and
+permittivity, as well as whether H(div) normal-flux recovery was enabled, so an
+SA coefficient cannot silently be applied to an incompatible target interface
+or field representation.
+
+By default, the script averages the corrected participation over three
+neighboring radii. A correct local replacement should be independent of the
+artificial matching radius, so `radius_spread` is reported as a model
+uncertainty instead of being amplified by extrapolation to `R=0`. If Palace
+AMR iteration directories are available, the script selects the smallest
+radius window whose mean changes by less than 2% over the final three AMR
+states. If no window meets that threshold, it uses the least-varying window
+and reports the residual `amr_spread`. Explicit repeated `--radius R_UM`
+options override automatic selection. Large `radius_spread`, `amr_spread`, or
+fit residual values are warnings that the result needs more mesh resolution
+or that the local edge model is not applicable. The summary also reports how
+many perimeter segments receive nonzero bulk-tube quadrature samples at the
+least-resolved selected radius. A fit RMS larger than
+`--fit-residual-scale` is explicitly reported as a poor local edge fit; such a
+result is diagnostic, not a corrected
+participation suitable for validation. When both calibration simulations save
+AMR iterations, the process table also records the spread of the inside
+coefficient and outside delta over its final three states. Application warns
+when either calibration quantity varies by more than 5%. The reported
+`relative_uncertainty` is the largest of the fit residual, half the radius
+window range, the target AMR spread, the two calibration AMR spreads, and the
+correction-confidence deficit.
+It is an observable consistency bound, not a statistical confidence interval.
+
+Validation should report aggregate and per-layer SA/MS/MA errors against
+fabrication-resolved references, correction spread over the final AMR states,
+radius-window spread, and the separate bulk/surface fit residuals. Extruded
+CPW, flip-chip CPW, and genuinely three-dimensional corners test distinct
+assumptions and should remain separate validation cases.

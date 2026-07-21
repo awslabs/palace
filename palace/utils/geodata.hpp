@@ -332,9 +332,11 @@ struct BoundaryEdgeSegment
 // Extract all geometric edge segments belonging to boundary elements selected by marker.
 // In 2D, each selected boundary element contributes its line segment. In 3D, each
 // selected boundary face contributes its edge segments. The returned geometry is
-// replicated on every rank.
+// replicated on every rank. If exterior_only is true, internal boundary elements are
+// omitted.
 std::vector<BoundaryEdgeSegment>
-GetBoundaryElementEdgeSegments(const mfem::ParMesh &mesh, const mfem::Array<int> &marker);
+GetBoundaryElementEdgeSegments(const mfem::ParMesh &mesh, const mfem::Array<int> &marker,
+                               bool exterior_only = false);
 
 // Extract the global geometric perimeter of the boundary elements selected by marker.
 // The returned geometry is replicated on every rank. Coincident crack copies and

@@ -140,10 +140,43 @@ auto RandomMeasurement(int ndomain = 5)
     cache.interface_eps_i.emplace_back(
         Measurement::InterfaceData{i, 1 + randd(100), (1 + randd(9999)) / 10000,
                                    (1 + randd(9999) / 10000), 1e9 / (1 + randd(9999))});
-    cache.interface_edge_i.emplace_back(
-        Measurement::InterfaceEdgeData{i, 1 + randd(100), 1 + randd(100),
-                                       (1 + randd(9999)) / 10000, 1 + randd(100),
-                                       (1 + randd(9999)) / 10000});
+    cache.interface_edge_i.emplace_back(Measurement::InterfaceEdgeData{
+        i, 1 + randd(100), 1 + randd(100), (1 + randd(9999)) / 10000, 1 + randd(100),
+        (1 + randd(9999)) / 10000});
+    cache.interface_local_edge_i.emplace_back(Measurement::InterfaceLocalEdgeData{
+        i,
+        i + 1,
+        true,
+        i + 2,
+        i + 3,
+        {1, 2},
+        {0.0, 0.0, 1.0},
+        {1 + randd(100), 1 + randd(100), 1 + randd(100)},
+        {1 + randd(100), 1 + randd(100), 1 + randd(100)},
+        1 + randd(100),
+        1 + randd(100),
+        1 + randd(100),
+        (1 + randd(9999)) / 10000,
+        {1 + randd(100), 1 + randd(100)},
+        {(1 + randd(9999)) / 10000, (1 + randd(9999)) / 10000},
+        1 + randd(100),
+        (1 + randd(9999)) / 10000,
+        {1 + randd(100), 1 + randd(100)},
+        {(1 + randd(9999)) / 10000, (1 + randd(9999)) / 10000},
+        1 + randd(100),
+        (1 + randd(9999)) / 10000,
+        {1 + randd(100), 1 + randd(100)},
+        {(1 + randd(9999)) / 10000, (1 + randd(9999)) / 10000},
+        1 + randd(100),
+        (1 + randd(9999)) / 10000,
+        1 + randd(100),
+        (1 + randd(9999)) / 10000,
+        1 + randd(100),
+        (1 + randd(9999)) / 10000,
+        {1 + randd(100), 1 + randd(100), 1 + randd(100), 1 + randd(100), 1 + randd(100),
+         1 + randd(100)},
+        {(1 + randd(9999)) / 10000, (1 + randd(9999)) / 10000, (1 + randd(9999)) / 10000,
+         (1 + randd(9999)) / 10000, (1 + randd(9999)) / 10000, (1 + randd(9999)) / 10000}});
   }
 
   return cache;
@@ -371,6 +404,130 @@ TEST_CASE("PostOperator", "[idempotent][Serial]")
     CHECK_THAT(c.energy_annulus, !Catch::Matchers::WithinRel(dc.energy_annulus));
     CHECK_THAT(c.participation_annulus,
                Catch::Matchers::WithinRel(dc.participation_annulus));
+  }
+
+  for (std::size_t i = 0; i < cache.interface_local_edge_i.size(); i++)
+  {
+    auto &c = cache.interface_local_edge_i[i];
+    auto &ndc = non_dim_cache.interface_local_edge_i[i];
+    CHECK(c.idx == ndc.idx);
+    CHECK(c.edge == ndc.edge);
+    CHECK(c.automatic == ndc.automatic);
+    CHECK(c.component == ndc.component);
+    CHECK(c.chain == ndc.chain);
+    CHECK(c.vertex_types == ndc.vertex_types);
+    CHECK(c.process_normal == ndc.process_normal);
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(c.p0[d], Catch::Matchers::WithinRel(ndc.p0[d]));
+      CHECK_THAT(c.p1[d], Catch::Matchers::WithinRel(ndc.p1[d]));
+    }
+    CHECK_THAT(c.length, Catch::Matchers::WithinRel(ndc.length));
+    CHECK_THAT(c.distance, Catch::Matchers::WithinRel(ndc.distance));
+    CHECK_THAT(c.energy_total, Catch::Matchers::WithinRel(ndc.energy_total));
+    CHECK_THAT(c.participation_total, Catch::Matchers::WithinRel(ndc.participation_total));
+    CHECK_THAT(c.energy_inside, Catch::Matchers::WithinRel(ndc.energy_inside));
+    CHECK_THAT(c.participation_inside,
+               Catch::Matchers::WithinRel(ndc.participation_inside));
+    CHECK_THAT(c.energy_annulus, Catch::Matchers::WithinRel(ndc.energy_annulus));
+    CHECK_THAT(c.participation_annulus,
+               Catch::Matchers::WithinRel(ndc.participation_annulus));
+    CHECK_THAT(c.energy_vertex_inside,
+               Catch::Matchers::WithinRel(ndc.energy_vertex_inside));
+    CHECK_THAT(c.participation_vertex_inside,
+               Catch::Matchers::WithinRel(ndc.participation_vertex_inside));
+    CHECK_THAT(c.energy_volume_annulus,
+               Catch::Matchers::WithinRel(ndc.energy_volume_annulus));
+    CHECK_THAT(c.participation_volume_annulus,
+               Catch::Matchers::WithinRel(ndc.participation_volume_annulus));
+    CHECK_THAT(c.energy_volume_vertex_annulus,
+               Catch::Matchers::WithinRel(ndc.energy_volume_vertex_annulus));
+    CHECK_THAT(c.participation_volume_vertex_annulus,
+               Catch::Matchers::WithinRel(ndc.participation_volume_vertex_annulus));
+    for (std::size_t component = 0; component < 2; component++)
+    {
+      CHECK_THAT(c.energy_total_polarized[component],
+                 Catch::Matchers::WithinRel(ndc.energy_total_polarized[component]));
+      CHECK_THAT(c.participation_total_polarized[component],
+                 Catch::Matchers::WithinRel(ndc.participation_total_polarized[component]));
+      CHECK_THAT(c.energy_inside_polarized[component],
+                 Catch::Matchers::WithinRel(ndc.energy_inside_polarized[component]));
+      CHECK_THAT(c.participation_inside_polarized[component],
+                 Catch::Matchers::WithinRel(ndc.participation_inside_polarized[component]));
+      CHECK_THAT(c.energy_annulus_polarized[component],
+                 Catch::Matchers::WithinRel(ndc.energy_annulus_polarized[component]));
+      CHECK_THAT(
+          c.participation_annulus_polarized[component],
+          Catch::Matchers::WithinRel(ndc.participation_annulus_polarized[component]));
+    }
+    for (std::size_t component = 0; component < 6; component++)
+    {
+      CHECK_THAT(
+          c.energy_volume_annulus_polarized[component],
+          Catch::Matchers::WithinRel(ndc.energy_volume_annulus_polarized[component]));
+      CHECK_THAT(c.participation_volume_annulus_polarized[component],
+                 Catch::Matchers::WithinRel(
+                     ndc.participation_volume_annulus_polarized[component]));
+    }
+
+    auto &dc = dim_cache.interface_local_edge_i[i];
+    CHECK(c.idx == dc.idx);
+    CHECK(c.edge == dc.edge);
+    CHECK(c.automatic == dc.automatic);
+    CHECK(c.component == dc.component);
+    CHECK(c.chain == dc.chain);
+    CHECK(c.vertex_types == dc.vertex_types);
+    CHECK(c.process_normal == dc.process_normal);
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(c.p0[d], !Catch::Matchers::WithinRel(dc.p0[d]));
+      CHECK_THAT(c.p1[d], !Catch::Matchers::WithinRel(dc.p1[d]));
+    }
+    CHECK_THAT(c.length, !Catch::Matchers::WithinRel(dc.length));
+    CHECK_THAT(c.distance, !Catch::Matchers::WithinRel(dc.distance));
+    CHECK_THAT(c.energy_total, !Catch::Matchers::WithinRel(dc.energy_total));
+    CHECK_THAT(c.participation_total, Catch::Matchers::WithinRel(dc.participation_total));
+    CHECK_THAT(c.energy_inside, !Catch::Matchers::WithinRel(dc.energy_inside));
+    CHECK_THAT(c.participation_inside, Catch::Matchers::WithinRel(dc.participation_inside));
+    CHECK_THAT(c.energy_annulus, !Catch::Matchers::WithinRel(dc.energy_annulus));
+    CHECK_THAT(c.participation_annulus,
+               Catch::Matchers::WithinRel(dc.participation_annulus));
+    CHECK_THAT(c.energy_vertex_inside,
+               !Catch::Matchers::WithinRel(dc.energy_vertex_inside));
+    CHECK_THAT(c.participation_vertex_inside,
+               Catch::Matchers::WithinRel(dc.participation_vertex_inside));
+    CHECK_THAT(c.energy_volume_annulus,
+               !Catch::Matchers::WithinRel(dc.energy_volume_annulus));
+    CHECK_THAT(c.participation_volume_annulus,
+               Catch::Matchers::WithinRel(dc.participation_volume_annulus));
+    CHECK_THAT(c.energy_volume_vertex_annulus,
+               !Catch::Matchers::WithinRel(dc.energy_volume_vertex_annulus));
+    CHECK_THAT(c.participation_volume_vertex_annulus,
+               Catch::Matchers::WithinRel(dc.participation_volume_vertex_annulus));
+    for (std::size_t component = 0; component < 2; component++)
+    {
+      CHECK_THAT(c.energy_total_polarized[component],
+                 !Catch::Matchers::WithinRel(dc.energy_total_polarized[component]));
+      CHECK_THAT(c.participation_total_polarized[component],
+                 Catch::Matchers::WithinRel(dc.participation_total_polarized[component]));
+      CHECK_THAT(c.energy_inside_polarized[component],
+                 !Catch::Matchers::WithinRel(dc.energy_inside_polarized[component]));
+      CHECK_THAT(c.participation_inside_polarized[component],
+                 Catch::Matchers::WithinRel(dc.participation_inside_polarized[component]));
+      CHECK_THAT(c.energy_annulus_polarized[component],
+                 !Catch::Matchers::WithinRel(dc.energy_annulus_polarized[component]));
+      CHECK_THAT(c.participation_annulus_polarized[component],
+                 Catch::Matchers::WithinRel(dc.participation_annulus_polarized[component]));
+    }
+    for (std::size_t component = 0; component < 6; component++)
+    {
+      CHECK_THAT(
+          c.energy_volume_annulus_polarized[component],
+          !Catch::Matchers::WithinRel(dc.energy_volume_annulus_polarized[component]));
+      CHECK_THAT(
+          c.participation_volume_annulus_polarized[component],
+          Catch::Matchers::WithinRel(dc.participation_volume_annulus_polarized[component]));
+    }
   }
 }
 

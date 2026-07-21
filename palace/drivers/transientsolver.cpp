@@ -62,13 +62,33 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
         iodata.solver.linear.estimator_mg);
   }
-  auto AddEstimate = [&](const Vector &E, const Vector &B, double Et, ErrorIndicator &ind)
+  auto AddEstimate =
+      [&](const Vector &E, const Vector &B, const Vector *D, double Et, ErrorIndicator &ind)
   {
     if (is_2d)
-      estimator_2d->AddErrorIndicator(E, B, Et, ind);
+    {
+      if (D)
+        estimator_2d->AddErrorIndicator(E, B, *D, Et, ind);
+      else
+        estimator_2d->AddErrorIndicator(E, B, Et, ind);
+    }
     else
-      estimator_3d->AddErrorIndicator(E, B, Et, ind);
+    {
+      if (D)
+        estimator_3d->AddErrorIndicator(E, B, *D, Et, ind);
+      else
+        estimator_3d->AddErrorIndicator(E, B, Et, ind);
+    }
   };
+  auto RecoverElectricFlux = [&](const Vector &E, Vector &D)
+  {
+    if (is_2d)
+      estimator_2d->RecoverElectricFlux(E, D);
+    else
+      estimator_3d->RecoverElectricFlux(E, D);
+  };
+  Vector D(space_op.GetRTSpace().GetTrueVSize());
+  D.UseDevice(true);
   ErrorIndicator indicator;
 
   // Main time integration loop.
@@ -101,11 +121,19 @@ TransientSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                linalg::Norml2(space_op.GetComm(), E),
                linalg::Norml2(space_op.GetComm(), B));
 
+    const Vector *recovered_flux = nullptr;
+    if (post_op.NeedsRecoveredElectricFlux())
+    {
+      Mpi::Print(" Recovering electric flux for interface postprocessing\n");
+      RecoverElectricFlux(E, D);
+      post_op.SetRecoveredElectricFlux(D);
+      recovered_flux = &D;
+    }
     auto total_domain_energy = post_op.MeasureAndPrintAll(step, E, B, t, J_coef(t));
 
     // Calculate and record the error indicators.
     Mpi::Print(" Updating solution error estimates\n");
-    AddEstimate(E, B, total_domain_energy, indicator);
+    AddEstimate(E, B, recovered_flux, total_domain_energy, indicator);
   }
   // Final postprocessing & printing.
   BlockTimer bt1(Timer::POSTPRO);

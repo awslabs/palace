@@ -246,6 +246,8 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       iodata.solver.linear.estimator_mg);
 
   PostOperator<ProblemType::BOUNDARYMODE> post_op(iodata, mode_op);
+  ComplexVector D(mode_op.GetRTSpace().GetTrueVSize());
+  D.UseDevice(true);
 
   ErrorIndicator indicator;
 
@@ -313,6 +315,13 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const double error_bkwd = eig.GetError(i, EigenvalueSolver::ErrorType::BACKWARD);
     const double error_abs = eig.GetError(i, EigenvalueSolver::ErrorType::ABSOLUTE);
 
+    const bool recover_flux = post_op.NeedsRecoveredElectricFlux();
+    if (recover_flux)
+    {
+      Mpi::Print(" Recovering electric flux for interface postprocessing\n");
+      estimator.RecoverElectricFlux(et, D);
+      post_op.SetRecoveredElectricFlux(D);
+    }
     auto total_domain_energy =
         post_op.MeasureAndPrintAll(i, et, en, kn, omega, error_abs, error_bkwd, n_print);
 
@@ -332,7 +341,14 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       bz.Real() *= 1.0 / omega;
       bz.Imag() = curl_etr;
       bz.Imag() *= -1.0 / omega;
-      estimator.AddErrorIndicator(et, bz, total_domain_energy, indicator);
+      if (recover_flux)
+      {
+        estimator.AddErrorIndicator(et, bz, D, total_domain_energy, indicator);
+      }
+      else
+      {
+        estimator.AddErrorIndicator(et, bz, total_domain_energy, indicator);
+      }
     }
   }
   Mpi::Print("\n");

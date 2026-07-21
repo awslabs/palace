@@ -10,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <type_traits>
+#include <unordered_set>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/gridfunction.hpp"
@@ -20,6 +21,7 @@
 #include "models/lumpedportoperator.hpp"
 #include "models/postoperatorcsv.hpp"
 #include "models/surfacepostoperator.hpp"
+#include "models/surfaceresponseoperator.hpp"
 #include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/units.hpp"
@@ -119,8 +121,9 @@ protected:
   // Base post-op output directory.
   fs::path post_dir;
 
-  // Fields: Electric, Magnetic, Scalar Potential, Vector Potential.
-  std::unique_ptr<GridFunction> E, B, V, A;
+  // Fields: Electric, recovered electric displacement, Magnetic, Scalar Potential, Vector
+  // Potential.
+  std::unique_ptr<GridFunction> E, D_recovered, B, V, A;
 
   // Mode analysis: normal (out-of-plane) E component on H1 space, and in-plane B field
   // on ND space for visualization. The in-plane B is the dominant component:
@@ -248,6 +251,28 @@ protected:
 
   mutable Measurement measurement_cache;
 
+  // Optional postprocessing-only PEC Maxwell surface response correction. The ordinary
+  // measurement cache and surface-Q.csv remain the raw thin-metal result.
+  std::unique_ptr<SurfaceResponseOperator> surface_response_op;
+  struct MaxwellSurfaceResponseMeasurement
+  {
+    struct Interface
+    {
+      double raw_energy = 0.0;
+      double corrected_energy = 0.0;
+      double loss_tangent = 0.0;
+    };
+
+    double raw_normalization_energy = 0.0;
+    double corrected_normalization_energy = 0.0;
+    std::map<int, Interface> interfaces;
+    SurfaceResponseOperator::MaxwellResponse confidence;
+  };
+  mutable std::optional<MaxwellSurfaceResponseMeasurement> surface_response_measurement;
+  mutable std::unique_ptr<TableWithCSVFile> surface_Q_corrected;
+  mutable std::unique_ptr<TableWithCSVFile> surface_response_confidence;
+  mutable bool surface_response_warning_printed = false;
+
   // Per-entry impedance postprocessing configuration (keyed by config index).
   struct ImpedancePostproConfig
   {
@@ -285,7 +310,9 @@ protected:
   void MeasureSurfaceFlux() const;
   void MeasureFarField() const;
   void MeasureInterfaceEFieldEnergy() const;  // Depends: LumpedPorts
+  void MeasureSurfaceResponseCorrection() const;  // Depends: Domain, ports, interfaces
   void MeasureProbes() const;
+  void PrintSurfaceResponseCorrection(double output_index, int excitation) const;
 
   // Helper function called by all solvers. Has to ensure correct call order to deal with
   // dependent measurements.
@@ -299,6 +326,7 @@ protected:
     MeasureSParameter();
     MeasureSurfaceFlux();
     MeasureInterfaceEFieldEnergy();
+    MeasureSurfaceResponseCorrection();
     MeasureProbes();
     MeasureFarField();
   }
@@ -389,8 +417,31 @@ protected:
 public:
   PostOperator(const config::ProblemData &problem, const config::SolverData &solver,
                const config::DomainData &domains, const config::BoundaryData &boundaries,
-               const Units &units, fem_op_t<solver_t> &fem_op);
+               const Units &units, fem_op_t<solver_t> &fem_op,
+               const std::unordered_set<int> *cracked_attributes = nullptr);
   explicit PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op);
+
+  bool NeedsRecoveredElectricFlux() const { return D_recovered != nullptr; }
+
+  template <ProblemType U = solver_t>
+  auto SetRecoveredElectricFlux(const ComplexVector &d)
+      -> std::enable_if_t<HasEGridFunction<U>() && HasComplexGridFunction<U>(), void>
+  {
+    MFEM_VERIFY(D_recovered, "Recovered electric flux was not requested!");
+    D_recovered->Real().SetFromTrueDofs(d.Real());
+    D_recovered->Imag().SetFromTrueDofs(d.Imag());
+    D_recovered->Real().ExchangeFaceNbrData();
+    D_recovered->Imag().ExchangeFaceNbrData();
+  }
+
+  template <ProblemType U = solver_t>
+  auto SetRecoveredElectricFlux(const Vector &d)
+      -> std::enable_if_t<HasEGridFunction<U>() && !HasComplexGridFunction<U>(), void>
+  {
+    MFEM_VERIFY(D_recovered, "Recovered electric flux was not requested!");
+    D_recovered->Real().SetFromTrueDofs(d);
+    D_recovered->Real().ExchangeFaceNbrData();
+  }
 
   // MeasureAndPrintAll is the primary public interface of this class. It is specialized by
   // solver type, since each solver has different fields and extra data required. These
@@ -491,6 +542,82 @@ public:
   auto GetAGridFunction() -> std::enable_if_t<HasAGridFunction<U>(), decltype(*A) &>
   {
     return *A;
+  }
+
+  struct ElectrostaticEnergyData
+  {
+    struct Interface
+    {
+      double energy;
+      double loss_tangent;
+      std::vector<SurfacePostOperator::InterfaceEdgeEnergy> edge_energies;
+    };
+
+    double domain = 0.0;
+    std::map<int, Interface> interfaces;
+  };
+
+  // Evaluate electrostatic domain and interface energies without producing ordinary
+  // measurement output. This is used to assemble fabrication-corrected observables while
+  // preserving the historical raw thin-metal CSV output.
+  template <ProblemType U = solver_t>
+  auto GetElectrostaticEnergies(const Vector &v, const Vector &e,
+                                const Vector *d = nullptr)
+      -> std::enable_if_t<U == ProblemType::ELECTROSTATIC, ElectrostaticEnergyData>
+  {
+    SetVGridFunction(v);
+    SetEGridFunction(e);
+    if (NeedsRecoveredElectricFlux())
+    {
+      MFEM_VERIFY(d, "Recovered electric flux is required for interface postprocessing!");
+      SetRecoveredElectricFlux(*d);
+    }
+
+    ElectrostaticEnergyData energies;
+    energies.domain = dom_post_op.GetElectricFieldEnergy(*V);
+    surf_post_op.ResetInterfaceLocalEdgeEnergyCache();
+    for (const auto &[idx, data] : surf_post_op.eps_surfs)
+    {
+      energies.interfaces.emplace(
+          idx, typename ElectrostaticEnergyData::Interface{
+                   surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E,
+                                                                D_recovered.get()),
+                   surf_post_op.GetInterfaceLossTangent(idx),
+                   surf_post_op.GetInterfaceEdgeElectricFieldEnergies(
+                       idx, *E, D_recovered.get())});
+    }
+    return energies;
+  }
+
+  // Evaluate localized interface energies for an electrostatic field without producing
+  // ordinary measurement output. Volume-annulus diagnostics are omitted because response
+  // matrix calibration uses only the surface energies.
+  template <ProblemType U = solver_t>
+  auto GetInterfaceLocalEdgeElectricFieldEnergies(const Vector &e,
+                                                  const Vector *d = nullptr)
+      -> std::enable_if_t<
+          U == ProblemType::ELECTROSTATIC,
+          std::map<int, std::vector<SurfacePostOperator::InterfaceLocalEdgeEnergy>>>
+  {
+    SetEGridFunction(e);
+    if (NeedsRecoveredElectricFlux())
+    {
+      MFEM_VERIFY(d, "Recovered electric flux is required for interface postprocessing!");
+      SetRecoveredElectricFlux(*d);
+    }
+
+    std::map<int, std::vector<SurfacePostOperator::InterfaceLocalEdgeEnergy>> energies;
+    surf_post_op.ResetInterfaceLocalEdgeEnergyCache();
+    for (const auto &[idx, data] : surf_post_op.eps_surfs)
+    {
+      auto interface_energy = surf_post_op.GetInterfaceLocalEdgeElectricFieldEnergies(
+          idx, *E, D_recovered.get(), false);
+      if (!interface_energy.empty())
+      {
+        energies.emplace(idx, std::move(interface_energy));
+      }
+    }
+    return energies;
   }
 
   // Whether impedance/voltage postprocessing is configured (mode analysis).

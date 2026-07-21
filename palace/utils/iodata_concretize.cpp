@@ -3,6 +3,8 @@
 
 #include "iodata.hpp"
 
+#include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -164,6 +166,91 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
                              json &j_electrostatic)
 {
   Concretize(j_electrostatic, "Save", electrostatic.n_post);
+  Concretize(j_electrostatic, "ResponseMatrix", electrostatic.response_matrix);
+  if (electrostatic.response_correction)
+  {
+    const auto &response = *electrostatic.response_correction;
+    if (j_electrostatic.contains("ResponseCorrection"))
+    {
+      return;
+    }
+
+    auto &j_response = j_electrostatic["ResponseCorrection"] = json::object();
+    if (response.IsAutomatic())
+    {
+      j_response["Library"] = response.library;
+      if (!response.target_interfaces.empty())
+      {
+        j_response["TargetInterfaces"] = response.target_interfaces;
+      }
+      j_response["UnmatchedPolicy"] =
+          response.unmatched_policy ==
+                  config::ElectrostaticSolverData::ResponseCorrectionData::UnmatchedPolicy::
+                      ERROR
+              ? "Error"
+              : "Warn";
+      return;
+    }
+
+    const bool legacy =
+        response.models.size() == 1 && response.models.front().idx == 1 &&
+        response.models.front().fabricated_surface_matrix.empty() &&
+        response.models.front().thin_surface_matrix.empty() &&
+        response.models.front().interfaces.empty() &&
+        std::all_of(response.patches.begin(), response.patches.end(),
+                    [](const auto &patch)
+                    {
+                      return patch.model == 1 &&
+                             patch.reference == std::array<double, 3>{0.0, 0.0, 0.0};
+                    });
+    if (legacy)
+    {
+      const auto &model = response.models.front();
+      ApplyEntries(j_response, {{"FabricatedMatrix", model.fabricated_matrix},
+                                {"ThinMatrix", model.thin_matrix},
+                                {"BasisPoints", model.basis_points}});
+      j_response["Edges"] = json::array();
+      for (const auto &patch : response.patches)
+      {
+        j_response["Edges"].push_back(
+            {{"Origin", patch.origin}, {"AxisU", patch.axis_u}, {"AxisV", patch.axis_v}});
+      }
+      return;
+    }
+
+    j_response["Models"] = json::array();
+    for (const auto &model : response.models)
+    {
+      json j_model = {{"Index", model.idx},
+                      {"FabricatedMatrix", model.fabricated_matrix},
+                      {"ThinMatrix", model.thin_matrix},
+                      {"BasisPoints", model.basis_points}};
+      if (!model.fabricated_surface_matrix.empty())
+      {
+        j_model["FabricatedSurfaceMatrix"] = model.fabricated_surface_matrix;
+        j_model["ThinSurfaceMatrix"] = model.thin_surface_matrix;
+      }
+      if (!model.interfaces.empty())
+      {
+        j_model["Interfaces"] = json::array();
+        for (const auto &interface : model.interfaces)
+        {
+          j_model["Interfaces"].push_back(
+              {{"Target", interface.target}, {"Coupon", interface.coupon}});
+        }
+      }
+      j_response["Models"].push_back(std::move(j_model));
+    }
+    j_response["Patches"] = json::array();
+    for (const auto &patch : response.patches)
+    {
+      j_response["Patches"].push_back({{"Model", patch.model},
+                                        {"Origin", patch.origin},
+                                        {"AxisU", patch.axis_u},
+                                        {"AxisV", patch.axis_v},
+                                        {"Reference", patch.reference}});
+    }
+  }
 }
 
 void ConcretizeMagnetostatic(const config::MagnetostaticSolverData &magnetostatic,
@@ -417,16 +504,34 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                    }
                  });
 
-    ApplyIndexed("Dielectric",
-                 [&](int idx, json &j_entry)
-                 {
-                   auto it = pp.dielectric.find(idx);
-                   if (it != pp.dielectric.end())
-                   {
-                     ApplyEntries(j_entry, {{"Type", ToString(it->second.type)},
-                                            {"LossTan", it->second.tandelta}});
-                   }
-                 });
+    ApplyIndexed(
+        "Dielectric",
+        [&](int idx, json &j_entry)
+        {
+          auto it = pp.dielectric.find(idx);
+          if (it != pp.dielectric.end())
+          {
+            ApplyEntries(j_entry, {{"Type", ToString(it->second.type)},
+                                   {"LossTan", it->second.tandelta}});
+            Concretize(j_entry, "FluxRecovery", it->second.flux_recovery);
+            if (!it->second.edge_distances.empty())
+            {
+              Concretize(j_entry, "AutomaticEdges", it->second.automatic_edges);
+              Concretize(j_entry, "EdgeDistanceSmoothing",
+                         it->second.edge_distance_smoothing);
+              Concretize(j_entry, "LocalizeEdgeEnergy", it->second.localize_edge_energy);
+            }
+            if (it->second.edge_refinement)
+            {
+              auto &j_refinement = j_entry["EdgeRefinement"];
+              ApplyEntries(
+                  j_refinement,
+                  {{"OuterRadiusFactor", it->second.edge_refinement->outer_radius_factor},
+                   {"CoreIndicatorWeight",
+                    it->second.edge_refinement->core_indicator_weight}});
+            }
+          }
+        });
 
     ApplyIndexed("Impedance",
                  [&](int idx, json &j_entry)
@@ -480,6 +585,23 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
   if (!iodata.solver.ceed_backend.empty())
   {
     Concretize(j_solver, "Backend", iodata.solver.ceed_backend);
+  }
+  if (iodata.solver.surface_response_correction &&
+      !j_solver.contains("SurfaceResponseCorrection"))
+  {
+    const auto &response = *iodata.solver.surface_response_correction;
+    auto &j_response = j_solver["SurfaceResponseCorrection"] = json::object();
+    j_response["Library"] = response.library;
+    if (!response.target_interfaces.empty())
+    {
+      j_response["TargetInterfaces"] = response.target_interfaces;
+    }
+    j_response["UnmatchedPolicy"] =
+        response.unmatched_policy ==
+                config::ElectrostaticSolverData::ResponseCorrectionData::UnmatchedPolicy::
+                    ERROR
+            ? "Error"
+            : "Warn";
   }
 
   if (!j_solver.contains("Linear"))
