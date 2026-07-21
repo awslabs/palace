@@ -40,6 +40,11 @@ runs:
         # resolve head.repo to the fork, so this stays false for them — they must
         # never reach the instance-role push credentials on the public repo.
         LABEL_PUSH: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'push-containers') && github.event.pull_request.head.repo.full_name == github.repository }}
+        # 'true' iff a manual dispatch requested a push. GitHub only lets users
+        # with write access dispatch a workflow, and dispatch always runs a
+        # branch of this repo (never a fork), so this path is push-safe without
+        # the head.repo guard the label path needs.
+        DISPATCH_PUSH: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.push == 'true' }}
       run: |
         ARCH_LABEL=$(spack arch -t)
 
@@ -54,15 +59,17 @@ runs:
         #   - push to   main        -> "main"         (rolling dev), pushed
         #   - PR w/ push-containers -> "dev-<branch>" (prototype), pushed
         #                              (same-repo PRs only; forks never push)
+        #   - dispatch w/ push=true -> "dev-<branch>" (prototype), pushed
+        #                              (no PR needed; write-access users only)
         #   - everything else       -> "dev-<branch>", build only, never pushed
-        #                              (plain PRs, manual dispatch re-runs).
+        #                              (plain PRs, build-only dispatch re-runs).
         # ECR tags can't contain '/', so VERSION uses '-' while the S3 prefix
         # keeps '/' for a tidy bucket layout.
         if [ "$EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
           VERSION="main"; S3_PREFIX="main"; PUSH=true
         elif [ "$EVENT_NAME" = "push" ] && [ "${GITHUB_REF#refs/tags/v}" != "$GITHUB_REF" ]; then
           VERSION="${GITHUB_REF#refs/tags/v}"; S3_PREFIX="$VERSION"; PUSH=true
-        elif [ "$LABEL_PUSH" = "true" ]; then
+        elif [ "$LABEL_PUSH" = "true" ] || [ "$DISPATCH_PUSH" = "true" ]; then
           VERSION="dev-${BRANCH_SLUG}"; S3_PREFIX="dev/${BRANCH_SLUG}"; PUSH=true
         else
           VERSION="dev-${BRANCH_SLUG}"; S3_PREFIX="dev/${BRANCH_SLUG}"; PUSH=false

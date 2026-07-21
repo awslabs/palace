@@ -492,6 +492,27 @@ spack spec local.palace@develop
 will show you the spec for your most recent `palace` package, which you can
 compare with the one for `builtin.palace@develop`.
 
+## Publishing a container without a PR
+
+To publish a `dev-<branch>` prototype straight from a branch, trigger the
+workflow manually with the `push` input enabled. Only users with write access
+can dispatch the workflow, and dispatch always runs a branch of this repository
+(never a fork), so this path is push-safe.
+
+Using the [GitHub CLI](https://cli.github.com/):
+
+```bash
+# Publish a dev-<branch> prototype from the current branch.
+gh workflow run containers.yml --ref "$(git branch --show-current)" -f push=true
+
+# Follow the run that was just started.
+gh run watch "$(gh run list --workflow=containers.yml --limit=1 --json databaseId --jq '.[0].databaseId')"
+```
+
+Omit `-f push=true` (or set `push=false`) for a build-only run that verifies the image
+builds without publishing. From the web UI, the same controls live under
+Actions → Containers → Run workflow, where you pick the branch and tick push.
+
 ## Changelog
 
 Code contributions should generally be accompanied by an entry in the
