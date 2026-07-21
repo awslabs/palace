@@ -44,7 +44,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Check if there are nonlinear terms and, if so, setup interpolation operator.
   auto funcA2 = [&space_op](std::complex<double> lambda) -> std::unique_ptr<ComplexOperator>
   {
-    const std::complex<double> omega = lambda / std::complex<double>(0.0, 1.0);  // ω = -iλ
+    const std::complex<double> omega = lambda / std::complex<double>(0.0, 1.0);  // ω = λ/i
     return space_op.GetExtraSystemMatrix(omega, Operator::DIAG_ZERO);
   };
   auto funcP = [&space_op](std::complex<double> a0, std::complex<double> a1,

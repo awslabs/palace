@@ -119,15 +119,22 @@ private:
   bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS);
   bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &RHS);
 
-  // Helper functions to build the preconditioner matrix.
+  // Helper functions to build the preconditioner matrix. The type of a3 selects the
+  // frequency-dependent (A2) stamping path: double dispatches to the real-ω overload of
+  // AddExtraSystemBdrCoefficients (driven/boundary-mode: Floquet term included, cached
+  // wave-port Initialize, Re(k_n) only), while std::complex dispatches to the complex-ω
+  // overload (eigenmode nonlinear solve: exact analytic continuation, including the
+  // wave-port attenuation -Im(k_n)·M on the real slot even at real ω).
+  template <typename A3Type>
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
-                              std::complex<double> a2, std::complex<double> a3,
+                              std::complex<double> a2, A3Type a3,
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec,
                               std::vector<std::unique_ptr<Operator>> &bi_vec,
                               std::vector<std::unique_ptr<Operator>> &bi_aux_vec);
+  template <typename A3Type>
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
-                              std::complex<double> a2, std::complex<double> a3,
+                              std::complex<double> a2, A3Type a3,
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec);
   void AssemblePreconditioner(double a0, double a1, double a2, double a3,
@@ -223,11 +230,13 @@ public:
                                                  Operator::DiagonalPolicy diag_policy,
                                                  bool include_wave_ports);
 
-  // Complex-ω overload for the eigenmode nonlinear solve: assembles A2(λ) with all three
-  // frequency-dependent boundary terms evaluated at the genuinely complex frequency
-  // (ω = -i·λ). Always a ComplexOperator (the wave-port / ABC / surf-σ terms acquire a
-  // real-slot contribution at complex ω). For real ω this matches GetExtraSystemMatrix<
-  // ComplexOperator>(double).
+  // Complex-ω overload for the eigenmode nonlinear solve: assembles A2(λ) with all
+  // frequency-dependent boundary terms (2nd-order ABC, surface conductivity, rational
+  // impedance, numeric wave ports) evaluated at the genuinely complex frequency
+  // (ω = -i·λ). Always a ComplexOperator (these terms acquire a real-slot contribution
+  // at complex ω). For real ω this matches GetExtraSystemMatrix<ComplexOperator>(double)
+  // up to the wave-port term, which additionally carries the attenuation -Im(k_n)·M on
+  // the real slot (the real-ω path intentionally stamps only Re(k_n)).
   std::unique_ptr<ComplexOperator>
   GetExtraSystemMatrix(std::complex<double> omega, Operator::DiagonalPolicy diag_policy);
 
@@ -265,9 +274,16 @@ public:
   // is real-valued (Mr > 0, Mi < 0, |Mr + Mi| is done on the material property coefficient,
   // not the matrix entries themselves):
   //             B = a0 K + a1 C -/+ a2 |Mr + Mi| + A2r(a3) + A2i(a3).
-  template <typename OperType, typename ScalarType>
+  // The a3 type is an explicit caller choice of the A2 stamping path, independent of the
+  // a3 value: double selects the real-ω path (driven/boundary-mode: Floquet term
+  // included, cached wave-port EVP, Re(k_n) only), std::complex<double> the complex-ω
+  // analytic continuation (eigenmode nonlinear solve: no Floquet term, uncached wave-port
+  // EVP carrying -Im(k_n)·M on the real slot even for real-valued a3). The choice cannot
+  // be inferred from Im(a3) == 0 because the HYBRID eigenmode seed needs the complex
+  // stamping at real frequencies.
+  template <typename OperType, typename ScalarType, typename A3Type>
   std::unique_ptr<OperType> GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
-                                                    ScalarType a2, ScalarType a3);
+                                                    ScalarType a2, A3Type a3);
 
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const

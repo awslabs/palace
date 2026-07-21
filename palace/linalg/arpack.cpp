@@ -406,18 +406,20 @@ int ArpackEigenvalueSolver::SolveInternal(int n, std::complex<double> *r,
     {
       return l_on_target_side;
     }
+    // d* = distance to the target, per component (imaginary part first: TARGET_IMAGINARY
+    // ranks by closeness in Im(λ), with Re(λ) and |λ - σ| as tie-breakers).
     const double target = sigma.imag();
-    const double l_dimag = std::abs(eig[l].imag() - target);
-    const double r_dimag = std::abs(eig[r].imag() - target);
-    if (l_dimag != r_dimag)
+    const double l_dist_imag = std::abs(eig[l].imag() - target);
+    const double r_dist_imag = std::abs(eig[r].imag() - target);
+    if (l_dist_imag != r_dist_imag)
     {
-      return l_dimag < r_dimag;
+      return l_dist_imag < r_dist_imag;
     }
-    const double l_dreal = std::abs(eig[l].real() - sigma.real());
-    const double r_dreal = std::abs(eig[r].real() - sigma.real());
-    if (l_dreal != r_dreal)
+    const double l_dist_real = std::abs(eig[l].real() - sigma.real());
+    const double r_dist_real = std::abs(eig[r].real() - sigma.real());
+    if (l_dist_real != r_dist_real)
     {
-      return l_dreal < r_dreal;
+      return l_dist_real < r_dist_real;
     }
     return std::abs(eig[l] - sigma) < std::abs(eig[r] - sigma);
   };
@@ -433,6 +435,8 @@ int ArpackEigenvalueSolver::SolveInternal(int n, std::complex<double> *r,
     int num_target_side = 0;
     for (int i = 0; i < num_extracted; i++)
     {
+      // In-place compaction: num_target_side <= i always, so perm[i] is read before it
+      // can be overwritten (at worst a safe self-assignment).
       if (OnTargetImagSide(eig[perm[i]]))
       {
         perm[num_target_side++] = perm[i];

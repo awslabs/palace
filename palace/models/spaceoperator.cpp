@@ -552,9 +552,10 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
                                     Operator::DiagonalPolicy diag_policy)
 {
   // Complex-ω A2(λ) for the eigenmode nonlinear solve: identical assembly to the real-ω
-  // overload but the three frequency-dependent boundary terms are evaluated at the
-  // genuinely complex frequency (ω = -i·λ). Always returns a ComplexOperator since the
-  // wave-port / ABC / surf-σ terms carry a real-slot contribution at complex ω.
+  // overload but the frequency-dependent boundary terms (2nd-order ABC, surface
+  // conductivity, rational impedance, numeric wave ports) are evaluated at the genuinely
+  // complex frequency (ω = -i·λ). Always returns a ComplexOperator since these terms
+  // carry a real-slot contribution at complex ω.
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
       dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
@@ -774,9 +775,10 @@ void ProjectBdrCoefficientViaMassSolve(SumVectorCoefficient &fb, const LumpedPor
 
 }  // namespace
 
+template <typename A3Type>
 void SpaceOperator::AssemblePreconditioner(
-    std::complex<double> a0, std::complex<double> a1, std::complex<double> a2,
-    std::complex<double> a3, std::vector<std::unique_ptr<Operator>> &br_vec,
+    std::complex<double> a0, std::complex<double> a1, std::complex<double> a2, A3Type a3,
+    std::vector<std::unique_ptr<Operator>> &br_vec,
     std::vector<std::unique_ptr<Operator>> &br_aux_vec,
     std::vector<std::unique_ptr<Operator>> &bi_vec,
     std::vector<std::unique_ptr<Operator>> &bi_aux_vec)
@@ -838,9 +840,10 @@ void SpaceOperator::AssemblePreconditioner(
   }
 }
 
+template <typename A3Type>
 void SpaceOperator::AssemblePreconditioner(
-    std::complex<double> a0, std::complex<double> a1, std::complex<double> a2,
-    std::complex<double> a3, std::vector<std::unique_ptr<Operator>> &br_vec,
+    std::complex<double> a0, std::complex<double> a1, std::complex<double> a2, A3Type a3,
+    std::vector<std::unique_ptr<Operator>> &br_vec,
     std::vector<std::unique_ptr<Operator>> &br_aux_vec)
 {
   constexpr bool skip_zeros = false, assemble_q_data = false;
@@ -906,10 +909,10 @@ void SpaceOperator::AssemblePreconditioner(
   }
 }
 
-template <typename OperType, typename ScalarType>
-std::unique_ptr<OperType>
-SpaceOperator::GetPreconditionerMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
-                                       ScalarType a3)
+template <typename OperType, typename ScalarType, typename A3Type>
+std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
+                                                                 ScalarType a1,
+                                                                 ScalarType a2, A3Type a3)
 {
   // When partially assembled, the coarse operators can reuse the fine operator quadrature
   // data if the spaces correspond to the same mesh. When appropriate, we build the
@@ -1083,10 +1086,9 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
   // all frequency-dependent boundary terms (2nd-order farfield ABC, surface conductivity,
   // rational surface impedance, numeric wave ports) are evaluated at the genuinely complex
   // frequency (ω = -i·λ) so the assembled A2(λ) is the exact analytic continuation. For
-  // real ω the operators' complex overloads reduce to their double overloads. Rational
-  // impedance boundaries are currently rejected outside driven/boundary-mode problems at
-  // configuration time, but the term is stamped here so the operator stays complete if
-  // that restriction is lifted.
+  // real ω the operators' complex overloads reduce to their double overloads, except the
+  // wave-port term, which additionally carries the line attenuation -Im(k_n)·M on the
+  // real slot (the real-ω overload intentionally stamps only Re(k_n)).
   farfield_op.AddExtraSystemBdrCoefficients(omega, dfbr, dfbi);
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
@@ -1361,10 +1363,16 @@ SpaceOperator::GetSystemMatrix<ComplexOperator, std::complex<double>>(
     const ComplexOperator *);
 
 template std::unique_ptr<Operator>
-SpaceOperator::GetPreconditionerMatrix<Operator, double>(double, double, double, double);
+SpaceOperator::GetPreconditionerMatrix<Operator, double, double>(double, double, double,
+                                                                 double);
 template std::unique_ptr<ComplexOperator>
-    SpaceOperator::GetPreconditionerMatrix<ComplexOperator, std::complex<double>>(
-        std::complex<double>, std::complex<double>, std::complex<double>,
-        std::complex<double>);
+SpaceOperator::GetPreconditionerMatrix<ComplexOperator, std::complex<double>, double>(
+    std::complex<double>, std::complex<double>, std::complex<double>, double);
+template std::unique_ptr<ComplexOperator>
+    SpaceOperator::GetPreconditionerMatrix<ComplexOperator, std::complex<double>,
+                                           std::complex<double>>(std::complex<double>,
+                                                                 std::complex<double>,
+                                                                 std::complex<double>,
+                                                                 std::complex<double>);
 
 }  // namespace palace

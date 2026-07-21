@@ -212,6 +212,24 @@ AssembleAnn(const FiniteElementSpace &h1_fespace, const MaterialOperator &mat_op
   MaterialPropertyCoefficient poseps_h1_func(
       mat_op.GetAttributeToMaterial(),
       normal ? mat_op.GetPermittivityReal() : mat_op.GetPermittivityScalar(), w2r);
+  if (complex_omega && mat_op.HasLossTangent())
+  {
+    // Cross term: Re(+ω²·(i·ε_imag)) = -w2i·ε_imag — mirror of the +w2i·ε_imag term in
+    // AssembleAtt. Accumulate before the (destructive) normal projection below;
+    // projection is linear so this equals projecting the sum.
+    poseps_h1_func.AddCoefficient(
+        mat_op.GetAttributeToMaterial(),
+        normal ? mat_op.GetPermittivityImag() : mat_op.GetPermittivityImagScalar(), -w2i);
+  }
+  if (complex_omega && mat_op.HasConductivity())
+  {
+    // Cross term: Re(-iω·σ) = +wi·σ — mirror of the -wi·σ term in AssembleAtt (the
+    // conduction current enters the normal block with the opposite sign, -iωσ vs +iωσ,
+    // following the +ω²ε_c vs -ω²ε_c convention).
+    poseps_h1_func.AddCoefficient(
+        mat_op.GetAttributeToMaterial(),
+        normal ? mat_op.GetConductivity() : mat_op.GetConductivityScalar(), wi);
+  }
   if (normal)
   {
     poseps_h1_func.NormalProjectedCoefficient(*normal);
@@ -298,7 +316,8 @@ AssembleAnn(const FiniteElementSpace &h1_fespace, const MaterialOperator &mat_op
 
   std::unique_ptr<mfem::HypreParMatrix> Anni_assembled;
   {
-    const bool has_imag = mat_op.HasLossTangent() || !nn_fbi.empty() || complex_omega;
+    const bool has_imag = mat_op.HasLossTangent() || mat_op.HasConductivity() ||
+                          !nn_fbi.empty() || complex_omega;
     if (has_imag)
     {
       const int n_attr = mat_op.GetAttributeToMaterial().Size();
@@ -321,6 +340,15 @@ AssembleAnn(const FiniteElementSpace &h1_fespace, const MaterialOperator &mat_op
                                        normal ? mat_op.GetPermittivityImag()
                                               : mat_op.GetPermittivityImagScalar(),
                                        w2r);
+      }
+      if (mat_op.HasConductivity())
+      {
+        // Im(-iω·σ) = -wr·σ: the conduction-current part of the complex permittivity
+        // ε_c = ε - iσ/ω in the normal block's +ω²·ε_c term (mirror of the +wr·σ term in
+        // AssembleAtt, opposite sign convention).
+        posepsi_h1_func.AddCoefficient(
+            mat_op.GetAttributeToMaterial(),
+            normal ? mat_op.GetConductivity() : mat_op.GetConductivityScalar(), -wr);
       }
       if (normal && !posepsi_h1_func.empty())
       {
