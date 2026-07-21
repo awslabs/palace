@@ -31,6 +31,7 @@ set(PALACE_BUILD_EXTERNAL_DEPS ON CACHE BOOL "Build external third-party depende
 set(PALACE_WITH_SUPERLU ON CACHE BOOL "Build with SuperLU_DIST sparse direct solver")
 set(PALACE_WITH_STRUMPACK OFF CACHE BOOL "Build with STRUMPACK sparse direct solver")
 set(PALACE_WITH_MUMPS OFF CACHE BOOL "Build with MUMPS sparse direct solver")
+set(PALACE_WITH_CUDSS OFF CACHE BOOL "Build with cuDSS sparse direct solver")
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 set(PALACE_WITH_LIBXSMM ON CACHE BOOL "Build with LIBXSMM backend for libCEED")
@@ -151,6 +152,11 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 if(CMAKE_C_COMPILER_ID STREQUAL "Intel" OR CMAKE_CXX_COMPILER_ID STREQUAL "Intel")
   message(WARNING "The Intel classic compilers (icc/icpc) are no longer supported and \
 have been replaced by the newer Clang-based icx/icpx from Intel oneAPI")
+endif()
+
+# cuDSS is only for CUDA builds
+if(PALACE_WITH_CUDSS AND NOT PALACE_WITH_CUDA)
+  message(FATAL_ERROR "PALACE_WITH_CUDSS requires PALACE_WITH_CUDA")
 endif()
 
 # MAGMA is only for GPU builds

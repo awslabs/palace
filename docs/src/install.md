@@ -54,10 +54,10 @@ spack install palace
 
 This will install the default version of *Palace*. Spack supports installing
 _variants_ of *Palace*. For instance, if you want to install *Palace* with CUDA,
-MUMPS and SLEPc, call
+MUMPS, SLEPc and the NVIDIA cuDSS GPU sparse direct solver, call
 
 ```bash
-spack install palace +mumps +slepc +cuda cuda_arch=90
+spack install palace +mumps +slepc +cuda +cudss cuda_arch=90
 ```
 
 where `cuda_arch` is determined by the [generation of your
@@ -192,6 +192,9 @@ Additional build options are (with default values in brackets):
   - `PALACE_WITH_SUPERLU [ON]` :  Build with SuperLU_DIST sparse direct solver
   - `PALACE_WITH_STRUMPACK [OFF]` :  Build with STRUMPACK sparse direct solver
   - `PALACE_WITH_MUMPS [OFF]` :  Build with MUMPS sparse direct solver
+  - `PALACE_WITH_CUDSS [OFF]` :  Build with NVIDIA cuDSS sparse direct solver (requires
+    `PALACE_WITH_CUDA=ON`; the cuDSS installation directory can be specified with
+    `CUDSS_DIR`)
   - `PALACE_WITH_SLEPC [ON]` :  Build with SLEPc eigenvalue solver
   - `PALACE_WITH_ARPACK [OFF]` :  Build with ARPACK eigenvalue solver
   - `PALACE_WITH_LIBXSMM [ON]` :  Build with LIBXSMM backend for libCEED
@@ -281,7 +284,9 @@ source code for these dependencies is downloaded during the build process:
 
 For solving eigenvalue problems, at least one of SLEPc or ARPACK-NG must be specified.
 Typically only one of the SuperLU_DIST, STRUMPACK, and MUMPS dependencies is required but
-all can be built so the user can decide at runtime which solver to use.
+all can be built so the user can decide at runtime which solver to use. On CUDA builds, the
+NVIDIA cuDSS GPU-resident sparse direct solver is additionally available via
+`PALACE_WITH_CUDSS` (selected at runtime with `"Type": "cuDSS"`).
 
 For unit testing, *Palace* relies on the [Catch2
 library](https://github.com/catchorg/Catch2), which is automatically downloaded

@@ -36,6 +36,7 @@ set(PALACE_WITH_HIP OFF CACHE BOOL "Use HIP for AMD or NVIDIA GPU support")
 set(PALACE_WITH_SUPERLU ON CACHE BOOL "Build with SuperLU_DIST sparse direct solver")
 set(PALACE_WITH_STRUMPACK OFF CACHE BOOL "Build with STRUMPACK sparse direct solver")
 set(PALACE_WITH_MUMPS OFF CACHE BOOL "Build with MUMPS sparse direct solver")
+set(PALACE_WITH_CUDSS OFF CACHE BOOL "Build with cuDSS sparse direct solver")
 set(PALACE_WITH_SLEPC ON CACHE BOOL "Build with SLEPc eigenvalue solver")
 set(PALACE_WITH_ARPACK OFF CACHE BOOL "Build with ARPACK eigenvalue solver")
 set(PALACE_WITH_SUNDIALS ON CACHE BOOL "Build with SUNDIALS time integrators")
@@ -89,6 +90,9 @@ set(GSLIB_DIR "" CACHE STRING
 )
 set(SCALAPACK_DIR "" CACHE STRING
   "Path to ScaLAPACK build or installation directory (not required if already on CMAKE_PREFIX_PATH)"
+)
+set(CUDSS_DIR "" CACHE STRING
+  "Path to cuDSS installation directory (not required if already on CMAKE_PREFIX_PATH)"
 )
 
 # Enable Fortran if required
@@ -604,6 +608,15 @@ if(PALACE_WITH_MUMPS)
       SCALAPACK::SCALAPACK ${MPI_Fortran_LIBRARIES})
     target_include_directories(${LIB_TARGET_NAME} PUBLIC ${MUMPS_INCLUDE_DIR})
   endif()
+endif()
+
+# Link cuDSS
+if(PALACE_WITH_CUDSS)
+  find_library(CUDSS_LIBRARY NAMES cudss HINTS ${CUDSS_DIR}/lib REQUIRED)
+  find_path(CUDSS_INCLUDE_DIR NAMES cudss.h HINTS ${CUDSS_DIR}/include REQUIRED)
+  message(STATUS "Found cuDSS: ${CUDSS_LIBRARY}")
+  target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${CUDSS_LIBRARY})
+  target_include_directories(${LIB_TARGET_NAME} PUBLIC ${CUDSS_INCLUDE_DIR})
 endif()
 
 # Link METIS and ParMETIS (must come after SuperLU_DIST, STRUMPACK, MUMPS for static linking)

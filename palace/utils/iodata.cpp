@@ -610,6 +610,10 @@ void IoData::CheckConfiguration()
   MFEM_VERIFY(solver.linear.type != LinearSolver::MUMPS,
               "Linear solver MUMPS requested but Palace was not built with MUMPS support!");
 #endif
+#if !defined(MFEM_USE_CUDSS)
+  MFEM_VERIFY(solver.linear.type != LinearSolver::CUDSS,
+              "Linear solver cuDSS requested but Palace was not built with cuDSS support!");
+#endif
 
   // Configure settings for quadrature rules and partial assembly.
   BilinearForm::pa_order_threshold = solver.pa_order_threshold;
