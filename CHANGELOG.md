@@ -31,21 +31,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Enable at build time with `PALACE_WITH_CUDSS=ON` (requires `PALACE_WITH_CUDA=ON`).
     SchemaVer 1-3-0 [PR 717](https://github.com/awslabs/palace/pull/717).
 
-#### Bug Fixes
-
-  - Fixed S-parameter post-processing for mixed Floquet + lumped/wave port configurations.
-    Previously, `MeasureSParameter()` skipped processing when Floquet ports coexisted with
-    lumped or wave ports, leaving `port-S.csv` with incorrect values. The fix applies a power
-    normalization factor, restoring S-matrix unitarity and reciprocity for the mixed
-    case [PR 804](https://github.com/awslabs/palace/pull/804).
-  - Fixed a bug where a mesh saved with `"SaveAdaptMesh"` during nonconformal AMR on a
-    periodic problem could not be used as the input mesh for a subsequent solve. Loading now
-    detects the already-periodic mesh and skips the periodicity construction.
-    [PR 810](https://github.com/awslabs/palace/pull/810).
-  - Fixed an overflow in the mesh broadcast path used when loading nonconformal meshes by
-    introducing a chunked MPI broadcast call handle arbitrarily large meshes.
-    [PR 810](https://github.com/awslabs/palace/pull/810).
-
 #### Interface Changes
 
   - Eigenmode simulations with frequency-dependent boundary conditions (e.g. waveports,
@@ -64,9 +49,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     lumped or wave ports, leaving `port-S.csv` with incorrect values. The fix applies a power
     normalization factor, restoring S-matrix unitarity and reciprocity for the mixed
     case [PR 804](https://github.com/awslabs/palace/pull/804).
+  - Fixed a bug where a mesh saved with `"SaveAdaptMesh"` during nonconformal AMR on a
+    periodic problem could not be used as the input mesh for a subsequent solve. Loading now
+    detects the already-periodic mesh and skips the periodicity construction.
+    [PR 810](https://github.com/awslabs/palace/pull/810).
+  - Fixed an overflow in the mesh broadcast path used when loading nonconformal meshes by
+    introducing a chunked MPI broadcast call handle arbitrarily large meshes.
+    [PR 810](https://github.com/awslabs/palace/pull/810).
   - Fixed a bug in the 2D mode eigensolver that sometimes led to crashes when waveports
     were used in conjunction with non-zero conductivity materials.
     [PR 778](https://github.com/awslabs/palace/pull/778).
+  - Fixed a bug in the 2D mode eigensolver for lossy cross-sections, where a complex
+    permittivity term was missing. [PR 778](https://github.com/awslabs/palace/pull/778).
 
 ## [0.17.0] - 2026-06-28
 

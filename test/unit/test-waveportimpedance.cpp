@@ -361,4 +361,149 @@ TEST_CASE("WavePortData TE10 at complex ω", "[waveportimpedance][Serial]")
   }
 }
 
+// Validate the wave-port cross-section solve for a guide with a lossy (finite domain
+// conductivity σ) fill against the closed-form dispersion with complex permittivity,
+//
+//   k_n(ω) = √(ω²μ(ε − iσ/ω) − k_c²) = √(ω²με − iωμσ − k_c²),
+//
+// which holds for BOTH the TE and TM modes of a homogeneous rectangular guide. The
+// conduction current enters the 2D mode solver's two blocks with opposite signs (+iωσ in
+// the transverse Att block, −iωσ in the normal Ann block, following the ∓ω²ε_c sign
+// convention). A TE mode has no normal field component (e_n = 0), so it exercises only
+// Att; a TM mode has e_n ≠ 0 and requires the Ann σ terms to be assembled consistently
+// with Att — with σ missing from Ann (the historical gap), the degenerate TE11/TM11 pair
+// splits into one correct root and one root missing its conduction loss, while TE10 stays
+// correct. Checking BOTH members of the pair against the same closed form therefore pins
+// the Ann σ assembly and the Att/Ann consistency regardless of how the degenerate pair is
+// ordered. The complex-ω section additionally covers the Im(ω)·σ cross terms on the
+// opposite slots (Re(±iωσ) = ∓wi·σ).
+TEST_CASE("WavePortData lossy fill at real and complex ω", "[waveportimpedance][Serial]")
+{
+  MPI_Comm comm = Mpi::World();
+
+  // WR-90 guide, uniformly filled with a weakly conducting dielectric. At 20 GHz,
+  // σ/(ωε₀) ≈ 0.09, so the conduction term is a ~9% effect — far above discretization
+  // error but small enough that the mode structure is unchanged. Cutoffs: TE10 6.56,
+  // TE20 13.11, TE01 14.75, TE11/TM11 16.15 GHz (degenerate pair, modes 4 and 5).
+  const double a_m = 22.86e-3;
+  const double b_m = 10.16e-3;
+  const double L_m = 10.0e-3;
+  const double sigma_Sm = 0.1;
+  const double f_GHz = 20.0;
+
+  // The TM11 transverse wavenumber k_c = π√(1/a² + 1/b²) ≈ 338 rad/m is 2.5x the TE10
+  // one; refine the port face beyond the TE10 tests' 8x8x4 for comparable accuracy.
+  auto build_kn = [&](int mode_idx, std::complex<double> omega_scale)
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(4, 14, 8, mfem::Element::TETRAHEDRON, L_m, a_m, b_m));
+
+    Units units(1.0, 1.0);
+    IoData iodata(units);
+    iodata.model.L0 = 1.0;
+    iodata.model.Lc = 1.0;
+
+    auto &material = iodata.domains.materials.emplace_back();
+    material.attributes = {1};
+    material.epsilon_r.s = {1.0, 1.0, 1.0};
+    material.mu_r.s = {1.0, 1.0, 1.0};
+    material.sigma.s = {sigma_Sm, sigma_Sm, sigma_Sm};
+
+    iodata.boundaries.pec.attributes = {1, 2, 3, 4, 6};
+
+    auto &wave = iodata.boundaries.waveport.try_emplace(1).first->second;
+    wave.attributes = {5};
+    wave.mode_idx = mode_idx;
+    wave.excitation = 0;
+    wave.active = true;
+    wave.eig_tol = 1.0e-10;
+    wave.ksp_tol = 1.0e-10;
+    wave.ksp_max_its = 200;
+    // Mirror the formula used by IoData::CheckConfiguration for eigenmode.max_size.
+    wave.max_size = std::max(2 * wave.mode_idx, wave.mode_idx + 15);
+
+    iodata.solver.order = 2;
+    iodata.solver.linear.tol = 1.0e-10;
+    iodata.solver.linear.max_it = 200;
+    iodata.problem.type = ProblemType::DRIVEN;
+
+    iodata.NondimensionalizeInputs(serial_mesh);
+    auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+    iodata.CheckConfiguration();
+    Mesh palace_mesh(std::move(par_mesh));
+
+    auto nd_fec = std::make_unique<mfem::ND_FECollection>(iodata.solver.order,
+                                                          palace_mesh.Dimension());
+    auto h1_fec = std::make_unique<mfem::H1_FECollection>(iodata.solver.order,
+                                                          palace_mesh.Dimension());
+    FiniteElementSpace nd_fespace_palace(palace_mesh, nd_fec.get());
+    FiniteElementSpace h1_fespace_palace(palace_mesh, h1_fec.get());
+    MaterialOperator mat_op(iodata, palace_mesh);
+
+    WavePortOperator wave_port_op(iodata, mat_op, nd_fespace_palace.Get(),
+                                  h1_fespace_palace.Get());
+    wave_port_op.SetSuppressOutput(true);
+    auto &port = const_cast<WavePortData &>(wave_port_op.GetPort(1));
+
+    const double omega_nd =
+        2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz);
+    const std::complex<double> kn_nd = port.SolveKnComplex(omega_nd * omega_scale);
+    const double kn_scale =
+        1.0 / iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+    return kn_nd * kn_scale;  // physical rad/m
+  };
+
+  const double c0 = electromagnetics::c0_;
+  const double mu0 = 4.0e-7 * M_PI;
+  auto kn_closed_form = [&](double kc, std::complex<double> omega_rad_s)
+  {
+    const std::complex<double> k0 = omega_rad_s / c0;
+    return std::sqrt(
+        k0 * k0 - std::complex<double>(0.0, 1.0) * omega_rad_s * mu0 * sigma_Sm - kc * kc);
+  };
+  const double kc_te10 = M_PI / a_m;
+  const double kc_tm11 = M_PI * std::sqrt(1.0 / (a_m * a_m) + 1.0 / (b_m * b_m));
+  const std::complex<double> omega_r(2.0 * M_PI * f_GHz * 1.0e9, 0.0);
+
+  SECTION("TE10 (transverse only: validates Att +iωσ)")
+  {
+    const std::complex<double> kn = build_kn(1, {1.0, 0.0});
+    const std::complex<double> kn_ref = kn_closed_form(kc_te10, omega_r);
+    CAPTURE(kn, kn_ref);
+    CHECK_THAT(kn.real(), WithinRel(kn_ref.real(), 1.0e-3));
+    CHECK_THAT(kn.imag(), WithinRel(kn_ref.imag(), 1.0e-3));
+    // The conduction loss must actually be there (Im(k_n) ≈ -19.9 rad/m at 20 GHz).
+    CHECK(std::abs(kn.imag()) > 10.0);
+  }
+
+  SECTION("TE11/TM11 pair (normal component: validates Ann -iωσ and Att/Ann consistency)")
+  {
+    // Both members of the degenerate pair must satisfy the same closed form
+    // (kn ≈ 249.4 - 31.7i rad/m); a σ term missing from Ann breaks exactly one of them.
+    const std::complex<double> kn_ref = kn_closed_form(kc_tm11, omega_r);
+    for (int mode_idx : {4, 5})
+    {
+      const std::complex<double> kn = build_kn(mode_idx, {1.0, 0.0});
+      CAPTURE(mode_idx, kn, kn_ref);
+      CHECK_THAT(kn.real(), WithinRel(kn_ref.real(), 5.0e-3));
+      CHECK_THAT(kn.imag(), WithinRel(kn_ref.imag(), 5.0e-3));
+    }
+  }
+
+  SECTION("TE11/TM11 pair at complex ω (validates the Im(ω)·σ cross terms)")
+  {
+    // ω = ω_r(1 + i/20): the σ cross terms Re(±iωσ) = ∓wi·σ land on the real slots of
+    // Att/Ann and only contribute off the real-ω axis.
+    const std::complex<double> scale_c(1.0, 0.05);
+    const std::complex<double> kn_ref = kn_closed_form(kc_tm11, omega_r * scale_c);
+    for (int mode_idx : {4, 5})
+    {
+      const std::complex<double> kn = build_kn(mode_idx, scale_c);
+      CAPTURE(mode_idx, kn, kn_ref);
+      CHECK_THAT(kn.real(), WithinRel(kn_ref.real(), 5.0e-3));
+      CHECK_THAT(kn.imag(), WithinRel(kn_ref.imag(), 5.0e-3));
+    }
+  }
+}
+
 }  // namespace palace
