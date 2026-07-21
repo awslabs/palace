@@ -105,6 +105,7 @@ def main():
     )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--order", type=int, default=1)
+    parser.add_argument("--length", type=int, choices=(50, 200), default=50)
     parser.add_argument(
         "--mesh-directory",
         type=Path,
@@ -117,8 +118,11 @@ def main():
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     mesh_directory = args.mesh_directory.expanduser().resolve()
-    thin_mesh = mesh_directory / "cpw3d_surface_maxwell_thin.msh"
-    fabricated_mesh = mesh_directory / "cpw3d_surface_maxwell_fabricated.msh"
+    suffix = "" if args.length == 50 else f"_L{args.length}"
+    thin_mesh = mesh_directory / f"cpw3d_surface_maxwell_thin{suffix}.msh"
+    fabricated_mesh = (
+        mesh_directory / f"cpw3d_surface_maxwell_fabricated{suffix}.msh"
+    )
     for mesh in (thin_mesh, fabricated_mesh):
         if not mesh.is_file():
             raise FileNotFoundError(

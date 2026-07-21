@@ -260,11 +260,14 @@ protected:
     {
       double raw_energy = 0.0;
       double corrected_energy = 0.0;
+      double corrected_energy_fixed_flux = 0.0;
+      double trace_closure_spread = 0.0;
       double loss_tangent = 0.0;
     };
 
     double raw_normalization_energy = 0.0;
     double corrected_normalization_energy = 0.0;
+    double corrected_normalization_energy_fixed_flux = 0.0;
     std::map<int, Interface> interfaces;
     SurfaceResponseOperator::MaxwellResponse confidence;
   };

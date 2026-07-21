@@ -45,7 +45,10 @@ private:
   {
     int idx = 0;
     int basis_size = 0;
+    mfem::DenseMatrix fabricated_domain;
+    mfem::DenseMatrix thin_domain;
     mfem::DenseMatrix domain_defect;
+    mfem::DenseMatrix fixed_flux_transform;
     std::map<int, mfem::DenseMatrix> fabricated_surfaces;
     std::map<int, mfem::DenseMatrix> surface_defects;
   };
@@ -99,7 +102,9 @@ public:
   struct MaxwellResponse
   {
     double domain_correction = 0.0;
+    double domain_correction_fixed_flux = 0.0;
     std::map<int, double> fabricated_surface_energy;
+    std::map<int, double> fabricated_surface_energy_fixed_flux;
 
     double kR = 0.0;
     double loop_residual = 0.0;
@@ -107,6 +112,7 @@ public:
     double corner_neighborhood_fraction = 0.0;
     double maximum_curvature_ratio = 0.0;
     double maximum_library_distance = 0.0;
+    double maximum_trace_closure_spread = 0.0;
     bool confident = true;
   };
 

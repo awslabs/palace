@@ -1728,9 +1728,18 @@ mfem::DenseMatrix BuildDenseMatrix(const std::vector<MatrixEntry> &entries, int 
   return matrix;
 }
 
-mfem::DenseMatrix BuildDomainResponseDefect(const std::string &fabricated_path,
-                                            const std::string &thin_path, int expected_size,
-                                            const Units &units)
+struct DomainResponseMatrices
+{
+  mfem::DenseMatrix fabricated;
+  mfem::DenseMatrix thin;
+  mfem::DenseMatrix defect;
+  mfem::DenseMatrix fixed_flux_transform;
+};
+
+DomainResponseMatrices BuildDomainResponseMatrices(const std::string &fabricated_path,
+                                                   const std::string &thin_path,
+                                                   int expected_size,
+                                                   const Units &units)
 {
   auto [fabricated_size, fabricated_entries] = ReadDomainResponseMatrix(fabricated_path);
   auto [thin_size, thin_entries] = ReadDomainResponseMatrix(thin_path);
@@ -1742,12 +1751,19 @@ mfem::DenseMatrix BuildDomainResponseDefect(const std::string &fabricated_path,
 
   // The CSV stores coupon energy Q in joules for basis traces measured in volts.
   // Internally, 1/2 xᵀ C x must equal the nondimensional energy defect, so
-  // C = 2 V_scale² / E_scale (Q_fabricated - Q_thin).
+  // C = 2 V_scale² / E_scale Q.
   const double voltage_scale = units.GetScaleFactor<Units::ValueType::VOLTAGE>();
   const double energy_scale = units.GetScaleFactor<Units::ValueType::ENERGY>();
-  fabricated.Add(-1.0, thin);
-  fabricated *= 2.0 * voltage_scale * voltage_scale / energy_scale;
-  return fabricated;
+  const double scale = 2.0 * voltage_scale * voltage_scale / energy_scale;
+  fabricated *= scale;
+  thin *= scale;
+
+  mfem::DenseMatrix defect(fabricated);
+  defect.Add(-1.0, thin);
+  mfem::DenseMatrix fixed_flux_transform;
+  mfem::DenseMatrixInverse(fabricated, true).Mult(thin, fixed_flux_transform);
+  return {std::move(fabricated), std::move(thin), std::move(defect),
+          std::move(fixed_flux_transform)};
 }
 
 std::map<int, mfem::DenseMatrix> ReadSurfaceResponseMatrices(const std::string &path,
@@ -2039,9 +2055,14 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
     ResponseModel model;
     model.idx = model_config.idx;
     model.basis_size = static_cast<int>(points.size());
-    model.domain_defect =
-        BuildDomainResponseDefect(model_config.fabricated_matrix, model_config.thin_matrix,
-                                  model.basis_size, iodata.units);
+    auto domain_response =
+        BuildDomainResponseMatrices(model_config.fabricated_matrix,
+                                    model_config.thin_matrix, model.basis_size,
+                                    iodata.units);
+    model.fabricated_domain = std::move(domain_response.fabricated);
+    model.thin_domain = std::move(domain_response.thin);
+    model.domain_defect = std::move(domain_response.defect);
+    model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
     auto surface_response =
         BuildSurfaceResponseMatrices(model_config, model.basis_size, iodata.units);
     model.fabricated_surfaces = std::move(surface_response.fabricated);
@@ -2232,10 +2253,14 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
     ResponseModel model;
     model.idx = model_config.idx;
     model.basis_size = static_cast<int>(points.size());
-    model.domain_defect =
-        BuildDomainResponseDefect(model_config.fabricated_matrix,
-                                  model_config.thin_matrix, model.basis_size,
-                                  iodata.units);
+    auto domain_response =
+        BuildDomainResponseMatrices(model_config.fabricated_matrix,
+                                    model_config.thin_matrix, model.basis_size,
+                                    iodata.units);
+    model.fabricated_domain = std::move(domain_response.fabricated);
+    model.thin_domain = std::move(domain_response.thin);
+    model.domain_defect = std::move(domain_response.defect);
+    model.fixed_flux_transform = std::move(domain_response.fixed_flux_transform);
     auto surface_response =
         BuildSurfaceResponseMatrices(model_config, model.basis_size, iodata.units);
     model.fabricated_surfaces = std::move(surface_response.fabricated);
@@ -2484,7 +2509,7 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   result.maximum_curvature_ratio = maximum_curvature_ratio;
   result.maximum_library_distance = maximum_library_distance;
 
-  Vector trace_real, trace_imag, workspace;
+  Vector trace_real, trace_imag, fixed_flux_real, fixed_flux_imag, workspace;
   for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
   {
     const auto &patch = patches[patch_index];
@@ -2495,6 +2520,8 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
 
     trace_real.SetSize(model.basis_size);
     trace_imag.SetSize(model.basis_size);
+    fixed_flux_real.SetSize(model.basis_size);
+    fixed_flux_imag.SetSize(model.basis_size);
     trace_real = 0.0;
     trace_imag = 0.0;
 
@@ -2547,17 +2574,29 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
           std::max(result.loop_residual, std::abs(loop_integral) / loop_scale);
     }
 
-    auto HermitianForm = [&](const mfem::DenseMatrix &matrix)
+    model.fixed_flux_transform.Mult(trace_real, fixed_flux_real);
+    model.fixed_flux_transform.Mult(trace_imag, fixed_flux_imag);
+    auto HermitianForm = [&](const mfem::DenseMatrix &matrix, const Vector &real,
+                             const Vector &imag)
     {
-      return QuadraticForm(matrix, trace_real, workspace) +
-             QuadraticForm(matrix, trace_imag, workspace);
+      return QuadraticForm(matrix, real, workspace) +
+             QuadraticForm(matrix, imag, workspace);
     };
     result.domain_correction +=
-        0.5 * patch.weight * HermitianForm(model.domain_defect);
+        0.5 * patch.weight *
+        HermitianForm(model.domain_defect, trace_real, trace_imag);
+    result.domain_correction_fixed_flux +=
+        0.5 * patch.weight *
+        (HermitianForm(model.fabricated_domain, fixed_flux_real, fixed_flux_imag) -
+         HermitianForm(model.thin_domain, trace_real, trace_imag));
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
-      result.fabricated_surface_energy[interface] +=
-          patch.weight * HermitianForm(matrix);
+      const double fixed_trace_energy =
+          patch.weight * HermitianForm(matrix, trace_real, trace_imag);
+      const double fixed_flux_energy =
+          patch.weight * HermitianForm(matrix, fixed_flux_real, fixed_flux_imag);
+      result.fabricated_surface_energy[interface] += fixed_trace_energy;
+      result.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
     }
   }
 
@@ -2567,12 +2606,30 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   constexpr double maximum_curvature = 0.25;
   constexpr double minimum_coverage = 1.0 - 1.0e-10;
   constexpr double maximum_library_match_distance = 0.8;
+  // Fixed-trace and fixed-flux closures are both admissible in postprocessing-only
+  // correction. A material difference between them means that the unresolved
+  // fabricated field is not determined accurately enough by the thin-model trace.
+  constexpr double maximum_trace_closure_spread = 0.05;
+  for (const auto &[interface, fixed_trace] : result.fabricated_surface_energy)
+  {
+    const auto fixed_flux = result.fabricated_surface_energy_fixed_flux.find(interface);
+    MFEM_ASSERT(fixed_flux != result.fabricated_surface_energy_fixed_flux.end(),
+                "Missing fixed-flux fabricated surface response!");
+    const double scale = std::max(std::abs(fixed_trace), std::abs(fixed_flux->second));
+    if (scale > 0.0)
+    {
+      result.maximum_trace_closure_spread =
+          std::max(result.maximum_trace_closure_spread,
+                   std::abs(fixed_trace - fixed_flux->second) / scale);
+    }
+  }
   result.confident =
       result.kR <= maximum_kR && result.loop_residual <= maximum_loop_residual &&
       result.matched_length_fraction >= minimum_coverage &&
       result.corner_neighborhood_fraction <= maximum_corner_fraction &&
       result.maximum_curvature_ratio <= maximum_curvature &&
-      result.maximum_library_distance <= maximum_library_match_distance;
+      result.maximum_library_distance <= maximum_library_match_distance &&
+      result.maximum_trace_closure_spread <= maximum_trace_closure_spread;
   return result;
 }
 

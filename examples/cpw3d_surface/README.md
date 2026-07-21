@@ -70,10 +70,12 @@ tolerance before enabling refinement.
 
 The compact wave-port case exercises the postprocessing-only Maxwell path
 against a fabrication-resolved driven reference. It uses the same held-out
-20/12 um CPW and fabrication stack, a 50 um extrusion, and two structured
-layers along the propagation direction. The length keeps the artificial
-wave-port endpoint neighborhoods below the current 10% confidence limit while
-remaining electrically short at 5 GHz.
+20/12 um CPW and fabrication stack and 50 and 200 um extrusions. Structured
+layers preserve a 25 um axial spacing along the propagation direction. The
+50 um line keeps the artificial wave-port endpoint neighborhoods below the
+current 10% confidence limit; the 200 um line reduces their fraction from
+0.08 to 0.02 so a length sweep can distinguish endpoint error from
+straight-edge response error. Both lines remain electrically short at 5 GHz.
 
 Generate the first-order thin and fabricated meshes:
 
@@ -91,8 +93,11 @@ matching radius:
 python3 examples/cpw3d_surface/prepare_maxwell_validation.py \
   --library /path/to/process-library-3d.json \
   --output /tmp/cpw3d-maxwell-validation \
-  --order 2
+  --order 2 \
+  --length 50
 ```
+
+Use `--length 200` to prepare the endpoint-sensitivity pair.
 
 Run the three generated configurations and compare them:
 
@@ -108,16 +113,45 @@ python3 examples/cpw3d_surface/compare_maxwell_validation.py \
 
 The comparison first verifies that enabling correction did not alter any raw
 output, then reports normalization, surface-energy numerator, and participation
-errors separately. On the generated mesh at order 2 with no AMR, the corrected
-SA/MS/MA participation errors relative to the same-order fabricated run were
-`+3.37%/-1.93%/+14.90%`, compared with raw errors of
-`-10.48%/-21.15%/-59.85%`. The confidence diagnostics passed: the matched
-fraction was one, the loop residual was below 0.05, and the artificial endpoint
-neighborhood fraction was 0.08.
+errors separately. `p_surf corrected` retains the original fixed-trace
+(Dirichlet) response. The additional `p_surf corrected fixed-flux` column uses
+the local fixed-flux (Neumann) response. Neither closure is selected as
+universally correct: their difference measures how strongly the unresolved
+fabricated field depends on a closure assumption that a postprocessing-only
+method cannot recover from the thin-metal field. The per-interface spread is
+reported in `surface-Q-corrected.csv`; its maximum is reported in
+`surface-response-confidence.csv` and fails confidence above 5%.
 
-The order-2 fabricated MA result remains about 11% below the converged 2D
-cross-section value. It is therefore not yet a converged three-dimensional
-reference. Repeat the corrected and fabricated runs at order 3 before using
-this case as an accuracy gate. A remote runner must make the process-library
-JSON and its matrix files visible at the exact path stored in the generated
-configuration; staging only the Palace config and mesh is insufficient.
+On the generated mesh at order 2 with no AMR, the fixed-trace SA/MS/MA
+participation errors relative to the same-order fabricated run were
+`+3.37%/-1.93%/+14.90%`, while the fixed-flux errors were
+`+10.13%/+1.66%/+7.64%`. Raw errors were
+`-10.48%/-21.15%/-59.85%`. The maximum closure spread was `8.27%`, so the
+closure diagnostic correctly rejects this result even though the matched
+fraction is one, the loop residual is below 0.05, and the artificial endpoint
+neighborhood fraction is 0.08.
+
+At order 4, the 50 um corrected SA/MS/MA errors were
+`+0.06%/-0.78%/+12.15%`, compared with raw errors of
+`-0.37%/-5.67%/-53.13%`. Increasing the line length to 200 um while preserving
+the 25 um axial mesh spacing gave corrected errors of
+`-0.62%/-0.76%/+11.75%`. The corrected values at the two lengths agree within
+`0.01%` for every interface, and the 200 um confidence diagnostics report a
+matched fraction of one, loop residual of `4.8e-5`, and endpoint-neighborhood
+fraction of 0.02. The persistent MA excess is therefore not caused by the
+artificial endpoints or insufficient axial resolution. These order-4 runs
+predate the fixed-flux diagnostic. The order-2 closure dependence shows that
+the remaining error is specifically a postprocessing-only trace-closure
+limitation, rather than evidence that the coupon response matrix is inaccurate
+for a prescribed trace. Repeat the order-4 corrected run with the current
+executable before using MA as an accuracy gate.
+
+The order-3 to order-4 changes in the 50 um fabricated SA/MS/MA references were
+`+0.99%/+1.45%/+2.37%`; account for that remaining reference-discretization
+uncertainty when interpreting the errors above. Do not compare this compact
+Maxwell case directly to the large-domain 2D electrostatic result: its ground,
+substrate, and vacuum extents are intentionally much smaller.
+
+A remote runner must make the process-library JSON and its matrix files visible
+at the exact path stored in the generated configuration; staging only the
+Palace config and mesh is insufficient.

@@ -101,6 +101,26 @@ def check(corrected_output, baseline_output, tolerance):
 
         norm_raw = group[0]["E_norm raw (J)"]
         norm_corrected = group[0]["E_norm corrected (J)"]
+        fixed_flux_fields = (
+            "E_norm corrected fixed-flux (J)",
+            "E_surf corrected fixed-flux (J)",
+            "p_surf corrected fixed-flux",
+            "Q_surf corrected fixed-flux",
+            "trace closure spread",
+        )
+        fixed_flux_columns = [
+            field in group[0] for field in fixed_flux_fields
+        ]
+        if any(fixed_flux_columns) and not all(fixed_flux_columns):
+            raise RuntimeError(
+                f"Incomplete fixed-flux output in row group {row_index}"
+            )
+        has_fixed_flux = all(fixed_flux_columns)
+        norm_fixed_flux = (
+            group[0]["E_norm corrected fixed-flux (J)"]
+            if has_fixed_flux
+            else None
+        )
         if not math.isfinite(norm_raw) or norm_raw <= 0.0:
             raise RuntimeError(
                 f"Invalid raw normalization energy in row group {row_index}"
@@ -108,6 +128,12 @@ def check(corrected_output, baseline_output, tolerance):
         if not math.isfinite(norm_corrected) or norm_corrected <= 0.0:
             raise RuntimeError(
                 f"Invalid corrected normalization energy in row group {row_index}"
+            )
+        if has_fixed_flux and (
+            not math.isfinite(norm_fixed_flux) or norm_fixed_flux <= 0.0
+        ):
+            raise RuntimeError(
+                f"Invalid fixed-flux normalization energy in row group {row_index}"
             )
 
         for interface in raw_indices:
@@ -131,6 +157,14 @@ def check(corrected_output, baseline_output, tolerance):
                     norm_corrected,
                     corrected["E_norm corrected (J)"],
                     tolerance,
+                )
+                or (
+                    has_fixed_flux
+                    and not close(
+                        norm_fixed_flux,
+                        corrected["E_norm corrected fixed-flux (J)"],
+                        tolerance,
+                    )
                 )
             ):
                 raise RuntimeError(
@@ -180,6 +214,62 @@ def check(corrected_output, baseline_output, tolerance):
                     f"Invalid zero-participation quality factor in row {row_index}, "
                     f"interface {interface}"
                 )
+
+            if has_fixed_flux:
+                energy_fixed_flux = corrected[
+                    "E_surf corrected fixed-flux (J)"
+                ]
+                participation_fixed_flux = corrected[
+                    "p_surf corrected fixed-flux"
+                ]
+                quality_fixed_flux = corrected[
+                    "Q_surf corrected fixed-flux"
+                ]
+                closure_spread = corrected["trace closure spread"]
+                check_nonnegative(
+                    energy_fixed_flux,
+                    "E_surf corrected fixed-flux",
+                    row_index,
+                    interface,
+                )
+                check_nonnegative(
+                    participation_fixed_flux,
+                    "p_surf corrected fixed-flux",
+                    row_index,
+                    interface,
+                )
+                if not close(
+                    participation_fixed_flux,
+                    energy_fixed_flux / norm_fixed_flux,
+                    tolerance,
+                ):
+                    raise RuntimeError(
+                        "Fixed-flux energy and participation disagree in row "
+                        f"{row_index}, interface {interface}"
+                    )
+                if participation_fixed_flux > 0.0:
+                    if (
+                        not math.isfinite(quality_fixed_flux)
+                        or quality_fixed_flux <= 0.0
+                    ):
+                        raise RuntimeError(
+                            f"Invalid Q_surf corrected fixed-flux in row "
+                            f"{row_index}, interface {interface}"
+                        )
+                elif quality_fixed_flux <= 0.0:
+                    raise RuntimeError(
+                        f"Invalid zero-participation fixed-flux quality factor in "
+                        f"row {row_index}, interface {interface}"
+                    )
+                if (
+                    not math.isfinite(closure_spread)
+                    or closure_spread < 0.0
+                    or closure_spread > 1.0
+                ):
+                    raise RuntimeError(
+                        f"Invalid trace closure spread in row {row_index}, "
+                        f"interface {interface}"
+                    )
 
 
 def main():

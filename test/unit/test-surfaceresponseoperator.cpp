@@ -417,9 +417,18 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   const auto real_response =
       maxwell_response_3d.GetMaxwellResponse(maxwell_field, 0.0);
   CHECK(std::abs(real_response.domain_correction) > 0.0);
+  CHECK(std::abs(real_response.domain_correction_fixed_flux) > 0.0);
   REQUIRE(real_response.fabricated_surface_energy.size() == 3);
+  REQUIRE(real_response.fabricated_surface_energy_fixed_flux.size() == 3);
+  for (const auto &[interface, energy] :
+       real_response.fabricated_surface_energy_fixed_flux)
+  {
+    (void)interface;
+    CHECK(energy > 0.0);
+  }
   CHECK(real_response.loop_residual < 1.0e-10);
   CHECK(real_response.kR == 0.0);
+  CHECK(real_response.maximum_trace_closure_spread > 0.0);
   CHECK_THAT(real_response.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
 
   // A Maxwell trace reconstructed from E = -grad(V) must reproduce the H1 coupon trace
@@ -461,11 +470,21 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       maxwell_response_3d.GetMaxwellResponse(maxwell_field, 0.0);
   CHECK_THAT(complex_response.domain_correction,
              WithinRel(2.0 * real_response.domain_correction, 1.0e-10));
+  CHECK_THAT(complex_response.domain_correction_fixed_flux,
+             WithinRel(2.0 * real_response.domain_correction_fixed_flux,
+                       1.0e-10));
   for (const auto &[interface, energy] :
        real_response.fabricated_surface_energy)
   {
     CHECK_THAT(complex_response.fabricated_surface_energy.at(interface),
                WithinRel(2.0 * energy, 1.0e-10));
+  }
+  for (const auto &[interface, energy] :
+       real_response.fabricated_surface_energy_fixed_flux)
+  {
+    CHECK_THAT(
+        complex_response.fabricated_surface_energy_fixed_flux.at(interface),
+        WithinRel(2.0 * energy, 1.0e-10));
   }
 
   auto coupled_config_3d = config_3d;

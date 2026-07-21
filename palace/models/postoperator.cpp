@@ -1575,8 +1575,12 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         surface_response_op->GetMaxwellResponse(*E, measurement_cache.freq);
     result.corrected_normalization_energy =
         result.raw_normalization_energy + result.confidence.domain_correction;
+    result.corrected_normalization_energy_fixed_flux =
+        result.raw_normalization_energy +
+        result.confidence.domain_correction_fixed_flux;
     MFEM_VERIFY(result.raw_normalization_energy > 0.0 &&
-                    result.corrected_normalization_energy > 0.0,
+                    result.corrected_normalization_energy > 0.0 &&
+                    result.corrected_normalization_energy_fixed_flux > 0.0,
                 "Maxwell surface-response normalization energy must be positive!");
 
     const auto target_interfaces = surface_response_op->GetTargetInterfaces();
@@ -1585,6 +1589,7 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
       auto &interface = result.interfaces[raw.idx];
       interface.raw_energy = raw.energy;
       interface.corrected_energy = raw.energy;
+      interface.corrected_energy_fixed_flux = raw.energy;
       interface.loss_tangent = raw.tandelta;
     }
     for (const int target : target_interfaces)
@@ -1598,6 +1603,13 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
                       result.confidence.fabricated_surface_energy.end(),
                   "Maxwell surface response produced no fabricated energy for target "
                       << target << "!");
+      auto fabricated_fixed_flux =
+          result.confidence.fabricated_surface_energy_fixed_flux.find(target);
+      MFEM_VERIFY(
+          fabricated_fixed_flux !=
+              result.confidence.fabricated_surface_energy_fixed_flux.end(),
+          "Maxwell surface response produced no fixed-flux fabricated energy for target "
+              << target << "!");
 
       const double radius = surface_response_op->GetMatchingRadius();
       auto outside = std::find_if(
@@ -1616,6 +1628,17 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
               << " requires EdgeDistances containing the coupon matching radius!");
       interface->second.corrected_energy =
           outside->energy_outside + fabricated->second;
+      interface->second.corrected_energy_fixed_flux =
+          outside->energy_outside + fabricated_fixed_flux->second;
+      const double closure_scale =
+          std::max(std::abs(fabricated->second),
+                   std::abs(fabricated_fixed_flux->second));
+      if (closure_scale > 0.0)
+      {
+        interface->second.trace_closure_spread =
+            std::abs(fabricated->second - fabricated_fixed_flux->second) /
+            closure_scale;
+      }
     }
 
     if (!result.confidence.confident && !surface_response_warning_printed)
@@ -1623,13 +1646,15 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
       Mpi::Warning(
           "PEC Maxwell surface-response confidence limits were exceeded: "
           "kR = {:.3e}, loop residual = {:.3e}, matched fraction = {:.6f}, "
-          "corner fraction = {:.3e}, max R/rho = {:.3e}, library distance = {:.3e}. "
+          "corner fraction = {:.3e}, max R/rho = {:.3e}, library distance = {:.3e}, "
+          "trace-closure spread = {:.3e}. "
           "Corrected values are reported but should not be treated as validated.\n",
           result.confidence.kR, result.confidence.loop_residual,
           result.confidence.matched_length_fraction,
           result.confidence.corner_neighborhood_fraction,
           result.confidence.maximum_curvature_ratio,
-          result.confidence.maximum_library_distance);
+          result.confidence.maximum_library_distance,
+          result.confidence.maximum_trace_closure_spread);
       surface_response_warning_printed = true;
     }
     surface_response_measurement = std::move(result);
@@ -1654,12 +1679,21 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table.insert("interface", "interface");
     table.insert("domain_raw", "E_norm raw (J)");
     table.insert("domain_corrected", "E_norm corrected (J)");
+    table.insert("domain_corrected_fixed_flux",
+                 "E_norm corrected fixed-flux (J)");
     table.insert("energy_raw", "E_surf raw (J)");
     table.insert("participation_raw", "p_surf raw");
     table.insert("quality_raw", "Q_surf raw");
     table.insert("energy_corrected", "E_surf corrected (J)");
     table.insert("participation_corrected", "p_surf corrected");
     table.insert("quality_corrected", "Q_surf corrected");
+    table.insert("energy_corrected_fixed_flux",
+                 "E_surf corrected fixed-flux (J)");
+    table.insert("participation_corrected_fixed_flux",
+                 "p_surf corrected fixed-flux");
+    table.insert("quality_corrected_fixed_flux",
+                 "Q_surf corrected fixed-flux");
+    table.insert("trace_closure_spread", "trace closure spread");
     table["excitation"].print_as_int = true;
     table["interface"].print_as_int = true;
     if constexpr (solver_t == ProblemType::EIGENMODE)
@@ -1681,6 +1715,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table.insert("corner_fraction", "corner neighborhood fraction");
     table.insert("curvature", "max R/rho");
     table.insert("library_distance", "max library distance");
+    table.insert("trace_closure_spread", "max trace closure spread");
     table.insert("confident", "confidence pass");
     table["excitation"].print_as_int = true;
     table["confident"].print_as_int = true;
@@ -1698,6 +1733,9 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
         interface.raw_energy / result.raw_normalization_energy;
     const double p_corrected =
         interface.corrected_energy / result.corrected_normalization_energy;
+    const double p_corrected_fixed_flux =
+        interface.corrected_energy_fixed_flux /
+        result.corrected_normalization_energy_fixed_flux;
     const double q_raw =
         p_raw == 0.0 || interface.loss_tangent == 0.0
             ? mfem::infinity()
@@ -1706,6 +1744,10 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
         p_corrected == 0.0 || interface.loss_tangent == 0.0
             ? mfem::infinity()
             : 1.0 / (p_corrected * interface.loss_tangent);
+    const double q_corrected_fixed_flux =
+        p_corrected_fixed_flux == 0.0 || interface.loss_tangent == 0.0
+            ? mfem::infinity()
+            : 1.0 / (p_corrected_fixed_flux * interface.loss_tangent);
     auto &table = surface_Q_corrected->table;
     table["idx"] << output_index;
     table["excitation"] << excitation;
@@ -1715,6 +1757,9 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table["domain_corrected"]
         << units.Dimensionalize<VT::ENERGY>(
                result.corrected_normalization_energy);
+    table["domain_corrected_fixed_flux"]
+        << units.Dimensionalize<VT::ENERGY>(
+               result.corrected_normalization_energy_fixed_flux);
     table["energy_raw"]
         << units.Dimensionalize<VT::ENERGY>(interface.raw_energy);
     table["participation_raw"] << p_raw;
@@ -1723,6 +1768,12 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
         << units.Dimensionalize<VT::ENERGY>(interface.corrected_energy);
     table["participation_corrected"] << p_corrected;
     table["quality_corrected"] << q_corrected;
+    table["energy_corrected_fixed_flux"]
+        << units.Dimensionalize<VT::ENERGY>(
+               interface.corrected_energy_fixed_flux);
+    table["participation_corrected_fixed_flux"] << p_corrected_fixed_flux;
+    table["quality_corrected_fixed_flux"] << q_corrected_fixed_flux;
+    table["trace_closure_spread"] << interface.trace_closure_spread;
   }
   surface_Q_corrected->WriteFullTableTrunc();
 
@@ -1736,6 +1787,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
   table["corner_fraction"] << confidence.corner_neighborhood_fraction;
   table["curvature"] << confidence.maximum_curvature_ratio;
   table["library_distance"] << confidence.maximum_library_distance;
+  table["trace_closure_spread"] << confidence.maximum_trace_closure_spread;
   table["confident"] << (confidence.confident ? 1.0 : 0.0);
   surface_response_confidence->WriteFullTableTrunc();
 }
