@@ -175,6 +175,7 @@ void MaterialOperator::SetUpMaterialProperties(
     mat_muinv_scalar.SetSize(1, 1, nmats);
     mat_epsilon_scalar.SetSize(1, 1, nmats);
     mat_epsilon_imag_scalar.SetSize(1, 1, nmats);
+    mat_sigma_scalar.SetSize(1, 1, nmats);
     mat_invLondon_scalar.SetSize(1, 1, nmats);
   }
   mat_epsilon.SetSize(sdim, sdim, nmats);
@@ -292,6 +293,9 @@ void MaterialOperator::SetUpMaterialProperties(
       mfem::DenseMatrix epstd_3d(3, 3);
       Mult(mat_eps_3d, mat_td_3d, epstd_3d);
       mat_epsilon_imag_scalar(count)(0, 0) = -ProjectNormal(epstd_3d);
+
+      mfem::DenseMatrix mat_sigma_3d = internal::mat::ToDenseMatrix(data.sigma);
+      mat_sigma_scalar(count)(0, 0) = ProjectNormal(mat_sigma_3d);
     }
 
     // Material permittivity: Re{ε} = ε, Im{ε} = -ε * tan(δ)

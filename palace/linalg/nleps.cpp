@@ -175,14 +175,15 @@ void QuasiNewtonSolver::SetMaxRestart(int max_num_restart)
 }
 
 void QuasiNewtonSolver::SetExtraSystemMatrix(
-    std::function<std::unique_ptr<ComplexOperator>(double)> A2)
+    std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> A2)
 {
   funcA2 = A2;
 }
 
 void QuasiNewtonSolver::SetPreconditionerUpdate(
-    std::function<std::unique_ptr<ComplexOperator>(
-        std::complex<double>, std::complex<double>, std::complex<double>, double)>
+    std::function<
+        std::unique_ptr<ComplexOperator>(std::complex<double>, std::complex<double>,
+                                         std::complex<double>, std::complex<double>)>
         P)
 {
   funcP = P;
@@ -494,10 +495,11 @@ int QuasiNewtonSolver::Solve()
     v2 *= 1.0 / norm_v;
 
     // Set the linear solver operators.
-    opA2 = (*funcA2)(std::abs(eig.imag()));
+    opA2 = (*funcA2)(eig);
     opA = BuildParSumOperator({1.0 + 0.0i, eig, eig * eig, 1.0 + 0.0i},
                               {opK, opC, opM, opA2.get()}, true);
-    opP = (*funcP)(1.0 + 0.0i, eig, eig * eig, eig.imag());
+    opP = (*funcP)(1.0 + 0.0i, eig, eig * eig,
+                   eig / std::complex<double>(0.0, 1.0));  // ω = λ/i
     opInv->SetOperators(*opA, *opP);
     opInv->SetAbsTol(1.0e-12);
 
@@ -553,7 +555,7 @@ int QuasiNewtonSolver::Solve()
                                  Eigen::VectorXcd &rr2,
                                  std::unique_ptr<ComplexOperator> &A2_out) -> double
     {
-      A2_out = (*funcA2)(std::abs(lam.imag()));
+      A2_out = (*funcA2)(lam);
       auto A = BuildParSumOperator({1.0 + 0.0i, lam, lam * lam, 1.0 + 0.0i},
                                    {opK, opC, opM, A2_out.get()}, true);
       A->Mult(vv, rr);
@@ -647,9 +649,8 @@ int QuasiNewtonSolver::Solve()
       }
 
       // Compute w = J * v.
-      auto opA2p = (*funcA2)(std::abs(eig.imag()) * (1.0 + delta));
-      const std::complex<double> denom =
-          std::complex<double>(0.0, delta * std::abs(eig.imag()));
+      auto opA2p = (*funcA2)(eig * (1.0 + delta));
+      const std::complex<double> denom = delta * eig;
       std::unique_ptr<ComplexOperator> opAJ =
           BuildParSumOperator({1.0 / denom, -1.0 / denom}, {opA2p.get(), A2n.get()}, true);
       auto opJ = BuildParSumOperator({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * eig, 1.0 + 0.0i},
@@ -724,11 +725,12 @@ int QuasiNewtonSolver::Solve()
       if (it > 0 && it % preconditioner_lag == 0 && res > preconditioner_tol)
       {
         eig_opInv = eig;
-        opA2 = (*funcA2)(std::abs(eig_opInv.imag()));
+        opA2 = (*funcA2)(eig_opInv);
         opA =
             BuildParSumOperator({1.0 + 0.0i, eig_opInv, eig_opInv * eig_opInv, 1.0 + 0.0i},
                                 {opK, opC, opM, opA2.get()}, true);
-        opP = (*funcP)(1.0 + 0.0i, eig_opInv, eig_opInv * eig_opInv, eig_opInv.imag());
+        opP = (*funcP)(1.0 + 0.0i, eig_opInv, eig_opInv * eig_opInv,
+                       eig_opInv / std::complex<double>(0.0, 1.0));
         opInv->SetOperators(*opA, *opP);
         // Recompute w0 and normalize.
         opInv->SetRelTol(std::max(ksp_rel_tol, inexact_tol));
@@ -815,7 +817,7 @@ double QuasiNewtonSolver::GetResidualNorm(std::complex<double> l, const ComplexV
     opC->AddMult(x, r, l);
   }
   opM->AddMult(x, r, l * l);
-  auto A2 = (*funcA2)(std::abs(l.imag()));
+  auto A2 = (*funcA2)(l);
   A2->AddMult(x, r, 1.0);
   return linalg::Norml2(comm, r);
 }
@@ -841,7 +843,7 @@ double QuasiNewtonSolver::GetBackwardScaling(std::complex<double> l) const
 }
 
 NewtonInterpolationOperator::NewtonInterpolationOperator(
-    std::function<std::unique_ptr<ComplexOperator>(double)> funcA2, int size)
+    std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> funcA2, int size)
   : funcA2(funcA2)
 {
   rhs.SetSize(size);
@@ -887,7 +889,7 @@ void NewtonInterpolationOperator::Interpolate(const std::complex<double> sigma_m
     {
       if (k == 0)
       {
-        auto A2j = (funcA2)(points[j].imag());
+        auto A2j = (funcA2)(points[j]);
         ops[k].push_back(std::move(A2j));
       }
       else

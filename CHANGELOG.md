@@ -31,6 +31,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Enable at build time with `PALACE_WITH_CUDSS=ON` (requires `PALACE_WITH_CUDA=ON`).
     SchemaVer 1-3-0 [PR 717](https://github.com/awslabs/palace/pull/717).
 
+#### Interface Changes
+
+  - Eigenmode simulations with frequency-dependent boundary conditions (e.g. waveports,
+    second-order absorbing, surface conductivity) now evaluate the boundary conditions at
+    the true complex frequency/eigenmode. Previously, the boundary conditions were
+    evaluated using only the real component of the eigenmode.
+    [PR 778](https://github.com/awslabs/palace/pull/778).
+  - Enabled the `RationalImpedance` boundary condition in eigenmode simulations, handled
+    by the nonlinear eigenvalue solver and evaluated at the complex eigenfrequency.
+    SchemaVer 1-3-1 [PR 778](https://github.com/awslabs/palace/pull/778).
+
 #### Bug Fixes
 
   - Fixed S-parameter post-processing for mixed Floquet + lumped/wave port configurations.
@@ -45,6 +56,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed an overflow in the mesh broadcast path used when loading nonconformal meshes by
     introducing a chunked MPI broadcast call handle arbitrarily large meshes.
     [PR 810](https://github.com/awslabs/palace/pull/810).
+  - Fixed a bug in the 2D mode eigensolver that sometimes led to crashes when waveports
+    were used in conjunction with non-zero conductivity materials.
+    [PR 778](https://github.com/awslabs/palace/pull/778).
+  - Fixed a bug in the 2D mode eigensolver for lossy cross-sections, where a complex
+    permittivity term was missing. [PR 778](https://github.com/awslabs/palace/pull/778).
 
 ## [0.17.0] - 2026-06-28
 

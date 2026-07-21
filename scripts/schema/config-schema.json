@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-3-0",
+  "$id": "urn:palace:schema:1-3-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -219,7 +219,7 @@
         "RationalImpedance": {
           "type": "array",
           "title": "Rational Impedance",
-          "description": "Array of rational surface impedance boundary conditions. The per-square surface impedance is an arbitrary rational function of frequency, Zs(s) = N(s)/D(s) with s = iω, specified by the numerator and denominator polynomial coefficients (its zeros and poles). This generalizes [Impedance](@ref config-boundaries-impedance) to any passive lumped-network response. Only available for frequency domain driven and boundary mode simulations.",
+          "description": "Array of rational surface impedance boundary conditions. The per-square surface impedance is an arbitrary rational function of frequency, Zs(s) = N(s)/D(s) with s = iω, specified by the numerator and denominator polynomial coefficients (its zeros and poles). This generalizes [Impedance](@ref config-boundaries-impedance) to any passive lumped-network response. Only available for frequency domain driven, eigenmode, and boundary mode simulations.",
           "additionalItems": false,
           "items": { "$ref": "#/$defs/RationalImpedance" }
         },

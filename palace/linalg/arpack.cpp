@@ -297,10 +297,18 @@ int ArpackEigenvalueSolver::SolveInternal(int n, std::complex<double> *r,
     case WhichType::SMALLEST_IMAGINARY:
       which_option = ::arpack::which::smallest_imaginary;
       break;
-    case WhichType::TARGET_REAL:
     case WhichType::TARGET_IMAGINARY:
-      MFEM_ABORT("ARPACK eigenvalue solver does not implement TARGET_REAL or "
-                 "TARGET_IMAGINARY for SetWhichEigenpairs!");
+      MFEM_VERIFY(sinvert, "ARPACK TARGET_IMAGINARY requires a shift-and-invert "
+                           "spectral transformation!");
+      // ARPACK selects Ritz values of the shift-inverted spectrum θ ≈ 1/(λ - σ), σ =
+      // i·target. Im(θ) has opposite sign from Im(λ) - Im(σ). Use the imaginary selector
+      // that stays on the target side, then sort the extracted original eigenvalues by
+      // imaginary distance to σ.
+      which_option = ::arpack::which::smallest_imaginary;
+      break;
+    case WhichType::TARGET_REAL:
+      MFEM_ABORT("ARPACK eigenvalue solver does not implement TARGET_REAL for "
+                 "SetWhichEigenpairs!");
       break;
   }
 
@@ -378,13 +386,74 @@ int ArpackEigenvalueSolver::SolveInternal(int n, std::complex<double> *r,
   { return eig[l].imag() < eig[r].imag(); };
   auto CompareAbs = [&eig](const int &l, const int &r)
   { return std::abs(eig[l]) < std::abs(eig[r]); };
+  const auto OnTargetImagSide = [this](const std::complex<double> &lambda)
+  {
+    if (sigma.imag() > 0.0)
+    {
+      return lambda.imag() >= sigma.imag();
+    }
+    if (sigma.imag() < 0.0)
+    {
+      return lambda.imag() <= sigma.imag();
+    }
+    return true;
+  };
+  auto CompareTargetImag = [this, &eig, &OnTargetImagSide](const int &l, const int &r)
+  {
+    const bool l_on_target_side = OnTargetImagSide(eig[l]);
+    const bool r_on_target_side = OnTargetImagSide(eig[r]);
+    if (l_on_target_side != r_on_target_side)
+    {
+      return l_on_target_side;
+    }
+    // d* = distance to the target, per component (imaginary part first: TARGET_IMAGINARY
+    // ranks by closeness in Im(λ), with Re(λ) and |λ - σ| as tie-breakers).
+    const double target = sigma.imag();
+    const double l_dist_imag = std::abs(eig[l].imag() - target);
+    const double r_dist_imag = std::abs(eig[r].imag() - target);
+    if (l_dist_imag != r_dist_imag)
+    {
+      return l_dist_imag < r_dist_imag;
+    }
+    const double l_dist_real = std::abs(eig[l].real() - sigma.real());
+    const double r_dist_real = std::abs(eig[r].real() - sigma.real());
+    if (l_dist_real != r_dist_real)
+    {
+      return l_dist_real < r_dist_real;
+    }
+    return std::abs(eig[l] - sigma) < std::abs(eig[r] - sigma);
+  };
   for (int i = 0; i < nev; i++)
   {
     eig[i] = eig[i] * gamma;
     perm[i] = i;
   }
-  if (which_option == ::arpack::which::largest_real ||
-      which_option == ::arpack::which::smallest_real)
+  if (which_type == WhichType::TARGET_IMAGINARY)
+  {
+    std::sort(perm, perm + nev, CompareTargetImag);
+    const int num_extracted = std::min(num_conv, nev);
+    int num_target_side = 0;
+    for (int i = 0; i < num_extracted; i++)
+    {
+      // In-place compaction: num_target_side <= i always, so perm[i] is read before it
+      // can be overwritten (at worst a safe self-assignment).
+      if (OnTargetImagSide(eig[perm[i]]))
+      {
+        perm[num_target_side++] = perm[i];
+      }
+    }
+    if (num_target_side < num_conv)
+    {
+      Mpi::Warning(comm,
+                   "ARPACK TARGET_IMAGINARY discarded {:d} extracted eigenvalue{} on "
+                   "the wrong side of the target!\n",
+                   num_extracted - num_target_side,
+                   (num_extracted - num_target_side > 1) ? "s" : "");
+    }
+    num_conv = num_target_side;
+  }
+  else if (which_option == ::arpack::which::largest_real ||
+           which_option == ::arpack::which::smallest_real)
   {
     std::sort(perm, perm + nev, CompareReal);
   }
