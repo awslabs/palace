@@ -65,3 +65,59 @@ Both committed configurations use `Refinement.MaxIts = 0`, so their error
 indicators are diagnostic only. They use a relaxed `EstimatorTol` to avoid
 oversolving an estimator that does not drive AMR. Restore a strict estimator
 tolerance before enabling refinement.
+
+## Driven Maxwell validation
+
+The compact wave-port case exercises the postprocessing-only Maxwell path
+against a fabrication-resolved driven reference. It uses the same held-out
+20/12 um CPW and fabrication stack, a 50 um extrusion, and two structured
+layers along the propagation direction. The length keeps the artificial
+wave-port endpoint neighborhoods below the current 10% confidence limit while
+remaining electrically short at 5 GHz.
+
+Generate the first-order thin and fabricated meshes:
+
+```text
+julia --project=examples \
+  examples/cpw3d_surface/mesh/generate_maxwell_validation_meshes.jl
+```
+
+Prepare raw thin, corrected thin, and fabricated-reference configurations.
+`--library` must name the independently generated process library for the
+100 nm metal, 50 nm overetch, 80 degree sidewalls, 10 nm rounding, and 2 um
+matching radius:
+
+```text
+python3 examples/cpw3d_surface/prepare_maxwell_validation.py \
+  --library /path/to/process-library-3d.json \
+  --output /tmp/cpw3d-maxwell-validation \
+  --order 2
+```
+
+Run the three generated configurations and compare them:
+
+```text
+build/bin/palace -np 2 /tmp/cpw3d-maxwell-validation/thin_raw.json
+build/bin/palace -np 2 /tmp/cpw3d-maxwell-validation/thin_corrected.json
+build/bin/palace -np 2 /tmp/cpw3d-maxwell-validation/fabricated_reference.json
+python3 examples/cpw3d_surface/compare_maxwell_validation.py \
+  --baseline /tmp/cpw3d-maxwell-validation/thin_raw \
+  --corrected /tmp/cpw3d-maxwell-validation/thin_corrected \
+  --fabricated /tmp/cpw3d-maxwell-validation/fabricated_reference
+```
+
+The comparison first verifies that enabling correction did not alter any raw
+output, then reports normalization, surface-energy numerator, and participation
+errors separately. On the generated mesh at order 2 with no AMR, the corrected
+SA/MS/MA participation errors relative to the same-order fabricated run were
+`+3.37%/-1.93%/+14.90%`, compared with raw errors of
+`-10.48%/-21.15%/-59.85%`. The confidence diagnostics passed: the matched
+fraction was one, the loop residual was below 0.05, and the artificial endpoint
+neighborhood fraction was 0.08.
+
+The order-2 fabricated MA result remains about 11% below the converged 2D
+cross-section value. It is therefore not yet a converged three-dimensional
+reference. Repeat the corrected and fabricated runs at order 3 before using
+this case as an accuracy gate. A remote runner must make the process-library
+JSON and its matrix files visible at the exact path stored in the generated
+configuration; staging only the Palace config and mesh is insufficient.

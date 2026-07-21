@@ -53,6 +53,7 @@ function generate_cpw2d_mesh(;
     # --- Mesh ---
     lc_fine::Float64     = 0.03,
     lc_far::Float64      = 60.0,
+    lc_transition::Float64 = 0.0,    # edge distance where size reaches lc_far; 0 = auto
     mesh_order::Int      = 2,
 
     # --- Extrusion (quasi-2D) ---
@@ -887,7 +888,8 @@ function generate_cpw2d_mesh(;
     gmsh.model.mesh.field.setNumber(field_id, "SizeMax", lc_far)
     dist_scale = flipchip ? gap : w_gap
     gmsh.model.mesh.field.setNumber(field_id, "DistMin", thick ? 5.0*max(tox,t_metal/50) : 0.1)
-    gmsh.model.mesh.field.setNumber(field_id, "DistMax", 200.0*dist_scale)
+    dist_max = lc_transition > 0.0 ? lc_transition : 200.0*dist_scale
+    gmsh.model.mesh.field.setNumber(field_id, "DistMax", dist_max)
     thresh_id = field_id
     field_id += 1
 
