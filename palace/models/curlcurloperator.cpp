@@ -25,9 +25,8 @@ CurlCurlOperator::CurlCurlOperator(const config::BoundaryData &boundaries,
                                    ProblemType problem_type,
                                    const std::vector<std::unique_ptr<Mesh>> &mesh,
                                    const mfem::Array<int> &additional_dbc)
-  : print_hdr(true),
-    dbc_attr(SetUpBoundaryProperties(boundaries.pec, boundaries.fluxloop, *mesh.back(),
-                                     additional_dbc)),
+  : print_hdr(true), dbc_attr(SetUpBoundaryProperties(boundaries.pec, boundaries.fluxloop,
+                                                      *mesh.back(), additional_dbc)),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         solver.order, mesh.back()->Dimension(), solver.linear.mg_max_levels,
         solver.linear.mg_coarsening, false)),

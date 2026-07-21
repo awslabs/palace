@@ -86,8 +86,7 @@ private:
 public:
   CurlCurlOperator(const config::BoundaryData &boundaries, const config::SolverData &solver,
                    const std::vector<config::MaterialData> &materials,
-                   ProblemType problem_type,
-                   const std::vector<std::unique_ptr<Mesh>> &mesh,
+                   ProblemType problem_type, const std::vector<std::unique_ptr<Mesh>> &mesh,
                    const mfem::Array<int> &additional_dbc = {});
   CurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
