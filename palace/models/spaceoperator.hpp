@@ -177,6 +177,7 @@ public:
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetFloquetPortOp() const { return floquet_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
+  const auto &GetRationalImpedanceOp() const { return surf_rz_op; }
 
   // Get the full frequency-dependent operator A2(ω) + F(ω), where A2 is the assembled
   // sparse boundary operator and F is the low-rank Floquet DtN correction. The returned
@@ -248,6 +249,27 @@ public:
   template <typename OperType>
   std::unique_ptr<OperType>
   GetWavePortBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
+
+  // Construct the ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield
+  // (absorbing) BC, with unit coefficient, stored on the real slot. The full A2
+  // contribution at frequency ω is `i·(0.5/ω)·M_ff` (real-ω stamping) or `-0.5/λ·M_ff`
+  // (complex-λ analytic continuation); a caller scales this matrix by the appropriate
+  // complex coefficient. Returns a null pointer if the farfield BC order < 2 or it
+  // contributes no DoFs on this rank. Used by the NLEPS HYBRID frozen-ABC seed strategy.
+  template <typename OperType>
+  std::unique_ptr<OperType>
+  GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy);
+
+  // Construct the λ-independent boundary mass matrix M_b for rational impedance boundary
+  // idx, with unit coefficient (including crack scaling), stored on the real slot. The
+  // full A2 contribution at λ = iω is `g(λ)·M_b` with the scalar Robin coefficient
+  // `g(λ) = λ·D(λ)/N(λ)` from `GetRationalImpedanceOp().EvalRobinCoefficient(idx, λ)`; a
+  // caller scales this matrix by the appropriate complex coefficient. Returns a null
+  // pointer if the boundary contributes no DoFs on this rank. Used by the NLEPS HYBRID
+  // fit-or-freeze seed strategy.
+  template <typename OperType>
+  std::unique_ptr<OperType>
+  GetRationalImpedanceBoundaryMassMatrix(int idx, Operator::DiagonalPolicy diag_policy);
 
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:

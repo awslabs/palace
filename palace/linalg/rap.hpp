@@ -239,6 +239,20 @@ BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
                     const std::array<const ComplexParOperator *, N> &ops,
                     bool set_essential = true);
 
+// Runtime-sized overload for when the number of summands is not known at compile time
+// (e.g. a variable number of frozen seed-correction terms in the NLEPS interpolation).
+std::unique_ptr<ComplexParOperator>
+BuildParSumOperator(const std::vector<std::complex<double>> &coeff,
+                    const std::vector<const ComplexParOperator *> &ops,
+                    bool set_essential = true);
+
+// Runtime-sized dispatcher taking abstract ComplexOperator pointers (each must be a
+// ComplexParOperator underneath).
+std::unique_ptr<ComplexParOperator>
+BuildParSumOperator(const std::vector<std::complex<double>> &coeff,
+                    const std::vector<const ComplexOperator *> &ops,
+                    bool set_essential = true);
+
 // Dispatcher to convert initializer list or C arrays into std::array whilst deducing sizes
 // and types.
 template <std::size_t N, typename ScalarType, typename OperType>
