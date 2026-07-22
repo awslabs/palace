@@ -30,8 +30,8 @@ private:
   // vector).
   mfem::DenseTensor mat_muinv, mat_muinv_scalar, mat_epsilon, mat_epsilon_scalar,
       mat_epsilon_imag, mat_epsilon_imag_scalar, mat_epsilon_abs, mat_invz0, mat_c0,
-      mat_sigma, mat_invLondon, mat_invLondon_scalar, mat_kxTmuinv, mat_muinvkx,
-      mat_kxTmuinvkx, mat_kx;
+      mat_sigma, mat_sigma_scalar, mat_invLondon, mat_invLondon_scalar, mat_kxTmuinv,
+      mat_muinvkx, mat_kxTmuinvkx, mat_kx;
   mfem::DenseMatrix wave_vector_cross;
   mfem::Vector wave_vector;        // BZ-wrapped k_F (fixed) or k₀ = k_F/ω (freq-scaled).
   mfem::Vector wave_vector_bz;     // BZ-wrapped k_F (always k_F, never k₀). For BZ offset.
@@ -97,6 +97,8 @@ public:
   const auto &GetPermittivityScalar() const { return mat_epsilon_scalar; }
   // Scalar (1x1) imaginary permittivity for the out-of-plane component in 2D.
   const auto &GetPermittivityImagScalar() const { return mat_epsilon_imag_scalar; }
+  // Scalar (1x1) conductivity for the out-of-plane component in 2D mode analysis.
+  const auto &GetConductivityScalar() const { return mat_sigma_scalar; }
   auto GetInvImpedance(int attr) const { return Wrap(mat_invz0, attr); }
   auto GetLightSpeed(int attr) const { return Wrap(mat_c0, attr); }
   auto GetConductivity(int attr) const { return Wrap(mat_sigma, attr); }

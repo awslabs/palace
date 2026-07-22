@@ -114,9 +114,10 @@ void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(
   // In boundary mode (and the wave port 2D eigenproblem) the operating frequency is fixed,
   // so Zs(iω) is simply evaluated there.
   MFEM_VERIFY(impedance.empty() || problem_type == ProblemType::DRIVEN ||
+                  problem_type == ProblemType::EIGENMODE ||
                   problem_type == ProblemType::BOUNDARYMODE,
               "Rational impedance boundaries are only available for frequency-domain "
-              "driven and boundary mode simulation types!");
+              "simulation types!");
 
   boundaries.reserve(impedance.size());
   for (const auto &data : impedance)
@@ -180,6 +181,39 @@ mfem::Array<int> SurfaceRationalImpedanceOperator::GetAttrList() const
     attr_list.Append(bdr.attr_list);
   }
   return attr_list;
+}
+
+void SurfaceRationalImpedanceOperator::AddExtraSystemBdrCoefficients(
+    std::complex<double> omega, MaterialPropertyCoefficient &fbr,
+    MaterialPropertyCoefficient &fbi)
+{
+  // Complex-ω overload: the rational Robin coefficient s·D(s)/N(s) with s = iω continues
+  // analytically to complex ω with no change to the evaluation (rational in s). The
+  // passivity check is a real-ω-axis criterion and is skipped off-axis; the DC-limit
+  // branch is likewise only reachable through the real-ω overload.
+  if (omega.imag() == 0.0)
+  {
+    AddExtraSystemBdrCoefficients(omega.real(), fbr, fbi);
+    return;
+  }
+  const std::complex<double> s = std::complex<double>(0.0, 1.0) * omega;  // s = iω
+  for (auto &bdr : boundaries)
+  {
+    const std::complex<double> N = EvalPoly(bdr.num, s);
+    const std::complex<double> D = EvalPoly(bdr.den, s);
+    MFEM_VERIFY(std::abs(N) > 0.0,
+                "Rational impedance boundary has a transmission zero (Zs = 0) at the "
+                "evaluation frequency; the admittance iω/Zs is singular!");
+    // Surface admittance Ys = 1/Zs = D/N (see the real-ω overload for the rationale).
+    const std::complex<double> Y = D / N;
+    for (auto attr : bdr.attr_list)
+    {
+      const double sc = bdr.attr_scaling.at(attr);
+      const std::complex<double> coef = s * Y / sc;  // iω·Ys per square
+      fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.real());
+      fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.imag());
+    }
+  }
 }
 
 void SurfaceRationalImpedanceOperator::AddExtraSystemBdrCoefficients(

@@ -155,11 +155,13 @@ private:
   std::unique_ptr<ComplexOperator> opA2, opA, opP;
 
   // Function to compute the A2 operator.
-  std::optional<std::function<std::unique_ptr<ComplexOperator>(double)>> funcA2;
+  std::optional<std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>>
+      funcA2;
 
   // Function to compute the preconditioner matrix.
   std::optional<std::function<std::unique_ptr<ComplexOperator>(
-      std::complex<double>, std::complex<double>, std::complex<double>, double)>>
+      std::complex<double>, std::complex<double>, std::complex<double>,
+      std::complex<double>)>>
       funcP;
 
   // Linear eigenvalue solver used to set initial guess.
@@ -206,12 +208,12 @@ public:
 
   // Set the frequency-dependent A2 matrix function.
   void SetExtraSystemMatrix(
-      std::function<std::unique_ptr<ComplexOperator>(double)>) override;
+      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>) override;
 
   // Set the preconditioner update function.
   void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
                                    std::complex<double>, std::complex<double>,
-                                   std::complex<double>, double)>) override;
+                                   std::complex<double>, std::complex<double>)>) override;
 
   // Set the update frequency of the preconditioner.
   void SetPreconditionerLag(int preconditioner_update_freq,
@@ -247,7 +249,7 @@ class NewtonInterpolationOperator : public Interpolation
 {
 private:
   // Function to compute the A2 operator.
-  std::function<std::unique_ptr<ComplexOperator>(double)> funcA2;
+  std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> funcA2;
 
   // Number of points used in the interpolation (currently always second order).
   int num_points = 3;
@@ -266,7 +268,8 @@ private:
 
 public:
   NewtonInterpolationOperator(
-      std::function<std::unique_ptr<ComplexOperator>(double)> funcA2, const int size);
+      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)> funcA2,
+      const int size);
 
   // Interpolate the A2 matrix between sigma_min and sigma_max with a Newton polynomial.
   void Interpolate(const std::complex<double> sigma_min,
