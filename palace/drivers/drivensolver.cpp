@@ -23,6 +23,7 @@
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
+#include "models/surfaceresponseoperator.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -53,6 +54,13 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                  "Reverting to uniform sweep!\n",
                  iodata.solver.driven.prom_indices.size());
     adaptive = false;
+  }
+  if (adaptive && iodata.solver.surface_response_correction)
+  {
+    Mpi::Warning(
+        "Self-consistent Maxwell surface-response correction is not yet applied to the "
+        "adaptive PROM sweep. Raw, fixed-trace, and fixed-flux results remain available; "
+        "use a uniform sweep for the self-consistent corrected field.\n");
   }
   SaveMetadata(space_op.GetNDSpaces());
   Mpi::Print("\nComputing {}frequency response for:\n{}", adaptive ? "adaptive fast " : "",
@@ -92,22 +100,46 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
+  std::unique_ptr<ComplexWrapperOperator> response_mass;
+  if (response_correction)
+  {
+    response_mass = std::make_unique<ComplexWrapperOperator>(response_correction, nullptr);
+  }
   const auto &Curl = space_op.GetCurlMatrix();
 
   // Set up the linear solver.
   // The operators are constructed for each frequency step and used to initialize the ksp.
   ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  std::unique_ptr<ComplexKspSolver> corrected_ksp;
+  if (response_correction)
+  {
+    corrected_ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
+                                                       &space_op.GetH1Spaces());
+    corrected_ksp->SetInitialGuess(true);
+  }
 
   // Set up RHS vector for the incident field at port boundaries, and the vector for the
   // first frequency step.
-  ComplexVector RHS(Curl.Width()), E(Curl.Width()), B(Curl.Height()),
-      D(space_op.GetRTSpace().GetTrueVSize());
+  ComplexVector RHS(Curl.Width()), E(Curl.Width()), E_corrected, B(Curl.Height()),
+      D(space_op.GetRTSpace().GetTrueVSize()), D_corrected;
   RHS.UseDevice(true);
   E.UseDevice(true);
   B.UseDevice(true);
   D.UseDevice(true);
   E = 0.0;
   B = 0.0;
+  if (response_correction)
+  {
+    E_corrected.SetSize(Curl.Width());
+    E_corrected.UseDevice(true);
+    E_corrected = 0.0;
+    if (post_op.NeedsRecoveredElectricFlux())
+    {
+      D_corrected.SetSize(space_op.GetRTSpace().GetTrueVSize());
+      D_corrected.UseDevice(true);
+    }
+  }
 
   // Initialize structures for storing and reducing the results of error estimation.
   const bool is_2d = (space_op.GetNDSpace().Dimension() < 3);
@@ -195,9 +227,19 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
       auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
                                         K.get(), C.get(), M.get(), A2.get());
+      std::unique_ptr<SumComplexOperator> corrected_A;
+      if (response_correction)
+      {
+        corrected_A = std::make_unique<SumComplexOperator>(*A);
+        corrected_A->AddOperator(*response_mass, -omega * omega + 0.0i);
+      }
       auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
           1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
       ksp.SetOperators(*A, *P);
+      if (corrected_ksp)
+      {
+        corrected_ksp->SetOperators(*corrected_A, *P);
+      }
 
       Mpi::Print(
           "\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s{})\n",
@@ -215,6 +257,12 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
       Mpi::Print("\n");
       ksp.Mult(RHS, E);
+      if (corrected_ksp)
+      {
+        Mpi::Print(" Solving self-consistent fabrication-response corrected field\n");
+        E_corrected = E;
+        corrected_ksp->Mult(RHS, E_corrected);
+      }
 
       // Start Post-processing.
       BlockTimer bt0(Timer::POSTPRO);
@@ -242,6 +290,17 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
         RecoverElectricFlux(E, D);
         post_op.SetRecoveredElectricFlux(D);
         recovered_flux = &D;
+      }
+      if (corrected_ksp)
+      {
+        const ComplexVector *corrected_flux = nullptr;
+        if (post_op.NeedsRecoveredElectricFlux())
+        {
+          Mpi::Print(" Recovering electric flux for corrected interface postprocessing\n");
+          RecoverElectricFlux(E_corrected, D_corrected);
+          corrected_flux = &D_corrected;
+        }
+        post_op.SetSurfaceResponseCorrectedField(E_corrected, corrected_flux);
       }
       auto total_domain_energy =
           post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);

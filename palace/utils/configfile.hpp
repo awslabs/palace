@@ -501,8 +501,9 @@ public:
   // List of boundary attributes on which to impose the spatially varying potential.
   std::vector<int> attributes = {};
 
-  // CSV file containing an ordered closed polyline as x,y,z,V rows. Coordinates are in
-  // mesh units and potential is in volts.
+  // CSV file containing either an ordered closed polyline as x,y,z,V rows or a
+  // triangulated surface as x,y,z,V,triangle rows. Coordinates are in mesh units and
+  // potential is in volts.
   std::string data_file = {};
 
   PrescribedPotentialData() = default;
@@ -971,9 +972,11 @@ public:
 
     // Local coupon coordinate directions in the global frame. AxisU points from the metal
     // into the gap, while AxisV points from the substrate/process side toward vacuum in
-    // the canonical coupon.
+    // the canonical straight-edge coupon. AxisW is used by three-dimensional vertex
+    // coupons; automatic matching supplies a complete orthonormal frame.
     std::array<double, 3> axis_u = {};
     std::array<double, 3> axis_v = {};
+    std::array<double, 3> axis_w = {};
 
     // Location of the coupon's reference conductor in its local frame, in mesh length
     // units. The default preserves the original one-edge convention.
@@ -1007,6 +1010,11 @@ public:
 
     // Local coupon contour knot coordinates, in mesh length units.
     std::string basis_points;
+
+    // Internal metadata for a three-dimensional vertex coupon. ContourGroups partitions
+    // the basis points into independent closed Maxwell voltage contours.
+    bool spatial_basis = false;
+    std::vector<int> contour_groups;
 
     // Mapping from global target interface index to coupon interface index.
     std::vector<ResponseCorrectionInterfaceData> interfaces;

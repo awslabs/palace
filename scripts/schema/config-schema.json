@@ -328,7 +328,7 @@
         },
         "PrescribedPotential": {
           "type": "array",
-          "description": "Array of spatially varying Dirichlet potential boundaries for electrostatic simulations. Each source is read from an ordered closed-polyline CSV trace and solved independently. This is mutually exclusive with `Terminal` because the boundary is not equipotential and does not define a capacitance-matrix terminal.",
+          "description": "Array of spatially varying Dirichlet potential boundaries for electrostatic simulations. Each source is read from either an ordered closed-polyline CSV trace (`x,y,z,V`) or a triangulated-surface CSV trace (`x,y,z,V,triangle`) and solved independently. This is mutually exclusive with `Terminal` because the boundary is not equipotential and does not define a capacitance-matrix terminal.",
           "additionalItems": false,
           "items": {
             "$ref": "#/$defs/PrescribedPotential"
@@ -389,7 +389,7 @@
         },
         "SurfaceResponseCorrection": {
           "$ref": "#/$defs/Electrostatic/properties/ResponseCorrection",
-          "description": "Apply a postprocessing-only fabrication-process surface response correction to a three-dimensional driven or eigenmode PEC Maxwell field. The initial Maxwell implementation requires one planar fabrication layer and automatic `Library` matching to isolated or parallel paired-edge coupons. Standard fields, AMR, and `surface-Q.csv` remain the raw thin-metal result; corrected values and confidence diagnostics are written separately."
+          "description": "Apply a fabrication-process surface response correction to a three-dimensional driven or eigenmode PEC Maxwell field. The initial Maxwell implementation requires one planar fabrication layer and automatic `Library` matching to isolated-edge, parallel paired-edge, and optional corner coupons. Standard fields, AMR, and `surface-Q.csv` remain the raw thin-metal result; fixed-trace, fixed-flux, confidence, and uniform-driven self-consistent results are written separately."
         },
         "Eigenmode": {
           "$ref": "#/$defs/Eigenmode",
@@ -1857,7 +1857,7 @@
         },
         "EdgeExcludeAttributes": {
           "$ref": "#/$defs/Attributes",
-          "description": "Boundary attributes whose geometric edge segments should be excluded from the perimeter defined by `EdgeAttributes`. This is useful for artificial boundaries such as the front and back faces of an extruded geometry."
+          "description": "Boundary attributes whose geometric edge segments should be excluded from the perimeter defined by `EdgeAttributes` or `AutomaticEdges`. This is useful for artificial boundaries such as the front and back faces of an extruded geometry."
         },
         "EdgeDistances": {
           "type": "array",
@@ -1958,7 +1958,6 @@
           ]
         },
         "EdgeExcludeAttributes": [
-          "EdgeAttributes",
           "EdgeDistances"
         ],
         "EdgeDistanceSmoothing": [

@@ -4,10 +4,12 @@
 #ifndef PALACE_MODELS_SURFACE_RESPONSE_OPERATOR_HPP
 #define PALACE_MODELS_SURFACE_RESPONSE_OPERATOR_HPP
 
+#include <array>
 #include <complex>
 #include <map>
 #include <memory>
 #include <set>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
@@ -41,6 +43,27 @@ private:
     bool local = false;
   };
 
+  struct MaxwellQuadraturePoint
+  {
+    PointEvaluation evaluation;
+    std::array<double, 3> weighted_tangent{};
+  };
+
+  struct MaxwellLine
+  {
+    int point_offset = 0;
+    int point_count = 0;
+  };
+
+  struct MaxwellContourPath
+  {
+    int anchor_line = -1;
+    int contour_line_offset = 0;
+    int start = 0;
+    int trace_offset = 0;
+    int size = 0;
+  };
+
   struct ResponseModel
   {
     int idx = 0;
@@ -51,6 +74,8 @@ private:
     mfem::DenseMatrix fixed_flux_transform;
     std::map<int, mfem::DenseMatrix> fabricated_surfaces;
     std::map<int, mfem::DenseMatrix> surface_defects;
+    bool spatial_basis = false;
+    std::vector<int> contour_groups;
   };
 
   struct Patch
@@ -69,10 +94,14 @@ private:
   std::vector<PointEvaluation> points;
 
   // Maxwell postprocessing uses local coupon contour line integrals instead of H1 point
-  // values. Contours are stored in the same order as patches.
+  // values. The line quadrature representation supplies both the trace action and its
+  // transpose, so the same map is used for postprocessing and self-consistent correction.
   std::vector<std::vector<mfem::Vector>> maxwell_contours;
   std::vector<mfem::Vector> maxwell_anchors;
-  mutable std::unique_ptr<mfem::FindPointsGSLIB> maxwell_finder;
+  std::vector<MaxwellQuadraturePoint> maxwell_points;
+  std::vector<MaxwellLine> maxwell_lines;
+  std::vector<MaxwellContourPath> maxwell_paths;
+  std::vector<std::pair<int, int>> maxwell_patch_paths;
   int maxwell_quadrature_order = 0;
 
   double matching_radius = 0.0;
@@ -84,10 +113,16 @@ private:
 
   mutable Vector x_free, local_x, local_y, trace, response, correction;
   mutable mfem::Array<int> element_dofs;
-  mutable Vector shape, element_values;
+  mutable mfem::DofTransformation dof_transform;
+  mutable mfem::DenseMatrix vector_shape;
+  mutable Vector shape, element_values, vector_value;
 
   void EvaluatePoints(const Vector &x, Vector &values) const;
   void AddPointTranspose(int point, double value, Vector &y) const;
+  void EvaluateMaxwellLines(const Vector &x, Vector &values) const;
+  void AddMaxwellLinesTranspose(const Vector &values, Vector &y) const;
+  void BuildMaxwellTrace(const Vector &line_values, Vector &values) const;
+  void BuildMaxwellTraceTranspose(const Vector &values, Vector &line_values) const;
   void ApplyTrace(const Vector &x, Vector &values) const;
   void ApplyTraceTranspose(const Vector &values, Vector &y) const;
   void ApplyUneliminated(const Vector &x, Vector &y) const;
@@ -97,6 +132,16 @@ public:
   {
     double domain = 0.0;
     std::map<int, double> interfaces;
+  };
+
+  struct ElectrostaticResponse
+  {
+    double domain_correction = 0.0;
+    double domain_correction_fixed_flux = 0.0;
+    std::map<int, double> fabricated_surface_energy;
+    std::map<int, double> fabricated_surface_energy_fixed_flux;
+    std::map<int, double> trace_closure_spread;
+    double maximum_trace_closure_spread = 0.0;
   };
 
   struct MaxwellResponse
@@ -132,6 +177,11 @@ public:
   // Evaluate the complete fabricated-coupon surface energy for every mapped target
   // interface. Corrected participation replaces the measured global core with this data.
   std::map<int, double> GetFabricatedSurfaceEnergy(const Vector &x) const;
+
+  // Evaluate fixed-trace and fixed-flux coupon responses on an unchanged electrostatic
+  // thin-metal potential. This is the electrostatic analogue of the postprocessing-only
+  // Maxwell correction.
+  ElectrostaticResponse GetElectrostaticResponse(const Vector &x) const;
 
   // Evaluate a postprocessing-only response for a complex Nedelec Maxwell field. Coupon
   // voltages are reconstructed from transverse contour integrals and applied through

@@ -10,6 +10,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -51,7 +52,9 @@ enum class LibraryTopology : char
   ISOLATED_EDGE,
   SAME_CONDUCTOR_GAP,
   DIFFERENT_CONDUCTOR_GAP,
-  SAME_CONDUCTOR_STRIP
+  SAME_CONDUCTOR_STRIP,
+  CONVEX_CORNER,
+  CONCAVE_CORNER
 };
 
 struct LibraryInterface
@@ -66,6 +69,8 @@ struct LibraryModel
   LibraryTopology topology;
   double separation = 0.0;
   double separation_tolerance = 0.0;
+  double angle = 0.0;
+  double angle_tolerance = 0.0;
   double coupon_depth = 0.0;
   ResponseModelData response;
   std::array<double, 3> reference{};
@@ -174,6 +179,14 @@ LibraryTopology ParseLibraryTopology(const std::string &topology)
   {
     return LibraryTopology::SAME_CONDUCTOR_STRIP;
   }
+  if (topology == "ConvexCorner")
+  {
+    return LibraryTopology::CONVEX_CORNER;
+  }
+  if (topology == "ConcaveCorner")
+  {
+    return LibraryTopology::CONCAVE_CORNER;
+  }
   MFEM_ABORT("Unknown fabrication-process response topology \"" << topology << "\"!");
 }
 
@@ -214,6 +227,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, double coordinate_sca
     model.topology = ParseLibraryTopology(entry.at("Topology").get<std::string>());
     model.separation = entry.value("Separation", 0.0) / coordinate_scale;
     model.separation_tolerance = entry.value("SeparationTolerance", 0.0) / coordinate_scale;
+    model.angle = entry.value("Angle", 0.0) * std::acos(-1.0) / 180.0;
+    model.angle_tolerance = entry.value("AngleTolerance", 0.0) * std::acos(-1.0) / 180.0;
     if (auto depth = entry.find("CouponDepth"); depth != entry.end())
     {
       model.coupon_depth = depth->get<double>() / coordinate_scale;
@@ -224,10 +239,13 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, double coordinate_sca
     {
       model.coupon_depth = default_coupon_depth;
     }
-    if (model.topology == LibraryTopology::ISOLATED_EDGE)
+    const bool corner = model.topology == LibraryTopology::CONVEX_CORNER ||
+                        model.topology == LibraryTopology::CONCAVE_CORNER;
+    if (model.topology == LibraryTopology::ISOLATED_EDGE || corner)
     {
       MFEM_VERIFY(model.separation == 0.0,
-                  "An isolated-edge response model cannot specify a separation!");
+                  "An isolated-edge or corner response model cannot specify a "
+                  "separation!");
     }
     else
     {
@@ -236,6 +254,26 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, double coordinate_sca
                       model.separation_tolerance >= 0.0,
                   "Paired-edge response models require a positive separation and a "
                   "nonnegative separation tolerance!");
+    }
+    if (corner)
+    {
+      MFEM_VERIFY(std::isfinite(model.angle) && model.angle > 0.0 &&
+                      model.angle < std::acos(-1.0) &&
+                      std::isfinite(model.angle_tolerance) && model.angle_tolerance >= 0.0,
+                  "Corner response models require Angle strictly between zero and 180 "
+                  "degrees and a nonnegative AngleTolerance!");
+      model.response.spatial_basis = true;
+      model.response.contour_groups = entry.value("ContourGroups", std::vector<int>{});
+      MFEM_VERIFY(
+          std::all_of(model.response.contour_groups.begin(),
+                      model.response.contour_groups.end(),
+                      [](int size) { return size >= 3; }),
+          "Every corner-response ContourGroups entry must contain at least three knots!");
+    }
+    else
+    {
+      MFEM_VERIFY(model.angle == 0.0,
+                  "Straight-edge response models cannot specify Angle!");
     }
 
     model.response.fabricated_matrix =
@@ -335,6 +373,11 @@ Point3D Add(const Point3D &a, const Point3D &b)
 Point3D Scale(double scale, const Point3D &a)
 {
   return {scale * a[0], scale * a[1], scale * a[2]};
+}
+
+Point3D Cross(const Point3D &a, const Point3D &b)
+{
+  return {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
 }
 
 Point3D Interpolate(const EdgeSegment3D &segment, double distance)
@@ -578,6 +621,30 @@ std::optional<std::size_t> FindLibraryModel(const ProcessLibrary &library,
   return best;
 }
 
+std::optional<std::size_t> FindCornerLibraryModel(const ProcessLibrary &library,
+                                                  LibraryTopology topology, double angle)
+{
+  std::optional<std::size_t> best;
+  double best_error = mfem::infinity();
+  for (std::size_t i = 0; i < library.models.size(); i++)
+  {
+    const auto &model = library.models[i];
+    if (model.topology != topology)
+    {
+      continue;
+    }
+    const double error = std::abs(model.angle - angle);
+    const double tolerance =
+        std::max(model.angle_tolerance, 1.0e-10 * std::max(model.angle, angle));
+    if (error <= tolerance && error < best_error)
+    {
+      best = i;
+      best_error = error;
+    }
+  }
+  return best;
+}
+
 std::string TopologyName(LibraryTopology topology)
 {
   switch (topology)
@@ -590,6 +657,10 @@ std::string TopologyName(LibraryTopology topology)
       return "different-conductor gap";
     case LibraryTopology::SAME_CONDUCTOR_STRIP:
       return "same-conductor strip";
+    case LibraryTopology::CONVEX_CORNER:
+      return "convex corner";
+    case LibraryTopology::CONCAVE_CORNER:
+      return "concave corner";
   }
   return "unknown";
 }
@@ -966,10 +1037,19 @@ double SegmentDistanceSquared(const Point3D &p0, const Point3D &p1, const Point3
   return Dot(delta, delta);
 }
 
-ResponseCorrectionData BuildAutomaticResponseData3D(
-    const IoData &iodata, const mfem::ParMesh &mesh, const MaterialOperator &mat_op,
-    const ResponseCorrectionData &request, bool maxwell,
-    AutomaticResponseDiagnostics *diagnostics = nullptr)
+double PointSegmentDistanceSquared(const Point3D &point, const EdgeSegment3D &segment)
+{
+  const double distance =
+      std::clamp(Dot(Subtract(point, segment.p0), segment.tangent), 0.0, segment.length);
+  const Point3D delta = Subtract(point, Interpolate(segment, distance));
+  return Dot(delta, delta);
+}
+
+ResponseCorrectionData
+BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
+                             const MaterialOperator &mat_op,
+                             const ResponseCorrectionData &request, bool maxwell,
+                             AutomaticResponseDiagnostics *diagnostics = nullptr)
 {
   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
               "Automatic three-dimensional fabrication-process response matching "
@@ -983,8 +1063,7 @@ ResponseCorrectionData BuildAutomaticResponseData3D(
     {
       const int attribute = mesh.GetAttribute(element);
       diagnostics->minimum_wave_speed =
-          std::min(diagnostics->minimum_wave_speed,
-                   mat_op.GetLightSpeedMin(attribute));
+          std::min(diagnostics->minimum_wave_speed, mat_op.GetLightSpeedMin(attribute));
     }
     Mpi::GlobalMin(1, &diagnostics->minimum_wave_speed, mesh.GetComm());
     MFEM_VERIFY(std::isfinite(diagnostics->minimum_wave_speed) &&
@@ -1017,6 +1096,8 @@ ResponseCorrectionData BuildAutomaticResponseData3D(
                     << index << " does not match the fabrication-process library radius!");
     auto segment_indices =
         GetInterfaceMetalEdgeSegmentIndices(geometry, index, dielectric.type);
+    ExcludeMetalEdgeSegmentIndices(mesh, geometry, dielectric.edge_exclude_attributes,
+                                   segment_indices);
     auto &group = groups_by_segments[segment_indices];
     if (group.segments.empty())
     {
@@ -1084,6 +1165,7 @@ ResponseCorrectionData BuildAutomaticResponseData3D(
   int matched_segments = 0;
   int unmatched_groups = 0;
   int nonregular_vertices = 0;
+  int matched_corner_vertices = 0;
   std::optional<Point3D> layer_normal;
   double layer_offset = 0.0;
   mfem::Vector mesh_bbmin, mesh_bbmax;
@@ -1101,12 +1183,12 @@ ResponseCorrectionData BuildAutomaticResponseData3D(
     int group_matched_intervals = 0;
     double group_selected_length = 0.0;
     double group_corner_neighborhood_length = 0.0;
+    double group_modeled_corner_neighborhood_length = 0.0;
     double group_maximum_curvature_ratio = 0.0;
     double group_maximum_library_distance = 0.0;
     const auto process_normals = BuildMetalEdgeProcessNormals(
-        mesh, geometry, group.segments,
-        [&](int attribute) { return mat_op.GetLightSpeedMax(attribute); },
-        group.process_normal);
+        mesh, geometry, group.segments, [&](int attribute)
+        { return mat_op.GetLightSpeedMax(attribute); }, group.process_normal);
     const auto gap_directions =
         BuildMetalEdgeGapDirections(mesh, geometry, group.segments, process_normals);
 
@@ -1131,9 +1213,7 @@ ResponseCorrectionData BuildAutomaticResponseData3D(
             !source.conditions.empty() &&
                 std::all_of(source.conditions.begin(), source.conditions.end(),
                             [](const auto &condition)
-                            {
-                              return condition.type == MetalBoundaryConditionType::PEC;
-                            }),
+                            { return condition.type == MetalBoundaryConditionType::PEC; }),
             "Maxwell surface-response correction currently supports PEC target metal "
             "boundaries only!");
         MFEM_VERIFY(source.component >= 0,
@@ -1153,7 +1233,7 @@ ResponseCorrectionData BuildAutomaticResponseData3D(
         MFEM_VERIFY(conductors.size() == 1,
                     "Unable to assign an automatically detected three-dimensional metal "
                     "edge to exactly one electrostatic conductor!");
-      segment.conductor = *conductors.begin();
+        segment.conductor = *conductors.begin();
       }
       local_indices.emplace(geometry_index, segments.size());
       segments.push_back(segment);
@@ -1163,8 +1243,7 @@ ResponseCorrectionData BuildAutomaticResponseData3D(
     if (diagnostics)
     {
       diagnostics->selected_length += group_selected_length;
-      const double layer_tolerance =
-          1.0e-8 * std::max(mesh_extent, group.matching_radius);
+      const double layer_tolerance = 1.0e-8 * std::max(mesh_extent, group.matching_radius);
       for (std::size_t i = 0; i < segments.size(); i++)
       {
         const auto &segment = segments[i];
@@ -1228,10 +1307,8 @@ ResponseCorrectionData BuildAutomaticResponseData3D(
         };
         const Point3D first = DirectionAway(*incident[0]);
         const Point3D second = DirectionAway(*incident[1]);
-        const double turning_angle =
-            std::acos(std::clamp(-Dot(first, second), -1.0, 1.0));
-        const double local_length =
-            0.5 * (incident[0]->length + incident[1]->length);
+        const double turning_angle = std::acos(std::clamp(-Dot(first, second), -1.0, 1.0));
+        const double local_length = 0.5 * (incident[0]->length + incident[1]->length);
         if (local_length > 0.0)
         {
           group_maximum_curvature_ratio =
@@ -1252,7 +1329,186 @@ ResponseCorrectionData BuildAutomaticResponseData3D(
       const auto type = geometry.vertices[vertex].physical_type;
       nonregular_vertices += type && *type != MetalEdgeVertexType::REGULAR;
     }
+    struct ConnectedVertexNeighborhood
+    {
+      Point3D point;
+      std::set<int> physical_chains;
+    };
+    std::vector<ConnectedVertexNeighborhood> connected_vertex_neighborhoods;
+    for (const std::size_t vertex : vertices)
+    {
+      if (geometry.vertices[vertex].physical_type == MetalEdgeVertexType::REGULAR)
+      {
+        continue;
+      }
+      ConnectedVertexNeighborhood neighborhood{geometry.vertices[vertex].coordinate, {}};
+      for (const std::size_t geometry_segment : geometry.vertices[vertex].segments)
+      {
+        auto local = local_indices.find(geometry_segment);
+        if (local != local_indices.end())
+        {
+          neighborhood.physical_chains.insert(
+              geometry.segments[geometry_segment].physical_chain);
+        }
+      }
+      if (neighborhood.physical_chains.size() > 1)
+      {
+        connected_vertex_neighborhoods.push_back(std::move(neighborhood));
+      }
+    }
 
+    std::vector<PendingPatch> pending;
+    std::vector<std::vector<std::pair<double, double>>> vertex_excluded_intervals(
+        segments.size());
+    auto ExcludeCornerArm = [&](std::size_t vertex, std::size_t segment_index)
+    {
+      const int physical_chain =
+          geometry.segments[segments[segment_index].geometry_index].physical_chain;
+      std::set<std::size_t> visited;
+      double remaining = group.matching_radius;
+      const double tolerance = 1.0e-10 * group.matching_radius;
+      while (remaining > tolerance)
+      {
+        MFEM_VERIFY(visited.insert(segment_index).second,
+                    "Metal physical chain contains a cycle within a corner neighborhood!");
+        const auto &segment = segments[segment_index];
+        const auto &source = geometry.segments[segment.geometry_index];
+        MFEM_VERIFY(source.physical_chain == physical_chain &&
+                        (source.vertices[0] == vertex || source.vertices[1] == vertex),
+                    "Inconsistent metal physical-chain connectivity!");
+
+        const double trim = std::min(remaining, segment.length);
+        if (source.vertices[0] == vertex)
+        {
+          vertex_excluded_intervals[segment_index].emplace_back(0.0, trim);
+        }
+        else
+        {
+          vertex_excluded_intervals[segment_index].emplace_back(segment.length - trim,
+                                                                 segment.length);
+        }
+        remaining -= trim;
+        if (trim < segment.length - tolerance)
+        {
+          break;
+        }
+
+        const std::size_t next_vertex =
+            source.vertices[0] == vertex ? source.vertices[1] : source.vertices[0];
+        std::optional<std::size_t> next_segment;
+        for (const std::size_t geometry_segment :
+             geometry.vertices[next_vertex].segments)
+        {
+          auto local = local_indices.find(geometry_segment);
+          if (local == local_indices.end() || local->second == segment_index ||
+              geometry.segments[geometry_segment].physical_chain != physical_chain)
+          {
+            continue;
+          }
+          MFEM_VERIFY(!next_segment,
+                      "Metal physical chain branches within a corner neighborhood!");
+          next_segment = local->second;
+        }
+        if (!next_segment)
+        {
+          break;
+        }
+        vertex = next_vertex;
+        segment_index = *next_segment;
+      }
+    };
+    int matched_corners = 0;
+    for (const std::size_t vertex : vertices)
+    {
+      if (geometry.vertices[vertex].physical_type != MetalEdgeVertexType::CORNER)
+      {
+        continue;
+      }
+      std::vector<std::size_t> incident;
+      for (const std::size_t geometry_segment : geometry.vertices[vertex].segments)
+      {
+        auto local = local_indices.find(geometry_segment);
+        if (local != local_indices.end())
+        {
+          incident.push_back(local->second);
+        }
+      }
+      if (incident.size() != 2)
+      {
+        continue;
+      }
+      auto DirectionAway = [&](std::size_t segment_index)
+      {
+        const auto &source = geometry.segments[segments[segment_index].geometry_index];
+        return source.vertices[0] == vertex ? segments[segment_index].tangent
+                                            : Scale(-1.0, segments[segment_index].tangent);
+      };
+      Point3D first_direction = DirectionAway(incident[0]);
+      Point3D second_direction = DirectionAway(incident[1]);
+      const auto &first_segment = segments[incident[0]];
+      const auto &second_segment = segments[incident[1]];
+      const double corner_score = Dot(first_segment.axis_u, second_direction) +
+                                  Dot(second_segment.axis_u, first_direction);
+      if (std::abs(corner_score) <= 1.0e-8)
+      {
+        continue;
+      }
+      const LibraryTopology topology = corner_score < 0.0 ? LibraryTopology::CONVEX_CORNER
+                                                          : LibraryTopology::CONCAVE_CORNER;
+      const double angle =
+          std::acos(std::clamp(Dot(first_direction, second_direction), -1.0, 1.0));
+      const auto model_index = FindCornerLibraryModel(library, topology, angle);
+      if (!model_index)
+      {
+        continue;
+      }
+
+      MFEM_VERIFY(Dot(first_segment.axis_v, second_segment.axis_v) > 0.95,
+                  "A corner-response model requires compatible process normals on both "
+                  "incident arms!");
+      Point3D process_normal = Normalize(Add(first_segment.axis_v, second_segment.axis_v));
+      if (Dot(Cross(process_normal, first_direction), second_direction) < 0.0)
+      {
+        std::swap(incident[0], incident[1]);
+        std::swap(first_direction, second_direction);
+      }
+      ResponsePatchData patch;
+      patch.origin = geometry.vertices[vertex].coordinate;
+      patch.axis_u = first_direction;
+      patch.axis_v = Normalize(Cross(process_normal, first_direction));
+      patch.axis_w = process_normal;
+      const auto &source_model = library.models[*model_index];
+      patch.reference = source_model.reference;
+      patch.weight = 1.0;
+      patch.maxwell_anchor = patch.origin;
+      for (int d = 0; d < 3; d++)
+      {
+        (*patch.maxwell_anchor)[d] += source_model.reference[0] * patch.axis_u[d] +
+                                      source_model.reference[1] * patch.axis_v[d] +
+                                      source_model.reference[2] * patch.axis_w[d];
+      }
+      pending.push_back({*model_index, patch});
+
+      for (const std::size_t segment_index : incident)
+      {
+        ExcludeCornerArm(vertex, segment_index);
+      }
+      const double tolerance = std::max(source_model.angle_tolerance, 1.0e-10 * angle);
+      group_maximum_library_distance = std::max(
+          group_maximum_library_distance, std::abs(source_model.angle - angle) / tolerance);
+      matched_corners++;
+    }
+    for (auto intervals : vertex_excluded_intervals)
+    {
+      std::sort(intervals.begin(), intervals.end());
+      double end = -mfem::infinity();
+      for (const auto &[begin, interval_end] : intervals)
+      {
+        group_modeled_corner_neighborhood_length +=
+            std::max(0.0, interval_end - std::max(begin, end));
+        end = std::max(end, interval_end);
+      }
+    }
     bool group_matched = true;
     const double interaction_distance =
         2.0 * group.matching_radius * (1.0 - 16.0 * std::numeric_limits<double>::epsilon());
@@ -1304,6 +1560,23 @@ ResponseCorrectionData BuildAutomaticResponseData3D(
             SegmentsShareVertex(first_source, second_source) ||
             SegmentDistanceSquared(segments[i].p0, segments[i].p1, segments[j].p0,
                                    segments[j].p1) >= interaction_distance_squared)
+        {
+          continue;
+        }
+        const bool connected_near_vertex = std::any_of(
+            connected_vertex_neighborhoods.begin(), connected_vertex_neighborhoods.end(),
+            [&](const auto &neighborhood)
+            {
+              return neighborhood.physical_chains.find(first_source.physical_chain) !=
+                         neighborhood.physical_chains.end() &&
+                     neighborhood.physical_chains.find(second_source.physical_chain) !=
+                         neighborhood.physical_chains.end() &&
+                     PointSegmentDistanceSquared(neighborhood.point, segments[i]) <
+                         interaction_distance_squared &&
+                     PointSegmentDistanceSquared(neighborhood.point, segments[j]) <
+                         interaction_distance_squared;
+            });
+        if (connected_near_vertex)
         {
           continue;
         }
@@ -1368,48 +1641,101 @@ ResponseCorrectionData BuildAutomaticResponseData3D(
       }
     }
 
-    std::vector<PendingPatch> pending;
-    auto AppendQuadrature = [&](std::size_t model_index, const EdgeSegment3D &first,
-                                double begin, double end, const EdgeSegment3D *second)
+    auto AppendQuadrature = [&](std::size_t model_index, std::size_t first_index,
+                                double begin, double end,
+                                std::optional<std::size_t> second_index)
     {
       const auto &source = library.models[model_index];
       MFEM_VERIFY(source.coupon_depth > 0.0,
                   "Three-dimensional response correction requires CouponDepth for every "
                   "selected fabrication-process response model!");
-      for (int q = 0; q < quadrature.GetNPoints(); q++)
+      const auto &first = segments[first_index];
+      const EdgeSegment3D *second = second_index ? &segments[*second_index] : nullptr;
+      std::vector<std::pair<double, double>> intervals = {{begin, end}};
+      auto SubtractIntervals = [&](const std::vector<std::pair<double, double>> &excluded)
       {
-        const auto &ip = quadrature.IntPoint(q);
-        const double first_distance = begin + (end - begin) * ip.x;
-        const Point3D first_point = Interpolate(first, first_distance);
-        ResponsePatchData patch;
-        if (second)
+        for (const auto &[excluded_begin, excluded_end] : excluded)
         {
-          double second_distance = Dot(Subtract(first_point, second->p0), second->tangent);
-          second_distance = std::clamp(second_distance, 0.0, second->length);
-          const Point3D second_point = Interpolate(*second, second_distance);
-          const Point3D direction = Normalize(Subtract(second_point, first_point));
-          patch.origin = Scale(0.5, Add(first_point, second_point));
-          patch.axis_u = direction;
-          patch.axis_v = Normalize(Add(first.axis_v, second->axis_v));
+          std::vector<std::pair<double, double>> remainder;
+          for (const auto &[interval_begin, interval_end] : intervals)
+          {
+            if (excluded_end <= interval_begin || excluded_begin >= interval_end)
+            {
+              remainder.emplace_back(interval_begin, interval_end);
+              continue;
+            }
+            if (excluded_begin > interval_begin)
+            {
+              remainder.emplace_back(interval_begin,
+                                     std::min(excluded_begin, interval_end));
+            }
+            if (excluded_end < interval_end)
+            {
+              remainder.emplace_back(std::max(excluded_end, interval_begin), interval_end);
+            }
+          }
+          intervals = std::move(remainder);
         }
-        else
+      };
+      SubtractIntervals(vertex_excluded_intervals[first_index]);
+      if (second_index)
+      {
+        std::vector<std::pair<double, double>> mapped;
+        for (const auto &[second_begin, second_end] :
+             vertex_excluded_intervals[*second_index])
         {
-          patch.origin = first_point;
-          patch.axis_u = first.axis_u;
-          patch.axis_v = first.axis_v;
+          const double first_begin =
+              Dot(Subtract(Interpolate(*second, second_begin), first.p0), first.tangent);
+          const double first_end =
+              Dot(Subtract(Interpolate(*second, second_end), first.p0), first.tangent);
+          mapped.emplace_back(std::min(first_begin, first_end),
+                              std::max(first_begin, first_end));
         }
-        if (source.topology == LibraryTopology::SAME_CONDUCTOR_STRIP)
+        SubtractIntervals(mapped);
+      }
+      for (const auto &[interval_begin, interval_end] : intervals)
+      {
+        if (interval_end <= interval_begin)
         {
-          patch.maxwell_anchor = patch.origin;
+          continue;
         }
-        else
+        for (int q = 0; q < quadrature.GetNPoints(); q++)
         {
-          patch.maxwell_anchor =
-              Add(first_point, Scale(-group.matching_radius, first.axis_u));
+          const auto &ip = quadrature.IntPoint(q);
+          const double first_distance =
+              interval_begin + (interval_end - interval_begin) * ip.x;
+          const Point3D first_point = Interpolate(first, first_distance);
+          ResponsePatchData patch;
+          if (second)
+          {
+            double second_distance =
+                Dot(Subtract(first_point, second->p0), second->tangent);
+            second_distance = std::clamp(second_distance, 0.0, second->length);
+            const Point3D second_point = Interpolate(*second, second_distance);
+            const Point3D direction = Normalize(Subtract(second_point, first_point));
+            patch.origin = Scale(0.5, Add(first_point, second_point));
+            patch.axis_u = direction;
+            patch.axis_v = Normalize(Add(first.axis_v, second->axis_v));
+          }
+          else
+          {
+            patch.origin = first_point;
+            patch.axis_u = first.axis_u;
+            patch.axis_v = first.axis_v;
+          }
+          if (source.topology == LibraryTopology::SAME_CONDUCTOR_STRIP)
+          {
+            patch.maxwell_anchor = patch.origin;
+          }
+          else
+          {
+            patch.maxwell_anchor =
+                Add(first_point, Scale(-group.matching_radius, first.axis_u));
+          }
+          patch.reference = source.reference;
+          patch.weight = (interval_end - interval_begin) * ip.weight / source.coupon_depth;
+          pending.push_back({model_index, patch});
         }
-        patch.reference = source.reference;
-        patch.weight = (end - begin) * ip.weight / source.coupon_depth;
-        pending.push_back({model_index, patch});
       }
     };
 
@@ -1482,7 +1808,8 @@ ResponseCorrectionData BuildAutomaticResponseData3D(
       group_maximum_library_distance =
           std::max(group_maximum_library_distance,
                    std::abs(matched_model.separation - separation) / model_tolerance);
-      AppendQuadrature(*model_index, first, pair.first_begin, pair.first_end, &second);
+      AppendQuadrature(*model_index, pair.first, pair.first_begin, pair.first_end,
+                       pair.second);
       group_matched_intervals++;
     }
 
@@ -1503,14 +1830,14 @@ ResponseCorrectionData BuildAutomaticResponseData3D(
       {
         if (paired_begin > begin)
         {
-          AppendQuadrature(*isolated_model, segments[i], begin, paired_begin, nullptr);
+          AppendQuadrature(*isolated_model, i, begin, paired_begin, std::nullopt);
           group_matched_intervals++;
         }
         begin = std::max(begin, paired_end);
       }
       if (begin < segments[i].length)
       {
-        AppendQuadrature(*isolated_model, segments[i], begin, segments[i].length, nullptr);
+        AppendQuadrature(*isolated_model, i, begin, segments[i].length, std::nullopt);
         group_matched_intervals++;
       }
     }
@@ -1558,17 +1885,16 @@ ResponseCorrectionData BuildAutomaticResponseData3D(
     }
     matched_intervals += group_matched_intervals;
     matched_segments += static_cast<int>(segments.size());
+    matched_corner_vertices += matched_corners;
     if (diagnostics)
     {
       diagnostics->matched_length += group_selected_length;
-      diagnostics->matched_corner_neighborhood_length +=
-          group_corner_neighborhood_length;
+      diagnostics->matched_corner_neighborhood_length += std::max(
+          0.0, group_corner_neighborhood_length - group_modeled_corner_neighborhood_length);
       diagnostics->maximum_curvature_ratio =
-          std::max(diagnostics->maximum_curvature_ratio,
-                   group_maximum_curvature_ratio);
+          std::max(diagnostics->maximum_curvature_ratio, group_maximum_curvature_ratio);
       diagnostics->maximum_library_distance =
-          std::max(diagnostics->maximum_library_distance,
-                   group_maximum_library_distance);
+          std::max(diagnostics->maximum_library_distance, group_maximum_library_distance);
     }
   }
 
@@ -1580,17 +1906,21 @@ ResponseCorrectionData BuildAutomaticResponseData3D(
              " Matched physical edge segments: {:d}\n"
              " Matched longitudinal intervals: {:d}\n"
              " Longitudinal quadrature patches: {:d}\n"
+             " Matched corner vertices: {:d}\n"
              " Unmatched interface groups: {:d}\n",
              library.name, matched_segments, matched_intervals,
-             static_cast<int>(result.patches.size()), unmatched_groups);
-  if (nonregular_vertices > 0)
+             static_cast<int>(result.patches.size()), matched_corner_vertices,
+             unmatched_groups);
+  const int unmatched_vertices = nonregular_vertices - matched_corner_vertices;
+  if (unmatched_vertices > 0)
   {
     Mpi::Warning(
-        "The selected three-dimensional metal perimeter has {} corner, endpoint, or "
+        "The selected three-dimensional metal perimeter has {} unmatched corner, endpoint, "
+        "or "
         "junction vertices. Straight-edge coupon response is integrated through these "
         "neighborhoods; validate or add a corner-response model when their contribution "
         "is significant.\n",
-        nonregular_vertices);
+        unmatched_vertices);
   }
   return result;
 }
@@ -1738,8 +2068,7 @@ struct DomainResponseMatrices
 
 DomainResponseMatrices BuildDomainResponseMatrices(const std::string &fabricated_path,
                                                    const std::string &thin_path,
-                                                   int expected_size,
-                                                   const Units &units)
+                                                   int expected_size, const Units &units)
 {
   auto [fabricated_size, fabricated_entries] = ReadDomainResponseMatrix(fabricated_path);
   auto [thin_size, thin_entries] = ReadDomainResponseMatrix(thin_path);
@@ -2055,10 +2384,18 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
     ResponseModel model;
     model.idx = model_config.idx;
     model.basis_size = static_cast<int>(points.size());
-    auto domain_response =
-        BuildDomainResponseMatrices(model_config.fabricated_matrix,
-                                    model_config.thin_matrix, model.basis_size,
-                                    iodata.units);
+    model.spatial_basis = model_config.spatial_basis;
+    model.contour_groups = model_config.contour_groups;
+    if (model.contour_groups.empty())
+    {
+      model.contour_groups.push_back(model.basis_size);
+    }
+    MFEM_VERIFY(std::accumulate(model.contour_groups.begin(), model.contour_groups.end(),
+                                0) == model.basis_size,
+                "Response-correction ContourGroups do not partition BasisPoints!");
+    auto domain_response = BuildDomainResponseMatrices(model_config.fabricated_matrix,
+                                                       model_config.thin_matrix,
+                                                       model.basis_size, iodata.units);
     model.fabricated_domain = std::move(domain_response.fabricated);
     model.thin_domain = std::move(domain_response.thin);
     model.domain_defect = std::move(domain_response.defect);
@@ -2100,20 +2437,32 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
   {
     const auto &patch = patches[patch_idx];
     const auto &patch_config = config->patches[patch_idx];
+    const auto &model = models[patch.model];
     const auto &local_points = basis_points[patch.model];
-    double norm_u = 0.0, norm_v = 0.0, dot = 0.0;
+    double norm_u = 0.0, norm_v = 0.0, norm_w = 0.0;
+    double dot_uv = 0.0, dot_uw = 0.0, dot_vw = 0.0;
     for (int d = 0; d < dimension; d++)
     {
       norm_u += patch_config.axis_u[d] * patch_config.axis_u[d];
       norm_v += patch_config.axis_v[d] * patch_config.axis_v[d];
-      dot += patch_config.axis_u[d] * patch_config.axis_v[d];
+      norm_w += patch_config.axis_w[d] * patch_config.axis_w[d];
+      dot_uv += patch_config.axis_u[d] * patch_config.axis_v[d];
+      dot_uw += patch_config.axis_u[d] * patch_config.axis_w[d];
+      dot_vw += patch_config.axis_v[d] * patch_config.axis_w[d];
     }
     norm_u = std::sqrt(norm_u);
     norm_v = std::sqrt(norm_v);
     MFEM_VERIFY(std::abs(norm_u - 1.0) < 1.0e-10 && std::abs(norm_v - 1.0) < 1.0e-10 &&
-                    std::abs(dot) < 1.0e-10,
+                    std::abs(dot_uv) < 1.0e-10,
                 "Surface response correction AxisU and AxisV must be orthonormal in the "
                 "coupon cross-section!");
+    if (model.spatial_basis)
+    {
+      MFEM_VERIFY(dimension == 3 && std::abs(std::sqrt(norm_w) - 1.0) < 1.0e-10 &&
+                      std::abs(dot_uw) < 1.0e-10 && std::abs(dot_vw) < 1.0e-10,
+                  "A spatial response-correction basis requires an orthonormal three-"
+                  "dimensional coupon frame!");
+    }
 
     std::vector<Point2D> *polygon = nullptr;
     if (dimension == 2)
@@ -2123,16 +2472,19 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
     }
     for (const auto &local : local_points)
     {
-      MFEM_VERIFY(std::abs(local[2]) <= 1.0e-12,
+      MFEM_VERIFY(model.spatial_basis || std::abs(local[2]) <= 1.0e-12,
                   "Response-correction basis points must lie in the local coupon "
                   "cross-section!");
       Point2D global{};
       for (int d = 0; d < dimension; d++)
       {
-        const double coordinate =
-            patch_config.origin[d] +
-            (local[0] * patch_config.axis_u[d] + local[1] * patch_config.axis_v[d]) /
-                coordinate_scale;
+        double coordinate = patch_config.origin[d] + (local[0] * patch_config.axis_u[d] +
+                                                      local[1] * patch_config.axis_v[d]) /
+                                                         coordinate_scale;
+        if (model.spatial_basis)
+        {
+          coordinate += local[2] * patch_config.axis_w[d] / coordinate_scale;
+        }
         xyz(d * point_count + point) = coordinate;
         if (d < 2)
         {
@@ -2149,7 +2501,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
     {
       xyz(d * point_count + point) = patch_config.origin[d] +
                                      patch_config.reference[0] * patch_config.axis_u[d] +
-                                     patch_config.reference[1] * patch_config.axis_v[d];
+                                     patch_config.reference[1] * patch_config.axis_v[d] +
+                                     patch_config.reference[2] * patch_config.axis_w[d];
     }
     point++;
   }
@@ -2171,12 +2524,24 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
   finder.FindPoints(xyz, mfem::Ordering::byNODES);
   points.resize(point_count);
   const int rank = Mpi::Rank(fespace.GetComm());
+  const int size = Mpi::Size(fespace.GetComm());
+  std::vector<int> point_owners(point_count, size);
+  for (int i = 0; i < point_count; i++)
+  {
+    if (static_cast<int>(finder.GetProc()[i]) == rank)
+    {
+      point_owners[i] = rank;
+    }
+  }
+  Mpi::GlobalMin(point_count, point_owners.data(), fespace.GetComm());
   for (int i = 0; i < point_count; i++)
   {
     MFEM_VERIFY(finder.GetCode()[i] != 2,
                 "Surface response contour point " << i << " could not be located!");
+    MFEM_VERIFY(point_owners[i] < size,
+                "Surface response contour point " << i << " has no owning rank!");
     auto &evaluation = points[i];
-    evaluation.local = static_cast<int>(finder.GetProc()[i]) == rank;
+    evaluation.local = point_owners[i] == rank;
     if (evaluation.local)
     {
       evaluation.element = static_cast<int>(finder.GetElem()[i]);
@@ -2210,8 +2575,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
     basis_size(0)
 {
   const auto &request = iodata.solver.surface_response_correction;
-  MFEM_VERIFY(request,
-              "Missing Maxwell surface response correction configuration!");
+  MFEM_VERIFY(request, "Missing Maxwell surface response correction configuration!");
   MFEM_VERIFY(request->IsAutomatic(),
               "Maxwell surface response correction requires automatic fabrication-"
               "process library matching!");
@@ -2221,19 +2585,16 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
 
 #if defined(MFEM_USE_GSLIB)
   AutomaticResponseDiagnostics diagnostics;
-  const auto config =
-      BuildAutomaticResponseData3D(iodata, fespace.GetParMesh(),
-                                   space_op.GetMaterialOp(), *request, true, &diagnostics);
+  const auto config = BuildAutomaticResponseData3D(
+      iodata, fespace.GetParMesh(), space_op.GetMaterialOp(), *request, true, &diagnostics);
   matching_radius = diagnostics.matching_radius;
   minimum_wave_speed = diagnostics.minimum_wave_speed;
-  matched_length_fraction =
-      diagnostics.selected_length > 0.0
-          ? diagnostics.matched_length / diagnostics.selected_length
-          : 0.0;
+  matched_length_fraction = diagnostics.selected_length > 0.0
+                                ? diagnostics.matched_length / diagnostics.selected_length
+                                : 0.0;
   corner_neighborhood_fraction =
       diagnostics.matched_length > 0.0
-          ? diagnostics.matched_corner_neighborhood_length /
-                diagnostics.matched_length
+          ? diagnostics.matched_corner_neighborhood_length / diagnostics.matched_length
           : 0.0;
   maximum_curvature_ratio = diagnostics.maximum_curvature_ratio;
   maximum_library_distance = diagnostics.maximum_library_distance;
@@ -2253,10 +2614,18 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
     ResponseModel model;
     model.idx = model_config.idx;
     model.basis_size = static_cast<int>(points.size());
-    auto domain_response =
-        BuildDomainResponseMatrices(model_config.fabricated_matrix,
-                                    model_config.thin_matrix, model.basis_size,
-                                    iodata.units);
+    model.spatial_basis = model_config.spatial_basis;
+    model.contour_groups = model_config.contour_groups;
+    if (model.contour_groups.empty())
+    {
+      model.contour_groups.push_back(model.basis_size);
+    }
+    MFEM_VERIFY(std::accumulate(model.contour_groups.begin(), model.contour_groups.end(),
+                                0) == model.basis_size,
+                "Response-correction ContourGroups do not partition BasisPoints!");
+    auto domain_response = BuildDomainResponseMatrices(model_config.fabricated_matrix,
+                                                       model_config.thin_matrix,
+                                                       model.basis_size, iodata.units);
     model.fabricated_domain = std::move(domain_response.fabricated);
     model.thin_domain = std::move(domain_response.thin);
     model.domain_defect = std::move(domain_response.defect);
@@ -2272,6 +2641,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
 
   maxwell_contours.reserve(config.patches.size());
   maxwell_anchors.reserve(config.patches.size());
+  maxwell_paths.reserve(config.patches.size());
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   for (const auto &patch_config : config.patches)
   {
@@ -2282,65 +2652,203 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
     MFEM_VERIFY(std::isfinite(patch_config.weight) && patch_config.weight > 0.0,
                 "Response-correction patch weights must be positive!");
 
-    double norm_u = 0.0, norm_v = 0.0, dot = 0.0;
+    double norm_u = 0.0, norm_v = 0.0, norm_w = 0.0;
+    double dot_uv = 0.0, dot_uw = 0.0, dot_vw = 0.0;
     for (int d = 0; d < 3; d++)
     {
       norm_u += patch_config.axis_u[d] * patch_config.axis_u[d];
       norm_v += patch_config.axis_v[d] * patch_config.axis_v[d];
-      dot += patch_config.axis_u[d] * patch_config.axis_v[d];
+      norm_w += patch_config.axis_w[d] * patch_config.axis_w[d];
+      dot_uv += patch_config.axis_u[d] * patch_config.axis_v[d];
+      dot_uw += patch_config.axis_u[d] * patch_config.axis_w[d];
+      dot_vw += patch_config.axis_v[d] * patch_config.axis_w[d];
     }
     MFEM_VERIFY(std::abs(std::sqrt(norm_u) - 1.0) < 1.0e-10 &&
                     std::abs(std::sqrt(norm_v) - 1.0) < 1.0e-10 &&
-                    std::abs(dot) < 1.0e-10,
+                    std::abs(dot_uv) < 1.0e-10,
                 "Surface response correction AxisU and AxisV must be orthonormal in the "
                 "coupon cross-section!");
+    if (model.spatial_basis)
+    {
+      MFEM_VERIFY(std::abs(std::sqrt(norm_w) - 1.0) < 1.0e-10 &&
+                      std::abs(dot_uw) < 1.0e-10 && std::abs(dot_vw) < 1.0e-10,
+                  "A spatial response-correction basis requires an orthonormal three-"
+                  "dimensional coupon frame!");
+    }
 
     auto &contour = maxwell_contours.emplace_back();
     contour.reserve(basis_points[model_it->second].size());
     for (const auto &local : basis_points[model_it->second])
     {
-      MFEM_VERIFY(std::abs(local[2]) <= 1.0e-12,
+      MFEM_VERIFY(model.spatial_basis || std::abs(local[2]) <= 1.0e-12,
                   "Response-correction basis points must lie in the local coupon "
                   "cross-section!");
       mfem::Vector point(3);
       for (int d = 0; d < 3; d++)
       {
-        point[d] =
-            patch_config.origin[d] +
-            (local[0] * patch_config.axis_u[d] +
-             local[1] * patch_config.axis_v[d]) /
-                coordinate_scale;
+        point[d] = patch_config.origin[d] +
+                   (local[0] * patch_config.axis_u[d] + local[1] * patch_config.axis_v[d]) /
+                       coordinate_scale;
+        if (model.spatial_basis)
+        {
+          point[d] += local[2] * patch_config.axis_w[d] / coordinate_scale;
+        }
       }
       contour.push_back(std::move(point));
     }
     MFEM_VERIFY(patch_config.maxwell_anchor,
                 "Automatic Maxwell response patch is missing its PEC voltage anchor!");
     mfem::Vector anchor(3);
-    std::copy(patch_config.maxwell_anchor->begin(),
-              patch_config.maxwell_anchor->end(), anchor.GetData());
+    std::copy(patch_config.maxwell_anchor->begin(), patch_config.maxwell_anchor->end(),
+              anchor.GetData());
     maxwell_anchors.push_back(std::move(anchor));
 
-    patches.push_back(
-        Patch{model_it->second, 0, basis_size, patch_config.weight});
+    patches.push_back(Patch{model_it->second, 0, basis_size, patch_config.weight});
     basis_size += model.basis_size;
   }
 
   maxwell_quadrature_order = 2 * std::max(1, iodata.solver.order) + 2;
-  maxwell_finder = std::make_unique<mfem::FindPointsGSLIB>(fespace.GetComm());
-  fem::SetupInterpolator(*maxwell_finder,
-                         const_cast<mfem::ParMesh &>(fespace.GetParMesh()));
+  struct PendingQuadraturePoint
+  {
+    std::array<double, 3> coordinate{};
+    std::array<double, 3> weighted_tangent{};
+  };
+  std::vector<PendingQuadraturePoint> pending_points;
+  const auto &line_rule =
+      mfem::IntRules.Get(mfem::Geometry::SEGMENT, maxwell_quadrature_order);
+  auto AppendLine = [&](const mfem::Vector &p0, const mfem::Vector &p1)
+  {
+    MaxwellLine line;
+    line.point_offset = static_cast<int>(pending_points.size());
+    line.point_count = line_rule.GetNPoints();
+    std::array<double, 3> tangent{};
+    for (int d = 0; d < 3; d++)
+    {
+      tangent[d] = p1[d] - p0[d];
+    }
+    MFEM_VERIFY(Norm(tangent) > 0.0,
+                "Maxwell response contour contains a zero-length line segment!");
+    for (int q = 0; q < line_rule.GetNPoints(); q++)
+    {
+      const auto &ip = line_rule.IntPoint(q);
+      PendingQuadraturePoint point;
+      for (int d = 0; d < 3; d++)
+      {
+        point.coordinate[d] = p0[d] + ip.x * tangent[d];
+        point.weighted_tangent[d] = ip.weight * tangent[d];
+      }
+      pending_points.push_back(point);
+    }
+    maxwell_lines.push_back(line);
+    return static_cast<int>(maxwell_lines.size()) - 1;
+  };
 
-  Mpi::Print("\nConfigured PEC Maxwell surface response postprocessing:\n"
+  for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
+  {
+    const auto &patch = patches[patch_index];
+    const auto &model = models[patch.model];
+    const auto &contour = maxwell_contours[patch_index];
+    const auto &anchor = maxwell_anchors[patch_index];
+    MFEM_ASSERT(static_cast<int>(contour.size()) == model.basis_size,
+                "Inconsistent Maxwell response contour size!");
+
+    const int path_begin = static_cast<int>(maxwell_paths.size());
+    int group_offset = 0;
+    for (const int group_size : model.contour_groups)
+    {
+      MaxwellContourPath path;
+      path.trace_offset = patch.trace_offset + group_offset;
+      path.size = group_size;
+      double start_distance = mfem::infinity();
+      for (int i = 0; i < group_size; i++)
+      {
+        mfem::Vector delta(contour[group_offset + i]);
+        delta -= anchor;
+        const double distance = delta.Norml2();
+        if (distance < start_distance)
+        {
+          path.start = i;
+          start_distance = distance;
+        }
+      }
+      if (start_distance > 1.0e-14 * std::max(1.0, matching_radius))
+      {
+        path.anchor_line = AppendLine(anchor, contour[group_offset + path.start]);
+      }
+      path.contour_line_offset = static_cast<int>(maxwell_lines.size());
+      for (int i = 0; i < group_size; i++)
+      {
+        AppendLine(contour[group_offset + i], contour[group_offset + (i + 1) % group_size]);
+      }
+      maxwell_paths.push_back(path);
+      group_offset += group_size;
+    }
+    MFEM_ASSERT(group_offset == model.basis_size,
+                "Inconsistent Maxwell contour-group partition!");
+    maxwell_patch_paths.emplace_back(path_begin,
+                                     static_cast<int>(maxwell_paths.size()) - path_begin);
+  }
+
+  MFEM_VERIFY(!pending_points.empty(),
+              "Maxwell surface response generated no contour quadrature points!");
+  mfem::Vector xyz(3 * pending_points.size());
+  for (std::size_t i = 0; i < pending_points.size(); i++)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      xyz(d * pending_points.size() + i) = pending_points[i].coordinate[d];
+    }
+  }
+  mfem::FindPointsGSLIB finder(fespace.GetComm());
+  finder.Setup(const_cast<mfem::ParMesh &>(fespace.GetParMesh()), 0.01, 1.0e-12,
+               static_cast<unsigned int>(pending_points.size()));
+  finder.FindPoints(xyz, mfem::Ordering::byNODES);
+  maxwell_points.resize(pending_points.size());
+  const int rank = Mpi::Rank(fespace.GetComm());
+  const int size = Mpi::Size(fespace.GetComm());
+  std::vector<int> point_owners(pending_points.size(), size);
+  for (std::size_t i = 0; i < pending_points.size(); i++)
+  {
+    if (static_cast<int>(finder.GetProc()[i]) == rank)
+    {
+      point_owners[i] = rank;
+    }
+  }
+  Mpi::GlobalMin(static_cast<int>(point_owners.size()), point_owners.data(),
+                 fespace.GetComm());
+  for (std::size_t i = 0; i < pending_points.size(); i++)
+  {
+    MFEM_VERIFY(finder.GetCode()[i] != 2,
+                "Maxwell surface-response contour quadrature point "
+                    << i << " could not be located!");
+    MFEM_VERIFY(point_owners[i] < size, "Maxwell surface-response contour quadrature point "
+                                            << i << " has no owning rank!");
+    auto &point = maxwell_points[i];
+    point.weighted_tangent = pending_points[i].weighted_tangent;
+    point.evaluation.local = point_owners[i] == rank;
+    if (point.evaluation.local)
+    {
+      point.evaluation.element = static_cast<int>(finder.GetElem()[i]);
+      point.evaluation.point.Set3(finder.GetReferencePosition()(3 * i),
+                                  finder.GetReferencePosition()(3 * i + 1),
+                                  finder.GetReferencePosition()(3 * i + 2));
+    }
+  }
+  dbc_tdof_list = space_op.GetNDDbcTDofLists().back();
+
+  Mpi::Print("\nConfigured PEC Maxwell surface response correction:\n"
              " Coupon models: {:d}\n"
              " Longitudinal quadrature patches: {:d}\n"
              " Total contour coefficients: {:d}\n"
+             " Contour line functionals: {:d}\n"
              " Matched edge-length fraction: {:.6f}\n"
-             " Corner-neighborhood fraction: {:.6f}\n"
+             " Unmodeled corner-neighborhood fraction: {:.6f}\n"
              " Maximum R/rho: {:.3e}\n"
              " Maximum normalized library distance: {:.3e}\n",
-             static_cast<int>(models.size()), static_cast<int>(patches.size()),
-             basis_size, matched_length_fraction, corner_neighborhood_fraction,
-             maximum_curvature_ratio, maximum_library_distance);
+             static_cast<int>(models.size()), static_cast<int>(patches.size()), basis_size,
+             static_cast<int>(maxwell_lines.size()), matched_length_fraction,
+             corner_neighborhood_fraction, maximum_curvature_ratio,
+             maximum_library_distance);
 #else
   MFEM_ABORT("Maxwell surface response correction requires MFEM_USE_GSLIB!");
 #endif
@@ -2387,8 +2895,159 @@ void SurfaceResponseOperator::AddPointTranspose(int point, double value, Vector 
   y.AddElementVector(element_dofs, shape);
 }
 
+void SurfaceResponseOperator::EvaluateMaxwellLines(const Vector &x, Vector &values) const
+{
+  MFEM_ASSERT(!maxwell_lines.empty() && !maxwell_points.empty(),
+              "Maxwell contour trace is not configured!");
+  local_x.SetSize(fespace.GetVSize());
+  fespace.GetProlongationMatrix()->Mult(x, local_x);
+  local_x.HostRead();
+  values.SetSize(static_cast<int>(maxwell_lines.size()));
+  values = 0.0;
+  auto *value_data = values.HostWrite();
+  for (std::size_t line_index = 0; line_index < maxwell_lines.size(); line_index++)
+  {
+    const auto &line = maxwell_lines[line_index];
+    for (int q = 0; q < line.point_count; q++)
+    {
+      const auto &point = maxwell_points[line.point_offset + q];
+      const auto &evaluation = point.evaluation;
+      if (!evaluation.local)
+      {
+        continue;
+      }
+
+      const auto &fe = *fespace.Get().GetFE(evaluation.element);
+      MFEM_ASSERT(fe.GetRangeType() == mfem::FiniteElement::VECTOR,
+                  "Maxwell contour trace requires a vector finite element!");
+      auto &transformation = *fespace.Get().GetElementTransformation(evaluation.element);
+      transformation.SetIntPoint(&evaluation.point);
+      vector_shape.SetSize(fe.GetDof(), fespace.SpaceDimension());
+      fe.CalcVShape(transformation, vector_shape);
+      fespace.Get().GetElementVDofs(evaluation.element, element_dofs, dof_transform);
+      element_values.SetSize(element_dofs.Size());
+      local_x.GetSubVector(element_dofs, element_values);
+      dof_transform.InvTransformPrimal(element_values);
+      vector_value.SetSize(fespace.SpaceDimension());
+      vector_shape.MultTranspose(element_values, vector_value);
+      for (int d = 0; d < fespace.SpaceDimension(); d++)
+      {
+        value_data[line_index] +=
+            vector_value[d] * point.weighted_tangent[static_cast<std::size_t>(d)];
+      }
+    }
+  }
+  Mpi::GlobalSum(values.Size(), value_data, fespace.GetComm());
+}
+
+void SurfaceResponseOperator::AddMaxwellLinesTranspose(const Vector &values,
+                                                       Vector &y) const
+{
+  MFEM_ASSERT(values.Size() == static_cast<int>(maxwell_lines.size()),
+              "Invalid Maxwell line-functional vector size!");
+  local_y.SetSize(fespace.GetVSize());
+  local_y = 0.0;
+  const auto *value_data = values.HostRead();
+  for (std::size_t line_index = 0; line_index < maxwell_lines.size(); line_index++)
+  {
+    if (value_data[line_index] == 0.0)
+    {
+      continue;
+    }
+    const auto &line = maxwell_lines[line_index];
+    for (int q = 0; q < line.point_count; q++)
+    {
+      const auto &point = maxwell_points[line.point_offset + q];
+      const auto &evaluation = point.evaluation;
+      if (!evaluation.local)
+      {
+        continue;
+      }
+
+      const auto &fe = *fespace.Get().GetFE(evaluation.element);
+      auto &transformation = *fespace.Get().GetElementTransformation(evaluation.element);
+      transformation.SetIntPoint(&evaluation.point);
+      vector_shape.SetSize(fe.GetDof(), fespace.SpaceDimension());
+      fe.CalcVShape(transformation, vector_shape);
+      shape.SetSize(fe.GetDof());
+      shape = 0.0;
+      for (int i = 0; i < fe.GetDof(); i++)
+      {
+        for (int d = 0; d < fespace.SpaceDimension(); d++)
+        {
+          shape[i] += value_data[line_index] * vector_shape(i, d) *
+                      point.weighted_tangent[static_cast<std::size_t>(d)];
+        }
+      }
+      fespace.Get().GetElementVDofs(evaluation.element, element_dofs, dof_transform);
+      dof_transform.TransformDual(shape);
+      local_y.AddElementVector(element_dofs, shape);
+    }
+  }
+  y.SetSize(fespace.GetTrueVSize());
+  fespace.GetProlongationMatrix()->MultTranspose(local_y, y);
+}
+
+void SurfaceResponseOperator::BuildMaxwellTrace(const Vector &line_values,
+                                                Vector &values) const
+{
+  MFEM_ASSERT(line_values.Size() == static_cast<int>(maxwell_lines.size()),
+              "Inconsistent Maxwell contour-path data!");
+  values.SetSize(basis_size);
+  values = 0.0;
+  for (const auto &path : maxwell_paths)
+  {
+    Vector patch_trace(values.GetData() + path.trace_offset, path.size);
+    if (path.anchor_line >= 0)
+    {
+      patch_trace[path.start] = -line_values[path.anchor_line];
+    }
+    for (int offset = 0; offset < path.size; offset++)
+    {
+      const int i = (path.start + offset) % path.size;
+      const int next = (i + 1) % path.size;
+      if (next != path.start)
+      {
+        patch_trace[next] = patch_trace[i] - line_values[path.contour_line_offset + i];
+      }
+    }
+  }
+}
+
+void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
+                                                         Vector &line_values) const
+{
+  MFEM_ASSERT(values.Size() == basis_size, "Inconsistent Maxwell contour-path data!");
+  line_values.SetSize(static_cast<int>(maxwell_lines.size()));
+  line_values = 0.0;
+  Vector adjoint;
+  for (const auto &path : maxwell_paths)
+  {
+    Vector patch_values(const_cast<double *>(values.GetData()) + path.trace_offset,
+                        path.size);
+    adjoint = patch_values;
+    for (int offset = path.size - 2; offset >= 0; offset--)
+    {
+      const int i = (path.start + offset) % path.size;
+      const int next = (i + 1) % path.size;
+      line_values[path.contour_line_offset + i] -= adjoint[next];
+      adjoint[i] += adjoint[next];
+    }
+    if (path.anchor_line >= 0)
+    {
+      line_values[path.anchor_line] -= adjoint[path.start];
+    }
+  }
+}
+
 void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
 {
+  if (!maxwell_paths.empty())
+  {
+    EvaluateMaxwellLines(x, correction);
+    BuildMaxwellTrace(correction, values);
+    return;
+  }
   EvaluatePoints(x, correction);
   values.SetSize(basis_size);
   for (const auto &patch : patches)
@@ -2404,6 +3063,12 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
 
 void SurfaceResponseOperator::ApplyTraceTranspose(const Vector &values, Vector &y) const
 {
+  if (!maxwell_paths.empty())
+  {
+    BuildMaxwellTraceTranspose(values, correction);
+    AddMaxwellLinesTranspose(correction, y);
+    return;
+  }
   local_y.SetSize(fespace.GetVSize());
   local_y = 0.0;
   for (const auto &patch : patches)
@@ -2491,16 +3156,59 @@ SurfaceResponseOperator::GetFabricatedSurfaceEnergy(const Vector &x) const
   return energy;
 }
 
+SurfaceResponseOperator::ElectrostaticResponse
+SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x) const
+{
+  ApplyTrace(x, trace);
+  ElectrostaticResponse result;
+  Vector fixed_flux;
+  for (const auto &patch : patches)
+  {
+    const auto &model = models[patch.model];
+    Vector patch_trace(trace.GetData() + patch.trace_offset, model.basis_size);
+    fixed_flux.SetSize(model.basis_size);
+    model.fixed_flux_transform.Mult(patch_trace, fixed_flux);
+    result.domain_correction +=
+        0.5 * patch.weight * QuadraticForm(model.domain_defect, patch_trace, response);
+    result.domain_correction_fixed_flux +=
+        0.5 * patch.weight *
+        (QuadraticForm(model.fabricated_domain, fixed_flux, response) -
+         QuadraticForm(model.thin_domain, patch_trace, response));
+    for (const auto &[interface, matrix] : model.fabricated_surfaces)
+    {
+      result.fabricated_surface_energy[interface] +=
+          patch.weight * QuadraticForm(matrix, patch_trace, response);
+      result.fabricated_surface_energy_fixed_flux[interface] +=
+          patch.weight * QuadraticForm(matrix, fixed_flux, response);
+    }
+  }
+
+  for (const auto &[interface, fixed_trace] : result.fabricated_surface_energy)
+  {
+    const auto fixed_flux_energy =
+        result.fabricated_surface_energy_fixed_flux.find(interface);
+    MFEM_ASSERT(fixed_flux_energy != result.fabricated_surface_energy_fixed_flux.end(),
+                "Missing fixed-flux fabricated surface response!");
+    const double scale =
+        std::max(std::abs(fixed_trace), std::abs(fixed_flux_energy->second));
+    const double spread =
+        scale > 0.0 ? std::abs(fixed_trace - fixed_flux_energy->second) / scale : 0.0;
+    result.trace_closure_spread[interface] = spread;
+    result.maximum_trace_closure_spread =
+        std::max(result.maximum_trace_closure_spread, spread);
+  }
+  return result;
+}
+
 SurfaceResponseOperator::MaxwellResponse
 SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
                                             std::complex<double> omega) const
 {
-  MFEM_VERIFY(maxwell_finder && maxwell_contours.size() == patches.size(),
+  MFEM_VERIFY(!maxwell_paths.empty() && maxwell_contours.size() == patches.size(),
               "Maxwell surface response was not configured!");
   MFEM_ASSERT(maxwell_anchors.size() == patches.size(),
               "Inconsistent Maxwell response anchor count!");
-  MFEM_VERIFY(E.HasImag(),
-              "Maxwell surface response requires a complex electric field!");
+  MFEM_VERIFY(E.HasImag(), "Maxwell surface response requires a complex electric field!");
 
   MaxwellResponse result;
   result.kR = std::abs(omega) * matching_radius / minimum_wave_speed;
@@ -2509,90 +3217,63 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   result.maximum_curvature_ratio = maximum_curvature_ratio;
   result.maximum_library_distance = maximum_library_distance;
 
-  Vector trace_real, trace_imag, fixed_flux_real, fixed_flux_imag, workspace;
+  Vector field_real, field_imag, line_real, line_imag, trace_real, trace_imag;
+  E.Real().GetTrueDofs(field_real);
+  E.Imag().GetTrueDofs(field_imag);
+  EvaluateMaxwellLines(field_real, line_real);
+  EvaluateMaxwellLines(field_imag, line_imag);
+  BuildMaxwellTrace(line_real, trace_real);
+  BuildMaxwellTrace(line_imag, trace_imag);
+
+  Vector fixed_flux_real, fixed_flux_imag, workspace;
   for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
   {
     const auto &patch = patches[patch_index];
     const auto &model = models[patch.model];
-    const auto &contour = maxwell_contours[patch_index];
-    MFEM_ASSERT(static_cast<int>(contour.size()) == model.basis_size,
-                "Inconsistent Maxwell response contour size!");
-
-    trace_real.SetSize(model.basis_size);
-    trace_imag.SetSize(model.basis_size);
+    Vector patch_trace_real(trace_real.GetData() + patch.trace_offset, model.basis_size);
+    Vector patch_trace_imag(trace_imag.GetData() + patch.trace_offset, model.basis_size);
     fixed_flux_real.SetSize(model.basis_size);
     fixed_flux_imag.SetSize(model.basis_size);
-    trace_real = 0.0;
-    trace_imag = 0.0;
 
-    const auto &anchor = maxwell_anchors[patch_index];
-    int start = 0;
-    double start_distance = mfem::infinity();
-    for (int i = 0; i < model.basis_size; i++)
+    const auto [path_begin, path_count] = maxwell_patch_paths[patch_index];
+    for (int path_index = path_begin; path_index < path_begin + path_count; path_index++)
     {
-      mfem::Vector delta(contour[i]);
-      delta -= anchor;
-      if (delta.Norml2() < start_distance)
+      const auto &path = maxwell_paths[path_index];
+      std::complex<double> loop_integral = 0.0;
+      double loop_scale = 0.0;
+      for (int i = 0; i < path.size; i++)
       {
-        start = i;
-        start_distance = delta.Norml2();
+        const std::complex<double> integral = {line_real[path.contour_line_offset + i],
+                                               line_imag[path.contour_line_offset + i]};
+        loop_integral += integral;
+        loop_scale += std::abs(integral);
+      }
+      if (loop_scale > 0.0)
+      {
+        result.loop_residual =
+            std::max(result.loop_residual, std::abs(loop_integral) / loop_scale);
       }
     }
-    if (start_distance > 1.0e-14 * std::max(1.0, matching_radius))
-    {
-      const std::complex<double> anchor_integral = {
-          fem::ComputeLineIntegral(*maxwell_finder, anchor, contour[start], E.Real(),
-                                   maxwell_quadrature_order),
-          fem::ComputeLineIntegral(*maxwell_finder, anchor, contour[start], E.Imag(),
-                                   maxwell_quadrature_order)};
-      trace_real[start] = -anchor_integral.real();
-      trace_imag[start] = -anchor_integral.imag();
-    }
 
-    std::complex<double> loop_integral = 0.0;
-    double loop_scale = 0.0;
-    for (int offset = 0; offset < model.basis_size; offset++)
-    {
-      const int i = (start + offset) % model.basis_size;
-      const int next = (i + 1) % model.basis_size;
-      const std::complex<double> integral = {
-          fem::ComputeLineIntegral(*maxwell_finder, contour[i], contour[next], E.Real(),
-                                   maxwell_quadrature_order),
-          fem::ComputeLineIntegral(*maxwell_finder, contour[i], contour[next], E.Imag(),
-                                   maxwell_quadrature_order)};
-      loop_integral += integral;
-      loop_scale += std::abs(integral);
-      if (next != start)
-      {
-        trace_real[next] = trace_real[i] - integral.real();
-        trace_imag[next] = trace_imag[i] - integral.imag();
-      }
-    }
-    if (loop_scale > 0.0)
-    {
-      result.loop_residual =
-          std::max(result.loop_residual, std::abs(loop_integral) / loop_scale);
-    }
-
-    model.fixed_flux_transform.Mult(trace_real, fixed_flux_real);
-    model.fixed_flux_transform.Mult(trace_imag, fixed_flux_imag);
-    auto HermitianForm = [&](const mfem::DenseMatrix &matrix, const Vector &real,
-                             const Vector &imag)
+    model.fixed_flux_transform.Mult(patch_trace_real, fixed_flux_real);
+    model.fixed_flux_transform.Mult(patch_trace_imag, fixed_flux_imag);
+    auto HermitianForm =
+        [&](const mfem::DenseMatrix &matrix, const Vector &real, const Vector &imag)
     {
       return QuadraticForm(matrix, real, workspace) +
              QuadraticForm(matrix, imag, workspace);
     };
     result.domain_correction +=
         0.5 * patch.weight *
-        HermitianForm(model.domain_defect, trace_real, trace_imag);
+        HermitianForm(model.domain_defect, patch_trace_real, patch_trace_imag);
     result.domain_correction_fixed_flux +=
         0.5 * patch.weight *
         (HermitianForm(model.fabricated_domain, fixed_flux_real, fixed_flux_imag) -
-         HermitianForm(model.thin_domain, trace_real, trace_imag));
+         HermitianForm(model.thin_domain, patch_trace_real, patch_trace_imag));
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
       const double fixed_trace_energy =
-          patch.weight * HermitianForm(matrix, trace_real, trace_imag);
+          patch.weight * HermitianForm(matrix, patch_trace_real, patch_trace_imag);
       const double fixed_flux_energy =
           patch.weight * HermitianForm(matrix, fixed_flux_real, fixed_flux_imag);
       result.fabricated_surface_energy[interface] += fixed_trace_energy;
@@ -2623,13 +3304,13 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
                    std::abs(fixed_trace - fixed_flux->second) / scale);
     }
   }
-  result.confident =
-      result.kR <= maximum_kR && result.loop_residual <= maximum_loop_residual &&
-      result.matched_length_fraction >= minimum_coverage &&
-      result.corner_neighborhood_fraction <= maximum_corner_fraction &&
-      result.maximum_curvature_ratio <= maximum_curvature &&
-      result.maximum_library_distance <= maximum_library_match_distance &&
-      result.maximum_trace_closure_spread <= maximum_trace_closure_spread;
+  result.confident = result.kR <= maximum_kR &&
+                     result.loop_residual <= maximum_loop_residual &&
+                     result.matched_length_fraction >= minimum_coverage &&
+                     result.corner_neighborhood_fraction <= maximum_corner_fraction &&
+                     result.maximum_curvature_ratio <= maximum_curvature &&
+                     result.maximum_library_distance <= maximum_library_match_distance &&
+                     result.maximum_trace_closure_spread <= maximum_trace_closure_spread;
   return result;
 }
 

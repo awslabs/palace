@@ -251,9 +251,11 @@ protected:
 
   mutable Measurement measurement_cache;
 
-  // Optional postprocessing-only PEC Maxwell surface response correction. The ordinary
-  // measurement cache and surface-Q.csv remain the raw thin-metal result.
+  // Optional PEC Maxwell surface response correction. The ordinary measurement cache and
+  // surface-Q.csv remain the raw thin-metal result.
   std::unique_ptr<SurfaceResponseOperator> surface_response_op;
+  const ComplexVector *surface_response_corrected_field = nullptr;
+  const ComplexVector *surface_response_corrected_flux = nullptr;
   struct MaxwellSurfaceResponseMeasurement
   {
     struct Interface
@@ -261,6 +263,7 @@ protected:
       double raw_energy = 0.0;
       double corrected_energy = 0.0;
       double corrected_energy_fixed_flux = 0.0;
+      double self_consistent_energy = 0.0;
       double trace_closure_spread = 0.0;
       double loss_tangent = 0.0;
     };
@@ -268,6 +271,8 @@ protected:
     double raw_normalization_energy = 0.0;
     double corrected_normalization_energy = 0.0;
     double corrected_normalization_energy_fixed_flux = 0.0;
+    double self_consistent_normalization_energy = 0.0;
+    bool has_self_consistent = false;
     std::map<int, Interface> interfaces;
     SurfaceResponseOperator::MaxwellResponse confidence;
   };
@@ -312,7 +317,7 @@ protected:
   void MeasureSParameter() const;      // Depends: LumpedPorts, WavePorts, FloquetPorts
   void MeasureSurfaceFlux() const;
   void MeasureFarField() const;
-  void MeasureInterfaceEFieldEnergy() const;  // Depends: LumpedPorts
+  void MeasureInterfaceEFieldEnergy() const;      // Depends: LumpedPorts
   void MeasureSurfaceResponseCorrection() const;  // Depends: Domain, ports, interfaces
   void MeasureProbes() const;
   void PrintSurfaceResponseCorrection(double output_index, int excitation) const;
@@ -425,6 +430,22 @@ public:
   explicit PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op);
 
   bool NeedsRecoveredElectricFlux() const { return D_recovered != nullptr; }
+
+  SurfaceResponseOperator *GetSurfaceResponseOperator()
+  {
+    return surface_response_op.get();
+  }
+
+  // Supply a response-corrected Maxwell field for participation postprocessing while the
+  // ordinary MeasureAndPrintAll field and CSV output remain the raw thin-metal result.
+  template <ProblemType U = solver_t>
+  auto SetSurfaceResponseCorrectedField(const ComplexVector &e,
+                                        const ComplexVector *d = nullptr)
+      -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::EIGENMODE, void>
+  {
+    surface_response_corrected_field = &e;
+    surface_response_corrected_flux = d;
+  }
 
   template <ProblemType U = solver_t>
   auto SetRecoveredElectricFlux(const ComplexVector &d)
@@ -564,8 +585,7 @@ public:
   // measurement output. This is used to assemble fabrication-corrected observables while
   // preserving the historical raw thin-metal CSV output.
   template <ProblemType U = solver_t>
-  auto GetElectrostaticEnergies(const Vector &v, const Vector &e,
-                                const Vector *d = nullptr)
+  auto GetElectrostaticEnergies(const Vector &v, const Vector &e, const Vector *d = nullptr)
       -> std::enable_if_t<U == ProblemType::ELECTROSTATIC, ElectrostaticEnergyData>
   {
     SetVGridFunction(v);
@@ -583,11 +603,10 @@ public:
     {
       energies.interfaces.emplace(
           idx, typename ElectrostaticEnergyData::Interface{
-                   surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E,
-                                                                D_recovered.get()),
+                   surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E, D_recovered.get()),
                    surf_post_op.GetInterfaceLossTangent(idx),
-                   surf_post_op.GetInterfaceEdgeElectricFieldEnergies(
-                       idx, *E, D_recovered.get())});
+                   surf_post_op.GetInterfaceEdgeElectricFieldEnergies(idx, *E,
+                                                                      D_recovered.get())});
     }
     return energies;
   }

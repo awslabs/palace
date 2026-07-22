@@ -72,6 +72,7 @@ public:
   double GetAbsTol() const { return ksp->GetAbsTol(); }
   void SetRelTol(double tol) { ksp->SetRelTol(tol); }
   void SetAbsTol(double tol) { ksp->SetAbsTol(tol); }
+  void SetInitialGuess(bool initial_guess) { ksp->SetInitialGuess(initial_guess); }
 
   void SetOperators(const OperType &op, const OperType &pc_op);
 

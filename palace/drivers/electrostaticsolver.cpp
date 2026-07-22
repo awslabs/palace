@@ -70,13 +70,15 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                       iodata.solver.electrostatic.response_matrix
                                   ? n_step
                                   : 0);
-  using EnergyData =
-      PostOperator<ProblemType::ELECTROSTATIC>::ElectrostaticEnergyData;
+  using EnergyData = PostOperator<ProblemType::ELECTROSTATIC>::ElectrostaticEnergyData;
   struct CorrectedResult
   {
     int source;
     EnergyData raw;
+    EnergyData postprocessed_fixed_trace;
+    EnergyData postprocessed_fixed_flux;
     EnergyData corrected;
+    std::map<int, double> trace_closure_spread;
   };
   std::vector<CorrectedResult> corrected_results;
   corrected_results.reserve(response_correction ? n_step : 0);
@@ -136,16 +138,52 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     auto total_domain_energy = post_op.MeasureAndPrintAll(step, V[step], E, idx);
 
     EnergyData raw_energies;
-    if (response_correction && response_correction->HasSurfaceResponse())
+    if (response_correction)
     {
-      raw_energies =
-          post_op.GetElectrostaticEnergies(V[step], E,
-                                           post_op.NeedsRecoveredElectricFlux() ? &D
-                                                                                : nullptr);
+      raw_energies = post_op.GetElectrostaticEnergies(
+          V[step], E, post_op.NeedsRecoveredElectricFlux() ? &D : nullptr);
     }
 
     if (response_correction)
     {
+      const auto response = response_correction->GetElectrostaticResponse(V[step]);
+      auto ApplyResponse = [&](EnergyData energies, double domain_correction,
+                               const std::map<int, double> &fabricated_surface)
+      {
+        energies.domain += domain_correction;
+        for (const auto &[interface, energy] : fabricated_surface)
+        {
+          auto it = energies.interfaces.find(interface);
+          MFEM_VERIFY(it != energies.interfaces.end(),
+                      "Response correction refers to target interface "
+                          << interface << " which is not configured for postprocessing!");
+          MFEM_VERIFY(
+              !it->second.edge_energies.empty(),
+              "Response-corrected target interface "
+                  << interface << " requires EdgeDistances and EdgeAttributes or AutomaticEdges!");
+          // EdgeDistances are sorted. The largest configured radius is the matching
+          // distance of the coupon response model.
+          it->second.energy = it->second.edge_energies.back().energy_outside + energy;
+        }
+        MFEM_VERIFY(energies.domain > 0.0,
+                    "Response-corrected electrostatic energy is not positive!");
+        return energies;
+      };
+      auto postprocessed_fixed_trace = ApplyResponse(
+          raw_energies, response.domain_correction, response.fabricated_surface_energy);
+      auto postprocessed_fixed_flux =
+          ApplyResponse(raw_energies, response.domain_correction_fixed_flux,
+                        response.fabricated_surface_energy_fixed_flux);
+      constexpr double maximum_trace_closure_spread = 0.05;
+      if (response.maximum_trace_closure_spread > maximum_trace_closure_spread)
+      {
+        Mpi::Warning(
+            "Electrostatic postprocessing-only surface-response trace-closure spread "
+            "exceeds 5% ({:.3e}). Corrected values are reported, but the raw thin-metal "
+            "field does not determine a closure-independent local response.\n",
+            response.maximum_trace_closure_spread);
+      }
+
       Mpi::Print(" Solving fabrication-response corrected field\n");
       corrected_ksp->Mult(corrected_rhs, V_corrected[step]);
       Vector E_corrected(Grad.Height()), D_corrected;
@@ -160,34 +198,20 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         D_corrected_ptr = &D_corrected;
       }
 
-      auto corrected_energies = post_op.GetElectrostaticEnergies(
-          V_corrected[step], E_corrected, D_corrected_ptr);
-      const auto defect = response_correction->GetEnergyCorrection(V_corrected[step]);
-      const auto fabricated_surface =
-          response_correction->GetFabricatedSurfaceEnergy(V_corrected[step]);
-      corrected_energies.domain += defect.domain;
-      for (const auto &[interface, energy] : fabricated_surface)
-      {
-        auto it = corrected_energies.interfaces.find(interface);
-        MFEM_VERIFY(it != corrected_energies.interfaces.end(),
-                    "Response correction refers to target interface "
-                        << interface << " which is not configured for postprocessing!");
-        MFEM_VERIFY(!it->second.edge_energies.empty(),
-                    "Response-corrected target interface "
-                        << interface
-                        << " requires EdgeDistances and EdgeAttributes or AutomaticEdges!");
-        // EdgeDistances are sorted. The largest configured radius is the matching
-        // distance of the coupon response model.
-        it->second.energy =
-            it->second.edge_energies.back().energy_outside + energy;
-      }
-      MFEM_VERIFY(corrected_energies.domain > 0.0,
-                  "Response-corrected electrostatic energy is not positive!");
+      auto corrected_energies =
+          post_op.GetElectrostaticEnergies(V_corrected[step], E_corrected, D_corrected_ptr);
+      const auto corrected_response =
+          response_correction->GetElectrostaticResponse(V_corrected[step]);
+      corrected_energies =
+          ApplyResponse(std::move(corrected_energies), corrected_response.domain_correction,
+                        corrected_response.fabricated_surface_energy);
 
       if (response_correction->HasSurfaceResponse())
       {
-        corrected_results.push_back(
-            CorrectedResult{idx, std::move(raw_energies), corrected_energies});
+        corrected_results.push_back(CorrectedResult{
+            idx, std::move(raw_energies), std::move(postprocessed_fixed_trace),
+            std::move(postprocessed_fixed_flux), std::move(corrected_energies),
+            response.trace_closure_spread});
       }
     }
 
@@ -225,6 +249,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     TableWithCSVFile output(post_dir / "surface-Q-corrected.csv");
     output.table.insert(Column("source", "i", 0, 0, 2, ""));
     output.table.insert("domain_raw", "E_elec raw (J)");
+    output.table.insert("domain_postprocessed_fixed_trace",
+                        "E_elec postprocessed fixed-trace (J)");
+    output.table.insert("domain_postprocessed_fixed_flux",
+                        "E_elec postprocessed fixed-flux (J)");
     output.table.insert("domain_corrected", "E_elec corrected (J)");
     const auto &interfaces = corrected_results.front().raw.interfaces;
     for (const auto &[interface, data] : interfaces)
@@ -235,44 +263,94 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                           fmt::format("p_surf raw[{}]", interface));
       output.table.insert(fmt::format("quality_raw_{}", interface),
                           fmt::format("Q_surf raw[{}]", interface));
+      output.table.insert(
+          fmt::format("energy_postprocessed_fixed_trace_{}", interface),
+          fmt::format("E_surf postprocessed fixed-trace[{}] (J)", interface));
+      output.table.insert(
+          fmt::format("participation_postprocessed_fixed_trace_{}", interface),
+          fmt::format("p_surf postprocessed fixed-trace[{}]", interface));
+      output.table.insert(fmt::format("quality_postprocessed_fixed_trace_{}", interface),
+                          fmt::format("Q_surf postprocessed fixed-trace[{}]", interface));
+      output.table.insert(
+          fmt::format("energy_postprocessed_fixed_flux_{}", interface),
+          fmt::format("E_surf postprocessed fixed-flux[{}] (J)", interface));
+      output.table.insert(
+          fmt::format("participation_postprocessed_fixed_flux_{}", interface),
+          fmt::format("p_surf postprocessed fixed-flux[{}]", interface));
+      output.table.insert(fmt::format("quality_postprocessed_fixed_flux_{}", interface),
+                          fmt::format("Q_surf postprocessed fixed-flux[{}]", interface));
       output.table.insert(fmt::format("energy_corrected_{}", interface),
                           fmt::format("E_surf corrected[{}] (J)", interface));
       output.table.insert(fmt::format("participation_corrected_{}", interface),
                           fmt::format("p_surf corrected[{}]", interface));
       output.table.insert(fmt::format("quality_corrected_{}", interface),
                           fmt::format("Q_surf corrected[{}]", interface));
+      output.table.insert(fmt::format("trace_closure_spread_{}", interface),
+                          fmt::format("trace closure spread[{}]", interface));
     }
     for (const auto &result : corrected_results)
     {
       output.table["source"] << result.source;
       output.table["domain_raw"]
           << iodata.units.Dimensionalize<VT::ENERGY>(result.raw.domain);
+      output.table["domain_postprocessed_fixed_trace"]
+          << iodata.units.Dimensionalize<VT::ENERGY>(
+                 result.postprocessed_fixed_trace.domain);
+      output.table["domain_postprocessed_fixed_flux"]
+          << iodata.units.Dimensionalize<VT::ENERGY>(
+                 result.postprocessed_fixed_flux.domain);
       output.table["domain_corrected"]
           << iodata.units.Dimensionalize<VT::ENERGY>(result.corrected.domain);
-      MFEM_VERIFY(result.raw.interfaces.size() == interfaces.size() &&
-                      result.corrected.interfaces.size() == interfaces.size(),
-                  "Inconsistent corrected surface response entries!");
+      MFEM_VERIFY(
+          result.raw.interfaces.size() == interfaces.size() &&
+              result.postprocessed_fixed_trace.interfaces.size() == interfaces.size() &&
+              result.postprocessed_fixed_flux.interfaces.size() == interfaces.size() &&
+              result.corrected.interfaces.size() == interfaces.size(),
+          "Inconsistent corrected surface response entries!");
       for (const auto &[interface, raw] : result.raw.interfaces)
       {
+        const auto fixed_trace = result.postprocessed_fixed_trace.interfaces.at(interface);
+        const auto fixed_flux = result.postprocessed_fixed_flux.interfaces.at(interface);
         const auto corrected = result.corrected.interfaces.at(interface);
         const double p_raw = raw.energy / result.raw.domain;
+        const double p_fixed_trace =
+            fixed_trace.energy / result.postprocessed_fixed_trace.domain;
+        const double p_fixed_flux =
+            fixed_flux.energy / result.postprocessed_fixed_flux.domain;
         const double p_corrected = corrected.energy / result.corrected.domain;
-        const double q_raw = p_raw == 0.0 || raw.loss_tangent == 0.0
-                                 ? mfem::infinity()
-                                 : 1.0 / (p_raw * raw.loss_tangent);
-        const double q_corrected =
-            p_corrected == 0.0 || corrected.loss_tangent == 0.0
-                ? mfem::infinity()
-                : 1.0 / (p_corrected * corrected.loss_tangent);
+        auto Quality = [](double participation, double loss_tangent)
+        {
+          return participation == 0.0 || loss_tangent == 0.0
+                     ? mfem::infinity()
+                     : 1.0 / (participation * loss_tangent);
+        };
         output.table[fmt::format("energy_raw_{}", interface)]
             << iodata.units.Dimensionalize<VT::ENERGY>(raw.energy);
         output.table[fmt::format("participation_raw_{}", interface)] << p_raw;
-        output.table[fmt::format("quality_raw_{}", interface)] << q_raw;
+        output.table[fmt::format("quality_raw_{}", interface)]
+            << Quality(p_raw, raw.loss_tangent);
+        output.table[fmt::format("energy_postprocessed_fixed_trace_{}", interface)]
+            << iodata.units.Dimensionalize<VT::ENERGY>(fixed_trace.energy);
+        output.table[fmt::format("participation_postprocessed_fixed_trace_{}", interface)]
+            << p_fixed_trace;
+        output.table[fmt::format("quality_postprocessed_fixed_trace_{}", interface)]
+            << Quality(p_fixed_trace, fixed_trace.loss_tangent);
+        output.table[fmt::format("energy_postprocessed_fixed_flux_{}", interface)]
+            << iodata.units.Dimensionalize<VT::ENERGY>(fixed_flux.energy);
+        output.table[fmt::format("participation_postprocessed_fixed_flux_{}", interface)]
+            << p_fixed_flux;
+        output.table[fmt::format("quality_postprocessed_fixed_flux_{}", interface)]
+            << Quality(p_fixed_flux, fixed_flux.loss_tangent);
         output.table[fmt::format("energy_corrected_{}", interface)]
             << iodata.units.Dimensionalize<VT::ENERGY>(corrected.energy);
-        output.table[fmt::format("participation_corrected_{}", interface)]
-            << p_corrected;
-        output.table[fmt::format("quality_corrected_{}", interface)] << q_corrected;
+        output.table[fmt::format("participation_corrected_{}", interface)] << p_corrected;
+        output.table[fmt::format("quality_corrected_{}", interface)]
+            << Quality(p_corrected, corrected.loss_tangent);
+        const auto closure_spread = result.trace_closure_spread.find(interface);
+        output.table[fmt::format("trace_closure_spread_{}", interface)]
+            << (closure_spread == result.trace_closure_spread.end()
+                    ? 0.0
+                    : closure_spread->second);
       }
     }
     output.WriteFullTableTrunc();

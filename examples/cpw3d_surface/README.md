@@ -5,6 +5,10 @@ mesh against an independently fabrication-resolved reference. The CPW
 cross-section is extruded with a structured mesh, so the converged 3D
 electrostatic result should also reproduce the corresponding 2D result.
 
+[`corner_coupon/`](corner_coupon/README.md) contains the separate prototype
+workflow for generating a spatial three-dimensional convex-corner response
+matrix.
+
 The geometry is the held-out 20/12 um CPW from the 2D validation study. The
 fabrication stack is 100 nm metal, 50 nm substrate overetch, 80 degree
 sidewalls, and 10 nm corner radii. Correction coefficients must remain fixed
@@ -66,6 +70,22 @@ indicators are diagnostic only. They use a relaxed `EstimatorTol` to avoid
 oversolving an estimator that does not drive AMR. Restore a strict estimator
 tolerance before enabling refinement.
 
+When electrostatic response correction is enabled, `surface-Q-corrected.csv`
+reports two postprocessing-only closures evaluated on the unchanged raw
+thin-metal potential in addition to the historical raw result and the
+self-consistent corrected solve. The fixed-trace closure preserves the
+potential on the coupon contour; the fixed-flux closure transforms that trace
+to preserve the coupon flux. Their per-interface difference is reported as
+`trace closure spread`.
+
+On the order-3, 20 um test extrusion, errors relative to the converged 2D
+fabricated SA/MS/MA values were `+0.11%/-2.51%/+6.98%` for postprocessed
+fixed-trace, `+6.60%/+1.06%/+0.66%` for postprocessed fixed-flux, and
+`+1.53%/-0.82%/+4.35%` for the self-consistent corrected solve. The last set
+exactly reproduces the result obtained before the postprocessing-only columns
+were added. The maximum trace-closure spread was 8.39%, so neither
+postprocessing-only closure passes the 5% confidence threshold.
+
 ## Driven Maxwell validation
 
 The compact wave-port case exercises the postprocessing-only Maxwell path
@@ -125,11 +145,21 @@ reported in `surface-Q-corrected.csv`; its maximum is reported in
 On the generated mesh at order 2 with no AMR, the fixed-trace SA/MS/MA
 participation errors relative to the same-order fabricated run were
 `+3.37%/-1.93%/+14.90%`, while the fixed-flux errors were
-`+10.13%/+1.66%/+7.64%`. Raw errors were
-`-10.48%/-21.15%/-59.85%`. The maximum closure spread was `8.27%`, so the
-closure diagnostic correctly rejects this result even though the matched
-fraction is one, the loop residual is below 0.05, and the artificial endpoint
-neighborhood fraction is 0.08.
+`+10.13%/+1.66%/+7.64%`. The uniform-driven self-consistent errors were
+`+4.86%/-0.37%/+9.88%`, and raw errors were `-10.48%/-21.15%/-59.85%`.
+The maximum closure spread was `8.27%`, so the closure diagnostic correctly
+rejects the postprocessing-only results even though the matched fraction is
+one, the loop residual is below 0.05, and the artificial endpoint neighborhood
+fraction is 0.08.
+
+Running electrostatics on the same compact order-2 thin and fabricated meshes
+gave fixed-trace errors of `+0.39%/-0.92%/+13.68%`, fixed-flux errors of
+`+6.85%/+2.69%/+6.64%`, and self-consistent corrected errors of
+`+1.95%/+0.88%/+9.75%`. Maxwell therefore adds a modest error for this
+electrically short line, especially for SA, but it does not explain the
+persistent MA error by itself. The earlier smaller electrostatic errors also
+benefited from order 3 and the corrected global solve rather than a
+postprocessing-only closure.
 
 At order 4, the 50 um corrected SA/MS/MA errors were
 `+0.06%/-0.78%/+12.15%`, compared with raw errors of

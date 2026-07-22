@@ -4,6 +4,7 @@
 #include "fixtures.hpp"
 
 #include <array>
+#include <cmath>
 #include <fstream>
 #include <memory>
 #include <set>
@@ -49,6 +50,15 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   const auto library_3d_path = temp.temp_dir / "fabrication-process-3d.json";
   const auto coupled_library_3d_path =
       temp.temp_dir / "fabrication-process-coupled-3d.json";
+  const auto corner_points_path = temp.temp_dir / "corner-basis-points.csv";
+  const auto corner_fabricated_path = temp.temp_dir / "corner-fabricated.csv";
+  const auto corner_thin_path = temp.temp_dir / "corner-thin.csv";
+  const auto corner_fabricated_surface_path =
+      temp.temp_dir / "corner-fabricated-surface.csv";
+  const auto corner_thin_surface_path = temp.temp_dir / "corner-thin-surface.csv";
+  const auto convex_library_3d_path = temp.temp_dir / "fabrication-process-convex-3d.json";
+  const auto concave_library_3d_path =
+      temp.temp_dir / "fabrication-process-concave-3d.json";
   if (Mpi::Root(Mpi::World()))
   {
     {
@@ -69,29 +79,27 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
          {{0.1e-12, 0.5e-12, 0.08e-12, 0.04e-12}},
          {{0.05e-12, 0.08e-12, 0.7e-12, 0.09e-12}},
          {{0.02e-12, 0.04e-12, 0.09e-12, 0.4e-12}}}};
-    auto write_domain_matrix =
-        [](const auto &path, const std::array<std::array<double, 4>, 4> &matrix)
+    auto write_domain_matrix = [](const auto &path, const auto &matrix)
     {
       std::ofstream output(path);
       output << "basis_i,basis_j,Q_ij (J)\n";
-      for (int i = 0; i < 4; i++)
+      for (std::size_t i = 0; i < matrix.size(); i++)
       {
-        for (int j = i; j < 4; j++)
+        for (std::size_t j = i; j < matrix.size(); j++)
         {
           output << i + 1 << "," << j + 1 << "," << matrix[i][j] << "\n";
         }
       }
     };
-    auto write_surface_matrix =
-        [](const auto &path, const std::array<std::array<double, 4>, 4> &matrix)
+    auto write_surface_matrix = [](const auto &path, const auto &matrix)
     {
       std::ofstream output(path);
       output << "interface,edge,basis_i,basis_j,Q_total_ij (J)\n";
       for (int edge = 1; edge <= 2; edge++)
       {
-        for (int i = 0; i < 4; i++)
+        for (std::size_t i = 0; i < matrix.size(); i++)
         {
-          for (int j = i; j < 4; j++)
+          for (std::size_t j = i; j < matrix.size(); j++)
           {
             output << "1," << edge << "," << i + 1 << "," << j + 1 << ","
                    << 0.5 * matrix[i][j] << "\n";
@@ -141,6 +149,60 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     coupled_library_3d["Models"].push_back(std::move(coupled_model));
     std::ofstream coupled_output_3d(coupled_library_3d_path);
     coupled_output_3d << coupled_library_3d.dump(2) << "\n";
+
+    {
+      std::ofstream output(corner_points_path);
+      output << "x,y,z\n";
+      for (const double z : {-0.02, 0.02})
+      {
+        output << "0.02,0.02," << z << "\n"
+               << "0.08,0.02," << z << "\n"
+               << "0.08,0.08," << z << "\n"
+               << "0.02,0.08," << z << "\n";
+      }
+    }
+    std::array<std::array<double, 8>, 8> corner_fabricated{};
+    std::array<std::array<double, 8>, 8> corner_thin{};
+    for (std::size_t i = 0; i < corner_fabricated.size(); i++)
+    {
+      for (std::size_t j = 0; j < corner_fabricated.size(); j++)
+      {
+        const double coupling =
+            1.0 / (1.0 + std::abs(static_cast<int>(i) - static_cast<int>(j)));
+        corner_fabricated[i][j] = (i == j ? 3.0 : 0.05 * coupling) * 1.0e-12;
+        corner_thin[i][j] = (i == j ? 1.0 : 0.01 * coupling) * 1.0e-12;
+      }
+    }
+    write_domain_matrix(corner_fabricated_path, corner_fabricated);
+    write_domain_matrix(corner_thin_path, corner_thin);
+    write_surface_matrix(corner_fabricated_surface_path, corner_fabricated);
+    write_surface_matrix(corner_thin_surface_path, corner_thin);
+
+    auto convex_library_3d = library_3d;
+    convex_library_3d["Name"] = "unit-test-process-convex-3d";
+    convex_library_3d["MatchingRadius"] = 0.2;
+    convex_library_3d["CouponDepth"] = 0.2;
+    auto corner_model = convex_library_3d["Models"][0];
+    corner_model["Name"] = "convex-corner-90";
+    corner_model["Topology"] = "ConvexCorner";
+    corner_model["Angle"] = 90.0;
+    corner_model["AngleTolerance"] = 1.0e-6;
+    corner_model["FabricatedMatrix"] = corner_fabricated_path.string();
+    corner_model["ThinMatrix"] = corner_thin_path.string();
+    corner_model["FabricatedSurfaceMatrix"] = corner_fabricated_surface_path.string();
+    corner_model["ThinSurfaceMatrix"] = corner_thin_surface_path.string();
+    corner_model["BasisPoints"] = corner_points_path.string();
+    corner_model["ContourGroups"] = {4, 4};
+    convex_library_3d["Models"].push_back(corner_model);
+    std::ofstream convex_output_3d(convex_library_3d_path);
+    convex_output_3d << convex_library_3d.dump(2) << "\n";
+
+    auto concave_library_3d = convex_library_3d;
+    concave_library_3d["Name"] = "unit-test-process-concave-3d";
+    concave_library_3d["Models"][1]["Name"] = "concave-corner-90";
+    concave_library_3d["Models"][1]["Topology"] = "ConcaveCorner";
+    std::ofstream concave_output_3d(concave_library_3d_path);
+    concave_output_3d << concave_library_3d.dump(2) << "\n";
   }
   Mpi::Barrier(Mpi::World());
 
@@ -237,6 +299,14 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   const auto fabricated_energy = response.GetFabricatedSurfaceEnergy(x);
   REQUIRE(fabricated_energy.size() == 1);
   CHECK(fabricated_energy.at(4) > energy.interfaces.at(4));
+  const auto local_electrostatic_response = response.GetElectrostaticResponse(x);
+  CHECK_THAT(local_electrostatic_response.domain_correction,
+             WithinRel(energy.domain, 1.0e-12));
+  CHECK_THAT(local_electrostatic_response.fabricated_surface_energy.at(4),
+             WithinRel(fabricated_energy.at(4), 1.0e-12));
+  CHECK(std::isfinite(local_electrostatic_response.domain_correction_fixed_flux));
+  CHECK(local_electrostatic_response.fabricated_surface_energy_fixed_flux.at(4) > 0.0);
+  CHECK(local_electrostatic_response.maximum_trace_closure_spread > 0.0);
 
   auto separated_config = config;
   separated_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Patches"].push_back(
@@ -387,21 +457,18 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   maxwell_config_3d["Problem"]["Type"] = "Eigenmode";
   maxwell_config_3d["Boundaries"]["Ground"]["Attributes"] = {1, 2};
   maxwell_config_3d["Boundaries"].erase("Terminal");
-  maxwell_config_3d["Solver"] = {
-      {"Order", 1},
-      {"Eigenmode", {{"Target", 1.0}}},
-      {"SurfaceResponseCorrection",
-       {{"Library", library_3d_path.string()},
-        {"TargetInterfaces", {1, 2, 3}},
-        {"UnmatchedPolicy", "Error"}}}};
+  maxwell_config_3d["Solver"] = {{"Order", 1},
+                                 {"Eigenmode", {{"Target", 1.0}}},
+                                 {"SurfaceResponseCorrection",
+                                  {{"Library", library_3d_path.string()},
+                                   {"TargetInterfaces", {1, 2, 3}},
+                                   {"UnmatchedPolicy", "Error"}}}};
   IoData maxwell_iodata_3d(maxwell_config_3d, false);
   auto maxwell_mesh_3d = mesh::ReadMesh(maxwell_iodata_3d, Mpi::World());
   std::vector<std::unique_ptr<Mesh>> maxwell_meshes_3d;
-  maxwell_meshes_3d.push_back(
-      std::make_unique<Mesh>(std::move(maxwell_mesh_3d)));
+  maxwell_meshes_3d.push_back(std::make_unique<Mesh>(std::move(maxwell_mesh_3d)));
   SpaceOperator maxwell_space_3d(maxwell_iodata_3d, maxwell_meshes_3d);
-  SurfaceResponseOperator maxwell_response_3d(maxwell_iodata_3d,
-                                              maxwell_space_3d);
+  SurfaceResponseOperator maxwell_response_3d(maxwell_iodata_3d, maxwell_space_3d);
   CHECK(maxwell_response_3d.GetPatchCount() > 0);
   CHECK(maxwell_response_3d.HasSurfaceResponse());
   CHECK(maxwell_response_3d.GetTargetInterfaces() == std::set<int>{1, 2, 3});
@@ -414,14 +481,12 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   mfem::VectorConstantCoefficient field_coefficient(constant_field);
   maxwell_field.Real().ProjectCoefficient(field_coefficient);
   maxwell_field.Imag() = 0.0;
-  const auto real_response =
-      maxwell_response_3d.GetMaxwellResponse(maxwell_field, 0.0);
+  const auto real_response = maxwell_response_3d.GetMaxwellResponse(maxwell_field, 0.0);
   CHECK(std::abs(real_response.domain_correction) > 0.0);
   CHECK(std::abs(real_response.domain_correction_fixed_flux) > 0.0);
   REQUIRE(real_response.fabricated_surface_energy.size() == 3);
   REQUIRE(real_response.fabricated_surface_energy_fixed_flux.size() == 3);
-  for (const auto &[interface, energy] :
-       real_response.fabricated_surface_energy_fixed_flux)
+  for (const auto &[interface, energy] : real_response.fabricated_surface_energy_fixed_flux)
   {
     (void)interface;
     CHECK(energy > 0.0);
@@ -431,12 +496,34 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(real_response.maximum_trace_closure_spread > 0.0);
   CHECK_THAT(real_response.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
 
+  // The contour reconstruction is also the trace operator used by the self-consistent
+  // Maxwell mass correction. Verify its energy identity and transpose symmetry.
+  Vector field_true, correction_true;
+  maxwell_field.Real().GetTrueDofs(field_true);
+  field_true.SetSubVector(maxwell_space_3d.GetNDDbcTDofLists().back(), 0.0);
+  maxwell_field.Real().SetFromTrueDofs(field_true);
+  const auto operator_response = maxwell_response_3d.GetMaxwellResponse(maxwell_field, 0.0);
+  maxwell_response_3d.Mult(field_true, correction_true);
+  CHECK_THAT(0.5 * linalg::Dot(Mpi::World(), field_true, correction_true),
+             WithinRel(operator_response.domain_correction, 1.0e-10));
+
+  Vector probe(field_true.Size()), correction_probe;
+  auto *probe_data = probe.HostWrite();
+  for (int i = 0; i < probe.Size(); i++)
+  {
+    probe_data[i] = std::sin(0.37 * (i + 1 + 11 * Mpi::Rank(Mpi::World())));
+  }
+  probe.SetSubVector(maxwell_space_3d.GetNDDbcTDofLists().back(), 0.0);
+  maxwell_response_3d.Mult(probe, correction_probe);
+  CHECK_THAT(linalg::Dot(Mpi::World(), probe, correction_true),
+             WithinRel(linalg::Dot(Mpi::World(), field_true, correction_probe), 1.0e-10));
+
   // A Maxwell trace reconstructed from E = -grad(V) must reproduce the H1 coupon trace
   // relative to the PEC. This catches a missing contour-voltage gauge even when the
   // contour-loop residual and complex-field scaling tests pass.
   mfem::ParGridFunction potential(&laplace_3d.GetH1Space().Get());
-  mfem::FunctionCoefficient potential_coefficient(
-      [](const mfem::Vector &x) { return x[1]; });
+  mfem::FunctionCoefficient potential_coefficient([](const mfem::Vector &x)
+                                                  { return x[1]; });
   potential.ProjectCoefficient(potential_coefficient);
   Vector potential_true;
   potential.GetTrueDofs(potential_true);
@@ -447,12 +534,11 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   maxwell_field.Real().ProjectCoefficient(normal_field_coefficient);
   maxwell_field.Imag() = 0.0;
 
-  const auto electrostatic_correction =
-      response_3d.GetEnergyCorrection(potential_true);
+  const auto electrostatic_correction = response_3d.GetEnergyCorrection(potential_true);
   const auto electrostatic_surfaces =
       response_3d.GetFabricatedSurfaceEnergy(potential_true);
-  const auto gradient_response =
-      maxwell_response_3d.GetMaxwellResponse(maxwell_field, 0.0);
+  const auto electrostatic_response = response_3d.GetElectrostaticResponse(potential_true);
+  const auto gradient_response = maxwell_response_3d.GetMaxwellResponse(maxwell_field, 0.0);
   CHECK_THAT(gradient_response.domain_correction,
              WithinRel(electrostatic_correction.domain, 1.0e-10));
   REQUIRE(gradient_response.fabricated_surface_energy.size() ==
@@ -461,30 +547,31 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   {
     CHECK_THAT(gradient_response.fabricated_surface_energy.at(interface),
                WithinRel(energy, 1.0e-10));
+    CHECK_THAT(
+        gradient_response.fabricated_surface_energy_fixed_flux.at(interface),
+        WithinRel(electrostatic_response.fabricated_surface_energy_fixed_flux.at(interface),
+                  1.0e-10));
   }
+  CHECK_THAT(gradient_response.domain_correction_fixed_flux,
+             WithinRel(electrostatic_response.domain_correction_fixed_flux, 1.0e-10));
   CHECK(gradient_response.loop_residual < 1.0e-10);
 
   maxwell_field.Real().ProjectCoefficient(field_coefficient);
   maxwell_field.Imag() = maxwell_field.Real();
-  const auto complex_response =
-      maxwell_response_3d.GetMaxwellResponse(maxwell_field, 0.0);
+  const auto complex_response = maxwell_response_3d.GetMaxwellResponse(maxwell_field, 0.0);
   CHECK_THAT(complex_response.domain_correction,
              WithinRel(2.0 * real_response.domain_correction, 1.0e-10));
   CHECK_THAT(complex_response.domain_correction_fixed_flux,
-             WithinRel(2.0 * real_response.domain_correction_fixed_flux,
-                       1.0e-10));
-  for (const auto &[interface, energy] :
-       real_response.fabricated_surface_energy)
+             WithinRel(2.0 * real_response.domain_correction_fixed_flux, 1.0e-10));
+  for (const auto &[interface, energy] : real_response.fabricated_surface_energy)
   {
     CHECK_THAT(complex_response.fabricated_surface_energy.at(interface),
                WithinRel(2.0 * energy, 1.0e-10));
   }
-  for (const auto &[interface, energy] :
-       real_response.fabricated_surface_energy_fixed_flux)
+  for (const auto &[interface, energy] : real_response.fabricated_surface_energy_fixed_flux)
   {
-    CHECK_THAT(
-        complex_response.fabricated_surface_energy_fixed_flux.at(interface),
-        WithinRel(2.0 * energy, 1.0e-10));
+    CHECK_THAT(complex_response.fabricated_surface_energy_fixed_flux.at(interface),
+               WithinRel(2.0 * energy, 1.0e-10));
   }
 
   auto coupled_config_3d = config_3d;
@@ -516,20 +603,18 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   coupled_maxwell_config_3d["Solver"]["SurfaceResponseCorrection"]["Library"] =
       coupled_library_3d_path.string();
   IoData coupled_maxwell_iodata_3d(coupled_maxwell_config_3d, false);
-  auto coupled_maxwell_mesh_3d =
-      mesh::ReadMesh(coupled_maxwell_iodata_3d, Mpi::World());
+  auto coupled_maxwell_mesh_3d = mesh::ReadMesh(coupled_maxwell_iodata_3d, Mpi::World());
   std::vector<std::unique_ptr<Mesh>> coupled_maxwell_meshes_3d;
   coupled_maxwell_meshes_3d.push_back(
       std::make_unique<Mesh>(std::move(coupled_maxwell_mesh_3d)));
   SpaceOperator coupled_maxwell_space_3d(coupled_maxwell_iodata_3d,
                                          coupled_maxwell_meshes_3d);
-  SurfaceResponseOperator coupled_maxwell_response_3d(
-      coupled_maxwell_iodata_3d, coupled_maxwell_space_3d);
+  SurfaceResponseOperator coupled_maxwell_response_3d(coupled_maxwell_iodata_3d,
+                                                      coupled_maxwell_space_3d);
   const auto &maxwell_line_rule = mfem::IntRules.Get(
       mfem::Geometry::SEGMENT, 2 * coupled_maxwell_iodata_3d.solver.order);
   CHECK(coupled_maxwell_response_3d.GetPatchCount() ==
-        static_cast<int>(segment_indices.size() / 2) *
-            maxwell_line_rule.GetNPoints());
+        static_cast<int>(segment_indices.size() / 2) * maxwell_line_rule.GetNPoints());
   GridFunction coupled_maxwell_field(coupled_maxwell_space_3d.GetNDSpace(), true);
   coupled_maxwell_field.Real().ProjectCoefficient(normal_field_coefficient);
   coupled_maxwell_field.Imag() = 0.0;
@@ -538,6 +623,194 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(std::abs(coupled_maxwell_result.domain_correction) > 0.0);
   CHECK(coupled_maxwell_result.fabricated_surface_energy.size() == 3);
   CHECK(coupled_maxwell_result.loop_residual < 1.0e-10);
+
+  // A closed rectangular PEC island supplies true in-plane corners, unlike the CPW
+  // extrusion above whose longitudinal physical edges end on truncation boundaries.
+  json island_config = {
+      {"Problem", {{"Type", "Electrostatic"}, {"Output", temp.temp_dir.string()}}},
+      {"Model", {{"Mesh", "unused.msh"}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+      {"Boundaries",
+       {{"Ground", {{"Attributes", {1, 2, 3, 4, 5, 6}}}},
+        {"Terminal", {{{"Index", 1}, {"Attributes", {9}}}}},
+        {"Postprocessing",
+         {{"Dielectric",
+           {{{"Index", 4},
+             {"Attributes", {9}},
+             {"Type", "SA"},
+             {"Thickness", 0.002},
+             {"Permittivity", 4.0},
+             {"AutomaticEdges", true},
+             {"EdgeDistances", {0.2}},
+             {"EdgeFrameNormal", {0.0, 1.0, 0.0}}}}}}}}},
+      {"Solver",
+       {{"Order", 1},
+        {"Electrostatic",
+         {{"ResponseCorrection",
+           {{"Library", concave_library_3d_path.string()},
+            {"TargetInterfaces", {4}},
+            {"UnmatchedPolicy", "Error"}}}}}}}};
+  auto MakeIslandMesh = []()
+  {
+    mfem::Mesh serial =
+        mfem::Mesh::MakeCartesian3D(8, 4, 8, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
+    for (int face = 0; face < serial.GetNumFaces(); face++)
+    {
+      int element1, element2;
+      serial.GetFaceElements(face, &element1, &element2);
+      if (element1 < 0 || element2 < 0)
+      {
+        continue;
+      }
+      mfem::Array<int> vertices;
+      serial.GetFaceVertices(face, vertices);
+      bool on_plane = true;
+      double xmin = 1.0, xmax = 0.0, zmin = 1.0, zmax = 0.0;
+      for (const int vertex : vertices)
+      {
+        const double *point = serial.GetVertex(vertex);
+        on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+        xmin = std::min(xmin, point[0]);
+        xmax = std::max(xmax, point[0]);
+        zmin = std::min(zmin, point[2]);
+        zmax = std::max(zmax, point[2]);
+      }
+      if (on_plane && xmin >= 0.25 - 1.0e-12 && xmax <= 0.75 + 1.0e-12 &&
+          zmin >= 0.25 - 1.0e-12 && zmax <= 0.75 + 1.0e-12)
+      {
+        serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+        serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+      }
+    }
+    serial.FinalizeTopology();
+    serial.Finalize();
+    return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+  };
+
+  IoData concave_island_iodata(island_config, false);
+  concave_island_iodata.boundaries.cracked_attributes.insert(9);
+  auto island_geometry_mesh = MakeIslandMesh();
+  const auto island_geometry =
+      ExtractMetalEdgeGeometry(*island_geometry_mesh, concave_island_iodata.boundaries);
+  const auto island_segments =
+      GetInterfaceMetalEdgeSegmentIndices(island_geometry, 4, InterfaceDielectric::SA);
+  std::set<std::size_t> island_vertices;
+  double island_perimeter = 0.0;
+  for (const std::size_t segment_index : island_segments)
+  {
+    const auto &segment = island_geometry.segments[segment_index];
+    island_vertices.insert(segment.vertices.begin(), segment.vertices.end());
+    const auto &p0 = island_geometry.vertices[segment.vertices[0]].coordinate;
+    const auto &p1 = island_geometry.vertices[segment.vertices[1]].coordinate;
+    double length_squared = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      length_squared += (p1[d] - p0[d]) * (p1[d] - p0[d]);
+    }
+    island_perimeter += std::sqrt(length_squared);
+  }
+  const int island_corners = static_cast<int>(
+      std::count_if(island_vertices.begin(), island_vertices.end(),
+                    [&](std::size_t vertex)
+                    {
+                      return island_geometry.vertices[vertex].physical_type ==
+                             MetalEdgeVertexType::CORNER;
+                    }));
+  REQUIRE(island_corners == 4);
+  CHECK_THAT(island_perimeter, WithinAbs(2.0, 1.0e-12));
+
+  std::vector<std::unique_ptr<Mesh>> concave_island_meshes;
+  concave_island_meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh()));
+  LaplaceOperator concave_island_laplace(concave_island_iodata, concave_island_meshes);
+  SurfaceResponseOperator concave_island_response(concave_island_iodata,
+                                                  concave_island_laplace);
+  const auto &island_line_rule = mfem::IntRules.Get(mfem::Geometry::SEGMENT, 2);
+  CHECK(concave_island_response.GetPatchCount() ==
+        static_cast<int>(island_segments.size()) * island_line_rule.GetNPoints());
+  CHECK(concave_island_response.GetBasisSize() ==
+        4 * concave_island_response.GetPatchCount());
+  CHECK_THAT(concave_island_response.GetPatchWeight(),
+             WithinRel(island_perimeter / 0.2, 1.0e-12));
+
+  auto convex_island_config = island_config;
+  convex_island_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      convex_library_3d_path.string();
+  IoData convex_island_iodata(convex_island_config, false);
+  convex_island_iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> convex_island_meshes;
+  convex_island_meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh()));
+  LaplaceOperator convex_island_laplace(convex_island_iodata, convex_island_meshes);
+  SurfaceResponseOperator convex_island_response(convex_island_iodata,
+                                                 convex_island_laplace);
+  const int removed_straight_patches =
+      2 * island_corners * island_line_rule.GetNPoints();
+  CHECK(convex_island_response.GetPatchCount() ==
+        concave_island_response.GetPatchCount() - removed_straight_patches +
+            island_corners);
+  CHECK(convex_island_response.GetBasisSize() ==
+        4 * (convex_island_response.GetPatchCount() - island_corners) +
+            8 * island_corners);
+  const double expected_convex_weight =
+      (island_perimeter - 2.0 * island_corners * 0.2) / 0.2 + island_corners;
+  CHECK_THAT(convex_island_response.GetPatchWeight(),
+             WithinRel(expected_convex_weight, 1.0e-12));
+
+  auto convex_maxwell_island_config = convex_island_config;
+  convex_maxwell_island_config["Problem"]["Type"] = "Eigenmode";
+  convex_maxwell_island_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4,
+                                                                        5, 6, 9};
+  convex_maxwell_island_config["Boundaries"].erase("Terminal");
+  convex_maxwell_island_config["Solver"] = {{"Order", 1},
+                                            {"Eigenmode", {{"Target", 1.0}}},
+                                            {"SurfaceResponseCorrection",
+                                             {{"Library", convex_library_3d_path.string()},
+                                              {"TargetInterfaces", {4}},
+                                              {"UnmatchedPolicy", "Error"}}}};
+  IoData convex_maxwell_island_iodata(convex_maxwell_island_config, false);
+  convex_maxwell_island_iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> convex_maxwell_island_meshes;
+  convex_maxwell_island_meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh()));
+  SpaceOperator convex_maxwell_island_space(convex_maxwell_island_iodata,
+                                            convex_maxwell_island_meshes);
+  SurfaceResponseOperator convex_maxwell_island_response(convex_maxwell_island_iodata,
+                                                         convex_maxwell_island_space);
+  CHECK(convex_maxwell_island_response.GetPatchCount() ==
+        static_cast<int>(island_segments.size()) * island_line_rule.GetNPoints() -
+            removed_straight_patches + island_corners);
+
+  GridFunction island_field(convex_maxwell_island_space.GetNDSpace(), true);
+  island_field.Real().ProjectCoefficient(field_coefficient);
+  island_field.Imag() = 0.0;
+  const auto constant_island_response =
+      convex_maxwell_island_response.GetMaxwellResponse(island_field, 0.0);
+  CHECK(constant_island_response.loop_residual < 1.0e-10);
+  CHECK(constant_island_response.corner_neighborhood_fraction == 0.0);
+
+  Vector island_true, island_correction, island_probe, island_probe_correction;
+  island_field.Real().GetTrueDofs(island_true);
+  auto *island_data = island_true.HostWrite();
+  for (int i = 0; i < island_true.Size(); i++)
+  {
+    island_data[i] = std::cos(0.23 * (i + 1 + 7 * Mpi::Rank(Mpi::World())));
+  }
+  island_true.SetSubVector(convex_maxwell_island_space.GetNDDbcTDofLists().back(), 0.0);
+  island_field.Real().SetFromTrueDofs(island_true);
+  const auto random_island_response =
+      convex_maxwell_island_response.GetMaxwellResponse(island_field, 0.0);
+  convex_maxwell_island_response.Mult(island_true, island_correction);
+  CHECK_THAT(0.5 * linalg::Dot(Mpi::World(), island_true, island_correction),
+             WithinRel(random_island_response.domain_correction, 1.0e-10));
+  island_probe.SetSize(island_true.Size());
+  auto *island_probe_data = island_probe.HostWrite();
+  for (int i = 0; i < island_probe.Size(); i++)
+  {
+    island_probe_data[i] = std::sin(0.31 * (i + 1 + 5 * Mpi::Rank(Mpi::World())));
+  }
+  island_probe.SetSubVector(convex_maxwell_island_space.GetNDDbcTDofLists().back(), 0.0);
+  convex_maxwell_island_response.Mult(island_probe, island_probe_correction);
+  CHECK_THAT(
+      linalg::Dot(Mpi::World(), island_probe, island_correction),
+      WithinRel(linalg::Dot(Mpi::World(), island_true, island_probe_correction), 1.0e-10));
 #endif
 }
 

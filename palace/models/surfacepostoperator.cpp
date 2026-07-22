@@ -349,6 +349,8 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
     {
       auto segment_indices =
           GetInterfaceMetalEdgeSegmentIndices(metal_edges, idx, data.type);
+      ExcludeMetalEdgeSegmentIndices(mesh, metal_edges, data.edge_exclude_attributes,
+                                     segment_indices);
       const AutomaticEdgeDistanceTreeKey tree_key{segment_indices, data.edge_frame_normal};
       auto tree_it = automatic_edge_distance_trees.find(tree_key);
       if (tree_it == automatic_edge_distance_trees.end())

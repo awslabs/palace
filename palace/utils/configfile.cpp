@@ -658,18 +658,17 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
   MFEM_VERIFY(!automatic_edges || edge_attributes.empty(),
               "Interface dielectric \"AutomaticEdges\" cannot be combined with "
               "\"EdgeAttributes\"!");
-  MFEM_VERIFY(!automatic_edges || edge_exclude_attributes.empty(),
-              "Interface dielectric \"AutomaticEdges\" cannot be combined with "
-              "\"EdgeExcludeAttributes\"!");
   MFEM_VERIFY(edge_distances.empty() == (!automatic_edges && edge_attributes.empty()),
               "Interface dielectric \"EdgeDistances\" requires exactly one of "
               "\"EdgeAttributes\" or \"AutomaticEdges\"!");
   MFEM_VERIFY(!automatic_edges || type != InterfaceDielectric::DEFAULT,
               "Interface dielectric \"AutomaticEdges\" requires \"Type\" to be "
               "\"MA\", \"MS\", or \"SA\"!");
-  MFEM_VERIFY(edge_exclude_attributes.empty() || !edge_attributes.empty(),
-              "\"EdgeExcludeAttributes\" requires \"EdgeAttributes\" and "
-              "\"EdgeDistances\" for interface dielectric postprocessing!");
+  MFEM_VERIFY(edge_exclude_attributes.empty() || automatic_edges ||
+                  !edge_attributes.empty(),
+              "\"EdgeExcludeAttributes\" requires \"EdgeDistances\" and exactly one of "
+              "\"EdgeAttributes\" or \"AutomaticEdges\" for interface dielectric "
+              "postprocessing!");
   MFEM_VERIFY(std::all_of(edge_distances.begin(), edge_distances.end(), [](double distance)
                           { return std::isfinite(distance) && distance > 0.0; }),
               "Interface dielectric \"EdgeDistances\" must be finite and positive!");

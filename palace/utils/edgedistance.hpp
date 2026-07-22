@@ -117,6 +117,11 @@ std::vector<std::size_t>
 GetInterfaceMetalEdgeSegmentIndices(const MetalEdgeGeometry &geometry, int interface_index,
                                     InterfaceDielectric interface_type);
 
+void ExcludeMetalEdgeSegmentIndices(const mfem::ParMesh &mesh,
+                                    const MetalEdgeGeometry &geometry,
+                                    const std::vector<int> &exclude_attributes,
+                                    std::vector<std::size_t> &segment_indices);
+
 std::shared_ptr<const EdgeDistanceTree>
 BuildEdgeDistanceTree(const MetalEdgeGeometry &geometry,
                       const std::vector<std::size_t> &segment_indices,

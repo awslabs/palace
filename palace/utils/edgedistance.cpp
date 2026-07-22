@@ -432,6 +432,52 @@ GetInterfaceMetalEdgeSegmentIndices(const MetalEdgeGeometry &geometry, int inter
   return indices;
 }
 
+void ExcludeMetalEdgeSegmentIndices(const mfem::ParMesh &mesh,
+                                    const MetalEdgeGeometry &geometry,
+                                    const std::vector<int> &exclude_attributes,
+                                    std::vector<std::size_t> &segment_indices)
+{
+  if (exclude_attributes.empty())
+  {
+    return;
+  }
+  auto exclude_marker = mesh::BdrAttrToMarker(mesh, exclude_attributes, true);
+  auto excluded_segments = mesh::GetBoundaryElementEdgeSegments(mesh, exclude_marker);
+  MFEM_VERIFY(!excluded_segments.empty(),
+              "No boundary geometry was found for interface dielectric edge exclusion "
+              "attributes!");
+  const EdgeDistanceTree excluded_tree(std::move(excluded_segments));
+  mfem::Vector bbmin, bbmax;
+  mesh::GetAxisAlignedBoundingBox(mesh, bbmin, bbmax);
+  double extent = 0.0;
+  for (int d = 0; d < mesh.SpaceDimension(); d++)
+  {
+    extent = std::max(extent, bbmax[d] - bbmin[d]);
+  }
+  MFEM_VERIFY(extent > 0.0,
+              "Degenerate mesh geometry for interface dielectric edge exclusion!");
+  const double tolerance_squared = 1.0e-20 * extent * extent;
+  segment_indices.erase(
+      std::remove_if(segment_indices.begin(), segment_indices.end(),
+                     [&](std::size_t index)
+                     {
+                       MFEM_VERIFY(index < geometry.segments.size(),
+                                   "Invalid automatically extracted metal edge segment "
+                                   "index!");
+                       const auto &source = geometry.segments[index];
+                       const mesh::BoundaryEdgeSegment segment{
+                           geometry.vertices[source.vertices[0]].coordinate,
+                           geometry.vertices[source.vertices[1]].coordinate};
+                       return IsCoincidentWithExcludedBoundary(
+                           segment, excluded_tree, mesh.SpaceDimension(),
+                           tolerance_squared);
+                     }),
+      segment_indices.end());
+  MFEM_VERIFY(!segment_indices.empty(),
+              "Interface dielectric edge exclusion removed the entire automatically "
+              "extracted perimeter!");
+}
+
 std::shared_ptr<const EdgeDistanceTree>
 BuildEdgeDistanceTree(const MetalEdgeGeometry &geometry,
                       const std::vector<std::size_t> &segment_indices,
@@ -545,6 +591,9 @@ BuildEdgeRefinementContexts(const mfem::ParMesh &mesh,
       }
       segment_indices =
           GetInterfaceMetalEdgeSegmentIndices(metal_edges, index, dielectric.type);
+      ExcludeMetalEdgeSegmentIndices(mesh, metal_edges,
+                                     dielectric.edge_exclude_attributes,
+                                     segment_indices);
     }
     const TreeKey tree_key{dielectric.automatic_edges, dielectric.edge_attributes,
                            dielectric.edge_exclude_attributes, segment_indices};

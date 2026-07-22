@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <complex>
+#include <limits>
 #include <set>
 #include <string>
 #include "drivers/boundarymodesolver.hpp"
@@ -260,8 +261,7 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   {
     if (iodata.solver.surface_response_correction)
     {
-      surface_response_op =
-          std::make_unique<SurfaceResponseOperator>(iodata, fem_op_);
+      surface_response_op = std::make_unique<SurfaceResponseOperator>(iodata, fem_op_);
       MFEM_VERIFY(surface_response_op->HasSurfaceResponse(),
                   "Maxwell surface response correction requires fabricated and thin "
                   "surface response matrices in the selected coupon models!");
@@ -1568,16 +1568,13 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
     }
 
     MaxwellSurfaceResponseMeasurement result;
-    result.raw_normalization_energy =
-        measurement_cache.domain_E_field_energy_all +
-        measurement_cache.lumped_port_capacitor_energy;
-    result.confidence =
-        surface_response_op->GetMaxwellResponse(*E, measurement_cache.freq);
+    result.raw_normalization_energy = measurement_cache.domain_E_field_energy_all +
+                                      measurement_cache.lumped_port_capacitor_energy;
+    result.confidence = surface_response_op->GetMaxwellResponse(*E, measurement_cache.freq);
     result.corrected_normalization_energy =
         result.raw_normalization_energy + result.confidence.domain_correction;
     result.corrected_normalization_energy_fixed_flux =
-        result.raw_normalization_energy +
-        result.confidence.domain_correction_fixed_flux;
+        result.raw_normalization_energy + result.confidence.domain_correction_fixed_flux;
     MFEM_VERIFY(result.raw_normalization_energy > 0.0 &&
                     result.corrected_normalization_energy > 0.0 &&
                     result.corrected_normalization_energy_fixed_flux > 0.0,
@@ -1599,8 +1596,7 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
                   "Maxwell surface response refers to target interface "
                       << target << " which is not configured for postprocessing!");
       auto fabricated = result.confidence.fabricated_surface_energy.find(target);
-      MFEM_VERIFY(fabricated !=
-                      result.confidence.fabricated_surface_energy.end(),
+      MFEM_VERIFY(fabricated != result.confidence.fabricated_surface_energy.end(),
                   "Maxwell surface response produced no fabricated energy for target "
                       << target << "!");
       auto fabricated_fixed_flux =
@@ -1612,33 +1608,100 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
               << target << "!");
 
       const double radius = surface_response_op->GetMatchingRadius();
-      auto outside = std::find_if(
-          measurement_cache.interface_edge_i.begin(),
-          measurement_cache.interface_edge_i.end(),
-          [&](const auto &edge)
-          {
-            return edge.idx == target &&
-                   std::abs(edge.distance - radius) <=
-                       1.0e-10 * std::max(edge.distance, radius);
-          });
-      MFEM_VERIFY(
-          outside != measurement_cache.interface_edge_i.end(),
-          "Maxwell response-corrected target interface "
-              << target
-              << " requires EdgeDistances containing the coupon matching radius!");
-      interface->second.corrected_energy =
-          outside->energy_outside + fabricated->second;
+      auto outside = std::find_if(measurement_cache.interface_edge_i.begin(),
+                                  measurement_cache.interface_edge_i.end(),
+                                  [&](const auto &edge)
+                                  {
+                                    return edge.idx == target &&
+                                           std::abs(edge.distance - radius) <=
+                                               1.0e-10 * std::max(edge.distance, radius);
+                                  });
+      MFEM_VERIFY(outside != measurement_cache.interface_edge_i.end(),
+                  "Maxwell response-corrected target interface "
+                      << target
+                      << " requires EdgeDistances containing the coupon matching radius!");
+      interface->second.corrected_energy = outside->energy_outside + fabricated->second;
       interface->second.corrected_energy_fixed_flux =
           outside->energy_outside + fabricated_fixed_flux->second;
       const double closure_scale =
-          std::max(std::abs(fabricated->second),
-                   std::abs(fabricated_fixed_flux->second));
+          std::max(std::abs(fabricated->second), std::abs(fabricated_fixed_flux->second));
       if (closure_scale > 0.0)
       {
         interface->second.trace_closure_spread =
-            std::abs(fabricated->second - fabricated_fixed_flux->second) /
-            closure_scale;
+            std::abs(fabricated->second - fabricated_fixed_flux->second) / closure_scale;
       }
+    }
+
+    if (surface_response_corrected_field)
+    {
+      GridFunction corrected_field(*E->ParFESpace(), true);
+      corrected_field.Real().SetFromTrueDofs(surface_response_corrected_field->Real());
+      corrected_field.Imag().SetFromTrueDofs(surface_response_corrected_field->Imag());
+      corrected_field.Real().ExchangeFaceNbrData();
+      corrected_field.Imag().ExchangeFaceNbrData();
+      std::unique_ptr<GridFunction> corrected_flux;
+      if (D_recovered)
+      {
+        MFEM_VERIFY(surface_response_corrected_flux,
+                    "Self-consistent Maxwell surface-response postprocessing requires "
+                    "recovered electric flux for the corrected field!");
+        corrected_flux = std::make_unique<GridFunction>(*D_recovered->ParFESpace(), true);
+        corrected_flux->Real().SetFromTrueDofs(surface_response_corrected_flux->Real());
+        corrected_flux->Imag().SetFromTrueDofs(surface_response_corrected_flux->Imag());
+        corrected_flux->Real().ExchangeFaceNbrData();
+        corrected_flux->Imag().ExchangeFaceNbrData();
+      }
+
+      double capacitor_energy = 0.0;
+      for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
+      {
+        (void)idx;
+        if (std::abs(data.C) > 0.0)
+        {
+          const auto voltage = data.GetVoltage(corrected_field);
+          capacitor_energy +=
+              0.5 * std::abs(data.C) * std::real(voltage * std::conj(voltage));
+        }
+      }
+      const auto corrected_response =
+          surface_response_op->GetMaxwellResponse(corrected_field, measurement_cache.freq);
+      result.self_consistent_normalization_energy =
+          dom_post_op.GetElectricFieldEnergy(corrected_field) + capacitor_energy +
+          corrected_response.domain_correction;
+      MFEM_VERIFY(result.self_consistent_normalization_energy > 0.0,
+                  "Self-consistent Maxwell surface-response normalization energy must be "
+                  "positive!");
+
+      for (auto &[index, interface] : result.interfaces)
+      {
+        interface.self_consistent_energy = surf_post_op.GetInterfaceElectricFieldEnergy(
+            index, corrected_field, corrected_flux.get());
+      }
+      for (const int target : target_interfaces)
+      {
+        auto fabricated = corrected_response.fabricated_surface_energy.find(target);
+        MFEM_VERIFY(fabricated != corrected_response.fabricated_surface_energy.end(),
+                    "Self-consistent Maxwell surface response produced no fabricated "
+                    "energy for target "
+                        << target << "!");
+        const auto edge_energies = surf_post_op.GetInterfaceEdgeElectricFieldEnergies(
+            target, corrected_field, corrected_flux.get());
+        const double radius = surface_response_op->GetMatchingRadius();
+        auto outside = std::find_if(edge_energies.begin(), edge_energies.end(),
+                                    [&](const auto &edge)
+                                    {
+                                      return std::abs(edge.distance - radius) <=
+                                             1.0e-10 * std::max(edge.distance, radius);
+                                    });
+        MFEM_VERIFY(outside != edge_energies.end(),
+                    "Self-consistent Maxwell response-corrected target interface "
+                        << target
+                        << " requires EdgeDistances containing the coupon matching "
+                           "radius!");
+        result.interfaces.at(target).self_consistent_energy =
+            outside->energy_outside + fabricated->second;
+      }
+      result.has_self_consistent = true;
     }
 
     if (!result.confidence.confident && !surface_response_warning_printed)
@@ -1646,7 +1709,8 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
       Mpi::Warning(
           "PEC Maxwell surface-response confidence limits were exceeded: "
           "kR = {:.3e}, loop residual = {:.3e}, matched fraction = {:.6f}, "
-          "corner fraction = {:.3e}, max R/rho = {:.3e}, library distance = {:.3e}, "
+          "unmodeled corner fraction = {:.3e}, max R/rho = {:.3e}, "
+          "library distance = {:.3e}, "
           "trace-closure spread = {:.3e}. "
           "Corrected values are reported but should not be treated as validated.\n",
           result.confidence.kR, result.confidence.loop_residual,
@@ -1679,20 +1743,20 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table.insert("interface", "interface");
     table.insert("domain_raw", "E_norm raw (J)");
     table.insert("domain_corrected", "E_norm corrected (J)");
-    table.insert("domain_corrected_fixed_flux",
-                 "E_norm corrected fixed-flux (J)");
+    table.insert("domain_corrected_fixed_flux", "E_norm corrected fixed-flux (J)");
+    table.insert("domain_self_consistent", "E_norm self-consistent (J)");
     table.insert("energy_raw", "E_surf raw (J)");
     table.insert("participation_raw", "p_surf raw");
     table.insert("quality_raw", "Q_surf raw");
     table.insert("energy_corrected", "E_surf corrected (J)");
     table.insert("participation_corrected", "p_surf corrected");
     table.insert("quality_corrected", "Q_surf corrected");
-    table.insert("energy_corrected_fixed_flux",
-                 "E_surf corrected fixed-flux (J)");
-    table.insert("participation_corrected_fixed_flux",
-                 "p_surf corrected fixed-flux");
-    table.insert("quality_corrected_fixed_flux",
-                 "Q_surf corrected fixed-flux");
+    table.insert("energy_corrected_fixed_flux", "E_surf corrected fixed-flux (J)");
+    table.insert("participation_corrected_fixed_flux", "p_surf corrected fixed-flux");
+    table.insert("quality_corrected_fixed_flux", "Q_surf corrected fixed-flux");
+    table.insert("energy_self_consistent", "E_surf self-consistent (J)");
+    table.insert("participation_self_consistent", "p_surf self-consistent");
+    table.insert("quality_self_consistent", "Q_surf self-consistent");
     table.insert("trace_closure_spread", "trace closure spread");
     table["excitation"].print_as_int = true;
     table["interface"].print_as_int = true;
@@ -1704,15 +1768,14 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
   if (!surface_response_confidence)
   {
     surface_response_confidence =
-        std::make_unique<TableWithCSVFile>(post_dir /
-                                           "surface-response-confidence.csv");
+        std::make_unique<TableWithCSVFile>(post_dir / "surface-response-confidence.csv");
     auto &table = surface_response_confidence->table;
     table.insert("idx", solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m");
     table.insert("excitation", "exc");
     table.insert("kR", "kR");
     table.insert("loop_residual", "loop residual");
     table.insert("matched_fraction", "matched edge fraction");
-    table.insert("corner_fraction", "corner neighborhood fraction");
+    table.insert("corner_fraction", "unmodeled corner neighborhood fraction");
     table.insert("curvature", "max R/rho");
     table.insert("library_distance", "max library distance");
     table.insert("trace_closure_spread", "max trace closure spread");
@@ -1729,50 +1792,63 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
   const auto &result = *surface_response_measurement;
   for (const auto &[interface_index, interface] : result.interfaces)
   {
-    const double p_raw =
-        interface.raw_energy / result.raw_normalization_energy;
+    const double p_raw = interface.raw_energy / result.raw_normalization_energy;
     const double p_corrected =
         interface.corrected_energy / result.corrected_normalization_energy;
-    const double p_corrected_fixed_flux =
-        interface.corrected_energy_fixed_flux /
-        result.corrected_normalization_energy_fixed_flux;
-    const double q_raw =
-        p_raw == 0.0 || interface.loss_tangent == 0.0
-            ? mfem::infinity()
-            : 1.0 / (p_raw * interface.loss_tangent);
-    const double q_corrected =
-        p_corrected == 0.0 || interface.loss_tangent == 0.0
-            ? mfem::infinity()
-            : 1.0 / (p_corrected * interface.loss_tangent);
+    const double p_corrected_fixed_flux = interface.corrected_energy_fixed_flux /
+                                          result.corrected_normalization_energy_fixed_flux;
+    const double q_raw = p_raw == 0.0 || interface.loss_tangent == 0.0
+                             ? mfem::infinity()
+                             : 1.0 / (p_raw * interface.loss_tangent);
+    const double q_corrected = p_corrected == 0.0 || interface.loss_tangent == 0.0
+                                   ? mfem::infinity()
+                                   : 1.0 / (p_corrected * interface.loss_tangent);
     const double q_corrected_fixed_flux =
         p_corrected_fixed_flux == 0.0 || interface.loss_tangent == 0.0
             ? mfem::infinity()
             : 1.0 / (p_corrected_fixed_flux * interface.loss_tangent);
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double p_self_consistent =
+        result.has_self_consistent
+            ? interface.self_consistent_energy / result.self_consistent_normalization_energy
+            : nan;
+    const double q_self_consistent =
+        !result.has_self_consistent
+            ? nan
+            : (p_self_consistent == 0.0 || interface.loss_tangent == 0.0
+                   ? mfem::infinity()
+                   : 1.0 / (p_self_consistent * interface.loss_tangent));
     auto &table = surface_Q_corrected->table;
     table["idx"] << output_index;
     table["excitation"] << excitation;
     table["interface"] << interface_index;
-    table["domain_raw"]
-        << units.Dimensionalize<VT::ENERGY>(result.raw_normalization_energy);
-    table["domain_corrected"]
-        << units.Dimensionalize<VT::ENERGY>(
-               result.corrected_normalization_energy);
-    table["domain_corrected_fixed_flux"]
-        << units.Dimensionalize<VT::ENERGY>(
-               result.corrected_normalization_energy_fixed_flux);
-    table["energy_raw"]
-        << units.Dimensionalize<VT::ENERGY>(interface.raw_energy);
+    table["domain_raw"] << units.Dimensionalize<VT::ENERGY>(
+        result.raw_normalization_energy);
+    table["domain_corrected"] << units.Dimensionalize<VT::ENERGY>(
+        result.corrected_normalization_energy);
+    table["domain_corrected_fixed_flux"] << units.Dimensionalize<VT::ENERGY>(
+        result.corrected_normalization_energy_fixed_flux);
+    table["domain_self_consistent"]
+        << (result.has_self_consistent ? units.Dimensionalize<VT::ENERGY>(
+                                             result.self_consistent_normalization_energy)
+                                       : nan);
+    table["energy_raw"] << units.Dimensionalize<VT::ENERGY>(interface.raw_energy);
     table["participation_raw"] << p_raw;
     table["quality_raw"] << q_raw;
-    table["energy_corrected"]
-        << units.Dimensionalize<VT::ENERGY>(interface.corrected_energy);
+    table["energy_corrected"] << units.Dimensionalize<VT::ENERGY>(
+        interface.corrected_energy);
     table["participation_corrected"] << p_corrected;
     table["quality_corrected"] << q_corrected;
     table["energy_corrected_fixed_flux"]
-        << units.Dimensionalize<VT::ENERGY>(
-               interface.corrected_energy_fixed_flux);
+        << units.Dimensionalize<VT::ENERGY>(interface.corrected_energy_fixed_flux);
     table["participation_corrected_fixed_flux"] << p_corrected_fixed_flux;
     table["quality_corrected_fixed_flux"] << q_corrected_fixed_flux;
+    table["energy_self_consistent"]
+        << (result.has_self_consistent
+                ? units.Dimensionalize<VT::ENERGY>(interface.self_consistent_energy)
+                : nan);
+    table["participation_self_consistent"] << p_self_consistent;
+    table["quality_self_consistent"] << q_self_consistent;
     table["trace_closure_spread"] << interface.trace_closure_spread;
   }
   surface_Q_corrected->WriteFullTableTrunc();
@@ -1849,6 +1925,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
       units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
   post_op_csv.PrintAllCSVData(*this, measurement_cache, freq.real(), step, ex_idx);
   PrintSurfaceResponseCorrection(freq.real(), ex_idx);
+  surface_response_corrected_field = nullptr;
+  surface_response_corrected_flux = nullptr;
   if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
@@ -1916,6 +1994,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
   PrintSurfaceResponseCorrection(print_idx, 0);
+  surface_response_corrected_field = nullptr;
+  surface_response_corrected_flux = nullptr;
   if (ShouldWriteParaviewFields(step))
   {
     WriteParaviewFields(step, print_idx);

@@ -362,7 +362,6 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
 
     auto automatic = dielectric;
     automatic.erase("EdgeAttributes");
-    automatic.erase("EdgeExcludeAttributes");
     automatic.erase("EdgeFrameNormal");
     automatic["AutomaticEdges"] = true;
     automatic["Type"] = "SA";

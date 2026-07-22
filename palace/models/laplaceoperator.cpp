@@ -8,6 +8,7 @@
 #include <cmath>
 #include <fstream>
 #include <limits>
+#include <map>
 #include <set>
 #include <sstream>
 #include <string>
@@ -32,9 +33,115 @@ namespace
 class TracePotentialCoefficient : public mfem::Coefficient
 {
 private:
-  std::vector<std::array<double, 3>> points;
-  std::vector<double> values;
+  struct Sample
+  {
+    std::array<double, 3> point;
+    double value;
+  };
+
+  std::vector<Sample> curve;
+  std::vector<std::array<Sample, 3>> triangles;
   int dimension;
+
+  static double Dot(const std::array<double, 3> &a, const std::array<double, 3> &b)
+  {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  }
+
+  static std::array<double, 3> Subtract(const std::array<double, 3> &a,
+                                        const std::array<double, 3> &b)
+  {
+    return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
+  }
+
+  static std::pair<double, double>
+  EvaluateTriangle(const std::array<Sample, 3> &triangle,
+                   const std::array<double, 3> &point)
+  {
+    // Closest-point regions and barycentric coordinates from
+    // "Real-Time Collision Detection", Christer Ericson, section 5.1.5.
+    const auto ab = Subtract(triangle[1].point, triangle[0].point);
+    const auto ac = Subtract(triangle[2].point, triangle[0].point);
+    const auto ap = Subtract(point, triangle[0].point);
+    const double d1 = Dot(ab, ap);
+    const double d2 = Dot(ac, ap);
+    double u, v, w;
+    if (d1 <= 0.0 && d2 <= 0.0)
+    {
+      u = 1.0;
+      v = w = 0.0;
+    }
+    else
+    {
+      const auto bp = Subtract(point, triangle[1].point);
+      const double d3 = Dot(ab, bp);
+      const double d4 = Dot(ac, bp);
+      if (d3 >= 0.0 && d4 <= d3)
+      {
+        v = 1.0;
+        u = w = 0.0;
+      }
+      else
+      {
+        const double vc = d1 * d4 - d3 * d2;
+        if (vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0)
+        {
+          v = d1 / (d1 - d3);
+          u = 1.0 - v;
+          w = 0.0;
+        }
+        else
+        {
+          const auto cp = Subtract(point, triangle[2].point);
+          const double d5 = Dot(ab, cp);
+          const double d6 = Dot(ac, cp);
+          if (d6 >= 0.0 && d5 <= d6)
+          {
+            w = 1.0;
+            u = v = 0.0;
+          }
+          else
+          {
+            const double vb = d5 * d2 - d1 * d6;
+            if (vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0)
+            {
+              w = d2 / (d2 - d6);
+              u = 1.0 - w;
+              v = 0.0;
+            }
+            else
+            {
+              const double va = d3 * d6 - d5 * d4;
+              if (va <= 0.0 && d4 - d3 >= 0.0 && d5 - d6 >= 0.0)
+              {
+                w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+                u = 0.0;
+                v = 1.0 - w;
+              }
+              else
+              {
+                const double denominator = 1.0 / (va + vb + vc);
+                v = vb * denominator;
+                w = vc * denominator;
+                u = 1.0 - v - w;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    std::array<double, 3> closest;
+    for (int d = 0; d < 3; d++)
+    {
+      closest[d] =
+          u * triangle[0].point[d] + v * triangle[1].point[d] + w * triangle[2].point[d];
+    }
+    const auto delta = Subtract(point, closest);
+    const double value =
+        u * triangle[0].value + v * triangle[1].value + w * triangle[2].value;
+    return {Dot(delta, delta), value};
+  }
 
 public:
   TracePotentialCoefficient(const std::string &path, int dimension_,
@@ -47,7 +154,9 @@ public:
 
     std::string line;
     bool have_data = false;
+    int columns = 0;
     int line_number = 0;
+    std::map<int, std::vector<Sample>> triangle_samples;
     while (std::getline(input, line))
     {
       line_number++;
@@ -58,28 +167,80 @@ public:
       }
       std::replace(line.begin(), line.end(), ',', ' ');
       std::istringstream row(line);
-      std::array<double, 3> point;
-      double value;
-      if (!(row >> point[0] >> point[1] >> point[2] >> value))
+      std::vector<double> data;
+      double entry;
+      while (row >> entry)
+      {
+        data.push_back(entry);
+      }
+      if (data.size() != 4 && data.size() != 5)
       {
         MFEM_VERIFY(!have_data, "Could not parse prescribed potential trace file \""
                                     << path << "\" at line " << line_number << "!");
         continue;  // Optional header before the first data row.
       }
-      MFEM_VERIFY(std::isfinite(point[0]) && std::isfinite(point[1]) &&
-                      std::isfinite(point[2]) && std::isfinite(value),
+      if (columns == 0)
+      {
+        columns = static_cast<int>(data.size());
+      }
+      MFEM_VERIFY(columns == static_cast<int>(data.size()),
+                  "Mixed curve and surface rows in prescribed potential trace file \""
+                      << path << "\" at line " << line_number << "!");
+      Sample sample{{data[0], data[1], data[2]}, data[3]};
+      MFEM_VERIFY(std::isfinite(sample.point[0]) && std::isfinite(sample.point[1]) &&
+                      std::isfinite(sample.point[2]) && std::isfinite(sample.value),
                   "Non-finite value in prescribed potential trace file \""
                       << path << "\" at line " << line_number << "!");
-      for (auto &x : point)
+      for (auto &x : sample.point)
       {
         x /= mesh_coordinate_scale;
       }
-      points.push_back(point);
-      values.push_back(value / voltage_scale);
+      sample.value /= voltage_scale;
+      if (columns == 4)
+      {
+        curve.push_back(sample);
+      }
+      else
+      {
+        const int triangle =
+            static_cast<int>(std::llround(data[4]));
+        MFEM_VERIFY(triangle > 0 && static_cast<double>(triangle) == data[4],
+                    "Invalid triangle index in prescribed potential surface file \""
+                        << path << "\" at line " << line_number << "!");
+        triangle_samples[triangle].push_back(sample);
+      }
       have_data = true;
     }
-    MFEM_VERIFY(points.size() >= 3, "Prescribed potential trace file \""
-                                        << path << "\" must contain at least 3 points!");
+    MFEM_VERIFY(have_data, "Prescribed potential trace file \""
+                               << path << "\" contains no data!");
+    if (columns == 4)
+    {
+      MFEM_VERIFY(curve.size() >= 3, "Prescribed potential curve file \""
+                                           << path << "\" must contain at least 3 points!");
+    }
+    else
+    {
+      MFEM_VERIFY(dimension == 3, "Prescribed potential surface file \""
+                                      << path << "\" requires a three-dimensional mesh!");
+      triangles.reserve(triangle_samples.size());
+      for (const auto &[index, samples] : triangle_samples)
+      {
+        MFEM_VERIFY(samples.size() == 3, "Triangle "
+                                            << index << " in prescribed potential surface \""
+                                            << path << "\" must contain exactly 3 rows!");
+        std::array<Sample, 3> triangle{samples[0], samples[1], samples[2]};
+        const auto ab = Subtract(triangle[1].point, triangle[0].point);
+        const auto ac = Subtract(triangle[2].point, triangle[0].point);
+        const std::array<double, 3> cross = {
+            ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2],
+            ab[0] * ac[1] - ab[1] * ac[0]};
+        MFEM_VERIFY(Dot(cross, cross) > 0.0,
+                    "Degenerate triangle " << index
+                                           << " in prescribed potential surface \"" << path
+                                           << "\"!");
+        triangles.push_back(std::move(triangle));
+      }
+    }
   }
 
   double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
@@ -87,39 +248,56 @@ public:
     double x_data[3] = {0.0, 0.0, 0.0};
     mfem::Vector x(x_data, dimension);
     T.Transform(ip, x);
+    const std::array<double, 3> point{x_data[0], x_data[1], x_data[2]};
 
     double closest_distance_sq = std::numeric_limits<double>::infinity();
     double closest_value = 0.0;
-    for (std::size_t i = 0; i < points.size(); i++)
+    if (!triangles.empty())
     {
-      const std::size_t j = (i + 1) % points.size();
-      double length_sq = 0.0;
-      double projection = 0.0;
-      for (int d = 0; d < dimension; d++)
+      for (const auto &triangle : triangles)
       {
-        const double delta = points[j][d] - points[i][d];
-        length_sq += delta * delta;
-        projection += (x[d] - points[i][d]) * delta;
+        const auto [distance_sq, value] = EvaluateTriangle(triangle, point);
+        if (distance_sq < closest_distance_sq)
+        {
+          closest_distance_sq = distance_sq;
+          closest_value = value;
+        }
       }
-      if (length_sq <= 0.0)
+    }
+    else
+    {
+      for (std::size_t i = 0; i < curve.size(); i++)
       {
-        continue;
-      }
-      const double t = std::clamp(projection / length_sq, 0.0, 1.0);
-      double distance_sq = 0.0;
-      for (int d = 0; d < dimension; d++)
-      {
-        const double delta = x[d] - (points[i][d] + t * (points[j][d] - points[i][d]));
-        distance_sq += delta * delta;
-      }
-      if (distance_sq < closest_distance_sq)
-      {
-        closest_distance_sq = distance_sq;
-        closest_value = values[i] + t * (values[j] - values[i]);
+        const std::size_t j = (i + 1) % curve.size();
+        double length_sq = 0.0;
+        double projection = 0.0;
+        for (int d = 0; d < dimension; d++)
+        {
+          const double delta = curve[j].point[d] - curve[i].point[d];
+          length_sq += delta * delta;
+          projection += (x[d] - curve[i].point[d]) * delta;
+        }
+        if (length_sq <= 0.0)
+        {
+          continue;
+        }
+        const double t = std::clamp(projection / length_sq, 0.0, 1.0);
+        double distance_sq = 0.0;
+        for (int d = 0; d < dimension; d++)
+        {
+          const double delta =
+              x[d] - (curve[i].point[d] + t * (curve[j].point[d] - curve[i].point[d]));
+          distance_sq += delta * delta;
+        }
+        if (distance_sq < closest_distance_sq)
+        {
+          closest_distance_sq = distance_sq;
+          closest_value = curve[i].value + t * (curve[j].value - curve[i].value);
+        }
       }
     }
     MFEM_VERIFY(std::isfinite(closest_distance_sq),
-                "Prescribed potential trace contains no nonzero-length segments!");
+                "Prescribed potential trace contains no valid interpolation elements!");
     return closest_value;
   }
 };

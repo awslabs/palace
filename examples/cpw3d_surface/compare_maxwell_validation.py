@@ -45,6 +45,7 @@ def main():
     norm_raw = corrected_rows[0]["E_norm raw (J)"]
     norm_fixed_trace = corrected_rows[0]["E_norm corrected (J)"]
     norm_fixed_flux = corrected_rows[0]["E_norm corrected fixed-flux (J)"]
+    norm_self_consistent = corrected_rows[0].get("E_norm self-consistent (J)")
     print("Normalization energy (J)")
     print(f"  thin raw:          {norm_raw:.12e}")
     print(
@@ -55,24 +56,33 @@ def main():
         f"  fixed flux:        {norm_fixed_flux:.12e}"
         f" ({relative_error(norm_fixed_flux, fabricated_domain):+.3f}%)"
     )
+    if norm_self_consistent is not None:
+        print(
+            f"  self-consistent:   {norm_self_consistent:.12e}"
+            f" ({relative_error(norm_self_consistent, fabricated_domain):+.3f}%)"
+        )
     print(f"  fabricated:        {fabricated_domain:.12e}")
     print()
     print(
-        "Interface  p_raw          p_fixed_trace  p_fixed_flux"
-        "   p_fabricated   raw error   trace error   flux error   closure spread"
+        "Interface  p_raw          p_fixed_trace  p_fixed_flux   p_self_consist"
+        "  p_fabricated   raw error   trace error   flux error   self error"
+        "   closure spread"
     )
     for interface, name in INTERFACE_NAMES.items():
         row = corrected[interface]
         p_raw = row["p_surf raw"]
         p_fixed_trace = row["p_surf corrected"]
         p_fixed_flux = row["p_surf corrected fixed-flux"]
+        p_self_consistent = row.get("p_surf self-consistent")
         p_fabricated = fabricated_surface[f"p_surf[{interface}]"]
+        self_value = p_self_consistent if p_self_consistent is not None else float("nan")
         print(
             f"{name:>9}  {p_raw:.6e}  {p_fixed_trace:.6e}  {p_fixed_flux:.6e}"
-            f"  {p_fabricated:.6e}"
+            f"  {self_value:.6e}  {p_fabricated:.6e}"
             f"  {relative_error(p_raw, p_fabricated):+9.3f}%"
             f"  {relative_error(p_fixed_trace, p_fabricated):+11.3f}%"
             f"  {relative_error(p_fixed_flux, p_fabricated):+10.3f}%"
+            f"  {relative_error(self_value, p_fabricated):+10.3f}%"
             f"  {100.0 * row['trace closure spread']:+13.3f}%"
         )
         fabricated_energy = p_fabricated * fabricated_domain
@@ -80,10 +90,12 @@ def main():
             f"{'energy':>9}  {row['E_surf raw (J)']:.6e}"
             f"  {row['E_surf corrected (J)']:.6e}"
             f"  {row['E_surf corrected fixed-flux (J)']:.6e}"
+            f"  {row.get('E_surf self-consistent (J)', float('nan')):.6e}"
             f"  {fabricated_energy:.6e}"
             f"  {relative_error(row['E_surf raw (J)'], fabricated_energy):+9.3f}%"
             f"  {relative_error(row['E_surf corrected (J)'], fabricated_energy):+15.3f}%"
             f"  {relative_error(row['E_surf corrected fixed-flux (J)'], fabricated_energy):+10.3f}%"
+            f"  {relative_error(row.get('E_surf self-consistent (J)', float('nan')), fabricated_energy):+10.3f}%"
         )
 
     confidence = read_rows(args.corrected / "surface-response-confidence.csv")[-1]
