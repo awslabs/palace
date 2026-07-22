@@ -46,6 +46,7 @@ set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cp
 
 set(PALACE_BUILD_WITH_COVERAGE OFF CACHE BOOL "Compile Palace with coverage flags (source-based for LLVM; gcov for GCC)")
 set(PALACE_BUILD_WITH_SANITIZERS OFF CACHE BOOL "Compile Palace with sanitizers (AddressSanitizer + UndefinedBehaviorSanitizer)")
+set(PALACE_BUILD_DEPENDENCIES "" CACHE STRING "Pipe-separated name=value build dependency metadata")
 
 # Help find third-party dependencies
 set(MFEM_DIR "" CACHE STRING
@@ -366,6 +367,16 @@ set_property(
 # Generate embedded schema header from JSON schema files
 include(${CMAKE_SOURCE_DIR}/../cmake/EmbedSchema.cmake)
 
+# Generate build version information supplied by the superbuild or package manager.
+set(PALACE_BUILD_DEPENDENCIES_TEXT "${PALACE_BUILD_DEPENDENCIES}")
+string(REPLACE "|" "\n  " PALACE_BUILD_DEPENDENCIES_TEXT "${PALACE_BUILD_DEPENDENCIES_TEXT}")
+string(REPLACE "=" ": " PALACE_BUILD_DEPENDENCIES_TEXT "${PALACE_BUILD_DEPENDENCIES_TEXT}")
+configure_file(
+  ${CMAKE_SOURCE_DIR}/cmake/BuildInfo.hpp.in
+  ${CMAKE_BINARY_DIR}/generated/build_info.hpp
+  @ONLY
+)
+
 # Add Git revision information (forces reconfigure when Git status changes)
 include(GetGitDescription)
 git_describe(GIT_COMMIT_ID)
@@ -650,49 +661,6 @@ if(PALACE_WITH_GPU_AWARE_MPI)
     PUBLIC PALACE_WITH_GPU_AWARE_MPI
   )
 endif()
-
-# Report build dependency versions through `palace --version`. For each
-# dependency, prefer the git description of its source tree (most precise,
-# available when built from source via the superbuild). When the source tree is
-# not a git checkout (e.g. a tarball download, or a Spack/system install), fall
-# back to the version number discovered by find_package. Dependencies that are
-# not built report nothing.
-set(dependency_folders
-  STRUMPACK arpack-ng eigen fmt gslib hypre json libCEED libxsmm magma
-  metis mfem mumps parmetis petsc scalapack scn slepc sundials superlu_dist
-)
-
-# find_package version numbers, used as a fallback when no git description is
-# available. Folders without an entry here (gslib, libCEED, libxsmm, magma,
-# petsc, slepc) expose no version number at this point and are therefore
-# reported only when built from source.
-set(dep_version_STRUMPACK    "${strumpack_VERSION}")
-set(dep_version_arpack_ng    "${arpackng_VERSION}")
-set(dep_version_eigen        "${Eigen3_VERSION}")
-set(dep_version_fmt          "${fmt_VERSION}")
-set(dep_version_hypre        "${HYPRE_VERSION}")
-set(dep_version_json         "${nlohmann_json_VERSION}")
-set(dep_version_metis        "${METIS_VERSION}")
-set(dep_version_mfem         "${MFEM_VERSION}")
-set(dep_version_mumps        "${MUMPS_VERSION}")
-set(dep_version_parmetis     "${ParMETIS_VERSION}")
-set(dep_version_scalapack    "${scalapack_VERSION}")
-set(dep_version_scn          "${scn_VERSION}")
-set(dep_version_sundials     "${SUNDIALS_VERSION}")
-set(dep_version_superlu_dist "${superlu_dist_VERSION}")
-
-foreach(dep_folder IN LISTS dependency_folders)
-  string(REPLACE "-" "_" dep_name "${dep_folder}")
-  get_dependency_git_sha("${CMAKE_BINARY_DIR}/../extern/${dep_folder}" dep_info)
-  if(dep_info STREQUAL "")
-    set(dep_info "${dep_version_${dep_name}}")
-  endif()
-  message(DEBUG "Version info for ${dep_folder}: ${dep_info}")
-  set_property(
-    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
-    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_DEP_${dep_name}_VERSION=\"${dep_info}\""
-  )
-endforeach()
 
 # Install target and helper scripts
 install(

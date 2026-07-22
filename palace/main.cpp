@@ -9,6 +9,7 @@
 #include <mpi.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
+#include "build_info.hpp"
 #include "drivers/boundarymodesolver.hpp"
 #include "drivers/drivensolver.hpp"
 #include "drivers/eigensolver.hpp"
@@ -38,54 +39,23 @@ using namespace palace;
 static const char *GetPalaceGitTag()
 {
 #if defined(PALACE_GIT_COMMIT)
-  static const char *commit = PALACE_GIT_COMMIT_ID;
+  return PALACE_GIT_COMMIT_ID;
 #else
-  static const char *commit = "UNKNOWN";
+  return "UNKNOWN";
 #endif
-  return commit;
 }
 
 static void PrintPalaceVersionInfo(MPI_Comm comm)
 {
+  Mpi::Print(comm, "Palace version: {}\n", build_info::palace_version);
   if (std::strcmp(GetPalaceGitTag(), "UNKNOWN"))
   {
     Mpi::Print(comm, "Git commit: {}\n", GetPalaceGitTag());
   }
-
-  Mpi::Print(comm, "\nBuild dependencies:\n");
-
-// Print the git description or version number for a dependency. CMake defines
-// PALACE_DEP_<NAME>_VERSION for every dependency; the value is empty for those
-// that were not built, in which case nothing is printed.
-#define X(DEP_NAME)                                                             \
-  if (PALACE_DEP_##DEP_NAME##_VERSION[0] != '\0')                               \
-  {                                                                             \
-    Mpi::Print(comm, "  " #DEP_NAME ": {}\n", PALACE_DEP_##DEP_NAME##_VERSION); \
+  if (!build_info::dependency_versions.empty())
+  {
+    Mpi::Print(comm, "\nBuild dependencies:\n  {}\n", build_info::dependency_versions);
   }
-
-  // List of dependencies, matching the folders in palace/CMakeLists.txt.
-  X(STRUMPACK)
-  X(arpack_ng)
-  X(eigen)
-  X(fmt)
-  X(gslib)
-  X(hypre)
-  X(json)
-  X(libCEED)
-  X(libxsmm)
-  X(magma)
-  X(metis)
-  X(mfem)
-  X(mumps)
-  X(parmetis)
-  X(petsc)
-  X(scalapack)
-  X(scn)
-  X(slepc)
-  X(sundials)
-  X(superlu_dist)
-
-#undef X
 }
 
 static const char *GetPalaceCeedJitSourceDir()

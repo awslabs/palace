@@ -251,32 +251,52 @@ set(EXTERN_ZFP_GIT_TAG
 )
 
 # nlohmann/json
+set(EXTERN_JSON_VERSION
+  "3.12.0" CACHE STRING
+  "Version for external nlohmann/json build"
+)
 set(EXTERN_JSON_URL
-  "https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz" CACHE STRING
+  "https://github.com/nlohmann/json/releases/download/v${EXTERN_JSON_VERSION}/json.tar.xz" CACHE STRING
   "URL for external nlohmann/json build"
 )
 
 # nlohmann/json-schema-validator
+set(EXTERN_JSON_SCHEMA_VALIDATOR_VERSION
+  "2.4.0" CACHE STRING
+  "Version for external nlohmann/json-schema-validator build"
+)
 set(EXTERN_JSON_SCHEMA_VALIDATOR_URL
-  "https://github.com/pboettch/json-schema-validator/archive/refs/tags/2.4.0.tar.gz" CACHE STRING
+  "https://github.com/pboettch/json-schema-validator/archive/refs/tags/${EXTERN_JSON_SCHEMA_VALIDATOR_VERSION}.tar.gz" CACHE STRING
   "URL for external nlohmann/json-schema-validator build"
 )
 
 # fmt
+set(EXTERN_FMT_VERSION
+  "12.1.0" CACHE STRING
+  "Version for external fmt build"
+)
 set(EXTERN_FMT_URL
-  "https://github.com/fmtlib/fmt/releases/download/12.1.0/fmt-12.1.0.zip" CACHE STRING
+  "https://github.com/fmtlib/fmt/releases/download/${EXTERN_FMT_VERSION}/fmt-${EXTERN_FMT_VERSION}.zip" CACHE STRING
   "URL for external fmt build"
 )
 
 # scn
+set(EXTERN_SCN_VERSION
+  "4.0.1" CACHE STRING
+  "Version for external scn build"
+)
 set(EXTERN_SCN_URL
-  "https://github.com/eliaskosunen/scnlib/archive/refs/tags/v4.0.1.zip" CACHE STRING
+  "https://github.com/eliaskosunen/scnlib/archive/refs/tags/v${EXTERN_SCN_VERSION}.zip" CACHE STRING
   "URL for external scn build"
 )
 
 # Eigen
+set(EXTERN_EIGEN_VERSION
+  "5.0.0" CACHE STRING
+  "Version for external Eigen build"
+)
 set(EXTERN_EIGEN_URL
-  "https://gitlab.com/libeigen/eigen/-/archive/5.0.0/eigen-5.0.0.tar.gz" CACHE STRING
+  "https://gitlab.com/libeigen/eigen/-/archive/${EXTERN_EIGEN_VERSION}/eigen-${EXTERN_EIGEN_VERSION}.tar.gz" CACHE STRING
   "URL for external Eigen build"
 )
 

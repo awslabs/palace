@@ -297,6 +297,44 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     depends_on("catch2@3:", type="test")
 
+    def _dependency_build_info(self):
+        dependencies = (
+            ("STRUMPACK", "strumpack"),
+            ("arpack_ng", "arpack-ng"),
+            ("butterflypack", "butterflypack"),
+            ("eigen", "eigen"),
+            ("fmt", "fmt"),
+            ("gslib", "gslib"),
+            ("hypre", "hypre"),
+            ("json", "nlohmann-json"),
+            ("json_schema_validator", "nlohmann-json-schema-validator"),
+            ("libCEED", "libceed"),
+            ("libxsmm", "libxsmm"),
+            ("magma", "magma"),
+            ("metis", "metis"),
+            ("mfem", "mfem"),
+            ("mumps", "mumps"),
+            ("parmetis", "parmetis"),
+            ("petsc", "petsc"),
+            ("scalapack", "scalapack"),
+            ("scn", "scnlib"),
+            ("slepc", "slepc"),
+            ("sundials", "sundials"),
+            ("superlu_dist", "superlu-dist"),
+            ("umpire", "umpire"),
+            ("zfp", "zfp"),
+        )
+
+        entries = []
+        for label, package in dependencies:
+            if package not in self.spec:
+                continue
+            dependency = self.spec[package]
+            entries.append(
+                f"{label}={dependency.version}/{dependency.dag_hash(length=7)}"
+            )
+        return "|".join(entries)
+
     def cmake_args(self):
         args = [
             self.define_from_variant("CMAKE_CXX_STANDARD", "cxxstd"),
@@ -318,6 +356,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             self.define("PALACE_BUILD_EXTERNAL_DEPS", False),
             self.define("PALACE_MFEM_USE_EXCEPTIONS", self.run_tests),
         ]
+
+        if self.spec.satisfies("@0.16.1:"):
+            args.append(
+                self.define("PALACE_BUILD_DEPENDENCIES", self._dependency_build_info())
+            )
 
         if self.spec.satisfies("@0.16:"):
             args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))

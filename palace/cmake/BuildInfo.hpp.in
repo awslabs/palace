@@ -1,0 +1,15 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+#pragma once
+
+#include <string_view>
+
+namespace palace::build_info
+{
+
+inline constexpr std::string_view palace_version = "@PROJECT_VERSION@";
+inline constexpr std::string_view dependency_versions =
+    R"palace(@PALACE_BUILD_DEPENDENCIES_TEXT@)palace";
+
+}  // namespace palace::build_info

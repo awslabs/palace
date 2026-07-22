@@ -117,14 +117,15 @@ if ! echo $PALACE | grep -q $ARCH; then
     exit 1
 fi
 
+# Version information does not require an MPI launcher.
+if [[ -n "$VERSION" ]]; then
+    echo ">> $PALACE $VERSION"
+    exec "$PALACE" "$VERSION"
+fi
+
 # Configure --dry-run
 if [[ -n "$DRY_RUN" ]]; then
     PALACE="$PALACE $DRY_RUN"
-fi
-
-# Configure --version
-if [[ -n "$VERSION" ]]; then
-    PALACE="$PALACE $VERSION"
 fi
 
 # Configure OpenMP threads

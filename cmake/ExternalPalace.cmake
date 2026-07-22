@@ -14,6 +14,69 @@ if(PALACE_BUILD_EXTERNAL_DEPS)
   if(PALACE_WITH_ARPACK)
     list(APPEND PALACE_DEPENDENCIES arpack-ng)
   endif()
+
+  # The superbuild owns the exact dependency source revisions. Pass that metadata to the
+  # Palace build instead of rediscovering it from source directories later.
+  set(_palace_build_dependencies
+    "eigen=${EXTERN_EIGEN_VERSION}"
+    "fmt=${EXTERN_FMT_VERSION}"
+    "hypre=${EXTERN_HYPRE_GIT_TAG}"
+    "json=${EXTERN_JSON_VERSION}"
+    "json_schema_validator=${EXTERN_JSON_SCHEMA_VALIDATOR_VERSION}"
+    "libCEED=${EXTERN_LIBCEED_GIT_TAG}"
+    "metis=${EXTERN_METIS_GIT_TAG}"
+    "mfem=${EXTERN_MFEM_GIT_TAG}"
+    "scn=${EXTERN_SCN_VERSION}"
+  )
+  if(PALACE_WITH_ARPACK)
+    list(APPEND _palace_build_dependencies "arpack_ng=${EXTERN_ARPACK_GIT_TAG}")
+  endif()
+  if(PALACE_WITH_GSLIB)
+    list(APPEND _palace_build_dependencies "gslib=${EXTERN_GSLIB_GIT_TAG}")
+  endif()
+  if(PALACE_WITH_LIBXSMM)
+    list(APPEND _palace_build_dependencies "libxsmm=${EXTERN_LIBXSMM_GIT_TAG}")
+  endif()
+  if(PALACE_WITH_MAGMA)
+    list(APPEND _palace_build_dependencies "magma=${EXTERN_MAGMA_GIT_TAG}")
+  endif()
+  if(PALACE_WITH_SUPERLU OR PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
+    list(APPEND _palace_build_dependencies "parmetis=${EXTERN_PARMETIS_GIT_TAG}")
+  endif()
+  if(PALACE_WITH_SLEPC)
+    list(APPEND _palace_build_dependencies
+      "petsc=${EXTERN_PETSC_GIT_TAG}"
+      "slepc=${EXTERN_SLEPC_GIT_TAG}"
+    )
+  endif()
+  if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
+    list(APPEND _palace_build_dependencies "scalapack=${EXTERN_SCALAPACK_GIT_TAG}")
+  endif()
+  if(PALACE_WITH_STRUMPACK)
+    list(APPEND _palace_build_dependencies "STRUMPACK=${EXTERN_STRUMPACK_GIT_TAG}")
+    if(PALACE_WITH_STRUMPACK_BUTTERFLYPACK)
+      list(APPEND _palace_build_dependencies
+        "butterflypack=${EXTERN_BUTTERFLYPACK_GIT_TAG}"
+      )
+    endif()
+    if(PALACE_WITH_STRUMPACK_ZFP)
+      list(APPEND _palace_build_dependencies "zfp=${EXTERN_ZFP_GIT_TAG}")
+    endif()
+  endif()
+  if(PALACE_WITH_MUMPS)
+    list(APPEND _palace_build_dependencies "mumps=${EXTERN_MUMPS_GIT_TAG}")
+  endif()
+  if(PALACE_WITH_SUNDIALS)
+    list(APPEND _palace_build_dependencies "sundials=${EXTERN_SUNDIALS_GIT_TAG}")
+  endif()
+  if(PALACE_WITH_SUPERLU)
+    list(APPEND _palace_build_dependencies "superlu_dist=${EXTERN_SUPERLU_GIT_TAG}")
+  endif()
+  if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+    list(APPEND _palace_build_dependencies "umpire=${EXTERN_UMPIRE_GIT_TAG}")
+  endif()
+  list(SORT _palace_build_dependencies)
+  list(JOIN _palace_build_dependencies "|" PALACE_BUILD_DEPENDENCIES)
 endif()
 
 set(PALACE_OPTIONS ${PALACE_SUPERBUILD_DEFAULT_ARGS})
@@ -28,6 +91,7 @@ list(APPEND PALACE_OPTIONS
   "-DPALACE_WITH_SUPERLU=${PALACE_WITH_SUPERLU}"
   "-DPALACE_WITH_MUMPS=${PALACE_WITH_MUMPS}"
   "-DPALACE_WITH_GSLIB=${PALACE_WITH_GSLIB}"
+  "-DPALACE_BUILD_DEPENDENCIES=${PALACE_BUILD_DEPENDENCIES}"
   "-DANALYZE_SOURCES_CLANG_TIDY=${ANALYZE_SOURCES_CLANG_TIDY}"
   "-DANALYZE_SOURCES_CPPCHECK=${ANALYZE_SOURCES_CPPCHECK}"
   "-DPALACE_BUILD_EXTERNAL_DEPS=${PALACE_BUILD_EXTERNAL_DEPS}" # For Catch2
