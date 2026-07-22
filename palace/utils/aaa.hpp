@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <vector>
 #include <Eigen/Dense>
+#include <mfem.hpp>
 
 // LAPACK ZGGEV — used to extract poles from the AAA generalised eigenproblem.
 // Declared at file scope (not inside a function or namespace) so it is plain C
@@ -99,6 +100,17 @@ inline AAAResult RunAAA(const Eigen::VectorXcd &z, const Eigen::VectorXcd &F, do
   {
     return r;
   }
+#if defined(MFEM_DEBUG)
+  // Duplicate sample points produce 1/0 = NaN inside the Loewner build; fail loudly.
+  for (std::size_t i = 0; i < M; i++)
+  {
+    for (std::size_t j = i + 1; j < M; j++)
+    {
+      MFEM_VERIFY(z(static_cast<long>(i)) != z(static_cast<long>(j)),
+                  "AAA sample points must be distinct!");
+    }
+  }
+#endif
   const double F_norm = F.cwiseAbs().maxCoeff();
   if (F_norm == 0.0)
   {
@@ -115,7 +127,8 @@ inline AAAResult RunAAA(const Eigen::VectorXcd &z, const Eigen::VectorXcd &F, do
   support_indices.reserve(m_max);
   Eigen::VectorXcd zj_buf(m_max), fj_buf(m_max);
   Eigen::VectorXcd wj_buf;
-  r.err_history.resize(0);
+  r.err_history.resize(static_cast<long>(m_max));
+  long n_hist = 0;
   for (std::size_t m = 0; m < m_max; m++)
   {
     // Pick the index in {non-support} that maximises |F − R|.
@@ -145,8 +158,7 @@ inline AAAResult RunAAA(const Eigen::VectorXcd &z, const Eigen::VectorXcd &F, do
     {
       // All samples are now support points; trivial perfect fit.
       wj_buf = Eigen::VectorXcd::Ones(m + 1);
-      r.err_history.conservativeResize(static_cast<long>(m + 1));
-      r.err_history(static_cast<long>(m)) = 0.0;
+      r.err_history(n_hist++) = 0.0;
       break;
     }
     Eigen::MatrixXcd A(M_J, m + 1);
@@ -188,14 +200,14 @@ inline AAAResult RunAAA(const Eigen::VectorXcd &z, const Eigen::VectorXcd &F, do
       R(i) = num / den;
       cur_err = std::max(cur_err, std::abs(F(i) - R(i)));
     }
-    r.err_history.conservativeResize(static_cast<long>(m + 1));
-    r.err_history(static_cast<long>(m)) = cur_err;
+    r.err_history(n_hist++) = cur_err;
     if (cur_err <= abs_tol)
     {
       r.converged = true;
       break;
     }
   }
+  r.err_history.conservativeResize(n_hist);
 
   const auto m_used = static_cast<long>(support_indices.size());
   r.zj = zj_buf.head(m_used);
@@ -229,7 +241,10 @@ inline AAAPoleResidue AAAToPoleResidue(const AAAResult &r)
   }
   std::complex<double> sum_w = r.wj.sum();
   std::complex<double> sum_wf = (r.wj.array() * r.fj.array()).sum();
-  out.d = sum_wf / sum_w;
+  // The asymptote d = r(∞) = Σwf/Σw is undefined when the weights sum to (near) zero
+  // (the barycentric rational is strictly proper). Fall back to d = 0 rather than
+  // propagating a NaN through the pole-residue form.
+  out.d = (std::abs(sum_w) > 1.0e-14 * r.wj.cwiseAbs().maxCoeff()) ? sum_wf / sum_w : 0.0;
 
   // Generalised eigenproblem for poles.
   Eigen::MatrixXcd A_geig = Eigen::MatrixXcd::Zero(m + 1, m + 1);
@@ -249,13 +264,17 @@ inline AAAPoleResidue AAAToPoleResidue(const AAAResult &r)
   int info = 0;
   zggev_(&jobvl, &jobvr, &n, A_geig.data(), &n, B_geig.data(), &n, alpha.data(),
          beta.data(), nullptr, &n, nullptr, &n, work.data(), &lwork, rwork.data(), &info);
-  // Collect finite eigenvalues (drop the single eigenvalue with beta = 0,
-  // corresponding to the rank deficiency in B).
+  // Collect finite eigenvalues, dropping the single eigenvalue at infinity from the
+  // rank deficiency in B. ZGGEV usually signals it with beta = 0 exactly, but roundoff
+  // in an ill-conditioned pencil can instead produce a tiny nonzero beta — a spurious
+  // "finite" pole at ~1/eps whose residue would contaminate in-band evaluation — so
+  // filter on |beta| relative to |alpha| rather than on exact zero.
   std::vector<std::complex<double>> finite_poles;
   finite_poles.reserve(m);
+  constexpr double beta_tol = 1.0e-13;
   for (int j = 0; j < n; j++)
   {
-    if (std::abs(beta[j]) > 0.0)
+    if (std::abs(beta[j]) > beta_tol * std::max(std::abs(alpha[j]), 1.0))
     {
       auto val = alpha[j] / beta[j];
       if (std::isfinite(val.real()) && std::isfinite(val.imag()))

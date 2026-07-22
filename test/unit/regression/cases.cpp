@@ -494,10 +494,12 @@ TEST_CASE("adapter_driven_synth", "[Serial][Parallel][Regression]")
   opts.atol = 1.0e-11;
   // The synthesized-eigenvalue rows track the adaptive greedy sampling: modes are
   // only reproducible where the PROM converged, so allow row-count drift and compare
-  // the leading (sorted, in-band) modes. The HDM eigenpair error columns in
-  // rom-eigenvalues.csv are residual diagnostics, not regression targets (same
-  // exclusion as the eigenmode cases).
+  // the leading (sorted, in-band) modes. Require at least 5 rows (reference has 7
+  // modes) so a partial loss of trailing modes cannot pass as a leading-subset match.
+  // The HDM eigenpair error columns in rom-eigenvalues.csv are residual diagnostics,
+  // not regression targets (same exclusion as the eigenmode cases).
   opts.skip_rowcount = true;
+  opts.min_rows = 5;
   opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)"};
   // The raw synthesis matrices and the eigenvectors (which live in the same
   // basis-dependent node coordinates) vary with the greedy sampling and MPI partition;

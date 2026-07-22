@@ -230,6 +230,14 @@ bool ValidateCSVTables(Table &actual, Table &reference, const RegressionOptions 
     // Eigen/adaptive cases may have a different row count, but empty output
     // against a non-empty reference is still a failure.
     CHECK((actual.n_rows() > 0) == (reference.n_rows() > 0));
+    if (opts.min_rows)
+    {
+      // Capped by the reference's own row count so the floor only binds on files that
+      // actually have that many rows (e.g. rom-eigenvalues.csv, not error-indicators.csv).
+      const std::size_t floor_rows = std::min(*opts.min_rows, reference.n_rows());
+      INFO("minimum row count " << floor_rows);
+      CHECK(actual.n_rows() >= floor_rows);
+    }
   }
 
   const bool comparable_columns = actual.n_cols() == reference.n_cols();
