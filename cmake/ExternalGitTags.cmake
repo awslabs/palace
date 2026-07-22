@@ -10,6 +10,33 @@ if(__extern_git_tags)
 endif()
 set(__extern_git_tags YES)
 
+function(_palace_validate_archive_cache package version_variable url_variable
+         canonical_url canonical_prefix)
+  if(NOT PALACE_BUILD_EXTERNAL_DEPS)
+    return()
+  endif()
+  if("${${version_variable}}" STREQUAL "" OR "${${url_variable}}" STREQUAL "")
+    message(FATAL_ERROR
+      "External ${package} archive cache values ${version_variable} and ${url_variable} "
+      "must both be nonempty. Update both cache values together, or clear the stale "
+      "${url_variable} cache entry."
+    )
+  endif()
+
+  # Cache variables deliberately remain user-overridable, including opaque mirror or local
+  # URLs. Only an URL in the dependency's official canonical family can be diagnosed as a
+  # stale default left behind after changing its separately cached version.
+  string(FIND "${${url_variable}}" "${canonical_prefix}" _palace_prefix_position)
+  if(_palace_prefix_position EQUAL 0 AND
+     NOT "${${url_variable}}" STREQUAL "${canonical_url}")
+    message(FATAL_ERROR
+      "External ${package} archive URL '${${url_variable}}' is stale for selected version "
+      "'${${version_variable}}'. Update both ${version_variable} and ${url_variable} "
+      "together, or clear the stale ${url_variable} cache entry."
+    )
+  endif()
+endfunction()
+
 # ARPACK-NG
 set(EXTERN_ARPACK_URL
   "https://github.com/opencollab/arpack-ng.git" CACHE STRING
@@ -259,6 +286,10 @@ set(EXTERN_JSON_URL
   "https://github.com/nlohmann/json/releases/download/v${EXTERN_JSON_VERSION}/json.tar.xz" CACHE STRING
   "URL for external nlohmann/json build"
 )
+_palace_validate_archive_cache("nlohmann/json" EXTERN_JSON_VERSION EXTERN_JSON_URL
+  "https://github.com/nlohmann/json/releases/download/v${EXTERN_JSON_VERSION}/json.tar.xz"
+  "https://github.com/nlohmann/json/releases/download/"
+)
 
 # nlohmann/json-schema-validator
 set(EXTERN_JSON_SCHEMA_VALIDATOR_VERSION
@@ -268,6 +299,11 @@ set(EXTERN_JSON_SCHEMA_VALIDATOR_VERSION
 set(EXTERN_JSON_SCHEMA_VALIDATOR_URL
   "https://github.com/pboettch/json-schema-validator/archive/refs/tags/${EXTERN_JSON_SCHEMA_VALIDATOR_VERSION}.tar.gz" CACHE STRING
   "URL for external nlohmann/json-schema-validator build"
+)
+_palace_validate_archive_cache("nlohmann/json-schema-validator"
+  EXTERN_JSON_SCHEMA_VALIDATOR_VERSION EXTERN_JSON_SCHEMA_VALIDATOR_URL
+  "https://github.com/pboettch/json-schema-validator/archive/refs/tags/${EXTERN_JSON_SCHEMA_VALIDATOR_VERSION}.tar.gz"
+  "https://github.com/pboettch/json-schema-validator/archive/refs/tags/"
 )
 
 # fmt
@@ -279,6 +315,10 @@ set(EXTERN_FMT_URL
   "https://github.com/fmtlib/fmt/releases/download/${EXTERN_FMT_VERSION}/fmt-${EXTERN_FMT_VERSION}.zip" CACHE STRING
   "URL for external fmt build"
 )
+_palace_validate_archive_cache("fmt" EXTERN_FMT_VERSION EXTERN_FMT_URL
+  "https://github.com/fmtlib/fmt/releases/download/${EXTERN_FMT_VERSION}/fmt-${EXTERN_FMT_VERSION}.zip"
+  "https://github.com/fmtlib/fmt/releases/download/"
+)
 
 # scn
 set(EXTERN_SCN_VERSION
@@ -289,6 +329,10 @@ set(EXTERN_SCN_URL
   "https://github.com/eliaskosunen/scnlib/archive/refs/tags/v${EXTERN_SCN_VERSION}.zip" CACHE STRING
   "URL for external scn build"
 )
+_palace_validate_archive_cache("scn" EXTERN_SCN_VERSION EXTERN_SCN_URL
+  "https://github.com/eliaskosunen/scnlib/archive/refs/tags/v${EXTERN_SCN_VERSION}.zip"
+  "https://github.com/eliaskosunen/scnlib/archive/refs/tags/"
+)
 
 # Eigen
 set(EXTERN_EIGEN_VERSION
@@ -298,6 +342,10 @@ set(EXTERN_EIGEN_VERSION
 set(EXTERN_EIGEN_URL
   "https://gitlab.com/libeigen/eigen/-/archive/${EXTERN_EIGEN_VERSION}/eigen-${EXTERN_EIGEN_VERSION}.tar.gz" CACHE STRING
   "URL for external Eigen build"
+)
+_palace_validate_archive_cache("Eigen" EXTERN_EIGEN_VERSION EXTERN_EIGEN_URL
+  "https://gitlab.com/libeigen/eigen/-/archive/${EXTERN_EIGEN_VERSION}/eigen-${EXTERN_EIGEN_VERSION}.tar.gz"
+  "https://gitlab.com/libeigen/eigen/-/archive/"
 )
 
 # SUNDIALS

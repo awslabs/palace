@@ -27,10 +27,13 @@ jobs:
         with:
           filters: |
             test:
+              - 'CMakeLists.txt'
               - 'palace/**'
               - 'cmake/**'
               - 'extern/**'
               - 'examples/**'
+              - 'scripts/palace'
+              - 'test/cmake/**'
               - 'test/examples/**'
               - 'test/unit/**'
               - '.github/workflows/build-and-test-macos.yml'
@@ -248,6 +251,9 @@ jobs:
           fi
           export DYLD_LIBRARY_PATH="$(pwd)/palace-install/lib:$DYLD_LIBRARY_PATH"
           cd $(pwd)/palace-build/palace-build/test/unit
+
+          # Run dependency-free build information tests.
+          ctest --no-tests=error --output-on-failure --tests-regex '^build-info-'
 
           # Run Serial tests
           ./palace-unit-tests --skip-benchmarks

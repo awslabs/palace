@@ -52,9 +52,10 @@ static void PrintPalaceVersionInfo(MPI_Comm comm)
   {
     Mpi::Print(comm, "Git commit: {}\n", GetPalaceGitTag());
   }
-  if (!build_info::dependency_versions.empty())
+  if (!build_info::formatted_dependency_versions.empty())
   {
-    Mpi::Print(comm, "\nBuild dependencies:\n  {}\n", build_info::dependency_versions);
+    Mpi::Print(comm, "\nBuild dependencies:\n{}\n",
+               build_info::formatted_dependency_versions);
   }
 }
 

@@ -46,7 +46,13 @@ set(ANALYZE_SOURCES_CPPCHECK OFF CACHE BOOL "Run static analysis checks using cp
 
 set(PALACE_BUILD_WITH_COVERAGE OFF CACHE BOOL "Compile Palace with coverage flags (source-based for LLVM; gcov for GCC)")
 set(PALACE_BUILD_WITH_SANITIZERS OFF CACHE BOOL "Compile Palace with sanitizers (AddressSanitizer + UndefinedBehaviorSanitizer)")
-set(PALACE_BUILD_DEPENDENCIES "" CACHE STRING "Pipe-separated name=value build dependency metadata")
+
+# Public wire contract (do not rename): PALACE_BUILD_DEPENDENCIES is empty or a
+# pipe-separated label=value sequence. Labels match [A-Za-z][A-Za-z0-9_]*; consumers
+# split each record on its first '=' so values may contain further '='. Semicolons, pipes
+# within producer fields, and CR/LF are reserved. The superbuild reports source pins;
+# package managers may instead report reproducible package identities.
+set(PALACE_BUILD_DEPENDENCIES "" CACHE STRING "Pipe-separated label=value build dependency metadata")
 
 # Help find third-party dependencies
 set(MFEM_DIR "" CACHE STRING
@@ -368,9 +374,12 @@ set_property(
 include(${CMAKE_SOURCE_DIR}/../cmake/EmbedSchema.cmake)
 
 # Generate build version information supplied by the superbuild or package manager.
-set(PALACE_BUILD_DEPENDENCIES_TEXT "${PALACE_BUILD_DEPENDENCIES}")
-string(REPLACE "|" "\n  " PALACE_BUILD_DEPENDENCIES_TEXT "${PALACE_BUILD_DEPENDENCIES_TEXT}")
-string(REPLACE "=" ": " PALACE_BUILD_DEPENDENCIES_TEXT "${PALACE_BUILD_DEPENDENCIES_TEXT}")
+include(${CMAKE_SOURCE_DIR}/../cmake/BuildDependencyMetadata.cmake)
+palace_format_build_dependencies(
+  "${PALACE_BUILD_DEPENDENCIES}"
+  PALACE_FORMATTED_BUILD_DEPENDENCIES
+  PALACE_BUILD_DEPENDENCIES_CPP_STRING
+)
 configure_file(
   ${CMAKE_SOURCE_DIR}/cmake/BuildInfo.hpp.in
   ${CMAKE_BINARY_DIR}/generated/build_info.hpp

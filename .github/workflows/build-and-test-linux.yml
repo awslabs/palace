@@ -27,10 +27,13 @@ jobs:
         with:
           filters: |
             test:
+              - 'CMakeLists.txt'
               - 'palace/**'
               - 'cmake/**'
               - 'extern/**'
               - 'examples/**'
+              - 'scripts/palace'
+              - 'test/cmake/**'
               - 'test/examples/**'
               - 'test/unit/**'
               - '.github/workflows/build-and-test-linux.yml'

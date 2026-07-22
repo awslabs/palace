@@ -5,76 +5,73 @@
 # Build Palace
 #
 
-# Force build order
+# The superbuild owns the exact dependency source revisions. Target existence is the
+# authority for which pins are reported, avoiding a second copy of the feature-selection
+# predicates in extern/CMakeLists.txt.
+include(BuildDependencyMetadata)
 if(PALACE_BUILD_EXTERNAL_DEPS)
-  list(APPEND PALACE_DEPENDENCIES mfem libCEED json json_schema_validator fmt eigen scn)
-  if(PALACE_WITH_SLEPC)
-    list(APPEND PALACE_DEPENDENCIES slepc)
-  endif()
-  if(PALACE_WITH_ARPACK)
-    list(APPEND PALACE_DEPENDENCIES arpack-ng)
-  endif()
+  # Force the same direct build order as before, but let configured targets determine which
+  # optional eigensolver is present.
+  set(PALACE_DEPENDENCIES)
+  foreach(_palace_dependency IN ITEMS
+      mfem libCEED json json_schema_validator fmt eigen scn slepc arpack-ng)
+    if(TARGET "${_palace_dependency}")
+      list(APPEND PALACE_DEPENDENCIES "${_palace_dependency}")
+    endif()
+  endforeach()
 
-  # The superbuild owns the exact dependency source revisions. Pass that metadata to the
-  # Palace build instead of rediscovering it from source directories later.
-  set(_palace_build_dependencies
-    "eigen=${EXTERN_EIGEN_VERSION}"
-    "fmt=${EXTERN_FMT_VERSION}"
-    "hypre=${EXTERN_HYPRE_GIT_TAG}"
-    "json=${EXTERN_JSON_VERSION}"
-    "json_schema_validator=${EXTERN_JSON_SCHEMA_VALIDATOR_VERSION}"
-    "libCEED=${EXTERN_LIBCEED_GIT_TAG}"
-    "metis=${EXTERN_METIS_GIT_TAG}"
-    "mfem=${EXTERN_MFEM_GIT_TAG}"
-    "scn=${EXTERN_SCN_VERSION}"
-  )
-  if(PALACE_WITH_ARPACK)
-    list(APPEND _palace_build_dependencies "arpack_ng=${EXTERN_ARPACK_GIT_TAG}")
-  endif()
-  if(PALACE_WITH_GSLIB)
-    list(APPEND _palace_build_dependencies "gslib=${EXTERN_GSLIB_GIT_TAG}")
-  endif()
-  if(PALACE_WITH_LIBXSMM)
-    list(APPEND _palace_build_dependencies "libxsmm=${EXTERN_LIBXSMM_GIT_TAG}")
-  endif()
-  if(PALACE_WITH_MAGMA)
-    list(APPEND _palace_build_dependencies "magma=${EXTERN_MAGMA_GIT_TAG}")
-  endif()
-  if(PALACE_WITH_SUPERLU OR PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
-    list(APPEND _palace_build_dependencies "parmetis=${EXTERN_PARMETIS_GIT_TAG}")
-  endif()
-  if(PALACE_WITH_SLEPC)
-    list(APPEND _palace_build_dependencies
-      "petsc=${EXTERN_PETSC_GIT_TAG}"
-      "slepc=${EXTERN_SLEPC_GIT_TAG}"
-    )
-  endif()
-  if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
-    list(APPEND _palace_build_dependencies "scalapack=${EXTERN_SCALAPACK_GIT_TAG}")
-  endif()
-  if(PALACE_WITH_STRUMPACK)
-    list(APPEND _palace_build_dependencies "STRUMPACK=${EXTERN_STRUMPACK_GIT_TAG}")
-    if(PALACE_WITH_STRUMPACK_BUTTERFLYPACK)
-      list(APPEND _palace_build_dependencies
-        "butterflypack=${EXTERN_BUTTERFLYPACK_GIT_TAG}"
-      )
-    endif()
-    if(PALACE_WITH_STRUMPACK_ZFP)
-      list(APPEND _palace_build_dependencies "zfp=${EXTERN_ZFP_GIT_TAG}")
-    endif()
-  endif()
-  if(PALACE_WITH_MUMPS)
-    list(APPEND _palace_build_dependencies "mumps=${EXTERN_MUMPS_GIT_TAG}")
-  endif()
-  if(PALACE_WITH_SUNDIALS)
-    list(APPEND _palace_build_dependencies "sundials=${EXTERN_SUNDIALS_GIT_TAG}")
-  endif()
-  if(PALACE_WITH_SUPERLU)
-    list(APPEND _palace_build_dependencies "superlu_dist=${EXTERN_SUPERLU_GIT_TAG}")
-  endif()
-  if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
-    list(APPEND _palace_build_dependencies "umpire=${EXTERN_UMPIRE_GIT_TAG}")
-  endif()
+  # Keep these labels aligned with the Spack helper where the same dependency is present.
+  # Target/spec presence is authoritative in each producer.
+  set(_palace_build_dependencies)
+  palace_append_external_build_dependency(_palace_build_dependencies strumpack STRUMPACK
+    "${EXTERN_STRUMPACK_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies arpack-ng arpack_ng
+    "${EXTERN_ARPACK_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies butterflypack
+    butterflypack "${EXTERN_BUTTERFLYPACK_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies eigen eigen
+    "${EXTERN_EIGEN_VERSION}")
+  palace_append_external_build_dependency(_palace_build_dependencies fmt fmt
+    "${EXTERN_FMT_VERSION}")
+  palace_append_external_build_dependency(_palace_build_dependencies gslib gslib
+    "${EXTERN_GSLIB_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies hypre hypre
+    "${EXTERN_HYPRE_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies json json
+    "${EXTERN_JSON_VERSION}")
+  palace_append_external_build_dependency(_palace_build_dependencies json_schema_validator
+    json_schema_validator "${EXTERN_JSON_SCHEMA_VALIDATOR_VERSION}")
+  palace_append_external_build_dependency(_palace_build_dependencies libCEED libCEED
+    "${EXTERN_LIBCEED_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies libxsmm libxsmm
+    "${EXTERN_LIBXSMM_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies magma magma
+    "${EXTERN_MAGMA_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies metis metis
+    "${EXTERN_METIS_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies mfem mfem
+    "${EXTERN_MFEM_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies mumps mumps
+    "${EXTERN_MUMPS_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies parmetis parmetis
+    "${EXTERN_PARMETIS_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies petsc petsc
+    "${EXTERN_PETSC_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies scalapack scalapack
+    "${EXTERN_SCALAPACK_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies scn scn
+    "${EXTERN_SCN_VERSION}")
+  palace_append_external_build_dependency(_palace_build_dependencies slepc slepc
+    "${EXTERN_SLEPC_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies sundials sundials
+    "${EXTERN_SUNDIALS_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies superlu_dist
+    superlu_dist "${EXTERN_SUPERLU_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies umpire umpire
+    "${EXTERN_UMPIRE_GIT_TAG}")
+  palace_append_external_build_dependency(_palace_build_dependencies zfp zfp
+    "${EXTERN_ZFP_GIT_TAG}")
+
   list(SORT _palace_build_dependencies)
   list(JOIN _palace_build_dependencies "|" PALACE_BUILD_DEPENDENCIES)
 endif()

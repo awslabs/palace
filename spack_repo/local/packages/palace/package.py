@@ -298,6 +298,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("catch2@3:", type="test")
 
     def _dependency_build_info(self):
+        """Format present Spack deps as label=version/7-char-DAG-hash records.
+
+        Superbuild producers report source pins instead. Pipes, semicolons, and line
+        breaks are reserved; consumers split each record on the first equals sign.
+        """
+        # Keep shared labels aligned with ExternalPalace.cmake. Spack spec membership,
+        # rather than that superbuild target catalog, is authoritative for this producer.
         dependencies = (
             ("STRUMPACK", "strumpack"),
             ("arpack_ng", "arpack-ng"),

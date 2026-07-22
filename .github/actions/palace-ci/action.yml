@@ -280,6 +280,106 @@ runs:
         spack -e . install --only-concrete --keep-stage --show-log-on-error --only package --no-cache --test root -j $(nproc)
         end_timer "Build Palace"
 
+    - name: Run Build Information Tests
+      shell: bash
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+        spack_environment=$PWD
+        eval "$(spack -e "$spack_environment" load --sh palace)"
+
+        # These dependency-free CTests run for every installed configuration, including
+        # long-test jobs where the Catch2 suite is intentionally skipped.
+        cd "$(spack -e "$spack_environment" location -b palace)"
+        ctest --no-tests=error --output-on-failure --tests-regex '^build-info-'
+
+        # Validate Spack's producer-specific version/hash payload through the public CLI.
+        nonexistent_launcher="/tmp/palace-build-info-nonexistent-launcher-$$"
+        rm -f "$nonexistent_launcher"
+        version_output=$(palace --launcher "$nonexistent_launcher" --version)
+        printf '%s\n' "$version_output"
+        dependency_lines=$(printf '%s\n' "$version_output" |
+          awk '/^Build dependencies:$/ { in_dependencies = 1; next }
+               in_dependencies && /^  / { print }')
+        if [[ -z "$dependency_lines" ]]; then
+          echo "Palace --version reported no Spack dependency metadata" >&2
+          exit 1
+        fi
+        # Independently bind every public label to its concrete package. This catches
+        # malformed hashes, swapped values, unknown labels, and omitted records.
+        export PALACE_REPORTED_DEPENDENCIES="$dependency_lines"
+        PALACE_CONCRETE_DAG=$(spack -e "$spack_environment" find -d \
+          --format '{name}={version}/{hash:7}' palace)
+        export PALACE_CONCRETE_DAG
+        python3 <<'PY'
+        import os
+        import re
+
+        package_for_label = {
+            "STRUMPACK": "strumpack",
+            "arpack_ng": "arpack-ng",
+            "butterflypack": "butterflypack",
+            "eigen": "eigen",
+            "fmt": "fmt",
+            "gslib": "gslib",
+            "hypre": "hypre",
+            "json": "nlohmann-json",
+            "json_schema_validator": "nlohmann-json-schema-validator",
+            "libCEED": "libceed",
+            "libxsmm": "libxsmm",
+            "magma": "magma",
+            "metis": "metis",
+            "mfem": "mfem",
+            "mumps": "mumps",
+            "parmetis": "parmetis",
+            "petsc": "petsc",
+            "scalapack": "scalapack",
+            "scn": "scnlib",
+            "slepc": "slepc",
+            "sundials": "sundials",
+            "superlu_dist": "superlu-dist",
+            "umpire": "umpire",
+            "zfp": "zfp",
+        }
+        dag = {}
+        for line in os.environ["PALACE_CONCRETE_DAG"].splitlines():
+            package, separator, value = line.strip().partition("=")
+            if separator:
+                dag[package] = value
+
+        row_pattern = re.compile(r"^  ([A-Za-z][A-Za-z0-9_]*): (.+/[a-z0-9]{7})$")
+        reported = {}
+        for line in os.environ["PALACE_REPORTED_DEPENDENCIES"].splitlines():
+            match = row_pattern.fullmatch(line)
+            if not match:
+                raise SystemExit(f"Malformed Spack dependency metadata row: {line}")
+            label, value = match.groups()
+            if label in reported:
+                raise SystemExit(f"Duplicate Spack dependency metadata label: {label}")
+            reported[label] = value
+
+        expected = {
+            label: dag[package]
+            for label, package in package_for_label.items()
+            if package in dag
+        }
+        if reported != expected:
+            missing = sorted(expected.keys() - reported.keys())
+            unexpected = sorted(reported.keys() - expected.keys())
+            mismatched = sorted(
+                label
+                for label in expected.keys() & reported.keys()
+                if expected[label] != reported[label]
+            )
+            raise SystemExit(
+                "Spack dependency metadata does not match its concrete package DAG: "
+                f"missing={missing}, unexpected={unexpected}, mismatched={mismatched}"
+            )
+        PY
+        unset PALACE_REPORTED_DEPENDENCIES PALACE_CONCRETE_DAG
+
+        end_timer "Run Build Information Tests"
+
     # We don't want to run unit tests as part of the long test run. They are
     # already run elsewhere.
     - name: Run Unit Tests

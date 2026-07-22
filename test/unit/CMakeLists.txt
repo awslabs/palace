@@ -5,6 +5,58 @@
 # CMake configuration for Palace unit tests
 #
 
+# Dependency-free build information tests remain available even when Catch2 is absent.
+include(CTest)
+if(BUILD_TESTING)
+  add_test(
+    NAME build-info-metadata
+    COMMAND ${CMAKE_COMMAND}
+      "-DMODULE_FILE=${CMAKE_CURRENT_LIST_DIR}/../../cmake/BuildDependencyMetadata.cmake"
+      "-DHEADER_TEMPLATE=${CMAKE_SOURCE_DIR}/cmake/BuildInfo.hpp.in"
+      "-DTEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/build-info-metadata"
+      -P "${CMAKE_CURRENT_LIST_DIR}/../cmake/build_info_metadata.cmake"
+  )
+  add_test(
+    NAME build-info-archive-cache
+    COMMAND ${CMAKE_COMMAND}
+      "-DEXTERNAL_GIT_TAGS=${CMAKE_CURRENT_LIST_DIR}/../../cmake/ExternalGitTags.cmake"
+      -P "${CMAKE_CURRENT_LIST_DIR}/../cmake/archive_cache_metadata.cmake"
+  )
+  add_test(
+    NAME build-info-cli
+    COMMAND ${CMAKE_COMMAND}
+      "-DPALACE_WRAPPER=${CMAKE_INSTALL_PREFIX}/bin/palace"
+      "-DPALACE_EXECUTABLE=$<TARGET_FILE:${TARGET_NAME}>"
+      "-DPALACE_PROJECT_VERSION=${PROJECT_VERSION}"
+      "-DPALACE_BUILD_DEPENDENCIES=${PALACE_BUILD_DEPENDENCIES}"
+      "-DTEST_BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}/build-info-cli"
+      -P "${CMAKE_CURRENT_LIST_DIR}/../cmake/check_build_info.cmake"
+  )
+  set_tests_properties(
+    build-info-metadata build-info-archive-cache build-info-cli
+    PROPERTIES LABELS build-info
+  )
+endif()
+
+# Compile a generated header containing characters that previously could terminate the
+# dependency metadata's raw string literal. Keeping this as a normal CMake target lets the
+# configured generator and toolchain provide all required compiler options.
+set(_build_info_compile_metadata
+  [=[alpha=first=second|raw=)palace"|slash=C:\path\"quoted]=])
+palace_format_build_dependencies("${_build_info_compile_metadata}"
+  _build_info_compile_formatted PALACE_BUILD_DEPENDENCIES_CPP_STRING)
+set(_build_info_compile_directory "${CMAKE_CURRENT_BINARY_DIR}/build-info-compile")
+file(MAKE_DIRECTORY "${_build_info_compile_directory}")
+configure_file("${CMAKE_SOURCE_DIR}/cmake/BuildInfo.hpp.in"
+  "${_build_info_compile_directory}/build_info.hpp" @ONLY)
+add_library(build-info-header-compile OBJECT
+  "${CMAKE_CURRENT_LIST_DIR}/../cmake/build_info_compile.cpp")
+target_include_directories(build-info-header-compile PRIVATE
+  "${_build_info_compile_directory}")
+# This subdirectory is excluded from ALL and may return below when Catch2 is absent. Attach
+# the dependency-free check to Palace itself so every configured test build compiles it.
+add_dependencies(${TARGET_NAME} build-info-header-compile)
+
 # Add Catch2
 if(PALACE_BUILD_EXTERNAL_DEPS)
   Include(FetchContent)
@@ -143,9 +195,6 @@ install(
     PATTERN "*.json"
     PATTERN "*/postpro/*" EXCLUDE     # Skip palace.json files
 )
-
-# Enable CTest for coverage support
-include(CTest)
 
 # Discover and register tests with CTest using Catch2's built-in function
 include(Catch)

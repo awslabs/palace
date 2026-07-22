@@ -9,7 +9,7 @@ namespace palace::build_info
 {
 
 inline constexpr std::string_view palace_version = "@PROJECT_VERSION@";
-inline constexpr std::string_view dependency_versions =
-    R"palace(@PALACE_BUILD_DEPENDENCIES_TEXT@)palace";
+inline constexpr std::string_view formatted_dependency_versions =
+    "@PALACE_BUILD_DEPENDENCIES_CPP_STRING@";
 
 }  // namespace palace::build_info

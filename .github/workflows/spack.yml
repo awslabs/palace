@@ -32,10 +32,13 @@ jobs:
         with:
           filters: |
             test:
+              - 'CMakeLists.txt'
               - 'palace/**'
               - 'cmake/**'
               - 'extern/**'
               - 'examples/**'
+              - 'scripts/palace'
+              - 'test/cmake/**'
               - 'test/examples/**'
               - 'test/unit/**'
               - 'spack_repo/**'
