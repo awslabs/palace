@@ -33,7 +33,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<SurfaceResponseOperator> response_correction;
   std::unique_ptr<SumOperator> corrected_K;
   const Operator *system_K = K.get();
-  if (iodata.solver.electrostatic.response_correction)
+  if (iodata.solver.electrostatic.response_correction && final_postprocessing_pass)
   {
     response_correction = std::make_unique<SurfaceResponseOperator>(iodata, laplace_op);
     corrected_K = std::make_unique<SumOperator>(*K, *response_correction);
@@ -45,14 +45,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Preserve the historical thin-metal solve and outputs even when response correction is
   // enabled. The corrected solve uses the same assembled thin operator as its
   // preconditioner.
-  KspSolver raw_ksp(iodata, laplace_op.GetH1Spaces());
-  raw_ksp.SetOperators(*K, *K);
-  std::unique_ptr<KspSolver> corrected_ksp;
-  if (response_correction)
-  {
-    corrected_ksp = std::make_unique<KspSolver>(iodata, laplace_op.GetH1Spaces());
-    corrected_ksp->SetOperators(*system_K, *K);
-  }
+  KspSolver ksp(iodata, laplace_op.GetH1Spaces());
+  ksp.SetOperators(*K, *K);
 
   // Source indices are either equipotential terminals or prescribed potential traces.
   PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op);
@@ -111,7 +105,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       corrected_rhs = RHS;
       response_correction->EliminateRHS(V_corrected[step], corrected_rhs);
     }
-    raw_ksp.Mult(RHS, V[step]);
+    ksp.Mult(RHS, V[step]);
 
     // Start Post-processing.
     BlockTimer bt2(Timer::POSTPRO);
@@ -185,7 +179,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
 
       Mpi::Print(" Solving fabrication-response corrected field\n");
-      corrected_ksp->Mult(corrected_rhs, V_corrected[step]);
+      V_corrected[step] = V[step];
+      ksp.SetOperator(*system_K);
+      ksp.SetInitialGuess(true);
+      ksp.Mult(corrected_rhs, V_corrected[step]);
+      ksp.SetInitialGuess(iodata.solver.linear.initial_guess);
+      ksp.SetOperator(*K);
       Vector E_corrected(Grad.Height()), D_corrected;
       E_corrected = 0.0;
       Grad.AddMult(V_corrected[step], E_corrected, -1.0);
@@ -233,7 +232,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Postprocess the capacitance matrix only for equipotential terminal solutions.
   BlockTimer bt1(Timer::POSTPRO);
-  SaveMetadata(corrected_ksp ? *corrected_ksp : raw_ksp);
+  SaveMetadata(ksp);
   if (iodata.boundaries.prescribed_potential.empty())
   {
     PostprocessTerminals(post_op, laplace_op.GetSources(), V);

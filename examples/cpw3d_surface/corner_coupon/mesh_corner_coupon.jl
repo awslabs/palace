@@ -23,6 +23,129 @@ function extruded_polygon(occ, points, direction)
     return only(tag for (dim, tag) in entities if dim == 3)
 end
 
+function rounded_rectangle_wire(occ, half_x, half_y, radius, z)
+    0.0 <= radius < min(half_x, half_y) ||
+        error("Rounded-rectangle radius must lie in [0, min(half_x, half_y))")
+    if radius == 0.0
+        points = [
+            occ.addPoint(-half_x, -half_y, z),
+            occ.addPoint(half_x, -half_y, z),
+            occ.addPoint(half_x, half_y, z),
+            occ.addPoint(-half_x, half_y, z),
+        ]
+        curves = [
+            occ.addLine(points[i], points[mod1(i + 1, length(points))])
+            for i in eachindex(points)
+        ]
+        return occ.addWire(curves)
+    end
+
+    points = [
+        occ.addPoint(half_x - radius, -half_y, z),
+        occ.addPoint(half_x, -half_y + radius, z),
+        occ.addPoint(half_x, half_y - radius, z),
+        occ.addPoint(half_x - radius, half_y, z),
+        occ.addPoint(-half_x + radius, half_y, z),
+        occ.addPoint(-half_x, half_y - radius, z),
+        occ.addPoint(-half_x, -half_y + radius, z),
+        occ.addPoint(-half_x + radius, -half_y, z),
+    ]
+    centers = [
+        occ.addPoint(half_x - radius, -half_y + radius, z),
+        occ.addPoint(half_x - radius, half_y - radius, z),
+        occ.addPoint(-half_x + radius, half_y - radius, z),
+        occ.addPoint(-half_x + radius, -half_y + radius, z),
+    ]
+    curves = [
+        occ.addCircleArc(points[1], centers[1], points[2]),
+        occ.addLine(points[2], points[3]),
+        occ.addCircleArc(points[3], centers[2], points[4]),
+        occ.addLine(points[4], points[5]),
+        occ.addCircleArc(points[5], centers[3], points[6]),
+        occ.addLine(points[6], points[7]),
+        occ.addCircleArc(points[7], centers[4], points[8]),
+        occ.addLine(points[8], points[1]),
+    ]
+    return occ.addWire(curves)
+end
+
+function rounded_rectangle_surface(occ, half_x, half_y, radius, z)
+    return occ.addPlaneSurface([
+        rounded_rectangle_wire(occ, half_x, half_y, radius, z),
+    ])
+end
+
+function tapered_rounded_rectangle(
+    occ, half_x, half_y, radius, z0, height, pullback_bottom, pullback_top)
+    bottom_half_x = half_x - pullback_bottom
+    bottom_half_y = half_y - pullback_bottom
+    top_half_x = half_x - pullback_top
+    top_half_y = half_y - pullback_top
+    bottom_radius = radius - pullback_bottom
+    top_radius = radius - pullback_top
+    minimum_radius = min(bottom_radius, top_radius)
+    minimum_radius >= 0.0 ||
+        error("Sidewall pullback exceeds the plan-view corner radius")
+
+    bottom = rounded_rectangle_wire(
+        occ, bottom_half_x, bottom_half_y, bottom_radius, z0)
+    top = rounded_rectangle_wire(
+        occ, top_half_x, top_half_y, top_radius, z0 + height)
+    volumes = occ.addThruSections([bottom, top], -1, true, false, -1, "C0")
+    result = [(dim, tag) for (dim, tag) in volumes if dim == 3]
+    isempty(result) && error("Rounded-rectangle loft did not create a volume")
+    return result
+end
+
+function rounded_convex_corner_wire(occ, extent, radius, offset, z)
+    offset < extent ||
+        error("Rounded-corner offset must be smaller than the extent")
+    radius >= offset ||
+        error("Sidewall pullback exceeds the plan-view corner radius")
+    if radius == offset
+        points = [
+            occ.addPoint(offset, offset, z),
+            occ.addPoint(extent, offset, z),
+            occ.addPoint(extent, extent, z),
+            occ.addPoint(offset, extent, z),
+        ]
+        curves = [
+            occ.addLine(points[i], points[mod1(i + 1, length(points))])
+            for i in eachindex(points)
+        ]
+        return occ.addWire(curves)
+    end
+
+    points = [
+        occ.addPoint(radius, offset, z),
+        occ.addPoint(extent, offset, z),
+        occ.addPoint(extent, extent, z),
+        occ.addPoint(offset, extent, z),
+        occ.addPoint(offset, radius, z),
+    ]
+    center = occ.addPoint(radius, radius, z)
+    curves = [
+        occ.addLine(points[1], points[2]),
+        occ.addLine(points[2], points[3]),
+        occ.addLine(points[3], points[4]),
+        occ.addLine(points[4], points[5]),
+        occ.addCircleArc(points[5], center, points[1]),
+    ]
+    return occ.addWire(curves)
+end
+
+function tapered_rounded_convex_corner(
+    occ, extent, radius, z0, height, offset_bottom, offset_top)
+    bottom = rounded_convex_corner_wire(
+        occ, extent, radius, offset_bottom, z0)
+    top = rounded_convex_corner_wire(
+        occ, extent, radius, offset_top, z0 + height)
+    volumes = occ.addThruSections([bottom, top], -1, true, false, -1, "C0")
+    result = [(dim, tag) for (dim, tag) in volumes if dim == 3]
+    isempty(result) && error("Rounded-corner loft did not create a volume")
+    return result
+end
+
 function boundary_curves(volumes)
     gmsh.model.occ.synchronize()
     surfaces = [
@@ -163,6 +286,7 @@ function generate_corner_coupon(;
     topology::Symbol = :convex,
     fabricated::Bool = false,
     radius::Float64 = 2.0,
+    corner_radius::Float64 = 0.0,
     metal_thickness::Float64 = 0.1,
     overetch_depth::Float64 = 0.05,
     sidewall_angle::Float64 = 80.0,
@@ -177,6 +301,10 @@ function generate_corner_coupon(;
     topology in (:convex, :concave) ||
         error("topology must be :convex or :concave")
     convex = topology == :convex
+    0.0 <= corner_radius < radius ||
+        error("corner_radius must lie in [0, radius)")
+    !convex && corner_radius > 0.0 &&
+        error("Rounded concave coupons are not implemented yet")
     0.0 < sidewall_angle <= 90.0 ||
         error("sidewall_angle must be in (0, 90] degrees")
     if fabricated
@@ -200,12 +328,29 @@ function generate_corner_coupon(;
             occ.addBox(-radius, -radius, -radius, 2radius, 2radius, radius)
         substrate = [(3, substrate_base)]
         if overetch_depth > 0.0
-            notch = add_overetch_notch(
-                occ, radius, overetch_depth, sidewall_angle, convex)
+            trench_pullback =
+                overetch_depth / tan(deg2rad(sidewall_angle))
+            notch = if corner_radius > 0.0
+                extension = 0.1 * radius
+                trench_slab = [(
+                    3,
+                    occ.addBox(
+                        -radius, -radius, -overetch_depth,
+                        2radius, 2radius, overetch_depth),
+                )]
+                pedestal = tapered_rounded_convex_corner(
+                    occ, radius + extension, corner_radius,
+                    -overetch_depth, overetch_depth, -trench_pullback, 0.0)
+                result, _ = occ.cut(trench_slab, pedestal)
+                result
+            else
+                add_overetch_notch(
+                    occ, radius, overetch_depth, sidewall_angle, convex)
+            end
             substrate, _ = occ.cut(substrate, notch)
             trench_location =
                 (convex ? -1.0 : 1.0) *
-                overetch_depth / tan(deg2rad(sidewall_angle))
+                trench_pullback
             tolerance = 1.0e-6 * radius
             substrate = fillet_volume_edges(
                 occ, substrate, trench_rounding,
@@ -213,18 +358,32 @@ function generate_corner_coupon(;
                     xmin, ymin, zmin, xmax, ymax, zmax = bounds
                     on_floor = abs(zmin + overetch_depth) < tolerance &&
                                abs(zmax + overetch_depth) < tolerance
-                    on_trench = (abs(xmin - trench_location) < tolerance &&
-                                 abs(xmax - trench_location) < tolerance) ||
-                                (abs(ymin - trench_location) < tolerance &&
-                                 abs(ymax - trench_location) < tolerance)
+                    on_trench = if corner_radius > 0.0
+                        xmin <= corner_radius + tolerance &&
+                        ymin <= corner_radius + tolerance &&
+                        xmax >= trench_location - tolerance &&
+                        ymax >= trench_location - tolerance
+                    else
+                        (abs(xmin - trench_location) < tolerance &&
+                         abs(xmax - trench_location) < tolerance) ||
+                        (abs(ymin - trench_location) < tolerance &&
+                         abs(ymax - trench_location) < tolerance)
+                    end
                     on_floor && on_trench
                 end,
                 "trench-bottom",
             )
         end
 
-        metal = add_tapered_corner_metal(
-            occ, radius, metal_thickness, sidewall_angle, convex)
+        metal = if corner_radius > 0.0
+            tapered_rounded_convex_corner(
+                occ, 1.1radius, corner_radius,
+                0.0, metal_thickness, 0.0,
+                metal_thickness / tan(deg2rad(sidewall_angle)))
+        else
+            add_tapered_corner_metal(
+                occ, radius, metal_thickness, sidewall_angle, convex)
+        end
         top_location =
             (convex ? 1.0 : -1.0) *
             metal_thickness / tan(deg2rad(sidewall_angle))
@@ -235,42 +394,57 @@ function generate_corner_coupon(;
                 xmin, ymin, zmin, xmax, ymax, zmax = bounds
                 on_top = abs(zmin - metal_thickness) < tolerance &&
                          abs(zmax - metal_thickness) < tolerance
-                on_side = (abs(xmin - top_location) < tolerance &&
-                           abs(xmax - top_location) < tolerance) ||
-                          (abs(ymin - top_location) < tolerance &&
-                           abs(ymax - top_location) < tolerance)
+                on_side = if corner_radius > 0.0
+                    xmin <= corner_radius + tolerance &&
+                    ymin <= corner_radius + tolerance
+                else
+                    (abs(xmin - top_location) < tolerance &&
+                     abs(xmax - top_location) < tolerance) ||
+                    (abs(ymin - top_location) < tolerance &&
+                     abs(ymax - top_location) < tolerance)
+                end
                 on_top && on_side
             end,
             "top-metal",
         )
         outer = occ.addBox(
             -radius, -radius, -radius, 2radius, 2radius, 2radius)
-        field, _ = occ.cut([(3, outer)], metal, -1, true, false)
+        field, _ = occ.cut([(3, outer)], metal, -1, true, true)
         vacuum, _ = occ.cut(field, substrate, -1, true, false)
         domains, domain_map = occ.fragment(vcat(substrate, vacuum), [])
         substrate_seed = domain_map[1:length(substrate)] |> Iterators.flatten |> collect
         vacuum_seed =
             domain_map[length(substrate) + 1:end] |> Iterators.flatten |> collect
     else
-        # Splitting at x=0 and y=0 makes the metal quadrant and exposed
-        # substrate interface distinct geometric surfaces.
-        volumes = Tuple{Int32,Int32}[]
-        material = Symbol[]
-        for (z0, depth, name) in ((-radius, radius, :substrate),
-                                  (0.0, radius, :vacuum))
-            for x0 in (-radius, 0.0), y0 in (-radius, 0.0)
-                push!(volumes, (3, occ.addBox(x0, y0, z0, radius, radius, depth)))
-                push!(material, name)
-            end
+        substrate_box = (3, occ.addBox(
+            -radius, -radius, -radius, 2radius, 2radius, radius))
+        vacuum_box = (3, occ.addBox(
+            -radius, -radius, 0.0, 2radius, 2radius, radius))
+        footprint = if convex && corner_radius > 0.0
+            wire = rounded_convex_corner_wire(
+                occ, radius, corner_radius, 0.0, 0.0)
+            occ.addPlaneSurface([wire])
+        else
+            polygon_surface(
+                occ,
+                convex ?
+                    [(0.0, 0.0, 0.0), (radius, 0.0, 0.0),
+                     (radius, radius, 0.0), (0.0, radius, 0.0)] :
+                    [(-radius, -radius, 0.0), (radius, -radius, 0.0),
+                     (radius, 0.0, 0.0), (0.0, 0.0, 0.0),
+                     (0.0, radius, 0.0), (-radius, radius, 0.0)],
+            )
         end
-        domains, domain_map = occ.fragment(volumes, [])
-        for (index, mapped) in enumerate(domain_map)
-            if material[index] == :substrate
-                append!(substrate_seed, mapped)
-            else
-                append!(vacuum_seed, mapped)
-            end
-        end
+        lower = occ.extrude([(2, footprint)], 0.0, 0.0, -radius)
+        upper = occ.extrude([(2, footprint)], 0.0, 0.0, radius)
+        tools = [
+            entity for entity in vcat(lower, upper)
+            if entity[1] == 3
+        ]
+        domains, domain_map =
+            occ.fragment([substrate_box, vacuum_box], tools)
+        append!(substrate_seed, domain_map[1])
+        append!(vacuum_seed, domain_map[2])
     end
     occ.synchronize()
 
@@ -316,8 +490,17 @@ function generate_corner_coupon(;
         else
             xmin, ymin, zmin, xmax, ymax, zmax = bounds
             on_interface = abs(zmin) < tolerance && abs(zmax) < tolerance
-            in_quadrant = xmin >= -tolerance && ymin >= -tolerance
-            on_metal = convex ? in_quadrant : !in_quadrant
+            center = gmsh.model.occ.getCenterOfMass(dim, tag)
+            x, y = center[1], center[2]
+            in_quadrant = x >= -tolerance && y >= -tolerance
+            rounded_convex_metal =
+                x >= corner_radius - tolerance ||
+                y >= corner_radius - tolerance ||
+                (x - corner_radius)^2 + (y - corner_radius)^2 <=
+                    corner_radius^2 + tolerance^2
+            on_metal = convex ?
+                in_quadrant && rounded_convex_metal :
+                !in_quadrant
             if on_interface && on_metal
                 push!(thin_metal, tag)
             elseif on_interface &&
@@ -390,7 +573,7 @@ function generate_corner_coupon(;
     gmsh.write(filename)
 
     println("Corner coupon: topology=$(topology), fabricated=$(fabricated), " *
-            "R=$(radius) um")
+            "R=$(radius) um, corner radius=$(corner_radius) um")
     for (dim, tag) in gmsh.model.getPhysicalGroups()
         name = gmsh.model.getPhysicalName(dim, tag)
         entities = gmsh.model.getEntitiesForPhysicalGroup(dim, tag)
@@ -402,9 +585,9 @@ function generate_corner_coupon(;
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    length(ARGS) == 2 ||
+    length(ARGS) in (2, 3) ||
         error("Usage: mesh_corner_coupon.jl " *
-              "[convex-|concave-]thin|fabricated OUTPUT.msh")
+              "[convex-|concave-]thin|fabricated OUTPUT.msh [CORNER_RADIUS_UM]")
     kind = ARGS[1]
     aliases = Dict(
         "thin" => (:convex, false),
@@ -416,9 +599,11 @@ if abspath(PROGRAM_FILE) == @__FILE__
     )
     haskey(aliases, kind) || error("Unknown coupon kind: $kind")
     topology, fabricated = aliases[kind]
+    corner_radius = length(ARGS) == 3 ? parse(Float64, ARGS[3]) : 0.0
     generate_corner_coupon(
         topology = topology,
         fabricated = fabricated,
+        corner_radius = corner_radius,
         filename = abspath(ARGS[2]),
     )
 end

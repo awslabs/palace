@@ -74,6 +74,8 @@ public:
   void SetAbsTol(double tol) { ksp->SetAbsTol(tol); }
   void SetInitialGuess(bool initial_guess) { ksp->SetInitialGuess(initial_guess); }
 
+  // Update the system operator without rebuilding an unchanged preconditioner.
+  void SetOperator(const OperType &op);
   void SetOperators(const OperType &op, const OperType &pc_op);
 
   void Mult(const VecType &x, VecType &y) const;

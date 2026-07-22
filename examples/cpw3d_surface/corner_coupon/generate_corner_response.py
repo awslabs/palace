@@ -256,22 +256,36 @@ def make_config(output, name, mesh, traces, radius, order, fabricated):
     }
 
 
-def write_library(output, radius, contour_groups, topology):
+def write_library(output, radius, corner_radius, contour_groups, topology):
     topology_name = f"{topology.capitalize()}Corner"
+    model_name = f"{topology}-corner-90deg"
+    if corner_radius > 0.0:
+        model_name += f"-r{corner_radius:g}um"
+    reference = (
+        [corner_radius, corner_radius, 0.0]
+        if topology == "convex" and corner_radius > 0.0
+        else [0.0, 0.0, 0.0]
+    )
+    corner_radius_tolerance = max(
+        0.02 * corner_radius,
+        1.0e-3 * radius,
+    )
     library = {
         "Version": 1,
         "Name": (
             "100nm-metal-50nm-overetch-10nm-rounding-"
-            f"{topology}-corner-prototype"
+            f"{topology}-corner-r{corner_radius:g}um-prototype"
         ),
         "MatchingRadius": radius,
         "Models": [
             {
-                "Name": f"{topology}-corner-90deg",
+                "Name": model_name,
                 "Topology": topology_name,
                 "Angle": 90.0,
                 "AngleTolerance": 2.0,
-                "Reference": [0.0, 0.0, 0.0],
+                "CornerRadius": corner_radius,
+                "CornerRadiusTolerance": corner_radius_tolerance,
+                "Reference": reference,
                 "FabricatedMatrix": "postpro/fabricated/domain-response-matrix.csv",
                 "ThinMatrix": "postpro/thin/domain-response-matrix.csv",
                 "FabricatedSurfaceMatrix":
@@ -299,6 +313,7 @@ def main():
     parser.add_argument("--thin-mesh", type=Path, required=True)
     parser.add_argument("--fabricated-mesh", type=Path, required=True)
     parser.add_argument("--radius", type=float, default=2.0)
+    parser.add_argument("--corner-radius", type=float, default=0.0)
     parser.add_argument("--ring-size", type=int, default=8)
     parser.add_argument("--order", type=int, default=1)
     parser.add_argument("--metal-thickness", type=float, default=0.1)
@@ -309,6 +324,8 @@ def main():
     args = parser.parse_args()
     if args.radius <= 0.0:
         parser.error("--radius must be positive")
+    if not 0.0 <= args.corner_radius < args.radius:
+        parser.error("--corner-radius must lie in [0, radius)")
     if args.order < 1:
         parser.error("--order must be positive")
     if not 0.0 < args.metal_thickness < args.radius:
@@ -346,7 +363,11 @@ def main():
         )
         (output / f"{name}.json").write_text(json.dumps(config, indent=2) + "\n")
     library = write_library(
-        output, args.radius, contour_groups, args.topology
+        output,
+        args.radius,
+        args.corner_radius,
+        contour_groups,
+        args.topology,
     )
 
     fine_points, fine_triangles, _ = build_surface(

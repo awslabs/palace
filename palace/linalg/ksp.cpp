@@ -292,6 +292,13 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
 }
 
 template <typename OperType>
+void BaseKspSolver<OperType>::SetOperator(const OperType &op)
+{
+  BlockTimer bt(Timer::KSP_SETUP, use_timer);
+  ksp->SetOperator(op);
+}
+
+template <typename OperType>
 void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op)
 {
   BlockTimer bt(Timer::KSP_SETUP, use_timer);

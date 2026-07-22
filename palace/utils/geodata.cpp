@@ -1507,6 +1507,127 @@ inline void GetBdrElementNeighborTransforms(int i, const mfem::ParMesh &mesh,
   BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(i, mesh, FET, T1, T2);
 }
 
+class PointBoxTree
+{
+private:
+  static constexpr std::size_t leaf_size = 16;
+  using Point = std::array<double, 3>;
+
+  struct Node
+  {
+    Point min = {mfem::infinity(), mfem::infinity(), mfem::infinity()};
+    Point max = {-mfem::infinity(), -mfem::infinity(), -mfem::infinity()};
+    std::size_t begin = 0;
+    std::size_t end = 0;
+    int left = -1;
+    int right = -1;
+
+    bool IsLeaf() const { return left < 0; }
+  };
+
+  const std::vector<Point> &points;
+  std::vector<std::size_t> indices;
+  std::vector<Node> nodes;
+
+  int Build(std::size_t begin, std::size_t end)
+  {
+    Node node;
+    node.begin = begin;
+    node.end = end;
+    for (std::size_t i = begin; i < end; i++)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        node.min[d] = std::min(node.min[d], points[indices[i]][d]);
+        node.max[d] = std::max(node.max[d], points[indices[i]][d]);
+      }
+    }
+
+    const int node_index = static_cast<int>(nodes.size());
+    nodes.push_back(node);
+    if (end - begin <= leaf_size)
+    {
+      return node_index;
+    }
+
+    int axis = 0;
+    for (int d = 1; d < 3; d++)
+    {
+      if (node.max[d] - node.min[d] > node.max[axis] - node.min[axis])
+      {
+        axis = d;
+      }
+    }
+    const std::size_t mid = begin + (end - begin) / 2;
+    std::nth_element(indices.begin() + begin, indices.begin() + mid, indices.begin() + end,
+                     [&](std::size_t a, std::size_t b)
+                     {
+                       return points[a][axis] < points[b][axis] ||
+                              (points[a][axis] == points[b][axis] && a < b);
+                     });
+    const int left = Build(begin, mid);
+    const int right = Build(mid, end);
+    nodes[node_index].left = left;
+    nodes[node_index].right = right;
+    return node_index;
+  }
+
+  void Query(int node_index, const Point &min, const Point &max,
+             std::vector<std::size_t> &matches) const
+  {
+    const auto &node = nodes[node_index];
+    for (int d = 0; d < 3; d++)
+    {
+      if (node.max[d] < min[d] || node.min[d] > max[d])
+      {
+        return;
+      }
+    }
+    if (node.IsLeaf())
+    {
+      for (std::size_t i = node.begin; i < node.end; i++)
+      {
+        const std::size_t point = indices[i];
+        bool inside = true;
+        for (int d = 0; d < 3; d++)
+        {
+          inside &= points[point][d] >= min[d] && points[point][d] <= max[d];
+        }
+        if (inside)
+        {
+          matches.push_back(point);
+        }
+      }
+      return;
+    }
+    Query(node.left, min, max, matches);
+    Query(node.right, min, max, matches);
+  }
+
+public:
+  explicit PointBoxTree(const std::vector<Point> &points_)
+    : points(points_), indices(points.size())
+  {
+    MFEM_VERIFY(!points.empty(), "Cannot build an empty point search tree!");
+    std::iota(indices.begin(), indices.end(), 0);
+    nodes.reserve(2 * (indices.size() / leaf_size + 1));
+    Build(0, indices.size());
+  }
+
+  void QuerySegment(const Point &p0, const Point &p1, double tolerance,
+                    std::vector<std::size_t> &matches) const
+  {
+    Point min, max;
+    for (int d = 0; d < 3; d++)
+    {
+      min[d] = std::min(p0[d], p1[d]) - tolerance;
+      max[d] = std::max(p0[d], p1[d]) + tolerance;
+    }
+    matches.clear();
+    Query(0, min, max, matches);
+  }
+};
+
 }  // namespace
 
 std::vector<BoundaryEdgeSegment>
@@ -1850,6 +1971,17 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
     // gathered segment at all canonical vertices which lie on it, then deduplicate the
     // resulting atomic segments. This turns a coarse segment on one side and matching
     // fine segments on the other into the same geometric chain.
+    std::vector<std::pair<PointKey, Point>> search_points;
+    std::vector<Point> search_coordinates;
+    search_points.reserve(points.size());
+    search_coordinates.reserve(points.size());
+    for (const auto &[key, data] : points)
+    {
+      search_points.emplace_back(key, data.coordinate);
+      search_coordinates.push_back(data.coordinate);
+    }
+    const PointBoxTree point_tree(search_coordinates);
+    std::vector<std::size_t> point_candidates;
     std::set<SegmentKey> atomic_segments;
     for (const auto &[k0, k1] : unique_segments)
     {
@@ -1865,13 +1997,15 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
       MFEM_VERIFY(length_squared > 0.0, "Degenerate segment in 2D edge extraction!");
 
       std::vector<std::pair<double, PointKey>> segment_points;
-      segment_points.reserve(points.size());
-      for (const auto &[key, data] : points)
+      point_tree.QuerySegment(p0, p1, coordinate_tolerance, point_candidates);
+      segment_points.reserve(point_candidates.size());
+      for (const std::size_t candidate : point_candidates)
       {
+        const auto &[key, point] = search_points[candidate];
         double projection = 0.0;
         for (int d = 0; d < 3; d++)
         {
-          projection += (data.coordinate[d] - p0[d]) * direction[d];
+          projection += (point[d] - p0[d]) * direction[d];
         }
         const double t = projection / length_squared;
         if (t < 0.0 || t > 1.0)
@@ -1881,7 +2015,7 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
         double distance_squared = 0.0;
         for (int d = 0; d < 3; d++)
         {
-          const double delta = data.coordinate[d] - p0[d] - t * direction[d];
+          const double delta = point[d] - p0[d] - t * direction[d];
           distance_squared += delta * delta;
         }
         if (distance_squared <= coordinate_tolerance * coordinate_tolerance)
@@ -2067,6 +2201,17 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
       }
     }
 
+    std::vector<std::pair<PointKey, Point>> search_points;
+    std::vector<Point> search_coordinates;
+    search_points.reserve(data.points.size());
+    search_coordinates.reserve(data.points.size());
+    for (const auto &[key, point] : data.points)
+    {
+      search_points.emplace_back(key, point.coordinate);
+      search_coordinates.push_back(point.coordinate);
+    }
+    const PointBoxTree point_tree(search_coordinates);
+    std::vector<std::size_t> point_candidates;
     std::map<SegmentKey, int> incidence;
     for (const auto &[k0, k1] : data.segments)
     {
@@ -2088,12 +2233,15 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
       MFEM_VERIFY(length_squared > 0.0, "Degenerate segment in 3D edge extraction!");
 
       std::vector<std::pair<double, PointKey>> segment_points;
-      for (const auto &[key, point] : data.points)
+      point_tree.QuerySegment(p0, p1, coordinate_tolerance, point_candidates);
+      segment_points.reserve(point_candidates.size());
+      for (const std::size_t candidate : point_candidates)
       {
+        const auto &[key, point] = search_points[candidate];
         double projection = 0.0;
         for (int d = 0; d < 3; d++)
         {
-          projection += (point.coordinate[d] - p0[d]) * direction[d];
+          projection += (point[d] - p0[d]) * direction[d];
         }
         const double t = projection / length_squared;
         if (t < 0.0 || t > 1.0)
@@ -2103,7 +2251,7 @@ std::vector<BoundaryEdgeSegment> GetBoundaryEdgeSegments(const mfem::ParMesh &me
         double distance_squared = 0.0;
         for (int d = 0; d < 3; d++)
         {
-          const double delta = point.coordinate[d] - p0[d] - t * direction[d];
+          const double delta = point[d] - p0[d] - t * direction[d];
           distance_squared += delta * delta;
         }
         if (distance_squared <= coordinate_tolerance * coordinate_tolerance)

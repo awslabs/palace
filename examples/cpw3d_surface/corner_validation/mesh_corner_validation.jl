@@ -51,6 +51,7 @@ function generate_corner_validation(;
     fabricated::Bool = false,
     island_width::Float64 = 8.0,
     island_height::Float64 = 6.0,
+    corner_radius::Float64 = 0.0,
     half_box::Float64 = 12.0,
     substrate_depth::Float64 = 8.0,
     vacuum_height::Float64 = 8.0,
@@ -68,6 +69,8 @@ function generate_corner_validation(;
     half_y = 0.5 * island_height
     half_x > 0.0 && half_y > 0.0 ||
         error("island dimensions must be positive")
+    0.0 <= corner_radius < min(half_x, half_y) ||
+        error("corner_radius must lie in [0, min(island_width, island_height) / 2)")
     half_box > max(half_x, half_y) ||
         error("half_box must contain the island")
     substrate_depth > overetch_depth ||
@@ -100,9 +103,13 @@ function generate_corner_validation(;
                 -half_box, -half_box, -overetch_depth,
                 2half_box, 2half_box, overetch_depth),
         )]
-        pedestal = tapered_rectangle(
-            occ, half_x, half_y, -overetch_depth, overetch_depth,
-            -trench_pullback, 0.0)
+        pedestal = corner_radius > 0.0 ?
+            tapered_rounded_rectangle(
+                occ, half_x, half_y, corner_radius,
+                -overetch_depth, overetch_depth, -trench_pullback, 0.0) :
+            tapered_rectangle(
+                occ, half_x, half_y, -overetch_depth, overetch_depth,
+                -trench_pullback, 0.0)
         notch, _ = occ.cut(trench_slab, pedestal)
         substrate, _ = occ.cut(substrate_box, notch)
         tolerance = 1.0e-6 * half_box
@@ -112,35 +119,28 @@ function generate_corner_validation(;
                 xmin, ymin, zmin, xmax, ymax, zmax = bounds
                 on_floor = abs(zmin + overetch_depth) < tolerance &&
                            abs(zmax + overetch_depth) < tolerance
-                on_pedestal = (
-                    abs(abs(xmin) - (half_x + trench_pullback)) < tolerance &&
-                    abs(xmax - xmin) < tolerance
-                ) || (
-                    abs(abs(ymin) - (half_y + trench_pullback)) < tolerance &&
-                    abs(ymax - ymin) < tolerance
-                )
+                on_pedestal =
+                    maximum(abs.((xmin, ymin, xmax, ymax))) <
+                    half_box - tolerance
                 on_floor && on_pedestal
             end,
             "validation trench-bottom",
         )
 
-        metal = tapered_rectangle(
-            occ, half_x, half_y, 0.0, metal_thickness,
-            0.0, metal_pullback)
+        metal = corner_radius > 0.0 ?
+            tapered_rounded_rectangle(
+                occ, half_x, half_y, corner_radius,
+                0.0, metal_thickness, 0.0, metal_pullback) :
+            tapered_rectangle(
+                occ, half_x, half_y, 0.0, metal_thickness,
+                0.0, metal_pullback)
         metal = fillet_volume_edges(
             occ, metal, top_rounding,
             bounds -> begin
                 xmin, ymin, zmin, xmax, ymax, zmax = bounds
                 on_top = abs(zmin - metal_thickness) < tolerance &&
                          abs(zmax - metal_thickness) < tolerance
-                on_side = (
-                    abs(abs(xmin) - (half_x - metal_pullback)) < tolerance &&
-                    abs(xmax - xmin) < tolerance
-                ) || (
-                    abs(abs(ymin) - (half_y - metal_pullback)) < tolerance &&
-                    abs(ymax - ymin) < tolerance
-                )
-                on_top && on_side
+                on_top
             end,
             "validation top-metal",
         )
@@ -157,33 +157,26 @@ function generate_corner_validation(;
         vacuum_seed =
             domain_map[length(substrate) + 1:end] |> Iterators.flatten |> collect
     else
-        x_coordinates = (-half_box, -half_x, half_x, half_box)
-        y_coordinates = (-half_box, -half_y, half_y, half_box)
-        volumes = Tuple{Int32,Int32}[]
-        materials = Symbol[]
-        for (z0, depth, material) in (
-            (-substrate_depth, substrate_depth, :substrate),
-            (0.0, vacuum_height, :vacuum),
-        )
-            for i in 1:3, j in 1:3
-                push!(volumes, (
-                    3,
-                    occ.addBox(
-                        x_coordinates[i], y_coordinates[j], z0,
-                        x_coordinates[i + 1] - x_coordinates[i],
-                        y_coordinates[j + 1] - y_coordinates[j],
-                        depth),
-                ))
-                push!(materials, material)
-            end
-        end
-        domains, domain_map = occ.fragment(volumes, [])
-        for (index, mapped) in enumerate(domain_map)
-            append!(
-                materials[index] == :substrate ? substrate_seed : vacuum_seed,
-                mapped,
-            )
-        end
+        substrate_box = (3, occ.addBox(
+            -half_box, -half_box, -substrate_depth,
+            2half_box, 2half_box, substrate_depth))
+        vacuum_box = (3, occ.addBox(
+            -half_box, -half_box, 0.0,
+            2half_box, 2half_box, vacuum_height))
+        footprint =
+            rounded_rectangle_surface(occ, half_x, half_y, corner_radius, 0.0)
+        lower = occ.extrude(
+            [(2, footprint)], 0.0, 0.0, -substrate_depth)
+        upper = occ.extrude(
+            [(2, footprint)], 0.0, 0.0, vacuum_height)
+        tools = [
+            entity for entity in vcat(lower, upper)
+            if entity[1] == 3
+        ]
+        domains, domain_map =
+            occ.fragment([substrate_box, vacuum_box], tools)
+        append!(substrate_seed, domain_map[1])
+        append!(vacuum_seed, domain_map[2])
     end
     occ.synchronize()
 
@@ -222,10 +215,11 @@ function generate_corner_validation(;
         else
             xmin, ymin, zmin, xmax, ymax, zmax = bounds
             on_interface = abs(zmin) < tolerance && abs(zmax) < tolerance
-            inside_island = xmin >= -half_x - tolerance &&
-                            xmax <= half_x + tolerance &&
-                            ymin >= -half_y - tolerance &&
-                            ymax <= half_y + tolerance
+            inside_island =
+                xmin >= -half_x - tolerance &&
+                xmax <= half_x + tolerance &&
+                ymin >= -half_y - tolerance &&
+                ymax <= half_y + tolerance
             if on_interface && inside_island
                 push!(thin_metal, tag)
             elseif on_interface &&
@@ -295,7 +289,8 @@ function generate_corner_validation(;
     mesh_order > 1 && gmsh.model.mesh.optimize("HighOrderElastic")
     gmsh.write(filename)
 
-    println("Corner validation: fabricated=$(fabricated)")
+    println("Corner validation: fabricated=$(fabricated), " *
+            "corner radius=$(corner_radius) um")
     for (dim, tag) in gmsh.model.getPhysicalGroups()
         name = gmsh.model.getPhysicalName(dim, tag)
         entities = gmsh.model.getEntitiesForPhysicalGroup(dim, tag)
@@ -307,12 +302,15 @@ function generate_corner_validation(;
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    length(ARGS) == 2 ||
-        error("Usage: mesh_corner_validation.jl thin|fabricated OUTPUT.msh")
+    length(ARGS) in (2, 3) ||
+        error("Usage: mesh_corner_validation.jl " *
+              "thin|fabricated OUTPUT.msh [CORNER_RADIUS_UM]")
     kind = ARGS[1]
     kind in ("thin", "fabricated") || error("Unknown validation kind: $kind")
+    corner_radius = length(ARGS) == 3 ? parse(Float64, ARGS[3]) : 0.0
     generate_corner_validation(
         fabricated = kind == "fabricated",
+        corner_radius = corner_radius,
         filename = abspath(ARGS[2]),
     )
 end

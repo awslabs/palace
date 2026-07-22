@@ -40,12 +40,6 @@ private:
   {
     int element = -1;
     mfem::IntegrationPoint point;
-    bool local = false;
-  };
-
-  struct MaxwellQuadraturePoint
-  {
-    PointEvaluation evaluation;
     std::array<double, 3> weighted_tangent{};
   };
 
@@ -91,14 +85,22 @@ private:
   std::vector<ResponseModel> models;
   std::vector<Patch> patches;
   int basis_size;
+  int global_basis_size = 0;
+  int global_patch_count = 0;
   std::vector<PointEvaluation> points;
+  int point_query_count = 0;
+  std::vector<int> point_send_counts;
+  std::vector<int> point_send_offsets;
+  std::vector<int> point_receive_counts;
+  std::vector<int> point_receive_offsets;
+  std::vector<int> point_send_indices;
+  bool maxwell = false;
 
   // Maxwell postprocessing uses local coupon contour line integrals instead of H1 point
   // values. The line quadrature representation supplies both the trace action and its
   // transpose, so the same map is used for postprocessing and self-consistent correction.
   std::vector<std::vector<mfem::Vector>> maxwell_contours;
   std::vector<mfem::Vector> maxwell_anchors;
-  std::vector<MaxwellQuadraturePoint> maxwell_points;
   std::vector<MaxwellLine> maxwell_lines;
   std::vector<MaxwellContourPath> maxwell_paths;
   std::vector<std::pair<int, int>> maxwell_patch_paths;
@@ -117,8 +119,12 @@ private:
   mutable mfem::DenseMatrix vector_shape;
   mutable Vector shape, element_values, vector_value;
 
+  void ConfigurePointCommunication(
+      const mfem::Vector &xyz, int dimension,
+      const std::vector<std::array<double, 3>> *weighted_tangents = nullptr);
+  void EvaluatePointValues(const Vector &x, Vector &values, bool vector_field) const;
+  void AddPointValuesTranspose(const Vector &values, Vector &y, bool vector_field) const;
   void EvaluatePoints(const Vector &x, Vector &values) const;
-  void AddPointTranspose(int point, double value, Vector &y) const;
   void EvaluateMaxwellLines(const Vector &x, Vector &values) const;
   void AddMaxwellLinesTranspose(const Vector &values, Vector &y) const;
   void BuildMaxwellTrace(const Vector &line_values, Vector &values) const;
@@ -192,8 +198,8 @@ public:
   bool HasSurfaceResponse() const;
   std::set<int> GetTargetInterfaces() const;
 
-  int GetBasisSize() const { return basis_size; }
-  int GetPatchCount() const { return static_cast<int>(patches.size()); }
+  int GetBasisSize() const { return global_basis_size; }
+  int GetPatchCount() const { return global_patch_count; }
   int GetEdgeCount() const { return GetPatchCount(); }
   double GetPatchWeight() const;
   double GetMatchingRadius() const { return matching_radius; }

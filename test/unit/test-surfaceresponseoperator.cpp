@@ -59,6 +59,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   const auto convex_library_3d_path = temp.temp_dir / "fabrication-process-convex-3d.json";
   const auto concave_library_3d_path =
       temp.temp_dir / "fabrication-process-concave-3d.json";
+  const auto rounded_library_3d_path =
+      temp.temp_dir / "fabrication-process-rounded-3d.json";
   if (Mpi::Root(Mpi::World()))
   {
     {
@@ -203,6 +205,15 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     concave_library_3d["Models"][1]["Topology"] = "ConcaveCorner";
     std::ofstream concave_output_3d(concave_library_3d_path);
     concave_output_3d << concave_library_3d.dump(2) << "\n";
+
+    auto rounded_library_3d = convex_library_3d;
+    rounded_library_3d["Name"] = "unit-test-process-rounded-3d";
+    rounded_library_3d["Models"][1]["Name"] = "convex-corner-90-r0.125";
+    rounded_library_3d["Models"][1]["CornerRadius"] = 0.125;
+    rounded_library_3d["Models"][1]["CornerRadiusTolerance"] = 0.01;
+    rounded_library_3d["Models"][1]["Reference"] = {0.125, 0.125, 0.0};
+    std::ofstream rounded_output_3d(rounded_library_3d_path);
+    rounded_output_3d << rounded_library_3d.dump(2) << "\n";
   }
   Mpi::Barrier(Mpi::World());
 
@@ -650,10 +661,11 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
            {{"Library", concave_library_3d_path.string()},
             {"TargetInterfaces", {4}},
             {"UnmatchedPolicy", "Error"}}}}}}}};
-  auto MakeIslandMesh = []()
+  auto MakeIslandMesh = [](bool rounded = false)
   {
-    mfem::Mesh serial =
-        mfem::Mesh::MakeCartesian3D(8, 4, 8, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
+    const int in_plane_elements = rounded ? 16 : 8;
+    mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(
+        in_plane_elements, 4, in_plane_elements, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
     for (int face = 0; face < serial.GetNumFaces(); face++)
     {
       int element1, element2;
@@ -680,6 +692,53 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       {
         serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
         serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+      }
+    }
+    if (rounded)
+    {
+      constexpr double half_width = 0.25;
+      constexpr double radius = 0.125;
+      constexpr double tolerance = 1.0e-12;
+      for (int vertex = 0; vertex < serial.GetNV(); vertex++)
+      {
+        double *point = serial.GetVertex(vertex);
+        if (std::abs(point[1] - 0.5) > tolerance)
+        {
+          continue;
+        }
+        for (const double sign_x : {-1.0, 1.0})
+        {
+          for (const double sign_z : {-1.0, 1.0})
+          {
+            const double corner_x = 0.5 + sign_x * half_width;
+            const double corner_z = 0.5 + sign_z * half_width;
+            const double center_x = corner_x - sign_x * radius;
+            const double center_z = corner_z - sign_z * radius;
+            const double local_x = sign_x * (point[0] - center_x);
+            const double local_z = sign_z * (point[2] - center_z);
+            if (local_x < -tolerance || local_x > radius + tolerance ||
+                local_z < -tolerance || local_z > radius + tolerance)
+            {
+              continue;
+            }
+
+            double angle = 0.0;
+            if (std::abs(point[2] - corner_z) <= tolerance)
+            {
+              angle = 0.5 * std::acos(-1.0) - 0.25 * std::acos(-1.0) * local_x / radius;
+            }
+            else if (std::abs(point[0] - corner_x) <= tolerance)
+            {
+              angle = 0.25 * std::acos(-1.0) * local_z / radius;
+            }
+            else
+            {
+              continue;
+            }
+            point[0] = center_x + sign_x * radius * std::cos(angle);
+            point[2] = center_z + sign_z * radius * std::sin(angle);
+          }
+        }
       }
     }
     serial.FinalizeTopology();
@@ -742,18 +801,54 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   LaplaceOperator convex_island_laplace(convex_island_iodata, convex_island_meshes);
   SurfaceResponseOperator convex_island_response(convex_island_iodata,
                                                  convex_island_laplace);
-  const int removed_straight_patches =
-      2 * island_corners * island_line_rule.GetNPoints();
-  CHECK(convex_island_response.GetPatchCount() ==
-        concave_island_response.GetPatchCount() - removed_straight_patches +
-            island_corners);
+  const int removed_straight_patches = 2 * island_corners * island_line_rule.GetNPoints();
+  CHECK(convex_island_response.GetPatchCount() == concave_island_response.GetPatchCount() -
+                                                      removed_straight_patches +
+                                                      island_corners);
   CHECK(convex_island_response.GetBasisSize() ==
-        4 * (convex_island_response.GetPatchCount() - island_corners) +
-            8 * island_corners);
+        4 * (convex_island_response.GetPatchCount() - island_corners) + 8 * island_corners);
   const double expected_convex_weight =
       (island_perimeter - 2.0 * island_corners * 0.2) / 0.2 + island_corners;
   CHECK_THAT(convex_island_response.GetPatchWeight(),
              WithinRel(expected_convex_weight, 1.0e-12));
+
+  auto rounded_island_config = island_config;
+  rounded_island_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      rounded_library_3d_path.string();
+  IoData rounded_island_iodata(rounded_island_config, false);
+  rounded_island_iodata.boundaries.cracked_attributes.insert(9);
+  auto rounded_geometry_mesh = MakeIslandMesh(true);
+  const auto rounded_geometry =
+      ExtractMetalEdgeGeometry(*rounded_geometry_mesh, rounded_island_iodata.boundaries);
+  const auto rounded_segments =
+      GetInterfaceMetalEdgeSegmentIndices(rounded_geometry, 4, InterfaceDielectric::SA);
+  std::set<std::size_t> rounded_vertices;
+  for (const std::size_t segment_index : rounded_segments)
+  {
+    const auto &segment = rounded_geometry.segments[segment_index];
+    rounded_vertices.insert(segment.vertices.begin(), segment.vertices.end());
+  }
+  CHECK(std::none_of(rounded_vertices.begin(), rounded_vertices.end(),
+                     [&](std::size_t vertex)
+                     {
+                       return rounded_geometry.vertices[vertex].physical_type !=
+                              MetalEdgeVertexType::REGULAR;
+                     }));
+
+  std::vector<std::unique_ptr<Mesh>> rounded_island_meshes;
+  rounded_island_meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh(true)));
+  LaplaceOperator rounded_island_laplace(rounded_island_iodata, rounded_island_meshes);
+  SurfaceResponseOperator rounded_island_response(rounded_island_iodata,
+                                                  rounded_island_laplace);
+  constexpr int rounded_corner_count = 4;
+  constexpr int remaining_straight_intervals = 8;
+  CHECK(rounded_island_response.GetPatchCount() ==
+        remaining_straight_intervals * island_line_rule.GetNPoints() +
+            rounded_corner_count);
+  CHECK(rounded_island_response.GetBasisSize() ==
+        4 * remaining_straight_intervals * island_line_rule.GetNPoints() +
+            8 * rounded_corner_count);
+  CHECK_THAT(rounded_island_response.GetPatchWeight(), WithinRel(6.0, 1.0e-12));
 
   auto convex_maxwell_island_config = convex_island_config;
   convex_maxwell_island_config["Problem"]["Type"] = "Eigenmode";

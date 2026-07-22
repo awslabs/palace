@@ -167,6 +167,8 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   };
   std::vector<InterfaceSupport> interface_support;
   std::set<int> interface_attributes;
+  std::map<std::vector<int>, std::shared_ptr<const EdgeDistanceTree>>
+      interface_support_trees;
   for (const auto &[index, dielectric] : boundaries.postpro.dielectric)
   {
     interface_attributes.insert(dielectric.attributes.begin(), dielectric.attributes.end());
@@ -174,7 +176,15 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
     {
       continue;
     }
-    auto tree = BuildSupportTree(mesh, dielectric.attributes, true);
+    auto attributes = dielectric.attributes;
+    std::sort(attributes.begin(), attributes.end());
+    attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
+    auto [tree_it, inserted] = interface_support_trees.try_emplace(attributes);
+    if (inserted)
+    {
+      tree_it->second = BuildSupportTree(mesh, attributes, true);
+    }
+    auto tree = tree_it->second;
     if (tree)
     {
       interface_support.push_back({index, dielectric.type, std::move(tree)});
@@ -685,15 +695,14 @@ BuildMetalEdgeProcessNormals(const mfem::ParMesh &mesh, const MetalEdgeGeometry 
   return process_normals;
 }
 
-std::vector<std::array<double, 3>> BuildMetalEdgeGapDirections(
-    const mfem::ParMesh &mesh, const MetalEdgeGeometry &geometry,
-    const std::vector<std::size_t> &segment_indices,
-    const std::vector<std::array<double, 3>> &process_normals)
+std::vector<std::array<double, 3>>
+BuildMetalEdgeGapDirections(const mfem::ParMesh &mesh, const MetalEdgeGeometry &geometry,
+                            const std::vector<std::size_t> &segment_indices,
+                            const std::vector<std::array<double, 3>> &process_normals)
 {
   MFEM_VERIFY(mesh.Dimension() == 3 && mesh.SpaceDimension() == 3,
               "Automatic metal edge frames require a three-dimensional mesh!");
-  MFEM_VERIFY(!segment_indices.empty() &&
-                  process_normals.size() == segment_indices.size(),
+  MFEM_VERIFY(!segment_indices.empty() && process_normals.size() == segment_indices.size(),
               "Automatic metal edge gap directions require matching nonempty segment "
               "and process-normal lists!");
 
@@ -803,8 +812,8 @@ std::vector<std::array<double, 3>> BuildMetalEdgeGapDirections(
       double inward_norm_squared = 0.0;
       for (int d = 0; d < 3; d++)
       {
-        inward[d] -= inward_tangent * tangent[d] / tangent_norm_squared +
-                     inward_normal * normal[d];
+        inward[d] -=
+            inward_tangent * tangent[d] / tangent_norm_squared + inward_normal * normal[d];
         inward_norm_squared += inward[d] * inward[d];
       }
       if (inward_norm_squared <= coordinate_tolerance * coordinate_tolerance)

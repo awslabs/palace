@@ -244,6 +244,11 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     }
     return (refinement.max_it > 0);
   }();
+  const bool defer_electrostatic_response =
+      use_amr && iodata.problem.type == ProblemType::ELECTROSTATIC &&
+      iodata.solver.electrostatic.response_correction.has_value();
+  final_postprocessing_pass = !defer_electrostatic_response;
+  bool completed_final_postprocessing = final_postprocessing_pass;
   if (use_amr && mesh.size() > 1)
   {
     Mpi::Print("\nFlattening mesh sequence:\n AMR will start from the final mesh in "
@@ -361,6 +366,13 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
+    if (defer_electrostatic_response && it >= refinement.max_it)
+    {
+      Mpi::Print("This is the final AMR solve; enabling surface-response "
+                 "postprocessing.\n");
+      final_postprocessing_pass = true;
+      completed_final_postprocessing = true;
+    }
     std::tie(indicators, ntdof) = Solve(mesh);
     marking_indicators =
         BuildMarkingIndicators(indicators, mesh.back()->Get(), iodata.boundaries);
@@ -373,6 +385,12 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
              (refinement.max_size > 0
                   ? ", max. size = " + std::to_string(refinement.max_size)
                   : ""));
+  if (defer_electrostatic_response && !completed_final_postprocessing)
+  {
+    Mpi::Print("\nProceeding with final surface-response postprocessing solve...\n");
+    final_postprocessing_pass = true;
+    Solve(mesh);
+  }
 }
 
 void BaseSolver::SaveMetadata(const FiniteElementSpaceHierarchy &fespaces) const
