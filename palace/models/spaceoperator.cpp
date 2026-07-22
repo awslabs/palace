@@ -627,7 +627,8 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
   // (the real-ω path uses i·(0.5/ω); the complex-λ path uses -0.5/λ). With imag_slot=true
   // it is placed on the IMAGINARY slot, matching the wave-port boundary-mass convention
   // (the i in i·f(ω)·M baked in) so circuit synthesis can fold it in uniformly. Returns
-  // null if the farfield ABC order < 2 or it contributes no DoFs on this rank.
+  // null if the farfield ABC order < 2 or it contributes no DoFs on any rank (the check is
+  // collective, so the null contract is rank-uniform).
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient df(mat_op.MaxCeedBdrAttribute());
   farfield_op.AddExtraSystemBoundaryCurlCurlBdrCoefficients(1.0, df);
@@ -669,7 +670,7 @@ SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,
   // group_idx, on the IMAGINARY slot (matching the wave-port convention). The full A2
   // contribution at frequency ω is (i·ω/Z_g(ω))·A_σ; circuit synthesis factors out A_σ here
   // and applies the scalar via a dispersion fit. Returns null if the group contributes no
-  // DoFs on this rank.
+  // DoFs on any rank (the check is collective, so the null contract is rank-uniform).
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
   surf_sigma_op.AddBoundaryMassBdrCoefficients(static_cast<std::size_t>(group_idx), fb);
@@ -707,7 +708,8 @@ std::unique_ptr<OperType> SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(
   // fit-or-freeze seed strategy). With imag_slot=true it is placed on the IMAGINARY slot,
   // matching the wave-port boundary-mass convention (the i in i·f(ω)·M baked in, with
   // f(ω) = g(iω)/i) so circuit synthesis can fold it in uniformly. Returns null if the
-  // boundary contributes no DoFs on this rank.
+  // boundary contributes no DoFs on any rank (the check is collective, so the null contract
+  // is rank-uniform).
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
   surf_rz_op.AddUnitBdrCoefficients(idx, fb);
@@ -748,7 +750,8 @@ SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int port_idx,
   // ω-independent µ⁻¹ boundary mass for a single Floquet port's Robin BC, on the
   // IMAGINARY slot (matching the wave-port / farfield convention: the i in i·γ₀·M is baked
   // in). The full online contribution is i·γ₀(ω)·M_floquet, with γ₀ the specular (0,0)
-  // propagation constant. Returns null if the port contributes no DoFs on this rank.
+  // propagation constant. Returns null if the port contributes no DoFs on any rank (the
+  // check is collective, so the null contract is rank-uniform).
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   const auto &port = floquet_port_op.GetPort(port_idx);
   MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());

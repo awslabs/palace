@@ -61,6 +61,10 @@ struct RegressionOptions
   // RunRegressionCase derives it from Solver.Eigenmode.N so extra converged
   // modes beyond the requested count are ignored.
   std::optional<std::size_t> max_rows;
+  // With skip_rowcount, still require at least this many rows in the live output.
+  // Guards against a partial loss of trailing rows (e.g. dropped eigenvalue estimates)
+  // passing silently because only min(actual, reference) leading rows are compared.
+  std::optional<std::size_t> min_rows;
   // Expected volumetric-output directories.
   bool paraview_fields = true;
   bool gridfunction_fields = false;

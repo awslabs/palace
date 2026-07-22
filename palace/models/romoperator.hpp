@@ -407,7 +407,9 @@ protected:
   static double EvaluateWavePortKnFit(const WavePortDispersionFit &fit, double omega);
 
   // Accumulate the polynomial-fit corrections from one port into the running Kr_corr,
-  // Cr_corr, Mr_corr buffers. Folds α₀+d into Im(Kr), -α₁ into Re(Cr), -α₂ into Im(Mr).
+  // Cr_corr, Mr_corr buffers. With Mp_r = i·M_proj this folds (α₀+d)·M_proj into Im(Kr),
+  // +α₁·M_proj into Re(Cr), and -α₂·M_proj into Im(Mr), recovering the port term
+  // i·(α₀+d+α₁ω+α₂ω²)·M_proj in K + iωC - ω²M.
   static void ApplyPolynomialFitCorrections(const WavePortDispersionFit &fit,
                                             const Eigen::MatrixXcd &Mp_r,
                                             Eigen::MatrixXcd &Kr_corr,
@@ -442,11 +444,13 @@ protected:
       Eigen::MatrixXcd &Mr_corr);
 
   // Build an aux block for one (matrix, pole-residue list) contribution, used by the ABC
-  // (analytic single pole at ω=0, residue 0.5) and surf-σ (fitted poles). `Mp_r` is the
-  // projected purely-imaginary boundary mass; the SVD of its imaginary part gives the
-  // coupling directions exactly as in the wave-port augmented path.
+  // (analytic single pole at ω=0, residue 0.5), surf-σ, and rational impedance (fitted
+  // poles). `label` (required, nonempty) prefixes the aux-state row names in the
+  // synthesized matrices. `Mp_r` is the projected purely-imaginary boundary mass; the SVD
+  // of its imaginary part gives the coupling directions exactly as in the wave-port
+  // augmented path.
   static std::optional<WavePortAuxBlock>
-  MakeAuxBlock(int label_idx, const Eigen::MatrixXcd &Mp_r,
+  MakeAuxBlock(std::string label, const Eigen::MatrixXcd &Mp_r,
                const std::vector<std::complex<double>> &poles,
                const std::vector<std::complex<double>> &residues, double rank_tol);
   static bool AddAuxBlockDirections(WavePortAuxBlock &blk, const Eigen::MatrixXcd &Mp_r,

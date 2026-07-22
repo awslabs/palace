@@ -247,7 +247,8 @@ public:
   // returned with PEC essential DoF rows handled by `diag_policy`. The full wave-port
   // contribution to the system matrix at frequency ω is `i·k_{n,p}(ω)·M_{μ⁻¹,p}` with
   // `k_{n,p}` from `GetWavePortOp().GetWavePortKn(port_idx, ω)`. Returns a null pointer if
-  // the port boundary contributes no DoFs on this rank.
+  // the port boundary contributes no DoFs on any rank (the check is collective, so the null
+  // contract is rank-uniform).
   template <typename OperType>
   std::unique_ptr<OperType>
   GetWavePortBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
@@ -260,7 +261,7 @@ public:
   // to instead place M_ff on the imaginary slot, matching the wave-port boundary-mass
   // convention (i·f(ω)·M with the i baked in) so it can be folded into circuit synthesis
   // uniformly with wave ports. Returns null if the farfield BC order < 2 or contributes no
-  // DoFs on this rank.
+  // DoFs on any rank (the check is collective, so the null contract is rank-uniform).
   template <typename OperType>
   std::unique_ptr<OperType>
   GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy,
@@ -271,8 +272,9 @@ public:
   // convention). The full A2 contribution at frequency ω is `(i·ω/Z_g(ω))·A_σ` =
   // `f_g(ω)·(i·A_σ)` with f_g(ω) = ω/Z_g(ω) the real-or-complex scalar from
   // GetSurfaceConductivityOp().EvaluateScalar(group, ω)/i. Returns null if the group
-  // contributes no DoFs on this rank. Used to fold surface conductivity into circuit
-  // synthesis. `NumSurfaceConductivityGroups()` gives the group count.
+  // contributes no DoFs on any rank (the check is collective, so the null contract is
+  // rank-uniform). Used to fold surface conductivity into circuit synthesis.
+  // `NumSurfaceConductivityGroups()` gives the group count.
   template <typename OperType>
   std::unique_ptr<OperType>
   GetSurfaceConductivityBoundaryMatrix(int group_idx, Operator::DiagonalPolicy diag_policy);
@@ -282,8 +284,9 @@ public:
   // full A2 contribution at λ = iω is `g(λ)·M_b` with the scalar Robin coefficient
   // `g(λ) = λ·D(λ)/N(λ)` from `GetRationalImpedanceOp().EvalRobinCoefficient(idx, λ)`; a
   // caller scales this matrix by the appropriate complex coefficient. Returns a null
-  // pointer if the boundary contributes no DoFs on this rank. Used by the NLEPS HYBRID
-  // fit-or-freeze seed strategy.
+  // pointer if the boundary contributes no DoFs on any rank (the check is collective, so
+  // the null contract is rank-uniform). Used by the NLEPS HYBRID fit-or-freeze seed
+  // strategy.
   template <typename OperType>
   std::unique_ptr<OperType>
   GetRationalImpedanceBoundaryMassMatrix(int idx, Operator::DiagonalPolicy diag_policy,
@@ -292,7 +295,7 @@ public:
   // Construct the ω-independent µ⁻¹ boundary mass for a single Floquet port's Robin BC,
   // placed on the imaginary slot. The full online term is i·γ₀,p(ω)·M_floquet_p with
   // γ₀ the (0,0) specular propagation constant. Returns null if the port contributes no
-  // DoFs on this rank.
+  // DoFs on any rank (the check is collective, so the null contract is rank-uniform).
   template <typename OperType>
   std::unique_ptr<OperType>
   GetFloquetRobinBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
