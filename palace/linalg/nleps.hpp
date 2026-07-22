@@ -276,16 +276,19 @@ private:
   std::vector<std::complex<double>>
   ComputeMonomialCoefficients(const std::vector<std::complex<double>> &dd) const;
 
-  // Optional frozen-pole corrections (NLEPS frozen seed strategy). Each term added via
-  // AddFrozenPole contributes corr[order]·M to the operator returned by
-  // GetInterpolationOperator for every order. The M operators are owned here so they
-  // outlive the returned operators.
-  struct FrozenTerm
-  {
-    std::unique_ptr<ComplexOperator> M;
-    std::vector<std::complex<double>> corr;
-  };
-  std::vector<FrozenTerm> frozen_terms;
+  // The seed pencil in monomial form: the order-th coefficient operator is
+  // Σₜ pencil_coeffs[order][t]·pencil_ops[order][t]. Terms 0..num_points-1 are the
+  // Newton→monomial combination of the leading divided-difference operators, rebuilt by
+  // Interpolate(); AddFrozenPole appends one correction term per frozen pole.
+  // GetInterpolationOperator, Mult, and AddMult all read this single representation, so
+  // they cannot disagree on the frozen corrections.
+  std::vector<std::vector<std::complex<double>>> pencil_coeffs;
+  std::vector<std::vector<const ComplexOperator *>> pencil_ops;
+
+  // Ownership of the frozen-pole boundary matrices referenced by pencil_ops (the base
+  // terms are owned by ops), so they outlive the operators returned by
+  // GetInterpolationOperator.
+  std::vector<std::unique_ptr<ComplexOperator>> frozen_ops;
 
   // Workspace objects for solver application.
   mutable ComplexVector rhs;
@@ -306,8 +309,9 @@ public:
   // interpolated contribution (the scalar interpolant of f at the nodes, times the constant
   // M) from every order, and re-add the pole frozen at lambda_target into the order-0
   // coefficient. Takes ownership of M; a null M is a no-op. Must be called after
-  // Interpolate(); may be called multiple times to freeze independent terms. Subsequent
-  // GetInterpolationOperator calls return the corrected operators.
+  // Interpolate(); may be called multiple times to freeze independent terms. The
+  // corrections are folded into the shared pencil representation, so subsequent
+  // GetInterpolationOperator, Mult, and AddMult calls all include them.
   void AddFrozenPole(std::unique_ptr<ComplexOperator> M,
                      const std::function<std::complex<double>(std::complex<double>)> &f,
                      std::complex<double> lambda_target);

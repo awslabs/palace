@@ -875,7 +875,7 @@ void NewtonInterpolationOperator::Interpolate(const std::complex<double> sigma_m
   ops.resize(num_points);
   points.clear();
   points.resize(num_points);
-  frozen_terms.clear();
+  frozen_ops.clear();
 
   // Linearly spaced sample points.
   for (int j = 0; j < num_points; j++)
@@ -913,6 +913,22 @@ void NewtonInterpolationOperator::Interpolate(const std::complex<double> sigma_m
     {
       double sign = ((j - k) % 2 == 0) ? 1 : -1;
       coeffs[k][j] = sign * elementarySymmetric(points, j - k, j);
+    }
+  }
+
+  // Assemble the single per-order (coefficient, operator) representation read by
+  // GetInterpolationOperator, Mult, and AddMult: the order-th pencil coefficient operator
+  // is Σₜ pencil_coeffs[order][t]·pencil_ops[order][t]. The base terms are the
+  // Newton→monomial combination of the leading divided-difference operators;
+  // AddFrozenPole appends one correction term per frozen pole.
+  pencil_coeffs.assign(num_points, {});
+  pencil_ops.assign(num_points, {});
+  for (int order = 0; order < num_points; order++)
+  {
+    for (int j = 0; j < num_points; j++)
+    {
+      pencil_coeffs[order].push_back(coeffs[order][j]);
+      pencil_ops[order].push_back(ops[j][0].get());
     }
   }
 }
@@ -972,16 +988,22 @@ void NewtonInterpolationOperator::AddFrozenPole(
   // Per-order multiplier of M: remove the interpolated pole at every order (the scalar
   // Newton interpolant of f through the same nodes as the operator path), then re-add the
   // pole frozen at the target into order 0. By linearity of the interpolation, this
-  // yields the smooth remainder pencil with the pole frozen in K.
+  // yields the smooth remainder pencil with the pole frozen in K. The correction terms
+  // are appended to the shared pencil representation, so GetInterpolationOperator, Mult,
+  // and AddMult all see them.
   const auto q = ComputeMonomialCoefficients(ComputeLeadingDividedDifferences(f));
-  auto &term = frozen_terms.emplace_back();
-  term.corr.assign(num_points, 0.0);
+  const ComplexOperator *M_raw = M.get();
+  frozen_ops.push_back(std::move(M));
   for (int order = 0; order < num_points; order++)
   {
-    term.corr[order] = -q[order];
+    std::complex<double> corr = -q[order];
+    if (order == 0)
+    {
+      corr += f(lambda_target);
+    }
+    pencil_coeffs[order].push_back(corr);
+    pencil_ops[order].push_back(M_raw);
   }
-  term.corr[0] += f(lambda_target);
-  term.M = std::move(M);
 }
 
 bool NewtonInterpolationOperator::DetermineFrozen(
@@ -1036,23 +1058,7 @@ NewtonInterpolationOperator::GetInterpolationOperator(int order) const
   MFEM_VERIFY(order >= 0 && order < num_points,
               "Order must be greater than or equal to 0 and smaller than the number of "
               "interpolation points!");
-  if (frozen_terms.empty())
-  {
-    return BuildParSumOperator({coeffs[order][0], coeffs[order][1], coeffs[order][2]},
-                               {ops[0][0].get(), ops[1][0].get(), ops[2][0].get()}, true);
-  }
-  // Frozen-pole corrections: append corr[order]·M for each frozen term. The M operators
-  // are members, so they outlive the returned operator — no keepalive needed.
-  std::vector<std::complex<double>> sum_coeffs = {coeffs[order][0], coeffs[order][1],
-                                                  coeffs[order][2]};
-  std::vector<const ComplexOperator *> sum_ops = {ops[0][0].get(), ops[1][0].get(),
-                                                  ops[2][0].get()};
-  for (const auto &term : frozen_terms)
-  {
-    sum_coeffs.push_back(term.corr[order]);
-    sum_ops.push_back(term.M.get());
-  }
-  return BuildParSumOperator(sum_coeffs, sum_ops, true);
+  return BuildParSumOperator(pencil_coeffs[order], pencil_ops[order], true);
 }
 
 void NewtonInterpolationOperator::Mult(int order, const ComplexVector &x,
@@ -1063,11 +1069,11 @@ void NewtonInterpolationOperator::Mult(int order, const ComplexVector &x,
               "interpolation points!");
 
   y = 0.0;
-  for (int j = 0; j < num_points; j++)
+  for (std::size_t t = 0; t < pencil_ops[order].size(); t++)
   {
-    if (coeffs[order][j] != 0.0)
+    if (pencil_coeffs[order][t] != 0.0)
     {
-      ops[j][0]->AddMult(x, y, coeffs[order][j]);
+      pencil_ops[order][t]->AddMult(x, y, pencil_coeffs[order][t]);
     }
   }
 }
