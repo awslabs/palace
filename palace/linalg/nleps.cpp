@@ -917,6 +917,46 @@ void NewtonInterpolationOperator::Interpolate(const std::complex<double> sigma_m
   }
 }
 
+std::vector<std::complex<double>>
+NewtonInterpolationOperator::ComputeLeadingDividedDifferences(
+    const std::function<std::complex<double>(std::complex<double>)> &f) const
+{
+  // In-place leading divided differences: after pass k, dd[j] = f[x_{j-k}, ..., x_j] for
+  // j >= k, so on completion dd[j] = f[x_0, ..., x_j] — the scalar analogue of the
+  // operator divided differences ops[j][0], with the same denominators
+  // points[j] - points[j - k] as the operator DAG in Interpolate().
+  std::vector<std::complex<double>> dd(num_points);
+  for (int j = 0; j < num_points; j++)
+  {
+    dd[j] = f(points[j]);
+  }
+  for (int k = 1; k < num_points; k++)
+  {
+    for (int j = num_points - 1; j >= k; j--)
+    {
+      dd[j] = (dd[j] - dd[j - 1]) / (points[j] - points[j - k]);
+    }
+  }
+  return dd;
+}
+
+std::vector<std::complex<double>> NewtonInterpolationOperator::ComputeMonomialCoefficients(
+    const std::vector<std::complex<double>> &dd) const
+{
+  // q[order] = Σⱼ coeffs[order][j]·dd[j], the same Newton→monomial combination the
+  // operator path applies to ops[j][0], so the scalar Newton interpolant through the
+  // nodes is p(λ) = Σ q[order]·λ^order.
+  std::vector<std::complex<double>> q(num_points, 0.0);
+  for (int order = 0; order < num_points; order++)
+  {
+    for (int j = 0; j < num_points; j++)
+    {
+      q[order] += coeffs[order][j] * dd[j];
+    }
+  }
+  return q;
+}
+
 void NewtonInterpolationOperator::AddFrozenPole(
     std::unique_ptr<ComplexOperator> M,
     const std::function<std::complex<double>(std::complex<double>)> &f,
@@ -929,37 +969,16 @@ void NewtonInterpolationOperator::AddFrozenPole(
   MFEM_VERIFY(!points.empty() && !coeffs.empty(),
               "AddFrozenPole requires a prior Interpolate() call!");
 
-  // Scalar divided differences of f at the interpolation nodes, mirroring the operator
-  // divided-difference DAG (same denominators points[j + k] - points[j]).
-  std::vector<std::vector<std::complex<double>>> dd(num_points);
-  for (int k = 0; k < num_points; k++)
-  {
-    for (int j = 0; j < num_points - k; j++)
-    {
-      if (k == 0)
-      {
-        dd[k].push_back(f(points[j]));
-      }
-      else
-      {
-        const std::complex<double> denom = points[j + k] - points[j];
-        dd[k].push_back((dd[k - 1][j + 1] - dd[k - 1][j]) / denom);
-      }
-    }
-  }
-
-  // Per-order multiplier of M: remove the interpolated pole at every order
-  // (q[order] = Σⱼ coeffs[order][j]·dd[j][0], using the same Newton→monomial matrix as the
-  // operator path), then re-add the pole frozen at the target into order 0. By linearity of
-  // the interpolation, this yields the smooth remainder pencil with the pole frozen in K.
+  // Per-order multiplier of M: remove the interpolated pole at every order (the scalar
+  // Newton interpolant of f through the same nodes as the operator path), then re-add the
+  // pole frozen at the target into order 0. By linearity of the interpolation, this
+  // yields the smooth remainder pencil with the pole frozen in K.
+  const auto q = ComputeMonomialCoefficients(ComputeLeadingDividedDifferences(f));
   auto &term = frozen_terms.emplace_back();
   term.corr.assign(num_points, 0.0);
   for (int order = 0; order < num_points; order++)
   {
-    for (int j = 0; j < num_points; j++)
-    {
-      term.corr[order] -= coeffs[order][j] * dd[j][0];
-    }
+    term.corr[order] = -q[order];
   }
   term.corr[0] += f(lambda_target);
   term.M = std::move(M);
@@ -973,50 +992,27 @@ bool NewtonInterpolationOperator::DetermineFrozen(
   MFEM_VERIFY(!points.empty() && !coeffs.empty(),
               "DetermineFrozen requires a prior Interpolate() call!");
 
-  // Polynomial Newton interpolant through the same nodes as the operator path: leading
-  // scalar divided differences dd_j, then the monomial basis via the shared
-  // Newton→monomial coefficients (matching Mult/GetInterpolationOperator, which apply
-  // coeffs[order][j] to the j-th divided-difference operator).
-  auto divided_differences =
-      [&](const std::function<std::complex<double>(std::complex<double>)> &f)
+  // Monomial coefficients of the scalar Newton interpolants through the same nodes as the
+  // operator path: the full coefficient (fit branch) and its smooth part f_full - f_frozen
+  // (what AddFrozenPole(M, f_frozen, lambda_target) leaves interpolated, exact when that
+  // part is a polynomial of degree < num_points).
+  const auto q_full = ComputeMonomialCoefficients(ComputeLeadingDividedDifferences(f_full));
+  const auto q_smooth = ComputeMonomialCoefficients(ComputeLeadingDividedDifferences(
+      [&](std::complex<double> lambda) { return f_full(lambda) - f_frozen(lambda); }));
+  auto eval = [&](const std::vector<std::complex<double>> &q, std::complex<double> lambda)
   {
-    std::vector<std::complex<double>> dd(num_points);
-    for (int j = 0; j < num_points; j++)
+    // Horner evaluation of Σ q[order]·λ^order.
+    std::complex<double> val = 0.0;
+    for (int order = num_points - 1; order >= 0; order--)
     {
-      dd[j] = f(points[j]);
-    }
-    for (int k = 1; k < num_points; k++)
-    {
-      for (int j = num_points - 1; j >= k; j--)
-      {
-        dd[j] = (dd[j] - dd[j - 1]) / (points[j] - points[j - k]);
-      }
-    }
-    return dd;
-  };
-  auto fit = [&](const std::vector<std::complex<double>> &dd, std::complex<double> lambda)
-  {
-    std::complex<double> val = 0.0, lambda_pow = 1.0;
-    for (int order = 0; order < num_points; order++)
-    {
-      std::complex<double> c = 0.0;
-      for (int j = 0; j < num_points; j++)
-      {
-        c += coeffs[order][j] * dd[j];
-      }
-      val += c * lambda_pow;
-      lambda_pow *= lambda;
+      val = val * lambda + q[order];
     }
     return val;
   };
-  const auto dd_full = divided_differences(f_full);
-  const auto dd_smooth = divided_differences([&](std::complex<double> lambda)
-                                             { return f_full(lambda) - f_frozen(lambda); });
 
   // Max relative error over a dense sample of the window. The freeze branch is what
   // AddFrozenPole(M, f_frozen, lambda_target) produces: the interpolant of the smooth part
-  // f_full - f_frozen (exact when that part is a polynomial of degree < num_points) plus
-  // the frozen value f_frozen(lambda_target).
+  // plus the frozen value f_frozen(lambda_target).
   const std::complex<double> frozen_target = f_frozen(lambda_target);
   constexpr int n_samples = 101;
   fit_err = freeze_err = 0.0;
@@ -1027,9 +1023,9 @@ bool NewtonInterpolationOperator::DetermineFrozen(
         (double)i * (points.back() - points.front()) / (double)(n_samples - 1);
     const std::complex<double> f_exact = f_full(lambda);
     const double scale = std::max(std::abs(f_exact), 1.0e-300);
-    fit_err = std::max(fit_err, std::abs(fit(dd_full, lambda) - f_exact) / scale);
+    fit_err = std::max(fit_err, std::abs(eval(q_full, lambda) - f_exact) / scale);
     freeze_err = std::max(
-        freeze_err, std::abs(fit(dd_smooth, lambda) + frozen_target - f_exact) / scale);
+        freeze_err, std::abs(eval(q_smooth, lambda) + frozen_target - f_exact) / scale);
   }
   return freeze_err < fit_err;
 }

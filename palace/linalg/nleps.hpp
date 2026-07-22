@@ -263,6 +263,19 @@ private:
   // Divided difference operators.
   std::vector<std::vector<std::unique_ptr<ComplexOperator>>> ops;
 
+  // Leading scalar divided differences f[x₀, ..., xⱼ] of f at the interpolation nodes,
+  // j = 0..num_points-1: the scalar analogue of the ops[j][0] operator divided
+  // differences, sharing their node set and denominators.
+  std::vector<std::complex<double>> ComputeLeadingDividedDifferences(
+      const std::function<std::complex<double>(std::complex<double>)> &f) const;
+
+  // Combine leading divided differences into monomial coefficients with the shared
+  // Newton→monomial matrix (q[order] = Σⱼ coeffs[order][j]·dd[j]), so the scalar Newton
+  // interpolant is p(λ) = Σ q[order]·λ^order — the scalar analogue of the per-order
+  // operator combination in GetInterpolationOperator / Mult.
+  std::vector<std::complex<double>>
+  ComputeMonomialCoefficients(const std::vector<std::complex<double>> &dd) const;
+
   // Optional frozen-pole corrections (NLEPS frozen seed strategy). Each term added via
   // AddFrozenPole contributes corr[order]·M to the operator returned by
   // GetInterpolationOperator for every order. The M operators are owned here so they
