@@ -258,15 +258,15 @@ public:
   // contributes no DoFs on this rank. Used by the NLEPS HYBRID frozen-ABC seed strategy.
   template <typename OperType>
   std::unique_ptr<OperType>
-  GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy diag_policy);
+  GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy);
 
   // Construct the λ-independent boundary mass matrix M_b for rational impedance boundary
   // idx, with unit coefficient (including crack scaling), stored on the real slot. The
   // full A2 contribution at λ = iω is `g(λ)·M_b` with the scalar Robin coefficient
-  // `g(λ) = λ·D(λ)/N(λ)` from `GetRationalImpedanceOp().EvalRobinCoef(idx, λ)`; a caller
-  // scales this matrix by the appropriate complex coefficient. Returns a null pointer if
-  // the boundary contributes no DoFs on this rank. Used by the NLEPS HYBRID fit-or-freeze
-  // seed strategy.
+  // `g(λ) = λ·D(λ)/N(λ)` from `GetRationalImpedanceOp().EvalRobinCoefficient(idx, λ)`; a
+  // caller scales this matrix by the appropriate complex coefficient. Returns a null
+  // pointer if the boundary contributes no DoFs on this rank. Used by the NLEPS HYBRID
+  // fit-or-freeze seed strategy.
   template <typename OperType>
   std::unique_ptr<OperType>
   GetRationalImpedanceBoundaryMassMatrix(int idx, Operator::DiagonalPolicy diag_policy);

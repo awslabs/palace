@@ -36,14 +36,9 @@
     [
       {
         "Attributes": [5],   // Termination under test (z = L)
-        // Zs(s) = N(s)/D(s), s = i*omega [rad/s], coefficients highest-degree-first.
-        // Series RLC: Zs = R + sL + 1/(sC) = (s^2 LC + s RC + 1)/(sC) with
-        //   R = 376.730313668 Ω/sq, L = 2.0e-8 H/sq, C = 3.908996282497599e-15 F/sq,
-        // a notch resonant at 18 GHz (Zs -> R = eta0, matched absorber) with
-        // Q = w0 L / R = 6. The Robin coefficient s*D/N has a complex pole pair (the
-        // zeros of Zs) inside the interpolation window [Target, 3*Target] = [9, 27] GHz,
-        // which ruins the quadratic NLEPS seed fit and exercises the freeze branch of
-        // the fit-or-freeze seed strategy
+        // Series RLC, Zs = (s^2 LC + s RC + 1)/(sC): R = eta0, L = 2.0e-8 H/sq,
+        // C = 3.909e-15 F/sq -> notch at 18 GHz, inside the NLEPS seed window
+        // (exercises the freeze branch of the fit-or-freeze seed strategy).
         "Numerator":   [7.817992564995199e-23, 1.4726373956323666e-12, 1.0],
         "Denominator": [3.908996282497599e-15, 0.0]
       }

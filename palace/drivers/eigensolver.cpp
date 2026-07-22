@@ -56,12 +56,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   auto A2 = funcA2(1i * target);
   bool has_A2 = (A2 != nullptr);
 
-  // Frozen-ABC seed for the NLEPS HYBRID polynomial seed pencil. The 2nd-order farfield ABC
-  // contributes a pole term f(λ)·M_ff to A2(λ), with f(λ) = -0.5/λ, that a polynomial
-  // (K' + λC' + λ²M') seed cannot fit accurately. AddFrozenPole removes the pole's
-  // interpolated contribution and re-adds it frozen at the target into the K-block.
-  auto M_ff = space_op.GetFarfieldExtraBoundaryMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-
   // Extend K, C, M operators with interpolated A2 operator.
   // K' = K + A2_0, C' = C + A2_1, M' = M + A2_2
   std::unique_ptr<ComplexOperator> Kp, Cp, Mp;
@@ -73,6 +67,18 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const double target_max = iodata.solver.eigenmode.target_upper;
     auto interp = std::make_unique<NewtonInterpolationOperator>(funcA2, A2->Width());
     interp->Interpolate(1i * target, 1i * target_max);
+    // Frozen-ABC seed for the NLEPS HYBRID polynomial seed pencil. The 2nd-order farfield
+    // ABC contributes a pole term f(λ)·M_ff to A2(λ), with f(λ) = -0.5/λ, that a
+    // polynomial (K' + λC' + λ²M') seed cannot fit accurately. AddFrozenPole removes the
+    // pole's interpolated contribution and re-adds it frozen at the target into the
+    // K-block. The freeze is deliberately unconditional (no DetermineFrozen): the fit's
+    // pointwise window error is small (the pole at λ = 0 sits outside the window), but its
+    // curvature term injects a fictitious rank-deficient λ² contribution into the seed's
+    // M-block that displaces spurious roots into the unphysical half-plane — the failure
+    // mode is structural, not a pointwise approximation error, so the pointwise metric
+    // must not be allowed to choose the fit here.
+    auto M_ff =
+        space_op.GetFarfieldBoundaryCurlCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO);
     if (M_ff)
     {
       interp->AddFrozenPole(
@@ -90,11 +96,11 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       const bool proper_split = (surf_rz_op.GetRobinQuotientDegree(idx) <= 2);
       auto f_full = [&surf_rz_op, idx](std::complex<double> lambda)
-      { return surf_rz_op.EvalRobinCoef(idx, lambda); };
+      { return surf_rz_op.EvalRobinCoefficient(idx, lambda); };
       auto f_frozen = [&surf_rz_op, idx, proper_split](std::complex<double> lambda)
       {
         return proper_split ? surf_rz_op.EvalRobinRemainder(idx, lambda)
-                            : surf_rz_op.EvalRobinCoef(idx, lambda);
+                            : surf_rz_op.EvalRobinCoefficient(idx, lambda);
       };
       double fit_err, freeze_err;
       if (interp->DetermineFrozen(f_full, f_frozen, 1i * target, fit_err, freeze_err))

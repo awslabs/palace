@@ -618,7 +618,7 @@ SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
 
 template <typename OperType>
 std::unique_ptr<OperType>
-SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy diag_policy)
+SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy)
 {
   // ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield ABC, with unit
   // coefficient. Stored on the REAL slot of the resulting ComplexParOperator so that
@@ -659,11 +659,11 @@ SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int idx,
   // λ-independent boundary mass matrix M_b for rational impedance boundary idx, with unit
   // coefficient (including crack scaling), stored on the REAL slot so that downstream
   // BuildParSumOperator can scale it by the arbitrary complex Robin coefficient g(λ) from
-  // GetRationalImpedanceOp().EvalRobinCoef(idx, λ). Returns null if the boundary
+  // GetRationalImpedanceOp().EvalRobinCoefficient(idx, λ). Returns null if the boundary
   // contributes no DoFs on this rank. Used by the NLEPS HYBRID fit-or-freeze seed strategy.
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
-  surf_rz_op.AddUnitBdrCoefficient(idx, fb);
+  surf_rz_op.AddUnitBdrCoefficients(idx, fb);
   int empty = fb.empty();
   Mpi::GlobalMin(1, &empty, GetComm());
   if (empty)
@@ -1424,9 +1424,9 @@ template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetWavePortBoundaryMassMatrix(int, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
-    SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy);
+    SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
-    SpaceOperator::GetFarfieldExtraBoundaryMatrix(Operator::DiagonalPolicy);
+    SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy);

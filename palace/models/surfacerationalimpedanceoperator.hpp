@@ -86,13 +86,13 @@ public:
 
   // Stamp a unit coefficient (including the per-attribute crack scaling) for boundary
   // index idx, so that the assembled boundary mass matrix M_b satisfies: contribution of
-  // boundary idx to A2(λ) = g(λ)·M_b with g = EvalRobinCoef(idx, ·). Used by the nonlinear
-  // eigensolver seed to fit or freeze the boundary's Robin coefficient.
-  void AddUnitBdrCoefficient(int idx, MaterialPropertyCoefficient &fb) const;
+  // boundary idx to A2(λ) = g(λ)·M_b with g = EvalRobinCoefficient(idx, ·). Used by the
+  // nonlinear eigensolver seed to fit or freeze the boundary's Robin coefficient.
+  void AddUnitBdrCoefficients(int idx, MaterialPropertyCoefficient &fb) const;
 
   // Evaluate the scalar Robin coefficient g(s) = s·D(s)/N(s) of boundary idx at complex
   // s = iω = λ (nondimensional).
-  std::complex<double> EvalRobinCoef(int idx, std::complex<double> s) const;
+  std::complex<double> EvalRobinCoefficient(int idx, std::complex<double> s) const;
 
   // Evaluate the strictly proper (pole) part R(s)/N(s) of the Robin coefficient of
   // boundary idx, from the long division g = P + R/N. The polynomial part P = g - R/N is

@@ -223,7 +223,7 @@ mfem::Array<int> SurfaceRationalImpedanceOperator::GetAttrList() const
   return attr_list;
 }
 
-void SurfaceRationalImpedanceOperator::AddUnitBdrCoefficient(
+void SurfaceRationalImpedanceOperator::AddUnitBdrCoefficients(
     int idx, MaterialPropertyCoefficient &fb) const
 {
   const auto &bdr = boundaries[idx];
@@ -235,7 +235,8 @@ void SurfaceRationalImpedanceOperator::AddUnitBdrCoefficient(
 }
 
 std::complex<double>
-SurfaceRationalImpedanceOperator::EvalRobinCoef(int idx, std::complex<double> s) const
+SurfaceRationalImpedanceOperator::EvalRobinCoefficient(int idx,
+                                                       std::complex<double> s) const
 {
   const auto &bdr = boundaries[idx];
   const std::complex<double> N = EvalPoly(bdr.num, s);
