@@ -42,8 +42,22 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const auto &port_data = iodata.boundaries.current.at(port_idx);
     return port_data.inactive_port_mode.value_or(global_mode) == InactivePortMode::SHORT;
   };
+
+  // A single linear solver is reused across all excitation steps so that its solver
+  // statistics are accumulated for the metadata. Each step swaps in the stiffness matrix
+  // whose essential DOFs match that step's shorted inactive ports (an empty set for a step
+  // with no shorted ports reuses the base operator K). The base operator is bound lazily so
+  // that an all-short configuration does not pay for an unused preconditioner setup.
   KspSolver ksp(iodata, curlcurl_op.GetNDSpaces(), &curlcurl_op.GetH1Spaces());
-  ksp.SetOperators(*K, *K);
+  const Operator *bound_op = nullptr;
+  auto set_operator = [&](const Operator &op)
+  {
+    if (bound_op != &op)
+    {
+      ksp.SetOperators(op, op);
+      bound_op = &op;
+    }
+  };
 
   // Surface current source indices define the boundaries over which to compute the
   // inductance matrix.
@@ -64,6 +78,9 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Source term and solution vector storage.
   Vector RHS(Curl.Width()), B(Curl.Height());
+  // Per-step stiffness matrix for shorted inactive ports; declared here so it outlives the
+  // solver's operator binding for the duration of the step's solve.
+  std::unique_ptr<Operator> K_step;
   std::vector<Vector> A(n_step);
   std::vector<double> I_inc(n_step);
   std::vector<double> Phi_inc(n_step);
@@ -130,20 +147,19 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
       if (short_attrs.Size() > 0)
       {
-        // Rebuild the operator with the shorted inactive ports as essential (PEC)
-        // boundaries for this excitation step.
-        CurlCurlOperator curlcurl_step(iodata.boundaries, iodata.solver,
-                                       iodata.domains.materials, iodata.problem.type, mesh,
-                                       short_attrs);
-        auto K_step = curlcurl_step.GetStiffnessMatrix();
-        KspSolver ksp_step(iodata, curlcurl_step.GetNDSpaces(),
-                           &curlcurl_step.GetH1Spaces());
-        ksp_step.SetOperators(*K_step, *K_step);
-        ksp_step.Mult(RHS, A[step]);
+        // Reassemble the stiffness matrix with the shorted inactive ports added as
+        // essential (PEC) boundaries for this excitation step, and zero the excitation on
+        // those DOFs so the DIAG_ONE elimination does not inject spurious values on edges
+        // shared with the active port. The reused solver records its stats for metadata.
+        K_step = curlcurl_op.GetStiffnessMatrix(short_attrs);
+        curlcurl_op.ZeroEssentialTrueDofs(short_attrs, RHS);
+        set_operator(*K_step);
+        ksp.Mult(RHS, A[step]);
       }
       else
       {
         // No inactive ports shorted for this step: all inactive ports are open.
+        set_operator(*K);
         ksp.Mult(RHS, A[step]);
       }
     }
@@ -160,7 +176,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       I_inc[step] = 0.0;                         // Zero current for flux loops
       Phi_inc[step] = data.GetExcitationFlux();  // Store prescribed flux
 
-      // Solve 3D magnetostatic problem.
+      // Solve 3D magnetostatic problem (flux loops use the base operator).
+      set_operator(*K);
       ksp.Mult(RHS, A[step]);
     }
 

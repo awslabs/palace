@@ -46,12 +46,13 @@ private:
   // Helper variable for log file printing.
   bool print_hdr;
 
-  // Skip boundary check when additional DBC attrs overlap with surface current.
-  bool skip_bc_check = false;
-
   // Essential boundary condition attributes.
   mfem::Array<int> dbc_attr;
   std::vector<mfem::Array<int>> dbc_tdof_lists;
+
+  // Per-level essential true DOF lists from the latest GetStiffnessMatrix(extra_dbc_attr).
+  // SetEssentialTrueDofs stores a shallow reference, so these must outlive that operator.
+  std::vector<mfem::Array<int>> extra_dbc_tdof_lists;
 
   // Objects defining the finite element spaces for the magnetic vector potential
   // (Nedelec) and magnetic flux density (Raviart-Thomas) on the given mesh. The H1 spaces
@@ -79,15 +80,14 @@ private:
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                           const std::map<int, config::FluxLoopData> &fluxloop,
-                          const mfem::ParMesh &mesh,
-                          const mfem::Array<int> &additional_dbc = {});
+                          const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
 
 public:
   CurlCurlOperator(const config::BoundaryData &boundaries, const config::SolverData &solver,
                    const std::vector<config::MaterialData> &materials,
-                   ProblemType problem_type, const std::vector<std::unique_ptr<Mesh>> &mesh,
-                   const mfem::Array<int> &additional_dbc = {});
+                   ProblemType problem_type,
+                   const std::vector<std::unique_ptr<Mesh>> &mesh);
   CurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
   // Return material operator for postprocessing.
@@ -125,9 +125,14 @@ public:
   // Ampere's law.
   std::unique_ptr<Operator> GetStiffnessMatrix();
 
-  // Construct stiffness matrix with additional essential (PEC) boundary attributes beyond
-  // those specified at construction. Used in Short mode to add inactive port boundaries.
+  // Construct the stiffness matrix with extra essential (PEC) attributes beyond those set at
+  // construction, without mutating base boundary state. Used in Short mode to treat inactive
+  // surface current ports as PEC for a single excitation step.
   std::unique_ptr<Operator> GetStiffnessMatrix(const mfem::Array<int> &extra_dbc_attr);
+
+  // Zero v on the merged essential set (base Dirichlet plus extra_dbc_attr), clearing the
+  // excitation on shorted inactive ports so DIAG_ONE elimination injects no spurious values.
+  void ZeroEssentialTrueDofs(const mfem::Array<int> &extra_dbc_attr, Vector &v) const;
 
   // Construct and return the discrete curl matrix.
   const Operator &GetCurlMatrix() const

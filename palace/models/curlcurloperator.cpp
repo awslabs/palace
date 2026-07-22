@@ -23,10 +23,9 @@ CurlCurlOperator::CurlCurlOperator(const config::BoundaryData &boundaries,
                                    const config::SolverData &solver,
                                    const std::vector<config::MaterialData> &materials,
                                    ProblemType problem_type,
-                                   const std::vector<std::unique_ptr<Mesh>> &mesh,
-                                   const mfem::Array<int> &additional_dbc)
-  : print_hdr(true), dbc_attr(SetUpBoundaryProperties(boundaries.pec, boundaries.fluxloop,
-                                                      *mesh.back(), additional_dbc)),
+                                   const std::vector<std::unique_ptr<Mesh>> &mesh)
+  : print_hdr(true),
+    dbc_attr(SetUpBoundaryProperties(boundaries.pec, boundaries.fluxloop, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         solver.order, mesh.back()->Dimension(), solver.linear.mg_max_levels,
         solver.linear.mg_coarsening, false)),
@@ -53,7 +52,6 @@ CurlCurlOperator::CurlCurlOperator(const config::BoundaryData &boundaries,
   }
 
   // Finalize setup.
-  skip_bc_check = (additional_dbc.Size() > 0);
   CheckBoundaryProperties();
 
   // Print essential BC information.
@@ -74,7 +72,7 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
 
 mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(
     const config::PecBoundaryData &pec, const std::map<int, config::FluxLoopData> &fluxloop,
-    const mfem::ParMesh &mesh, const mfem::Array<int> &additional_dbc)
+    const mfem::ParMesh &mesh)
 {
   // Check that boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
@@ -105,7 +103,7 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(
 
   // Mark selected boundary attributes from the mesh as essential (Dirichlet).
   mfem::Array<int> dbc_bcs;
-  dbc_bcs.Reserve(static_cast<int>(pec.attributes.size()) + additional_dbc.Size());
+  dbc_bcs.Reserve(static_cast<int>(pec.attributes.size()));
   for (auto attr : pec.attributes)
   {
     if (attr <= 0 || attr > bdr_attr_max || !bdr_attr_marker[attr - 1])
@@ -136,23 +134,12 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(
   {
     dbc_bcs.Append(attr);  // Each attribute added only once
   }
-  // Add any additional Dirichlet attributes (e.g., shorted inactive ports).
-  for (int i = 0; i < additional_dbc.Size(); i++)
-  {
-    dbc_bcs.Append(additional_dbc[i]);
-  }
   return dbc_bcs;
 }
 
 void CurlCurlOperator::CheckBoundaryProperties()
 {
   // A final check that no boundary attribute is assigned multiple boundary conditions.
-  // Skip when additional_dbc attributes are present (Short mode), since inactive ports
-  // are intentionally in both PEC and surface current lists.
-  if (skip_bc_check)
-  {
-    return;
-  }
   const mfem::ParMesh &mesh = GetMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   const auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_attr);
@@ -248,14 +235,14 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
 std::unique_ptr<Operator>
 CurlCurlOperator::GetStiffnessMatrix(const mfem::Array<int> &extra_dbc_attr)
 {
-  // Reassemble the stiffness matrix with additional essential boundary attributes.
-  // Compute merged essential DOF list from base + extra attributes.
+  // Reassemble the stiffness matrix with the base plus extra essential attributes. Size the
+  // marker from the global max attribute (BdrAttrToMarker) so a rank whose partition lacks
+  // the shorted-port boundary does not build an undersized, corrupt marker.
   mfem::Array<int> merged_attr(dbc_attr);
   merged_attr.Append(extra_dbc_attr);
 
   const auto &pmesh = static_cast<const mfem::ParMesh &>(GetMesh());
-  int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
-  auto merged_marker = mesh::AttrToMarker(bdr_attr_max, merged_attr);
+  auto merged_marker = mesh::BdrAttrToMarker(pmesh, merged_attr, true);
 
   constexpr bool skip_zeros = false;
   MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
@@ -264,16 +251,35 @@ CurlCurlOperator::GetStiffnessMatrix(const mfem::Array<int> &extra_dbc_attr)
   k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
   auto k_vec = k.Assemble(GetNDSpaces(), skip_zeros);
   auto K = std::make_unique<MultigridOperator>(GetNDSpaces().GetNumLevels());
+  // SetEssentialTrueDofs stores a shallow reference, so hold the per-level lists in a
+  // member that outlives the returned operator rather than in loop-local arrays.
+  extra_dbc_tdof_lists.assign(GetNDSpaces().GetNumLevels(), mfem::Array<int>());
   for (std::size_t l = 0; l < GetNDSpaces().GetNumLevels(); l++)
   {
     const auto &nd_fespace_l = GetNDSpaces().GetFESpaceAtLevel(l);
-    mfem::Array<int> tdof_list_l;
-    nd_fespace_l.Get().GetEssentialTrueDofs(merged_marker, tdof_list_l);
+    nd_fespace_l.Get().GetEssentialTrueDofs(merged_marker, extra_dbc_tdof_lists[l]);
     auto K_l = std::make_unique<ParOperator>(std::move(k_vec[l]), nd_fespace_l);
-    K_l->SetEssentialTrueDofs(tdof_list_l, Operator::DiagonalPolicy::DIAG_ONE);
+    K_l->SetEssentialTrueDofs(extra_dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
     K->AddOperator(std::move(K_l));
   }
   return K;
+}
+
+void CurlCurlOperator::ZeroEssentialTrueDofs(const mfem::Array<int> &extra_dbc_attr,
+                                             Vector &v) const
+{
+  // Zero the excitation on the merged essential set (base Dirichlet plus shorted-port
+  // attributes) so DIAG_ONE elimination sees a zero RHS on every constrained true DOF,
+  // including edges an active port shares with a shorted one.
+  mfem::Array<int> merged_attr(dbc_attr);
+  merged_attr.Append(extra_dbc_attr);
+
+  const auto &pmesh = static_cast<const mfem::ParMesh &>(GetMesh());
+  auto merged_marker = mesh::BdrAttrToMarker(pmesh, merged_attr, true);
+
+  mfem::Array<int> tdof_list;
+  GetNDSpace().Get().GetEssentialTrueDofs(merged_marker, tdof_list);
+  linalg::SetSubVector(v, tdof_list, 0.0);
 }
 
 void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)

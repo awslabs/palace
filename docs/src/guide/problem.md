@@ -162,6 +162,16 @@ can be overridden on a per-port basis using
 [`config["Boundaries"]["SurfaceCurrent"]["InactiveMode"]`](../config/reference.md#config-boundaries-surfacecurrent),
 which takes precedence over the global default for that port.
 
+The inactive-port treatment changes what the off-diagonal inductance entries represent. With
+all ports `"Open"`, the entries ``M_{ij}`` depend on the geometry alone and are symmetric by
+reciprocity. When ports are shorted, the shorted ports carry induced screening currents, so
+``M_{ij}`` is the *effective* mutual inductance in the presence of those currents rather than
+the bare geometric coupling. In a mixed configuration the set of shorted ports can differ
+between the solve exciting port ``i`` and the one exciting port ``j``, so the cross-energies
+need not be reciprocal; the reported matrix is symmetrized from ``A_j^T K A_i`` and should be
+read as the effective coupling for that inactive-port configuration, not a geometry-only
+quantity.
+
 **Flux loop boundaries** ([`config["Boundaries"]["FluxLoop"]`](../config/reference.md#config-boundaries-fluxloop)):
 Prescribe magnetic flux through specified holes in conducting surfaces. For each flux loop, a
 magnetostatic field is computed by applying flux through the loop of interest, leaving all
