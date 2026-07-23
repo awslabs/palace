@@ -233,10 +233,15 @@ TEST_CASE("SurfaceRationalImpedanceOperator",
       CHECK_THROWS(op_dc.AddExtraSystemBdrCoefficients(0.0, fbr, fbi));
     }
 
-    // Rational impedance boundaries are driven-only.
+    // Rational impedance boundaries are frequency-domain only: transient (and static)
+    // simulation types are rejected, while driven, eigenmode, and boundary mode are
+    // allowed.
     CHECK_THROWS(SurfaceRationalImpedanceOperator({make_data(num, den)}, cracked,
-                                                  ProblemType::EIGENMODE, units, mat_op,
+                                                  ProblemType::TRANSIENT, units, mat_op,
                                                   palace_mesh));
+    CHECK_NOTHROW(SurfaceRationalImpedanceOperator({make_data(num, den)}, cracked,
+                                                   ProblemType::EIGENMODE, units, mat_op,
+                                                   palace_mesh));
   }
 }
 

@@ -489,11 +489,13 @@ public:
   std::unique_ptr<ComplexOperator> opA2, opA2p, opJ, opA, opAJ, opA2_pc, opA_pc, opP_pc;
 
   // Function to compute the A2 operator.
-  std::optional<std::function<std::unique_ptr<ComplexOperator>(double)>> funcA2;
+  std::optional<std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>>
+      funcA2;
 
   // Function to compute the preconditioner matrix.
   std::optional<std::function<std::unique_ptr<ComplexOperator>(
-      std::complex<double>, std::complex<double>, std::complex<double>, double)>>
+      std::complex<double>, std::complex<double>, std::complex<double>,
+      std::complex<double>)>>
       funcP;
 
   // Eigenvalue estimate at current iteration.
@@ -527,12 +529,12 @@ public:
 
   // Set the frequency-dependent A2 matrix function.
   void SetExtraSystemMatrix(
-      std::function<std::unique_ptr<ComplexOperator>(double)>) override;
+      std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>) override;
 
   // Set the preconditioner update function.
   void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
                                    std::complex<double>, std::complex<double>,
-                                   std::complex<double>, double)>) override;
+                                   std::complex<double>, std::complex<double>)>) override;
 };
 
 }  // namespace slepc

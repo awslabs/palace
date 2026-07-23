@@ -104,6 +104,14 @@ private:
                                      MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi,
                                      bool include_wave_ports = true);
+  // Complex-ω overload: dispatches to the farfield / surf-σ / wave-port complex
+  // AddExtraSystemBdrCoefficients overloads for the eigenmode nonlinear solve and its
+  // matching preconditioner. Reduces to the double overload for real ω.
+  void AddExtraSystemBdrCoefficients(std::complex<double> omega,
+                                     MaterialPropertyCoefficient &dfbr,
+                                     MaterialPropertyCoefficient &dfbi,
+                                     MaterialPropertyCoefficient &fbr,
+                                     MaterialPropertyCoefficient &fbi);
   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
 
@@ -111,15 +119,22 @@ private:
   bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS);
   bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &RHS);
 
-  // Helper functions to build the preconditioner matrix.
+  // Helper functions to build the preconditioner matrix. The type of a3 selects the
+  // frequency-dependent (A2) stamping path: double dispatches to the real-ω overload of
+  // AddExtraSystemBdrCoefficients (driven/boundary-mode: Floquet term included, cached
+  // wave-port Initialize, Re(k_n) only), while std::complex dispatches to the complex-ω
+  // overload (eigenmode nonlinear solve: exact analytic continuation, including the
+  // wave-port attenuation -Im(k_n)·M on the real slot even at real ω).
+  template <typename A3Type>
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
-                              std::complex<double> a2, double a3,
+                              std::complex<double> a2, A3Type a3,
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec,
                               std::vector<std::unique_ptr<Operator>> &bi_vec,
                               std::vector<std::unique_ptr<Operator>> &bi_aux_vec);
+  template <typename A3Type>
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
-                              std::complex<double> a2, double a3,
+                              std::complex<double> a2, A3Type a3,
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec);
   void AssemblePreconditioner(double a0, double a1, double a2, double a3,
@@ -162,6 +177,7 @@ public:
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetFloquetPortOp() const { return floquet_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
+  const auto &GetRationalImpedanceOp() const { return surf_rz_op; }
 
   // Get the full frequency-dependent operator A2(ω) + F(ω), where A2 is the assembled
   // sparse boundary operator and F is the low-rank Floquet DtN correction. The returned
@@ -215,6 +231,16 @@ public:
                                                  Operator::DiagonalPolicy diag_policy,
                                                  bool include_wave_ports);
 
+  // Complex-ω overload for the eigenmode nonlinear solve: assembles A2(λ) with all
+  // frequency-dependent boundary terms (2nd-order ABC, surface conductivity, rational
+  // impedance, numeric wave ports) evaluated at the genuinely complex frequency
+  // (ω = -i·λ). Always a ComplexOperator (these terms acquire a real-slot contribution
+  // at complex ω). For real ω this matches GetExtraSystemMatrix<ComplexOperator>(double)
+  // up to the wave-port term, which additionally carries the attenuation -Im(k_n)·M on
+  // the real slot (the real-ω path intentionally stamps only Re(k_n)).
+  std::unique_ptr<ComplexOperator>
+  GetExtraSystemMatrix(std::complex<double> omega, Operator::DiagonalPolicy diag_policy);
+
   // Construct the ω-independent boundary mass matrix M_{μ⁻¹,p} for a single wave port,
   // returned with PEC essential DoF rows handled by `diag_policy`. The full wave-port
   // contribution to the system matrix at frequency ω is `i·k_{n,p}(ω)·M_{μ⁻¹,p}` with
@@ -223,6 +249,27 @@ public:
   template <typename OperType>
   std::unique_ptr<OperType>
   GetWavePortBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
+
+  // Construct the ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield
+  // (absorbing) BC, with unit coefficient, stored on the real slot. The full A2
+  // contribution at frequency ω is `i·(0.5/ω)·M_ff` (real-ω stamping) or `-0.5/λ·M_ff`
+  // (complex-λ analytic continuation); a caller scales this matrix by the appropriate
+  // complex coefficient. Returns a null pointer if the farfield BC order < 2 or it
+  // contributes no DoFs on this rank. Used by the NLEPS HYBRID frozen-ABC seed strategy.
+  template <typename OperType>
+  std::unique_ptr<OperType>
+  GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy);
+
+  // Construct the λ-independent boundary mass matrix M_b for rational impedance boundary
+  // idx, with unit coefficient (including crack scaling), stored on the real slot. The
+  // full A2 contribution at λ = iω is `g(λ)·M_b` with the scalar Robin coefficient
+  // `g(λ) = λ·D(λ)/N(λ)` from `GetRationalImpedanceOp().EvalRobinCoefficient(idx, λ)`; a
+  // caller scales this matrix by the appropriate complex coefficient. Returns a null
+  // pointer if the boundary contributes no DoFs on this rank. Used by the NLEPS HYBRID
+  // fit-or-freeze seed strategy.
+  template <typename OperType>
+  std::unique_ptr<OperType>
+  GetRationalImpedanceBoundaryMassMatrix(int idx, Operator::DiagonalPolicy diag_policy);
 
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:
@@ -249,9 +296,16 @@ public:
   // is real-valued (Mr > 0, Mi < 0, |Mr + Mi| is done on the material property coefficient,
   // not the matrix entries themselves):
   //             B = a0 K + a1 C -/+ a2 |Mr + Mi| + A2r(a3) + A2i(a3).
-  template <typename OperType, typename ScalarType>
+  // The a3 type is an explicit caller choice of the A2 stamping path, independent of the
+  // a3 value: double selects the real-ω path (driven/boundary-mode: Floquet term
+  // included, cached wave-port EVP, Re(k_n) only), std::complex<double> the complex-ω
+  // analytic continuation (eigenmode nonlinear solve: no Floquet term, uncached wave-port
+  // EVP carrying -Im(k_n)·M on the real slot even for real-valued a3). The choice cannot
+  // be inferred from Im(a3) == 0 because the HYBRID eigenmode seed needs the complex
+  // stamping at real frequencies.
+  template <typename OperType, typename ScalarType, typename A3Type>
   std::unique_ptr<OperType> GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
-                                                    ScalarType a2, double a3);
+                                                    ScalarType a2, A3Type a3);
 
   // Construct and return the discrete curl or gradient matrices.
   const Operator &GetGradMatrix() const

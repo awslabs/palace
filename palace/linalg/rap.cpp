@@ -834,6 +834,18 @@ BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
                     const std::array<const ComplexParOperator *, N> &ops,
                     bool set_essential)
 {
+  return BuildParSumOperator(
+      std::vector<std::complex<double>>(coeff.begin(), coeff.end()),
+      std::vector<const ComplexParOperator *>(ops.begin(), ops.end()), set_essential);
+}
+
+// Runtime-sized overload for a caller-determined number of terms.
+std::unique_ptr<ComplexParOperator>
+BuildParSumOperator(const std::vector<std::complex<double>> &coeff,
+                    const std::vector<const ComplexParOperator *> &ops, bool set_essential)
+{
+  MFEM_VERIFY(coeff.size() == ops.size(),
+              "BuildParSumOperator requires matching coefficient and operator counts!");
   auto it = std::find_if(ops.begin(), ops.end(), [](auto p) { return p != nullptr; });
   MFEM_VERIFY(it != ops.end(),
               "BuildParSumOperator requires at least one valid ComplexParOperator!");
@@ -876,7 +888,6 @@ BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
   auto O = std::make_unique<ComplexParOperator>(std::move(sumr), std::move(sumi), fespace);
   if (set_essential)
   {
-    // Extract essential dof pointer from first operator with one.
     auto it_ess = std::find_if(ops.begin(), ops.end(), [](auto p)
                                { return p != nullptr && p->GetEssentialTrueDofs(); });
     if (it_ess == ops.end())
@@ -884,8 +895,6 @@ BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
       return O;
     }
     const auto *ess_dofs = (*it_ess)->GetEssentialTrueDofs();
-
-    // Check other existent essential dof arrays are references.
     MFEM_VERIFY(std::all_of(ops.begin(), ops.end(),
                             [&](auto p)
                             {
@@ -898,8 +907,6 @@ BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
                                      ReferencesSameMemory(*ess_dofs, *p_ess_dofs);
                             }),
                 "If essential dofs are set, all suboperators must agree on them!");
-
-    // Use implied ordering of enumeration.
     Operator::DiagonalPolicy policy = Operator::DiagonalPolicy::DIAG_ZERO;
     for (auto p : ops)
     {
@@ -909,6 +916,16 @@ BuildParSumOperator(const std::array<std::complex<double>, N> &coeff,
     O->SetEssentialTrueDofs(*ess_dofs, policy);
   }
   return O;
+}
+
+std::unique_ptr<ComplexParOperator>
+BuildParSumOperator(const std::vector<std::complex<double>> &coeff,
+                    const std::vector<const ComplexOperator *> &ops, bool set_essential)
+{
+  std::vector<const ComplexParOperator *> par_ops(ops.size());
+  std::transform(ops.begin(), ops.end(), par_ops.begin(), [](const ComplexOperator *op)
+                 { return dynamic_cast<const ComplexParOperator *>(op); });
+  return BuildParSumOperator(coeff, par_ops, set_essential);
 }
 
 // TODO: replace with std::to_array in c++20.

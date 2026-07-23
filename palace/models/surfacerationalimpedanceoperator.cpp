@@ -44,6 +44,39 @@ int EffectiveDegree(const std::vector<double> &coeffs)
   return -1;
 }
 
+// Polynomial long division a = q·b + r with deg(r) < deg(b), real coefficients stored
+// highest-degree-first. An empty vector is the zero polynomial.
+void PolyDivMod(std::vector<double> a, std::vector<double> b, std::vector<double> &q,
+                std::vector<double> &r)
+{
+  // Strip leading zero coefficients of the divisor.
+  std::size_t lead = 0;
+  while (lead < b.size() && b[lead] == 0.0)
+  {
+    lead++;
+  }
+  b.erase(b.begin(), b.begin() + lead);
+  MFEM_VERIFY(!b.empty(), "Polynomial long division requires a nonzero divisor!");
+  const std::size_t db = b.size() - 1;
+  if (a.size() <= db)
+  {
+    q.clear();
+    r = std::move(a);
+    return;
+  }
+  q.assign(a.size() - db, 0.0);
+  for (std::size_t i = 0; i + db < a.size(); i++)
+  {
+    const double c = a[i] / b[0];
+    q[i] = c;
+    for (std::size_t j = 0; j <= db; j++)
+    {
+      a[i + j] -= c * b[j];
+    }
+  }
+  r.assign(a.end() - db, a.end());
+}
+
 }  // namespace
 
 SurfaceRationalImpedanceOperator::SurfaceRationalImpedanceOperator(
@@ -114,9 +147,10 @@ void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(
   // In boundary mode (and the wave port 2D eigenproblem) the operating frequency is fixed,
   // so Zs(iω) is simply evaluated there.
   MFEM_VERIFY(impedance.empty() || problem_type == ProblemType::DRIVEN ||
+                  problem_type == ProblemType::EIGENMODE ||
                   problem_type == ProblemType::BOUNDARYMODE,
               "Rational impedance boundaries are only available for frequency-domain "
-              "driven and boundary mode simulation types!");
+              "simulation types!");
 
   boundaries.reserve(impedance.size());
   for (const auto &data : impedance)
@@ -127,6 +161,13 @@ void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(
     auto &bdr = boundaries.emplace_back();
     bdr.num = data.num;
     bdr.den = data.den;
+    // Long division of the Robin coefficient g(s) = s·D(s)/N(s) = P(s) + R(s)/N(s): the
+    // polynomial part P is exactly representable in a polynomial eigenvalue pencil, while
+    // the strictly proper remainder R/N carries the poles of g (the zeros of Zs). Used by
+    // the nonlinear eigensolver seed to fit or freeze the pole part.
+    std::vector<double> sD = bdr.den;
+    sD.push_back(0.0);  // s·D(s)
+    PolyDivMod(std::move(sD), bdr.num, bdr.robin_quotient, bdr.robin_remainder);
     // Passivity necessary condition at infinity: a positive-real (passive) impedance has
     // numerator and denominator degrees differing by at most one.
     const int dN = EffectiveDegree(bdr.num);
@@ -180,6 +221,78 @@ mfem::Array<int> SurfaceRationalImpedanceOperator::GetAttrList() const
     attr_list.Append(bdr.attr_list);
   }
   return attr_list;
+}
+
+void SurfaceRationalImpedanceOperator::AddUnitBdrCoefficients(
+    int idx, MaterialPropertyCoefficient &fb) const
+{
+  const auto &bdr = boundaries[idx];
+  for (auto attr : bdr.attr_list)
+  {
+    fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr),
+                           1.0 / bdr.attr_scaling.at(attr));
+  }
+}
+
+std::complex<double>
+SurfaceRationalImpedanceOperator::EvalRobinCoefficient(int idx,
+                                                       std::complex<double> s) const
+{
+  const auto &bdr = boundaries[idx];
+  const std::complex<double> N = EvalPoly(bdr.num, s);
+  MFEM_VERIFY(std::abs(N) > 0.0,
+              "Rational impedance boundary has a transmission zero (Zs = 0) at the "
+              "evaluation frequency; the admittance iω/Zs is singular!");
+  return s * EvalPoly(bdr.den, s) / N;
+}
+
+std::complex<double>
+SurfaceRationalImpedanceOperator::EvalRobinRemainder(int idx, std::complex<double> s) const
+{
+  const auto &bdr = boundaries[idx];
+  const std::complex<double> N = EvalPoly(bdr.num, s);
+  MFEM_VERIFY(std::abs(N) > 0.0,
+              "Rational impedance boundary has a transmission zero (Zs = 0) at the "
+              "evaluation frequency; the admittance iω/Zs is singular!");
+  return EvalPoly(bdr.robin_remainder, s) / N;
+}
+
+int SurfaceRationalImpedanceOperator::GetRobinQuotientDegree(int idx) const
+{
+  return EffectiveDegree(boundaries[idx].robin_quotient);
+}
+
+void SurfaceRationalImpedanceOperator::AddExtraSystemBdrCoefficients(
+    std::complex<double> omega, MaterialPropertyCoefficient &fbr,
+    MaterialPropertyCoefficient &fbi)
+{
+  // Complex-ω overload: the rational Robin coefficient s·D(s)/N(s) with s = iω continues
+  // analytically to complex ω with no change to the evaluation (rational in s). The
+  // passivity check is a real-ω-axis criterion and is skipped off-axis; the DC-limit
+  // branch is likewise only reachable through the real-ω overload.
+  if (omega.imag() == 0.0)
+  {
+    AddExtraSystemBdrCoefficients(omega.real(), fbr, fbi);
+    return;
+  }
+  const std::complex<double> s = std::complex<double>(0.0, 1.0) * omega;  // s = iω
+  for (auto &bdr : boundaries)
+  {
+    const std::complex<double> N = EvalPoly(bdr.num, s);
+    const std::complex<double> D = EvalPoly(bdr.den, s);
+    MFEM_VERIFY(std::abs(N) > 0.0,
+                "Rational impedance boundary has a transmission zero (Zs = 0) at the "
+                "evaluation frequency; the admittance iω/Zs is singular!");
+    // Surface admittance Ys = 1/Zs = D/N (see the real-ω overload for the rationale).
+    const std::complex<double> Y = D / N;
+    for (auto attr : bdr.attr_list)
+    {
+      const double sc = bdr.attr_scaling.at(attr);
+      const std::complex<double> coef = s * Y / sc;  // iω·Ys per square
+      fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.real());
+      fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(attr), coef.imag());
+    }
+  }
 }
 
 void SurfaceRationalImpedanceOperator::AddExtraSystemBdrCoefficients(

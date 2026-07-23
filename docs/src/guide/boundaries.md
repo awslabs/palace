@@ -54,8 +54,10 @@ highest to lowest degree (the roots of ``N`` and ``D`` are the zeros and poles o
 This generalizes the parallel-RLC [impedance boundary](#Impedance-boundary) to any passive
 lumped-network response, for example a fitted rational approximation of a measured or
 synthesized surface impedance. Warnings are emitted for inputs that cannot correspond to a
-passive (positive-real) impedance. It is available only for frequency domain driven
-and boundary mode simulations.
+passive (positive-real) impedance. It is available only for frequency domain driven,
+eigenmode, and boundary mode simulations. In eigenmode simulations, when the resulting
+contribution to the system matrix is not polynomial in frequency, it is handled by the
+nonlinear eigenvalue solver.
 
 ## Absorbing (scattering) boundary
 
