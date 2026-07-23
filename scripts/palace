@@ -117,14 +117,15 @@ if ! echo $PALACE | grep -q $ARCH; then
     exit 1
 fi
 
+# Version only queries the binary, so skip the MPI launcher which may be absent
+# on the machine (e.g. a login node) where the version is being checked.
+if [[ -n "$VERSION" ]]; then
+    exec $PALACE $VERSION
+fi
+
 # Configure --dry-run
 if [[ -n "$DRY_RUN" ]]; then
     PALACE="$PALACE $DRY_RUN"
-fi
-
-# Configure --version
-if [[ -n "$VERSION" ]]; then
-    PALACE="$PALACE $VERSION"
 fi
 
 # Configure OpenMP threads
