@@ -1566,6 +1566,7 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
     {
       return;
     }
+    BlockTimer response_timer(Timer::POSTPRO_RESPONSE);
 
     MaxwellSurfaceResponseMeasurement result;
     result.raw_normalization_energy = measurement_cache.domain_E_field_energy_all +

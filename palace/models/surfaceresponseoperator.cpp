@@ -32,6 +32,7 @@
 #include "utils/iodata.hpp"
 #include "utils/metaledge.hpp"
 #include "utils/tablecsv.hpp"
+#include "utils/timer.hpp"
 #include "utils/units.hpp"
 
 namespace palace
@@ -3023,6 +3024,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
   : Operator(laplace_op.GetH1Space().GetTrueVSize()), fespace(laplace_op.GetH1Space()),
     basis_size(0)
 {
+  BlockTimer setup_timer(Timer::CONSTRUCT_RESPONSE);
   const auto &request = iodata.solver.electrostatic.response_correction;
   MFEM_VERIFY(request, "Missing electrostatic surface response correction configuration!");
   const int dimension = fespace.Dimension();
@@ -3035,6 +3037,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
   const ResponseCorrectionData *config = &*request;
   if (request->IsAutomatic())
   {
+    BlockTimer geometry_timer(Timer::CONSTRUCT_RESPONSE_GEOMETRY);
     automatic_config = BuildAutomaticResponseData(iodata, laplace_op, *request);
     config = &*automatic_config;
   }
@@ -3204,7 +3207,10 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
     }
   }
 
-  ConfigurePointCommunication(xyz, dimension);
+  {
+    BlockTimer point_timer(Timer::CONSTRUCT_RESPONSE_POINTS);
+    ConfigurePointCommunication(xyz, dimension);
+  }
 
   Mpi::Print("\nConfigured surface response correction:\n"
              " Coupon models: {:d}\n"
@@ -3221,6 +3227,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
   : Operator(space_op.GetNDSpace().GetTrueVSize()), fespace(space_op.GetNDSpace()),
     basis_size(0)
 {
+  BlockTimer setup_timer(Timer::CONSTRUCT_RESPONSE);
   const auto &request = iodata.solver.surface_response_correction;
   MFEM_VERIFY(request, "Missing Maxwell surface response correction configuration!");
   MFEM_VERIFY(request->IsAutomatic(),
@@ -3233,8 +3240,13 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
 #if defined(MFEM_USE_GSLIB)
   maxwell = true;
   AutomaticResponseDiagnostics diagnostics;
-  const auto config = BuildAutomaticResponseData3D(
-      iodata, fespace.GetParMesh(), space_op.GetMaterialOp(), *request, true, &diagnostics);
+  ResponseCorrectionData config;
+  {
+    BlockTimer geometry_timer(Timer::CONSTRUCT_RESPONSE_GEOMETRY);
+    config =
+        BuildAutomaticResponseData3D(iodata, fespace.GetParMesh(), space_op.GetMaterialOp(),
+                                     *request, true, &diagnostics);
+  }
   matching_radius = diagnostics.matching_radius;
   minimum_wave_speed = diagnostics.minimum_wave_speed;
   matched_length_fraction = diagnostics.selected_length > 0.0
@@ -3464,7 +3476,10 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
       xyz(d * pending_points.size() + i) = pending_points[i].coordinate[d];
     }
   }
-  ConfigurePointCommunication(xyz, 3, &weighted_tangents);
+  {
+    BlockTimer point_timer(Timer::CONSTRUCT_RESPONSE_POINTS);
+    ConfigurePointCommunication(xyz, 3, &weighted_tangents);
+  }
   dbc_tdof_list = space_op.GetNDDbcTDofLists().back();
   int global_line_count = static_cast<int>(maxwell_lines.size());
   Mpi::GlobalSum(1, &global_line_count, fespace.GetComm());
@@ -3816,67 +3831,79 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
                    fespace.GetComm());
   }
 
-  points.resize(receive_total);
+  point_dof_offsets.resize(receive_total + 1);
+  point_dofs.clear();
+  point_weights.clear();
+  mfem::Array<int> element_dofs;
+  mfem::DofTransformation dof_transform;
+  mfem::DenseMatrix vector_shape;
+  Vector shape;
   for (int i = 0; i < receive_total; i++)
   {
-    auto &point = points[i];
-    point.element = receive_elements[i];
+    mfem::IntegrationPoint point;
     if (dimension == 2)
     {
-      point.point.Set2(receive_references[2 * i], receive_references[2 * i + 1]);
+      point.Set2(receive_references[2 * i], receive_references[2 * i + 1]);
     }
     else
     {
-      point.point.Set3(receive_references[3 * i], receive_references[3 * i + 1],
-                       receive_references[3 * i + 2]);
+      point.Set3(receive_references[3 * i], receive_references[3 * i + 1],
+                 receive_references[3 * i + 2]);
     }
+    const int element = receive_elements[i];
+    const auto &fe = *fespace.Get().GetFE(element);
     if (weighted_tangents)
-    {
-      std::copy_n(receive_tangents.data() + 3 * i, 3, point.weighted_tangent.begin());
-    }
-  }
-}
-
-void SurfaceResponseOperator::EvaluatePointValues(const Vector &x, Vector &values,
-                                                  bool vector_field) const
-{
-  local_x.SetSize(fespace.GetVSize());
-  fespace.GetProlongationMatrix()->Mult(x, local_x);
-  local_x.HostRead();
-
-  std::vector<double> owned_values(points.size(), 0.0);
-  for (std::size_t i = 0; i < points.size(); i++)
-  {
-    const auto &evaluation = points[i];
-    const auto &fe = *fespace.Get().GetFE(evaluation.element);
-    if (vector_field)
     {
       MFEM_ASSERT(fe.GetRangeType() == mfem::FiniteElement::VECTOR,
                   "Maxwell contour trace requires a vector finite element!");
-      auto &transformation = *fespace.Get().GetElementTransformation(evaluation.element);
-      transformation.SetIntPoint(&evaluation.point);
+      auto &transformation = *fespace.Get().GetElementTransformation(element);
+      transformation.SetIntPoint(&point);
       vector_shape.SetSize(fe.GetDof(), fespace.SpaceDimension());
       fe.CalcVShape(transformation, vector_shape);
-      fespace.Get().GetElementVDofs(evaluation.element, element_dofs, dof_transform);
-      element_values.SetSize(element_dofs.Size());
-      local_x.GetSubVector(element_dofs, element_values);
-      dof_transform.InvTransformPrimal(element_values);
-      vector_value.SetSize(fespace.SpaceDimension());
-      vector_shape.MultTranspose(element_values, vector_value);
-      for (int d = 0; d < fespace.SpaceDimension(); d++)
+      shape.SetSize(fe.GetDof());
+      shape = 0.0;
+      for (int j = 0; j < fe.GetDof(); j++)
       {
-        owned_values[i] +=
-            vector_value[d] * evaluation.weighted_tangent[static_cast<std::size_t>(d)];
+        for (int d = 0; d < fespace.SpaceDimension(); d++)
+        {
+          shape[j] += vector_shape(j, d) * receive_tangents[3 * i + d];
+        }
       }
+      fespace.Get().GetElementVDofs(element, element_dofs, dof_transform);
+      dof_transform.TransformDual(shape);
     }
     else
     {
       shape.SetSize(fe.GetDof());
-      fe.CalcShape(evaluation.point, shape);
-      fespace.Get().GetElementDofs(evaluation.element, element_dofs);
-      element_values.SetSize(element_dofs.Size());
-      local_x.GetSubVector(element_dofs, element_values);
-      owned_values[i] = shape * element_values;
+      fe.CalcShape(point, shape);
+      fespace.Get().GetElementDofs(element, element_dofs);
+    }
+
+    MFEM_ASSERT(element_dofs.Size() == shape.Size(),
+                "Invalid surface-response point interpolation stencil!");
+    point_dof_offsets[i] = static_cast<int>(point_dofs.size());
+    for (int j = 0; j < element_dofs.Size(); j++)
+    {
+      const int signed_dof = element_dofs[j];
+      point_dofs.push_back(signed_dof >= 0 ? signed_dof : -1 - signed_dof);
+      point_weights.push_back((signed_dof >= 0 ? 1.0 : -1.0) * shape[j]);
+    }
+  }
+  point_dof_offsets[receive_total] = static_cast<int>(point_dofs.size());
+}
+
+void SurfaceResponseOperator::EvaluatePointValues(const Vector &x, Vector &values) const
+{
+  local_x.SetSize(fespace.GetVSize());
+  fespace.GetProlongationMatrix()->Mult(x, local_x);
+  const auto *local_data = local_x.HostRead();
+
+  std::vector<double> owned_values(point_dof_offsets.size() - 1, 0.0);
+  for (std::size_t i = 0; i + 1 < point_dof_offsets.size(); i++)
+  {
+    for (int j = point_dof_offsets[i]; j < point_dof_offsets[i + 1]; j++)
+    {
+      owned_values[i] += point_weights[j] * local_data[point_dofs[j]];
     }
   }
 
@@ -3892,8 +3919,7 @@ void SurfaceResponseOperator::EvaluatePointValues(const Vector &x, Vector &value
   }
 }
 
-void SurfaceResponseOperator::AddPointValuesTranspose(const Vector &values, Vector &y,
-                                                      bool vector_field) const
+void SurfaceResponseOperator::AddPointValuesTranspose(const Vector &values, Vector &y) const
 {
   MFEM_ASSERT(values.Size() == point_query_count,
               "Invalid surface-response point-functional vector size!");
@@ -3903,49 +3929,24 @@ void SurfaceResponseOperator::AddPointValuesTranspose(const Vector &values, Vect
   {
     packed_values[i] = value_data[point_send_indices[i]];
   }
-  std::vector<double> owned_values(points.size());
+  std::vector<double> owned_values(point_dof_offsets.size() - 1);
   Mpi::Alltoallv(packed_values.data(), point_send_counts.data(), point_send_offsets.data(),
                  owned_values.data(), point_receive_counts.data(),
                  point_receive_offsets.data(), fespace.GetComm());
 
   local_y.SetSize(fespace.GetVSize());
   local_y = 0.0;
-  for (std::size_t i = 0; i < points.size(); i++)
+  auto *local_data = local_y.HostWrite();
+  for (std::size_t i = 0; i + 1 < point_dof_offsets.size(); i++)
   {
     const double value = owned_values[i];
     if (value == 0.0)
     {
       continue;
     }
-    const auto &evaluation = points[i];
-    const auto &fe = *fespace.Get().GetFE(evaluation.element);
-    if (vector_field)
+    for (int j = point_dof_offsets[i]; j < point_dof_offsets[i + 1]; j++)
     {
-      auto &transformation = *fespace.Get().GetElementTransformation(evaluation.element);
-      transformation.SetIntPoint(&evaluation.point);
-      vector_shape.SetSize(fe.GetDof(), fespace.SpaceDimension());
-      fe.CalcVShape(transformation, vector_shape);
-      shape.SetSize(fe.GetDof());
-      shape = 0.0;
-      for (int j = 0; j < fe.GetDof(); j++)
-      {
-        for (int d = 0; d < fespace.SpaceDimension(); d++)
-        {
-          shape[j] += value * vector_shape(j, d) *
-                      evaluation.weighted_tangent[static_cast<std::size_t>(d)];
-        }
-      }
-      fespace.Get().GetElementVDofs(evaluation.element, element_dofs, dof_transform);
-      dof_transform.TransformDual(shape);
-      local_y.AddElementVector(element_dofs, shape);
-    }
-    else
-    {
-      shape.SetSize(fe.GetDof());
-      fe.CalcShape(evaluation.point, shape);
-      shape *= value;
-      fespace.Get().GetElementDofs(evaluation.element, element_dofs);
-      local_y.AddElementVector(element_dofs, shape);
+      local_data[point_dofs[j]] += value * point_weights[j];
     }
   }
   y.SetSize(fespace.GetTrueVSize());
@@ -3954,13 +3955,13 @@ void SurfaceResponseOperator::AddPointValuesTranspose(const Vector &values, Vect
 
 void SurfaceResponseOperator::EvaluatePoints(const Vector &x, Vector &values) const
 {
-  EvaluatePointValues(x, values, false);
+  EvaluatePointValues(x, values);
 }
 
 void SurfaceResponseOperator::EvaluateMaxwellLines(const Vector &x, Vector &values) const
 {
   Vector point_values;
-  EvaluatePointValues(x, point_values, true);
+  EvaluatePointValues(x, point_values);
   const auto *point_data = point_values.HostRead();
   values.SetSize(static_cast<int>(maxwell_lines.size()));
   values = 0.0;
@@ -3992,7 +3993,7 @@ void SurfaceResponseOperator::AddMaxwellLinesTranspose(const Vector &values,
       point_data[line.point_offset + q] = value_data[line_index];
     }
   }
-  AddPointValuesTranspose(point_values, y, true);
+  AddPointValuesTranspose(point_values, y);
 }
 
 void SurfaceResponseOperator::BuildMaxwellTrace(const Vector &line_values,
@@ -4090,11 +4091,12 @@ void SurfaceResponseOperator::ApplyTraceTranspose(const Vector &values, Vector &
     }
     correction[patch.point_offset + model.basis_size] = reference;
   }
-  AddPointValuesTranspose(correction, y, false);
+  AddPointValuesTranspose(correction, y);
 }
 
 void SurfaceResponseOperator::ApplyUneliminated(const Vector &x, Vector &y) const
 {
+  BlockTimer timer(Timer::RESPONSE_APPLY);
   ApplyTrace(x, trace);
   response.SetSize(trace.Size());
   for (const auto &patch : patches)
@@ -4190,7 +4192,8 @@ SurfaceResponseOperator::GetFabricatedSurfaceEnergy(const Vector &x) const
 }
 
 SurfaceResponseOperator::ElectrostaticResponse
-SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x) const
+SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
+                                                  bool include_fixed_flux) const
 {
   ApplyTrace(x, trace);
   ElectrostaticResponse result;
@@ -4201,43 +4204,57 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x) const
     {
       (void)matrix;
       result.fabricated_surface_energy.try_emplace(interface, 0.0);
-      result.fabricated_surface_energy_fixed_flux.try_emplace(interface, 0.0);
+      if (include_fixed_flux)
+      {
+        result.fabricated_surface_energy_fixed_flux.try_emplace(interface, 0.0);
+      }
     }
   }
   for (const auto &patch : patches)
   {
     const auto &model = models[patch.model];
     Vector patch_trace(trace.GetData() + patch.trace_offset, model.basis_size);
-    fixed_flux.SetSize(model.basis_size);
-    model.fixed_flux_transform.Mult(patch_trace, fixed_flux);
     result.domain_correction +=
         0.5 * patch.weight * QuadraticForm(model.domain_defect, patch_trace, response);
-    result.domain_correction_fixed_flux +=
-        0.5 * patch.weight *
-        (QuadraticForm(model.fabricated_domain, fixed_flux, response) -
-         QuadraticForm(model.thin_domain, patch_trace, response));
+    if (include_fixed_flux)
+    {
+      fixed_flux.SetSize(model.basis_size);
+      model.fixed_flux_transform.Mult(patch_trace, fixed_flux);
+      result.domain_correction_fixed_flux +=
+          0.5 * patch.weight *
+          (QuadraticForm(model.fabricated_domain, fixed_flux, response) -
+           QuadraticForm(model.thin_domain, patch_trace, response));
+    }
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
       result.fabricated_surface_energy[interface] +=
           patch.weight * QuadraticForm(matrix, patch_trace, response);
-      result.fabricated_surface_energy_fixed_flux[interface] +=
-          patch.weight * QuadraticForm(matrix, fixed_flux, response);
+      if (include_fixed_flux)
+      {
+        result.fabricated_surface_energy_fixed_flux[interface] +=
+            patch.weight * QuadraticForm(matrix, fixed_flux, response);
+      }
     }
   }
-  double domain_corrections[] = {result.domain_correction,
-                                 result.domain_correction_fixed_flux};
-  Mpi::GlobalSum(2, domain_corrections, fespace.GetComm());
-  result.domain_correction = domain_corrections[0];
-  result.domain_correction_fixed_flux = domain_corrections[1];
+  Mpi::GlobalSum(1, &result.domain_correction, fespace.GetComm());
+  if (include_fixed_flux)
+  {
+    Mpi::GlobalSum(1, &result.domain_correction_fixed_flux, fespace.GetComm());
+  }
   for (auto &[interface, fixed_trace] : result.fabricated_surface_energy)
   {
-    auto &fixed_flux_energy = result.fabricated_surface_energy_fixed_flux.at(interface);
-    double energies[] = {fixed_trace, fixed_flux_energy};
-    Mpi::GlobalSum(2, energies, fespace.GetComm());
-    fixed_trace = energies[0];
-    fixed_flux_energy = energies[1];
+    Mpi::GlobalSum(1, &fixed_trace, fespace.GetComm());
+    if (include_fixed_flux)
+    {
+      auto &fixed_flux_energy = result.fabricated_surface_energy_fixed_flux.at(interface);
+      Mpi::GlobalSum(1, &fixed_flux_energy, fespace.GetComm());
+    }
   }
 
+  if (!include_fixed_flux)
+  {
+    return result;
+  }
   for (const auto &[interface, fixed_trace] : result.fabricated_surface_energy)
   {
     const auto fixed_flux_energy =

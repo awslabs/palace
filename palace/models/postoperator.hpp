@@ -581,6 +581,30 @@ public:
     std::map<int, Interface> interfaces;
   };
 
+  // Reuse the raw electrostatic energies already measured by MeasureAndPrintAll.
+  template <ProblemType U = solver_t>
+  auto GetCachedElectrostaticEnergies() const
+      -> std::enable_if_t<U == ProblemType::ELECTROSTATIC, ElectrostaticEnergyData>
+  {
+    ElectrostaticEnergyData energies;
+    energies.domain = measurement_cache.domain_E_field_energy_all;
+    for (const auto &interface : measurement_cache.interface_eps_i)
+    {
+      energies.interfaces.emplace(interface.idx,
+                                  typename ElectrostaticEnergyData::Interface{
+                                      interface.energy, interface.tandelta, {}});
+    }
+    for (const auto &edge : measurement_cache.interface_edge_i)
+    {
+      auto interface = energies.interfaces.find(edge.idx);
+      MFEM_VERIFY(interface != energies.interfaces.end(),
+                  "Missing cached electrostatic interface energy!");
+      interface->second.edge_energies.push_back(SurfacePostOperator::InterfaceEdgeEnergy{
+          edge.distance, edge.energy_outside, edge.energy_annulus});
+    }
+    return energies;
+  }
+
   // Evaluate electrostatic domain and interface energies without producing ordinary
   // measurement output. This is used to assemble fabrication-corrected observables while
   // preserving the historical raw thin-metal CSV output.

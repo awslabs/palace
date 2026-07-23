@@ -36,13 +36,6 @@ class SpaceOperator;
 class SurfaceResponseOperator : public Operator
 {
 private:
-  struct PointEvaluation
-  {
-    int element = -1;
-    mfem::IntegrationPoint point;
-    std::array<double, 3> weighted_tangent{};
-  };
-
   struct MaxwellLine
   {
     int point_offset = 0;
@@ -87,13 +80,15 @@ private:
   int basis_size;
   int global_basis_size = 0;
   int global_patch_count = 0;
-  std::vector<PointEvaluation> points;
   int point_query_count = 0;
   std::vector<int> point_send_counts;
   std::vector<int> point_send_offsets;
   std::vector<int> point_receive_counts;
   std::vector<int> point_receive_offsets;
   std::vector<int> point_send_indices;
+  std::vector<int> point_dof_offsets;
+  std::vector<int> point_dofs;
+  std::vector<double> point_weights;
   bool maxwell = false;
 
   // Maxwell postprocessing uses local coupon contour line integrals instead of H1 point
@@ -114,16 +109,12 @@ private:
   double maximum_library_distance = 0.0;
 
   mutable Vector x_free, local_x, local_y, trace, response, correction;
-  mutable mfem::Array<int> element_dofs;
-  mutable mfem::DofTransformation dof_transform;
-  mutable mfem::DenseMatrix vector_shape;
-  mutable Vector shape, element_values, vector_value;
 
   void ConfigurePointCommunication(
       const mfem::Vector &xyz, int dimension,
       const std::vector<std::array<double, 3>> *weighted_tangents = nullptr);
-  void EvaluatePointValues(const Vector &x, Vector &values, bool vector_field) const;
-  void AddPointValuesTranspose(const Vector &values, Vector &y, bool vector_field) const;
+  void EvaluatePointValues(const Vector &x, Vector &values) const;
+  void AddPointValuesTranspose(const Vector &values, Vector &y) const;
   void EvaluatePoints(const Vector &x, Vector &values) const;
   void EvaluateMaxwellLines(const Vector &x, Vector &values) const;
   void AddMaxwellLinesTranspose(const Vector &values, Vector &y) const;
@@ -187,7 +178,8 @@ public:
   // Evaluate fixed-trace and fixed-flux coupon responses on an unchanged electrostatic
   // thin-metal potential. This is the electrostatic analogue of the postprocessing-only
   // Maxwell correction.
-  ElectrostaticResponse GetElectrostaticResponse(const Vector &x) const;
+  ElectrostaticResponse GetElectrostaticResponse(const Vector &x,
+                                                 bool include_fixed_flux = true) const;
 
   // Evaluate a postprocessing-only response for a complex Nedelec Maxwell field. Coupon
   // voltages are reconstructed from transverse contour integrals and applied through

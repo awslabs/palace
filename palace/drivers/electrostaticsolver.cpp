@@ -134,12 +134,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     EnergyData raw_energies;
     if (response_correction)
     {
-      raw_energies = post_op.GetElectrostaticEnergies(
-          V[step], E, post_op.NeedsRecoveredElectricFlux() ? &D : nullptr);
+      raw_energies = post_op.GetCachedElectrostaticEnergies();
     }
 
     if (response_correction)
     {
+      BlockTimer response_timer(Timer::POSTPRO_RESPONSE);
       const auto response = response_correction->GetElectrostaticResponse(V[step]);
       auto ApplyResponse = [&](EnergyData energies, double domain_correction,
                                const std::map<int, double> &fabricated_surface)
@@ -200,7 +200,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       auto corrected_energies =
           post_op.GetElectrostaticEnergies(V_corrected[step], E_corrected, D_corrected_ptr);
       const auto corrected_response =
-          response_correction->GetElectrostaticResponse(V_corrected[step]);
+          response_correction->GetElectrostaticResponse(V_corrected[step], false);
       corrected_energies =
           ApplyResponse(std::move(corrected_energies), corrected_response.domain_correction,
                         corrected_response.fabricated_surface_energy);

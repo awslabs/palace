@@ -29,28 +29,33 @@ public:
   enum Index
   {
     INIT = 0,
-    MESH_PREPROCESS,       // Preprocessing mesh
-    CONSTRUCT,             // Space and operator construction
-    WAVE_PORT,             // Wave port solver
-    KSP,                   // Linear solver
-    KSP_SETUP,             // Linear solver setup
-    KSP_PRECONDITIONER,    // Linear solver preconditioner
-    KSP_COARSE_SOLVE,      // Linear solver coarse-level solve
-    TS,                    // Time integrator
-    EPS,                   // Eigenvalue problem solver
-    DIV_FREE,              // Divergence-free projection
-    CONSTRUCT_PROM,        // Adaptive frequency sweep offline
-    SOLVE_PROM,            // Adaptive frequency sweep online
-    ESTIMATION,            // Error estimation
-    CONSTRUCT_ESTIMATOR,   // Construction of estimator
-    SOLVE_ESTIMATOR,       // Evaluation of estimator
-    ADAPTATION,            // Adaptation
-    REBALANCE,             // Rebalancing
-    POSTPRO,               // Solution postprocessing
-    POSTPRO_FARFIELD,      // Computing far-fields
-    POSTPRO_PARAVIEW,      // Paraview calculations and I/O
-    POSTPRO_GRIDFUNCTION,  // MFEM gridfunction calculations and I/O
-    IO,                    // Disk I/O
+    MESH_PREPROCESS,              // Preprocessing mesh
+    CONSTRUCT,                    // Space and operator construction
+    CONSTRUCT_RESPONSE,           // Surface response setup
+    CONSTRUCT_RESPONSE_GEOMETRY,  // Surface response geometry and library matching
+    CONSTRUCT_RESPONSE_POINTS,    // Surface response point interpolation stencils
+    WAVE_PORT,                    // Wave port solver
+    KSP,                          // Linear solver
+    KSP_SETUP,                    // Linear solver setup
+    KSP_PRECONDITIONER,           // Linear solver preconditioner
+    KSP_COARSE_SOLVE,             // Linear solver coarse-level solve
+    RESPONSE_APPLY,               // Surface response operator application
+    TS,                           // Time integrator
+    EPS,                          // Eigenvalue problem solver
+    DIV_FREE,                     // Divergence-free projection
+    CONSTRUCT_PROM,               // Adaptive frequency sweep offline
+    SOLVE_PROM,                   // Adaptive frequency sweep online
+    ESTIMATION,                   // Error estimation
+    CONSTRUCT_ESTIMATOR,          // Construction of estimator
+    SOLVE_ESTIMATOR,              // Evaluation of estimator
+    ADAPTATION,                   // Adaptation
+    REBALANCE,                    // Rebalancing
+    POSTPRO,                      // Solution postprocessing
+    POSTPRO_FARFIELD,             // Computing far-fields
+    POSTPRO_PARAVIEW,             // Paraview calculations and I/O
+    POSTPRO_GRIDFUNCTION,         // MFEM gridfunction calculations and I/O
+    POSTPRO_RESPONSE,             // Surface response postprocessing
+    IO,                           // Disk I/O
     TOTAL,
     NUM_TIMINGS
   };
@@ -60,11 +65,15 @@ public:
       "Initialization",
       "  Mesh Preprocessing",
       "Operator Construction",
+      "  Response Setup",
+      "    Geometry Matching",
+      "    Point Stencils",
       "  Wave Ports",
       "Linear Solve",
       "  Setup",
       "  Preconditioner",
       "  Coarse Solve",
+      "  Response Application",
       "Time Stepping",
       "Eigenvalue Solve",
       "Div.-Free Projection",
@@ -79,6 +88,7 @@ public:
       "  Far Fields",
       "  Paraview",
       "  Grid function",
+      "  Surface Response",
       "Disk IO",
       "Total"};
   // clang-format on
