@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -40,6 +41,7 @@ static const char *GetPalaceGitTag()
 
 static void PrintPalaceVersionInfo(MPI_Comm comm)
 {
+  Mpi::Print(comm, "Palace version: {}\n", PALACE_VERSION);
   if (std::strcmp(GetPalaceGitTag(), "UNKNOWN"))
   {
     Mpi::Print(comm, "Git commit: {}\n", GetPalaceGitTag());
