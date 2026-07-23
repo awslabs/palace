@@ -5,6 +5,7 @@
 #define PALACE_UTILS_OUTPUTDIR_HPP
 
 #include <exception>
+#include <fstream>
 #include <string>
 #include <system_error>
 #include <fmt/format.h>
@@ -168,7 +169,30 @@ inline void MakeOutputFolder(IoData &iodata, MPI_Comm &comm)
   }
 
   // Create the output directory (node-local aware).
-  EnsureDirectory(fs::path(output_str), comm);
+  auto output_path = fs::path(output_str);
+  EnsureDirectory(output_path, comm);
+
+  // Fail fast if the output directory is not writable, with a clear message at setup rather
+  // than an obscure failure deep in the solve. Checked on every node's filesystem, since a
+  // node-local (non-shared) filesystem may be writable on one node but not another. Each
+  // node root writes and removes a rank-unique probe file so concurrent checks on a shared
+  // filesystem do not race on the same path.
+  ApplyOnEachNodeFilesystem(
+      comm, fmt::format("Verifying output directory \"{}\" is writable", output_str),
+      [&]()
+      {
+        auto tmp = output_path / fmt::format("tmp_test_file_{}.txt", Mpi::Rank(comm));
+        {
+          std::ofstream f(tmp);
+          f << "Test Print";
+        }
+        if (!fs::is_regular_file(tmp))
+        {
+          throw fs::filesystem_error("Could not create test file in output folder", tmp,
+                                     std::make_error_code(std::errc::permission_denied));
+        }
+        fs::remove(tmp);
+      });
 }
 
 }  // namespace palace
