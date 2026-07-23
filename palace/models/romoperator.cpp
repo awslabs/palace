@@ -142,6 +142,37 @@ ToPoleResidueVectors(const utils::AAAPoleResidue &pr)
   return {std::move(poles), std::move(residues)};
 }
 
+// Fold the centered polynomial quotient from an AAA conversion into the quadratic
+// synthesis pencil. Higher-degree quotients cannot be represented by K + iωC − ω²M and
+// must not be silently discarded.
+inline void FoldAAAPolynomialIntoQuadratic(const utils::AAAPoleResidue &pr,
+                                           std::complex<double> &a0,
+                                           std::complex<double> &a1,
+                                           std::complex<double> &a2)
+{
+  MFEM_VERIFY(pr.polynomial.size() <= 3,
+              "AAA polynomial quotient has degree "
+                  << pr.polynomial.size() - 1
+                  << ", which cannot be represented by a quadratic synthesis pencil!");
+  MFEM_VERIFY(pr.polynomial_scale > 0.0,
+              "AAA polynomial quotient must have a positive affine scale!");
+
+  const std::complex<double> q0 = pr.polynomial.size() > 0 ? pr.polynomial(0) : 0.0;
+  const std::complex<double> q1 = pr.polynomial.size() > 1 ? pr.polynomial(1) : 0.0;
+  const std::complex<double> q2 = pr.polynomial.size() > 2 ? pr.polynomial(2) : 0.0;
+  const double inverse_scale = 1.0 / pr.polynomial_scale;
+
+  // AAA stores q in x = (ω-ωc)/s. Equivalently, x = ω/s-ω̂c with the nondimensional
+  // center ω̂c = ωc/s. Compose q0+q1*x+q2*x² analytically into powers of the physical
+  // omega used by the existing synthesis pencil; do not first expand it into an
+  // ill-conditioned temporary vector of physical-omega monomial coefficients.
+  const std::complex<double> nondimensional_center = pr.polynomial_center * inverse_scale;
+  a0 +=
+      q0 - q1 * nondimensional_center + q2 * nondimensional_center * nondimensional_center;
+  a1 += (q1 - 2.0 * q2 * nondimensional_center) * inverse_scale;
+  a2 += q2 * inverse_scale * inverse_scale;
+}
+
 // Evaluate the complex synthesis model α₀ + α₁ω + α₂ω² + Σₖ rₖ/(ω − pₖ).
 inline std::complex<double> EvaluatePolyPlusPoles(std::complex<double> a0,
                                                   std::complex<double> a1,
@@ -1381,10 +1412,14 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
   auto pr = FitResidualPoles(fit_omegas, F_aaa, waveport_synthesis_tol, max_abs_truth,
                              waveport_synthesis_order_max);
 
-  // Fold the asymptote d into α₀ — equivalent and avoids carrying a separate constant
-  // offset through the augmented block.
-  const double aaa_d = pr.d.real();
-  fit.alpha0 += aaa_d;
+  // Fold any polynomial quotient from the barycentric-to-pole conversion into the base
+  // quadratic. Real wave-port samples produce a real quotient up to roundoff.
+  std::complex<double> alpha0 = fit.alpha0, alpha1 = fit.alpha1, alpha2 = fit.alpha2;
+  FoldAAAPolynomialIntoQuadratic(pr, alpha0, alpha1, alpha2);
+  fit.alpha0 = alpha0.real();
+  fit.alpha1 = alpha1.real();
+  fit.alpha2 = alpha2.real();
+  const double aaa_q0 = pr.polynomial.size() > 0 ? pr.polynomial(0).real() : 0.0;
 
   auto [poles, residues] = ToPoleResidueVectors(pr);
 
@@ -1413,11 +1448,11 @@ RomOperator::FitWavePortDispersion(int port_idx, const Eigen::MatrixXcd &Mp_r) c
   const std::size_t aux_per_port = n_poles * rank_used;
   Mpi::Print(" Wave port {:d}: augmented synthesis residual {:.3e} → {:.3e} "
              "(tol {:.3e}, {:d} pole{} × rank-{:d} mass = +{:d} aux state{}, "
-             "α₀={:.3e}, α₁={:.3e}, α₂={:.3e}, d={:.3e})\n",
+             "α₀={:.3e}, α₁={:.3e}, α₂={:.3e}, q₀={:.3e})\n",
              port_idx, fit.rel_err_polynomial, fit.rel_err_augmented,
              waveport_synthesis_tol, n_poles, n_poles == 1 ? "" : "s", rank_used,
              aux_per_port, aux_per_port == 1 ? "" : "s", fit.alpha0, fit.alpha1, fit.alpha2,
-             aaa_d);
+             aaa_q0);
   if (fit.rel_err_augmented > waveport_synthesis_tol)
   {
     Mpi::Warning("Wave port {:d}: augmented synthesis residual {:.3e} exceeds "
@@ -1595,7 +1630,7 @@ RomOperator::WavePortDispersionFit RomOperator::FitScalarDispersion(
   }
   auto pr = FitResidualPoles(fit_omegas, F_aaa, waveport_synthesis_tol, max_abs_truth,
                              waveport_synthesis_order_max);
-  fit.alpha0c += pr.d;  // fold AAA asymptote into the constant term
+  FoldAAAPolynomialIntoQuadratic(pr, fit.alpha0c, fit.alpha1c, fit.alpha2c);
 
   max_rel = 0.0;
   for (int i = 0; i < n_dense; i++)
@@ -1680,7 +1715,9 @@ RomOperator::FitRationalImpedanceDispersion(const std::string &label,
   }
   auto pr = FitResidualPoles(fit_omegas, F_aaa, waveport_synthesis_tol, max_abs_truth,
                              waveport_synthesis_order_max);
-  fit.alpha0c += pr.d;  // strictly proper remainder: d ≈ 0, but fold in any AAA leftover
+  // The exact remainder is strictly proper, but preserve any small polynomial quotient
+  // introduced by the numerical AAA conversion instead of silently dropping it.
+  FoldAAAPolynomialIntoQuadratic(pr, fit.alpha0c, fit.alpha1c, fit.alpha2c);
 
   // Dense-grid residual of the full reconstruction (polynomial part + pole-residue).
   double max_rel = 0.0;
