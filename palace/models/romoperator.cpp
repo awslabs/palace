@@ -1715,16 +1715,19 @@ RomOperator::AugmentedPencil RomOperator::BuildAugmentedPencil(
     std::vector<std::string> &aux_labels)
 {
   // Per pole–residue (pₖ, rₖ) at port p, with projected mass M_proj = Σⱼ σⱼ uⱼuⱼᵀ:
-  // For each kept singular vector j, allocate one aux state sₖⱼ. The augmented pencil
-  //   ⎡ K  K_va ⎤   ⎡ 0  0  ⎤    ⎡ 0  0 ⎤
-  //   ⎢       ⎥+iω⎢      ⎥−ω²⎢     ⎥
-  //   ⎣ K_avᵀ K_aa⎦   ⎣ 0 C_aa⎦    ⎣ 0  0 ⎦
-  // with Kr_aa = -pₖ, Cr_aa = -i, K_va = a·uⱼ, K_avᵀ = a·uⱼᵀ symmetric. Eliminating
-  // sₖⱼ gives the pencil contribution -a²·uⱼuⱼᵀ·v/(ω - pₖ). Choosing a² = -i·rₖ·σⱼ
-  // makes the sum over j equal +i·rₖ·M_proj·v/(ω - pₖ), the desired rₖ-residue
-  // contribution to the unaugmented wave-port pencil i·kₙ(ω)·Mp_r·v. Both K_va and
-  // K_avᵀ get the same coupling so the augmented pencil is complex-symmetric (not
-  // Hermitian — downstream eigensolvers handle this fine).
+  // for each kept singular vector j, allocate one aux state sₖⱼ. On the state [v; sₖⱼ],
+  // the augmented pencil is
+  //
+  //   A(ω) = [ K      a·uⱼ ] + iω · [ C   0  ] − ω² · [ M   0 ]
+  //          [ a·uⱼᵀ  -pₖ  ]        [ 0   -i ]        [ 0   0 ]
+  //
+  // (K/C/M are the n×n base blocks; the aux row/column carries K_va = K_avᵀ = a·uⱼ,
+  // K_aa = -pₖ, C_aa = -i, M_aa = 0). Eliminating sₖⱼ gives the Schur contribution
+  // -a²·uⱼuⱼᵀ·v/(ω - pₖ). Choosing a² = -i·rₖ·σⱼ makes the sum over j equal
+  // +i·rₖ·M_proj·v/(ω - pₖ), the desired rₖ-residue contribution to the unaugmented
+  // wave-port pencil i·kₙ(ω)·Mp_r·v. Both couplings are the same a·uⱼ (no conjugation),
+  // so the augmented pencil stays complex-symmetric (not Hermitian — downstream
+  // eigensolvers handle this fine).
   std::size_t n_aux_total = 0;
   for (const auto &blk : aux_blocks)
   {
