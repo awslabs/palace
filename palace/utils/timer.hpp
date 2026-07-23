@@ -31,6 +31,7 @@ public:
     INIT = 0,
     MESH_PREPROCESS,              // Preprocessing mesh
     CONSTRUCT,                    // Space and operator construction
+    CONSTRUCT_SURFACE_POST,       // Surface postprocessing setup
     CONSTRUCT_RESPONSE,           // Surface response setup
     CONSTRUCT_RESPONSE_GEOMETRY,  // Surface response geometry and library matching
     CONSTRUCT_RESPONSE_POINTS,    // Surface response point interpolation stencils
@@ -67,6 +68,7 @@ public:
       "Initialization",
       "  Mesh Preprocessing",
       "Operator Construction",
+      "  Surface Post Setup",
       "  Response Setup",
       "    Geometry Matching",
       "    Point Stencils",

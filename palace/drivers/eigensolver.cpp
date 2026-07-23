@@ -126,7 +126,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(space_op.GetNDSpaces());
 
   // Configure objects for postprocessing.
-  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op, &response_geometry);
+  PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op, &response_geometry,
+                                               &surface_post_geometry);
   ComplexVector E(Curl.Width()), B(Curl.Height()), D(space_op.GetRTSpace().GetTrueVSize());
   E.UseDevice(true);
   B.UseDevice(true);

@@ -60,12 +60,12 @@ std::string OutputFolderName(const ProblemType solver_t)
 }  // namespace
 
 template <ProblemType solver_t>
-PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
-                                     const config::SolverData &solver,
-                                     const config::DomainData &domains,
-                                     const config::BoundaryData &boundaries,
-                                     const Units &units_, fem_op_t<solver_t> &fem_op_,
-                                     const std::unordered_set<int> *cracked_attributes)
+PostOperator<solver_t>::PostOperator(
+    const config::ProblemData &problem, const config::SolverData &solver,
+    const config::DomainData &domains, const config::BoundaryData &boundaries,
+    const Units &units_, fem_op_t<solver_t> &fem_op_,
+    const std::unordered_set<int> *cracked_attributes,
+    std::shared_ptr<const SurfacePostGeometry> *surface_post_geometry)
   : fem_op(&fem_op_), units(units_), post_dir(problem.output),
     post_op_csv(problem, solver, boundaries, units_, fem_op_),
     // dom_post_op does not have a default ctor so specialize via immediate lambda.
@@ -96,7 +96,7 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
         }())),
     surf_post_op(boundaries.postpro, solver_t, fem_op->GetMaterialOp(),
                  fem_op->GetH1Space(), fem_op->GetNDSpace(), cracked_attributes,
-                 &boundaries),
+                 &boundaries, surface_post_geometry),
     interp_op(domains.postpro.probe, units_, fem_op->GetNDSpace())
 {
   // Define primary grid-functions.
@@ -255,9 +255,11 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
 template <ProblemType solver_t>
 PostOperator<solver_t>::PostOperator(
     const IoData &iodata, fem_op_t<solver_t> &fem_op_,
-    std::shared_ptr<const SurfaceResponseGeometry> *response_geometry)
+    std::shared_ptr<const SurfaceResponseGeometry> *response_geometry,
+    std::shared_ptr<const SurfacePostGeometry> *surface_post_geometry)
   : PostOperator(iodata.problem, iodata.solver, iodata.domains, iodata.boundaries,
-                 iodata.units, fem_op_, &iodata.boundaries.cracked_attributes)
+                 iodata.units, fem_op_, &iodata.boundaries.cracked_attributes,
+                 surface_post_geometry)
 {
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
   {

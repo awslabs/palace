@@ -270,15 +270,17 @@ SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &
   attr_list = SetUpBoundaryProperties(data, bdr_attr_marker);
 }
 
-SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro,
-                                         ProblemType problem_type,
-                                         const MaterialOperator &mat_op,
-                                         mfem::ParFiniteElementSpace &h1_fespace,
-                                         mfem::ParFiniteElementSpace &nd_fespace,
-                                         const std::unordered_set<int> *cracked_attributes,
-                                         const config::BoundaryData *boundaries)
+SurfacePostOperator::SurfacePostOperator(
+    const config::BoundaryPostData &postpro, ProblemType problem_type,
+    const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &h1_fespace,
+    mfem::ParFiniteElementSpace &nd_fespace,
+    const std::unordered_set<int> *cracked_attributes,
+    const config::BoundaryData *boundaries,
+    std::shared_ptr<const SurfacePostGeometry> *automatic_geometry)
   : mat_op(mat_op), h1_fespace(h1_fespace), nd_fespace(nd_fespace)
 {
+  BlockTimer setup_timer(Timer::CONSTRUCT_SURFACE_POST);
+
   // Check that boundary attributes have been specified correctly.
   const auto &mesh = *h1_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
@@ -318,10 +320,27 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
       std::pair<std::vector<std::size_t>, std::optional<std::array<double, 3>>>;
   std::map<AutomaticEdgeDistanceTreeKey, std::shared_ptr<const EdgeDistanceTree>>
       automatic_edge_distance_trees;
+  const SurfacePostGeometry *cached_automatic_geometry =
+      automatic_geometry && *automatic_geometry ? automatic_geometry->get() : nullptr;
+  std::shared_ptr<SurfacePostGeometry> new_automatic_geometry;
+  if (automatic_geometry && !*automatic_geometry)
+  {
+    new_automatic_geometry = std::make_shared<SurfacePostGeometry>();
+  }
   MetalEdgeGeometry metal_edges;
-  const bool use_automatic_edges =
-      std::any_of(postpro.dielectric.begin(), postpro.dielectric.end(),
-                  [](const auto &entry) { return entry.second.automatic_edges; });
+  const bool use_automatic_edges = std::any_of(
+      postpro.dielectric.begin(), postpro.dielectric.end(),
+      [cached_automatic_geometry](const auto &entry)
+      {
+        const auto &[idx, data] = entry;
+        if (!data.automatic_edges)
+        {
+          return false;
+        }
+        return data.localize_edge_energy || !cached_automatic_geometry ||
+               cached_automatic_geometry->automatic_edge_distance_trees.find(idx) ==
+                   cached_automatic_geometry->automatic_edge_distance_trees.end();
+      });
   if (use_automatic_edges)
   {
     MFEM_VERIFY(boundaries,
@@ -347,6 +366,17 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
 
     if (data.automatic_edges)
     {
+      if (!data.localize_edge_energy && cached_automatic_geometry)
+      {
+        const auto cached_tree =
+            cached_automatic_geometry->automatic_edge_distance_trees.find(idx);
+        if (cached_tree != cached_automatic_geometry->automatic_edge_distance_trees.end())
+        {
+          it->second.edge_distance_tree = cached_tree->second;
+          continue;
+        }
+      }
+
       auto segment_indices =
           GetInterfaceMetalEdgeSegmentIndices(metal_edges, idx, data.type);
       ExcludeMetalEdgeSegmentIndices(mesh, metal_edges, data.edge_exclude_attributes,
@@ -355,9 +385,13 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
       auto tree_it = automatic_edge_distance_trees.find(tree_key);
       if (tree_it == automatic_edge_distance_trees.end())
       {
-        auto process_normals = BuildMetalEdgeProcessNormals(
-            mesh, metal_edges, segment_indices, [this](int attribute)
-            { return this->mat_op.GetLightSpeedMax(attribute); }, data.edge_frame_normal);
+        std::vector<std::array<double, 3>> process_normals;
+        if (data.localize_edge_energy)
+        {
+          process_normals = BuildMetalEdgeProcessNormals(
+              mesh, metal_edges, segment_indices, [this](int attribute)
+              { return this->mat_op.GetLightSpeedMax(attribute); }, data.edge_frame_normal);
+        }
         tree_it =
             automatic_edge_distance_trees
                 .try_emplace(tree_key, BuildEdgeDistanceTree(metal_edges, segment_indices,
@@ -365,6 +399,10 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
                 .first;
       }
       it->second.edge_distance_tree = tree_it->second;
+      if (!data.localize_edge_energy && new_automatic_geometry)
+      {
+        new_automatic_geometry->automatic_edge_distance_trees.emplace(idx, tree_it->second);
+      }
     }
     else
     {
@@ -381,6 +419,11 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
       }
       it->second.edge_distance_tree = tree_it->second;
     }
+  }
+  if (automatic_geometry && !*automatic_geometry && new_automatic_geometry &&
+      !new_automatic_geometry->automatic_edge_distance_trees.empty())
+  {
+    *automatic_geometry = std::move(new_automatic_geometry);
   }
 
   // FarField postprocessing.
@@ -422,13 +465,13 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
   farfield = FarFieldData(postpro.farfield, *nd_fespace.GetParMesh(), bdr_attr_marker);
 }
 
-SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
-                                         const MaterialOperator &mat_op,
-                                         mfem::ParFiniteElementSpace &h1_fespace,
-                                         mfem::ParFiniteElementSpace &nd_fespace)
+SurfacePostOperator::SurfacePostOperator(
+    const IoData &iodata, const MaterialOperator &mat_op,
+    mfem::ParFiniteElementSpace &h1_fespace, mfem::ParFiniteElementSpace &nd_fespace,
+    std::shared_ptr<const SurfacePostGeometry> *automatic_geometry)
   : SurfacePostOperator(iodata.boundaries.postpro, iodata.problem.type, mat_op, h1_fespace,
                         nd_fespace, &iodata.boundaries.cracked_attributes,
-                        &iodata.boundaries)
+                        &iodata.boundaries, automatic_geometry)
 {
 }
 

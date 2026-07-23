@@ -33,6 +33,16 @@ struct FarFieldPostData;
 
 enum class ProblemType : char;
 
+// Mesh-independent automatic edge-distance geometry retained across AMR iterations. Only
+// aggregate edge-distance trees are cached; mesh-segment-localized diagnostics are rebuilt.
+class SurfacePostGeometry
+{
+private:
+  std::map<int, std::shared_ptr<const EdgeDistanceTree>> automatic_edge_distance_trees;
+
+  friend class SurfacePostOperator;
+};
+
 //
 // A class handling boundary surface postprocessing.
 //
@@ -154,15 +164,17 @@ public:
   std::map<int, InterfaceDielectricData> eps_surfs;
   FarFieldData farfield;
 
-  SurfacePostOperator(const config::BoundaryPostData &postpro, ProblemType problem_type,
-                      const MaterialOperator &mat_op,
-                      mfem::ParFiniteElementSpace &h1_fespace,
-                      mfem::ParFiniteElementSpace &nd_fespace,
-                      const std::unordered_set<int> *cracked_attributes = nullptr,
-                      const config::BoundaryData *boundaries = nullptr);
-  SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat_op,
-                      mfem::ParFiniteElementSpace &h1_fespace,
-                      mfem::ParFiniteElementSpace &nd_fespace);
+  SurfacePostOperator(
+      const config::BoundaryPostData &postpro, ProblemType problem_type,
+      const MaterialOperator &mat_op, mfem::ParFiniteElementSpace &h1_fespace,
+      mfem::ParFiniteElementSpace &nd_fespace,
+      const std::unordered_set<int> *cracked_attributes = nullptr,
+      const config::BoundaryData *boundaries = nullptr,
+      std::shared_ptr<const SurfacePostGeometry> *automatic_geometry = nullptr);
+  SurfacePostOperator(
+      const IoData &iodata, const MaterialOperator &mat_op,
+      mfem::ParFiniteElementSpace &h1_fespace, mfem::ParFiniteElementSpace &nd_fespace,
+      std::shared_ptr<const SurfacePostGeometry> *automatic_geometry = nullptr);
 
   // Get surface integrals computing electric or magnetic field flux through a boundary.
   std::complex<double> GetSurfaceFlux(int idx, const GridFunction *E,

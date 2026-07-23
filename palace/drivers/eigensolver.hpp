@@ -13,6 +13,7 @@ namespace palace
 
 class ErrorIndicator;
 class Mesh;
+class SurfacePostGeometry;
 class SurfaceResponseGeometry;
 
 //
@@ -21,6 +22,7 @@ class SurfaceResponseGeometry;
 class EigenSolver : public BaseSolver
 {
 private:
+  mutable std::shared_ptr<const SurfacePostGeometry> surface_post_geometry;
   mutable std::shared_ptr<const SurfaceResponseGeometry> response_geometry;
 
   std::pair<ErrorIndicator, long long int>

@@ -427,10 +427,12 @@ public:
   PostOperator(const config::ProblemData &problem, const config::SolverData &solver,
                const config::DomainData &domains, const config::BoundaryData &boundaries,
                const Units &units, fem_op_t<solver_t> &fem_op,
-               const std::unordered_set<int> *cracked_attributes = nullptr);
+               const std::unordered_set<int> *cracked_attributes = nullptr,
+               std::shared_ptr<const SurfacePostGeometry> *surface_post_geometry = nullptr);
   explicit PostOperator(
       const IoData &iodata, fem_op_t<solver_t> &fem_op,
-      std::shared_ptr<const SurfaceResponseGeometry> *response_geometry = nullptr);
+      std::shared_ptr<const SurfaceResponseGeometry> *response_geometry = nullptr,
+      std::shared_ptr<const SurfacePostGeometry> *surface_post_geometry = nullptr);
 
   bool NeedsRecoveredElectricFlux() const { return D_recovered != nullptr; }
 
