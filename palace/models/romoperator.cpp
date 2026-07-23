@@ -542,11 +542,18 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
 
   // Per-port boundary masses for wave ports (ω-independent). The wave-port contribution
   // to A(ω) is then assembled at each ω as Σ_p k_{n,p}(ω)·M_{μ⁻¹,r,p}, where M_{r,p} is
-  // projected onto the basis only when the basis grows. This avoids HDM-scale work in
-  // the online phase. See WavePortOperator::AddBoundaryMassBdrCoefficients and
+  // projected onto the basis only when the basis grows. Cache masses for every active port
+  // and for inactive ports included as unloaded synthesis nodes: the latter do not
+  // contribute to A(ω), but their mass is required for node scaling and reference data.
+  // This avoids HDM-scale work in the online phase. See
+  // WavePortOperator::AddBoundaryMassBdrCoefficients and
   // SpaceOperator::GetWavePortBoundaryMassMatrix.
   for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
   {
+    if (!port_data.active && !port_data.include_in_synthesis)
+    {
+      continue;
+    }
     auto Mp = space_op.GetWavePortBoundaryMassMatrix<ComplexOperator>(port_idx,
                                                                       Operator::DIAG_ZERO);
     if (Mp)
@@ -1264,6 +1271,11 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     BlockTimer bt(Timer::WAVE_PORT);
     for (const auto &[port_idx, Mp_r] : Mwp_p_r)
     {
+      const auto &port_data = space_op.GetWavePortOp().GetPort(port_idx);
+      if (!port_data.active)
+      {
+        continue;
+      }
       const double kn = space_op.GetWavePortOp().GetWavePortKn(port_idx, omega);
       Ar += std::complex<double>(kn, 0.0) * Mp_r;
     }
@@ -1830,29 +1842,27 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   // actually added (real + imaginary parts each count separately, see
   // AddWavePortModesForSynthesis → UpdatePROM).
   long n_waveport_rows = 0;
-  if (!Mwp_p_r.empty())
+  for (long j = n_port_modes; j < static_cast<long>(v_node_label.size()); j++)
   {
-    for (long j = n_port_modes; j < static_cast<long>(v_node_label.size()); j++)
+    if (v_node_label[j].rfind("waveport_", 0) == 0)
     {
-      if (v_node_label[j].rfind("waveport_", 0) == 0)
-      {
-        n_waveport_rows++;
-      }
-      else
-      {
-        break;
-      }
+      n_waveport_rows++;
     }
-    // The scan above assumes the wave-port rows form one contiguous block directly after
-    // the lumped-port rows (AddWavePortModesForSynthesis runs immediately after
-    // AddLumpedPortModesForSynthesis, before any HDM sample). Verify no waveport_ label
-    // appears later, which would mean the block was split and undercounted.
-    for (long j = n_port_modes + n_waveport_rows;
-         j < static_cast<long>(v_node_label.size()); j++)
+    else
     {
-      MFEM_VERIFY(v_node_label[j].rfind("waveport_", 0) != 0,
-                  "Wave-port basis rows are not contiguous after the lumped-port rows!");
+      break;
     }
+  }
+  // The scan above assumes the wave-port rows form one contiguous block directly after
+  // the lumped-port rows (AddWavePortModesForSynthesis runs immediately after
+  // AddLumpedPortModesForSynthesis, before any HDM sample). Verify no waveport_ label
+  // appears later, which would mean the block was split and undercounted. Row existence is
+  // independent of Active: an inactive included port is still an unloaded synthesis node.
+  for (long j = n_port_modes + n_waveport_rows; j < static_cast<long>(v_node_label.size());
+       j++)
+  {
+    MFEM_VERIFY(v_node_label[j].rfind("waveport_", 0) != 0,
+                "Wave-port basis rows are not contiguous after the lumped-port rows!");
   }
   for (long j = 0; j < n_port_modes + n_waveport_rows; j++)
   {
@@ -1889,12 +1899,22 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
     for (auto &[port_idx, Mp_r] : Mwp_p_r)
     {
       auto fit = FitWavePortDispersion(port_idx, Mp_r);
+      out.wave_port_fits.push_back(fit);
+
+      // Inactive included ports are unloaded synthesis terminals. They need the fit for
+      // rom-port-reference.csv, but their Robin termination must not be added to either the
+      // loaded total pencil or the removable per-port load.
+      const auto &port_data = space_op.GetWavePortOp().GetPort(port_idx);
+      if (!port_data.active)
+      {
+        continue;
+      }
+
       PendingPortLoad port_load;
       port_load.label = fmt::format("waveport_{:d}_re", port_idx);
       port_load.Kr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
       port_load.Cr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
       port_load.Mr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
-      out.wave_port_fits.push_back(fit);
       ApplyPolynomialFitCorrections(fit, Mp_r, Kr_total_corr, Cr_total_corr, Mr_total_corr);
       ApplyPolynomialFitCorrections(fit, Mp_r, port_load.Kr_corr, port_load.Cr_corr,
                                     port_load.Mr_corr);
@@ -2624,18 +2644,15 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
   {
     const long n_port_modes = static_cast<long>(NumSynthesisPortModes());
     long n_waveport_rows = 0;
-    if (!Mwp_p_r.empty())
+    for (long j = n_port_modes; j < static_cast<long>(v_node_label.size()); j++)
     {
-      for (long j = n_port_modes; j < static_cast<long>(v_node_label.size()); j++)
+      if (v_node_label[j].rfind("waveport_", 0) == 0)
       {
-        if (v_node_label[j].rfind("waveport_", 0) == 0)
-        {
-          n_waveport_rows++;
-        }
-        else
-        {
-          break;
-        }
+        n_waveport_rows++;
+      }
+      else
+      {
+        break;
       }
     }
     for (long j = 0; j < n_port_modes + n_waveport_rows; j++)

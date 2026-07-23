@@ -246,9 +246,11 @@ public:
   // Construct the ω-independent boundary mass matrix M_{μ⁻¹,p} for a single wave port,
   // returned with PEC essential DoF rows handled by `diag_policy`. The full wave-port
   // contribution to the system matrix at frequency ω is `i·k_{n,p}(ω)·M_{μ⁻¹,p}` with
-  // `k_{n,p}` from `GetWavePortOp().GetWavePortKn(port_idx, ω)`. Returns a null pointer if
-  // the port boundary contributes no DoFs on any rank (the check is collective, so the null
-  // contract is rank-uniform).
+  // `k_{n,p}` from `GetWavePortOp().GetWavePortKn(port_idx, ω)`. The unit mass is returned
+  // for active and inactive ports so synthesis can normalize an unloaded port node; callers
+  // decide whether to stamp the physical termination. Returns a null pointer if the port
+  // boundary contributes no DoFs on any rank (the check is collective, so the null contract
+  // is rank-uniform).
   template <typename OperType>
   std::unique_ptr<OperType>
   GetWavePortBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
