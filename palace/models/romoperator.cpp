@@ -2585,31 +2585,13 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
   std::sort(modes.begin(), modes.end(),
             [](const auto &a, const auto &b) { return a.freq_re_GHz < b.freq_re_GHz; });
 
-  // Deduplicate near-identical modes (conjugate pairs or numerical duplicates). Compare
-  // the full complex frequency: two quasi-degenerate physical modes can share Re{f} while
-  // differing in Im{f} (distinct Q), and must both be kept. Since modes are sorted by
-  // Re{f}, comparing against all previously kept modes within the Re{f} window suffices.
-  constexpr double dedup_tol_GHz = 1.0e-4;
-  std::vector<EigenvalueEstimate> deduped;
-  for (const auto &m : modes)
-  {
-    bool duplicate = false;
-    for (auto it = deduped.rbegin();
-         it != deduped.rend() && m.freq_re_GHz - it->freq_re_GHz < dedup_tol_GHz; ++it)
-    {
-      if (std::hypot(m.freq_re_GHz - it->freq_re_GHz, m.freq_im_GHz - it->freq_im_GHz) <
-          dedup_tol_GHz)
-      {
-        duplicate = true;
-        break;
-      }
-    }
-    if (!duplicate)
-    {
-      deduped.push_back(m);
-    }
-  }
-  return deduped;
+  // No frequency-based deduplication: the complex eigenfrequency is not a unique mode
+  // identifier (a genuinely degenerate eigenspace yields one QZ eigenvalue per
+  // multiplicity, each with its own eigenvector, and all must be reported). The pencil is
+  // complex-symmetric, so roots do not come in conjugate pairs and there is no redundant
+  // numerical representation to remove here; if one is ever observed it needs an
+  // eigenvector/rank-aware policy, not frequency clustering.
+  return modes;
 }
 
 void RomOperator::ComputeEigenvalueEstimateErrors(

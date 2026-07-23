@@ -398,6 +398,7 @@ inline AAAPoleResidue AAAToPoleResidue(const AAAResult &r)
   int info = 0;
   zggev_(&jobvl, &jobvr, &n, A_geig.data(), &n, B_geig.data(), &n, alpha.data(),
          beta.data(), nullptr, &n, nullptr, &n, work.data(), &lwork, rwork.data(), &info);
+  MFEM_VERIFY(info == 0, "zggev failed with info = " << info);
   // Collect finite eigenvalues. ZGGEV usually signals an eigenvalue at infinity with
   // beta = 0 exactly, but roundoff can instead produce a tiny nonzero beta, so filter on
   // |beta| relative to |alpha| rather than on exact zero.
