@@ -533,23 +533,48 @@ SurfacePostOperator::InterfaceEdgeEnergy
 SurfacePostOperator::GetInterfaceOuterElectricFieldEnergy(int idx, const GridFunction &E,
                                                           const GridFunction *D) const
 {
-  auto it = eps_surfs.find(idx);
-  MFEM_VERIFY(it != eps_surfs.end(),
-              "Unknown interface dielectric postprocessing index requested!");
-  const auto &data = it->second;
-  MFEM_VERIFY(!data.edge_distances.empty(),
-              "Response-corrected interface requires a matching edge distance!");
+  auto energies = GetInterfaceOuterElectricFieldEnergies({idx}, E, D);
+  MFEM_ASSERT(energies.size() == 1 && energies.find(idx) != energies.end(),
+              "Missing response-corrected interface energy!");
+  return energies.at(idx);
+}
 
+std::map<int, SurfacePostOperator::InterfaceEdgeEnergy>
+SurfacePostOperator::GetInterfaceOuterElectricFieldEnergies(const std::set<int> &indices,
+                                                            const GridFunction &E,
+                                                            const GridFunction *D) const
+{
   const auto &mesh = *h1_fespace.GetParMesh();
   const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
-  const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
-  auto coefficient = data.GetCoefficient(E, D, mat_op);
-  const double distance = data.edge_distances.back();
-  EdgeDistanceCoefficient outside(*coefficient, *data.edge_distance_tree, distance,
-                                  mfem::infinity(), data.edge_distance_smoothing);
-  double energy = GetLocalSurfaceIntegral(outside, attr_marker);
-  Mpi::GlobalSum(1, &energy, E.GetComm());
-  return {distance, energy, 0.0};
+  std::map<int, InterfaceEdgeEnergy> energies;
+  std::vector<double> local_energies;
+  local_energies.reserve(indices.size());
+  for (const int idx : indices)
+  {
+    auto it = eps_surfs.find(idx);
+    MFEM_VERIFY(it != eps_surfs.end(),
+                "Unknown interface dielectric postprocessing index requested!");
+    const auto &data = it->second;
+    MFEM_VERIFY(!data.edge_distances.empty(),
+                "Response-corrected interface requires a matching edge distance!");
+
+    const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
+    auto coefficient = data.GetCoefficient(E, D, mat_op);
+    const double distance = data.edge_distances.back();
+    EdgeDistanceCoefficient outside(*coefficient, *data.edge_distance_tree, distance,
+                                    mfem::infinity(), data.edge_distance_smoothing);
+    local_energies.push_back(GetLocalSurfaceIntegral(outside, attr_marker));
+    energies.emplace(idx, InterfaceEdgeEnergy{distance, 0.0, 0.0});
+  }
+  Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
+                 E.GetComm());
+  std::size_t i = 0;
+  for (auto &[idx, energy] : energies)
+  {
+    (void)idx;
+    energy.energy_outside = local_energies[i++];
+  }
+  return energies;
 }
 
 std::size_t SurfacePostOperator::GetNInterfaceEdgeEntries() const

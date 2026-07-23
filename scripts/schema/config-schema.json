@@ -3143,6 +3143,12 @@
               "description": "Behavior when a detected edge cluster has no compatible coupon model. `Warn` disables correction for the affected interface group; `Error` terminates the simulation.",
               "default": "Warn"
             },
+            "SolveTol": {
+              "type": "number",
+              "exclusiveMinimum": 0.0,
+              "description": "Relative convergence tolerance for an optional self-consistent fabrication-response corrected-field solve. The raw field solve continues to use `Solver.Linear.Tol`.",
+              "default": 1e-06
+            },
             "FabricatedMatrix": {
               "type": "string",
               "description": "Path to the fabricated coupon `domain-response-matrix.csv` file."

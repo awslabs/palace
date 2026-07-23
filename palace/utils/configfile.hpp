@@ -1040,6 +1040,10 @@ public:
     // edge topology.
     UnmatchedPolicy unmatched_policy = UnmatchedPolicy::WARN;
 
+    // Relative tolerance for an optional self-consistent corrected-field solve. The raw
+    // field solve continues to use Solver.Linear.Tol.
+    double solve_tol = 1.0e-6;
+
     // Reusable local coupon models and their nonoverlapping global placements. A placement
     // may represent one isolated edge or a coupled cluster of nearby edges.
     std::vector<ResponseCorrectionModelData> models;

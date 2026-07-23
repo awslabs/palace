@@ -627,12 +627,15 @@ public:
     ElectrostaticEnergyData energies;
     energies.domain = dom_post_op.GetElectricFieldEnergy(*V);
     surf_post_op.ResetInterfaceLocalEdgeEnergyCache();
+    const auto outside_energies =
+        response_targets ? surf_post_op.GetInterfaceOuterElectricFieldEnergies(
+                               *response_targets, *E, D_recovered.get())
+                         : std::map<int, SurfacePostOperator::InterfaceEdgeEnergy>{};
     for (const auto &[idx, data] : surf_post_op.eps_surfs)
     {
       if (response_targets && response_targets->find(idx) != response_targets->end())
       {
-        auto outside =
-            surf_post_op.GetInterfaceOuterElectricFieldEnergy(idx, *E, D_recovered.get());
+        auto outside = outside_energies.at(idx);
         energies.interfaces.emplace(
             idx,
             typename ElectrostaticEnergyData::Interface{

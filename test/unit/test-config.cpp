@@ -604,10 +604,10 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   const config::ElectrostaticSolverData electrostatic(
       json{{"ResponseCorrection", correction}});
   REQUIRE(electrostatic.response_correction);
+  CHECK(electrostatic.response_correction->solve_tol == 1.0e-6);
   REQUIRE(electrostatic.response_correction->models.size() == 1);
   CHECK(electrostatic.response_correction->models[0].idx == 1);
-  CHECK(electrostatic.response_correction->models[0].fabricated_matrix ==
-        "fabricated.csv");
+  CHECK(electrostatic.response_correction->models[0].fabricated_matrix == "fabricated.csv");
   CHECK(electrostatic.response_correction->models[0].thin_matrix == "thin.csv");
   CHECK(electrostatic.response_correction->models[0].basis_points == "points.csv");
   REQUIRE(electrostatic.response_correction->patches.size() == 1);
@@ -627,28 +627,28 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   json sparse = config;
   sparse["Solver"]["Electrostatic"].erase("ResponseCorrection");
   sparse = IoData::ConcretizeDefaults(iodata, sparse);
-  CHECK(sparse["Solver"]["Electrostatic"]["ResponseCorrection"] == correction);
+  auto concretized_correction = correction;
+  concretized_correction["SolveTol"] = 1.0e-6;
+  CHECK(sparse["Solver"]["Electrostatic"]["ResponseCorrection"] == concretized_correction);
 
   config["Problem"]["Type"] = "Magnetostatic";
   CHECK_THROWS(IoData(config, false));
 
-  const json multi_model = {
-      {"Models",
-       {{{"Index", 7},
-         {"FabricatedMatrix", "fabricated-domain.csv"},
-         {"ThinMatrix", "thin-domain.csv"},
-         {"FabricatedSurfaceMatrix", "fabricated-surface.csv"},
-         {"ThinSurfaceMatrix", "thin-surface.csv"},
-         {"BasisPoints", "pair-points.csv"},
-         {"Interfaces", {{{"Target", 4}, {"Coupon", 1}}}}}}},
-      {"Patches",
-       {{{"Model", 7},
-         {"Origin", {3.0, 4.0, 0.0}},
-         {"AxisU", {1.0, 0.0, 0.0}},
-         {"AxisV", {0.0, 1.0, 0.0}},
-         {"Reference", {-1.0, 0.0, 0.0}}}}}};
-  const config::ElectrostaticSolverData modern(
-      json{{"ResponseCorrection", multi_model}});
+  const json multi_model = {{"Models",
+                             {{{"Index", 7},
+                               {"FabricatedMatrix", "fabricated-domain.csv"},
+                               {"ThinMatrix", "thin-domain.csv"},
+                               {"FabricatedSurfaceMatrix", "fabricated-surface.csv"},
+                               {"ThinSurfaceMatrix", "thin-surface.csv"},
+                               {"BasisPoints", "pair-points.csv"},
+                               {"Interfaces", {{{"Target", 4}, {"Coupon", 1}}}}}}},
+                            {"Patches",
+                             {{{"Model", 7},
+                               {"Origin", {3.0, 4.0, 0.0}},
+                               {"AxisU", {1.0, 0.0, 0.0}},
+                               {"AxisV", {0.0, 1.0, 0.0}},
+                               {"Reference", {-1.0, 0.0, 0.0}}}}}};
+  const config::ElectrostaticSolverData modern(json{{"ResponseCorrection", multi_model}});
   REQUIRE(modern.response_correction);
   REQUIRE(modern.response_correction->models.size() == 1);
   CHECK(modern.response_correction->models[0].idx == 7);
@@ -660,47 +660,50 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK(modern.response_correction->patches[0].reference ==
         std::array<double, 3>{-1.0, 0.0, 0.0});
 
-  const json automatic_correction = {
-      {"Library", "fabrication-process.json"},
-      {"TargetInterfaces", {4, 5, 6}},
-      {"UnmatchedPolicy", "Error"}};
+  const json automatic_correction = {{"Library", "fabrication-process.json"},
+                                     {"TargetInterfaces", {4, 5, 6}},
+                                     {"UnmatchedPolicy", "Error"},
+                                     {"SolveTol", 1.0e-7}};
   const config::ElectrostaticSolverData automatic(
       json{{"ResponseCorrection", automatic_correction}});
   REQUIRE(automatic.response_correction);
   CHECK(automatic.response_correction->IsAutomatic());
   CHECK(automatic.response_correction->library == "fabrication-process.json");
-  CHECK(automatic.response_correction->target_interfaces ==
-        std::vector<int>{4, 5, 6});
+  CHECK(automatic.response_correction->target_interfaces == std::vector<int>{4, 5, 6});
   CHECK(automatic.response_correction->unmatched_policy ==
         config::ElectrostaticSolverData::ResponseCorrectionData::UnmatchedPolicy::ERROR);
+  CHECK(automatic.response_correction->solve_tol == 1.0e-7);
   CHECK(automatic.response_correction->models.empty());
   CHECK(automatic.response_correction->patches.empty());
 
   auto duplicate_targets = automatic_correction;
   duplicate_targets["TargetInterfaces"] = {4, 4};
-  CHECK_THROWS(config::ElectrostaticSolverData(
-      json{{"ResponseCorrection", duplicate_targets}}));
+  CHECK_THROWS(
+      config::ElectrostaticSolverData(json{{"ResponseCorrection", duplicate_targets}}));
 
   auto invalid_policy = automatic_correction;
   invalid_policy["UnmatchedPolicy"] = "Ignore";
-  CHECK_THROWS(config::ElectrostaticSolverData(
-      json{{"ResponseCorrection", invalid_policy}}));
+  CHECK_THROWS(
+      config::ElectrostaticSolverData(json{{"ResponseCorrection", invalid_policy}}));
+
+  auto invalid_solve_tol = automatic_correction;
+  invalid_solve_tol["SolveTol"] = 0.0;
+  CHECK_THROWS(
+      config::ElectrostaticSolverData(json{{"ResponseCorrection", invalid_solve_tol}}));
 
   const config::SolverData maxwell_solver(
       json{{"SurfaceResponseCorrection", automatic_correction}});
   REQUIRE(maxwell_solver.surface_response_correction);
   CHECK(maxwell_solver.surface_response_correction->IsAutomatic());
-  CHECK(maxwell_solver.surface_response_correction->library ==
-        "fabrication-process.json");
+  CHECK(maxwell_solver.surface_response_correction->library == "fabrication-process.json");
 
-  json maxwell_config = {
-      {"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
-      {"Model", {{"Mesh", "test.msh"}}},
-      {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-      {"Boundaries", json::object()},
-      {"Solver",
-       {{"Eigenmode", {{"Target", 1.0}}},
-        {"SurfaceResponseCorrection", automatic_correction}}}};
+  json maxwell_config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                         {"Model", {{"Mesh", "test.msh"}}},
+                         {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                         {"Boundaries", json::object()},
+                         {"Solver",
+                          {{"Eigenmode", {{"Target", 1.0}}},
+                           {"SurfaceResponseCorrection", automatic_correction}}}};
   CHECK_NOTHROW(IoData(maxwell_config, false));
   maxwell_config["Problem"]["Type"] = "Electrostatic";
   maxwell_config["Solver"].erase("Eigenmode");

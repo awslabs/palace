@@ -4215,11 +4215,21 @@ SurfaceResponseOperator::GetEnergyCorrection(const Vector &x) const
           patch.weight * QuadraticForm(defect, patch_trace, response);
     }
   }
-  Mpi::GlobalSum(1, &energy.domain, fespace.GetComm());
+  std::vector<double> reduction;
+  reduction.reserve(1 + energy.interfaces.size());
+  reduction.push_back(energy.domain);
+  for (const auto &[interface, value] : energy.interfaces)
+  {
+    (void)interface;
+    reduction.push_back(value);
+  }
+  Mpi::GlobalSum(static_cast<int>(reduction.size()), reduction.data(), fespace.GetComm());
+  energy.domain = reduction[0];
+  std::size_t i = 1;
   for (auto &[interface, value] : energy.interfaces)
   {
     (void)interface;
-    Mpi::GlobalSum(1, &value, fespace.GetComm());
+    value = reduction[i++];
   }
   return energy;
 }
@@ -4247,10 +4257,19 @@ SurfaceResponseOperator::GetFabricatedSurfaceEnergy(const Vector &x) const
           patch.weight * QuadraticForm(response, patch_trace, this->response);
     }
   }
+  std::vector<double> reduction;
+  reduction.reserve(energy.size());
+  for (const auto &[interface, value] : energy)
+  {
+    (void)interface;
+    reduction.push_back(value);
+  }
+  Mpi::GlobalSum(static_cast<int>(reduction.size()), reduction.data(), fespace.GetComm());
+  std::size_t i = 0;
   for (auto &[interface, value] : energy)
   {
     (void)interface;
-    Mpi::GlobalSum(1, &value, fespace.GetComm());
+    value = reduction[i++];
   }
   return energy;
 }
@@ -4300,18 +4319,36 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
       }
     }
   }
-  Mpi::GlobalSum(1, &result.domain_correction, fespace.GetComm());
+  const std::size_t values_per_interface = include_fixed_flux ? 2 : 1;
+  std::vector<double> reduction;
+  reduction.reserve(1 + (include_fixed_flux ? 1 : 0) +
+                    values_per_interface * result.fabricated_surface_energy.size());
+  reduction.push_back(result.domain_correction);
   if (include_fixed_flux)
   {
-    Mpi::GlobalSum(1, &result.domain_correction_fixed_flux, fespace.GetComm());
+    reduction.push_back(result.domain_correction_fixed_flux);
+  }
+  for (const auto &[interface, fixed_trace] : result.fabricated_surface_energy)
+  {
+    reduction.push_back(fixed_trace);
+    if (include_fixed_flux)
+    {
+      reduction.push_back(result.fabricated_surface_energy_fixed_flux.at(interface));
+    }
+  }
+  Mpi::GlobalSum(static_cast<int>(reduction.size()), reduction.data(), fespace.GetComm());
+  std::size_t i = 0;
+  result.domain_correction = reduction[i++];
+  if (include_fixed_flux)
+  {
+    result.domain_correction_fixed_flux = reduction[i++];
   }
   for (auto &[interface, fixed_trace] : result.fabricated_surface_energy)
   {
-    Mpi::GlobalSum(1, &fixed_trace, fespace.GetComm());
+    fixed_trace = reduction[i++];
     if (include_fixed_flux)
     {
-      auto &fixed_flux_energy = result.fabricated_surface_energy_fixed_flux.at(interface);
-      Mpi::GlobalSum(1, &fixed_flux_energy, fespace.GetComm());
+      result.fabricated_surface_energy_fixed_flux.at(interface) = reduction[i++];
     }
   }
 
@@ -4425,19 +4462,25 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
       result.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
     }
   }
-  double domain_corrections[] = {result.domain_correction,
-                                 result.domain_correction_fixed_flux};
-  Mpi::GlobalSum(2, domain_corrections, fespace.GetComm());
-  result.domain_correction = domain_corrections[0];
-  result.domain_correction_fixed_flux = domain_corrections[1];
+  std::vector<double> reduction;
+  reduction.reserve(2 + 2 * result.fabricated_surface_energy.size());
+  reduction.push_back(result.domain_correction);
+  reduction.push_back(result.domain_correction_fixed_flux);
+  for (const auto &[interface, fixed_trace] : result.fabricated_surface_energy)
+  {
+    reduction.push_back(fixed_trace);
+    reduction.push_back(result.fabricated_surface_energy_fixed_flux.at(interface));
+  }
+  Mpi::GlobalSum(static_cast<int>(reduction.size()), reduction.data(), fespace.GetComm());
+  std::size_t i = 0;
+  result.domain_correction = reduction[i++];
+  result.domain_correction_fixed_flux = reduction[i++];
   Mpi::GlobalMax(1, &result.loop_residual, fespace.GetComm());
   for (auto &[interface, fixed_trace] : result.fabricated_surface_energy)
   {
     auto &fixed_flux = result.fabricated_surface_energy_fixed_flux.at(interface);
-    double energies[] = {fixed_trace, fixed_flux};
-    Mpi::GlobalSum(2, energies, fespace.GetComm());
-    fixed_trace = energies[0];
-    fixed_flux = energies[1];
+    fixed_trace = reduction[i++];
+    fixed_flux = reduction[i++];
   }
 
   constexpr double maximum_kR = 0.1;

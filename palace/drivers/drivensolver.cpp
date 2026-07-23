@@ -117,6 +117,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
     corrected_ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                                        &space_op.GetH1Spaces());
     corrected_ksp->SetInitialGuess(true);
+    corrected_ksp->SetRelTol(iodata.solver.surface_response_correction->solve_tol);
   }
 
   // Set up RHS vector for the incident field at port boundaries, and the vector for the

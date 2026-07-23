@@ -881,39 +881,42 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     malformed_axis["ResponseCorrection"]["Edges"][0]["AxisU"] = {1.0, 0.0};
     CHECK(!ValidateConfig(malformed_axis, "Electrostatic").empty());
 
-    json modern = {
-        {"ResponseCorrection",
-         {{"Models",
-           {{{"Index", 1},
-             {"FabricatedMatrix", "fabricated-domain.csv"},
-             {"ThinMatrix", "thin-domain.csv"},
-             {"FabricatedSurfaceMatrix", "fabricated-surface.csv"},
-             {"ThinSurfaceMatrix", "thin-surface.csv"},
-             {"BasisPoints", "points.csv"},
-             {"Interfaces", {{{"Target", 4}, {"Coupon", 1}}}}}}},
-          {"Patches",
-           {{{"Model", 1},
-             {"Origin", {1.0, 2.0, 0.0}},
-             {"AxisU", {1.0, 0.0, 0.0}},
-             {"AxisV", {0.0, 1.0, 0.0}},
-             {"Reference", {-1.0, 0.0, 0.0}}}}}}}};
+    json modern = {{"ResponseCorrection",
+                    {{"Models",
+                      {{{"Index", 1},
+                        {"FabricatedMatrix", "fabricated-domain.csv"},
+                        {"ThinMatrix", "thin-domain.csv"},
+                        {"FabricatedSurfaceMatrix", "fabricated-surface.csv"},
+                        {"ThinSurfaceMatrix", "thin-surface.csv"},
+                        {"BasisPoints", "points.csv"},
+                        {"Interfaces", {{{"Target", 4}, {"Coupon", 1}}}}}}},
+                     {"Patches",
+                      {{{"Model", 1},
+                        {"Origin", {1.0, 2.0, 0.0}},
+                        {"AxisU", {1.0, 0.0, 0.0}},
+                        {"AxisV", {0.0, 1.0, 0.0}},
+                        {"Reference", {-1.0, 0.0, 0.0}}}}}}}};
     CHECK(ValidateConfig(modern, "Electrostatic").empty());
 
     auto missing_surface_pair = modern;
-    missing_surface_pair["ResponseCorrection"]["Models"][0].erase(
-        "ThinSurfaceMatrix");
+    missing_surface_pair["ResponseCorrection"]["Models"][0].erase("ThinSurfaceMatrix");
     CHECK(!ValidateConfig(missing_surface_pair, "Electrostatic").empty());
 
     auto mixed_syntax = modern;
     mixed_syntax["ResponseCorrection"]["FabricatedMatrix"] = "legacy.csv";
     CHECK(!ValidateConfig(mixed_syntax, "Electrostatic").empty());
 
-    json automatic = {
-        {"ResponseCorrection",
-         {{"Library", "fabrication-process.json"},
-          {"TargetInterfaces", {1, 2, 3}},
-          {"UnmatchedPolicy", "Warn"}}}};
+    json automatic = {{"ResponseCorrection",
+                       {{"Library", "fabrication-process.json"},
+                        {"TargetInterfaces", {1, 2, 3}},
+                        {"UnmatchedPolicy", "Warn"}}}};
     CHECK(ValidateConfig(automatic, "Electrostatic").empty());
+
+    auto response_solve_tol = automatic;
+    response_solve_tol["ResponseCorrection"]["SolveTol"] = 1.0e-7;
+    CHECK(ValidateConfig(response_solve_tol, "Electrostatic").empty());
+    response_solve_tol["ResponseCorrection"]["SolveTol"] = 0.0;
+    CHECK(!ValidateConfig(response_solve_tol, "Electrostatic").empty());
 
     auto duplicate_targets = automatic;
     duplicate_targets["ResponseCorrection"]["TargetInterfaces"] = {1, 1};

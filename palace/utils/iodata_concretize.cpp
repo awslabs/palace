@@ -176,6 +176,7 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
     }
 
     auto &j_response = j_electrostatic["ResponseCorrection"] = json::object();
+    j_response["SolveTol"] = response.solve_tol;
     if (response.IsAutomatic())
     {
       j_response["Library"] = response.library;
@@ -184,9 +185,8 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
         j_response["TargetInterfaces"] = response.target_interfaces;
       }
       j_response["UnmatchedPolicy"] =
-          response.unmatched_policy ==
-                  config::ElectrostaticSolverData::ResponseCorrectionData::UnmatchedPolicy::
-                      ERROR
+          response.unmatched_policy == config::ElectrostaticSolverData::
+                                           ResponseCorrectionData::UnmatchedPolicy::ERROR
               ? "Error"
               : "Warn";
       return;
@@ -245,10 +245,10 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
     for (const auto &patch : response.patches)
     {
       j_response["Patches"].push_back({{"Model", patch.model},
-                                        {"Origin", patch.origin},
-                                        {"AxisU", patch.axis_u},
-                                        {"AxisV", patch.axis_v},
-                                        {"Reference", patch.reference}});
+                                       {"Origin", patch.origin},
+                                       {"AxisU", patch.axis_u},
+                                       {"AxisV", patch.axis_v},
+                                       {"Reference", patch.reference}});
     }
   }
 }
@@ -592,14 +592,14 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
     const auto &response = *iodata.solver.surface_response_correction;
     auto &j_response = j_solver["SurfaceResponseCorrection"] = json::object();
     j_response["Library"] = response.library;
+    j_response["SolveTol"] = response.solve_tol;
     if (!response.target_interfaces.empty())
     {
       j_response["TargetInterfaces"] = response.target_interfaces;
     }
     j_response["UnmatchedPolicy"] =
-        response.unmatched_policy ==
-                config::ElectrostaticSolverData::ResponseCorrectionData::UnmatchedPolicy::
-                    ERROR
+        response.unmatched_policy == config::ElectrostaticSolverData::
+                                         ResponseCorrectionData::UnmatchedPolicy::ERROR
             ? "Error"
             : "Warn";
   }

@@ -6,6 +6,7 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <unordered_set>
 #include <vector>
 #include <mfem.hpp>
@@ -183,6 +184,10 @@ public:
   InterfaceEdgeEnergy
   GetInterfaceOuterElectricFieldEnergy(int idx, const GridFunction &E,
                                        const GridFunction *D = nullptr) const;
+  std::map<int, InterfaceEdgeEnergy>
+  GetInterfaceOuterElectricFieldEnergies(const std::set<int> &indices,
+                                         const GridFunction &E,
+                                         const GridFunction *D = nullptr) const;
   std::vector<InterfaceLocalEdgeEnergy>
   GetInterfaceLocalEdgeElectricFieldEnergies(int idx, const GridFunction &E,
                                              const GridFunction *D = nullptr,

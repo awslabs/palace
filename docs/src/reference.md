@@ -798,7 +798,8 @@ and `Patches` lists:
 "ResponseCorrection": {
   "Library": "process-library.json",
   "TargetInterfaces": [1, 2, 3],
-  "UnmatchedPolicy": "Warn"
+  "UnmatchedPolicy": "Warn",
+  "SolveTol": 1.0e-6
 }
 ```
 
@@ -810,6 +811,11 @@ radius. Palace intersects the perimeter of each group with the perimeter of the 
 of all configured metal boundary conditions. This removes points introduced only by a
 change in boundary attribute, such as a ground plane continuing into a bump bond. It
 also removes endpoints on exterior simulation-domain truncations.
+
+`SolveTol` controls only the optional self-consistent corrected-field solve. The raw
+thin-metal field and AMR estimator retain `Solver.Linear.Tol` and `EstimatorTol`,
+respectively. The default `1.0e-6` is normally well below the accuracy of the local
+fabrication response model; it can be tightened independently when needed.
 
 The remaining sites are assigned to their electrostatic conductor and clustered when
 their separation is less than ``2R``. A one-site cluster uses an `IsolatedEdge` model.

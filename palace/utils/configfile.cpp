@@ -1433,14 +1433,16 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
   {
     const auto &correction = *it;
     ResponseCorrectionData data;
+    data.solve_tol = correction.value("SolveTol", data.solve_tol);
+    MFEM_VERIFY(std::isfinite(data.solve_tol) && data.solve_tol > 0.0,
+                "Electrostatic response-correction \"SolveTol\" must be positive!");
     if (auto library = correction.find("Library"); library != correction.end())
     {
       data.library = library->get<std::string>();
-      data.target_interfaces =
-          correction.value("TargetInterfaces", std::vector<int>{});
+      data.target_interfaces = correction.value("TargetInterfaces", std::vector<int>{});
       std::sort(data.target_interfaces.begin(), data.target_interfaces.end());
       MFEM_VERIFY(std::adjacent_find(data.target_interfaces.begin(),
-                                    data.target_interfaces.end()) ==
+                                     data.target_interfaces.end()) ==
                       data.target_interfaces.end(),
                   "Electrostatic response-correction target interfaces must be unique!");
       const std::string policy = correction.value("UnmatchedPolicy", "Warn");
@@ -1488,8 +1490,7 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       patch_data.origin = patch.at("Origin");
       patch_data.axis_u = patch.at("AxisU");
       patch_data.axis_v = patch.at("AxisV");
-      patch_data.reference =
-          patch.value("Reference", std::array<double, 3>{0.0, 0.0, 0.0});
+      patch_data.reference = patch.value("Reference", std::array<double, 3>{0.0, 0.0, 0.0});
       return patch_data;
     };
 
@@ -1636,8 +1637,7 @@ SolverData::SolverData(const json &solver)
 
   if (auto it = solver.find("SurfaceResponseCorrection"); it != solver.end())
   {
-    ElectrostaticSolverData response_parser(
-        json{{"ResponseCorrection", *it}});
+    ElectrostaticSolverData response_parser(json{{"ResponseCorrection", *it}});
     surface_response_correction = std::move(response_parser.response_correction);
   }
 

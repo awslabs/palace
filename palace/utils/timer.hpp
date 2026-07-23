@@ -55,6 +55,8 @@ public:
     POSTPRO_PARAVIEW,             // Paraview calculations and I/O
     POSTPRO_GRIDFUNCTION,         // MFEM gridfunction calculations and I/O
     POSTPRO_RESPONSE,             // Surface response postprocessing
+    POSTPRO_RESPONSE_COUPON,      // Surface response coupon evaluation
+    POSTPRO_RESPONSE_ENERGY,      // Surface response corrected-field energies
     IO,                           // Disk I/O
     TOTAL,
     NUM_TIMINGS
@@ -89,6 +91,8 @@ public:
       "  Paraview",
       "  Grid function",
       "  Surface Response",
+      "    Coupon Evaluation",
+      "    Corrected Energies",
       "Disk IO",
       "Total"};
   // clang-format on

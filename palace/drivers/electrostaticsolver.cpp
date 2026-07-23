@@ -141,7 +141,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     if (response_correction)
     {
       BlockTimer response_timer(Timer::POSTPRO_RESPONSE);
-      const auto response = response_correction->GetElectrostaticResponse(V[step]);
+      SurfaceResponseOperator::ElectrostaticResponse response;
+      {
+        BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
+        response = response_correction->GetElectrostaticResponse(V[step]);
+      }
       auto ApplyResponse = [&](EnergyData energies, double domain_correction,
                                const std::map<int, double> &fabricated_surface)
       {
@@ -181,11 +185,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
       Mpi::Print(" Solving fabrication-response corrected field\n");
       V_corrected[step] = V[step];
+      const double solve_tol = ksp.GetRelTol();
+      ksp.SetRelTol(iodata.solver.electrostatic.response_correction->solve_tol);
       ksp.SetOperator(*system_K);
       ksp.SetInitialGuess(true);
       ksp.Mult(corrected_rhs, V_corrected[step]);
       ksp.SetInitialGuess(iodata.solver.linear.initial_guess);
       ksp.SetOperator(*K);
+      ksp.SetRelTol(solve_tol);
       Vector E_corrected(Grad.Height()), D_corrected;
       E_corrected = 0.0;
       Grad.AddMult(V_corrected[step], E_corrected, -1.0);
@@ -199,10 +206,18 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
 
       const auto target_interfaces = response_correction->GetTargetInterfaces();
-      auto corrected_energies = post_op.GetElectrostaticEnergies(
-          V_corrected[step], E_corrected, D_corrected_ptr, &target_interfaces);
-      const auto corrected_response =
-          response_correction->GetElectrostaticResponse(V_corrected[step], false);
+      EnergyData corrected_energies;
+      {
+        BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
+        corrected_energies = post_op.GetElectrostaticEnergies(
+            V_corrected[step], E_corrected, D_corrected_ptr, &target_interfaces);
+      }
+      SurfaceResponseOperator::ElectrostaticResponse corrected_response;
+      {
+        BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
+        corrected_response =
+            response_correction->GetElectrostaticResponse(V_corrected[step], false);
+      }
       corrected_energies =
           ApplyResponse(std::move(corrected_energies), corrected_response.domain_correction,
                         corrected_response.fabricated_surface_energy);
