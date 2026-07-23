@@ -181,6 +181,27 @@ runs:
         echo "Uploaded SIF to ${S3_KEY}"
         end_timer "Upload SIF to S3"
 
+    - name: Upload schema to S3
+      # Publishes the exact config-schema.json this build was compiled from to
+      # the schema bucket, mirroring the SIF prefix. Fires for every published
+      # channel (release / main / dev). Both arch jobs write the identical
+      # arch-independent file; the second write is a harmless overwrite.
+      if: steps.meta.outputs.push == 'true'
+      shell: bash
+      env:
+        AWS_REGION: us-west-2
+        S3_BUCKET: palace-ci-schemas
+        S3_PREFIX: ${{ steps.meta.outputs.s3_prefix }}
+      run: |
+        source /tmp/timing_functions.sh
+        start_timer
+
+        S3_KEY="s3://${S3_BUCKET}/${S3_PREFIX}/schema.json"
+        aws s3 cp --region "$AWS_REGION" scripts/schema/config-schema.json "$S3_KEY"
+
+        echo "Uploaded schema to ${S3_KEY}"
+        end_timer "Upload schema to S3"
+
     - name: Upload OCI image
       uses: actions/upload-artifact@v7
       with:
