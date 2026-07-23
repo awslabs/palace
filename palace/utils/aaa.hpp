@@ -4,9 +4,12 @@
 #ifndef PALACE_UTILS_AAA_HPP
 #define PALACE_UTILS_AAA_HPP
 
+#include <algorithm>
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <limits>
+#include <utility>
 #include <vector>
 #include <Eigen/Dense>
 #include <mfem.hpp>
@@ -47,20 +50,25 @@ struct AAAResult
   bool converged = false;
 };
 
-// Pole–residue–asymptote form of the AAA rational interpolant:
+// Polynomial-plus-pole–residue form of the AAA rational interpolant:
 //
-//   r(z) = d + Σⱼ residues(j) / (z − poles(j))
+//   x = (z − polynomial_center) / polynomial_scale,
+//   r(z) = Σₖ polynomial(k) xᵏ + Σⱼ residues(j) / (z − poles(j)).
 //
-// This is the standard partial-fraction expansion. With d = r(∞) explicitly
-// separated, residues are well-conditioned (in contrast to absorbing d into the
-// numerator, which makes residues blow up). Used to build the augmented L⁻¹/R⁻¹/C
-// state-space realisation: each pole becomes one auxiliary state per port,
-// residues become the cross-coupling magnitudes between aux state and port mode.
+// A constant asymptote is the common proper-rational case, but a barycentric denominator
+// can lose one or more leading coefficients. The resulting interpolant is improper and
+// has a nonconstant polynomial quotient, which must be retained when converting to partial
+// fractions. Keeping that quotient in the normalized coordinate prevents catastrophic
+// cancellation when the support points have a large common translation. Used to build the
+// augmented L⁻¹/R⁻¹/C state-space realisation: polynomial terms are folded into the base
+// pencil, while each pole becomes an auxiliary state.
 struct AAAPoleResidue
 {
-  Eigen::VectorXcd poles;            // length m
-  Eigen::VectorXcd residues;         // length m
-  std::complex<double> d{0.0, 0.0};  // asymptotic value r(∞)
+  Eigen::VectorXcd poles;                        // finite poles in physical z
+  Eigen::VectorXcd residues;                     // one residue per finite pole
+  Eigen::VectorXcd polynomial;                   // quotient in x, low-degree first
+  std::complex<double> polynomial_center = 0.0;  // affine origin for x
+  double polynomial_scale = 1.0;                 // positive affine scale for x
 };
 
 // Evaluate the AAA barycentric interpolant at a (set of) point(s). Numerically
@@ -216,21 +224,21 @@ inline AAAResult RunAAA(const Eigen::VectorXcd &z, const Eigen::VectorXcd &F, do
   return r;
 }
 
-// Extract poles, residues, and asymptote from an AAA result.
+// Extract the polynomial quotient, poles, and residues from an AAA result.
 //
-// Asymptote d = r(∞) = (Σ wⱼ fⱼ) / (Σ wⱼ).
 // Poles = roots of the denominator D(z) = Σ wⱼ / (z − zⱼ): solve the (m+1)×(m+1)
 // generalised eigenproblem (Nakatsukasa et al. 2018, sec 2.7)
 //
 //        ⎡ 0   wᵀ      ⎤        ⎡ 0   0    ⎤
 //   A = ⎢            ⎥,   B = ⎢          ⎥
-//        ⎣ 1  diag(zⱼ) ⎦        ⎣ 0   I    ⎦
+//        ⎣ 1  diag(xⱼ) ⎦        ⎣ 0   I    ⎦
 //
-// and discard the spurious eigenvalue at infinity (B is rank-deficient by 1).
-// Residues by formula rₖ = N(pₖ) / D'(pₖ) with the d-term subtracted:
-//   rₖ = (Σⱼ wⱼ (fⱼ − d) / (pₖ − zⱼ)) · (1 / (− Σⱼ wⱼ / (pₖ − zⱼ)²))
-// (the "− d" subtraction is what keeps residues numerically well-conditioned;
-// see Nakatsukasa eq 2.21 with the rational shifted to be strictly proper).
+// in the affine-normalized coordinate x = (z-center)/scale, then map finite eigenvalues
+// back to z. The normalization is essential when the support points have a large common
+// translation. Discard the eigenvalues at infinity (B is rank-deficient by at least 1).
+// Residues use rₖ = N(pₖ) / D'(pₖ), with the polynomial quotient evaluated at pₖ
+// subtracted from every fⱼ. This leaves the numerator unchanged at a denominator root but
+// keeps the proper remainder numerically well-conditioned.
 inline AAAPoleResidue AAAToPoleResidue(const AAAResult &r)
 {
   AAAPoleResidue out;
@@ -239,21 +247,147 @@ inline AAAPoleResidue AAAToPoleResidue(const AAAResult &r)
   {
     return out;
   }
-  std::complex<double> sum_w = r.wj.sum();
-  std::complex<double> sum_wf = (r.wj.array() * r.fj.array()).sum();
-  // The asymptote d = r(∞) = Σwf/Σw is undefined when the weights sum to (near) zero
-  // (the barycentric rational is strictly proper). Fall back to d = 0 rather than
-  // propagating a NaN through the pole-residue form.
-  out.d = (std::abs(sum_w) > 1.0e-14 * r.wj.cwiseAbs().maxCoeff()) ? sum_wf / sum_w : 0.0;
+  // Clear the barycentric denominators in the dimensionless coordinate
+  // x = (z-center)/scale, where the support points are O(1):
+  //
+  //   N(x) = Σⱼ wⱼ (fⱼ-f_center) ∏ₗ₍ₗ≠ⱼ₎ (x-xₗ),
+  //   D(x) = Σⱼ wⱼ              ∏ₗ₍ₗ≠ⱼ₎ (x-xₗ).
+  //
+  // Centering both z and f avoids cancellation from a large translation. Their leading
+  // coefficients are Σw(f-f_center) and Σw, respectively. In particular, Σw ≈ 0 lowers
+  // deg(D); it does NOT make the interpolant strictly proper. Coefficients below are stored
+  // low-degree first.
+  const std::complex<double> center = r.zj.mean();
+  const std::complex<double> f_center = r.fj.mean();
+  double support_scale = 0.0;
+  Eigen::VectorXcd xj(m);
+  for (long j = 0; j < m; j++)
+  {
+    support_scale = std::max(support_scale, std::abs(r.zj(j) - center));
+  }
+  if (support_scale == 0.0)
+  {
+    support_scale = 1.0;
+  }
+  for (long j = 0; j < m; j++)
+  {
+    xj(j) = (r.zj(j) - center) / support_scale;
+  }
+  out.polynomial_center = center;
+  out.polynomial_scale = support_scale;
 
-  // Generalised eigenproblem for poles.
+  std::vector<std::complex<double>> numerator(static_cast<std::size_t>(m), 0.0);
+  std::vector<std::complex<double>> denominator(static_cast<std::size_t>(m), 0.0);
+  for (long j = 0; j < m; j++)
+  {
+    std::vector<std::complex<double>> factor{1.0};
+    for (long l = 0; l < m; l++)
+    {
+      if (l == j)
+      {
+        continue;
+      }
+      std::vector<std::complex<double>> next(factor.size() + 1, 0.0);
+      for (std::size_t k = 0; k < factor.size(); k++)
+      {
+        next[k] -= xj(l) * factor[k];
+        next[k + 1] += factor[k];
+      }
+      factor = std::move(next);
+    }
+    for (std::size_t k = 0; k < factor.size(); k++)
+    {
+      numerator[k] += r.wj(j) * (r.fj(j) - f_center) * factor[k];
+      denominator[k] += r.wj(j) * factor[k];
+    }
+  }
+  // In powers of dimensionless x, coefficients within each polynomial have comparable
+  // units, so one relative trimming criterion remains meaningful across each vector.
+  auto trim_leading_zeros = [m](std::vector<std::complex<double>> &p)
+  {
+    double scale = 0.0;
+    for (const auto &c : p)
+    {
+      scale = std::max(scale, std::abs(c));
+    }
+    if (scale == 0.0)
+    {
+      p.clear();
+      return;
+    }
+    const double tol =
+        64.0 * std::numeric_limits<double>::epsilon() * std::max<long>(m, 1) * scale;
+    while (!p.empty() && std::abs(p.back()) <= tol)
+    {
+      p.pop_back();
+    }
+  };
+  trim_leading_zeros(numerator);
+  trim_leading_zeros(denominator);
+  MFEM_VERIFY(!denominator.empty(), "AAA interpolant has an identically zero denominator!");
+
+  std::vector<std::complex<double>> quotient;
+  if (numerator.size() >= denominator.size())
+  {
+    auto remainder = numerator;
+    quotient.assign(numerator.size() - denominator.size() + 1, 0.0);
+    const long degree_den = static_cast<long>(denominator.size()) - 1;
+    for (long k = static_cast<long>(quotient.size()) - 1; k >= 0; k--)
+    {
+      const auto q = remainder[static_cast<std::size_t>(degree_den + k)] /
+                     denominator[static_cast<std::size_t>(degree_den)];
+      quotient[static_cast<std::size_t>(k)] = q;
+      for (long j = 0; j <= degree_den; j++)
+      {
+        remainder[static_cast<std::size_t>(j + k)] -=
+            q * denominator[static_cast<std::size_t>(j)];
+      }
+    }
+    trim_leading_zeros(quotient);
+  }
+
+  // Restore the function centering while coefficients still share the same units. Use the
+  // scale from before the addition so a proper rational whose shifted quotient is
+  // -f_center is recognized as having no polynomial quotient despite roundoff.
+  double quotient_scale = std::abs(f_center);
+  for (const auto &c : quotient)
+  {
+    quotient_scale = std::max(quotient_scale, std::abs(c));
+  }
+  if (quotient.empty())
+  {
+    quotient.push_back(f_center);
+  }
+  else
+  {
+    quotient[0] += f_center;
+  }
+  const double quotient_tol =
+      64.0 * std::numeric_limits<double>::epsilon() * std::max<long>(m, 1) * quotient_scale;
+  while (!quotient.empty() && std::abs(quotient.back()) <= quotient_tol)
+  {
+    quotient.pop_back();
+  }
+
+  // Retain q in the normalized coordinate. Expanding q((z-center)/scale) into powers of
+  // physical z would immediately reintroduce the large, mutually cancelling coefficients
+  // that the affine normalization above was chosen to avoid.
+  out.polynomial.resize(static_cast<long>(quotient.size()));
+  for (long k = 0; k < out.polynomial.size(); k++)
+  {
+    out.polynomial(k) = quotient[static_cast<std::size_t>(k)];
+  }
+
+  // Solve for poles in the same normalized coordinate used to determine the polynomial
+  // degrees above. Forming this pencil with the physical support points can turn exact
+  // eigenvalues at infinity into bogus finite poles when all z_j share a large translation.
   Eigen::MatrixXcd A_geig = Eigen::MatrixXcd::Zero(m + 1, m + 1);
   Eigen::MatrixXcd B_geig = Eigen::MatrixXcd::Zero(m + 1, m + 1);
   A_geig.row(0).tail(m) = r.wj.transpose();
   for (long j = 0; j < m; j++)
   {
     A_geig(1 + j, 0) = 1.0;
-    A_geig(1 + j, 1 + j) = r.zj(j);
+    A_geig(1 + j, 1 + j) = xj(j);
     B_geig(1 + j, 1 + j) = 1.0;
   }
   char jobvl = 'N', jobvr = 'N';
@@ -264,49 +398,68 @@ inline AAAPoleResidue AAAToPoleResidue(const AAAResult &r)
   int info = 0;
   zggev_(&jobvl, &jobvr, &n, A_geig.data(), &n, B_geig.data(), &n, alpha.data(),
          beta.data(), nullptr, &n, nullptr, &n, work.data(), &lwork, rwork.data(), &info);
-  // Collect finite eigenvalues, dropping the single eigenvalue at infinity from the
-  // rank deficiency in B. ZGGEV usually signals it with beta = 0 exactly, but roundoff
-  // in an ill-conditioned pencil can instead produce a tiny nonzero beta — a spurious
-  // "finite" pole at ~1/eps whose residue would contaminate in-band evaluation — so
-  // filter on |beta| relative to |alpha| rather than on exact zero.
+  // Collect finite eigenvalues. ZGGEV usually signals an eigenvalue at infinity with
+  // beta = 0 exactly, but roundoff can instead produce a tiny nonzero beta, so filter on
+  // |beta| relative to |alpha| rather than on exact zero.
+  std::vector<std::complex<double>> finite_x_poles;
   std::vector<std::complex<double>> finite_poles;
+  finite_x_poles.reserve(m);
   finite_poles.reserve(m);
   constexpr double beta_tol = 1.0e-13;
   for (int j = 0; j < n; j++)
   {
     if (std::abs(beta[j]) > beta_tol * std::max(std::abs(alpha[j]), 1.0))
     {
-      auto val = alpha[j] / beta[j];
-      if (std::isfinite(val.real()) && std::isfinite(val.imag()))
+      const auto x_pole = alpha[j] / beta[j];
+      if (std::isfinite(x_pole.real()) && std::isfinite(x_pole.imag()))
       {
-        finite_poles.push_back(val);
+        const auto pole = center + support_scale * x_pole;
+        if (std::isfinite(pole.real()) && std::isfinite(pole.imag()))
+        {
+          finite_x_poles.push_back(x_pole);
+          finite_poles.push_back(pole);
+        }
       }
     }
   }
   out.poles = Eigen::Map<Eigen::VectorXcd>(finite_poles.data(), finite_poles.size());
 
-  // Residues with d separated out.
+  // Residues of the strictly proper remainder. Subtracting the polynomial quotient at the
+  // pole leaves the residue unchanged because the barycentric denominator vanishes there,
+  // while avoiding cancellation against a potentially large polynomial component. Evaluate
+  // both the quotient and barycentric sums at the normalized pole xₖ. Converting the ratio
+  // from x back to z contributes one factor of support_scale to the physical-z residue.
   out.residues.resize(out.poles.size());
   for (long k = 0; k < out.poles.size(); k++)
   {
-    std::complex<double> pk = out.poles(k);
+    const std::complex<double> x_pole = finite_x_poles[static_cast<std::size_t>(k)];
+    std::complex<double> polynomial_at_pole = 0.0;
+    for (long j = out.polynomial.size(); j-- > 0;)
+    {
+      polynomial_at_pole = polynomial_at_pole * x_pole + out.polynomial(j);
+    }
     std::complex<double> num = 0.0, den = 0.0;
     for (long j = 0; j < m; j++)
     {
-      auto inv = 1.0 / (pk - r.zj(j));
-      num += r.wj(j) * (r.fj(j) - out.d) * inv;
+      auto inv = 1.0 / (x_pole - xj(j));
+      num += r.wj(j) * (r.fj(j) - polynomial_at_pole) * inv;
       den -= r.wj(j) * inv * inv;
     }
-    out.residues(k) = num / den;
+    out.residues(k) = support_scale * num / den;
   }
   return out;
 }
 
-// Evaluate the pole–residue partial-fraction form. Used in tests.
+// Evaluate the polynomial-plus-pole–residue partial-fraction form. Used in tests.
 inline std::complex<double> EvaluatePoleResidue(const AAAPoleResidue &pr,
                                                 std::complex<double> z)
 {
-  std::complex<double> sum = pr.d;
+  const std::complex<double> x = (z - pr.polynomial_center) / pr.polynomial_scale;
+  std::complex<double> sum = 0.0;
+  for (long k = pr.polynomial.size(); k-- > 0;)
+  {
+    sum = sum * x + pr.polynomial(k);
+  }
   for (long k = 0; k < pr.poles.size(); k++)
   {
     sum += pr.residues(k) / (z - pr.poles(k));

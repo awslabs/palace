@@ -45,6 +45,69 @@ TEST_CASE("AAA: trivial constant function", "[aaa][Serial]")
   }
 }
 
+TEST_CASE("AAA: improper barycentric interpolant preserves polynomial quotient",
+          "[aaa][Serial]")
+{
+  // With support data (0,0), (1,1) and weights (-1,1), the barycentric form is exactly
+  // r(z)=z. Here Σw=0 lowers the denominator degree and creates a linear polynomial
+  // quotient; treating the undefined constant asymptote as zero would lose the function.
+  AAAResult r;
+  r.zj.resize(2);
+  r.fj.resize(2);
+  r.wj.resize(2);
+  r.zj << 0.0, 1.0;
+  r.fj << 0.0, 1.0;
+  r.wj << -1.0, 1.0;
+
+  auto pr = AAAToPoleResidue(r);
+  REQUIRE(pr.polynomial.size() == 2);
+  REQUIRE_THAT(std::abs(pr.polynomial_center - 0.5), WithinAbs(0.0, 1e-13));
+  REQUIRE_THAT(std::abs(pr.polynomial_scale - 0.5), WithinAbs(0.0, 1e-13));
+  REQUIRE_THAT(std::abs(pr.polynomial(0) - 0.5), WithinAbs(0.0, 1e-13));
+  REQUIRE_THAT(std::abs(pr.polynomial(1) - 0.5), WithinAbs(0.0, 1e-13));
+  for (const auto z : {std::complex<double>(0.25, 0.0), std::complex<double>(2.0, 0.5)})
+  {
+    REQUIRE_THAT(std::abs(EvaluatePoleResidue(pr, z) - z), WithinAbs(0.0, 1e-12));
+  }
+}
+
+TEST_CASE("AAA: translated exact quadratic retains centered quotient", "[aaa][Serial]")
+{
+  // These third-difference weights make the cleared denominator constant, so interpolating
+  // the four samples of f(z)=(z-center)² gives that exact quadratic with no finite poles.
+  // Its physical-z monomials, z²-2*center*z+center², catastrophically cancel near 1e9;
+  // retaining the quotient in the normalized support coordinate avoids that expansion.
+  constexpr double center = 1.0e9 + 1.5;
+  AAAResult r;
+  r.zj.resize(4);
+  r.fj.resize(4);
+  r.wj.resize(4);
+  r.zj << 1.0e9, 1.0e9 + 1.0, 1.0e9 + 2.0, 1.0e9 + 3.0;
+  for (long j = 0; j < r.zj.size(); j++)
+  {
+    r.fj(j) = (r.zj(j) - center) * (r.zj(j) - center);
+  }
+  r.wj << -1.0, 3.0, -3.0, 1.0;
+
+  auto pr = AAAToPoleResidue(r);
+  REQUIRE(pr.polynomial.size() == 3);
+  REQUIRE(pr.poles.size() == 0);
+  REQUIRE(pr.residues.size() == 0);
+  REQUIRE_THAT(std::abs(pr.polynomial_center - center), WithinAbs(0.0, 1e-13));
+  REQUIRE_THAT(std::abs(pr.polynomial_scale - 1.5), WithinAbs(0.0, 1e-13));
+  REQUIRE_THAT(std::abs(pr.polynomial(0)), WithinAbs(0.0, 1e-12));
+  REQUIRE_THAT(std::abs(pr.polynomial(1)), WithinAbs(0.0, 1e-12));
+  REQUIRE_THAT(std::abs(pr.polynomial(2) - 2.25), WithinAbs(0.0, 1e-12));
+
+  // Reconstruct at fresh off-support points, including one off the real axis.
+  for (const auto z :
+       {std::complex<double>(center + 0.25, 0.0), std::complex<double>(center, 0.75)})
+  {
+    const auto truth = (z - center) * (z - center);
+    REQUIRE_THAT(std::abs(EvaluatePoleResidue(pr, z) - truth), WithinAbs(0.0, 1e-12));
+  }
+}
+
 TEST_CASE("AAA: rational function recovered exactly", "[aaa][Serial]")
 {
   // f(z) = 1/(z − 2) + 3/(z − 5). AAA should converge with m = 2 supports
@@ -66,10 +129,10 @@ TEST_CASE("AAA: rational function recovered exactly", "[aaa][Serial]")
     auto v = EvaluateAAA(r, z_test(i));
     REQUIRE_THAT(std::abs(v - truth) / std::abs(truth), WithinAbs(0.0, 1e-9));
   }
-  // Verify pole/residue extraction recovers the same function. With f(∞)=0 the
-  // asymptote d should be very small; both poles and residues should be real.
+  // Verify pole/residue extraction recovers the same function. With f(∞)=0 there should
+  // be no polynomial quotient; both poles and residues should be real.
   auto pr = AAAToPoleResidue(r);
-  REQUIRE_THAT(std::abs(pr.d), WithinAbs(0.0, 1e-12));
+  REQUIRE(pr.polynomial.size() == 0);
   // Match poles to known set {2, 5} (order-independent).
   std::vector<std::complex<double>> sorted_poles(pr.poles.data(),
                                                  pr.poles.data() + pr.poles.size());
@@ -133,10 +196,10 @@ TEST_CASE("AAA: pole-residue accuracy with complex poles + asymptote", "[aaa][Se
     }
     REQUIRE_THAT(min_dist, WithinAbs(0.0, 1e-9));
   }
-  // The asymptote d should match. AAAToPoleResidue computes d as a row sum of
-  // (alpha[k]/beta[k]) at infinity (see aaa.hpp); a sign error on the residue formula
-  // typically leaves d intact but shifts the residue magnitudes.
-  REQUIRE_THAT(std::abs(pr.d - d), WithinAbs(0.0, 1e-9));
+  // The constant polynomial quotient should match the asymptote d; a sign error in the
+  // residue formula typically leaves this intact but shifts the residue magnitudes.
+  REQUIRE(pr.polynomial.size() == 1);
+  REQUIRE_THAT(std::abs(pr.polynomial(0) - d), WithinAbs(0.0, 1e-9));
 
   // Spot-check pole-residue evaluation at fresh test points (away from sample grid).
   const std::vector<std::complex<double>> z_test = {
