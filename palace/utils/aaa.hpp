@@ -399,29 +399,45 @@ inline AAAPoleResidue AAAToPoleResidue(const AAAResult &r)
   zggev_(&jobvl, &jobvr, &n, A_geig.data(), &n, B_geig.data(), &n, alpha.data(),
          beta.data(), nullptr, &n, nullptr, &n, work.data(), &lwork, rwork.data(), &info);
   MFEM_VERIFY(info == 0, "zggev failed with info = " << info);
-  // Collect finite eigenvalues. ZGGEV usually signals an eigenvalue at infinity with
-  // beta = 0 exactly, but roundoff can instead produce a tiny nonzero beta, so filter on
-  // |beta| relative to |alpha| rather than on exact zero.
-  std::vector<std::complex<double>> finite_x_poles;
-  std::vector<std::complex<double>> finite_poles;
-  finite_x_poles.reserve(m);
-  finite_poles.reserve(m);
-  constexpr double beta_tol = 1.0e-13;
+  // Collect the finite eigenvalues. Their count is known structurally: the poles are the
+  // roots of the cleared denominator, so exactly deg(D) of the m+1 pencil eigenvalues are
+  // finite and the rest lie at infinity. ZGGEV usually signals infinity with beta = 0
+  // exactly, but QZ roundoff (BLAS/architecture dependent) can instead produce a small
+  // nonzero beta — a bogus "finite" pole at ~1/eps — and no fixed |beta| threshold is
+  // robust when the denominator degree drops (many eigenvalues at infinity, e.g. a purely
+  // polynomial interpolant). Instead keep exactly deg(D) eigenvalues, selecting those
+  // farthest from infinity in the chordal metric |beta| / sqrt(|alpha|² + |beta|²).
+  const long n_finite = static_cast<long>(denominator.size()) - 1;
+  std::vector<int> order(static_cast<std::size_t>(n));
   for (int j = 0; j < n; j++)
   {
-    if (std::abs(beta[j]) > beta_tol * std::max(std::abs(alpha[j]), 1.0))
-    {
-      const auto x_pole = alpha[j] / beta[j];
-      if (std::isfinite(x_pole.real()) && std::isfinite(x_pole.imag()))
-      {
-        const auto pole = center + support_scale * x_pole;
-        if (std::isfinite(pole.real()) && std::isfinite(pole.imag()))
-        {
-          finite_x_poles.push_back(x_pole);
-          finite_poles.push_back(pole);
-        }
-      }
-    }
+    order[static_cast<std::size_t>(j)] = j;
+  }
+  auto chordal = [&](int j)
+  {
+    const double a = std::abs(alpha[static_cast<std::size_t>(j)]);
+    const double b = std::abs(beta[static_cast<std::size_t>(j)]);
+    return b / std::hypot(a, b);
+  };
+  std::sort(order.begin(), order.end(),
+            [&](int a, int b) { return chordal(a) > chordal(b); });
+  std::vector<std::complex<double>> finite_x_poles;
+  std::vector<std::complex<double>> finite_poles;
+  finite_x_poles.reserve(static_cast<std::size_t>(n_finite));
+  finite_poles.reserve(static_cast<std::size_t>(n_finite));
+  for (long k = 0; k < n_finite; k++)
+  {
+    const int j = order[static_cast<std::size_t>(k)];
+    MFEM_VERIFY(std::abs(beta[static_cast<std::size_t>(j)]) > 0.0,
+                "AAA pole extraction found fewer finite eigenvalues than the denominator "
+                "degree implies!");
+    const auto x_pole =
+        alpha[static_cast<std::size_t>(j)] / beta[static_cast<std::size_t>(j)];
+    const auto pole = center + support_scale * x_pole;
+    MFEM_VERIFY(std::isfinite(pole.real()) && std::isfinite(pole.imag()),
+                "AAA pole extraction produced a non-finite pole!");
+    finite_x_poles.push_back(x_pole);
+    finite_poles.push_back(pole);
   }
   out.poles = Eigen::Map<Eigen::VectorXcd>(finite_poles.data(), finite_poles.size());
 
