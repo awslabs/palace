@@ -33,7 +33,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<SurfaceResponseOperator> response_correction;
   std::unique_ptr<SumOperator> corrected_K;
   const Operator *system_K = K.get();
-  if (iodata.solver.electrostatic.response_correction && final_postprocessing_pass)
+  if (iodata.solver.electrostatic.response_correction)
   {
     response_correction = std::make_unique<SurfaceResponseOperator>(iodata, laplace_op);
     corrected_K = std::make_unique<SumOperator>(*K, *response_correction);

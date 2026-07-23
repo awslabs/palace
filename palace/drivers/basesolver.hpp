@@ -39,10 +39,6 @@ protected:
   fs::path post_dir;
   bool root;
 
-  // AMR can defer expensive postprocessing that does not affect error indicators until the
-  // final mesh.
-  mutable bool final_postprocessing_pass = true;
-
   // Performs a solve using the mesh sequence, then reports error indicators and the number
   // of global true dofs.
   virtual std::pair<ErrorIndicator, long long int>
