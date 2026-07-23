@@ -46,6 +46,25 @@ auto LoadScaleParMesh(IoData &iodata, MPI_Comm world_comm)
   return mesh_;
 }
 
+json LoadCpwWaveConfig()
+{
+  // The cpw example config and mesh are installed under the test data directory via the
+  // regression fixtures (which symlink to examples/cpw and are dereferenced on install).
+  auto cpw_dir = fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / "cpw";
+  auto config_path = cpw_dir / "cpw_wave_uniform.json";
+
+  // Override Mesh to absolute so the relative mesh reference resolves regardless of cwd.
+  std::ifstream f(config_path);
+  REQUIRE(f.good());
+  json setup = json::parse(f, /*cb=*/nullptr, /*allow_exceptions=*/true,
+                           /*ignore_comments=*/true);
+  auto mesh_rel = setup["Model"]["Mesh"].get<std::string>();
+  setup["Model"]["Mesh"] = (cpw_dir / mesh_rel).string();
+  // Avoid writing any postprocessing output during unit tests.
+  setup["Problem"]["Output"] = "";
+  return setup;
+}
+
 }  // namespace
 
 // Verify the factorisation invariant
@@ -59,22 +78,7 @@ TEST_CASE("WavePortOperator-BoundaryMassFactorisation",
           "[waveportoperator][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
-  // The cpw example config and mesh are installed under the test data directory via the
-  // regression fixtures (which symlink to examples/cpw and are dereferenced on install).
-  auto cpw_dir = fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / "cpw";
-  auto config_path = cpw_dir / "cpw_wave_uniform.json";
-
-  // Override Mesh to absolute so the relative mesh reference resolves regardless of cwd.
-  std::ifstream f(config_path);
-  REQUIRE(f.good());
-  json setup = json::parse(f, /*cb=*/nullptr, /*allow_exceptions=*/true,
-                           /*ignore_comments=*/true);
-  auto mesh_rel = setup["Model"]["Mesh"].get<std::string>();
-  setup["Model"]["Mesh"] = (cpw_dir / mesh_rel).string();
-  // Avoid writing any postprocessing output during unit test.
-  setup["Problem"]["Output"] = "";
-
-  IoData iodata(setup, /*print=*/false);
+  IoData iodata(LoadCpwWaveConfig(), /*print=*/false);
   auto mesh_io = LoadScaleParMesh(iodata, comm);
   SpaceOperator space_op(iodata, mesh_io);
 
@@ -156,4 +160,45 @@ TEST_CASE("WavePortOperator-BoundaryMassFactorisation",
     CAPTURE(omega, rel_err);
     CHECK(rel_err < 1.0e-10);
   }
+}
+
+// An inactive wave port is an unloaded boundary, but its unit mass remains part of the
+// synthesis coordinate definition when IncludeInSynthesis is true. Verify that exposing
+// this unit operator does not accidentally reactivate the physical Robin termination.
+TEST_CASE("WavePortOperator-InactiveBoundaryMassForSynthesis",
+          "[waveportoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  auto setup = LoadCpwWaveConfig();
+  bool first_port = true;
+  for (auto &port : setup["Boundaries"]["WavePort"])
+  {
+    port["Active"] = false;
+    port["IncludeInSynthesis"] = true;
+    port["Excitation"] = first_port ? 1 : 0;
+    first_port = false;
+  }
+
+  IoData iodata(setup, /*print=*/false);
+  auto mesh_io = LoadScaleParMesh(iodata, comm);
+  SpaceOperator space_op(iodata, mesh_io);
+
+  const auto &wp_op = space_op.GetWavePortOp();
+  REQUIRE(wp_op.Size() > 0);
+  for (const auto &[idx, data] : wp_op)
+  {
+    CHECK_FALSE(data.active);
+    CHECK(data.include_in_synthesis);
+    auto Mp =
+        space_op.GetWavePortBoundaryMassMatrix<ComplexOperator>(idx, Operator::DIAG_ZERO);
+    REQUIRE(Mp);
+  }
+
+  const double omega =
+      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
+  auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+  CHECK_FALSE(A2);
+  auto A2_complex = space_op.GetExtraSystemMatrix(std::complex<double>(omega, 1.0e-3),
+                                                  Operator::DIAG_ZERO);
+  CHECK_FALSE(A2_complex);
 }
