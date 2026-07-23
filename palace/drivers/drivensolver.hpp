@@ -15,6 +15,7 @@ namespace palace
 class ErrorIndicator;
 class Mesh;
 class SpaceOperator;
+class SurfaceResponseGeometry;
 
 //
 // Driver class for driven terminal simulations.
@@ -22,6 +23,8 @@ class SpaceOperator;
 class DrivenSolver : public BaseSolver
 {
 private:
+  mutable std::shared_ptr<const SurfaceResponseGeometry> response_geometry;
+
   ErrorIndicator SweepUniform(SpaceOperator &space_op) const;
 
   ErrorIndicator SweepAdaptive(SpaceOperator &space_op) const;

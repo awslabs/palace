@@ -35,7 +35,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const Operator *system_K = K.get();
   if (iodata.solver.electrostatic.response_correction)
   {
-    response_correction = std::make_unique<SurfaceResponseOperator>(iodata, laplace_op);
+    response_correction =
+        std::make_unique<SurfaceResponseOperator>(iodata, laplace_op, &response_geometry);
     corrected_K = std::make_unique<SumOperator>(*K, *response_correction);
     system_K = corrected_K.get();
   }
@@ -197,8 +198,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         D_corrected_ptr = &D_corrected;
       }
 
-      auto corrected_energies =
-          post_op.GetElectrostaticEnergies(V_corrected[step], E_corrected, D_corrected_ptr);
+      const auto target_interfaces = response_correction->GetTargetInterfaces();
+      auto corrected_energies = post_op.GetElectrostaticEnergies(
+          V_corrected[step], E_corrected, D_corrected_ptr, &target_interfaces);
       const auto corrected_response =
           response_correction->GetElectrostaticResponse(V_corrected[step], false);
       corrected_energies =

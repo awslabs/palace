@@ -26,6 +26,7 @@ namespace palace
 class ErrorIndicator;
 class LaplaceOperator;
 class Mesh;
+class SurfaceResponseGeometry;
 template <ProblemType>
 class PostOperator;
 
@@ -35,6 +36,8 @@ class PostOperator;
 class ElectrostaticSolver : public BaseSolver
 {
 private:
+  mutable std::shared_ptr<const SurfaceResponseGeometry> response_geometry;
+
   void PostprocessTerminals(PostOperator<ProblemType::ELECTROSTATIC> &post_op,
                             const std::map<int, mfem::Array<int>> &terminal_sources,
                             const std::vector<Vector> &V) const;

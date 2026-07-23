@@ -13,6 +13,7 @@ namespace palace
 
 class ErrorIndicator;
 class Mesh;
+class SurfaceResponseGeometry;
 
 //
 // Driver class for eigenmode simulations.
@@ -20,6 +21,8 @@ class Mesh;
 class EigenSolver : public BaseSolver
 {
 private:
+  mutable std::shared_ptr<const SurfaceResponseGeometry> response_geometry;
+
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 

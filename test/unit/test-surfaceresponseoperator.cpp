@@ -408,10 +408,18 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   std::vector<std::unique_ptr<Mesh>> automatic_meshes;
   automatic_meshes.push_back(std::make_unique<Mesh>(std::move(automatic_parallel)));
   LaplaceOperator automatic_laplace(automatic_iodata, automatic_meshes);
-  SurfaceResponseOperator automatic_response(automatic_iodata, automatic_laplace);
+  std::shared_ptr<const SurfaceResponseGeometry> automatic_geometry;
+  SurfaceResponseOperator automatic_response(automatic_iodata, automatic_laplace,
+                                             &automatic_geometry);
+  REQUIRE(automatic_geometry);
   CHECK(automatic_response.GetPatchCount() == 2);
   CHECK(automatic_response.GetBasisSize() == 8);
   CHECK(automatic_response.HasSurfaceResponse());
+  SurfaceResponseOperator cached_automatic_response(automatic_iodata, automatic_laplace,
+                                                    &automatic_geometry);
+  CHECK(cached_automatic_response.GetPatchCount() == automatic_response.GetPatchCount());
+  CHECK(cached_automatic_response.GetBasisSize() == automatic_response.GetBasisSize());
+  CHECK(cached_automatic_response.HasSurfaceResponse());
 
   auto invalid_depth_config = automatic_config;
   invalid_depth_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =

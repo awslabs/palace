@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <type_traits>
 #include <unordered_set>
 #include <vector>
@@ -427,7 +428,9 @@ public:
                const config::DomainData &domains, const config::BoundaryData &boundaries,
                const Units &units, fem_op_t<solver_t> &fem_op,
                const std::unordered_set<int> *cracked_attributes = nullptr);
-  explicit PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op);
+  explicit PostOperator(
+      const IoData &iodata, fem_op_t<solver_t> &fem_op,
+      std::shared_ptr<const SurfaceResponseGeometry> *response_geometry = nullptr);
 
   bool NeedsRecoveredElectricFlux() const { return D_recovered != nullptr; }
 
@@ -609,7 +612,8 @@ public:
   // measurement output. This is used to assemble fabrication-corrected observables while
   // preserving the historical raw thin-metal CSV output.
   template <ProblemType U = solver_t>
-  auto GetElectrostaticEnergies(const Vector &v, const Vector &e, const Vector *d = nullptr)
+  auto GetElectrostaticEnergies(const Vector &v, const Vector &e, const Vector *d = nullptr,
+                                const std::set<int> *response_targets = nullptr)
       -> std::enable_if_t<U == ProblemType::ELECTROSTATIC, ElectrostaticEnergyData>
   {
     SetVGridFunction(v);
@@ -625,12 +629,26 @@ public:
     surf_post_op.ResetInterfaceLocalEdgeEnergyCache();
     for (const auto &[idx, data] : surf_post_op.eps_surfs)
     {
-      energies.interfaces.emplace(
-          idx, typename ElectrostaticEnergyData::Interface{
-                   surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E, D_recovered.get()),
-                   surf_post_op.GetInterfaceLossTangent(idx),
-                   surf_post_op.GetInterfaceEdgeElectricFieldEnergies(idx, *E,
-                                                                      D_recovered.get())});
+      if (response_targets && response_targets->find(idx) != response_targets->end())
+      {
+        auto outside =
+            surf_post_op.GetInterfaceOuterElectricFieldEnergy(idx, *E, D_recovered.get());
+        energies.interfaces.emplace(
+            idx,
+            typename ElectrostaticEnergyData::Interface{
+                outside.energy_outside, surf_post_op.GetInterfaceLossTangent(idx),
+                std::vector<SurfacePostOperator::InterfaceEdgeEnergy>{std::move(outside)}});
+      }
+      else
+      {
+        energies.interfaces.emplace(
+            idx,
+            typename ElectrostaticEnergyData::Interface{
+                surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E, D_recovered.get()),
+                surf_post_op.GetInterfaceLossTangent(idx),
+                surf_post_op.GetInterfaceEdgeElectricFieldEnergies(idx, *E,
+                                                                   D_recovered.get())});
+      }
     }
     return energies;
   }

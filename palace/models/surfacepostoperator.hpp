@@ -180,6 +180,9 @@ public:
   std::vector<InterfaceEdgeEnergy>
   GetInterfaceEdgeElectricFieldEnergies(int idx, const GridFunction &E,
                                         const GridFunction *D = nullptr) const;
+  InterfaceEdgeEnergy
+  GetInterfaceOuterElectricFieldEnergy(int idx, const GridFunction &E,
+                                       const GridFunction *D = nullptr) const;
   std::vector<InterfaceLocalEdgeEnergy>
   GetInterfaceLocalEdgeElectricFieldEnergies(int idx, const GridFunction &E,
                                              const GridFunction *D = nullptr,

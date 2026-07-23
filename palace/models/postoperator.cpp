@@ -253,7 +253,9 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
 }
 
 template <ProblemType solver_t>
-PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &fem_op_)
+PostOperator<solver_t>::PostOperator(
+    const IoData &iodata, fem_op_t<solver_t> &fem_op_,
+    std::shared_ptr<const SurfaceResponseGeometry> *response_geometry)
   : PostOperator(iodata.problem, iodata.solver, iodata.domains, iodata.boundaries,
                  iodata.units, fem_op_, &iodata.boundaries.cracked_attributes)
 {
@@ -261,7 +263,8 @@ PostOperator<solver_t>::PostOperator(const IoData &iodata, fem_op_t<solver_t> &f
   {
     if (iodata.solver.surface_response_correction)
     {
-      surface_response_op = std::make_unique<SurfaceResponseOperator>(iodata, fem_op_);
+      surface_response_op =
+          std::make_unique<SurfaceResponseOperator>(iodata, fem_op_, response_geometry);
       MFEM_VERIFY(surface_response_op->HasSurfaceResponse(),
                   "Maxwell surface response correction requires fabricated and thin "
                   "surface response matrices in the selected coupon models!");

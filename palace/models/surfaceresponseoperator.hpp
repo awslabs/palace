@@ -24,6 +24,22 @@ class IoData;
 class LaplaceOperator;
 class SpaceOperator;
 
+// Mesh-independent automatic coupon layout. A solver retains this across AMR iterations;
+// finite-element point interpolation is still rebuilt for every refined mesh.
+class SurfaceResponseGeometry
+{
+private:
+  struct Impl;
+  std::shared_ptr<const Impl> impl;
+
+  explicit SurfaceResponseGeometry(std::shared_ptr<const Impl> impl_)
+    : impl(std::move(impl_))
+  {
+  }
+
+  friend class SurfaceResponseOperator;
+};
+
 //
 // Low-rank Schur-complement correction which replaces the local response of an ideal
 // thin-metal edge by a fabrication-resolved coupon response. The correction has the form
@@ -158,8 +174,12 @@ public:
     bool confident = true;
   };
 
-  SurfaceResponseOperator(const IoData &iodata, const LaplaceOperator &laplace_op);
-  SurfaceResponseOperator(const IoData &iodata, const SpaceOperator &space_op);
+  SurfaceResponseOperator(
+      const IoData &iodata, const LaplaceOperator &laplace_op,
+      std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry = nullptr);
+  SurfaceResponseOperator(
+      const IoData &iodata, const SpaceOperator &space_op,
+      std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry = nullptr);
 
   void Mult(const Vector &x, Vector &y) const override;
   void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }

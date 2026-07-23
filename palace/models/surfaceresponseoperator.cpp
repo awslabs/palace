@@ -3019,8 +3019,16 @@ double QuadraticForm(const mfem::DenseMatrix &matrix, const Vector &x, Vector &w
 
 }  // namespace
 
-SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
-                                                 const LaplaceOperator &laplace_op)
+struct SurfaceResponseGeometry::Impl
+{
+  ResponseCorrectionData config;
+  std::optional<AutomaticResponseDiagnostics> diagnostics;
+  bool maxwell = false;
+};
+
+SurfaceResponseOperator::SurfaceResponseOperator(
+    const IoData &iodata, const LaplaceOperator &laplace_op,
+    std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry)
   : Operator(laplace_op.GetH1Space().GetTrueVSize()), fespace(laplace_op.GetH1Space()),
     basis_size(0)
 {
@@ -3034,12 +3042,35 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
               "Three-dimensional surface response correction requires automatic "
               "fabrication-process library matching!");
   std::optional<ResponseCorrectionData> automatic_config;
+  std::shared_ptr<const SurfaceResponseGeometry> cached_geometry;
   const ResponseCorrectionData *config = &*request;
   if (request->IsAutomatic())
   {
-    BlockTimer geometry_timer(Timer::CONSTRUCT_RESPONSE_GEOMETRY);
-    automatic_config = BuildAutomaticResponseData(iodata, laplace_op, *request);
-    config = &*automatic_config;
+    if (automatic_geometry && *automatic_geometry)
+    {
+      cached_geometry = *automatic_geometry;
+      MFEM_VERIFY(!cached_geometry->impl->maxwell,
+                  "Cannot reuse Maxwell surface-response geometry for electrostatics!");
+      config = &cached_geometry->impl->config;
+    }
+    else
+    {
+      BlockTimer geometry_timer(Timer::CONSTRUCT_RESPONSE_GEOMETRY);
+      automatic_config = BuildAutomaticResponseData(iodata, laplace_op, *request);
+      if (automatic_geometry)
+      {
+        auto impl = std::make_shared<SurfaceResponseGeometry::Impl>();
+        impl->config = std::move(*automatic_config);
+        cached_geometry = std::shared_ptr<const SurfaceResponseGeometry>(
+            new SurfaceResponseGeometry(std::move(impl)));
+        *automatic_geometry = cached_geometry;
+        config = &cached_geometry->impl->config;
+      }
+      else
+      {
+        config = &*automatic_config;
+      }
+    }
   }
   MFEM_VERIFY(!config->models.empty() && !config->patches.empty(),
               "Surface response correction requires at least one model and patch!");
@@ -3222,8 +3253,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
 #endif
 }
 
-SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
-                                                 const SpaceOperator &space_op)
+SurfaceResponseOperator::SurfaceResponseOperator(
+    const IoData &iodata, const SpaceOperator &space_op,
+    std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry)
   : Operator(space_op.GetNDSpace().GetTrueVSize()), fespace(space_op.GetNDSpace()),
     basis_size(0)
 {
@@ -3239,14 +3271,46 @@ SurfaceResponseOperator::SurfaceResponseOperator(const IoData &iodata,
 
 #if defined(MFEM_USE_GSLIB)
   maxwell = true;
-  AutomaticResponseDiagnostics diagnostics;
-  ResponseCorrectionData config;
+  AutomaticResponseDiagnostics local_diagnostics;
+  std::optional<ResponseCorrectionData> local_config;
+  std::shared_ptr<const SurfaceResponseGeometry> cached_geometry;
+  const ResponseCorrectionData *config_ptr = nullptr;
+  const AutomaticResponseDiagnostics *diagnostics_ptr = nullptr;
+  if (automatic_geometry && *automatic_geometry)
+  {
+    cached_geometry = *automatic_geometry;
+    MFEM_VERIFY(cached_geometry->impl->maxwell &&
+                    cached_geometry->impl->diagnostics.has_value(),
+                "Cannot reuse electrostatic surface-response geometry for Maxwell!");
+    config_ptr = &cached_geometry->impl->config;
+    diagnostics_ptr = &*cached_geometry->impl->diagnostics;
+  }
+  else
   {
     BlockTimer geometry_timer(Timer::CONSTRUCT_RESPONSE_GEOMETRY);
-    config =
+    local_config =
         BuildAutomaticResponseData3D(iodata, fespace.GetParMesh(), space_op.GetMaterialOp(),
-                                     *request, true, &diagnostics);
+                                     *request, true, &local_diagnostics);
+    if (automatic_geometry)
+    {
+      auto impl = std::make_shared<SurfaceResponseGeometry::Impl>();
+      impl->config = std::move(*local_config);
+      impl->diagnostics = local_diagnostics;
+      impl->maxwell = true;
+      cached_geometry = std::shared_ptr<const SurfaceResponseGeometry>(
+          new SurfaceResponseGeometry(std::move(impl)));
+      *automatic_geometry = cached_geometry;
+      config_ptr = &cached_geometry->impl->config;
+      diagnostics_ptr = &*cached_geometry->impl->diagnostics;
+    }
+    else
+    {
+      config_ptr = &*local_config;
+      diagnostics_ptr = &local_diagnostics;
+    }
   }
+  const auto &config = *config_ptr;
+  const auto &diagnostics = *diagnostics_ptr;
   matching_radius = diagnostics.matching_radius;
   minimum_wave_speed = diagnostics.minimum_wave_speed;
   matched_length_fraction = diagnostics.selected_length > 0.0
