@@ -506,13 +506,11 @@ WavePortData::WavePortData(const config::WavePortData &data,
   e0.SetSize(port_nd_fespace->GetTrueVSize() + port_h1_fespace->GetTrueVSize());
   e0.UseDevice(true);
 
-  // Set the shift-and-invert target as the maximum propagation constant.
-  double c_min = mat_op.GetLightSpeedMax().Min();
-  Mpi::GlobalMin(1, &c_min, nd_fespace.GetComm());
-  MFEM_VERIFY(c_min > 0.0 && c_min < mfem::infinity(),
-              "Invalid material speed of light detected in WavePortOperator!");
-  mu_eps_max = 1.0 / (c_min * c_min) * 1.1;  // Add a safety factor for maximum
-                                             // propagation constant possible
+  // Set the shift-and-invert target above the bulk propagation constants of materials
+  // present on this port. For anisotropic media the electric and magnetic polarizations
+  // can sample different material axes, so max(mu_r * epsilon_r) is not a safe bound;
+  // use max(mu_r) * max(epsilon_r) instead.
+  mu_eps_max = port_mat_op->GetMaxMuEpsilon() * 1.1;
 
   // Configure a communicator for the processes which have elements for this port.
   MPI_Comm comm = nd_fespace.GetComm();

@@ -64,6 +64,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 778](https://github.com/awslabs/palace/pull/778).
   - Fixed a bug in the 2D mode eigensolver for lossy cross-sections, where a complex
     permittivity term was missing. [PR 778](https://github.com/awslabs/palace/pull/778).
+  - Fixed numeric wave port and automatic boundary-mode targeting for anisotropic
+    materials, which could select an evanescent mode instead of the mode with the largest
+    propagation constant. [PR 836](https://github.com/awslabs/palace/pull/836).
 
 ## [0.17.0] - 2026-06-28
 

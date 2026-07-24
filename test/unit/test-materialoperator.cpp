@@ -83,6 +83,26 @@ TEST_CASE("MaterialOperator IsIsotropic", "[materialoperator][Serial]")
   }
 }
 
+TEST_CASE("MaterialOperator anisotropic wave-number bound", "[materialoperator][Serial]")
+{
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+  Mesh palace_mesh(std::move(par_mesh));
+
+  config::MaterialData material;
+  material.attributes = {1};
+  material.mu_r.s = {4.0, 1.0, 1.0};
+  material.epsilon_r.s = {1.0, 4.0, 1.0};
+
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, palace_mesh);
+
+  // Same-axis products max(mu_i * epsilon_i) are only 4, but a wave polarized with E
+  // along y and H along x samples mu_x * epsilon_y = 16.
+  CHECK(mat_op.GetMaxMuEpsilon() == Approx(16.0));
+}
+
 TEST_CASE("MaterialOperator utility functions", "[materialoperator][Serial]")
 {
   SECTION("IsOrthonormal")
