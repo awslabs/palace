@@ -875,6 +875,7 @@ void NewtonInterpolationOperator::Interpolate(const std::complex<double> sigma_m
   ops.resize(num_points);
   points.clear();
   points.resize(num_points);
+  frozen_ops.clear();
 
   // Linearly spaced sample points.
   for (int j = 0; j < num_points; j++)
@@ -914,6 +915,141 @@ void NewtonInterpolationOperator::Interpolate(const std::complex<double> sigma_m
       coeffs[k][j] = sign * elementarySymmetric(points, j - k, j);
     }
   }
+
+  // Assemble the single per-order (coefficient, operator) representation read by
+  // GetInterpolationOperator, Mult, and AddMult: the order-th pencil coefficient operator
+  // is Σₜ pencil_coeffs[order][t]·pencil_ops[order][t]. The base terms are the
+  // Newton→monomial combination of the leading divided-difference operators;
+  // AddFrozenPole appends one correction term per frozen pole.
+  pencil_coeffs.assign(num_points, {});
+  pencil_ops.assign(num_points, {});
+  for (int order = 0; order < num_points; order++)
+  {
+    for (int j = 0; j < num_points; j++)
+    {
+      pencil_coeffs[order].push_back(coeffs[order][j]);
+      pencil_ops[order].push_back(ops[j][0].get());
+    }
+  }
+}
+
+std::vector<std::complex<double>>
+NewtonInterpolationOperator::ComputeLeadingDividedDifferences(
+    const std::function<std::complex<double>(std::complex<double>)> &f) const
+{
+  // In-place leading divided differences: after pass k, dd[j] = f[x_{j-k}, ..., x_j] for
+  // j >= k, so on completion dd[j] = f[x_0, ..., x_j] — the scalar analogue of the
+  // operator divided differences ops[j][0], with the same denominators
+  // points[j] - points[j - k] as the operator DAG in Interpolate().
+  std::vector<std::complex<double>> dd(num_points);
+  for (int j = 0; j < num_points; j++)
+  {
+    dd[j] = f(points[j]);
+  }
+  for (int k = 1; k < num_points; k++)
+  {
+    for (int j = num_points - 1; j >= k; j--)
+    {
+      dd[j] = (dd[j] - dd[j - 1]) / (points[j] - points[j - k]);
+    }
+  }
+  return dd;
+}
+
+std::vector<std::complex<double>> NewtonInterpolationOperator::ComputeMonomialCoefficients(
+    const std::vector<std::complex<double>> &dd) const
+{
+  // q[order] = Σⱼ coeffs[order][j]·dd[j], the same Newton→monomial combination the
+  // operator path applies to ops[j][0], so the scalar Newton interpolant through the
+  // nodes is p(λ) = Σ q[order]·λ^order.
+  std::vector<std::complex<double>> q(num_points, 0.0);
+  for (int order = 0; order < num_points; order++)
+  {
+    for (int j = 0; j < num_points; j++)
+    {
+      q[order] += coeffs[order][j] * dd[j];
+    }
+  }
+  return q;
+}
+
+void NewtonInterpolationOperator::AddFrozenPole(
+    std::unique_ptr<ComplexOperator> M,
+    const std::function<std::complex<double>(std::complex<double>)> &f,
+    std::complex<double> lambda_target)
+{
+  if (!M)
+  {
+    return;
+  }
+  MFEM_VERIFY(!points.empty() && !coeffs.empty(),
+              "AddFrozenPole requires a prior Interpolate() call!");
+
+  // Per-order multiplier of M: remove the interpolated pole at every order (the scalar
+  // Newton interpolant of f through the same nodes as the operator path), then re-add the
+  // pole frozen at the target into order 0. By linearity of the interpolation, this
+  // yields the smooth remainder pencil with the pole frozen in K. The correction terms
+  // are appended to the shared pencil representation, so GetInterpolationOperator, Mult,
+  // and AddMult all see them.
+  const auto q = ComputeMonomialCoefficients(ComputeLeadingDividedDifferences(f));
+  const ComplexOperator *M_raw = M.get();
+  frozen_ops.push_back(std::move(M));
+  for (int order = 0; order < num_points; order++)
+  {
+    std::complex<double> corr = -q[order];
+    if (order == 0)
+    {
+      corr += f(lambda_target);
+    }
+    pencil_coeffs[order].push_back(corr);
+    pencil_ops[order].push_back(M_raw);
+  }
+}
+
+bool NewtonInterpolationOperator::DetermineFrozen(
+    const std::function<std::complex<double>(std::complex<double>)> &f_full,
+    const std::function<std::complex<double>(std::complex<double>)> &f_frozen,
+    std::complex<double> lambda_target, double &fit_err, double &freeze_err) const
+{
+  MFEM_VERIFY(!points.empty() && !coeffs.empty(),
+              "DetermineFrozen requires a prior Interpolate() call!");
+
+  // Monomial coefficients of the scalar Newton interpolants through the same nodes as the
+  // operator path: the full coefficient (fit branch) and its smooth part f_full - f_frozen
+  // (what AddFrozenPole(M, f_frozen, lambda_target) leaves interpolated, exact when that
+  // part is a polynomial of degree < num_points).
+  const auto q_full = ComputeMonomialCoefficients(ComputeLeadingDividedDifferences(f_full));
+  const auto q_smooth = ComputeMonomialCoefficients(ComputeLeadingDividedDifferences(
+      [&](std::complex<double> lambda) { return f_full(lambda) - f_frozen(lambda); }));
+  auto eval = [&](const std::vector<std::complex<double>> &q, std::complex<double> lambda)
+  {
+    // Horner evaluation of Σ q[order]·λ^order.
+    std::complex<double> val = 0.0;
+    for (int order = num_points - 1; order >= 0; order--)
+    {
+      val = val * lambda + q[order];
+    }
+    return val;
+  };
+
+  // Max relative error over a dense sample of the window. The freeze branch is what
+  // AddFrozenPole(M, f_frozen, lambda_target) produces: the interpolant of the smooth part
+  // plus the frozen value f_frozen(lambda_target).
+  const std::complex<double> frozen_target = f_frozen(lambda_target);
+  constexpr int n_samples = 101;
+  fit_err = freeze_err = 0.0;
+  for (int i = 0; i < n_samples; i++)
+  {
+    const std::complex<double> lambda =
+        points.front() +
+        (double)i * (points.back() - points.front()) / (double)(n_samples - 1);
+    const std::complex<double> f_exact = f_full(lambda);
+    const double scale = std::max(std::abs(f_exact), 1.0e-300);
+    fit_err = std::max(fit_err, std::abs(eval(q_full, lambda) - f_exact) / scale);
+    freeze_err = std::max(
+        freeze_err, std::abs(eval(q_smooth, lambda) + frozen_target - f_exact) / scale);
+  }
+  return freeze_err < fit_err;
 }
 
 std::unique_ptr<ComplexOperator>
@@ -922,8 +1058,7 @@ NewtonInterpolationOperator::GetInterpolationOperator(int order) const
   MFEM_VERIFY(order >= 0 && order < num_points,
               "Order must be greater than or equal to 0 and smaller than the number of "
               "interpolation points!");
-  return BuildParSumOperator({coeffs[order][0], coeffs[order][1], coeffs[order][2]},
-                             {ops[0][0].get(), ops[1][0].get(), ops[2][0].get()}, true);
+  return BuildParSumOperator(pencil_coeffs[order], pencil_ops[order], true);
 }
 
 void NewtonInterpolationOperator::Mult(int order, const ComplexVector &x,
@@ -934,11 +1069,11 @@ void NewtonInterpolationOperator::Mult(int order, const ComplexVector &x,
               "interpolation points!");
 
   y = 0.0;
-  for (int j = 0; j < num_points; j++)
+  for (std::size_t t = 0; t < pencil_ops[order].size(); t++)
   {
-    if (coeffs[order][j] != 0.0)
+    if (pencil_coeffs[order][t] != 0.0)
     {
-      ops[j][0]->AddMult(x, y, coeffs[order][j]);
+      pencil_ops[order][t]->AddMult(x, y, pencil_coeffs[order][t]);
     }
   }
 }

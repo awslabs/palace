@@ -386,6 +386,19 @@ TEST_CASE("rational_impedance", "[Serial][Parallel][GPU][Regression]")
                                   "rational", opts);
 }
 
+// Eigenmode with a series-RLC rational impedance.
+TEST_CASE("rational_impedance_eigen", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = kEigenExcluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance", "series_rlc18_rational_eigen.json",
+                                  "series_rlc18_eigen", opts);
+}
+
 TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

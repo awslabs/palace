@@ -37,6 +37,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     treats it as a perfect conductor (PEC) allowing induced screening currents. The mode can
     be overridden per port with `config["Boundaries"]["SurfaceCurrent"][...]["InactiveMode"]`.
     SchemaVer 1-4-0 [PR 831](https://github.com/awslabs/palace/pull/831).
+  - Improve hybrid nonlinear eigensolver convergence when using 2nd-order absorbing and
+    rational impedance boundary conditions. [PR 792](https://github.com/awslabs/palace/pull/792).
 
 #### Interface Changes
 

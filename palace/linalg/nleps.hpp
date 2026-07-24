@@ -263,6 +263,33 @@ private:
   // Divided difference operators.
   std::vector<std::vector<std::unique_ptr<ComplexOperator>>> ops;
 
+  // Leading scalar divided differences f[x₀, ..., xⱼ] of f at the interpolation nodes,
+  // j = 0..num_points-1: the scalar analogue of the ops[j][0] operator divided
+  // differences, sharing their node set and denominators.
+  std::vector<std::complex<double>> ComputeLeadingDividedDifferences(
+      const std::function<std::complex<double>(std::complex<double>)> &f) const;
+
+  // Combine leading divided differences into monomial coefficients with the shared
+  // Newton→monomial matrix (q[order] = Σⱼ coeffs[order][j]·dd[j]), so the scalar Newton
+  // interpolant is p(λ) = Σ q[order]·λ^order — the scalar analogue of the per-order
+  // operator combination in GetInterpolationOperator / Mult.
+  std::vector<std::complex<double>>
+  ComputeMonomialCoefficients(const std::vector<std::complex<double>> &dd) const;
+
+  // The seed pencil in monomial form: the order-th coefficient operator is
+  // Σₜ pencil_coeffs[order][t]·pencil_ops[order][t]. Terms 0..num_points-1 are the
+  // Newton→monomial combination of the leading divided-difference operators, rebuilt by
+  // Interpolate(); AddFrozenPole appends one correction term per frozen pole.
+  // GetInterpolationOperator, Mult, and AddMult all read this single representation, so
+  // they cannot disagree on the frozen corrections.
+  std::vector<std::vector<std::complex<double>>> pencil_coeffs;
+  std::vector<std::vector<const ComplexOperator *>> pencil_ops;
+
+  // Ownership of the frozen-pole boundary matrices referenced by pencil_ops (the base
+  // terms are owned by ops), so they outlive the operators returned by
+  // GetInterpolationOperator.
+  std::vector<std::unique_ptr<ComplexOperator>> frozen_ops;
+
   // Workspace objects for solver application.
   mutable ComplexVector rhs;
 
@@ -277,6 +304,31 @@ public:
 
   // Get the interpolation operator of specified order.
   std::unique_ptr<ComplexOperator> GetInterpolationOperator(int order) const;
+
+  // Fold a frozen pole f(λ)·M into the interpolation: by linearity, remove its
+  // interpolated contribution (the scalar interpolant of f at the nodes, times the constant
+  // M) from every order, and re-add the pole frozen at lambda_target into the order-0
+  // coefficient. Takes ownership of M; a null M is a no-op. Must be called after
+  // Interpolate(); may be called multiple times to freeze independent terms. The
+  // corrections are folded into the shared pencil representation, so subsequent
+  // GetInterpolationOperator, Mult, and AddMult calls all include them.
+  void AddFrozenPole(std::unique_ptr<ComplexOperator> M,
+                     const std::function<std::complex<double>(std::complex<double>)> &f,
+                     std::complex<double> lambda_target);
+
+  // Decide between fitting and freezing a scalar coefficient f_full(λ) of a term
+  // f_full(λ)·M of A2, where f_full = P + f_frozen with P a polynomial of degree ≤ 2
+  // (exactly representable in the seed pencil, so only f_frozen would be frozen). Compares
+  // the maximum relative error over a dense sample of the interpolation window of (a) the
+  // polynomial Newton interpolant of f_full through the nodes and (b) P + f_frozen frozen
+  // at lambda_target, both normalized pointwise by |f_full|. Returns true if freezing is
+  // more accurate, and reports both errors. Pass f_frozen = f_full to evaluate freezing the
+  // whole coefficient. Must be called after Interpolate().
+  bool
+  DetermineFrozen(const std::function<std::complex<double>(std::complex<double>)> &f_full,
+                  const std::function<std::complex<double>(std::complex<double>)> &f_frozen,
+                  std::complex<double> lambda_target, double &fit_err,
+                  double &freeze_err) const;
 
   // Perform multiplication with interpolation operator of specified order.
   void Mult(int order, const ComplexVector &x, ComplexVector &y) const;
