@@ -46,6 +46,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed saving output to non-shared filesystems [PR 813](https://github.com/awslabs/palace/pull/813).
   - Fixed S-parameter post-processing for mixed Floquet + lumped/wave port configurations.
     Previously, `MeasureSParameter()` skipped processing when Floquet ports coexisted with
     lumped or wave ports, leaving `port-S.csv` with incorrect values. The fix applies a power
