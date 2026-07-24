@@ -14,7 +14,7 @@
 #include <Eigen/Dense>
 #include <mfem.hpp>
 
-// LAPACK ZGGEV — used to extract poles from the AAA generalised eigenproblem.
+// LAPACK ZGGEV — used to extract poles from the AAA denominator companion pencil.
 // Declared at file scope (not inside a function or namespace) so it is plain C
 // linkage; the symbol is provided by the LAPACK library on the link line.
 extern "C" void zggev_(char *, char *, int *, std::complex<double> *, int *,
@@ -226,19 +226,12 @@ inline AAAResult RunAAA(const Eigen::VectorXcd &z, const Eigen::VectorXcd &F, do
 
 // Extract the polynomial quotient, poles, and residues from an AAA result.
 //
-// Poles = roots of the denominator D(z) = Σ wⱼ / (z − zⱼ): solve the (m+1)×(m+1)
-// generalised eigenproblem (Nakatsukasa et al. 2018, sec 2.7)
-//
-//        ⎡ 0   wᵀ      ⎤        ⎡ 0   0    ⎤
-//   A = ⎢            ⎥,   B = ⎢          ⎥
-//        ⎣ 1  diag(xⱼ) ⎦        ⎣ 0   I    ⎦
-//
-// in the affine-normalized coordinate x = (z-center)/scale, then map finite eigenvalues
-// back to z. The normalization is essential when the support points have a large common
-// translation. Discard the eigenvalues at infinity (B is rank-deficient by at least 1).
-// Residues use rₖ = N(pₖ) / D'(pₖ), with the polynomial quotient evaluated at pₖ
-// subtracted from every fⱼ. This leaves the numerator unchanged at a denominator root but
-// keeps the proper remainder numerically well-conditioned.
+// Clear the barycentric denominators in the affine-normalized coordinate
+// x = (z-center)/scale, trim roundoff-level leading coefficients, and divide the resulting
+// numerator by denominator. The poles are the roots of that same trimmed denominator,
+// found from its companion pencil; residues come from the retained remainder R as
+// scale*R(xₖ)/D'(xₖ). Keeping division, root extraction, and residue evaluation on one
+// polynomial representation is essential when trimming lowers the denominator degree.
 inline AAAPoleResidue AAAToPoleResidue(const AAAResult &r)
 {
   AAAPoleResidue out;
@@ -326,10 +319,10 @@ inline AAAPoleResidue AAAToPoleResidue(const AAAResult &r)
   trim_leading_zeros(denominator);
   MFEM_VERIFY(!denominator.empty(), "AAA interpolant has an identically zero denominator!");
 
+  auto remainder = numerator;
   std::vector<std::complex<double>> quotient;
   if (numerator.size() >= denominator.size())
   {
-    auto remainder = numerator;
     quotient.assign(numerator.size() - denominator.size() + 1, 0.0);
     const long degree_den = static_cast<long>(denominator.size()) - 1;
     for (long k = static_cast<long>(quotient.size()) - 1; k >= 0; k--)
@@ -343,6 +336,10 @@ inline AAAPoleResidue AAAToPoleResidue(const AAAResult &r)
             q * denominator[static_cast<std::size_t>(j)];
       }
     }
+    // The cancelled high-order entries retain division roundoff and are not part of the
+    // mathematical remainder. Dropping them is especially important when evaluating at a
+    // large-magnitude pole produced by a small leading denominator coefficient.
+    remainder.resize(static_cast<std::size_t>(degree_den));
     trim_leading_zeros(quotient);
   }
 
@@ -378,91 +375,97 @@ inline AAAPoleResidue AAAToPoleResidue(const AAAResult &r)
     out.polynomial(k) = quotient[static_cast<std::size_t>(k)];
   }
 
-  // Solve for poles in the same normalized coordinate used to determine the polynomial
-  // degrees above. Forming this pencil with the physical support points can turn exact
-  // eigenvalues at infinity into bogus finite poles when all z_j share a large translation.
-  Eigen::MatrixXcd A_geig = Eigen::MatrixXcd::Zero(m + 1, m + 1);
-  Eigen::MatrixXcd B_geig = Eigen::MatrixXcd::Zero(m + 1, m + 1);
-  A_geig.row(0).tail(m) = r.wj.transpose();
-  for (long j = 0; j < m; j++)
+  const auto evaluate_polynomial =
+      [](const std::vector<std::complex<double>> &p, std::complex<double> x)
   {
-    A_geig(1 + j, 0) = 1.0;
-    A_geig(1 + j, 1 + j) = xj(j);
-    B_geig(1 + j, 1 + j) = 1.0;
-  }
-  char jobvl = 'N', jobvr = 'N';
-  int n = static_cast<int>(m + 1);
-  int lwork = 4 * n;
-  std::vector<std::complex<double>> alpha(n), beta(n), work(lwork);
-  std::vector<double> rwork(8 * n);
-  int info = 0;
-  zggev_(&jobvl, &jobvr, &n, A_geig.data(), &n, B_geig.data(), &n, alpha.data(),
-         beta.data(), nullptr, &n, nullptr, &n, work.data(), &lwork, rwork.data(), &info);
-  MFEM_VERIFY(info == 0, "zggev failed with info = " << info);
-  // Collect the finite eigenvalues. Their count is known structurally: the poles are the
-  // roots of the cleared denominator, so exactly deg(D) of the m+1 pencil eigenvalues are
-  // finite and the rest lie at infinity. ZGGEV usually signals infinity with beta = 0
-  // exactly, but QZ roundoff (BLAS/architecture dependent) can instead produce a small
-  // nonzero beta — a bogus "finite" pole at ~1/eps — and no fixed |beta| threshold is
-  // robust when the denominator degree drops (many eigenvalues at infinity, e.g. a purely
-  // polynomial interpolant). Instead keep exactly deg(D) eigenvalues, selecting those
-  // farthest from infinity in the chordal metric |beta| / sqrt(|alpha|² + |beta|²).
-  const long n_finite = static_cast<long>(denominator.size()) - 1;
-  std::vector<int> order(static_cast<std::size_t>(n));
-  for (int j = 0; j < n; j++)
-  {
-    order[static_cast<std::size_t>(j)] = j;
-  }
-  auto chordal = [&](int j)
-  {
-    const double a = std::abs(alpha[static_cast<std::size_t>(j)]);
-    const double b = std::abs(beta[static_cast<std::size_t>(j)]);
-    return b / std::hypot(a, b);
+    std::complex<double> value = 0.0;
+    for (auto it = p.rbegin(); it != p.rend(); ++it)
+    {
+      value = value * x + *it;
+    }
+    return value;
   };
-  std::sort(order.begin(), order.end(),
-            [&](int a, int b) { return chordal(a) > chordal(b); });
-  std::vector<std::complex<double>> finite_x_poles;
-  std::vector<std::complex<double>> finite_poles;
-  finite_x_poles.reserve(static_cast<std::size_t>(n_finite));
-  finite_poles.reserve(static_cast<std::size_t>(n_finite));
-  for (long k = 0; k < n_finite; k++)
+  const auto evaluate_polynomial_derivative =
+      [](const std::vector<std::complex<double>> &p, std::complex<double> x)
   {
-    const int j = order[static_cast<std::size_t>(k)];
-    MFEM_VERIFY(std::abs(beta[static_cast<std::size_t>(j)]) > 0.0,
-                "AAA pole extraction found fewer finite eigenvalues than the denominator "
-                "degree implies!");
-    const auto x_pole =
-        alpha[static_cast<std::size_t>(j)] / beta[static_cast<std::size_t>(j)];
+    std::complex<double> value = 0.0;
+    for (std::size_t k = p.size(); k-- > 1;)
+    {
+      value = value * x + static_cast<double>(k) * p[k];
+    }
+    return value;
+  };
+
+  // Solve the companion pencil for the roots of the trimmed denominator in x. Its
+  // dimension is exactly deg(D), so a degree-deficient denominator introduces no
+  // artificial infinite eigenvalues to classify. Scale the coefficients before forming
+  // the pencil so its coefficient row is O(1).
+  const long degree_den = static_cast<long>(denominator.size()) - 1;
+  std::vector<std::complex<double>> x_poles(static_cast<std::size_t>(degree_den));
+  if (degree_den == 1)
+  {
+    // Avoid sending the scalar pencil through QZ. A retained leading coefficient can be
+    // near the trimming threshold, making the root very large; direct division preserves
+    // substantially more relative accuracy in the resulting pole-polynomial cancellation.
+    x_poles[0] = -denominator[0] / denominator[1];
+  }
+  else if (degree_den > 1)
+  {
+    double coefficient_scale = 0.0;
+    for (const auto &coefficient : denominator)
+    {
+      coefficient_scale = std::max(coefficient_scale, std::abs(coefficient));
+    }
+    MFEM_VERIFY(coefficient_scale > 0.0, "AAA denominator has zero coefficient scale!");
+
+    Eigen::MatrixXcd A_geig = Eigen::MatrixXcd::Zero(degree_den, degree_den);
+    Eigen::MatrixXcd B_geig = Eigen::MatrixXcd::Identity(degree_den, degree_den);
+    for (long j = 0; j + 1 < degree_den; j++)
+    {
+      A_geig(j, j + 1) = 1.0;
+    }
+    for (long j = 0; j < degree_den; j++)
+    {
+      A_geig(degree_den - 1, j) =
+          -denominator[static_cast<std::size_t>(j)] / coefficient_scale;
+    }
+    B_geig(degree_den - 1, degree_den - 1) =
+        denominator[static_cast<std::size_t>(degree_den)] / coefficient_scale;
+
+    char jobvl = 'N', jobvr = 'N';
+    int n = static_cast<int>(degree_den);
+    int lwork = 4 * n;
+    std::vector<std::complex<double>> alpha(n), beta(n), work(lwork);
+    std::vector<double> rwork(8 * n);
+    std::complex<double> vl_dummy = 0.0, vr_dummy = 0.0;
+    int ldvl = 1, ldvr = 1, info = 0;
+    zggev_(&jobvl, &jobvr, &n, A_geig.data(), &n, B_geig.data(), &n, alpha.data(),
+           beta.data(), &vl_dummy, &ldvl, &vr_dummy, &ldvr, work.data(), &lwork,
+           rwork.data(), &info);
+    MFEM_VERIFY(info == 0, "zggev failed with info = " << info);
+    for (int k = 0; k < n; k++)
+    {
+      MFEM_VERIFY(std::abs(beta[static_cast<std::size_t>(k)]) > 0.0,
+                  "AAA denominator companion pencil produced an infinite root!");
+      x_poles[static_cast<std::size_t>(k)] =
+          alpha[static_cast<std::size_t>(k)] / beta[static_cast<std::size_t>(k)];
+    }
+  }
+
+  out.poles.resize(degree_den);
+  out.residues.resize(degree_den);
+  for (long k = 0; k < degree_den; k++)
+  {
+    const auto x_pole = x_poles[static_cast<std::size_t>(k)];
     const auto pole = center + support_scale * x_pole;
+    const auto denominator_derivative = evaluate_polynomial_derivative(denominator, x_pole);
     MFEM_VERIFY(std::isfinite(pole.real()) && std::isfinite(pole.imag()),
                 "AAA pole extraction produced a non-finite pole!");
-    finite_x_poles.push_back(x_pole);
-    finite_poles.push_back(pole);
-  }
-  out.poles = Eigen::Map<Eigen::VectorXcd>(finite_poles.data(), finite_poles.size());
-
-  // Residues of the strictly proper remainder. Subtracting the polynomial quotient at the
-  // pole leaves the residue unchanged because the barycentric denominator vanishes there,
-  // while avoiding cancellation against a potentially large polynomial component. Evaluate
-  // both the quotient and barycentric sums at the normalized pole xₖ. Converting the ratio
-  // from x back to z contributes one factor of support_scale to the physical-z residue.
-  out.residues.resize(out.poles.size());
-  for (long k = 0; k < out.poles.size(); k++)
-  {
-    const std::complex<double> x_pole = finite_x_poles[static_cast<std::size_t>(k)];
-    std::complex<double> polynomial_at_pole = 0.0;
-    for (long j = out.polynomial.size(); j-- > 0;)
-    {
-      polynomial_at_pole = polynomial_at_pole * x_pole + out.polynomial(j);
-    }
-    std::complex<double> num = 0.0, den = 0.0;
-    for (long j = 0; j < m; j++)
-    {
-      auto inv = 1.0 / (x_pole - xj(j));
-      num += r.wj(j) * (r.fj(j) - polynomial_at_pole) * inv;
-      den -= r.wj(j) * inv * inv;
-    }
-    out.residues(k) = support_scale * num / den;
+    MFEM_VERIFY(std::abs(denominator_derivative) > 0.0,
+                "AAA pole extraction encountered a multiple denominator root!");
+    out.poles(k) = pole;
+    out.residues(k) =
+        support_scale * evaluate_polynomial(remainder, x_pole) / denominator_derivative;
   }
   return out;
 }

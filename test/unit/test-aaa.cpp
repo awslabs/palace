@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <limits>
 #include <vector>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
@@ -106,6 +107,33 @@ TEST_CASE("AAA: translated exact quadratic retains centered quotient", "[aaa][Se
     const auto truth = (z - center) * (z - center);
     REQUIRE_THAT(std::abs(EvaluatePoleResidue(pr, z) - truth), WithinAbs(0.0, 1e-12));
   }
+}
+
+TEST_CASE("AAA: trimmed denominator consistently determines poles and residues",
+          "[aaa][Serial]")
+{
+  // Put the quadratic denominator coefficient just below the trimming threshold and the
+  // linear coefficient just above it. Pole extraction must use the resulting linear
+  // denominator, not select one root from the original quadratic barycentric pencil.
+  constexpr long m = 3;
+  const double tau = 64.0 * std::numeric_limits<double>::epsilon() * m;
+  auto D = [tau](double x) { return 1.0 + 1.01 * tau * x + 0.99 * tau * x * x; };
+
+  AAAResult r;
+  r.zj.resize(m);
+  r.fj.resize(m);
+  r.wj.resize(m);
+  r.zj << -1.0, 0.0, 1.0;
+  r.wj << 0.5 * D(-1.0), -D(0.0), 0.5 * D(1.0);
+  for (long j = 0; j < m; j++)
+  {
+    r.fj(j) = 1.0 / D(r.zj(j).real());
+  }
+
+  auto pr = AAAToPoleResidue(r);
+  REQUIRE(pr.poles.size() == 1);
+  REQUIRE_THAT(std::abs(EvaluatePoleResidue(pr, 0.0) - EvaluateAAA(r, 0.0)),
+               WithinAbs(0.0, 1e-12));
 }
 
 TEST_CASE("AAA: rational function recovered exactly", "[aaa][Serial]")
