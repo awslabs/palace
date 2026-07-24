@@ -1714,12 +1714,16 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
     {
       Mpi::Warning(
           "PEC Maxwell surface-response confidence limits were exceeded: "
-          "kR = {:.3e}, loop residual = {:.3e}, matched fraction = {:.6f}, "
+          "kR = {:.3e}, loop residual = {:.3e}, response-weighted loop residual = "
+          "{:.3e}, loop-response fraction above limit = {:.3e}, matched fraction = "
+          "{:.6f}, "
           "unmodeled corner fraction = {:.3e}, max R/rho = {:.3e}, "
           "library distance = {:.3e}, "
           "trace-closure spread = {:.3e}. "
           "Corrected values are reported but should not be treated as validated.\n",
           result.confidence.kR, result.confidence.loop_residual,
+          result.confidence.response_weighted_loop_residual,
+          result.confidence.loop_response_failure_fraction,
           result.confidence.matched_length_fraction,
           result.confidence.corner_neighborhood_fraction,
           result.confidence.maximum_curvature_ratio,
@@ -1764,6 +1768,8 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table.insert("participation_self_consistent", "p_surf self-consistent");
     table.insert("quality_self_consistent", "Q_surf self-consistent");
     table.insert("trace_closure_spread", "trace closure spread");
+    table.insert("matched_fraction", "matched edge fraction");
+    table.insert("corner_fraction", "unmodeled corner neighborhood fraction");
     table["excitation"].print_as_int = true;
     table["interface"].print_as_int = true;
     if constexpr (solver_t == ProblemType::EIGENMODE)
@@ -1780,6 +1786,8 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table.insert("excitation", "exc");
     table.insert("kR", "kR");
     table.insert("loop_residual", "loop residual");
+    table.insert("weighted_loop_residual", "response-weighted loop residual");
+    table.insert("loop_failure_fraction", "loop-response fraction above limit");
     table.insert("matched_fraction", "matched edge fraction");
     table.insert("corner_fraction", "unmodeled corner neighborhood fraction");
     table.insert("curvature", "max R/rho");
@@ -1796,6 +1804,7 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
 
   using VT = Units::ValueType;
   const auto &result = *surface_response_measurement;
+  const auto &confidence = result.confidence;
   for (const auto &[interface_index, interface] : result.interfaces)
   {
     const double p_raw = interface.raw_energy / result.raw_normalization_energy;
@@ -1824,6 +1833,10 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
             : (p_self_consistent == 0.0 || interface.loss_tangent == 0.0
                    ? mfem::infinity()
                    : 1.0 / (p_self_consistent * interface.loss_tangent));
+    const auto matched_fraction =
+        confidence.matched_length_fraction_by_interface.find(interface_index);
+    const auto corner_fraction =
+        confidence.corner_neighborhood_fraction_by_interface.find(interface_index);
     auto &table = surface_Q_corrected->table;
     table["idx"] << output_index;
     table["excitation"] << excitation;
@@ -1856,15 +1869,24 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table["participation_self_consistent"] << p_self_consistent;
     table["quality_self_consistent"] << q_self_consistent;
     table["trace_closure_spread"] << interface.trace_closure_spread;
+    table["matched_fraction"]
+        << (matched_fraction != confidence.matched_length_fraction_by_interface.end()
+                ? matched_fraction->second
+                : nan);
+    table["corner_fraction"]
+        << (corner_fraction != confidence.corner_neighborhood_fraction_by_interface.end()
+                ? corner_fraction->second
+                : nan);
   }
   surface_Q_corrected->WriteFullTableTrunc();
 
-  const auto &confidence = result.confidence;
   auto &table = surface_response_confidence->table;
   table["idx"] << output_index;
   table["excitation"] << excitation;
   table["kR"] << confidence.kR;
   table["loop_residual"] << confidence.loop_residual;
+  table["weighted_loop_residual"] << confidence.response_weighted_loop_residual;
+  table["loop_failure_fraction"] << confidence.loop_response_failure_fraction;
   table["matched_fraction"] << confidence.matched_length_fraction;
   table["corner_fraction"] << confidence.corner_neighborhood_fraction;
   table["curvature"] << confidence.maximum_curvature_ratio;

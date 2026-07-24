@@ -58,19 +58,43 @@ private:
     int point_count = 0;
   };
 
+  struct MaxwellLineGeometry
+  {
+    std::array<double, 3> begin{};
+    std::array<double, 3> end{};
+  };
+
   struct MaxwellContourPath
   {
     int anchor_line = -1;
     int contour_line_offset = 0;
-    int start = 0;
+    int contour_line_count = 0;
+    int end_line = -1;
+    int conductor_line = -1;
+    int closure_sign = 0;
+    bool closed = true;
+    std::vector<int> trace_indices;
+  };
+
+  struct MaxwellConductorPath
+  {
+    int line = -1;
     int trace_offset = 0;
-    int size = 0;
+  };
+
+  struct OpenContourPath
+  {
+    std::vector<int> indices;
+    int start_conductor = 0;
+    int end_conductor = 0;
   };
 
   struct ResponseModel
   {
     int idx = 0;
+    int contour_size = 0;
     int basis_size = 0;
+    int conductor_state_count = 0;
     mfem::DenseMatrix fabricated_domain;
     mfem::DenseMatrix thin_domain;
     mfem::DenseMatrix domain_defect;
@@ -79,6 +103,8 @@ private:
     std::map<int, mfem::DenseMatrix> surface_defects;
     bool spatial_basis = false;
     std::vector<int> contour_groups;
+    std::vector<int> zero_trace_indices;
+    std::vector<OpenContourPath> open_contour_paths;
   };
 
   struct Patch
@@ -112,8 +138,10 @@ private:
   // transpose, so the same map is used for postprocessing and self-consistent correction.
   std::vector<std::vector<mfem::Vector>> maxwell_contours;
   std::vector<mfem::Vector> maxwell_anchors;
+  std::vector<mfem::Vector> maxwell_secondary_anchors;
   std::vector<MaxwellLine> maxwell_lines;
   std::vector<MaxwellContourPath> maxwell_paths;
+  std::vector<MaxwellConductorPath> maxwell_conductor_paths;
   std::vector<std::pair<int, int>> maxwell_patch_paths;
   int maxwell_quadrature_order = 0;
 
@@ -121,6 +149,8 @@ private:
   double minimum_wave_speed = mfem::infinity();
   double matched_length_fraction = 1.0;
   double corner_neighborhood_fraction = 0.0;
+  std::map<int, double> matched_length_fraction_by_interface;
+  std::map<int, double> corner_neighborhood_fraction_by_interface;
   double maximum_curvature_ratio = 0.0;
   double maximum_library_distance = 0.0;
 
@@ -129,6 +159,7 @@ private:
   void ConfigurePointCommunication(
       const mfem::Vector &xyz, int dimension,
       const std::vector<std::array<double, 3>> *weighted_tangents = nullptr);
+  void ConfigureMaxwellLines(const std::vector<MaxwellLineGeometry> &line_geometry);
   void EvaluatePointValues(const Vector &x, Vector &values) const;
   void AddPointValuesTranspose(const Vector &values, Vector &y) const;
   void EvaluatePoints(const Vector &x, Vector &values) const;
@@ -166,8 +197,12 @@ public:
 
     double kR = 0.0;
     double loop_residual = 0.0;
+    double response_weighted_loop_residual = 0.0;
+    double loop_response_failure_fraction = 0.0;
     double matched_length_fraction = 1.0;
     double corner_neighborhood_fraction = 0.0;
+    std::map<int, double> matched_length_fraction_by_interface;
+    std::map<int, double> corner_neighborhood_fraction_by_interface;
     double maximum_curvature_ratio = 0.0;
     double maximum_library_distance = 0.0;
     double maximum_trace_closure_spread = 0.0;

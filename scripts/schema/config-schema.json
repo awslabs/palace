@@ -1608,6 +1608,10 @@
         "DataFile": {
           "type": "string",
           "description": "CSV file containing an ordered closed polyline with columns `x,y,z,V`. Coordinates use the input mesh coordinate unit and potential is in volts. A header row is optional."
+        },
+        "TerminalAttributes": {
+          "$ref": "#/$defs/Attributes",
+          "description": "Optional boundary attributes held at one volt in the same excitation while `DataFile` is imposed on `Attributes`. This supplies an independent conductor-voltage basis field when generating a local fabrication response matrix. The prescribed trace must be conforming where `Attributes` meets `TerminalAttributes`."
         }
       }
     },

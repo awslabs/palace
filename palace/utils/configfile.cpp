@@ -490,6 +490,18 @@ PrescribedPotentialData::PrescribedPotentialData(const json &potential)
   attributes = potential.at("Attributes").get<std::vector<int>>();  // Required
   std::sort(attributes.begin(), attributes.end());
   data_file = potential.at("DataFile").get<std::string>();  // Required
+  terminal_attributes = potential.value("TerminalAttributes", std::vector<int>{});
+  std::sort(terminal_attributes.begin(), terminal_attributes.end());
+  MFEM_VERIFY(std::adjacent_find(terminal_attributes.begin(), terminal_attributes.end()) ==
+                      terminal_attributes.end() &&
+                  std::none_of(terminal_attributes.begin(), terminal_attributes.end(),
+                               [&](int attribute)
+                               {
+                                 return std::binary_search(attributes.begin(),
+                                                           attributes.end(), attribute);
+                               }),
+              "PrescribedPotential TerminalAttributes must be unique and disjoint from "
+              "Attributes!");
 }
 
 PeriodicBoundaryData::PeriodicBoundaryData(const json &periodic)
@@ -1158,6 +1170,8 @@ BoundaryData::BoundaryData(const json &boundaries)
   for (const auto &[idx, data] : prescribed_potential)
   {
     attributes.insert(attributes.end(), data.attributes.begin(), data.attributes.end());
+    attributes.insert(attributes.end(), data.terminal_attributes.begin(),
+                      data.terminal_attributes.end());
   }
   for (const auto &[idx, data] : floquetport)
   {

@@ -742,6 +742,26 @@ nearest-segment patch, without the matching-radius cutoff, and its normal and ta
 components. These full-patch operators can be differenced between matched fabricated and
 thin coupons to obtain a process-local surface-energy defect operator.
 The basis indices are the `Index` values of the `PrescribedPotential` entries.
+For a coupled coupon containing two independent conductors, the final excitation combines
+a conforming conductor-state trace on `Attributes` with `TerminalAttributes` held at one
+volt. This adds the conductor-voltage basis field while all other essential boundaries
+remain at zero:
+
+```json
+{
+  "Index": 97,
+  "Attributes": [1],
+  "TerminalAttributes": [5],
+  "DataFile": "trace-conductor-b.csv"
+}
+```
+
+When the matching boundary intersects conductor B, the trace must equal one at that
+junction; a zero trace would impose incompatible Dirichlet values and create an
+artificial singularity. The thin and fabricated coupons must use the same conductor-cut
+trace topology: include both endpoints of every finite-thickness cut, remove all
+cut-constrained knots from the free basis, and make the final trace zero on conductor A
+and one on conductor B.
 
 Palace also writes `domain-response-matrix.csv`. Its matrix ``Q_domain`` satisfies
 
@@ -788,8 +808,8 @@ potential at `Reference`. Each `Models` entry defines one reusable coupon respon
 each `Patches` entry places that model in the global mesh. `Origin`, `AxisU`, and
 `AxisV` map the coupon coordinates into the global frame. For a one-edge coupon,
 `AxisU` points from metal into the gap and `AxisV` points from the process side toward
-vacuum. The fabricated and thin response matrices must use the same ordered basis as
-`BasisPoints`.
+vacuum. The fabricated and thin response matrices must use the contour ordering in
+`BasisPoints`, followed by any explicitly documented conductor-state coefficients.
 
 For repeated use of one fabrication process, `Library` replaces the explicit `Models`
 and `Patches` lists:
@@ -821,10 +841,13 @@ The remaining sites are assigned to their electrostatic conductor and clustered 
 their separation is less than ``2R``. A one-site cluster uses an `IsolatedEdge` model.
 A two-site cluster is classified as `SameConductorGap`, `DifferentConductorGap`, or
 `SameConductorStrip` from its conductor ownership and the directions in which the metal
-continues. Larger clusters, noncanonical orientations, opposing process normals, and
-missing separation entries are unsupported. With `UnmatchedPolicy` set to `Warn`,
-Palace reports the unsupported topology and disables correction for the complete
-interface group, avoiding a partial correction. `Error` instead terminates the run.
+continues. Palace first looks for a model within its declared separation tolerance. If
+none matches, it linearly combines the nearest lower- and upper-separation models with
+the same topology and compatible conductor-state representation. It does not
+extrapolate. Larger clusters, noncanonical orientations, opposing process normals, and
+unbracketed separations are unsupported. With `UnmatchedPolicy` set to `Warn`, Palace
+reports the unsupported topology and disables correction for the complete interface
+group, avoiding a partial correction. `Error` instead terminates the run.
 
 In 3D, targets selecting the same automatically extracted physical metal segments form
 one interface group. Palace infers the process normal and the in-plane direction from
@@ -832,13 +855,27 @@ metal toward gap directly from the supporting metal faces. It partitions straigh
 parallel edge segments wherever a second edge lies within ``2R``. Longitudinally
 overlapping pairs use the same three coupled topologies as 2D; the remaining intervals
 use `IsolatedEdge`. The 2D coupon response is integrated along each interval using a
-Gauss rule selected from the global FEM order. A matching `ConvexCorner` or
+Gauss rule selected from the global FEM order. Separation interpolation evaluates both
+coupon traces at every longitudinal quadrature point and combines their domain and
+surface responses with convex weights. The normalized bracket width contributes to
+`max library distance`. A matching `ConvexCorner` or
 `ConcaveCorner` response replaces a physical corner and trims a distance ``R`` from each
-incident straight arm. Locally connected arms are not treated as an unsupported
-nearby-edge pair. Other nonparallel nearby edges, cross-layer offsets, more than two
-interacting edges, a nearby edge outside the interface group, and partially overlapping
-interface groups fail closed. This prevents Palace from silently combining incompatible
-local responses.
+incident straight arm. A rounded corner first uses an angle- and radius-tolerance match.
+Otherwise, Palace linearly combines the nearest lower- and upper-radius models with the
+same topology and compatible angle. Both bracket radii must be positive: a sharp-corner
+model is not an interpolation endpoint, and Palace does not extrapolate outside the
+available rounded-radius range. A rounded corner with neither an exact match nor a
+positive-radius bracket remains uncorrected and contributes to the unmatched-corner
+diagnostics. The response operators and conductor reference are combined with convex
+weights; the normalized bracket width contributes to `max library distance`. Locally
+connected arms are not treated as an unsupported nearby-edge pair.
+Other nonparallel nearby edges, cross-layer offsets, more than two interacting edges, a
+nearby edge outside the interface group, and partially overlapping interface groups fail
+closed locally. With `UnmatchedPolicy` set to `Warn`, Palace omits the affected physical
+edge segments, reports the reduced per-interface matched fraction, and continues to
+correct supported segments in the same interface group. `Error` instead terminates at
+the first unsupported interaction. This prevents Palace from silently combining
+incompatible local responses without discarding unrelated edge neighborhoods.
 
 A version-1 process library has the following form:
 
@@ -887,10 +924,101 @@ characteristic lengths. `CouponDepth` is required for 3D; a model-level value ov
 the library default. Omitting it preserves the legacy 2D assumption that coupon and
 application use the same `Lc`.
 
-Paired-edge models require a positive `Separation`; Palace selects the closest model
-within its nonnegative `SeparationTolerance`. `Reference` is the local coupon point whose
-sampled potential is subtracted from every contour coefficient. Surface matrices and
-`Interfaces` are optional as a set, but are required for corrected participation output.
+Paired-edge models require a positive `Separation`. Palace prefers the closest model
+within its nonnegative `SeparationTolerance`. Otherwise it uses the narrowest bracket
+formed by lower- and upper-separation entries of the same topology. It combines the two
+responses and conductor references with linear convex weights. A
+`DifferentConductorGap` bracket cannot mix a legacy one-reference entry with a
+two-conductor-state entry. Palace never extrapolates beyond the library range. The
+bracket span divided by `MatchingRadius` contributes to `max library distance`, so a
+sparse but technically complete bracket can still fail confidence.
+
+`Reference` is the local coupon point whose sampled potential is subtracted from every
+contour coefficient. Surface matrices and `Interfaces` are optional as a set, but are
+required for corrected participation output.
+
+A version-2 library can give a `DifferentConductorGap` coupon an independent voltage
+state for its second conductor:
+
+```json
+{
+  "Version": 2,
+  "MatchingRadius": 2.0,
+  "Models": [
+    {
+      "Name": "different-conductor-gap-2um",
+      "Topology": "DifferentConductorGap",
+      "Separation": 2.0,
+      "SeparationTolerance": 0.01,
+      "ConductorReferences": [
+        [-3.0, 0.0, 0.0],
+        [ 3.0, 0.0, 0.0]
+      ],
+      "OpenContourPaths": [
+        {
+          "Indices": [7, 8, 1, 2],
+          "StartConductor": 1,
+          "EndConductor": 2
+        },
+        {
+          "Indices": [6, 5, 4, 3],
+          "StartConductor": 1,
+          "EndConductor": 2
+        }
+      ],
+      "FabricatedMatrix": "gap/fabricated/domain-response-matrix.csv",
+      "ThinMatrix": "gap/thin/domain-response-matrix.csv",
+      "BasisPoints": "gap/basis-points.csv"
+    }
+  ]
+}
+```
+
+The two references must be distinct points on conductors A and B in coupon coordinates.
+For ``N`` free contour knots, the matrices are ``(N+1)`` by ``(N+1)`` and their
+coefficient ordering is
+
+```math
+[V(\bm{x}_1)-V_A,\ldots,V(\bm{x}_N)-V_A,V_B-V_A].
+```
+
+Generate the last row and column by appending the conforming `TerminalAttributes` coupon
+excitation described above after the free contour basis excitations. A version-2 library
+may also contain legacy `DifferentConductorGap` entries without `ConductorReferences`,
+which retain the original single-reference, contour-only approximation. This permits
+version-1 and version-2 model libraries to be combined without rewriting their matrices.
+
+Version 3 records the dielectric layers used when generating the surface-response
+matrices:
+
+```json
+{
+  "Version": 3,
+  "Fabrication": {
+    "InterfaceLayers": {
+      "SA": {"Thickness": 0.002, "Permittivity": 4.0},
+      "MS": {"Thickness": 0.002, "Permittivity": 11.47},
+      "MA": {"Thickness": 0.002, "Permittivity": 10.0}
+    }
+  }
+}
+```
+
+Thickness uses the application mesh coordinate unit, like `MatchingRadius`. Palace
+requires an entry for every interface type represented by a version-3 model. Before
+automatic 2D or 3D matching, it also requires every selected runtime interface to have
+the same type, thickness, and relative permittivity. A mismatch is fatal because the
+surface-response matrices already include both layer properties. Version-1 and
+version-2 libraries remain usable, but Palace warns that their interface properties
+cannot be verified when they omit this metadata.
+
+`OpenContourPaths` is required when conductor cuts interrupt the free matching contour.
+Each one-based `Indices` list orders a disjoint subset of `BasisPoints` from
+`StartConductor` to `EndConductor`; the paths must partition all free contour points.
+The paired-coupon generator emits this metadata automatically. Electrostatics samples the
+same point coefficients directly. Maxwell integrates each open path and compares its
+endpoint voltage with the independent conductor-voltage integral, so no integration
+segment crosses an omitted metal cut.
 
 A three-dimensional corner coupon is added to the same library:
 
@@ -908,6 +1036,7 @@ A three-dimensional corner coupon is added to the same library:
   "ThinSurfaceMatrix": "corner-90/thin/surface-response-matrix.csv",
   "BasisPoints": "corner-90/basis-points.csv",
   "ContourGroups": [16, 16],
+  "ZeroTraceIndices": [17, 18, 19],
   "Interfaces": [
     {"Type": "SA", "Coupon": 1},
     {"Type": "MS", "Coupon": 2},
@@ -924,7 +1053,13 @@ incident arm, whose second axis lies in the fabrication plane, and whose third a
 the process normal. The other arm lies at the model's `Angle` in this frame.
 `ContourGroups` partitions those points into independent closed Maxwell voltage
 contours. It is optional for electrostatics and defaults to one contour containing all
-basis points. Corner matrices are generated by paired thin and fabrication-resolved 3D
+basis points. `ZeroTraceIndices` optionally lists one-based contour knots constrained to
+the reference-conductor potential by PEC. Palace fixes every listed Maxwell trace to
+zero and reconstructs each free contour arc independently between consecutive PEC knots.
+It creates no line functional on an arc whose endpoints and interior knots are all PEC
+constrained. This is required when a rounded-corner `Reference` lies inside the thin PEC
+footprint and either the direct anchor path or part of the matching contour lies on the
+conductor. Corner matrices are generated by paired thin and fabrication-resolved 3D
 coupons and already represent one complete vertex, so Palace applies them once with no
 `CouponDepth` scaling.
 
@@ -1041,15 +1176,19 @@ boundary splitting. `SameConductorGap`, `SameConductorStrip`, and
 `DifferentConductorGap` library entries use the same separation matching as the
 electrostatic path. Locally connected corner arms are handled by the matching corner
 model or the unmodeled-corner fallback. Other nonparallel close edges, more than two
-interacting edges, cross-layer pairs, and missing library separations follow
+interacting edges, cross-layer pairs, and unbracketed library separations follow
 `UnmatchedPolicy`. Impedance metal, multiple fabrication layers, and explicit `Models` or
 `Patches` are not supported by the Maxwell path.
 
-A version-1 different-conductor coupon has one PEC reference and no independent
-coefficient for the second conductor voltage. Its use should therefore be validated for
-the intended field family; strongly coupled different-conductor pairs require a future
-two-conductor trace basis. Same-conductor pairs and isolated PEC edges do not have this
-additional state.
+A version-2 different-conductor coupon reconstructs the final ``V_B-V_A`` coefficient
+from the two mapped PEC reference points. Electrostatics uses two H1 point values.
+Maxwell uses the oriented Nedelec line integral from conductor A to conductor B and
+reconstructs free contour voltages along the library's open conductor-to-conductor paths.
+Disagreement between either path integral and ``V_B-V_A`` contributes to the reported
+loop residual.
+Version-1 different-conductor coupons retain one PEC reference and no independent second
+conductor voltage, so their use should be restricted to validated field families.
+Same-conductor pairs and isolated PEC edges do not need this additional state.
 
 The fixed-trace result applies the fabricated coupon matrices directly to the
 reconstructed thin-field trace. The fixed-flux result transforms that trace by
@@ -1073,23 +1212,36 @@ not available.
 
 Palace writes one row per frequency and excitation or eigenmode to
 `surface-response-confidence.csv`. `confidence pass` is one only when all of the
-following limits hold:
+gating limits in the following table hold. `surface-Q-corrected.csv` also reports the
+matched and unmodeled-corner fractions for each target interface; nontarget interfaces
+receive `NaN` in those columns.
 
 | Column | Meaning | Current limit |
 |:---|:---|:---|
 | `kR` | Electrical size of the coupon, ``|\omega|R/v_{min}`` | ``\leq 0.1`` |
-| `loop residual` | ``|\oint \bm{E}\cdot d\bm{l}|`` divided by the sum of absolute contour-segment integrals | ``\leq 0.05`` |
-| `matched edge fraction` | Fraction of selected physical edge length assigned a library model | effectively 1 |
-| `unmodeled corner neighborhood fraction` | Fraction of matched edge length within ``R`` of an unmatched corner, endpoint, or junction | ``\leq 0.1`` |
+| `loop residual` | Maximum ``|\oint \bm{E}\cdot d\bm{l}|`` divided by the sum of absolute contour-segment integrals over all contour paths | diagnostic only |
+| `response-weighted loop residual` | RMS loop residual weighted by the fabricated surface response carried by each contour path | ``\leq 0.05`` |
+| `loop-response fraction above limit` | Fraction of fabricated surface response assigned to paths whose loop residual exceeds 0.05 | ``\leq 0.01`` |
+| `matched edge fraction` | Minimum, over target interfaces, of the selected physical edge length assigned a library model | effectively 1 |
+| `unmodeled corner neighborhood fraction` | Maximum, over target interfaces, of the matched edge length within ``R`` of an unmatched corner, endpoint, or junction | ``\leq 0.1`` |
 | `max R/rho` | Largest matching-radius to local-curvature-radius ratio | ``\leq 0.25`` |
-| `max library distance` | Largest normalized paired-edge separation mismatch | ``\leq 0.8`` |
+| `max library distance` | Largest normalized paired-edge mismatch, separation-interpolation span, corner mismatch, or rounded-radius interpolation span | ``\leq 0.8`` |
 | `trace closure spread` | Largest relative difference between fixed-trace and fixed-flux surface response | ``\leq 0.05`` |
 
-The loop residual tests the local quasi-electrostatic approximation and contour
-resolution. The remaining columns test whether the geometry is represented by the
-isolated-, paired-, or corner-response library. Corrected values are still written when a
-limit fails, but Palace warns that they are not validated. The unmodeled corner fraction
-is a geometric length fraction, not a statistical confidence interval.
+The maximum loop residual identifies the worst local violation of the quasi-electrostatic
+approximation or contour resolution. It does not gate confidence because an arbitrarily
+small trace can have a large relative residual without affecting the corrected energy.
+For response weighting, each coupon patch is assigned the larger of its fixed-trace and
+fixed-flux fabricated surface energies, summed over target interfaces. That weight is
+split among a patch's contour paths in proportion to the squared sum of absolute segment
+integrals. The weighted RMS and failed-response fraction gate whether nonconservative
+paths carry a material fraction of the modeled response. The remaining columns test
+whether the geometry is
+represented by the isolated-, paired-, or corner-response library. The interface-wise
+extrema prevent a large-perimeter interface from hiding poor coverage of a smaller one.
+Corrected values are still written when a limit fails, but Palace warns that they are not
+validated. The unmodeled corner fraction is a geometric length fraction, not a
+statistical confidence interval.
 
 ## Lumped parameter extraction
 

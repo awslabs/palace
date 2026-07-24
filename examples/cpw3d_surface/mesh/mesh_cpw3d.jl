@@ -616,13 +616,35 @@ function generate_cpw2d_mesh(;
     model_doms = Set(tag for (dim, tag) in gmsh.model.getEntities(dom_dim))
     mr = max(r_top, r_bot, tp, to) + 0.01
 
-    pec_trace = Int[]; pec_ground = Int[]; bb_pec = Int[]; outer_c = Int[]
+    pec_trace = Int[]; pec_ground = Int[]
+    pec_trace_ms = Int[]; pec_trace_ma = Int[]
+    pec_ground_ms = Int[]; pec_ground_ma = Int[]
+    bb_pec = Int[]; outer_c = Int[]
     sa_curves = Int[]
     port_front = Int[]   # z = 0 end cap (waveport in 3D)
     port_back  = Int[]   # z = extrude_length end cap (waveport in 3D)
 
+    ms_domains = Set(vcat(l1_doms, l2_doms, l1_ms_ox, l2_ms_ox, sc_ms_ox))
+    ma_domains = Set(vcat(gap_doms, l1_ma_ox, l2_ma_ox, sc_ma_ox))
+
+    function add_pec!(is_trace, tag, adjacent_domains)
+        if !thick
+            push!(is_trace ? pec_trace : pec_ground, tag)
+            return
+        end
+        ms = count(domain -> domain in ms_domains, adjacent_domains)
+        ma = count(domain -> domain in ma_domains, adjacent_domains)
+        ms + ma == 1 ||
+            error("Unable to classify thick-metal PEC boundary $tag as MS or MA")
+        if is_trace
+            push!(ms == 1 ? pec_trace_ms : pec_trace_ma, tag)
+        else
+            push!(ms == 1 ? pec_ground_ms : pec_ground_ma, tag)
+        end
+    end
+
     # For thick metal with oxide: PEC = curve/face with exactly 1 adjacent
-    # model domain (oxide inner face).
+    # model domain (oxide inner face). Its oxide type determines MS or MA.
     # For thick metal without oxide: classify by geometry.
     # For thin metal: classify by x-range at interface y.
     # When extruded, lateral faces use their (x,y) extent which matches the
@@ -665,17 +687,17 @@ function generate_cpw2d_mesh(;
                     in_trace_x = xn > x_tl - mr && xx < x_tr + mr
                     in_l2_y = yn > y2b - tol && yx < y2t + tol
                     if in_l2_y && in_trace_x
-                        push!(pec_trace, tag)
+                        add_pec!(true, tag, adj)
                     else
-                        push!(pec_ground, tag)
+                        add_pec!(false, tag, adj)
                     end
                 else
                     in_trace_x = xn > x_tl - mr && xx < x_tr + mr
                     in_metal_y = yn > -tol && yx < t_metal + tol
                     if in_trace_x && in_metal_y
-                        push!(pec_trace, tag)
+                        add_pec!(true, tag, adj)
                     else
-                        push!(pec_ground, tag)
+                        add_pec!(false, tag, adj)
                     end
                 end
                 continue
@@ -701,15 +723,15 @@ function generate_cpw2d_mesh(;
                 # L2 trace
                 in_trace_x = xn > x_tl - mr && xx < x_tr + mr
                 if yn > y2b-tol && yx < y2t+tol && in_trace_x && !(in_bbl||in_bbr)
-                    push!(pec_trace, tag); continue end
+                    add_pec!(true, tag, adj); continue end
 
                 # L2 ground
                 if yn > y2b-tol && yx < y2t+tol && !in_trace_x && !(in_bbl||in_bbr)
-                    push!(pec_ground, tag); continue end
+                    add_pec!(false, tag, adj); continue end
 
                 # L1 ground
                 if yn > -tol && yx < t_metal+tol && !(in_bbl||in_bbr)
-                    push!(pec_ground, tag); continue end
+                    add_pec!(false, tag, adj); continue end
 
                 # SA (overetch)
                 if has_overetch
@@ -729,7 +751,7 @@ function generate_cpw2d_mesh(;
                 in_rgap = xn > x_tr-mr && xx < x_gr+mr
                 in_lgap = xn > x_gl-mr && xx < x_tl+mr
                 if yn > -tol && yx < t_metal+tol && in_trace_x
-                    push!(pec_trace, tag); continue end
+                    add_pec!(true, tag, adj); continue end
                 if ih && abs(ym)<tol && (in_rgap||in_lgap)
                     if has_overetch
                         # y=0 in gap is vacuum-vacuum interface, not SA
@@ -739,7 +761,7 @@ function generate_cpw2d_mesh(;
                     continue
                 end
                 if yn > -tol && yx < t_metal+tol && !in_trace_x
-                    push!(pec_ground, tag); continue end
+                    add_pec!(false, tag, adj); continue end
                 if has_overetch
                     if yn > -oe-tol && yx < tol && (in_rgap||in_lgap)
                         push!(sa_curves, tag); continue end
@@ -819,8 +841,22 @@ function generate_cpw2d_mesh(;
     end
 
     bi = 1
-    !isempty(pec_trace) && (gmsh.model.addPhysicalGroup(bdr_dim,pec_trace,bi,"PEC_trace"); bi+=1)
-    !isempty(pec_ground) && (gmsh.model.addPhysicalGroup(bdr_dim,pec_ground,bi,"PEC_ground"); bi+=1)
+    if thick
+        for (boundaries, name) in [
+            (pec_trace_ms, "PEC_trace_MS"),
+            (pec_trace_ma, "PEC_trace_MA"),
+            (pec_ground_ms, "PEC_ground_MS"),
+            (pec_ground_ma, "PEC_ground_MA"),
+        ]
+            !isempty(boundaries) &&
+                (gmsh.model.addPhysicalGroup(bdr_dim, boundaries, bi, name); bi += 1)
+        end
+    else
+        !isempty(pec_trace) &&
+            (gmsh.model.addPhysicalGroup(bdr_dim, pec_trace, bi, "PEC_trace"); bi += 1)
+        !isempty(pec_ground) &&
+            (gmsh.model.addPhysicalGroup(bdr_dim, pec_ground, bi, "PEC_ground"); bi += 1)
+    end
     !isempty(bb_pec) && (gmsh.model.addPhysicalGroup(bdr_dim,bb_pec,bi,"bump_bonds"); bi+=1)
     !isempty(sa_curves) && (gmsh.model.addPhysicalGroup(bdr_dim,sa_curves,bi,"SA"); bi+=1)
     !isempty(outer_c) && (gmsh.model.addPhysicalGroup(bdr_dim,outer_c,bi,"outer"); bi+=1)

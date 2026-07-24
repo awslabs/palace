@@ -96,6 +96,7 @@ MetalEdgeGeometry ExtractMetalEdgeGeometry(const mfem::ParMesh &mesh,
   {
     (void)index;
     AddCondition(potential.attributes, MetalBoundaryConditionType::PEC, 0);
+    AddCondition(potential.terminal_attributes, MetalBoundaryConditionType::PEC, 0);
   }
   for (std::size_t i = 0; i < boundaries.conductivity.size(); i++)
   {

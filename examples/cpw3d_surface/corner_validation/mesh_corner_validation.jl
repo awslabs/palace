@@ -1,8 +1,8 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Fabrication-resolved and thin-metal electrostatic validation meshes for a
-# finite rectangular island with four convex in-plane corners.
+# Fabrication-resolved and thin-metal validation meshes for either a finite
+# rectangular island or a rectangular aperture in a metal sheet.
 
 import Gmsh: gmsh
 
@@ -49,6 +49,7 @@ end
 
 function generate_corner_validation(;
     fabricated::Bool = false,
+    aperture::Bool = false,
     island_width::Float64 = 8.0,
     island_height::Float64 = 6.0,
     corner_radius::Float64 = 0.0,
@@ -63,6 +64,7 @@ function generate_corner_validation(;
     lc_fine::Float64 = fabricated ? 0.01 : 0.08,
     lc_far::Float64 = 1.5,
     mesh_order::Int = 1,
+    maxwell_excitation::Bool = false,
     filename::String,
 )
     half_x = 0.5 * island_width
@@ -77,11 +79,14 @@ function generate_corner_validation(;
         error("substrate_depth must exceed overetch_depth")
     vacuum_height > metal_thickness ||
         error("vacuum_height must exceed metal_thickness")
+    aperture && maxwell_excitation &&
+        error("The Maxwell excitation is currently defined only for an island")
 
     gmsh.initialize()
     gmsh.option.setNumber("General.Verbosity", 2)
     gmsh.model.add(
-        fabricated ? "corner_validation_fabricated" : "corner_validation_thin")
+        "corner_validation_" * (aperture ? "aperture_" : "island_") *
+        (fabricated ? "fabricated" : "thin"))
     occ = gmsh.model.occ
 
     substrate_seed = Tuple{Int32,Int32}[]
@@ -97,20 +102,30 @@ function generate_corner_validation(;
                 -half_box, -half_box, -substrate_depth,
                 2half_box, 2half_box, substrate_depth),
         )]
-        trench_slab = [(
-            3,
-            occ.addBox(
-                -half_box, -half_box, -overetch_depth,
-                2half_box, 2half_box, overetch_depth),
-        )]
-        pedestal = corner_radius > 0.0 ?
-            tapered_rounded_rectangle(
-                occ, half_x, half_y, corner_radius,
-                -overetch_depth, overetch_depth, -trench_pullback, 0.0) :
-            tapered_rectangle(
-                occ, half_x, half_y, -overetch_depth, overetch_depth,
-                -trench_pullback, 0.0)
-        notch, _ = occ.cut(trench_slab, pedestal)
+        notch = if aperture
+            corner_radius > 0.0 ?
+                tapered_rounded_rectangle(
+                    occ, half_x, half_y, corner_radius,
+                    -overetch_depth, overetch_depth, trench_pullback, 0.0) :
+                tapered_rectangle(
+                    occ, half_x, half_y, -overetch_depth, overetch_depth,
+                    trench_pullback, 0.0)
+        else
+            trench_slab = [(
+                3,
+                occ.addBox(
+                    -half_box, -half_box, -overetch_depth,
+                    2half_box, 2half_box, overetch_depth),
+            )]
+            pedestal = corner_radius > 0.0 ?
+                tapered_rounded_rectangle(
+                    occ, half_x, half_y, corner_radius,
+                    -overetch_depth, overetch_depth, -trench_pullback, 0.0) :
+                tapered_rectangle(
+                    occ, half_x, half_y, -overetch_depth, overetch_depth,
+                    -trench_pullback, 0.0)
+            occ.cut(trench_slab, pedestal)[1]
+        end
         substrate, _ = occ.cut(substrate_box, notch)
         tolerance = 1.0e-6 * half_box
         substrate = fillet_volume_edges(
@@ -127,20 +142,40 @@ function generate_corner_validation(;
             "validation trench-bottom",
         )
 
-        metal = corner_radius > 0.0 ?
-            tapered_rounded_rectangle(
-                occ, half_x, half_y, corner_radius,
-                0.0, metal_thickness, 0.0, metal_pullback) :
-            tapered_rectangle(
-                occ, half_x, half_y, 0.0, metal_thickness,
-                0.0, metal_pullback)
+        metal = if aperture
+            metal_sheet = [(
+                3,
+                occ.addBox(
+                    -half_box, -half_box, 0.0,
+                    2half_box, 2half_box, metal_thickness),
+            )]
+            opening = corner_radius > 0.0 ?
+                tapered_rounded_rectangle(
+                    occ, half_x, half_y, corner_radius,
+                    0.0, metal_thickness, 0.0, -metal_pullback) :
+                tapered_rectangle(
+                    occ, half_x, half_y, 0.0, metal_thickness,
+                    0.0, -metal_pullback)
+            occ.cut(metal_sheet, opening)[1]
+        else
+            corner_radius > 0.0 ?
+                tapered_rounded_rectangle(
+                    occ, half_x, half_y, corner_radius,
+                    0.0, metal_thickness, 0.0, metal_pullback) :
+                tapered_rectangle(
+                    occ, half_x, half_y, 0.0, metal_thickness,
+                    0.0, metal_pullback)
+        end
         metal = fillet_volume_edges(
             occ, metal, top_rounding,
             bounds -> begin
                 xmin, ymin, zmin, xmax, ymax, zmax = bounds
                 on_top = abs(zmin - metal_thickness) < tolerance &&
                          abs(zmax - metal_thickness) < tolerance
-                on_top
+                off_outer_box =
+                    maximum(abs.((xmin, ymin, xmax, ymax))) <
+                    half_box - tolerance
+                on_top && (!aperture || off_outer_box)
             end,
             "validation top-metal",
         )
@@ -178,6 +213,57 @@ function generate_corner_validation(;
         append!(substrate_seed, domain_map[1])
         append!(vacuum_seed, domain_map[2])
     end
+
+    lumped_port_seed = Tuple{Int32,Int32}[]
+    sa_port_exclusion_seed = Tuple{Int32,Int32}[]
+    port_width = 0.0
+    if maxwell_excitation
+        port_width = 0.5
+        port = (
+            2,
+            occ.addRectangle(
+                half_x, -0.5port_width, 0.0, half_box - half_x, port_width),
+        )
+        tools = [port]
+        if fabricated
+            trench_pullback =
+                overetch_depth / tan(deg2rad(sidewall_angle))
+            exclusion_start = half_x + trench_pullback
+            push!(
+                tools,
+                (
+                    2,
+                    occ.addRectangle(
+                        exclusion_start,
+                        -0.5port_width,
+                        -overetch_depth,
+                        half_box - exclusion_start,
+                        port_width,
+                    ),
+                ),
+            )
+        end
+        old_domains = domains
+        old_substrate = Set(
+            tag for (dim, tag) in substrate_seed if dim == 3)
+        old_vacuum = Set(
+            tag for (dim, tag) in vacuum_seed if dim == 3)
+        domains, domain_map =
+            occ.fragment(old_domains, tools, -1, true, false)
+        substrate_seed = Tuple{Int32,Int32}[]
+        vacuum_seed = Tuple{Int32,Int32}[]
+        for (index, (dim, tag)) in enumerate(old_domains)
+            dim == 3 || continue
+            tag in old_substrate && append!(substrate_seed, domain_map[index])
+            tag in old_vacuum && append!(vacuum_seed, domain_map[index])
+        end
+        append!(lumped_port_seed, domain_map[length(old_domains) + 1])
+        fabricated &&
+            append!(
+                sa_port_exclusion_seed,
+                domain_map[length(old_domains) + 2],
+            )
+    end
     occ.synchronize()
 
     domain_tags = Set(tag for (dim, tag) in domains if dim == 3)
@@ -189,21 +275,51 @@ function generate_corner_validation(;
         if dim == 3 && tag in domain_tags))
     substrate_set = Set(substrate_tags)
     vacuum_set = Set(vacuum_tags)
+    lumped_port_set = Set(
+        tag for (dim, tag) in lumped_port_seed if dim == 2)
+    sa_port_exclusion_set = Set(
+        tag for (dim, tag) in sa_port_exclusion_seed if dim == 2)
     tolerance = 1.0e-6 * half_box
     outer = Int32[]
+    outer_truncation = Int32[]
+    lumped_port = Int32[]
+    sa_port_exclusion = Int32[]
     thin_metal = Int32[]
     ms = Int32[]
     sa = Int32[]
     ma = Int32[]
     for (dim, tag) in gmsh.model.getEntities(2)
+        bounds = gmsh.model.getBoundingBox(dim, tag)
+        xmin, ymin, zmin, xmax, ymax, zmax = bounds
+        on_lumped_port =
+            maxwell_excitation &&
+            abs(zmin) < tolerance && abs(zmax) < tolerance &&
+            xmin >= half_x - tolerance && xmax <= half_box + tolerance &&
+            ymin >= -0.5port_width - tolerance &&
+            ymax <= 0.5port_width + tolerance
+        if tag in lumped_port_set || on_lumped_port
+            push!(lumped_port, tag)
+            continue
+        elseif tag in sa_port_exclusion_set
+            push!(sa_port_exclusion, tag)
+            continue
+        end
         up, _ = gmsh.model.getAdjacencies(dim, tag)
         adjacent_substrate = [volume for volume in up if volume in substrate_set]
         adjacent_vacuum = [volume for volume in up if volume in vacuum_set]
         isempty(adjacent_substrate) && isempty(adjacent_vacuum) && continue
-        bounds = gmsh.model.getBoundingBox(dim, tag)
         if on_outer_box(
             bounds, half_box, substrate_depth, vacuum_height, tolerance)
-            push!(outer, tag)
+            on_horizontal_outer =
+                (abs(zmin + substrate_depth) < tolerance &&
+                 abs(zmax + substrate_depth) < tolerance) ||
+                (abs(zmin - vacuum_height) < tolerance &&
+                 abs(zmax - vacuum_height) < tolerance)
+            if aperture && !on_horizontal_outer
+                push!(outer_truncation, tag)
+            else
+                push!(outer, tag)
+            end
         elseif fabricated
             if !isempty(adjacent_substrate) && !isempty(adjacent_vacuum)
                 push!(sa, tag)
@@ -213,14 +329,15 @@ function generate_corner_validation(;
                 push!(ma, tag)
             end
         else
-            xmin, ymin, zmin, xmax, ymax, zmax = bounds
             on_interface = abs(zmin) < tolerance && abs(zmax) < tolerance
-            inside_island =
+            inside_footprint =
                 xmin >= -half_x - tolerance &&
                 xmax <= half_x + tolerance &&
                 ymin >= -half_y - tolerance &&
                 ymax <= half_y + tolerance
-            if on_interface && inside_island
+            on_thin_metal =
+                on_interface && (aperture ? !inside_footprint : inside_footprint)
+            if on_thin_metal
                 push!(thin_metal, tag)
             elseif on_interface &&
                    !isempty(adjacent_substrate) && !isempty(adjacent_vacuum)
@@ -229,11 +346,32 @@ function generate_corner_validation(;
         end
     end
 
+    for surface in lumped_port
+        up, _ = gmsh.model.getAdjacencies(2, surface)
+        if isempty(up)
+            length(vacuum_tags) == 1 ||
+                error("Cannot identify the vacuum volume containing the lumped port")
+            gmsh.model.mesh.embed(2, [surface], 3, only(vacuum_tags))
+        end
+    end
+
     groups = [
         (3, substrate_tags, 1, "substrate"),
         (3, vacuum_tags, 2, "vacuum"),
         (2, outer, 1, "outer"),
     ]
+    aperture &&
+        push!(
+            groups,
+            (2, outer_truncation, 7, "outer_truncation"),
+        )
+    maxwell_excitation &&
+        push!(groups, (2, lumped_port, 5, "lumped_port"))
+    fabricated && maxwell_excitation &&
+        push!(
+            groups,
+            (2, sa_port_exclusion, 6, "SA_port_exclusion"),
+        )
     if fabricated
         append!(groups, [
             (2, ms, 2, "MS"),
@@ -252,11 +390,21 @@ function generate_corner_validation(;
     end
 
     feature_surfaces = fabricated ? vcat(ms, sa, ma) : thin_metal
+    excluded_feature_curves = Set(
+        curve for (dim, curve) in gmsh.model.getBoundary(
+            [(2, surface) for surface in sa_port_exclusion],
+            false,
+            false,
+            false,
+        )
+        if dim == 1
+    )
     feature_curves = Int32[]
     for surface in feature_surfaces
         for (dim, curve) in gmsh.model.getBoundary(
             [(2, surface)], false, false, false)
             dim == 1 || continue
+            curve in excluded_feature_curves && continue
             bounds = gmsh.model.getBoundingBox(dim, curve)
             on_outer_box(
                 bounds, half_box, substrate_depth, vacuum_height, tolerance) ||
@@ -289,7 +437,8 @@ function generate_corner_validation(;
     mesh_order > 1 && gmsh.model.mesh.optimize("HighOrderElastic")
     gmsh.write(filename)
 
-    println("Corner validation: fabricated=$(fabricated), " *
+    println("Corner validation: geometry=$(aperture ? "aperture" : "island"), " *
+            "fabricated=$(fabricated), " *
             "corner radius=$(corner_radius) um")
     for (dim, tag) in gmsh.model.getPhysicalGroups()
         name = gmsh.model.getPhysicalName(dim, tag)
@@ -301,16 +450,39 @@ function generate_corner_validation(;
     gmsh.finalize()
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
-    length(ARGS) in (2, 3) ||
-        error("Usage: mesh_corner_validation.jl " *
-              "thin|fabricated OUTPUT.msh [CORNER_RADIUS_UM]")
-    kind = ARGS[1]
+function main(args)
+    length(args) >= 2 ||
+        error("Usage: mesh_corner_validation.jl thin|fabricated OUTPUT.msh " *
+              "[CORNER_RADIUS_UM] [island|aperture] [maxwell]")
+    kind = args[1]
     kind in ("thin", "fabricated") || error("Unknown validation kind: $kind")
-    corner_radius = length(ARGS) == 3 ? parse(Float64, ARGS[3]) : 0.0
+    corner_radius = 0.0
+    radius_set = false
+    aperture = false
+    maxwell_excitation = false
+    for argument in args[3:end]
+        if argument == "island"
+            aperture = false
+        elseif argument == "aperture"
+            aperture = true
+        elseif argument == "maxwell"
+            maxwell_excitation = true
+        elseif !radius_set
+            corner_radius = parse(Float64, argument)
+            radius_set = true
+        else
+            error("Unknown validation argument: $argument")
+        end
+    end
     generate_corner_validation(
         fabricated = kind == "fabricated",
+        aperture = aperture,
         corner_radius = corner_radius,
-        filename = abspath(ARGS[2]),
+        maxwell_excitation = maxwell_excitation,
+        filename = abspath(args[2]),
     )
+end
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    main(ARGS)
 end

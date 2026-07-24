@@ -506,6 +506,11 @@ public:
   // potential is in volts.
   std::string data_file = {};
 
+  // Optional boundary attributes held at one volt in the same excitation. This
+  // allows one response-matrix basis field to combine a contour trace with an
+  // independent conductor voltage.
+  std::vector<int> terminal_attributes = {};
+
   PrescribedPotentialData() = default;
   PrescribedPotentialData(const json &potential);
 };
@@ -986,9 +991,19 @@ public:
     // Explicit configuration syntax always uses the default unit weight.
     double weight = 1.0;
 
+    // Internal identifier for weighted alternatives that interpolate one automatic 2D
+    // placement. Their contours intentionally overlap; unrelated placements remain
+    // subject to the overlap check.
+    int interpolation_group = 0;
+
     // Internal global PEC anchor used to fix the gauge of Maxwell contour voltages.
     // Automatic 3D matching places this away from the singular metal edge.
     std::optional<std::array<double, 3>> maxwell_anchor = std::nullopt;
+
+    // Optional second-conductor reference, in the same local coordinates as Reference,
+    // and its mapped global PEC anchor for Maxwell line integration.
+    std::optional<std::array<double, 3>> secondary_reference = std::nullopt;
+    std::optional<std::array<double, 3>> maxwell_secondary_anchor = std::nullopt;
   };
 
   struct ResponseCorrectionInterfaceData
@@ -999,6 +1014,15 @@ public:
 
   struct ResponseCorrectionModelData
   {
+    struct OpenContourPathData
+    {
+      // Zero-based BasisPoints indices ordered from the starting conductor to the ending
+      // conductor. Conductor indices are also zero-based internally.
+      std::vector<int> indices;
+      int start_conductor = 0;
+      int end_conductor = 0;
+    };
+
     int idx = 0;
 
     // Matched fabricated- and thin-coupon domain response matrices and optional surface
@@ -1015,6 +1039,19 @@ public:
     // the basis points into independent closed Maxwell voltage contours.
     bool spatial_basis = false;
     std::vector<int> contour_groups;
+
+    // Zero-based BasisPoints indices whose voltage relative to the reference conductor is
+    // fixed to zero by PEC. A closed Maxwell contour can start at one of these points
+    // without integrating an anchor line through the conductor.
+    std::vector<int> zero_trace_indices;
+
+    // Internal metadata for contour traces interrupted by independent conductors. Each
+    // open path orders a subset of BasisPoints between its two conductor anchors.
+    std::vector<OpenContourPathData> open_contour_paths;
+
+    // Number of independent conductor-voltage coefficients appended after the contour
+    // coefficients. The current two-conductor model supports zero or one.
+    int conductor_state_count = 0;
 
     // Mapping from global target interface index to coupon interface index.
     std::vector<ResponseCorrectionInterfaceData> interfaces;

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Generate compact thin-metal and fabrication-resolved 3D meshes for the
-# held-out 20/12 um driven-CPW surface-response validation.
+# held-out 20/12 um Maxwell CPW surface-response validation.
 
 include(joinpath(@__DIR__, "mesh_cpw3d.jl"))
 

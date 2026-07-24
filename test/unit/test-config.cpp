@@ -590,6 +590,14 @@ TEST_CASE("Config electrostatic response matrix", "[config][Serial]")
        {"LocalizeEdgeEnergy", true},
        {"EdgeFrameNormal", {0.0, 1.0, 0.0}}}};
   CHECK_NOTHROW(IoData(config, false));
+
+  config["Boundaries"]["PrescribedPotential"][0]["TerminalAttributes"] = {3};
+  const IoData conductor_basis(config, false);
+  CHECK(conductor_basis.boundaries.prescribed_potential.at(1).terminal_attributes ==
+        std::vector<int>{3});
+
+  config["Boundaries"]["PrescribedPotential"][0]["TerminalAttributes"] = {1};
+  CHECK_THROWS(IoData(config, false));
 }
 
 TEST_CASE("Config electrostatic response correction", "[config][Serial]")
@@ -751,7 +759,8 @@ TEST_CASE("Config automatic interface dielectric edges", "[config][Serial]")
   dielectric.erase("EdgeAttributes");
 
   dielectric["EdgeExcludeAttributes"] = {3};
-  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
+  const config::InterfaceDielectricData excluded(dielectric);
+  CHECK(excluded.edge_exclude_attributes == std::vector<int>{3});
   dielectric.erase("EdgeExcludeAttributes");
 
   dielectric["Type"] = "Default";

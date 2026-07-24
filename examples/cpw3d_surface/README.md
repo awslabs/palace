@@ -142,46 +142,99 @@ method cannot recover from the thin-metal field. The per-interface spread is
 reported in `surface-Q-corrected.csv`; its maximum is reported in
 `surface-response-confidence.csv` and fails confidence above 5%.
 
-On the generated mesh at order 2 with no AMR, the fixed-trace SA/MS/MA
-participation errors relative to the same-order fabricated run were
-`+3.37%/-1.93%/+14.90%`, while the fixed-flux errors were
-`+10.13%/+1.66%/+7.64%`. The uniform-driven self-consistent errors were
-`+4.86%/-0.37%/+9.88%`, and raw errors were `-10.48%/-21.15%/-59.85%`.
-The maximum closure spread was `8.27%`, so the closure diagnostic correctly
-rejects the postprocessing-only results even though the matched fraction is
-one, the loop residual is below 0.05, and the artificial endpoint neighborhood
-fraction is 0.08.
+The fabrication-resolved mesh assigns separate physical groups to trace and
+ground MS and MA surfaces. On freshly generated 200 um meshes at order 1 with
+no AMR, fixed-trace SA/MS/MA participation errors relative to the split
+fabricated reference are `+3.37%/+3.24%/+22.63%`; fixed-flux errors are
+`+9.92%/+7.03%/+22.83%`, and self-consistent errors are
+`+4.64%/+4.71%/+22.29%`. Raw errors are
+`-20.11%/-35.79%/-64.74%`. The maximum closure spread is `8.02%`, so the
+confidence gate correctly rejects the postprocessing-only values. Geometric
+coverage is complete apart from an endpoint-neighborhood fraction of 0.02.
 
-Running electrostatics on the same compact order-2 thin and fabricated meshes
-gave fixed-trace errors of `+0.39%/-0.92%/+13.68%`, fixed-flux errors of
-`+6.85%/+2.69%/+6.64%`, and self-consistent corrected errors of
-`+1.95%/+0.88%/+9.75%`. Maxwell therefore adds a modest error for this
-electrically short line, especially for SA, but it does not explain the
-persistent MA error by itself. The earlier smaller electrostatic errors also
-benefited from order 3 and the corrected global solve rather than a
-postprocessing-only closure.
+On the 50 um split meshes at order 2, fixed-trace errors are
+`+3.38%/-1.93%/+7.65%`, fixed-flux errors are
+`+10.12%/+1.68%/+7.80%`, and self-consistent errors are
+`+4.71%/-0.50%/+7.13%`. Raw errors are
+`-10.48%/-21.15%/-59.85%`. The maximum closure spread is `8.26%`, and the
+shorter line has an endpoint-neighborhood fraction of 0.08. The order-2
+Maxwell MA error agrees with the order-2 2D electrostatic error below, so
+Maxwell postprocessing itself does not add a separate MA discrepancy.
 
-At order 4, the 50 um corrected SA/MS/MA errors were
-`+0.06%/-0.78%/+12.15%`, compared with raw errors of
-`-0.37%/-5.67%/-53.13%`. Increasing the line length to 200 um while preserving
-the 25 um axial mesh spacing gave corrected errors of
-`-0.62%/-0.76%/+11.75%`. The corrected values at the two lengths agree within
-`0.01%` for every interface, and the 200 um confidence diagnostics report a
-matched fraction of one, loop residual of `4.8e-5`, and endpoint-neighborhood
-fraction of 0.02. The persistent MA excess is therefore not caused by the
-artificial endpoints or insufficient axial resolution. These order-4 runs
-predate the fixed-flux diagnostic. The order-2 closure dependence shows that
-the remaining error is specifically a postprocessing-only trace-closure
-limitation, rather than evidence that the coupon response matrix is inaccurate
-for a prescribed trace. Repeat the order-4 corrected run with the current
-executable before using MA as an accuracy gate.
+The large order-1 MA error is primarily a discretization effect, not an MS/MA
+grouping artifact. A compact 2D electrostatic p-refinement study on the same
+cross-section and response library gives fixed-trace SA/MS/MA errors:
 
-The order-3 to order-4 changes in the 50 um fabricated SA/MS/MA references were
-`+0.99%/+1.45%/+2.37%`; account for that remaining reference-discretization
-uncertainty when interpreting the errors above. Do not compare this compact
-Maxwell case directly to the large-domain 2D electrostatic result: its ground,
-substrate, and vacuum extents are intentionally much smaller.
+| Order | SA | MS | MA |
+| ---: | ---: | ---: | ---: |
+| 1 | `+2.69%` | `+3.56%` | `+22.76%` |
+| 2 | `+1.09%` | `-0.70%` | `+7.71%` |
+| 3 | `-0.78%` | `+0.41%` | `+6.27%` |
+| 4 | `-0.32%` | `-0.84%` | `+4.66%` |
+| 5 | `-1.19%` | `-0.45%` | `+4.14%` |
+| 6 | `-0.77%` | `-1.18%` | `+3.31%` |
+
+The corrected MA value is stable to less than 0.5% between consecutive orders
+above order 2, while the fabrication-resolved reference is still converging.
+The reference changes by 0.55% from order 5 to 6, so the remaining asymptotic
+MA bias is smaller than the order-6 error and is likely a few percent. Over the
+same sweep, raw MA remains 40-50% low and raw SA/MS drift upward.
+
+Two independent resolution checks do not explain the residual. Increasing the
+isolated-edge trace basis from 48 to 96 functions changes fixed-trace SA/MS/MA
+by `-0.05%/-0.03%/+0.78%`. Refining the entire 2 um matching tube to about
+0.17 um element size changes the order-4 result from
+`-0.32%/-0.84%/+4.66%` to `+0.06%/+0.32%/+5.66%`. The production mesh is
+therefore adequate at the matching contour, and refining the full tube by
+default would add substantial cost without removing the MA bias.
+
+This supports the response correction but leaves a small MA model discrepancy
+to investigate. A third-order or higher 3D Maxwell run using the split
+fabricated mesh remains necessary before setting a converged Maxwell accuracy
+gate. Do not compare this compact Maxwell case directly to the large-domain 2D
+electrostatic result: its ground, substrate, and vacuum extents are
+intentionally much smaller.
 
 A remote runner must make the process-library JSON and its matrix files visible
 at the exact path stored in the generated configuration; staging only the
 Palace config and mesh is insufficient.
+
+## Eigenmode Maxwell validation
+
+The same 200 um extrusion also provides a compact standing-wave eigenmode
+check. The front and back faces are left as PMC boundaries instead of being
+modeled as metal, and their attributes are excluded from the automatic edge
+selection. This avoids introducing artificial PEC-cap edges with a fabrication
+mapping unrelated to the CPW metal. Prepare the configurations with:
+
+```text
+python3 examples/cpw3d_surface/prepare_maxwell_validation.py \
+  --library /path/to/process-library-3d.json \
+  --output /tmp/cpw3d-eigenmode-validation \
+  --problem eigenmode \
+  --eigenmode-target 100 \
+  --order 1 \
+  --length 200
+```
+
+Run the same three generated configurations, then compare the first common
+mode:
+
+```text
+python3 examples/cpw3d_surface/compare_maxwell_validation.py \
+  --baseline /tmp/cpw3d-eigenmode-validation/thin_raw \
+  --corrected /tmp/cpw3d-eigenmode-validation/thin_corrected \
+  --fabricated /tmp/cpw3d-eigenmode-validation/fabricated_reference \
+  --mode 1
+```
+
+With the 2 um isolated-edge library and freshly generated split first-order
+meshes, the first thin and fabricated quasi-TEM modes are 290.96 and
+292.83 GHz. Raw SA/MS/MA participation errors are
+`-24.91%/-35.36%/-66.47%`; fixed-trace correction gives
+`-2.95%/+0.45%/+20.42%`, and fixed-flux correction gives
+`+3.36%/+4.13%/+20.54%`. The maximum closure spread is 8.02%, so Palace
+correctly fails the confidence gate. This case verifies eigenmode extraction,
+automatic PEC edge matching, and corrected-output plumbing, but the order-1
+MA result is not an accuracy pass. Eigenmode correction remains
+postprocessing-only and therefore has no self-consistent columns.

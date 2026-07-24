@@ -173,13 +173,39 @@ def heldout_potential(points, radius):
     return 0.35 + 0.20 * x - 0.15 * y + 0.10 * z + 0.08 * x * y + 0.06 * z * z
 
 
-def dielectric(index, attributes, interface_type, radius):
-    permittivity, loss_tangent = INTERFACES[interface_type]
+def thin_metal_mask(points, radius, corner_radius, topology):
+    tolerance = 1.0e-12 * radius
+    x = points[:, 0]
+    y = points[:, 1]
+    on_process_plane = np.abs(points[:, 2]) <= tolerance
+    in_positive_quadrant = (x >= -tolerance) & (y >= -tolerance)
+    rounded_quadrant = (
+        (x >= corner_radius - tolerance)
+        | (y >= corner_radius - tolerance)
+        | (
+            (x - corner_radius) ** 2 + (y - corner_radius) ** 2
+            <= corner_radius**2 + tolerance**2
+        )
+    )
+    if topology == "convex":
+        in_metal = in_positive_quadrant & rounded_quadrant
+    else:
+        on_corner_boundary = (
+            (np.abs(y) <= tolerance) & (x >= corner_radius - tolerance)
+        ) | ((np.abs(x) <= tolerance) & (y >= corner_radius - tolerance))
+        in_metal = ~(in_positive_quadrant & rounded_quadrant) | on_corner_boundary
+    return on_process_plane & in_metal
+
+
+def dielectric(
+    index, attributes, interface_type, radius, thickness, permittivity
+):
+    _, loss_tangent = INTERFACES[interface_type]
     return {
         "Index": index,
         "Attributes": attributes,
         "Type": interface_type,
-        "Thickness": 2.0e-3,
+        "Thickness": thickness,
         "Permittivity": permittivity,
         "LossTan": loss_tangent,
         "LocalizeEdgeEnergy": True,
@@ -190,18 +216,28 @@ def dielectric(index, attributes, interface_type, radius):
     }
 
 
-def make_config(output, name, mesh, traces, radius, order, fabricated):
+def make_config(
+    output,
+    name,
+    mesh,
+    traces,
+    radius,
+    order,
+    fabricated,
+    substrate_permittivity,
+    interface_layers,
+):
     interfaces = (
         [
-            dielectric(1, [3], "SA", radius),
-            dielectric(2, [2], "MS", radius),
-            dielectric(3, [4], "MA", radius),
+            dielectric(1, [3], "SA", radius, *interface_layers["SA"]),
+            dielectric(2, [2], "MS", radius, *interface_layers["MS"]),
+            dielectric(3, [4], "MA", radius, *interface_layers["MA"]),
         ]
         if fabricated
         else [
-            dielectric(1, [3], "SA", radius),
-            dielectric(2, [2], "MS", radius),
-            dielectric(3, [2], "MA", radius),
+            dielectric(1, [3], "SA", radius, *interface_layers["SA"]),
+            dielectric(2, [2], "MS", radius, *interface_layers["MS"]),
+            dielectric(3, [2], "MA", radius, *interface_layers["MA"]),
         ]
     )
     return {
@@ -218,7 +254,7 @@ def make_config(output, name, mesh, traces, radius, order, fabricated):
         },
         "Domains": {
             "Materials": [
-                {"Attributes": [1], "Permittivity": 11.47},
+                {"Attributes": [1], "Permittivity": substrate_permittivity},
                 {"Attributes": [2], "Permittivity": 1.0},
             ],
             "Postprocessing": {
@@ -256,7 +292,18 @@ def make_config(output, name, mesh, traces, radius, order, fabricated):
     }
 
 
-def write_library(output, radius, corner_radius, contour_groups, topology):
+def write_library(
+    output,
+    radius,
+    corner_radius,
+    contour_groups,
+    zero_trace_indices,
+    topology,
+    metal_thickness,
+    overetch_depth,
+    substrate_permittivity,
+    interface_layers,
+):
     topology_name = f"{topology.capitalize()}Corner"
     model_name = f"{topology}-corner-90deg"
     if corner_radius > 0.0:
@@ -270,37 +317,51 @@ def write_library(output, radius, corner_radius, contour_groups, topology):
         0.02 * corner_radius,
         1.0e-3 * radius,
     )
+    model = {
+        "Name": model_name,
+        "Topology": topology_name,
+        "Angle": 90.0,
+        "AngleTolerance": 2.0,
+        "CornerRadius": corner_radius,
+        "CornerRadiusTolerance": corner_radius_tolerance,
+        "Reference": reference,
+        "FabricatedMatrix": "postpro/fabricated/domain-response-matrix.csv",
+        "ThinMatrix": "postpro/thin/domain-response-matrix.csv",
+        "FabricatedSurfaceMatrix":
+            "postpro/fabricated/surface-response-matrix-aggregate.csv",
+        "ThinSurfaceMatrix":
+            "postpro/thin/surface-response-matrix-aggregate.csv",
+        "BasisPoints": "basis-points.csv",
+        "ContourGroups": contour_groups,
+        "Interfaces": [
+            {"Type": "SA", "Coupon": 1},
+            {"Type": "MS", "Coupon": 2},
+            {"Type": "MA", "Coupon": 3},
+        ],
+    }
+    if zero_trace_indices:
+        model["ZeroTraceIndices"] = zero_trace_indices
     library = {
-        "Version": 1,
+        "Version": 3,
         "Name": (
             "100nm-metal-50nm-overetch-10nm-rounding-"
             f"{topology}-corner-r{corner_radius:g}um-prototype"
         ),
         "MatchingRadius": radius,
-        "Models": [
-            {
-                "Name": model_name,
-                "Topology": topology_name,
-                "Angle": 90.0,
-                "AngleTolerance": 2.0,
-                "CornerRadius": corner_radius,
-                "CornerRadiusTolerance": corner_radius_tolerance,
-                "Reference": reference,
-                "FabricatedMatrix": "postpro/fabricated/domain-response-matrix.csv",
-                "ThinMatrix": "postpro/thin/domain-response-matrix.csv",
-                "FabricatedSurfaceMatrix":
-                    "postpro/fabricated/surface-response-matrix-aggregate.csv",
-                "ThinSurfaceMatrix":
-                    "postpro/thin/surface-response-matrix-aggregate.csv",
-                "BasisPoints": "basis-points.csv",
-                "ContourGroups": contour_groups,
-                "Interfaces": [
-                    {"Type": "SA", "Coupon": 1},
-                    {"Type": "MS", "Coupon": 2},
-                    {"Type": "MA", "Coupon": 3},
-                ],
-            }
-        ],
+        "Fabrication": {
+            "LengthUnit": "um",
+            "MetalThickness": metal_thickness,
+            "OveretchDepth": overetch_depth,
+            "SubstratePermittivity": substrate_permittivity,
+            "InterfaceLayers": {
+                interface_type: {
+                    "Thickness": layer[0],
+                    "Permittivity": layer[1],
+                }
+                for interface_type, layer in interface_layers.items()
+            },
+        },
+        "Models": [model],
     }
     path = output / "process-library.json"
     path.write_text(json.dumps(library, indent=2) + "\n")
@@ -318,6 +379,13 @@ def main():
     parser.add_argument("--order", type=int, default=1)
     parser.add_argument("--metal-thickness", type=float, default=0.1)
     parser.add_argument("--overetch-depth", type=float, default=0.05)
+    parser.add_argument("--substrate-permittivity", type=float, default=11.47)
+    parser.add_argument("--sa-thickness", type=float, default=0.002)
+    parser.add_argument("--sa-permittivity", type=float, default=4.0)
+    parser.add_argument("--ms-thickness", type=float, default=0.002)
+    parser.add_argument("--ms-permittivity", type=float, default=11.47)
+    parser.add_argument("--ma-thickness", type=float, default=0.002)
+    parser.add_argument("--ma-permittivity", type=float, default=10.0)
     parser.add_argument(
         "--topology", choices=("convex", "concave"), default="convex"
     )
@@ -332,6 +400,22 @@ def main():
         parser.error("--metal-thickness must lie between zero and the radius")
     if not 0.0 <= args.overetch_depth < args.radius:
         parser.error("--overetch-depth must be nonnegative and smaller than the radius")
+    material_values = (
+        args.substrate_permittivity,
+        args.sa_thickness,
+        args.sa_permittivity,
+        args.ms_thickness,
+        args.ms_permittivity,
+        args.ma_thickness,
+        args.ma_permittivity,
+    )
+    if any(not np.isfinite(value) or value <= 0.0 for value in material_values):
+        parser.error("substrate and interface-layer properties must be finite and positive")
+    interface_layers = {
+        "SA": (args.sa_thickness, args.sa_permittivity),
+        "MS": (args.ms_thickness, args.ms_permittivity),
+        "MA": (args.ma_thickness, args.ma_permittivity),
+    }
 
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -348,6 +432,19 @@ def main():
         args.overetch_depth,
     )
     traces = write_basis(output, points, triangles)
+    zero_trace_indices = (
+        np.flatnonzero(
+            thin_metal_mask(
+                points,
+                args.radius,
+                args.corner_radius,
+                args.topology,
+            )
+        )
+        + 1
+    ).tolist()
+    if not zero_trace_indices:
+        raise ValueError("corner coupon has no PEC-constrained trace knots")
     for name, mesh, fabricated in (
         ("thin", thin_mesh, False),
         ("fabricated", fabricated_mesh, True),
@@ -360,6 +457,8 @@ def main():
             args.radius,
             args.order,
             fabricated,
+            args.substrate_permittivity,
+            interface_layers,
         )
         (output / f"{name}.json").write_text(json.dumps(config, indent=2) + "\n")
     library = write_library(
@@ -367,7 +466,12 @@ def main():
         args.radius,
         args.corner_radius,
         contour_groups,
+        zero_trace_indices,
         args.topology,
+        args.metal_thickness,
+        args.overetch_depth,
+        args.substrate_permittivity,
+        interface_layers,
     )
 
     fine_points, fine_triangles, _ = build_surface(
@@ -404,12 +508,16 @@ def main():
             args.radius,
             args.order,
             fabricated,
+            args.substrate_permittivity,
+            interface_layers,
         )
         config["Solver"]["Electrostatic"]["ResponseMatrix"] = False
         (output / f"{name}.json").write_text(json.dumps(config, indent=2) + "\n")
 
     print(f"Generated {len(points)} spatial basis traces")
     print(f"ContourGroups: {contour_groups}")
+    if zero_trace_indices:
+        print(f"ZeroTraceIndices: {zero_trace_indices}")
     print(output / "thin.json")
     print(output / "fabricated.json")
     print(library)

@@ -54,9 +54,8 @@ private:
     return {a[0] - b[0], a[1] - b[1], a[2] - b[2]};
   }
 
-  static std::pair<double, double>
-  EvaluateTriangle(const std::array<Sample, 3> &triangle,
-                   const std::array<double, 3> &point)
+  static std::pair<double, double> EvaluateTriangle(const std::array<Sample, 3> &triangle,
+                                                    const std::array<double, 3> &point)
   {
     // Closest-point regions and barycentric coordinates from
     // "Real-Time Collision Detection", Christer Ericson, section 5.1.5.
@@ -202,8 +201,7 @@ public:
       }
       else
       {
-        const int triangle =
-            static_cast<int>(std::llround(data[4]));
+        const int triangle = static_cast<int>(std::llround(data[4]));
         MFEM_VERIFY(triangle > 0 && static_cast<double>(triangle) == data[4],
                     "Invalid triangle index in prescribed potential surface file \""
                         << path << "\" at line " << line_number << "!");
@@ -211,12 +209,12 @@ public:
       }
       have_data = true;
     }
-    MFEM_VERIFY(have_data, "Prescribed potential trace file \""
-                               << path << "\" contains no data!");
+    MFEM_VERIFY(have_data,
+                "Prescribed potential trace file \"" << path << "\" contains no data!");
     if (columns == 4)
     {
       MFEM_VERIFY(curve.size() >= 3, "Prescribed potential curve file \""
-                                           << path << "\" must contain at least 3 points!");
+                                         << path << "\" must contain at least 3 points!");
     }
     else
     {
@@ -225,19 +223,18 @@ public:
       triangles.reserve(triangle_samples.size());
       for (const auto &[index, samples] : triangle_samples)
       {
-        MFEM_VERIFY(samples.size() == 3, "Triangle "
-                                            << index << " in prescribed potential surface \""
-                                            << path << "\" must contain exactly 3 rows!");
+        MFEM_VERIFY(samples.size() == 3,
+                    "Triangle " << index << " in prescribed potential surface \"" << path
+                                << "\" must contain exactly 3 rows!");
         std::array<Sample, 3> triangle{samples[0], samples[1], samples[2]};
         const auto ab = Subtract(triangle[1].point, triangle[0].point);
         const auto ac = Subtract(triangle[2].point, triangle[0].point);
-        const std::array<double, 3> cross = {
-            ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2],
-            ab[0] * ac[1] - ab[1] * ac[0]};
+        const std::array<double, 3> cross = {ab[1] * ac[2] - ab[2] * ac[1],
+                                             ab[2] * ac[0] - ab[0] * ac[2],
+                                             ab[0] * ac[1] - ab[1] * ac[0]};
         MFEM_VERIFY(Dot(cross, cross) > 0.0,
-                    "Degenerate triangle " << index
-                                           << " in prescribed potential surface \"" << path
-                                           << "\"!");
+                    "Degenerate triangle " << index << " in prescribed potential surface \""
+                                           << path << "\"!");
         triangles.push_back(std::move(triangle));
       }
     }
@@ -329,6 +326,8 @@ LaplaceOperator::LaplaceOperator(const config::BoundaryData &boundaries,
     source_attr_lists(
         ConstructSources(boundaries.terminal, boundaries.prescribed_potential)),
     source_data_files(ConstructSourceDataFiles(boundaries.prescribed_potential)),
+    source_terminal_attr_lists(
+        ConstructSourceTerminalAttributes(boundaries.prescribed_potential)),
     mesh_coordinate_scale(1.0), voltage_scale(1.0)
 {
   // Print essential BC information.
@@ -401,6 +400,15 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(
         MFEM_VERIFY(bdr_attr_marker[attr - 1] > 0,
                     "Unknown prescribed potential boundary attribute " << attr << "!");
       }
+      for (auto attr : data.terminal_attributes)
+      {
+        MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max,
+                    "Prescribed potential terminal boundary attribute tags must be "
+                    "non-negative and correspond to attributes in the mesh!");
+        MFEM_VERIFY(bdr_attr_marker[attr - 1] > 0,
+                    "Unknown prescribed potential terminal boundary attribute " << attr
+                                                                                << "!");
+      }
     }
   }
 
@@ -426,6 +434,10 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(
   for (const auto &[idx, data] : potential)
   {
     for (auto attr : data.attributes)
+    {
+      dbc_bcs.Append(attr);
+    }
+    for (auto attr : data.terminal_attributes)
     {
       dbc_bcs.Append(attr);
     }
@@ -455,8 +467,13 @@ std::map<int, mfem::Array<int>> LaplaceOperator::ConstructSources(
   for (const auto &[idx, data] : potential)
   {
     mfem::Array<int> &attr_list = attr_lists[idx];
-    attr_list.Reserve(static_cast<int>(data.attributes.size()));
+    attr_list.Reserve(
+        static_cast<int>(data.attributes.size() + data.terminal_attributes.size()));
     for (auto attr : data.attributes)
+    {
+      attr_list.Append(attr);
+    }
+    for (auto attr : data.terminal_attributes)
     {
       attr_list.Append(attr);
     }
@@ -473,6 +490,25 @@ std::map<int, std::string> LaplaceOperator::ConstructSourceDataFiles(
     data_files.emplace(idx, data.data_file);
   }
   return data_files;
+}
+
+std::map<int, mfem::Array<int>> LaplaceOperator::ConstructSourceTerminalAttributes(
+    const std::map<int, config::PrescribedPotentialData> &potential)
+{
+  std::map<int, mfem::Array<int>> attributes;
+  for (const auto &[idx, data] : potential)
+  {
+    if (!data.terminal_attributes.empty())
+    {
+      auto &list = attributes[idx];
+      list.Reserve(static_cast<int>(data.terminal_attributes.size()));
+      for (const int attribute : data.terminal_attributes)
+      {
+        list.Append(attribute);
+      }
+    }
+  }
+  return attributes;
 }
 
 namespace
@@ -572,6 +608,14 @@ void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
     TracePotentialCoefficient trace(it->second, mesh.SpaceDimension(),
                                     mesh_coordinate_scale, voltage_scale);
     x.ProjectBdrCoefficient(trace, source_marker);  // Values only correct on master
+    if (auto terminal = source_terminal_attr_lists.find(idx);
+        terminal != source_terminal_attr_lists.end())
+    {
+      auto terminal_marker = mesh::AttrToMarker(bdr_attr_max, terminal->second);
+      mfem::ConstantCoefficient one_volt(1.0 / voltage_scale);
+      x.ProjectBdrCoefficient(one_volt,
+                              terminal_marker);  // Values only correct on master
+    }
   }
   else
   {

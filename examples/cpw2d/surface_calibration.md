@@ -87,9 +87,9 @@ two edges separated by width `w` and matching radius `R`, use a coupled
 two-edge coupon when `w < 2R`. At `w = 2R` the contours touch but do not
 overlap, so either representation is geometrically admissible.
 
-`mesh/mesh_edge_pair_coupon.jl` creates matched thin and fabricated coupons for
-the two equipotential edges bounding a ground-plane cutout. For example, for a
-2 um cutout and `R = 2 um`:
+`mesh/mesh_edge_pair_coupon.jl` creates matched thin and fabricated coupons. By
+default the two edges are equipotential, as for a ground-plane cutout. For
+example, for a 2 um cutout and `R = 2 um`:
 
 ```text
 mkdir -p /tmp/edge-pair
@@ -97,27 +97,152 @@ julia mesh/mesh_edge_pair_coupon.jl thin 2.0 /tmp/edge-pair/edge_pair_thin.msh
 julia mesh/mesh_edge_pair_coupon.jl fabricated 2.0 \
   /tmp/edge-pair/edge_pair_fabricated.msh
 python3 generate_edge_pair_response.py \
-  --cutout-width 2.0 --radius 2.0 --output /tmp/edge-pair
+  --cutout-width 2.0 --radius 2.0 --metal-thickness 0.1 \
+  --output /tmp/edge-pair
 ../../build/bin/palace -np 4 /tmp/edge-pair/edge_pair_thin.json
 ../../build/bin/palace -np 4 /tmp/edge-pair/edge_pair_fabricated.json
 ```
 
-The generator phase-aligns the periodic contour basis so both points where the
-matching contour meets grounded metal are exact knots. This is required: a
-basis which interpolates across either zero-potential junction can create a
-spurious singular MS response.
+The generator phase-aligns the periodic contour basis and inserts both the
+lower thin-sheet junction and upper fabricated-metal junction at every
+conductor cut. `--metal-thickness` must equal `t_metal` in the fabricated mesh.
+This gives the thin and fabricated coupons the same trace space. A basis which
+interpolates across a conductor cut imposes an artificial voltage discontinuity
+and can create a large, basis-dependent MA response.
 
-Configure the resulting matrices as one `ResponseCorrection.Models` entry and
-place one patch at the midpoint of the edge pair. A separate one-edge model can
-still be reused for other nonoverlapping edges in the same simulation. Every
-patch contributes to every target in its model's `Interfaces` mapping. If the
-same coupon files are used for distinct interface groups, use separate model
-entries so that each patch contributes only to its intended targets.
+For edges belonging to different conductors, append `different` to both mesh
+commands and add `--different-conductors` to the Python command. The generator
+then removes all knots on both conductor cuts from the free contour basis.
+Every free trace is zero at all four cut endpoints. One additional
+conductor-voltage trace is zero on conductor A, one on conductor B, and holds
+conductor B at one volt through `TerminalAttributes`. The emitted version-2
+process library records the two open dielectric contour paths for Maxwell
+reconstruction and can be used directly by Palace's automatic matcher.
 
-The paired generator assumes both enclosed edges are on the same equipotential
-conductor. It is not valid for nearby edges belonging to different terminals.
-That case requires a coupled coupon basis which also represents the independent
-conductor potentials.
+For the opposite local topology, where two outward-facing edges bound a narrow
+physical metal strip, append `strip` to both mesh commands and add `--strip` to
+the Python command:
+
+```text
+julia mesh/mesh_edge_pair_coupon.jl thin 2.0 \
+  /tmp/edge-pair/strip_thin.msh strip
+julia mesh/mesh_edge_pair_coupon.jl fabricated 2.0 \
+  /tmp/edge-pair/strip_fabricated.msh strip
+python3 generate_edge_pair_response.py \
+  --cutout-width 2.0 --radius 2.0 --metal-thickness 0.1 --strip \
+  --thin-mesh /tmp/edge-pair/strip_thin.msh \
+  --fabricated-mesh /tmp/edge-pair/strip_fabricated.msh \
+  --output /tmp/edge-pair/strip
+```
+
+The strip does not intersect the matching contour, so all contour knots remain
+free and the strip center is the single PEC reference. Palace identifies this
+topology from the two local gap directions; the two sides may belong to
+different perimeter loops even though the metal between them is physically
+connected.
+
+For a paired topology, Palace first uses an entry within
+`SeparationTolerance`. Otherwise it interpolates between the nearest lower and
+upper separations with the same conductor-state representation. Each coupon is
+evaluated on its own matching contour and the two responses are combined with
+linear weights; Palace does not extrapolate. The separation-bracket span
+divided by `R` enters the 3D Maxwell confidence diagnostic, so the process
+library should sample rapidly changing small gaps more densely.
+
+As an intentionally coarse check, the independently calibrated 1 and 3 um
+same-conductor coupons were interpolated to the held-out 2 um coupon. Across
+four smooth trace excitations, most SA/MS/MA fixed-trace and fixed-flux errors
+were `0.6--12.2%`, while the domain-defect error was `9.6--19.3%`. One SA
+relative error was much larger because its held-out energy was nearly zero.
+This 2 um bracket has span/R equal to one and therefore fails the current
+confidence threshold. The result supports interpolation as a library-coverage
+mechanism, but not treating a coarse separation grid as converged calibration
+data.
+
+A held-out `SameConductorStrip` check used independently calibrated 1 and 3 um
+strip coupons to interpolate the 2 um claw-shield strips in the coarse,
+first-order single-transmon Maxwell model. The automatic matcher interpolated
+154 longitudinal intervals with the same geometric coverage as a direct 2 um
+strip coupon. Across both computed modes and all SA/MS/MA interfaces, the
+interpolated corrected participation differed from the direct-coupon result by
+`0.19--0.70%` for fixed trace and `0.19--0.78%` for fixed flux. This is good
+evidence that strip-width interpolation works for that process and field
+family, but the `span/R = 1` confidence warning remains intentionally
+conservative because the same bracket was less accurate for gap coupons.
+Repeating the direct 2 um strip calibration with 48 rather than 24 periodic
+hat functions changed the same transmon participations by at most `0.18%` for
+fixed trace and `0.25%` for fixed flux. The 24-function strip basis is therefore
+adequate for these comparisons.
+
+The generated matrices can also be configured as an explicit
+`ResponseCorrection.Models` entry with one patch at the midpoint of the pair. A
+separate one-edge model can still be reused for other nonoverlapping edges in the
+same simulation. Every patch contributes to every target in its model's
+`Interfaces` mapping.
+
+### Building a process-library sweep
+
+`build_surface_process_library.py` automates the straight-edge coupon workflow
+for one fabrication process. It generates the isolated-edge response plus
+matched thin and fabricated meshes for every paired-edge sample, writes and
+runs the Palace response-matrix configurations, and packages the result with
+any existing corner libraries into one portable directory. For example, from
+`examples/cpw2d`:
+
+```text
+python3 build_surface_process_library.py \
+  --output /tmp/al-100nm-process \
+  --name al-100nm-overetch-50nm-R2um \
+  --palace ../../build/bin/palace --ranks 4 \
+  --matching-radius 2.0 \
+  --metal-thickness 0.1 --overetch 0.05 \
+  --sidewall-angle 80 --top-radius 0.01 --bottom-radius 0.01 \
+  --substrate-permittivity 11.47 \
+  --sa-thickness 0.002 --sa-permittivity 4.0 \
+  --ms-thickness 0.002 --ms-permittivity 11.47 \
+  --ma-thickness 0.002 --ma-permittivity 10.0 \
+  --separations 0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0 \
+  --base-library /path/to/corner/process-library.json
+```
+
+The final file is
+`/tmp/al-100nm-process/library/process-library.json`. The build manifest and
+individual coupon inputs remain under the output directory so an interrupted
+build can be resumed with the same command. A coupon is reused only when its
+recorded fabrication, mesh, and response-basis specification is unchanged and
+all four response matrices exist. Use `--prepare-only` to generate the meshes
+and Palace configurations without running the solves.
+
+The packaged library uses schema version 3 and records the SA, MS, and MA layer
+thicknesses and permittivities used by the coupon configurations. Palace checks
+these values against every selected runtime dielectric interface before applying
+the library. This prevents a response calibrated with one interface-layer model
+from being silently reused with another.
+
+The substrate and interface-layer options drive both the generated Palace coupon
+configs and the version-3 process metadata. Changing any of them invalidates the
+resumable coupon specification, so matrices generated with the old values are not
+reused.
+
+If a base library already contains an `IsolatedEdge` model, the builder reuses
+it and does not generate a duplicate. `--skip-isolated` disables isolated-edge
+generation explicitly, for example when preparing only an additional paired
+sweep.
+
+`--separations` applies one sweep to `SameConductorGap`,
+`DifferentConductorGap`, and `SameConductorStrip`. The topology-specific
+`--same-conductor-gaps`, `--different-conductor-gaps`, and
+`--same-conductor-strips` options override that common sweep; pass a
+topology-specific option with no values to omit that topology.
+
+Palace never extrapolates a paired response. Each requested topology should
+therefore include the smallest separation supported by the fabrication design
+rules and an endpoint at `2R`. Features wider than `2R` have disjoint matching
+tubes and use the isolated-edge response. The spacing between samples controls
+both interpolation error and the `max library distance` confidence diagnostic.
+The example's `0.5 um` spacing gives a normalized interpolation span of `0.25`
+for `R = 2 um`, but the appropriate grid still needs an independent held-out
+coupon convergence check for each fabrication process.
 
 A flip-chip CPW sweep using 100 nm metal, 50 nm overetch, 80 degree sidewalls,
 10 nm rounding, and `R = 2 um` tested cutout widths

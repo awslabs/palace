@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Prepare corrected-thin and fabricated-reference corner validation runs."""
+"""Prepare smooth driven-Maxwell rounded-corner validation runs."""
 
 import argparse
 import json
@@ -14,14 +14,7 @@ INTERFACES = {
 }
 
 
-def dielectric(
-    index,
-    attributes,
-    interface_type,
-    radius,
-    automatic,
-    edge_elements_per_radius,
-):
+def dielectric(index, attributes, interface_type, radius, automatic):
     permittivity, loss_tangent = INTERFACES[interface_type]
     result = {
         "Index": index,
@@ -35,77 +28,51 @@ def dielectric(
         result.update(
             {
                 "AutomaticEdges": True,
-                "LocalizeEdgeEnergy": False,
-                "EdgeExcludeAttributes": [1, 7],
+                "EdgeExcludeAttributes": [1, 5],
                 "EdgeDistances": [radius],
+                "LocalizeEdgeEnergy": False,
             }
         )
-        if edge_elements_per_radius:
-            result["EdgeRefinement"] = {
-                "Radius": radius,
-                "ElementsPerRadius": edge_elements_per_radius,
-                "OuterRadiusFactor": 1.0,
-                "CoreIndicatorWeight": 0.0,
-            }
     return result
 
 
-def config(
-    output,
-    mesh,
-    order,
-    amr_iterations,
-    fabricated,
-    library,
-    radius,
-    edge_elements_per_radius,
-):
-    refinement = 0 if fabricated else edge_elements_per_radius
+def config(output, mesh, order, frequency, fabricated, library, radius):
     interfaces = (
         [
-            dielectric(1, [3], "SA", radius, True, refinement),
-            dielectric(2, [2], "MS", radius, True, refinement),
-            dielectric(3, [4], "MA", radius, True, refinement),
+            dielectric(1, [3], "SA", radius, False),
+            dielectric(2, [2], "MS", radius, False),
+            dielectric(3, [4], "MA", radius, False),
         ]
         if fabricated
         else [
-            dielectric(1, [3], "SA", radius, True, refinement),
-            dielectric(2, [2], "MS", radius, True, refinement),
-            dielectric(3, [2], "MA", radius, True, refinement),
+            dielectric(1, [3], "SA", radius, True),
+            dielectric(2, [2], "MS", radius, True),
+            dielectric(3, [2], "MA", radius, True),
         ]
     )
-    boundaries = {
-        "Ground": {"Attributes": [1]},
-        "Terminal": [
-            {
-                "Index": 1,
-                "Attributes": [2, 4] if fabricated else [2],
-            }
-        ],
-        "Postprocessing": {"Dielectric": interfaces},
-    }
     solver = {
         "Order": order,
-        "Electrostatic": {"Save": 0},
+        "Driven": {
+            "Samples": [{"Type": "Point", "Freq": [frequency], "SaveStep": 0}]
+        },
         "Linear": {
-            "Type": "BoomerAMG",
-            "KSPType": "CG",
-            "Tol": 1.0e-10,
-            "MaxIts": 1000,
-            "EstimatorTol": 1.0e-6 if amr_iterations else 1.0e-1,
-            "EstimatorMaxIts": 500 if amr_iterations else 20,
+            "Type": "STRUMPACK",
+            "KSPType": "GMRES",
+            "Tol": 1.0e-8,
+            "MaxIts": 500,
+            "EstimatorTol": 1.0e-1,
             "EstimatorMG": True,
         },
     }
-    if not fabricated:
-        solver["Electrostatic"]["ResponseCorrection"] = {
+    if not fabricated and library is not None:
+        solver["SurfaceResponseCorrection"] = {
             "Library": str(library),
             "TargetInterfaces": [1, 2, 3],
             "UnmatchedPolicy": "Error",
         }
     return {
         "Problem": {
-            "Type": "Electrostatic",
+            "Type": "Driven",
             "Verbose": 2,
             "Output": str(output),
             "OutputFormats": {"Paraview": False, "GridFunction": False},
@@ -113,7 +80,7 @@ def config(
         "Model": {
             "Mesh": str(mesh),
             "L0": 1.0e-6,
-            "Refinement": {"Tol": 1.0e-12, "MaxIts": amr_iterations},
+            "Refinement": {"MaxIts": 0},
         },
         "Domains": {
             "Materials": [
@@ -127,7 +94,19 @@ def config(
                 ]
             },
         },
-        "Boundaries": boundaries,
+        "Boundaries": {
+            "PEC": {"Attributes": [1, 2, 4] if fabricated else [1, 2]},
+            "LumpedPort": [
+                {
+                    "Index": 1,
+                    "Attributes": [5],
+                    "Direction": "+X",
+                    "R": 50.0,
+                    "Excitation": 1,
+                }
+            ],
+            "Postprocessing": {"Dielectric": interfaces},
+        },
         "Solver": solver,
     }
 
@@ -138,16 +117,13 @@ def main():
     parser.add_argument("--library", type=Path, required=True)
     parser.add_argument("--thin-mesh", type=Path, required=True)
     parser.add_argument("--fabricated-mesh", type=Path, required=True)
-    parser.add_argument("--order", type=int, default=2)
-    parser.add_argument("--amr-iterations", type=int, default=0)
-    parser.add_argument("--edge-elements-per-radius", type=int, default=1)
+    parser.add_argument("--order", type=int, default=1)
+    parser.add_argument("--frequency", type=float, default=50.0)
     args = parser.parse_args()
     if args.order < 1:
         parser.error("--order must be positive")
-    if args.amr_iterations < 0:
-        parser.error("--amr-iterations must be nonnegative")
-    if args.edge_elements_per_radius < 1:
-        parser.error("--edge-elements-per-radius must be positive")
+    if args.frequency <= 0.0:
+        parser.error("--frequency must be positive")
 
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -161,19 +137,20 @@ def main():
     if radius <= 0.0:
         raise ValueError("The process library MatchingRadius must be positive")
 
-    for name, mesh, fabricated in (
-        ("thin-corrected", thin_mesh, False),
-        ("fabricated-reference", fabricated_mesh, True),
-    ):
+    cases = (
+        ("thin-raw", thin_mesh, False, None),
+        ("thin-corrected", thin_mesh, False, library),
+        ("fabricated-reference", fabricated_mesh, True, None),
+    )
+    for name, mesh, fabricated, correction_library in cases:
         data = config(
             output / "postpro" / name,
             mesh,
             args.order,
-            args.amr_iterations,
+            args.frequency,
             fabricated,
-            library,
+            correction_library,
             radius,
-            args.edge_elements_per_radius,
         )
         path = output / f"{name}.json"
         path.write_text(json.dumps(data, indent=2) + "\n")

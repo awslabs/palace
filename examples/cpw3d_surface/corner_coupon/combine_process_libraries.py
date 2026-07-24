@@ -4,6 +4,7 @@
 
 import argparse
 import json
+import math
 import re
 import shutil
 from pathlib import Path
@@ -34,14 +35,46 @@ def model_directory(index, name):
 def load_library(path):
     path = path.expanduser().resolve()
     data = json.loads(path.read_text())
-    if data.get("Version") != 1:
-        raise ValueError(f"{path} is not a version-1 process library")
+    if data.get("Version") not in (1, 2, 3):
+        raise ValueError(f"{path} is not a supported process library")
+    if data["Version"] >= 3:
+        layers = data.get("Fabrication", {}).get("InterfaceLayers")
+        if not isinstance(layers, dict):
+            raise ValueError(
+                f"{path} is version 3 but has no Fabrication.InterfaceLayers metadata"
+            )
     if not data.get("Models"):
         raise ValueError(f"{path} contains no response models")
     radius = float(data["MatchingRadius"])
     if radius <= 0.0:
         raise ValueError(f"{path} has a nonpositive MatchingRadius")
     return path, data
+
+
+def merge_metadata(first, second, path="Fabrication"):
+    if isinstance(first, dict) and isinstance(second, dict):
+        result = {}
+        for key in first.keys() | second.keys():
+            if key not in first:
+                result[key] = second[key]
+            elif key not in second:
+                result[key] = first[key]
+            else:
+                result[key] = merge_metadata(
+                    first[key], second[key], f"{path}.{key}"
+                )
+        return result
+    if (
+        isinstance(first, (int, float))
+        and not isinstance(first, bool)
+        and isinstance(second, (int, float))
+        and not isinstance(second, bool)
+    ):
+        if math.isclose(float(first), float(second), rel_tol=1.0e-12, abs_tol=0.0):
+            return first
+    elif first == second:
+        return first
+    raise ValueError(f"Input libraries contain different {path} metadata")
 
 
 def main():
@@ -63,12 +96,31 @@ def main():
                 f"expected {matching_radius}"
             )
 
+    version = max(library["Version"] for _, library in loaded)
+    fabrication = [library.get("Fabrication") for _, library in loaded]
+    known_fabrication = [entry for entry in fabrication if entry is not None]
+    merged_fabrication = None
+    for entry in known_fabrication:
+        merged_fabrication = (
+            entry
+            if merged_fabrication is None
+            else merge_metadata(merged_fabrication, entry)
+        )
+    if known_fabrication and len(known_fabrication) != len(fabrication):
+        print(
+            "Warning: combining libraries with and without Fabrication metadata; "
+            "the output is downgraded to version 2 until its process is recorded"
+        )
+        version = min(version, 2)
+
     result = {
-        "Version": 1,
+        "Version": version,
         "Name": args.name,
         "MatchingRadius": matching_radius,
         "Models": [],
     }
+    if known_fabrication and len(known_fabrication) == len(fabrication):
+        result["Fabrication"] = merged_fabrication
     names = set()
     index = 0
     for source_path, library in loaded:

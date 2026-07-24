@@ -64,6 +64,7 @@ private:
 
   // CSV potential trace file for prescribed-potential sources.
   std::map<int, std::string> source_data_files;
+  std::map<int, mfem::Array<int>> source_terminal_attr_lists;
   double mesh_coordinate_scale;
   double voltage_scale;
 
@@ -77,6 +78,8 @@ private:
                    const std::map<int, config::PrescribedPotentialData> &potential);
   std::map<int, std::string>
   ConstructSourceDataFiles(const std::map<int, config::PrescribedPotentialData> &potential);
+  std::map<int, mfem::Array<int>> ConstructSourceTerminalAttributes(
+      const std::map<int, config::PrescribedPotentialData> &potential);
 
 public:
   LaplaceOperator(const config::BoundaryData &boundaries, const config::SolverData &solver,
