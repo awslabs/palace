@@ -177,7 +177,7 @@ inductance ``M_{ij}`` only between ports that are both `"Open"` when inactive. O
 entries involving a `"Short"` port are written as `NaN`, and `terminal-Minv.csv` and
 `terminal-Mm.csv` are computed over the reciprocal `"Open"`-`"Open"` sub-block only (their
 `"Short"`-port rows and columns are likewise `NaN`). With all ports `"Open"` (the default)
-this reduces to the usual full, symmetric, geometry-only inductance matrix.
+this reduces to the usual full, symmetric inductance matrix (no screening boundaries).
 
 **Flux loop boundaries** ([`config["Boundaries"]["FluxLoop"]`](../config/reference.md#config-boundaries-fluxloop)):
 Prescribe magnetic flux through specified holes in conducting surfaces. For each flux loop, a
