@@ -53,9 +53,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   REQUIRE(fs::is_directory(dir));
 
   // Regression guard: EnsureDirectory must NOT treat an already-existing
-  // directory as an error. It relies on the non-throwing create_directories
-  // overload and ignores the bool return, so a pre-existing directory returns
-  // cleanly rather than aborting.
+  // directory as an error.
   EnsureDirectory(dir, comm);
 
   CHECK(fs::is_directory(dir));
