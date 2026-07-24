@@ -36,7 +36,7 @@ private:
   mfem::Vector wave_vector;        // BZ-wrapped k_F (fixed) or k₀ = k_F/ω (freq-scaled).
   mfem::Vector wave_vector_bz;     // BZ-wrapped k_F (always k_F, never k₀). For BZ offset.
   double floquet_omega_ref = 0.0;  // Nondimensional; when > 0, k_F scales with frequency.
-  mfem::Array<double> mat_c0_min, mat_c0_max;
+  mfem::Array<double> mat_c0_min, mat_c0_max, mat_mu_eps_max;
 
   // Are materials isotropic? True when all the material properties are effectively
   // scalar-valued (ie, true scalars or vectors with identical entries). Also true when a
@@ -134,6 +134,12 @@ public:
 
   const auto &GetLightSpeedMin() const { return mat_c0_min; }
   const auto &GetLightSpeedMax() const { return mat_c0_max; }
+
+  // Conservative upper bound on (k_n / omega)^2 for bulk waves, computed as
+  // lambda_max(mu_r) * lambda_max(epsilon_r) and maximized over this mesh's materials.
+  // Keeping the tensor extrema separate is required for anisotropic media because the
+  // electric and magnetic polarizations generally lie on different material axes.
+  double GetMaxMuEpsilon() const;
 
   bool HasLossTangent() const { return has_losstan_attr; }
   bool HasConductivity() const { return has_conductivity_attr; }

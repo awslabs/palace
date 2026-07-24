@@ -101,9 +101,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
 
   double omega =
       2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
-  double c_min = mat_op.GetLightSpeedMax().Min();
-  Mpi::GlobalMin(1, &c_min, nd_fespace.GetComm());
-  double kn_target = omega / c_min * std::sqrt(1.1);
+  double kn_target = omega * std::sqrt(1.1 * mat_op.GetMaxMuEpsilon());
 
   // ModeEigenSolver requires a positive Krylov subspace size (num_vec). Mirror the
   // formula used by IoData::CheckConfiguration for eigenmode.max_size.
