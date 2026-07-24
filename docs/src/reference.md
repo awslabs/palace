@@ -1121,8 +1121,8 @@ piecewise-linear mesh geometry.
 
 ### Maxwell response correction
 
-Driven and eigenmode simulations can apply the same fabrication-process library to a
-complex Maxwell field:
+Driven, eigenmode, and two-dimensional boundary-mode simulations can apply the same
+fabrication-process library to a complex Maxwell field:
 
 ```json
 "Solver": {
@@ -1138,13 +1138,15 @@ The standard `surface-Q.csv`, saved fields, error indicator, and AMR sequence re
 raw thin-metal result. `surface-Q-corrected.csv` is an additional long-form table
 containing raw, fixed-trace, fixed-flux, and, when available, self-consistent
 normalization energies, interface energies, participations, and quality factors for each
-frequency and excitation or eigenmode.
+frequency and excitation, eigenmode, or boundary mode.
 
-For every longitudinal edge quadrature point, Palace maps the selected coupon contour
-into the plane transverse to the physical edge. A corner coupon instead maps its full
-spatial basis at one vertex. Palace reconstructs each complex quasi-electrostatic contour
-voltage using finite-element Nedelec line integrals. The first knot of every closed
-contour is referenced to an automatically placed point on the PEC:
+In 3D, Palace maps the selected coupon contour into the plane transverse to the physical
+edge at every longitudinal edge quadrature point. A corner coupon instead maps its full
+spatial basis at one vertex. In a 2D boundary-mode solve, each detected cross-section
+edge receives one planar coupon patch. Palace reconstructs each complex
+quasi-electrostatic contour voltage using finite-element Nedelec line integrals. The
+first knot of every closed contour is referenced to an automatically placed point on the
+PEC:
 
 ```math
 a_i = -\int_{\bm{x}_{PEC}}^{\bm{x}_i} \bm{E}\cdot d\bm{l}.
@@ -1157,22 +1159,27 @@ essential: contour differences alone leave an arbitrary constant which changes t
 coupon response. The complex coefficients are evaluated with Hermitian domain- and
 surface-response quadratic forms.
 
-The corrected interface energy keeps the resolved raw energy outside the matching
-radius and replaces the complete thin core with the fabricated coupon response. The
+The corrected interface energy keeps the resolved raw energy outside the matching radius
+and replaces the complete thin core with the fabricated coupon response. The
 normalization energy receives the corresponding fabricated-minus-thin domain-response
-defect. Every target interface must therefore enable `AutomaticEdges` and include the
-library `MatchingRadius` in `EdgeDistances`.
+defect. Every 3D target interface must therefore enable `AutomaticEdges`; every 2D
+boundary-mode target must specify `EdgeAttributes` and `EdgeFrameNormal`. In both cases,
+`EdgeDistances` must include the library `MatchingRadius`.
 
 The initial Maxwell implementation requires:
 
-  - a three-dimensional driven or eigenmode simulation,
+  - a two-dimensional boundary-mode or three-dimensional driven/eigenmode simulation,
   - PEC metal for every selected target edge,
-  - one planar fabrication layer with a common process normal, and
-  - automatic library matches for isolated edges or longitudinally overlapping,
-    parallel two-edge coupons, with optional spatial corner coupons.
+  - one planar fabrication layer with a common process normal,
+  - planar isolated- or parallel paired-edge coupon matches in 2D, or
+  - isolated edges or longitudinally overlapping parallel two-edge coupons in 3D, with
+    optional spatial corner coupons.
 
 The paired-edge topology and conductor ownership are inferred without additional user
-boundary splitting. `SameConductorGap`, `SameConductorStrip`, and
+boundary splitting. In 2D boundary-mode meshes, PEC boundary attributes identify
+conductor classes: disjoint segments with the same attribute are treated as the same
+conductor, while different attributes are treated as different conductors.
+`SameConductorGap`, `SameConductorStrip`, and
 `DifferentConductorGap` library entries use the same separation matching as the
 electrostatic path. Locally connected corner arms are handled by the matching corner
 model or the unmodeled-corner fallback. Other nonparallel close edges, more than two
@@ -1206,11 +1213,13 @@ A_{corr}(\omega)
 
 with the raw thin operator as the preconditioner and the raw field as the initial guess.
 The trace action ``P`` and its exact transpose use the same Nedelec line-integral
-representation as postprocessing. Adaptive PROM sweeps and eigenmode solves currently
-report raw, fixed-trace, and fixed-flux results only; their self-consistent columns are
-not available.
+representation as postprocessing. Adaptive PROM sweeps, eigenmode solves, and boundary
+modes report raw, fixed-trace, and fixed-flux results only; their self-consistent columns
+are not available. Boundary-mode correction uses the transverse field ``\bm{E}_t`` and
+is intended for quasi-TEM modes whose longitudinal electric-field contribution is
+negligible. It does not solve a second corrected eigenproblem.
 
-Palace writes one row per frequency and excitation or eigenmode to
+Palace writes one row per frequency and excitation, eigenmode, or boundary mode to
 `surface-response-confidence.csv`. `confidence pass` is one only when all of the
 gating limits in the following table hold. `surface-Q-corrected.csv` also reports the
 matched and unmodeled-corner fractions for each target interface; nontarget interfaces

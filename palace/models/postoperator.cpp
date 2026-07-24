@@ -261,7 +261,8 @@ PostOperator<solver_t>::PostOperator(
                  iodata.units, fem_op_, &iodata.boundaries.cracked_attributes,
                  surface_post_geometry)
 {
-  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE ||
+                solver_t == ProblemType::BOUNDARYMODE)
   {
     if (iodata.solver.surface_response_correction)
     {
@@ -1565,7 +1566,8 @@ template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
 {
   surface_response_measurement.reset();
-  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
+  if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE ||
+                solver_t == ProblemType::BOUNDARYMODE)
   {
     if (!surface_response_op)
     {
@@ -1638,76 +1640,79 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
       }
     }
 
-    if (surface_response_corrected_field)
+    if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
     {
-      GridFunction corrected_field(*E->ParFESpace(), true);
-      corrected_field.Real().SetFromTrueDofs(surface_response_corrected_field->Real());
-      corrected_field.Imag().SetFromTrueDofs(surface_response_corrected_field->Imag());
-      corrected_field.Real().ExchangeFaceNbrData();
-      corrected_field.Imag().ExchangeFaceNbrData();
-      std::unique_ptr<GridFunction> corrected_flux;
-      if (D_recovered)
+      if (surface_response_corrected_field)
       {
-        MFEM_VERIFY(surface_response_corrected_flux,
-                    "Self-consistent Maxwell surface-response postprocessing requires "
-                    "recovered electric flux for the corrected field!");
-        corrected_flux = std::make_unique<GridFunction>(*D_recovered->ParFESpace(), true);
-        corrected_flux->Real().SetFromTrueDofs(surface_response_corrected_flux->Real());
-        corrected_flux->Imag().SetFromTrueDofs(surface_response_corrected_flux->Imag());
-        corrected_flux->Real().ExchangeFaceNbrData();
-        corrected_flux->Imag().ExchangeFaceNbrData();
-      }
-
-      double capacitor_energy = 0.0;
-      for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
-      {
-        (void)idx;
-        if (std::abs(data.C) > 0.0)
+        GridFunction corrected_field(*E->ParFESpace(), true);
+        corrected_field.Real().SetFromTrueDofs(surface_response_corrected_field->Real());
+        corrected_field.Imag().SetFromTrueDofs(surface_response_corrected_field->Imag());
+        corrected_field.Real().ExchangeFaceNbrData();
+        corrected_field.Imag().ExchangeFaceNbrData();
+        std::unique_ptr<GridFunction> corrected_flux;
+        if (D_recovered)
         {
-          const auto voltage = data.GetVoltage(corrected_field);
-          capacitor_energy +=
-              0.5 * std::abs(data.C) * std::real(voltage * std::conj(voltage));
+          MFEM_VERIFY(surface_response_corrected_flux,
+                      "Self-consistent Maxwell surface-response postprocessing requires "
+                      "recovered electric flux for the corrected field!");
+          corrected_flux = std::make_unique<GridFunction>(*D_recovered->ParFESpace(), true);
+          corrected_flux->Real().SetFromTrueDofs(surface_response_corrected_flux->Real());
+          corrected_flux->Imag().SetFromTrueDofs(surface_response_corrected_flux->Imag());
+          corrected_flux->Real().ExchangeFaceNbrData();
+          corrected_flux->Imag().ExchangeFaceNbrData();
         }
-      }
-      const auto corrected_response =
-          surface_response_op->GetMaxwellResponse(corrected_field, measurement_cache.freq);
-      result.self_consistent_normalization_energy =
-          dom_post_op.GetElectricFieldEnergy(corrected_field) + capacitor_energy +
-          corrected_response.domain_correction;
-      MFEM_VERIFY(result.self_consistent_normalization_energy > 0.0,
-                  "Self-consistent Maxwell surface-response normalization energy must be "
-                  "positive!");
 
-      for (auto &[index, interface] : result.interfaces)
-      {
-        interface.self_consistent_energy = surf_post_op.GetInterfaceElectricFieldEnergy(
-            index, corrected_field, corrected_flux.get());
+        double capacitor_energy = 0.0;
+        for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
+        {
+          (void)idx;
+          if (std::abs(data.C) > 0.0)
+          {
+            const auto voltage = data.GetVoltage(corrected_field);
+            capacitor_energy +=
+                0.5 * std::abs(data.C) * std::real(voltage * std::conj(voltage));
+          }
+        }
+        const auto corrected_response = surface_response_op->GetMaxwellResponse(
+            corrected_field, measurement_cache.freq);
+        result.self_consistent_normalization_energy =
+            dom_post_op.GetElectricFieldEnergy(corrected_field) + capacitor_energy +
+            corrected_response.domain_correction;
+        MFEM_VERIFY(result.self_consistent_normalization_energy > 0.0,
+                    "Self-consistent Maxwell surface-response normalization energy must "
+                    "be positive!");
+
+        for (auto &[index, interface] : result.interfaces)
+        {
+          interface.self_consistent_energy = surf_post_op.GetInterfaceElectricFieldEnergy(
+              index, corrected_field, corrected_flux.get());
+        }
+        for (const int target : target_interfaces)
+        {
+          auto fabricated = corrected_response.fabricated_surface_energy.find(target);
+          MFEM_VERIFY(fabricated != corrected_response.fabricated_surface_energy.end(),
+                      "Self-consistent Maxwell surface response produced no fabricated "
+                      "energy for target "
+                          << target << "!");
+          const auto edge_energies = surf_post_op.GetInterfaceEdgeElectricFieldEnergies(
+              target, corrected_field, corrected_flux.get());
+          const double radius = surface_response_op->GetMatchingRadius();
+          auto outside = std::find_if(edge_energies.begin(), edge_energies.end(),
+                                      [&](const auto &edge)
+                                      {
+                                        return std::abs(edge.distance - radius) <=
+                                               1.0e-10 * std::max(edge.distance, radius);
+                                      });
+          MFEM_VERIFY(outside != edge_energies.end(),
+                      "Self-consistent Maxwell response-corrected target interface "
+                          << target
+                          << " requires EdgeDistances containing the coupon matching "
+                             "radius!");
+          result.interfaces.at(target).self_consistent_energy =
+              outside->energy_outside + fabricated->second;
+        }
+        result.has_self_consistent = true;
       }
-      for (const int target : target_interfaces)
-      {
-        auto fabricated = corrected_response.fabricated_surface_energy.find(target);
-        MFEM_VERIFY(fabricated != corrected_response.fabricated_surface_energy.end(),
-                    "Self-consistent Maxwell surface response produced no fabricated "
-                    "energy for target "
-                        << target << "!");
-        const auto edge_energies = surf_post_op.GetInterfaceEdgeElectricFieldEnergies(
-            target, corrected_field, corrected_flux.get());
-        const double radius = surface_response_op->GetMatchingRadius();
-        auto outside = std::find_if(edge_energies.begin(), edge_energies.end(),
-                                    [&](const auto &edge)
-                                    {
-                                      return std::abs(edge.distance - radius) <=
-                                             1.0e-10 * std::max(edge.distance, radius);
-                                    });
-        MFEM_VERIFY(outside != edge_energies.end(),
-                    "Self-consistent Maxwell response-corrected target interface "
-                        << target
-                        << " requires EdgeDistances containing the coupon matching "
-                           "radius!");
-        result.interfaces.at(target).self_consistent_energy =
-            outside->energy_outside + fabricated->second;
-      }
-      result.has_self_consistent = true;
     }
 
     if (!result.confidence.confident && !surface_response_warning_printed)
@@ -1772,7 +1777,8 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table.insert("corner_fraction", "unmodeled corner neighborhood fraction");
     table["excitation"].print_as_int = true;
     table["interface"].print_as_int = true;
-    if constexpr (solver_t == ProblemType::EIGENMODE)
+    if constexpr (solver_t == ProblemType::EIGENMODE ||
+                  solver_t == ProblemType::BOUNDARYMODE)
     {
       table["idx"].print_as_int = true;
     }
@@ -1796,7 +1802,8 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table.insert("confident", "confidence pass");
     table["excitation"].print_as_int = true;
     table["confident"].print_as_int = true;
-    if constexpr (solver_t == ProblemType::EIGENMODE)
+    if constexpr (solver_t == ProblemType::EIGENMODE ||
+                  solver_t == ProblemType::BOUNDARYMODE)
     {
       table["idx"].print_as_int = true;
     }
@@ -2247,6 +2254,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   }
 
   measurement_cache = {};
+  measurement_cache.freq = omega;
   measurement_cache.error_abs = error_abs;
   measurement_cache.error_bkwd = error_bkwd;
 
@@ -2384,6 +2392,7 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
+  PrintSurfaceResponseCorrection(print_idx, 0);
   if (ShouldWriteParaviewFields(step))
   {
     WriteParaviewFields(step, print_idx);

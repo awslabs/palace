@@ -23,6 +23,7 @@
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/interpolator.hpp"
+#include "models/boundarymodeoperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
@@ -1104,12 +1105,18 @@ bool PointOnSegment(const Point2D &point, const Point2D &a, const Point2D &b, do
   return Distance(point, closest) <= tol;
 }
 
-std::optional<int> GetConductor(const config::BoundaryData &boundaries, int attribute)
+std::optional<int> GetConductor(const config::BoundaryData &boundaries, int attribute,
+                                bool pec_attribute_conductors = false)
 {
   if (std::find(boundaries.pec.attributes.begin(), boundaries.pec.attributes.end(),
                 attribute) != boundaries.pec.attributes.end())
   {
-    return 0;
+    return pec_attribute_conductors ? attribute : 0;
+  }
+  if (std::find(boundaries.auxpec.attributes.begin(), boundaries.auxpec.attributes.end(),
+                attribute) != boundaries.auxpec.attributes.end())
+  {
+    return pec_attribute_conductors ? attribute : 0;
   }
   for (const auto &[index, terminal] : boundaries.terminal)
   {
@@ -1151,7 +1158,8 @@ std::vector<AttributedSegment2D> GetAttributedSegments(const mfem::ParMesh &mesh
 
 std::vector<EdgeSite2D> ExtractEdgeSites(const mfem::ParMesh &mesh,
                                          const config::BoundaryData &boundaries,
-                                         const EdgeGroup2D &group)
+                                         const EdgeGroup2D &group,
+                                         bool pec_attribute_conductors)
 {
   auto marker = mesh::BdrAttrToMarker(mesh, group.edge_attributes, true);
   const auto endpoints = mesh::GetBoundaryEdgeSegments(mesh, marker);
@@ -1264,7 +1272,8 @@ std::vector<EdgeSite2D> ExtractEdgeSites(const mfem::ParMesh &mesh,
         inward[0] += direction[0];
         inward[1] += direction[1];
       }
-      if (auto conductor = GetConductor(boundaries, segment.attribute))
+      if (auto conductor =
+              GetConductor(boundaries, segment.attribute, pec_attribute_conductors))
       {
         conductors.insert(*conductor);
       }
@@ -1274,7 +1283,7 @@ std::vector<EdgeSite2D> ExtractEdgeSites(const mfem::ParMesh &mesh,
                 "two-dimensional metal edge!");
     MFEM_VERIFY(conductors.size() == 1,
                 "Unable to assign an automatically detected two-dimensional metal edge "
-                "to exactly one electrostatic conductor!");
+                "to exactly one conductor!");
 
     EdgeSite2D site;
     site.point = point;
@@ -1523,16 +1532,31 @@ std::string TopologyName(LibraryTopology topology)
   return "unknown";
 }
 
-ResponseCorrectionData BuildAutomaticResponseData2D(const IoData &iodata,
-                                                    const LaplaceOperator &laplace_op,
-                                                    const ResponseCorrectionData &request)
+ResponseCorrectionData BuildAutomaticResponseData2D(
+    const IoData &iodata, const mfem::ParMesh &mesh, const MaterialOperator &mat_op,
+    const ResponseCorrectionData &request, bool pec_attribute_conductors = false,
+    AutomaticResponseDiagnostics *diagnostics = nullptr)
 {
-  const auto &mesh = laplace_op.GetH1Space().GetParMesh();
   MFEM_VERIFY(mesh.Dimension() == 2 && mesh.SpaceDimension() == 2,
-              "Automatic fabrication-process response matching currently supports only "
-              "two-dimensional electrostatic meshes!");
+              "Automatic two-dimensional fabrication-process response matching requires "
+              "a two-dimensional mesh!");
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   const auto library = ReadProcessLibrary(request.library, coordinate_scale);
+  if (diagnostics)
+  {
+    diagnostics->matching_radius = library.matching_radius;
+    for (int element = 0; element < mesh.GetNE(); element++)
+    {
+      const int attribute = mesh.GetAttribute(element);
+      diagnostics->minimum_wave_speed =
+          std::min(diagnostics->minimum_wave_speed, mat_op.GetLightSpeedMin(attribute));
+    }
+    Mpi::GlobalMin(1, &diagnostics->minimum_wave_speed, mesh.GetComm());
+    MFEM_VERIFY(std::isfinite(diagnostics->minimum_wave_speed) &&
+                    diagnostics->minimum_wave_speed > 0.0,
+                "Unable to determine a positive wave speed for Maxwell surface-response "
+                "confidence diagnostics!");
+  }
 
   std::set<int> target_filter(request.target_interfaces.begin(),
                               request.target_interfaces.end());
@@ -1629,10 +1653,21 @@ ResponseCorrectionData BuildAutomaticResponseData2D(const IoData &iodata,
       continue;
     }
 
-    const auto sites = ExtractEdgeSites(mesh, iodata.boundaries, group);
+    const auto sites =
+        ExtractEdgeSites(mesh, iodata.boundaries, group, pec_attribute_conductors);
     MFEM_VERIFY(!sites.empty(),
                 "Automatic response matching found no physical metal edges for target "
                 "interface group!");
+    if (diagnostics)
+    {
+      diagnostics->selected_length += static_cast<double>(sites.size());
+      for (const auto &[type, target] : group.targets)
+      {
+        (void)type;
+        diagnostics->selected_length_by_interface[target] +=
+            static_cast<double>(sites.size());
+      }
+    }
 
     std::vector<int> component(sites.size(), -1);
     int component_count = 0;
@@ -1665,6 +1700,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(const IoData &iodata,
     std::vector<PendingPatch> pending;
     bool group_matched = true;
     int group_interpolated_paired_clusters = 0;
+    double group_maximum_library_distance = 0.0;
     for (int component_index = 0; component_index < component_count; component_index++)
     {
       std::vector<std::size_t> cluster;
@@ -1751,6 +1787,8 @@ ResponseCorrectionData BuildAutomaticResponseData2D(const IoData &iodata,
       }
       patch.reference = model_selection->reference;
       patch.secondary_reference = model_selection->secondary_reference;
+      group_maximum_library_distance =
+          std::max(group_maximum_library_distance, model_selection->normalized_distance);
       if (model_selection->IsInterpolated())
       {
         patch.interpolation_group = next_interpolation_group++;
@@ -1812,6 +1850,18 @@ ResponseCorrectionData BuildAutomaticResponseData2D(const IoData &iodata,
     matched_clusters += component_count;
     matched_edges += static_cast<int>(sites.size());
     interpolated_paired_clusters += group_interpolated_paired_clusters;
+    if (diagnostics)
+    {
+      diagnostics->matched_length += static_cast<double>(sites.size());
+      diagnostics->maximum_library_distance =
+          std::max(diagnostics->maximum_library_distance, group_maximum_library_distance);
+      for (const auto &[type, target] : group.targets)
+      {
+        (void)type;
+        diagnostics->matched_length_by_interface[target] +=
+            static_cast<double>(sites.size());
+      }
+    }
   }
 
   MFEM_VERIFY(!result.models.empty() && !result.patches.empty(),
@@ -3472,7 +3522,7 @@ ResponseCorrectionData BuildAutomaticResponseData(const IoData &iodata,
   const auto &mesh = laplace_op.GetH1Space().GetParMesh();
   if (mesh.Dimension() == 2 && mesh.SpaceDimension() == 2)
   {
-    return BuildAutomaticResponseData2D(iodata, laplace_op, request);
+    return BuildAutomaticResponseData2D(iodata, mesh, laplace_op.GetMaterialOp(), request);
   }
   if (mesh.Dimension() == 3 && mesh.SpaceDimension() == 3)
   {
@@ -3892,6 +3942,7 @@ struct SurfaceResponseGeometry::Impl
   ResponseCorrectionData config;
   std::optional<AutomaticResponseDiagnostics> diagnostics;
   bool maxwell = false;
+  int dimension = 0;
 };
 
 SurfaceResponseOperator::SurfaceResponseOperator(
@@ -3917,7 +3968,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     if (automatic_geometry && *automatic_geometry)
     {
       cached_geometry = *automatic_geometry;
-      MFEM_VERIFY(!cached_geometry->impl->maxwell,
+      MFEM_VERIFY(!cached_geometry->impl->maxwell &&
+                      cached_geometry->impl->dimension == dimension,
                   "Cannot reuse Maxwell surface-response geometry for electrostatics!");
       config = &cached_geometry->impl->config;
     }
@@ -3929,6 +3981,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       {
         auto impl = std::make_shared<SurfaceResponseGeometry::Impl>();
         impl->config = std::move(*automatic_config);
+        impl->dimension = dimension;
         cached_geometry = std::shared_ptr<const SurfaceResponseGeometry>(
             new SurfaceResponseGeometry(std::move(impl)));
         *automatic_geometry = cached_geometry;
@@ -4192,15 +4245,35 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   : Operator(space_op.GetNDSpace().GetTrueVSize()), fespace(space_op.GetNDSpace()),
     basis_size(0)
 {
+  ConfigureMaxwellResponse(iodata, space_op.GetMaterialOp(),
+                           space_op.GetNDDbcTDofLists().back(), automatic_geometry);
+}
+
+SurfaceResponseOperator::SurfaceResponseOperator(
+    const IoData &iodata, const BoundaryModeOperator &mode_op,
+    std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry)
+  : Operator(mode_op.GetNDSpace().GetTrueVSize()), fespace(mode_op.GetNDSpace()),
+    basis_size(0)
+{
+  ConfigureMaxwellResponse(iodata, mode_op.GetMaterialOp(),
+                           mode_op.GetNDDbcTDofLists().back(), automatic_geometry);
+}
+
+void SurfaceResponseOperator::ConfigureMaxwellResponse(
+    const IoData &iodata, const MaterialOperator &mat_op,
+    const mfem::Array<int> &essential_tdofs,
+    std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry)
+{
   BlockTimer setup_timer(Timer::CONSTRUCT_RESPONSE);
   const auto &request = iodata.solver.surface_response_correction;
   MFEM_VERIFY(request, "Missing Maxwell surface response correction configuration!");
   MFEM_VERIFY(request->IsAutomatic(),
               "Maxwell surface response correction requires automatic fabrication-"
               "process library matching!");
-  MFEM_VERIFY(fespace.Dimension() == 3 && fespace.SpaceDimension() == 3,
-              "Maxwell surface response correction currently requires a three-"
-              "dimensional mesh!");
+  const int dimension = fespace.Dimension();
+  MFEM_VERIFY((dimension == 2 || dimension == 3) && fespace.SpaceDimension() == dimension,
+              "Maxwell surface response correction requires a two- or three-dimensional "
+              "mesh!");
 
 #if defined(MFEM_USE_GSLIB)
   maxwell = true;
@@ -4213,23 +4286,32 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   {
     cached_geometry = *automatic_geometry;
     MFEM_VERIFY(cached_geometry->impl->maxwell &&
-                    cached_geometry->impl->diagnostics.has_value(),
-                "Cannot reuse electrostatic surface-response geometry for Maxwell!");
+                    cached_geometry->impl->diagnostics.has_value() &&
+                    cached_geometry->impl->dimension == dimension,
+                "Cannot reuse incompatible surface-response geometry for Maxwell!");
     config_ptr = &cached_geometry->impl->config;
     diagnostics_ptr = &*cached_geometry->impl->diagnostics;
   }
   else
   {
     BlockTimer geometry_timer(Timer::CONSTRUCT_RESPONSE_GEOMETRY);
-    local_config =
-        BuildAutomaticResponseData3D(iodata, fespace.GetParMesh(), space_op.GetMaterialOp(),
-                                     *request, true, &local_diagnostics);
+    if (dimension == 2)
+    {
+      local_config = BuildAutomaticResponseData2D(iodata, fespace.GetParMesh(), mat_op,
+                                                  *request, true, &local_diagnostics);
+    }
+    else
+    {
+      local_config = BuildAutomaticResponseData3D(iodata, fespace.GetParMesh(), mat_op,
+                                                  *request, true, &local_diagnostics);
+    }
     if (automatic_geometry)
     {
       auto impl = std::make_shared<SurfaceResponseGeometry::Impl>();
       impl->config = std::move(*local_config);
       impl->diagnostics = local_diagnostics;
       impl->maxwell = true;
+      impl->dimension = dimension;
       cached_geometry = std::shared_ptr<const SurfaceResponseGeometry>(
           new SurfaceResponseGeometry(std::move(impl)));
       *automatic_geometry = cached_geometry;
@@ -4297,6 +4379,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                 "conductor-voltage coefficient per coupon!");
     model.basis_size = model.contour_size + model.conductor_state_count;
     model.spatial_basis = model_config.spatial_basis;
+    MFEM_VERIFY(dimension == 3 || !model.spatial_basis,
+                "Two-dimensional BoundaryMode response correction requires planar "
+                "coupon models!");
     model.contour_groups = model_config.contour_groups;
     model.zero_trace_indices = model_config.zero_trace_indices;
     for (const auto &path : model_config.open_contour_paths)
@@ -4387,8 +4472,10 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     const auto &model = models[model_it->second];
     MFEM_VERIFY(std::isfinite(patch_config.weight) && patch_config.weight > 0.0,
                 "Response-correction patch weights must be positive!");
-    MFEM_VERIFY(static_cast<int>(patch_config.maxwell_secondary_anchor.has_value()) ==
-                    model.conductor_state_count,
+    const bool has_secondary_anchor =
+        dimension == 3 ? patch_config.maxwell_secondary_anchor.has_value()
+                       : patch_config.secondary_reference.has_value();
+    MFEM_VERIFY(static_cast<int>(has_secondary_anchor) == model.conductor_state_count,
                 "Maxwell response-correction patch conductor anchors do not match its "
                 "model!");
     if (static_cast<int>(patch_index % size) != rank)
@@ -4440,18 +4527,47 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       }
       contour.push_back(std::move(point));
     }
-    MFEM_VERIFY(patch_config.maxwell_anchor,
-                "Automatic Maxwell response patch is missing its PEC voltage anchor!");
     mfem::Vector anchor(3);
-    std::copy(patch_config.maxwell_anchor->begin(), patch_config.maxwell_anchor->end(),
-              anchor.GetData());
+    anchor = 0.0;
+    if (patch_config.maxwell_anchor)
+    {
+      std::copy(patch_config.maxwell_anchor->begin(), patch_config.maxwell_anchor->end(),
+                anchor.GetData());
+    }
+    else
+    {
+      MFEM_VERIFY(dimension == 2,
+                  "Automatic Maxwell response patch is missing its PEC voltage anchor!");
+      for (int d = 0; d < dimension; d++)
+      {
+        anchor[d] = patch_config.origin[d] +
+                    patch_config.reference[0] * patch_config.axis_u[d] +
+                    patch_config.reference[1] * patch_config.axis_v[d];
+      }
+    }
     maxwell_anchors.push_back(std::move(anchor));
     mfem::Vector secondary_anchor;
-    if (patch_config.maxwell_secondary_anchor)
+    if (has_secondary_anchor)
     {
       secondary_anchor.SetSize(3);
-      std::copy(patch_config.maxwell_secondary_anchor->begin(),
-                patch_config.maxwell_secondary_anchor->end(), secondary_anchor.GetData());
+      secondary_anchor = 0.0;
+      if (patch_config.maxwell_secondary_anchor)
+      {
+        std::copy(patch_config.maxwell_secondary_anchor->begin(),
+                  patch_config.maxwell_secondary_anchor->end(), secondary_anchor.GetData());
+      }
+      else
+      {
+        MFEM_ASSERT(patch_config.secondary_reference,
+                    "Missing second-conductor response reference!");
+        for (int d = 0; d < dimension; d++)
+        {
+          secondary_anchor[d] =
+              patch_config.origin[d] +
+              (*patch_config.secondary_reference)[0] * patch_config.axis_u[d] +
+              (*patch_config.secondary_reference)[1] * patch_config.axis_v[d];
+        }
+      }
     }
     maxwell_secondary_anchors.push_back(std::move(secondary_anchor));
 
@@ -4465,7 +4581,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   {
     MaxwellLineGeometry geometry;
     std::array<double, 3> tangent;
-    for (int d = 0; d < 3; d++)
+    for (int d = 0; d < dimension; d++)
     {
       geometry.begin[d] = p0[d];
       geometry.end[d] = p1[d];
@@ -4632,13 +4748,13 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     BlockTimer point_timer(Timer::CONSTRUCT_RESPONSE_POINTS);
     ConfigureMaxwellLines(line_geometry);
   }
-  dbc_tdof_list = space_op.GetNDDbcTDofLists().back();
+  dbc_tdof_list = essential_tdofs;
   int global_line_count = static_cast<int>(maxwell_lines.size());
   Mpi::GlobalSum(1, &global_line_count, fespace.GetComm());
 
   Mpi::Print("\nConfigured PEC Maxwell surface response correction:\n"
              " Coupon models: {:d}\n"
-             " Longitudinal quadrature patches: {:d}\n"
+             " Response patches: {:d}\n"
              " Total contour coefficients: {:d}\n"
              " Contour line functionals: {:d}\n"
              " Minimum interface matched edge-length fraction: {:.6f}\n"
@@ -4668,7 +4784,8 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
   auto &mesh = const_cast<mfem::ParMesh &>(fespace.GetParMesh());
   const auto comm = fespace.GetComm();
   const int size = Mpi::Size(comm);
-  ElementPointLocator locator(mesh, 3);
+  const int dimension = fespace.Dimension();
+  ElementPointLocator locator(mesh, dimension);
 
   auto SetOffsets = [](const std::vector<int> &counts, std::vector<int> &offsets)
   {
@@ -4693,7 +4810,7 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
 
   double coordinate_scale = 0.0;
   const auto &bounds = locator.GetBounds();
-  for (int d = 0; d < 3; d++)
+  for (int d = 0; d < dimension; d++)
   {
     coordinate_scale = std::max({coordinate_scale, std::abs(bounds.min[d]),
                                  std::abs(bounds.max[d]), bounds.max[d] - bounds.min[d]});
@@ -4744,7 +4861,7 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
           candidate.max[d] = global_routing[rank_offset + routing_box_values * box + 3 + d];
         }
         if (candidate.min[0] <= candidate.max[0] &&
-            candidate.IntersectsSegment(line.begin, line.end, 3, box_tolerance))
+            candidate.IntersectsSegment(line.begin, line.end, dimension, box_tolerance))
         {
           return true;
         }
@@ -4883,13 +5000,13 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
   else
   {
     Mpi::Warning(comm,
-                 "Exact Maxwell response-contour integration requires a linear tetrahedral "
+                 "Exact Maxwell response-contour integration requires a linear simplex "
                  "mesh; using composite line quadrature instead.\n");
     for (std::size_t line_index = 0; line_index < line_geometry.size(); line_index++)
     {
       const auto &line = line_geometry[line_index];
-      std::array<double, 3> tangent;
-      for (int d = 0; d < 3; d++)
+      std::array<double, 3> tangent{};
+      for (int d = 0; d < dimension; d++)
       {
         tangent[d] = line.end[d] - line.begin[d];
       }
@@ -4970,8 +5087,8 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
       integration_intervals = std::move(line_intervals[line_index]);
     }
 
-    std::array<double, 3> tangent;
-    for (int d = 0; d < 3; d++)
+    std::array<double, 3> tangent{};
+    for (int d = 0; d < dimension; d++)
     {
       tangent[d] = line.end[d] - line.begin[d];
     }
@@ -4983,7 +5100,7 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
         const auto &ip = line_rule.IntPoint(q);
         const double parameter = begin + interval_length * ip.x;
         PendingQuadraturePoint point;
-        for (int d = 0; d < 3; d++)
+        for (int d = 0; d < dimension; d++)
         {
           point.coordinate[d] = line.begin[d] + parameter * tangent[d];
           point.weighted_tangent[d] = interval_length * ip.weight * tangent[d];
@@ -4995,17 +5112,17 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
         static_cast<int>(pending_points.size()) - functional.point_offset;
   }
 
-  mfem::Vector xyz(3 * pending_points.size());
+  mfem::Vector xyz(dimension * pending_points.size());
   std::vector<std::array<double, 3>> weighted_tangents(pending_points.size());
   for (std::size_t i = 0; i < pending_points.size(); i++)
   {
     weighted_tangents[i] = pending_points[i].weighted_tangent;
-    for (int d = 0; d < 3; d++)
+    for (int d = 0; d < dimension; d++)
     {
       xyz(d * pending_points.size() + i) = pending_points[i].coordinate[d];
     }
   }
-  ConfigurePointCommunication(xyz, 3, &weighted_tangents);
+  ConfigurePointCommunication(xyz, dimension, &weighted_tangents);
 }
 
 void SurfaceResponseOperator::ConfigurePointCommunication(

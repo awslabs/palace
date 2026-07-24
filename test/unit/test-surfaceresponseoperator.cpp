@@ -17,6 +17,7 @@
 #include "fem/gridfunction.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/vector.hpp"
+#include "models/boundarymodeoperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfaceresponseoperator.hpp"
@@ -53,6 +54,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   const auto library_3d_path = temp.temp_dir / "fabrication-process-3d.json";
   const auto exact_pair_library_2d_path =
       temp.temp_dir / "fabrication-process-exact-pair-2d.json";
+  const auto different_pair_library_2d_path =
+      temp.temp_dir / "fabrication-process-different-pair-2d.json";
   const auto interpolated_pair_library_2d_path =
       temp.temp_dir / "fabrication-process-interpolated-pair-2d.json";
   const auto coupled_library_3d_path =
@@ -173,6 +176,14 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     exact_pair_library_2d["Models"] = {exact_pair_model_2d};
     std::ofstream exact_pair_output_2d(exact_pair_library_2d_path);
     exact_pair_output_2d << exact_pair_library_2d.dump(2) << "\n";
+    auto different_pair_library_2d = exact_pair_library_2d;
+    different_pair_library_2d["Name"] = "unit-test-different-pair-2d";
+    different_pair_library_2d["MatchingRadius"] = 0.25;
+    different_pair_library_2d["Models"][0]["Name"] = "different-gap-0.4";
+    different_pair_library_2d["Models"][0]["Topology"] = "DifferentConductorGap";
+    different_pair_library_2d["Models"][0]["Separation"] = 0.4;
+    std::ofstream different_pair_output_2d(different_pair_library_2d_path);
+    different_pair_output_2d << different_pair_library_2d.dump(2) << "\n";
     auto interpolated_pair_library_2d = exact_pair_library_2d;
     interpolated_pair_library_2d["Name"] = "unit-test-interpolated-pair-2d";
     auto lower_pair_model_2d = exact_pair_model_2d;
@@ -582,6 +593,103 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(cached_automatic_response.GetPatchCount() == automatic_response.GetPatchCount());
   CHECK(cached_automatic_response.GetBasisSize() == automatic_response.GetBasisSize());
   CHECK(cached_automatic_response.HasSurfaceResponse());
+
+  auto boundary_mode_config = automatic_config;
+  boundary_mode_config["Problem"]["Type"] = "BoundaryMode";
+  boundary_mode_config["Boundaries"].erase("Ground");
+  boundary_mode_config["Boundaries"].erase("Terminal");
+  boundary_mode_config["Boundaries"]["PEC"] = {{"Attributes", {9, 10}}};
+  boundary_mode_config["Solver"] = {
+      {"Order", 1},
+      {"BoundaryMode", {{"Freq", 5.0}}},
+      {"SurfaceResponseCorrection",
+       {{"Library", library_path.string()}, {"UnmatchedPolicy", "Error"}}}};
+  IoData boundary_mode_iodata(boundary_mode_config, false);
+  boundary_mode_iodata.boundaries.cracked_attributes.insert(9);
+  boundary_mode_iodata.boundaries.cracked_attributes.insert(10);
+  MaterialOperator boundary_mode_material(boundary_mode_iodata, *automatic_meshes.back());
+  BoundaryModeOperator boundary_mode_op(boundary_mode_iodata, automatic_meshes,
+                                        boundary_mode_material);
+  SurfaceResponseOperator boundary_mode_response(boundary_mode_iodata, boundary_mode_op);
+  CHECK(boundary_mode_response.GetPatchCount() == automatic_response.GetPatchCount());
+  CHECK(boundary_mode_response.GetBasisSize() == automatic_response.GetBasisSize());
+  CHECK(boundary_mode_response.HasSurfaceResponse());
+  CHECK(boundary_mode_response.GetTargetInterfaces() == std::set<int>{4});
+
+  GridFunction boundary_mode_field(boundary_mode_op.GetNDSpace(), true);
+  mfem::Vector boundary_mode_field_value(2);
+  boundary_mode_field_value[0] = 0.7;
+  boundary_mode_field_value[1] = -0.4;
+  mfem::VectorConstantCoefficient boundary_mode_field_coefficient(
+      boundary_mode_field_value);
+  boundary_mode_field.Real().ProjectCoefficient(boundary_mode_field_coefficient);
+  boundary_mode_field.Imag() = 0.0;
+  const auto boundary_mode_result =
+      boundary_mode_response.GetMaxwellResponse(boundary_mode_field, 0.0);
+  CHECK(boundary_mode_result.fabricated_surface_energy.at(4) > 0.0);
+  CHECK(boundary_mode_result.fabricated_surface_energy_fixed_flux.at(4) > 0.0);
+  CHECK(boundary_mode_result.loop_residual < 1.0e-10);
+  CHECK_THAT(boundary_mode_result.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
+
+  auto different_pair_config = boundary_mode_config;
+  different_pair_config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeAttributes"] =
+      {9, 10};
+  different_pair_config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeDistances"] =
+      {0.25};
+  different_pair_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      different_pair_library_2d_path.string();
+  IoData different_pair_iodata(different_pair_config, false);
+  different_pair_iodata.boundaries.cracked_attributes.insert(9);
+  different_pair_iodata.boundaries.cracked_attributes.insert(10);
+
+  mfem::Mesh different_pair_serial =
+      mfem::Mesh::MakeCartesian2D(10, 4, mfem::Element::TRIANGLE, false, 1.0, 1.0);
+  for (int face = 0; face < different_pair_serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    different_pair_serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    different_pair_serial.GetFaceVertices(face, vertices);
+    if (vertices.Size() != 2)
+    {
+      continue;
+    }
+    const double *p0 = different_pair_serial.GetVertex(vertices[0]);
+    const double *p1 = different_pair_serial.GetVertex(vertices[1]);
+    const double xmin = std::min(p0[0], p1[0]);
+    const double xmax = std::max(p0[0], p1[0]);
+    if (std::abs(p0[1] - 0.5) < 1.0e-12 && std::abs(p1[1] - 0.5) < 1.0e-12 &&
+        (xmax <= 0.3 + 1.0e-12 || xmin >= 0.7 - 1.0e-12))
+    {
+      different_pair_serial.AddBdrElement(
+          different_pair_serial.GetFace(face)->Duplicate(&different_pair_serial));
+      different_pair_serial.SetBdrAttribute(different_pair_serial.GetNBE() - 1,
+                                            xmax <= 0.3 + 1.0e-12 ? 9 : 10);
+    }
+  }
+  different_pair_serial.FinalizeTopology();
+  different_pair_serial.Finalize();
+  while (different_pair_serial.GetNE() < Mpi::Size(Mpi::World()))
+  {
+    different_pair_serial.UniformRefinement();
+  }
+  auto different_pair_parallel =
+      std::make_unique<mfem::ParMesh>(Mpi::World(), different_pair_serial);
+  std::vector<std::unique_ptr<Mesh>> different_pair_meshes;
+  different_pair_meshes.push_back(
+      std::make_unique<Mesh>(std::move(different_pair_parallel)));
+  MaterialOperator different_pair_material(different_pair_iodata,
+                                           *different_pair_meshes.back());
+  BoundaryModeOperator different_pair_mode(different_pair_iodata, different_pair_meshes,
+                                           different_pair_material);
+  SurfaceResponseOperator different_pair_response(different_pair_iodata,
+                                                  different_pair_mode);
+  CHECK(different_pair_response.GetPatchCount() == 1);
+  CHECK(different_pair_response.GetBasisSize() == 4);
 
   auto thickness_mismatch_config = automatic_config;
   thickness_mismatch_config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Thickness"] =

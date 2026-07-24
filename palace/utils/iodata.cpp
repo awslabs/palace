@@ -290,11 +290,11 @@ void IoData::CheckConfiguration()
                   problem.type == ProblemType::ELECTROSTATIC,
               "Electrostatic \"ResponseCorrection\" is only supported for electrostatic "
               "simulations!");
-  MFEM_VERIFY(!solver.surface_response_correction ||
-                  problem.type == ProblemType::DRIVEN ||
-                  problem.type == ProblemType::EIGENMODE,
-              "\"SurfaceResponseCorrection\" is only supported for driven and eigenmode "
-              "simulations!");
+  MFEM_VERIFY(!solver.surface_response_correction || problem.type == ProblemType::DRIVEN ||
+                  problem.type == ProblemType::EIGENMODE ||
+                  problem.type == ProblemType::BOUNDARYMODE,
+              "\"SurfaceResponseCorrection\" is only supported for driven, eigenmode, "
+              "and boundary mode simulations!");
   MFEM_VERIFY(!solver.surface_response_correction ||
                   solver.surface_response_correction->IsAutomatic(),
               "Maxwell \"SurfaceResponseCorrection\" requires automatic fabrication-"

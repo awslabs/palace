@@ -389,7 +389,7 @@
         },
         "SurfaceResponseCorrection": {
           "$ref": "#/$defs/Electrostatic/properties/ResponseCorrection",
-          "description": "Apply a fabrication-process surface response correction to a three-dimensional driven or eigenmode PEC Maxwell field. The initial Maxwell implementation requires one planar fabrication layer and automatic `Library` matching to isolated-edge, parallel paired-edge, and optional corner coupons. Standard fields, AMR, and `surface-Q.csv` remain the raw thin-metal result; fixed-trace, fixed-flux, confidence, and uniform-driven self-consistent results are written separately."
+          "description": "Apply a fabrication-process surface response correction to a two-dimensional boundary mode or three-dimensional driven/eigenmode PEC Maxwell field. Boundary mode uses planar isolated- or paired-edge coupons; three-dimensional Maxwell additionally supports optional corner coupons. Standard fields, AMR, and `surface-Q.csv` remain the raw thin-metal result; fixed-trace, fixed-flux, confidence, and uniform-driven self-consistent results are written separately."
         },
         "Eigenmode": {
           "$ref": "#/$defs/Eigenmode",

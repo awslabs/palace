@@ -939,6 +939,12 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
          {{"Eigenmode", {{"Target", 1.0}}},
           {"SurfaceResponseCorrection", automatic["ResponseCorrection"]}}}};
     CHECK(ValidateConfig(maxwell_config).empty());
+    auto boundary_mode_config = maxwell_config;
+    boundary_mode_config["Problem"]["Type"] = "BoundaryMode";
+    boundary_mode_config["Solver"].erase("Eigenmode");
+    boundary_mode_config["Solver"]["BoundaryMode"] = {{"Freq", 5.0}};
+    CHECK(ValidateConfig(boundary_mode_config).empty());
+
     maxwell_config["Solver"]["SurfaceResponseCorrection"]["Models"] = json::array();
     CHECK(!ValidateConfig(maxwell_config).empty());
   }

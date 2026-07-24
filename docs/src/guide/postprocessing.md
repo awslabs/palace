@@ -144,8 +144,9 @@ file. These include:
     Palace then writes `surface-response-matrix.csv`, the upper triangles of the localized
     quadratic core- and full-patch surface-energy operators for every interface, edge, and
     matching radius. It also writes `domain-response-matrix.csv`, the domain-energy
-    response over the same prescribed-potential basis. Driven and eigenmode simulations
-    can apply a compatible fabrication-process library with
+    response over the same prescribed-potential basis. Driven, eigenmode, and
+    two-dimensional boundary-mode simulations can apply a compatible
+    fabrication-process library with
     [`Solver.SurfaceResponseCorrection`](../config/reference.md#config-solver-surfaceresponsecorrection).
     This postprocessing-only PEC correction writes `surface-Q-corrected.csv` and
     `surface-response-confidence.csv`; the solved field, AMR sequence, and standard

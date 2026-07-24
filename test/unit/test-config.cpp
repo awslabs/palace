@@ -713,6 +713,12 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
                           {{"Eigenmode", {{"Target", 1.0}}},
                            {"SurfaceResponseCorrection", automatic_correction}}}};
   CHECK_NOTHROW(IoData(maxwell_config, false));
+  auto boundary_mode_config = maxwell_config;
+  boundary_mode_config["Problem"]["Type"] = "BoundaryMode";
+  boundary_mode_config["Solver"].erase("Eigenmode");
+  boundary_mode_config["Solver"]["BoundaryMode"] = {{"Freq", 5.0}};
+  CHECK_NOTHROW(IoData(boundary_mode_config, false));
+
   maxwell_config["Problem"]["Type"] = "Electrostatic";
   maxwell_config["Solver"].erase("Eigenmode");
   maxwell_config["Solver"]["Electrostatic"] = json::object();

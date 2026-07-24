@@ -62,6 +62,10 @@ public:
   std::vector<mfem::Array<int>> &GetNDDbcTDofLists() { return nd_dbc_tdof_lists; }
   std::vector<mfem::Array<int>> &GetH1DbcTDofLists() { return h1_dbc_tdof_lists; }
   std::vector<mfem::Array<int>> &GetH1AuxDbcTDofLists() { return h1_aux_dbc_tdof_lists; }
+  const std::vector<mfem::Array<int>> &GetNDDbcTDofLists() const
+  {
+    return nd_dbc_tdof_lists;
+  }
 
   // Access material and boundary operators.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }

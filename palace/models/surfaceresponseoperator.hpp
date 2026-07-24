@@ -21,7 +21,9 @@ namespace palace
 class FiniteElementSpace;
 class GridFunction;
 class IoData;
+class BoundaryModeOperator;
 class LaplaceOperator;
+class MaterialOperator;
 class SpaceOperator;
 
 // Mesh-independent automatic coupon layout. A solver retains this across AMR iterations;
@@ -170,6 +172,10 @@ private:
   void ApplyTrace(const Vector &x, Vector &values) const;
   void ApplyTraceTranspose(const Vector &values, Vector &y) const;
   void ApplyUneliminated(const Vector &x, Vector &y) const;
+  void ConfigureMaxwellResponse(
+      const IoData &iodata, const MaterialOperator &mat_op,
+      const mfem::Array<int> &dbc_tdof_list,
+      std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry);
 
 public:
   struct EnergyCorrection
@@ -214,6 +220,9 @@ public:
       std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry = nullptr);
   SurfaceResponseOperator(
       const IoData &iodata, const SpaceOperator &space_op,
+      std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry = nullptr);
+  SurfaceResponseOperator(
+      const IoData &iodata, const BoundaryModeOperator &mode_op,
       std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry = nullptr);
 
   void Mult(const Vector &x, Vector &y) const override;
