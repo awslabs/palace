@@ -162,15 +162,22 @@ can be overridden on a per-port basis using
 [`config["Boundaries"]["SurfaceCurrent"]["InactiveMode"]`](../config/reference.md#config-boundaries-surfacecurrent),
 which takes precedence over the global default for that port.
 
-The inactive-port treatment changes what the off-diagonal inductance entries represent. With
-all ports `"Open"`, the entries ``M_{ij}`` depend on the geometry alone and are symmetric by
-reciprocity. When ports are shorted, the shorted ports carry induced screening currents, so
-``M_{ij}`` is the *effective* mutual inductance in the presence of those currents rather than
-the bare geometric coupling. In a mixed configuration the set of shorted ports can differ
-between the solve exciting port ``i`` and the one exciting port ``j``, so the cross-energies
-need not be reciprocal; the reported matrix is symmetrized from ``A_j^T K A_i`` and should be
-read as the effective coupling for that inactive-port configuration, not a geometry-only
-quantity.
+The inactive-port treatment affects which inductance entries are well-defined. A port that is
+`"Open"` when inactive is never an essential (Dirichlet) boundary, so every excitation of an
+`"Open"` port is solved with the *same* operator (any `"Short"` ports acting as fixed
+screening conductors) and only the right-hand side changes. The resulting mutual entries are
+reciprocal and represent the mutual inductance in the presence of the shorted screens. A port
+that is `"Short"` when inactive, by contrast, is added to the essential set on every step
+*except* the one that excites it, so exciting a `"Short"` port uses a different operator than
+the other excitations; its cross-energy with another column mixes two different
+boundary-value problems and does not correspond to a reciprocal mutual inductance.
+
+Palace therefore reports the self-inductance (diagonal) for every port, but writes a mutual
+inductance ``M_{ij}`` only between ports that are both `"Open"` when inactive. Off-diagonal
+entries involving a `"Short"` port are written as `NaN`, and `terminal-Minv.csv` and
+`terminal-Mm.csv` are computed over the reciprocal `"Open"`-`"Open"` sub-block only (their
+`"Short"`-port rows and columns are likewise `NaN`). With all ports `"Open"` (the default)
+this reduces to the usual full, symmetric, geometry-only inductance matrix.
 
 **Flux loop boundaries** ([`config["Boundaries"]["FluxLoop"]`](../config/reference.md#config-boundaries-fluxloop)):
 Prescribe magnetic flux through specified holes in conducting surfaces. For each flux loop, a

@@ -3,6 +3,7 @@
 
 #include "magnetostaticsolver.hpp"
 
+#include <limits>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
@@ -238,14 +239,49 @@ void MagnetostaticSolver::PostprocessTerminals(
   // the reluctance:
   //                          R_ij = (A_j^T*K*A_i)/(Φ_i*Φ_j)
   // and then M = R^-1. Mixed current/flux excitation is rejected before solving.
+  //
+  // Reciprocity note for Short inactive ports: the reciprocal cross-energy formula only
+  // holds when every excitation is solved with the same operator (same essential-DOF set).
+  // A port shorted while inactive is added to the essential set on every step except the
+  // one that excites it, so exciting a Short port uses a different operator than the others
+  // and its mutual entries are not reciprocal (and reflect the screened field of a
+  // different boundary-value problem, not a coupling). Ports that are Open when inactive,
+  // by contrast, are never essential, so every excitation of an Open port shares one common
+  // operator (the Short ports acting as fixed screens) and its mutual entries are
+  // well-defined and reciprocal. We therefore report self-inductances for all ports, but
+  // mutual inductances only between ports that are Open when inactive; other off-diagonals
+  // are set to NaN and Minv/Mm are computed over the Open-Open sub-block only.
   int n_current = static_cast<int>(surf_j_op.Size());
   int n_flux = static_cast<int>(surf_flux_op.Size());
   int n = A.size();
+
+  // Mark which columns have a well-defined reciprocal mutual (Open-when-inactive ports).
+  // Flux loops always share one operator, so they are all reciprocal.
+  const InactivePortMode global_mode = iodata.solver.magnetostatic.inactive_port_mode;
+  std::vector<bool> reciprocal(n, true);
+  {
+    int col = 0;
+    for (const auto &[idx, data] : surf_j_op)
+    {
+      const auto &port_cfg = iodata.boundaries.current.at(idx);
+      reciprocal[col++] =
+          port_cfg.inactive_port_mode.value_or(global_mode) == InactivePortMode::OPEN;
+    }
+    // Remaining columns are flux loops (reciprocal), already initialized to true.
+  }
+  auto reciprocal_pair = [&](int i, int j) { return reciprocal[i] && reciprocal[j]; };
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+
   // Allocate final result matrices
   mfem::DenseMatrix M(n), Minv(n), Mm(n);
+  M = nan;
+  Minv = nan;
+  Mm = nan;
 
-  // Compute cross-energy matrix and diagonals
+  // Compute cross-energy matrix and diagonals. Off-diagonals are only meaningful between
+  // reciprocal (Open-Open) port pairs; other pairs are left as NaN.
   mfem::DenseMatrix cross_energy(n);
+  cross_energy = nan;
   for (int i = 0; i < n; i++)
   {
     auto &A_gf = post_op.GetAGridFunction().Real();
@@ -254,9 +290,13 @@ void MagnetostaticSolver::PostprocessTerminals(
     post_op.GetDomainPostOp().M_mag->Mult(A_gf, H_gf);
     cross_energy(i, i) = linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf);
 
-    // Off-diagonal cross-energies
+    // Off-diagonal cross-energies (only for reciprocal Open-Open pairs).
     for (int j = i + 1; j < n; j++)
     {
+      if (!reciprocal_pair(i, j))
+      {
+        continue;
+      }
       A_gf.SetFromTrueDofs(A[j]);
       cross_energy(i, j) = cross_energy(j, i) =
           linalg::Dot<Vector>(post_op.GetComm(), A_gf, H_gf);
@@ -265,7 +305,8 @@ void MagnetostaticSolver::PostprocessTerminals(
 
   if (n_flux == n)
   {
-    // Pure flux case: compute reluctance first, then get inductance by inversion
+    // Pure flux case: compute reluctance first, then get inductance by inversion. All flux
+    // loops are reciprocal, so this always spans the full matrix.
     for (int i = 0; i < n; i++)
     {
       Minv(i, i) = cross_energy(i, i) / (Phi_inc[i] * Phi_inc[i]);
@@ -280,30 +321,83 @@ void MagnetostaticSolver::PostprocessTerminals(
   }
   else
   {
-    // Pure current case: compute inductance directly, then get reluctance by inversion
+    // Pure current case: compute inductance directly. Self-inductances (diagonal) are
+    // always defined; mutuals only for reciprocal Open-Open pairs, otherwise left as NaN.
     for (int i = 0; i < n; i++)
     {
       M(i, i) = cross_energy(i, i) / (I_inc[i] * I_inc[i]);
       for (int j = i + 1; j < n; j++)
       {
+        if (!reciprocal_pair(i, j))
+        {
+          continue;
+        }
         M(i, j) = M(j, i) = cross_energy(i, j) / (I_inc[i] * I_inc[j]);
       }
     }
-    // Get reluctance from inductance: R = M^{-1}
-    Minv = M;
-    Minv.Invert();
+    // Reluctance and mutual matrices are only well-defined over the reciprocal sub-block.
+    // Extract the Open-Open sub-block, invert/transform it, and scatter back;
+    // non-reciprocal rows/columns remain NaN.
+    std::vector<int> recip_idx;
+    for (int i = 0; i < n; i++)
+    {
+      if (reciprocal[i])
+      {
+        recip_idx.push_back(i);
+      }
+    }
+    const int nr = static_cast<int>(recip_idx.size());
+    if (nr > 0)
+    {
+      mfem::DenseMatrix M_sub(nr), Minv_sub(nr);
+      for (int a = 0; a < nr; a++)
+      {
+        for (int b = 0; b < nr; b++)
+        {
+          M_sub(a, b) = M(recip_idx[a], recip_idx[b]);
+        }
+      }
+      // Reluctance R = M^{-1} over the sub-block.
+      Minv_sub = M_sub;
+      Minv_sub.Invert();
+      // Mutual inductance matrix Mm (current-difference form) over the sub-block.
+      mfem::DenseMatrix Mm_sub(nr);
+      for (int a = 0; a < nr; a++)
+      {
+        Mm_sub(a, a) = M_sub(a, a);
+        for (int b = 0; b < nr; b++)
+        {
+          if (a != b)
+          {
+            Mm_sub(a, b) = -M_sub(a, b);
+            Mm_sub(a, a) += M_sub(a, b);
+          }
+        }
+      }
+      for (int a = 0; a < nr; a++)
+      {
+        for (int b = 0; b < nr; b++)
+        {
+          Minv(recip_idx[a], recip_idx[b]) = Minv_sub(a, b);
+          Mm(recip_idx[a], recip_idx[b]) = Mm_sub(a, b);
+        }
+      }
+    }
   }
 
-  // Compute Mm matrix from final M
-  for (int i = 0; i < n; i++)
+  if (n_flux == n)
   {
-    Mm(i, i) = M(i, i);
-    for (int j = 0; j < n; j++)
+    // Compute Mm matrix from final M (full matrix in the flux case).
+    for (int i = 0; i < n; i++)
     {
-      if (i != j)
+      Mm(i, i) = M(i, i);
+      for (int j = 0; j < n; j++)
       {
-        Mm(i, j) = -M(i, j);
-        Mm(i, i) += M(i, j);
+        if (i != j)
+        {
+          Mm(i, j) = -M(i, j);
+          Mm(i, i) += M(i, j);
+        }
       }
     }
   }

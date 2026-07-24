@@ -125,13 +125,14 @@ public:
   // Ampere's law.
   std::unique_ptr<Operator> GetStiffnessMatrix();
 
-  // Construct the stiffness matrix with extra essential (PEC) attributes beyond those set at
-  // construction, without mutating base boundary state. Used in Short mode to treat inactive
-  // surface current ports as PEC for a single excitation step.
+  // Construct the stiffness matrix with extra essential (PEC) attributes beyond those set
+  // at construction, without mutating base boundary state. Used in Short mode to treat
+  // inactive surface current ports as PEC for a single excitation step.
   std::unique_ptr<Operator> GetStiffnessMatrix(const mfem::Array<int> &extra_dbc_attr);
 
   // Zero v on the merged essential set (base Dirichlet plus extra_dbc_attr), clearing the
-  // excitation on shorted inactive ports so DIAG_ONE elimination injects no spurious values.
+  // excitation on shorted inactive ports so DIAG_ONE elimination injects no spurious
+  // values.
   void ZeroEssentialTrueDofs(const mfem::Array<int> &extra_dbc_attr, Vector &v) const;
 
   // Construct and return the discrete curl matrix.
