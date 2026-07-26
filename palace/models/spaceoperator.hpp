@@ -173,11 +173,13 @@ public:
   auto &GetWavePortOp() { return wave_port_op; }
   auto &GetFloquetPortOp() { return floquet_port_op; }
   auto &GetSurfaceCurrentOp() { return surf_j_op; }
+  auto &GetSurfaceConductivityOp() { return surf_sigma_op; }
   const auto &GetLumpedPortOp() const { return lumped_port_op; }
   const auto &GetWavePortOp() const { return wave_port_op; }
   const auto &GetFloquetPortOp() const { return floquet_port_op; }
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
   const auto &GetRationalImpedanceOp() const { return surf_rz_op; }
+  const auto &GetSurfaceConductivityOp() const { return surf_sigma_op; }
 
   // Get the full frequency-dependent operator A2(ω) + F(ω), where A2 is the assembled
   // sparse boundary operator and F is the low-rank Floquet DtN correction. The returned
@@ -244,32 +246,61 @@ public:
   // Construct the ω-independent boundary mass matrix M_{μ⁻¹,p} for a single wave port,
   // returned with PEC essential DoF rows handled by `diag_policy`. The full wave-port
   // contribution to the system matrix at frequency ω is `i·k_{n,p}(ω)·M_{μ⁻¹,p}` with
-  // `k_{n,p}` from `GetWavePortOp().GetWavePortKn(port_idx, ω)`. Returns a null pointer if
-  // the port boundary contributes no DoFs on this rank.
+  // `k_{n,p}` from `GetWavePortOp().GetWavePortKn(port_idx, ω)`. The unit mass is returned
+  // for active and inactive ports so synthesis can normalize an unloaded port node; callers
+  // decide whether to stamp the physical termination. Returns a null pointer if the port
+  // boundary contributes no DoFs on any rank (the check is collective, so the null contract
+  // is rank-uniform).
   template <typename OperType>
   std::unique_ptr<OperType>
   GetWavePortBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
 
   // Construct the ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield
-  // (absorbing) BC, with unit coefficient, stored on the real slot. The full A2
-  // contribution at frequency ω is `i·(0.5/ω)·M_ff` (real-ω stamping) or `-0.5/λ·M_ff`
-  // (complex-λ analytic continuation); a caller scales this matrix by the appropriate
-  // complex coefficient. Returns a null pointer if the farfield BC order < 2 or it
-  // contributes no DoFs on this rank. Used by the NLEPS HYBRID frozen-ABC seed strategy.
+  // (absorbing) BC, with unit coefficient. By default stored on the real slot (so a caller
+  // scales it by an arbitrary complex coefficient): the full A2 contribution at frequency ω
+  // is `i·(0.5/ω)·M_ff` (real-ω stamping) or `-0.5/λ·M_ff` (complex-λ analytic
+  // continuation). Used by the NLEPS HYBRID frozen-ABC seed strategy. Set `imag_slot=true`
+  // to instead place M_ff on the imaginary slot, matching the wave-port boundary-mass
+  // convention (i·f(ω)·M with the i baked in) so it can be folded into circuit synthesis
+  // uniformly with wave ports. Returns null if the farfield BC order < 2 or contributes no
+  // DoFs on any rank (the check is collective, so the null contract is rank-uniform).
   template <typename OperType>
   std::unique_ptr<OperType>
-  GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy);
+  GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy,
+                                    bool imag_slot = false);
+
+  // Construct the ω-independent boundary mass matrix A_σ for surface-conductivity group
+  // `group_idx`, with unit coefficient, on the IMAGINARY slot (matching the wave-port
+  // convention). The full A2 contribution at frequency ω is `(i·ω/Z_g(ω))·A_σ` =
+  // `f_g(ω)·(i·A_σ)` with f_g(ω) = ω/Z_g(ω) the real-or-complex scalar from
+  // GetSurfaceConductivityOp().EvaluateScalar(group, ω)/i. Returns null if the group
+  // contributes no DoFs on any rank (the check is collective, so the null contract is
+  // rank-uniform). Used to fold surface conductivity into circuit synthesis.
+  // `NumSurfaceConductivityGroups()` gives the group count.
+  template <typename OperType>
+  std::unique_ptr<OperType>
+  GetSurfaceConductivityBoundaryMatrix(int group_idx, Operator::DiagonalPolicy diag_policy);
 
   // Construct the λ-independent boundary mass matrix M_b for rational impedance boundary
   // idx, with unit coefficient (including crack scaling), stored on the real slot. The
   // full A2 contribution at λ = iω is `g(λ)·M_b` with the scalar Robin coefficient
   // `g(λ) = λ·D(λ)/N(λ)` from `GetRationalImpedanceOp().EvalRobinCoefficient(idx, λ)`; a
   // caller scales this matrix by the appropriate complex coefficient. Returns a null
-  // pointer if the boundary contributes no DoFs on this rank. Used by the NLEPS HYBRID
-  // fit-or-freeze seed strategy.
+  // pointer if the boundary contributes no DoFs on any rank (the check is collective, so
+  // the null contract is rank-uniform). Used by the NLEPS HYBRID fit-or-freeze seed
+  // strategy.
   template <typename OperType>
   std::unique_ptr<OperType>
-  GetRationalImpedanceBoundaryMassMatrix(int idx, Operator::DiagonalPolicy diag_policy);
+  GetRationalImpedanceBoundaryMassMatrix(int idx, Operator::DiagonalPolicy diag_policy,
+                                         bool imag_slot = false);
+
+  // Construct the ω-independent µ⁻¹ boundary mass for a single Floquet port's Robin BC,
+  // placed on the imaginary slot. The full online term is i·γ₀,p(ω)·M_floquet_p with
+  // γ₀ the (0,0) specular propagation constant. Returns null if the port contributes no
+  // DoFs on any rank (the check is collective, so the null contract is rank-uniform).
+  template <typename OperType>
+  std::unique_ptr<OperType>
+  GetFloquetRobinBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
 
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:
@@ -353,16 +384,22 @@ public:
   // Fill vector corresponding to the tangential electric field E_t on a lumped port, with
   // overall normalization such that the reference impedance \vert Z_R \vert = 1 in internal
   // units.
-  void GetLumpedPortExcitationVectorPrimaryEt(int port_idx, ComplexVector &Et_primary,
-                                              bool zero_metal);
+  void GetLumpedPortExcitationVectorPrimaryEt(int port_idx, ComplexVector &Et_primary);
 
   // Fill vector corresponding to the tangential field H_t x n on a lumped port, with
   // overall normalization such that the reference impedance \vert Z_R \vert = 1 in internal
   // units. This is locally in the same direction as E_t, but because of lumped ports can
   // have multiple attributes ports with different surface impedances, they are not just
   // proportional to each other.
-  void GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx, ComplexVector &Htcn_primary,
-                                                bool zero_metal);
+  void GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx, ComplexVector &Htcn_primary);
+
+  // Fill vector corresponding to the tangential modal electric field E_t at a wave port,
+  // evaluated at the reference frequency `omega_ref`. Used by the synthesis code path to
+  // seed the basis with a port mode (analogous to GetLumpedPortExcitationVectorPrimaryEt
+  // for lumped ports). Triggers the cross-section EVP for this port if it has not
+  // already been initialised at the requested frequency.
+  void GetWavePortFieldVectorPrimaryEt(int port_idx, double omega_ref,
+                                       ComplexVector &Et_primary);
 
   // Construct a constant or randomly initialized vector which satisfies the PEC essential
   // boundary conditions.

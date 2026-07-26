@@ -48,12 +48,23 @@ struct RegressionOptions
   // gauge-dependent signed quantities whose sign is not reproducible
   // (e.g. near-zero κ_ext for high-Q eigenmodes).
   std::vector<std::string> abs_columns;
+  // Partial-match substrings on the CSV path relative to postpro/; matching files
+  // must exist in both the live output and the reference tree but are otherwise
+  // skipped entirely (no shape, header, or value comparison). Used for outputs whose
+  // representation is legitimately run-dependent, e.g. the raw synthesized circuit
+  // matrices (rom-Linv/Rinv/C), whose dimensions follow the adaptive sample count and
+  // whose entries depend on the orthogonalized basis.
+  std::vector<std::string> excluded_files;
   // Allow row-count mismatch (eigen / adaptive cases).
   bool skip_rowcount = false;
   // Compare at most this many leading rows. If unset for an Eigenmode case,
   // RunRegressionCase derives it from Solver.Eigenmode.N so extra converged
   // modes beyond the requested count are ignored.
   std::optional<std::size_t> max_rows;
+  // With skip_rowcount, still require at least this many rows in the live output.
+  // Guards against a partial loss of trailing rows (e.g. dropped eigenvalue estimates)
+  // passing silently because only min(actual, reference) leading rows are compared.
+  std::optional<std::size_t> min_rows;
   // Expected volumetric-output directories.
   bool paraview_fields = true;
   bool gridfunction_fields = false;

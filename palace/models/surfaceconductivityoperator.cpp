@@ -145,8 +145,8 @@ mfem::Array<int> SurfaceConductivityOperator::GetAttrList() const
 }
 
 std::complex<double>
-SurfaceConductivityOperator::EvaluateScalar(std::size_t group_idx,
-                                            std::complex<double> omega) const
+SurfaceConductivityOperator::EvaluateScalarImpl(std::size_t group_idx,
+                                                std::complex<double> omega) const
 {
   // If the provided conductor thickness is empty (zero), prescribe a surface impedance
   // (1+i)/σδ, where δ is the skin depth. If it is nonzero, use a finite thickness
@@ -189,7 +189,8 @@ void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
   {
     if (std::abs(boundaries[g].sigma) > 0.0)
     {
-      const std::complex<double> s = EvaluateScalar(g, std::complex<double>(omega, 0.0));
+      const std::complex<double> s =
+          EvaluateScalarImpl(g, std::complex<double>(omega, 0.0));
       fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(boundaries[g].attr_list),
                               s.real());
       fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(boundaries[g].attr_list),
@@ -208,12 +209,24 @@ void SurfaceConductivityOperator::AddExtraSystemBdrCoefficients(
   {
     if (std::abs(boundaries[g].sigma) > 0.0)
     {
-      const std::complex<double> s = EvaluateScalar(g, omega);
+      const std::complex<double> s = EvaluateScalarImpl(g, omega);
       fbr.AddMaterialProperty(mat_op.GetCeedBdrAttributes(boundaries[g].attr_list),
                               s.real());
       fbi.AddMaterialProperty(mat_op.GetCeedBdrAttributes(boundaries[g].attr_list),
                               s.imag());
     }
+  }
+}
+
+void SurfaceConductivityOperator::AddBoundaryMassBdrCoefficients(
+    std::size_t g, MaterialPropertyCoefficient &fb) const
+{
+  // ω-independent unit-coefficient boundary mass for group g (the operator that the scalar
+  // i·ω/Z_g(ω) multiplies). Factored out so circuit synthesis can project it once and apply
+  // the frequency dependence as a fitted scalar. No contribution for an inactive group.
+  if (g < boundaries.size() && std::abs(boundaries[g].sigma) > 0.0)
+  {
+    fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(boundaries[g].attr_list), 1.0);
   }
 }
 
