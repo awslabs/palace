@@ -53,6 +53,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Enabled the `RationalImpedance` boundary condition in eigenmode simulations, handled
     by the nonlinear eigenvalue solver and evaluated at the complex eigenfrequency.
     SchemaVer 1-3-1 [PR 778](https://github.com/awslabs/palace/pull/778).
+  - Excited lumped ports may now carry reactance (`"L"` and/or `"C"`, including purely
+    reactive ports with `"R": 0`). The reactance enters the system matrix as a physical
+    termination; the incident drive is normalized to the port `"R"` when positive, or to
+    an internal unit reference impedance for a purely reactive port. Previously, excited
+    lumped ports were required to be purely resistive.
 
 #### Bug Fixes
 
