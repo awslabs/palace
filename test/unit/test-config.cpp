@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "embedded_schema.hpp"
 #include "linalg/ksp.hpp"
 #include "utils/configfile.hpp"
@@ -140,6 +141,40 @@ std::vector<std::string> SchemaCoverageGaps(const std::string &pointer,
 }
 
 }  // namespace
+
+TEST_CASE("Config Domain Postprocessing", "[config][Serial]")
+{
+  auto MakeDomains = [](const std::vector<int> &material_attributes,
+                        const std::vector<int> &postprocessing_attributes)
+  {
+    return json{
+        {"Materials", {{{"Attributes", material_attributes}}}},
+        {"Postprocessing",
+         {{"Energy", {{{"Index", 1}, {"Attributes", postprocessing_attributes}}}}}}};
+  };
+
+  SECTION("Postprocessing material domain is accepted")
+  {
+    CHECK_NOTHROW(config::DomainData(MakeDomains({1, 3}, {1, 3})));
+  }
+
+  SECTION("Postprocessing domain between material attributes is rejected")
+  {
+    // This specifically exercises a missing value whose lower bound is not end().
+    CHECK_THROWS_WITH(config::DomainData(MakeDomains({1, 3}, {2})),
+                      Catch::Matchers::ContainsSubstring(
+                          "Domain postprocessing attribute 2 has no corresponding entry in "
+                          "config[\"Domains\"][\"Materials\"]!"));
+  }
+
+  SECTION("Postprocessing domain above material attributes is rejected")
+  {
+    CHECK_THROWS_WITH(config::DomainData(MakeDomains({1, 3}, {4})),
+                      Catch::Matchers::ContainsSubstring(
+                          "Domain postprocessing attribute 4 has no corresponding entry in "
+                          "config[\"Domains\"][\"Materials\"]!"));
+  }
+}
 
 TEST_CASE("Config Boundary Ports", "[config][Serial]")
 {
