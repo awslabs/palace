@@ -49,6 +49,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed validation of domain material coverage so postprocessing and retained mesh
+    attributes without a corresponding `config["Domains"]["Materials"]` entry are rejected
+    instead of silently assigning zero material coefficients to retained volumes. [PR
+    840](https://github.com/awslabs/palace/pull/840).
   - Fixed saving output to non-shared filesystems [PR 813](https://github.com/awslabs/palace/pull/813).
   - Fixed S-parameter post-processing for mixed Floquet + lumped/wave port configurations.
     Previously, `MeasureSParameter()` skipped processing when Floquet ports coexisted with
