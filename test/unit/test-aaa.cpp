@@ -132,8 +132,15 @@ TEST_CASE("AAA: trimmed denominator consistently determines poles and residues",
 
   auto pr = AAAToPoleResidue(r);
   REQUIRE(pr.poles.size() == 1);
-  REQUIRE_THAT(std::abs(EvaluatePoleResidue(pr, 0.0) - EvaluateAAA(r, 0.0)),
-               WithinAbs(0.0, 1e-12));
+  // Check away from the support points too: a centering artifact left in the trimmed
+  // numerator produces an O(1/tol) quotient-pole cancellation that is exact at z = 0 but
+  // loses ~1e-3 elsewhere in band.
+  for (const auto z : {std::complex<double>(0.0, 0.0), std::complex<double>(0.5, 0.25),
+                       std::complex<double>(-0.7, 0.1)})
+  {
+    REQUIRE_THAT(std::abs(EvaluatePoleResidue(pr, z) - EvaluateAAA(r, z)),
+                 WithinAbs(0.0, 1e-12));
+  }
 }
 
 TEST_CASE("AAA: rational function recovered exactly", "[aaa][Serial]")

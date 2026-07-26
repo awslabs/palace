@@ -315,9 +315,21 @@ inline AAAPoleResidue AAAToPoleResidue(const AAAResult &r)
       p.pop_back();
     }
   };
-  trim_leading_zeros(numerator);
+  const auto untrimmed_denominator = denominator;
   trim_leading_zeros(denominator);
   MFEM_VERIFY(!denominator.empty(), "AAA interpolant has an identically zero denominator!");
+  // The centered numerator absorbs -f_center*D at every degree, so a denominator
+  // coefficient dropped by trimming leaves a -f_center*d_k centering artifact in the
+  // numerator's top coefficients. Transfer f_center*d_k back before trimming the
+  // numerator: the resulting representation is r*(D/D_trimmed), a relative perturbation
+  // at the trimming tolerance. Without it the division turns the artifact into a
+  // polynomial quotient and pole of size ~1/tol whose cancellation costs |q|*eps at
+  // every evaluation away from the support points.
+  for (std::size_t k = denominator.size(); k < untrimmed_denominator.size(); k++)
+  {
+    numerator[k] += f_center * untrimmed_denominator[k];
+  }
+  trim_leading_zeros(numerator);
 
   auto remainder = numerator;
   std::vector<std::complex<double>> quotient;
