@@ -41,7 +41,9 @@ private:
   mfem::FindPointsGSLIB op;
 
   // libCEED evaluators at the located probe points, avoiding per-sample GSLIB
-  // interpolation), constructed lazily per source finite element space.
+  // interpolation, constructed lazily per source finite element space. The source spaces
+  // outlive this operator and both are rebuilt together after mesh/space reconstruction,
+  // so pointer identity is stable for the lifetime of this cache.
   mutable std::map<const mfem::FiniteElementSpace *, std::unique_ptr<CeedProbeEvaluator>>
       ceed_probes;
 #endif

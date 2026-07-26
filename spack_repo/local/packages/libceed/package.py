@@ -19,7 +19,9 @@ class Libceed(MakefilePackage, CudaPackage, ROCmPackage):
 
     license("BSD-2-Clause")
 
-    version("develop", branch="main")
+    # Palace's develop build carries a libCEED patch, so keep Spack aligned with the
+    # reproducible superbuild revision in cmake/ExternalGitTags.cmake.
+    version("develop", commit="64e0491369518e158481079ef966c29e2fa4f8fd")
     version("0.12.0", tag="v0.12.0", commit="4018a20a98d451fac24765d3ddb936861647ce8d")
     version("0.11.0", tag="v0.11.0", commit="8ec64e9ae9d5df169dba8c8ee61d8ec8907b8f80")
     version("0.10.1", tag="v0.10.1", commit="74532b27052d94e943eb8bc76257fbd710103614")

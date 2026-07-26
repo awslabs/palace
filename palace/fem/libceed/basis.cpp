@@ -3,6 +3,9 @@
 
 #include "basis.hpp"
 
+#include <map>
+#include <memory>
+#include <mutex>
 #include <mfem.hpp>
 #include "utils/diagnostic.hpp"
 
@@ -11,6 +14,49 @@ namespace palace::ceed
 
 namespace
 {
+
+int TetNumModes(int degree)
+{
+  return (degree + 1) * (degree + 2) * (degree + 3) / 6;
+}
+
+const mfem::IntegrationRule &GetRegisteredTetLatticeRule(int degree)
+{
+  static std::map<int, std::unique_ptr<mfem::IntegrationRule>> registry;
+  static std::mutex registry_mutex;
+  std::lock_guard<std::mutex> lock(registry_mutex);
+  auto it = registry.find(degree);
+  if (it == registry.end())
+  {
+    auto ir = std::make_unique<mfem::IntegrationRule>(TetNumModes(degree));
+    int q = 0;
+    if (degree == 0)
+    {
+      ir->IntPoint(q).Set3(0.25, 0.25, 0.25);
+      ir->IntPoint(q++).weight = 1.0;
+    }
+    else
+    {
+      for (int total = 0; total <= degree; total++)
+      {
+        for (int i = 0; i <= total; i++)
+        {
+          for (int j = 0; j <= total - i; j++)
+          {
+            const int k = total - i - j;
+            ir->IntPoint(q).Set3(static_cast<double>(i) / degree,
+                                 static_cast<double>(j) / degree,
+                                 static_cast<double>(k) / degree);
+            ir->IntPoint(q++).weight = 1.0;
+          }
+        }
+      }
+    }
+    MFEM_ASSERT(q == ir->GetNPoints(), "Invalid tetrahedral lattice rule size!");
+    it = registry.emplace(degree, std::move(ir)).first;
+  }
+  return *it->second;
+}
 
 void InitTensorBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
                      CeedInt num_comp, Ceed ceed, CeedBasis *basis)
@@ -194,8 +240,22 @@ void InitBasisAtPoints(const mfem::FiniteElement &fe, const mfem::IntegrationRul
 {
   // Always use full tabulation: the integration rule points may be arbitrary (not a
   // tensor-product rule), which the tensor basis construction cannot represent. The
-  // corresponding element restriction must use native dof ordering.
+  // corresponding element restriction must use native dof ordering. The caller must
+  // keep ir alive while the finite element can retain its pointer-keyed DofToQuad cache.
   InitNonTensorBasis(fe, ir, num_comp, ceed, basis);
+}
+
+void InitTetBasisAtPoints(const mfem::FiniteElement &fe, bool grad_only, CeedInt num_comp,
+                          Ceed ceed, CeedBasis *basis)
+{
+  MFEM_VERIFY(fe.GetGeomType() == mfem::Geometry::TETRAHEDRON,
+              "Tetrahedral AtPoints basis requested for a non-tetrahedral element!");
+  // MAGMA's non-tensor AtPoints basis construction requires tabulation points that
+  // overdetermine the complete polynomial space. One extra lattice degree provides a
+  // deterministic overdetermined reconstruction. The registered rule has application
+  // lifetime to satisfy MFEM's pointer-keyed DofToQuad cache.
+  const int degree = std::max(0, fe.GetOrder() - (grad_only ? 1 : 0) + 1);
+  InitBasisAtPoints(fe, GetRegisteredTetLatticeRule(degree), num_comp, ceed, basis);
 }
 
 void InitInterpolatorBasis(const mfem::FiniteElement &trial_fe,

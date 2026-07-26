@@ -34,8 +34,8 @@ namespace
 
 // Key identifying one export point-evaluator group. The request supplies an
 // integer/topological point_key (reference-face topology/orientation/subface identity),
-// so grouping never depends on rounded physical or reference point coordinates. Ad-hoc
-// requests with an empty point_key receive a unique request-order key.
+// so normal grouping never depends on rounded physical or reference point coordinates.
+// Ad-hoc requests with an empty point_key use exact coordinate bits.
 using PointConfigKey = std::vector<long long>;
 
 // Message tags for the setup (payload size, payload) and evaluation exchanges. A
@@ -43,6 +43,30 @@ using PointConfigKey = std::vector<long long>;
 // every exchange object in the same order, so per-pair messages match in order (MPI
 // non-overtaking guarantee).
 constexpr int TAG_SETUP_SIZE = 1741, TAG_SETUP_PAYLOAD = 1742, TAG_EVAL = 1743;
+
+void VerifyRegisteredIr(const mfem::IntegrationRule &ir,
+                        const std::vector<mfem::IntegrationPoint> &pts)
+{
+  MFEM_VERIFY(ir.GetNPoints() == static_cast<int>(pts.size()),
+              "Face-neighbor point key reused with a different point count!");
+  for (int q = 0; q < ir.GetNPoints(); q++)
+  {
+    const auto &a = ir.IntPoint(q);
+    const auto &b = pts[static_cast<std::size_t>(q)];
+    const double err = std::max({std::abs(a.x - b.x), std::abs(a.y - b.y),
+                                 std::abs(a.z - b.z), std::abs(a.weight - b.weight)});
+    MFEM_VERIFY(err <= 1.0e-12,
+                "Face-neighbor point key reused for different reference points!");
+  }
+}
+
+long long EncodePointCoordinate(double x)
+{
+  static_assert(sizeof(long long) == sizeof(double));
+  long long bits;
+  std::memcpy(&bits, &x, sizeof(bits));
+  return bits;
+}
 
 // Registry of evaluation point integration rules with application lifetime (as in
 // output_functionals.cpp): mfem::FiniteElement::GetDofToQuad caches tabulations keyed by
@@ -65,6 +89,10 @@ const mfem::IntegrationRule *GetRegisteredIr(const PointConfigKey &key,
     }
     it = registry.emplace(key, std::move(ir)).first;
   }
+  else
+  {
+    VerifyRegisteredIr(*it->second, pts);
+  }
   return it->second.get();
 }
 
@@ -74,57 +102,6 @@ bool CeedSupportsNonTensorAtPoints(Ceed ceed)
   PalaceCeedCall(ceed, CeedGetResource(ceed, &resource));
   return std::strstr(resource, "/cpu/self") || std::strstr(resource, "/gpu/cuda/ref") ||
          std::strstr(resource, "/gpu/cuda/magma");
-}
-
-int TetNumModes(int degree)
-{
-  return (degree + 1) * (degree + 2) * (degree + 3) / 6;
-}
-
-mfem::IntegrationRule MakeTetLatticeRule(int degree)
-{
-  mfem::IntegrationRule ir(TetNumModes(degree));
-  int q = 0;
-  if (degree == 0)
-  {
-    ir.IntPoint(q).Set3(0.25, 0.25, 0.25);
-    ir.IntPoint(q++).weight = 1.0;
-  }
-  else
-  {
-    for (int total = 0; total <= degree; total++)
-    {
-      for (int i = 0; i <= total; i++)
-      {
-        for (int j = 0; j <= total - i; j++)
-        {
-          const int k = total - i - j;
-          ir.IntPoint(q).Set3(static_cast<double>(i) / degree,
-                              static_cast<double>(j) / degree,
-                              static_cast<double>(k) / degree);
-          ir.IntPoint(q++).weight = 1.0;
-        }
-      }
-    }
-  }
-  return ir;
-}
-
-void InitTetBasisForAtPoints(const mfem::FiniteElement &fe, bool grad_only,
-                             CeedInt num_comp, Ceed ceed, CeedBasis *basis)
-{
-  MFEM_VERIFY(fe.GetGeomType() == mfem::Geometry::TETRAHEDRON,
-              "FaceNbrFieldExchange AtPoints export currently supports tetrahedral "
-              "volume elements only!");
-  // MAGMA's hardened non-tensor AtPoints basis construction (libCEED
-  // cuda-nontensor-atpoints branch) requires tabulation points that overdetermine the
-  // complete polynomial space for non-H1 spaces; square tabulations are rejected. Bump the
-  // lattice by one degree, matching the InitTetBasisForAtPoints copy in
-  // output_functionals.cpp, since this exchange builds bases for the same ND/RT field
-  // spaces.
-  const int degree = std::max(0, fe.GetOrder() - (grad_only ? 1 : 0) + 1);
-  const mfem::IntegrationRule ir = MakeTetLatticeRule(degree);
-  ceed::InitBasisAtPoints(fe, ir, num_comp, ceed, basis);
 }
 
 void CreateSequentialPointRestriction(Ceed ceed, std::size_t num_elem, int nq, int num_comp,
@@ -280,8 +257,7 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
   // export evaluators use runtime point coordinates so requests with the same
   // source/geometry/point count can share one operator even when their finite NC trace
   // maps differ. Other backends keep the mapped-integration-rule grouping by
-  // integer/topological point-key data; empty keys intentionally fall back to unique
-  // request-order groups.
+  // integer/topological point-key data; empty keys use exact serialized point bits.
   struct ExportGroup
   {
     bool at_points = false;
@@ -290,7 +266,6 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     std::vector<int> bases;  // Export vector base offset per element entry
   };
   std::map<PointConfigKey, ExportGroup> export_map;
-  int export_group_id = 0;
   int export_size = 0;
   for (int i = 0; i < num_nbr; i++)
   {
@@ -331,16 +306,25 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
                       "Missing finite element space for received source slot!");
           const bool at_points_group = use_at_points && geom == mfem::Geometry::TETRAHEDRON;
           PointConfigKey key;
-          key.reserve(5 + point_key.size());
+          key.reserve(5 + point_key.size() + (point_key.empty() ? 3 * pts.size() : 0));
           key.push_back(s);
           key.push_back(static_cast<long long>(geom));
           key.push_back(nq);
           key.push_back(static_cast<long long>(at_points_group));
           if (!at_points_group)
           {
+            key.push_back(point_key.empty() ? 0 : 1);
             if (point_key.empty())
             {
-              key.push_back(export_group_id++);
+              // Ad-hoc requests have no topological key. Use the exact serialized point
+              // bits so distinct requests cannot alias in the application-lifetime rule
+              // registry, while repeated identical requests still reuse their rule.
+              for (const auto &ip : pts)
+              {
+                key.push_back(EncodePointCoordinate(ip.x));
+                key.push_back(EncodePointCoordinate(ip.y));
+                key.push_back(EncodePointCoordinate(ip.z));
+              }
             }
             else
             {
@@ -435,8 +419,8 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     CeedBasis mesh_basis;
     if (group.at_points)
     {
-      InitTetBasisForAtPoints(*mesh_fe, /*grad_only*/ true, mesh_fespace.GetVDim(), ceed,
-                              &mesh_basis);
+      ceed::InitTetBasisAtPoints(*mesh_fe, /*grad_only*/ true, mesh_fespace.GetVDim(), ceed,
+                                 &mesh_basis);
     }
     else
     {
@@ -453,8 +437,8 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
     CeedBasis field_basis;
     if (group.at_points)
     {
-      InitTetBasisForAtPoints(*fe, /*grad_only*/ false, fespace.GetVDim(), ceed,
-                              &field_basis);
+      ceed::InitTetBasisAtPoints(*fe, /*grad_only*/ false, fespace.GetVDim(), ceed,
+                                 &field_basis);
     }
     else
     {

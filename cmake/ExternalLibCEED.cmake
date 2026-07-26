@@ -125,7 +125,7 @@ ExternalProject_Add(libCEED
   PATCH_COMMAND
     git reset --hard &&
     git clean -fd &&
-    git apply "${LIBCEED_PATCH_FILES}"
+    git apply ${LIBCEED_PATCH_FILES}
   CONFIGURE_COMMAND ""
   BUILD_COMMAND     ""
   INSTALL_COMMAND   ${CMAKE_MAKE_PROGRAM} ${LIBCEED_OPTIONS} install

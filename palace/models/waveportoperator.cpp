@@ -844,7 +844,7 @@ std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) co
 
   // Set two_sided = true even on the exterior port surface so the QFunction uses the
   // fixed outward normal directly (no x0-based reorientation).
-  if (!power_func && SurfaceFunctional::Enabled())
+  if (!power_func)
   {
     int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
     mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, attr_list);
@@ -861,7 +861,7 @@ std::complex<double> WavePortData::GetPower(GridFunction &E, GridFunction &B) co
     // outward normal, contributions negated), matching LumpedPortData::GetPower.
     return power_func->EvalComplexPower(E, B);
   }
-  if (SurfaceFunctional::Enabled() && mesh.Dimension() == 3 && mesh.SpaceDimension() == 3)
+  if (mesh.Dimension() == 3 && mesh.SpaceDimension() == 3)
   {
     MFEM_VERIFY(power_func && power_func->IsValid(),
                 "libCEED wave-port power postprocessing could not assemble for a "

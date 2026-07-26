@@ -28,6 +28,12 @@ void InitBasis(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir, i
 void InitBasisAtPoints(const mfem::FiniteElement &fe, const mfem::IntegrationRule &ir,
                        int num_comp, Ceed ceed, CeedBasis *basis);
 
+// Initialize a tetrahedral AtPoints basis using an overdetermined polynomial lattice.
+// The registered lattice rules have application lifetime because MFEM caches DofToQuad
+// tabulations by IntegrationRule pointer inside shared finite elements.
+void InitTetBasisAtPoints(const mfem::FiniteElement &fe, bool grad_only, int num_comp,
+                          Ceed ceed, CeedBasis *basis);
+
 void InitInterpolatorBasis(const mfem::FiniteElement &trial_fe,
                            const mfem::FiniteElement &test_fe, int trial_num_comp,
                            int test_num_comp, Ceed ceed, CeedBasis *basis);

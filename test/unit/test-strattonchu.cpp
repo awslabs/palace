@@ -241,27 +241,34 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   SurfacePostOperator surf_post_op(postpro, ProblemType::DRIVEN, mat_op, nd_fespace,
                                    nd_fespace);
 
-  auto thetaphis = GenerateSphericalTestPoints();
   double omega_rad_per_time =
       2 * M_PI * units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
   constexpr double omega_im = 0.0;
-  auto rE_computed = surf_post_op.GetFarFieldrE(thetaphis, E_field, B_field,
-                                                {omega_rad_per_time, omega_im});
-
-  // Validate computed far-field against analytical solution
-  for (std::size_t i = 0; i < thetaphis.size(); i++)
+  auto CheckFarField = [&](const std::vector<std::pair<double, double>> &thetaphis)
   {
-    const auto &E_phys = units.Dimensionalize<Units::ValueType::VOLTAGE>(rE_computed[i]);
-    const auto &[theta, phi] = thetaphis[i];
-    auto rE_far = ComputeAnalyticalFarFieldrE(theta, phi, p0, freq_Hz);
-
-    for (std::size_t j = 0; j < dim; j++)
+    auto rE_computed = surf_post_op.GetFarFieldrE(thetaphis, E_field, B_field,
+                                                  {omega_rad_per_time, omega_im});
+    REQUIRE(rE_computed.size() == thetaphis.size());
+    for (std::size_t i = 0; i < thetaphis.size(); i++)
     {
-      // The agreement has to be up to a phase, so we compare the absolute values.
-      CHECK_THAT(std::abs(E_phys[j]),
-                 WithinRel(std::abs(rE_far[j]), rtol) || WithinAbs(0.0, atol));
+      const auto &E_phys = units.Dimensionalize<Units::ValueType::VOLTAGE>(rE_computed[i]);
+      const auto &[theta, phi] = thetaphis[i];
+      auto rE_far = ComputeAnalyticalFarFieldrE(theta, phi, p0, freq_Hz);
+
+      for (std::size_t j = 0; j < dim; j++)
+      {
+        // The agreement has to be up to a phase, so we compare the absolute values.
+        CHECK_THAT(std::abs(E_phys[j]),
+                   WithinRel(std::abs(rE_far[j]), rtol) || WithinAbs(0.0, atol));
+      }
     }
-  }
+  };
+
+  CheckFarField(GenerateSphericalTestPoints());
+  // Observation directions are part of the assembled libCEED functional. A second call
+  // with a different-sized set must rebuild the cached functional rather than silently
+  // returning values for the first call's directions.
+  CheckFarField({{0.27, 0.41}, {1.03, 2.17}, {2.35, 5.02}});
 }
 
 TEST_CASE("Dipole field implementation", "[strattonchu][Serial]")

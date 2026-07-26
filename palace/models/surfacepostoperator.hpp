@@ -99,6 +99,7 @@ private:
   // boundary LinearForm assembly in the legacy paths when supported.
   mutable std::map<int, std::unique_ptr<SurfaceFunctional>> flux_funcs, eps_funcs;
   mutable std::unique_ptr<SurfaceFunctional> farfield_func;
+  mutable std::vector<std::array<double, 3>> farfield_func_dirs;
 
 public:
   // Data structures for postprocessing the surface with the given type.

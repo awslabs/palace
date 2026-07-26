@@ -1722,32 +1722,62 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
   Mpi::GlobalSum(3 * r_naughts.size(), integrals_r.data()->data(), comm);
   Mpi::GlobalSum(3 * r_naughts.size(), integrals_i.data()->data(), comm);
 
-  SurfaceFunctional farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts);
-  REQUIRE(farfield.IsValid());
-  auto result = farfield.EvalFarField(E, B, {omega_re, omega_im});
-  REQUIRE(result.size() == r_naughts.size());
-  for (std::size_t d = 0; d < r_naughts.size(); d++)
+  std::vector<std::array<std::complex<double>, 3>> result;
   {
-    const auto &r = r_naughts[d];
-    const auto &Ir = integrals_r[d];
-    const auto &Ii = integrals_i[d];
-    const std::array<double, 3> cr = {r[1] * Ir[2] - r[2] * Ir[1],
-                                      r[2] * Ir[0] - r[0] * Ir[2],
-                                      r[0] * Ir[1] - r[1] * Ir[0]};
-    const std::array<double, 3> ci = {r[1] * Ii[2] - r[2] * Ii[1],
-                                      r[2] * Ii[0] - r[0] * Ii[2],
-                                      r[0] * Ii[1] - r[1] * Ii[0]};
+    SurfaceFunctional farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op, r_naughts);
+    REQUIRE(farfield.IsValid());
+    result = farfield.EvalFarField(E, B, {omega_re, omega_im});
+    REQUIRE(result.size() == r_naughts.size());
+    for (std::size_t d = 0; d < r_naughts.size(); d++)
+    {
+      const auto &r = r_naughts[d];
+      const auto &Ir = integrals_r[d];
+      const auto &Ii = integrals_i[d];
+      const std::array<double, 3> cr = {r[1] * Ir[2] - r[2] * Ir[1],
+                                        r[2] * Ir[0] - r[0] * Ir[2],
+                                        r[0] * Ir[1] - r[1] * Ir[0]};
+      const std::array<double, 3> ci = {r[1] * Ii[2] - r[2] * Ii[1],
+                                        r[2] * Ii[0] - r[0] * Ii[2],
+                                        r[0] * Ii[1] - r[1] * Ii[0]};
+      for (int c = 0; c < 3; c++)
+      {
+        CAPTURE(d, c, cr[c], ci[c], result[d][c].real(), result[d][c].imag());
+        CHECK(result[d][c].real() == Catch::Approx(cr[c]).epsilon(1.0e-10).margin(1.0e-14));
+        CHECK(result[d][c].imag() == Catch::Approx(ci[c]).epsilon(1.0e-10).margin(1.0e-14));
+      }
+    }
+
+    // Changing the frequency must reassemble and still agree (different result).
+    auto result2 = farfield.EvalFarField(E, B, {2.0 * omega_re, 0.0});
+    CHECK(std::abs(result2[0][0] - result[0][0]) > 0.0);
+  }
+
+  // Reconstruct against the same live finite element collections. MFEM retains
+  // DofToQuad caches after the first functional is destroyed, so AtPoints lattice rules
+  // must retain application lifetime.
+  SurfaceFunctional rebuilt_farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op,
+                                     r_naughts);
+  REQUIRE(rebuilt_farfield.IsValid());
+  const auto rebuilt_result = rebuilt_farfield.EvalFarField(E, B, {omega_re, omega_im});
+  REQUIRE(rebuilt_result.size() == result.size());
+  for (std::size_t d = 0; d < result.size(); d++)
+  {
     for (int c = 0; c < 3; c++)
     {
-      CAPTURE(d, c, cr[c], ci[c], result[d][c].real(), result[d][c].imag());
-      CHECK(result[d][c].real() == Catch::Approx(cr[c]).epsilon(1.0e-10).margin(1.0e-14));
-      CHECK(result[d][c].imag() == Catch::Approx(ci[c]).epsilon(1.0e-10).margin(1.0e-14));
+      CHECK(rebuilt_result[d][c].real() ==
+            Catch::Approx(result[d][c].real()).epsilon(1.0e-12).margin(1.0e-14));
+      CHECK(rebuilt_result[d][c].imag() ==
+            Catch::Approx(result[d][c].imag()).epsilon(1.0e-12).margin(1.0e-14));
     }
   }
 
-  // Changing the frequency must reassemble and still agree (different result).
-  auto result2 = farfield.EvalFarField(E, B, {2.0 * omega_re, 0.0});
-  CHECK(std::abs(result2[0][0] - result[0][0]) > 0.0);
+  // Interior far-field surfaces are invalid. Construction must make that decision
+  // collectively even when only some ranks own elements of the marked interface.
+  marker = 0;
+  marker[7 - 1] = 1;
+  SurfaceFunctional interior_farfield(*mesh, marker, nd_fespace, rt_fespace, mat_op,
+                                      r_naughts);
+  REQUIRE_FALSE(interior_farfield.IsValid());
 }
 
 #if defined(MFEM_USE_GSLIB)
@@ -1785,49 +1815,68 @@ TEST_CASE("InterpolationOperator Ceed Probes", "[surfacefunctional][Serial][Para
   E.Real().ProjectCoefficient(fer);
   E.Imag().ProjectCoefficient(fei);
 
-  // Probe points (element interiors, in both material regions; points on element
-  // borders are avoided since interpolated values of H(curl) fields are multi-valued
-  // there and the GSLIB reference resolves the donor element rank-dependently).
-  std::map<int, config::ProbeData> probes;
-  const std::array<std::array<double, 3>, 3> pts = {
-      {{0.21, 0.37, 0.23}, {0.74, 0.52, 0.81}, {0.53, 0.48, 0.52}}};
-  for (std::size_t i = 0; i < pts.size(); i++)
-  {
-    config::ProbeData data;
-    data.center = pts[i];
-    probes.emplace(static_cast<int>(i + 1), data);
-  }
+  // Probe points are in element interiors and both material regions. Use enough points
+  // to select the libCEED path, and compare against direct GSLIB interpolation.
   Units units(1.0, 1.0);
-  InterpolationOperator interp(probes, units, nd_fespace);
-
-  // Reference: GSLIB interpolation at the same points (byVDIM).
-  const int npts = static_cast<int>(pts.size());
-  mfem::Vector xyz(npts * 3), vals_r(npts * 3), vals_i(npts * 3);
-  for (int i = 0; i < npts; i++)
+  auto CheckProbes = [&](const std::array<std::array<double, 3>, 8> &pts)
   {
-    for (int d = 0; d < 3; d++)
+    std::map<int, config::ProbeData> probes;
+    for (std::size_t i = 0; i < pts.size(); i++)
     {
-      xyz(d * npts + i) = pts[i][d];
+      config::ProbeData data;
+      data.center = pts[i];
+      probes.emplace(static_cast<int>(i + 1), data);
     }
-  }
-  fem::InterpolateFunction(xyz, E.Real(), vals_r, mfem::Ordering::byNODES);
-  fem::InterpolateFunction(xyz, E.Imag(), vals_i, mfem::Ordering::byNODES);
+    InterpolationOperator interp(probes, units, nd_fespace);
 
-  auto vals = interp.ProbeField(E);
-  REQUIRE(static_cast<int>(vals.size()) == npts * 3);
-  for (int i = 0; i < npts; i++)
-  {
-    for (int d = 0; d < 3; d++)
+    const int npts = static_cast<int>(pts.size());
+    mfem::Vector xyz(npts * 3), vals_r(npts * 3), vals_i(npts * 3);
+    for (int i = 0; i < npts; i++)
     {
-      // ProbeField returns byVDIM; the InterpolateFunction reference returns with the
-      // requested (byNODES) ordering.
-      const auto val = vals[3 * i + d];
-      const double ref_r = vals_r(d * npts + i), ref_i = vals_i(d * npts + i);
-      CAPTURE(i, d, ref_r, ref_i);
-      CHECK(val.real() == Catch::Approx(ref_r).epsilon(1.0e-9).margin(1.0e-12));
-      CHECK(val.imag() == Catch::Approx(ref_i).epsilon(1.0e-9).margin(1.0e-12));
+      for (int d = 0; d < 3; d++)
+      {
+        xyz(d * npts + i) = pts[i][d];
+      }
     }
-  }
+    fem::InterpolateFunction(xyz, E.Real(), vals_r, mfem::Ordering::byNODES);
+    fem::InterpolateFunction(xyz, E.Imag(), vals_i, mfem::Ordering::byNODES);
+
+    auto vals = interp.ProbeField(E);
+    REQUIRE(static_cast<int>(vals.size()) == npts * 3);
+    for (int i = 0; i < npts; i++)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        // ProbeField returns byVDIM; the reference uses the requested byNODES ordering.
+        const auto val = vals[3 * i + d];
+        const double ref_r = vals_r(d * npts + i), ref_i = vals_i(d * npts + i);
+        CAPTURE(i, d, ref_r, ref_i);
+        CHECK(val.real() == Catch::Approx(ref_r).epsilon(1.0e-9).margin(1.0e-12));
+        CHECK(val.imag() == Catch::Approx(ref_i).epsilon(1.0e-9).margin(1.0e-12));
+      }
+    }
+  };
+
+  const std::array<std::array<double, 3>, 8> pts_1 = {{{0.21, 0.37, 0.23},
+                                                       {0.74, 0.52, 0.81},
+                                                       {0.53, 0.48, 0.52},
+                                                       {0.13, 0.68, 0.34},
+                                                       {0.32, 0.82, 0.67},
+                                                       {0.87, 0.16, 0.42},
+                                                       {0.61, 0.29, 0.73},
+                                                       {0.43, 0.57, 0.89}}};
+  const std::array<std::array<double, 3>, 8> pts_2 = {{{0.17, 0.31, 0.27},
+                                                       {0.78, 0.56, 0.84},
+                                                       {0.58, 0.44, 0.54},
+                                                       {0.11, 0.72, 0.38},
+                                                       {0.36, 0.86, 0.63},
+                                                       {0.83, 0.19, 0.46},
+                                                       {0.66, 0.24, 0.77},
+                                                       {0.47, 0.61, 0.92}}};
+  CheckProbes(pts_1);
+  // CheckProbes destroys its InterpolationOperator. Reconstruct one with different
+  // coordinates while nd_fespace and its MFEM DofToQuad caches remain alive.
+  CheckProbes(pts_2);
 }
 #endif
 

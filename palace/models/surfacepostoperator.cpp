@@ -325,7 +325,7 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
   // Use the libCEED surface functional path when supported, avoiding per-call
   // boundary LinearForm assembly in the legacy coefficient path.
   auto &func = flux_funcs[idx];
-  if (!func && SurfaceFunctional::Enabled())
+  if (!func)
   {
     func = std::make_unique<SurfaceFunctional>(
         mat_op.GetMesh(), attr_marker, E ? E->ParFESpace() : nullptr,
@@ -336,7 +336,7 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
   {
     return func->EvalFlux(E, B);
   }
-  if (SurfaceFunctional::Enabled() && IsSupportedSurfaceFluxDimension(mesh))
+  if (IsSupportedSurfaceFluxDimension(mesh))
   {
     RequireCeedSurfaceFunctional(func.get(), "3D surface flux");
   }
@@ -383,7 +383,7 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
   // Use the libCEED surface functional path when supported, avoiding per-call
   // boundary LinearForm assembly in the legacy coefficient path.
   auto &func = eps_funcs[idx];
-  if (!func && SurfaceFunctional::Enabled())
+  if (!func)
   {
     func = std::make_unique<SurfaceFunctional>(mat_op.GetMesh(), attr_marker,
                                                *E.ParFESpace(), mat_op, it->second.type,
@@ -393,7 +393,7 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
   {
     return func->Eval(E);
   }
-  if (SurfaceFunctional::Enabled() && IsSupportedSurfaceFunctionalDimension(mesh))
+  if (IsSupportedSurfaceFunctionalDimension(mesh))
   {
     RequireCeedSurfaceFunctional(func.get(), "interface dielectric postprocessing");
   }
@@ -432,8 +432,6 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   // Compute target unit vectors from the given theta and phis.
   std::vector<std::array<double, 3>> r_naughts;
   r_naughts.reserve(theta_phi_pairs.size());
-
-  r_naughts.reserve(theta_phi_pairs.size());
   for (const auto &[theta, phi] : theta_phi_pairs)
   {
     r_naughts.emplace_back(std::array<double, 3>{
@@ -445,17 +443,20 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, farfield.attr_list);
 
   // Use the libCEED surface functional path when supported, avoiding per-point host
-  // coefficient evaluation in the legacy path.
-  if (!farfield_func && SurfaceFunctional::Enabled() && E.HasImag() && B.HasImag())
+  // coefficient evaluation in the MFEM path. Observation directions are part of the
+  // assembled operator and must therefore invalidate the cached functional when changed.
+  const bool use_ceed = E.HasImag() && B.HasImag();
+  if (use_ceed && (!farfield_func || farfield_func_dirs != r_naughts))
   {
     farfield_func = std::make_unique<SurfaceFunctional>(
         mat_op.GetMesh(), attr_marker, *E.ParFESpace(), *B.ParFESpace(), mat_op, r_naughts);
+    farfield_func_dirs = r_naughts;
   }
-  if (farfield_func && farfield_func->IsValid())
+  if (use_ceed && farfield_func && farfield_func->IsValid())
   {
     return farfield_func->EvalFarField(E, B, omega);
   }
-  if (SurfaceFunctional::Enabled() && E.HasImag() && B.HasImag())
+  if (use_ceed)
   {
     RequireCeedSurfaceFunctional(farfield_func.get(), "3D far-field postprocessing");
   }

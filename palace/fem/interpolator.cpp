@@ -3,9 +3,13 @@
 
 #include "interpolator.hpp"
 
-#include <deque>
+#include <array>
+#include <cstdint>
+#include <cstring>
 #include <limits>
+#include <map>
 #include <memory>
+#include <mutex>
 
 #include <algorithm>
 #include "fem/fespace.hpp"
@@ -19,7 +23,6 @@
 #include "fem/libceed/ceed.hpp"
 #include "fem/libceed/functional.hpp"
 #include "fem/libceed/restriction.hpp"
-#include "fem/postprocessing_backend.hpp"
 #include "utils/diagnostic.hpp"
 
 PalacePragmaDiagnosticPush
@@ -38,6 +41,40 @@ namespace
 constexpr auto GSLIB_BB_TOL = 0.01;  // MFEM defaults, slightly reduced bounding box
 constexpr auto GSLIB_NEWTON_TOL = 1.0e-12;
 
+#if defined(MFEM_USE_GSLIB)
+
+using PointRuleKey = std::array<std::uint64_t, 4>;
+
+std::uint64_t EncodePointCoordinate(double x)
+{
+  static_assert(sizeof(std::uint64_t) == sizeof(double));
+  std::uint64_t bits;
+  std::memcpy(&bits, &x, sizeof(bits));
+  return bits;
+}
+
+// MFEM caches DofToQuad tabulations by IntegrationRule pointer in the shared finite
+// elements. Keep every rule passed to InitBasisAtPoints alive for the application
+// lifetime; exact IEEE data, including the weight, makes reuse collision-safe.
+const mfem::IntegrationRule &GetRegisteredPointRule(const mfem::IntegrationPoint &ip)
+{
+  static std::map<PointRuleKey, std::unique_ptr<mfem::IntegrationRule>> registry;
+  static std::mutex registry_mutex;
+  const PointRuleKey key = {EncodePointCoordinate(ip.x), EncodePointCoordinate(ip.y),
+                            EncodePointCoordinate(ip.z), EncodePointCoordinate(ip.weight)};
+  std::lock_guard<std::mutex> lock(registry_mutex);
+  auto it = registry.find(key);
+  if (it == registry.end())
+  {
+    auto ir = std::make_unique<mfem::IntegrationRule>(1);
+    ir->IntPoint(0) = ip;
+    it = registry.emplace(key, std::move(ir)).first;
+  }
+  return *it->second;
+}
+
+#endif
+
 }  // namespace
 
 #if defined(MFEM_USE_GSLIB)
@@ -51,7 +88,6 @@ class CeedProbeEvaluator
 {
 private:
   std::vector<fem::CeedGroupOperator> groups;
-  std::deque<std::unique_ptr<mfem::IntegrationRule>> point_irs;  // Tabulation lifetime
   mutable Vector field_staging, local_out;
   MPI_Comm comm;
   bool valid = true;
@@ -104,12 +140,12 @@ public:
 
       // FindPointsGSLIB::GetReferencePosition returns mfem reference coordinates of
       // the original mesh element (point-major).
-      auto ir = std::make_unique<mfem::IntegrationRule>(1);
-      mfem::IntegrationPoint &ip = ir->IntPoint(0);
+      mfem::IntegrationPoint ip;
       ip.Set3(op.GetReferencePosition()[i * dim + 0],
               op.GetReferencePosition()[i * dim + 1],
               op.GetReferencePosition()[i * dim + 2]);
       ip.weight = 1.0;
+      const mfem::IntegrationRule &ir = GetRegisteredPointRule(ip);
       const std::vector<int> indices = {elem};
 
       std::vector<ceed::CeedFunctionalFieldInput> inputs;
@@ -120,7 +156,7 @@ public:
         const mfem::FiniteElement *mesh_fe =
             mesh_fespace.FEColl()->FiniteElementForGeometry(geom);
         CeedBasis mesh_basis;
-        ceed::InitBasisAtPoints(*mesh_fe, *ir, mesh_fespace.GetVDim(), ceed, &mesh_basis);
+        ceed::InitBasisAtPoints(*mesh_fe, ir, mesh_fespace.GetVDim(), ceed, &mesh_basis);
         CeedVector mesh_nodes_vec;
         ceed::InitCeedVector(*mesh.GetNodes(), ceed, &mesh_nodes_vec);
         inputs.push_back(
@@ -130,7 +166,7 @@ public:
                               &field_restr);
         const mfem::FiniteElement *fe = fespace.FEColl()->FiniteElementForGeometry(geom);
         CeedBasis field_basis;
-        ceed::InitBasisAtPoints(*fe, *ir, fespace.GetVDim(), ceed, &field_basis);
+        ceed::InitBasisAtPoints(*fe, ir, fespace.GetVDim(), ceed, &field_basis);
         CeedVector field_vec;
         ceed::InitCeedVector(field_staging, ceed, &field_vec);
         inputs.push_back(
@@ -168,7 +204,6 @@ public:
         PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_basis));
         PalaceCeedCall(ceed, CeedBasisDestroy(&field_basis));
       }
-      point_irs.push_back(std::move(ir));
     }
   }
 
@@ -260,7 +295,7 @@ std::vector<double> InterpolationOperator::ProbeField(const mfem::ParGridFunctio
   // GSLIB interpolation path, especially in driven postprocessing where only a few
   // fixed monitor points are evaluated once or twice.
   constexpr int ceed_probe_min_points = 8;
-  if (fem::LibceedPostprocessingEnabled() && npts >= ceed_probe_min_points)
+  if (npts >= ceed_probe_min_points)
   {
     auto &eval = ceed_probes[U.FESpace()];
     if (!eval)

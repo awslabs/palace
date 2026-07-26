@@ -21,23 +21,7 @@ namespace palace
 class GridFunction;
 class MaterialOperator;
 class Mesh;
-class PointFieldEvaluator;
 class FaceNbrFieldExchange;
-
-// Non-reducing boundary point field kinds. These are private SurfaceFunctional backend
-// hooks used by the ParaView/GridFunction follow-up; the output-functional PR keeps the
-// enum here so the reducing functional implementation is self-contained without pulling
-// in the point-field evaluator API.
-enum class PointFieldKind : char
-{
-  FIELD_E,    // H(curl) E field values
-  FIELD_B,    // H(div) B field values
-  FLUX_Q,     // Surface charge (eps E) . n
-  CURRENT_J,  // Surface current n x (mu^-1 B)
-  ENERGY_E,   // Electric energy density
-  ENERGY_M,   // Magnetic energy density
-  POYNTING    // Poynting vector E x (mu^-1 B)
-};
 
 // Description of a real vector-valued mode coefficient on a marked boundary surface.
 // UNIFORM represents scale * direction. COAXIAL represents scale * (x - origin) /
@@ -60,19 +44,18 @@ struct SurfaceModeCoefficient
 //
 // Class to compute reducing output functionals (integrals of functions of solution
 // fields) over boundary element sets using libCEED, supporting full (non-trace)
-// evaluation of volume fields at boundary element quadrature points. Non-reducing
-// visualization point fields are exposed through PointFieldEvaluator, which uses private
-// boundary point-field assembly hooks here. This enables postprocessing measurements
-// (interface dielectric energy participation, surface fluxes, port powers, etc.) to
-// execute on the device, in contrast to the legacy mfem::Coefficient-based paths which
-// are host-only.
+// evaluation of volume fields at boundary element quadrature points. This enables
+// postprocessing measurements (interface dielectric energy participation, surface
+// fluxes, port powers, etc.) to execute on the device, in contrast to the legacy
+// mfem::Coefficient-based paths which are host-only.
 //
 // The key construction: for each boundary element, the field is evaluated from an
 // attached volume element (or both, with averaging or differencing, for interior
 // boundaries, following the conventions of BdrGridFunctionCoefficient and its derived
-// legacy coefficients). AtPoints-capable groups keep mapped reference points as runtime
-// data; mapped-integration-rule groups use per-assembly integer identities rather than
-// rounded coordinate keys. Processor-boundary ghost values are requested through
+// coefficients). AtPoints-capable groups keep mapped reference points as runtime data;
+// mapped-integration-rule groups use per-assembly registry identities plus finite
+// MFEM/NCMesh topology keys rather than rounded point-cloud keys. Processor-boundary
+// ghost values are requested through
 // FaceNbrFieldExchange with integer/topological reference-face orientation keys so point
 // identity never depends on fuzzy coordinate matching.
 //
@@ -89,11 +72,6 @@ public:
   };
 
 private:
-  friend class PointFieldEvaluator;
-
-  // Internal backend selector. Public SurfaceFunctional::Kind is reduction-only;
-  // non-reducing boundary visualization entries are reachable only through
-  // PointFieldEvaluator's private backend hooks.
   enum class KernelKind
   {
     AREA,
@@ -101,44 +79,11 @@ private:
     INTERFACE_EPR,
     SURFACE_FLUX,
     FARFIELD,
-    MODE_OVERLAP,
-    BDR_FIELD_E,
-    BDR_FIELD_B,
-    BDR_FLUX_Q,
-    BDR_CURRENT_J,
-    BDR_ENERGY_E,
-    BDR_ENERGY_M,
-    BDR_POYNTING
+    MODE_OVERLAP
   };
 
   static KernelKind ToKernelKind(Kind kind);
-  static KernelKind ToKernelKind(PointFieldKind kind);
   static const char *KindName(KernelKind kind);
-
-  // Whether the backend kind fills a per-point visualization buffer (vs. computing
-  // reductions).
-  static bool IsBufferKind(KernelKind kind)
-  {
-    return kind == KernelKind::BDR_FIELD_E || kind == KernelKind::BDR_FIELD_B ||
-           kind == KernelKind::BDR_FLUX_Q || kind == KernelKind::BDR_CURRENT_J ||
-           kind == KernelKind::BDR_ENERGY_E || kind == KernelKind::BDR_ENERGY_M ||
-           kind == KernelKind::BDR_POYNTING;
-  }
-
-  // Number of components per visualization point for buffer kinds.
-  static int BufferNumComp(KernelKind kind)
-  {
-    return (kind == KernelKind::BDR_FLUX_Q || kind == KernelKind::BDR_ENERGY_E ||
-            kind == KernelKind::BDR_ENERGY_M)
-               ? 1
-               : 3;
-  }
-
-  // Total buffer size (all boundary elements, lattice points, components) and
-  // per-element point-base offsets for the boundary visualization field kinds. Vector
-  // buffers are component-major: x[points], y[points], z[points].
-  int BufferSize() const { return buffer_size; }
-  const std::vector<int> &BufferBases() const { return buffer_bases; }
 
   // Computation kind and integrand parameters.
   KernelKind kind;
@@ -150,15 +95,6 @@ private:
   std::vector<std::array<double, 3>> farfield_dirs;
   std::complex<double> farfield_omega = 0.0;
   std::map<int, SurfaceModeCoefficient> mode_coeff_by_attr;
-
-  // Boundary visualization field kinds: lattice refinement level, output scaling,
-  // total output buffer size, and per-boundary-element point-base offsets into the
-  // component-major buffer.
-  int viz_lod = 0;
-  double viz_scaling = 1.0;
-  int buffer_size = 0;
-  std::vector<int> buffer_bases;
-  std::vector<int> trace_bdr_indices;
 
   // Field finite element spaces (not owned): nd_fespace for H(curl) fields (source index
   // 0), rt_fespace for H(div) fields (source index 1). Either may be nullptr depending
@@ -210,36 +146,7 @@ private:
   // Zero the local output vector, apply, and return the local sum (no MPI reduction).
   double EvalLocal(const std::array<const Vector *, 4> &srcs) const;
 
-  // Construct boundary point-field evaluators. These are intentionally private to keep
-  // SurfaceFunctional reduction-oriented at call sites; PointFieldEvaluator owns the
-  // non-reducing visualization API.
-  SurfaceFunctional(PointFieldKind kind, const Mesh &mesh,
-                    const mfem::Array<int> &bdr_attr_marker,
-                    const mfem::ParFiniteElementSpace &fespace, int lod);
-  SurfaceFunctional(PointFieldKind kind, const Mesh &mesh,
-                    const mfem::Array<int> &bdr_attr_marker,
-                    const mfem::ParFiniteElementSpace &fespace,
-                    const MaterialOperator &mat_op, int lod, double scaling);
-  SurfaceFunctional(PointFieldKind kind, const Mesh &mesh,
-                    const mfem::Array<int> &bdr_attr_marker,
-                    const mfem::ParFiniteElementSpace &nd_fespace,
-                    const mfem::ParFiniteElementSpace &rt_fespace,
-                    const MaterialOperator &mat_op, int lod, double scaling);
-
-  // Fill boundary visualization buffers. Friend-only; non-reducing callers use
-  // PointFieldEvaluator. Continuous trace fields (E_t/B_n) use boundary/face DOFs
-  // directly on the MFEM boundary-element tessellation.
-  void EvalTraceFieldBuffer(const Vector &u, Vector &buffer) const;
-  void EvalBuffer(const Vector &u, Vector &buffer) const;
-  void EvalBuffer(const GridFunction &u, Vector &buffer) const;
-  void EvalBuffer(const GridFunction &E, const GridFunction &B, Vector &buffer) const;
-
 public:
-  // Returns false when libCEED surface functionals have been globally disabled via the
-  // PALACE_LEGACY_SURFACE_POSTPRO environment variable (legacy mfem::Coefficient paths
-  // are used instead, for debugging and benchmarking).
-  static bool Enabled();
-
   // Construct a functional over the boundary elements with marked attributes (marker
   // over global mfem boundary attributes). For field-less functionals (AREA), fespace
   // may be nullptr but the mesh is still required.

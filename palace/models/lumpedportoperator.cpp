@@ -269,18 +269,16 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
   // Compute port power, (E x H) ⋅ n = E ⋅ (-n x H), integrated over the port surface using
   // the computed E and H = μ⁻¹ B fields, where +n is the direction of propagation (into the
   // domain). The BdrSurfaceCurrentVectorCoefficient computes -n x H for an outward normal,
-  // so we multiply by -1. The linear form is reconstructed from scratch each time due to
-  // changing H.
+  // so we multiply by -1.
   MFEM_VERIFY((E.HasImag() && B.HasImag()) || (!E.HasImag() && !B.HasImag()),
               "Mismatch between real- and complex-valued E and B fields in port power "
               "calculation!");
-  const bool has_imag = E.HasImag();
   auto &nd_fespace = *E.ParFESpace();
   const auto &mesh = *nd_fespace.GetParMesh();
 
   // Use the libCEED surface functional path when supported, avoiding per-call
   // boundary LinearForm assembly in the legacy coefficient path.
-  if (!power_func && SurfaceFunctional::Enabled())
+  if (!power_func)
   {
     mfem::Array<int> attr_list;
     for (const auto &elem : elems)
@@ -299,7 +297,7 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
   {
     return power_func->EvalComplexPower(E, B);
   }
-  if (SurfaceFunctional::Enabled() && mesh.Dimension() == 3 && mesh.SpaceDimension() == 3)
+  if (mesh.Dimension() == 3 && mesh.SpaceDimension() == 3)
   {
     MFEM_VERIFY(power_func && power_func->IsValid(),
                 "libCEED lumped-port power postprocessing could not assemble for a "
@@ -310,9 +308,8 @@ std::complex<double> LumpedPortData::GetPower(GridFunction &E, GridFunction &B) 
 
 std::complex<double> LumpedPortData::GetPowerLegacy(GridFunction &E, GridFunction &B) const
 {
-  // Host fallback matching the original coefficient/linear-form implementation. This is
-  // still the cheapest path for very small port surfaces before libCEED JIT costs can be
-  // amortized over many samples.
+  // MFEM coefficient/linear-form implementation used for unsupported dimensions and as
+  // an independent numerical reference in tests.
   MFEM_VERIFY((E.HasImag() && B.HasImag()) || (!E.HasImag() && !B.HasImag()),
               "Mismatch between real- and complex-valued E and B fields in port power "
               "calculation!");
@@ -380,7 +377,7 @@ std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
 {
   // Compute the average voltage across the port using the same mode-overlap machinery as
   // S-parameters, with the voltage normalization coefficient.
-  if (!v_func && SurfaceFunctional::Enabled())
+  if (!v_func)
   {
     std::vector<SurfaceModeCoefficient> modes;
     modes.reserve(elems.size());
@@ -396,7 +393,7 @@ std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
     return v_func->EvalModeOverlap(E);
   }
   const auto &mesh = *E.ParFESpace()->GetParMesh();
-  if (SurfaceFunctional::Enabled() && mesh.Dimension() == 3 && mesh.SpaceDimension() == 3)
+  if (mesh.Dimension() == 3 && mesh.SpaceDimension() == 3)
   {
     MFEM_VERIFY(v_func && v_func->IsValid(),
                 "libCEED lumped-port voltage postprocessing could not assemble for a "
@@ -590,7 +587,7 @@ std::map<int, std::complex<double>> LumpedPortOperator::GetPowers(GridFunction &
   // SurfaceFunctional still accumulates per-boundary-element slots;
   // EvalComplexPowerByAttribute bins those slots back to the port indices, so no
   // processor-boundary or ghost-side behavior is weakened relative to the per-port path.
-  if (!batched_power_unavailable && SurfaceFunctional::Enabled())
+  if (!batched_power_unavailable)
   {
     if (!batched_power_func)
     {
