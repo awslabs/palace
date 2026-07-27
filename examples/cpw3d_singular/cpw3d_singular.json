@@ -1,0 +1,81 @@
+{
+  "Problem": {
+    "Type": "Electrostatic",
+    "Verbose": 2,
+    "Output": "postpro/singular",
+    "OutputFormats": {
+      "Paraview": true
+    }
+  },
+  "Model": {
+    "Mesh": "mesh/cpw3d_singular.mesh",
+    "L0": 1.0e-6,
+    "CrackInternalBoundaryElements": false
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permittivity": 11.45
+      },
+      {
+        "Attributes": [2],
+        "Permittivity": 1.0
+      }
+    ],
+    "Postprocessing": {
+      "Energy": [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        },
+        {
+          "Index": 2,
+          "Attributes": [2]
+        }
+      ]
+    }
+  },
+  "Boundaries": {
+    "Periodic": {
+      "FloquetWaveVector": [0.0, 0.0, 0.0],
+      "BoundaryPairs": [
+        {
+          "DonorAttributes": [20],
+          "ReceiverAttributes": [21]
+        }
+      ]
+    },
+    "Ground": {
+      "Attributes": [11, 12]
+    },
+    "Terminal": [
+      {
+        "Index": 1,
+        "Attributes": [10]
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 1,
+    "Device": "CPU",
+    "Electrostatic": {
+      "Save": 1
+    },
+    "SingularElements": {
+      "Attributes": [10, 11],
+      "Order": 1,
+      "QuadratureOrder": 8,
+      "AbsTol": 1.0e-3,
+      "RelTol": 1.0e-3,
+      "MaxSubdivisions": 6
+    },
+    "Linear": {
+      "Type": "BoomerAMG",
+      "KSPType": "CG",
+      "Tol": 1.0e-10,
+      "MaxIts": 500,
+      "MGMaxLevels": 1
+    }
+  }
+}

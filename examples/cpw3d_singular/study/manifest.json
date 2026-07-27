@@ -1,0 +1,366 @@
+{
+  "version": 1,
+  "length_unit_m": 1e-06,
+  "reference": {
+    "type": "infinite-domain conformal-map CPW",
+    "strip_half_width": 5.0,
+    "ground_inner": 8.0,
+    "substrate_permittivity": 11.45
+  },
+  "quadrature": {
+    "absolute_tolerance": 1e-05,
+    "relative_tolerance": 1e-05,
+    "maximum_subdivisions": 6
+  },
+  "meshes": {
+    "fixed_coarse": {
+      "file": "study/mesh/fixed_coarse.mesh",
+      "sha256": "d01adafc37abf255cf53f28af88dfa9182d617bb06a081245a8c5dff3581dded",
+      "parameters_mesh_units": {
+        "strip_half_width": 5.0,
+        "gap": 3.0,
+        "ground_outer": 80.0,
+        "box_half_width": 160.0,
+        "box_half_height": 160.0,
+        "length": 10.0,
+        "strip_half_intervals": 2,
+        "gap_intervals": 2,
+        "ground_intervals": 8,
+        "outer_intervals": 4,
+        "height_intervals": 10,
+        "longitudinal_intervals": 3,
+        "transverse_subdivision_factor": 1
+      },
+      "counts": {
+        "x_cells": 32,
+        "y_cells": 20,
+        "z_cells": 3,
+        "tetrahedra": 11520
+      }
+    },
+    "fixed_medium": {
+      "file": "study/mesh/fixed_medium.mesh",
+      "sha256": "00bc40b1b8640cc686d20d3d9c6f23cbe42a882147044247ca8cc48d69252e25",
+      "parameters_mesh_units": {
+        "strip_half_width": 5.0,
+        "gap": 3.0,
+        "ground_outer": 80.0,
+        "box_half_width": 160.0,
+        "box_half_height": 160.0,
+        "length": 10.0,
+        "strip_half_intervals": 2,
+        "gap_intervals": 2,
+        "ground_intervals": 8,
+        "outer_intervals": 4,
+        "height_intervals": 10,
+        "longitudinal_intervals": 3,
+        "transverse_subdivision_factor": 2
+      },
+      "counts": {
+        "x_cells": 64,
+        "y_cells": 40,
+        "z_cells": 3,
+        "tetrahedra": 46080
+      },
+      "nested_parent": "fixed_coarse"
+    },
+    "fixed_fine": {
+      "file": "study/mesh/fixed_fine.mesh",
+      "sha256": "97b1c74936d7d79aee2477334f768f14abb96865726f2d6d3b0683455ea0d407",
+      "parameters_mesh_units": {
+        "strip_half_width": 5.0,
+        "gap": 3.0,
+        "ground_outer": 80.0,
+        "box_half_width": 160.0,
+        "box_half_height": 160.0,
+        "length": 10.0,
+        "strip_half_intervals": 2,
+        "gap_intervals": 2,
+        "ground_intervals": 8,
+        "outer_intervals": 4,
+        "height_intervals": 10,
+        "longitudinal_intervals": 3,
+        "transverse_subdivision_factor": 4
+      },
+      "counts": {
+        "x_cells": 128,
+        "y_cells": 80,
+        "z_cells": 3,
+        "tetrahedra": 184320
+      },
+      "nested_parent": "fixed_medium"
+    },
+    "large_box_fixed_ground": {
+      "file": "study/mesh/large_box_fixed_ground.mesh",
+      "sha256": "e697ae4a948f19102e4586c837b41b85666b0f9b7f1c609ff1ceb3fc792fa918",
+      "parameters_mesh_units": {
+        "strip_half_width": 5.0,
+        "gap": 3.0,
+        "ground_outer": 80.0,
+        "box_half_width": 320.0,
+        "box_half_height": 320.0,
+        "length": 10.0,
+        "strip_half_intervals": 2,
+        "gap_intervals": 2,
+        "ground_intervals": 8,
+        "outer_intervals": 6,
+        "height_intervals": 12,
+        "longitudinal_intervals": 3,
+        "transverse_subdivision_factor": 1
+      },
+      "counts": {
+        "x_cells": 36,
+        "y_cells": 24,
+        "z_cells": 3,
+        "tetrahedra": 15552
+      }
+    },
+    "large_box_scaled_ground": {
+      "file": "study/mesh/large_box_scaled_ground.mesh",
+      "sha256": "4ecfbee96307e9da87522be39984b4caa78f598f6388a58b7843a79648ffcb57",
+      "parameters_mesh_units": {
+        "strip_half_width": 5.0,
+        "gap": 3.0,
+        "ground_outer": 160.0,
+        "box_half_width": 320.0,
+        "box_half_height": 320.0,
+        "length": 10.0,
+        "strip_half_intervals": 2,
+        "gap_intervals": 2,
+        "ground_intervals": 12,
+        "outer_intervals": 5,
+        "height_intervals": 12,
+        "longitudinal_intervals": 3,
+        "transverse_subdivision_factor": 1
+      },
+      "counts": {
+        "x_cells": 42,
+        "y_cells": 24,
+        "z_cells": 3,
+        "tetrahedra": 18144
+      }
+    },
+    "large_box_scaled_ground_medium": {
+      "file": "study/mesh/large_box_scaled_ground_medium.mesh",
+      "sha256": "0956f439143da1e1a1243e6d62aa5c7e4d59031e25c7344ff25164c5000a3bf9",
+      "parameters_mesh_units": {
+        "strip_half_width": 5.0,
+        "gap": 3.0,
+        "ground_outer": 160.0,
+        "box_half_width": 320.0,
+        "box_half_height": 320.0,
+        "length": 10.0,
+        "strip_half_intervals": 2,
+        "gap_intervals": 2,
+        "ground_intervals": 12,
+        "outer_intervals": 5,
+        "height_intervals": 12,
+        "longitudinal_intervals": 3,
+        "transverse_subdivision_factor": 2
+      },
+      "counts": {
+        "x_cells": 84,
+        "y_cells": 48,
+        "z_cells": 3,
+        "tetrahedra": 72576
+      },
+      "nested_parent": "large_box_scaled_ground"
+    },
+    "xlarge_box_scaled_ground": {
+      "file": "study/mesh/xlarge_box_scaled_ground.mesh",
+      "sha256": "4f47bcb5f105fd9bc436cc72dab16ff8a66babc3387a12ac4c5ac87e0603912f",
+      "parameters_mesh_units": {
+        "strip_half_width": 5.0,
+        "gap": 3.0,
+        "ground_outer": 320.0,
+        "box_half_width": 640.0,
+        "box_half_height": 640.0,
+        "length": 10.0,
+        "strip_half_intervals": 2,
+        "gap_intervals": 2,
+        "ground_intervals": 17,
+        "outer_intervals": 6,
+        "height_intervals": 14,
+        "longitudinal_intervals": 3,
+        "transverse_subdivision_factor": 1
+      },
+      "counts": {
+        "x_cells": 54,
+        "y_cells": 28,
+        "z_cells": 3,
+        "tetrahedra": 27216
+      }
+    }
+  },
+  "runs": {
+    "fixed_coarse_standard": {
+      "mesh": "fixed_coarse",
+      "method": "standard",
+      "config": "study/config/fixed_coarse_standard.json",
+      "config_sha256": "314dc12e2ff3919bad2cb28bb1bf11a06e2a5283e7e877564c3e2184e6b36b52",
+      "output": "postpro/study/fixed_coarse_standard",
+      "command_from_example_directory": [
+        "../../build/bin/palace",
+        "-np",
+        "1",
+        "study/config/fixed_coarse_standard.json"
+      ]
+    },
+    "fixed_coarse_singular_s1": {
+      "mesh": "fixed_coarse",
+      "method": "singular_s1",
+      "config": "study/config/fixed_coarse_singular_s1.json",
+      "config_sha256": "974e37e31713166265f024c0bc1ea62193f8ca8624fab760a2cd981a416f0756",
+      "output": "postpro/study/fixed_coarse_singular_s1",
+      "command_from_example_directory": [
+        "../../build/bin/palace",
+        "-np",
+        "1",
+        "study/config/fixed_coarse_singular_s1.json"
+      ]
+    },
+    "fixed_coarse_singular_s2": {
+      "mesh": "fixed_coarse",
+      "method": "singular_s2",
+      "config": "study/config/fixed_coarse_singular_s2.json",
+      "config_sha256": "ecbeaf96521e2f33ff2fb9a88244458ea73f539842d83174de5d793828e51641",
+      "output": "postpro/study/fixed_coarse_singular_s2",
+      "command_from_example_directory": [
+        "../../build/bin/palace",
+        "-np",
+        "1",
+        "study/config/fixed_coarse_singular_s2.json"
+      ]
+    },
+    "fixed_coarse_singular_s3": {
+      "mesh": "fixed_coarse",
+      "method": "singular_s3",
+      "config": "study/config/fixed_coarse_singular_s3.json",
+      "config_sha256": "db48cffea5c19d3a8bdaee70dd555db3b03608546c8d14499b9d686be1ff4563",
+      "output": "postpro/study/fixed_coarse_singular_s3",
+      "command_from_example_directory": [
+        "../../build/bin/palace",
+        "-np",
+        "1",
+        "study/config/fixed_coarse_singular_s3.json"
+      ]
+    },
+    "fixed_medium_standard": {
+      "mesh": "fixed_medium",
+      "method": "standard",
+      "config": "study/config/fixed_medium_standard.json",
+      "config_sha256": "9231ffd2694cc76b4ffcc05b1d229f75edce8c496d9611864f7a1a0b81bd5095",
+      "output": "postpro/study/fixed_medium_standard",
+      "command_from_example_directory": [
+        "../../build/bin/palace",
+        "-np",
+        "1",
+        "study/config/fixed_medium_standard.json"
+      ]
+    },
+    "fixed_medium_singular_s1": {
+      "mesh": "fixed_medium",
+      "method": "singular_s1",
+      "config": "study/config/fixed_medium_singular_s1.json",
+      "config_sha256": "3a154ddae8c299454c9fdf89b6916f13a3eb7e4355b90d9977ebccd149f460ba",
+      "output": "postpro/study/fixed_medium_singular_s1",
+      "command_from_example_directory": [
+        "../../build/bin/palace",
+        "-np",
+        "1",
+        "study/config/fixed_medium_singular_s1.json"
+      ]
+    },
+    "fixed_medium_singular_s2": {
+      "mesh": "fixed_medium",
+      "method": "singular_s2",
+      "config": "study/config/fixed_medium_singular_s2.json",
+      "config_sha256": "735fe0543eba239a88fed12c92d70993a4633a5b6f0d39fdad47feb00370dc3a",
+      "output": "postpro/study/fixed_medium_singular_s2",
+      "command_from_example_directory": [
+        "../../build/bin/palace",
+        "-np",
+        "1",
+        "study/config/fixed_medium_singular_s2.json"
+      ]
+    },
+    "fixed_fine_standard": {
+      "mesh": "fixed_fine",
+      "method": "standard",
+      "config": "study/config/fixed_fine_standard.json",
+      "config_sha256": "9bc6542b84b6c01f1ce9352f024fadd261ec2191d24b9d04c897197de4d2900e",
+      "output": "postpro/study/fixed_fine_standard",
+      "command_from_example_directory": [
+        "../../build/bin/palace",
+        "-np",
+        "1",
+        "study/config/fixed_fine_standard.json"
+      ]
+    },
+    "fixed_fine_singular_s1": {
+      "mesh": "fixed_fine",
+      "method": "singular_s1",
+      "config": "study/config/fixed_fine_singular_s1.json",
+      "config_sha256": "de968f5fdf9c516f719f23e7fa27c43687eefccba0830ee8163d458b47c01297",
+      "output": "postpro/study/fixed_fine_singular_s1",
+      "command_from_example_directory": [
+        "../../build/bin/palace",
+        "-np",
+        "1",
+        "study/config/fixed_fine_singular_s1.json"
+      ]
+    },
+    "large_box_fixed_ground_singular_s1": {
+      "mesh": "large_box_fixed_ground",
+      "method": "singular_s1",
+      "config": "study/config/large_box_fixed_ground_singular_s1.json",
+      "config_sha256": "1f1b254b9983034a0884d6136ec85b79dbf63d48d0b525e5fa333e9516d9b602",
+      "output": "postpro/study/large_box_fixed_ground_singular_s1",
+      "command_from_example_directory": [
+        "../../build/bin/palace",
+        "-np",
+        "1",
+        "study/config/large_box_fixed_ground_singular_s1.json"
+      ]
+    },
+    "large_box_scaled_ground_singular_s1": {
+      "mesh": "large_box_scaled_ground",
+      "method": "singular_s1",
+      "config": "study/config/large_box_scaled_ground_singular_s1.json",
+      "config_sha256": "99d20d0ce010169f917b7670f846eeed0ccac1df367d32fa11f14df9a72c1eec",
+      "output": "postpro/study/large_box_scaled_ground_singular_s1",
+      "command_from_example_directory": [
+        "../../build/bin/palace",
+        "-np",
+        "1",
+        "study/config/large_box_scaled_ground_singular_s1.json"
+      ]
+    },
+    "large_box_scaled_ground_medium_singular_s1": {
+      "mesh": "large_box_scaled_ground_medium",
+      "method": "singular_s1",
+      "config": "study/config/large_box_scaled_ground_medium_singular_s1.json",
+      "config_sha256": "24b57f099b887dadaee0e01cc4794d2cbefee34a26d7b6bc011aeb3ecd4b9593",
+      "output": "postpro/study/large_box_scaled_ground_medium_singular_s1",
+      "command_from_example_directory": [
+        "../../build/bin/palace",
+        "-np",
+        "1",
+        "study/config/large_box_scaled_ground_medium_singular_s1.json"
+      ]
+    },
+    "xlarge_box_scaled_ground_singular_s1": {
+      "mesh": "xlarge_box_scaled_ground",
+      "method": "singular_s1",
+      "config": "study/config/xlarge_box_scaled_ground_singular_s1.json",
+      "config_sha256": "92dc7847512450acf8fb22648ac3c24c96b550917e96c8da003dd00e87cc1e86",
+      "output": "postpro/study/xlarge_box_scaled_ground_singular_s1",
+      "command_from_example_directory": [
+        "../../build/bin/palace",
+        "-np",
+        "1",
+        "study/config/xlarge_box_scaled_ground_singular_s1.json"
+      ]
+    }
+  }
+}
