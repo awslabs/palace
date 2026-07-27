@@ -618,13 +618,17 @@ SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
 
 template <typename OperType>
 std::unique_ptr<OperType>
-SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy)
+SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy,
+                                                 bool imag_slot)
 {
   // ω-independent boundary curl-curl matrix M_ff for the 2nd-order farfield ABC, with unit
-  // coefficient. Stored on the REAL slot of the resulting ComplexParOperator so that
-  // downstream BuildParSumOperator can scale it by an arbitrary complex coefficient (the
-  // real-ω path uses i·(0.5/ω); the complex-λ path uses -0.5/λ). Returns null if the
-  // farfield ABC order < 2 or it contributes no DoFs on this rank.
+  // coefficient. By default stored on the REAL slot of the resulting ComplexParOperator so
+  // that downstream BuildParSumOperator can scale it by an arbitrary complex coefficient
+  // (the real-ω path uses i·(0.5/ω); the complex-λ path uses -0.5/λ). With imag_slot=true
+  // it is placed on the IMAGINARY slot, matching the wave-port boundary-mass convention
+  // (the i in i·f(ω)·M baked in) so circuit synthesis can fold it in uniformly. Returns
+  // null if the farfield ABC order < 2 or it contributes no DoFs on any rank (the check is
+  // collective, so the null contract is rank-uniform).
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient df(mat_op.MaxCeedBdrAttribute());
   farfield_op.AddExtraSystemBoundaryCurlCurlBdrCoefficients(1.0, df);
@@ -639,7 +643,49 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
       AssembleOperator(GetNDSpace(), nullptr, nullptr, &df, nullptr, nullptr, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
-    auto M_op = std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
+    auto M_op =
+        imag_slot
+            ? std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace())
+            : std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+  else
+  {
+    MFEM_VERIFY(!imag_slot,
+                "imag_slot is only meaningful for the ComplexOperator instantiation of "
+                "GetFarfieldBoundaryCurlCurlMatrix!");
+    auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+}
+
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,
+                                                    Operator::DiagonalPolicy diag_policy)
+{
+  // ω-independent unit-coefficient boundary mass A_σ for surface-conductivity group
+  // group_idx, on the IMAGINARY slot (matching the wave-port convention). The full A2
+  // contribution at frequency ω is (i·ω/Z_g(ω))·A_σ; circuit synthesis factors out A_σ here
+  // and applies the scalar via a dispersion fit. Returns null if the group contributes no
+  // DoFs on any rank (the check is collective, so the null contract is rank-uniform).
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
+  surf_sigma_op.AddBoundaryMassBdrCoefficients(static_cast<std::size_t>(group_idx), fb);
+  int empty = fb.empty();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto m =
+      AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
     M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     return M_op;
   }
@@ -652,15 +698,18 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
 }
 
 template <typename OperType>
-std::unique_ptr<OperType>
-SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int idx,
-                                                      Operator::DiagonalPolicy diag_policy)
+std::unique_ptr<OperType> SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(
+    int idx, Operator::DiagonalPolicy diag_policy, bool imag_slot)
 {
   // λ-independent boundary mass matrix M_b for rational impedance boundary idx, with unit
-  // coefficient (including crack scaling), stored on the REAL slot so that downstream
-  // BuildParSumOperator can scale it by the arbitrary complex Robin coefficient g(λ) from
-  // GetRationalImpedanceOp().EvalRobinCoefficient(idx, λ). Returns null if the boundary
-  // contributes no DoFs on this rank. Used by the NLEPS HYBRID fit-or-freeze seed strategy.
+  // coefficient (including crack scaling). By default stored on the REAL slot so that
+  // downstream BuildParSumOperator can scale it by the arbitrary complex Robin coefficient
+  // g(λ) from GetRationalImpedanceOp().EvalRobinCoefficient(idx, λ) (the NLEPS HYBRID
+  // fit-or-freeze seed strategy). With imag_slot=true it is placed on the IMAGINARY slot,
+  // matching the wave-port boundary-mass convention (the i in i·f(ω)·M baked in, with
+  // f(ω) = g(iω)/i) so circuit synthesis can fold it in uniformly. Returns null if the
+  // boundary contributes no DoFs on any rank (the check is collective, so the null contract
+  // is rank-uniform).
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
   surf_rz_op.AddUnitBdrCoefficients(idx, fb);
@@ -675,7 +724,54 @@ SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int idx,
       AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
-    auto M_op = std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
+    auto M_op =
+        imag_slot
+            ? std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace())
+            : std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+  else
+  {
+    MFEM_VERIFY(!imag_slot,
+                "imag_slot is only meaningful for the ComplexOperator instantiation of "
+                "GetRationalImpedanceBoundaryMassMatrix!");
+    auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
+    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    return M_op;
+  }
+}
+
+template <typename OperType>
+std::unique_ptr<OperType>
+SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int port_idx,
+                                                 Operator::DiagonalPolicy diag_policy)
+{
+  // ω-independent µ⁻¹ boundary mass for a single Floquet port's Robin BC, on the
+  // IMAGINARY slot (matching the wave-port / farfield convention: the i in i·γ₀·M is baked
+  // in). The full online contribution is i·γ₀(ω)·M_floquet, with γ₀ the specular (0,0)
+  // propagation constant. Returns null if the port contributes no DoFs on any rank (the
+  // check is collective, so the null contract is rank-uniform).
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  const auto &port = floquet_port_op.GetPort(port_idx);
+  MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
+  MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
+                                         mat_op.GetInvPermeability());
+  muinv_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(port.GetAttrList()));
+  fb.AddCoefficient(muinv_func.GetAttributeToMaterial(), muinv_func.GetMaterialProperties(),
+                    1.0);
+  int empty = fb.empty();
+  Mpi::GlobalMin(1, &empty, GetComm());
+  if (empty)
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  auto m =
+      AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
+  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  {
+    auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
     M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
     return M_op;
   }
@@ -1212,8 +1308,7 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
 }
 
 void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
-                                                           ComplexVector &Et_primary,
-                                                           bool zero_metal)
+                                                           ComplexVector &Et_primary)
 {
   const auto &data = GetLumpedPortOp().GetPort(port_idx);
 
@@ -1235,15 +1330,11 @@ void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
   ProjectBdrCoefficientViaMassSolve(fb, data, mat_op, GetNDSpace(), GetComm(),
                                     Et_primary.Real());
 
-  if (zero_metal)
-  {
-    linalg::SetSubVector(Et_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
-  }
+  linalg::SetSubVector(Et_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
 }
 
 void SpaceOperator::GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
-                                                             ComplexVector &Htcn_primary,
-                                                             bool zero_metal)
+                                                             ComplexVector &Htcn_primary)
 {
   const auto &data = lumped_port_op.GetPort(port_idx);
 
@@ -1265,10 +1356,46 @@ void SpaceOperator::GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
   ProjectBdrCoefficientViaMassSolve(fb, data, mat_op, GetNDSpace(), GetComm(),
                                     Htcn_primary.Real());
 
-  if (zero_metal)
+  linalg::SetSubVector(Htcn_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
+}
+
+void SpaceOperator::GetWavePortFieldVectorPrimaryEt(int port_idx, double omega_ref,
+                                                    ComplexVector &Et_primary)
+{
+  // Trigger (or refresh) the cross-section EVP at omega_ref. WavePortData::Initialize
+  // caches by omega so calling this is cheap if already initialised.
+  wave_port_op.GetWavePortKn(port_idx, omega_ref);
+  const auto &data = wave_port_op.GetPort(port_idx);
+
+  // Project the modal tangential E-field onto the parent ND space, restricted to the
+  // port boundary attributes. Real and imaginary parts are projected separately, since
+  // the full waveport mode is generally complex.
+  Et_primary.SetSize(GetNDSpace().GetTrueVSize());
+  Et_primary.UseDevice(true);
+  Et_primary = 0.0;
+
+  const auto &mesh = GetNDSpace().GetParMesh();
+  int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> attr_marker;
+  mesh::AttrToMarker(bdr_attr_max, data.GetAttrList(), attr_marker);
+
+  GridFunction rhs_re(GetNDSpace());
+  GridFunction rhs_im(GetNDSpace());
+  rhs_re = 0.0;
+  rhs_im = 0.0;
   {
-    linalg::SetSubVector(Htcn_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
+    auto fb_re = data.GetModeFieldCoefficientReal(1.0);
+    rhs_re.Real().ProjectBdrCoefficientTangent(*fb_re, attr_marker);
   }
+  {
+    auto fb_im = data.GetModeFieldCoefficientImag(1.0);
+    rhs_im.Real().ProjectBdrCoefficientTangent(*fb_im, attr_marker);
+  }
+  GetNDSpace().GetRestrictionMatrix()->Mult(rhs_re.Real(), Et_primary.Real());
+  GetNDSpace().GetRestrictionMatrix()->Mult(rhs_im.Real(), Et_primary.Imag());
+
+  linalg::SetSubVector(Et_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
+  linalg::SetSubVector(Et_primary.Imag(), GetNDDbcTDofLists().back(), 0.0);
 }
 
 bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1)
@@ -1424,14 +1551,24 @@ template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetWavePortBoundaryMassMatrix(int, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
-    SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy);
+SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy, bool);
 template std::unique_ptr<ComplexOperator>
-    SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy);
+SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy, bool);
 
 template std::unique_ptr<Operator>
-SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy);
+SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int, Operator::DiagonalPolicy);
 template std::unique_ptr<ComplexOperator>
-SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy);
+SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int, Operator::DiagonalPolicy);
+
+template std::unique_ptr<Operator>
+SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy, bool);
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(int, Operator::DiagonalPolicy, bool);
+
+template std::unique_ptr<Operator>
+SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int, Operator::DiagonalPolicy);
+template std::unique_ptr<ComplexOperator>
+SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetSystemMatrix<Operator, double>(double, double, double, const Operator *,

@@ -63,6 +63,7 @@ public:
   double d_offset;
   int excitation;
   bool active;
+  bool include_in_synthesis;
   std::complex<double> kn0;
   double omega0;
   mfem::Vector port_normal;
@@ -250,13 +251,14 @@ public:
   // Add the ω-independent boundary mass contribution from a single wave port to a material
   // property coefficient. The full system contribution from this port is
   // i·k_n(ω)·(this) — see AddExtraSystemBdrCoefficients. Used to factor out the
-  // ω-independent operator for reuse by the reduced-order model. The port_idx must refer
-  // to an active port; if it does not, no contribution is added.
+  // ω-independent operator for reuse by the reduced-order model. This unit operator is
+  // available for active and inactive ports; callers that stamp the physical boundary
+  // condition are responsible for applying the port's Active flag.
   void AddBoundaryMassBdrCoefficients(int port_idx, MaterialPropertyCoefficient &fb) const;
 
   // As above, with an explicit scale factor on the contribution. Used internally by
-  // AddExtraSystemBdrCoefficients to share the per-port coefficient setup without
-  // duplicating the mfem::MaterialPropertyCoefficient construction.
+  // AddExtraSystemBdrCoefficients after its Active check to share the per-port coefficient
+  // setup without duplicating the mfem::MaterialPropertyCoefficient construction.
   void AddBoundaryMassBdrCoefficients(int port_idx, MaterialPropertyCoefficient &fb,
                                       double scale) const;
 

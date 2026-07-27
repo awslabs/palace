@@ -365,7 +365,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
                            mfem::ParFiniteElementSpace &nd_fespace,
                            mfem::ParFiniteElementSpace &h1_fespace,
                            const mfem::Array<int> &dbc_attr)
-  : mat_op(mat_op), excitation(data.excitation), active(data.active)
+  : mat_op(mat_op), excitation(data.excitation), active(data.active),
+    include_in_synthesis(data.include_in_synthesis)
 {
   mode_idx = data.mode_idx;
   d_offset = data.d_offset;
@@ -1354,10 +1355,14 @@ void WavePortOperator::AddBoundaryMassBdrCoefficients(int port_idx,
   // of AddExtraSystemBdrCoefficients gives the reduced-order model access to the
   // ω-independent operator separately from its per-ω scaling k_n(ω).
   auto it = ports.find(port_idx);
-  if (it == ports.end() || !it->second.active)
+  if (it == ports.end())
   {
     return;
   }
+  // This helper exposes the unit boundary mass independently of whether the Robin
+  // termination is active. AddExtraSystemBdrCoefficients performs the Active check before
+  // calling it, while circuit synthesis also needs the mass of an inactive-but-included
+  // port to normalize its node and compute reference data.
   const auto &data = it->second;
   const MaterialOperator &mat_op = data.mat_op;
   MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),

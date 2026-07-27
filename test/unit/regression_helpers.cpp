@@ -230,6 +230,14 @@ bool ValidateCSVTables(Table &actual, Table &reference, const RegressionOptions 
     // Eigen/adaptive cases may have a different row count, but empty output
     // against a non-empty reference is still a failure.
     CHECK((actual.n_rows() > 0) == (reference.n_rows() > 0));
+    if (opts.min_rows)
+    {
+      // Capped by the reference's own row count so the floor only binds on files that
+      // actually have that many rows (e.g. rom-eigenvalues.csv, not error-indicators.csv).
+      const std::size_t floor_rows = std::min(*opts.min_rows, reference.n_rows());
+      INFO("minimum row count " << floor_rows);
+      CHECK(actual.n_rows() >= floor_rows);
+    }
   }
 
   const bool comparable_columns = actual.n_cols() == reference.n_cols();
@@ -508,6 +516,16 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
       {
         CHECK(std::filesystem::is_regular_file(actual));
         CHECK(std::filesystem::is_regular_file(reference));
+        continue;
+      }
+
+      // Presence in both trees is already established above; skip excluded files
+      // before any shape/header/value comparison.
+      const bool excluded = std::any_of(
+          effective_opts.excluded_files.begin(), effective_opts.excluded_files.end(),
+          [&rel](const std::string &pat) { return rel.find(pat) != std::string::npos; });
+      if (excluded)
+      {
         continue;
       }
 
