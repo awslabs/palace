@@ -39,6 +39,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     SchemaVer 1-4-0 [PR 831](https://github.com/awslabs/palace/pull/831).
   - Improve hybrid nonlinear eigensolver convergence when using 2nd-order absorbing and
     rational impedance boundary conditions. [PR 792](https://github.com/awslabs/palace/pull/792).
+  - Enable circuit synthesis with frequency-dependent boundary conditions, including
+    wave ports with a new optional `IncludeInSynthesis` wave-port flag. SchemaVer 1-4-0
+    [PR 811](https://github.com/awslabs/palace/pull/811).
 
 #### Interface Changes
 
@@ -53,6 +56,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed saving output to non-shared filesystems [PR 813](https://github.com/awslabs/palace/pull/813).
   - Fixed S-parameter post-processing for mixed Floquet + lumped/wave port configurations.
     Previously, `MeasureSParameter()` skipped processing when Floquet ports coexisted with
     lumped or wave ports, leaving `port-S.csv` with incorrect values. The fix applies a power
@@ -70,6 +74,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 778](https://github.com/awslabs/palace/pull/778).
   - Fixed a bug in the 2D mode eigensolver for lossy cross-sections, where a complex
     permittivity term was missing. [PR 778](https://github.com/awslabs/palace/pull/778).
+  - Fixed numeric wave port and automatic boundary-mode targeting for anisotropic
+    materials, which could select an evanescent mode instead of the mode with the largest
+    propagation constant. [PR 836](https://github.com/awslabs/palace/pull/836).
+  - Fixed intermittent MPI deadlocks in output-directory unit tests when ranks observed
+    filesystem changes at different times. [PR
+    839](https://github.com/awslabs/palace/pull/839).
 
 ## [0.17.0] - 2026-06-28
 

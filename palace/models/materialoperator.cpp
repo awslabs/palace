@@ -3,6 +3,7 @@
 
 #include "materialoperator.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <unordered_set>
@@ -187,6 +188,7 @@ void MaterialOperator::SetUpMaterialProperties(
   mat_invLondon.SetSize(sdim, sdim, nmats);
   mat_c0_min.SetSize(nmats);
   mat_c0_max.SetSize(nmats);
+  mat_mu_eps_max.SetSize(nmats);
   mat_muinvkx.SetSize(sdim, sdim, nmats);
   mat_kxTmuinvkx.SetSize(sdim, sdim, nmats);
   mat_kx.SetSize(sdim, sdim, nmats);
@@ -203,6 +205,14 @@ void MaterialOperator::SetUpMaterialProperties(
       continue;
     }
     const auto &data = materials[i];
+    double mu_max = 0.0, eps_max = 0.0;
+    for (std::size_t d = 0; d < data.mu_r.s.size(); d++)
+    {
+      mu_max = std::max(mu_max, std::abs(data.mu_r.s[d]));
+      eps_max = std::max(eps_max, std::abs(data.epsilon_r.s[d]));
+    }
+    mat_mu_eps_max[count] = mu_max * eps_max;
+
     if (problem_type == ProblemType::ELECTROSTATIC)
     {
       MFEM_VERIFY(internal::mat::IsValid(data.epsilon_r),
@@ -370,6 +380,15 @@ void MaterialOperator::SetUpMaterialProperties(
   has_conductivity_attr = has_attr[1];
   has_london_attr = has_attr[2];
   has_wave_attr = has_attr[3];
+}
+
+double MaterialOperator::GetMaxMuEpsilon() const
+{
+  double mu_eps_max = mat_mu_eps_max.Size() > 0 ? mat_mu_eps_max.Max() : 0.0;
+  Mpi::GlobalMax(1, &mu_eps_max, mesh.GetComm());
+  MFEM_VERIFY(mu_eps_max > 0.0 && mu_eps_max < mfem::infinity(),
+              "Invalid material permeability or permittivity!");
+  return mu_eps_max;
 }
 
 void MaterialOperator::SetUpFloquetWaveVector(const config::PeriodicBoundaryData &periodic,

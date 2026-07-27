@@ -26,6 +26,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/fixtures.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-2d-submesh.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-aaa.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-basesolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-boundarymodeoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-coefficient.cpp
@@ -42,6 +43,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-memoryreporting.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-nondimensionalize.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-outputdir.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp

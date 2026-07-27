@@ -315,6 +315,13 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
     prom_op.AddLumpedPortModesForSynthesis();
+    if (space_op.GetWavePortOp().Size() > 0)
+    {
+      // Use the band center as the reference frequency for seeding wave-port modes.
+      // The choice rescales the basis vector but does not change correctness.
+      const double omega_ref = 0.5 * (omega_sample.front() + omega_sample.back());
+      prom_op.AddWavePortModesForSynthesis(omega_ref);
+    }
   }
 
   // Initialize the basis with samples from the top and bottom of the frequency
@@ -426,9 +433,6 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   {
     prom_op.PrintPROMMatrices(iodata.units, iodata.problem.output);
   }
-
-  // XX TODO: Add output of eigenvalue estimates from the PROM system (and nonlinear EVP
-  // in the general case with wave ports, etc.?)
 
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");

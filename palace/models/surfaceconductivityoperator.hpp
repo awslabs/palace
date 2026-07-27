@@ -53,8 +53,8 @@ private:
   // thickness terms accept complex ω directly (analytic continuation ω = -i·λ); for real
   // ω this returns the same scalar the real-ω stamping always used. The formula lives
   // here so both AddExtraSystemBdrCoefficients overloads share it.
-  std::complex<double> EvaluateScalar(std::size_t group_idx,
-                                      std::complex<double> omega) const;
+  std::complex<double> EvaluateScalarImpl(std::size_t group_idx,
+                                          std::complex<double> omega) const;
 
 public:
   SurfaceConductivityOperator(const std::vector<config::ConductivityData> &conductivity,
@@ -76,6 +76,32 @@ public:
   void AddExtraSystemBdrCoefficients(std::complex<double> omega,
                                      MaterialPropertyCoefficient &fbr,
                                      MaterialPropertyCoefficient &fbi);
+
+  // Number of finite-conductivity attribute groups (each with its own σ/μ/h and thus its
+  // own frequency-dependent surface admittance i·ω/Z(ω)).
+  std::size_t Size() const { return boundaries.size(); }
+
+  // Whether group `g` is active (nonzero conductivity).
+  bool IsActive(std::size_t g) const
+  {
+    return g < boundaries.size() && std::abs(boundaries[g].sigma) > 0.0;
+  }
+
+  // Per-group surface-admittance scalar i·ω/Z_g(ω), evaluated at (possibly complex) ω.
+  // Public wrapper so the circuit-synthesis path can sample the scalar for its dispersion
+  // fit (the ω-independent boundary mass is factored out via
+  // SpaceOperator::GetSurfaceConductivityBoundaryMatrix).
+  std::complex<double> EvaluateScalar(std::size_t group_idx,
+                                      std::complex<double> omega) const
+  {
+    return EvaluateScalarImpl(group_idx, omega);
+  }
+
+  // Add the ω-independent unit-coefficient boundary mass for group `g` to a material
+  // property coefficient. The full per-group contribution to the system matrix at ω is
+  // `(i·ω/Z_g(ω))·(this)`. Used to factor out the ω-independent operator for circuit
+  // synthesis, mirroring WavePortOperator::AddBoundaryMassBdrCoefficients.
+  void AddBoundaryMassBdrCoefficients(std::size_t g, MaterialPropertyCoefficient &fb) const;
 };
 
 }  // namespace palace

@@ -281,18 +281,27 @@ void IoData::CheckConfiguration()
                     solver.driven.adaptive_tol > 0.0,
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
                 "adaptive frequency sweep (AdaptiveTol > 0.0)!\n");
-    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis || !boundaries.lumpedport.empty(),
-                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
-                "at least one LumpedPort boundary condition!\n");
     MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
-                    (boundaries.auxpec.empty() && boundaries.waveport.empty() &&
-                     (boundaries.farfield.empty() || boundaries.farfield.order == 1) &&
-                     boundaries.conductivity.empty() &&
-                     boundaries.rational_impedance.empty()),
-                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) is not "
-                "supported in systems with any of: "
-                "WavePort, Absorbing (order > 1), Conductivity, or RationalImpedance "
-                "boundary conditions!\n");
+                    !boundaries.lumpedport.empty() || !boundaries.waveport.empty(),
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
+                "at least one port (LumpedPort or WavePort) boundary condition!\n");
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis || boundaries.floquetport.empty(),
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
+                "yet support Floquet port boundaries. The Floquet Robin dispersion is "
+                "handled in the online PROM sweep but has not been folded into the "
+                "synthesised circuit pencil.\n");
+    // Second-order absorbing (farfield), surface-conductivity, and rational surface
+    // impedance boundaries are supported in circuit synthesis: their frequency-dependent
+    // contributions are folded into the synthesised pencil via the same auxiliary-state
+    // path as the wave ports (the 2nd-order ABC's 0.5/ω as an exact pole at ω=0; surface
+    // conductivity's iω/Z(ω) and the rational impedance's Robin coefficient s·D(s)/N(s)
+    // by a polynomial + AAA fit). See RomOperator::CalculateNormalizedPROMMatrices.
+    // Wave ports are supported via an automatic polynomial fit of the modal dispersion,
+    // augmented with AAA residual poles when the polynomial residual exceeds AdaptiveTol.
+    // The runtime check is in RomOperator::CalculateNormalizedPROMMatrices.
+    // WavePortPEC (boundaries.auxpec) is also supported: it only affects the per-port
+    // cross-section eigenvalue problem (forces the port submesh outer rim to PEC) and
+    // does not change the parent FE system, so synthesis works correctly with it.
   }
   else if (problem.type == ProblemType::EIGENMODE)
   {

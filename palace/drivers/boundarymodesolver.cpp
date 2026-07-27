@@ -258,12 +258,10 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   else
   {
-    double c_min = mode_op.GetMaterialOp().GetLightSpeedMax().Min();
-    Mpi::GlobalMin(1, &c_min, mode_op.GetComm());
-    MFEM_VERIFY(c_min > 0.0 && c_min < mfem::infinity(),
-                "Invalid material speed of light!");
-    kn_target = omega / c_min * std::sqrt(1.1);
-    Mpi::Print(" Auto kn_target = {:.6e} (from c_min = {:.6e})\n", kn_target, c_min);
+    const double mu_eps_max = mode_op.GetMaterialOp().GetMaxMuEpsilon();
+    kn_target = omega * std::sqrt(1.1 * mu_eps_max);
+    Mpi::Print(" Auto kn_target = {:.6e} (from max(mu_r) * max(epsilon_r) = {:.6e})\n",
+               kn_target, mu_eps_max);
   }
 
   // Solve the eigenvalue problem.

@@ -365,7 +365,8 @@ WavePortData::WavePortData(const config::WavePortData &data,
                            mfem::ParFiniteElementSpace &nd_fespace,
                            mfem::ParFiniteElementSpace &h1_fespace,
                            const mfem::Array<int> &dbc_attr)
-  : mat_op(mat_op), excitation(data.excitation), active(data.active)
+  : mat_op(mat_op), excitation(data.excitation), active(data.active),
+    include_in_synthesis(data.include_in_synthesis)
 {
   mode_idx = data.mode_idx;
   d_offset = data.d_offset;
@@ -506,13 +507,11 @@ WavePortData::WavePortData(const config::WavePortData &data,
   e0.SetSize(port_nd_fespace->GetTrueVSize() + port_h1_fespace->GetTrueVSize());
   e0.UseDevice(true);
 
-  // Set the shift-and-invert target as the maximum propagation constant.
-  double c_min = mat_op.GetLightSpeedMax().Min();
-  Mpi::GlobalMin(1, &c_min, nd_fespace.GetComm());
-  MFEM_VERIFY(c_min > 0.0 && c_min < mfem::infinity(),
-              "Invalid material speed of light detected in WavePortOperator!");
-  mu_eps_max = 1.0 / (c_min * c_min) * 1.1;  // Add a safety factor for maximum
-                                             // propagation constant possible
+  // Set the shift-and-invert target above the bulk propagation constants of materials
+  // present on this port. For anisotropic media the electric and magnetic polarizations
+  // can sample different material axes, so max(mu_r * epsilon_r) is not a safe bound;
+  // use max(mu_r) * max(epsilon_r) instead.
+  mu_eps_max = port_mat_op->GetMaxMuEpsilon() * 1.1;
 
   // Configure a communicator for the processes which have elements for this port.
   MPI_Comm comm = nd_fespace.GetComm();
@@ -1356,10 +1355,14 @@ void WavePortOperator::AddBoundaryMassBdrCoefficients(int port_idx,
   // of AddExtraSystemBdrCoefficients gives the reduced-order model access to the
   // ω-independent operator separately from its per-ω scaling k_n(ω).
   auto it = ports.find(port_idx);
-  if (it == ports.end() || !it->second.active)
+  if (it == ports.end())
   {
     return;
   }
+  // This helper exposes the unit boundary mass independently of whether the Robin
+  // termination is active. AddExtraSystemBdrCoefficients performs the Active check before
+  // calling it, while circuit synthesis also needs the mass of an inactive-but-included
+  // port to normalize its node and compute reference data.
   const auto &data = it->second;
   const MaterialOperator &mat_op = data.mat_op;
   MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),

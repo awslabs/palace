@@ -103,6 +103,13 @@ public:
   // (-1 for the zero polynomial).
   int GetRobinQuotientDegree(int idx) const;
 
+  // Coefficients of the polynomial part P of the Robin coefficient of boundary idx
+  // (highest-degree-first, nondimensionalized; empty is the zero polynomial).
+  const std::vector<double> &GetRobinQuotient(int idx) const
+  {
+    return boundaries[idx].robin_quotient;
+  }
+
   // Add contributions to the frequency-dependent system matrix A2(ω). The Robin BC term has
   // coefficient iω / Zs(iω) per square, exactly as the parallel-RLC admittance contributes
   // iω·Ys to K + iωC - ω²M.
