@@ -61,7 +61,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     lumped ports were required to be purely resistive. As part of this change, *passive*
     purely reactive lumped ports (`R = 0` with `L` and/or `C`) now report a finite
     S-parameter row referenced to the internal unit impedance, where previously their
-    `port-S.csv` row was identically zero.
+    `port-S.csv` row was identically zero; similarly, the incident columns `inc<idx>` of
+    `port-V.csv` and `port-I.csv` at a purely reactive excited port now report finite
+    unit-reference values, where previously both were zero. These are bookkeeping
+    quantities referenced to the internal unit impedance, not physical incident waves.
     [PR 841](https://github.com/awslabs/palace/pull/841).
 
 #### Bug Fixes

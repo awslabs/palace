@@ -277,7 +277,11 @@ fixed ``\sqrt{R_j/Z_0}`` conversion factor separates them from a voltage-transfe
 They satisfy reciprocity (``S_{ji} = S_{ij}``). The same unit-reference projection applies
 to *passive* purely reactive lumped ports (``R = 0`` with ``L`` and/or ``C``) appearing as
 observation ports: their S-parameter rows are finite and referenced to ``Z_0``, rather
-than identically zero.
+than identically zero. Likewise, the incident voltage and current columns of the port
+postprocessing output (``V^{inc}``, ``I^{inc}``) at a purely reactive excited port are
+finite and referenced to ``Z_0`` — like the S-parameter row, they are bookkeeping
+quantities consistent with the assembled drive normalization, not physical incident
+waves (an ``R = 0`` port supports no incident traveling wave).
 
 In the time domain, the time histories of the port voltages can be Fourier-transformed to
 get their frequency domain representation for scattering parameter calculation.
