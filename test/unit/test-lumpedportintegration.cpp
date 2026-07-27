@@ -868,8 +868,7 @@ TEST_CASE("LumpedPort_ReactiveExcitation_Cube321", "[lumped_port][Serial][Parall
   // (3) Characteristic impedance Z_ref(w) = 1 / (1/R + 1/(iwL) + iwC). Check against a
   // direct evaluation at a representative (nondimensional) frequency.
   const double f_GHz = 10.0;
-  const double omega =
-      iodata.units.Nondimensionalize<VT::FREQUENCY>(2.0 * M_PI * f_GHz * 1.0e9);
+  const double omega = 2.0 * M_PI * iodata.units.Nondimensionalize<VT::FREQUENCY>(f_GHz);
   const std::complex<double> imag_unit{0.0, 1.0};
   std::complex<double> Y = 0.0;
   if (case_R > 0.0)
@@ -903,4 +902,20 @@ TEST_CASE("LumpedPort_ReactiveExcitation_Cube321", "[lumped_port][Serial][Parall
   Mpi::GlobalMax(1, &max_abs, world_comm);
   // The drive is nonzero (a genuine incident field was assembled).
   CHECK(max_abs > 0.0);
+
+  // (5) Output paths reference the same real resistance. GetExcitationVoltage() must be
+  // finite and nonzero for R = 0 (it references GetExcitationRefResistance(), not R), and
+  // the S-parameter projection linear form must produce a finite, nonzero projection for
+  // a nonzero field (its normalization also references the real reference resistance).
+  const double V_inc = port_1.GetExcitationVoltage();
+  CHECK(std::isfinite(V_inc));
+  CHECK(V_inc > 0.0);
+
+  GridFunction E_test(space_op.GetNDSpace(), true);
+  E_test.Real() = 1.0;  // Uniform nonzero field: projection onto the port mode is nonzero
+  E_test.Imag() = 0.0;
+  const std::complex<double> S_proj = port_1.GetSParameter(E_test);
+  CHECK(std::isfinite(S_proj.real()));
+  CHECK(std::isfinite(S_proj.imag()));
+  CHECK(std::abs(S_proj) > 0.0);
 }

@@ -197,8 +197,9 @@ for implementation details.
     The medium adjacent to the port must be homogeneous and isotropic.
 
 For each port, the excitation is normalized to have unit incident power over the port boundary
-surface. Lumped ports with reactive elements (`"L"` and/or `"C"`) may also be excited, including
-purely reactive ports with `"R": 0`. For a purely reactive port (`R = 0`) the power normalization
+surface. Lumped ports with reactive elements (`"L"` and/or `"C"`, or the surface-parameter
+equivalents `"Ls"` and/or `"Cs"`) may also be excited, including purely reactive ports with
+`"R": 0` (`"Rs": 0`). For a purely reactive port (`R = 0`) the power normalization
 references an internal unit impedance; see the [mathematical reference](../reference.md#Lumped-ports-and-wave-ports)
 for the S-parameter interpretation in this case.
 

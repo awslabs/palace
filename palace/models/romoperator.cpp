@@ -2270,8 +2270,15 @@ void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &pos
       std::complex<double> y_ref = 0.0;
       if (ref.type == RefType::Lumped)
       {
+        // Use the same real reference resistance as Palace's own S-parameter measurement
+        // (GetExcitationRefResistance: R for a resistive port, the unit internal reference
+        // for a purely reactive R == 0 port). This keeps the table consistent with its
+        // documented purpose — converting synthesized admittances to Palace/Kurokawa S —
+        // after reactive lumped excitation referenced direct S to the real R_ref. The
+        // physical (complex) RLC port load is exported separately in the rom-portload-*
+        // matrices. For resistive ports this coincides with the characteristic impedance.
         const auto &port_data = space_op.GetLumpedPortOp().GetPort(ref.port_idx);
-        y_ref = unit_ohm_inv / port_data.GetCharacteristicImpedance(omega);
+        y_ref = unit_ohm_inv / port_data.GetExcitationRefResistance();
       }
       else
       {

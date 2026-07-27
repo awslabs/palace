@@ -38,10 +38,14 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
     if (has_circ)
     {
       MFEM_VERIFY(data.R >= 0.0, "Excited lumped port must have non-negative resistance!");
+      MFEM_VERIFY(data.L >= 0.0 && data.C >= 0.0,
+                  "Excited lumped port must have non-negative inductance and capacitance!");
     }
     else
     {
       MFEM_VERIFY(data.Rs >= 0.0, "Excited lumped port must have non-negative resistance!");
+      MFEM_VERIFY(data.Ls >= 0.0 && data.Cs >= 0.0,
+                  "Excited lumped port must have non-negative inductance and capacitance!");
     }
   }
 
@@ -625,9 +629,13 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
                                                       SumVectorCoefficient &fb)
 {
   // Construct the RHS source term for lumped port boundaries, which looks like -U_inc =
-  // +2 iω/Z_s E_inc for a port boundary with an incident field E_inc. The chosen incident
-  // field magnitude corresponds to a unit incident power over the full port boundary. See
-  // p. 49 and p. 82 of the COMSOL RF Module manual for more detail.
+  // +2 iω/R_ref E_inc for a port boundary with an incident field E_inc, where R_ref is the
+  // real reference resistance from GetExcitationRefResistance() (the port R, or the unit
+  // internal reference for a purely reactive R == 0 port; any port reactance acts through
+  // the system-matrix termination iω/Z_s, not through this drive coefficient). The chosen
+  // incident field magnitude corresponds to a unit incident power over the full port
+  // boundary, referenced to R_ref. See p. 49 and p. 82 of the COMSOL RF Module manual for
+  // more detail.
   // Note: The real RHS returned here does not yet have the factor of (iω) included, so
   // works for time domain simulations requiring RHS -U_inc(t).
   for (const auto &[idx, data] : ports)

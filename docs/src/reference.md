@@ -250,9 +250,12 @@ S_{ij} = \frac{\displaystyle\int_{\Gamma_i}\bm{E}\cdot\bm{E}^{inc}_i\,dS}
 For a resistive excited port, the incident field ``\bm{E}^{inc}`` is normalized so that the
 power integrated over the port boundary is unity, referenced to the port resistance ``R``.
 A lumped port with nonzero inductance and/or capacitance may also be excited. In this case
-the port's ``R``, ``L``, and ``C`` all enter the system matrix as a physical parallel
-termination, and the incident field is normalized to a real reference resistance: ``R`` when
-``R > 0``, or the free-space impedance ``Z_0 \approx 376.7~\Omega`` when ``R = 0``. The
+the *termination* and *excitation* coefficients differ: the port's full ``R``, ``L``, and
+``C`` enter the system matrix as a physical parallel termination through the Robin
+coefficient ``\gamma = i\omega/Z_s`` with the complex ``Z_s(\omega)``, while the source
+term ``\bm{U}^{inc}`` is assembled with the real drive coefficient ``i\omega/R_{ref}``,
+where ``R_{ref}`` is a real reference resistance: ``R`` when ``R > 0``, or the free-space
+impedance ``Z_0 \approx 376.7~\Omega`` when ``R = 0`` (and equivalently ``Z_s^{-1} \to R_{ref}^{-1}`` in the time-domain source term). The
 scattering parameters at resistive ports (observation or drive) retain their standard power-wave
 interpretation. For a purely reactive drive port (``R = 0``), the reported ``S_{ii}`` is related
 to the loaded port impedance by
@@ -262,12 +265,19 @@ S_{ii} + 1 = \frac{2\,Z_{\text{loaded}}}{Z_0}
 ```
 
 where ``Z_{\text{loaded}} = Z_p \parallel Z_{\text{struct}}`` is the parallel combination of
-the port impedance ``Z_p = (1/R + 1/(i\omega L) + i\omega C)^{-1}`` and the structure's
-input impedance at the port plane. This is a reciprocal, frequency-dependent
-quantity — but it is not bounded by unity and should not be interpreted as a power
-reflection coefficient. Transmission parameters ``S_{ji}`` (``j \ne i``) between a reactive
-drive and a resistive observation port are physical voltage-transfer ratios and satisfy
-reciprocity (``S_{ji} = S_{ij}``).
+the port impedance ``Z_p = (1/R + 1/(i\omega L) + i\omega C)^{-1}`` (zero-valued branches
+are omitted from the sum: the ``1/R`` term is dropped when ``R = 0``, and likewise for
+``L`` and ``C``) and the structure's input impedance at the port plane. This is a
+reciprocal, frequency-dependent quantity — but it is not bounded by unity and should not
+be interpreted as a power reflection coefficient. Transmission parameters ``S_{ji}``
+(``j \ne i``) between a reactive drive and a resistive observation port are
+real-reference-normalized transmission amplitudes: each side is normalized to its own real
+reference (``Z_0`` at the reactive drive, ``R_j`` at the resistive observation port), so a
+fixed ``\sqrt{R_j/Z_0}`` conversion factor separates them from a voltage-transfer ratio.
+They satisfy reciprocity (``S_{ji} = S_{ij}``). The same unit-reference projection applies
+to *passive* purely reactive lumped ports (``R = 0`` with ``L`` and/or ``C``) appearing as
+observation ports: their S-parameter rows are finite and referenced to ``Z_0``, rather
+than identically zero.
 
 In the time domain, the time histories of the port voltages can be Fourier-transformed to
 get their frequency domain representation for scattering parameter calculation.
