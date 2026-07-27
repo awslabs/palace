@@ -26,10 +26,20 @@ using BarycentricPermutation = std::array<int, 4>;
 using ReferenceCoefficientTensor = std::array<std::array<double, 3>, 3>;
 using InterpolationIndices = std::array<int, 4>;
 
+using Vector2 = std::array<double, 2>;
+using TriangleBarycentricPoint = std::array<double, 3>;
+using TriangleBarycentricGradients = std::array<Vector2, 3>;
+
 struct VectorBasisValue
 {
   Vector3 value;
   Vector3 curl;
+};
+
+struct TriangleVectorBasisValue
+{
+  Vector2 value;
+  double curl;
 };
 
 struct ScalarPolynomialValue
@@ -169,6 +179,11 @@ struct FirstOrderAdaptiveReferenceIntegral
 BarycentricPoint ReferenceBarycentricPoint(const Vector3 &point);
 const BarycentricGradients &ReferenceBarycentricGradients();
 
+// MFEM reference triangle:
+//   v0 = (0,0), v1 = (1,0), v2 = (0,1).
+TriangleBarycentricPoint ReferenceTriangleBarycentricPoint(const Vector2 &point);
+const TriangleBarycentricGradients &ReferenceTriangleBarycentricGradients();
+
 // Silvester-Lagrange factors from equations (25) and (27), where
 // grid_denominator is the superscript q. The derivative is with respect to the
 // scalar coordinate.
@@ -182,6 +197,43 @@ ScalarPolynomialValue EvaluateShiftedSilvesterLagrange(int grid_denominator, int
 // coordinates, which is essential at strongly graded quadrature points.
 double NodeRadialCoordinate(const BarycentricPoint &lambda, int i);
 double EdgeRadialCoordinate(const BarycentricPoint &lambda, int i, int j);
+double TriangleNodeRadialCoordinate(const TriangleBarycentricPoint &lambda, int i);
+
+// Lowest-order additive triangular bases from Graglia-Lombardi (2004),
+// expressed in the barycentric and normalization conventions of Elkin et al.
+// The scalar curl is d(value_y)/dx - d(value_x)/dy.
+TriangleVectorBasisValue
+EvaluateTriangleStandardEdge(const TriangleBarycentricPoint &lambda,
+                             const TriangleBarycentricGradients &grad_lambda, int i, int j);
+double EvaluateTriangleNodeGradientPotential(const TriangleBarycentricPoint &lambda, int i,
+                                             int j, double nu);
+TriangleVectorBasisValue
+EvaluateTriangleNodeGradient(const TriangleBarycentricPoint &lambda,
+                             const TriangleBarycentricGradients &grad_lambda, int i, int j,
+                             double nu);
+TriangleVectorBasisValue
+EvaluateTriangleNodeRotational(const TriangleBarycentricPoint &lambda,
+                               const TriangleBarycentricGradients &grad_lambda, int i,
+                               int j, int k, double nu);
+
+using TriangleQuadraturePointVisitor =
+    std::function<void(const TriangleBarycentricPoint &lambda, double weight)>;
+using TriangleReferenceIntegrand =
+    std::function<double(const TriangleBarycentricPoint &lambda)>;
+
+// Tensor-product Gauss rule under the singular-node Duffy map
+//
+//   lambda_i = 1-r, lambda_j = r(1-t), lambda_k = r t,
+//   r = u^radial_power.
+//
+// The weights integrate over the MFEM reference triangle of area 1/2.
+void ForEachReferenceTriangleNodeDuffyQuadraturePoint(
+    int order, int singular_node, double radial_power,
+    const TriangleQuadraturePointVisitor &visitor);
+double IntegrateReferenceTriangleNodeDuffy(int order, int singular_node,
+                                           double radial_power,
+                                           const TriangleReferenceIntegrand &integrand);
+std::size_t ReferenceTriangleNodeDuffyQuadraturePointCount(int order);
 
 // Apply a simultaneous node relabeling where permutation[a] is the new index of
 // old index a. Reference tables use these routines to map every feature tuple to

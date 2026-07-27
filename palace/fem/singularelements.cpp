@@ -65,6 +65,33 @@ void ValidateIndex(int i)
   }
 }
 
+void ValidateTriangleIndex(int i)
+{
+  if (i < 0 || i >= 3)
+  {
+    throw std::invalid_argument(
+        "Singular-element triangle barycentric index must be in [0, 2]!");
+  }
+}
+
+template <typename... T>
+void ValidateDistinctTriangleIndices(T... indices)
+{
+  const std::array<int, sizeof...(T)> values{indices...};
+  for (std::size_t a = 0; a < values.size(); a++)
+  {
+    ValidateTriangleIndex(values[a]);
+    for (std::size_t b = a + 1; b < values.size(); b++)
+    {
+      if (values[a] == values[b])
+      {
+        throw std::invalid_argument(
+            "Singular-element triangle barycentric indices must be distinct!");
+      }
+    }
+  }
+}
+
 template <typename... T>
 void ValidateDistinctIndices(T... indices)
 {
@@ -698,6 +725,61 @@ void ValidateBarycentricGradients(const BarycentricGradients &grad_lambda)
   }
 }
 
+void ValidateTriangleBarycentricPoint(const TriangleBarycentricPoint &lambda)
+{
+  double sum = 0.0;
+  for (double value : lambda)
+  {
+    if (!std::isfinite(value) || value < -BarycentricTolerance ||
+        value > 1.0 + BarycentricTolerance)
+    {
+      throw std::invalid_argument(
+          "Singular-element barycentric coordinates must describe a triangle point!");
+    }
+    sum += value;
+  }
+  if (std::abs(sum - 1.0) > BarycentricTolerance)
+  {
+    throw std::invalid_argument(
+        "Singular-element triangle barycentric coordinates must sum to one!");
+  }
+}
+
+void ValidateTriangleBarycentricGradients(const TriangleBarycentricGradients &grad_lambda)
+{
+  Vector2 sum{0.0, 0.0};
+  double scale = 1.0;
+  for (const auto &gradient : grad_lambda)
+  {
+    for (int d = 0; d < 2; d++)
+    {
+      if (!std::isfinite(gradient[d]))
+      {
+        throw std::invalid_argument(
+            "Singular-element triangle barycentric gradients must be finite!");
+      }
+      sum[d] += gradient[d];
+      scale = std::max(scale, std::abs(gradient[d]));
+    }
+  }
+  for (double value : sum)
+  {
+    if (std::abs(value) > BarycentricTolerance * scale)
+    {
+      throw std::invalid_argument(
+          "Singular-element triangle barycentric gradients must sum to zero!");
+    }
+  }
+}
+
+void ValidateTriangleEvaluation(const TriangleBarycentricPoint &lambda,
+                                const TriangleBarycentricGradients &grad_lambda, double nu)
+{
+  ValidateTriangleBarycentricPoint(lambda);
+  ValidateTriangleBarycentricGradients(grad_lambda);
+  ValidateExponent(nu);
+}
+
 void ValidateEvaluation(const BarycentricPoint &lambda,
                         const BarycentricGradients &grad_lambda, double nu)
 {
@@ -746,6 +828,24 @@ void Add(double scale, const Vector3 &x, Vector3 &y)
 Vector3 Cross(const Vector3 &x, const Vector3 &y)
 {
   return {x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]};
+}
+
+Vector2 Scale(double scale, const Vector2 &x)
+{
+  return {scale * x[0], scale * x[1]};
+}
+
+void Add(double scale, const Vector2 &x, Vector2 &y)
+{
+  for (int d = 0; d < 2; d++)
+  {
+    y[d] += scale * x[d];
+  }
+}
+
+double Cross(const Vector2 &x, const Vector2 &y)
+{
+  return x[0] * y[1] - x[1] * y[0];
 }
 
 std::array<ScalarPolynomialValue, 4>
@@ -1247,6 +1347,20 @@ const BarycentricGradients &ReferenceBarycentricGradients()
   return GradLambda;
 }
 
+TriangleBarycentricPoint ReferenceTriangleBarycentricPoint(const Vector2 &point)
+{
+  TriangleBarycentricPoint lambda{1.0 - point[0] - point[1], point[0], point[1]};
+  ValidateTriangleBarycentricPoint(lambda);
+  return lambda;
+}
+
+const TriangleBarycentricGradients &ReferenceTriangleBarycentricGradients()
+{
+  static constexpr TriangleBarycentricGradients GradLambda{
+      Vector2{-1.0, -1.0}, Vector2{1.0, 0.0}, Vector2{0.0, 1.0}};
+  return GradLambda;
+}
+
 ScalarPolynomialValue EvaluateSilvesterLagrange(int grid_denominator, int index,
                                                 double coordinate)
 {
@@ -1309,6 +1423,83 @@ double EdgeRadialCoordinate(const BarycentricPoint &lambda, int i, int j)
     }
   }
   return rho;
+}
+
+double TriangleNodeRadialCoordinate(const TriangleBarycentricPoint &lambda, int i)
+{
+  ValidateTriangleBarycentricPoint(lambda);
+  ValidateTriangleIndex(i);
+  double rho = 0.0;
+  for (int a = 0; a < 3; a++)
+  {
+    if (a != i)
+    {
+      rho += lambda[a];
+    }
+  }
+  return rho;
+}
+
+TriangleVectorBasisValue
+EvaluateTriangleStandardEdge(const TriangleBarycentricPoint &lambda,
+                             const TriangleBarycentricGradients &grad_lambda, int i, int j)
+{
+  ValidateTriangleBarycentricPoint(lambda);
+  ValidateTriangleBarycentricGradients(grad_lambda);
+  ValidateDistinctTriangleIndices(i, j);
+
+  TriangleVectorBasisValue result{{0.0, 0.0}, -2.0 * Cross(grad_lambda[i], grad_lambda[j])};
+  Add(lambda[j], grad_lambda[i], result.value);
+  Add(-lambda[i], grad_lambda[j], result.value);
+  return result;
+}
+
+double EvaluateTriangleNodeGradientPotential(const TriangleBarycentricPoint &lambda, int i,
+                                             int j, double nu)
+{
+  ValidateTriangleBarycentricPoint(lambda);
+  ValidateDistinctTriangleIndices(i, j);
+  ValidateExponent(nu);
+
+  const double rho = TriangleNodeRadialCoordinate(lambda, i);
+  ValidateRadialProxy(rho);
+  return lambda[j] * OneMinusPositivePower(rho, nu - 1.0);
+}
+
+TriangleVectorBasisValue
+EvaluateTriangleNodeGradient(const TriangleBarycentricPoint &lambda,
+                             const TriangleBarycentricGradients &grad_lambda, int i, int j,
+                             double nu)
+{
+  ValidateTriangleEvaluation(lambda, grad_lambda, nu);
+  ValidateDistinctTriangleIndices(i, j);
+
+  const double rho = TriangleNodeRadialCoordinate(lambda, i);
+  ValidateRadialProxy(rho);
+  const double factor = OneMinusPositivePower(rho, nu - 1.0);
+  const double derivative = lambda[j] * (nu - 1.0) * PositivePower(rho, nu - 2.0);
+
+  TriangleVectorBasisValue result{{0.0, 0.0}, 0.0};
+  Add(factor, grad_lambda[j], result.value);
+  Add(derivative, grad_lambda[i], result.value);
+  return result;
+}
+
+TriangleVectorBasisValue
+EvaluateTriangleNodeRotational(const TriangleBarycentricPoint &lambda,
+                               const TriangleBarycentricGradients &grad_lambda, int i,
+                               int j, int k, double nu)
+{
+  ValidateTriangleEvaluation(lambda, grad_lambda, nu);
+  ValidateDistinctTriangleIndices(i, j, k);
+
+  const double rho = TriangleNodeRadialCoordinate(lambda, i);
+  ValidateRadialProxy(rho);
+  const auto edge = EvaluateTriangleStandardEdge(lambda, grad_lambda, j, k);
+  const double factor = PositivePowerMinusOne(rho, nu);
+  const auto grad_factor = Scale(-nu * PositivePower(rho, nu - 1.0), grad_lambda[i]);
+
+  return {Scale(factor, edge.value), factor * edge.curl + Cross(grad_factor, edge.value)};
 }
 
 BarycentricPoint ApplyBarycentricPermutation(const BarycentricPoint &lambda,
@@ -2068,6 +2259,91 @@ void ForEachReferenceTetrahedronEdgeDuffyQuadraturePoint(
       }
     }
   }
+}
+
+void ForEachReferenceTriangleNodeDuffyQuadraturePoint(
+    int order, int singular_node, double radial_power,
+    const TriangleQuadraturePointVisitor &visitor)
+{
+  ValidateTriangleIndex(singular_node);
+  if (!visitor)
+  {
+    throw std::invalid_argument(
+        "Singular-element triangle quadrature visitor must be callable!");
+  }
+
+  std::array<int, 2> other_nodes;
+  int other = 0;
+  for (int i = 0; i < 3; i++)
+  {
+    if (i != singular_node)
+    {
+      other_nodes[other++] = i;
+    }
+  }
+
+  const auto &rule = GetDuffyQuadratureRule(order, radial_power);
+  ValidateNodeDuffyQuadratureRule(rule, radial_power);
+  for (int q_r = 0; q_r < rule.GetNPoints(); q_r++)
+  {
+    const auto &point_r = rule.IntPoint(q_r);
+    const double parameter = point_r.x;
+    const double r = std::pow(parameter, radial_power);
+    const double derivative = radial_power * r / parameter;
+    for (int q_t = 0; q_t < rule.GetNPoints(); q_t++)
+    {
+      const auto &point_t = rule.IntPoint(q_t);
+      const double t = point_t.x;
+      TriangleBarycentricPoint lambda;
+      lambda[singular_node] = 1.0 - r;
+      lambda[other_nodes[0]] = r * (1.0 - t);
+      lambda[other_nodes[1]] = r * t;
+      const double weight = point_r.weight * point_t.weight * derivative * r;
+      ValidateTriangleBarycentricPoint(lambda);
+      visitor(lambda, weight);
+    }
+  }
+}
+
+double IntegrateReferenceTriangleNodeDuffy(int order, int singular_node,
+                                           double radial_power,
+                                           const TriangleReferenceIntegrand &integrand)
+{
+  if (!integrand)
+  {
+    throw std::invalid_argument(
+        "Singular-element triangle quadrature integrand must be callable!");
+  }
+  CompensatedAccumulator result;
+  ForEachReferenceTriangleNodeDuffyQuadraturePoint(
+      order, singular_node, radial_power,
+      [&result, &integrand](const TriangleBarycentricPoint &lambda, double weight)
+      {
+        const double value = integrand(lambda);
+        if (!std::isfinite(value))
+        {
+          throw std::domain_error(
+              "Singular-element triangle integrand returned a non-finite value!");
+        }
+        result.Add(static_cast<long double>(weight) * value);
+      });
+  return result.Value();
+}
+
+std::size_t ReferenceTriangleNodeDuffyQuadraturePointCount(int order)
+{
+  if (order < 1 || order > MaximumDuffyQuadratureOrder)
+  {
+    throw std::invalid_argument(
+        "Singular-element Duffy quadrature order must be in [1, 63]!");
+  }
+  const std::size_t points = static_cast<std::size_t>(
+      mfem::IntRules.Get(mfem::Geometry::SEGMENT, order).GetNPoints());
+  if (points == 0 || points > std::numeric_limits<std::size_t>::max() / points)
+  {
+    throw std::overflow_error("Singular-element triangle quadrature point count overflow!");
+  }
+  return points * points;
 }
 
 std::size_t ReferenceTetrahedronQuadraturePointCount(int order, int subdivisions)

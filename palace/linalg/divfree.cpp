@@ -13,6 +13,8 @@
 #include "linalg/iterative.hpp"
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
+#include "utils/communication.hpp"
+#include "utils/iodata.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -152,9 +154,83 @@ DivFreeSolver<VecType>::DivFreeSolver(
 }
 
 template <typename VecType>
+DivFreeSolver<VecType>::DivFreeSolver(const IoData &iodata, MPI_Comm comm,
+                                      const Operator &mass, const Operator &gradient,
+                                      const mfem::Array<int> &h1_bdr_tdof_list)
+  : Grad(&gradient), combined_mass(&mass), combined_h1_bdr_tdof_list(h1_bdr_tdof_list)
+{
+  BlockTimer bt(Timer::DIV_FREE);
+
+  const auto *hypre_mass = dynamic_cast<const mfem::HypreParMatrix *>(&mass);
+  const auto *hypre_gradient = dynamic_cast<const mfem::HypreParMatrix *>(&gradient);
+  MFEM_VERIFY(hypre_mass && hypre_gradient && mass.Height() == gradient.Height() &&
+                  mass.Width() == gradient.Height(),
+              "Combined divergence-free projection requires compatible assembled mass "
+              "and gradient matrices!");
+
+  HYPRE_BigInt constrained_dofs = combined_h1_bdr_tdof_list.Size();
+  Mpi::GlobalSum(1, &constrained_dofs, comm);
+  if (constrained_dofs == 0)
+  {
+    int root = gradient.Width() == 0 ? Mpi::Size(comm) : Mpi::Rank(comm);
+    Mpi::GlobalMin(1, &root, comm);
+    MFEM_VERIFY(root < Mpi::Size(comm),
+                "No root process found for the combined scalar-potential constraint!");
+    if (root == Mpi::Rank(comm))
+    {
+      combined_h1_bdr_tdof_list.Append(0);
+    }
+  }
+
+  combined_projection_matrix.reset(mfem::RAP(hypre_mass, hypre_gradient));
+  MFEM_VERIFY(combined_projection_matrix &&
+                  combined_projection_matrix->Height() == gradient.Width(),
+              "Failed to assemble the combined G^T M G projection matrix!");
+  combined_projection_matrix->EliminateBC(combined_h1_bdr_tdof_list,
+                                          Operator::DiagonalPolicy::DIAG_ONE);
+
+  combined_ksp = MakeSingularDirectKspSolver(iodata, comm);
+  combined_ksp->SetOperators(*combined_projection_matrix, *combined_projection_matrix);
+
+  psi.SetSize(gradient.Width());
+  rhs.SetSize(gradient.Width());
+  mass_y.SetSize(gradient.Height());
+  psi.UseDevice(true);
+  rhs.UseDevice(true);
+  mass_y.UseDevice(true);
+}
+
+template <typename VecType>
 void DivFreeSolver<VecType>::Mult(VecType &y) const
 {
   BlockTimer bt(Timer::DIV_FREE);
+
+  if (combined_mass)
+  {
+    // Orthogonal projection in the enriched electric-energy inner product:
+    //   y <- y - G (G^T M G)^-1 G^T M y.
+    if constexpr (std::is_same<VecType, ComplexVector>::value)
+    {
+      combined_mass->Mult(y.Real(), mass_y.Real());
+      combined_mass->Mult(y.Imag(), mass_y.Imag());
+      Grad->MultTranspose(mass_y.Real(), rhs.Real());
+      Grad->MultTranspose(mass_y.Imag(), rhs.Imag());
+      linalg::SetSubVector(rhs, combined_h1_bdr_tdof_list, 0.0);
+      combined_ksp->Mult(rhs.Real(), psi.Real());
+      combined_ksp->Mult(rhs.Imag(), psi.Imag());
+      Grad->AddMult(psi.Real(), y.Real(), -1.0);
+      Grad->AddMult(psi.Imag(), y.Imag(), -1.0);
+    }
+    else
+    {
+      combined_mass->Mult(y, mass_y);
+      Grad->MultTranspose(mass_y, rhs);
+      linalg::SetSubVector(rhs, combined_h1_bdr_tdof_list, 0.0);
+      combined_ksp->Mult(rhs, psi);
+      Grad->AddMult(psi, y, -1.0);
+    }
+    return;
+  }
 
   // Compute the divergence of y.
   if constexpr (std::is_same<VecType, ComplexVector>::value)

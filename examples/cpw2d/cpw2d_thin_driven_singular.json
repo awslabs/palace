@@ -1,0 +1,68 @@
+{
+  "Problem": {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/thin_driven_singular"
+  },
+  "Model": {
+    "Mesh": "mesh/cpw2d_thin.msh",
+    "L0": 1.0e-6,
+    "CrackInternalBoundaryElements": false,
+    "Refinement": {
+      "MaxIts": 0
+    }
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 11.47
+      },
+      {
+        "Attributes": [2],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [1, 2]
+    },
+    "SurfaceCurrent": [
+      {
+        "Index": 1,
+        "Attributes": [3],
+        "Direction": "+X"
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 1,
+    "Device": "CPU",
+    "Driven": {
+      "Samples": [
+        {
+          "Type": "Point",
+          "Freq": [5.0]
+        }
+      ]
+    },
+    "SingularElements": {
+      "Attributes": [1, 2],
+      "Order": 1,
+      "QuadratureOrder": 8,
+      "AbsTol": 2.0e-6,
+      "RelTol": 2.0e-6,
+      "MaxSubdivisions": 6
+    },
+    "Linear": {
+      "Type": "SuperLU",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-10,
+      "MaxIts": 100,
+      "MGMaxLevels": 1
+    }
+  }
+}

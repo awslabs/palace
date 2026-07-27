@@ -273,9 +273,12 @@ void IoData::CheckConfiguration()
 {
   if (solver.singular_elements.Enabled())
   {
-    MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC,
-                "Singular elements are initially supported only for electrostatic "
-                "simulations!");
+    MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC ||
+                    problem.type == ProblemType::BOUNDARYMODE ||
+                    problem.type == ProblemType::DRIVEN ||
+                    problem.type == ProblemType::EIGENMODE,
+                "Singular elements are supported only for electrostatic, BoundaryMode, "
+                "driven, and eigenmode simulations!");
     MFEM_VERIFY(solver.device == Device::CPU,
                 "Singular elements are initially supported only with Solver.Device = "
                 "\"CPU\"!");
@@ -285,6 +288,9 @@ void IoData::CheckConfiguration()
       conductor_attributes.insert(conductor_attributes.end(), terminal.attributes.begin(),
                                   terminal.attributes.end());
     }
+    conductor_attributes.insert(conductor_attributes.end(),
+                                boundaries.auxpec.attributes.begin(),
+                                boundaries.auxpec.attributes.end());
     std::sort(conductor_attributes.begin(), conductor_attributes.end());
     conductor_attributes.erase(
         std::unique(conductor_attributes.begin(), conductor_attributes.end()),
@@ -296,9 +302,83 @@ void IoData::CheckConfiguration()
                         std::back_inserter(unconstrained_attributes));
     MFEM_VERIFY(
         unconstrained_attributes.empty(),
-        "Singular-element attributes must also be electrostatic PEC/ground or terminal "
-        "boundary attributes! Missing conductor attributes: "
+        "Singular-element attributes must also be PEC, auxiliary PEC, or electrostatic "
+        "terminal boundary attributes! Missing conductor attributes: "
             << fmt::format("{}", fmt::join(unconstrained_attributes, " ")));
+    const auto is_isotropic = [](const auto &property)
+    {
+      return std::all_of(property.s.begin() + 1, property.s.end(),
+                         [&property](double value) { return value == property.s[0]; });
+    };
+    const auto is_zero = [](const auto &property)
+    {
+      return std::all_of(property.s.begin(), property.s.end(),
+                         [](double value) { return value == 0.0; });
+    };
+    if (problem.type == ProblemType::BOUNDARYMODE)
+    {
+      MFEM_VERIFY(boundaries.impedance.empty() && boundaries.conductivity.empty() &&
+                      boundaries.rational_impedance.empty() && boundaries.farfield.empty(),
+                  "Singular BoundaryMode simulations currently support only PEC, "
+                  "auxiliary PEC, and natural PMC boundary conditions!");
+      for (const auto &material : domains.materials)
+      {
+        MFEM_VERIFY(is_isotropic(material.mu_r) && is_isotropic(material.epsilon_r) &&
+                        is_zero(material.tandelta) && is_zero(material.sigma) &&
+                        material.lambda_L == 0.0,
+                    "Singular BoundaryMode simulations currently require isotropic, "
+                    "lossless bulk materials without London penetration depth!");
+      }
+    }
+    if (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE)
+    {
+#if !defined(MFEM_USE_SUPERLU)
+      MFEM_ABORT("Full-wave singular elements currently require a Palace build with "
+                 "SuperLU_DIST!");
+#endif
+      constexpr std::array<double, 3> zero_wave_vector{0.0, 0.0, 0.0};
+      MFEM_VERIFY(boundaries.impedance.empty() && boundaries.conductivity.empty() &&
+                      boundaries.rational_impedance.empty() &&
+                      boundaries.farfield.empty() && boundaries.lumpedport.empty() &&
+                      boundaries.waveport.empty() && boundaries.floquetport.empty() &&
+                      boundaries.periodic.boundary_pairs.empty() &&
+                      boundaries.periodic.wave_vector == zero_wave_vector,
+                  "Full-wave singular simulations currently support only PEC, auxiliary "
+                  "PEC, natural PMC, and source-only boundary terms; impedance, absorbing, "
+                  "port, and periodic terms are not yet supported!");
+      for (const auto &material : domains.materials)
+      {
+        MFEM_VERIFY(is_isotropic(material.mu_r) && is_isotropic(material.epsilon_r) &&
+                        is_zero(material.tandelta) && is_zero(material.sigma) &&
+                        material.lambda_L == 0.0,
+                    "Full-wave singular simulations currently require isotropic, lossless "
+                    "bulk materials without London penetration depth!");
+      }
+      MFEM_VERIFY(
+          domains.postpro.energy.empty() && domains.postpro.probe.empty() &&
+              boundaries.postpro.flux.empty() && boundaries.postpro.dielectric.empty() &&
+              boundaries.postpro.impedance.empty() && boundaries.postpro.voltage.empty() &&
+              boundaries.postpro.farfield.empty(),
+          "Full-wave singular field reconstruction and configured domain/boundary "
+          "postprocessing are not yet supported!");
+      if (problem.type == ProblemType::DRIVEN)
+      {
+        MFEM_VERIFY(solver.driven.adaptive_tol <= 0.0 &&
+                        !solver.driven.adaptive_circuit_synthesis &&
+                        solver.driven.save_indices.empty(),
+                    "Driven singular simulations currently require a uniform frequency "
+                    "sweep without saved standard-grid fields or PROM!");
+        MFEM_VERIFY(domains.current_dipole.empty() && !boundaries.current.empty(),
+                    "Driven singular simulations currently require a surface-current "
+                    "source and do not yet support current dipoles!");
+      }
+      else
+      {
+        MFEM_VERIFY(solver.eigenmode.n_post == 0,
+                    "Eigenmode singular simulations do not yet support saved "
+                    "standard-grid fields; set Solver.Eigenmode.Save = 0!");
+      }
+    }
     const auto &refinement = model.refinement;
     bool has_region_refinement = false;
     for (const auto &box : refinement.GetBoxes())

@@ -101,6 +101,14 @@ MakeSingularPatchKspSolver(const IoData &iodata, FiniteElementSpaceHierarchy &fe
                            const fem::singular::ParallelFeaturePatches &feature_patches);
 bool UsesSingularPatchKspSolver(const IoData &iodata);
 
+// Configure correctness-first solvers for assembled combined standard-plus-singular
+// systems. The exact SuperLU preconditioner acts on the complete operator and therefore
+// does not rely on standard MFEM finite element space dimensions or auxiliary-space
+// interpolation operators.
+std::unique_ptr<KspSolver> MakeSingularDirectKspSolver(const IoData &iodata, MPI_Comm comm);
+std::unique_ptr<ComplexKspSolver> MakeSingularComplexKspSolver(const IoData &iodata,
+                                                               MPI_Comm comm);
+
 }  // namespace palace
 
 #endif  // PALACE_LINALG_KSP_HPP

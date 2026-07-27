@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <set>
 #include <string>
 
 #include <catch2/catch_test_macros.hpp>
@@ -141,6 +142,70 @@ palace::test::CustomCheck CompareComplexMagnitudes(double rtol, double atol)
   };
 }
 
+// Compare a canonical-keyed diagnostic against a reference subset. The final
+// `numeric_columns` columns are compared numerically; preceding columns form
+// the lookup key except for explicitly ignored partition-dependent columns.
+palace::test::CustomCheck CompareCanonicalRows(std::size_t numeric_columns,
+                                               std::set<std::string> ignored_key_headers,
+                                               double rtol, double atol,
+                                               bool compare_complex_magnitude = false)
+{
+  return [numeric_columns, ignored_key_headers = std::move(ignored_key_headers), rtol, atol,
+          compare_complex_magnitude](palace::Table &actual, palace::Table &reference)
+  {
+    REQUIRE(actual.n_cols() == reference.n_cols());
+    REQUIRE(actual.n_cols() >= numeric_columns);
+    const std::size_t numeric_begin = actual.n_cols() - numeric_columns;
+    for (std::size_t c = 0; c < actual.n_cols(); c++)
+    {
+      CHECK(actual[c].header_text == reference[c].header_text);
+    }
+    for (std::size_t rr = 0; rr < reference.n_rows(); rr++)
+    {
+      std::vector<std::size_t> matches;
+      for (std::size_t ar = 0; ar < actual.n_rows(); ar++)
+      {
+        bool match = true;
+        for (std::size_t c = 0; c < numeric_begin; c++)
+        {
+          if (ignored_key_headers.count(actual[c].header_text) == 0 &&
+              actual[c].data[ar] != reference[c].data[rr])
+          {
+            match = false;
+            break;
+          }
+        }
+        if (match)
+        {
+          matches.push_back(ar);
+        }
+      }
+      INFO("canonical reference row " << rr + 1);
+      REQUIRE(matches.size() == 1);
+      const std::size_t ar = matches.front();
+      if (compare_complex_magnitude)
+      {
+        REQUIRE(numeric_columns == 2);
+        const double actual_magnitude =
+            std::hypot(actual[numeric_begin].data[ar], actual[numeric_begin + 1].data[ar]);
+        const double reference_magnitude = std::hypot(
+            reference[numeric_begin].data[rr], reference[numeric_begin + 1].data[rr]);
+        CHECK_THAT(actual_magnitude,
+                   Catch::Matchers::WithinRel(reference_magnitude, rtol) ||
+                       Catch::Matchers::WithinAbs(reference_magnitude, atol));
+        continue;
+      }
+      for (std::size_t c = numeric_begin; c < actual.n_cols(); c++)
+      {
+        INFO("column '" << actual[c].header_text << "'");
+        CHECK_THAT(actual[c].data[ar],
+                   Catch::Matchers::WithinRel(reference[c].data[rr], rtol) ||
+                       Catch::Matchers::WithinAbs(reference[c].data[rr], atol));
+      }
+    }
+  };
+}
+
 // Standard "drop per-element extrema + eigenmode error columns" list.
 const std::vector<std::string> kEigenExcluded = {"Maximum", "Minimum", "Mean",
                                                  "Error (Bkwd.)", "Error (Abs.)"};
@@ -194,6 +259,20 @@ TEST_CASE("singular_sheet_electrostatic", "[Serial][Parallel][Regression]")
   opts.excluded_columns = {"true_dof"};
   opts.linear_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("singular_sheet", "singular_sheet.json", "", opts);
+}
+
+TEST_CASE("singular_sheet_eigenmode", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-8;
+  opts.atol = 1.0e-13;
+  opts.excluded_columns = {"Error ("};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.eigen_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_sheet_eigenmode",
+                                  "singular_sheet_eigenmode.json", "eigenmode", opts);
 }
 
 TEST_CASE("spheres", "[Serial][Parallel][GPU][Regression]")
@@ -575,6 +654,56 @@ TEST_CASE("transmon_amr", "[Serial][Parallel][GPU][Regression][Long]")
 // 2D cases.
 // ===========================================================================
 
+TEST_CASE("singular_line_electrostatic", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-9;
+  opts.atol = 1.0e-20;
+  opts.excluded_columns = {"true_dof"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.custom_checks["singular-coefficients.csv"] =
+      CompareCanonicalRows(2, {"true_dof"}, opts.rtol, opts.atol);
+  opts.custom_checks["singular-tip-slopes.csv"] =
+      CompareCanonicalRows(8, {}, opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("singular_line_electrostatic",
+                                  "singular_line_electrostatic.json", "", opts);
+}
+
+TEST_CASE("singular_line_boundarymode", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-4;
+  opts.atol = 2.0e-9;
+  opts.excluded_columns = {"enrichment_true_dof", "Im{kn}", "Im{n_eff}", "Error (", "Im{P}",
+                           "coefficient norm"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.custom_checks["singular-mode-nd-coefficients.csv"] =
+      CompareCanonicalRows(2, {"enrichment_true_dof"}, 3.0e-4, 2.0e-3, true);
+  opts.custom_checks["singular-mode-h1-coefficients.csv"] =
+      CompareCanonicalRows(2, {"enrichment_true_dof"}, 3.0e-4, 2.0e-3, true);
+  opts.custom_checks["singular-mode-tip-slopes.csv"] =
+      CompareCanonicalRows(8, {}, opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("singular_line_boundarymode",
+                                  "singular_line_boundarymode.json", "", opts);
+}
+
+TEST_CASE("singular_line_eigenmode", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-8;
+  opts.atol = 1.0e-13;
+  opts.excluded_columns = {"Error ("};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  opts.eigen_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_line_fullwave", "singular_line_eigenmode.json",
+                                  "eigenmode", opts);
+}
+
 // cavity2d eigenmode uses the tight 1e-4 / 1e-16 tolerance.
 TEST_CASE("cavity2d_eigenmode", "[Serial][Parallel][GPU][Regression]")
 {
@@ -642,6 +771,18 @@ TEST_CASE("cpw2d_thin", "[Serial][Parallel][GPU][Regression]")
   opts.linear_solver_policy = kForceDefaultSolver;
   opts.custom_checks["mode-V.csv"] = CompareComplexMagnitudes(opts.rtol, opts.atol);
   palace::test::RunRegressionCase("cpw2d", "cpw2d_thin.json", "thin", opts);
+}
+
+TEST_CASE("cpw2d_thin_driven_singular", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 5.0e-3;
+  opts.atol = 1.0e-15;
+  opts.excluded_columns = {"Relative residual"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("cpw2d", "cpw2d_thin_driven_singular.json",
+                                  "thin_driven_singular", opts);
 }
 
 TEST_CASE("cpw2d_thick_impedance", "[Serial][Parallel][GPU][Regression]")

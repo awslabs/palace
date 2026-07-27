@@ -1124,7 +1124,7 @@ public:
 struct SingularElementsData
 {
 public:
-  // Internal zero-thickness PEC sheet boundary attributes to enrich.
+  // Internal zero-thickness PEC line (2D) or sheet (3D) boundary attributes to enrich.
   std::vector<int> attributes = {};
 
   // Polynomial interpolation order of the additive singular basis.

@@ -11,6 +11,7 @@
 
 #include "fem/singulardofs.hpp"
 #include "fem/singularelements.hpp"
+#include "fem/singulargeometry.hpp"
 
 namespace palace
 {
@@ -50,6 +51,8 @@ struct ElementEnrichmentMatrices
   // ND mass matrix corresponding to their analytic gradient bases.
   mfem::DenseMatrix h1_diffusion;
   mfem::DenseMatrix h1_diffusion_estimated_absolute_error;
+  mfem::DenseMatrix h1_mass;
+  mfem::DenseMatrix h1_mass_estimated_absolute_error;
 
   mfem::DenseMatrix nd_mass;
   mfem::DenseMatrix nd_mass_estimated_absolute_error;
@@ -67,6 +70,9 @@ struct ElementStandardEnrichmentMatrices
   mfem::DenseMatrix h1_standard_enrichment;
   mfem::DenseMatrix h1_enrichment_standard;
   mfem::DenseMatrix h1_estimated_absolute_error;
+  mfem::DenseMatrix h1_mass_standard_enrichment;
+  mfem::DenseMatrix h1_mass_enrichment_standard;
+  mfem::DenseMatrix h1_mass_estimated_absolute_error;
 
   mfem::DenseMatrix nd_mass_standard_enrichment;
   mfem::DenseMatrix nd_mass_enrichment_standard;
@@ -105,6 +111,7 @@ struct LocalSparseOperatorBlocks
 struct LocalSparseEnrichmentMatrices
 {
   LocalSparseOperatorBlocks h1_diffusion;
+  LocalSparseOperatorBlocks h1_mass;
   LocalSparseOperatorBlocks nd_mass;
   LocalSparseOperatorBlocks nd_curl_curl;
 
@@ -135,22 +142,36 @@ struct ParallelSparseOperatorBlocks
 struct ParallelSparseEnrichmentMatrices
 {
   ParallelSparseOperatorBlocks h1_diffusion;
+  ParallelSparseOperatorBlocks h1_mass;
   ParallelSparseOperatorBlocks nd_mass;
   ParallelSparseOperatorBlocks nd_curl_curl;
 };
 
-// Return the physical barycentric gradients and positive Jacobian determinant
-// for an affine three-dimensional tetrahedron.
+// Return the constant physical barycentric gradients and positive Jacobian
+// determinant for an actually affine three-dimensional tetrahedron. A
+// high-order nodal representation of an affine map is accepted.
 BarycentricGradients
 GetAffineBarycentricGradients(mfem::ElementTransformation &transformation,
                               double &jacobian_determinant);
+
+// Return constant physical barycentric gradients and the positive area
+// Jacobian for an actually affine two-dimensional triangle. A high-order nodal
+// representation of an affine map is accepted.
+TriangleBarycentricGradients
+GetAffineTriangleBarycentricGradients(mfem::ElementTransformation &transformation,
+                                      double &jacobian_determinant);
 
 // Construct the parallel map from uniquely owned enrichment true DOFs to the
 // rank-local canonical enrichment DOFs used by element maps.
 std::unique_ptr<mfem::HypreParMatrix>
 BuildParallelEnrichmentProlongation(MPI_Comm comm, const TrueDofMap &dofs);
 
-// Assemble enrichment-enrichment element matrices on one affine tetrahedron.
+// Assemble enrichment-enrichment element matrices on one tetrahedron. The
+// explicit-gradient overload is the affine reference-tensor path. The
+// transformation overload detects high-order nodal maps which are actually
+// affine and otherwise evaluates the physical Jacobian pointwise under
+// singularity-aligned reference quadrature.
+//
 // Scalar material coefficients are deliberately excluded and must be applied
 // by the caller. Every upper-triangular basis pair is integrated once and
 // mirrored exactly.
@@ -162,11 +183,27 @@ ElementEnrichmentMatrices AssembleElementEnrichmentMatrices(
     const ElementDofMap &element_dofs, const BarycentricGradients &grad_lambda,
     double jacobian_determinant, const AdaptiveAssemblyOptions &options);
 
+ElementEnrichmentMatrices
+AssembleElementEnrichmentMatrices(const ElementDofMap &element_dofs,
+                                  mfem::ElementTransformation &transformation,
+                                  const AdaptiveAssemblyOptions &options);
+
+ElementEnrichmentMatrices
+AssembleTriangleElementEnrichmentMatrices(const TriangleElementDofMap &element_dofs,
+                                          const TriangleBarycentricGradients &grad_lambda,
+                                          double jacobian_determinant,
+                                          const AdaptiveAssemblyOptions &options);
+
+ElementEnrichmentMatrices
+AssembleTriangleElementEnrichmentMatrices(const TriangleElementDofMap &element_dofs,
+                                          mfem::ElementTransformation &transformation,
+                                          const AdaptiveAssemblyOptions &options);
+
 // Assemble the standard-enrichment coupling blocks using the actual MFEM H1
-// and ND tetrahedral basis conventions. The finite elements must have matching
-// positive order and the transformation must be affine. Scalar material
-// coefficients and element DOF orientation transformations are deliberately
-// excluded and must be applied by the caller.
+// and ND simplex basis conventions. The finite elements must have matching
+// positive order. Scalar material coefficients and element DOF orientation
+// transformations are deliberately excluded and must be applied by the
+// caller.
 //
 // ND entries are integrated adaptively in physical coordinates. H1 coupling
 // is formed as G^T M using MFEM's element-local discrete gradient G and the
@@ -174,6 +211,11 @@ ElementEnrichmentMatrices AssembleElementEnrichmentMatrices(
 // the enriched H1-to-ND exact sequence algebraically.
 ElementStandardEnrichmentMatrices AssembleElementStandardEnrichmentMatrices(
     const ElementDofMap &element_dofs, const mfem::FiniteElement &h1_fe,
+    const mfem::FiniteElement &nd_fe, mfem::ElementTransformation &transformation,
+    const AdaptiveAssemblyOptions &options);
+
+ElementStandardEnrichmentMatrices AssembleTriangleElementStandardEnrichmentMatrices(
+    const TriangleElementDofMap &element_dofs, const mfem::FiniteElement &h1_fe,
     const mfem::FiniteElement &nd_fe, mfem::ElementTransformation &transformation,
     const AdaptiveAssemblyOptions &options);
 
@@ -208,12 +250,12 @@ void ApplyIsotropicMaterialCoefficients(const IsotropicMaterialCoefficients &coe
 void ApplyIsotropicMaterialCoefficients(const IsotropicMaterialCoefficients &coefficients,
                                         ElementStandardEnrichmentMatrices &matrices);
 
-// Assemble local sparse L-vector blocks over a conforming affine tetrahedral
-// mesh. The standard spaces and topology must refer to the same mesh, and one
-// positive isotropic material pair is supplied per element. Standard signed
-// VDofs and MFEM DOF transformations are applied to values; error bounds use
-// the absolute transformations and unsigned VDof indices. Reverse coupling
-// blocks are generated as exact sparse transposes.
+// Assemble local sparse L-vector blocks over a conforming simplex mesh. The
+// standard spaces and topology must refer to the same mesh, and one positive
+// isotropic material pair is supplied per element. Standard signed VDofs and
+// MFEM DOF transformations are applied to values; error bounds use the
+// absolute transformations and unsigned VDof indices. Reverse coupling blocks
+// are generated as exact sparse transposes.
 //
 // MFEM finite-element evaluation mutates transformation scratch state, so this
 // correctness path is serial until an explicitly thread-safe evaluator exists.
@@ -223,11 +265,22 @@ LocalSparseEnrichmentMatrices AssembleLocalSparseEnrichmentMatrices(
     const std::vector<IsotropicMaterialCoefficients> &materials,
     const AdaptiveAssemblyOptions &options);
 
+LocalSparseEnrichmentMatrices AssembleLocalSparseEnrichmentMatrices(
+    const TriangleDofTopology &topology, mfem::FiniteElementSpace &h1_fespace,
+    mfem::FiniteElementSpace &nd_fespace,
+    const std::vector<IsotropicMaterialCoefficients> &materials,
+    const AdaptiveAssemblyOptions &options);
+
 // Electrostatic specialization of AssembleLocalSparseEnrichmentMatrices. It
 // assembles only the H1 diffusion block and therefore does not evaluate any
 // rotational ND basis or curl-curl integral.
 LocalSparseH1EnrichmentMatrices AssembleLocalSparseH1EnrichmentMatrices(
     const DofTopology &topology, mfem::FiniteElementSpace &h1_fespace,
+    const std::vector<IsotropicMaterialCoefficients> &materials,
+    const AdaptiveAssemblyOptions &options);
+
+LocalSparseH1EnrichmentMatrices AssembleLocalSparseH1EnrichmentMatrices(
+    const TriangleDofTopology &topology, mfem::FiniteElementSpace &h1_fespace,
     const std::vector<IsotropicMaterialCoefficients> &materials,
     const AdaptiveAssemblyOptions &options);
 

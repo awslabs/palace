@@ -190,4 +190,6 @@ function generate_cpw2d_thin_mesh(;
     return gmsh.finalize()
 end
 
-generate_cpw2d_thin_mesh()
+if abspath(PROGRAM_FILE) == @__FILE__
+    generate_cpw2d_thin_mesh()
+end

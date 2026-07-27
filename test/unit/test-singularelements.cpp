@@ -24,6 +24,10 @@ namespace palace
 using namespace Catch::Matchers;
 using fem::singular::BarycentricGradients;
 using fem::singular::BarycentricPoint;
+using fem::singular::TriangleBarycentricGradients;
+using fem::singular::TriangleBarycentricPoint;
+using fem::singular::TriangleVectorBasisValue;
+using fem::singular::Vector2;
 using fem::singular::Vector3;
 using fem::singular::VectorBasisValue;
 
@@ -36,6 +40,16 @@ double Dot(const Vector3 &x, const Vector3 &y)
 }
 
 double Norm(const Vector3 &x)
+{
+  return std::sqrt(Dot(x, x));
+}
+
+double Dot(const Vector2 &x, const Vector2 &y)
+{
+  return x[0] * y[0] + x[1] * y[1];
+}
+
+double Norm(const Vector2 &x)
 {
   return std::sqrt(Dot(x, x));
 }
@@ -62,11 +76,35 @@ void CheckVector(const Vector3 &actual, const Vector3 &expected, double toleranc
   }
 }
 
+void CheckVector(const Vector2 &actual, const Vector2 &expected, double tolerance)
+{
+  for (int d = 0; d < 2; d++)
+  {
+    CAPTURE(d, actual[d], expected[d]);
+    CHECK_THAT(actual[d], WithinAbs(expected[d], tolerance));
+  }
+}
+
 template <typename F>
 Vector3 NumericalGradient(const Vector3 &point, F &&function, double step = 1.0e-6)
 {
   Vector3 gradient{};
   for (int d = 0; d < 3; d++)
+  {
+    auto plus = point;
+    auto minus = point;
+    plus[d] += step;
+    minus[d] -= step;
+    gradient[d] = (function(plus) - function(minus)) / (2.0 * step);
+  }
+  return gradient;
+}
+
+template <typename F>
+Vector2 NumericalGradient(const Vector2 &point, F &&function, double step = 1.0e-6)
+{
+  Vector2 gradient{};
+  for (int d = 0; d < 2; d++)
   {
     auto plus = point;
     auto minus = point;
@@ -96,6 +134,22 @@ Vector3 NumericalCurl(const Vector3 &point, F &&function, double step = 1.0e-6)
   }
   return {derivative[1][2] - derivative[2][1], derivative[2][0] - derivative[0][2],
           derivative[0][1] - derivative[1][0]};
+}
+
+template <typename F>
+double NumericalCurl(const Vector2 &point, F &&function, double step = 1.0e-6)
+{
+  auto plus_x = point;
+  auto minus_x = point;
+  auto plus_y = point;
+  auto minus_y = point;
+  plus_x[0] += step;
+  minus_x[0] -= step;
+  plus_y[1] += step;
+  minus_y[1] -= step;
+  const double derivative_x = (function(plus_x)[1] - function(minus_x)[1]) / (2.0 * step);
+  const double derivative_y = (function(plus_y)[0] - function(minus_y)[0]) / (2.0 * step);
+  return derivative_x - derivative_y;
 }
 
 Vector3 TangentialPart(const Vector3 &value, const Vector3 &normal)
@@ -3107,6 +3161,268 @@ TEST_CASE("Singular element volume and surface integrability", "[singularelement
   CHECK_THAT(surface_8, WithinAbs(std::log(1.0e8), 1.0e-11));
   CHECK_THAT(surface_4 - surface_2, WithinAbs(surface_2, 1.0e-12));
   CHECK_THAT(surface_8 - surface_4, WithinAbs(surface_4, 1.0e-11));
+}
+
+TEST_CASE("Singular triangle lowest-order basis identities",
+          "[singularelements][triangle][Serial]")
+{
+  const Vector2 point{0.27, 0.31};
+  const auto lambda = fem::singular::ReferenceTriangleBarycentricPoint(point);
+  const auto &grad_lambda = fem::singular::ReferenceTriangleBarycentricGradients();
+
+  for (double nu : {0.5, 2.0 / 3.0})
+  {
+    CAPTURE(nu);
+    for (int j : {1, 2})
+    {
+      const auto gradient =
+          fem::singular::EvaluateTriangleNodeGradient(lambda, grad_lambda, 0, j, nu);
+      const auto numerical_gradient = NumericalGradient(
+          point,
+          [j, nu](const Vector2 &x)
+          {
+            return fem::singular::EvaluateTriangleNodeGradientPotential(
+                fem::singular::ReferenceTriangleBarycentricPoint(x), 0, j, nu);
+          });
+      CheckVector(gradient.value, numerical_gradient, 2.0e-9);
+      CHECK(gradient.curl == 0.0);
+
+      const double numerical_curl =
+          NumericalCurl(point,
+                        [j, nu, &grad_lambda](const Vector2 &x)
+                        {
+                          return fem::singular::EvaluateTriangleNodeGradient(
+                                     fem::singular::ReferenceTriangleBarycentricPoint(x),
+                                     grad_lambda, 0, j, nu)
+                              .value;
+                        });
+      CHECK_THAT(numerical_curl, WithinAbs(0.0, 2.0e-9));
+    }
+
+    const auto rotational =
+        fem::singular::EvaluateTriangleNodeRotational(lambda, grad_lambda, 0, 1, 2, nu);
+    const double rho = fem::singular::TriangleNodeRadialCoordinate(lambda, 0);
+    CHECK_THAT(rotational.curl, WithinAbs(2.0 - (2.0 + nu) * std::pow(rho, nu), 2.0e-14));
+    const double numerical_curl =
+        NumericalCurl(point,
+                      [nu, &grad_lambda](const Vector2 &x)
+                      {
+                        return fem::singular::EvaluateTriangleNodeRotational(
+                                   fem::singular::ReferenceTriangleBarycentricPoint(x),
+                                   grad_lambda, 0, 1, 2, nu)
+                            .value;
+                      });
+    CHECK_THAT(rotational.curl, WithinAbs(numerical_curl, 2.0e-9));
+  }
+}
+
+TEST_CASE("Singular triangle bases have the published edge traces",
+          "[singularelements][triangle][Serial]")
+{
+  constexpr double nu = 0.5;
+  constexpr std::array<Vector2, 3> vertices{Vector2{0.0, 0.0}, Vector2{1.0, 0.0},
+                                            Vector2{0.0, 1.0}};
+  const auto &grad_lambda = fem::singular::ReferenceTriangleBarycentricGradients();
+
+  for (int opposite = 0; opposite < 3; opposite++)
+  {
+    std::array<int, 2> edge_vertices;
+    int next = 0;
+    for (int vertex = 0; vertex < 3; vertex++)
+    {
+      if (vertex != opposite)
+      {
+        edge_vertices[next++] = vertex;
+      }
+    }
+    TriangleBarycentricPoint lambda{0.0, 0.0, 0.0};
+    lambda[edge_vertices[0]] = 0.37;
+    lambda[edge_vertices[1]] = 0.63;
+    const Vector2 tangent{vertices[edge_vertices[1]][0] - vertices[edge_vertices[0]][0],
+                          vertices[edge_vertices[1]][1] - vertices[edge_vertices[0]][1]};
+
+    for (int j : {1, 2})
+    {
+      const auto gradient =
+          fem::singular::EvaluateTriangleNodeGradient(lambda, grad_lambda, 0, j, nu);
+      const int associated_opposite = j == 1 ? 2 : 1;
+      if (opposite == associated_opposite)
+      {
+        CHECK(std::abs(Dot(gradient.value, tangent)) > 1.0e-3);
+      }
+      else
+      {
+        CHECK_THAT(Dot(gradient.value, tangent), WithinAbs(0.0, 2.0e-14));
+      }
+    }
+
+    const auto rotational =
+        fem::singular::EvaluateTriangleNodeRotational(lambda, grad_lambda, 0, 1, 2, nu);
+    CHECK_THAT(Dot(rotational.value, tangent), WithinAbs(0.0, 2.0e-14));
+  }
+}
+
+TEST_CASE("Singular triangle basis is covariant under vertex relabeling",
+          "[singularelements][triangle][Serial]")
+{
+  constexpr double nu = 2.0 / 3.0;
+  const TriangleBarycentricPoint lambda{0.42, 0.23, 0.35};
+  const TriangleBarycentricGradients grad_lambda{Vector2{-1.7, -0.4}, Vector2{0.6, -0.9},
+                                                 Vector2{1.1, 1.3}};
+  const auto gradient =
+      fem::singular::EvaluateTriangleNodeGradient(lambda, grad_lambda, 0, 1, nu);
+  const auto rotational =
+      fem::singular::EvaluateTriangleNodeRotational(lambda, grad_lambda, 0, 1, 2, nu);
+
+  std::array<int, 3> permutation{0, 1, 2};
+  do
+  {
+    TriangleBarycentricPoint permuted_lambda;
+    TriangleBarycentricGradients permuted_gradients;
+    for (int i = 0; i < 3; i++)
+    {
+      permuted_lambda[permutation[i]] = lambda[i];
+      permuted_gradients[permutation[i]] = grad_lambda[i];
+    }
+    const auto permuted_gradient = fem::singular::EvaluateTriangleNodeGradient(
+        permuted_lambda, permuted_gradients, permutation[0], permutation[1], nu);
+    const auto permuted_rotational = fem::singular::EvaluateTriangleNodeRotational(
+        permuted_lambda, permuted_gradients, permutation[0], permutation[1], permutation[2],
+        nu);
+    CheckVector(permuted_gradient.value, gradient.value, 2.0e-14);
+    CHECK(permuted_gradient.curl == gradient.curl);
+    CheckVector(permuted_rotational.value, rotational.value, 2.0e-14);
+    CHECK_THAT(permuted_rotational.curl, WithinAbs(rotational.curl, 2.0e-14));
+  } while (std::next_permutation(permutation.begin(), permutation.end()));
+}
+
+TEST_CASE("Singular triangle gradient has the Meixner slope",
+          "[singularelements][triangle][Serial]")
+{
+  const auto &grad_lambda = fem::singular::ReferenceTriangleBarycentricGradients();
+  constexpr double angular_coordinate = 0.37;
+  constexpr double rho_1 = 0x1p-48;
+  constexpr double rho_2 = 0x1p-36;
+
+  for (double nu : {0.5, 2.0 / 3.0})
+  {
+    const auto magnitude = [nu, &grad_lambda](double rho)
+    {
+      const TriangleBarycentricPoint lambda{1.0 - rho, rho * (1.0 - angular_coordinate),
+                                            rho * angular_coordinate};
+      return Norm(
+          fem::singular::EvaluateTriangleNodeGradient(lambda, grad_lambda, 0, 1, nu).value);
+    };
+    const double slope = LogSlope(rho_1, magnitude(rho_1), rho_2, magnitude(rho_2));
+    CAPTURE(nu, slope);
+    CHECK_THAT(slope, WithinAbs(nu - 1.0, 1.0e-4));
+  }
+}
+
+TEST_CASE("Singular triangle node Duffy quadrature", "[singularelements][triangle][Serial]")
+{
+  constexpr int order = 31;
+  constexpr double radial_power = 6.0;
+
+  double weight_sum = 0.0;
+  std::size_t point_count = 0;
+  fem::singular::ForEachReferenceTriangleNodeDuffyQuadraturePoint(
+      order, 0, radial_power,
+      [&weight_sum, &point_count](const TriangleBarycentricPoint &lambda, double weight)
+      {
+        for (double value : lambda)
+        {
+          CHECK(value > 0.0);
+          CHECK(value < 1.0);
+        }
+        CHECK(weight > 0.0);
+        weight_sum += weight;
+        point_count++;
+      });
+  CHECK(point_count > 0);
+  CHECK(point_count ==
+        fem::singular::ReferenceTriangleNodeDuffyQuadraturePointCount(order));
+  CHECK_THAT(weight_sum, WithinAbs(0.5, 2.0e-15));
+
+  const auto factorial = [](int n) { return std::tgamma(static_cast<double>(n) + 1.0); };
+  for (int a = 0; a <= 4; a++)
+  {
+    for (int b = 0; b <= 4 - a; b++)
+    {
+      for (int c = 0; c <= 4 - a - b; c++)
+      {
+        const double value = fem::singular::IntegrateReferenceTriangleNodeDuffy(
+            order, 0, radial_power,
+            [a, b, c](const TriangleBarycentricPoint &lambda)
+            {
+              return std::pow(lambda[0], a) * std::pow(lambda[1], b) *
+                     std::pow(lambda[2], c);
+            });
+        const double exact =
+            factorial(a) * factorial(b) * factorial(c) / factorial(a + b + c + 2);
+        CAPTURE(a, b, c, value, exact);
+        CHECK_THAT(value, WithinAbs(exact, 3.0e-15));
+      }
+    }
+  }
+
+  for (double exponent : {-1.0, -2.0 / 3.0, 0.0, 2.0})
+  {
+    const double value = fem::singular::IntegrateReferenceTriangleNodeDuffy(
+        order, 0, radial_power,
+        [exponent](const TriangleBarycentricPoint &lambda)
+        {
+          return std::pow(fem::singular::TriangleNodeRadialCoordinate(lambda, 0), exponent);
+        });
+    CAPTURE(exponent, value);
+    CHECK_THAT(value, WithinAbs(1.0 / (exponent + 2.0), 3.0e-14));
+  }
+
+  const auto &grad_lambda = fem::singular::ReferenceTriangleBarycentricGradients();
+  const auto gradient_mass = [&grad_lambda](int quadrature_order)
+  {
+    return fem::singular::IntegrateReferenceTriangleNodeDuffy(
+        quadrature_order, 0, 6.0,
+        [&grad_lambda](const TriangleBarycentricPoint &lambda)
+        {
+          const auto basis =
+              fem::singular::EvaluateTriangleNodeGradient(lambda, grad_lambda, 0, 1, 0.5);
+          return Dot(basis.value, basis.value);
+        });
+  };
+  const double mass_23 = gradient_mass(23);
+  const double mass_31 = gradient_mass(31);
+  CHECK(std::isfinite(mass_31));
+  CHECK(mass_31 > 0.0);
+  CHECK_THAT(mass_23, WithinAbs(mass_31, 2.0e-13));
+}
+
+TEST_CASE("Singular triangle rejects invalid inputs",
+          "[singularelements][triangle][Serial]")
+{
+  const TriangleBarycentricPoint lambda{0.4, 0.3, 0.3};
+  const auto &grad_lambda = fem::singular::ReferenceTriangleBarycentricGradients();
+  CHECK_THROWS_AS(
+      fem::singular::EvaluateTriangleNodeGradient(lambda, grad_lambda, 0, 0, 0.5),
+      std::invalid_argument);
+  CHECK_THROWS_AS(
+      fem::singular::EvaluateTriangleNodeGradient(lambda, grad_lambda, 0, 1, 0.0),
+      std::invalid_argument);
+  CHECK_THROWS_AS(
+      fem::singular::EvaluateTriangleNodeGradient({1.0, 0.0, 0.0}, grad_lambda, 0, 1, 0.5),
+      std::domain_error);
+  CHECK_THROWS_AS(fem::singular::ForEachReferenceTriangleNodeDuffyQuadraturePoint(
+                      0, 0, 6.0, [](const auto &, double) {}),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(fem::singular::IntegrateReferenceTriangleNodeDuffy(
+                      12, 3, 6.0, [](const auto &) { return 1.0; }),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(fem::singular::ReferenceTriangleNodeDuffyQuadraturePointCount(0),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(
+      fem::singular::IntegrateReferenceTriangleNodeDuffy(
+          12, 0, 6.0, [](const auto &) { return std::numeric_limits<double>::infinity(); }),
+      std::domain_error);
 }
 
 }  // namespace palace

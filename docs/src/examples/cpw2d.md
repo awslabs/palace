@@ -22,7 +22,7 @@ cross-section. It uses a similar CPW geometry as the
 [3D crosstalk example](cpw.md) but solves the 2D eigenvalue problem directly on the
 cross-section mesh, making it much cheaper than a full 3D driven simulation.
 
-Two configurations are provided in the
+Two baseline configurations are provided in the
 [`examples/cpw2d/`](https://github.com/awslabs/palace/blob/main/examples/cpw2d) directory:
 
   - **Thin metal** (`cpw2d_thin.json`): Zero-thickness PEC traces on a dielectric substrate.
@@ -87,6 +87,68 @@ across the CPW gap:
 
 Additionally, domain energy postprocessing and interface dielectric loss (SA, MS, MA types)
 are configured for energy participation ratio analysis.
+
+### Experimental singular-element configurations
+
+Five configurations exercise the additive singular-element implementation on the
+quadratic Gmsh mesh used by the baseline thin-metal example:
+
+  - `cpw2d_thin_electrostatic_standard.json`
+  - `cpw2d_thin_electrostatic.json`
+  - `cpw2d_thin_boundarymode_standard.json`
+  - `cpw2d_thin_boundarymode_singular.json`
+  - `cpw2d_thin_driven_singular.json`
+
+The two standard configurations and their singular counterparts use the same mesh and
+materials. The singular configurations add first-order triangular basis functions at the
+four endpoints of the zero-thickness trace and ground lines:
+
+```json
+"SingularElements":
+{
+    "Attributes": [1, 2],
+    "Order": 1,
+    "QuadratureOrder": 8,
+    "AbsTol": 2.0e-6,
+    "RelTol": 2.0e-6,
+    "MaxSubdivisions": 6
+}
+```
+
+Generate the mesh with
+`julia --project=examples examples/cpw2d/mesh/mesh_thin.jl`. A high-order nodal triangle
+whose map is actually affine uses the same pretabulated reference-integral path as a
+linear mesh. A genuinely curved enriched triangle instead uses singularity-aligned
+reference quadrature with its physical Jacobian evaluated pointwise. Curved elements
+away from singular features are unrestricted. Selected PEC line segments themselves
+must remain geometrically straight and regular, but may use a nonuniform high-order
+parametrization along that straight image. AMR through enriched elements, GPU execution,
+and triangular singular order greater than one are not supported.
+
+Selected singular attributes are automatically excluded from Palace's internal-boundary
+cracking pass because their conforming two-sided topology defines the singular feature.
+The example files also set `Model.CrackInternalBoundaryElements` to `false` for clarity,
+but that global setting is not required; nonselected boundary attributes continue to
+follow it normally.
+
+The electrostatic solve reports capacitance, combined-field domain energy, canonical
+singular coefficients, and fitted tip slopes. The singular `BoundaryMode` solve supports
+isotropic lossless materials with PEC or natural PMC boundaries and reports propagation
+constants, combined-field energies, canonical ND/H1 coefficients, and fitted transverse
+field slopes. Voltage, impedance, surface measurements, and the standard error estimator
+are disabled on the enriched `BoundaryMode` path.
+
+The driven configuration is a restricted full-wave validation case with a surface-current
+source. Singular driven and eigenmode simulations currently require CPU execution,
+single-level meshes, isotropic lossless materials, assembled operators, and a Palace build
+with SuperLU_DIST. Ports, periodic boundaries, impedance or absorbing boundaries, saved
+grid fields, configured field/surface postprocessing, adaptive frequency sweeps, and PROM
+are not yet supported on this path.
+
+The zero-thickness surface integral of ``|E|^2`` diverges logarithmically at a sheet edge.
+Consequently, these configurations do not report raw SA, MS, or MA participation. Physical
+participation requires resolved finite-thickness interface geometry or a separately
+validated finite-fabrication response correction applied to the converged outer field.
 
 ### Thick metal with impedance BC
 

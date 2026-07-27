@@ -323,6 +323,44 @@ bool UsesSingularPatchKspSolver(const IoData &iodata)
 #endif
 }
 
+namespace
+{
+
+template <typename OperType>
+std::unique_ptr<BaseKspSolver<OperType>>
+MakeSingularDirectKspSolverImpl(const IoData &iodata, MPI_Comm comm)
+{
+#if defined(MFEM_USE_SUPERLU)
+  auto linear = iodata.solver.linear;
+  linear.krylov_solver = KrylovSolver::GMRES;
+  linear.initial_guess = false;
+  auto pc = MakeWrapperSolver<OperType, SuperLUSolver>(
+      linear, comm, linear.sym_factorization, linear.superlu_3d, linear.reorder_reuse,
+      iodata.problem.verbose - 1);
+  auto result = std::make_unique<BaseKspSolver<OperType>>(
+      ConfigureKrylovSolver<OperType>(linear, iodata.problem.verbose, comm), std::move(pc));
+  result->EnableTimer();
+  return result;
+#else
+  MFEM_ABORT("Combined singular-element systems require a Palace build with "
+             "SuperLU_DIST!");
+  return nullptr;
+#endif
+}
+
+}  // namespace
+
+std::unique_ptr<KspSolver> MakeSingularDirectKspSolver(const IoData &iodata, MPI_Comm comm)
+{
+  return MakeSingularDirectKspSolverImpl<Operator>(iodata, comm);
+}
+
+std::unique_ptr<ComplexKspSolver> MakeSingularComplexKspSolver(const IoData &iodata,
+                                                               MPI_Comm comm)
+{
+  return MakeSingularDirectKspSolverImpl<ComplexOperator>(iodata, comm);
+}
+
 template <typename OperType>
 BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear,
                                        MatrixSymmetry pc_mat_sym, int verbose,

@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 #include "drivers/basesolver.hpp"
+#include "drivers/singularsolver.hpp"
 #include "utils/configfile.hpp"
 
 namespace palace
@@ -22,6 +23,10 @@ class SpaceOperator;
 class DrivenSolver : public BaseSolver
 {
 private:
+  mutable FullWaveSingularFeatures singular_features;
+
+  ErrorIndicator SweepUniformSingular(SpaceOperator &space_op) const;
+
   ErrorIndicator SweepUniform(SpaceOperator &space_op) const;
 
   ErrorIndicator SweepAdaptive(SpaceOperator &space_op) const;
@@ -31,6 +36,12 @@ private:
 
 public:
   using BaseSolver::BaseSolver;
+
+  void Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
+                  MPI_Comm comm) const override;
+  bool RequiresSourceSerialMeshMetadata() const override;
+  void ProcessPartitionedMesh(const mfem::ParMesh &parallel_mesh,
+                              const mesh::PartitionMetadata &metadata) const override;
 };
 
 }  // namespace palace

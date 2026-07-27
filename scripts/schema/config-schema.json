@@ -402,7 +402,7 @@
         "SingularElements": {
           "$ref": "#/$defs/SingularElements",
           "title": "Singular Elements",
-          "description": "Experimental additive singular-element enrichment for selected internal zero-thickness PEC sheets. Initially supported only for three-dimensional electrostatic simulations on conforming affine tetrahedral meshes with isotropic materials."
+          "description": "Experimental additive singular-element enrichment for selected internal zero-thickness PEC lines in two dimensions or sheets in three dimensions. Supported on CPU, single-level simplex meshes for electrostatic, BoundaryMode, driven, and eigenmode simulations. BoundaryMode and full-wave paths currently require isotropic lossless materials; driven/eigenmode additionally require assembled operators and SuperLU_DIST and exclude ports, periodic/absorbing/impedance boundaries, configured field or surface postprocessing, and saved grid fields."
         },
         "Linear": {
           "$ref": "#/$defs/Linear",
@@ -2783,7 +2783,7 @@
     "SingularElements": {
       "type": "object",
       "title": "Singular Elements",
-      "description": "Configures additive singular tetrahedral basis functions for explicitly selected internal zero-thickness PEC sheets.",
+      "description": "Configures additive singular basis functions for explicitly selected internal zero-thickness PEC lines on triangular meshes or PEC sheets on tetrahedral meshes. Selected attributes are automatically excluded from internal-boundary cracking so their conforming two-sided topology is preserved. Ordinary curved elements are unrestricted. Enriched elements may use affine, high-order affine, or genuinely curved isoparametric maps, but each selected singular line or sheet-perimeter segment must remain geometrically straight. The implementation is CPU-only and does not support mesh refinement through an enabled singular solve.",
       "additionalProperties": false,
       "required": [
         "Attributes"
@@ -2791,7 +2791,7 @@
       "properties": {
         "Attributes": {
           "type": "array",
-          "description": "Nonempty set of internal PEC sheet boundary attributes whose topological perimeter is enriched with the zero-thickness sheet exponent `nu = 1/2`.",
+          "description": "Nonempty set of internal zero-thickness PEC boundary attributes enriched with exponent `nu = 1/2`. In two dimensions these are straight line chains whose interior endpoints are enriched; in three dimensions these are sheets whose topological perimeter is enriched.",
           "additionalItems": false,
           "uniqueItems": true,
           "minItems": 1,
@@ -2802,14 +2802,14 @@
         },
         "Order": {
           "type": "integer",
-          "description": "Interpolation order of the additive singular basis. This is independent of [`/Solver/Order`](@ref config-solver-order).",
+          "description": "Interpolation order of the additive singular basis. This is independent of [`/Solver/Order`](@ref config-solver-order). The triangular implementation currently supports only order 1.",
           "minimum": 1,
           "maximum": 4,
           "default": 1
         },
         "QuadratureOrder": {
           "type": "integer",
-          "description": "Base tetrahedral quadrature order used by adaptive singular-element matrix integration.",
+          "description": "Base quadrature order used to select singular-element matrix integration rules.",
           "minimum": 1,
           "default": 8,
           "x-palace-advanced": true
@@ -2830,7 +2830,7 @@
         },
         "MaxSubdivisions": {
           "type": "integer",
-          "description": "Maximum recursive one-to-eight tetrahedral subdivision depth for adaptive singular-element matrix integration.",
+          "description": "Maximum recursive one-to-eight tetrahedral subdivision depth for adaptive three-dimensional singular-element matrix integration. Two-dimensional triangular integration uses graded Duffy rules instead.",
           "minimum": 1,
           "maximum": 12,
           "default": 9,

@@ -99,11 +99,13 @@ private:
   // Optional additive singular space and its assembled true-DOF data. Combined vectors
   // use rank-local ordering [standard true DOFs, owned enrichment true DOFs].
   const fem::singular::FeatureTopology *singular_features;
+  const fem::singular::TriangleFeatureTopology *triangle_singular_features;
   const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids;
   int standard_order;
   int singular_order;
   fem::singular::AdaptiveAssemblyOptions singular_assembly_options;
   std::unique_ptr<fem::singular::DofTopology> singular_dofs;
+  std::unique_ptr<fem::singular::TriangleDofTopology> triangle_singular_dofs;
   std::unique_ptr<fem::singular::ParallelDofNumbering> singular_numbering;
   std::unique_ptr<mfem::HypreParMatrix> singular_gradient;
   std::unique_ptr<mfem::HypreParMatrix> singular_unconstrained_stiffness;
@@ -128,11 +130,13 @@ public:
       const std::vector<config::MaterialData> &materials, ProblemType problem_type,
       const std::vector<std::unique_ptr<Mesh>> &mesh,
       const fem::singular::FeatureTopology *singular_features = nullptr,
-      const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids = nullptr);
+      const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids = nullptr,
+      const fem::singular::TriangleFeatureTopology *triangle_singular_features = nullptr);
   LaplaceOperator(
       const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh,
       const fem::singular::FeatureTopology *singular_features = nullptr,
-      const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids = nullptr);
+      const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids = nullptr,
+      const fem::singular::TriangleFeatureTopology *triangle_singular_features = nullptr);
 
   // Return material operator for postprocessing.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }
@@ -163,13 +167,22 @@ public:
            (singular_numbering ? singular_numbering->h1.global_size : 0);
   }
 
-  bool HasSingularEnrichment() const { return singular_features != nullptr; }
+  bool HasSingularEnrichment() const
+  {
+    return singular_features != nullptr || triangle_singular_features != nullptr;
+  }
+  bool HasTriangleSingularEnrichment() const
+  {
+    return triangle_singular_features != nullptr;
+  }
   const mfem::HypreParMatrix &GetUnconstrainedStiffnessMatrix() const;
   const mfem::HypreParMatrix &GetSingularStandardStiffnessMatrix() const;
   const fem::singular::ParallelFeaturePatches &GetSingularFeaturePatches() const;
   const SingularOperatorDiagnostics &GetSingularDiagnostics() const;
   double GetSingularStiffnessEnergyErrorBound(const mfem::Vector &combined_true_dofs) const;
   std::unique_ptr<fem::singular::EnrichedH1FieldEvaluator> GetSingularFieldEvaluator();
+  std::unique_ptr<fem::singular::TriangleEnrichedH1FieldEvaluator>
+  GetTriangleSingularFieldEvaluator();
 
   // Construct and return system matrix representing discretized Laplace operator for
   // Gauss's law.

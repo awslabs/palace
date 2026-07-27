@@ -9,6 +9,7 @@
 #include <Eigen/Dense>
 #include <fmt/core.h>
 #include <mfem.hpp>
+#include <nlohmann/json.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
@@ -27,6 +28,7 @@
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/prettyprint.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -34,12 +36,32 @@ namespace palace
 
 using namespace std::complex_literals;
 
+void DrivenSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
+                              MPI_Comm comm) const
+{
+  BaseSolver::Preprocess(iodata, smesh, comm);
+  singular_features.Preprocess(iodata, smesh, comm);
+}
+
+bool DrivenSolver::RequiresSourceSerialMeshMetadata() const
+{
+  return iodata.solver.singular_elements.Enabled();
+}
+
+void DrivenSolver::ProcessPartitionedMesh(const mfem::ParMesh &parallel_mesh,
+                                          const mesh::PartitionMetadata &metadata) const
+{
+  singular_features.ProcessPartitionedMesh(iodata, parallel_mesh, metadata);
+}
+
 std::pair<ErrorIndicator, long long int>
 DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   // Set up the spatial discretization and frequency sweep.
   BlockTimer bt0(Timer::CONSTRUCT);
-  SpaceOperator space_op(iodata, mesh);
+  SpaceOperator space_op(iodata, mesh, singular_features.GetSheetFeatures(),
+                         singular_features.GetLineFeatures(),
+                         singular_features.GetSourceVertexIds());
   const auto &port_excitations = space_op.GetPortExcitations();
   SaveMetadata(port_excitations);
 
@@ -77,6 +99,11 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
 ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 {
+  if (space_op.HasSingularEnrichment())
+  {
+    return SweepUniformSingular(space_op);
+  }
+
   const auto &port_excitations = space_op.GetPortExcitations();
   const auto &omega_sample = iodata.solver.driven.sample_f;
 
@@ -230,6 +257,120 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   }
   post_op.MeasureFinalize(indicator);
   return indicator;
+}
+
+ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
+{
+  const auto &port_excitations = space_op.GetPortExcitations();
+  const auto &omega_sample = iodata.solver.driven.sample_f;
+  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  auto K_energy = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);
+  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M_energy = space_op.GetMassMatrix<Operator>(Operator::DIAG_ZERO);
+  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  MFEM_VERIFY(!C && K->Real() && !K->Imag() && M->Real() && !M->Imag(),
+              "Driven singular simulations require real lossless stiffness and mass "
+              "operators without damping!");
+
+  auto ksp = MakeSingularComplexKspSolver(iodata, space_op.GetComm());
+  ComplexVector rhs(space_op.GetNDTrueVSize()), electric_field(space_op.GetNDTrueVSize()),
+      residual(space_op.GetNDTrueVSize());
+  rhs.UseDevice(true);
+  electric_field.UseDevice(true);
+  residual.UseDevice(true);
+  electric_field = 0.0;
+
+  TableWithCSVFile output;
+  if (root)
+  {
+    output = TableWithCSVFile(post_dir / "singular-driven.csv");
+    output.table.insert("excitation", "Excitation", -1, 0, 0, "");
+    output.table.insert("index", "Frequency index", -1, 0, 0, "");
+    output.table.insert("frequency", "Frequency (GHz)");
+    output.table.insert("electric_energy", "Electric field energy (J)");
+    output.table.insert("magnetic_energy", "Magnetic field energy (J)");
+    output.table.insert("relative_residual", "Relative residual");
+    output.table[0].print_as_int = true;
+    output.table[1].print_as_int = true;
+    output.WriteFullTableTrunc();
+  }
+
+  auto t0 = Timer::Now();
+  std::size_t excitation_counter = 0;
+  const std::size_t excitation_restart_counter =
+      ((iodata.solver.driven.restart - 1) / omega_sample.size()) + 1;
+  const std::size_t frequency_restart_index =
+      (iodata.solver.driven.restart - 1) % omega_sample.size();
+  for (const auto &[excitation_index, excitation_spec] : port_excitations)
+  {
+    if (++excitation_counter < excitation_restart_counter)
+    {
+      continue;
+    }
+    for (std::size_t frequency_index =
+             excitation_counter == excitation_restart_counter ? frequency_restart_index : 0;
+         frequency_index < omega_sample.size(); frequency_index++)
+    {
+      const double omega = omega_sample[frequency_index];
+      MFEM_VERIFY(omega > 0.0 && std::isfinite(omega),
+                  "Driven singular simulations require positive finite frequencies!");
+      auto extra = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+      MFEM_VERIFY(!extra,
+                  "Driven singular simulations do not support extra boundary operators!");
+      auto A =
+          space_op.GetSystemMatrix(1.0 + 0.0i, 0.0 + 0.0i, -omega * omega + 0.0i, K.get(),
+                                   static_cast<const ComplexOperator *>(nullptr), M.get());
+      ksp->SetOperators(*A, *A);
+
+      Mpi::Print("\nIt {:d}/{:d}: omega/2pi = {:.3e} GHz (total elapsed time = {:.2e} s)\n",
+                 frequency_index + 1, omega_sample.size(),
+                 iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
+                     (2 * M_PI),
+                 Timer::Duration(Timer::Now() - t0).count());
+      space_op.GetExcitationVector(excitation_index, omega, rhs);
+      ksp->Mult(rhs, electric_field);
+
+      A->Mult(electric_field, residual);
+      linalg::AXPY(-1.0, rhs, residual);
+      const double relative_residual = linalg::Norml2(space_op.GetComm(), residual) /
+                                       std::max(linalg::Norml2(space_op.GetComm(), rhs),
+                                                std::numeric_limits<double>::min());
+      const auto energy = MeasureSingularFullWaveEnergy(space_op.GetComm(), *M_energy,
+                                                        *K_energy, electric_field, omega);
+      const double electric_energy =
+          iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy.electric);
+      const double magnetic_energy =
+          iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy.magnetic);
+      Mpi::Print(" Sol. ||E|| = {:.6e} (||RHS|| = {:.6e}, rel. residual = {:.3e})\n"
+                 " Field energy E ({:.3e} J) + H ({:.3e} J) = {:.3e} J\n",
+                 linalg::Norml2(space_op.GetComm(), electric_field),
+                 linalg::Norml2(space_op.GetComm(), rhs), relative_residual,
+                 electric_energy, magnetic_energy, electric_energy + magnetic_energy);
+
+      if (root)
+      {
+        output.table["excitation"] << excitation_index;
+        output.table["index"] << frequency_index + 1;
+        output.table["frequency"]
+            << iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
+        output.table["electric_energy"] << electric_energy;
+        output.table["magnetic_energy"] << magnetic_energy;
+        output.table["relative_residual"] << relative_residual;
+        output.WriteFullTableTrunc();
+      }
+    }
+  }
+
+  SaveMetadata(*ksp);
+  SaveMetadata("SingularFullWave",
+               nlohmann::json{{"Enabled", true},
+                              {"Dimension", space_op.GetMesh().Dimension()},
+                              {"Output", "singular-driven.csv"},
+                              {"ElectricEnergy", "0.5 E^H M_epsilon E"},
+                              {"MagneticEnergy", "0.5 E^H K_mu^-1 E / |omega|^2"},
+                              {"FieldGridOutput", false},
+                              {"ErrorEstimator", false}});
+  return {};
 }
 
 ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const

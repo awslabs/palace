@@ -13,6 +13,7 @@
 #include <tuple>
 #include <nlohmann/json.hpp>
 
+#include "fem/singulargeometry.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -53,15 +54,23 @@ EdgeKey GetEdgeKey(const mfem::Mesh &mesh, int edge)
 }
 
 std::array<double, 3> DirectionFromVertex(const mfem::Mesh &mesh, int vertex,
-                                          const FeatureSegment &segment)
+                                          const std::array<int, 2> &segment_vertices)
 {
-  const int other = segment.mesh_vertices[0] == vertex ? segment.mesh_vertices[1]
-                                                       : segment.mesh_vertices[0];
-  const double *x = mesh.GetVertex(vertex);
-  const double *y = mesh.GetVertex(other);
+  if (mesh.SpaceDimension() < 1 || mesh.SpaceDimension() > 3 ||
+      (segment_vertices[0] != vertex && segment_vertices[1] != vertex))
+  {
+    throw std::runtime_error(
+        "Singular-feature segment does not contain its incident vertex!");
+  }
+  const int other =
+      segment_vertices[0] == vertex ? segment_vertices[1] : segment_vertices[0];
+  std::array<double, 3> x{}, y{};
+  mesh.GetNode(vertex, x.data());
+  mesh.GetNode(other, y.data());
+
   std::array<double, 3> direction{};
   double norm_squared = 0.0;
-  for (int d = 0; d < 3; d++)
+  for (int d = 0; d < mesh.SpaceDimension(); d++)
   {
     direction[d] = y[d] - x[d];
     norm_squared += direction[d] * direction[d];
@@ -111,6 +120,42 @@ std::array<int, 4> CanonicalNodeTuple(const mfem::Element &element, int singular
 {
   return CanonicalNodeTuple(element, singular_vertex,
                             [](int vertex) { return static_cast<GlobalVertexId>(vertex); });
+}
+
+template <typename GetVertexId>
+std::array<int, 3> CanonicalTriangleNodeTuple(const mfem::Element &element,
+                                              int singular_vertex,
+                                              GetVertexId &&get_vertex_id)
+{
+  const int *vertices = element.GetVertices();
+  int singular_local = -1;
+  std::array<std::pair<GlobalVertexId, int>, 2> remaining;
+  int next = 0;
+  for (int local = 0; local < 3; local++)
+  {
+    if (vertices[local] == singular_vertex)
+    {
+      singular_local = local;
+    }
+    else
+    {
+      remaining[next++] = {get_vertex_id(vertices[local]), local};
+    }
+  }
+  if (singular_local < 0 || next != 2)
+  {
+    throw std::runtime_error(
+        "Singular-feature tip is not a vertex of its incident triangle!");
+  }
+  std::sort(remaining.begin(), remaining.end());
+  return {singular_local, remaining[0].second, remaining[1].second};
+}
+
+std::array<int, 3> CanonicalTriangleNodeTuple(const mfem::Element &element,
+                                              int singular_vertex)
+{
+  return CanonicalTriangleNodeTuple(element, singular_vertex, [](int vertex)
+                                    { return static_cast<GlobalVertexId>(vertex); });
 }
 
 template <typename GetVertexId>
@@ -212,12 +257,6 @@ void ValidateMesh(const mfem::Mesh &mesh, bool allow_parallel = false)
       throw std::invalid_argument(
           "Singular-feature extraction initially supports only tetrahedral meshes!");
     }
-  }
-  const auto *nodal_space = mesh.GetNodalFESpace();
-  if (nodal_space && nodal_space->GetMaxElementOrder() > 1)
-  {
-    throw std::invalid_argument(
-        "Singular-feature extraction initially supports only affine geometry!");
   }
 }
 
@@ -536,7 +575,324 @@ FeatureTopology UnpackFeatureTopology(const json &packed)
   return features;
 }
 
+bool IsTrianglePermutation(const std::array<int, 3> &indices)
+{
+  auto sorted = indices;
+  std::sort(sorted.begin(), sorted.end());
+  return sorted == std::array<int, 3>{0, 1, 2};
+}
+
+void ValidateTriangleFeatureBlueprintStructure(const TriangleFeatureTopology &features)
+{
+  std::set<int> tip_vertices;
+  for (std::size_t i = 0; i < features.vertices.size(); i++)
+  {
+    const auto &vertex = features.vertices[i];
+    if (vertex.id != i || vertex.mesh_vertex < 0 ||
+        !tip_vertices.insert(vertex.mesh_vertex).second ||
+        vertex.selected_segments.empty() || !std::isfinite(vertex.nu) || vertex.nu <= 0.0 ||
+        vertex.nu >= 1.0)
+    {
+      throw std::invalid_argument(
+          "Singular line-tip blueprint contains an invalid tip record!");
+    }
+    for (std::size_t segment : vertex.selected_segments)
+    {
+      if (segment >= features.selected_segments.size())
+      {
+        throw std::invalid_argument(
+            "Singular line tip references an invalid selected segment!");
+      }
+    }
+  }
+  std::set<StableEdgeKey> selected_edges;
+  for (const auto &segment : features.selected_segments)
+  {
+    const StableEdgeKey edge{segment.mesh_vertices[0], segment.mesh_vertices[1]};
+    if (segment.boundary_element < 0 || segment.mesh_edge < 0 ||
+        segment.boundary_attribute <= 0 || edge[0] < 0 || edge[0] >= edge[1] ||
+        !selected_edges.insert(edge).second)
+    {
+      throw std::invalid_argument(
+          "Singular line-tip blueprint contains an invalid selected segment!");
+    }
+  }
+  for (const auto &element : features.elements)
+  {
+    std::set<std::size_t> element_tips;
+    for (const auto &node : element.nodes)
+    {
+      if (node.vertex >= features.vertices.size() ||
+          node.mesh_vertex != features.vertices[node.vertex].mesh_vertex ||
+          !IsTrianglePermutation(node.canonical_nodes) ||
+          !element_tips.insert(node.vertex).second)
+      {
+        throw std::invalid_argument(
+            "Singular line-tip blueprint has inconsistent element incidence!");
+      }
+    }
+  }
+}
+
+json PackTriangleFeatureTopology(const TriangleFeatureTopology &features)
+{
+  json packed{{"num_elements", features.elements.size()},
+              {"vertices", json::array()},
+              {"selected_segments", json::array()},
+              {"elements", json::array()}};
+  for (const auto &vertex : features.vertices)
+  {
+    packed["vertices"].push_back(
+        {vertex.id, vertex.mesh_vertex, vertex.selected_segments, vertex.nu});
+  }
+  for (const auto &segment : features.selected_segments)
+  {
+    packed["selected_segments"].push_back({segment.boundary_element, segment.mesh_edge,
+                                           segment.mesh_vertices,
+                                           segment.boundary_attribute});
+  }
+  for (std::size_t element = 0; element < features.elements.size(); element++)
+  {
+    const auto &incidence = features.elements[element];
+    if (incidence.nodes.empty())
+    {
+      continue;
+    }
+    json nodes = json::array();
+    for (const auto &node : incidence.nodes)
+    {
+      nodes.push_back({node.vertex, node.mesh_vertex, node.canonical_nodes});
+    }
+    packed["elements"].push_back({element, std::move(nodes)});
+  }
+  return packed;
+}
+
+TriangleFeatureTopology UnpackTriangleFeatureTopology(const json &packed)
+{
+  TriangleFeatureTopology features;
+  features.elements.resize(packed.at("num_elements").get<std::size_t>());
+  for (const auto &entry : packed.at("vertices"))
+  {
+    features.vertices.push_back({entry.at(0).get<std::size_t>(), entry.at(1).get<int>(),
+                                 entry.at(2).get<std::vector<std::size_t>>(),
+                                 entry.at(3).get<double>()});
+  }
+  for (const auto &entry : packed.at("selected_segments"))
+  {
+    features.selected_segments.push_back({entry.at(0).get<int>(), entry.at(1).get<int>(),
+                                          entry.at(2).get<std::array<int, 2>>(),
+                                          entry.at(3).get<int>()});
+  }
+  std::set<std::size_t> unpacked_elements;
+  for (const auto &entry : packed.at("elements"))
+  {
+    const std::size_t element = entry.at(0).get<std::size_t>();
+    if (element >= features.elements.size() || !unpacked_elements.insert(element).second)
+    {
+      throw std::invalid_argument(
+          "Serialized singular line-tip blueprint contains an invalid element!");
+    }
+    for (const auto &node : entry.at(1))
+    {
+      features.elements[element].nodes.push_back({node.at(0).get<std::size_t>(),
+                                                  node.at(1).get<int>(),
+                                                  node.at(2).get<std::array<int, 3>>()});
+    }
+  }
+  ValidateTriangleFeatureBlueprintStructure(features);
+  return features;
+}
+
 }  // namespace
+
+TriangleFeatureTopology
+ExtractSerialLineTipFeatures(const mfem::Mesh &mesh,
+                             const std::vector<int> &boundary_attributes, double nu)
+{
+  const auto *parallel_mesh = dynamic_cast<const mfem::ParMesh *>(&mesh);
+  if (parallel_mesh && parallel_mesh->GetNRanks() > 1)
+  {
+    throw std::invalid_argument(
+        "Serial singular-line extraction cannot use a multi-rank ParMesh!");
+  }
+  if (mesh.Dimension() != 2 || mesh.SpaceDimension() != 2)
+  {
+    throw std::invalid_argument(
+        "Singular-line extraction requires a two-dimensional mesh!");
+  }
+  if (mesh.Nonconforming())
+  {
+    throw std::invalid_argument(
+        "Singular-line extraction does not support nonconforming meshes!");
+  }
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    if (mesh.GetElementGeometry(element) != mfem::Geometry::TRIANGLE)
+    {
+      throw std::invalid_argument(
+          "Singular-line extraction initially supports only triangular meshes!");
+    }
+  }
+  if (!std::isfinite(nu) || nu <= 0.0 || nu >= 1.0)
+  {
+    throw std::invalid_argument(
+        "Singular-line exponent must be finite and satisfy 0 < nu < 1!");
+  }
+
+  std::set<int> selected_attributes;
+  for (int attribute : boundary_attributes)
+  {
+    if (attribute <= 0)
+    {
+      throw std::invalid_argument("Singular-line boundary attributes must be positive!");
+    }
+    selected_attributes.insert(attribute);
+  }
+
+  TriangleFeatureTopology result;
+  result.elements.resize(mesh.GetNE());
+  if (selected_attributes.empty())
+  {
+    return result;
+  }
+
+  std::set<int> present_attributes;
+  std::map<EdgeKey, TriangleSelectedSegment> selected_edges;
+  for (int boundary_element = 0; boundary_element < mesh.GetNBE(); boundary_element++)
+  {
+    const int attribute = mesh.GetBdrAttribute(boundary_element);
+    if (selected_attributes.find(attribute) == selected_attributes.end())
+    {
+      continue;
+    }
+    present_attributes.insert(attribute);
+    if (mesh.GetBdrElementGeometry(boundary_element) != mfem::Geometry::SEGMENT)
+    {
+      throw std::invalid_argument(
+          "Selected singular-line boundary elements must be segments!");
+    }
+
+    int edge, orientation, element_1, element_2;
+    mesh.GetBdrElementFace(boundary_element, &edge, &orientation);
+    mesh.GetFaceElements(edge, &element_1, &element_2);
+    if (element_1 < 0 || element_2 < 0)
+    {
+      throw std::invalid_argument(
+          "Selected zero-thickness PEC lines must be internal mesh boundaries!");
+    }
+    mfem::IsoparametricTransformation edge_transformation;
+    mesh.GetEdgeTransformation(edge, &edge_transformation);
+    if (!IsGeometricallyStraightSegmentTransformation(edge_transformation))
+    {
+      throw std::invalid_argument(
+          "Selected zero-thickness PEC line segments must be geometrically straight!");
+    }
+    const auto key = GetEdgeKey(mesh, edge);
+    if (!selected_edges
+             .emplace(key, TriangleSelectedSegment{boundary_element, edge, key, attribute})
+             .second)
+    {
+      throw std::invalid_argument(
+          "A selected zero-thickness PEC segment is represented more than once!");
+    }
+  }
+  if (present_attributes != selected_attributes)
+  {
+    throw std::invalid_argument(
+        "At least one requested singular-line boundary attribute is absent!");
+  }
+
+  std::set<int> exterior_vertices;
+  mfem::Array<int> face_vertices;
+  for (int face = 0; face < mesh.GetNumFaces(); face++)
+  {
+    int element_1, element_2;
+    mesh.GetFaceElements(face, &element_1, &element_2);
+    if (element_1 >= 0 && element_2 >= 0)
+    {
+      continue;
+    }
+    mesh.GetFaceVertices(face, face_vertices);
+    if (face_vertices.Size() != 2)
+    {
+      throw std::runtime_error("Triangular mesh edge has invalid topology!");
+    }
+    exterior_vertices.insert(face_vertices[0]);
+    exterior_vertices.insert(face_vertices[1]);
+  }
+
+  std::map<int, std::vector<std::size_t>> vertex_segments;
+  for (const auto &[key, segment] : selected_edges)
+  {
+    (void)key;
+    const std::size_t index = result.selected_segments.size();
+    result.selected_segments.push_back(segment);
+    for (int vertex : segment.mesh_vertices)
+    {
+      vertex_segments[vertex].push_back(index);
+    }
+  }
+
+  constexpr double straight_tolerance = 1.0e-10;
+  for (const auto &[vertex, segments] : vertex_segments)
+  {
+    if (segments.size() > 2)
+    {
+      throw std::invalid_argument(
+          "Selected zero-thickness PEC lines contain a branch or junction!");
+    }
+    if (segments.size() == 2)
+    {
+      std::array<std::array<double, 2>, 2> direction;
+      for (int side = 0; side < 2; side++)
+      {
+        const auto &segment = result.selected_segments[segments[side]];
+        const auto physical_direction =
+            DirectionFromVertex(mesh, vertex, segment.mesh_vertices);
+        direction[side] = {physical_direction[0], physical_direction[1]};
+      }
+      const double dot =
+          direction[0][0] * direction[1][0] + direction[0][1] * direction[1][1];
+      if (dot > -1.0 + straight_tolerance)
+      {
+        throw std::invalid_argument(
+            "Selected zero-thickness PEC lines must be straight; corner exponents "
+            "are not implemented yet!");
+      }
+      continue;
+    }
+
+    if (exterior_vertices.find(vertex) == exterior_vertices.end())
+    {
+      result.vertices.push_back({result.vertices.size(), vertex, segments, nu});
+    }
+  }
+
+  std::map<int, std::size_t> tip_by_vertex;
+  for (const auto &vertex : result.vertices)
+  {
+    tip_by_vertex.emplace(vertex.mesh_vertex, vertex.id);
+  }
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    const auto &triangle = *mesh.GetElement(element);
+    const int *vertices = triangle.GetVertices();
+    for (int local = 0; local < 3; local++)
+    {
+      const auto tip = tip_by_vertex.find(vertices[local]);
+      if (tip == tip_by_vertex.end())
+      {
+        continue;
+      }
+      result.elements[element].nodes.push_back(
+          {tip->second, vertices[local],
+           CanonicalTriangleNodeTuple(triangle, vertices[local])});
+    }
+  }
+  ValidateTriangleFeatureBlueprintStructure(result);
+  return result;
+}
 
 FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
                                            const std::vector<int> &boundary_attributes,
@@ -659,6 +1015,13 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
     edge.boundary_attributes.erase(
         std::unique(edge.boundary_attributes.begin(), edge.boundary_attributes.end()),
         edge.boundary_attributes.end());
+    mfem::IsoparametricTransformation edge_transformation;
+    mesh.GetEdgeTransformation(edge.mesh_edge, &edge_transformation);
+    if (!IsGeometricallyStraightSegmentTransformation(edge_transformation))
+    {
+      throw std::invalid_argument(
+          "Selected PEC sheet perimeter edges must be geometrically straight!");
+    }
     result.segments.push_back(
         {edge.mesh_edge, key, 0, std::move(edge.boundary_attributes)});
   }
@@ -687,10 +1050,10 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
     }
     else if (vertex.segments.size() == 2)
     {
-      const auto direction_0 = DirectionFromVertex(mesh, vertex.mesh_vertex,
-                                                   result.segments[vertex.segments[0]]);
-      const auto direction_1 = DirectionFromVertex(mesh, vertex.mesh_vertex,
-                                                   result.segments[vertex.segments[1]]);
+      const auto direction_0 = DirectionFromVertex(
+          mesh, vertex.mesh_vertex, result.segments[vertex.segments[0]].mesh_vertices);
+      const auto direction_1 = DirectionFromVertex(
+          mesh, vertex.mesh_vertex, result.segments[vertex.segments[1]].mesh_vertices);
       double dot = 0.0;
       for (int d = 0; d < 3; d++)
       {
@@ -844,9 +1207,9 @@ DistributeSerialSheetFeatures(const mfem::Mesh &serial_mesh,
       throw std::invalid_argument(
           "Rank-local mesh has invalid or duplicate source serial vertex IDs!");
     }
-    const double *serial_coordinate =
-        serial_mesh.GetVertex(static_cast<int>(serial_vertex));
-    const double *parallel_coordinate = parallel_mesh.GetVertex(local_vertex);
+    std::array<double, 3> serial_coordinate{}, parallel_coordinate{};
+    serial_mesh.GetNode(static_cast<int>(serial_vertex), serial_coordinate.data());
+    parallel_mesh.GetNode(local_vertex, parallel_coordinate.data());
     for (int d = 0; d < serial_mesh.SpaceDimension(); d++)
     {
       const double scale =
@@ -973,6 +1336,35 @@ void BroadcastSerialSheetFeatures(FeatureTopology &serial_features, MPI_Comm com
   }
 }
 
+void BroadcastSerialLineTipFeatures(TriangleFeatureTopology &serial_features, MPI_Comm comm)
+{
+  std::vector<std::uint8_t> bytes;
+  if (Mpi::Root(comm))
+  {
+    ValidateTriangleFeatureBlueprintStructure(serial_features);
+    bytes = json::to_cbor(PackTriangleFeatureTopology(serial_features));
+  }
+  std::int64_t size = static_cast<std::int64_t>(bytes.size());
+  if (Mpi::Root(comm) && static_cast<std::size_t>(size) != bytes.size())
+  {
+    throw std::overflow_error("Serialized singular line-tip blueprint is too large!");
+  }
+  Mpi::Broadcast(1, &size, 0, comm);
+  if (size < 0)
+  {
+    throw std::runtime_error("Serialized singular line-tip blueprint has invalid size!");
+  }
+  if (!Mpi::Root(comm))
+  {
+    bytes.resize(static_cast<std::size_t>(size));
+  }
+  Mpi::BroadcastLarge(size, bytes.data(), 0, comm);
+  if (!Mpi::Root(comm))
+  {
+    serial_features = UnpackTriangleFeatureTopology(json::from_cbor(bytes));
+  }
+}
+
 FeatureTopology
 DistributeSerialSheetFeatures(const FeatureTopology &serial_features,
                               const mfem::ParMesh &parallel_mesh,
@@ -1060,6 +1452,78 @@ DistributeSerialSheetFeatures(const FeatureTopology &serial_features,
       incidence.edges.push_back(
           {edge.feature, edge.segment, local_edge->second,
            CanonicalEdgeTuple(tetrahedron, local_edge_vertices, local_vertex_id)});
+    }
+  }
+  return result;
+}
+
+TriangleFeatureTopology
+DistributeSerialLineTipFeatures(const TriangleFeatureTopology &serial_features,
+                                const mfem::ParMesh &parallel_mesh,
+                                const std::vector<GlobalVertexId> &serial_vertex_ids,
+                                const std::vector<GlobalVertexId> &source_element_ids)
+{
+  ValidateTriangleFeatureBlueprintStructure(serial_features);
+  if (parallel_mesh.Dimension() != 2 || parallel_mesh.SpaceDimension() != 2 ||
+      parallel_mesh.Nonconforming() ||
+      serial_vertex_ids.size() != static_cast<std::size_t>(parallel_mesh.GetNV()) ||
+      source_element_ids.size() != static_cast<std::size_t>(parallel_mesh.GetNE()))
+  {
+    throw std::invalid_argument(
+        "Singular line-tip blueprint and rank-local source maps are incompatible!");
+  }
+  std::map<GlobalVertexId, int> local_vertices;
+  for (int local_vertex = 0; local_vertex < parallel_mesh.GetNV(); local_vertex++)
+  {
+    const GlobalVertexId serial_vertex = serial_vertex_ids[local_vertex];
+    if (serial_vertex < 0 || !local_vertices.emplace(serial_vertex, local_vertex).second)
+    {
+      throw std::invalid_argument(
+          "Rank-local triangular mesh has invalid or duplicate source vertex IDs!");
+    }
+  }
+
+  TriangleFeatureTopology result = serial_features;
+  result.elements.assign(parallel_mesh.GetNE(), {});
+  std::set<GlobalVertexId> matched_serial_elements;
+  const auto local_vertex_id = [&serial_vertex_ids](int vertex)
+  { return serial_vertex_ids[vertex]; };
+  for (int local_element = 0; local_element < parallel_mesh.GetNE(); local_element++)
+  {
+    if (parallel_mesh.GetElementGeometry(local_element) != mfem::Geometry::TRIANGLE)
+    {
+      throw std::invalid_argument(
+          "Singular line-tip distribution requires triangular elements!");
+    }
+    const GlobalVertexId serial_element = source_element_ids[local_element];
+    if (serial_element < 0 ||
+        serial_element >= static_cast<GlobalVertexId>(serial_features.elements.size()) ||
+        !matched_serial_elements.insert(serial_element).second)
+    {
+      throw std::invalid_argument(
+          "Rank-local triangle has an invalid source serial element ID!");
+    }
+
+    const auto &triangle = *parallel_mesh.GetElement(local_element);
+    const auto &source = serial_features.elements[serial_element];
+    auto &incidence = result.elements[local_element];
+    for (const auto &node : source.nodes)
+    {
+      if (node.vertex >= serial_features.vertices.size())
+      {
+        throw std::invalid_argument(
+            "Source singular line-tip incidence references an invalid tip!");
+      }
+      const GlobalVertexId source_vertex = node.mesh_vertex;
+      const auto local_vertex = local_vertices.find(source_vertex);
+      if (local_vertex == local_vertices.end())
+      {
+        throw std::invalid_argument(
+            "Rank-local triangle is missing an incident singular tip!");
+      }
+      incidence.nodes.push_back(
+          {node.vertex, local_vertex->second,
+           CanonicalTriangleNodeTuple(triangle, local_vertex->second, local_vertex_id)});
     }
   }
   return result;

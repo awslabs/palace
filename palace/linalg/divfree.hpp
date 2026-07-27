@@ -23,6 +23,7 @@ namespace palace
 
 class FiniteElementSpaceHierarchy;
 class FiniteElementSpace;
+class IoData;
 class MaterialOperator;
 
 //
@@ -54,11 +55,23 @@ private:
   // Workspace objects for solver application.
   mutable VecType psi, rhs;
 
+  // Optional combined standard-plus-singular projection. In this path the weak
+  // divergence and scalar diffusion operators are formed algebraically from the exact
+  // enriched gradient and mass matrices.
+  const Operator *combined_mass = nullptr;
+  std::unique_ptr<mfem::HypreParMatrix> combined_projection_matrix;
+  mfem::Array<int> combined_h1_bdr_tdof_list;
+  std::unique_ptr<KspSolver> combined_ksp;
+  mutable VecType mass_y;
+
 public:
   DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
                 FiniteElementSpaceHierarchy &h1_fespaces,
                 const std::vector<mfem::Array<int>> &h1_bdr_tdof_lists, double tol,
                 int max_it, int print);
+
+  DivFreeSolver(const IoData &iodata, MPI_Comm comm, const Operator &mass,
+                const Operator &gradient, const mfem::Array<int> &h1_bdr_tdof_list);
 
   // Given a vector of Nedelec dofs for an arbitrary vector field, compute the Nedelec dofs
   // of the irrotational portion of this vector field. The resulting vector will satisfy

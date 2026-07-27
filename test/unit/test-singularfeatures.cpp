@@ -13,6 +13,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "fem/singularfeatures.hpp"
+#include "fem/singulargeometry.hpp"
 #include "test-helpers.hpp"
 #include "utils/communication.hpp"
 
@@ -137,6 +138,102 @@ mfem::Mesh PerimeterJunctionMesh()
   return mesh;
 }
 
+mfem::Mesh InternalLineTipMesh(bool bend = false, bool selected_external_edge = false,
+                               bool straight_chain = false)
+{
+  mfem::Mesh mesh(2, 9, 8, (bend || straight_chain) ? 2 : 1, 2);
+  mesh.AddVertex(-1.0, -1.0);
+  mesh.AddVertex(0.0, -1.0);
+  mesh.AddVertex(1.0, -1.0);
+  mesh.AddVertex(-1.0, 0.0);
+  mesh.AddVertex(0.0, 0.0);
+  mesh.AddVertex(1.0, 0.0);
+  mesh.AddVertex(-1.0, 1.0);
+  mesh.AddVertex(0.0, 1.0);
+  mesh.AddVertex(1.0, 1.0);
+
+  mesh.AddTriangle(0, 1, 4, 1);
+  mesh.AddTriangle(0, 4, 3, 1);
+  mesh.AddTriangle(3, 4, 7, 1);
+  mesh.AddTriangle(3, 7, 6, 1);
+  mesh.AddTriangle(1, 2, 5, 1);
+  mesh.AddTriangle(1, 5, 4, 1);
+  mesh.AddTriangle(4, 5, 8, 1);
+  mesh.AddTriangle(4, 8, 7, 1);
+
+  if (selected_external_edge)
+  {
+    mesh.AddBdrSegment(0, 1, 7);
+  }
+  else
+  {
+    mesh.AddBdrSegment(3, 4, 7);
+    if (bend)
+    {
+      mesh.AddBdrSegment(4, 7, 7);
+    }
+    else if (straight_chain)
+    {
+      mesh.AddBdrSegment(4, 5, 7);
+    }
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize(true, false);
+  return mesh;
+}
+
+void SetQuadraticGeometry(mfem::Mesh &mesh, bool curve_selected_feature)
+{
+  const int dimension = mesh.SpaceDimension();
+  mesh.SetCurvature(2, false, dimension, mfem::Ordering::byVDIM);
+  mfem::VectorFunctionCoefficient geometry(
+      dimension,
+      [dimension, curve_selected_feature](const mfem::Vector &x, mfem::Vector &value)
+      {
+        value.SetSize(dimension);
+        value = x;
+        if (dimension == 2)
+        {
+          value[1] += curve_selected_feature ? 0.1 * x[0] * x[0] : 0.1 * x[0] * x[1];
+        }
+        else
+        {
+          value[2] +=
+              curve_selected_feature ? 0.1 * x[0] * (1.0 - x[0]) : 0.1 * x[0] * x[2];
+        }
+      });
+  mesh.GetNodes()->ProjectCoefficient(geometry);
+}
+
+void SetQuadraticStraightNonAffineFeatureGeometry(mfem::Mesh &mesh)
+{
+  const int dimension = mesh.SpaceDimension();
+  mesh.SetCurvature(2, false, dimension, mfem::Ordering::byVDIM);
+  mfem::VectorFunctionCoefficient geometry(
+      dimension,
+      [dimension](const mfem::Vector &x, mfem::Vector &value)
+      {
+        value.SetSize(dimension);
+        value = x;
+        if (dimension == 2)
+        {
+          // The selected edge is y = 0, -1 <= x <= 0. Its image stays on
+          // y = 0, but the quadratic x parametrization is nonuniform.
+          value[0] += 0.2 * x[0] * (x[0] + 1.0);
+          value[1] += 0.05 * x[0] * x[1];
+        }
+        else
+        {
+          // The selected sheet perimeter remains the unit-square boundary in
+          // z = 0, with nonuniform quadratic maps along its straight edges.
+          value[0] += 0.15 * x[0] * (1.0 - x[0]);
+          value[1] += 0.1 * x[1] * (1.0 - x[1]);
+          value[2] += 0.05 * x[0] * x[2];
+        }
+      });
+  mesh.GetNodes()->ProjectCoefficient(geometry);
+}
+
 std::map<std::array<int, 4>,
          std::pair<std::vector<std::pair<std::size_t, std::array<int, 4>>>,
                    std::vector<std::pair<std::size_t, std::array<int, 4>>>>>
@@ -202,6 +299,230 @@ void CheckCanonicalElementTuples(const mfem::Mesh &mesh,
 }
 
 }  // namespace
+
+TEST_CASE("Straight high-order singular segments require globally regular maps",
+          "[singularfeatures][geometry][Serial]")
+{
+  mfem::H1_SegmentElement segment_element(3);
+  mfem::IsoparametricTransformation transformation;
+  transformation.SetFE(&segment_element);
+  mfem::DenseMatrix points(2, segment_element.GetDof());
+
+  const auto set_map = [&](const auto &longitudinal, const auto &transverse)
+  {
+    const auto &nodes = segment_element.GetNodes();
+    for (int i = 0; i < nodes.GetNPoints(); i++)
+    {
+      const double t = nodes.IntPoint(i).x;
+      points(0, i) = longitudinal(t);
+      points(1, i) = transverse(t);
+    }
+    transformation.SetPointMat(points);
+  };
+
+  set_map([](double t) { return t + 0.15 * t * (1.0 - t); }, [](double) { return 0.0; });
+  CHECK(fem::singular::IsGeometricallyStraightSegmentTransformation(transformation));
+
+  // The derivative is strictly positive, but its degree-two Bernstein control
+  // polygon has a negative middle coefficient. This requires subdivision to
+  // certify and guards against rejecting a valid map from one loose bound.
+  constexpr double positive_floor = 0.01;
+  constexpr double positive_integral = 1.0 / 12.0 + positive_floor;
+  set_map(
+      [](double t)
+      {
+        return (((t - 0.5) * (t - 0.5) * (t - 0.5) + 0.125) / 3.0 +
+                positive_floor * t) /
+               positive_integral;
+      },
+      [](double) { return 0.0; });
+  CHECK(fem::singular::IsGeometricallyStraightSegmentTransformation(transformation));
+
+  // This cubic map has a negative derivative only on (0.10, 0.18), between
+  // the order-eight Gauss points used by the former sampled validator.
+  constexpr double center = 0.14;
+  constexpr double half_width = 0.04;
+  constexpr double integral =
+      ((1.0 - center) * (1.0 - center) * (1.0 - center) + center * center * center) / 3.0 -
+      half_width * half_width;
+  set_map(
+      [](double t)
+      {
+        const double primitive =
+            ((t - center) * (t - center) * (t - center) + center * center * center) / 3.0 -
+            half_width * half_width * t;
+        return primitive / integral;
+      },
+      [](double) { return 0.0; });
+  CHECK_FALSE(fem::singular::IsGeometricallyStraightSegmentTransformation(transformation));
+
+  set_map([](double t) { return t; }, [](double t) { return 1.0e-3 * t * (1.0 - t); });
+  CHECK_FALSE(fem::singular::IsGeometricallyStraightSegmentTransformation(transformation));
+
+  set_map([](double t) { return t * t; }, [](double) { return 0.0; });
+  CHECK_FALSE(fem::singular::IsGeometricallyStraightSegmentTransformation(transformation));
+}
+
+TEST_CASE("Singular line features extract internal thin-sheet tips",
+          "[singularfeatures][triangle][Serial]")
+{
+  auto mesh = InternalLineTipMesh();
+  const auto topology = fem::singular::ExtractSerialLineTipFeatures(mesh, {7}, 0.5);
+  REQUIRE(topology.selected_segments.size() == 1);
+  CHECK(topology.selected_segments[0].boundary_attribute == 7);
+  CHECK(topology.selected_segments[0].mesh_vertices == std::array<int, 2>{3, 4});
+  REQUIRE(topology.vertices.size() == 1);
+  CHECK(topology.vertices[0].id == 0);
+  CHECK(topology.vertices[0].mesh_vertex == 4);
+  CHECK(topology.vertices[0].selected_segments == std::vector<std::size_t>{0});
+  CHECK(topology.vertices[0].nu == 0.5);
+  REQUIRE(topology.elements.size() == static_cast<std::size_t>(mesh.GetNE()));
+
+  std::size_t incidence_count = 0;
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    const int *vertices = mesh.GetElement(element)->GetVertices();
+    const bool contains_tip =
+        std::find(vertices, vertices + 3, topology.vertices[0].mesh_vertex) != vertices + 3;
+    CAPTURE(element);
+    CHECK(topology.elements[element].nodes.size() == (contains_tip ? 1 : 0));
+    for (const auto &node : topology.elements[element].nodes)
+    {
+      incidence_count++;
+      CHECK(node.vertex == 0);
+      CHECK(vertices[node.canonical_nodes[0]] == 4);
+      CHECK(vertices[node.canonical_nodes[1]] < vertices[node.canonical_nodes[2]]);
+    }
+  }
+  CHECK(incidence_count == 6);
+
+  const auto empty = fem::singular::ExtractSerialLineTipFeatures(mesh, {});
+  CHECK(empty.Empty());
+  CHECK(empty.elements.size() == static_cast<std::size_t>(mesh.GetNE()));
+
+  auto quadratic_affine = InternalLineTipMesh();
+  quadratic_affine.SetCurvature(2);
+  CHECK(
+      fem::singular::ExtractSerialLineTipFeatures(quadratic_affine, {7}).vertices.size() ==
+      1);
+
+  auto curved_elements = InternalLineTipMesh();
+  SetQuadraticGeometry(curved_elements, false);
+  CHECK(fem::singular::ExtractSerialLineTipFeatures(curved_elements, {7}).vertices.size() ==
+        1);
+
+  auto nonuniform_straight_feature = InternalLineTipMesh();
+  SetQuadraticStraightNonAffineFeatureGeometry(nonuniform_straight_feature);
+  CHECK(fem::singular::ExtractSerialLineTipFeatures(nonuniform_straight_feature, {7})
+            .vertices.size() == 1);
+
+  auto curved_feature = InternalLineTipMesh();
+  SetQuadraticGeometry(curved_feature, true);
+  CHECK_THROWS_AS(fem::singular::ExtractSerialLineTipFeatures(curved_feature, {7}),
+                  std::invalid_argument);
+
+  auto endpoint_degenerate_feature = InternalLineTipMesh();
+  endpoint_degenerate_feature.SetCurvature(2, false, 2, mfem::Ordering::byVDIM);
+  mfem::VectorFunctionCoefficient endpoint_degenerate_geometry(
+      2,
+      [](const mfem::Vector &x, mfem::Vector &value)
+      {
+        value.SetSize(2);
+        value = x;
+        value[0] = (x[0] + 1.0) * (x[0] + 1.0) - 1.0;
+      });
+  endpoint_degenerate_feature.GetNodes()->ProjectCoefficient(endpoint_degenerate_geometry);
+  endpoint_degenerate_feature.NodesUpdated();
+  CHECK_THROWS_AS(
+      fem::singular::ExtractSerialLineTipFeatures(endpoint_degenerate_feature, {7}),
+      std::invalid_argument);
+
+  auto physically_bent_chain = InternalLineTipMesh(false, false, true);
+  physically_bent_chain.SetCurvature(2, false, 2, mfem::Ordering::byVDIM);
+  mfem::VectorFunctionCoefficient bent_geometry(
+      2,
+      [](const mfem::Vector &x, mfem::Vector &value)
+      {
+        value.SetSize(2);
+        value = x;
+        value[1] += 0.2 * (1.0 - std::abs(x[0]));
+      });
+  physically_bent_chain.GetNodes()->ProjectCoefficient(bent_geometry);
+  physically_bent_chain.NodesUpdated();
+  CHECK_THROWS_AS(fem::singular::ExtractSerialLineTipFeatures(physically_bent_chain, {7}),
+                  std::invalid_argument);
+}
+
+TEST_CASE("Singular line feature extraction rejects unsupported topology",
+          "[singularfeatures][triangle][Serial]")
+{
+  {
+    auto mesh = InternalLineTipMesh(true);
+    CHECK_THROWS_AS(fem::singular::ExtractSerialLineTipFeatures(mesh, {7}),
+                    std::invalid_argument);
+  }
+  {
+    auto mesh = InternalLineTipMesh(false, true);
+    CHECK_THROWS_AS(fem::singular::ExtractSerialLineTipFeatures(mesh, {7}),
+                    std::invalid_argument);
+  }
+  {
+    auto mesh = InternalLineTipMesh();
+    CHECK_THROWS_AS(fem::singular::ExtractSerialLineTipFeatures(mesh, {8}),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(fem::singular::ExtractSerialLineTipFeatures(mesh, {0}),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(fem::singular::ExtractSerialLineTipFeatures(mesh, {7}, 1.0),
+                    std::invalid_argument);
+  }
+}
+
+TEST_CASE("Serial singular line-tip blueprints broadcast sparsely",
+          "[singularfeatures][triangle][Parallel]")
+{
+  auto mesh = InternalLineTipMesh();
+  const auto expected = fem::singular::ExtractSerialLineTipFeatures(mesh, {7});
+  auto broadcast =
+      Mpi::Root(Mpi::World()) ? expected : fem::singular::TriangleFeatureTopology{};
+  fem::singular::BroadcastSerialLineTipFeatures(broadcast, Mpi::World());
+
+  REQUIRE(broadcast.vertices.size() == expected.vertices.size());
+  REQUIRE(broadcast.selected_segments.size() == expected.selected_segments.size());
+  REQUIRE(broadcast.elements.size() == expected.elements.size());
+  for (std::size_t i = 0; i < expected.vertices.size(); i++)
+  {
+    CHECK(broadcast.vertices[i].id == expected.vertices[i].id);
+    CHECK(broadcast.vertices[i].mesh_vertex == expected.vertices[i].mesh_vertex);
+    CHECK(broadcast.vertices[i].selected_segments ==
+          expected.vertices[i].selected_segments);
+    CHECK(broadcast.vertices[i].nu == expected.vertices[i].nu);
+  }
+  for (std::size_t i = 0; i < expected.selected_segments.size(); i++)
+  {
+    CHECK(broadcast.selected_segments[i].boundary_element ==
+          expected.selected_segments[i].boundary_element);
+    CHECK(broadcast.selected_segments[i].mesh_edge ==
+          expected.selected_segments[i].mesh_edge);
+    CHECK(broadcast.selected_segments[i].mesh_vertices ==
+          expected.selected_segments[i].mesh_vertices);
+    CHECK(broadcast.selected_segments[i].boundary_attribute ==
+          expected.selected_segments[i].boundary_attribute);
+  }
+  for (std::size_t element = 0; element < expected.elements.size(); element++)
+  {
+    REQUIRE(broadcast.elements[element].nodes.size() ==
+            expected.elements[element].nodes.size());
+    for (std::size_t node = 0; node < expected.elements[element].nodes.size(); node++)
+    {
+      CHECK(broadcast.elements[element].nodes[node].vertex ==
+            expected.elements[element].nodes[node].vertex);
+      CHECK(broadcast.elements[element].nodes[node].mesh_vertex ==
+            expected.elements[element].nodes[node].mesh_vertex);
+      CHECK(broadcast.elements[element].nodes[node].canonical_nodes ==
+            expected.elements[element].nodes[node].canonical_nodes);
+    }
+  }
+}
 
 TEST_CASE("Singular sheet features extract topological perimeter and element incidence",
           "[singularfeatures][Serial]")
@@ -347,9 +668,28 @@ TEST_CASE("Singular sheet feature extraction rejects unsupported inputs",
   CHECK_THROWS_AS(fem::singular::ExtractSerialSheetFeatures(external, {1}),
                   std::invalid_argument);
 
-  auto curved = RectangleSheetMesh();
-  curved.SetCurvature(2);
-  CHECK_THROWS_AS(fem::singular::ExtractSerialSheetFeatures(curved, {7, 8}),
+  auto quadratic_affine = RectangleSheetMesh();
+  quadratic_affine.SetCurvature(2);
+  const auto quadratic_topology =
+      fem::singular::ExtractSerialSheetFeatures(quadratic_affine, {7, 8});
+  CHECK(quadratic_topology.segments.size() == 4);
+  CHECK(quadratic_topology.elements.size() ==
+        static_cast<std::size_t>(quadratic_affine.GetNE()));
+
+  auto curved_elements = RectangleSheetMesh();
+  SetQuadraticGeometry(curved_elements, false);
+  CHECK(
+      fem::singular::ExtractSerialSheetFeatures(curved_elements, {7, 8}).segments.size() ==
+      4);
+
+  auto nonuniform_straight_feature = RectangleSheetMesh();
+  SetQuadraticStraightNonAffineFeatureGeometry(nonuniform_straight_feature);
+  CHECK(fem::singular::ExtractSerialSheetFeatures(nonuniform_straight_feature, {7, 8})
+            .segments.size() == 4);
+
+  auto curved_feature = RectangleSheetMesh();
+  SetQuadraticGeometry(curved_feature, true);
+  CHECK_THROWS_AS(fem::singular::ExtractSerialSheetFeatures(curved_feature, {7, 8}),
                   std::invalid_argument);
 
   auto hexahedron =

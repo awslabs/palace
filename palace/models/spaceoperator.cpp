@@ -11,6 +11,8 @@
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
+#include "fem/singulardofs.hpp"
+#include "fem/singularsystem.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
@@ -84,6 +86,8 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
 
   // Finalize setup.
   CheckBoundaryProperties();
+  combined_nd_dbc_tdof_list = nd_dbc_tdof_lists.back();
+  combined_h1_dbc_tdof_list = h1_dbc_tdof_lists.back();
 
   // Print essential BC information.
   if (dbc_attr.Size())
@@ -93,13 +97,199 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
   }
 }
 
-SpaceOperator::SpaceOperator(const IoData &iodata,
-                             const std::vector<std::unique_ptr<Mesh>> &mesh)
+SpaceOperator::SpaceOperator(
+    const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh,
+    const fem::singular::FeatureTopology *singular_features_in,
+    const fem::singular::TriangleFeatureTopology *triangle_singular_features_in,
+    const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids_in)
   : SpaceOperator(iodata.solver, iodata.domains, iodata.boundaries, iodata.problem.type,
                   iodata.units, mesh)
 {
+  singular_features = singular_features_in;
+  triangle_singular_features = triangle_singular_features_in;
+  source_vertex_ids = source_vertex_ids_in;
+  if (singular_features || triangle_singular_features)
+  {
+    SetUpSingularEnrichment(iodata.solver);
+    CheckSingularExcitations(iodata.problem.type);
+  }
+
   // Validate excitations after wave port setup is complete.
   CheckExcitations(iodata.problem.type);
+}
+
+void SpaceOperator::SetUpSingularEnrichment(const config::SolverData &solver)
+{
+  const bool tetrahedral = singular_features != nullptr;
+  const bool triangular = triangle_singular_features != nullptr;
+  MFEM_VERIFY(tetrahedral != triangular && source_vertex_ids &&
+                  source_vertex_ids->size() ==
+                      static_cast<std::size_t>(GetMesh().Get().GetNV()) &&
+                  solver.singular_elements.Enabled() && solver.linear.mg_max_levels == 1,
+              "Full-wave singular enrichment requires exactly one complete simplex "
+              "feature topology, source vertex IDs, and one finite-element level!");
+  MFEM_VERIFY(
+      (tetrahedral && GetMesh().Dimension() == 3) ||
+          (triangular && GetMesh().Dimension() == 2 && solver.singular_elements.order == 1),
+      "Full-wave singular feature topology is inconsistent with the solve mesh!");
+
+  if (tetrahedral)
+  {
+    singular_dofs =
+        std::make_unique<fem::singular::DofTopology>(fem::singular::BuildLocalDofTopology(
+            GetMesh(), *singular_features, *source_vertex_ids,
+            solver.singular_elements.order));
+    singular_numbering = std::make_unique<fem::singular::ParallelDofNumbering>(
+        fem::singular::BuildParallelDofNumbering(GetComm(), *singular_dofs));
+  }
+  else
+  {
+    triangle_singular_dofs = std::make_unique<fem::singular::TriangleDofTopology>(
+        fem::singular::BuildLocalTriangleDofTopology(GetMesh(), *triangle_singular_features,
+                                                     *source_vertex_ids,
+                                                     solver.singular_elements.order));
+    singular_numbering = std::make_unique<fem::singular::ParallelDofNumbering>(
+        fem::singular::BuildParallelDofNumbering(GetComm(), *triangle_singular_dofs));
+  }
+  MFEM_VERIFY(singular_numbering->h1.owned_size <= std::numeric_limits<int>::max() &&
+                  singular_numbering->nd.owned_size <= std::numeric_limits<int>::max(),
+              "Full-wave singular local true-DOF count exceeds integer limits!");
+
+  std::vector<fem::singular::IsotropicMaterialCoefficients> materials(GetMesh().GetNE(),
+                                                                      {1.0, 1.0});
+  for (int element = 0; element < GetMesh().GetNE(); element++)
+  {
+    const int attribute = GetMesh().Get().GetAttribute(element);
+    const bool enriched =
+        tetrahedral ? !singular_features->elements[element].nodes.empty() ||
+                          !singular_features->elements[element].edges.empty()
+                    : !triangle_singular_features->elements[element].nodes.empty();
+    if (!enriched)
+    {
+      continue;
+    }
+    MFEM_VERIFY(mat_op.IsIsotropic(attribute),
+                "Full-wave singular enrichment requires isotropic material in every "
+                "enriched simplex! Domain attribute: "
+                    << attribute);
+    materials[element] = {mat_op.GetPermittivityReal(attribute)(0, 0),
+                          mat_op.GetInvPermeability(attribute)(0, 0)};
+  }
+
+  const fem::singular::AdaptiveAssemblyOptions options{
+      solver.singular_elements.quadrature_order, solver.singular_elements.abs_tol,
+      solver.singular_elements.rel_tol, solver.singular_elements.max_subdivisions};
+  const auto local = tetrahedral ? fem::singular::AssembleLocalSparseEnrichmentMatrices(
+                                       *singular_dofs, GetH1Space().Get(),
+                                       GetNDSpace().Get(), materials, options)
+                                 : fem::singular::AssembleLocalSparseEnrichmentMatrices(
+                                       *triangle_singular_dofs, GetH1Space().Get(),
+                                       GetNDSpace().Get(), materials, options);
+  singular_domain_matrices = fem::singular::AssembleParallelSparseEnrichmentMatrices(
+      local, *singular_numbering, GetH1Space().Get(), GetNDSpace().Get());
+
+  auto enrichment_gradient =
+      fem::singular::BuildParallelEnrichmentGradient(GetComm(), *singular_numbering);
+  const auto &standard_gradient_operator =
+      GetNDSpace().GetDiscreteInterpolator(GetH1Space());
+  const auto *standard_gradient =
+      dynamic_cast<const ParOperator *>(&standard_gradient_operator);
+  MFEM_VERIFY(standard_gradient,
+              "Full-wave singular enrichment requires an assembled standard gradient!");
+  singular_gradient = fem::singular::BuildParallelEnrichedGradient(
+      standard_gradient->ParallelAssemble(), *enrichment_gradient);
+
+  if (tetrahedral)
+  {
+    singular_h1_essential_true_dofs = fem::singular::GetEssentialH1TrueDofs(
+        GetComm(), *singular_features, *singular_dofs, *singular_numbering);
+    singular_nd_essential_true_dofs = fem::singular::GetEssentialNDTrueDofs(
+        GetComm(), *singular_features, *singular_dofs, *singular_numbering);
+  }
+  else
+  {
+    singular_h1_essential_true_dofs = fem::singular::GetEssentialTriangleH1TrueDofs(
+        GetComm(), *triangle_singular_features, *triangle_singular_dofs,
+        *singular_numbering);
+    singular_nd_essential_true_dofs = fem::singular::GetEssentialTriangleNDTrueDofs(
+        GetComm(), *triangle_singular_features, *triangle_singular_dofs,
+        *singular_numbering);
+  }
+
+  combined_nd_dbc_tdof_list = nd_dbc_tdof_lists.back();
+  const int standard_nd_size = GetNDSpace().GetTrueVSize();
+  for (int dof : singular_nd_essential_true_dofs)
+  {
+    combined_nd_dbc_tdof_list.Append(standard_nd_size + dof);
+  }
+  combined_nd_dbc_tdof_list.Sort();
+  combined_h1_dbc_tdof_list = h1_dbc_tdof_lists.back();
+  const int standard_h1_size = GetH1Space().GetTrueVSize();
+  for (int dof : singular_h1_essential_true_dofs)
+  {
+    combined_h1_dbc_tdof_list.Append(standard_h1_size + dof);
+  }
+  combined_h1_dbc_tdof_list.Sort();
+  MFEM_VERIFY(std::adjacent_find(combined_nd_dbc_tdof_list.begin(),
+                                 combined_nd_dbc_tdof_list.end()) ==
+                      combined_nd_dbc_tdof_list.end() &&
+                  std::adjacent_find(combined_h1_dbc_tdof_list.begin(),
+                                     combined_h1_dbc_tdof_list.end()) ==
+                      combined_h1_dbc_tdof_list.end(),
+              "Full-wave singular essential true DOFs are not unique!");
+
+  Mpi::Print(" Singular full-wave enrichment: {:d} ND + {:d} H1 global true DOFs\n",
+             singular_numbering->nd.global_size, singular_numbering->h1.global_size);
+}
+
+const Operator &SpaceOperator::GetGradMatrix() const
+{
+  return singular_gradient ? static_cast<const Operator &>(*singular_gradient)
+                           : GetNDSpace().GetDiscreteInterpolator(GetH1Space());
+}
+
+void SpaceOperator::CheckSingularExcitations(ProblemType problem_type) const
+{
+  if (problem_type != ProblemType::DRIVEN)
+  {
+    return;
+  }
+  MFEM_VERIFY(current_dipole_op.Empty(),
+              "Driven singular elements do not yet assemble current-dipole enrichment "
+              "load vectors!");
+
+  const auto source_attributes = surf_j_op.GetAttrList();
+  MFEM_VERIFY(source_attributes.Size() > 0,
+              "Driven singular elements currently require at least one surface-current "
+              "source!");
+  const int maximum_attribute =
+      GetMesh().Get().bdr_attributes.Size() ? GetMesh().Get().bdr_attributes.Max() : 0;
+  const auto source_marker = mesh::AttrToMarker(maximum_attribute, source_attributes);
+  bool intersects_enrichment = false;
+  for (int boundary_element = 0; boundary_element < GetMesh().GetNBE(); boundary_element++)
+  {
+    const int attribute = GetMesh().Get().GetBdrAttribute(boundary_element);
+    if (attribute <= 0 || attribute > source_marker.Size() || !source_marker[attribute - 1])
+    {
+      continue;
+    }
+    int element = -1, face = -1;
+    GetMesh().Get().GetBdrElementAdjacentElement(boundary_element, element, face);
+    if (element < 0)
+    {
+      continue;
+    }
+    intersects_enrichment =
+        intersects_enrichment ||
+        (singular_features && (!singular_features->elements[element].nodes.empty() ||
+                               !singular_features->elements[element].edges.empty())) ||
+        (triangle_singular_features &&
+         !triangle_singular_features->elements[element].nodes.empty());
+  }
+  Mpi::GlobalOr(1, &intersects_enrichment, GetComm());
+  MFEM_VERIFY(!intersects_enrichment,
+              "A driven surface-current source touches an enriched element. Its singular "
+              "load-vector entries must be implemented before this source is supported!");
 }
 
 void SpaceOperator::CheckExcitations(ProblemType problem_type) const
@@ -399,6 +589,24 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
     ki =
         AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, &fc, skip_zeros);
   }
+  if (HasSingularEnrichment())
+  {
+    MFEM_VERIFY(kr && !ki, "Full-wave singular stiffness assembly requires a real domain "
+                           "curl-curl operator without Floquet terms!");
+    auto standard =
+        ParOperator(std::move(kr), GetNDSpace()).StealParallelAssemble(skip_zeros);
+    auto combined = fem::singular::BuildParallelEnrichedOperator(
+        *standard, singular_domain_matrices.nd_curl_curl);
+    combined->EliminateBC(combined_nd_dbc_tdof_list, diag_policy);
+    if constexpr (std::is_same<OperType, ComplexOperator>::value)
+    {
+      return std::make_unique<ComplexWrapperOperator>(std::move(combined), nullptr);
+    }
+    else
+    {
+      return combined;
+    }
+  }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
     auto K =
@@ -482,6 +690,25 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   if (!empty[1])
   {
     mi = AssembleOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, nullptr, skip_zeros);
+  }
+  if (HasSingularEnrichment())
+  {
+    MFEM_VERIFY(mr && !mi,
+                "Full-wave singular mass assembly requires a real lossless domain "
+                "permittivity operator!");
+    auto standard =
+        ParOperator(std::move(mr), GetNDSpace()).StealParallelAssemble(skip_zeros);
+    auto combined = fem::singular::BuildParallelEnrichedOperator(
+        *standard, singular_domain_matrices.nd_mass);
+    combined->EliminateBC(combined_nd_dbc_tdof_list, diag_policy);
+    if constexpr (std::is_same<OperType, ComplexOperator>::value)
+    {
+      return std::make_unique<ComplexWrapperOperator>(std::move(combined), nullptr);
+    }
+    else
+    {
+      return combined;
+    }
   }
   if constexpr (std::is_same<OperType, ComplexOperator>::value)
   {
@@ -783,12 +1010,76 @@ SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int port_idx,
   }
 }
 
+namespace
+{
+
+std::unique_ptr<mfem::HypreParMatrix> AddScaledHypreMatrices(
+    const std::vector<std::pair<double, const mfem::HypreParMatrix *>> &terms)
+{
+  std::unique_ptr<mfem::HypreParMatrix> result;
+  for (const auto &[coefficient, matrix] : terms)
+  {
+    if (coefficient == 0.0 || !matrix)
+    {
+      continue;
+    }
+    if (!result)
+    {
+      result = std::make_unique<mfem::HypreParMatrix>(*matrix);
+      *result *= coefficient;
+    }
+    else
+    {
+      result.reset(mfem::Add(1.0, *result, coefficient, *matrix));
+    }
+  }
+  return result;
+}
+
+const mfem::HypreParMatrix *GetHyprePart(const ComplexOperator *op, bool imaginary)
+{
+  if (!op)
+  {
+    return nullptr;
+  }
+  return dynamic_cast<const mfem::HypreParMatrix *>(imaginary ? op->Imag() : op->Real());
+}
+
+}  // namespace
+
 template <typename OperType, typename ScalarType>
 std::unique_ptr<OperType>
 SpaceOperator::GetSystemMatrix(ScalarType a0, ScalarType a1, ScalarType a2,
                                const OperType *K, const OperType *C, const OperType *M,
                                const OperType *A2)
 {
+  if (HasSingularEnrichment())
+  {
+    if constexpr (std::is_same_v<OperType, ComplexOperator>)
+    {
+      MFEM_VERIFY(!C && !A2 && (!K || (GetHyprePart(K, false) && !GetHyprePart(K, true))) &&
+                      (!M || (GetHyprePart(M, false) && !GetHyprePart(M, true))),
+                  "Full-wave singular system composition currently requires real "
+                  "lossless K and M matrices without extra boundary operators!");
+      const auto *Kr = GetHyprePart(K, false);
+      const auto *Mr = GetHyprePart(M, false);
+      auto Ar = AddScaledHypreMatrices({{a0.real(), Kr}, {a2.real(), Mr}});
+      auto Ai = AddScaledHypreMatrices({{a0.imag(), Kr}, {a2.imag(), Mr}});
+      MFEM_VERIFY(Ar || Ai, "Full-wave singular system matrix is empty!");
+      return std::make_unique<ComplexWrapperOperator>(std::move(Ar), std::move(Ai));
+    }
+    else
+    {
+      const auto *Kr = dynamic_cast<const mfem::HypreParMatrix *>(K);
+      const auto *Cr = dynamic_cast<const mfem::HypreParMatrix *>(C);
+      const auto *Mr = dynamic_cast<const mfem::HypreParMatrix *>(M);
+      const auto *A2r = dynamic_cast<const mfem::HypreParMatrix *>(A2);
+      auto A = AddScaledHypreMatrices({{a0, Kr}, {a1, Cr}, {a2, Mr}, {1.0, A2r}});
+      MFEM_VERIFY(A, "Full-wave singular real system matrix is empty!");
+      return A;
+    }
+  }
+
   // When A2 is an abstract ComplexOperator (not a sparse ComplexParOperator), it cannot
   // participate in BuildParSumOperator. Build the sparse KCM sum separately and add A2 via
   // a non-owning SumComplexOperator.
@@ -823,6 +1114,15 @@ std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double
                                                                const ComplexOperator *K,
                                                                const ComplexOperator *M)
 {
+  if (HasSingularEnrichment())
+  {
+    const auto *Kr = GetHyprePart(K, false);
+    const auto *Mr = GetHyprePart(M, false);
+    MFEM_VERIFY((!K || Kr) && (!M || Mr) && (!K || !GetHyprePart(K, true)) &&
+                    (!M || !GetHyprePart(M, true)),
+                "Full-wave singular inner product requires real sparse matrices!");
+    return AddScaledHypreMatrices({{a0, Kr}, {a2, Mr}});
+  }
   const auto *PtAP_K = (K) ? dynamic_cast<const ComplexParOperator *>(K) : nullptr;
   const auto *PtAP_M = (M) ? dynamic_cast<const ComplexParOperator *>(M) : nullptr;
   return BuildParSumOperator(
@@ -1081,6 +1381,60 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
                                                                  ScalarType a1,
                                                                  ScalarType a2, A3Type a3)
 {
+  if (HasSingularEnrichment())
+  {
+    const double stiffness_coefficient = [&]()
+    {
+      if constexpr (std::is_same_v<ScalarType, std::complex<double>>)
+      {
+        return a0.real();
+      }
+      else
+      {
+        return a0;
+      }
+    }();
+    const double mass_coefficient = [&]()
+    {
+      const double value = [&]()
+      {
+        if constexpr (std::is_same_v<ScalarType, std::complex<double>>)
+        {
+          return a2.real();
+        }
+        else
+        {
+          return a2;
+        }
+      }();
+      return pc_mat_shifted ? std::abs(value) : value;
+    }();
+    auto K = GetStiffnessMatrix<OperType>(Operator::DIAG_ZERO);
+    auto M = GetMassMatrix<OperType>(Operator::DIAG_ZERO);
+    if constexpr (std::is_same_v<OperType, ComplexOperator>)
+    {
+      auto B = GetSystemMatrix(std::complex<double>(stiffness_coefficient, 0.0),
+                               std::complex<double>(0.0, 0.0),
+                               std::complex<double>(mass_coefficient, 0.0), K.get(),
+                               static_cast<const OperType *>(nullptr), M.get());
+      const auto *matrix = GetHyprePart(B.get(), false);
+      MFEM_VERIFY(matrix && !GetHyprePart(B.get(), true),
+                  "Full-wave singular preconditioner is not a real sparse matrix!");
+      auto constrained = std::make_unique<mfem::HypreParMatrix>(*matrix);
+      constrained->EliminateBC(combined_nd_dbc_tdof_list, Operator::DIAG_ONE);
+      return std::make_unique<ComplexWrapperOperator>(std::move(constrained), nullptr);
+    }
+    else
+    {
+      auto B = GetSystemMatrix(stiffness_coefficient, 0.0, mass_coefficient, K.get(),
+                               static_cast<const OperType *>(nullptr), M.get());
+      auto *matrix = dynamic_cast<mfem::HypreParMatrix *>(B.get());
+      MFEM_VERIFY(matrix, "Full-wave singular real preconditioner is not a sparse matrix!");
+      matrix->EliminateBC(combined_nd_dbc_tdof_list, Operator::DIAG_ONE);
+      return B;
+    }
+  }
+
   // When partially assembled, the coarse operators can reuse the fine operator quadrature
   // data if the spaces correspond to the same mesh. When appropriate, we build the
   // preconditioner on all levels based on the actual complex-valued system matrix. The
@@ -1285,11 +1639,19 @@ void SpaceOperator::AddImagPeriodicCoefficients(double coeff,
 bool SpaceOperator::GetExcitationVector(int excitation_idx, Vector &RHS)
 {
   // Time domain excitation vector.
-  RHS.SetSize(GetNDSpace().GetTrueVSize());
+  Vector standard_rhs(GetNDSpace().GetTrueVSize());
+  standard_rhs.UseDevice(true);
+  standard_rhs = 0.0;
+  bool nnz = AddExcitationVector1Internal(excitation_idx, standard_rhs);
+  linalg::SetSubVector(standard_rhs, nd_dbc_tdof_lists.back(), 0.0);
+
+  RHS.SetSize(GetNDTrueVSize());
   RHS.UseDevice(true);
   RHS = 0.0;
-  bool nnz = AddExcitationVector1Internal(excitation_idx, RHS);
-  linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
+  for (int i = 0; i < standard_rhs.Size(); i++)
+  {
+    RHS[i] = standard_rhs[i];
+  }
   return nnz;
 }
 
@@ -1297,13 +1659,22 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
                                         ComplexVector &RHS)
 {
   // Frequency domain excitation vector: RHS = iω RHS1 + RHS2(ω).
-  RHS.SetSize(GetNDSpace().GetTrueVSize());
+  ComplexVector standard_rhs(GetNDSpace().GetTrueVSize());
+  standard_rhs.UseDevice(true);
+  standard_rhs = 0.0;
+  bool nnz1 = AddExcitationVector1Internal(excitation_idx, standard_rhs.Real());
+  standard_rhs *= 1i * omega;
+  bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, standard_rhs);
+  linalg::SetSubVector(standard_rhs, nd_dbc_tdof_lists.back(), 0.0);
+
+  RHS.SetSize(GetNDTrueVSize());
   RHS.UseDevice(true);
   RHS = 0.0;
-  bool nnz1 = AddExcitationVector1Internal(excitation_idx, RHS.Real());
-  RHS *= 1i * omega;
-  bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, RHS);
-  linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
+  for (int i = 0; i < standard_rhs.Size(); i++)
+  {
+    RHS.Real()[i] = standard_rhs.Real()[i];
+    RHS.Imag()[i] = standard_rhs.Imag()[i];
+  }
   return nnz1 || nnz2;
 }
 
@@ -1402,22 +1773,39 @@ bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1
 {
   // Assemble the frequency domain excitation term with linear frequency dependence
   // (coefficient iω, see GetExcitationVector above, is accounted for later).
-  RHS1.SetSize(GetNDSpace().GetTrueVSize());
+  Vector standard_rhs(GetNDSpace().GetTrueVSize());
+  standard_rhs.UseDevice(true);
+  standard_rhs = 0.0;
+  bool nnz1 = AddExcitationVector1Internal(excitation_idx, standard_rhs);
+  linalg::SetSubVector(standard_rhs, nd_dbc_tdof_lists.back(), 0.0);
+
+  RHS1.SetSize(GetNDTrueVSize());
   RHS1.UseDevice(true);
   RHS1 = 0.0;
-  bool nnz1 = AddExcitationVector1Internal(excitation_idx, RHS1.Real());
-  linalg::SetSubVector(RHS1.Real(), nd_dbc_tdof_lists.back(), 0.0);
+  for (int i = 0; i < standard_rhs.Size(); i++)
+  {
+    RHS1.Real()[i] = standard_rhs[i];
+  }
   return nnz1;
 }
 
 bool SpaceOperator::GetExcitationVector2(int excitation_idx, double omega,
                                          ComplexVector &RHS2)
 {
-  RHS2.SetSize(GetNDSpace().GetTrueVSize());
+  ComplexVector standard_rhs(GetNDSpace().GetTrueVSize());
+  standard_rhs.UseDevice(true);
+  standard_rhs = 0.0;
+  bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, standard_rhs);
+  linalg::SetSubVector(standard_rhs, nd_dbc_tdof_lists.back(), 0.0);
+
+  RHS2.SetSize(GetNDTrueVSize());
   RHS2.UseDevice(true);
   RHS2 = 0.0;
-  bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, RHS2);
-  linalg::SetSubVector(RHS2, nd_dbc_tdof_lists.back(), 0.0);
+  for (int i = 0; i < standard_rhs.Size(); i++)
+  {
+    RHS2.Real()[i] = standard_rhs.Real()[i];
+    RHS2.Imag()[i] = standard_rhs.Imag()[i];
+  }
   return nnz2;
 }
 
@@ -1507,18 +1895,18 @@ bool SpaceOperator::AddExcitationVector2Internal(int excitation_idx, double omeg
 
 void SpaceOperator::GetConstantInitialVector(ComplexVector &v)
 {
-  v.SetSize(GetNDSpace().GetTrueVSize());
+  v.SetSize(GetNDTrueVSize());
   v.UseDevice(true);
   v = 1.0;
-  linalg::SetSubVector(v.Real(), nd_dbc_tdof_lists.back(), 0.0);
+  linalg::SetSubVector(v.Real(), combined_nd_dbc_tdof_list, 0.0);
 }
 
 void SpaceOperator::GetRandomInitialVector(ComplexVector &v)
 {
-  v.SetSize(GetNDSpace().GetTrueVSize());
+  v.SetSize(GetNDTrueVSize());
   v.UseDevice(true);
   linalg::SetRandom(GetNDSpace().GetComm(), v);
-  linalg::SetSubVector(v, nd_dbc_tdof_lists.back(), 0.0);
+  linalg::SetSubVector(v, combined_nd_dbc_tdof_list, 0.0);
 }
 
 template std::unique_ptr<Operator>

@@ -1,0 +1,68 @@
+{
+  "Problem": {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/singular_driven"
+  },
+  "Model": {
+    "Mesh": "mesh/cpw3d_singular.mesh",
+    "L0": 1.0e-6,
+    "CrackInternalBoundaryElements": false,
+    "Refinement": {
+      "MaxIts": 0
+    }
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 11.45
+      },
+      {
+        "Attributes": [2],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [10, 11]
+    },
+    "SurfaceCurrent": [
+      {
+        "Index": 1,
+        "Attributes": [12],
+        "Direction": "+Z"
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 1,
+    "Device": "CPU",
+    "Driven": {
+      "Samples": [
+        {
+          "Type": "Point",
+          "Freq": [5.0]
+        }
+      ]
+    },
+    "SingularElements": {
+      "Attributes": [10, 11],
+      "Order": 1,
+      "QuadratureOrder": 8,
+      "AbsTol": 1.0e-3,
+      "RelTol": 1.0e-3,
+      "MaxSubdivisions": 6
+    },
+    "Linear": {
+      "Type": "SuperLU",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-10,
+      "MaxIts": 100,
+      "MGMaxLevels": 1
+    }
+  }
+}

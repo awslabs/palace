@@ -81,6 +81,38 @@ struct DofTopology
   std::vector<ElementDofMap> elements;
 };
 
+// Lowest-order triangular basis descriptor. The gradient basis with nodes
+// {i,j,k} is grad(phi_ij); the rotational basis is N_i,r with the same
+// canonical ordering. Higher triangular singular orders require separate
+// Graglia-Lombardi interpolation tuples and are not represented by this type.
+struct TriangleBasis
+{
+  HigherOrderBasisFamily family;
+  std::array<int, 3> nodes;
+  int order;
+  double nu;
+};
+
+struct TriangleElementDof
+{
+  std::size_t dof;
+  TriangleBasis basis;
+};
+
+struct TriangleElementDofMap
+{
+  std::vector<TriangleElementDof> h1;
+  std::vector<TriangleElementDof> nd;
+};
+
+struct TriangleDofTopology
+{
+  std::vector<DofKey> h1_dofs;
+  std::vector<DofKey> nd_dofs;
+  std::vector<std::size_t> h1_to_nd;
+  std::vector<TriangleElementDofMap> elements;
+};
+
 struct TrueDofMap
 {
   // Partition of the rank-local enrichment L-vectors. Shared functions occur
@@ -118,6 +150,13 @@ bool IsGradientFamily(HigherOrderBasisFamily family);
 std::vector<std::vector<std::size_t>>
 BuildH1DofFeatureMembership(const FeatureTopology &features, const DofTopology &topology);
 
+// Map every triangular H1 enrichment key to its singular line-tip patch. Each
+// physical tip is one feature because the initial 2D extractor supports only
+// straight, unbranched selected PEC line chains.
+std::vector<std::vector<std::size_t>>
+BuildTriangleH1DofFeatureMembership(const TriangleFeatureTopology &features,
+                                    const TriangleDofTopology &topology);
+
 // Recover decomposition-independent serial vertex IDs on a ParMesh constructed
 // from serial_mesh with the supplied element partition. The map is exact and
 // topological: it uses the preserved serial-to-local element ordering and
@@ -142,6 +181,17 @@ DofTopology BuildLocalDofTopology(const mfem::Mesh &mesh, const FeatureTopology 
                                   const std::vector<GlobalVertexId> &serial_vertex_ids,
                                   int order);
 
+// Enumerate the two edge-trace gradient functions and one element-interior
+// rotational function associated with each singular tip/triangle incidence.
+// The initial triangular implementation supports only singular order one.
+TriangleDofTopology BuildSerialTriangleDofTopology(const mfem::Mesh &mesh,
+                                                   const TriangleFeatureTopology &features,
+                                                   int order);
+
+TriangleDofTopology BuildLocalTriangleDofTopology(
+    const mfem::Mesh &mesh, const TriangleFeatureTopology &features,
+    const std::vector<GlobalVertexId> &serial_vertex_ids, int order);
+
 // Assign MPI ownership and true-DOF numbers to the canonical keys present on
 // each rank. The minimum participating rank owns a shared key, and owned keys
 // occupy one contiguous block per rank.
@@ -152,6 +202,9 @@ DofTopology BuildLocalDofTopology(const mfem::Mesh &mesh, const FeatureTopology 
 // production-scale layouts.
 ParallelDofNumbering BuildParallelDofNumbering(MPI_Comm comm, const DofTopology &topology);
 
+ParallelDofNumbering BuildParallelDofNumbering(MPI_Comm comm,
+                                               const TriangleDofTopology &topology);
+
 // Return rank-local owned H1 true DOFs whose scalar enrichment trace is
 // nonzero on a selected PEC sheet face. The classification is topological: a
 // retained interpolation support entity lies on a sheet face if all of its
@@ -159,6 +212,29 @@ ParallelDofNumbering BuildParallelDofNumbering(MPI_Comm comm, const DofTopology 
 mfem::Array<int> GetEssentialH1TrueDofs(MPI_Comm comm, const FeatureTopology &features,
                                         const DofTopology &topology,
                                         const ParallelDofNumbering &parallel_numbering);
+
+// Return rank-local owned ND true DOFs whose vector enrichment has nonzero
+// tangential trace on a selected PEC sheet face. As for H1, trace support is
+// classified from stable source vertices, so the result is independent of
+// element ordering and mesh partitioning.
+mfem::Array<int> GetEssentialNDTrueDofs(MPI_Comm comm, const FeatureTopology &features,
+                                        const DofTopology &topology,
+                                        const ParallelDofNumbering &parallel_numbering);
+
+// Return owned enriched H1 true DOFs whose nonzero trace lies on a selected
+// zero-thickness PEC line segment.
+mfem::Array<int>
+GetEssentialTriangleH1TrueDofs(MPI_Comm comm, const TriangleFeatureTopology &features,
+                               const TriangleDofTopology &topology,
+                               const ParallelDofNumbering &parallel_numbering);
+
+// Return owned enriched ND true DOFs with nonzero tangential trace on a
+// selected zero-thickness PEC line segment. Rotational triangle enrichments
+// have element-interior support and are therefore never included.
+mfem::Array<int>
+GetEssentialTriangleNDTrueDofs(MPI_Comm comm, const TriangleFeatureTopology &features,
+                               const TriangleDofTopology &topology,
+                               const ParallelDofNumbering &parallel_numbering);
 
 }  // namespace singular
 

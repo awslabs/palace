@@ -454,18 +454,21 @@ ModeEigenSolver::ModeEigenSolver(BoundaryModeOperator &bmo,
 
 void ModeEigenSolver::Init(MPI_Comm solver_comm)
 {
-  nd_size = nd_fespace.GetTrueVSize();
-  h1_size = h1_fespace.GetTrueVSize();
+  nd_size = bmo ? bmo->GetNDTrueVSize() : nd_fespace.GetTrueVSize();
+  h1_size = bmo ? bmo->GetH1TrueVSize() : h1_fespace.GetTrueVSize();
 
   // Build the frequency-independent block B matrix. Btn is real-only; Btt and the zero
   // H1 diagonal placeholder make up the rest.
+  MFEM_VERIFY(Bttr && Btnr && Bttr->Height() == nd_size && Bttr->Width() == nd_size &&
+                  Btnr->Height() == h1_size && Btnr->Width() == nd_size,
+              "BoundaryMode frequency-independent blocks have inconsistent combined "
+              "dimensions!");
   Vector d(h1_size);
   d.UseDevice(false);
   d = 0.0;
   mfem::SparseMatrix diag(d);
   auto Dnn = std::make_unique<mfem::HypreParMatrix>(
-      h1_fespace.Get().GetComm(), h1_fespace.Get().GlobalTrueVSize(),
-      h1_fespace.Get().GetTrueDofOffsets(), &diag);
+      Btnr->GetComm(), Btnr->GetGlobalNumRows(), Btnr->GetRowStarts(), &diag);
   auto [Br, Bi] = BuildSystemMatrixB(Bttr, nullptr, Btnr, Btni, Dnn.get());
   opB = std::make_unique<ComplexWrapperOperator>(std::move(Br), std::move(Bi));
 
@@ -661,8 +664,7 @@ ModeEigenSolver::ComplexHypreParMatrix ModeEigenSolver::BuildSystemMatrixA(
       dtt = 0.0;
       diag_tt = std::make_unique<mfem::SparseMatrix>(dtt);
       Dtt_zero = std::make_unique<mfem::HypreParMatrix>(
-          nd_fespace.Get().GetComm(), nd_fespace.Get().GlobalTrueVSize(),
-          nd_fespace.Get().GetTrueDofOffsets(), diag_tt.get());
+          Attr->GetComm(), Attr->GetGlobalNumRows(), Attr->GetRowStarts(), diag_tt.get());
     }
     if (!Anni)
     {
@@ -671,8 +673,7 @@ ModeEigenSolver::ComplexHypreParMatrix ModeEigenSolver::BuildSystemMatrixA(
       dnn = 0.0;
       diag_nn = std::make_unique<mfem::SparseMatrix>(dnn);
       Dnn_zero = std::make_unique<mfem::HypreParMatrix>(
-          h1_fespace.Get().GetComm(), h1_fespace.Get().GlobalTrueVSize(),
-          h1_fespace.Get().GetTrueDofOffsets(), diag_nn.get());
+          Annr->GetComm(), Annr->GetGlobalNumRows(), Annr->GetRowStarts(), diag_nn.get());
     }
     blocks(0, 0) = Atti ? Atti : Dtt_zero.get();
     blocks(0, 1) = Atni;

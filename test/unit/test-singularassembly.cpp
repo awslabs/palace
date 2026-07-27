@@ -29,6 +29,11 @@ double Dot(const fem::singular::Vector3 &a, const fem::singular::Vector3 &b)
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
+double Dot(const fem::singular::Vector2 &a, const fem::singular::Vector2 &b)
+{
+  return a[0] * b[0] + a[1] * b[1];
+}
+
 fem::singular::Vector3 Cross(const fem::singular::Vector3 &a,
                              const fem::singular::Vector3 &b)
 {
@@ -97,6 +102,75 @@ mfem::Mesh AffineTetrahedronMesh(const fem::singular::Vector3 &origin,
   mesh.AddTet(0, 1, 2, 3, 1);
   mesh.FinalizeTopology();
   mesh.Finalize(false, false);
+  return mesh;
+}
+
+mfem::Mesh AffineTriangleMesh(const fem::singular::Vector2 &origin,
+                              const fem::singular::Vector2 &a,
+                              const fem::singular::Vector2 &b)
+{
+  mfem::Mesh mesh(2, 3, 1, 0, 2);
+  mesh.AddVertex(origin.data());
+  const fem::singular::Vector2 vertex_a{origin[0] + a[0], origin[1] + a[1]};
+  const fem::singular::Vector2 vertex_b{origin[0] + b[0], origin[1] + b[1]};
+  mesh.AddVertex(vertex_a.data());
+  mesh.AddVertex(vertex_b.data());
+  mesh.AddTriangle(0, 1, 2, 1);
+  mesh.FinalizeTopology();
+  mesh.Finalize(false, false);
+  return mesh;
+}
+
+void SetQuadraticGeometry(mfem::Mesh &mesh, bool curved)
+{
+  const int dimension = mesh.SpaceDimension();
+  mesh.SetCurvature(2, false, dimension, mfem::Ordering::byVDIM);
+  if (!curved)
+  {
+    return;
+  }
+
+  mfem::VectorFunctionCoefficient geometry(
+      dimension,
+      [dimension](const mfem::Vector &x, mfem::Vector &value)
+      {
+        value.SetSize(dimension);
+        value = x;
+        if (dimension == 2)
+        {
+          value[1] += 0.2 * x[0] * x[1];
+        }
+        else
+        {
+          value[2] += 0.15 * x[0] * x[1];
+        }
+      });
+  mesh.GetNodes()->ProjectCoefficient(geometry);
+}
+
+mfem::Mesh InternalLineTipTriangleMesh()
+{
+  mfem::Mesh mesh(2, 9, 8, 1, 2);
+  mesh.AddVertex(-1.0, -1.0);
+  mesh.AddVertex(0.0, -1.0);
+  mesh.AddVertex(1.0, -1.0);
+  mesh.AddVertex(-1.0, 0.0);
+  mesh.AddVertex(0.0, 0.0);
+  mesh.AddVertex(1.0, 0.0);
+  mesh.AddVertex(-1.0, 1.0);
+  mesh.AddVertex(0.0, 1.0);
+  mesh.AddVertex(1.0, 1.0);
+  mesh.AddTriangle(0, 1, 4, 1);
+  mesh.AddTriangle(0, 4, 3, 1);
+  mesh.AddTriangle(3, 4, 7, 1);
+  mesh.AddTriangle(3, 7, 6, 1);
+  mesh.AddTriangle(1, 2, 5, 1);
+  mesh.AddTriangle(1, 5, 4, 1);
+  mesh.AddTriangle(4, 5, 8, 1);
+  mesh.AddTriangle(4, 8, 7, 1);
+  mesh.AddBdrSegment(3, 4, 7);
+  mesh.FinalizeTopology();
+  mesh.Finalize(true, false);
   return mesh;
 }
 
@@ -904,6 +978,580 @@ CouplingEnergies AssembleSharedFaceCoupling(bool permute_vertices)
 }
 
 }  // namespace
+
+TEST_CASE("Triangular singular assembly preserves the complete exact sequence",
+          "[singularelements][singularassembly][triangle][Serial]")
+{
+  constexpr double nu = 0.5;
+  fem::singular::TriangleElementDofMap element_dofs;
+  const fem::singular::TriangleBasis gradient_1{
+      fem::singular::HigherOrderBasisFamily::NODE_GRADIENT, {0, 1, 2}, 1, nu};
+  const fem::singular::TriangleBasis gradient_2{
+      fem::singular::HigherOrderBasisFamily::NODE_GRADIENT, {0, 2, 1}, 1, nu};
+  const fem::singular::TriangleBasis rotational{
+      fem::singular::HigherOrderBasisFamily::NODE_ROTATIONAL, {0, 1, 2}, 1, nu};
+  element_dofs.h1 = {{0, gradient_1}, {1, gradient_2}};
+  element_dofs.nd = {{0, gradient_1}, {1, gradient_2}, {2, rotational}};
+
+  auto mesh = AffineTriangleMesh({0.3, -0.2}, {1.7, 0.2}, {0.3, 1.4});
+  mfem::H1_FECollection h1_collection(1, 2);
+  mfem::ND_FECollection nd_collection(1, 2);
+  mfem::FiniteElementSpace h1_space(&mesh, &h1_collection);
+  mfem::FiniteElementSpace nd_space(&mesh, &nd_collection);
+  auto &transformation = *mesh.GetElementTransformation(0);
+  double jacobian_determinant;
+  const auto grad_lambda = fem::singular::GetAffineTriangleBarycentricGradients(
+      transformation, jacobian_determinant);
+  const fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-10, 2.0e-10, 9};
+
+  const auto enrichment = fem::singular::AssembleTriangleElementEnrichmentMatrices(
+      element_dofs, grad_lambda, jacobian_determinant, options);
+  const auto coupling = fem::singular::AssembleTriangleElementStandardEnrichmentMatrices(
+      element_dofs, *h1_space.GetFE(0), *nd_space.GetFE(0), transformation, options);
+
+  REQUIRE(enrichment.h1_diffusion.Height() == 2);
+  REQUIRE(enrichment.h1_mass.Height() == 2);
+  REQUIRE(enrichment.nd_mass.Height() == 3);
+  REQUIRE(enrichment.nd_curl_curl.Height() == 3);
+  CheckSymmetric(enrichment.h1_diffusion);
+  CheckSymmetric(enrichment.h1_diffusion_estimated_absolute_error);
+  CheckSymmetric(enrichment.h1_mass);
+  CheckSymmetric(enrichment.h1_mass_estimated_absolute_error);
+  CheckSymmetric(enrichment.nd_mass);
+  CheckSymmetric(enrichment.nd_mass_estimated_absolute_error);
+  CheckSymmetric(enrichment.nd_curl_curl);
+  CheckSymmetric(enrichment.nd_curl_curl_estimated_absolute_error);
+  CheckExactTranspose(coupling.h1_standard_enrichment, coupling.h1_enrichment_standard);
+  CheckExactTranspose(coupling.h1_mass_standard_enrichment,
+                      coupling.h1_mass_enrichment_standard);
+  CheckExactTranspose(coupling.nd_mass_standard_enrichment,
+                      coupling.nd_mass_enrichment_standard);
+  CheckExactTranspose(coupling.nd_curl_curl_standard_enrichment,
+                      coupling.nd_curl_curl_enrichment_standard);
+
+  for (int row = 0; row < 2; row++)
+  {
+    for (int column = 0; column < 2; column++)
+    {
+      CHECK(enrichment.h1_diffusion(row, column) == enrichment.nd_mass(row, column));
+      CHECK(enrichment.h1_diffusion_estimated_absolute_error(row, column) ==
+            enrichment.nd_mass_estimated_absolute_error(row, column));
+    }
+    for (int column = 0; column < 3; column++)
+    {
+      CHECK(enrichment.nd_curl_curl(row, column) == 0.0);
+      CHECK(enrichment.nd_curl_curl_estimated_absolute_error(row, column) == 0.0);
+    }
+  }
+  CHECK(enrichment.nd_curl_curl(2, 2) > 0.0);
+  CheckPositiveSemidefinite(enrichment.h1_diffusion,
+                            enrichment.h1_diffusion_estimated_absolute_error);
+  CheckPositiveSemidefinite(enrichment.h1_mass,
+                            enrichment.h1_mass_estimated_absolute_error);
+  CheckPositiveSemidefinite(enrichment.nd_mass,
+                            enrichment.nd_mass_estimated_absolute_error);
+  CheckPositiveSemidefinite(enrichment.nd_curl_curl,
+                            enrichment.nd_curl_curl_estimated_absolute_error);
+
+  mfem::DenseMatrix standard_nd_mass;
+  mfem::VectorFEMassIntegrator nd_mass_integrator;
+  nd_mass_integrator.AssembleElementMatrix(*nd_space.GetFE(0), transformation,
+                                           standard_nd_mass);
+  mfem::DenseMatrix standard_h1_diffusion;
+  mfem::DiffusionIntegrator diffusion_integrator;
+  diffusion_integrator.AssembleElementMatrix(*h1_space.GetFE(0), transformation,
+                                             standard_h1_diffusion);
+  mfem::DenseMatrix standard_h1_mass;
+  mfem::MassIntegrator h1_mass_integrator;
+  h1_mass_integrator.AssembleElementMatrix(*h1_space.GetFE(0), transformation,
+                                           standard_h1_mass);
+  mfem::DenseMatrix standard_gradient(nd_space.GetFE(0)->GetDof(),
+                                      h1_space.GetFE(0)->GetDof());
+  nd_space.GetFE(0)->ProjectGrad(*h1_space.GetFE(0), transformation, standard_gradient);
+
+  const int standard_h1 = standard_h1_diffusion.Height();
+  const int standard_nd = standard_nd_mass.Height();
+  const int enriched_h1 = enrichment.h1_diffusion.Height();
+  const int enriched_nd = enrichment.nd_mass.Height();
+  Eigen::MatrixXd combined_mass =
+      Eigen::MatrixXd::Zero(standard_nd + enriched_nd, standard_nd + enriched_nd);
+  combined_mass.topLeftCorner(standard_nd, standard_nd) = ToEigen(standard_nd_mass);
+  combined_mass.topRightCorner(standard_nd, enriched_nd) =
+      ToEigen(coupling.nd_mass_standard_enrichment);
+  combined_mass.bottomLeftCorner(enriched_nd, standard_nd) =
+      ToEigen(coupling.nd_mass_enrichment_standard);
+  combined_mass.bottomRightCorner(enriched_nd, enriched_nd) = ToEigen(enrichment.nd_mass);
+
+  Eigen::MatrixXd combined_gradient =
+      Eigen::MatrixXd::Zero(standard_nd + enriched_nd, standard_h1 + enriched_h1);
+  combined_gradient.topLeftCorner(standard_nd, standard_h1) = ToEigen(standard_gradient);
+  combined_gradient.block(standard_nd, standard_h1, enriched_h1, enriched_h1).setIdentity();
+  Eigen::MatrixXd combined_diffusion =
+      Eigen::MatrixXd::Zero(standard_h1 + enriched_h1, standard_h1 + enriched_h1);
+  combined_diffusion.topLeftCorner(standard_h1, standard_h1) =
+      ToEigen(standard_h1_diffusion);
+  combined_diffusion.topRightCorner(standard_h1, enriched_h1) =
+      ToEigen(coupling.h1_standard_enrichment);
+  combined_diffusion.bottomLeftCorner(enriched_h1, standard_h1) =
+      ToEigen(coupling.h1_enrichment_standard);
+  combined_diffusion.bottomRightCorner(enriched_h1, enriched_h1) =
+      ToEigen(enrichment.h1_diffusion);
+  const Eigen::MatrixXd exact_sequence =
+      combined_gradient.transpose() * combined_mass * combined_gradient;
+  CHECK((combined_diffusion - exact_sequence).cwiseAbs().maxCoeff() < 3.0e-12);
+
+  Eigen::MatrixXd combined_h1_mass =
+      Eigen::MatrixXd::Zero(standard_h1 + enriched_h1, standard_h1 + enriched_h1);
+  combined_h1_mass.topLeftCorner(standard_h1, standard_h1) = ToEigen(standard_h1_mass);
+  combined_h1_mass.topRightCorner(standard_h1, enriched_h1) =
+      ToEigen(coupling.h1_mass_standard_enrichment);
+  combined_h1_mass.bottomLeftCorner(enriched_h1, standard_h1) =
+      ToEigen(coupling.h1_mass_enrichment_standard);
+  combined_h1_mass.bottomRightCorner(enriched_h1, enriched_h1) =
+      ToEigen(enrichment.h1_mass);
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> h1_mass_solver(combined_h1_mass);
+  REQUIRE(h1_mass_solver.info() == Eigen::Success);
+  CHECK(h1_mass_solver.eigenvalues().minCoeff() > 0.0);
+
+  for (int row = 0; row < enriched_h1; row++)
+  {
+    for (int column = row; column < enriched_h1; column++)
+    {
+      const auto &row_basis = element_dofs.h1[row].basis;
+      const auto &column_basis = element_dofs.h1[column].basis;
+      const double direct = fem::singular::IntegrateReferenceTriangleNodeDuffy(
+          fem::singular::H1DuffyReferenceOrder + 4, 0, fem::singular::H1DuffyRadialPower,
+          [&](const fem::singular::TriangleBarycentricPoint &lambda)
+          {
+            return jacobian_determinant *
+                   fem::singular::EvaluateTriangleNodeGradientPotential(
+                       lambda, row_basis.nodes[0], row_basis.nodes[1], row_basis.nu) *
+                   fem::singular::EvaluateTriangleNodeGradientPotential(
+                       lambda, column_basis.nodes[0], column_basis.nodes[1],
+                       column_basis.nu);
+          });
+      CAPTURE(row, column, enrichment.h1_mass(row, column), direct,
+              enrichment.h1_mass_estimated_absolute_error(row, column));
+      CHECK(std::abs(enrichment.h1_mass(row, column) - direct) <=
+            enrichment.h1_mass_estimated_absolute_error(row, column) + 2.0e-13);
+    }
+  }
+  mfem::IntegrationPoint point;
+  mfem::Vector standard_shape(standard_h1);
+  for (int standard = 0; standard < standard_h1; standard++)
+  {
+    for (int enrichment_index = 0; enrichment_index < enriched_h1; enrichment_index++)
+    {
+      const auto &basis = element_dofs.h1[enrichment_index].basis;
+      const double direct = fem::singular::IntegrateReferenceTriangleNodeDuffy(
+          fem::singular::H1DuffyReferenceOrder + 4, 0, fem::singular::H1DuffyRadialPower,
+          [&](const fem::singular::TriangleBarycentricPoint &lambda)
+          {
+            point.Set2(lambda[1], lambda[2]);
+            h1_space.GetFE(0)->CalcShape(point, standard_shape);
+            return jacobian_determinant * standard_shape[standard] *
+                   fem::singular::EvaluateTriangleNodeGradientPotential(
+                       lambda, basis.nodes[0], basis.nodes[1], basis.nu);
+          });
+      CAPTURE(standard, enrichment_index,
+              coupling.h1_mass_standard_enrichment(standard, enrichment_index), direct,
+              coupling.h1_mass_estimated_absolute_error(standard, enrichment_index));
+      CHECK(std::abs(coupling.h1_mass_standard_enrichment(standard, enrichment_index) -
+                     direct) <=
+            coupling.h1_mass_estimated_absolute_error(standard, enrichment_index) +
+                2.0e-13);
+    }
+  }
+
+  auto missing_gradient = element_dofs;
+  missing_gradient.nd.erase(missing_gradient.nd.begin());
+  CHECK_THROWS_AS(fem::singular::AssembleTriangleElementEnrichmentMatrices(
+                      missing_gradient, grad_lambda, jacobian_determinant, options),
+                  std::invalid_argument);
+  const fem::singular::AdaptiveAssemblyOptions impossible{8, 1.0e-30, 1.0e-30, 1};
+  CHECK_THROWS_AS(fem::singular::AssembleTriangleElementEnrichmentMatrices(
+                      element_dofs, grad_lambda, jacobian_determinant, impossible),
+                  std::runtime_error);
+}
+
+TEST_CASE("Quadratic affine simplices retain singular reference assembly",
+          "[singularelements][singularassembly][curved][Serial]")
+{
+  constexpr double nu = 0.5;
+  const fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-6, 2.0e-6, 8};
+
+  fem::singular::TriangleElementDofMap triangle_dofs;
+  const fem::singular::TriangleBasis triangle_gradient{
+      fem::singular::HigherOrderBasisFamily::NODE_GRADIENT, {0, 1, 2}, 1, nu};
+  const fem::singular::TriangleBasis triangle_rotation{
+      fem::singular::HigherOrderBasisFamily::NODE_ROTATIONAL, {0, 1, 2}, 1, nu};
+  triangle_dofs.h1 = {{0, triangle_gradient}};
+  triangle_dofs.nd = {{0, triangle_gradient}, {1, triangle_rotation}};
+
+  auto linear_triangle = AffineTriangleMesh({0.3, -0.2}, {1.7, 0.2}, {0.3, 1.4});
+  auto quadratic_triangle = AffineTriangleMesh({0.3, -0.2}, {1.7, 0.2}, {0.3, 1.4});
+  SetQuadraticGeometry(quadratic_triangle, false);
+  auto &linear_triangle_transformation = *linear_triangle.GetElementTransformation(0);
+  auto &quadratic_triangle_transformation = *quadratic_triangle.GetElementTransformation(0);
+  REQUIRE(quadratic_triangle_transformation.OrderJ() > 0);
+  CHECK(fem::singular::IsAffineElementTransformation(quadratic_triangle_transformation));
+  double quadratic_triangle_jacobian;
+  CHECK_NOTHROW(fem::singular::GetAffineTriangleBarycentricGradients(
+      quadratic_triangle_transformation, quadratic_triangle_jacobian));
+  const auto linear_triangle_matrices =
+      fem::singular::AssembleTriangleElementEnrichmentMatrices(
+          triangle_dofs, linear_triangle_transformation, options);
+  const auto quadratic_triangle_matrices =
+      fem::singular::AssembleTriangleElementEnrichmentMatrices(
+          triangle_dofs, quadratic_triangle_transformation, options);
+  CheckClose(quadratic_triangle_matrices.h1_diffusion,
+             linear_triangle_matrices.h1_diffusion);
+  CheckClose(quadratic_triangle_matrices.h1_mass, linear_triangle_matrices.h1_mass);
+  CheckClose(quadratic_triangle_matrices.nd_mass, linear_triangle_matrices.nd_mass);
+  CheckClose(quadratic_triangle_matrices.nd_curl_curl,
+             linear_triangle_matrices.nd_curl_curl);
+  mfem::H1_FECollection triangle_h1_collection(1, 2);
+  mfem::ND_FECollection triangle_nd_collection(1, 2);
+  mfem::FiniteElementSpace linear_triangle_h1_space(&linear_triangle,
+                                                    &triangle_h1_collection);
+  mfem::FiniteElementSpace linear_triangle_nd_space(&linear_triangle,
+                                                    &triangle_nd_collection);
+  mfem::FiniteElementSpace quadratic_triangle_h1_space(&quadratic_triangle,
+                                                       &triangle_h1_collection);
+  mfem::FiniteElementSpace quadratic_triangle_nd_space(&quadratic_triangle,
+                                                       &triangle_nd_collection);
+  const auto linear_triangle_coupling =
+      fem::singular::AssembleTriangleElementStandardEnrichmentMatrices(
+          triangle_dofs, *linear_triangle_h1_space.GetFE(0),
+          *linear_triangle_nd_space.GetFE(0), linear_triangle_transformation, options);
+  const auto quadratic_triangle_coupling =
+      fem::singular::AssembleTriangleElementStandardEnrichmentMatrices(
+          triangle_dofs, *quadratic_triangle_h1_space.GetFE(0),
+          *quadratic_triangle_nd_space.GetFE(0), quadratic_triangle_transformation,
+          options);
+  CheckClose(quadratic_triangle_coupling.h1_standard_enrichment,
+             linear_triangle_coupling.h1_standard_enrichment);
+  CheckClose(quadratic_triangle_coupling.h1_mass_standard_enrichment,
+             linear_triangle_coupling.h1_mass_standard_enrichment);
+  CheckClose(quadratic_triangle_coupling.nd_mass_standard_enrichment,
+             linear_triangle_coupling.nd_mass_standard_enrichment);
+  CheckClose(quadratic_triangle_coupling.nd_curl_curl_standard_enrichment,
+             linear_triangle_coupling.nd_curl_curl_standard_enrichment);
+
+  auto linear_tetrahedron = AffineTetrahedronMesh({0.0, 0.0, 0.0}, {1.0, 0.0, 0.0},
+                                                  {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0});
+  auto quadratic_tetrahedron = AffineTetrahedronMesh({0.0, 0.0, 0.0}, {1.0, 0.0, 0.0},
+                                                     {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0});
+  SetQuadraticGeometry(quadratic_tetrahedron, false);
+  const auto tetrahedron_gradient =
+      fem::singular::EnumerateHigherOrderNodeGradientBases({0, 1, 2, 3}, 1, nu).front();
+  const auto tetrahedron_rotation =
+      fem::singular::EnumerateHigherOrderNodeRotationalBases({0, 1, 2, 3}, 1, nu).front();
+  fem::singular::ElementDofMap tetrahedron_dofs;
+  tetrahedron_dofs.h1 = {{0, tetrahedron_gradient}};
+  tetrahedron_dofs.nd = {{0, tetrahedron_gradient}, {1, tetrahedron_rotation}};
+  auto &linear_tetrahedron_transformation = *linear_tetrahedron.GetElementTransformation(0);
+  auto &quadratic_tetrahedron_transformation =
+      *quadratic_tetrahedron.GetElementTransformation(0);
+  REQUIRE(quadratic_tetrahedron_transformation.OrderJ() > 0);
+  CHECK(fem::singular::IsAffineElementTransformation(quadratic_tetrahedron_transformation));
+  double quadratic_tetrahedron_jacobian;
+  CHECK_NOTHROW(fem::singular::GetAffineBarycentricGradients(
+      quadratic_tetrahedron_transformation, quadratic_tetrahedron_jacobian));
+  const auto linear_tetrahedron_matrices = fem::singular::AssembleElementEnrichmentMatrices(
+      tetrahedron_dofs, linear_tetrahedron_transformation, options);
+  const auto quadratic_tetrahedron_matrices =
+      fem::singular::AssembleElementEnrichmentMatrices(
+          tetrahedron_dofs, quadratic_tetrahedron_transformation, options);
+  CheckClose(quadratic_tetrahedron_matrices.h1_diffusion,
+             linear_tetrahedron_matrices.h1_diffusion);
+  CheckClose(quadratic_tetrahedron_matrices.h1_mass, linear_tetrahedron_matrices.h1_mass);
+  CheckClose(quadratic_tetrahedron_matrices.nd_mass, linear_tetrahedron_matrices.nd_mass);
+  CheckClose(quadratic_tetrahedron_matrices.nd_curl_curl,
+             linear_tetrahedron_matrices.nd_curl_curl);
+  mfem::H1_FECollection tetrahedron_h1_collection(1, 3);
+  mfem::ND_FECollection tetrahedron_nd_collection(1, 3);
+  mfem::FiniteElementSpace linear_tetrahedron_h1_space(&linear_tetrahedron,
+                                                       &tetrahedron_h1_collection);
+  mfem::FiniteElementSpace linear_tetrahedron_nd_space(&linear_tetrahedron,
+                                                       &tetrahedron_nd_collection);
+  mfem::FiniteElementSpace quadratic_tetrahedron_h1_space(&quadratic_tetrahedron,
+                                                          &tetrahedron_h1_collection);
+  mfem::FiniteElementSpace quadratic_tetrahedron_nd_space(&quadratic_tetrahedron,
+                                                          &tetrahedron_nd_collection);
+  const auto linear_tetrahedron_coupling =
+      fem::singular::AssembleElementStandardEnrichmentMatrices(
+          tetrahedron_dofs, *linear_tetrahedron_h1_space.GetFE(0),
+          *linear_tetrahedron_nd_space.GetFE(0), linear_tetrahedron_transformation,
+          options);
+  const auto quadratic_tetrahedron_coupling =
+      fem::singular::AssembleElementStandardEnrichmentMatrices(
+          tetrahedron_dofs, *quadratic_tetrahedron_h1_space.GetFE(0),
+          *quadratic_tetrahedron_nd_space.GetFE(0), quadratic_tetrahedron_transformation,
+          options);
+  CheckClose(quadratic_tetrahedron_coupling.h1_standard_enrichment,
+             linear_tetrahedron_coupling.h1_standard_enrichment);
+  CheckClose(quadratic_tetrahedron_coupling.h1_mass_standard_enrichment,
+             linear_tetrahedron_coupling.h1_mass_standard_enrichment);
+  CheckClose(quadratic_tetrahedron_coupling.nd_mass_standard_enrichment,
+             linear_tetrahedron_coupling.nd_mass_standard_enrichment);
+  CheckClose(quadratic_tetrahedron_coupling.nd_curl_curl_standard_enrichment,
+             linear_tetrahedron_coupling.nd_curl_curl_standard_enrichment);
+}
+
+TEST_CASE("Singular geometry rejects inverted and folded simplex maps",
+          "[singularelements][singularassembly][curved][Serial]")
+{
+  mfem::IntegrationPoint triangle_center;
+  triangle_center.Set2(1.0 / 3.0, 1.0 / 3.0);
+  auto inverted_triangle = AffineTriangleMesh({0.0, 0.0}, {1.0, 0.0}, {0.0, 1.0});
+  for (int d = 0; d < 2; d++)
+  {
+    std::swap(inverted_triangle.GetVertex(1)[d], inverted_triangle.GetVertex(2)[d]);
+  }
+  auto &inverted_triangle_transformation = *inverted_triangle.GetElementTransformation(0);
+  inverted_triangle_transformation.SetIntPoint(&triangle_center);
+  REQUIRE(inverted_triangle_transformation.Jacobian().Det() < 0.0);
+  REQUIRE(inverted_triangle_transformation.Weight() < 0.0);
+  double jacobian_determinant;
+  CHECK_THROWS_AS(
+      fem::singular::GetTriangleBarycentricGradients(inverted_triangle_transformation,
+                                                     triangle_center, jacobian_determinant),
+      std::invalid_argument);
+  CHECK_THROWS_AS(
+      fem::singular::IsAffineElementTransformation(inverted_triangle_transformation),
+      std::invalid_argument);
+
+  mfem::IntegrationPoint tetrahedron_center;
+  tetrahedron_center.Set3(0.25, 0.25, 0.25);
+  auto inverted_tetrahedron = AffineTetrahedronMesh({0.0, 0.0, 0.0}, {1.0, 0.0, 0.0},
+                                                    {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0});
+  for (int d = 0; d < 3; d++)
+  {
+    std::swap(inverted_tetrahedron.GetVertex(1)[d], inverted_tetrahedron.GetVertex(2)[d]);
+  }
+  auto &inverted_tetrahedron_transformation =
+      *inverted_tetrahedron.GetElementTransformation(0);
+  inverted_tetrahedron_transformation.SetIntPoint(&tetrahedron_center);
+  REQUIRE(inverted_tetrahedron_transformation.Jacobian().Det() < 0.0);
+  REQUIRE(inverted_tetrahedron_transformation.Weight() < 0.0);
+  CHECK_THROWS_AS(
+      fem::singular::GetBarycentricGradients(inverted_tetrahedron_transformation,
+                                             tetrahedron_center, jacobian_determinant),
+      std::invalid_argument);
+  CHECK_THROWS_AS(
+      fem::singular::IsAffineElementTransformation(inverted_tetrahedron_transformation),
+      std::invalid_argument);
+
+  auto folded_triangle = AffineTriangleMesh({0.0, 0.0}, {1.0, 0.0}, {0.0, 1.0});
+  folded_triangle.SetCurvature(2, false, 2, mfem::Ordering::byVDIM);
+  mfem::VectorFunctionCoefficient folded_triangle_map(
+      2,
+      [](const mfem::Vector &point, mfem::Vector &value)
+      {
+        value.SetSize(2);
+        value[0] = point[0];
+        value[1] = (1.0 - 2.0 * point[0]) * point[1];
+      });
+  folded_triangle.GetNodes()->ProjectCoefficient(folded_triangle_map);
+  auto &folded_triangle_transformation = *folded_triangle.GetElementTransformation(0);
+  mfem::IntegrationPoint folded_triangle_point;
+  folded_triangle_point.Set2(0.75, 0.1);
+  folded_triangle_transformation.SetIntPoint(&folded_triangle_point);
+  REQUIRE(folded_triangle_transformation.Jacobian().Det() < 0.0);
+  CHECK_THROWS_AS(
+      fem::singular::GetTriangleBarycentricGradients(
+          folded_triangle_transformation, folded_triangle_point, jacobian_determinant),
+      std::invalid_argument);
+  CHECK_THROWS_AS(
+      fem::singular::IsAffineElementTransformation(folded_triangle_transformation),
+      std::invalid_argument);
+}
+
+TEST_CASE("Curved simplex singular matrices use pointwise physical geometry",
+          "[singularelements][singularassembly][curved][Serial]")
+{
+  constexpr double nu = 0.5;
+  const fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-6, 2.0e-6, 9};
+
+  auto triangle = AffineTriangleMesh({0.0, 0.0}, {1.0, 0.0}, {0.0, 1.0});
+  SetQuadraticGeometry(triangle, true);
+  auto &triangle_transformation = *triangle.GetElementTransformation(0);
+  REQUIRE_FALSE(fem::singular::IsAffineElementTransformation(triangle_transformation));
+  double affine_jacobian;
+  CHECK_THROWS_AS(fem::singular::GetAffineTriangleBarycentricGradients(
+                      triangle_transformation, affine_jacobian),
+                  std::invalid_argument);
+
+  const fem::singular::TriangleBasis triangle_gradient{
+      fem::singular::HigherOrderBasisFamily::NODE_GRADIENT, {0, 1, 2}, 1, nu};
+  const fem::singular::TriangleBasis triangle_rotation{
+      fem::singular::HigherOrderBasisFamily::NODE_ROTATIONAL, {0, 1, 2}, 1, nu};
+  fem::singular::TriangleElementDofMap triangle_dofs;
+  triangle_dofs.h1 = {{0, triangle_gradient}};
+  triangle_dofs.nd = {{0, triangle_gradient}, {1, triangle_rotation}};
+  const auto triangle_matrices = fem::singular::AssembleTriangleElementEnrichmentMatrices(
+      triangle_dofs, triangle_transformation, options);
+  mfem::H1_FECollection triangle_h1_collection(1, 2);
+  mfem::ND_FECollection triangle_nd_collection(1, 2);
+  mfem::FiniteElementSpace triangle_h1_space(&triangle, &triangle_h1_collection);
+  mfem::FiniteElementSpace triangle_nd_space(&triangle, &triangle_nd_collection);
+  const auto triangle_coupling =
+      fem::singular::AssembleTriangleElementStandardEnrichmentMatrices(
+          triangle_dofs, *triangle_h1_space.GetFE(0), *triangle_nd_space.GetFE(0),
+          triangle_transformation, options);
+
+  const auto evaluate_triangle =
+      [](const fem::singular::TriangleBarycentricPoint &lambda,
+         const fem::singular::TriangleBarycentricGradients &grad_lambda,
+         const fem::singular::TriangleBasis &basis)
+  {
+    return basis.family == fem::singular::HigherOrderBasisFamily::NODE_GRADIENT
+               ? fem::singular::EvaluateTriangleNodeGradient(
+                     lambda, grad_lambda, basis.nodes[0], basis.nodes[1], basis.nu)
+               : fem::singular::EvaluateTriangleNodeRotational(
+                     lambda, grad_lambda, basis.nodes[0], basis.nodes[1], basis.nodes[2],
+                     basis.nu);
+  };
+  for (int row = 0; row < 2; row++)
+  {
+    for (int column = row; column < 2; column++)
+    {
+      long double mass = 0.0L;
+      long double curl_curl = 0.0L;
+      mfem::IntegrationPoint point;
+      fem::singular::ForEachReferenceTriangleNodeDuffyQuadraturePoint(
+          fem::singular::H1DuffyReferenceOrder + 2, 0, fem::singular::H1DuffyRadialPower,
+          [&](const fem::singular::TriangleBarycentricPoint &lambda, double weight)
+          {
+            point.Set2(lambda[1], lambda[2]);
+            double jacobian_determinant;
+            const auto grad_lambda = fem::singular::GetTriangleBarycentricGradients(
+                triangle_transformation, point, jacobian_determinant);
+            const auto row_value =
+                evaluate_triangle(lambda, grad_lambda, triangle_dofs.nd[row].basis);
+            const auto column_value =
+                evaluate_triangle(lambda, grad_lambda, triangle_dofs.nd[column].basis);
+            mass += static_cast<long double>(weight * jacobian_determinant) *
+                    Dot(row_value.value, column_value.value);
+            curl_curl += static_cast<long double>(weight * jacobian_determinant) *
+                         row_value.curl * column_value.curl;
+          });
+      CAPTURE(row, column);
+      CHECK(std::abs(triangle_matrices.nd_mass(row, column) - static_cast<double>(mass)) <=
+            triangle_matrices.nd_mass_estimated_absolute_error(row, column) + 2.0e-11);
+      CHECK(std::abs(triangle_matrices.nd_curl_curl(row, column) -
+                     static_cast<double>(curl_curl)) <=
+            triangle_matrices.nd_curl_curl_estimated_absolute_error(row, column) + 2.0e-11);
+    }
+  }
+  CHECK(triangle_matrices.h1_diffusion(0, 0) == triangle_matrices.nd_mass(0, 0));
+  mfem::DenseMatrix triangle_discrete_gradient(triangle_nd_space.GetFE(0)->GetDof(),
+                                               triangle_h1_space.GetFE(0)->GetDof());
+  triangle_nd_space.GetFE(0)->ProjectGrad(
+      *triangle_h1_space.GetFE(0), triangle_transformation, triangle_discrete_gradient);
+  for (int standard_h1 = 0; standard_h1 < triangle_h1_space.GetFE(0)->GetDof();
+       standard_h1++)
+  {
+    double exact_sequence_value = 0.0;
+    for (int standard_nd = 0; standard_nd < triangle_nd_space.GetFE(0)->GetDof();
+         standard_nd++)
+    {
+      exact_sequence_value += triangle_discrete_gradient(standard_nd, standard_h1) *
+                              triangle_coupling.nd_mass_standard_enrichment(standard_nd, 0);
+    }
+    CHECK(std::abs(triangle_coupling.h1_standard_enrichment(standard_h1, 0) -
+                   exact_sequence_value) <=
+          64.0 * std::numeric_limits<double>::epsilon() *
+              std::max(1.0, std::abs(exact_sequence_value)));
+  }
+
+  auto tetrahedron = AffineTetrahedronMesh({0.0, 0.0, 0.0}, {1.0, 0.0, 0.0},
+                                           {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0});
+  SetQuadraticGeometry(tetrahedron, true);
+  auto &tetrahedron_transformation = *tetrahedron.GetElementTransformation(0);
+  REQUIRE_FALSE(fem::singular::IsAffineElementTransformation(tetrahedron_transformation));
+  CHECK_THROWS_AS(fem::singular::GetAffineBarycentricGradients(tetrahedron_transformation,
+                                                               affine_jacobian),
+                  std::invalid_argument);
+
+  const auto tetrahedron_gradient =
+      fem::singular::EnumerateHigherOrderNodeGradientBases({0, 1, 2, 3}, 1, nu).front();
+  const auto tetrahedron_rotation =
+      fem::singular::EnumerateHigherOrderNodeRotationalBases({0, 1, 2, 3}, 1, nu).front();
+  fem::singular::ElementDofMap tetrahedron_dofs;
+  tetrahedron_dofs.h1 = {{0, tetrahedron_gradient}};
+  tetrahedron_dofs.nd = {{0, tetrahedron_gradient}, {1, tetrahedron_rotation}};
+  const auto tetrahedron_matrices = fem::singular::AssembleElementEnrichmentMatrices(
+      tetrahedron_dofs, tetrahedron_transformation, options);
+  mfem::H1_FECollection tetrahedron_h1_collection(1, 3);
+  mfem::ND_FECollection tetrahedron_nd_collection(1, 3);
+  mfem::FiniteElementSpace tetrahedron_h1_space(&tetrahedron, &tetrahedron_h1_collection);
+  mfem::FiniteElementSpace tetrahedron_nd_space(&tetrahedron, &tetrahedron_nd_collection);
+  const auto tetrahedron_coupling =
+      fem::singular::AssembleElementStandardEnrichmentMatrices(
+          tetrahedron_dofs, *tetrahedron_h1_space.GetFE(0), *tetrahedron_nd_space.GetFE(0),
+          tetrahedron_transformation, options);
+  const auto tetrahedron_h1_matrices = fem::singular::AssembleElementH1EnrichmentMatrices(
+      tetrahedron_dofs, *tetrahedron_h1_space.GetFE(0), tetrahedron_transformation,
+      options);
+
+  std::array<long double, 2> direct_mass{};
+  mfem::IntegrationPoint point;
+  fem::singular::ForEachReferenceTetrahedronNodeDuffyQuadraturePoint(
+      fem::singular::H1DuffyReferenceOrder + 2, 0, fem::singular::H1DuffyRadialPower,
+      [&](const fem::singular::BarycentricPoint &lambda, double weight)
+      {
+        point.Set3(lambda[1], lambda[2], lambda[3]);
+        double jacobian_determinant;
+        const auto grad_lambda = fem::singular::GetBarycentricGradients(
+            tetrahedron_transformation, point, jacobian_determinant);
+        const auto gradient = fem::singular::EvaluateHigherOrderBasis(lambda, grad_lambda,
+                                                                      tetrahedron_gradient);
+        const auto rotation = fem::singular::EvaluateHigherOrderBasis(lambda, grad_lambda,
+                                                                      tetrahedron_rotation);
+        direct_mass[0] += static_cast<long double>(weight * jacobian_determinant) *
+                          Dot(gradient.value, gradient.value);
+        direct_mass[1] += static_cast<long double>(weight * jacobian_determinant) *
+                          Dot(gradient.value, rotation.value);
+      });
+  for (int column = 0; column < 2; column++)
+  {
+    CAPTURE(column);
+    CHECK(std::abs(tetrahedron_matrices.nd_mass(0, column) -
+                   static_cast<double>(direct_mass[column])) <=
+          tetrahedron_matrices.nd_mass_estimated_absolute_error(0, column) + 2.0e-8);
+  }
+  CHECK(tetrahedron_matrices.h1_diffusion(0, 0) == tetrahedron_matrices.nd_mass(0, 0));
+  CHECK(std::abs(tetrahedron_h1_matrices.enrichment_enrichment(0, 0) -
+                 tetrahedron_matrices.h1_diffusion(0, 0)) <=
+        tetrahedron_h1_matrices.enrichment_enrichment_estimated_absolute_error(0, 0) +
+            tetrahedron_matrices.h1_diffusion_estimated_absolute_error(0, 0) + 2.0e-8);
+  CHECK(tetrahedron_matrices.nd_curl_curl(0, 0) == 0.0);
+  CHECK(tetrahedron_matrices.nd_curl_curl(0, 1) == 0.0);
+  CHECK(tetrahedron_matrices.nd_curl_curl(1, 1) > 0.0);
+  mfem::DenseMatrix tetrahedron_discrete_gradient(tetrahedron_nd_space.GetFE(0)->GetDof(),
+                                                  tetrahedron_h1_space.GetFE(0)->GetDof());
+  tetrahedron_nd_space.GetFE(0)->ProjectGrad(*tetrahedron_h1_space.GetFE(0),
+                                             tetrahedron_transformation,
+                                             tetrahedron_discrete_gradient);
+  for (int standard_h1 = 0; standard_h1 < tetrahedron_h1_space.GetFE(0)->GetDof();
+       standard_h1++)
+  {
+    double exact_sequence_value = 0.0;
+    for (int standard_nd = 0; standard_nd < tetrahedron_nd_space.GetFE(0)->GetDof();
+         standard_nd++)
+    {
+      exact_sequence_value +=
+          tetrahedron_discrete_gradient(standard_nd, standard_h1) *
+          tetrahedron_coupling.nd_mass_standard_enrichment(standard_nd, 0);
+    }
+    CHECK(std::abs(tetrahedron_coupling.h1_standard_enrichment(standard_h1, 0) -
+                   exact_sequence_value) <=
+          64.0 * std::numeric_limits<double>::epsilon() *
+              std::max(1.0, std::abs(exact_sequence_value)));
+  }
+}
 
 TEST_CASE("Adaptive singular element local matrices preserve exact-sequence structure",
           "[singularelements][singularassembly][Serial]")
@@ -1759,6 +2407,9 @@ TEST_CASE("Local sparse singular assembly preserves element bilinear forms",
   REQUIRE(sparse.h1_diffusion.enrichment_enrichment);
   REQUIRE(sparse.h1_diffusion.standard_enrichment);
   REQUIRE(sparse.h1_diffusion.enrichment_standard);
+  REQUIRE(sparse.h1_mass.enrichment_enrichment);
+  REQUIRE(sparse.h1_mass.standard_enrichment);
+  REQUIRE(sparse.h1_mass.enrichment_standard);
   REQUIRE(sparse.nd_mass.enrichment_enrichment);
   REQUIRE(sparse.nd_mass.standard_enrichment);
   REQUIRE(sparse.nd_mass.enrichment_standard);
@@ -1769,10 +2420,14 @@ TEST_CASE("Local sparse singular assembly preserves element bilinear forms",
   CHECK(sparse.maximum_subdivision_depth <= options.maximum_subdivisions);
   CHECK(sparse.h1_diffusion.enrichment_enrichment->Height() == 1);
   CHECK(sparse.h1_diffusion.standard_enrichment->Height() == h1_space.GetVSize());
+  CHECK(sparse.h1_mass.enrichment_enrichment->Height() == 1);
+  CHECK(sparse.h1_mass.standard_enrichment->Height() == h1_space.GetVSize());
   CHECK(sparse.nd_mass.enrichment_enrichment->Height() == 2);
   CHECK(sparse.nd_mass.standard_enrichment->Height() == nd_space.GetVSize());
   CheckExactSparseTranspose(*sparse.h1_diffusion.standard_enrichment,
                             *sparse.h1_diffusion.enrichment_standard);
+  CheckExactSparseTranspose(*sparse.h1_mass.standard_enrichment,
+                            *sparse.h1_mass.enrichment_standard);
   CheckExactSparseTranspose(*sparse.nd_mass.standard_enrichment,
                             *sparse.nd_mass.enrichment_standard);
   CheckExactSparseTranspose(*sparse.nd_curl_curl.standard_enrichment,
@@ -1780,6 +2435,8 @@ TEST_CASE("Local sparse singular assembly preserves element bilinear forms",
   CheckSparseNonnegative(
       *sparse.h1_diffusion.enrichment_enrichment_estimated_absolute_error);
   CheckSparseNonnegative(*sparse.h1_diffusion.standard_enrichment_estimated_absolute_error);
+  CheckSparseNonnegative(*sparse.h1_mass.enrichment_enrichment_estimated_absolute_error);
+  CheckSparseNonnegative(*sparse.h1_mass.standard_enrichment_estimated_absolute_error);
   CheckSparseNonnegative(*sparse.nd_mass.enrichment_enrichment_estimated_absolute_error);
   CheckSparseNonnegative(*sparse.nd_mass.standard_enrichment_estimated_absolute_error);
   CheckSparseNonnegative(
@@ -2026,6 +2683,183 @@ TEST_CASE("Additive overlapping patch correction is symmetric positive definite"
     CAPTURE(coordinate);
     CHECK(basis * corrected > 0.0);
   }
+}
+
+TEST_CASE("Parallel triangular sparse assembly preserves global operators",
+          "[singularelements][singularassembly][triangle][Parallel]")
+{
+  REQUIRE(Mpi::Size(Mpi::World()) == 2);
+
+  auto serial_mesh = InternalLineTipTriangleMesh();
+  const auto serial_features =
+      fem::singular::ExtractSerialLineTipFeatures(serial_mesh, {7});
+  const auto serial_topology =
+      fem::singular::BuildSerialTriangleDofTopology(serial_mesh, serial_features, 1);
+  const std::array<int, 8> partition{0, 0, 0, 0, 1, 1, 1, 1};
+  mfem::ParMesh parallel_mesh(Mpi::World(), serial_mesh, partition.data());
+  const auto parallel_vertex_ids = fem::singular::MapPartitionedSerialVertexIds(
+      serial_mesh, parallel_mesh, partition.data());
+  std::vector<fem::singular::GlobalVertexId> source_element_ids;
+  for (int element = 0; element < serial_mesh.GetNE(); element++)
+  {
+    if (partition[element] == Mpi::Rank(Mpi::World()))
+    {
+      source_element_ids.push_back(element);
+    }
+  }
+  const auto local_features = fem::singular::DistributeSerialLineTipFeatures(
+      serial_features, parallel_mesh, parallel_vertex_ids, source_element_ids);
+  const auto local_topology = fem::singular::BuildLocalTriangleDofTopology(
+      parallel_mesh, local_features, parallel_vertex_ids, 1);
+  const auto numbering =
+      fem::singular::BuildParallelDofNumbering(Mpi::World(), local_topology);
+
+  mfem::H1_FECollection serial_h1_collection(1, 2);
+  mfem::ND_FECollection serial_nd_collection(1, 2);
+  mfem::FiniteElementSpace serial_h1_space(&serial_mesh, &serial_h1_collection);
+  mfem::FiniteElementSpace serial_nd_space(&serial_mesh, &serial_nd_collection);
+  mfem::H1_FECollection parallel_h1_collection(1, 2);
+  mfem::ND_FECollection parallel_nd_collection(1, 2);
+  mfem::ParFiniteElementSpace parallel_h1_space(&parallel_mesh, &parallel_h1_collection);
+  mfem::ParFiniteElementSpace parallel_nd_space(&parallel_mesh, &parallel_nd_collection);
+
+  const std::vector<fem::singular::IsotropicMaterialCoefficients> serial_materials(
+      serial_mesh.GetNE(), {2.3, 0.8});
+  const std::vector<fem::singular::IsotropicMaterialCoefficients> local_materials(
+      parallel_mesh.GetNE(), {2.3, 0.8});
+  const fem::singular::AdaptiveAssemblyOptions options{8, 2.0e-6, 2.0e-6, 9};
+  const auto serial = fem::singular::AssembleLocalSparseEnrichmentMatrices(
+      serial_topology, serial_h1_space, serial_nd_space, serial_materials, options);
+  const auto local = fem::singular::AssembleLocalSparseEnrichmentMatrices(
+      local_topology, parallel_h1_space, parallel_nd_space, local_materials, options);
+  const auto parallel = fem::singular::AssembleParallelSparseEnrichmentMatrices(
+      local, numbering, parallel_h1_space, parallel_nd_space);
+  const auto enrichment_gradient =
+      fem::singular::BuildParallelEnrichmentGradient(Mpi::World(), numbering);
+
+  CHECK(numbering.h1.global_size == 6);
+  CHECK(numbering.nd.global_size == 12);
+  bool has_signed_nd_dof = false;
+  for (int element = 0; element < parallel_nd_space.GetNE(); element++)
+  {
+    mfem::Array<int> vdofs;
+    parallel_nd_space.GetElementVDofs(element, vdofs);
+    has_signed_nd_dof = has_signed_nd_dof || std::any_of(vdofs.begin(), vdofs.end(),
+                                                         [](int dof) { return dof < 0; });
+  }
+  Mpi::GlobalOr(1, &has_signed_nd_dof, Mpi::World());
+  CHECK(has_signed_nd_dof);
+
+  const auto key_coefficient = [](const fem::singular::DofKey &key)
+  {
+    double value = 0.17 * (1 + static_cast<int>(key.family));
+    for (std::size_t i = 0; i < key.support_entity.size; i++)
+    {
+      value += 0.031 * (i + 1) * (key.support_entity.vertices[i] + 1);
+    }
+    return value;
+  };
+  const auto serial_coefficients = [&](const std::vector<fem::singular::DofKey> &keys)
+  {
+    mfem::Vector result(static_cast<int>(keys.size()));
+    for (int i = 0; i < result.Size(); i++)
+    {
+      result[i] = key_coefficient(keys[static_cast<std::size_t>(i)]);
+    }
+    return result;
+  };
+  const auto owned_coefficients = [&](const std::vector<fem::singular::DofKey> &keys,
+                                      const fem::singular::TrueDofMap &map)
+  {
+    REQUIRE(map.owned_size <= std::numeric_limits<int>::max());
+    mfem::Vector result(static_cast<int>(map.owned_size));
+    result = 0.0;
+    for (std::size_t local = 0; local < keys.size(); local++)
+    {
+      if (map.owner[local] != Mpi::Rank(Mpi::World()))
+      {
+        continue;
+      }
+      const HYPRE_BigInt owned = map.local_to_true[local] - map.owned_offset;
+      REQUIRE(owned >= 0);
+      REQUIRE(owned < map.owned_size);
+      result[static_cast<int>(owned)] = key_coefficient(keys[local]);
+    }
+    return result;
+  };
+  const auto serial_h1 = serial_coefficients(serial_topology.h1_dofs);
+  const auto serial_nd = serial_coefficients(serial_topology.nd_dofs);
+  const auto parallel_h1 = owned_coefficients(local_topology.h1_dofs, numbering.h1);
+  const auto parallel_nd = owned_coefficients(local_topology.nd_dofs, numbering.nd);
+  CheckClose(
+      SparseBilinear(serial_h1, *serial.h1_diffusion.enrichment_enrichment, serial_h1),
+      ParallelBilinear(parallel_h1, *parallel.h1_diffusion.enrichment_enrichment,
+                       parallel_h1));
+  CheckClose(
+      SparseBilinear(serial_h1, *serial.h1_mass.enrichment_enrichment, serial_h1),
+      ParallelBilinear(parallel_h1, *parallel.h1_mass.enrichment_enrichment, parallel_h1));
+  CheckClose(
+      SparseBilinear(serial_nd, *serial.nd_mass.enrichment_enrichment, serial_nd),
+      ParallelBilinear(parallel_nd, *parallel.nd_mass.enrichment_enrichment, parallel_nd));
+  CheckClose(
+      SparseBilinear(serial_nd, *serial.nd_curl_curl.enrichment_enrichment, serial_nd),
+      ParallelBilinear(parallel_nd, *parallel.nd_curl_curl.enrichment_enrichment,
+                       parallel_nd));
+
+  mfem::ParDiscreteLinearOperator standard_gradient(&parallel_h1_space, &parallel_nd_space);
+  standard_gradient.AddDomainInterpolator(new mfem::GradientInterpolator);
+  standard_gradient.Assemble();
+  standard_gradient.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> standard_gradient_matrix(
+      standard_gradient.ParallelAssemble());
+  REQUIRE(standard_gradient_matrix);
+
+  mfem::ConstantCoefficient electric(2.3);
+  mfem::ConstantCoefficient inverse_magnetic(0.8);
+  mfem::ParBilinearForm standard_h1_form(&parallel_h1_space);
+  standard_h1_form.AddDomainIntegrator(new mfem::DiffusionIntegrator(electric));
+  standard_h1_form.Assemble();
+  standard_h1_form.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> standard_h1_matrix(
+      standard_h1_form.ParallelAssemble());
+  mfem::ParBilinearForm standard_nd_mass_form(&parallel_nd_space);
+  standard_nd_mass_form.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(electric));
+  standard_nd_mass_form.Assemble();
+  standard_nd_mass_form.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> standard_nd_mass_matrix(
+      standard_nd_mass_form.ParallelAssemble());
+  mfem::ParBilinearForm standard_nd_curl_form(&parallel_nd_space);
+  standard_nd_curl_form.AddDomainIntegrator(new mfem::CurlCurlIntegrator(inverse_magnetic));
+  standard_nd_curl_form.Assemble();
+  standard_nd_curl_form.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> standard_nd_curl_matrix(
+      standard_nd_curl_form.ParallelAssemble());
+  REQUIRE(standard_h1_matrix);
+  REQUIRE(standard_nd_mass_matrix);
+  REQUIRE(standard_nd_curl_matrix);
+
+  const auto combined_h1 = fem::singular::BuildParallelEnrichedOperator(
+      *standard_h1_matrix, parallel.h1_diffusion);
+  const auto combined_nd_mass = fem::singular::BuildParallelEnrichedOperator(
+      *standard_nd_mass_matrix, parallel.nd_mass);
+  const auto combined_nd_curl = fem::singular::BuildParallelEnrichedOperator(
+      *standard_nd_curl_matrix, parallel.nd_curl_curl);
+  const auto combined_gradient = fem::singular::BuildParallelEnrichedGradient(
+      *standard_gradient_matrix, *enrichment_gradient);
+  REQUIRE(combined_h1);
+  REQUIRE(combined_nd_mass);
+  REQUIRE(combined_nd_curl);
+  REQUIRE(combined_gradient);
+
+  const Eigen::MatrixXd h1 = ToEigen(GatherParallelMatrix(*combined_h1));
+  const Eigen::MatrixXd mass = ToEigen(GatherParallelMatrix(*combined_nd_mass));
+  const Eigen::MatrixXd curl = ToEigen(GatherParallelMatrix(*combined_nd_curl));
+  const Eigen::MatrixXd gradient = ToEigen(GatherParallelMatrix(*combined_gradient));
+  const double scale = std::max(1.0, h1.cwiseAbs().maxCoeff());
+  CHECK((h1 - gradient.transpose() * mass * gradient).cwiseAbs().maxCoeff() <
+        2.0e-11 * scale);
+  CHECK((curl * gradient).cwiseAbs().maxCoeff() <
+        2.0e-11 * std::max(1.0, curl.cwiseAbs().maxCoeff()));
 }
 
 TEST_CASE("Parallel singular sparse assembly matches its serial true-DOF operator",

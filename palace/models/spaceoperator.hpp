@@ -9,6 +9,8 @@
 #include <vector>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
+#include "fem/singularassembly.hpp"
+#include "fem/singularfeatures.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
 #include "models/currentdipoleoperator.hpp"
@@ -83,10 +85,28 @@ private:
 
   PortExcitations port_excitation_helper;
 
+  // Optional additive singular H(curl) enrichment. The standard FE spaces
+  // remain owned by MFEM; enrichment topology, true-DOF numbering, and sparse
+  // coupling blocks are Palace-owned.
+  const fem::singular::FeatureTopology *singular_features = nullptr;
+  const fem::singular::TriangleFeatureTopology *triangle_singular_features = nullptr;
+  const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids = nullptr;
+  std::unique_ptr<fem::singular::DofTopology> singular_dofs;
+  std::unique_ptr<fem::singular::TriangleDofTopology> triangle_singular_dofs;
+  std::unique_ptr<fem::singular::ParallelDofNumbering> singular_numbering;
+  fem::singular::ParallelSparseEnrichmentMatrices singular_domain_matrices;
+  std::unique_ptr<mfem::HypreParMatrix> singular_gradient;
+  mfem::Array<int> singular_nd_essential_true_dofs;
+  mfem::Array<int> singular_h1_essential_true_dofs;
+  mfem::Array<int> combined_nd_dbc_tdof_list;
+  mfem::Array<int> combined_h1_dbc_tdof_list;
+
   mfem::Array<int> SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                                            const mfem::ParMesh &mesh);
   void CheckBoundaryProperties();
   void CheckExcitations(ProblemType problem_type) const;
+  void SetUpSingularEnrichment(const config::SolverData &solver);
+  void CheckSingularExcitations(ProblemType problem_type) const;
 
   // Helper functions for building the bilinear forms corresponding to the discretized
   // operators in Maxwell's equations.
@@ -145,7 +165,11 @@ public:
   SpaceOperator(const config::SolverData &solver, const config::DomainData &domains,
                 const config::BoundaryData &boundaries, ProblemType problem_type,
                 const Units &units, const std::vector<std::unique_ptr<Mesh>> &mesh);
-  SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
+  SpaceOperator(
+      const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh,
+      const fem::singular::FeatureTopology *singular_features = nullptr,
+      const fem::singular::TriangleFeatureTopology *triangle_singular_features = nullptr,
+      const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids = nullptr);
 
   // Return list of all PEC boundary true dofs for all finite element space levels.
   const std::vector<mfem::Array<int>> &GetNDDbcTDofLists() const
@@ -155,6 +179,14 @@ public:
   const std::vector<mfem::Array<int>> &GetH1DbcTDofLists() const
   {
     return h1_dbc_tdof_lists;
+  }
+  const mfem::Array<int> &GetCombinedNDDbcTDofList() const
+  {
+    return combined_nd_dbc_tdof_list;
+  }
+  const mfem::Array<int> &GetCombinedH1DbcTDofList() const
+  {
+    return combined_h1_dbc_tdof_list;
   }
 
   // Returns lists of all boundary condition true dofs, PEC included, for the auxiliary
@@ -208,7 +240,40 @@ public:
   const auto &GetMesh() const { return GetNDSpace().GetMesh(); }
 
   // Return the number of true (conforming) dofs on the finest ND space.
-  auto GlobalTrueVSize() const { return GetNDSpace().GlobalTrueVSize(); }
+  auto GlobalTrueVSize() const
+  {
+    return GetNDSpace().GlobalTrueVSize() +
+           (singular_numbering ? singular_numbering->nd.global_size : 0);
+  }
+  int GetNDTrueVSize() const
+  {
+    return GetNDSpace().GetTrueVSize() +
+           (singular_numbering ? static_cast<int>(singular_numbering->nd.owned_size) : 0);
+  }
+  int GetH1TrueVSize() const
+  {
+    return GetH1Space().GetTrueVSize() +
+           (singular_numbering ? static_cast<int>(singular_numbering->h1.owned_size) : 0);
+  }
+  bool HasSingularEnrichment() const { return singular_numbering != nullptr; }
+  const fem::singular::ParallelDofNumbering &GetSingularParallelNumbering() const
+  {
+    MFEM_VERIFY(singular_numbering, "Space operator has no singular DOF numbering!");
+    return *singular_numbering;
+  }
+  const fem::singular::DofTopology *GetSingularDofTopology() const
+  {
+    return singular_dofs.get();
+  }
+  const fem::singular::TriangleDofTopology *GetTriangleSingularDofTopology() const
+  {
+    return triangle_singular_dofs.get();
+  }
+  const fem::singular::ParallelSparseEnrichmentMatrices &GetSingularDomainMatrices() const
+  {
+    MFEM_VERIFY(HasSingularEnrichment(), "Space operator has no singular domain matrices!");
+    return singular_domain_matrices;
+  }
 
   // Construct any part of the frequency-dependent complex linear system matrix:
   //                     A = K + iω C - ω² (Mr + i Mi) + A2(ω).
@@ -339,10 +404,7 @@ public:
                                                     ScalarType a2, A3Type a3);
 
   // Construct and return the discrete curl or gradient matrices.
-  const Operator &GetGradMatrix() const
-  {
-    return GetNDSpace().GetDiscreteInterpolator(GetH1Space());
-  }
+  const Operator &GetGradMatrix() const;
   const Operator &GetCurlMatrix() const
   {
     // In 2D, curl maps H(curl) → L2 (scalar), not H(curl) → H(div).

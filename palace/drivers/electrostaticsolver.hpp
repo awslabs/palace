@@ -41,6 +41,8 @@ private:
   // reconstructed on the partition using exact source-serial entity IDs.
   mutable fem::singular::FeatureTopology serial_singular_features;
   mutable fem::singular::FeatureTopology local_singular_features;
+  mutable fem::singular::TriangleFeatureTopology serial_triangle_singular_features;
+  mutable fem::singular::TriangleFeatureTopology local_triangle_singular_features;
   mutable std::vector<fem::singular::GlobalVertexId> source_vertex_ids;
   mutable std::vector<fem::singular::GlobalVertexId> source_element_ids;
 

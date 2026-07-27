@@ -7,12 +7,15 @@
 #include <memory>
 #include <vector>
 #include "drivers/basesolver.hpp"
+#include "drivers/singularsolver.hpp"
 
 namespace palace
 {
 
 class ErrorIndicator;
 class Mesh;
+class ComplexOperator;
+class SpaceOperator;
 
 //
 // Driver class for eigenmode simulations.
@@ -20,11 +23,23 @@ class Mesh;
 class EigenSolver : public BaseSolver
 {
 private:
+  mutable FullWaveSingularFeatures singular_features;
+
+  std::pair<ErrorIndicator, long long int>
+  SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOperator> K,
+                std::unique_ptr<ComplexOperator> M) const;
+
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 
 public:
   using BaseSolver::BaseSolver;
+
+  void Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
+                  MPI_Comm comm) const override;
+  bool RequiresSourceSerialMeshMetadata() const override;
+  void ProcessPartitionedMesh(const mfem::ParMesh &parallel_mesh,
+                              const mesh::PartitionMetadata &metadata) const override;
 };
 
 }  // namespace palace

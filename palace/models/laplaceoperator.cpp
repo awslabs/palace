@@ -26,7 +26,8 @@ LaplaceOperator::LaplaceOperator(
     const std::vector<config::MaterialData> &materials, ProblemType problem_type,
     const std::vector<std::unique_ptr<Mesh>> &mesh,
     const fem::singular::FeatureTopology *singular_features,
-    const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids)
+    const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids,
+    const fem::singular::TriangleFeatureTopology *triangle_singular_features)
   : print_hdr(true),
     dbc_attr(SetUpBoundaryProperties(boundaries.pec, boundaries.terminal, *mesh.back())),
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
@@ -44,21 +45,36 @@ LaplaceOperator::LaplaceOperator(
         solver.linear.estimator_mg ? solver.linear.mg_max_levels : 1, mesh, rt_fecs)),
     mat_op(materials, boundaries.periodic, problem_type, *mesh.back()),
     source_attr_lists(ConstructSources(boundaries.terminal)),
-    singular_features(singular_features), source_vertex_ids(source_vertex_ids),
-    standard_order(solver.order), singular_order(solver.singular_elements.order),
+    singular_features(singular_features),
+    triangle_singular_features(triangle_singular_features),
+    source_vertex_ids(source_vertex_ids), standard_order(solver.order),
+    singular_order(solver.singular_elements.order),
     singular_assembly_options{
         solver.singular_elements.quadrature_order, solver.singular_elements.abs_tol,
         solver.singular_elements.rel_tol, solver.singular_elements.max_subdivisions}
 {
-  MFEM_VERIFY((singular_features == nullptr) == (source_vertex_ids == nullptr),
+  const bool has_tetrahedral_features = singular_features != nullptr;
+  const bool has_triangular_features = triangle_singular_features != nullptr;
+  MFEM_VERIFY(!(has_tetrahedral_features && has_triangular_features),
+              "A Laplace operator cannot use both triangular and tetrahedral singular "
+              "features!");
+  MFEM_VERIFY((has_tetrahedral_features || has_triangular_features) ==
+                  (source_vertex_ids != nullptr),
               "Singular feature topology and source vertex IDs must be supplied together!");
-  MFEM_VERIFY(!singular_features ||
-                  (solver.singular_elements.Enabled() &&
-                   singular_features->elements.size() ==
-                       static_cast<std::size_t>(mesh.back()->GetNE()) &&
-                   source_vertex_ids->size() ==
-                       static_cast<std::size_t>(mesh.back()->Get().GetNV())),
-              "Singular feature topology does not match the electrostatic solve mesh!");
+  MFEM_VERIFY(
+      !HasSingularEnrichment() ||
+          (solver.singular_elements.Enabled() &&
+           source_vertex_ids->size() ==
+               static_cast<std::size_t>(mesh.back()->Get().GetNV()) &&
+           ((!has_tetrahedral_features &&
+             triangle_singular_features->elements.size() ==
+                 static_cast<std::size_t>(mesh.back()->GetNE()) &&
+             mesh.back()->Dimension() == 2 && solver.singular_elements.order == 1) ||
+            (!has_triangular_features &&
+             singular_features->elements.size() ==
+                 static_cast<std::size_t>(mesh.back()->GetNE()) &&
+             mesh.back()->Dimension() == 3))),
+      "Singular feature topology does not match the electrostatic solve mesh!");
 
   // Print essential BC information.
   if (dbc_attr.Size())
@@ -71,9 +87,11 @@ LaplaceOperator::LaplaceOperator(
 LaplaceOperator::LaplaceOperator(
     const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh,
     const fem::singular::FeatureTopology *singular_features,
-    const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids)
+    const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids,
+    const fem::singular::TriangleFeatureTopology *triangle_singular_features)
   : LaplaceOperator(iodata.boundaries, iodata.solver, iodata.domains.materials,
-                    iodata.problem.type, mesh, singular_features, source_vertex_ids)
+                    iodata.problem.type, mesh, singular_features, source_vertex_ids,
+                    triangle_singular_features)
 {
 }
 
@@ -306,31 +324,57 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
   k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
   if (HasSingularEnrichment())
   {
-    singular_dofs =
-        std::make_unique<fem::singular::DofTopology>(fem::singular::BuildLocalDofTopology(
-            GetMesh(), *singular_features, *source_vertex_ids, singular_order));
-    singular_numbering = std::make_unique<fem::singular::ParallelDofNumbering>(
-        fem::singular::BuildParallelDofNumbering(GetComm(), *singular_dofs));
-
     std::vector<fem::singular::IsotropicMaterialCoefficients> materials(GetMesh().GetNE(),
                                                                         {1.0, 1.0});
-    for (int element = 0; element < GetMesh().GetNE(); element++)
+    fem::singular::LocalSparseH1EnrichmentMatrices local_enrichment;
+    if (singular_features)
     {
-      const auto &incidence = singular_features->elements[element];
-      if (incidence.nodes.empty() && incidence.edges.empty())
+      singular_dofs =
+          std::make_unique<fem::singular::DofTopology>(fem::singular::BuildLocalDofTopology(
+              GetMesh(), *singular_features, *source_vertex_ids, singular_order));
+      singular_numbering = std::make_unique<fem::singular::ParallelDofNumbering>(
+          fem::singular::BuildParallelDofNumbering(GetComm(), *singular_dofs));
+      for (int element = 0; element < GetMesh().GetNE(); element++)
       {
-        continue;
+        const auto &incidence = singular_features->elements[element];
+        if (incidence.nodes.empty() && incidence.edges.empty())
+        {
+          continue;
+        }
+        const int attribute = GetMesh().Get().GetAttribute(element);
+        MFEM_VERIFY(mat_op.IsPermittivityIsotropic(attribute),
+                    "Singular electrostatic enrichment initially requires isotropic "
+                    "permittivity in every enriched tetrahedron! Domain attribute: "
+                        << attribute);
+        materials[element].electric = mat_op.GetPermittivityReal(attribute)(0, 0);
       }
-      const int attribute = GetMesh().Get().GetAttribute(element);
-      MFEM_VERIFY(mat_op.IsPermittivityIsotropic(attribute),
-                  "Singular electrostatic enrichment initially requires isotropic "
-                  "permittivity in every enriched tetrahedron! Domain attribute: "
-                      << attribute);
-      materials[element].electric = mat_op.GetPermittivityReal(attribute)(0, 0);
+      local_enrichment = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
+          *singular_dofs, GetH1Space().Get(), materials, singular_assembly_options);
     }
-
-    auto local_enrichment = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
-        *singular_dofs, GetH1Space().Get(), materials, singular_assembly_options);
+    else
+    {
+      triangle_singular_dofs = std::make_unique<fem::singular::TriangleDofTopology>(
+          fem::singular::BuildLocalTriangleDofTopology(
+              GetMesh(), *triangle_singular_features, *source_vertex_ids, singular_order));
+      singular_numbering = std::make_unique<fem::singular::ParallelDofNumbering>(
+          fem::singular::BuildParallelDofNumbering(GetComm(), *triangle_singular_dofs));
+      for (int element = 0; element < GetMesh().GetNE(); element++)
+      {
+        if (triangle_singular_features->elements[element].nodes.empty())
+        {
+          continue;
+        }
+        const int attribute = GetMesh().Get().GetAttribute(element);
+        MFEM_VERIFY(mat_op.IsPermittivityIsotropic(attribute),
+                    "Triangular singular electrostatic enrichment requires isotropic "
+                    "permittivity in every enriched triangle! Domain attribute: "
+                        << attribute);
+        materials[element].electric = mat_op.GetPermittivityReal(attribute)(0, 0);
+      }
+      local_enrichment = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
+          *triangle_singular_dofs, GetH1Space().Get(), materials,
+          singular_assembly_options);
+    }
     auto parallel_enrichment = fem::singular::AssembleParallelSparseH1EnrichmentMatrices(
         local_enrichment, *singular_numbering, GetH1Space().Get());
 
@@ -364,20 +408,36 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     singular_gradient = fem::singular::BuildParallelEnrichedGradient(
         standard_gradient->ParallelAssemble(), *enrichment_gradient);
 
-    auto enrichment_essential = fem::singular::GetEssentialH1TrueDofs(
-        GetComm(), *singular_features, *singular_dofs, *singular_numbering);
+    mfem::Array<int> enrichment_essential;
+    std::vector<std::vector<std::size_t>> feature_membership;
+    std::size_t feature_count;
+    if (singular_features)
+    {
+      enrichment_essential = fem::singular::GetEssentialH1TrueDofs(
+          GetComm(), *singular_features, *singular_dofs, *singular_numbering);
+      feature_membership =
+          fem::singular::BuildH1DofFeatureMembership(*singular_features, *singular_dofs);
+      feature_count = singular_features->features.size();
+    }
+    else
+    {
+      enrichment_essential = fem::singular::GetEssentialTriangleH1TrueDofs(
+          GetComm(), *triangle_singular_features, *triangle_singular_dofs,
+          *singular_numbering);
+      feature_membership = fem::singular::BuildTriangleH1DofFeatureMembership(
+          *triangle_singular_features, *triangle_singular_dofs);
+      feature_count = triangle_singular_features->vertices.size();
+    }
     auto constrained_blocks = fem::singular::BuildParallelConstrainedOperatorBlocks(
         *standard_stiffness, parallel_enrichment, dbc_tdof_lists.back(),
         enrichment_essential);
     auto dirichlet = fem::singular::BuildParallelDirichletSystem(
         std::move(unconstrained), GetH1Space().GetTrueVSize(), dbc_tdof_lists.back(),
         enrichment_essential);
-    const auto feature_membership =
-        fem::singular::BuildH1DofFeatureMembership(*singular_features, *singular_dofs);
     auto feature_patches = fem::singular::BuildParallelFeaturePatches(
         *dirichlet.constrained, *constrained_blocks.standard_enrichment,
         GetH1Space().GetTrueVSize(), feature_membership, singular_numbering->h1,
-        singular_features->features.size());
+        feature_count);
     singular_constrained_standard_stiffness =
         std::move(constrained_blocks.standard_standard);
     singular_diagnostics->feature_patch_count = feature_patches.patches.size();
@@ -397,14 +457,24 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
     singular_eliminated_stiffness = std::move(dirichlet.eliminated);
     singular_essential_true_dofs = std::move(dirichlet.essential_true_dofs);
 
-    Mpi::Print(" Singular H1 enrichment: {:d} global true DOFs, {:d} adaptive "
-               "quadrature leaves (maximum depth = {:d}), {:d} cached Duffy tables "
-               "per rank maximum ({:d} cache hits)\n",
-               singular_numbering->h1.global_size,
-               singular_diagnostics->quadrature_leaf_count,
-               singular_diagnostics->quadrature_maximum_depth,
-               singular_diagnostics->duffy_reference_table_maximum_entries,
-               singular_diagnostics->duffy_reference_cache_hits);
+    if (triangle_singular_features)
+    {
+      Mpi::Print(" Singular H1 enrichment: {:d} global true DOFs, {:d} graded Duffy "
+                 "quadrature point evaluations\n",
+                 singular_numbering->h1.global_size,
+                 singular_diagnostics->quadrature_leaf_count);
+    }
+    else
+    {
+      Mpi::Print(" Singular H1 enrichment: {:d} global true DOFs, {:d} adaptive "
+                 "quadrature leaves (maximum depth = {:d}), {:d} cached Duffy tables "
+                 "per rank maximum ({:d} cache hits)\n",
+                 singular_numbering->h1.global_size,
+                 singular_diagnostics->quadrature_leaf_count,
+                 singular_diagnostics->quadrature_maximum_depth,
+                 singular_diagnostics->duffy_reference_table_maximum_entries,
+                 singular_diagnostics->duffy_reference_cache_hits);
+    }
     Mpi::Print(" Singular stiffness diagonal spread: standard = {:.3e}, enrichment = "
                "{:.3e}, combined = {:.3e}\n",
                singular_diagnostics->standard_diagonal_spread,
@@ -538,10 +608,21 @@ double LaplaceOperator::GetSingularStiffnessEnergyErrorBound(
 std::unique_ptr<fem::singular::EnrichedH1FieldEvaluator>
 LaplaceOperator::GetSingularFieldEvaluator()
 {
-  MFEM_VERIFY(HasSingularEnrichment() && singular_dofs && singular_numbering,
-              "Singular field evaluation is available only after singular assembly!");
+  MFEM_VERIFY(singular_features && singular_dofs && singular_numbering,
+              "Tetrahedral singular field evaluation is available only after singular "
+              "assembly!");
   return std::make_unique<fem::singular::EnrichedH1FieldEvaluator>(
       *singular_dofs, *singular_numbering, GetH1Space().Get());
+}
+
+std::unique_ptr<fem::singular::TriangleEnrichedH1FieldEvaluator>
+LaplaceOperator::GetTriangleSingularFieldEvaluator()
+{
+  MFEM_VERIFY(triangle_singular_features && triangle_singular_dofs && singular_numbering,
+              "Triangular singular field evaluation is available only after singular "
+              "assembly!");
+  return std::make_unique<fem::singular::TriangleEnrichedH1FieldEvaluator>(
+      *triangle_singular_dofs, *singular_numbering, GetH1Space().Get());
 }
 
 void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,

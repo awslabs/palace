@@ -8,6 +8,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
@@ -30,6 +31,12 @@ struct ProvisionalDof
 {
   DofKey key;
   HigherOrderBasis basis;
+};
+
+struct ProvisionalTriangleDof
+{
+  DofKey key;
+  TriangleBasis basis;
 };
 
 constexpr std::size_t PackedDofKeySize = 21;
@@ -63,6 +70,23 @@ GlobalVertexId GetGlobalVertex(const mfem::Element &element, int local,
   if (mesh_vertex < 0 || mesh_vertex >= static_cast<int>(serial_vertex_ids.size()))
   {
     throw std::runtime_error("A singular basis references an invalid mesh vertex!");
+  }
+  return serial_vertex_ids[mesh_vertex];
+}
+
+GlobalVertexId GetTriangleGlobalVertex(const mfem::Element &element, int local,
+                                       const std::vector<GlobalVertexId> &serial_vertex_ids)
+{
+  if (local < 0 || local >= 3)
+  {
+    throw std::runtime_error(
+        "A triangular singular basis has an invalid local vertex index!");
+  }
+  const int mesh_vertex = element.GetVertices()[local];
+  if (mesh_vertex < 0 || mesh_vertex >= static_cast<int>(serial_vertex_ids.size()))
+  {
+    throw std::runtime_error(
+        "A triangular singular basis references an invalid mesh vertex!");
   }
   return serial_vertex_ids[mesh_vertex];
 }
@@ -148,6 +172,47 @@ void AppendBases(const mfem::Element &element, std::vector<HigherOrderBasis> bas
     }
     nd.push_back(std::move(dof));
   }
+}
+
+void AppendTriangleBasis(const mfem::Element &element, TriangleBasis basis,
+                         const std::vector<GlobalVertexId> &serial_vertex_ids,
+                         std::vector<ProvisionalTriangleDof> &h1,
+                         std::vector<ProvisionalTriangleDof> &nd)
+{
+  const auto vertex = [&element, &serial_vertex_ids](int local)
+  { return GetTriangleGlobalVertex(element, local, serial_vertex_ids); };
+  const GlobalVertexId singular = vertex(basis.nodes[0]);
+
+  DofKey key;
+  key.family = basis.family;
+  key.order = basis.order;
+  key.singular_entity = MakeEntityKey({singular});
+  if (basis.family == HigherOrderBasisFamily::NODE_GRADIENT)
+  {
+    const GlobalVertexId radial = vertex(basis.nodes[1]);
+    key.support_entity = MakeEntityKey({singular, radial});
+    key.component_entity = key.support_entity;
+    key.interpolation_weights = {1, 1, 0, 0};
+  }
+  else if (basis.family == HigherOrderBasisFamily::NODE_ROTATIONAL)
+  {
+    const GlobalVertexId first = vertex(basis.nodes[1]);
+    const GlobalVertexId second = vertex(basis.nodes[2]);
+    key.support_entity = MakeEntityKey({singular, first, second});
+    key.component_entity = MakeEntityKey({first, second});
+    key.interpolation_weights = {1, 1, 1, 0};
+  }
+  else
+  {
+    throw std::invalid_argument("The triangular singular basis has an unsupported family!");
+  }
+
+  ProvisionalTriangleDof dof{std::move(key), std::move(basis)};
+  if (IsGradientFamily(dof.key.family))
+  {
+    h1.push_back(dof);
+  }
+  nd.push_back(std::move(dof));
 }
 
 template <typename T>
@@ -309,6 +374,99 @@ void ValidateFeatureTopology(const mfem::Mesh &mesh, const FeatureTopology &feat
       {
         throw std::invalid_argument(
             "Singular edge incidence has inconsistent stable vertex IDs!");
+      }
+    }
+  }
+}
+
+std::array<int, 3>
+CanonicalTriangleNodeTuple(const mfem::Element &element, int singular_vertex,
+                           const std::vector<GlobalVertexId> &serial_vertex_ids)
+{
+  int singular_local = -1;
+  std::array<std::pair<GlobalVertexId, int>, 2> remaining;
+  int next = 0;
+  for (int local = 0; local < 3; local++)
+  {
+    const int mesh_vertex = element.GetVertices()[local];
+    if (mesh_vertex == singular_vertex)
+    {
+      singular_local = local;
+    }
+    else
+    {
+      remaining[next++] = {serial_vertex_ids[mesh_vertex], local};
+    }
+  }
+  if (singular_local < 0 || next != 2)
+  {
+    throw std::invalid_argument(
+        "A rank-local singular tip is not in its incident triangle!");
+  }
+  std::sort(remaining.begin(), remaining.end());
+  return {singular_local, remaining[0].second, remaining[1].second};
+}
+
+void ValidateTriangleFeatureTopology(const mfem::Mesh &mesh,
+                                     const TriangleFeatureTopology &features,
+                                     const std::vector<GlobalVertexId> &serial_vertex_ids)
+{
+  if (mesh.Dimension() != 2 || mesh.SpaceDimension() != 2 ||
+      features.elements.size() != static_cast<std::size_t>(mesh.GetNE()) ||
+      serial_vertex_ids.size() != static_cast<std::size_t>(mesh.GetNV()))
+  {
+    throw std::invalid_argument(
+        "Singular line-tip topology does not match the triangular mesh!");
+  }
+  std::set<GlobalVertexId> unique_vertex_ids;
+  for (GlobalVertexId vertex : serial_vertex_ids)
+  {
+    if (vertex < 0 || !unique_vertex_ids.insert(vertex).second)
+    {
+      throw std::invalid_argument(
+          "Triangular singular DOF enumeration requires unique stable vertex IDs!");
+    }
+  }
+  for (std::size_t i = 0; i < features.vertices.size(); i++)
+  {
+    const auto &vertex = features.vertices[i];
+    if (vertex.id != i || vertex.mesh_vertex < 0 ||
+        vertex.mesh_vertex >= static_cast<int>(serial_vertex_ids.size()) ||
+        !std::isfinite(vertex.nu) || vertex.nu <= 0.0 || vertex.nu >= 1.0)
+    {
+      throw std::invalid_argument("Singular line-tip topology is inconsistent!");
+    }
+  }
+  for (const auto &segment : features.selected_segments)
+  {
+    if (segment.boundary_element < 0 || segment.mesh_edge < 0 ||
+        segment.mesh_vertices[0] < 0 ||
+        segment.mesh_vertices[0] >= segment.mesh_vertices[1] ||
+        segment.boundary_attribute <= 0)
+    {
+      throw std::invalid_argument(
+          "Selected singular line-segment topology is inconsistent!");
+    }
+  }
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    const auto &triangle = *mesh.GetElement(element);
+    if (triangle.GetGeometryType() != mfem::Geometry::TRIANGLE)
+    {
+      throw std::invalid_argument(
+          "Triangular singular DOF enumeration requires triangular elements!");
+    }
+    for (const auto &node : features.elements[element].nodes)
+    {
+      if (node.vertex >= features.vertices.size() || node.mesh_vertex < 0 ||
+          node.mesh_vertex >= mesh.GetNV() ||
+          serial_vertex_ids[node.mesh_vertex] !=
+              features.vertices[node.vertex].mesh_vertex ||
+          node.canonical_nodes !=
+              CanonicalTriangleNodeTuple(triangle, node.mesh_vertex, serial_vertex_ids))
+      {
+        throw std::invalid_argument(
+            "Singular tip incidence is inconsistent with its triangle!");
       }
     }
   }
@@ -498,6 +656,182 @@ TrueDofMap BuildTrueDofMap(MPI_Comm comm, const std::vector<DofKey> &keys)
   return result;
 }
 
+template <typename Topology>
+ParallelDofNumbering BuildParallelDofNumberingImpl(MPI_Comm comm, const Topology &topology)
+{
+  bool locally_valid = topology.h1_to_nd.size() == topology.h1_dofs.size();
+  Mpi::GlobalAnd(1, &locally_valid, comm);
+  if (!locally_valid)
+  {
+    throw std::invalid_argument(
+        "Parallel singular DOF numbering requires a complete H1-to-ND map!");
+  }
+
+  ParallelDofNumbering result;
+  result.h1 = BuildTrueDofMap(comm, topology.h1_dofs);
+  result.nd = BuildTrueDofMap(comm, topology.nd_dofs);
+  result.h1_to_nd_true.resize(topology.h1_dofs.size());
+  locally_valid = true;
+  for (std::size_t h1 = 0; h1 < topology.h1_dofs.size(); h1++)
+  {
+    const std::size_t nd = topology.h1_to_nd[h1];
+    if (nd >= topology.nd_dofs.size() || !(topology.h1_dofs[h1] == topology.nd_dofs[nd]) ||
+        result.h1.owner[h1] != result.nd.owner[nd])
+    {
+      locally_valid = false;
+      break;
+    }
+    result.h1_to_nd_true[h1] = result.nd.local_to_true[nd];
+  }
+  Mpi::GlobalAnd(1, &locally_valid, comm);
+  if (!locally_valid)
+  {
+    throw std::invalid_argument("Parallel singular H1-to-ND topology is inconsistent!");
+  }
+  return result;
+}
+
+template <typename Topology>
+mfem::Array<int> GetEssentialH1TrueDofsImpl(MPI_Comm comm,
+                                            const std::set<EntityKey> &essential_support,
+                                            const Topology &topology,
+                                            const ParallelDofNumbering &parallel_numbering)
+{
+  const auto &numbering = parallel_numbering.h1;
+  if (numbering.owner.size() != topology.h1_dofs.size() ||
+      numbering.local_to_true.size() != topology.h1_dofs.size() ||
+      numbering.owned_offset < 0 || numbering.owned_size < 0 ||
+      numbering.owned_size > std::numeric_limits<int>::max())
+  {
+    throw std::invalid_argument(
+        "Essential singular H1 classification received inconsistent DOF numbering!");
+  }
+
+  mfem::Array<int> result;
+  for (std::size_t local = 0; local < topology.h1_dofs.size(); local++)
+  {
+    if (essential_support.find(topology.h1_dofs[local].support_entity) ==
+            essential_support.end() ||
+        numbering.owner[local] != Mpi::Rank(comm))
+    {
+      continue;
+    }
+    const HYPRE_BigInt true_dof = numbering.local_to_true[local] - numbering.owned_offset;
+    if (true_dof < 0 || true_dof >= numbering.owned_size)
+    {
+      throw std::invalid_argument(
+          "An essential singular H1 DOF is outside its owner partition!");
+    }
+    result.Append(static_cast<int>(true_dof));
+  }
+  result.Sort();
+  if (std::adjacent_find(result.begin(), result.end()) != result.end())
+  {
+    throw std::logic_error("Essential singular H1 true DOFs are not unique!");
+  }
+  return result;
+}
+
+template <typename Topology>
+mfem::Array<int> GetEssentialNDTrueDofsImpl(MPI_Comm comm,
+                                            const std::set<EntityKey> &essential_support,
+                                            const Topology &topology,
+                                            const ParallelDofNumbering &parallel_numbering)
+{
+  const auto &numbering = parallel_numbering.nd;
+  if (numbering.owner.size() != topology.nd_dofs.size() ||
+      numbering.local_to_true.size() != topology.nd_dofs.size() ||
+      numbering.owned_offset < 0 || numbering.owned_size < 0 ||
+      numbering.owned_size > std::numeric_limits<int>::max())
+  {
+    throw std::invalid_argument(
+        "Essential singular ND classification received inconsistent DOF numbering!");
+  }
+
+  mfem::Array<int> result;
+  for (std::size_t local = 0; local < topology.nd_dofs.size(); local++)
+  {
+    if (essential_support.find(topology.nd_dofs[local].support_entity) ==
+            essential_support.end() ||
+        numbering.owner[local] != Mpi::Rank(comm))
+    {
+      continue;
+    }
+    const HYPRE_BigInt true_dof = numbering.local_to_true[local] - numbering.owned_offset;
+    if (true_dof < 0 || true_dof >= numbering.owned_size)
+    {
+      throw std::invalid_argument(
+          "An essential singular ND DOF is outside its owner partition!");
+    }
+    result.Append(static_cast<int>(true_dof));
+  }
+  result.Sort();
+  if (std::adjacent_find(result.begin(), result.end()) != result.end())
+  {
+    throw std::logic_error("Essential singular ND true DOFs are not unique!");
+  }
+  return result;
+}
+
+std::set<EntityKey> GetSelectedTriangleSegments(const TriangleFeatureTopology &features)
+{
+  std::set<EntityKey> selected_segments;
+  for (const auto &segment : features.selected_segments)
+  {
+    if (segment.boundary_attribute <= 0 || segment.mesh_vertices[0] < 0 ||
+        segment.mesh_vertices[0] >= segment.mesh_vertices[1] ||
+        !selected_segments
+             .insert(MakeEntityKey({segment.mesh_vertices[0], segment.mesh_vertices[1]}))
+             .second)
+    {
+      throw std::invalid_argument(
+          "Essential triangular classification received invalid selected segments!");
+    }
+  }
+  return selected_segments;
+}
+
+std::vector<std::array<GlobalVertexId, 3>>
+GetSelectedSheetFaces(const FeatureTopology &features)
+{
+  std::set<std::array<GlobalVertexId, 3>> unique_faces;
+  for (const auto &face : features.sheet_faces)
+  {
+    if (face.boundary_attribute <= 0 ||
+        !std::is_sorted(face.mesh_vertices.begin(), face.mesh_vertices.end()) ||
+        std::adjacent_find(face.mesh_vertices.begin(), face.mesh_vertices.end()) !=
+            face.mesh_vertices.end() ||
+        !unique_faces.insert(face.mesh_vertices).second)
+    {
+      throw std::invalid_argument(
+          "Essential singular classification received invalid sheet faces!");
+    }
+  }
+  return {unique_faces.begin(), unique_faces.end()};
+}
+
+template <typename Dof>
+bool HasSheetTrace(const Dof &dof,
+                   const std::vector<std::array<GlobalVertexId, 3>> &sheet_faces)
+{
+  const auto &support = dof.support_entity;
+  if (support.size == 0 || support.size > 4)
+  {
+    throw std::invalid_argument(
+        "An enriched singular DOF has invalid trace-support topology!");
+  }
+  return std::any_of(
+      sheet_faces.begin(), sheet_faces.end(),
+      [&support](const auto &face)
+      {
+        return support.size <= face.size() &&
+               std::all_of(
+                   support.vertices.begin(), support.vertices.begin() + support.size,
+                   [&face](GlobalVertexId vertex)
+                   { return std::binary_search(face.begin(), face.end(), vertex); });
+      });
+}
+
 }  // namespace
 
 bool EntityKey::operator==(const EntityKey &other) const
@@ -624,6 +958,46 @@ BuildH1DofFeatureMembership(const FeatureTopology &features, const DofTopology &
   return result;
 }
 
+std::vector<std::vector<std::size_t>>
+BuildTriangleH1DofFeatureMembership(const TriangleFeatureTopology &features,
+                                    const TriangleDofTopology &topology)
+{
+  std::map<GlobalVertexId, std::size_t> tip_features;
+  for (std::size_t feature = 0; feature < features.vertices.size(); feature++)
+  {
+    const auto &vertex = features.vertices[feature];
+    if (vertex.id != feature || vertex.mesh_vertex < 0 ||
+        vertex.selected_segments.size() != 1 ||
+        vertex.selected_segments[0] >= features.selected_segments.size() ||
+        !tip_features.emplace(static_cast<GlobalVertexId>(vertex.mesh_vertex), feature)
+             .second)
+    {
+      throw std::invalid_argument(
+          "Triangular singular tip-to-feature membership is inconsistent!");
+    }
+  }
+
+  std::vector<std::vector<std::size_t>> result;
+  result.reserve(topology.h1_dofs.size());
+  for (const auto &dof : topology.h1_dofs)
+  {
+    if (dof.family != HigherOrderBasisFamily::NODE_GRADIENT ||
+        dof.singular_entity.size != 1)
+    {
+      throw std::invalid_argument(
+          "The triangular singular H1 topology contains an invalid basis!");
+    }
+    const auto feature = tip_features.find(dof.singular_entity.vertices[0]);
+    if (feature == tip_features.end())
+    {
+      throw std::invalid_argument(
+          "A triangular H1 basis is absent from the line-tip topology!");
+    }
+    result.push_back({feature->second});
+  }
+  return result;
+}
+
 std::vector<GlobalVertexId>
 MapPartitionedSerialVertexIds(const mfem::Mesh &serial_mesh,
                               const mfem::ParMesh &parallel_mesh, const int *partitioning)
@@ -658,13 +1032,29 @@ MapPartitionedSerialVertexIds(const mfem::Mesh &serial_mesh,
     }
 
     const auto &serial = *serial_mesh.GetElement(serial_element);
-    const auto &parallel = *parallel_mesh.GetElement(local_element++);
+    const int parallel_element = local_element++;
+    const auto &parallel = *parallel_mesh.GetElement(parallel_element);
     if (serial.GetGeometryType() != parallel.GetGeometryType() ||
         serial.GetNVertices() != parallel.GetNVertices())
     {
       throw std::invalid_argument(
           "Parallel element does not match its serial source element!");
     }
+    const auto *serial_reference_vertices =
+        mfem::Geometries.GetVertices(serial.GetGeometryType());
+    const auto *parallel_reference_vertices =
+        mfem::Geometries.GetVertices(parallel.GetGeometryType());
+    if (!serial_reference_vertices || !parallel_reference_vertices ||
+        serial_reference_vertices->GetNPoints() != serial.GetNVertices() ||
+        parallel_reference_vertices->GetNPoints() != parallel.GetNVertices())
+    {
+      throw std::runtime_error(
+          "Unable to obtain reference vertices for a serial-to-parallel element map!");
+    }
+    mfem::IsoparametricTransformation serial_transformation;
+    mfem::IsoparametricTransformation parallel_transformation;
+    serial_mesh.GetElementTransformation(serial_element, &serial_transformation);
+    parallel_mesh.GetElementTransformation(parallel_element, &parallel_transformation);
     for (int i = 0; i < serial.GetNVertices(); i++)
     {
       const int serial_vertex = serial.GetVertices()[i];
@@ -683,8 +1073,12 @@ MapPartitionedSerialVertexIds(const mfem::Mesh &serial_mesh,
       }
       mapped = serial_vertex;
 
-      const double *serial_coordinate = serial_mesh.GetVertex(serial_vertex);
-      const double *parallel_coordinate = parallel_mesh.GetVertex(parallel_vertex);
+      mfem::Vector serial_coordinate(serial_mesh.SpaceDimension());
+      mfem::Vector parallel_coordinate(parallel_mesh.SpaceDimension());
+      serial_transformation.Transform(serial_reference_vertices->IntPoint(i),
+                                      serial_coordinate);
+      parallel_transformation.Transform(parallel_reference_vertices->IntPoint(i),
+                                        parallel_coordinate);
       for (int d = 0; d < serial_mesh.SpaceDimension(); d++)
       {
         const double scale = 1.0 + std::max(std::abs(serial_coordinate[d]),
@@ -692,8 +1086,14 @@ MapPartitionedSerialVertexIds(const mfem::Mesh &serial_mesh,
         if (std::abs(serial_coordinate[d] - parallel_coordinate[d]) >
             32.0 * std::numeric_limits<double>::epsilon() * scale)
         {
-          throw std::invalid_argument(
-              "Mapped serial and parallel vertices have different coordinates!");
+          std::ostringstream message;
+          message.precision(17);
+          message << "Mapped serial and parallel vertices have different coordinates "
+                  << "(serial element " << serial_element << ", parallel element "
+                  << parallel_element << ", local vertex " << i << ", component " << d
+                  << ": " << serial_coordinate[d] << " != " << parallel_coordinate[d]
+                  << ")!";
+          throw std::invalid_argument(message.str());
         }
       }
     }
@@ -821,38 +1221,122 @@ DofTopology BuildSerialDofTopology(const mfem::Mesh &mesh, const FeatureTopology
   return BuildLocalDofTopology(mesh, features, serial_vertex_ids, order);
 }
 
-ParallelDofNumbering BuildParallelDofNumbering(MPI_Comm comm, const DofTopology &topology)
+TriangleDofTopology BuildLocalTriangleDofTopology(
+    const mfem::Mesh &mesh, const TriangleFeatureTopology &features,
+    const std::vector<GlobalVertexId> &serial_vertex_ids, int order)
 {
-  bool locally_valid = topology.h1_to_nd.size() == topology.h1_dofs.size();
-  Mpi::GlobalAnd(1, &locally_valid, comm);
-  if (!locally_valid)
+  ValidateTriangleFeatureTopology(mesh, features, serial_vertex_ids);
+  if (order != 1)
   {
     throw std::invalid_argument(
-        "Parallel singular DOF numbering requires a complete H1-to-ND map!");
+        "The triangular singular basis currently supports only order one!");
   }
 
-  ParallelDofNumbering result;
-  result.h1 = BuildTrueDofMap(comm, topology.h1_dofs);
-  result.nd = BuildTrueDofMap(comm, topology.nd_dofs);
-  result.h1_to_nd_true.resize(topology.h1_dofs.size());
-  locally_valid = true;
-  for (std::size_t h1 = 0; h1 < topology.h1_dofs.size(); h1++)
+  std::vector<std::vector<ProvisionalTriangleDof>> element_h1(mesh.GetNE());
+  std::vector<std::vector<ProvisionalTriangleDof>> element_nd(mesh.GetNE());
+  std::set<DofKey> h1_keys, nd_keys;
+  for (int element = 0; element < mesh.GetNE(); element++)
   {
-    const std::size_t nd = topology.h1_to_nd[h1];
-    if (nd >= topology.nd_dofs.size() || !(topology.h1_dofs[h1] == topology.nd_dofs[nd]) ||
-        result.h1.owner[h1] != result.nd.owner[nd])
+    const auto &triangle = *mesh.GetElement(element);
+    auto &h1 = element_h1[element];
+    auto &nd = element_nd[element];
+    for (const auto &node : features.elements[element].nodes)
     {
-      locally_valid = false;
-      break;
+      const double nu = features.vertices[node.vertex].nu;
+      const int i = node.canonical_nodes[0];
+      const int j = node.canonical_nodes[1];
+      const int k = node.canonical_nodes[2];
+      AppendTriangleBasis(
+          triangle,
+          TriangleBasis{HigherOrderBasisFamily::NODE_GRADIENT, {i, j, k}, order, nu},
+          serial_vertex_ids, h1, nd);
+      AppendTriangleBasis(
+          triangle,
+          TriangleBasis{HigherOrderBasisFamily::NODE_GRADIENT, {i, k, j}, order, nu},
+          serial_vertex_ids, h1, nd);
+      AppendTriangleBasis(
+          triangle,
+          TriangleBasis{HigherOrderBasisFamily::NODE_ROTATIONAL, {i, j, k}, order, nu},
+          serial_vertex_ids, h1, nd);
     }
-    result.h1_to_nd_true[h1] = result.nd.local_to_true[nd];
+    CheckUniqueLocalKeys(h1);
+    CheckUniqueLocalKeys(nd);
+    for (const auto &dof : h1)
+    {
+      h1_keys.insert(dof.key);
+    }
+    for (const auto &dof : nd)
+    {
+      nd_keys.insert(dof.key);
+    }
   }
-  Mpi::GlobalAnd(1, &locally_valid, comm);
-  if (!locally_valid)
+
+  TriangleDofTopology result;
+  result.h1_dofs.assign(h1_keys.begin(), h1_keys.end());
+  result.nd_dofs.assign(nd_keys.begin(), nd_keys.end());
+  result.elements.resize(mesh.GetNE());
+  std::map<DofKey, std::size_t> h1_numbering, nd_numbering;
+  for (std::size_t i = 0; i < result.h1_dofs.size(); i++)
   {
-    throw std::invalid_argument("Parallel singular H1-to-ND topology is inconsistent!");
+    h1_numbering.emplace(result.h1_dofs[i], i);
+  }
+  for (std::size_t i = 0; i < result.nd_dofs.size(); i++)
+  {
+    nd_numbering.emplace(result.nd_dofs[i], i);
+  }
+  result.h1_to_nd.resize(result.h1_dofs.size());
+  for (std::size_t i = 0; i < result.h1_dofs.size(); i++)
+  {
+    const auto nd = nd_numbering.find(result.h1_dofs[i]);
+    if (nd == nd_numbering.end())
+    {
+      throw std::runtime_error(
+          "A triangular enriched H1 gradient basis is absent from the ND space!");
+    }
+    result.h1_to_nd[i] = nd->second;
+  }
+  for (int element = 0; element < mesh.GetNE(); element++)
+  {
+    auto &element_map = result.elements[element];
+    for (auto &dof : element_h1[element])
+    {
+      element_map.h1.push_back({h1_numbering.at(dof.key), std::move(dof.basis)});
+    }
+    for (auto &dof : element_nd[element])
+    {
+      element_map.nd.push_back({nd_numbering.at(dof.key), std::move(dof.basis)});
+    }
   }
   return result;
+}
+
+TriangleDofTopology BuildSerialTriangleDofTopology(const mfem::Mesh &mesh,
+                                                   const TriangleFeatureTopology &features,
+                                                   int order)
+{
+  const auto *parallel_mesh = dynamic_cast<const mfem::ParMesh *>(&mesh);
+  if (parallel_mesh && parallel_mesh->GetNRanks() > 1)
+  {
+    throw std::invalid_argument(
+        "Serial triangular singular DOF enumeration cannot use a multi-rank ParMesh!");
+  }
+  std::vector<GlobalVertexId> serial_vertex_ids(mesh.GetNV());
+  for (int vertex = 0; vertex < mesh.GetNV(); vertex++)
+  {
+    serial_vertex_ids[vertex] = vertex;
+  }
+  return BuildLocalTriangleDofTopology(mesh, features, serial_vertex_ids, order);
+}
+
+ParallelDofNumbering BuildParallelDofNumbering(MPI_Comm comm, const DofTopology &topology)
+{
+  return BuildParallelDofNumberingImpl(comm, topology);
+}
+
+ParallelDofNumbering BuildParallelDofNumbering(MPI_Comm comm,
+                                               const TriangleDofTopology &topology)
+{
+  return BuildParallelDofNumberingImpl(comm, topology);
 }
 
 mfem::Array<int> GetEssentialH1TrueDofs(MPI_Comm comm, const FeatureTopology &features,
@@ -869,42 +1353,13 @@ mfem::Array<int> GetEssentialH1TrueDofs(MPI_Comm comm, const FeatureTopology &fe
         "Essential singular H1 classification received inconsistent DOF numbering!");
   }
 
-  std::set<std::array<GlobalVertexId, 3>> sheet_faces;
-  for (const auto &face : features.sheet_faces)
-  {
-    if (face.boundary_attribute <= 0 ||
-        !std::is_sorted(face.mesh_vertices.begin(), face.mesh_vertices.end()) ||
-        std::adjacent_find(face.mesh_vertices.begin(), face.mesh_vertices.end()) !=
-            face.mesh_vertices.end() ||
-        !sheet_faces.insert(face.mesh_vertices).second)
-    {
-      throw std::invalid_argument(
-          "Essential singular H1 classification received invalid sheet faces!");
-    }
-  }
+  const auto sheet_faces = GetSelectedSheetFaces(features);
 
   mfem::Array<int> result;
   for (std::size_t local = 0; local < topology.h1_dofs.size(); local++)
   {
-    const auto &support = topology.h1_dofs[local].support_entity;
-    if (support.size == 0 || support.size > 4)
-    {
-      throw std::invalid_argument("An enriched H1 DOF has invalid trace-support topology!");
-    }
-    bool essential = false;
-    for (const auto &face : sheet_faces)
-    {
-      essential =
-          support.size <= face.size() &&
-          std::all_of(support.vertices.begin(), support.vertices.begin() + support.size,
-                      [&face](GlobalVertexId vertex)
-                      { return std::binary_search(face.begin(), face.end(), vertex); });
-      if (essential)
-      {
-        break;
-      }
-    }
-    if (!essential || numbering.owner[local] != Mpi::Rank(comm))
+    if (!HasSheetTrace(topology.h1_dofs[local], sheet_faces) ||
+        numbering.owner[local] != Mpi::Rank(comm))
     {
       continue;
     }
@@ -922,6 +1377,63 @@ mfem::Array<int> GetEssentialH1TrueDofs(MPI_Comm comm, const FeatureTopology &fe
     throw std::logic_error("Essential singular H1 true DOFs are not unique!");
   }
   return result;
+}
+
+mfem::Array<int> GetEssentialNDTrueDofs(MPI_Comm comm, const FeatureTopology &features,
+                                        const DofTopology &topology,
+                                        const ParallelDofNumbering &parallel_numbering)
+{
+  const auto &numbering = parallel_numbering.nd;
+  if (numbering.owner.size() != topology.nd_dofs.size() ||
+      numbering.local_to_true.size() != topology.nd_dofs.size() ||
+      numbering.owned_offset < 0 || numbering.owned_size < 0 ||
+      numbering.owned_size > std::numeric_limits<int>::max())
+  {
+    throw std::invalid_argument(
+        "Essential singular ND classification received inconsistent DOF numbering!");
+  }
+  const auto sheet_faces = GetSelectedSheetFaces(features);
+
+  mfem::Array<int> result;
+  for (std::size_t local = 0; local < topology.nd_dofs.size(); local++)
+  {
+    if (!HasSheetTrace(topology.nd_dofs[local], sheet_faces) ||
+        numbering.owner[local] != Mpi::Rank(comm))
+    {
+      continue;
+    }
+    const HYPRE_BigInt true_dof = numbering.local_to_true[local] - numbering.owned_offset;
+    if (true_dof < 0 || true_dof >= numbering.owned_size)
+    {
+      throw std::invalid_argument(
+          "An essential singular ND DOF is outside its owner partition!");
+    }
+    result.Append(static_cast<int>(true_dof));
+  }
+  result.Sort();
+  if (std::adjacent_find(result.begin(), result.end()) != result.end())
+  {
+    throw std::logic_error("Essential singular ND true DOFs are not unique!");
+  }
+  return result;
+}
+
+mfem::Array<int>
+GetEssentialTriangleH1TrueDofs(MPI_Comm comm, const TriangleFeatureTopology &features,
+                               const TriangleDofTopology &topology,
+                               const ParallelDofNumbering &parallel_numbering)
+{
+  const auto selected_segments = GetSelectedTriangleSegments(features);
+  return GetEssentialH1TrueDofsImpl(comm, selected_segments, topology, parallel_numbering);
+}
+
+mfem::Array<int>
+GetEssentialTriangleNDTrueDofs(MPI_Comm comm, const TriangleFeatureTopology &features,
+                               const TriangleDofTopology &topology,
+                               const ParallelDofNumbering &parallel_numbering)
+{
+  const auto selected_segments = GetSelectedTriangleSegments(features);
+  return GetEssentialNDTrueDofsImpl(comm, selected_segments, topology, parallel_numbering);
 }
 
 }  // namespace singular

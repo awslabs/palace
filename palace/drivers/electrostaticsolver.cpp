@@ -58,6 +58,12 @@ struct SingularEdgeSlopeMeasurement
   fem::singular::H1EdgeSlopeDiagnostic diagnostic;
 };
 
+struct SingularTipSlopeMeasurement
+{
+  int source;
+  fem::singular::H1TipSlopeDiagnostic diagnostic;
+};
+
 constexpr std::size_t CoefficientIntegerFields = 23;
 constexpr std::size_t CoefficientRealFields = 2;
 using PackedCoefficientIntegers =
@@ -68,6 +74,11 @@ constexpr std::size_t EdgeSlopeRealFields = 8;
 using PackedEdgeSlopeIntegers =
     std::array<fem::singular::GlobalVertexId, EdgeSlopeIntegerFields>;
 using PackedEdgeSlopeReals = std::array<double, EdgeSlopeRealFields>;
+constexpr std::size_t TipSlopeIntegerFields = 9;
+constexpr std::size_t TipSlopeRealFields = 8;
+using PackedTipSlopeIntegers =
+    std::array<fem::singular::GlobalVertexId, TipSlopeIntegerFields>;
+using PackedTipSlopeReals = std::array<double, TipSlopeRealFields>;
 
 fem::singular::GlobalVertexId ToDiagnosticInteger(HYPRE_BigInt value)
 {
@@ -477,6 +488,174 @@ std::vector<SingularEdgeSlopeMeasurement> GatherEdgeSlopeMeasurements(
   return measurements;
 }
 
+std::pair<PackedTipSlopeIntegers, PackedTipSlopeReals>
+PackTipSlopeMeasurement(const SingularTipSlopeMeasurement &measurement)
+{
+  const auto &diagnostic = measurement.diagnostic;
+  PackedTipSlopeIntegers integers{measurement.source,
+                                  diagnostic.source_element,
+                                  ToDiagnosticInteger(diagnostic.feature),
+                                  ToDiagnosticInteger(diagnostic.selected_segment),
+                                  diagnostic.canonical_vertices[0],
+                                  diagnostic.canonical_vertices[1],
+                                  diagnostic.canonical_vertices[2],
+                                  diagnostic.sample_count,
+                                  diagnostic.valid ? 1 : 0};
+  PackedTipSlopeReals reals{diagnostic.exponent,
+                            diagnostic.expected_slope,
+                            diagnostic.fitted_slope,
+                            diagnostic.r_squared,
+                            diagnostic.minimum_distance,
+                            diagnostic.maximum_distance,
+                            diagnostic.field_norm_at_minimum_distance,
+                            diagnostic.field_norm_at_maximum_distance};
+  if (diagnostic.source_element < 0 || diagnostic.sample_count < 3 ||
+      !std::all_of(
+          reals.begin(), reals.end(), [](double value) { return std::isfinite(value); }))
+  {
+    throw std::invalid_argument("Singular tip slope diagnostic contains invalid data!");
+  }
+  return {integers, reals};
+}
+
+SingularTipSlopeMeasurement
+UnpackTipSlopeMeasurement(const PackedTipSlopeIntegers &integers,
+                          const PackedTipSlopeReals &reals)
+{
+  SingularTipSlopeMeasurement measurement;
+  measurement.source = ToDiagnosticInt(integers[0]);
+  auto &diagnostic = measurement.diagnostic;
+  diagnostic.source_element = integers[1];
+  if (integers[2] < 0 || integers[3] < 0)
+  {
+    throw std::invalid_argument(
+        "Singular tip slope diagnostic has a negative feature index!");
+  }
+  diagnostic.feature = static_cast<std::size_t>(integers[2]);
+  diagnostic.selected_segment = static_cast<std::size_t>(integers[3]);
+  std::copy(integers.begin() + 4, integers.begin() + 7,
+            diagnostic.canonical_vertices.begin());
+  diagnostic.sample_count = ToDiagnosticInt(integers[7]);
+  diagnostic.valid = integers[8] != 0;
+  diagnostic.exponent = reals[0];
+  diagnostic.expected_slope = reals[1];
+  diagnostic.fitted_slope = reals[2];
+  diagnostic.r_squared = reals[3];
+  diagnostic.minimum_distance = reals[4];
+  diagnostic.maximum_distance = reals[5];
+  diagnostic.field_norm_at_minimum_distance = reals[6];
+  diagnostic.field_norm_at_maximum_distance = reals[7];
+  if (diagnostic.source_element < 0 || diagnostic.sample_count < 3 ||
+      (integers[8] != 0 && integers[8] != 1) ||
+      !std::all_of(
+          reals.begin(), reals.end(), [](double value) { return std::isfinite(value); }) ||
+      !(diagnostic.exponent > 0.0) || !(diagnostic.exponent < 1.0) ||
+      diagnostic.expected_slope != diagnostic.exponent - 1.0 ||
+      (diagnostic.valid && (!(diagnostic.minimum_distance > 0.0) ||
+                            !(diagnostic.maximum_distance > diagnostic.minimum_distance) ||
+                            !(diagnostic.field_norm_at_minimum_distance > 0.0) ||
+                            !(diagnostic.field_norm_at_maximum_distance > 0.0))))
+  {
+    throw std::invalid_argument("Singular tip slope diagnostic unpacked invalid data!");
+  }
+  return measurement;
+}
+
+std::vector<SingularTipSlopeMeasurement> GatherTipSlopeMeasurements(
+    MPI_Comm comm, int source,
+    const std::vector<fem::singular::H1TipSlopeDiagnostic> &local_diagnostics)
+{
+  bool valid = local_diagnostics.size() <=
+               static_cast<std::size_t>(std::numeric_limits<int>::max()) /
+                   std::max(TipSlopeIntegerFields, TipSlopeRealFields);
+  Mpi::GlobalAnd(1, &valid, comm);
+  if (!valid)
+  {
+    throw std::overflow_error("Singular tip slope diagnostics exceed MPI integer counts!");
+  }
+
+  const int local_records = static_cast<int>(local_diagnostics.size());
+  const int ranks = Mpi::Size(comm);
+  std::vector<int> record_counts(ranks);
+  Mpi::Allgather(1, &local_records, record_counts.data(), comm);
+  std::vector<int> integer_counts(ranks), integer_displacements(ranks);
+  std::vector<int> real_counts(ranks), real_displacements(ranks);
+  std::int64_t total_records = 0;
+  for (int rank = 0; rank < ranks; rank++)
+  {
+    if (record_counts[rank] < 0 ||
+        total_records >
+            std::numeric_limits<int>::max() / TipSlopeIntegerFields - record_counts[rank])
+    {
+      throw std::overflow_error(
+          "Gathered singular tip slope diagnostics exceed MPI integer counts!");
+    }
+    integer_displacements[rank] = static_cast<int>(total_records * TipSlopeIntegerFields);
+    real_displacements[rank] = static_cast<int>(total_records * TipSlopeRealFields);
+    integer_counts[rank] = static_cast<int>(record_counts[rank] * TipSlopeIntegerFields);
+    real_counts[rank] = static_cast<int>(record_counts[rank] * TipSlopeRealFields);
+    total_records += record_counts[rank];
+  }
+
+  std::vector<fem::singular::GlobalVertexId> local_integers(local_diagnostics.size() *
+                                                            TipSlopeIntegerFields);
+  std::vector<double> local_reals(local_diagnostics.size() * TipSlopeRealFields);
+  for (std::size_t i = 0; i < local_diagnostics.size(); i++)
+  {
+    const auto [integers, reals] = PackTipSlopeMeasurement({source, local_diagnostics[i]});
+    std::copy(integers.begin(), integers.end(),
+              local_integers.begin() + i * TipSlopeIntegerFields);
+    std::copy(reals.begin(), reals.end(), local_reals.begin() + i * TipSlopeRealFields);
+  }
+
+  std::vector<fem::singular::GlobalVertexId> global_integers(
+      static_cast<std::size_t>(total_records) * TipSlopeIntegerFields);
+  std::vector<double> global_reals(static_cast<std::size_t>(total_records) *
+                                   TipSlopeRealFields);
+  Mpi::Allgatherv(static_cast<int>(local_integers.size()), local_integers.data(),
+                  global_integers.data(), integer_counts.data(),
+                  integer_displacements.data(), comm);
+  Mpi::Allgatherv(static_cast<int>(local_reals.size()), local_reals.data(),
+                  global_reals.data(), real_counts.data(), real_displacements.data(), comm);
+
+  std::vector<SingularTipSlopeMeasurement> measurements;
+  measurements.reserve(static_cast<std::size_t>(total_records));
+  for (std::size_t i = 0; i < static_cast<std::size_t>(total_records); i++)
+  {
+    PackedTipSlopeIntegers integers;
+    PackedTipSlopeReals reals;
+    std::copy(global_integers.begin() + i * TipSlopeIntegerFields,
+              global_integers.begin() + (i + 1) * TipSlopeIntegerFields, integers.begin());
+    std::copy(global_reals.begin() + i * TipSlopeRealFields,
+              global_reals.begin() + (i + 1) * TipSlopeRealFields, reals.begin());
+    measurements.push_back(UnpackTipSlopeMeasurement(integers, reals));
+  }
+  std::sort(measurements.begin(), measurements.end(),
+            [](const auto &left, const auto &right)
+            {
+              return std::tie(left.diagnostic.source_element, left.diagnostic.feature) <
+                     std::tie(right.diagnostic.source_element, right.diagnostic.feature);
+            });
+  if (measurements.empty())
+  {
+    throw std::runtime_error(
+        "Singular tip slope diagnostics found no global triangle sectors!");
+  }
+  for (std::size_t i = 0; i < measurements.size(); i++)
+  {
+    if (measurements[i].source != source ||
+        (i > 0 && std::tie(measurements[i - 1].diagnostic.source_element,
+                           measurements[i - 1].diagnostic.feature) ==
+                      std::tie(measurements[i].diagnostic.source_element,
+                               measurements[i].diagnostic.feature)))
+    {
+      throw std::runtime_error(
+          "Singular tip slope diagnostics have duplicate triangle sectors!");
+    }
+  }
+  return measurements;
+}
+
 class SingularParaviewOutput
 {
 private:
@@ -492,10 +671,11 @@ private:
 public:
   SingularParaviewOutput(const fs::path &post_dir, mfem::ParMesh &mesh, int order,
                          const Units &units)
-    : mesh(mesh), sample_collection(order, 3, mfem::BasisType::GaussLegendre,
+    : mesh(mesh), sample_collection(order, mesh.Dimension(), mfem::BasisType::GaussLegendre,
                                     mfem::FiniteElement::VALUE),
       potential_space(&mesh, &sample_collection),
-      electric_space(&mesh, &sample_collection, 3, mfem::Ordering::byVDIM),
+      electric_space(&mesh, &sample_collection, mesh.SpaceDimension(),
+                     mfem::Ordering::byVDIM),
       potential(&potential_space), electric_field(&electric_space),
       data_collection(post_dir / "paraview" / "electrostatic", &mesh), units(units)
   {
@@ -515,7 +695,8 @@ public:
     data_collection.RegisterField("E", &electric_field);
   }
 
-  void Write(fem::singular::EnrichedH1FieldEvaluator &evaluator, int step, int source)
+  template <typename Evaluator>
+  void Write(Evaluator &evaluator, int step, int source)
   {
     evaluator.ProjectToDiscontinuousGridFunctions(potential, electric_field);
 
@@ -535,10 +716,10 @@ public:
   }
 };
 
+template <typename Evaluator>
 SingularDomainEnergyMeasurement
 MeasureSingularDomainEnergy(const IoData &iodata, const LaplaceOperator &laplace_op,
-                            fem::singular::EnrichedH1FieldEvaluator &evaluator,
-                            const Vector &potential, int source)
+                            Evaluator &evaluator, const Vector &potential, int source)
 {
   const fem::singular::AdaptiveAssemblyOptions options{
       iodata.solver.singular_elements.quadrature_order,
@@ -796,6 +977,60 @@ void WriteSingularEdgeSlopeMeasurements(
   output.WriteFullTableTrunc();
 }
 
+void WriteSingularTipSlopeMeasurements(
+    const fs::path &post_dir, const IoData &iodata,
+    const std::vector<SingularTipSlopeMeasurement> &measurements, bool root)
+{
+  if (!root)
+  {
+    return;
+  }
+  TableWithCSVFile output(post_dir / "singular-tip-slopes.csv");
+  for (const auto &[name, header] :
+       std::array<std::pair<std::string_view, std::string_view>, 9>{
+           std::pair{"source", "source"}, std::pair{"element", "source_element"},
+           std::pair{"feature", "tip_feature"}, std::pair{"segment", "selected_segment"},
+           std::pair{"tip_v", "tip_vertex"}, std::pair{"opposite_v0", "opposite_vertex_0"},
+           std::pair{"opposite_v1", "opposite_vertex_1"},
+           std::pair{"samples", "sample_count"}, std::pair{"valid", "fit_valid"}})
+  {
+    InsertIntegerDiagnosticColumn(output.table, std::string(name), std::string(header));
+  }
+  output.table.insert("nu", "nu");
+  output.table.insert("expected", "expected_slope");
+  output.table.insert("fitted", "fitted_slope");
+  output.table.insert("r_squared", "R_squared");
+  output.table.insert("rho_min", "minimum_distance (m)");
+  output.table.insert("rho_max", "maximum_distance (m)");
+  output.table.insert("field_min", "|E| at minimum_distance (V/m)");
+  output.table.insert("field_max", "|E| at maximum_distance (V/m)");
+
+  const double length_scale = iodata.units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+  const double field_scale = iodata.units.Dimensionalize<Units::ValueType::FIELD_E>(1.0);
+  for (const auto &measurement : measurements)
+  {
+    const auto &diagnostic = measurement.diagnostic;
+    output.table["source"] << measurement.source;
+    output.table["element"] << static_cast<double>(diagnostic.source_element);
+    output.table["feature"] << static_cast<double>(diagnostic.feature);
+    output.table["segment"] << static_cast<double>(diagnostic.selected_segment);
+    output.table["tip_v"] << static_cast<double>(diagnostic.canonical_vertices[0]);
+    output.table["opposite_v0"] << static_cast<double>(diagnostic.canonical_vertices[1]);
+    output.table["opposite_v1"] << static_cast<double>(diagnostic.canonical_vertices[2]);
+    output.table["samples"] << diagnostic.sample_count;
+    output.table["valid"] << (diagnostic.valid ? 1.0 : 0.0);
+    output.table["nu"] << diagnostic.exponent;
+    output.table["expected"] << diagnostic.expected_slope;
+    output.table["fitted"] << diagnostic.fitted_slope;
+    output.table["r_squared"] << diagnostic.r_squared;
+    output.table["rho_min"] << length_scale * diagnostic.minimum_distance;
+    output.table["rho_max"] << length_scale * diagnostic.maximum_distance;
+    output.table["field_min"] << field_scale * diagnostic.field_norm_at_minimum_distance;
+    output.table["field_max"] << field_scale * diagnostic.field_norm_at_maximum_distance;
+  }
+  output.WriteFullTableTrunc();
+}
+
 }  // namespace
 
 void ElectrostaticSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
@@ -809,17 +1044,45 @@ void ElectrostaticSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh>
 
   serial_singular_features = {};
   local_singular_features = {};
+  serial_triangle_singular_features = {};
+  local_triangle_singular_features = {};
   source_vertex_ids.clear();
   source_element_ids.clear();
+  int mesh_dimension = 0;
   if (Mpi::Root(comm))
   {
     MFEM_VERIFY(smesh, "Root rank has no serial mesh for singular feature extraction!");
-    serial_singular_features = fem::singular::ExtractSerialSheetFeatures(
-        *smesh, iodata.solver.singular_elements.attributes);
+    mesh_dimension = smesh->Dimension();
+    if (mesh_dimension == 3)
+    {
+      serial_singular_features = fem::singular::ExtractSerialSheetFeatures(
+          *smesh, iodata.solver.singular_elements.attributes);
+    }
+    else
+    {
+      MFEM_VERIFY(smesh->Dimension() == 2 && smesh->SpaceDimension() == 2,
+                  "Singular electrostatic enrichment requires a 2D triangular or 3D "
+                  "tetrahedral mesh!");
+      MFEM_VERIFY(iodata.solver.singular_elements.order == 1,
+                  "Triangular singular electrostatic enrichment currently supports only "
+                  "Solver.SingularElements.Order = 1!");
+      serial_triangle_singular_features = fem::singular::ExtractSerialLineTipFeatures(
+          *smesh, iodata.solver.singular_elements.attributes);
+    }
   }
-  fem::singular::BroadcastSerialSheetFeatures(serial_singular_features, comm);
-  MFEM_VERIFY(!serial_singular_features.Empty(),
-              "Singular feature extraction produced no sheet-edge features!");
+  Mpi::Broadcast(1, &mesh_dimension, 0, comm);
+  if (mesh_dimension == 2)
+  {
+    fem::singular::BroadcastSerialLineTipFeatures(serial_triangle_singular_features, comm);
+    MFEM_VERIFY(!serial_triangle_singular_features.Empty(),
+                "Singular feature extraction produced no internal PEC line tips!");
+  }
+  else
+  {
+    fem::singular::BroadcastSerialSheetFeatures(serial_singular_features, comm);
+    MFEM_VERIFY(!serial_singular_features.Empty(),
+                "Singular feature extraction produced no sheet-edge features!");
+  }
 }
 
 bool ElectrostaticSolver::RequiresSourceSerialMeshMetadata() const
@@ -832,11 +1095,22 @@ void ElectrostaticSolver::ProcessPartitionedMesh(
 {
   MFEM_VERIFY(iodata.solver.singular_elements.Enabled(),
               "Unexpected singular partition metadata for an unenriched solve!");
-  MFEM_VERIFY(!serial_singular_features.Empty(),
-              "Singular source feature blueprint was not initialized!");
-  local_singular_features = fem::singular::DistributeSerialSheetFeatures(
-      serial_singular_features, parallel_mesh, metadata.source_vertex_ids,
-      metadata.source_element_ids);
+  if (parallel_mesh.Dimension() == 2)
+  {
+    MFEM_VERIFY(!serial_triangle_singular_features.Empty(),
+                "Triangular singular source feature blueprint was not initialized!");
+    local_triangle_singular_features = fem::singular::DistributeSerialLineTipFeatures(
+        serial_triangle_singular_features, parallel_mesh, metadata.source_vertex_ids,
+        metadata.source_element_ids);
+  }
+  else
+  {
+    MFEM_VERIFY(!serial_singular_features.Empty(),
+                "Tetrahedral singular source feature blueprint was not initialized!");
+    local_singular_features = fem::singular::DistributeSerialSheetFeatures(
+        serial_singular_features, parallel_mesh, metadata.source_vertex_ids,
+        metadata.source_element_ids);
+  }
   source_vertex_ids = metadata.source_vertex_ids;
   source_element_ids = metadata.source_element_ids;
 }
@@ -850,14 +1124,19 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // prescribed BC values.
   BlockTimer bt0(Timer::CONSTRUCT);
   const bool singular = iodata.solver.singular_elements.Enabled();
-  MFEM_VERIFY(!singular || (!local_singular_features.Empty() &&
-                            source_vertex_ids.size() ==
-                                static_cast<std::size_t>(mesh.back()->Get().GetNV()) &&
-                            source_element_ids.size() ==
-                                static_cast<std::size_t>(mesh.back()->Get().GetNE())),
+  const bool triangle_singular = singular && mesh.back()->Dimension() == 2;
+  MFEM_VERIFY(!singular ||
+                  ((!triangle_singular && !local_singular_features.Empty()) ||
+                   (triangle_singular && !local_triangle_singular_features.Empty())) &&
+                      source_vertex_ids.size() ==
+                          static_cast<std::size_t>(mesh.back()->Get().GetNV()) &&
+                      source_element_ids.size() ==
+                          static_cast<std::size_t>(mesh.back()->Get().GetNE()),
               "Singular feature topology was not reconstructed on the solve mesh!");
-  LaplaceOperator laplace_op(iodata, mesh, singular ? &local_singular_features : nullptr,
-                             singular ? &source_vertex_ids : nullptr);
+  LaplaceOperator laplace_op(
+      iodata, mesh, singular && !triangle_singular ? &local_singular_features : nullptr,
+      singular ? &source_vertex_ids : nullptr,
+      triangle_singular ? &local_triangle_singular_features : nullptr);
   auto K = laplace_op.GetStiffnessMatrix();
   const auto &Grad = laplace_op.GetGradMatrix();
   SaveMetadata(laplace_op.GetH1Spaces());
@@ -887,6 +1166,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     std::vector<SingularDomainEnergyMeasurement> domain_energy;
     std::vector<SingularCoefficientMeasurement> coefficient_measurements;
     std::vector<SingularEdgeSlopeMeasurement> edge_slope_measurements;
+    std::vector<SingularTipSlopeMeasurement> tip_slope_measurements;
     const fem::singular::EdgeSlopeOptions edge_slope_options;
     domain_energy.reserve(n_step);
     const auto &singular_diagnostics = laplace_op.GetSingularDiagnostics();
@@ -959,8 +1239,51 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           {"PhysicalAmplitude", false}}},
         {"IdealSheetSurfaceParticipation",
          {{"Enabled", false}, {"Reason", "logarithmically divergent for nu <= 1/2"}}}};
+    if (triangle_singular)
+    {
+      const int high_order =
+          std::max(fem::singular::H1DuffyReferenceOrder,
+                   2 * iodata.solver.singular_elements.quadrature_order + 15);
+      auto &quadrature = singular_metadata["Quadrature"];
+      quadrature["Rule"] = "feature-aligned and partitioned triangle Duffy quadrature";
+      quadrature["DuffyReferenceOrder"] = high_order;
+      quadrature["DuffyComparisonOrder"] = high_order - 8;
+      quadrature["DuffyMaximumTableEntriesPerRank"] = 0;
+      quadrature["DuffyTotalCacheHits"] = 0;
+      quadrature["RecursiveSubdivision"] = false;
+      quadrature["TotalDuffyPointEvaluations"] = singular_diagnostics.quadrature_leaf_count;
+      quadrature.erase("MaximumSubdivisions");
+      quadrature.erase("TotalLeafCount");
+      quadrature.erase("MaximumDepth");
+      singular_metadata["Dimension"] = 2;
+      singular_metadata["SingularFeature"] = "internal PEC line tip";
+      singular_metadata["Postprocessing"] = {{"Capacitance", true},
+                                             {"CombinedDiscreteGradient", true},
+                                             {"CombinedFieldEvaluation", true},
+                                             {"DomainEnergy", true},
+                                             {"CoefficientDiagnostics", true},
+                                             {"TipSlopeDiagnostics", true},
+                                             {"DiscontinuousParaViewSampling", true}};
+      singular_metadata.erase("EdgeSlopeOutput");
+      singular_metadata["TipSlopeOutput"] = {
+          {"File", "singular-tip-slopes.csv"},
+          {"Ray", "tip to opposite-edge midpoint in each triangle"},
+          {"SampleCount", edge_slope_options.sample_count},
+          {"MinimumBarycentricRadius", edge_slope_options.minimum_barycentric_radius},
+          {"MaximumBarycentricRadius", edge_slope_options.maximum_barycentric_radius},
+          {"ExpectedSlope", "nu - 1"},
+          {"PhysicalAmplitude", false}};
+    }
+    else
+    {
+      singular_metadata["Dimension"] = 3;
+      singular_metadata["SingularFeature"] = "PEC sheet edge";
+    }
     SaveMetadata("SingularElements", singular_metadata);
-    auto field_evaluator = laplace_op.GetSingularFieldEvaluator();
+    auto field_evaluator =
+        triangle_singular ? nullptr : laplace_op.GetSingularFieldEvaluator();
+    auto triangle_field_evaluator =
+        triangle_singular ? laplace_op.GetTriangleSingularFieldEvaluator() : nullptr;
     std::unique_ptr<SingularParaviewOutput> field_output;
     if (iodata.problem.output_formats.paraview && iodata.solver.electrostatic.n_post > 0)
     {
@@ -978,8 +1301,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         "and domain energy extracted from the combined field plus optional combined-field "
         "ParaView sampling. Surface measurements, interface participation ratios, "
         "MFEM grid-function output, and error estimation are disabled. The raw "
-        "zero-thickness surface participation at a sheet edge is divergent and will "
-        "not be reported!\n");
+        "zero-thickness surface participation at an ideal PEC line tip or sheet edge "
+        "is divergent and will not be reported!\n");
 
     Mpi::Print("\nComputing singular electrostatic fields for {:d} terminal {}\n", n_step,
                (n_step > 1) ? "boundaries" : "boundary");
@@ -1002,9 +1325,18 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       // spaces. Physical field evaluation and output require the Phase 8 evaluator.
       E = 0.0;
       Grad.AddMult(V[step], E, -1.0);
-      field_evaluator->SetFromTrueDofs(V[step]);
+      if (triangle_singular)
+      {
+        triangle_field_evaluator->SetFromTrueDofs(V[step]);
+      }
+      else
+      {
+        field_evaluator->SetFromTrueDofs(V[step]);
+      }
       auto source_coefficients = GatherCoefficientMeasurements(
-          laplace_op.GetComm(), idx, field_evaluator->GetOwnedCoefficientDiagnostics(),
+          laplace_op.GetComm(), idx,
+          triangle_singular ? triangle_field_evaluator->GetOwnedCoefficientDiagnostics()
+                            : field_evaluator->GetOwnedCoefficientDiagnostics(),
           singular_diagnostics.h1_enrichment_dofs);
       if (root)
       {
@@ -1013,21 +1345,54 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             std::make_move_iterator(source_coefficients.begin()),
             std::make_move_iterator(source_coefficients.end()));
       }
-      auto source_edge_slopes = GatherEdgeSlopeMeasurements(
-          laplace_op.GetComm(), idx,
-          field_evaluator->FitEdgeSlopes(local_singular_features, source_vertex_ids,
-                                         source_element_ids, edge_slope_options));
-      if (root)
+      if (triangle_singular)
       {
-        edge_slope_measurements.insert(edge_slope_measurements.end(),
-                                       std::make_move_iterator(source_edge_slopes.begin()),
-                                       std::make_move_iterator(source_edge_slopes.end()));
+        auto source_tip_slopes = GatherTipSlopeMeasurements(
+            laplace_op.GetComm(), idx,
+            triangle_field_evaluator->FitTipSlopes(local_triangle_singular_features,
+                                                   source_vertex_ids, source_element_ids,
+                                                   edge_slope_options));
+        if (root)
+        {
+          tip_slope_measurements.insert(tip_slope_measurements.end(),
+                                        std::make_move_iterator(source_tip_slopes.begin()),
+                                        std::make_move_iterator(source_tip_slopes.end()));
+        }
       }
-      domain_energy.push_back(
-          MeasureSingularDomainEnergy(iodata, laplace_op, *field_evaluator, V[step], idx));
+      else
+      {
+        auto source_edge_slopes = GatherEdgeSlopeMeasurements(
+            laplace_op.GetComm(), idx,
+            field_evaluator->FitEdgeSlopes(local_singular_features, source_vertex_ids,
+                                           source_element_ids, edge_slope_options));
+        if (root)
+        {
+          edge_slope_measurements.insert(
+              edge_slope_measurements.end(),
+              std::make_move_iterator(source_edge_slopes.begin()),
+              std::make_move_iterator(source_edge_slopes.end()));
+        }
+      }
+      if (triangle_singular)
+      {
+        domain_energy.push_back(MeasureSingularDomainEnergy(
+            iodata, laplace_op, *triangle_field_evaluator, V[step], idx));
+      }
+      else
+      {
+        domain_energy.push_back(MeasureSingularDomainEnergy(
+            iodata, laplace_op, *field_evaluator, V[step], idx));
+      }
       if (field_output && step < iodata.solver.electrostatic.n_post)
       {
-        field_output->Write(*field_evaluator, step, idx);
+        if (triangle_singular)
+        {
+          field_output->Write(*triangle_field_evaluator, step, idx);
+        }
+        else
+        {
+          field_output->Write(*field_evaluator, step, idx);
+        }
         Mpi::Print(" Wrote sampled singular fields to disk (ParaView) for source {:d}\n",
                    idx);
       }
@@ -1060,7 +1425,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     SaveMetadata("SingularElements", singular_metadata);
     WriteSingularDomainEnergy(post_dir, iodata, domain_energy, root);
     WriteSingularCoefficientMeasurements(post_dir, iodata, coefficient_measurements, root);
-    WriteSingularEdgeSlopeMeasurements(post_dir, iodata, edge_slope_measurements, root);
+    if (triangle_singular)
+    {
+      WriteSingularTipSlopeMeasurements(post_dir, iodata, tip_slope_measurements, root);
+    }
+    else
+    {
+      WriteSingularEdgeSlopeMeasurements(post_dir, iodata, edge_slope_measurements, root);
+    }
     PostprocessSingularTerminals(laplace_op, laplace_op.GetSources(), V);
     return {ErrorIndicator(), laplace_op.GlobalTrueVSize()};
   }

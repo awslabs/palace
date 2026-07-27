@@ -6,6 +6,7 @@
 #include <complex>
 #include <vector>
 #include <mfem.hpp>
+#include <nlohmann/json.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/arpack.hpp"
@@ -23,12 +24,31 @@
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
 {
 
 using namespace std::complex_literals;
+
+void EigenSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
+                             MPI_Comm comm) const
+{
+  BaseSolver::Preprocess(iodata, smesh, comm);
+  singular_features.Preprocess(iodata, smesh, comm);
+}
+
+bool EigenSolver::RequiresSourceSerialMeshMetadata() const
+{
+  return iodata.solver.singular_elements.Enabled();
+}
+
+void EigenSolver::ProcessPartitionedMesh(const mfem::ParMesh &parallel_mesh,
+                                         const mesh::PartitionMetadata &metadata) const
+{
+  singular_features.ProcessPartitionedMesh(iodata, parallel_mesh, metadata);
+}
 
 std::pair<ErrorIndicator, long long int>
 EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -37,10 +57,17 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // values for the mass matrix PEC dof shift the Dirichlet eigenvalues out of the
   // computational range. The damping matrix may be nullptr.
   BlockTimer bt0(Timer::CONSTRUCT);
-  SpaceOperator space_op(iodata, mesh);
+  SpaceOperator space_op(iodata, mesh, singular_features.GetSheetFeatures(),
+                         singular_features.GetLineFeatures(),
+                         singular_features.GetSourceVertexIds());
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  if (space_op.HasSingularEnrichment())
+  {
+    MFEM_VERIFY(!C, "Eigenmode singular simulations require a lossless undamped operator!");
+    return SolveSingular(space_op, std::move(K), std::move(M));
+  }
 
   // Check if there are nonlinear terms and, if so, setup interpolation operator.
   auto funcA2 = [&space_op](std::complex<double> lambda) -> std::unique_ptr<ComplexOperator>
@@ -502,6 +529,221 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                                          << iodata.solver.eigenmode.n
                                                          << " were requested!");
   return {indicator, space_op.GlobalTrueVSize()};
+}
+
+std::pair<ErrorIndicator, long long int>
+EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOperator> K,
+                           std::unique_ptr<ComplexOperator> M) const
+{
+  MFEM_VERIFY(K && M && K->Real() && !K->Imag() && M->Real() && !M->Imag(),
+              "Eigenmode singular simulations require real lossless stiffness and mass "
+              "operators!");
+  auto K_energy = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);
+  auto M_energy = space_op.GetMassMatrix<Operator>(Operator::DIAG_ZERO);
+  const double target = iodata.solver.eigenmode.target;
+
+  std::unique_ptr<EigenvalueSolver> eigen;
+  const EigenSolverBackend type = iodata.solver.eigenmode.type;
+#if !defined(PALACE_WITH_ARPACK) && !defined(PALACE_WITH_SLEPC)
+#error "Eigenmode solver requires building with ARPACK or SLEPc!"
+#endif
+  if (type == EigenSolverBackend::ARPACK)
+  {
+#if defined(PALACE_WITH_ARPACK)
+    Mpi::Print("\nConfiguring ARPACK enriched eigenvalue solver:\n");
+    eigen = std::make_unique<arpack::ArpackEPSSolver>(space_op.GetComm(),
+                                                      iodata.problem.verbose);
+#endif
+  }
+  else
+  {
+#if defined(PALACE_WITH_SLEPC)
+    Mpi::Print("\nConfiguring SLEPc enriched eigenvalue solver:\n");
+    auto slepc =
+        std::make_unique<slepc::SlepcEPSSolver>(space_op.GetComm(), iodata.problem.verbose);
+    slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+    slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_HERMITIAN);
+    slepc->SetOrthogonalization(iodata.solver.linear.gs_orthog == Orthogonalization::MGS,
+                                iodata.solver.linear.gs_orthog == Orthogonalization::CGS2);
+    eigen = std::move(slepc);
+#endif
+  }
+  MFEM_VERIFY(eigen, "Requested eigenvalue solver backend is unavailable!");
+
+  const auto scale = iodata.solver.eigenmode.scale ? EigenvalueSolver::ScaleType::NORM_2
+                                                   : EigenvalueSolver::ScaleType::NONE;
+  eigen->SetOperators(*K, *M, scale);
+  eigen->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
+  eigen->SetTol(iodata.solver.eigenmode.tol);
+  eigen->SetMaxIter(iodata.solver.eigenmode.max_it);
+
+  auto mass_inner_product = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
+  if (iodata.solver.eigenmode.mass_orthog)
+  {
+    Mpi::Print(" Basis uses M-inner product\n");
+    eigen->SetBMat(*mass_inner_product);
+  }
+
+  std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
+  if (iodata.solver.linear.divfree_max_it > 0)
+  {
+    Mpi::Print(" Configuring enriched divergence-free projection\n");
+    divfree = std::make_unique<DivFreeSolver<ComplexVector>>(
+        iodata, space_op.GetComm(), *M_energy, space_op.GetGradMatrix(),
+        space_op.GetCombinedH1DbcTDofList());
+    eigen->SetDivFreeProjector(*divfree);
+  }
+
+  if (iodata.solver.eigenmode.init_v0)
+  {
+    ComplexVector initial;
+    if (iodata.solver.eigenmode.init_v0_const)
+    {
+      space_op.GetConstantInitialVector(initial);
+    }
+    else
+    {
+      space_op.GetRandomInitialVector(initial);
+    }
+    if (divfree)
+    {
+      divfree->Mult(initial);
+    }
+    eigen->SetInitialSpace(initial);
+  }
+
+  eigen->SetShiftInvert(target * target);
+  eigen->SetWhichEigenpairs(type == EigenSolverBackend::ARPACK
+                                ? EigenvalueSolver::WhichType::LARGEST_REAL
+                                : EigenvalueSolver::WhichType::TARGET_REAL);
+  auto shifted =
+      space_op.GetSystemMatrix(1.0 + 0.0i, 0.0 + 0.0i, -target * target + 0.0i, K.get(),
+                               static_cast<const ComplexOperator *>(nullptr), M.get());
+  auto ksp = MakeSingularComplexKspSolver(iodata, space_op.GetComm());
+  ksp->SetOperators(*shifted, *shifted);
+  eigen->SetLinearSolver(*ksp);
+
+  {
+    const double frequency =
+        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(target) / (2 * M_PI);
+    Mpi::Print(" Shift-and-invert sigma = {:.3e} GHz ({:.3e})\n", frequency, target);
+  }
+  BlockTimer bt(Timer::EPS);
+  Mpi::Print("\n");
+  const int num_converged = eigen->Solve();
+  Mpi::Print(" Found {:d} converged enriched eigenvalue{}\n", num_converged,
+             num_converged == 1 ? "" : "s");
+  if (!iodata.solver.eigenmode.mass_orthog)
+  {
+    // Match the standard eigenmode path: use Euclidean orthogonalization during
+    // the solve, but mass-normalize finalized eigenvectors for energy output.
+    eigen->SetBMat(*mass_inner_product);
+  }
+  eigen->RescaleEigenvectors(num_converged);
+  SaveMetadata(*ksp);
+
+  TableWithCSVFile eig_output, energy_output;
+  if (root)
+  {
+    eig_output = TableWithCSVFile(post_dir / "eig.csv");
+    eig_output.table.insert("idx", "m", -1, 0, 0, "");
+    eig_output.table.insert("f_re", "Re{f} (GHz)");
+    eig_output.table.insert("f_im", "Im{f} (GHz)");
+    eig_output.table.insert("q", "Q");
+    eig_output.table.insert("err_back", "Error (Bkwd.)");
+    eig_output.table.insert("err_abs", "Error (Abs.)");
+    eig_output.table[0].print_as_int = true;
+    eig_output.WriteFullTableTrunc();
+
+    energy_output = TableWithCSVFile(post_dir / "singular-eigenmode.csv");
+    energy_output.table.insert("idx", "m", -1, 0, 0, "");
+    energy_output.table.insert("electric_energy", "Electric field energy (J)");
+    energy_output.table.insert("magnetic_energy", "Magnetic field energy (J)");
+    energy_output.table.insert("energy_mismatch", "Relative energy mismatch");
+    energy_output.table.insert("weak_divergence", "Relative weak divergence");
+    energy_output.table[0].print_as_int = true;
+    energy_output.WriteFullTableTrunc();
+  }
+
+  ComplexVector electric_field(space_op.GetNDTrueVSize()),
+      mass_electric(space_op.GetNDTrueVSize());
+  ComplexVector weak_divergence(space_op.GetH1TrueVSize());
+  electric_field.UseDevice(true);
+  mass_electric.UseDevice(true);
+  weak_divergence.UseDevice(true);
+  const auto &gradient = space_op.GetGradMatrix();
+  for (int mode = 0; mode < num_converged; mode++)
+  {
+    const std::complex<double> omega = std::sqrt(eigen->GetEigenvalue(mode));
+    const double error_backward =
+        eigen->GetError(mode, EigenvalueSolver::ErrorType::BACKWARD);
+    const double error_absolute =
+        eigen->GetError(mode, EigenvalueSolver::ErrorType::ABSOLUTE);
+    eigen->GetEigenvector(mode, electric_field);
+    linalg::NormalizePhase(space_op.GetComm(), electric_field);
+
+    const auto energy = MeasureSingularFullWaveEnergy(space_op.GetComm(), *M_energy,
+                                                      *K_energy, electric_field, omega);
+    const double electric_energy =
+        iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy.electric);
+    const double magnetic_energy =
+        iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy.magnetic);
+    const double energy_mismatch =
+        std::abs(energy.electric - energy.magnetic) /
+        std::max({energy.electric, energy.magnetic, std::numeric_limits<double>::min()});
+
+    M_energy->Mult(electric_field.Real(), mass_electric.Real());
+    M_energy->Mult(electric_field.Imag(), mass_electric.Imag());
+    gradient.MultTranspose(mass_electric.Real(), weak_divergence.Real());
+    gradient.MultTranspose(mass_electric.Imag(), weak_divergence.Imag());
+    linalg::SetSubVector(weak_divergence, space_op.GetCombinedH1DbcTDofList(), 0.0);
+    const double relative_weak_divergence =
+        linalg::Norml2(space_op.GetComm(), weak_divergence) /
+        std::max(linalg::Norml2(space_op.GetComm(), mass_electric),
+                 std::numeric_limits<double>::min());
+
+    const std::complex<double> frequency =
+        iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
+    const double quality =
+        omega == 0.0 ? mfem::infinity() : 0.5 * std::abs(omega) / std::abs(omega.imag());
+    Mpi::Print(" Mode {:d}: f = {:.6e}{:+.6e}i GHz, Q = {:.6e}, "
+               "energy mismatch = {:.3e}, weak divergence = {:.3e}\n",
+               mode + 1, frequency.real(), frequency.imag(), quality, energy_mismatch,
+               relative_weak_divergence);
+    if (root)
+    {
+      eig_output.table["idx"] << mode + 1;
+      eig_output.table["f_re"] << frequency.real();
+      eig_output.table["f_im"] << frequency.imag();
+      eig_output.table["q"] << quality;
+      eig_output.table["err_back"] << error_backward;
+      eig_output.table["err_abs"] << error_absolute;
+      eig_output.WriteFullTableTrunc();
+
+      energy_output.table["idx"] << mode + 1;
+      energy_output.table["electric_energy"] << electric_energy;
+      energy_output.table["magnetic_energy"] << magnetic_energy;
+      energy_output.table["energy_mismatch"] << energy_mismatch;
+      energy_output.table["weak_divergence"] << relative_weak_divergence;
+      energy_output.WriteFullTableTrunc();
+    }
+  }
+
+  SaveMetadata("SingularFullWave",
+               nlohmann::json{{"Enabled", true},
+                              {"Dimension", space_op.GetMesh().Dimension()},
+                              {"EigenvalueOutput", "eig.csv"},
+                              {"EnergyOutput", "singular-eigenmode.csv"},
+                              {"ElectricEnergy", "0.5 E^H M_epsilon E"},
+                              {"MagneticEnergy", "0.5 E^H K_mu^-1 E / |omega|^2"},
+                              {"DivergenceProjection", divfree != nullptr},
+                              {"FieldGridOutput", false},
+                              {"ErrorEstimator", false}});
+  MFEM_VERIFY(num_converged >= iodata.solver.eigenmode.n,
+              "Singular eigenmode solve found " << num_converged << " modes when "
+                                                << iodata.solver.eigenmode.n
+                                                << " were requested!");
+  return {{}, space_op.GlobalTrueVSize()};
 }
 
 }  // namespace palace

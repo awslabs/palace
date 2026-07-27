@@ -1,0 +1,60 @@
+{
+  "Problem": {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/singular_eigenmode"
+  },
+  "Model": {
+    "Mesh": "mesh/cpw3d_singular.mesh",
+    "L0": 1.0e-6,
+    "CrackInternalBoundaryElements": false,
+    "Refinement": {
+      "MaxIts": 0
+    }
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0,
+        "Permittivity": 11.45
+      },
+      {
+        "Attributes": [2],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [10, 11, 12, 20, 21]
+    }
+  },
+  "Solver": {
+    "Order": 1,
+    "Device": "CPU",
+    "Eigenmode": {
+      "N": 1,
+      "Save": 0,
+      "Target": 500.0,
+      "Tol": 1.0e-8
+    },
+    "SingularElements": {
+      "Attributes": [10, 11],
+      "Order": 1,
+      "QuadratureOrder": 8,
+      "AbsTol": 1.0e-3,
+      "RelTol": 1.0e-3,
+      "MaxSubdivisions": 6
+    },
+    "Linear": {
+      "Type": "SuperLU",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-10,
+      "MaxIts": 100,
+      "MGMaxLevels": 1,
+      "DivFreeMaxIts": 10
+    }
+  }
+}

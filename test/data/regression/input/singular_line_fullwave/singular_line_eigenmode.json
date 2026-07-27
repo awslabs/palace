@@ -1,0 +1,55 @@
+{
+  "Problem": {
+    "Type": "Eigenmode",
+    "Verbose": 1,
+    "Output": "postpro/eigenmode"
+  },
+  "Model": {
+    "Mesh": "singular_line_fullwave.mesh",
+    "L0": 1.0,
+    "CrackInternalBoundaryElements": false,
+    "Refinement": {
+      "MaxIts": 0
+    }
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permeability": 1.7,
+        "Permittivity": 2.3
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [1, 2, 3, 4, 7]
+    }
+  },
+  "Solver": {
+    "Order": 1,
+    "Device": "CPU",
+    "Eigenmode": {
+      "N": 2,
+      "Save": 0,
+      "Target": 0.1,
+      "Tol": 1.0e-9
+    },
+    "SingularElements": {
+      "Attributes": [7],
+      "Order": 1,
+      "QuadratureOrder": 8,
+      "AbsTol": 2.0e-6,
+      "RelTol": 2.0e-6,
+      "MaxSubdivisions": 6
+    },
+    "Linear": {
+      "Type": "SuperLU",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-10,
+      "MaxIts": 100,
+      "MGMaxLevels": 1,
+      "DivFreeMaxIts": 10
+    }
+  }
+}

@@ -11,6 +11,9 @@
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
+#include "fem/singularassembly.hpp"
+#include "fem/singularfeatures.hpp"
+#include "fem/singularsystem.hpp"
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/iodata.hpp"
@@ -31,9 +34,27 @@ class SurfaceImpedanceOperator;
 class BoundaryModeOperator
 {
 public:
+  struct SingularCoefficientNorms
+  {
+    double nd_gradient = 0.0;
+    double nd_rotational = 0.0;
+    double h1_gradient = 0.0;
+  };
+
+  struct SingularFieldEnergies
+  {
+    double electric_transverse = 0.0;
+    double electric_normal = 0.0;
+    double magnetic_transverse = 0.0;
+    double magnetic_normal = 0.0;
+  };
+
   // Caller owns mat_op; it must outlive this operator.
-  BoundaryModeOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh,
-                       const MaterialOperator &mat_op);
+  BoundaryModeOperator(
+      const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh,
+      const MaterialOperator &mat_op,
+      const fem::singular::TriangleFeatureTopology *singular_features = nullptr,
+      const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids = nullptr);
 
   // Access FE spaces.
   FiniteElementSpace &GetNDSpace() { return nd_fespaces.GetFinestFESpace(); }
@@ -79,6 +100,10 @@ public:
   const mfem::HypreParMatrix *GetBtnr() const { return Btnr.get(); }
   const mfem::HypreParMatrix *GetBtni() const { return Btni.get(); }
   const mfem::HypreParMatrix *GetBtt() const { return Bttr.get(); }
+  const mfem::HypreParMatrix *GetCombinedGradient() const
+  {
+    return singular_gradient.get();
+  }
 
   using ComplexHypreParMatrix = std::tuple<std::unique_ptr<mfem::HypreParMatrix>,
                                            std::unique_ptr<mfem::HypreParMatrix>>;
@@ -101,6 +126,23 @@ public:
   std::complex<double> ComputePoyntingPower(double omega, std::complex<double> kn,
                                             const ComplexVector &et,
                                             const ComplexVector &en) const;
+  SingularCoefficientNorms ComputeSingularCoefficientNorms(const ComplexVector &et,
+                                                           const ComplexVector &en) const;
+  SingularFieldEnergies ComputeSingularFieldEnergies(double omega, std::complex<double> kn,
+                                                     const ComplexVector &et,
+                                                     const ComplexVector &en) const;
+
+  const fem::singular::TriangleDofTopology &GetSingularDofTopology() const
+  {
+    MFEM_VERIFY(singular_dofs, "BoundaryMode operator has no singular DOF topology!");
+    return *singular_dofs;
+  }
+  const fem::singular::ParallelDofNumbering &GetSingularDofNumbering() const
+  {
+    MFEM_VERIFY(singular_numbering,
+                "BoundaryMode operator has no singular parallel numbering!");
+    return *singular_numbering;
+  }
 
   // Access mesh.
   Mesh &GetMesh() { return *solve_mesh; }
@@ -111,8 +153,28 @@ public:
   int GetSolverOrder() const { return solver_order; }
 
   // True vector sizes.
-  int GetNDTrueVSize() const { return nd_fespaces.GetFinestFESpace().GetTrueVSize(); }
-  int GetH1TrueVSize() const { return h1_fespaces.GetFinestFESpace().GetTrueVSize(); }
+  int GetNDTrueVSize() const
+  {
+    return nd_fespaces.GetFinestFESpace().GetTrueVSize() +
+           (singular_numbering ? static_cast<int>(singular_numbering->nd.owned_size) : 0);
+  }
+  int GetH1TrueVSize() const
+  {
+    return h1_fespaces.GetFinestFESpace().GetTrueVSize() +
+           (singular_numbering ? static_cast<int>(singular_numbering->h1.owned_size) : 0);
+  }
+  HYPRE_BigInt GetNDGlobalTrueVSize() const
+  {
+    return nd_fespaces.GetFinestFESpace().GlobalTrueVSize() +
+           (singular_numbering ? singular_numbering->nd.global_size : 0);
+  }
+  HYPRE_BigInt GetH1GlobalTrueVSize() const
+  {
+    return h1_fespaces.GetFinestFESpace().GlobalTrueVSize() +
+           (singular_numbering ? singular_numbering->h1.global_size : 0);
+  }
+  bool HasSingularEnrichment() const { return singular_features != nullptr; }
+  const mfem::Array<int> &GetCombinedDbcTDofList() const { return combined_dbc_tdof_list; }
 
 private:
   const IoData &iodata;
@@ -133,6 +195,23 @@ private:
   std::unique_ptr<mfem::L2_FECollection> l2_curl_fec;
   std::unique_ptr<FiniteElementSpace> l2_curl_fespace;
 
+  // Optional triangular singular enrichment. Combined true vectors use
+  // process-local ordering [standard, owned enrichment] independently in the
+  // ND and H1 blocks.
+  const fem::singular::TriangleFeatureTopology *singular_features;
+  const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids;
+  std::unique_ptr<fem::singular::TriangleDofTopology> singular_dofs;
+  std::unique_ptr<fem::singular::ParallelDofNumbering> singular_numbering;
+  fem::singular::ParallelSparseEnrichmentMatrices singular_mu_matrices;
+  fem::singular::ParallelSparseEnrichmentMatrices singular_epsilon_matrices;
+  std::unique_ptr<mfem::HypreParMatrix> singular_gradient;
+  std::unique_ptr<mfem::HypreParMatrix> singular_epsilon_nd_mass;
+  std::unique_ptr<mfem::HypreParMatrix> singular_epsilon_h1_mass;
+  std::unique_ptr<mfem::HypreParMatrix> singular_mu_nd_curl_curl;
+  mfem::Array<int> singular_nd_essential_true_dofs;
+  mfem::Array<int> singular_h1_essential_true_dofs;
+  mfem::Array<int> combined_dbc_tdof_list;
+
   // Material and boundary operators. mat_op is caller-owned; the rest are constructed
   // from mat_op + the solve mesh at construction time.
   const MaterialOperator &mat_op;
@@ -149,6 +228,7 @@ private:
 
   // Setup helper.
   void SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>> &mesh);
+  void SetUpSingularEnrichment();
 };
 
 }  // namespace palace

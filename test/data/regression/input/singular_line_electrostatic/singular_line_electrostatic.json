@@ -1,0 +1,60 @@
+{
+  "Problem": {
+    "Type": "Electrostatic",
+    "Verbose": 1,
+    "Output": "postpro"
+  },
+  "Model": {
+    "Mesh": "singular_line_electrostatic.mesh",
+    "L0": 1.0,
+    "CrackInternalBoundaryElements": false
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [1],
+        "Permittivity": 3.25
+      }
+    ],
+    "Postprocessing": {
+      "Energy": [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        }
+      ]
+    }
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [1]
+    },
+    "Terminal": [
+      {
+        "Index": 1,
+        "Attributes": [7]
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 1,
+    "Electrostatic": {
+      "Save": 0
+    },
+    "SingularElements": {
+      "Attributes": [7],
+      "Order": 1,
+      "QuadratureOrder": 8,
+      "AbsTol": 2.0e-6,
+      "RelTol": 2.0e-6,
+      "MaxSubdivisions": 6
+    },
+    "Linear": {
+      "Type": "BoomerAMG",
+      "KSPType": "CG",
+      "Tol": 1.0e-10,
+      "MaxIts": 500,
+      "MGMaxLevels": 1
+    }
+  }
+}

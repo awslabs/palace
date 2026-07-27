@@ -109,8 +109,50 @@ struct FeatureTopology
   bool Empty() const { return features.empty(); }
 };
 
+struct TriangleSelectedSegment
+{
+  int boundary_element;
+  int mesh_edge;
+  std::array<int, 2> mesh_vertices;
+  int boundary_attribute;
+};
+
+struct TriangleTipVertex
+{
+  std::size_t id;
+  int mesh_vertex;
+  std::vector<std::size_t> selected_segments;
+  double nu;
+};
+
+struct TriangleElementNodeFeature
+{
+  std::size_t vertex;
+  int mesh_vertex;
+
+  // Element-local barycentric node indices. Entry zero is the singular node;
+  // the other two entries are ordered by source mesh vertex ID.
+  std::array<int, 3> canonical_nodes;
+};
+
+struct TriangleElementFeatureIncidence
+{
+  std::vector<TriangleElementNodeFeature> nodes;
+};
+
+struct TriangleFeatureTopology
+{
+  std::vector<TriangleTipVertex> vertices;
+  std::vector<TriangleSelectedSegment> selected_segments;
+  std::vector<TriangleElementFeatureIncidence> elements;
+
+  bool Empty() const { return vertices.empty(); }
+};
+
 // Extract the topological perimeter of selected zero-thickness internal PEC
-// boundary attributes in a serial, conforming, affine tetrahedral mesh.
+// boundary attributes in a serial, conforming tetrahedral mesh. Curved
+// elements away from and adjoining the sheet are accepted, but every selected
+// perimeter edge must be geometrically straight.
 //
 // This phase deliberately uses serial mesh vertex and edge IDs as stable entity
 // IDs. A ParMesh with more than one rank is rejected. Parallel extraction must
@@ -119,6 +161,16 @@ struct FeatureTopology
 FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
                                            const std::vector<int> &boundary_attributes,
                                            double nu = 0.5);
+
+// Extract endpoint singularities of selected straight, zero-thickness internal
+// PEC line chains in a serial, conforming triangular mesh. Curved elements are
+// accepted, but selected PEC segments must be geometrically straight.
+// Endpoints on the exterior mesh boundary are excluded. Bends, branches,
+// selected exterior edges, and non-triangular meshes are rejected until their
+// wedge exponents and continuity contracts are implemented.
+TriangleFeatureTopology
+ExtractSerialLineTipFeatures(const mfem::Mesh &mesh,
+                             const std::vector<int> &boundary_attributes, double nu = 0.5);
 
 // Reconstruct rank-local feature incidence from a serial feature blueprint.
 // serial_vertex_ids maps every rank-local mesh vertex to its source serial
@@ -138,6 +190,12 @@ DistributeSerialSheetFeatures(const mfem::Mesh &serial_mesh,
 // feature incur no per-element payload beyond the global element count.
 void BroadcastSerialSheetFeatures(FeatureTopology &serial_features, MPI_Comm comm);
 
+// Broadcast and distribute the immutable 2D line-tip blueprint. Selected
+// segments retain source-serial IDs; only element incidence is reconstructed
+// with rank-local mesh vertex numbers.
+void BroadcastSerialLineTipFeatures(TriangleFeatureTopology &serial_features,
+                                    MPI_Comm comm);
+
 // Reconstruct rank-local feature incidence from exact source-serial entity
 // maps transported by mesh::Partition. source_element_ids maps local element
 // ordering to the element ordering used by serial_features.elements.
@@ -146,6 +204,12 @@ DistributeSerialSheetFeatures(const FeatureTopology &serial_features,
                               const mfem::ParMesh &parallel_mesh,
                               const std::vector<GlobalVertexId> &serial_vertex_ids,
                               const std::vector<GlobalVertexId> &source_element_ids);
+
+TriangleFeatureTopology
+DistributeSerialLineTipFeatures(const TriangleFeatureTopology &serial_features,
+                                const mfem::ParMesh &parallel_mesh,
+                                const std::vector<GlobalVertexId> &serial_vertex_ids,
+                                const std::vector<GlobalVertexId> &source_element_ids);
 
 }  // namespace singular
 

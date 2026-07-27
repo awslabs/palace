@@ -1749,15 +1749,40 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
     CHECK_THROWS(IoData(config, false));
   }
 
-  SECTION("Only electrostatic simulations are supported")
+  SECTION("Supported simulation types")
   {
-    auto config = MakeConfig();
-    config["Problem"]["Type"] = "Driven";
-    config["Solver"]["Driven"] = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}};
-    CHECK_THROWS(IoData(config, false));
+    for (const auto *problem_type :
+         {"Electrostatic", "BoundaryMode", "Driven", "Eigenmode"})
+    {
+      auto config = MakeConfig();
+      config["Problem"]["Type"] = problem_type;
+      if (problem_type == std::string_view("BoundaryMode"))
+      {
+        config["Solver"]["BoundaryMode"] = {
+            {"Freq", 1.0}, {"N", 1}, {"Save", 0}, {"Target", 1.0}};
+      }
+      else if (problem_type == std::string_view("Driven"))
+      {
+        config["Boundaries"]["SurfaceCurrent"] = {
+            {{"Index", 1}, {"Attributes", {2}}, {"Direction", "+X"}}};
+        config["Solver"]["Driven"] = {{"Samples", {{{"Type", "Point"}, {"Freq", {1.0}}}}}};
+      }
+      else if (problem_type == std::string_view("Eigenmode"))
+      {
+        config["Solver"]["Eigenmode"] = {{"N", 1}, {"Save", 0}, {"Target", 1.0}};
+      }
+      CHECK_NOTHROW(IoData(config, false));
+    }
+
+    for (const auto *problem_type : {"Magnetostatic", "Transient"})
+    {
+      auto config = MakeConfig();
+      config["Problem"]["Type"] = problem_type;
+      CHECK_THROWS(IoData(config, false));
+    }
   }
 
-  SECTION("Selected sheets must be electrostatic conductors")
+  SECTION("Selected features must be conductors")
   {
     auto config = MakeConfig();
     config["Boundaries"] = json::object();
@@ -1795,6 +1820,25 @@ TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config
 
     config = MakeConfig();
     config["Solver"]["Linear"] = {{"MGMaxLevels", 2}};
+    CHECK_THROWS(IoData(config, false));
+  }
+
+  SECTION("Restricted full-wave features are rejected")
+  {
+    auto config = MakeConfig();
+    config["Problem"]["Type"] = "Driven";
+    config["Solver"]["Driven"] = {{"Samples", {{{"Type", "Point"}, {"Freq", {1.0}}}}}};
+    CHECK_THROWS(IoData(config, false));
+
+    config["Boundaries"]["SurfaceCurrent"] = {
+        {{"Index", 1}, {"Attributes", {2}}, {"Direction", "+X"}}};
+    config["Domains"]["Postprocessing"] = {
+        {"Energy", {{{"Index", 1}, {"Attributes", {1}}}}}};
+    CHECK_THROWS(IoData(config, false));
+
+    config = MakeConfig();
+    config["Problem"]["Type"] = "Eigenmode";
+    config["Solver"]["Eigenmode"] = {{"N", 1}, {"Save", 1}, {"Target", 1.0}};
     CHECK_THROWS(IoData(config, false));
   }
 }
