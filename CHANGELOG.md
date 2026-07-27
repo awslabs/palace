@@ -36,7 +36,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     boundary condition so no induced current flows across an inactive port, while `"Short"`
     treats it as a perfect conductor (PEC) allowing induced screening currents. The mode can
     be overridden per port with `config["Boundaries"]["SurfaceCurrent"][...]["InactiveMode"]`.
-    SchemaVer 1-4-0 [PR 831](https://github.com/awslabs/palace/pull/831).
+    SchemaVer 1-5-0 [PR 831](https://github.com/awslabs/palace/pull/831).
   - Improve hybrid nonlinear eigensolver convergence when using 2nd-order absorbing and
     rational impedance boundary conditions. [PR 792](https://github.com/awslabs/palace/pull/792).
   - Enable circuit synthesis with frequency-dependent boundary conditions, including
