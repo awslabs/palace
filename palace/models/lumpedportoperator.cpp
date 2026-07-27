@@ -37,13 +37,11 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
   {
     if (has_circ)
     {
-      MFEM_VERIFY(data.R >= 0.0,
-                  "Excited lumped port must have non-negative resistance!");
+      MFEM_VERIFY(data.R >= 0.0, "Excited lumped port must have non-negative resistance!");
     }
     else
     {
-      MFEM_VERIFY(data.Rs >= 0.0,
-                  "Excited lumped port must have non-negative resistance!");
+      MFEM_VERIFY(data.Rs >= 0.0, "Excited lumped port must have non-negative resistance!");
     }
   }
 
@@ -185,10 +183,11 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
     for (const auto &elem : elems)
     {
       // Reference the S-parameter projection to the same real resistance used to normalize
-      // the incident drive (R for a resistive port; the unit reference for a purely reactive
-      // R == 0 port, so this does not divide by zero). The reactance is already present in
-      // the system matrix, so the projected field is the physical response; a purely
-      // reactive port's own S is not a meaningful traveling-wave quantity regardless.
+      // the incident drive (R for a resistive port; the unit reference for a purely
+      // reactive R == 0 port, so this does not divide by zero). The reactance is already
+      // present in the system matrix, so the projected field is the physical response; a
+      // purely reactive port's own S is not a meaningful traveling-wave quantity
+      // regardless.
       const double Rs = GetExcitationRefResistance() * GetToSquare(*elem);
       const double Hinc = (std::abs(Rs) > 0.0)
                               ? 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
@@ -639,10 +638,10 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
     }
     // Normalize the incident field to a real reference resistance. For a resistive port
     // this is the port resistance R (legacy behaviour, unchanged). For a purely reactive
-    // excited port (R == 0) there is no real port resistance to reference the incident power
-    // to, so we use the unit reference |Z_R| = 1 in internal units purely to define a finite
-    // drive amplitude; the reactance itself acts through the system-matrix termination, not
-    // through this normalization.
+    // excited port (R == 0) there is no real port resistance to reference the incident
+    // power to, so we use the unit reference |Z_R| = 1 in internal units purely to define a
+    // finite drive amplitude; the reactance itself acts through the system-matrix
+    // termination, not through this normalization.
     const double R_ref = data.GetExcitationRefResistance();
     for (const auto &elem : data.elems)
     {

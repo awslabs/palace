@@ -796,8 +796,9 @@ TEST_CASE("LumpedPort_ReactiveExcitation_Cube321", "[lumped_port][Serial][Parall
   // when R = 0) so a purely reactive drive does not divide by zero. This test verifies:
   //   (1) a reactive excited port constructs without tripping the guardrail,
   //   (2) GetExcitationRefResistance() returns R when R > 0, else the unit reference,
-  //   (3) GetCharacteristicImpedance() returns the correct complex Z_ref(w) = R||iwL||1/iwC,
-  //   (4) the excitation RHS is finite (no NaN/Inf) for a purely reactive R = 0 drive.
+  //   (3) GetCharacteristicImpedance() returns the correct complex Z_ref(w) =
+  //   R||iwL||1/iwC, (4) the excitation RHS is finite (no NaN/Inf) for a purely reactive R
+  //   = 0 drive.
   using VT = palace::Units::ValueType;
   MPI_Comm world_comm = Mpi::World();
 
@@ -877,8 +878,7 @@ TEST_CASE("LumpedPort_ReactiveExcitation_Cube321", "[lumped_port][Serial][Parall
   }
   if (case_L > 0.0)
   {
-    Y += 1.0 /
-         (imag_unit * omega * iodata.units.Nondimensionalize<VT::INDUCTANCE>(case_L));
+    Y += 1.0 / (imag_unit * omega * iodata.units.Nondimensionalize<VT::INDUCTANCE>(case_L));
   }
   if (case_C > 0.0)
   {

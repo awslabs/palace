@@ -58,6 +58,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     termination; the incident drive is normalized to the port `"R"` when positive, or to
     an internal unit reference impedance for a purely reactive port. Previously, excited
     lumped ports were required to be purely resistive.
+    [PR 841](https://github.com/awslabs/palace/pull/841).
 
 #### Bug Fixes
 
