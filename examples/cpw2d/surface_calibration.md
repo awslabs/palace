@@ -235,6 +235,26 @@ sweep.
 `--same-conductor-strips` options override that common sweep; pass a
 topology-specific option with no values to omit that topology.
 
+### Coverage preflight and coupon planning
+
+Run Palace with `--surface-response-preflight` to classify a device without
+assembling or solving its field equations. The resulting
+`surface-response-requirements.json` records exact, interpolated, and missing
+coupon coverage. Convert the missing entries into a fabrication-aware work plan
+with:
+
+```text
+python3 prepare_surface_response_coupons.py \
+  /path/to/surface-response-requirements.json \
+  --output /tmp/process-coupon-plan
+```
+
+The plan points isolated and paired requirements to
+`build_surface_process_library.py` and 90 degree corners to the existing corner
+prototype. Endpoint, junction, parallel multi-edge, and exact spatial-cluster
+signatures remain explicitly marked as manual until corresponding canonical 3D
+mesh generators are available.
+
 Palace never extrapolates a paired response. Each requested topology should
 therefore include the smallest separation supported by the fabrication design
 rules and an endpoint at `2R`. Features wider than `2R` have disjoint matching

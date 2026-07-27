@@ -21,6 +21,7 @@ namespace palace
 class FiniteElementSpace;
 class GridFunction;
 class IoData;
+class Mesh;
 class BoundaryModeOperator;
 class LaplaceOperator;
 class MaterialOperator;
@@ -269,6 +270,12 @@ public:
   double GetPatchWeight() const;
   double GetMatchingRadius() const { return matching_radius; }
 };
+
+// Classify the configured automatic surface-response neighborhoods without assembling a
+// finite-element operator or solving a field problem. The deterministic JSON manifest
+// reports exact, interpolated, and missing process-library requirements.
+void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
+                                      const std::string &path);
 
 }  // namespace palace
 

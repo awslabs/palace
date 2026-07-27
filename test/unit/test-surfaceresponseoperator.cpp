@@ -77,6 +77,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       temp.temp_dir / "parallel-cluster-basis-points-2d.csv";
   const auto coupled_library_3d_path =
       temp.temp_dir / "fabrication-process-coupled-3d.json";
+  const auto missing_pair_library_3d_path =
+      temp.temp_dir / "fabrication-process-missing-pair-3d.json";
   const auto interpolated_coupled_library_3d_path =
       temp.temp_dir / "fabrication-process-coupled-interpolated-3d.json";
   const auto parallel_cluster_library_3d_path =
@@ -333,6 +335,10 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     coupled_library_3d["Version"] = 3;
     coupled_library_3d["Name"] = "unit-test-process-coupled-3d";
     coupled_library_3d["MatchingRadius"] = 7.0;
+    auto missing_pair_library_3d = coupled_library_3d;
+    missing_pair_library_3d["Name"] = "unit-test-process-missing-pair-3d";
+    std::ofstream missing_pair_output_3d(missing_pair_library_3d_path);
+    missing_pair_output_3d << missing_pair_library_3d.dump(2) << "\n";
     std::array<std::array<double, 5>, 5> coupled_fabricated{};
     std::array<std::array<double, 5>, 5> coupled_thin{};
     for (std::size_t i = 0; i < coupled_fabricated.size(); i++)
@@ -1113,6 +1119,24 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(cached_automatic_response.GetPatchCount() == automatic_response.GetPatchCount());
   CHECK(cached_automatic_response.GetBasisSize() == automatic_response.GetBasisSize());
   CHECK(cached_automatic_response.HasSurfaceResponse());
+
+  const auto requirements_path = temp.temp_dir / "surface-response-requirements.json";
+  WriteSurfaceResponseRequirements(automatic_iodata, *automatic_meshes.back(),
+                                   requirements_path.string());
+  std::ifstream requirements_input(requirements_path);
+  REQUIRE(requirements_input);
+  const json requirements = json::parse(requirements_input);
+  CHECK(requirements["Version"] == 1);
+  CHECK(requirements["Complete"]);
+  CHECK(requirements["MeshDimension"] == 2);
+  CHECK_FALSE(requirements["Maxwell"]);
+  CHECK(requirements["Summary"]["Counts"]["Exact"] == 2);
+  CHECK(requirements["Summary"]["Counts"]["Missing"] == 0);
+  REQUIRE(requirements["Requirements"].size() == 1);
+  CHECK(requirements["Requirements"][0]["Topology"] == "IsolatedEdge");
+  CHECK(requirements["Requirements"][0]["Status"] == "Exact");
+  CHECK(requirements["Requirements"][0]["Count"] == 2);
+  CHECK(requirements["Requirements"][0]["Interfaces"][0]["Target"] == 4);
 
   auto boundary_mode_config = automatic_config;
   boundary_mode_config["Problem"]["Type"] = "BoundaryMode";
@@ -1948,6 +1972,38 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
              WithinRel(0.25 * physical_edge_length, 1.0e-12));
   CHECK(coupled_response_3d.HasSurfaceResponse());
 
+  auto missing_pair_config_3d = coupled_config_3d;
+  missing_pair_config_3d["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      missing_pair_library_3d_path.string();
+  missing_pair_config_3d["Solver"]["Electrostatic"]["ResponseCorrection"]
+                        ["UnmatchedPolicy"] = "Warn";
+  IoData missing_pair_iodata_3d(missing_pair_config_3d, false);
+  missing_pair_iodata_3d.boundaries.cracked_attributes.insert(1);
+  missing_pair_iodata_3d.boundaries.cracked_attributes.insert(2);
+  auto missing_pair_mesh_3d = mesh::ReadMesh(missing_pair_iodata_3d, Mpi::World());
+  Mesh missing_pair_mesh(std::move(missing_pair_mesh_3d));
+  const auto missing_pair_requirements_path =
+      temp.temp_dir / "surface-response-requirements-missing-pair.json";
+  WriteSurfaceResponseRequirements(missing_pair_iodata_3d, missing_pair_mesh,
+                                   missing_pair_requirements_path.string());
+  std::ifstream missing_pair_requirements_input(missing_pair_requirements_path);
+  REQUIRE(missing_pair_requirements_input);
+  const json missing_pair_requirements = json::parse(missing_pair_requirements_input);
+  CHECK_FALSE(missing_pair_requirements["Complete"]);
+  CHECK(missing_pair_requirements["Summary"]["Counts"]["Missing"].get<int>() > 0);
+  const auto missing_pair_requirement =
+      std::find_if(missing_pair_requirements["Requirements"].begin(),
+                   missing_pair_requirements["Requirements"].end(),
+                   [](const auto &requirement)
+                   {
+                     return requirement["Topology"] == "DifferentConductorGap" &&
+                            requirement["Status"] == "Missing";
+                   });
+  REQUIRE(missing_pair_requirement != missing_pair_requirements["Requirements"].end());
+  CHECK((*missing_pair_requirement)["Geometry"]["EdgeCount"] == 2);
+  CHECK_THAT((*missing_pair_requirement)["Geometry"]["Separation"].get<double>(),
+             WithinAbs(12.0, 1.0e-9));
+
   auto interpolated_coupled_config_3d = coupled_config_3d;
   interpolated_coupled_config_3d["Solver"]["Electrostatic"]["ResponseCorrection"]
                                 ["Library"] = interpolated_coupled_library_3d_path.string();
@@ -2149,6 +2205,29 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
         5 * parallel_cluster_response_3d.GetPatchCount());
   CHECK_THAT(parallel_cluster_response_3d.GetPatchWeight(),
              WithinRel(0.125 * physical_edge_length, 1.0e-12));
+
+  const auto parallel_cluster_requirements_path =
+      temp.temp_dir / "surface-response-requirements-parallel-cluster.json";
+  WriteSurfaceResponseRequirements(parallel_cluster_iodata_3d,
+                                   *parallel_cluster_meshes_3d.back(),
+                                   parallel_cluster_requirements_path.string());
+  std::ifstream parallel_cluster_requirements_input(parallel_cluster_requirements_path);
+  REQUIRE(parallel_cluster_requirements_input);
+  const json parallel_cluster_requirements =
+      json::parse(parallel_cluster_requirements_input);
+  const auto parallel_cluster_requirement =
+      std::find_if(parallel_cluster_requirements["Requirements"].begin(),
+                   parallel_cluster_requirements["Requirements"].end(),
+                   [](const auto &requirement)
+                   {
+                     return requirement["Topology"] == "ParallelEdgeCluster" &&
+                            requirement["Status"] == "Exact";
+                   });
+  REQUIRE(parallel_cluster_requirement !=
+          parallel_cluster_requirements["Requirements"].end());
+  CHECK((*parallel_cluster_requirement)["Geometry"]["EdgeCount"] == 4);
+  CHECK((*parallel_cluster_requirement)["Geometry"]["Edges"].size() == 4);
+  CHECK((*parallel_cluster_requirement)["TotalEdgeLength"].get<double>() > 0.0);
 
   // An exact multi-edge coupon is self-contained. It must not require redundant
   // two-edge models for every pair in the active cluster.

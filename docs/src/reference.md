@@ -1405,6 +1405,22 @@ frequency, so a frequency-dependent non-PEC coupon must still be calibrated and
 validated over its intended frequency range. Explicit `Models` or `Patches` are not
 supported by the Maxwell path.
 
+Before a field solve, the same production geometry classifier can audit process-library
+coverage:
+
+```text
+palace --surface-response-preflight config.json
+```
+
+This loads, preprocesses, partitions, and applies a priori refinement to the solve mesh,
+but does not assemble a Maxwell operator or solve a field problem. It writes
+`surface-response-requirements.json` under `Problem.Output`. The deterministic manifest
+aggregates equivalent neighborhoods and reports their topology, interface slots, metal
+boundary law, count, total edge length, geometric signature, and exact, interpolated, or
+missing library selection. Its `Complete` field is true only when no requirement is
+missing. During preflight only, `UnmatchedPolicy: "Error"` is treated as `"Warn"` so all
+missing requirements can be reported in one pass.
+
 A multi-conductor coupon appends one ``V_i-V_1`` coefficient for every conductor after
 the first. Electrostatics uses H1 point values. Maxwell integrates the declared open
 paths and accumulates their signed voltage differences along a conductor spanning tree.

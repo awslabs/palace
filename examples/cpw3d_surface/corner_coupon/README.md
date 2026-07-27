@@ -179,6 +179,26 @@ respectively, on the local Apple M3 Pro.
 This projected test is suitable for local convergence studies; final process
 libraries still require the full trace basis.
 
+`run_probe_convergence.py` prepares and optionally runs these probe configs at
+multiple FEM orders, then writes `probe-convergence.json`. By default the lower
+order transitions are diagnostic and the acceptance gates apply to the final,
+highest-order transition. Pass `--gate-all-transitions` to require every
+adjacent-order comparison to pass.
+
+```sh
+python3 corner_coupon/run_probe_convergence.py \
+  /path/to/calibration \
+  --output /tmp/convex-r0p5-convergence \
+  --palace ../../build/bin/palace \
+  --orders 1 2 3
+```
+
+The default gates are 5% for fabricated response-matrix change, 10% for the
+worst fabricated quadratic-energy change, and 5% for the
+fabricated-minus-thin domain-defect matrix. Thin surface matrices are reported
+but not gated because corrected participation uses the complete fabricated
+surface response.
+
 ### Rounded-radius interpolation
 
 Independent `rho = 0.25 um` and `rho = 0.75 um` calibrations were linearly

@@ -23,6 +23,11 @@ class IoData;
 //     rewritten to absolute paths by the caller).
 void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag = nullptr);
 
+// Load and preprocess the configured mesh, classify automatic surface-response
+// neighborhoods, write a requirements manifest, and exit without assembling or solving.
+void RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
+                                 const char *git_tag = nullptr);
+
 }  // namespace palace
 
 #endif  // PALACE_DRIVER_HPP

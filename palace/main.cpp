@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -165,15 +166,19 @@ int main(int argc, char *argv[])
   // Parse command-line options.
   std::vector<std::string_view> argv_sv(argv, argv + argc);
   bool dryrun = false;
+  bool surface_response_preflight = false;
   auto Help = [executable_path = argv_sv[0], &world_comm]()
   {
-    Mpi::Print(world_comm,
-               "Usage: {} [OPTIONS] CONFIG_FILE\n\n"
-               "Options:\n"
-               "  -h, --help           Show this help message and exit\n"
-               "  --version            Show version information and exit\n"
-               "  -dry-run, --dry-run  Parse configuration file for errors and exit\n\n",
-               executable_path.substr(executable_path.find_last_of('/') + 1));
+    Mpi::Print(
+        world_comm,
+        "Usage: {} [OPTIONS] CONFIG_FILE\n\n"
+        "Options:\n"
+        "  -h, --help                    Show this help message and exit\n"
+        "  --version                     Show version information and exit\n"
+        "  -dry-run, --dry-run           Parse configuration file for errors and exit\n"
+        "  --surface-response-preflight  Classify process-library coverage without "
+        "solving\n\n",
+        executable_path.substr(executable_path.find_last_of('/') + 1));
   };
   for (int i = 1; i < argc; i++)
   {
@@ -194,10 +199,37 @@ int main(int argc, char *argv[])
       dryrun = true;
       continue;
     }
+    if (argv_i == "--surface-response-preflight")
+    {
+      surface_response_preflight = true;
+      continue;
+    }
   }
   if (argc < 2)
   {
     Mpi::Print(world_comm, "Error: Invalid usage!\n\n");
+    Help();
+    return 1;
+  }
+
+  // Palace-only execution modes must not remain in argv when PETSc/SLEPc parses command
+  // line options, otherwise they are reported as unused solver options at shutdown.
+  if (surface_response_preflight)
+  {
+    for (int i = 1; i < argc; i++)
+    {
+      if (std::string_view(argv[i]) == "--surface-response-preflight")
+      {
+        std::move(argv + i + 1, argv + argc, argv + i);
+        argc--;
+        argv[argc] = nullptr;
+        break;
+      }
+    }
+  }
+  if (argc < 2)
+  {
+    Mpi::Print(world_comm, "Error: Missing configuration file!\n\n");
     Help();
     return 1;
   }
@@ -225,7 +257,7 @@ int main(int argc, char *argv[])
 
   // Parse configuration file.
   PrintPalaceBanner(world_comm);
-  auto config = IoData::ParseAndValidate(argv[1]);
+  auto config = IoData::ParseAndValidate(argv[argc - 1]);
   IoData iodata(config, false);
   MakeOutputFolder(iodata, world_comm);
 
@@ -233,7 +265,7 @@ int main(int argc, char *argv[])
   // record of every Palace decision (all defaults filled in).
   if (world_root)
   {
-    iodata.WriteResolvedConfig(config, argv[1]);
+    iodata.WriteResolvedConfig(config, argv[argc - 1]);
   }
 
   // Initialize device + numerics. The BlockTimer is scoped to this block so it
@@ -268,7 +300,14 @@ int main(int argc, char *argv[])
   // reuse the exact same code path on an in-process IoData. See palace/driver.hpp
   // for the preconditions it expects.
   PrintPalaceInfo(world_comm, world_size, omp_threads, ngpu, *device);
-  palace::Run(iodata, world_comm, omp_threads, GetPalaceGitTag());
+  if (surface_response_preflight)
+  {
+    palace::RunSurfaceResponsePreflight(iodata, world_comm, omp_threads, GetPalaceGitTag());
+  }
+  else
+  {
+    palace::Run(iodata, world_comm, omp_threads, GetPalaceGitTag());
+  }
 
   // Finalize libCEED.
   ceed::Finalize();
