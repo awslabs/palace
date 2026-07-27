@@ -70,6 +70,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed numeric wave port and automatic boundary-mode targeting for anisotropic
     materials, which could select an evanescent mode instead of the mode with the largest
     propagation constant. [PR 836](https://github.com/awslabs/palace/pull/836).
+  - Fixed intermittent MPI deadlocks in output-directory unit tests when ranks observed
+    filesystem changes at different times. [PR
+    839](https://github.com/awslabs/palace/pull/839).
 
 ## [0.17.0] - 2026-06-28
 

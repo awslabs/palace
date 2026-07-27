@@ -15,14 +15,17 @@ using namespace palace;
 // single-rank and the multi-rank sweeps. In the parallel sweep they additionally
 // verify that the collective (barrier / split / free) is balanced across ranks
 // and does not deadlock, and that a directory created on the (shared) filesystem
-// is visible to every rank afterwards.
+// is visible to every rank afterwards. Reduce preconditions before fatal assertions
+// so every rank takes the same path into the following collectives.
 
 TEST_CASE_METHOD(palace::test::SharedTempDir, "EnsureDirectory creates a new directory",
                  "[outputdir][Serial][Parallel]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
   auto dir = temp_dir / "postpro";
-  REQUIRE(!fs::exists(dir));
+  bool directory_absent = !fs::exists(dir);
+  Mpi::GlobalAnd(1, &directory_absent, comm);
+  REQUIRE(directory_absent);
 
   EnsureDirectory(dir, comm);
 
@@ -50,7 +53,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     fs::create_directories(dir);
   }
   Mpi::Barrier(comm);
-  REQUIRE(fs::is_directory(dir));
+  bool directory_exists = fs::is_directory(dir);
+  Mpi::GlobalAnd(1, &directory_exists, comm);
+  REQUIRE(directory_exists);
 
   // Regression guard: EnsureDirectory must NOT treat an already-existing
   // directory as an error.
@@ -90,7 +95,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "EnsureDirectory creates nested di
 {
   MPI_Comm comm = MPI_COMM_WORLD;
   auto dir = temp_dir / "a" / "b" / "c";
-  REQUIRE(!fs::exists(dir));
+  bool directory_absent = !fs::exists(dir);
+  Mpi::GlobalAnd(1, &directory_absent, comm);
+  REQUIRE(directory_absent);
 
   EnsureDirectory(dir, comm);
 
@@ -123,7 +130,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     f << "stale artifact";
   }
   Mpi::Barrier(comm);
-  REQUIRE(fs::is_directory(dir));
+  bool directory_exists = fs::is_directory(dir);
+  Mpi::GlobalAnd(1, &directory_exists, comm);
+  REQUIRE(directory_exists);
 
   RemovePreviousOutput(dir, comm);
 
@@ -146,7 +155,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     fs::create_directory_symlink(target, link);
   }
   Mpi::Barrier(comm);
-  REQUIRE(fs::is_symlink(link));
+  bool link_exists = fs::is_symlink(link);
+  Mpi::GlobalAnd(1, &link_exists, comm);
+  REQUIRE(link_exists);
 
   RemovePreviousOutput(link, comm);
 
@@ -162,7 +173,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 {
   MPI_Comm comm = MPI_COMM_WORLD;
   auto dir = temp_dir / "does_not_exist";
-  REQUIRE(!fs::exists(dir));
+  bool directory_absent = !fs::exists(dir);
+  Mpi::GlobalAnd(1, &directory_absent, comm);
+  REQUIRE(directory_absent);
 
   // Removing a path that was never created must not error or abort.
   RemovePreviousOutput(dir, comm);
