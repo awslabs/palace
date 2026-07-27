@@ -166,35 +166,140 @@ def write_surface_trace(path, points, triangles, values):
     )
 
 
-def heldout_potential(points, radius):
+def metal_band_cutoff(points, radius, metal_thickness):
+    """Smoothly suppress a trace on both thin and fabricated PEC cuts."""
+    transition = radius / 3.0
+    distance = np.maximum(-points[:, 2], points[:, 2] - metal_thickness)
+    coordinate = np.clip(distance / transition, 0.0, 1.0)
+    return coordinate * coordinate * (3.0 - 2.0 * coordinate)
+
+
+def heldout_potential(points, radius, metal_thickness):
     x = points[:, 0] / radius
     y = points[:, 1] / radius
     z = points[:, 2] / radius
-    return 0.35 + 0.20 * x - 0.15 * y + 0.10 * z + 0.08 * x * y + 0.06 * z * z
+    potential = (
+        0.35
+        + 0.20 * x
+        - 0.15 * y
+        + 0.10 * z
+        + 0.08 * x * y
+        + 0.06 * z * z
+    )
+
+    # Both coupons have conductor cuts in the matching surface at z = 0, while
+    # the fabricated cut extends to z = metal_thickness. Use one smooth trace
+    # which is compatible with both cuts. This avoids an order-dependent
+    # Dirichlet jump where the matching and grounded boundaries meet.
+    return metal_band_cutoff(points, radius, metal_thickness) * potential
 
 
-def thin_metal_mask(points, radius, corner_radius, topology):
+def convergence_probe_potentials(points, radius, metal_thickness):
+    """Return a small low-order trace space for response convergence tests."""
+    x = points[:, 0] / radius
+    y = points[:, 1] / radius
+    z = points[:, 2] / radius
+    cutoff = metal_band_cutoff(points, radius, metal_thickness)
+    probes = (
+        ("common", "cutoff", np.ones_like(x)),
+        ("x-linear", "cutoff*x/R", x),
+        ("y-linear", "cutoff*y/R", y),
+        ("z-linear", "cutoff*z/R", z),
+        ("xy-mixed", "cutoff*x*y/R^2", x * y),
+        ("z-quadratic", "cutoff*z^2/R^2", z * z),
+    )
+    values = np.column_stack([cutoff * probe[2] for probe in probes])
+    if np.linalg.matrix_rank(values) != len(probes):
+        raise ValueError("corner convergence probes are linearly dependent")
+    return [
+        (name, expression, values[:, index])
+        for index, (name, expression, _) in enumerate(probes)
+    ]
+
+
+def metal_footprint_mask(
+    points,
+    radius,
+    corner_radius,
+    offset,
+    topology,
+):
     tolerance = 1.0e-12 * radius
     x = points[:, 0]
     y = points[:, 1]
-    on_process_plane = np.abs(points[:, 2]) <= tolerance
-    in_positive_quadrant = (x >= -tolerance) & (y >= -tolerance)
+    in_positive_quadrant = (x >= offset - tolerance) & (
+        y >= offset - tolerance
+    )
+    arc_radius = corner_radius - offset
     rounded_quadrant = (
         (x >= corner_radius - tolerance)
         | (y >= corner_radius - tolerance)
         | (
             (x - corner_radius) ** 2 + (y - corner_radius) ** 2
-            <= corner_radius**2 + tolerance**2
+            <= arc_radius**2 + tolerance**2
         )
     )
     if topology == "convex":
         in_metal = in_positive_quadrant & rounded_quadrant
     else:
         on_corner_boundary = (
-            (np.abs(y) <= tolerance) & (x >= corner_radius - tolerance)
-        ) | ((np.abs(x) <= tolerance) & (y >= corner_radius - tolerance))
+            (np.abs(y - offset) <= tolerance)
+            & (x >= corner_radius - tolerance)
+        ) | (
+            (np.abs(x - offset) <= tolerance)
+            & (y >= corner_radius - tolerance)
+        )
         in_metal = ~(in_positive_quadrant & rounded_quadrant) | on_corner_boundary
-    return on_process_plane & in_metal
+    return in_metal
+
+
+def thin_metal_mask(points, radius, corner_radius, topology):
+    tolerance = 1.0e-12 * radius
+    return (np.abs(points[:, 2]) <= tolerance) & metal_footprint_mask(
+        points,
+        radius,
+        corner_radius,
+        0.0,
+        topology,
+    )
+
+
+def pec_trace_mask(
+    points,
+    radius,
+    corner_radius,
+    metal_thickness,
+    sidewall_angle,
+    topology,
+):
+    tolerance = 1.0e-12 * radius
+    bottom = (np.abs(points[:, 2]) <= tolerance) & metal_footprint_mask(
+        points,
+        radius,
+        corner_radius,
+        0.0,
+        topology,
+    )
+    pullback = metal_thickness / np.tan(np.deg2rad(sidewall_angle))
+    top_offset = pullback if topology == "convex" else -pullback
+    top_footprint = metal_footprint_mask(
+        points,
+        radius,
+        corner_radius,
+        top_offset,
+        topology,
+    )
+    swept_footprint = top_footprint | metal_footprint_mask(
+        points,
+        radius,
+        corner_radius,
+        0.0,
+        topology,
+    )
+    top = (
+        np.abs(points[:, 2] - metal_thickness) <= tolerance
+    ) & swept_footprint
+    return bottom | top
 
 
 def dielectric(
@@ -284,8 +389,9 @@ def make_config(
                 "KSPType": "CG",
                 "Tol": 1.0e-10,
                 "MaxIts": 1000,
-                "EstimatorTol": 1.0e-1,
-                "EstimatorMaxIts": 20,
+                # These generated coupon solves never adapt the mesh.
+                "EstimatorTol": 5.0e-1,
+                "EstimatorMaxIts": 5,
                 "EstimatorMG": True,
             },
         },
@@ -301,6 +407,9 @@ def write_library(
     topology,
     metal_thickness,
     overetch_depth,
+    sidewall_angle,
+    top_rounding,
+    trench_rounding,
     substrate_permittivity,
     interface_layers,
 ):
@@ -352,6 +461,9 @@ def write_library(
             "LengthUnit": "um",
             "MetalThickness": metal_thickness,
             "OveretchDepth": overetch_depth,
+            "SidewallAngle": sidewall_angle,
+            "TopRounding": top_rounding,
+            "TrenchRounding": trench_rounding,
             "SubstratePermittivity": substrate_permittivity,
             "InterfaceLayers": {
                 interface_type: {
@@ -379,6 +491,9 @@ def main():
     parser.add_argument("--order", type=int, default=1)
     parser.add_argument("--metal-thickness", type=float, default=0.1)
     parser.add_argument("--overetch-depth", type=float, default=0.05)
+    parser.add_argument("--sidewall-angle", type=float, default=80.0)
+    parser.add_argument("--top-rounding", type=float, default=0.01)
+    parser.add_argument("--trench-rounding", type=float, default=0.01)
     parser.add_argument("--substrate-permittivity", type=float, default=11.47)
     parser.add_argument("--sa-thickness", type=float, default=0.002)
     parser.add_argument("--sa-permittivity", type=float, default=4.0)
@@ -400,6 +515,23 @@ def main():
         parser.error("--metal-thickness must lie between zero and the radius")
     if not 0.0 <= args.overetch_depth < args.radius:
         parser.error("--overetch-depth must be nonnegative and smaller than the radius")
+    if not 0.0 < args.sidewall_angle <= 90.0:
+        parser.error("--sidewall-angle must lie in (0, 90]")
+    if not 0.0 <= args.top_rounding < args.metal_thickness:
+        parser.error(
+            "--top-rounding must be nonnegative and smaller than the metal thickness"
+        )
+    if not 0.0 <= args.trench_rounding <= args.overetch_depth:
+        parser.error(
+            "--trench-rounding must lie between zero and the overetch depth"
+        )
+    pullback = args.metal_thickness / np.tan(
+        np.deg2rad(args.sidewall_angle)
+    )
+    if args.corner_radius > 0.0 and pullback > args.corner_radius:
+        parser.error(
+            "--sidewall-angle gives a pullback larger than the corner radius"
+        )
     material_values = (
         args.substrate_permittivity,
         args.sa_thickness,
@@ -434,10 +566,12 @@ def main():
     traces = write_basis(output, points, triangles)
     zero_trace_indices = (
         np.flatnonzero(
-            thin_metal_mask(
+            pec_trace_mask(
                 points,
                 args.radius,
                 args.corner_radius,
+                args.metal_thickness,
+                args.sidewall_angle,
                 args.topology,
             )
         )
@@ -470,6 +604,9 @@ def main():
         args.topology,
         args.metal_thickness,
         args.overetch_depth,
+        args.sidewall_angle,
+        args.top_rounding,
+        args.trench_rounding,
         args.substrate_permittivity,
         interface_layers,
     )
@@ -486,11 +623,20 @@ def main():
         heldout_trace,
         fine_points,
         fine_triangles,
-        heldout_potential(fine_points, args.radius),
+        heldout_potential(
+            fine_points,
+            args.radius,
+            args.metal_thickness,
+        ),
+    )
+    heldout_coefficients = heldout_potential(
+        points,
+        args.radius,
+        args.metal_thickness,
     )
     np.savetxt(
         output / "heldout-coefficients.csv",
-        heldout_potential(points, args.radius),
+        heldout_coefficients,
         delimiter=",",
         header="coefficient_V",
         comments="",
@@ -514,7 +660,52 @@ def main():
         config["Solver"]["Electrostatic"]["ResponseMatrix"] = False
         (output / f"{name}.json").write_text(json.dumps(config, indent=2) + "\n")
 
+    probe_directory = output / "convergence-probes"
+    probe_directory.mkdir(parents=True, exist_ok=True)
+    for stale_probe in probe_directory.glob("probe-*.csv"):
+        stale_probe.unlink()
+    convergence_probes = convergence_probe_potentials(
+        fine_points,
+        args.radius,
+        args.metal_thickness,
+    )
+    probe_paths = []
+    probe_metadata = []
+    for index, (name, expression, values) in enumerate(
+        convergence_probes, start=1
+    ):
+        path = probe_directory / f"probe-{index:02d}-{name}.csv"
+        write_surface_trace(path, fine_points, fine_triangles, values)
+        probe_paths.append(path)
+        probe_metadata.append(
+            {
+                "Index": index,
+                "Name": name,
+                "Expression": expression,
+            }
+        )
+    (output / "probe-manifest.json").write_text(
+        json.dumps({"Version": 1, "Probes": probe_metadata}, indent=2) + "\n"
+    )
+    for name, mesh, fabricated in (
+        ("probe-thin", thin_mesh, False),
+        ("probe-fabricated", fabricated_mesh, True),
+    ):
+        config = make_config(
+            output,
+            name,
+            mesh,
+            probe_paths,
+            args.radius,
+            args.order,
+            fabricated,
+            args.substrate_permittivity,
+            interface_layers,
+        )
+        (output / f"{name}.json").write_text(json.dumps(config, indent=2) + "\n")
+
     print(f"Generated {len(points)} spatial basis traces")
+    print(f"Generated {len(convergence_probes)} convergence probe traces")
     print(f"ContourGroups: {contour_groups}")
     if zero_trace_indices:
         print(f"ZeroTraceIndices: {zero_trace_indices}")
@@ -523,6 +714,8 @@ def main():
     print(library)
     print(output / "heldout-thin.json")
     print(output / "heldout-fabricated.json")
+    print(output / "probe-thin.json")
+    print(output / "probe-fabricated.json")
 
 
 if __name__ == "__main__":

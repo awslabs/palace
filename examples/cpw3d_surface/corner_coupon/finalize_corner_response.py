@@ -4,6 +4,7 @@
 
 import argparse
 import csv
+import json
 from pathlib import Path
 
 import numpy as np
@@ -115,6 +116,16 @@ def main():
 
     basis = np.loadtxt(root / "basis-points.csv", delimiter=",", skiprows=1)
     size = len(np.atleast_2d(basis))
+    library = json.loads((root / "process-library.json").read_text())
+    zero_trace_indices = np.asarray(
+        library["Models"][0].get("ZeroTraceIndices", []),
+        dtype=int,
+    ) - 1
+    if np.any(zero_trace_indices < 0) or np.any(zero_trace_indices >= size):
+        raise ValueError("ZeroTraceIndices contains an invalid basis index")
+    active_indices = np.delete(np.arange(size), zero_trace_indices)
+    if not len(active_indices):
+        raise ValueError("Corner response basis has no free trace coefficients")
     results = {}
     for kind in ("thin", "fabricated"):
         postpro = root / "postpro" / kind
@@ -130,40 +141,60 @@ def main():
         )
         results[kind] = (domain, surfaces)
 
+        reduced_domain = domain[np.ix_(active_indices, active_indices)]
         minimum, maximum, condition = check_positive(
-            f"{kind} domain response", domain, True
+            f"{kind} free-trace domain response", reduced_domain, True
         )
         print(
-            f"{kind}: basis={size}, domain eigenvalue range "
+            f"{kind}: basis={size}, free={len(active_indices)}, "
+            "free-trace domain eigenvalue range "
             f"[{minimum:.6e}, {maximum:.6e}], condition={condition:.3f}"
         )
         for interface, matrix in sorted(surfaces.items()):
+            reduced_surface = matrix[np.ix_(active_indices, active_indices)]
             minimum, maximum, _ = check_positive(
-                f"{kind} interface {interface} response", matrix, False
+                f"{kind} free-trace interface {interface} response",
+                reduced_surface,
+                False,
             )
             print(
-                f"  interface {interface}: eigenvalue range "
+                f"  free-trace interface {interface}: eigenvalue range "
                 f"[{minimum:.6e}, {maximum:.6e}]"
             )
         print(f"  compact surface matrix: {compact_path}")
 
     thin_domain, thin_surfaces = results["thin"]
     fabricated_domain, fabricated_surfaces = results["fabricated"]
-    domain_defect = np.linalg.norm(fabricated_domain - thin_domain) / np.linalg.norm(
-        thin_domain
+    active = np.ix_(active_indices, active_indices)
+    domain_defect = np.linalg.norm(
+        fabricated_domain[active] - thin_domain[active]
+    ) / np.linalg.norm(
+        thin_domain[active]
     )
-    print(f"relative domain defect norm: {domain_defect:.6e}")
+    print(f"relative free-trace domain defect norm: {domain_defect:.6e}")
     for interface in sorted(thin_surfaces):
         defect = np.linalg.norm(
-            fabricated_surfaces[interface] - thin_surfaces[interface]
-        ) / np.linalg.norm(thin_surfaces[interface])
-        print(f"relative interface {interface} defect norm: {defect:.6e}")
+            fabricated_surfaces[interface][active] - thin_surfaces[interface][active]
+        ) / np.linalg.norm(thin_surfaces[interface][active])
+        print(
+            f"relative free-trace interface {interface} defect norm: "
+            f"{defect:.6e}"
+        )
 
     coefficients_path = root / "heldout-coefficients.csv"
     if coefficients_path.is_file():
-        coefficients = np.loadtxt(
-            coefficients_path, delimiter=",", skiprows=1
+        coefficients = np.atleast_1d(
+            np.loadtxt(coefficients_path, delimiter=",", skiprows=1)
         )
+        if len(coefficients) != size:
+            raise ValueError(
+                f"{coefficients_path} has {len(coefficients)} coefficients; "
+                f"expected {size}"
+            )
+        if np.any(np.abs(coefficients[zero_trace_indices]) > 1.0e-14):
+            raise ValueError(
+                "Held-out excitation is nonzero at a PEC-constrained trace knot"
+            )
         for kind in ("thin", "fabricated"):
             postpro = root / "postpro" / f"heldout-{kind}"
             domain_path = postpro / "domain-E.csv"
@@ -171,9 +202,16 @@ def main():
             if not domain_path.is_file() or not surface_path.is_file():
                 print(f"held-out {kind}: not run")
                 continue
+            edge_path = postpro / "surface-Q-edge.csv"
+            if not edge_path.is_file():
+                print(
+                    f"held-out {kind}: missing {edge_path.name}; "
+                    "localized surface errors unavailable"
+                )
+                continue
             direct_domain = read_single_row(domain_path)["E_elec (J)"]
             surface_row = read_single_row(surface_path)
-            edge_rows = read_interface_rows(postpro / "surface-Q-edge.csv")
+            edge_rows = read_interface_rows(edge_path)
             predicted_domain = coefficients @ results[kind][0] @ coefficients
             domain_error = predicted_domain / direct_domain - 1.0
             print(f"held-out {kind} domain error: {domain_error:+.6e}")

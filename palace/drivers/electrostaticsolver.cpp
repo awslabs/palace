@@ -75,6 +75,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     EnergyData postprocessed_fixed_flux;
     EnergyData corrected;
     std::map<int, double> trace_closure_spread;
+    double maximum_trace_closure_spread;
+    double response_weighted_trace_closure_spread;
+    double trace_closure_response_failure_fraction;
+    bool confident;
   };
   std::vector<CorrectedResult> corrected_results;
   corrected_results.reserve(response_correction ? n_step : 0);
@@ -174,14 +178,19 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       auto postprocessed_fixed_flux =
           ApplyResponse(raw_energies, response.domain_correction_fixed_flux,
                         response.fabricated_surface_energy_fixed_flux);
-      constexpr double maximum_trace_closure_spread = 0.05;
-      if (response.maximum_trace_closure_spread > maximum_trace_closure_spread)
+      if (!response.confident)
       {
         Mpi::Warning(
-            "Electrostatic postprocessing-only surface-response trace-closure spread "
-            "exceeds 5% ({:.3e}). Corrected values are reported, but the raw thin-metal "
-            "field does not determine a closure-independent local response.\n",
-            response.maximum_trace_closure_spread);
+            "Electrostatic postprocessing-only surface-response confidence limits were "
+            "exceeded: max interface trace-closure spread = {:.3e}, response-weighted "
+            "local trace-closure spread = {:.3e}, trace-closure response fraction above "
+            "5% = {:.3e}. Corrected values are reported, but the raw thin-metal "
+            "field does not determine a closure-independent local response. The "
+            "self-consistent corrected result remains the preferred value because it "
+            "solves the globally coupled response-corrected system.\n",
+            response.maximum_trace_closure_spread,
+            response.response_weighted_trace_closure_spread,
+            response.trace_closure_response_failure_fraction);
       }
 
       Mpi::Print(" Solving fabrication-response corrected field\n");
@@ -228,7 +237,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         corrected_results.push_back(CorrectedResult{
             idx, std::move(raw_energies), std::move(postprocessed_fixed_trace),
             std::move(postprocessed_fixed_flux), std::move(corrected_energies),
-            response.trace_closure_spread});
+            response.trace_closure_spread, response.maximum_trace_closure_spread,
+            response.response_weighted_trace_closure_spread,
+            response.trace_closure_response_failure_fraction, response.confident});
       }
     }
 
@@ -271,6 +282,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     output.table.insert("domain_postprocessed_fixed_flux",
                         "E_elec postprocessed fixed-flux (J)");
     output.table.insert("domain_corrected", "E_elec corrected (J)");
+    output.table.insert("maximum_trace_closure_spread", "max trace closure spread");
+    output.table.insert("weighted_trace_closure_spread",
+                        "response-weighted local trace closure spread");
+    output.table.insert("trace_closure_failure_fraction",
+                        "trace-closure response fraction above limit");
+    output.table.insert("confidence_pass", "confidence pass");
+    output.table["confidence_pass"].print_as_int = true;
     const auto &interfaces = corrected_results.front().raw.interfaces;
     for (const auto &[interface, data] : interfaces)
     {
@@ -318,6 +336,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                  result.postprocessed_fixed_flux.domain);
       output.table["domain_corrected"]
           << iodata.units.Dimensionalize<VT::ENERGY>(result.corrected.domain);
+      output.table["maximum_trace_closure_spread"] << result.maximum_trace_closure_spread;
+      output.table["weighted_trace_closure_spread"]
+          << result.response_weighted_trace_closure_spread;
+      output.table["trace_closure_failure_fraction"]
+          << result.trace_closure_response_failure_fraction;
+      output.table["confidence_pass"] << (result.confident ? 1.0 : 0.0);
       MFEM_VERIFY(
           result.raw.interfaces.size() == interfaces.size() &&
               result.postprocessed_fixed_trace.interfaces.size() == interfaces.size() &&

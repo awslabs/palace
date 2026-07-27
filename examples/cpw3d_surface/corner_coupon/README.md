@@ -64,17 +64,22 @@ potential is stored as a triangulated `x,y,z,V,triangle` surface trace.
 
 `finalize_corner_response.py` checks the domain and surface matrices, aggregates
 the per-edge response localized to the union of the physical-edge radius-`R`
-tubes into compact matrices, and evaluates a smooth
-held-out boundary excitation defined on a finer matching-surface
-triangulation.
+tubes into compact matrices, and evaluates a smooth held-out boundary
+excitation defined on a finer matching-surface triangulation. The held-out
+trace vanishes smoothly throughout the metal-thickness band. It is therefore
+compatible with both the thin and fabricated conductor cuts and does not
+introduce an artificial, order-dependent Dirichlet singularity where the
+matching surface meets the grounded metal.
 
 For a rounded convex corner, the generated library uses `(rho, rho, 0)` as the
 local PEC reference. The virtual sharp corner at the origin is outside the
 rounded conductor and must not be used to gauge the coupon trace. For a rounded
 concave corner, the origin remains on the conductor side of the fillet and is
-the reference. The generator derives `ZeroTraceIndices` from the selected thin
-metal footprint for sharp and rounded corners of both topologies, so Maxwell
-contour knots on the PEC are fixed to the reference-conductor potential.
+the reference. The generator derives `ZeroTraceIndices` from the swept envelope
+of the thin-plane and fabricated conductor cuts for sharp and rounded corners
+of both topologies, so Maxwell contour knots on either PEC cut are fixed to the
+reference-conductor potential. This conservative envelope keeps a tapered cut
+compatible even when its sub-mesh-scale pullback lies between trace knots.
 
 At runtime Palace joins connected curved perimeter facets and estimates the
 radius from the two tangent-arm setbacks and the corner angle,
@@ -95,22 +100,84 @@ retains straight-edge response through that neighborhood and prints a warning.
 
 ## Calibration cost and checks
 
-For `R = 2 um` and `rho = 0.5 um`, the first-order local meshes contain 174,115
-thin and 214,641 fabricated tetrahedra. On a local Apple M3 Pro, the two
-72-source calibrations took 584 and 656 seconds when run concurrently. Peak
-memory was 2.5 and 2.8 GB. There are no AMR iterations, and BoomerAMG is used
-for the electrostatic solves.
+There are no AMR iterations, and BoomerAMG is used for the electrostatic
+solves. The error-estimator tolerance is intentionally relaxed because its
+result is not used without AMR.
 
-For the current meshes, the held-out excitation gave:
+For `R = 2 um` and `rho = 0.5 um`, the refined convex thin/fabricated meshes
+contain 331,606/397,672 tetrahedra; the corresponding concave meshes contain
+332,156/395,665. Direct fabricated held-out energies changed as follows:
 
-| Coupon | Domain energy error | Maximum SA/MS/MA energy error |
-|:--|--:|--:|
-| Thin | `2.13e-4` | `4.23e-5` |
-| Fabricated | `2.13e-4` | `2.43e-5` |
+| Topology | Order change | Domain | SA | MS | MA |
+|:--|:--|--:|--:|--:|--:|
+| Convex | p1 to p2 | `-1.31%` | `+4.14%` | `+1.19%` | `+10.16%` |
+| Convex | p2 to p3 | `-0.14%` | `+0.38%` | `-0.23%` | `+2.49%` |
+| Concave | p1 to p2 | `-1.16%` | `+5.04%` | `+0.22%` | `+4.06%` |
+| Concave | p2 to p3 | `-0.04%` | `+0.59%` | `-0.17%` | `+1.22%` |
 
-These errors validate the spatial trace representation and response-matrix
-assembly for one smooth excitation. They do not validate the physical corner
-correction in a device.
+The p1 convex 72-knot response matrix reproduced the independent compatible
+trace with domain, SA, MS, and MA errors of `+2.07%`, `+0.07%`, `+5.31%`, and
+`-4.49%`, respectively. This separates trace-basis error from FEM-order error.
+Use `compare_coupon_convergence.py` with ordered `--case NAME=CALIBRATION`
+arguments to reproduce both comparisons. Matrix conditioning and convergence
+are evaluated only on the free trace subspace; PEC-constrained rows are not
+physical response modes.
+
+These tests validate the spatial trace representation and show convergence of
+the fabrication-resolved surface energies for one smooth excitation. Final
+process matrices should use p2 or higher. The tests do not by themselves
+validate the physical corner correction in a device.
+
+The generator also writes `probe-thin.json` and `probe-fabricated.json` for an
+economical FEM-order convergence test. These configs use six smooth,
+PEC-compatible outer traces instead of the 72 trace hats. Run both configs at
+each order and compare the resulting projected response matrices with:
+
+```sh
+python3 corner_coupon/compare_probe_convergence.py \
+  --case p1=/path/to/p1-calibration \
+  --case p2=/path/to/p2-calibration \
+  --case p3=/path/to/p3-calibration
+```
+
+The comparison reports the thin, fabricated, and fabricated-minus-thin domain
+matrices, together with the thin and fabricated SA/MS/MA matrices. The matrix
+change is a relative Frobenius norm. When a matrix is positive definite, the
+worst-energy column is the maximum relative quadratic-energy change over all
+linear combinations of the six probes. The domain defect is important because
+cancellation can make normalization and the self-consistent correction converge
+more slowly than either coupon domain response.
+
+Corrected participation does not use a fabricated-minus-thin surface matrix.
+Palace replaces the measured device energy inside `R` with the complete
+fabricated surface response. The thin surface matrices are retained as coupon
+diagnostics and library-format compatibility data, but their order sensitivity
+does not enter the fixed-trace, fixed-flux, or self-consistent corrected surface
+energy.
+
+For the refined `R = 2 um`, `rho = 0.5 um` meshes above, the p2-to-p3 projected
+matrix changes were:
+
+| Topology | Matrix | Domain | SA | MS | MA |
+|:--|:--|--:|--:|--:|--:|
+| Convex | Thin | `0.04%` | `3.99%` | `5.05%` | `6.83%` |
+| Convex | Fabricated | `0.09%` | `0.53%` | `0.27%` | `2.72%` |
+| Convex | Domain defect | `1.59%` | - | - | - |
+| Concave | Thin | `0.04%` | `5.25%` | `2.40%` | `3.19%` |
+| Concave | Fabricated | `0.05%` | `0.55%` | `0.15%` | `1.39%` |
+| Concave | Domain defect | `2.39%` | - | - | - |
+
+The worst p2-to-p3 quadratic-energy changes over the probe space for the
+fabricated responses were `0.25/1.03/2.32/4.92%` for convex
+domain/SA/MS/MA and `0.16/1.14/1.24/4.99%` for concave. Thus p2 gives
+percent-level dominant fabricated responses, while p3 is still preferable for
+final corner libraries, particularly for weak MA combinations and the
+domain-response defect. The six-source Palace totals were approximately
+`30 s`, `3--4 min`, and `12--14 min` per coupon at p1, p2, and p3,
+respectively, on the local Apple M3 Pro.
+
+This projected test is suitable for local convergence studies; final process
+libraries still require the full trace basis.
 
 ### Rounded-radius interpolation
 
@@ -133,6 +200,12 @@ interpolation and remains visible through the fixed-trace/fixed-flux closure
 diagnostic.
 
 ## Rectangular-island validation
+
+> **Warning**
+> The prototype device numbers in the validation sections below predate the
+> swept-cut `ZeroTraceIndices` and compatible held-out trace. They are retained
+> only as historical closure diagnostics and must be rerun before they can
+> validate a library generated by the current scripts.
 
 The scripts in `../corner_validation` compare a corrected zero-thickness
 rounded rectangular metal island with an independently meshed
@@ -270,7 +343,8 @@ coupons and the runtime dielectric postprocessing configuration.
 Before adding these matrices to a production process library:
 
 1. Add any missing cross-sectional process rounding and fabrication details.
-2. Repeat at higher FEM order and with refined fabricated meshes.
+2. Generate the final response matrices at p2 or higher on the converged
+   fabricated meshes.
 3. Check matching-radius and trace-basis convergence.
 4. Generate at least two positive-radius entries, sweep held-out plan-view
    radii, and validate the interpolated response against fabricated references.

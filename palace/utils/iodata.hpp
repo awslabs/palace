@@ -45,6 +45,8 @@ public:
   // Exposed for testing; not intended for general use.
   void CheckConfiguration();
 
+  bool InputsNondimensionalized() const { return init; }
+
   explicit IoData(const Units &units);
 
   // Construct from a pre-parsed and validated JSON config object.

@@ -140,7 +140,10 @@ universally correct: their difference measures how strongly the unresolved
 fabricated field depends on a closure assumption that a postprocessing-only
 method cannot recover from the thin-metal field. The per-interface spread is
 reported in `surface-Q-corrected.csv`; its maximum is reported in
-`surface-response-confidence.csv` and fails confidence above 5%.
+`surface-response-confidence.csv` and fails confidence above 5%. The confidence file
+also reports a response-weighted RMS of each patch/interface spread and the response
+fraction carried by local spreads above 5%; this catches cancellation between different
+edge neighborhoods even when an interface total agrees.
 
 The fabrication-resolved mesh assigns separate physical groups to trace and
 ground MS and MA surfaces. On freshly generated 200 um meshes at order 1 with
@@ -233,8 +236,12 @@ meshes, the first thin and fabricated quasi-TEM modes are 290.96 and
 292.83 GHz. Raw SA/MS/MA participation errors are
 `-24.91%/-35.36%/-66.47%`; fixed-trace correction gives
 `-2.95%/+0.45%/+20.42%`, and fixed-flux correction gives
-`+3.36%/+4.13%/+20.54%`. The maximum closure spread is 8.02%, so Palace
-correctly fails the confidence gate. This case verifies eigenmode extraction,
-automatic PEC edge matching, and corrected-output plumbing, but the order-1
-MA result is not an accuracy pass. Eigenmode correction remains
-postprocessing-only and therefore has no self-consistent columns.
+`+3.36%/+4.13%/+20.54%`. The self-consistent solve shifts the first mode from
+290.961 to 291.534 GHz, compared with 292.835 GHz for the fabricated
+reference, and gives errors of `-3.08%/+0.35%/+20.26%` with a raw-mass overlap
+of 0.9999993. The maximum closure spread is 8.02%, so Palace correctly fails
+the postprocessing-only confidence gate while the self-consistent result
+passes its non-closure gates. This case verifies eigenmode extraction,
+one-to-one corrected-mode matching, automatic PEC edge matching, and
+corrected-output plumbing. The order-1 MA result remains an accuracy failure
+and requires a higher-order fabricated-reference study.

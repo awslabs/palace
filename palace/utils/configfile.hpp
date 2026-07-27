@@ -983,9 +983,10 @@ public:
     std::array<double, 3> axis_v = {};
     std::array<double, 3> axis_w = {};
 
-    // Location of the coupon's reference conductor in its local frame, in mesh length
-    // units. The default preserves the original one-edge convention.
-    std::array<double, 3> reference = {};
+    // Locations of the coupon conductor references in its local frame, in mesh length
+    // units. The first fixes the common trace gauge; every additional reference appends
+    // one independent V_i - V_1 conductor state.
+    std::vector<std::array<double, 3>> conductor_references = {{{0.0, 0.0, 0.0}}};
 
     // Internal longitudinal quadrature weight for automatically generated 3D patches.
     // Explicit configuration syntax always uses the default unit weight.
@@ -996,14 +997,12 @@ public:
     // subject to the overlap check.
     int interpolation_group = 0;
 
-    // Internal global PEC anchor used to fix the gauge of Maxwell contour voltages.
-    // Automatic 3D matching places this away from the singular metal edge.
-    std::optional<std::array<double, 3>> maxwell_anchor = std::nullopt;
-
-    // Optional second-conductor reference, in the same local coordinates as Reference,
-    // and its mapped global PEC anchor for Maxwell line integration.
-    std::optional<std::array<double, 3>> secondary_reference = std::nullopt;
-    std::optional<std::array<double, 3>> maxwell_secondary_anchor = std::nullopt;
+    // Internal global metal anchor used to fix the gauge of Maxwell contour voltages.
+    // PEC matching may place this inside the conductor. Finite-impedance matching uses
+    // the local metal surface because the tangential electric field is not constrained
+    // to vanish.
+    std::vector<std::array<double, 3>> maxwell_conductor_anchors;
+    bool maxwell_reference_is_pec = true;
   };
 
   struct ResponseCorrectionInterfaceData
@@ -1050,7 +1049,7 @@ public:
     std::vector<OpenContourPathData> open_contour_paths;
 
     // Number of independent conductor-voltage coefficients appended after the contour
-    // coefficients. The current two-conductor model supports zero or one.
+    // coefficients.
     int conductor_state_count = 0;
 
     // Mapping from global target interface index to coupon interface index.

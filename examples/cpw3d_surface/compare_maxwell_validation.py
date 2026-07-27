@@ -161,6 +161,16 @@ def main():
         f" max spread = {100.0 * confidence['max trace closure spread']:.3f}%,"
         f" confidence pass = {int(confidence['confidence pass'])}"
     )
+    if has_self_consistent:
+        print(
+            "Self-consistent diagnostic:"
+            " f ="
+            f" {confidence['Re{f self-consistent} (GHz)']:.6f}"
+            f"{confidence['Im{f self-consistent} (GHz)']:+.6e}i GHz,"
+            f" M-overlap = {confidence['self-consistent M-overlap']:.9f},"
+            " confidence pass ="
+            f" {int(confidence['self-consistent confidence pass'])}"
+        )
 
 
 if __name__ == "__main__":

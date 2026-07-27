@@ -51,40 +51,114 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       temp.temp_dir / "fabrication-process-missing-layer.json";
   const auto invalid_library_path =
       temp.temp_dir / "fabrication-process-invalid-depth.json";
+  const auto impedance_library_path = temp.temp_dir / "fabrication-process-impedance.json";
+  const auto legacy_impedance_library_path =
+      temp.temp_dir / "fabrication-process-impedance-legacy.json";
+  const auto conductivity_library_path =
+      temp.temp_dir / "fabrication-process-conductivity.json";
+  const auto rational_impedance_library_path =
+      temp.temp_dir / "fabrication-process-rational-impedance.json";
+  const auto invalid_boundary_law_library_path =
+      temp.temp_dir / "fabrication-process-invalid-boundary-law.json";
   const auto library_3d_path = temp.temp_dir / "fabrication-process-3d.json";
+  const auto impedance_library_3d_path =
+      temp.temp_dir / "fabrication-process-impedance-3d.json";
   const auto exact_pair_library_2d_path =
       temp.temp_dir / "fabrication-process-exact-pair-2d.json";
   const auto different_pair_library_2d_path =
       temp.temp_dir / "fabrication-process-different-pair-2d.json";
   const auto interpolated_pair_library_2d_path =
       temp.temp_dir / "fabrication-process-interpolated-pair-2d.json";
+  const auto parallel_cluster_library_2d_path =
+      temp.temp_dir / "fabrication-process-parallel-cluster-2d.json";
+  const auto impedance_parallel_cluster_library_2d_path =
+      temp.temp_dir / "fabrication-process-parallel-cluster-impedance-2d.json";
+  const auto parallel_cluster_points_2d_path =
+      temp.temp_dir / "parallel-cluster-basis-points-2d.csv";
   const auto coupled_library_3d_path =
       temp.temp_dir / "fabrication-process-coupled-3d.json";
   const auto interpolated_coupled_library_3d_path =
       temp.temp_dir / "fabrication-process-coupled-interpolated-3d.json";
+  const auto parallel_cluster_library_3d_path =
+      temp.temp_dir / "fabrication-process-parallel-cluster-3d.json";
+  const auto parallel_cluster_only_library_3d_path =
+      temp.temp_dir / "fabrication-process-parallel-cluster-only-3d.json";
+  const auto disconnected_cluster_library_3d_path =
+      temp.temp_dir / "fabrication-process-disconnected-cluster-3d.json";
   const auto coupled_fabricated_path = temp.temp_dir / "coupled-fabricated.csv";
   const auto coupled_thin_path = temp.temp_dir / "coupled-thin.csv";
   const auto coupled_fabricated_surface_path =
       temp.temp_dir / "coupled-fabricated-surface.csv";
   const auto coupled_thin_surface_path = temp.temp_dir / "coupled-thin-surface.csv";
+  const auto cluster_fabricated_path = temp.temp_dir / "cluster-fabricated.csv";
+  const auto cluster_thin_path = temp.temp_dir / "cluster-thin.csv";
+  const auto cluster_fabricated_surface_path =
+      temp.temp_dir / "cluster-fabricated-surface.csv";
+  const auto cluster_thin_surface_path = temp.temp_dir / "cluster-thin-surface.csv";
   const auto zero_trace_path = temp.temp_dir / "zero-trace.csv";
   const auto corner_points_path = temp.temp_dir / "corner-basis-points.csv";
   const auto corner_fabricated_path = temp.temp_dir / "corner-fabricated.csv";
   const auto corner_thin_path = temp.temp_dir / "corner-thin.csv";
+  const auto corner_constrained_perturbed_fabricated_path =
+      temp.temp_dir / "corner-constrained-perturbed-fabricated.csv";
+  const auto corner_constrained_perturbed_thin_path =
+      temp.temp_dir / "corner-constrained-perturbed-thin.csv";
   const auto corner_fabricated_surface_path =
       temp.temp_dir / "corner-fabricated-surface.csv";
   const auto corner_thin_surface_path = temp.temp_dir / "corner-thin-surface.csv";
   const auto convex_library_3d_path = temp.temp_dir / "fabrication-process-convex-3d.json";
+  const auto finite_impedance_convex_library_3d_path =
+      temp.temp_dir / "fabrication-process-convex-finite-impedance-3d.json";
   const auto concave_library_3d_path =
       temp.temp_dir / "fabrication-process-concave-3d.json";
-  const auto strip_library_3d_path =
-      temp.temp_dir / "fabrication-process-strip-3d.json";
+  const auto strip_library_3d_path = temp.temp_dir / "fabrication-process-strip-3d.json";
   const auto rounded_library_3d_path =
       temp.temp_dir / "fabrication-process-rounded-3d.json";
+  const auto constrained_perturbed_rounded_library_3d_path =
+      temp.temp_dir / "fabrication-process-rounded-constrained-perturbed-3d.json";
+  const auto finite_impedance_rounded_library_3d_path =
+      temp.temp_dir / "fabrication-process-rounded-finite-impedance-3d.json";
   const auto rounded_concave_library_3d_path =
       temp.temp_dir / "fabrication-process-rounded-concave-3d.json";
   const auto interpolated_rounded_library_3d_path =
       temp.temp_dir / "fabrication-process-rounded-interpolated-3d.json";
+  const auto endpoint_library_3d_path =
+      temp.temp_dir / "fabrication-process-endpoint-3d.json";
+  const auto junction_library_3d_path =
+      temp.temp_dir / "fabrication-process-junction-3d.json";
+  const auto spatial_cluster_library_3d_path =
+      temp.temp_dir / "fabrication-process-spatial-cluster-3d.json";
+  const auto cross_layer_spatial_cluster_library_3d_path =
+      temp.temp_dir / "fabrication-process-spatial-cluster-cross-layer-3d.json";
+  const auto incomplete_cross_layer_spatial_cluster_library_3d_path =
+      temp.temp_dir / "fabrication-process-spatial-cluster-cross-layer-incomplete-3d.json";
+  const auto spatial_cluster_position_mismatch_library_3d_path =
+      temp.temp_dir / "fabrication-process-spatial-cluster-position-mismatch-3d.json";
+  const auto spatial_cluster_orientation_mismatch_library_3d_path =
+      temp.temp_dir / "fabrication-process-spatial-cluster-orientation-mismatch-3d.json";
+  const auto spatial_cluster_extra_edge_library_3d_path =
+      temp.temp_dir / "fabrication-process-spatial-cluster-extra-edge-3d.json";
+  const auto spatial_cluster_impedance_mismatch_library_3d_path =
+      temp.temp_dir / "fabrication-process-spatial-cluster-impedance-mismatch-3d.json";
+  const auto spatial_cluster_mixed_impedance_library_3d_path =
+      temp.temp_dir / "fabrication-process-spatial-cluster-mixed-impedance-3d.json";
+  const auto spatial_cluster_parameter_mismatch_library_3d_path =
+      temp.temp_dir / "fabrication-process-spatial-cluster-parameter-mismatch-3d.json";
+  const auto spatial_cluster_points_path =
+      temp.temp_dir / "spatial-cluster-basis-points.csv";
+  const auto cross_layer_fabricated_surface_path =
+      temp.temp_dir / "cross-layer-fabricated-surface.csv";
+  const auto cross_layer_thin_surface_path = temp.temp_dir / "cross-layer-thin-surface.csv";
+  const json impedance_law = {{"Type", "Impedance"}, {"Ls", 1.0e-13}};
+  const json second_impedance_law = {{"Type", "Impedance"}, {"Ls", 2.0e-13}};
+  const json conductivity_law = {{"Type", "Conductivity"},
+                                 {"Conductivity", 5.8e7},
+                                 {"Permeability", 1.2},
+                                 {"Thickness", 1.0e-7},
+                                 {"External", true}};
+  const json rational_impedance_law = {{"Type", "RationalImpedance"},
+                                       {"Numerator", {5.0e-8, 0.0}},
+                                       {"Denominator", {5.0e-20, 1.0e-9, 50.0}}};
   if (Mpi::Root(Mpi::World()))
   {
     {
@@ -156,6 +230,45 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                              {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}}}}}};
     std::ofstream output(library_path);
     output << library.dump(2) << "\n";
+    auto impedance_library = library;
+    impedance_library["Name"] = "unit-test-process-impedance";
+    for (auto &model : impedance_library["Models"])
+    {
+      model["BoundaryCondition"] = impedance_law;
+    }
+    std::ofstream impedance_output(impedance_library_path);
+    impedance_output << impedance_library.dump(2) << "\n";
+    auto legacy_impedance_library = impedance_library;
+    legacy_impedance_library["Name"] = "unit-test-process-impedance-legacy";
+    for (auto &model : legacy_impedance_library["Models"])
+    {
+      model["BoundaryCondition"] = "Impedance";
+    }
+    std::ofstream legacy_impedance_output(legacy_impedance_library_path);
+    legacy_impedance_output << legacy_impedance_library.dump(2) << "\n";
+    auto conductivity_library = library;
+    conductivity_library["Name"] = "unit-test-process-conductivity";
+    for (auto &model : conductivity_library["Models"])
+    {
+      model["BoundaryCondition"] = conductivity_law;
+    }
+    std::ofstream conductivity_output(conductivity_library_path);
+    conductivity_output << conductivity_library.dump(2) << "\n";
+    auto rational_impedance_library = library;
+    rational_impedance_library["Name"] = "unit-test-process-rational-impedance";
+    for (auto &model : rational_impedance_library["Models"])
+    {
+      model["BoundaryCondition"] = {{"Type", "RationalImpedance"},
+                                    {"Numerator", {1.0e-7, 0.0}},
+                                    {"Denominator", {1.0e-19, 2.0e-9, 100.0}}};
+    }
+    std::ofstream rational_impedance_output(rational_impedance_library_path);
+    rational_impedance_output << rational_impedance_library.dump(2) << "\n";
+    auto invalid_boundary_law_library = impedance_library;
+    invalid_boundary_law_library["Name"] = "unit-test-process-invalid-boundary-law";
+    invalid_boundary_law_library["Models"][0]["BoundaryCondition"]["Inductance"] = 1.0e-13;
+    std::ofstream invalid_boundary_law_output(invalid_boundary_law_library_path);
+    invalid_boundary_law_output << invalid_boundary_law_library.dump(2) << "\n";
     auto legacy_library = library;
     legacy_library["Version"] = 2;
     legacy_library.erase("Fabrication");
@@ -208,6 +321,14 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                                              {{"Type", "MA"}, {"Coupon", 1}}};
     std::ofstream output_3d(library_3d_path);
     output_3d << library_3d.dump(2) << "\n";
+    auto impedance_library_3d = library_3d;
+    impedance_library_3d["Name"] = "unit-test-process-impedance-3d";
+    for (auto &model : impedance_library_3d["Models"])
+    {
+      model["BoundaryCondition"] = impedance_law;
+    }
+    std::ofstream impedance_output_3d(impedance_library_3d_path);
+    impedance_output_3d << impedance_library_3d.dump(2) << "\n";
     auto coupled_library_3d = library_3d;
     coupled_library_3d["Version"] = 3;
     coupled_library_3d["Name"] = "unit-test-process-coupled-3d";
@@ -268,6 +389,129 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     std::ofstream coupled_output_3d(coupled_library_3d_path);
     coupled_output_3d << coupled_library_3d.dump(2) << "\n";
 
+    auto parallel_cluster_library_3d = coupled_library_3d;
+    parallel_cluster_library_3d["Name"] = "unit-test-process-parallel-cluster-3d";
+    parallel_cluster_library_3d["MatchingRadius"] = 11.0;
+    auto strip_20_model = library_3d["Models"][0];
+    strip_20_model["Name"] = "trace-strip-20um";
+    strip_20_model["Topology"] = "SameConductorStrip";
+    strip_20_model["Separation"] = 20.0;
+    strip_20_model["SeparationTolerance"] = 1.0e-6;
+    auto parallel_cluster_model = coupled_library_3d["Models"][1];
+    parallel_cluster_model["Name"] = "cpw-four-edge-cluster";
+    parallel_cluster_model["Topology"] = "ParallelEdgeCluster";
+    parallel_cluster_model.erase("Separation");
+    parallel_cluster_model.erase("SeparationTolerance");
+    parallel_cluster_model["EdgeOffsetTolerance"] = 1.0e-6;
+    parallel_cluster_model["Edges"] = {
+        {{"Offset", 0.0}, {"GapDirection", 1}, {"Conductor", 1}},
+        {{"Offset", 12.0}, {"GapDirection", -1}, {"Conductor", 2}},
+        {{"Offset", 32.0}, {"GapDirection", 1}, {"Conductor", 2}},
+        {{"Offset", 44.0}, {"GapDirection", -1}, {"Conductor", 1}}};
+    std::array<std::array<double, 6>, 6> cluster_fabricated{};
+    std::array<std::array<double, 6>, 6> cluster_thin{};
+    for (std::size_t i = 0; i < cluster_fabricated.size(); i++)
+    {
+      cluster_fabricated[i][i] = (i >= 4 ? 3.0 : 1.0) * 1.0e-12;
+      cluster_thin[i][i] = 1.0e-12;
+    }
+    write_domain_matrix(cluster_fabricated_path, cluster_fabricated);
+    write_domain_matrix(cluster_thin_path, cluster_thin);
+    write_surface_matrix(cluster_fabricated_surface_path, cluster_fabricated);
+    write_surface_matrix(cluster_thin_surface_path, cluster_thin);
+    auto disconnected_ground_cluster_model = parallel_cluster_model;
+    disconnected_ground_cluster_model["Name"] = "cpw-three-conductor-four-edge-cluster";
+    disconnected_ground_cluster_model["ConductorReferences"] = {
+        {0.0, 0.0, 0.0}, {12.0, 0.0, 0.0}, {44.0, 0.0, 0.0}};
+    disconnected_ground_cluster_model["Edges"][3]["Conductor"] = 3;
+    disconnected_ground_cluster_model["OpenContourPaths"] = {
+        {{"Indices", {1, 2}}, {"StartConductor", 1}, {"EndConductor", 2}},
+        {{"Indices", {3, 4}}, {"StartConductor", 2}, {"EndConductor", 3}}};
+    disconnected_ground_cluster_model["FabricatedMatrix"] =
+        cluster_fabricated_path.string();
+    disconnected_ground_cluster_model["ThinMatrix"] = cluster_thin_path.string();
+    disconnected_ground_cluster_model["FabricatedSurfaceMatrix"] =
+        cluster_fabricated_surface_path.string();
+    disconnected_ground_cluster_model["ThinSurfaceMatrix"] =
+        cluster_thin_surface_path.string();
+    parallel_cluster_library_3d["Models"].push_back(std::move(strip_20_model));
+    parallel_cluster_library_3d["Models"].push_back(std::move(parallel_cluster_model));
+    parallel_cluster_library_3d["Models"].push_back(
+        std::move(disconnected_ground_cluster_model));
+    std::ofstream parallel_cluster_output_3d(parallel_cluster_library_3d_path);
+    parallel_cluster_output_3d << parallel_cluster_library_3d.dump(2) << "\n";
+    auto parallel_cluster_only_library_3d = parallel_cluster_library_3d;
+    parallel_cluster_only_library_3d["Name"] = "unit-test-process-parallel-cluster-only-3d";
+    parallel_cluster_only_library_3d["Models"] = json::array();
+    for (const auto &model : parallel_cluster_library_3d["Models"])
+    {
+      if (model.value("Topology", "") == "ParallelEdgeCluster")
+      {
+        parallel_cluster_only_library_3d["Models"].push_back(model);
+      }
+    }
+    std::ofstream parallel_cluster_only_output_3d(parallel_cluster_only_library_3d_path);
+    parallel_cluster_only_output_3d << parallel_cluster_only_library_3d.dump(2) << "\n";
+    auto disconnected_cluster_library_3d = parallel_cluster_library_3d;
+    disconnected_cluster_library_3d["Name"] = "unit-test-process-disconnected-cluster-3d";
+    disconnected_cluster_library_3d["Models"].back()["OpenContourPaths"].erase(1);
+    std::ofstream disconnected_cluster_output_3d(disconnected_cluster_library_3d_path);
+    disconnected_cluster_output_3d << disconnected_cluster_library_3d.dump(2) << "\n";
+
+    {
+      std::ofstream output(parallel_cluster_points_2d_path);
+      output << "x,y,z\n"
+             << "0.05,-0.05,0.0\n"
+             << "0.15,-0.05,0.0\n"
+             << "0.45,-0.05,0.0\n"
+             << "0.55,-0.05,0.0\n";
+    }
+    const json cpw_cluster_edges = {
+        {{"Offset", 0.0}, {"GapDirection", 1}, {"Conductor", 1}},
+        {{"Offset", 0.2}, {"GapDirection", -1}, {"Conductor", 2}},
+        {{"Offset", 0.4}, {"GapDirection", 1}, {"Conductor", 2}},
+        {{"Offset", 0.6}, {"GapDirection", -1}, {"Conductor", 1}}};
+    auto two_conductor_cluster_model = parallel_cluster_library_3d["Models"][1];
+    two_conductor_cluster_model["Name"] = "cpw-two-conductor-four-edge-cluster";
+    two_conductor_cluster_model["Topology"] = "ParallelEdgeCluster";
+    two_conductor_cluster_model.erase("Separation");
+    two_conductor_cluster_model.erase("SeparationTolerance");
+    two_conductor_cluster_model.erase("CouponDepth");
+    two_conductor_cluster_model["BasisPoints"] = parallel_cluster_points_2d_path.string();
+    two_conductor_cluster_model["ConductorReferences"] = {{0.0, 0.0, 0.0}, {0.2, 0.0, 0.0}};
+    two_conductor_cluster_model["Edges"] = cpw_cluster_edges;
+    two_conductor_cluster_model["EdgeOffsetTolerance"] = 1.0e-8;
+    two_conductor_cluster_model["OpenContourPaths"] = {
+        {{"Indices", {1, 2}}, {"StartConductor", 1}, {"EndConductor", 2}},
+        {{"Indices", {3, 4}}, {"StartConductor", 2}, {"EndConductor", 1}}};
+    auto three_conductor_cluster_model = parallel_cluster_library_3d["Models"].back();
+    three_conductor_cluster_model["Name"] = "cpw-three-conductor-four-edge-cluster-2d";
+    three_conductor_cluster_model.erase("CouponDepth");
+    three_conductor_cluster_model["BasisPoints"] = parallel_cluster_points_2d_path.string();
+    three_conductor_cluster_model["ConductorReferences"] = {
+        {0.0, 0.0, 0.0}, {0.2, 0.0, 0.0}, {0.6, 0.0, 0.0}};
+    three_conductor_cluster_model["Edges"] = cpw_cluster_edges;
+    three_conductor_cluster_model["Edges"][3]["Conductor"] = 3;
+    three_conductor_cluster_model["EdgeOffsetTolerance"] = 1.0e-8;
+    auto parallel_cluster_library_2d = library;
+    parallel_cluster_library_2d["Name"] = "unit-test-process-parallel-cluster-2d";
+    parallel_cluster_library_2d["MatchingRadius"] = 0.25;
+    parallel_cluster_library_2d["Models"] = {two_conductor_cluster_model,
+                                             three_conductor_cluster_model};
+    std::ofstream parallel_cluster_output_2d(parallel_cluster_library_2d_path);
+    parallel_cluster_output_2d << parallel_cluster_library_2d.dump(2) << "\n";
+    auto impedance_parallel_cluster_library_2d = parallel_cluster_library_2d;
+    impedance_parallel_cluster_library_2d["Name"] =
+        "unit-test-process-parallel-cluster-impedance-2d";
+    for (auto &model : impedance_parallel_cluster_library_2d["Models"])
+    {
+      model["BoundaryCondition"] = impedance_law;
+    }
+    std::ofstream impedance_parallel_cluster_output_2d(
+        impedance_parallel_cluster_library_2d_path);
+    impedance_parallel_cluster_output_2d << impedance_parallel_cluster_library_2d.dump(2)
+                                         << "\n";
+
     {
       std::ofstream output(corner_points_path);
       output << "x,y,z\n";
@@ -295,6 +539,30 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     write_domain_matrix(corner_thin_path, corner_thin);
     write_surface_matrix(corner_fabricated_surface_path, corner_fabricated);
     write_surface_matrix(corner_thin_surface_path, corner_thin);
+    auto corner_constrained_perturbed_fabricated = corner_fabricated;
+    auto corner_constrained_perturbed_thin = corner_thin;
+    for (const std::size_t i : {4, 5, 6, 7})
+    {
+      corner_constrained_perturbed_fabricated[i][i] = 8.0e-12;
+      corner_constrained_perturbed_thin[i][i] = 0.4e-12;
+      for (std::size_t j = 0; j < corner_fabricated.size(); j++)
+      {
+        if (j == i)
+        {
+          continue;
+        }
+        const double coupling =
+            1.0 / (1.0 + std::abs(static_cast<int>(i) - static_cast<int>(j)));
+        corner_constrained_perturbed_fabricated[i][j] =
+            corner_constrained_perturbed_fabricated[j][i] = 0.2e-12 * coupling;
+        corner_constrained_perturbed_thin[i][j] = corner_constrained_perturbed_thin[j][i] =
+            0.15e-12 * coupling;
+      }
+    }
+    write_domain_matrix(corner_constrained_perturbed_fabricated_path,
+                        corner_constrained_perturbed_fabricated);
+    write_domain_matrix(corner_constrained_perturbed_thin_path,
+                        corner_constrained_perturbed_thin);
 
     auto convex_library_3d = library_3d;
     convex_library_3d["Name"] = "unit-test-process-convex-3d";
@@ -314,6 +582,184 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     convex_library_3d["Models"].push_back(corner_model);
     std::ofstream convex_output_3d(convex_library_3d_path);
     convex_output_3d << convex_library_3d.dump(2) << "\n";
+
+    auto finite_impedance_convex_library_3d = convex_library_3d;
+    finite_impedance_convex_library_3d["Name"] =
+        "unit-test-process-convex-finite-impedance-3d";
+    for (auto &model : finite_impedance_convex_library_3d["Models"])
+    {
+      model["BoundaryCondition"] = impedance_law;
+    }
+    finite_impedance_convex_library_3d["Models"][1]["Name"] =
+        "convex-corner-90-finite-impedance";
+    finite_impedance_convex_library_3d["Models"][1]["BoundaryCondition"] = impedance_law;
+    finite_impedance_convex_library_3d["Models"][1]["Reference"] = {0.0, 0.0, 0.0};
+    std::ofstream finite_impedance_convex_output_3d(
+        finite_impedance_convex_library_3d_path);
+    finite_impedance_convex_output_3d << finite_impedance_convex_library_3d.dump(2) << "\n";
+
+    {
+      std::ofstream output(spatial_cluster_points_path);
+      output << "x,y,z\n"
+             << "0.025,-0.025,0.02\n"
+             << "0.050,-0.050,0.02\n"
+             << "0.075,-0.075,-0.02\n"
+             << "0.100,-0.100,-0.02\n";
+    }
+    auto spatial_cluster_library_3d = convex_library_3d;
+    spatial_cluster_library_3d["Name"] = "unit-test-process-spatial-cluster-3d";
+    auto spatial_cluster_model = coupled_library_3d["Models"][1];
+    spatial_cluster_model["Name"] = "offset-corner-pair";
+    spatial_cluster_model["Topology"] = "SpatialEdgeCluster";
+    spatial_cluster_model.erase("Separation");
+    spatial_cluster_model.erase("SeparationTolerance");
+    spatial_cluster_model.erase("CouponDepth");
+    spatial_cluster_model["BasisPoints"] = spatial_cluster_points_path.string();
+    spatial_cluster_model["EdgePositionTolerance"] = 1.0e-6;
+    spatial_cluster_model["EdgeAngleTolerance"] = 1.0e-6;
+    spatial_cluster_model["ConductorReferences"] = {{0.0, 0.0, 0.0}, {0.125, -0.125, 0.0}};
+    spatial_cluster_model["OpenContourPaths"] = {
+        {{"Indices", {1, 2}}, {"StartConductor", 1}, {"EndConductor", 2}},
+        {{"Indices", {4, 3}}, {"StartConductor", 1}, {"EndConductor", 2}}};
+    spatial_cluster_model["Edges"] = {{{"Point", {0.0, 0.0, 0.0}},
+                                       {"GapDirection", {0.0, -1.0, 0.0}},
+                                       {"ProcessNormal", {0.0, 0.0, 1.0}},
+                                       {"Interval", {0.0, 0.2}},
+                                       {"Conductor", 1},
+                                       {"BoundaryCondition", "PEC"}},
+                                      {{"Point", {0.0, 0.0, 0.0}},
+                                       {"GapDirection", {1.0, 0.0, 0.0}},
+                                       {"ProcessNormal", {0.0, 0.0, 1.0}},
+                                       {"Interval", {-0.2, 0.0}},
+                                       {"Conductor", 1},
+                                       {"BoundaryCondition", "PEC"}},
+                                      {{"Point", {0.125, -0.125, 0.0}},
+                                       {"GapDirection", {-1.0, 0.0, 0.0}},
+                                       {"ProcessNormal", {0.0, 0.0, 1.0}},
+                                       {"Interval", {-0.2, 0.0}},
+                                       {"Conductor", 2},
+                                       {"BoundaryCondition", "PEC"}},
+                                      {{"Point", {0.125, -0.125, 0.0}},
+                                       {"GapDirection", {0.0, 1.0, 0.0}},
+                                       {"ProcessNormal", {0.0, 0.0, 1.0}},
+                                       {"Interval", {0.0, 0.2}},
+                                       {"Conductor", 2},
+                                       {"BoundaryCondition", "PEC"}}};
+    spatial_cluster_library_3d["Models"].push_back(std::move(spatial_cluster_model));
+    std::ofstream spatial_cluster_output_3d(spatial_cluster_library_3d_path);
+    spatial_cluster_output_3d << spatial_cluster_library_3d.dump(2) << "\n";
+
+    auto write_cross_layer_surface_matrix = [](const auto &path, const auto &matrix)
+    {
+      std::ofstream output(path);
+      output << "interface,edge,basis_i,basis_j,Q_total_ij (J)\n";
+      for (int interface = 1; interface <= 2; interface++)
+      {
+        for (std::size_t i = 0; i < matrix.size(); i++)
+        {
+          for (std::size_t j = i; j < matrix.size(); j++)
+          {
+            output << interface << ",1," << i + 1 << "," << j + 1 << ","
+                   << 0.5 * matrix[i][j] << "\n";
+          }
+        }
+      }
+    };
+    write_cross_layer_surface_matrix(cross_layer_fabricated_surface_path,
+                                     coupled_fabricated);
+    write_cross_layer_surface_matrix(cross_layer_thin_surface_path, coupled_thin);
+    auto cross_layer_spatial_cluster_library_3d = spatial_cluster_library_3d;
+    cross_layer_spatial_cluster_library_3d["Name"] =
+        "unit-test-process-spatial-cluster-cross-layer-3d";
+    auto &cross_layer_model = cross_layer_spatial_cluster_library_3d["Models"].back();
+    cross_layer_model["Name"] = "offset-corner-pair-cross-layer";
+    cross_layer_model["FabricatedSurfaceMatrix"] =
+        cross_layer_fabricated_surface_path.string();
+    cross_layer_model["ThinSurfaceMatrix"] = cross_layer_thin_surface_path.string();
+    cross_layer_model["Interfaces"] = {{{"Slot", 1}, {"Type", "SA"}, {"Coupon", 1}},
+                                       {{"Slot", 2}, {"Type", "SA"}, {"Coupon", 2}}};
+    for (std::size_t edge = 0; edge < cross_layer_model["Edges"].size(); edge++)
+    {
+      cross_layer_model["Edges"][edge]["InterfaceSlot"] = edge < 2 ? 1 : 2;
+    }
+    std::ofstream cross_layer_spatial_cluster_output_3d(
+        cross_layer_spatial_cluster_library_3d_path);
+    cross_layer_spatial_cluster_output_3d << cross_layer_spatial_cluster_library_3d.dump(2)
+                                          << "\n";
+
+    auto incomplete_cross_layer_library = cross_layer_spatial_cluster_library_3d;
+    incomplete_cross_layer_library["Name"] =
+        "unit-test-process-spatial-cluster-cross-layer-incomplete-3d";
+    incomplete_cross_layer_library["Models"].back()["Interfaces"].erase(1);
+    std::ofstream incomplete_cross_layer_output_3d(
+        incomplete_cross_layer_spatial_cluster_library_3d_path);
+    incomplete_cross_layer_output_3d << incomplete_cross_layer_library.dump(2) << "\n";
+
+    auto position_mismatch_library = spatial_cluster_library_3d;
+    position_mismatch_library["Name"] =
+        "unit-test-process-spatial-cluster-position-mismatch-3d";
+    position_mismatch_library["Models"].back()["Edges"][3]["Point"] =
+        std::array<double, 3>{0.135, -0.125, 0.0};
+    std::ofstream position_mismatch_output_3d(
+        spatial_cluster_position_mismatch_library_3d_path);
+    position_mismatch_output_3d << position_mismatch_library.dump(2) << "\n";
+
+    auto orientation_mismatch_library = spatial_cluster_library_3d;
+    orientation_mismatch_library["Name"] =
+        "unit-test-process-spatial-cluster-orientation-mismatch-3d";
+    orientation_mismatch_library["Models"].back()["Edges"][3]["GapDirection"] =
+        std::array<double, 3>{0.6, 0.8, 0.0};
+    std::ofstream orientation_mismatch_output_3d(
+        spatial_cluster_orientation_mismatch_library_3d_path);
+    orientation_mismatch_output_3d << orientation_mismatch_library.dump(2) << "\n";
+
+    auto extra_edge_library = spatial_cluster_library_3d;
+    extra_edge_library["Name"] = "unit-test-process-spatial-cluster-extra-edge-3d";
+    extra_edge_library["Models"].back()["Edges"].erase(3);
+    std::ofstream extra_edge_output_3d(spatial_cluster_extra_edge_library_3d_path);
+    extra_edge_output_3d << extra_edge_library.dump(2) << "\n";
+
+    auto impedance_mismatch_library = spatial_cluster_library_3d;
+    impedance_mismatch_library["Name"] =
+        "unit-test-process-spatial-cluster-impedance-mismatch-3d";
+    for (auto &edge : impedance_mismatch_library["Models"].back()["Edges"])
+    {
+      edge["BoundaryCondition"] = "Impedance";
+    }
+    std::ofstream impedance_mismatch_output_3d(
+        spatial_cluster_impedance_mismatch_library_3d_path);
+    impedance_mismatch_output_3d << impedance_mismatch_library.dump(2) << "\n";
+
+    auto mixed_impedance_library = spatial_cluster_library_3d;
+    mixed_impedance_library["Name"] =
+        "unit-test-process-spatial-cluster-mixed-impedance-3d";
+    for (std::size_t edge = 2; edge < mixed_impedance_library["Models"][2]["Edges"].size();
+         edge++)
+    {
+      mixed_impedance_library["Models"][2]["Edges"][edge]["BoundaryCondition"] =
+          second_impedance_law;
+    }
+    auto mixed_impedance_isolated_model = mixed_impedance_library["Models"][0];
+    mixed_impedance_isolated_model["Name"] = "isolated-impedance-ls2";
+    mixed_impedance_isolated_model["BoundaryCondition"] = second_impedance_law;
+    mixed_impedance_library["Models"].push_back(std::move(mixed_impedance_isolated_model));
+    auto mixed_impedance_corner_model = mixed_impedance_library["Models"][1];
+    mixed_impedance_corner_model["Name"] = "convex-corner-90-impedance-ls2";
+    mixed_impedance_corner_model["BoundaryCondition"] = second_impedance_law;
+    mixed_impedance_corner_model["Reference"] = {0.0, 0.0, 0.0};
+    mixed_impedance_library["Models"].push_back(std::move(mixed_impedance_corner_model));
+    std::ofstream mixed_impedance_output_3d(
+        spatial_cluster_mixed_impedance_library_3d_path);
+    mixed_impedance_output_3d << mixed_impedance_library.dump(2) << "\n";
+
+    auto parameter_mismatch_library = mixed_impedance_library;
+    parameter_mismatch_library["Name"] =
+        "unit-test-process-spatial-cluster-parameter-mismatch-3d";
+    parameter_mismatch_library["Models"][2]["Edges"][3]["BoundaryCondition"] = {
+        {"Type", "Impedance"}, {"Ls", 3.0e-13}};
+    std::ofstream parameter_mismatch_output_3d(
+        spatial_cluster_parameter_mismatch_library_3d_path);
+    parameter_mismatch_output_3d << parameter_mismatch_library.dump(2) << "\n";
 
     auto concave_library_3d = convex_library_3d;
     concave_library_3d["Name"] = "unit-test-process-concave-3d";
@@ -344,6 +790,37 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     std::ofstream rounded_output_3d(rounded_library_3d_path);
     rounded_output_3d << rounded_library_3d.dump(2) << "\n";
 
+    auto constrained_perturbed_rounded_library_3d = rounded_library_3d;
+    constrained_perturbed_rounded_library_3d["Name"] =
+        "unit-test-process-rounded-constrained-perturbed-3d";
+    constrained_perturbed_rounded_library_3d["Models"][1]["FabricatedMatrix"] =
+        corner_constrained_perturbed_fabricated_path.string();
+    constrained_perturbed_rounded_library_3d["Models"][1]["ThinMatrix"] =
+        corner_constrained_perturbed_thin_path.string();
+    std::ofstream constrained_perturbed_rounded_output_3d(
+        constrained_perturbed_rounded_library_3d_path);
+    constrained_perturbed_rounded_output_3d
+        << constrained_perturbed_rounded_library_3d.dump(2) << "\n";
+
+    auto finite_impedance_rounded_library_3d = rounded_library_3d;
+    finite_impedance_rounded_library_3d["Name"] =
+        "unit-test-process-rounded-finite-impedance-3d";
+    for (auto &model : finite_impedance_rounded_library_3d["Models"])
+    {
+      model["BoundaryCondition"] = "Impedance";
+    }
+    finite_impedance_rounded_library_3d["Models"][1]["Name"] =
+        "convex-corner-90-r0.125-finite-impedance";
+    finite_impedance_rounded_library_3d["Models"][1]["BoundaryCondition"] = "Impedance";
+    const double rounded_reference = 0.125 * (1.0 - std::sqrt(0.5));
+    finite_impedance_rounded_library_3d["Models"][1]["Reference"] = {
+        rounded_reference, rounded_reference, 0.0};
+    finite_impedance_rounded_library_3d["Models"][1].erase("ZeroTraceIndices");
+    std::ofstream finite_impedance_rounded_output_3d(
+        finite_impedance_rounded_library_3d_path);
+    finite_impedance_rounded_output_3d << finite_impedance_rounded_library_3d.dump(2)
+                                       << "\n";
+
     auto rounded_concave_library_3d = rounded_library_3d;
     rounded_concave_library_3d["Name"] = "unit-test-process-rounded-concave-3d";
     rounded_concave_library_3d["Models"][1]["Name"] = "concave-corner-90-r0.125";
@@ -365,6 +842,37 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     interpolated_rounded_library_3d["Models"].push_back(std::move(upper_corner_model));
     std::ofstream interpolated_rounded_output_3d(interpolated_rounded_library_3d_path);
     interpolated_rounded_output_3d << interpolated_rounded_library_3d.dump(2) << "\n";
+
+    auto endpoint_library_3d = library_3d;
+    endpoint_library_3d["Name"] = "unit-test-process-endpoint-3d";
+    auto endpoint_model = corner_model;
+    endpoint_model["Name"] = "endpoint";
+    endpoint_model["Topology"] = "Endpoint";
+    endpoint_model.erase("Angle");
+    endpoint_model.erase("AngleTolerance");
+    endpoint_library_3d["Models"].push_back(std::move(endpoint_model));
+    std::ofstream endpoint_output_3d(endpoint_library_3d_path);
+    endpoint_output_3d << endpoint_library_3d.dump(2) << "\n";
+
+    auto junction_library_3d = convex_library_3d;
+    junction_library_3d["Name"] = "unit-test-process-junction-3d";
+    auto junction_model = corner_model;
+    junction_model["Name"] = "junction-4x90";
+    junction_model["Topology"] = "Junction";
+    junction_model.erase("Angle");
+    junction_model.erase("AngleTolerance");
+    junction_model["ArmAngles"] = {0.0, 90.0, 180.0, 270.0};
+    junction_model["ArmAngleTolerance"] = 1.0e-6;
+    junction_library_3d["Models"].push_back(junction_model);
+    junction_model["Name"] = "junction-4x90-finite-impedance";
+    junction_model["BoundaryCondition"] = "Impedance";
+    junction_library_3d["Models"].push_back(std::move(junction_model));
+    auto impedance_isolated_model = junction_library_3d["Models"][0];
+    impedance_isolated_model["Name"] = "isolated-impedance";
+    impedance_isolated_model["BoundaryCondition"] = "Impedance";
+    junction_library_3d["Models"].push_back(std::move(impedance_isolated_model));
+    std::ofstream junction_output_3d(junction_library_3d_path);
+    junction_output_3d << junction_library_3d.dump(2) << "\n";
   }
   Mpi::Barrier(Mpi::World());
 
@@ -491,6 +999,18 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(std::isfinite(local_electrostatic_response.domain_correction_fixed_flux));
   CHECK(local_electrostatic_response.fabricated_surface_energy_fixed_flux.at(4) > 0.0);
   CHECK(local_electrostatic_response.maximum_trace_closure_spread > 0.0);
+  // One patch and one mapped interface have no averaging: the response-weighted local
+  // spread is exactly the interface aggregate, and all response weight either passes or
+  // fails the local 5% limit.
+  CHECK_THAT(local_electrostatic_response.response_weighted_trace_closure_spread,
+             WithinRel(local_electrostatic_response.maximum_trace_closure_spread, 1.0e-12));
+  CHECK_THAT(local_electrostatic_response.trace_closure_response_failure_fraction,
+             WithinAbs(local_electrostatic_response.maximum_trace_closure_spread > 0.05
+                           ? 1.0
+                           : 0.0,
+                       1.0e-12));
+  CHECK(local_electrostatic_response.confident ==
+        (local_electrostatic_response.maximum_trace_closure_spread <= 0.05));
 
   auto separated_config = config;
   separated_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Patches"].push_back(
@@ -631,6 +1151,176 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(boundary_mode_result.loop_residual < 1.0e-10);
   CHECK_THAT(boundary_mode_result.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
 
+  // Finite-impedance boundary-mode edges use the local metal surface as their voltage
+  // reference. For a conservative field normal to the sheet this is gauge-equivalent to
+  // the PEC reference displaced into the metal.
+  auto impedance_boundary_mode_config = boundary_mode_config;
+  impedance_boundary_mode_config["Boundaries"].erase("PEC");
+  impedance_boundary_mode_config["Boundaries"]["Impedance"] = {
+      {{"Attributes", {9, 10}}, {"Ls", 1.0e-13}}};
+  impedance_boundary_mode_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      impedance_library_path.string();
+  IoData impedance_boundary_mode_iodata(impedance_boundary_mode_config, false);
+  impedance_boundary_mode_iodata.boundaries.cracked_attributes.insert(9);
+  impedance_boundary_mode_iodata.boundaries.cracked_attributes.insert(10);
+  MaterialOperator impedance_boundary_mode_material(impedance_boundary_mode_iodata,
+                                                    *automatic_meshes.back());
+  BoundaryModeOperator impedance_boundary_mode_op(
+      impedance_boundary_mode_iodata, automatic_meshes, impedance_boundary_mode_material);
+  SurfaceResponseOperator impedance_boundary_mode_response(impedance_boundary_mode_iodata,
+                                                           impedance_boundary_mode_op);
+  CHECK(impedance_boundary_mode_response.GetPatchCount() ==
+        boundary_mode_response.GetPatchCount());
+  GridFunction boundary_mode_normal_field(boundary_mode_op.GetNDSpace(), true);
+  mfem::Vector boundary_mode_normal_value(2);
+  boundary_mode_normal_value[0] = 0.0;
+  boundary_mode_normal_value[1] = -1.0;
+  mfem::VectorConstantCoefficient boundary_mode_normal_coefficient(
+      boundary_mode_normal_value);
+  boundary_mode_normal_field.Real().ProjectCoefficient(boundary_mode_normal_coefficient);
+  boundary_mode_normal_field.Imag() = 0.0;
+  GridFunction impedance_boundary_mode_normal_field(impedance_boundary_mode_op.GetNDSpace(),
+                                                    true);
+  impedance_boundary_mode_normal_field.Real().ProjectCoefficient(
+      boundary_mode_normal_coefficient);
+  impedance_boundary_mode_normal_field.Imag() = 0.0;
+  const auto boundary_mode_normal_result =
+      boundary_mode_response.GetMaxwellResponse(boundary_mode_normal_field, 0.0);
+  const auto impedance_boundary_mode_result =
+      impedance_boundary_mode_response.GetMaxwellResponse(
+          impedance_boundary_mode_normal_field, 0.0);
+  CHECK_THAT(impedance_boundary_mode_result.domain_correction,
+             WithinRel(boundary_mode_normal_result.domain_correction, 1.0e-10));
+  CHECK_THAT(
+      impedance_boundary_mode_result.fabricated_surface_energy.at(4),
+      WithinRel(boundary_mode_normal_result.fabricated_surface_energy.at(4), 1.0e-10));
+  CHECK(impedance_boundary_mode_result.loop_residual < 1.0e-10);
+  CHECK(impedance_boundary_mode_result.boundary_law_verified);
+
+  auto nondimensionalized_impedance_config = impedance_boundary_mode_config;
+  nondimensionalized_impedance_config["Model"]["L0"] = 1.0e-6;
+  nondimensionalized_impedance_config["Model"]["Lc"] = 1.0;
+  IoData nondimensionalized_impedance_iodata(nondimensionalized_impedance_config, false);
+  nondimensionalized_impedance_iodata.boundaries.cracked_attributes.insert(9);
+  nondimensionalized_impedance_iodata.boundaries.cracked_attributes.insert(10);
+  auto nondimensionalized_serial = std::make_unique<mfem::Mesh>(automatic_serial);
+  nondimensionalized_impedance_iodata.NondimensionalizeInputs(nondimensionalized_serial);
+  auto nondimensionalized_parallel =
+      std::make_unique<mfem::ParMesh>(Mpi::World(), *nondimensionalized_serial);
+  std::vector<std::unique_ptr<Mesh>> nondimensionalized_meshes;
+  nondimensionalized_meshes.push_back(
+      std::make_unique<Mesh>(std::move(nondimensionalized_parallel)));
+  MaterialOperator nondimensionalized_impedance_material(
+      nondimensionalized_impedance_iodata, *nondimensionalized_meshes.back());
+  BoundaryModeOperator nondimensionalized_impedance_op(
+      nondimensionalized_impedance_iodata, nondimensionalized_meshes,
+      nondimensionalized_impedance_material);
+  SurfaceResponseOperator nondimensionalized_impedance_response(
+      nondimensionalized_impedance_iodata, nondimensionalized_impedance_op);
+  GridFunction nondimensionalized_impedance_field(
+      nondimensionalized_impedance_op.GetNDSpace(), true);
+  nondimensionalized_impedance_field.Real().ProjectCoefficient(
+      boundary_mode_normal_coefficient);
+  nondimensionalized_impedance_field.Imag() = 0.0;
+  const auto nondimensionalized_impedance_result =
+      nondimensionalized_impedance_response.GetMaxwellResponse(
+          nondimensionalized_impedance_field, 0.0);
+  CHECK(nondimensionalized_impedance_result.boundary_law_verified);
+  CHECK(nondimensionalized_impedance_result.loop_residual < 1.0e-10);
+
+  auto impedance_mismatch_config = impedance_boundary_mode_config;
+  impedance_mismatch_config["Boundaries"]["Impedance"][0]["Ls"] = 2.0e-13;
+  IoData impedance_mismatch_iodata(impedance_mismatch_config, false);
+  impedance_mismatch_iodata.boundaries.cracked_attributes.insert(9);
+  impedance_mismatch_iodata.boundaries.cracked_attributes.insert(10);
+  MaterialOperator impedance_mismatch_material(impedance_mismatch_iodata,
+                                               *automatic_meshes.back());
+  BoundaryModeOperator impedance_mismatch_op(impedance_mismatch_iodata, automatic_meshes,
+                                             impedance_mismatch_material);
+  CHECK_THROWS_WITH(
+      SurfaceResponseOperator(impedance_mismatch_iodata, impedance_mismatch_op),
+      Catch::Matchers::ContainsSubstring(
+          "Automatic fabrication-process response matching failed"));
+
+  auto invalid_boundary_law_config = impedance_boundary_mode_config;
+  invalid_boundary_law_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      invalid_boundary_law_library_path.string();
+  IoData invalid_boundary_law_iodata(invalid_boundary_law_config, false);
+  CHECK_THROWS_WITH(
+      SurfaceResponseOperator(invalid_boundary_law_iodata, impedance_boundary_mode_op),
+      Catch::Matchers::ContainsSubstring(
+          "Unknown fabrication-process response BoundaryCondition key \"Inductance\""));
+
+  auto legacy_impedance_config = impedance_boundary_mode_config;
+  legacy_impedance_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      legacy_impedance_library_path.string();
+  IoData legacy_impedance_iodata(legacy_impedance_config, false);
+  legacy_impedance_iodata.boundaries.cracked_attributes.insert(9);
+  legacy_impedance_iodata.boundaries.cracked_attributes.insert(10);
+  SurfaceResponseOperator legacy_impedance_response(legacy_impedance_iodata,
+                                                    impedance_boundary_mode_op);
+  const auto legacy_impedance_result = legacy_impedance_response.GetMaxwellResponse(
+      impedance_boundary_mode_normal_field, 0.0);
+  CHECK_FALSE(legacy_impedance_result.boundary_law_verified);
+  CHECK_FALSE(legacy_impedance_result.closure_independent_confident);
+  CHECK_FALSE(legacy_impedance_result.confident);
+
+  auto conductivity_boundary_mode_config = boundary_mode_config;
+  conductivity_boundary_mode_config["Boundaries"].erase("PEC");
+  conductivity_boundary_mode_config["Boundaries"]["Conductivity"] = {
+      {{"Attributes", {9, 10}},
+       {"Conductivity", 5.8e7},
+       {"Permeability", 1.2},
+       {"Thickness", 1.0e-7},
+       {"External", true}}};
+  conductivity_boundary_mode_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      conductivity_library_path.string();
+  IoData conductivity_boundary_mode_iodata(conductivity_boundary_mode_config, false);
+  conductivity_boundary_mode_iodata.boundaries.cracked_attributes.insert(9);
+  conductivity_boundary_mode_iodata.boundaries.cracked_attributes.insert(10);
+  MaterialOperator conductivity_boundary_mode_material(conductivity_boundary_mode_iodata,
+                                                       *automatic_meshes.back());
+  BoundaryModeOperator conductivity_boundary_mode_op(conductivity_boundary_mode_iodata,
+                                                     automatic_meshes,
+                                                     conductivity_boundary_mode_material);
+  SurfaceResponseOperator conductivity_boundary_mode_response(
+      conductivity_boundary_mode_iodata, conductivity_boundary_mode_op);
+  GridFunction conductivity_boundary_mode_field(conductivity_boundary_mode_op.GetNDSpace(),
+                                                true);
+  conductivity_boundary_mode_field.Real().ProjectCoefficient(
+      boundary_mode_normal_coefficient);
+  conductivity_boundary_mode_field.Imag() = 0.0;
+  const auto conductivity_boundary_mode_result =
+      conductivity_boundary_mode_response.GetMaxwellResponse(
+          conductivity_boundary_mode_field, 0.0);
+  CHECK(conductivity_boundary_mode_result.boundary_law_verified);
+  CHECK(conductivity_boundary_mode_result.loop_residual < 1.0e-10);
+
+  auto rational_boundary_mode_config = boundary_mode_config;
+  rational_boundary_mode_config["Boundaries"].erase("PEC");
+  rational_boundary_mode_config["Boundaries"]["RationalImpedance"] = {
+      {{"Attributes", {9, 10}},
+       {"Numerator", rational_impedance_law["Numerator"]},
+       {"Denominator", rational_impedance_law["Denominator"]}}};
+  rational_boundary_mode_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      rational_impedance_library_path.string();
+  IoData rational_boundary_mode_iodata(rational_boundary_mode_config, false);
+  rational_boundary_mode_iodata.boundaries.cracked_attributes.insert(9);
+  rational_boundary_mode_iodata.boundaries.cracked_attributes.insert(10);
+  MaterialOperator rational_boundary_mode_material(rational_boundary_mode_iodata,
+                                                   *automatic_meshes.back());
+  BoundaryModeOperator rational_boundary_mode_op(
+      rational_boundary_mode_iodata, automatic_meshes, rational_boundary_mode_material);
+  SurfaceResponseOperator rational_boundary_mode_response(rational_boundary_mode_iodata,
+                                                          rational_boundary_mode_op);
+  GridFunction rational_boundary_mode_field(rational_boundary_mode_op.GetNDSpace(), true);
+  rational_boundary_mode_field.Real().ProjectCoefficient(boundary_mode_normal_coefficient);
+  rational_boundary_mode_field.Imag() = 0.0;
+  const auto rational_boundary_mode_result =
+      rational_boundary_mode_response.GetMaxwellResponse(rational_boundary_mode_field, 0.0);
+  CHECK(rational_boundary_mode_result.boundary_law_verified);
+  CHECK(rational_boundary_mode_result.loop_residual < 1.0e-10);
+
   auto different_pair_config = boundary_mode_config;
   different_pair_config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeAttributes"] =
       {9, 10};
@@ -690,6 +1380,169 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                                                   different_pair_mode);
   CHECK(different_pair_response.GetPatchCount() == 1);
   CHECK(different_pair_response.GetBasisSize() == 4);
+
+  auto parallel_cluster_config_2d = automatic_config;
+  parallel_cluster_config_2d["Boundaries"]["Ground"]["Attributes"] = {1, 3, 4, 9};
+  parallel_cluster_config_2d["Boundaries"]["Terminal"][0]["Attributes"] = {2, 10};
+  parallel_cluster_config_2d["Boundaries"]["Postprocessing"]["Dielectric"][0]
+                            ["EdgeAttributes"] = {9, 10};
+  parallel_cluster_config_2d["Boundaries"]["Postprocessing"]["Dielectric"][0]
+                            ["EdgeDistances"] = {0.25};
+  parallel_cluster_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      parallel_cluster_library_2d_path.string();
+  IoData parallel_cluster_iodata_2d(parallel_cluster_config_2d, false);
+  parallel_cluster_iodata_2d.boundaries.cracked_attributes.insert(9);
+  parallel_cluster_iodata_2d.boundaries.cracked_attributes.insert(10);
+
+  mfem::Mesh parallel_cluster_serial_2d =
+      mfem::Mesh::MakeCartesian2D(10, 4, mfem::Element::TRIANGLE, false, 1.0, 1.0);
+  for (int face = 0; face < parallel_cluster_serial_2d.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    parallel_cluster_serial_2d.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    parallel_cluster_serial_2d.GetFaceVertices(face, vertices);
+    if (vertices.Size() != 2)
+    {
+      continue;
+    }
+    const double *p0 = parallel_cluster_serial_2d.GetVertex(vertices[0]);
+    const double *p1 = parallel_cluster_serial_2d.GetVertex(vertices[1]);
+    const double xmin = std::min(p0[0], p1[0]);
+    const double xmax = std::max(p0[0], p1[0]);
+    const bool left_ground = xmax <= 0.2 + 1.0e-12;
+    const bool trace = xmin >= 0.4 - 1.0e-12 && xmax <= 0.6 + 1.0e-12;
+    const bool right_ground = xmin >= 0.8 - 1.0e-12;
+    if (std::abs(p0[1] - 0.5) < 1.0e-12 && std::abs(p1[1] - 0.5) < 1.0e-12 &&
+        (left_ground || trace || right_ground))
+    {
+      parallel_cluster_serial_2d.AddBdrElement(
+          parallel_cluster_serial_2d.GetFace(face)->Duplicate(&parallel_cluster_serial_2d));
+      parallel_cluster_serial_2d.SetBdrAttribute(parallel_cluster_serial_2d.GetNBE() - 1,
+                                                 trace ? 10 : 9);
+    }
+  }
+  parallel_cluster_serial_2d.FinalizeTopology();
+  parallel_cluster_serial_2d.Finalize();
+  while (parallel_cluster_serial_2d.GetNE() < Mpi::Size(Mpi::World()))
+  {
+    parallel_cluster_serial_2d.UniformRefinement();
+  }
+  auto parallel_cluster_parallel_2d =
+      std::make_unique<mfem::ParMesh>(Mpi::World(), parallel_cluster_serial_2d);
+  std::vector<std::unique_ptr<Mesh>> parallel_cluster_meshes_2d;
+  parallel_cluster_meshes_2d.push_back(
+      std::make_unique<Mesh>(std::move(parallel_cluster_parallel_2d)));
+  LaplaceOperator parallel_cluster_laplace_2d(parallel_cluster_iodata_2d,
+                                              parallel_cluster_meshes_2d);
+  SurfaceResponseOperator parallel_cluster_response_2d(parallel_cluster_iodata_2d,
+                                                       parallel_cluster_laplace_2d);
+  CHECK(parallel_cluster_response_2d.GetPatchCount() == 1);
+  CHECK(parallel_cluster_response_2d.GetBasisSize() == 5);
+
+  auto parallel_cluster_boundary_config_2d = parallel_cluster_config_2d;
+  parallel_cluster_boundary_config_2d["Problem"]["Type"] = "BoundaryMode";
+  parallel_cluster_boundary_config_2d["Boundaries"].erase("Ground");
+  parallel_cluster_boundary_config_2d["Boundaries"].erase("Terminal");
+  parallel_cluster_boundary_config_2d["Boundaries"]["PEC"] = {{"Attributes", {9, 10}}};
+  parallel_cluster_boundary_config_2d["Solver"] = {
+      {"Order", 1},
+      {"BoundaryMode", {{"Freq", 5.0}}},
+      {"SurfaceResponseCorrection",
+       {{"Library", parallel_cluster_library_2d_path.string()},
+        {"UnmatchedPolicy", "Error"}}}};
+  IoData parallel_cluster_boundary_iodata_2d(parallel_cluster_boundary_config_2d, false);
+  parallel_cluster_boundary_iodata_2d.boundaries.cracked_attributes.insert(9);
+  parallel_cluster_boundary_iodata_2d.boundaries.cracked_attributes.insert(10);
+  MaterialOperator parallel_cluster_boundary_material_2d(
+      parallel_cluster_boundary_iodata_2d, *parallel_cluster_meshes_2d.back());
+  BoundaryModeOperator parallel_cluster_boundary_op_2d(
+      parallel_cluster_boundary_iodata_2d, parallel_cluster_meshes_2d,
+      parallel_cluster_boundary_material_2d);
+  SurfaceResponseOperator parallel_cluster_boundary_response_2d(
+      parallel_cluster_boundary_iodata_2d, parallel_cluster_boundary_op_2d);
+  CHECK(parallel_cluster_boundary_response_2d.GetPatchCount() == 1);
+  CHECK(parallel_cluster_boundary_response_2d.GetBasisSize() == 6);
+
+  // Finite-impedance conductors use the same connected-component ownership as PEC.
+  // In particular, the two disconnected ground strips share attribute 9 but remain
+  // distinct conductors, selecting the three-conductor cluster response.
+  auto impedance_cluster_boundary_config_2d = parallel_cluster_boundary_config_2d;
+  impedance_cluster_boundary_config_2d["Boundaries"].erase("PEC");
+  impedance_cluster_boundary_config_2d["Boundaries"]["Impedance"] = {
+      {{"Attributes", {9, 10}}, {"Ls", 1.0e-13}}};
+  impedance_cluster_boundary_config_2d["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      impedance_parallel_cluster_library_2d_path.string();
+  IoData impedance_cluster_boundary_iodata_2d(impedance_cluster_boundary_config_2d, false);
+  impedance_cluster_boundary_iodata_2d.boundaries.cracked_attributes.insert(9);
+  impedance_cluster_boundary_iodata_2d.boundaries.cracked_attributes.insert(10);
+  MaterialOperator impedance_cluster_boundary_material_2d(
+      impedance_cluster_boundary_iodata_2d, *parallel_cluster_meshes_2d.back());
+  BoundaryModeOperator impedance_cluster_boundary_op_2d(
+      impedance_cluster_boundary_iodata_2d, parallel_cluster_meshes_2d,
+      impedance_cluster_boundary_material_2d);
+  SurfaceResponseOperator impedance_cluster_boundary_response_2d(
+      impedance_cluster_boundary_iodata_2d, impedance_cluster_boundary_op_2d);
+  CHECK(impedance_cluster_boundary_response_2d.GetPatchCount() == 1);
+  CHECK(impedance_cluster_boundary_response_2d.GetBasisSize() == 6);
+
+  mfem::FunctionCoefficient cluster_potential_coefficient(
+      [](const mfem::Vector &x)
+      {
+        const double distance = std::abs(x[0] - 0.5);
+        if (distance <= 0.1)
+        {
+          return 1.0;
+        }
+        if (distance >= 0.3)
+        {
+          return 0.0;
+        }
+        const double t = (distance - 0.1) / 0.2;
+        return 1.0 - 3.0 * t * t + 2.0 * t * t * t;
+      });
+  mfem::ParGridFunction parallel_cluster_potential_2d(
+      &parallel_cluster_laplace_2d.GetH1Space().Get());
+  parallel_cluster_potential_2d.ProjectCoefficient(cluster_potential_coefficient);
+  Vector parallel_cluster_potential_true_2d;
+  parallel_cluster_potential_2d.GetTrueDofs(parallel_cluster_potential_true_2d);
+  const auto parallel_cluster_electrostatic_result_2d =
+      parallel_cluster_response_2d.GetElectrostaticResponse(
+          parallel_cluster_potential_true_2d);
+
+  GridFunction parallel_cluster_boundary_field_2d(
+      parallel_cluster_boundary_op_2d.GetNDSpace(), true);
+  mfem::ParGridFunction parallel_cluster_boundary_potential_2d(
+      &parallel_cluster_boundary_op_2d.GetH1Space().Get());
+  parallel_cluster_boundary_potential_2d.ProjectCoefficient(cluster_potential_coefficient);
+  mfem::ParDiscreteLinearOperator parallel_cluster_gradient_2d(
+      &parallel_cluster_boundary_op_2d.GetH1Space().Get(),
+      &parallel_cluster_boundary_op_2d.GetNDSpace().Get());
+  parallel_cluster_gradient_2d.AddDomainInterpolator(new mfem::GradientInterpolator());
+  parallel_cluster_gradient_2d.Assemble();
+  parallel_cluster_gradient_2d.Mult(parallel_cluster_boundary_potential_2d,
+                                    parallel_cluster_boundary_field_2d.Real());
+  parallel_cluster_boundary_field_2d.Real() *= -1.0;
+  parallel_cluster_boundary_field_2d.Imag() = 0.0;
+  const auto parallel_cluster_boundary_result_2d =
+      parallel_cluster_boundary_response_2d.GetMaxwellResponse(
+          parallel_cluster_boundary_field_2d, 0.0);
+  CHECK(parallel_cluster_boundary_result_2d.loop_residual < 1.0e-10);
+  CHECK_THAT(
+      parallel_cluster_boundary_result_2d.domain_correction,
+      WithinRel(parallel_cluster_electrostatic_result_2d.domain_correction, 1.0e-10));
+  CHECK_THAT(
+      parallel_cluster_boundary_result_2d.domain_correction_fixed_flux,
+      WithinRel(parallel_cluster_electrostatic_result_2d.domain_correction_fixed_flux,
+                1.0e-10));
+  CHECK_THAT(
+      parallel_cluster_boundary_result_2d.fabricated_surface_energy.at(4),
+      WithinRel(parallel_cluster_electrostatic_result_2d.fabricated_surface_energy.at(4),
+                1.0e-10));
 
   auto thickness_mismatch_config = automatic_config;
   thickness_mismatch_config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Thickness"] =
@@ -780,6 +1633,16 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                     Catch::Matchers::ContainsSubstring(
                         "Fabrication-process response-model CouponDepth must be positive"));
 
+  auto disconnected_cluster_config = automatic_config;
+  disconnected_cluster_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      disconnected_cluster_library_3d_path.string();
+  IoData disconnected_cluster_iodata(disconnected_cluster_config, false);
+  disconnected_cluster_iodata.boundaries.cracked_attributes.insert(9);
+  disconnected_cluster_iodata.boundaries.cracked_attributes.insert(10);
+  CHECK_THROWS_WITH(SurfaceResponseOperator(disconnected_cluster_iodata, automatic_laplace),
+                    Catch::Matchers::ContainsSubstring(
+                        "OpenContourPaths must connect every conductor reference"));
+
   const auto config_3d_path = fs::path(__FILE__).parent_path().parent_path().parent_path() /
                               "examples/cpw3d_surface/cpw3d_surface_validation_thin.json";
   std::ifstream config_3d_input(config_3d_path);
@@ -797,9 +1660,11 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   const auto segment_indices =
       GetInterfaceMetalEdgeSegmentIndices(geometry_3d, 1, InterfaceDielectric::SA);
   double physical_edge_length = 0.0;
+  std::set<std::size_t> physical_edge_vertices;
   for (const std::size_t segment_index : segment_indices)
   {
     const auto &segment = geometry_3d.segments[segment_index];
+    physical_edge_vertices.insert(segment.vertices.begin(), segment.vertices.end());
     const auto &p0 = geometry_3d.vertices[segment.vertices[0]].coordinate;
     const auto &p1 = geometry_3d.vertices[segment.vertices[1]].coordinate;
     double length_squared = 0.0;
@@ -809,6 +1674,13 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     }
     physical_edge_length += std::sqrt(length_squared);
   }
+  const int physical_endpoint_count = static_cast<int>(std::count_if(
+      physical_edge_vertices.begin(), physical_edge_vertices.end(),
+      [&](std::size_t vertex)
+      {
+        return geometry_3d.vertices[vertex].physical_type == MetalEdgeVertexType::ENDPOINT;
+      }));
+  REQUIRE(physical_endpoint_count > 0);
   std::vector<std::unique_ptr<Mesh>> meshes_3d;
   meshes_3d.push_back(std::make_unique<Mesh>(std::move(mesh_3d)));
   LaplaceOperator laplace_3d(iodata_3d, meshes_3d);
@@ -820,6 +1692,22 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(response_3d.GetBasisSize() == 4 * response_3d.GetPatchCount());
   CHECK_THAT(response_3d.GetPatchWeight(), WithinRel(0.5 * physical_edge_length, 1.0e-12));
   CHECK(response_3d.HasSurfaceResponse());
+
+  auto endpoint_config_3d = config_3d;
+  endpoint_config_3d["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      endpoint_library_3d_path.string();
+  IoData endpoint_iodata_3d(endpoint_config_3d, false);
+  auto endpoint_mesh_3d = mesh::ReadMesh(endpoint_iodata_3d, Mpi::World());
+  std::vector<std::unique_ptr<Mesh>> endpoint_meshes_3d;
+  endpoint_meshes_3d.push_back(std::make_unique<Mesh>(std::move(endpoint_mesh_3d)));
+  LaplaceOperator endpoint_laplace_3d(endpoint_iodata_3d, endpoint_meshes_3d);
+  SurfaceResponseOperator endpoint_response_3d(endpoint_iodata_3d, endpoint_laplace_3d);
+  CHECK(endpoint_response_3d.GetPatchCount() ==
+        response_3d.GetPatchCount() + physical_endpoint_count);
+  CHECK(endpoint_response_3d.GetBasisSize() ==
+        response_3d.GetBasisSize() + 12 * physical_endpoint_count);
+  CHECK_THAT(endpoint_response_3d.GetPatchWeight(),
+             WithinRel(response_3d.GetPatchWeight(), 1.0e-12));
 
   auto maxwell_config_3d = config_3d;
   maxwell_config_3d["Problem"]["Type"] = "Eigenmode";
@@ -841,6 +1729,55 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(maxwell_response_3d.HasSurfaceResponse());
   CHECK(maxwell_response_3d.GetTargetInterfaces() == std::set<int>{1, 2, 3});
 
+  auto endpoint_maxwell_config_3d = maxwell_config_3d;
+  endpoint_maxwell_config_3d["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      endpoint_library_3d_path.string();
+  IoData endpoint_maxwell_iodata_3d(endpoint_maxwell_config_3d, false);
+  auto endpoint_maxwell_mesh_3d = mesh::ReadMesh(endpoint_maxwell_iodata_3d, Mpi::World());
+  std::vector<std::unique_ptr<Mesh>> endpoint_maxwell_meshes_3d;
+  endpoint_maxwell_meshes_3d.push_back(
+      std::make_unique<Mesh>(std::move(endpoint_maxwell_mesh_3d)));
+  SpaceOperator endpoint_maxwell_space_3d(endpoint_maxwell_iodata_3d,
+                                          endpoint_maxwell_meshes_3d);
+  SurfaceResponseOperator endpoint_maxwell_response_3d(endpoint_maxwell_iodata_3d,
+                                                       endpoint_maxwell_space_3d);
+  CHECK(endpoint_maxwell_response_3d.GetPatchCount() ==
+        maxwell_response_3d.GetPatchCount() + physical_endpoint_count);
+
+  // A finite-impedance metal does not provide an interior equipotential anchor. The
+  // automatic Maxwell trace instead references the local metal edge point and must still
+  // reproduce a conservative quasi-electrostatic field.
+  auto impedance_maxwell_config_3d = maxwell_config_3d;
+  impedance_maxwell_config_3d["Boundaries"].erase("Ground");
+  impedance_maxwell_config_3d["Boundaries"]["Impedance"] = {
+      {{"Attributes", {1, 2}}, {"Ls", 1.0e-13}}};
+  impedance_maxwell_config_3d["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      impedance_library_3d_path.string();
+  IoData impedance_maxwell_iodata_3d(impedance_maxwell_config_3d, false);
+  auto impedance_maxwell_mesh_3d =
+      mesh::ReadMesh(impedance_maxwell_iodata_3d, Mpi::World());
+  std::vector<std::unique_ptr<Mesh>> impedance_maxwell_meshes_3d;
+  impedance_maxwell_meshes_3d.push_back(
+      std::make_unique<Mesh>(std::move(impedance_maxwell_mesh_3d)));
+  SpaceOperator impedance_maxwell_space_3d(impedance_maxwell_iodata_3d,
+                                           impedance_maxwell_meshes_3d);
+  SurfaceResponseOperator impedance_maxwell_response_3d(impedance_maxwell_iodata_3d,
+                                                        impedance_maxwell_space_3d);
+  CHECK(impedance_maxwell_response_3d.GetPatchCount() ==
+        maxwell_response_3d.GetPatchCount());
+  GridFunction impedance_maxwell_field(impedance_maxwell_space_3d.GetNDSpace(), true);
+  mfem::Vector impedance_gradient(3);
+  impedance_gradient = 0.0;
+  impedance_gradient[1] = -1.0;
+  mfem::VectorConstantCoefficient impedance_gradient_coefficient(impedance_gradient);
+  impedance_maxwell_field.Real().ProjectCoefficient(impedance_gradient_coefficient);
+  impedance_maxwell_field.Imag() = 0.0;
+  const auto impedance_gradient_response =
+      impedance_maxwell_response_3d.GetMaxwellResponse(impedance_maxwell_field, 0.0);
+  CHECK(std::abs(impedance_gradient_response.domain_correction) > 0.0);
+  CHECK(impedance_gradient_response.loop_residual < 1.0e-10);
+  CHECK(impedance_gradient_response.boundary_law_verified);
+
   GridFunction maxwell_field(maxwell_space_3d.GetNDSpace(), true);
   mfem::Vector constant_field(3);
   constant_field[0] = 0.7;
@@ -849,6 +1786,12 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   mfem::VectorConstantCoefficient field_coefficient(constant_field);
   maxwell_field.Real().ProjectCoefficient(field_coefficient);
   maxwell_field.Imag() = 0.0;
+  GridFunction endpoint_maxwell_field(endpoint_maxwell_space_3d.GetNDSpace(), true);
+  endpoint_maxwell_field.Real().ProjectCoefficient(field_coefficient);
+  endpoint_maxwell_field.Imag() = 0.0;
+  const auto endpoint_maxwell_result =
+      endpoint_maxwell_response_3d.GetMaxwellResponse(endpoint_maxwell_field, 0.0);
+  CHECK(endpoint_maxwell_result.loop_residual < 1.0e-10);
   const auto real_response = maxwell_response_3d.GetMaxwellResponse(maxwell_field, 0.0);
   CHECK(std::abs(real_response.domain_correction) > 0.0);
   CHECK(std::abs(real_response.domain_correction_fixed_flux) > 0.0);
@@ -864,6 +1807,9 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(real_response.loop_response_failure_fraction == 0.0);
   CHECK(real_response.kR == 0.0);
   CHECK(real_response.maximum_trace_closure_spread > 0.0);
+  CHECK(real_response.response_weighted_trace_closure_spread > 0.0);
+  CHECK(real_response.trace_closure_response_failure_fraction >= 0.0);
+  CHECK(real_response.trace_closure_response_failure_fraction <= 1.0);
   CHECK_THAT(real_response.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
   REQUIRE(real_response.matched_length_fraction_by_interface.size() == 3);
   for (const auto &[interface, fraction] :
@@ -931,6 +1877,12 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   }
   CHECK_THAT(gradient_response.domain_correction_fixed_flux,
              WithinRel(electrostatic_response.domain_correction_fixed_flux, 1.0e-10));
+  CHECK_THAT(
+      gradient_response.response_weighted_trace_closure_spread,
+      WithinRel(electrostatic_response.response_weighted_trace_closure_spread, 1.0e-10));
+  CHECK_THAT(
+      gradient_response.trace_closure_response_failure_fraction,
+      WithinAbs(electrostatic_response.trace_closure_response_failure_fraction, 1.0e-12));
   CHECK(gradient_response.loop_residual < 1.0e-10);
 
   maxwell_field.Real().ProjectCoefficient(field_coefficient);
@@ -950,6 +1902,10 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     CHECK_THAT(complex_response.fabricated_surface_energy_fixed_flux.at(interface),
                WithinRel(2.0 * energy, 1.0e-10));
   }
+  CHECK_THAT(complex_response.response_weighted_trace_closure_spread,
+             WithinRel(real_response.response_weighted_trace_closure_spread, 1.0e-10));
+  CHECK_THAT(complex_response.trace_closure_response_failure_fraction,
+             WithinAbs(real_response.trace_closure_response_failure_fraction, 1.0e-12));
 
   mfem::VectorFunctionCoefficient rotational_field_coefficient(
       3,
@@ -1168,6 +2124,165 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
             1.0e-5));
   }
 
+  auto parallel_cluster_config_3d = coupled_config_3d;
+  for (auto &interface :
+       parallel_cluster_config_3d["Boundaries"]["Postprocessing"]["Dielectric"])
+  {
+    interface["EdgeDistances"] = {0.2, 2.0, 11.0};
+  }
+  parallel_cluster_config_3d["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      parallel_cluster_library_3d_path.string();
+  IoData parallel_cluster_iodata_3d(parallel_cluster_config_3d, false);
+  parallel_cluster_iodata_3d.boundaries.cracked_attributes.insert(1);
+  parallel_cluster_iodata_3d.boundaries.cracked_attributes.insert(2);
+  auto parallel_cluster_mesh_3d = mesh::ReadMesh(parallel_cluster_iodata_3d, Mpi::World());
+  std::vector<std::unique_ptr<Mesh>> parallel_cluster_meshes_3d;
+  parallel_cluster_meshes_3d.push_back(
+      std::make_unique<Mesh>(std::move(parallel_cluster_mesh_3d)));
+  LaplaceOperator parallel_cluster_laplace_3d(parallel_cluster_iodata_3d,
+                                              parallel_cluster_meshes_3d);
+  SurfaceResponseOperator parallel_cluster_response_3d(parallel_cluster_iodata_3d,
+                                                       parallel_cluster_laplace_3d);
+  CHECK(parallel_cluster_response_3d.GetPatchCount() ==
+        static_cast<int>(segment_indices.size() / 4) * line_rule.GetNPoints());
+  CHECK(parallel_cluster_response_3d.GetBasisSize() ==
+        5 * parallel_cluster_response_3d.GetPatchCount());
+  CHECK_THAT(parallel_cluster_response_3d.GetPatchWeight(),
+             WithinRel(0.125 * physical_edge_length, 1.0e-12));
+
+  // An exact multi-edge coupon is self-contained. It must not require redundant
+  // two-edge models for every pair in the active cluster.
+  auto parallel_cluster_only_config_3d = parallel_cluster_config_3d;
+  parallel_cluster_only_config_3d["Solver"]["Electrostatic"]["ResponseCorrection"]
+                                 ["Library"] =
+                                     parallel_cluster_only_library_3d_path.string();
+  IoData parallel_cluster_only_iodata_3d(parallel_cluster_only_config_3d, false);
+  parallel_cluster_only_iodata_3d.boundaries.cracked_attributes.insert(1);
+  parallel_cluster_only_iodata_3d.boundaries.cracked_attributes.insert(2);
+  auto parallel_cluster_only_mesh_3d =
+      mesh::ReadMesh(parallel_cluster_only_iodata_3d, Mpi::World());
+  std::vector<std::unique_ptr<Mesh>> parallel_cluster_only_meshes_3d;
+  parallel_cluster_only_meshes_3d.push_back(
+      std::make_unique<Mesh>(std::move(parallel_cluster_only_mesh_3d)));
+  LaplaceOperator parallel_cluster_only_laplace_3d(parallel_cluster_only_iodata_3d,
+                                                   parallel_cluster_only_meshes_3d);
+  SurfaceResponseOperator parallel_cluster_only_response_3d(
+      parallel_cluster_only_iodata_3d, parallel_cluster_only_laplace_3d);
+  CHECK(parallel_cluster_only_response_3d.GetPatchCount() ==
+        parallel_cluster_response_3d.GetPatchCount());
+  CHECK(parallel_cluster_only_response_3d.GetBasisSize() ==
+        parallel_cluster_response_3d.GetBasisSize());
+
+  auto parallel_cluster_maxwell_config_3d = coupled_maxwell_config_3d;
+  for (auto &interface :
+       parallel_cluster_maxwell_config_3d["Boundaries"]["Postprocessing"]["Dielectric"])
+  {
+    interface["EdgeDistances"] = {0.2, 2.0, 11.0};
+  }
+  parallel_cluster_maxwell_config_3d["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      parallel_cluster_library_3d_path.string();
+  IoData parallel_cluster_maxwell_iodata_3d(parallel_cluster_maxwell_config_3d, false);
+  auto parallel_cluster_maxwell_mesh_3d =
+      mesh::ReadMesh(parallel_cluster_maxwell_iodata_3d, Mpi::World());
+  std::vector<std::unique_ptr<Mesh>> parallel_cluster_maxwell_meshes_3d;
+  parallel_cluster_maxwell_meshes_3d.push_back(
+      std::make_unique<Mesh>(std::move(parallel_cluster_maxwell_mesh_3d)));
+  SpaceOperator parallel_cluster_maxwell_space_3d(parallel_cluster_maxwell_iodata_3d,
+                                                  parallel_cluster_maxwell_meshes_3d);
+  SurfaceResponseOperator parallel_cluster_maxwell_response_3d(
+      parallel_cluster_maxwell_iodata_3d, parallel_cluster_maxwell_space_3d);
+  CHECK(parallel_cluster_maxwell_response_3d.GetPatchCount() ==
+        static_cast<int>(segment_indices.size() / 4) * maxwell_line_rule.GetNPoints());
+  CHECK(parallel_cluster_maxwell_response_3d.GetBasisSize() ==
+        6 * parallel_cluster_maxwell_response_3d.GetPatchCount());
+
+  auto parallel_cluster_only_maxwell_config_3d = parallel_cluster_maxwell_config_3d;
+  parallel_cluster_only_maxwell_config_3d["Solver"]["SurfaceResponseCorrection"]
+                                         ["Library"] =
+                                             parallel_cluster_only_library_3d_path.string();
+  IoData parallel_cluster_only_maxwell_iodata_3d(parallel_cluster_only_maxwell_config_3d,
+                                                 false);
+  auto parallel_cluster_only_maxwell_mesh_3d =
+      mesh::ReadMesh(parallel_cluster_only_maxwell_iodata_3d, Mpi::World());
+  std::vector<std::unique_ptr<Mesh>> parallel_cluster_only_maxwell_meshes_3d;
+  parallel_cluster_only_maxwell_meshes_3d.push_back(
+      std::make_unique<Mesh>(std::move(parallel_cluster_only_maxwell_mesh_3d)));
+  SpaceOperator parallel_cluster_only_maxwell_space_3d(
+      parallel_cluster_only_maxwell_iodata_3d, parallel_cluster_only_maxwell_meshes_3d);
+  SurfaceResponseOperator parallel_cluster_only_maxwell_response_3d(
+      parallel_cluster_only_maxwell_iodata_3d, parallel_cluster_only_maxwell_space_3d);
+  CHECK(parallel_cluster_only_maxwell_response_3d.GetPatchCount() ==
+        parallel_cluster_maxwell_response_3d.GetPatchCount());
+  CHECK(parallel_cluster_only_maxwell_response_3d.GetBasisSize() ==
+        parallel_cluster_maxwell_response_3d.GetBasisSize());
+
+  GridFunction parallel_cluster_maxwell_field(
+      parallel_cluster_maxwell_space_3d.GetNDSpace(), true);
+  mfem::ParGridFunction parallel_cluster_maxwell_potential(
+      &parallel_cluster_maxwell_space_3d.GetH1Space().Get());
+  parallel_cluster_maxwell_potential.ProjectCoefficient(transverse_potential_coefficient);
+  mfem::ParDiscreteLinearOperator parallel_cluster_gradient(
+      &parallel_cluster_maxwell_space_3d.GetH1Space().Get(),
+      &parallel_cluster_maxwell_space_3d.GetNDSpace().Get());
+  parallel_cluster_gradient.AddDomainInterpolator(new mfem::GradientInterpolator());
+  parallel_cluster_gradient.Assemble();
+  parallel_cluster_gradient.Mult(parallel_cluster_maxwell_potential,
+                                 parallel_cluster_maxwell_field.Real());
+  parallel_cluster_maxwell_field.Real() *= -1.0;
+  parallel_cluster_maxwell_field.Imag() = 0.0;
+  const auto parallel_cluster_maxwell_result =
+      parallel_cluster_maxwell_response_3d.GetMaxwellResponse(
+          parallel_cluster_maxwell_field, 0.0);
+
+  mfem::ParGridFunction parallel_cluster_electrostatic_potential(
+      &parallel_cluster_laplace_3d.GetH1Space().Get());
+  parallel_cluster_electrostatic_potential.ProjectCoefficient(
+      transverse_potential_coefficient);
+  Vector parallel_cluster_electrostatic_true;
+  parallel_cluster_electrostatic_potential.GetTrueDofs(parallel_cluster_electrostatic_true);
+  const auto parallel_cluster_electrostatic_result =
+      parallel_cluster_response_3d.GetElectrostaticResponse(
+          parallel_cluster_electrostatic_true);
+  CHECK(std::abs(parallel_cluster_maxwell_result.domain_correction) > 0.0);
+  CHECK(parallel_cluster_maxwell_result.loop_residual < 1.0e-10);
+  CHECK_THAT(parallel_cluster_maxwell_result.domain_correction,
+             WithinRel(parallel_cluster_electrostatic_result.domain_correction, 1.0e-10));
+  CHECK_THAT(parallel_cluster_maxwell_result.domain_correction_fixed_flux,
+             WithinRel(parallel_cluster_electrostatic_result.domain_correction_fixed_flux,
+                       1.0e-10));
+  for (const auto &[interface, energy] :
+       parallel_cluster_electrostatic_result.fabricated_surface_energy)
+  {
+    CHECK_THAT(parallel_cluster_maxwell_result.fabricated_surface_energy.at(interface),
+               WithinRel(energy, 1.0e-5));
+    CHECK_THAT(
+        parallel_cluster_maxwell_result.fabricated_surface_energy_fixed_flux.at(interface),
+        WithinRel(
+            parallel_cluster_electrostatic_result.fabricated_surface_energy_fixed_flux.at(
+                interface),
+            1.0e-4));
+  }
+
+  Vector cluster_state(parallel_cluster_maxwell_space_3d.GetNDSpace().GetTrueVSize());
+  Vector cluster_probe(cluster_state.Size());
+  auto *cluster_state_data = cluster_state.HostWrite();
+  auto *cluster_probe_data = cluster_probe.HostWrite();
+  for (int i = 0; i < cluster_state.Size(); i++)
+  {
+    cluster_state_data[i] = std::cos(0.19 * (i + 1 + 5 * Mpi::Rank(Mpi::World())));
+    cluster_probe_data[i] = std::sin(0.27 * (i + 1 + 7 * Mpi::Rank(Mpi::World())));
+  }
+  cluster_state.SetSubVector(parallel_cluster_maxwell_space_3d.GetNDDbcTDofLists().back(),
+                             0.0);
+  cluster_probe.SetSubVector(parallel_cluster_maxwell_space_3d.GetNDDbcTDofLists().back(),
+                             0.0);
+  Vector cluster_correction, cluster_probe_correction;
+  parallel_cluster_maxwell_response_3d.Mult(cluster_state, cluster_correction);
+  parallel_cluster_maxwell_response_3d.Mult(cluster_probe, cluster_probe_correction);
+  CHECK_THAT(linalg::Dot(Mpi::World(), cluster_probe, cluster_correction),
+             WithinRel(linalg::Dot(Mpi::World(), cluster_state, cluster_probe_correction),
+                       1.0e-10));
+
   // Exercise line reconstruction with a nontrivial discrete gradient. A globally
   // constant field does not detect integration errors when contour lines cross elements.
   mfem::FunctionCoefficient curved_potential_coefficient(
@@ -1227,9 +2342,9 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
            {{"Library", concave_library_3d_path.string()},
             {"TargetInterfaces", {4}},
             {"UnmatchedPolicy", "Error"}}}}}}}};
-  auto MakeIslandMesh =
-      [](bool rounded = false, bool tetrahedral = false, bool aperture = false,
-         bool neighboring_island = false)
+  auto MakeIslandMesh = [](bool rounded = false, bool tetrahedral = false,
+                           bool aperture = false, bool neighboring_island = false,
+                           bool second_layer = false)
   {
     const double in_plane_extent = aperture || neighboring_island ? 2.0 : 1.0;
     const double center = 0.5 * in_plane_extent;
@@ -1251,32 +2366,38 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       mfem::Array<int> vertices;
       serial.GetFaceVertices(face, vertices);
       bool on_plane = true;
+      const double plane_y = serial.GetVertex(vertices[0])[1];
       double xmin = in_plane_extent, xmax = 0.0;
       double zmin = in_plane_extent, zmax = 0.0;
       for (const int vertex : vertices)
       {
         const double *point = serial.GetVertex(vertex);
-        on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+        on_plane = on_plane && std::abs(point[1] - plane_y) < 1.0e-12;
         xmin = std::min(xmin, point[0]);
         xmax = std::max(xmax, point[0]);
         zmin = std::min(zmin, point[2]);
         zmax = std::max(zmax, point[2]);
       }
       const double island_center_x = neighboring_island ? 0.625 : center;
-      const bool inside_island =
-          xmin >= island_center_x - half_width - 1.0e-12 &&
-          xmax <= island_center_x + half_width + 1.0e-12 &&
-          zmin >= center - half_width - 1.0e-12 && zmax <= center + half_width + 1.0e-12;
+      const bool inside_island = xmin >= island_center_x - half_width - 1.0e-12 &&
+                                 xmax <= island_center_x + half_width + 1.0e-12 &&
+                                 zmin >= center - half_width - 1.0e-12 &&
+                                 zmax <= center + half_width + 1.0e-12;
       constexpr double neighbor_center_x = 1.375;
       const bool inside_neighbor =
           neighboring_island && xmin >= neighbor_center_x - half_width - 1.0e-12 &&
           xmax <= neighbor_center_x + half_width + 1.0e-12 &&
           zmin >= center - half_width - 1.0e-12 && zmax <= center + half_width + 1.0e-12;
-      if (on_plane &&
+      const bool selected_plane = second_layer ? (std::abs(plane_y - 0.25) < 1.0e-12 ||
+                                                  std::abs(plane_y - 0.75) < 1.0e-12)
+                                               : std::abs(plane_y - 0.5) < 1.0e-12;
+      if (on_plane && selected_plane &&
           (aperture ? !inside_island : (inside_island || inside_neighbor)))
       {
         serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
-        serial.SetBdrAttribute(serial.GetNBE() - 1, inside_neighbor ? 10 : 9);
+        serial.SetBdrAttribute(serial.GetNBE() - 1, second_layer && plane_y > 0.5
+                                                        ? 10
+                                                        : (inside_neighbor ? 10 : 9));
       }
     }
     if (rounded)
@@ -1323,6 +2444,88 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
             point[2] = center_z + sign_z * radius * std::sin(angle);
           }
         }
+      }
+    }
+    serial.FinalizeTopology();
+    serial.Finalize();
+    return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+  };
+  auto MakeTouchingIslandMesh = []()
+  {
+    constexpr double extent = 2.0;
+    mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(16, 4, 16, mfem::Element::HEXAHEDRON,
+                                                    extent, 1.0, extent);
+    for (int face = 0; face < serial.GetNumFaces(); face++)
+    {
+      int element1, element2;
+      serial.GetFaceElements(face, &element1, &element2);
+      if (element1 < 0 || element2 < 0)
+      {
+        continue;
+      }
+      mfem::Array<int> vertices;
+      serial.GetFaceVertices(face, vertices);
+      bool on_plane = true;
+      double xmin = extent, xmax = 0.0;
+      double zmin = extent, zmax = 0.0;
+      for (const int vertex : vertices)
+      {
+        const double *point = serial.GetVertex(vertex);
+        on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+        xmin = std::min(xmin, point[0]);
+        xmax = std::max(xmax, point[0]);
+        zmin = std::min(zmin, point[2]);
+        zmax = std::max(zmax, point[2]);
+      }
+      const bool lower_left = xmin >= 0.25 - 1.0e-12 && xmax <= 1.0 + 1.0e-12 &&
+                              zmin >= 0.25 - 1.0e-12 && zmax <= 1.0 + 1.0e-12;
+      const bool upper_right = xmin >= 1.0 - 1.0e-12 && xmax <= 1.75 + 1.0e-12 &&
+                               zmin >= 1.0 - 1.0e-12 && zmax <= 1.75 + 1.0e-12;
+      if (on_plane && (lower_left || upper_right))
+      {
+        serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+        serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+      }
+    }
+    serial.FinalizeTopology();
+    serial.Finalize();
+    return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+  };
+  auto MakeOffsetCornerPairMesh = []()
+  {
+    constexpr double extent = 2.0;
+    mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(16, 4, 16, mfem::Element::HEXAHEDRON,
+                                                    extent, 1.0, extent);
+    for (int face = 0; face < serial.GetNumFaces(); face++)
+    {
+      int element1, element2;
+      serial.GetFaceElements(face, &element1, &element2);
+      if (element1 < 0 || element2 < 0)
+      {
+        continue;
+      }
+      mfem::Array<int> vertices;
+      serial.GetFaceVertices(face, vertices);
+      bool on_plane = true;
+      double xmin = extent, xmax = 0.0;
+      double zmin = extent, zmax = 0.0;
+      for (const int vertex : vertices)
+      {
+        const double *point = serial.GetVertex(vertex);
+        on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+        xmin = std::min(xmin, point[0]);
+        xmax = std::max(xmax, point[0]);
+        zmin = std::min(zmin, point[2]);
+        zmax = std::max(zmax, point[2]);
+      }
+      const bool first = xmin >= 0.25 - 1.0e-12 && xmax <= 1.0 + 1.0e-12 &&
+                         zmin >= 0.25 - 1.0e-12 && zmax <= 0.75 + 1.0e-12;
+      const bool second = xmin >= 1.125 - 1.0e-12 && xmax <= 1.625 + 1.0e-12 &&
+                          zmin >= 0.875 - 1.0e-12 && zmax <= 1.75 + 1.0e-12;
+      if (on_plane && (first || second))
+      {
+        serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+        serial.SetBdrAttribute(serial.GetNBE() - 1, first ? 9 : 10);
       }
     }
     serial.FinalizeTopology();
@@ -1396,6 +2599,51 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       (island_perimeter - 2.0 * island_corners * 0.2) / 0.2 + island_corners;
   CHECK_THAT(convex_island_response.GetPatchWeight(),
              WithinRel(expected_convex_weight, 1.0e-12));
+
+  auto touching_geometry_mesh = MakeTouchingIslandMesh();
+  const auto touching_geometry =
+      ExtractMetalEdgeGeometry(*touching_geometry_mesh, convex_island_iodata.boundaries);
+  const auto touching_segments =
+      GetInterfaceMetalEdgeSegmentIndices(touching_geometry, 4, InterfaceDielectric::SA);
+  std::set<std::size_t> touching_vertices;
+  for (const std::size_t segment_index : touching_segments)
+  {
+    const auto &segment = touching_geometry.segments[segment_index];
+    touching_vertices.insert(segment.vertices.begin(), segment.vertices.end());
+  }
+  const int touching_junctions = static_cast<int>(
+      std::count_if(touching_vertices.begin(), touching_vertices.end(),
+                    [&](std::size_t vertex)
+                    {
+                      return touching_geometry.vertices[vertex].physical_type ==
+                             MetalEdgeVertexType::JUNCTION;
+                    }));
+  REQUIRE(touching_junctions == 1);
+
+  std::vector<std::unique_ptr<Mesh>> touching_island_meshes;
+  touching_island_meshes.push_back(std::make_unique<Mesh>(MakeTouchingIslandMesh()));
+  LaplaceOperator touching_island_laplace(convex_island_iodata, touching_island_meshes);
+  SurfaceResponseOperator touching_island_response(convex_island_iodata,
+                                                   touching_island_laplace);
+  auto junction_island_config = convex_island_config;
+  junction_island_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      junction_library_3d_path.string();
+  IoData junction_island_iodata(junction_island_config, false);
+  junction_island_iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> junction_island_meshes;
+  junction_island_meshes.push_back(std::make_unique<Mesh>(MakeTouchingIslandMesh()));
+  LaplaceOperator junction_island_laplace(junction_island_iodata, junction_island_meshes);
+  SurfaceResponseOperator junction_island_response(junction_island_iodata,
+                                                   junction_island_laplace);
+  const int removed_junction_straight_patches = 4 * island_line_rule.GetNPoints();
+  CHECK(junction_island_response.GetPatchCount() ==
+        touching_island_response.GetPatchCount() - removed_junction_straight_patches +
+            touching_junctions);
+  CHECK(junction_island_response.GetBasisSize() ==
+        touching_island_response.GetBasisSize() - 4 * removed_junction_straight_patches +
+            12 * touching_junctions);
+  CHECK_THAT(junction_island_response.GetPatchWeight(),
+             WithinRel(touching_island_response.GetPatchWeight() - 3.0, 1.0e-12));
 
   auto rounded_island_config = island_config;
   rounded_island_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
@@ -1524,6 +2772,306 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       convex_maxwell_island_response.GetMaxwellResponse(island_field, 0.0);
   CHECK(constant_island_response.loop_residual < 1.0e-10);
   CHECK(constant_island_response.corner_neighborhood_fraction == 0.0);
+  CHECK(constant_island_response.closure_independent_confident);
+  CHECK(constant_island_response.maximum_trace_closure_spread > 0.05);
+  CHECK(constant_island_response.response_weighted_trace_closure_spread > 0.0);
+  CHECK(constant_island_response.trace_closure_response_failure_fraction > 0.0);
+  CHECK_FALSE(constant_island_response.confident);
+
+  auto impedance_convex_maxwell_config = convex_maxwell_island_config;
+  impedance_convex_maxwell_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3,
+                                                                           4, 5, 6};
+  impedance_convex_maxwell_config["Boundaries"]["Impedance"] = {
+      {{"Attributes", {9}}, {"Ls", 1.0e-13}}};
+  impedance_convex_maxwell_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      finite_impedance_convex_library_3d_path.string();
+  IoData impedance_convex_maxwell_iodata(impedance_convex_maxwell_config, false);
+  impedance_convex_maxwell_iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> impedance_convex_maxwell_meshes;
+  impedance_convex_maxwell_meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh()));
+  SpaceOperator impedance_convex_maxwell_space(impedance_convex_maxwell_iodata,
+                                               impedance_convex_maxwell_meshes);
+  SurfaceResponseOperator impedance_convex_maxwell_response(impedance_convex_maxwell_iodata,
+                                                            impedance_convex_maxwell_space);
+  CHECK(impedance_convex_maxwell_response.GetPatchCount() ==
+        convex_maxwell_island_response.GetPatchCount());
+  GridFunction impedance_convex_maxwell_field(impedance_convex_maxwell_space.GetNDSpace(),
+                                              true);
+  impedance_convex_maxwell_field.Real().ProjectCoefficient(field_coefficient);
+  impedance_convex_maxwell_field.Imag() = 0.0;
+  const auto impedance_convex_maxwell_result =
+      impedance_convex_maxwell_response.GetMaxwellResponse(impedance_convex_maxwell_field,
+                                                           0.0);
+  CHECK(impedance_convex_maxwell_result.loop_residual < 1.0e-10);
+  CHECK_THAT(impedance_convex_maxwell_result.matched_length_fraction,
+             WithinAbs(1.0, 1.0e-12));
+  CHECK(impedance_convex_maxwell_result.corner_neighborhood_fraction == 0.0);
+  CHECK(impedance_convex_maxwell_result.boundary_law_verified);
+
+  auto junction_maxwell_config = convex_maxwell_island_config;
+  junction_maxwell_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      junction_library_3d_path.string();
+  IoData junction_maxwell_iodata(junction_maxwell_config, false);
+  junction_maxwell_iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> junction_maxwell_meshes;
+  junction_maxwell_meshes.push_back(std::make_unique<Mesh>(MakeTouchingIslandMesh()));
+  SpaceOperator junction_maxwell_space(junction_maxwell_iodata, junction_maxwell_meshes);
+  SurfaceResponseOperator junction_maxwell_response(junction_maxwell_iodata,
+                                                    junction_maxwell_space);
+  CHECK(junction_maxwell_response.GetPatchCount() ==
+        junction_island_response.GetPatchCount());
+  GridFunction junction_maxwell_field(junction_maxwell_space.GetNDSpace(), true);
+  junction_maxwell_field.Real().ProjectCoefficient(field_coefficient);
+  junction_maxwell_field.Imag() = 0.0;
+  const auto junction_maxwell_result =
+      junction_maxwell_response.GetMaxwellResponse(junction_maxwell_field, 0.0);
+  CHECK(junction_maxwell_result.loop_residual < 1.0e-10);
+  CHECK(junction_maxwell_result.corner_neighborhood_fraction == 0.0);
+
+  auto impedance_junction_config = junction_maxwell_config;
+  impedance_junction_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6};
+  impedance_junction_config["Boundaries"]["Impedance"] = {
+      {{"Attributes", {9}}, {"Ls", 1.0e-13}}};
+  IoData impedance_junction_iodata(impedance_junction_config, false);
+  impedance_junction_iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> impedance_junction_meshes;
+  impedance_junction_meshes.push_back(std::make_unique<Mesh>(MakeTouchingIslandMesh()));
+  SpaceOperator impedance_junction_space(impedance_junction_iodata,
+                                         impedance_junction_meshes);
+  SurfaceResponseOperator impedance_junction_response(impedance_junction_iodata,
+                                                      impedance_junction_space);
+  CHECK(impedance_junction_response.GetPatchCount() ==
+        static_cast<int>(touching_segments.size()) * island_line_rule.GetNPoints() -
+            removed_junction_straight_patches + touching_junctions);
+  CHECK(impedance_junction_response.GetBasisSize() ==
+        4 * (static_cast<int>(touching_segments.size()) * island_line_rule.GetNPoints() -
+             removed_junction_straight_patches) +
+            12 * touching_junctions);
+  GridFunction impedance_junction_field(impedance_junction_space.GetNDSpace(), true);
+  impedance_junction_field.Real().ProjectCoefficient(field_coefficient);
+  impedance_junction_field.Imag() = 0.0;
+  const auto impedance_junction_result =
+      impedance_junction_response.GetMaxwellResponse(impedance_junction_field, 0.0);
+  CHECK(impedance_junction_result.loop_residual < 1.0e-10);
+
+  // Two disconnected island corners separated diagonally by less than 2R form one
+  // localized four-edge neighborhood. It contains perpendicular and endpoint-adjacent
+  // interactions, so no longitudinal pair or parallel-cluster coupon can represent it.
+  auto spatial_cluster_config = convex_maxwell_island_config;
+  spatial_cluster_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9, 10};
+  spatial_cluster_config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {
+      9, 10};
+  spatial_cluster_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      spatial_cluster_library_3d_path.string();
+  IoData spatial_cluster_iodata(spatial_cluster_config, false);
+  spatial_cluster_iodata.boundaries.cracked_attributes.insert(9);
+  spatial_cluster_iodata.boundaries.cracked_attributes.insert(10);
+  std::vector<std::unique_ptr<Mesh>> spatial_cluster_meshes;
+  spatial_cluster_meshes.push_back(std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
+  SpaceOperator spatial_cluster_space(spatial_cluster_iodata, spatial_cluster_meshes);
+  SurfaceResponseOperator spatial_cluster_response(spatial_cluster_iodata,
+                                                   spatial_cluster_space);
+  CHECK(spatial_cluster_response.GetPatchCount() > 0);
+  CHECK(spatial_cluster_response.GetTargetInterfaces() == std::set<int>{4});
+  CHECK_THAT(spatial_cluster_response.GetPatchWeight(), WithinRel(17.25, 1.0e-12));
+
+  GridFunction spatial_cluster_field(spatial_cluster_space.GetNDSpace(), true);
+  spatial_cluster_field.Real().ProjectCoefficient(field_coefficient);
+  spatial_cluster_field.Imag() = 0.0;
+  const auto spatial_cluster_result =
+      spatial_cluster_response.GetMaxwellResponse(spatial_cluster_field, 0.0);
+  CHECK(std::abs(spatial_cluster_result.domain_correction) > 0.0);
+  CHECK(spatial_cluster_result.loop_residual < 1.0e-10);
+  CHECK_THAT(spatial_cluster_result.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
+  CHECK(spatial_cluster_result.corner_neighborhood_fraction == 0.0);
+
+  // Spatial clusters match each physical edge's complete boundary law. The second
+  // island is finite impedance while the first remains PEC; its straight edges,
+  // corners, and coupled four-edge neighborhood all have exact object-form models.
+  auto mixed_impedance_spatial_cluster_config = spatial_cluster_config;
+  mixed_impedance_spatial_cluster_config["Boundaries"]["Ground"]["Attributes"] = {
+      1, 2, 3, 4, 5, 6, 9};
+  mixed_impedance_spatial_cluster_config["Boundaries"]["Impedance"] = {
+      {{"Attributes", {10}}, {"Ls", 2.0e-13}}};
+  mixed_impedance_spatial_cluster_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      spatial_cluster_mixed_impedance_library_3d_path.string();
+  IoData mixed_impedance_spatial_cluster_iodata(mixed_impedance_spatial_cluster_config,
+                                                false);
+  mixed_impedance_spatial_cluster_iodata.boundaries.cracked_attributes.insert(9);
+  mixed_impedance_spatial_cluster_iodata.boundaries.cracked_attributes.insert(10);
+  std::vector<std::unique_ptr<Mesh>> mixed_impedance_spatial_cluster_meshes;
+  mixed_impedance_spatial_cluster_meshes.push_back(
+      std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
+  SpaceOperator mixed_impedance_spatial_cluster_space(
+      mixed_impedance_spatial_cluster_iodata, mixed_impedance_spatial_cluster_meshes);
+  SurfaceResponseOperator mixed_impedance_spatial_cluster_response(
+      mixed_impedance_spatial_cluster_iodata, mixed_impedance_spatial_cluster_space);
+  GridFunction mixed_impedance_spatial_cluster_field(
+      mixed_impedance_spatial_cluster_space.GetNDSpace(), true);
+  mixed_impedance_spatial_cluster_field.Real().ProjectCoefficient(field_coefficient);
+  mixed_impedance_spatial_cluster_field.Imag() = 0.0;
+  const auto mixed_impedance_spatial_cluster_result =
+      mixed_impedance_spatial_cluster_response.GetMaxwellResponse(
+          mixed_impedance_spatial_cluster_field, 0.0);
+  CHECK_THAT(mixed_impedance_spatial_cluster_result.matched_length_fraction,
+             WithinAbs(1.0, 1.0e-12));
+  CHECK(mixed_impedance_spatial_cluster_result.corner_neighborhood_fraction == 0.0);
+  CHECK(mixed_impedance_spatial_cluster_result.boundary_law_verified);
+
+  auto parameter_mismatch_spatial_cluster_config = mixed_impedance_spatial_cluster_config;
+  parameter_mismatch_spatial_cluster_config
+      ["Solver"]["SurfaceResponseCorrection"]["Library"] =
+          spatial_cluster_parameter_mismatch_library_3d_path.string();
+  parameter_mismatch_spatial_cluster_config["Solver"]["SurfaceResponseCorrection"]
+                                           ["UnmatchedPolicy"] = "Warn";
+  IoData parameter_mismatch_spatial_cluster_iodata(
+      parameter_mismatch_spatial_cluster_config, false);
+  parameter_mismatch_spatial_cluster_iodata.boundaries.cracked_attributes.insert(9);
+  parameter_mismatch_spatial_cluster_iodata.boundaries.cracked_attributes.insert(10);
+  SurfaceResponseOperator parameter_mismatch_spatial_cluster_response(
+      parameter_mismatch_spatial_cluster_iodata, mixed_impedance_spatial_cluster_space);
+  CHECK(parameter_mismatch_spatial_cluster_response.GetPatchCount() > 0);
+  CHECK(parameter_mismatch_spatial_cluster_response.GetPatchCount() <
+        mixed_impedance_spatial_cluster_response.GetPatchCount());
+  const auto parameter_mismatch_spatial_cluster_result =
+      parameter_mismatch_spatial_cluster_response.GetMaxwellResponse(
+          mixed_impedance_spatial_cluster_field, 0.0);
+  CHECK(parameter_mismatch_spatial_cluster_result.matched_length_fraction > 0.0);
+  CHECK(parameter_mismatch_spatial_cluster_result.matched_length_fraction < 1.0);
+
+  auto cross_layer_spatial_cluster_config = spatial_cluster_config;
+  cross_layer_spatial_cluster_config["Boundaries"]["Postprocessing"]["Dielectric"] = {
+      {{"Index", 4},
+       {"Attributes", {9}},
+       {"Type", "SA"},
+       {"Thickness", 0.002},
+       {"Permittivity", 4.0},
+       {"AutomaticEdges", true},
+       {"EdgeDistances", {0.2}},
+       {"EdgeFrameNormal", {0.0, 1.0, 0.0}}},
+      {{"Index", 5},
+       {"Attributes", {10}},
+       {"Type", "SA"},
+       {"Thickness", 0.002},
+       {"Permittivity", 4.0},
+       {"AutomaticEdges", true},
+       {"EdgeDistances", {0.2}},
+       {"EdgeFrameNormal", {0.0, 1.0, 0.0}}}};
+  cross_layer_spatial_cluster_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      cross_layer_spatial_cluster_library_3d_path.string();
+  cross_layer_spatial_cluster_config["Solver"]["SurfaceResponseCorrection"]
+                                    ["TargetInterfaces"] = {4, 5};
+  IoData cross_layer_spatial_cluster_iodata(cross_layer_spatial_cluster_config, false);
+  cross_layer_spatial_cluster_iodata.boundaries.cracked_attributes.insert(9);
+  cross_layer_spatial_cluster_iodata.boundaries.cracked_attributes.insert(10);
+  std::vector<std::unique_ptr<Mesh>> cross_layer_spatial_cluster_meshes;
+  cross_layer_spatial_cluster_meshes.push_back(
+      std::make_unique<Mesh>(MakeOffsetCornerPairMesh()));
+  SpaceOperator cross_layer_spatial_cluster_space(cross_layer_spatial_cluster_iodata,
+                                                  cross_layer_spatial_cluster_meshes);
+  SurfaceResponseOperator cross_layer_spatial_cluster_response(
+      cross_layer_spatial_cluster_iodata, cross_layer_spatial_cluster_space);
+  CHECK(cross_layer_spatial_cluster_response.GetPatchCount() > 0);
+  CHECK(cross_layer_spatial_cluster_response.GetTargetInterfaces() == std::set<int>{4, 5});
+
+  GridFunction cross_layer_spatial_cluster_field(
+      cross_layer_spatial_cluster_space.GetNDSpace(), true);
+  cross_layer_spatial_cluster_field.Real().ProjectCoefficient(field_coefficient);
+  cross_layer_spatial_cluster_field.Imag() = 0.0;
+  const auto cross_layer_spatial_cluster_result =
+      cross_layer_spatial_cluster_response.GetMaxwellResponse(
+          cross_layer_spatial_cluster_field, 0.0);
+  CHECK(cross_layer_spatial_cluster_result.loop_residual < 1.0e-10);
+  CHECK_THAT(cross_layer_spatial_cluster_result.matched_length_fraction,
+             WithinAbs(1.0, 1.0e-12));
+  CHECK(cross_layer_spatial_cluster_result.corner_neighborhood_fraction == 0.0);
+  CHECK(cross_layer_spatial_cluster_result.fabricated_surface_energy.count(4) == 1);
+  CHECK(cross_layer_spatial_cluster_result.fabricated_surface_energy.count(5) == 1);
+
+  // Cross-layer replacement is all-or-nothing. A library with no multi-slot model, or
+  // with a multi-slot model that omits one physical target type, must leave the
+  // interaction neighborhood unmatched instead of applying independent local coupons.
+  auto CheckCrossLayerSpatialClusterMismatch = [&](const fs::path &library)
+  {
+    CAPTURE(library.string());
+    auto mismatch_config = cross_layer_spatial_cluster_config;
+    mismatch_config["Solver"]["SurfaceResponseCorrection"]["Library"] = library.string();
+    mismatch_config["Solver"]["SurfaceResponseCorrection"]["UnmatchedPolicy"] = "Warn";
+    IoData mismatch_iodata(mismatch_config, false);
+    mismatch_iodata.boundaries.cracked_attributes.insert(9);
+    mismatch_iodata.boundaries.cracked_attributes.insert(10);
+    SurfaceResponseOperator mismatch_response(mismatch_iodata,
+                                              cross_layer_spatial_cluster_space);
+    CHECK(mismatch_response.GetPatchCount() > 0);
+    CHECK(mismatch_response.GetPatchCount() <
+          cross_layer_spatial_cluster_response.GetPatchCount());
+    const auto result =
+        mismatch_response.GetMaxwellResponse(cross_layer_spatial_cluster_field, 0.0);
+    CHECK(result.matched_length_fraction > 0.0);
+    CHECK(result.matched_length_fraction < 1.0);
+  };
+  CheckCrossLayerSpatialClusterMismatch(spatial_cluster_library_3d_path);
+  CheckCrossLayerSpatialClusterMismatch(
+      incomplete_cross_layer_spatial_cluster_library_3d_path);
+
+  // A spatial cluster is an exact local topology signature. Perturbing one edge's
+  // position or orientation, changing its metal boundary condition, or presenting one
+  // more physical edge than the coupon describes must omit the interaction neighborhood.
+  auto CheckSpatialClusterMismatch = [&](const fs::path &library)
+  {
+    CAPTURE(library.string());
+    auto mismatch_config = spatial_cluster_config;
+    mismatch_config["Solver"]["SurfaceResponseCorrection"]["Library"] = library.string();
+    mismatch_config["Solver"]["SurfaceResponseCorrection"]["UnmatchedPolicy"] = "Warn";
+    IoData mismatch_iodata(mismatch_config, false);
+    mismatch_iodata.boundaries.cracked_attributes.insert(9);
+    mismatch_iodata.boundaries.cracked_attributes.insert(10);
+    SurfaceResponseOperator mismatch_response(mismatch_iodata, spatial_cluster_space);
+    CHECK(mismatch_response.GetPatchCount() > 0);
+    CHECK(mismatch_response.GetPatchCount() < spatial_cluster_response.GetPatchCount());
+    const auto result = mismatch_response.GetMaxwellResponse(spatial_cluster_field, 0.0);
+    CHECK(result.matched_length_fraction > 0.0);
+    CHECK(result.matched_length_fraction < 1.0);
+  };
+  CheckSpatialClusterMismatch(spatial_cluster_position_mismatch_library_3d_path);
+  CheckSpatialClusterMismatch(spatial_cluster_orientation_mismatch_library_3d_path);
+  CheckSpatialClusterMismatch(spatial_cluster_extra_edge_library_3d_path);
+  CheckSpatialClusterMismatch(spatial_cluster_impedance_mismatch_library_3d_path);
+
+  // Separated fabrication planes are independent placements of the same local process.
+  // They should both match unless their radius-R neighborhoods actually interact.
+  auto multilayer_maxwell_config = convex_maxwell_island_config;
+  multilayer_maxwell_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4,
+                                                                     5, 6, 9, 10};
+  auto second_interface =
+      multilayer_maxwell_config["Boundaries"]["Postprocessing"]["Dielectric"][0];
+  second_interface["Index"] = 5;
+  second_interface["Attributes"] = {10};
+  multilayer_maxwell_config["Boundaries"]["Postprocessing"]["Dielectric"].push_back(
+      second_interface);
+  multilayer_maxwell_config["Solver"]["SurfaceResponseCorrection"]["TargetInterfaces"] = {
+      4, 5};
+  IoData multilayer_maxwell_iodata(multilayer_maxwell_config, false);
+  multilayer_maxwell_iodata.boundaries.cracked_attributes.insert(9);
+  multilayer_maxwell_iodata.boundaries.cracked_attributes.insert(10);
+  std::vector<std::unique_ptr<Mesh>> multilayer_maxwell_meshes;
+  multilayer_maxwell_meshes.push_back(
+      std::make_unique<Mesh>(MakeIslandMesh(false, false, false, false, true)));
+  SpaceOperator multilayer_maxwell_space(multilayer_maxwell_iodata,
+                                         multilayer_maxwell_meshes);
+  SurfaceResponseOperator multilayer_maxwell_response(multilayer_maxwell_iodata,
+                                                      multilayer_maxwell_space);
+  CHECK(multilayer_maxwell_response.GetPatchCount() ==
+        2 * convex_maxwell_island_response.GetPatchCount());
+  CHECK(multilayer_maxwell_response.GetTargetInterfaces() == std::set<int>{4, 5});
+  GridFunction multilayer_field(multilayer_maxwell_space.GetNDSpace(), true);
+  multilayer_field.Real().ProjectCoefficient(field_coefficient);
+  multilayer_field.Imag() = 0.0;
+  const auto multilayer_result =
+      multilayer_maxwell_response.GetMaxwellResponse(multilayer_field, 0.0);
+  CHECK_THAT(multilayer_result.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
+  CHECK(multilayer_result.fabricated_surface_energy.count(4) == 1);
+  CHECK(multilayer_result.fabricated_surface_energy.count(5) == 1);
 
   Vector island_true, island_correction, island_probe, island_probe_correction;
   island_field.Real().GetTrueDofs(island_true);
@@ -1584,6 +3132,66 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       rounded_maxwell_island_response.GetMaxwellResponse(rounded_island_field, 0.0);
   CHECK(rounded_island_result.loop_residual < 1.0e-10);
 
+  // Fixed-flux closure acts only on the free trace subspace. Matrix rows associated
+  // with exact PEC trace knots are calibration artifacts and must not change either
+  // closure when their free-free blocks are unchanged.
+  auto constrained_perturbed_rounded_config = rounded_maxwell_island_config;
+  constrained_perturbed_rounded_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      constrained_perturbed_rounded_library_3d_path.string();
+  IoData constrained_perturbed_rounded_iodata(constrained_perturbed_rounded_config, false);
+  constrained_perturbed_rounded_iodata.boundaries.cracked_attributes.insert(9);
+  SurfaceResponseOperator constrained_perturbed_rounded_response(
+      constrained_perturbed_rounded_iodata, rounded_maxwell_island_space);
+  const auto constrained_perturbed_rounded_result =
+      constrained_perturbed_rounded_response.GetMaxwellResponse(rounded_island_field, 0.0);
+  CHECK_THAT(constrained_perturbed_rounded_result.domain_correction,
+             WithinRel(rounded_island_result.domain_correction, 1.0e-12));
+  CHECK_THAT(constrained_perturbed_rounded_result.domain_correction_fixed_flux,
+             WithinRel(rounded_island_result.domain_correction_fixed_flux, 1.0e-12));
+  CHECK_THAT(constrained_perturbed_rounded_result.fabricated_surface_energy.at(4),
+             WithinRel(rounded_island_result.fabricated_surface_energy.at(4), 1.0e-12));
+  CHECK_THAT(
+      constrained_perturbed_rounded_result.fabricated_surface_energy_fixed_flux.at(4),
+      WithinRel(rounded_island_result.fabricated_surface_energy_fixed_flux.at(4), 1.0e-12));
+  CHECK_THAT(
+      constrained_perturbed_rounded_result.response_weighted_trace_closure_spread,
+      WithinRel(rounded_island_result.response_weighted_trace_closure_spread, 1.0e-12));
+  CHECK_THAT(
+      constrained_perturbed_rounded_result.trace_closure_response_failure_fraction,
+      WithinAbs(rounded_island_result.trace_closure_response_failure_fraction, 1.0e-12));
+
+  auto impedance_rounded_maxwell_config = rounded_maxwell_island_config;
+  impedance_rounded_maxwell_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3,
+                                                                            4, 5, 6};
+  impedance_rounded_maxwell_config["Boundaries"]["Impedance"] = {
+      {{"Attributes", {9}}, {"Ls", 1.0e-13}}};
+  impedance_rounded_maxwell_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      finite_impedance_rounded_library_3d_path.string();
+  IoData impedance_rounded_maxwell_iodata(impedance_rounded_maxwell_config, false);
+  impedance_rounded_maxwell_iodata.boundaries.cracked_attributes.insert(9);
+  std::vector<std::unique_ptr<Mesh>> impedance_rounded_maxwell_meshes;
+  impedance_rounded_maxwell_meshes.push_back(
+      std::make_unique<Mesh>(MakeIslandMesh(true, true)));
+  SpaceOperator impedance_rounded_maxwell_space(impedance_rounded_maxwell_iodata,
+                                                impedance_rounded_maxwell_meshes);
+  SurfaceResponseOperator impedance_rounded_maxwell_response(
+      impedance_rounded_maxwell_iodata, impedance_rounded_maxwell_space);
+  CHECK(impedance_rounded_maxwell_response.GetPatchCount() ==
+        rounded_maxwell_island_response.GetPatchCount());
+  GridFunction impedance_rounded_maxwell_field(impedance_rounded_maxwell_space.GetNDSpace(),
+                                               true);
+  impedance_rounded_maxwell_field.Real().ProjectCoefficient(field_coefficient);
+  impedance_rounded_maxwell_field.Imag() = 0.0;
+  const auto impedance_rounded_maxwell_result =
+      impedance_rounded_maxwell_response.GetMaxwellResponse(impedance_rounded_maxwell_field,
+                                                            0.0);
+  CHECK(impedance_rounded_maxwell_result.loop_residual < 1.0e-10);
+  CHECK_THAT(impedance_rounded_maxwell_result.matched_length_fraction,
+             WithinAbs(1.0, 1.0e-12));
+  CHECK(impedance_rounded_maxwell_result.corner_neighborhood_fraction == 0.0);
+  CHECK_FALSE(impedance_rounded_maxwell_result.boundary_law_verified);
+  CHECK_FALSE(impedance_rounded_maxwell_result.closure_independent_confident);
+
   auto rounded_concave_maxwell_config = rounded_maxwell_island_config;
   rounded_concave_maxwell_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
       rounded_concave_library_3d_path.string();
@@ -1596,8 +3204,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       std::make_unique<Mesh>(MakeIslandMesh(true, true, true)));
   SpaceOperator rounded_concave_maxwell_space(rounded_concave_maxwell_iodata,
                                               rounded_concave_maxwell_meshes);
-  SurfaceResponseOperator rounded_concave_maxwell_response(
-      rounded_concave_maxwell_iodata, rounded_concave_maxwell_space);
+  SurfaceResponseOperator rounded_concave_maxwell_response(rounded_concave_maxwell_iodata,
+                                                           rounded_concave_maxwell_space);
   CHECK(rounded_concave_maxwell_response.GetPatchCount() ==
         rounded_maxwell_island_response.GetPatchCount());
 
@@ -1607,7 +3215,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   rounded_concave_maxwell_field.Imag() = 0.0;
   const auto rounded_concave_maxwell_result =
       rounded_concave_maxwell_response.GetMaxwellResponse(rounded_concave_maxwell_field,
-                                                         0.0);
+                                                          0.0);
   CHECK(rounded_concave_maxwell_result.loop_residual < 1.0e-10);
   CHECK(rounded_concave_maxwell_result.corner_neighborhood_fraction == 0.0);
 
@@ -1655,8 +3263,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   // signature. The two islands are separated by less than 2R only along their facing
   // sides, so Warn omits those local segments while Error remains strict.
   auto mixed_signature_config = convex_maxwell_island_config;
-  mixed_signature_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5,
-                                                                   6, 9, 10};
+  mixed_signature_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6, 9, 10};
   mixed_signature_config["Boundaries"]["Postprocessing"]["Dielectric"] = {
       {{"Index", 4},
        {"Attributes", {9}},
@@ -1676,8 +3283,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
        {"EdgeFrameNormal", {0.0, 1.0, 0.0}}}};
   mixed_signature_config["Solver"]["SurfaceResponseCorrection"]["TargetInterfaces"] = {4,
                                                                                        5};
-  mixed_signature_config["Solver"]["SurfaceResponseCorrection"]["UnmatchedPolicy"] =
-      "Warn";
+  mixed_signature_config["Solver"]["SurfaceResponseCorrection"]["UnmatchedPolicy"] = "Warn";
   IoData mixed_signature_iodata(mixed_signature_config, false);
   mixed_signature_iodata.boundaries.cracked_attributes.insert(9);
   mixed_signature_iodata.boundaries.cracked_attributes.insert(10);
@@ -1709,16 +3315,14 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
        {"AutomaticEdges", true},
        {"EdgeDistances", {0.2}},
        {"EdgeFrameNormal", {0.0, 1.0, 0.0}}}};
-  local_interaction_config["Solver"]["SurfaceResponseCorrection"]["TargetInterfaces"] = {
-      4};
+  local_interaction_config["Solver"]["SurfaceResponseCorrection"]["TargetInterfaces"] = {4};
   IoData local_interaction_iodata(local_interaction_config, false);
   local_interaction_iodata.boundaries.cracked_attributes.insert(9);
   local_interaction_iodata.boundaries.cracked_attributes.insert(10);
   std::vector<std::unique_ptr<Mesh>> local_interaction_meshes;
   local_interaction_meshes.push_back(
       std::make_unique<Mesh>(MakeIslandMesh(false, false, false, true)));
-  SpaceOperator local_interaction_space(local_interaction_iodata,
-                                        local_interaction_meshes);
+  SpaceOperator local_interaction_space(local_interaction_iodata, local_interaction_meshes);
   SurfaceResponseOperator local_interaction_response(local_interaction_iodata,
                                                      local_interaction_space);
   CHECK(local_interaction_response.GetPatchCount() > 0);
@@ -1739,8 +3343,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   auto MakePairedApertureMesh = []()
   {
     constexpr double extent = 3.0;
-    mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(
-        24, 4, 24, mfem::Element::HEXAHEDRON, extent, 1.0, extent);
+    mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(24, 4, 24, mfem::Element::HEXAHEDRON,
+                                                    extent, 1.0, extent);
     for (int face = 0; face < serial.GetNumFaces(); face++)
     {
       int element1, element2;
@@ -1763,12 +3367,10 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
         zmin = std::min(zmin, point[2]);
         zmax = std::max(zmax, point[2]);
       }
-      const bool left_aperture =
-          xmin >= 0.75 - 1.0e-12 && xmax <= 1.25 + 1.0e-12 &&
-          zmin >= 0.5 - 1.0e-12 && zmax <= 2.5 + 1.0e-12;
-      const bool right_aperture =
-          xmin >= 1.5 - 1.0e-12 && xmax <= 2.0 + 1.0e-12 &&
-          zmin >= 0.5 - 1.0e-12 && zmax <= 2.5 + 1.0e-12;
+      const bool left_aperture = xmin >= 0.75 - 1.0e-12 && xmax <= 1.25 + 1.0e-12 &&
+                                 zmin >= 0.5 - 1.0e-12 && zmax <= 2.5 + 1.0e-12;
+      const bool right_aperture = xmin >= 1.5 - 1.0e-12 && xmax <= 2.0 + 1.0e-12 &&
+                                  zmin >= 0.5 - 1.0e-12 && zmax <= 2.5 + 1.0e-12;
       if (on_plane && !left_aperture && !right_aperture)
       {
         serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
@@ -1783,8 +3385,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   auto strip_aperture_config = convex_maxwell_island_config;
   strip_aperture_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
       strip_library_3d_path.string();
-  strip_aperture_config["Solver"]["SurfaceResponseCorrection"]["UnmatchedPolicy"] =
-      "Warn";
+  strip_aperture_config["Solver"]["SurfaceResponseCorrection"]["UnmatchedPolicy"] = "Warn";
   strip_aperture_config["Boundaries"]["Postprocessing"]["Dielectric"][0]
                        ["EdgeExcludeAttributes"] = {1, 2, 3, 4, 5, 6};
   IoData strip_aperture_iodata(strip_aperture_config, false);
@@ -1804,8 +3405,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(strip_perimeter_components.size() == 2);
 
   std::vector<std::unique_ptr<Mesh>> strip_aperture_meshes;
-  strip_aperture_meshes.push_back(
-      std::make_unique<Mesh>(MakePairedApertureMesh()));
+  strip_aperture_meshes.push_back(std::make_unique<Mesh>(MakePairedApertureMesh()));
   SpaceOperator strip_aperture_space(strip_aperture_iodata, strip_aperture_meshes);
   SurfaceResponseOperator strip_aperture_response(strip_aperture_iodata,
                                                   strip_aperture_space);
@@ -1817,10 +3417,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   IoData no_strip_aperture_iodata(no_strip_aperture_config, false);
   no_strip_aperture_iodata.boundaries.cracked_attributes.insert(9);
   std::vector<std::unique_ptr<Mesh>> no_strip_aperture_meshes;
-  no_strip_aperture_meshes.push_back(
-      std::make_unique<Mesh>(MakePairedApertureMesh()));
-  SpaceOperator no_strip_aperture_space(no_strip_aperture_iodata,
-                                        no_strip_aperture_meshes);
+  no_strip_aperture_meshes.push_back(std::make_unique<Mesh>(MakePairedApertureMesh()));
+  SpaceOperator no_strip_aperture_space(no_strip_aperture_iodata, no_strip_aperture_meshes);
   SurfaceResponseOperator no_strip_aperture_response(no_strip_aperture_iodata,
                                                      no_strip_aperture_space);
 
@@ -1838,8 +3436,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
         no_strip_aperture_result.matched_length_fraction);
 
   auto strict_mixed_signature_config = mixed_signature_config;
-  strict_mixed_signature_config["Solver"]["SurfaceResponseCorrection"]
-                               ["UnmatchedPolicy"] = "Error";
+  strict_mixed_signature_config["Solver"]["SurfaceResponseCorrection"]["UnmatchedPolicy"] =
+      "Error";
   IoData strict_mixed_signature_iodata(strict_mixed_signature_config, false);
   strict_mixed_signature_iodata.boundaries.cracked_attributes.insert(9);
   strict_mixed_signature_iodata.boundaries.cracked_attributes.insert(10);

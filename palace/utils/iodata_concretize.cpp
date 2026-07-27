@@ -201,7 +201,8 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
                     [](const auto &patch)
                     {
                       return patch.model == 1 &&
-                             patch.reference == std::array<double, 3>{0.0, 0.0, 0.0};
+                             patch.conductor_references ==
+                                 std::vector<std::array<double, 3>>{{0.0, 0.0, 0.0}};
                     });
     if (legacy)
     {
@@ -248,7 +249,7 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
                                        {"Origin", patch.origin},
                                        {"AxisU", patch.axis_u},
                                        {"AxisV", patch.axis_v},
-                                       {"Reference", patch.reference}});
+                                       {"Reference", patch.conductor_references.front()}});
     }
   }
 }

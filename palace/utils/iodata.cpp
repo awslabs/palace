@@ -786,9 +786,12 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
       {
         x /= scale;
       }
-      for (auto &x : patch.reference)
+      for (auto &reference : patch.conductor_references)
       {
-        x /= scale;
+        for (auto &x : reference)
+        {
+          x /= scale;
+        }
       }
     }
   }

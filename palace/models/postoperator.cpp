@@ -36,6 +36,8 @@ using namespace std::complex_literals;
 namespace
 {
 
+constexpr double minimum_eigenmode_response_overlap = 0.8;
+
 std::string OutputFolderName(const ProblemType solver_t)
 {
   switch (solver_t)
@@ -1673,8 +1675,14 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
                 0.5 * std::abs(data.C) * std::real(voltage * std::conj(voltage));
           }
         }
-        const auto corrected_response = surface_response_op->GetMaxwellResponse(
-            corrected_field, measurement_cache.freq);
+        const auto corrected_frequency =
+            surface_response_corrected_frequency.value_or(measurement_cache.freq);
+        const auto corrected_response =
+            surface_response_op->GetMaxwellResponse(corrected_field, corrected_frequency);
+        result.self_consistent_confidence = corrected_response;
+        result.self_consistent_frequency = corrected_frequency;
+        result.self_consistent_mode_overlap =
+            surface_response_corrected_mode_overlap.value_or(1.0);
         result.self_consistent_normalization_energy =
             dom_post_op.GetElectricFieldEnergy(corrected_field) + capacitor_energy +
             corrected_response.domain_correction;
@@ -1715,17 +1723,37 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
       }
     }
 
+    bool self_consistent_confident =
+        result.has_self_consistent &&
+        result.self_consistent_confidence.closure_independent_confident;
+    if constexpr (solver_t == ProblemType::EIGENMODE)
+    {
+      self_consistent_confident =
+          self_consistent_confident &&
+          result.self_consistent_mode_overlap >= minimum_eigenmode_response_overlap;
+    }
     if (!result.confidence.confident && !surface_response_warning_printed)
     {
+      const std::string self_consistent_status =
+          !result.has_self_consistent
+              ? "No self-consistent corrected field is available for this solve."
+          : self_consistent_confident
+              ? "The self-consistent corrected result passes the non-closure "
+                "confidence gates and is preferred."
+              : "The self-consistent corrected result also fails a non-closure "
+                "confidence gate or, for an eigenmode, the minimum mode-overlap gate.";
       Mpi::Warning(
-          "PEC Maxwell surface-response confidence limits were exceeded: "
+          "Maxwell postprocessing-only surface-response confidence limits were exceeded: "
           "kR = {:.3e}, loop residual = {:.3e}, response-weighted loop residual = "
           "{:.3e}, loop-response fraction above limit = {:.3e}, matched fraction = "
           "{:.6f}, "
           "unmodeled corner fraction = {:.3e}, max R/rho = {:.3e}, "
-          "library distance = {:.3e}, "
-          "trace-closure spread = {:.3e}. "
-          "Corrected values are reported but should not be treated as validated.\n",
+          "library distance = {:.3e}, boundary-law parameters verified = {:d}, "
+          "max interface trace-closure spread = {:.3e}, response-weighted local "
+          "trace-closure spread = {:.3e}, trace-closure response fraction above limit = "
+          "{:.3e}. "
+          "Fixed-trace and fixed-flux values are reported but should not be treated as "
+          "validated. {}\n",
           result.confidence.kR, result.confidence.loop_residual,
           result.confidence.response_weighted_loop_residual,
           result.confidence.loop_response_failure_fraction,
@@ -1733,7 +1761,11 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
           result.confidence.corner_neighborhood_fraction,
           result.confidence.maximum_curvature_ratio,
           result.confidence.maximum_library_distance,
-          result.confidence.maximum_trace_closure_spread);
+          result.confidence.boundary_law_verified ? 1 : 0,
+          result.confidence.maximum_trace_closure_spread,
+          result.confidence.response_weighted_trace_closure_spread,
+          result.confidence.trace_closure_response_failure_fraction,
+          self_consistent_status);
       surface_response_warning_printed = true;
     }
     surface_response_measurement = std::move(result);
@@ -1798,14 +1830,31 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table.insert("corner_fraction", "unmodeled corner neighborhood fraction");
     table.insert("curvature", "max R/rho");
     table.insert("library_distance", "max library distance");
+    table.insert("boundary_law_verified", "boundary-law parameters verified");
     table.insert("trace_closure_spread", "max trace closure spread");
+    table.insert("weighted_trace_closure_spread",
+                 "response-weighted local trace closure spread");
+    table.insert("trace_closure_failure_fraction",
+                 "trace-closure response fraction above limit");
     table.insert("confident", "confidence pass");
+    table.insert("self_consistent_weighted_loop_residual",
+                 "self-consistent response-weighted loop residual");
+    table.insert("self_consistent_loop_failure_fraction",
+                 "self-consistent loop-response fraction above limit");
+    table.insert("self_consistent_confident", "self-consistent confidence pass");
     table["excitation"].print_as_int = true;
     table["confident"].print_as_int = true;
+    table["boundary_law_verified"].print_as_int = true;
     if constexpr (solver_t == ProblemType::EIGENMODE ||
                   solver_t == ProblemType::BOUNDARYMODE)
     {
       table["idx"].print_as_int = true;
+    }
+    if constexpr (solver_t == ProblemType::EIGENMODE)
+    {
+      table.insert("self_consistent_frequency_re", "Re{f self-consistent} (GHz)");
+      table.insert("self_consistent_frequency_im", "Im{f self-consistent} (GHz)");
+      table.insert("self_consistent_mode_overlap", "self-consistent M-overlap");
     }
   }
 
@@ -1898,8 +1947,45 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
   table["corner_fraction"] << confidence.corner_neighborhood_fraction;
   table["curvature"] << confidence.maximum_curvature_ratio;
   table["library_distance"] << confidence.maximum_library_distance;
+  table["boundary_law_verified"] << (confidence.boundary_law_verified ? 1.0 : 0.0);
   table["trace_closure_spread"] << confidence.maximum_trace_closure_spread;
+  table["weighted_trace_closure_spread"]
+      << confidence.response_weighted_trace_closure_spread;
+  table["trace_closure_failure_fraction"]
+      << confidence.trace_closure_response_failure_fraction;
   table["confident"] << (confidence.confident ? 1.0 : 0.0);
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  table["self_consistent_weighted_loop_residual"]
+      << (result.has_self_consistent
+              ? result.self_consistent_confidence.response_weighted_loop_residual
+              : nan);
+  table["self_consistent_loop_failure_fraction"]
+      << (result.has_self_consistent
+              ? result.self_consistent_confidence.loop_response_failure_fraction
+              : nan);
+  bool self_consistent_confident =
+      result.has_self_consistent &&
+      result.self_consistent_confidence.closure_independent_confident;
+  if constexpr (solver_t == ProblemType::EIGENMODE)
+  {
+    self_consistent_confident =
+        self_consistent_confident &&
+        result.self_consistent_mode_overlap >= minimum_eigenmode_response_overlap;
+    table["self_consistent_frequency_re"]
+        << (result.has_self_consistent ? units.Dimensionalize<VT::FREQUENCY>(
+                                             result.self_consistent_frequency.real()) /
+                                             (2 * M_PI)
+                                       : nan);
+    table["self_consistent_frequency_im"]
+        << (result.has_self_consistent ? units.Dimensionalize<VT::FREQUENCY>(
+                                             result.self_consistent_frequency.imag()) /
+                                             (2 * M_PI)
+                                       : nan);
+    table["self_consistent_mode_overlap"]
+        << (result.has_self_consistent ? result.self_consistent_mode_overlap : nan);
+  }
+  table["self_consistent_confident"]
+      << (result.has_self_consistent ? (self_consistent_confident ? 1.0 : 0.0) : nan);
   surface_response_confidence->WriteFullTableTrunc();
 }
 
@@ -1962,6 +2048,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
   PrintSurfaceResponseCorrection(freq.real(), ex_idx);
   surface_response_corrected_field = nullptr;
   surface_response_corrected_flux = nullptr;
+  surface_response_corrected_frequency.reset();
+  surface_response_corrected_mode_overlap.reset();
   if (ShouldWriteParaviewFields(step))
   {
     Mpi::Print("\n");
@@ -2031,6 +2119,8 @@ auto PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e
   PrintSurfaceResponseCorrection(print_idx, 0);
   surface_response_corrected_field = nullptr;
   surface_response_corrected_flux = nullptr;
+  surface_response_corrected_frequency.reset();
+  surface_response_corrected_mode_overlap.reset();
   if (ShouldWriteParaviewFields(step))
   {
     WriteParaviewFields(step, print_idx);

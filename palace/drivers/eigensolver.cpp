@@ -3,7 +3,10 @@
 
 #include "eigensolver.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <complex>
+#include <limits>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
@@ -29,6 +32,103 @@ namespace palace
 {
 
 using namespace std::complex_literals;
+
+std::vector<int>
+internal::MaximumWeightModeAssignment(const std::vector<std::vector<double>> &weights)
+{
+  if (weights.empty())
+  {
+    return {};
+  }
+  const int rows = static_cast<int>(weights.size());
+  const int columns = static_cast<int>(weights.front().size());
+  MFEM_VERIFY(columns >= rows,
+              "Mode assignment requires at least as many columns as rows!");
+  double maximum_weight = 0.0;
+  for (const auto &row : weights)
+  {
+    MFEM_VERIFY(static_cast<int>(row.size()) == columns,
+                "Mode-assignment weights must form a rectangular matrix!");
+    for (const double weight : row)
+    {
+      MFEM_VERIFY(std::isfinite(weight) && weight >= 0.0,
+                  "Mode-assignment weights must be finite and nonnegative!");
+      maximum_weight = std::max(maximum_weight, weight);
+    }
+  }
+
+  // Hungarian algorithm for a rectangular minimization problem. Subtracting each
+  // overlap from the common maximum converts maximum-weight mode matching to minimum
+  // cost without changing the optimal assignment.
+  std::vector<double> row_potential(rows + 1), column_potential(columns + 1);
+  std::vector<int> column_row(columns + 1), predecessor(columns + 1);
+  for (int row = 1; row <= rows; row++)
+  {
+    column_row[0] = row;
+    int current_column = 0;
+    std::vector<double> minimum_cost(columns + 1, std::numeric_limits<double>::infinity());
+    std::vector<bool> used(columns + 1, false);
+    do
+    {
+      used[current_column] = true;
+      const int current_row = column_row[current_column];
+      double delta = std::numeric_limits<double>::infinity();
+      int next_column = 0;
+      for (int column = 1; column <= columns; column++)
+      {
+        if (used[column])
+        {
+          continue;
+        }
+        const double cost = maximum_weight - weights[current_row - 1][column - 1] -
+                            row_potential[current_row] - column_potential[column];
+        if (cost < minimum_cost[column])
+        {
+          minimum_cost[column] = cost;
+          predecessor[column] = current_column;
+        }
+        if (minimum_cost[column] < delta)
+        {
+          delta = minimum_cost[column];
+          next_column = column;
+        }
+      }
+      for (int column = 0; column <= columns; column++)
+      {
+        if (used[column])
+        {
+          row_potential[column_row[column]] += delta;
+          column_potential[column] -= delta;
+        }
+        else
+        {
+          minimum_cost[column] -= delta;
+        }
+      }
+      current_column = next_column;
+    } while (column_row[current_column] != 0);
+
+    do
+    {
+      const int next_column = predecessor[current_column];
+      column_row[current_column] = column_row[next_column];
+      current_column = next_column;
+    } while (current_column != 0);
+  }
+
+  std::vector<int> assignment(rows, -1);
+  for (int column = 1; column <= columns; column++)
+  {
+    if (column_row[column] > 0)
+    {
+      assignment[column_row[column] - 1] = column - 1;
+    }
+  }
+  MFEM_ASSERT(std::all_of(assignment.begin(), assignment.end(),
+                          [](int column) { return column >= 0; }),
+              "Incomplete maximum-weight mode assignment!");
+  return assignment;
+}
 
 std::pair<ErrorIndicator, long long int>
 EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -128,7 +228,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Configure objects for postprocessing.
   PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op, &response_geometry,
                                                &surface_post_geometry);
-  ComplexVector E(Curl.Width()), B(Curl.Height()), D(space_op.GetRTSpace().GetTrueVSize());
+  ComplexVector E(Curl.Width()), E_corrected, B(Curl.Height()),
+      D(space_op.GetRTSpace().GetTrueVSize()), D_corrected;
   E.UseDevice(true);
   B.UseDevice(true);
   D.UseDevice(true);
@@ -136,7 +237,6 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // Define and configure the eigensolver to solve the eigenvalue problem:
   //         (K + λ C + λ² M) u = 0    or    K u = -λ² M u
   // with λ = iω. In general, the system matrices are complex and symmetric.
-  std::unique_ptr<EigenvalueSolver> eigen;
   const EigenSolverBackend type = iodata.solver.eigenmode.type;
 #if !defined(PALACE_WITH_ARPACK) && !defined(PALACE_WITH_SLEPC)
 #error "Eigenmode solver requires building with ARPACK or SLEPc!"
@@ -148,64 +248,105 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   nonlinear_type = NonlinearEigenSolver::HYBRID;
 #endif
-  if (type == EigenSolverBackend::ARPACK)
+  auto MakeEigenvalueSolver = [&]() -> std::unique_ptr<EigenvalueSolver>
   {
+    std::unique_ptr<EigenvalueSolver> result;
+    if (type == EigenSolverBackend::ARPACK)
+    {
 #if defined(PALACE_WITH_ARPACK)
-    Mpi::Print("\nConfiguring ARPACK eigenvalue solver:\n");
-    if (C || has_A2)
-    {
-      eigen = std::make_unique<arpack::ArpackPEPSolver>(space_op.GetComm(),
-                                                        iodata.problem.verbose);
-    }
-    else
-    {
-      eigen = std::make_unique<arpack::ArpackEPSSolver>(space_op.GetComm(),
-                                                        iodata.problem.verbose);
-    }
-#endif
-  }
-  else  // EigenSolverBackend::SLEPC
-  {
-#if defined(PALACE_WITH_SLEPC)
-    Mpi::Print("\nConfiguring SLEPc eigenvalue solver:\n");
-    std::unique_ptr<slepc::SlepcEigenvalueSolver> slepc;
-    if (nonlinear_type == NonlinearEigenSolver::SLP)
-    {
-      slepc = std::make_unique<slepc::SlepcNEPSolver>(space_op.GetComm(),
-                                                      iodata.problem.verbose);
-      slepc->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);
-      slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GENERAL);
-    }
-    else
-    {
       if (C || has_A2)
       {
-        if (!iodata.solver.eigenmode.pep_linear)
-        {
-          slepc = std::make_unique<slepc::SlepcPEPSolver>(space_op.GetComm(),
-                                                          iodata.problem.verbose);
-          slepc->SetType(slepc::SlepcEigenvalueSolver::Type::TOAR);
-        }
-        else
-        {
-          slepc = std::make_unique<slepc::SlepcPEPLinearSolver>(space_op.GetComm(),
-                                                                iodata.problem.verbose);
-          slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
-        }
+        result = std::make_unique<arpack::ArpackPEPSolver>(space_op.GetComm(),
+                                                           iodata.problem.verbose);
       }
       else
       {
-        slepc = std::make_unique<slepc::SlepcEPSSolver>(space_op.GetComm(),
-                                                        iodata.problem.verbose);
-        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+        result = std::make_unique<arpack::ArpackEPSSolver>(space_op.GetComm(),
+                                                           iodata.problem.verbose);
       }
-      slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
-    }
-    slepc->SetOrthogonalization(iodata.solver.linear.gs_orthog == Orthogonalization::MGS,
-                                iodata.solver.linear.gs_orthog == Orthogonalization::CGS2);
-    eigen = std::move(slepc);
 #endif
+    }
+    else  // EigenSolverBackend::SLEPC
+    {
+#if defined(PALACE_WITH_SLEPC)
+      std::unique_ptr<slepc::SlepcEigenvalueSolver> slepc;
+      if (nonlinear_type == NonlinearEigenSolver::SLP)
+      {
+        slepc = std::make_unique<slepc::SlepcNEPSolver>(space_op.GetComm(),
+                                                        iodata.problem.verbose);
+        slepc->SetType(slepc::SlepcEigenvalueSolver::Type::SLP);
+        slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GENERAL);
+      }
+      else
+      {
+        if (C || has_A2)
+        {
+          if (!iodata.solver.eigenmode.pep_linear)
+          {
+            slepc = std::make_unique<slepc::SlepcPEPSolver>(space_op.GetComm(),
+                                                            iodata.problem.verbose);
+            slepc->SetType(slepc::SlepcEigenvalueSolver::Type::TOAR);
+          }
+          else
+          {
+            slepc = std::make_unique<slepc::SlepcPEPLinearSolver>(space_op.GetComm(),
+                                                                  iodata.problem.verbose);
+            slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+          }
+        }
+        else
+        {
+          slepc = std::make_unique<slepc::SlepcEPSSolver>(space_op.GetComm(),
+                                                          iodata.problem.verbose);
+          slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
+        }
+        slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
+      }
+      slepc->SetOrthogonalization(iodata.solver.linear.gs_orthog == Orthogonalization::MGS,
+                                  iodata.solver.linear.gs_orthog ==
+                                      Orthogonalization::CGS2);
+      result = std::move(slepc);
+#endif
+    }
+    MFEM_VERIFY(result, "Requested eigenvalue-solver backend is unavailable!");
+    return result;
+  };
+
+  Mpi::Print("\nConfiguring {} eigenvalue solver:\n",
+             type == EigenSolverBackend::ARPACK ? "ARPACK" : "SLEPc");
+  auto eigen = MakeEigenvalueSolver();
+  SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
+  const bool self_consistent_response = response_correction && !C && !has_A2;
+  if (response_correction && !self_consistent_response)
+  {
+    Mpi::Warning(
+        "Self-consistent eigenmode surface-response correction currently requires a "
+        "linear eigenproblem without damping or frequency-dependent operators. Raw, "
+        "fixed-trace, and fixed-flux results remain available.\n");
   }
+  std::unique_ptr<ComplexWrapperOperator> response_mass;
+  std::unique_ptr<SumOperator> corrected_M_real;
+  std::unique_ptr<ComplexWrapperOperator> corrected_M;
+  std::unique_ptr<EigenvalueSolver> corrected_eigen;
+  if (self_consistent_response)
+  {
+    Mpi::Print("Configuring self-consistent response-corrected eigenvalue solver:\n");
+    response_mass = std::make_unique<ComplexWrapperOperator>(response_correction, nullptr);
+    MFEM_VERIFY(M->Real(), "Response-corrected eigenmode mass requires a real part!");
+    corrected_M_real = std::make_unique<SumOperator>(*M->Real());
+    corrected_M_real->AddOperator(*response_correction);
+    corrected_M =
+        std::make_unique<ComplexWrapperOperator>(corrected_M_real.get(), M->Imag());
+    corrected_eigen = MakeEigenvalueSolver();
+    E_corrected.SetSize(Curl.Width());
+    E_corrected.UseDevice(true);
+    if (post_op.NeedsRecoveredElectricFlux())
+    {
+      D_corrected.SetSize(space_op.GetRTSpace().GetTrueVSize());
+      D_corrected.UseDevice(true);
+    }
+  }
+
   EigenvalueSolver::ScaleType scale = iodata.solver.eigenmode.scale
                                           ? EigenvalueSolver::ScaleType::NORM_2
                                           : EigenvalueSolver::ScaleType::NONE;
@@ -230,14 +371,31 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       eigen->SetOperators(*K, *M, scale);
     }
   }
-  eigen->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
+  if (corrected_eigen)
+  {
+    corrected_eigen->SetOperators(*K, *corrected_M, scale);
+  }
   const double tol = (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
                          ? iodata.solver.eigenmode.linear_tol
                          : iodata.solver.eigenmode.tol;
-  eigen->SetTol(tol);
-  eigen->SetMaxIter(iodata.solver.eigenmode.max_it);
+  auto ConfigureCommon = [&](EigenvalueSolver &solver)
+  {
+    solver.SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
+    solver.SetTol(tol);
+    solver.SetMaxIter(iodata.solver.eigenmode.max_it);
+  };
+  ConfigureCommon(*eigen);
+  if (corrected_eigen)
+  {
+    ConfigureCommon(*corrected_eigen);
+  }
   Mpi::Print(" Scaling γ = {:.3e}, δ = {:.3e}\n", eigen->GetScalingGamma(),
              eigen->GetScalingDelta());
+  if (corrected_eigen)
+  {
+    Mpi::Print(" Corrected scaling γ = {:.3e}, δ = {:.3e}\n",
+               corrected_eigen->GetScalingGamma(), corrected_eigen->GetScalingDelta());
+  }
 
   // If desired, use an M-inner product for orthogonalizing the eigenvalue subspace. The
   // constructed matrix just references the real SPD part of the mass matrix (no copy is
@@ -248,6 +406,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print(" Basis uses M-inner product\n");
     KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
     eigen->SetBMat(*KM);
+    if (corrected_eigen)
+    {
+      // The raw positive mass form gives both mode families a common overlap and
+      // normalization metric. The response-corrected mass can contain a small
+      // indefinite defect and is not available as an assembled ParOperator.
+      corrected_eigen->SetBMat(*KM);
+    }
 
     // Mpi::Print(" Basis uses (K + M)-inner product\n");
     // KM = space_op.GetInnerProductMatrix(1.0, 1.0, K.get(), M.get());
@@ -268,6 +433,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         space_op.GetAuxBdrTDofLists(), iodata.solver.linear.divfree_tol,
         iodata.solver.linear.divfree_max_it, divfree_verbose);
     eigen->SetDivFreeProjector(*divfree);
+    if (corrected_eigen)
+    {
+      corrected_eigen->SetDivFreeProjector(*divfree);
+    }
   }
 
   // If using Floquet BCs, a correction term (kp x E) needs to be added to the B field.
@@ -299,6 +468,10 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       divfree->Mult(v0);
     }
     eigen->SetInitialSpace(v0);  // Copies the vector
+    if (corrected_eigen)
+    {
+      corrected_eigen->SetInitialSpace(v0);
+    }
 
     // Debug
     // const auto &Grad = space_op.GetGradMatrix();
@@ -345,6 +518,13 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       eigen->SetWhichEigenpairs(EigenvalueSolver::WhichType::TARGET_REAL);
     }
   }
+  if (corrected_eigen)
+  {
+    corrected_eigen->SetShiftInvert(target * target);
+    corrected_eigen->SetWhichEigenpairs(type == EigenSolverBackend::ARPACK
+                                            ? EigenvalueSolver::WhichType::LARGEST_REAL
+                                            : EigenvalueSolver::WhichType::TARGET_REAL);
+  }
 
   // Set up the linear solver required for solving systems involving the shifted operator
   // (K - σ² M) or P(iσ) = (K + iσ C - σ² M) during the eigenvalue solve. The
@@ -358,6 +538,17 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                                                 &space_op.GetH1Spaces());
   ksp->SetOperators(*A, *P);
   eigen->SetLinearSolver(*ksp);
+  std::unique_ptr<SumComplexOperator> corrected_A;
+  std::unique_ptr<ComplexKspSolver> corrected_ksp;
+  if (corrected_eigen)
+  {
+    corrected_A = std::make_unique<SumComplexOperator>(*A);
+    corrected_A->AddOperator(*response_mass, -target * target + 0.0i);
+    corrected_ksp = std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
+                                                       &space_op.GetH1Spaces());
+    corrected_ksp->SetOperators(*corrected_A, *P);
+    corrected_eigen->SetLinearSolver(*corrected_ksp);
+  }
 
   // Initialize structures for storing and reducing the results of error estimation.
   const bool is_2d = (space_op.GetNDSpace().Dimension() < 3);
@@ -416,6 +607,19 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                    ? fmt::format(" (first = {:.3e}{:+.3e}i)", lambda.real(), lambda.imag())
                    : "");
   }
+  int corrected_num_conv = 0;
+  if (corrected_eigen)
+  {
+    Mpi::Print("\nSolving self-consistent fabrication-response corrected eigenproblem\n");
+    corrected_num_conv = corrected_eigen->Solve();
+    std::complex<double> lambda =
+        corrected_num_conv > 0 ? corrected_eigen->GetEigenvalue(0) : 0.0;
+    Mpi::Print(" Found {:d} converged corrected eigenvalue{}{}\n", corrected_num_conv,
+               corrected_num_conv > 1 ? "s" : "",
+               corrected_num_conv > 0
+                   ? fmt::format(" (first = {:.3e}{:+.3e}i)", lambda.real(), lambda.imag())
+                   : "");
+  }
 
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
   {
@@ -461,6 +665,95 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
     eigen->SetBMat(*KM);
     eigen->RescaleEigenvectors(num_conv);
+    if (corrected_eigen)
+    {
+      corrected_eigen->SetBMat(*KM);
+      corrected_eigen->RescaleEigenvectors(corrected_num_conv);
+    }
+  }
+
+  std::vector<int> corrected_mode(num_conv, -1);
+  std::vector<double> corrected_mode_overlap(num_conv,
+                                             std::numeric_limits<double>::quiet_NaN());
+  std::vector<std::complex<double>> corrected_omega(corrected_num_conv);
+  if (corrected_eigen)
+  {
+    MFEM_VERIFY(corrected_num_conv >= iodata.solver.eigenmode.n,
+                "Response-corrected eigenmode solve found "
+                    << corrected_num_conv << " modes when " << iodata.solver.eigenmode.n
+                    << " were requested!");
+    for (int j = 0; j < corrected_num_conv; j++)
+    {
+      corrected_omega[j] = std::sqrt(corrected_eigen->GetEigenvalue(j));
+    }
+
+    const int pair_count = std::min(num_conv, corrected_num_conv);
+    std::vector<std::vector<double>> overlap(pair_count,
+                                             std::vector<double>(corrected_num_conv));
+    ComplexVector raw_mode(Curl.Width()), response_mode(Curl.Width());
+    raw_mode.UseDevice(true);
+    response_mode.UseDevice(true);
+    std::vector<double> raw_norm(pair_count), corrected_norm(corrected_num_conv);
+    for (int i = 0; i < pair_count; i++)
+    {
+      eigen->GetEigenvector(i, raw_mode);
+      raw_norm[i] =
+          std::sqrt(std::abs(linalg::Dot(space_op.GetComm(), raw_mode, *KM, raw_mode)));
+    }
+    for (int j = 0; j < corrected_num_conv; j++)
+    {
+      corrected_eigen->GetEigenvector(j, response_mode);
+      corrected_norm[j] = std::sqrt(
+          std::abs(linalg::Dot(space_op.GetComm(), response_mode, *KM, response_mode)));
+    }
+    for (int i = 0; i < pair_count; i++)
+    {
+      eigen->GetEigenvector(i, raw_mode);
+      for (int j = 0; j < corrected_num_conv; j++)
+      {
+        corrected_eigen->GetEigenvector(j, response_mode);
+        const double scale = raw_norm[i] * corrected_norm[j];
+        MFEM_VERIFY(scale > 0.0, "Cannot match a zero-norm eigenmode!");
+        overlap[i][j] = std::min(
+            1.0, std::abs(linalg::Dot(space_op.GetComm(), raw_mode, *KM, response_mode)) /
+                     scale);
+      }
+    }
+    const auto assignment = internal::MaximumWeightModeAssignment(overlap);
+    for (int i = 0; i < pair_count; i++)
+    {
+      corrected_mode[i] = assignment[i];
+      corrected_mode_overlap[i] = overlap[i][assignment[i]];
+    }
+
+    if (Mpi::Root(space_op.GetComm()))
+    {
+      Table table;
+      table.col_options = {6, 6};
+      table.insert(Column("raw", "Raw", 4, {}, {}, ""));
+      table.insert(Column("corrected", "Corrected", 9, {}, {}, ""));
+      table.insert(Column("overlap", "M-overlap"));
+      table.insert(Column("f_raw", "f raw (GHz)"));
+      table.insert(Column("f_corrected", "f corrected (GHz)"));
+      table["raw"].print_as_int = true;
+      table["corrected"].print_as_int = true;
+      for (int i = 0; i < pair_count; i++)
+      {
+        const auto raw_omega = std::sqrt(eigen->GetEigenvalue(i));
+        const auto response_omega = corrected_omega[corrected_mode[i]];
+        table["raw"] << i + 1;
+        table["corrected"] << corrected_mode[i] + 1;
+        table["overlap"] << corrected_mode_overlap[i];
+        table["f_raw"] << iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(
+                              raw_omega.real()) /
+                              (2 * M_PI);
+        table["f_corrected"] << iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(
+                                    response_omega.real()) /
+                                    (2 * M_PI);
+      }
+      Mpi::Print("\nSelf-consistent response-corrected mode matching:\n{}",
+                 table.format_table());
+    }
   }
   Mpi::Print("\n");
 
@@ -504,6 +797,21 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       RecoverElectricFlux(E, D);
       post_op.SetRecoveredElectricFlux(D);
       recovered_flux = &D;
+    }
+    if (corrected_mode[i] >= 0)
+    {
+      corrected_eigen->GetEigenvector(corrected_mode[i], E_corrected);
+      linalg::NormalizePhase(space_op.GetComm(), E_corrected);
+      const ComplexVector *corrected_flux = nullptr;
+      if (post_op.NeedsRecoveredElectricFlux())
+      {
+        Mpi::Print(" Recovering electric flux for self-consistent corrected mode\n");
+        RecoverElectricFlux(E_corrected, D_corrected);
+        corrected_flux = &D_corrected;
+      }
+      post_op.SetSurfaceResponseCorrectedField(E_corrected, corrected_flux,
+                                               corrected_omega[corrected_mode[i]],
+                                               corrected_mode_overlap[i]);
     }
     auto total_domain_energy =
         post_op.MeasureAndPrintAll(i, E, B, omega, error_abs, error_bkwd, num_conv);

@@ -665,7 +665,7 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK(modern.response_correction->models[0].interfaces[0].coupon == 1);
   REQUIRE(modern.response_correction->patches.size() == 1);
   CHECK(modern.response_correction->patches[0].model == 7);
-  CHECK(modern.response_correction->patches[0].reference ==
+  CHECK(modern.response_correction->patches[0].conductor_references.front() ==
         std::array<double, 3>{-1.0, 0.0, 0.0});
 
   const json automatic_correction = {{"Library", "fabrication-process.json"},

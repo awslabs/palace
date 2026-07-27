@@ -72,16 +72,18 @@ private:
     int contour_line_offset = 0;
     int contour_line_count = 0;
     int end_line = -1;
-    int conductor_line = -1;
-    int closure_sign = 0;
+    int start_conductor_trace = -1;
+    int end_conductor_trace = -1;
     bool closed = true;
     std::vector<int> trace_indices;
   };
 
   struct MaxwellConductorPath
   {
-    int line = -1;
+    int contour_path = -1;
+    int parent_trace_offset = -1;
     int trace_offset = 0;
+    int integral_sign = 0;
   };
 
   struct OpenContourPath
@@ -139,8 +141,7 @@ private:
   // values. The line quadrature representation supplies both the trace action and its
   // transpose, so the same map is used for postprocessing and self-consistent correction.
   std::vector<std::vector<mfem::Vector>> maxwell_contours;
-  std::vector<mfem::Vector> maxwell_anchors;
-  std::vector<mfem::Vector> maxwell_secondary_anchors;
+  std::vector<std::vector<mfem::Vector>> maxwell_conductor_anchors;
   std::vector<MaxwellLine> maxwell_lines;
   std::vector<MaxwellContourPath> maxwell_paths;
   std::vector<MaxwellConductorPath> maxwell_conductor_paths;
@@ -155,6 +156,7 @@ private:
   std::map<int, double> corner_neighborhood_fraction_by_interface;
   double maximum_curvature_ratio = 0.0;
   double maximum_library_distance = 0.0;
+  bool boundary_law_verified = true;
 
   mutable Vector x_free, local_x, local_y, trace, response, correction;
 
@@ -192,6 +194,9 @@ public:
     std::map<int, double> fabricated_surface_energy_fixed_flux;
     std::map<int, double> trace_closure_spread;
     double maximum_trace_closure_spread = 0.0;
+    double response_weighted_trace_closure_spread = 0.0;
+    double trace_closure_response_failure_fraction = 0.0;
+    bool confident = true;
   };
 
   struct MaxwellResponse
@@ -211,7 +216,11 @@ public:
     std::map<int, double> corner_neighborhood_fraction_by_interface;
     double maximum_curvature_ratio = 0.0;
     double maximum_library_distance = 0.0;
+    bool boundary_law_verified = true;
     double maximum_trace_closure_spread = 0.0;
+    double response_weighted_trace_closure_spread = 0.0;
+    double trace_closure_response_failure_fraction = 0.0;
+    bool closure_independent_confident = true;
     bool confident = true;
   };
 

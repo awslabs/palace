@@ -16,6 +16,16 @@ class Mesh;
 class SurfacePostGeometry;
 class SurfaceResponseGeometry;
 
+namespace internal
+{
+
+// Return the maximum-total-weight one-to-one column assignment for a rectangular matrix
+// with no more rows than columns.
+std::vector<int>
+MaximumWeightModeAssignment(const std::vector<std::vector<double>> &weights);
+
+}  // namespace internal
+
 //
 // Driver class for eigenmode simulations.
 //

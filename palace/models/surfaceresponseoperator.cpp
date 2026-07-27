@@ -49,6 +49,9 @@ using ResponseCorrectionData = config::ElectrostaticSolverData::ResponseCorrecti
 using ResponseModelData = config::ElectrostaticSolverData::ResponseCorrectionModelData;
 using ResponsePatchData = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
 
+constexpr double maximum_trace_closure_spread = 0.05;
+constexpr double maximum_trace_closure_response_failure_fraction = 0.01;
+
 struct ElementBox
 {
   std::array<double, 3> min;
@@ -519,12 +522,17 @@ enum class LibraryTopology : char
   SAME_CONDUCTOR_GAP,
   DIFFERENT_CONDUCTOR_GAP,
   SAME_CONDUCTOR_STRIP,
+  PARALLEL_EDGE_CLUSTER,
+  SPATIAL_EDGE_CLUSTER,
   CONVEX_CORNER,
-  CONCAVE_CORNER
+  CONCAVE_CORNER,
+  ENDPOINT,
+  JUNCTION
 };
 
 struct LibraryInterface
 {
+  int slot = 0;
   InterfaceDielectric type;
   int coupon;
 };
@@ -533,6 +541,33 @@ struct LibraryInterfaceLayer
 {
   double thickness = 0.0;
   double permittivity = 0.0;
+};
+
+struct LibraryClusterEdge
+{
+  double offset = 0.0;
+  int gap_direction = 0;
+  int conductor = 0;
+};
+
+struct MetalBoundaryLaw
+{
+  MetalBoundaryConditionType type = MetalBoundaryConditionType::PEC;
+  bool parameters_verified = true;
+  std::vector<double> parameters;
+  std::vector<double> numerator;
+  std::vector<double> denominator;
+};
+
+struct LibrarySpatialEdge
+{
+  Point3D point{};
+  Point3D gap_direction{};
+  Point3D process_normal{};
+  std::array<double, 2> interval{};
+  int conductor = 0;
+  int interface_slot = 0;
+  MetalBoundaryLaw boundary_condition;
 };
 
 struct LibraryModel
@@ -545,10 +580,17 @@ struct LibraryModel
   double angle_tolerance = 0.0;
   double corner_radius = 0.0;
   double corner_radius_tolerance = 0.0;
+  std::vector<double> arm_angles;
+  double arm_angle_tolerance = 0.0;
+  MetalBoundaryLaw boundary_condition;
   double coupon_depth = 0.0;
   ResponseModelData response;
-  std::array<double, 3> reference{};
-  std::optional<std::array<double, 3>> secondary_reference;
+  std::vector<std::array<double, 3>> conductor_references;
+  std::vector<LibraryClusterEdge> cluster_edges;
+  double cluster_offset_tolerance = 0.0;
+  std::vector<LibrarySpatialEdge> spatial_edges;
+  double spatial_position_tolerance = 0.0;
+  double spatial_angle_tolerance = 0.0;
   std::vector<LibraryInterface> interfaces;
 };
 
@@ -575,6 +617,7 @@ struct EdgeSite2D
   Point2D axis_u{};
   Point2D axis_v{};
   int conductor = std::numeric_limits<int>::min();
+  MetalBoundaryLaw boundary_condition;
 };
 
 struct EdgeGroup3D
@@ -595,6 +638,8 @@ struct EdgeSegment3D
   Point3D axis_v{};
   double length = 0.0;
   int conductor = std::numeric_limits<int>::min();
+  std::map<InterfaceDielectric, int> targets;
+  MetalBoundaryLaw boundary_condition;
 };
 
 struct EdgePair3D
@@ -629,11 +674,68 @@ struct LibrarySelection
   };
 
   std::vector<WeightedModel> models;
-  std::array<double, 3> reference{};
-  std::optional<std::array<double, 3>> secondary_reference;
+  std::vector<std::array<double, 3>> conductor_references;
   double normalized_distance = 0.0;
 
   bool IsInterpolated() const { return models.size() > 1; }
+};
+
+struct ParallelClusterSelection
+{
+  LibrarySelection response;
+  std::vector<std::size_t> ordered_edges;
+  std::vector<std::size_t> reference_edges;
+  Point2D axis_u{};
+  Point2D axis_v{};
+};
+
+struct ParallelClusterSelection3D
+{
+  LibrarySelection response;
+  std::vector<std::size_t> ordered_edges;
+  std::vector<std::size_t> reference_edges;
+  Point3D axis_u{};
+  Point3D axis_v{};
+};
+
+struct ParallelClusterSpan3D
+{
+  ParallelClusterSelection3D selection;
+  Point3D tangent{};
+  double begin = 0.0;
+  double end = 0.0;
+};
+
+struct SpatialEdgeSite3D
+{
+  int physical_chain = -1;
+  std::size_t geometry_index = 0;
+  std::size_t segment = 0;
+  double distance = 0.0;
+  Point3D point{};
+  Point3D gap_direction{};
+  Point3D process_normal{};
+  int conductor = std::numeric_limits<int>::min();
+  std::map<InterfaceDielectric, int> targets;
+  MetalBoundaryLaw boundary_condition;
+};
+
+struct SpatialClusterSelection3D
+{
+  struct InteractionNeighborhood
+  {
+    int first_chain = -1;
+    int second_chain = -1;
+    Point3D center{};
+  };
+
+  LibrarySelection response;
+  std::vector<SpatialEdgeSite3D> sites;
+  std::vector<std::size_t> model_to_site;
+  std::map<int, std::map<InterfaceDielectric, int>> targets_by_slot;
+  std::vector<InteractionNeighborhood> interactions;
+  Point3D origin{};
+  std::array<Point3D, 3> axes{};
 };
 
 struct AutomaticResponseDiagnostics
@@ -648,7 +750,11 @@ struct AutomaticResponseDiagnostics
   std::map<int, double> matched_corner_neighborhood_length_by_interface;
   double maximum_curvature_ratio = 0.0;
   double maximum_library_distance = 0.0;
+  bool boundary_law_verified = true;
 };
+
+double Dot(const Point3D &a, const Point3D &b);
+double Norm(const Point3D &a);
 
 std::string ResolveLibraryPath(const std::filesystem::path &directory,
                                const std::string &path)
@@ -675,6 +781,14 @@ LibraryTopology ParseLibraryTopology(const std::string &topology)
   {
     return LibraryTopology::SAME_CONDUCTOR_STRIP;
   }
+  if (topology == "ParallelEdgeCluster")
+  {
+    return LibraryTopology::PARALLEL_EDGE_CLUSTER;
+  }
+  if (topology == "SpatialEdgeCluster")
+  {
+    return LibraryTopology::SPATIAL_EDGE_CLUSTER;
+  }
   if (topology == "ConvexCorner")
   {
     return LibraryTopology::CONVEX_CORNER;
@@ -683,10 +797,198 @@ LibraryTopology ParseLibraryTopology(const std::string &topology)
   {
     return LibraryTopology::CONCAVE_CORNER;
   }
+  if (topology == "Endpoint")
+  {
+    return LibraryTopology::ENDPOINT;
+  }
+  if (topology == "Junction")
+  {
+    return LibraryTopology::JUNCTION;
+  }
   MFEM_ABORT("Unknown fabrication-process response topology \"" << topology << "\"!");
 }
 
-ProcessLibrary ReadProcessLibrary(const std::string &path, double coordinate_scale)
+MetalBoundaryConditionType ParseLibraryBoundaryConditionType(const std::string &condition)
+{
+  if (condition == "PEC")
+  {
+    return MetalBoundaryConditionType::PEC;
+  }
+  if (condition == "Conductivity")
+  {
+    return MetalBoundaryConditionType::CONDUCTIVITY;
+  }
+  if (condition == "Impedance")
+  {
+    return MetalBoundaryConditionType::IMPEDANCE;
+  }
+  if (condition == "RationalImpedance")
+  {
+    return MetalBoundaryConditionType::RATIONAL_IMPEDANCE;
+  }
+  MFEM_ABORT("Unknown fabrication-process response boundary condition \""
+             << condition
+             << "\"; expected PEC, Conductivity, Impedance, or RationalImpedance!");
+}
+
+void NormalizeRationalLaw(MetalBoundaryLaw &law)
+{
+  auto TrimLeadingZeros = [](std::vector<double> &coefficients)
+  {
+    auto first = std::find_if(coefficients.begin(), coefficients.end(),
+                              [](double value) { return value != 0.0; });
+    coefficients.erase(coefficients.begin(), first);
+  };
+  TrimLeadingZeros(law.numerator);
+  TrimLeadingZeros(law.denominator);
+  MFEM_VERIFY(!law.numerator.empty() && !law.denominator.empty(),
+              "Rational-impedance boundary-law polynomials must be nonzero!");
+  const double scale = law.denominator.front();
+  for (double &coefficient : law.numerator)
+  {
+    coefficient /= scale;
+  }
+  for (double &coefficient : law.denominator)
+  {
+    coefficient /= scale;
+  }
+}
+
+MetalBoundaryLaw ParseLibraryBoundaryCondition(const nlohmann::json &condition,
+                                               const Units &units, bool nondimensionalize)
+{
+  MetalBoundaryLaw law;
+  if (condition.is_string())
+  {
+    law.type = ParseLibraryBoundaryConditionType(condition.get<std::string>());
+    law.parameters_verified = law.type == MetalBoundaryConditionType::PEC;
+    return law;
+  }
+
+  MFEM_VERIFY(condition.is_object() && condition.contains("Type"),
+              "Fabrication-process response BoundaryCondition must be a string or an "
+              "object containing Type!");
+  law.type = ParseLibraryBoundaryConditionType(condition.at("Type").get<std::string>());
+  const auto VerifyKeys = [&condition](std::initializer_list<const char *> allowed)
+  {
+    for (const auto &item : condition.items())
+    {
+      const auto &key = item.key();
+      const bool valid =
+          std::any_of(allowed.begin(), allowed.end(),
+                      [&key](const char *candidate) { return key == candidate; });
+      MFEM_VERIFY(valid, "Unknown fabrication-process response BoundaryCondition key \""
+                             << key << "\"!");
+    }
+  };
+  nlohmann::json parameters = condition;
+  parameters.erase("Type");
+  parameters["Attributes"] = {1};
+  switch (law.type)
+  {
+    case MetalBoundaryConditionType::PEC:
+      VerifyKeys({"Type"});
+      MFEM_VERIFY(parameters.size() == 1,
+                  "A PEC response BoundaryCondition cannot specify parameters!");
+      break;
+    case MetalBoundaryConditionType::CONDUCTIVITY:
+      {
+        VerifyKeys({"Type", "Conductivity", "Permeability", "Thickness", "External"});
+        config::ConductivityData data(parameters);
+        if (nondimensionalize)
+        {
+          config::Nondimensionalize(units, data);
+        }
+        MFEM_VERIFY(std::isfinite(data.sigma) && data.sigma > 0.0 &&
+                        std::isfinite(data.mu_r) && data.mu_r > 0.0 &&
+                        std::isfinite(data.h) && data.h >= 0.0,
+                    "Conductivity response BoundaryCondition parameters are invalid!");
+        law.parameters = {data.sigma, data.mu_r, data.external ? 2.0 * data.h : data.h};
+        break;
+      }
+    case MetalBoundaryConditionType::IMPEDANCE:
+      {
+        VerifyKeys({"Type", "Rs", "Ls", "Cs"});
+        config::ImpedanceData data(parameters);
+        if (nondimensionalize)
+        {
+          config::Nondimensionalize(units, data);
+        }
+        MFEM_VERIFY(std::isfinite(data.Rs) && std::isfinite(data.Ls) &&
+                        std::isfinite(data.Cs) &&
+                        std::abs(data.Rs) + std::abs(data.Ls) + std::abs(data.Cs) > 0.0,
+                    "Impedance response BoundaryCondition parameters are invalid!");
+        law.parameters = {data.Rs, data.Ls, data.Cs};
+        break;
+      }
+    case MetalBoundaryConditionType::RATIONAL_IMPEDANCE:
+      {
+        VerifyKeys({"Type", "Numerator", "Denominator"});
+        config::RationalImpedanceData data(parameters);
+        if (nondimensionalize)
+        {
+          config::Nondimensionalize(units, data);
+        }
+        law.numerator = std::move(data.num);
+        law.denominator = std::move(data.den);
+        NormalizeRationalLaw(law);
+        break;
+      }
+  }
+  return law;
+}
+
+bool CompatibleBoundaryLaw(const MetalBoundaryLaw &library, const MetalBoundaryLaw &actual)
+{
+  if (library.type != actual.type)
+  {
+    return false;
+  }
+  if (!library.parameters_verified)
+  {
+    return true;
+  }
+  const auto Compatible =
+      [](const std::vector<double> &first, const std::vector<double> &second)
+  {
+    if (first.size() != second.size())
+    {
+      return false;
+    }
+    for (std::size_t i = 0; i < first.size(); i++)
+    {
+      const double scale = std::max({std::abs(first[i]), std::abs(second[i]), 1.0e-300});
+      if (std::abs(first[i] - second[i]) > 1.0e-10 * scale)
+      {
+        return false;
+      }
+    }
+    return true;
+  };
+  return Compatible(library.parameters, actual.parameters) &&
+         Compatible(library.numerator, actual.numerator) &&
+         Compatible(library.denominator, actual.denominator);
+}
+
+bool SameBoundaryLaw(const MetalBoundaryLaw &first, const MetalBoundaryLaw &second)
+{
+  return first.parameters_verified && second.parameters_verified &&
+         CompatibleBoundaryLaw(first, second) && CompatibleBoundaryLaw(second, first);
+}
+
+bool IsBoundaryLawVerified(const LibraryModel &model)
+{
+  if (model.topology == LibraryTopology::SPATIAL_EDGE_CLUSTER)
+  {
+    return std::all_of(model.spatial_edges.begin(), model.spatial_edges.end(),
+                       [](const auto &edge)
+                       { return edge.boundary_condition.parameters_verified; });
+  }
+  return model.boundary_condition.parameters_verified;
+}
+
+ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
+                                  bool nondimensionalize)
 {
   std::ifstream input(path);
   MFEM_VERIFY(input,
@@ -696,11 +998,12 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, double coordinate_sca
   const int version = data.value("Version", 0);
   MFEM_VERIFY(version == 1 || version == 2 || version == 3,
               "Fabrication-process response library \"" << path
-                                                         << "\" has unsupported version!");
+                                                        << "\" has unsupported version!");
 
   ProcessLibrary library;
   library.version = version;
   library.name = data.value("Name", std::filesystem::path(path).stem().string());
+  const double coordinate_scale = units.GetMeshLengthRelativeScale();
   library.matching_radius = data.at("MatchingRadius").get<double>() / coordinate_scale;
   MFEM_VERIFY(std::isfinite(library.matching_radius) && library.matching_radius > 0.0,
               "Fabrication-process response-library matching radius must be positive!");
@@ -771,6 +1074,13 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, double coordinate_sca
     model.corner_radius = entry.value("CornerRadius", 0.0) / coordinate_scale;
     model.corner_radius_tolerance =
         entry.value("CornerRadiusTolerance", 0.0) / coordinate_scale;
+    model.arm_angles = entry.value("ArmAngles", std::vector<double>{});
+    model.arm_angle_tolerance =
+        entry.value("ArmAngleTolerance", 0.0) * std::acos(-1.0) / 180.0;
+    for (double &angle : model.arm_angles)
+    {
+      angle *= std::acos(-1.0) / 180.0;
+    }
     if (auto depth = entry.find("CouponDepth"); depth != entry.end())
     {
       model.coupon_depth = depth->get<double>() / coordinate_scale;
@@ -781,13 +1091,140 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, double coordinate_sca
     {
       model.coupon_depth = default_coupon_depth;
     }
+    const bool parallel_cluster = model.topology == LibraryTopology::PARALLEL_EDGE_CLUSTER;
+    const bool spatial_cluster = model.topology == LibraryTopology::SPATIAL_EDGE_CLUSTER;
+    if (auto edges = entry.find("Edges"); edges != entry.end())
+    {
+      MFEM_VERIFY(
+          (parallel_cluster && edges->is_array() && edges->size() >= 3) ||
+              (spatial_cluster && edges->is_array() && edges->size() >= 2),
+          "Edges requires a ParallelEdgeCluster model with at least three entries or a "
+          "SpatialEdgeCluster model with at least two entries!");
+      if (parallel_cluster)
+      {
+        model.cluster_offset_tolerance =
+            entry.value("EdgeOffsetTolerance", 0.0) / coordinate_scale;
+        MFEM_VERIFY(std::isfinite(model.cluster_offset_tolerance) &&
+                        model.cluster_offset_tolerance >= 0.0,
+                    "ParallelEdgeCluster EdgeOffsetTolerance must be nonnegative!");
+        int next_conductor = 1;
+        std::set<int> conductors;
+        for (const auto &edge : *edges)
+        {
+          LibraryClusterEdge cluster_edge;
+          cluster_edge.offset = edge.at("Offset").get<double>() / coordinate_scale;
+          cluster_edge.gap_direction = edge.at("GapDirection").get<int>();
+          cluster_edge.conductor = edge.at("Conductor").get<int>();
+          MFEM_VERIFY(
+              std::isfinite(cluster_edge.offset) &&
+                  (cluster_edge.gap_direction == -1 || cluster_edge.gap_direction == 1) &&
+                  cluster_edge.conductor > 0,
+              "ParallelEdgeCluster edges require a finite Offset, GapDirection "
+              "equal to -1 or 1, and a positive Conductor!");
+          if (conductors.insert(cluster_edge.conductor).second)
+          {
+            MFEM_VERIFY(cluster_edge.conductor == next_conductor++,
+                        "ParallelEdgeCluster conductor labels must be canonical and "
+                        "contiguous in order of first occurrence!");
+          }
+          model.cluster_edges.push_back(cluster_edge);
+        }
+        MFEM_VERIFY(std::abs(model.cluster_edges.front().offset) <=
+                            1.0e-12 * library.matching_radius &&
+                        std::adjacent_find(model.cluster_edges.begin(),
+                                           model.cluster_edges.end(),
+                                           [](const auto &first, const auto &second)
+                                           { return first.offset >= second.offset; }) ==
+                            model.cluster_edges.end(),
+                    "ParallelEdgeCluster edge offsets must begin at zero and be strictly "
+                    "increasing!");
+      }
+      else
+      {
+        model.spatial_position_tolerance =
+            entry.value("EdgePositionTolerance", 0.0) / coordinate_scale;
+        model.spatial_angle_tolerance =
+            entry.value("EdgeAngleTolerance", 0.0) * std::acos(-1.0) / 180.0;
+        MFEM_VERIFY(std::isfinite(model.spatial_position_tolerance) &&
+                        model.spatial_position_tolerance >= 0.0 &&
+                        std::isfinite(model.spatial_angle_tolerance) &&
+                        model.spatial_angle_tolerance >= 0.0,
+                    "SpatialEdgeCluster edge position and angle tolerances must be "
+                    "nonnegative!");
+        int next_conductor = 1;
+        std::set<int> conductors;
+        for (const auto &edge : *edges)
+        {
+          LibrarySpatialEdge spatial_edge;
+          spatial_edge.point = edge.at("Point").get<Point3D>();
+          spatial_edge.gap_direction = edge.at("GapDirection").get<Point3D>();
+          spatial_edge.process_normal = edge.at("ProcessNormal").get<Point3D>();
+          spatial_edge.interval = edge.at("Interval").get<std::array<double, 2>>();
+          spatial_edge.conductor = edge.at("Conductor").get<int>();
+          spatial_edge.interface_slot = edge.value("InterfaceSlot", 0);
+          spatial_edge.boundary_condition = ParseLibraryBoundaryCondition(
+              edge.value("BoundaryCondition", nlohmann::json("PEC")), units,
+              nondimensionalize);
+          for (double &value : spatial_edge.point)
+          {
+            value /= coordinate_scale;
+          }
+          for (double &value : spatial_edge.interval)
+          {
+            value /= coordinate_scale;
+          }
+          const double gap_norm = Norm(spatial_edge.gap_direction);
+          const double normal_norm = Norm(spatial_edge.process_normal);
+          MFEM_VERIFY(
+              std::all_of(spatial_edge.point.begin(), spatial_edge.point.end(),
+                          [](double value) { return std::isfinite(value); }) &&
+                  std::isfinite(gap_norm) && std::isfinite(normal_norm) &&
+                  std::abs(gap_norm - 1.0) <= 1.0e-10 &&
+                  std::abs(normal_norm - 1.0) <= 1.0e-10 &&
+                  std::abs(Dot(spatial_edge.gap_direction, spatial_edge.process_normal)) <=
+                      1.0e-10 &&
+                  std::isfinite(spatial_edge.interval[0]) &&
+                  std::isfinite(spatial_edge.interval[1]) &&
+                  spatial_edge.interval[0] <= 0.0 && spatial_edge.interval[1] >= 0.0 &&
+                  spatial_edge.interval[1] > spatial_edge.interval[0] &&
+                  spatial_edge.conductor > 0 && spatial_edge.interface_slot >= 0,
+              "SpatialEdgeCluster edges require a finite Point, orthonormal unit "
+              "GapDirection and ProcessNormal vectors, an Interval containing zero, "
+              "a positive Conductor, and a nonnegative InterfaceSlot!");
+          if (conductors.insert(spatial_edge.conductor).second)
+          {
+            MFEM_VERIFY(spatial_edge.conductor == next_conductor++,
+                        "SpatialEdgeCluster conductor labels must be canonical and "
+                        "contiguous in order of first occurrence!");
+          }
+          model.spatial_edges.push_back(spatial_edge);
+        }
+      }
+    }
     const bool corner = model.topology == LibraryTopology::CONVEX_CORNER ||
                         model.topology == LibraryTopology::CONCAVE_CORNER;
-    if (model.topology == LibraryTopology::ISOLATED_EDGE || corner)
+    const bool endpoint = model.topology == LibraryTopology::ENDPOINT;
+    const bool junction = model.topology == LibraryTopology::JUNCTION;
+    const bool spatial_vertex = corner || endpoint || junction;
+    const bool spatial_response = spatial_vertex || spatial_cluster;
+    if (spatial_cluster)
+    {
+      MFEM_VERIFY(!entry.contains("BoundaryCondition"),
+                  "SpatialEdgeCluster boundary conditions must be specified separately "
+                  "for every Edges entry!");
+    }
+    else
+    {
+      model.boundary_condition = ParseLibraryBoundaryCondition(
+          entry.value("BoundaryCondition", nlohmann::json("PEC")), units,
+          nondimensionalize);
+    }
+    if (model.topology == LibraryTopology::ISOLATED_EDGE || spatial_response ||
+        parallel_cluster)
     {
       MFEM_VERIFY(model.separation == 0.0,
-                  "An isolated-edge or corner response model cannot specify a "
-                  "separation!");
+                  "An isolated-edge, parallel-cluster, or spatial response model cannot "
+                  "specify a separation!");
     }
     else
     {
@@ -810,18 +1247,56 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, double coordinate_sca
                       model.corner_radius_tolerance >= 0.0,
                   "Corner response models require CornerRadius in [0, MatchingRadius) "
                   "and a nonnegative CornerRadiusTolerance!");
-      model.response.spatial_basis = true;
-      model.response.contour_groups = entry.value("ContourGroups", std::vector<int>{});
+      MFEM_VERIFY(model.arm_angles.empty(),
+                  "Corner response models cannot specify ArmAngles!");
+    }
+    else if (junction)
+    {
+      const double full_angle = 2.0 * std::acos(-1.0);
       MFEM_VERIFY(
-          std::all_of(model.response.contour_groups.begin(),
-                      model.response.contour_groups.end(),
-                      [](int size) { return size >= 3; }),
-          "Every corner-response ContourGroups entry must contain at least three knots!");
+          model.angle == 0.0 && model.corner_radius == 0.0 &&
+              model.arm_angles.size() >= 3 && std::isfinite(model.arm_angle_tolerance) &&
+              model.arm_angle_tolerance >= 0.0 &&
+              std::abs(model.arm_angles.front()) <= 1.0e-12 &&
+              std::all_of(
+                  model.arm_angles.begin(), model.arm_angles.end(),
+                  [full_angle](double angle)
+                  { return std::isfinite(angle) && angle >= 0.0 && angle < full_angle; }) &&
+              std::adjacent_find(model.arm_angles.begin(), model.arm_angles.end(),
+                                 [](double first, double second)
+                                 { return first >= second; }) == model.arm_angles.end(),
+          "Junction response models require strictly increasing ArmAngles in [0, 360) "
+          "degrees, beginning with zero, and a nonnegative ArmAngleTolerance!");
+    }
+    else if (endpoint)
+    {
+      MFEM_VERIFY(model.angle == 0.0 && model.corner_radius == 0.0 &&
+                      model.arm_angles.empty(),
+                  "Endpoint response models cannot specify Angle, CornerRadius, or "
+                  "ArmAngles!");
     }
     else
     {
-      MFEM_VERIFY(model.angle == 0.0 && model.corner_radius == 0.0,
-                  "Straight-edge response models cannot specify Angle or CornerRadius!");
+      MFEM_VERIFY(model.angle == 0.0 && model.corner_radius == 0.0 &&
+                      model.arm_angles.empty(),
+                  "Straight-edge response models cannot specify Angle, CornerRadius, or "
+                  "ArmAngles!");
+    }
+    MFEM_VERIFY(parallel_cluster == !model.cluster_edges.empty(),
+                "ParallelEdgeCluster response models require Edges, and other "
+                "topologies cannot specify them!");
+    MFEM_VERIFY(spatial_cluster == !model.spatial_edges.empty(),
+                "SpatialEdgeCluster response models require spatial Edges, and other "
+                "topologies cannot specify them!");
+    if (spatial_response)
+    {
+      model.response.spatial_basis = true;
+      model.response.contour_groups = entry.value("ContourGroups", std::vector<int>{});
+      MFEM_VERIFY(std::all_of(model.response.contour_groups.begin(),
+                              model.response.contour_groups.end(),
+                              [](int size) { return size >= 3; }),
+                  "Every spatial response ContourGroups entry must contain at "
+                  "least three knots!");
     }
 
     model.response.fabricated_matrix =
@@ -850,48 +1325,76 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, double coordinate_sca
                   "ConductorReferences requires a version-2 fabrication-process "
                   "response library!");
       MFEM_VERIFY(!entry.contains("Reference") && references->is_array() &&
-                      references->size() == 2 &&
-                      model.topology == LibraryTopology::DIFFERENT_CONDUCTOR_GAP,
-                  "ConductorReferences must contain exactly two points and is supported "
-                  "only by a DifferentConductorGap model without Reference!");
-      model.reference = references->at(0).get<std::array<double, 3>>();
-      model.secondary_reference = references->at(1).get<std::array<double, 3>>();
-      for (int d = 0; d < 3; d++)
+                      references->size() >= 2 &&
+                      (model.topology == LibraryTopology::DIFFERENT_CONDUCTOR_GAP ||
+                       parallel_cluster || spatial_cluster),
+                  "ConductorReferences must contain at least two points and is supported "
+                  "only by a DifferentConductorGap, ParallelEdgeCluster, or "
+                  "SpatialEdgeCluster model without Reference!");
+      model.conductor_references = references->get<std::vector<std::array<double, 3>>>();
+      for (auto &reference : model.conductor_references)
       {
-        model.reference[d] /= coordinate_scale;
-        (*model.secondary_reference)[d] /= coordinate_scale;
-        MFEM_VERIFY(std::isfinite(model.reference[d]) &&
-                        std::isfinite((*model.secondary_reference)[d]),
-                    "Fabrication-process response-model ConductorReferences must be "
-                    "finite!");
+        for (double &value : reference)
+        {
+          value /= coordinate_scale;
+          MFEM_VERIFY(std::isfinite(value),
+                      "Fabrication-process response-model ConductorReferences must be "
+                      "finite!");
+        }
       }
-      double reference_separation = 0.0;
-      for (int d = 0; d < 3; d++)
+      for (std::size_t i = 0; i < model.conductor_references.size(); i++)
       {
-        const double delta = model.reference[d] - (*model.secondary_reference)[d];
-        reference_separation += delta * delta;
+        for (std::size_t j = i + 1; j < model.conductor_references.size(); j++)
+        {
+          double reference_separation = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            const double delta =
+                model.conductor_references[i][d] - model.conductor_references[j][d];
+            reference_separation += delta * delta;
+          }
+          MFEM_VERIFY(reference_separation > 0.0,
+                      "Fabrication-process response-model ConductorReferences must be "
+                      "distinct!");
+        }
       }
-      MFEM_VERIFY(reference_separation > 0.0,
-                  "Fabrication-process response-model ConductorReferences must be "
-                  "distinct!");
-      model.response.conductor_state_count = 1;
+      model.response.conductor_state_count =
+          static_cast<int>(model.conductor_references.size()) - 1;
     }
     else
     {
-      model.reference = entry.value("Reference", std::array<double, 3>{0.0, 0.0, 0.0});
-      for (double &value : model.reference)
+      auto reference = entry.value("Reference", std::array<double, 3>{0.0, 0.0, 0.0});
+      for (double &value : reference)
       {
         value /= coordinate_scale;
       }
+      model.conductor_references.push_back(reference);
+    }
+    if (parallel_cluster || spatial_cluster)
+    {
+      const int conductor_count =
+          parallel_cluster
+              ? std::max_element(model.cluster_edges.begin(), model.cluster_edges.end(),
+                                 [](const auto &first, const auto &second)
+                                 { return first.conductor < second.conductor; })
+                    ->conductor
+              : std::max_element(model.spatial_edges.begin(), model.spatial_edges.end(),
+                                 [](const auto &first, const auto &second)
+                                 { return first.conductor < second.conductor; })
+                    ->conductor;
+      MFEM_VERIFY(static_cast<int>(model.conductor_references.size()) == conductor_count,
+                  "Edge-cluster models require one conductor reference for each "
+                  "canonical conductor label!");
     }
     if (auto paths = entry.find("OpenContourPaths"); paths != entry.end())
     {
-      MFEM_VERIFY(model.secondary_reference &&
-                      model.topology == LibraryTopology::DIFFERENT_CONDUCTOR_GAP &&
+      MFEM_VERIFY(model.conductor_references.size() >= 2 &&
+                      (model.topology == LibraryTopology::DIFFERENT_CONDUCTOR_GAP ||
+                       parallel_cluster || spatial_cluster) &&
                       model.response.contour_groups.empty() && paths->is_array() &&
                       !paths->empty(),
-                  "OpenContourPaths requires a version-2 DifferentConductorGap model "
-                  "with ConductorReferences and no ContourGroups!");
+                  "OpenContourPaths requires a version-2 DifferentConductorGap or "
+                  "edge-cluster model with ConductorReferences and no ContourGroups!");
       std::set<int> point_indices;
       for (const auto &path : *paths)
       {
@@ -899,13 +1402,15 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, double coordinate_sca
         path_data.indices = path.at("Indices").get<std::vector<int>>();
         path_data.start_conductor = path.at("StartConductor").get<int>() - 1;
         path_data.end_conductor = path.at("EndConductor").get<int>() - 1;
-        MFEM_VERIFY(
-            !path_data.indices.empty() &&
-                (path_data.start_conductor == 0 || path_data.start_conductor == 1) &&
-                (path_data.end_conductor == 0 || path_data.end_conductor == 1) &&
-                path_data.start_conductor != path_data.end_conductor,
-            "Every OpenContourPaths entry must contain at least one point and "
-            "connect conductor 1 to conductor 2 or conductor 2 to conductor 1!");
+        MFEM_VERIFY(!path_data.indices.empty() && path_data.start_conductor >= 0 &&
+                        path_data.start_conductor <
+                            static_cast<int>(model.conductor_references.size()) &&
+                        path_data.end_conductor >= 0 &&
+                        path_data.end_conductor <
+                            static_cast<int>(model.conductor_references.size()) &&
+                        path_data.start_conductor != path_data.end_conductor,
+                    "Every OpenContourPaths entry must contain at least one point and "
+                    "connect two distinct valid conductor references!");
         for (int &index : path_data.indices)
         {
           MFEM_VERIFY(index > 0 && point_indices.insert(index).second,
@@ -914,6 +1419,25 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, double coordinate_sca
         }
         model.response.open_contour_paths.push_back(std::move(path_data));
       }
+      std::vector<bool> connected(model.conductor_references.size(), false);
+      connected.front() = true;
+      bool changed = true;
+      while (changed)
+      {
+        changed = false;
+        for (const auto &path : model.response.open_contour_paths)
+        {
+          if (connected[path.start_conductor] != connected[path.end_conductor])
+          {
+            connected[path.start_conductor] = true;
+            connected[path.end_conductor] = true;
+            changed = true;
+          }
+        }
+      }
+      MFEM_VERIFY(
+          std::all_of(connected.begin(), connected.end(), [](bool value) { return value; }),
+          "OpenContourPaths must connect every conductor reference!");
     }
     if (auto indices = entry.find("ZeroTraceIndices"); indices != entry.end())
     {
@@ -931,20 +1455,44 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, double coordinate_sca
       std::sort(model.response.zero_trace_indices.begin(),
                 model.response.zero_trace_indices.end());
     }
+    MFEM_VERIFY(model.response.zero_trace_indices.empty() ||
+                    (spatial_vertex &&
+                     model.boundary_condition.type == MetalBoundaryConditionType::PEC) ||
+                    (spatial_cluster &&
+                     std::all_of(model.spatial_edges.begin(), model.spatial_edges.end(),
+                                 [](const auto &edge)
+                                 {
+                                   return edge.boundary_condition.type ==
+                                          MetalBoundaryConditionType::PEC;
+                                 })),
+                "Finite-impedance spatial response models cannot use ZeroTraceIndices!");
 
-    std::set<InterfaceDielectric> types;
+    std::set<std::pair<int, InterfaceDielectric>> interface_slots;
     if (auto interfaces = entry.find("Interfaces"); interfaces != entry.end())
     {
       for (const auto &interface : *interfaces)
       {
         InterfaceDielectric type = InterfaceDielectric::DEFAULT;
         FromString(interface.at("Type").get<std::string>(), type);
+        const int slot = interface.value("Slot", 0);
         const int coupon = interface.at("Coupon");
-        MFEM_VERIFY(type != InterfaceDielectric::DEFAULT && coupon > 0 &&
-                        types.insert(type).second,
+        MFEM_VERIFY(type != InterfaceDielectric::DEFAULT && slot >= 0 && coupon > 0 &&
+                        interface_slots.emplace(slot, type).second,
                     "Fabrication-process response-model interface mappings must have "
-                    "unique explicit types and positive coupon indices!");
-        model.interfaces.push_back({type, coupon});
+                    "unique Slot and Type pairs, nonnegative slots, and positive coupon "
+                    "indices!");
+        MFEM_VERIFY(spatial_cluster || slot == 0,
+                    "Nonzero interface Slots are supported only by SpatialEdgeCluster "
+                    "response models!");
+        if (spatial_cluster)
+        {
+          MFEM_VERIFY(std::any_of(model.spatial_edges.begin(), model.spatial_edges.end(),
+                                  [slot](const auto &edge)
+                                  { return edge.interface_slot == slot; }),
+                      "A SpatialEdgeCluster interface mapping refers to an unused "
+                      "InterfaceSlot!");
+        }
+        model.interfaces.push_back({slot, type, coupon});
         mapped_interface_types.insert(type);
       }
     }
@@ -1002,8 +1550,8 @@ void ValidateLibraryInterfaceLayers(
                     << ")!");
     MFEM_VERIFY(compatible(dielectric->second.t, layer->second.thickness),
                 "Target dielectric interface "
-                    << index << " (" << ToString(dielectric->second.type)
-                    << ") thickness " << dielectric->second.t * coordinate_scale
+                    << index << " (" << ToString(dielectric->second.type) << ") thickness "
+                    << dielectric->second.t * coordinate_scale
                     << " does not match fabrication-process response library \""
                     << library.name << "\" thickness "
                     << layer->second.thickness * coordinate_scale
@@ -1013,9 +1561,74 @@ void ValidateLibraryInterfaceLayers(
                     << index << " (" << ToString(dielectric->second.type)
                     << ") permittivity " << dielectric->second.epsilon_r
                     << " does not match fabrication-process response library \""
-                    << library.name << "\" permittivity "
-                    << layer->second.permittivity << "!");
+                    << library.name << "\" permittivity " << layer->second.permittivity
+                    << "!");
   }
+}
+
+void MapLibraryInterfaces(
+    const LibraryModel &source,
+    const std::map<int, std::map<InterfaceDielectric, int>> &targets_by_slot,
+    ResponseModelData &model)
+{
+  for (const auto &[slot, targets] : targets_by_slot)
+  {
+    for (const auto &[type, target] : targets)
+    {
+      const int interface_slot = slot;
+      const InterfaceDielectric interface_type = type;
+      auto interface = std::find_if(
+          source.interfaces.begin(), source.interfaces.end(),
+          [interface_slot, interface_type](const auto &entry)
+          { return entry.slot == interface_slot && entry.type == interface_type; });
+      MFEM_VERIFY(interface != source.interfaces.end() ||
+                      source.response.fabricated_surface_matrix.empty(),
+                  "Fabrication-process response model \""
+                      << source.name << "\" has no slot " << slot << " " << ToString(type)
+                      << " interface mapping!");
+      if (interface != source.interfaces.end())
+      {
+        model.interfaces.push_back({target, interface->coupon});
+      }
+    }
+  }
+}
+
+bool MatchLibraryInterfaces(
+    const LibraryModel &model,
+    const std::map<int, std::map<InterfaceDielectric, int>> &targets_by_slot)
+{
+  if (model.response.fabricated_surface_matrix.empty())
+  {
+    return true;
+  }
+
+  std::map<int, std::set<InterfaceDielectric>> model_types_by_slot;
+  for (const auto &interface : model.interfaces)
+  {
+    model_types_by_slot[interface.slot].insert(interface.type);
+  }
+  if (model_types_by_slot.size() != targets_by_slot.size())
+  {
+    return false;
+  }
+  for (const auto &[slot, targets] : targets_by_slot)
+  {
+    const auto model_types = model_types_by_slot.find(slot);
+    if (model_types == model_types_by_slot.end())
+    {
+      return false;
+    }
+    for (const auto &[type, target] : targets)
+    {
+      (void)target;
+      if (model_types->second.find(type) == model_types->second.end())
+      {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 double Dot(const Point2D &a, const Point2D &b)
@@ -1137,6 +1750,130 @@ std::optional<int> GetConductor(const config::BoundaryData &boundaries, int attr
       return index;
     }
   }
+  if (pec_attribute_conductors)
+  {
+    const auto HasAttribute = [attribute](const auto &data)
+    {
+      return std::find(data.attributes.begin(), data.attributes.end(), attribute) !=
+             data.attributes.end();
+    };
+    if (std::any_of(boundaries.conductivity.begin(), boundaries.conductivity.end(),
+                    HasAttribute) ||
+        std::any_of(boundaries.impedance.begin(), boundaries.impedance.end(),
+                    HasAttribute) ||
+        std::any_of(boundaries.rational_impedance.begin(),
+                    boundaries.rational_impedance.end(), HasAttribute))
+    {
+      return attribute;
+    }
+  }
+  return std::nullopt;
+}
+
+MetalBoundaryLaw GetBoundaryConditionLaw(const config::BoundaryData &boundaries,
+                                         const MetalBoundaryCondition &condition)
+{
+  MetalBoundaryLaw law;
+  law.type = condition.type;
+  switch (condition.type)
+  {
+    case MetalBoundaryConditionType::PEC:
+      break;
+    case MetalBoundaryConditionType::CONDUCTIVITY:
+      {
+        MFEM_VERIFY(condition.index >= 0 &&
+                        condition.index < static_cast<int>(boundaries.conductivity.size()),
+                    "Invalid conductivity boundary-law index!");
+        const auto &data = boundaries.conductivity[condition.index];
+        law.parameters = {data.sigma, data.mu_r, data.external ? 2.0 * data.h : data.h};
+        break;
+      }
+    case MetalBoundaryConditionType::IMPEDANCE:
+      {
+        MFEM_VERIFY(condition.index >= 0 &&
+                        condition.index < static_cast<int>(boundaries.impedance.size()),
+                    "Invalid impedance boundary-law index!");
+        const auto &data = boundaries.impedance[condition.index];
+        law.parameters = {data.Rs, data.Ls, data.Cs};
+        break;
+      }
+    case MetalBoundaryConditionType::RATIONAL_IMPEDANCE:
+      {
+        MFEM_VERIFY(condition.index >= 0 &&
+                        condition.index <
+                            static_cast<int>(boundaries.rational_impedance.size()),
+                    "Invalid rational-impedance boundary-law index!");
+        const auto &data = boundaries.rational_impedance[condition.index];
+        law.numerator = data.num;
+        law.denominator = data.den;
+        NormalizeRationalLaw(law);
+        break;
+      }
+  }
+  return law;
+}
+
+std::optional<MetalBoundaryLaw>
+GetBoundaryConditionLaw(const config::BoundaryData &boundaries, int attribute)
+{
+  if (std::find(boundaries.pec.attributes.begin(), boundaries.pec.attributes.end(),
+                attribute) != boundaries.pec.attributes.end() ||
+      std::find(boundaries.auxpec.attributes.begin(), boundaries.auxpec.attributes.end(),
+                attribute) != boundaries.auxpec.attributes.end())
+  {
+    return MetalBoundaryLaw{};
+  }
+  for (const auto &[index, terminal] : boundaries.terminal)
+  {
+    (void)index;
+    if (std::find(terminal.attributes.begin(), terminal.attributes.end(), attribute) !=
+        terminal.attributes.end())
+    {
+      return MetalBoundaryLaw{};
+    }
+  }
+  for (const auto &[index, potential] : boundaries.prescribed_potential)
+  {
+    (void)index;
+    if (std::find(potential.attributes.begin(), potential.attributes.end(), attribute) !=
+            potential.attributes.end() ||
+        std::find(potential.terminal_attributes.begin(),
+                  potential.terminal_attributes.end(),
+                  attribute) != potential.terminal_attributes.end())
+    {
+      return MetalBoundaryLaw{};
+    }
+  }
+  const auto HasAttribute = [attribute](const auto &data)
+  {
+    return std::find(data.attributes.begin(), data.attributes.end(), attribute) !=
+           data.attributes.end();
+  };
+  for (std::size_t i = 0; i < boundaries.conductivity.size(); i++)
+  {
+    if (HasAttribute(boundaries.conductivity[i]))
+    {
+      return GetBoundaryConditionLaw(
+          boundaries, {MetalBoundaryConditionType::CONDUCTIVITY, static_cast<int>(i)});
+    }
+  }
+  for (std::size_t i = 0; i < boundaries.impedance.size(); i++)
+  {
+    if (HasAttribute(boundaries.impedance[i]))
+    {
+      return GetBoundaryConditionLaw(
+          boundaries, {MetalBoundaryConditionType::IMPEDANCE, static_cast<int>(i)});
+    }
+  }
+  for (std::size_t i = 0; i < boundaries.rational_impedance.size(); i++)
+  {
+    if (HasAttribute(boundaries.rational_impedance[i]))
+    {
+      return GetBoundaryConditionLaw(
+          boundaries,
+          {MetalBoundaryConditionType::RATIONAL_IMPEDANCE, static_cast<int>(i)});
+    }
+  }
   return std::nullopt;
 }
 
@@ -1223,6 +1960,46 @@ std::vector<EdgeSite2D> ExtractEdgeSites(const mfem::ParMesh &mesh,
   }
   const double tolerance = 1.0e-9 * std::max(extent, group.matching_radius);
 
+  std::vector<int> metal_segment_conductors(segments.size(),
+                                            std::numeric_limits<int>::max());
+  if (pec_attribute_conductors)
+  {
+    int next_conductor = std::numeric_limits<int>::min();
+    for (std::size_t seed = 0; seed < segments.size(); seed++)
+    {
+      if (metal_attributes.find(segments[seed].attribute) == metal_attributes.end() ||
+          metal_segment_conductors[seed] != std::numeric_limits<int>::max())
+      {
+        continue;
+      }
+      std::vector<std::size_t> queue = {seed};
+      metal_segment_conductors[seed] = next_conductor++;
+      for (std::size_t cursor = 0; cursor < queue.size(); cursor++)
+      {
+        const auto &current = segments[queue[cursor]];
+        for (std::size_t neighbor = 0; neighbor < segments.size(); neighbor++)
+        {
+          if (metal_attributes.find(segments[neighbor].attribute) ==
+                  metal_attributes.end() ||
+              metal_segment_conductors[neighbor] != std::numeric_limits<int>::max())
+          {
+            continue;
+          }
+          const auto &candidate = segments[neighbor];
+          const bool connected = Distance(current.p0, candidate.p0) <= tolerance ||
+                                 Distance(current.p0, candidate.p1) <= tolerance ||
+                                 Distance(current.p1, candidate.p0) <= tolerance ||
+                                 Distance(current.p1, candidate.p1) <= tolerance;
+          if (connected)
+          {
+            metal_segment_conductors[neighbor] = metal_segment_conductors[seed];
+            queue.push_back(neighbor);
+          }
+        }
+      }
+    }
+  }
+
   std::vector<EdgeSite2D> sites;
   for (const auto &endpoint : endpoints)
   {
@@ -1251,8 +2028,10 @@ std::vector<EdgeSite2D> ExtractEdgeSites(const mfem::ParMesh &mesh,
 
     Point2D inward = {};
     std::set<int> conductors;
-    for (const auto &segment : segments)
+    std::optional<MetalBoundaryLaw> boundary_condition;
+    for (std::size_t segment_index = 0; segment_index < segments.size(); segment_index++)
     {
+      const auto &segment = segments[segment_index];
       Point2D direction;
       if (Distance(point, segment.p0) <= tolerance)
       {
@@ -1272,10 +2051,30 @@ std::vector<EdgeSite2D> ExtractEdgeSites(const mfem::ParMesh &mesh,
         inward[0] += direction[0];
         inward[1] += direction[1];
       }
-      if (auto conductor =
-              GetConductor(boundaries, segment.attribute, pec_attribute_conductors))
+      std::optional<int> conductor;
+      if (pec_attribute_conductors &&
+          metal_attributes.find(segment.attribute) != metal_attributes.end())
+      {
+        MFEM_ASSERT(metal_segment_conductors[segment_index] !=
+                        std::numeric_limits<int>::max(),
+                    "Missing connected metal component!");
+        conductor = metal_segment_conductors[segment_index];
+      }
+      else
+      {
+        conductor = GetConductor(boundaries, segment.attribute, pec_attribute_conductors);
+      }
+      if (conductor)
       {
         conductors.insert(*conductor);
+        const auto segment_condition =
+            GetBoundaryConditionLaw(boundaries, segment.attribute);
+        MFEM_VERIFY(segment_condition,
+                    "Unable to determine a two-dimensional metal boundary condition!");
+        MFEM_VERIFY(
+            !boundary_condition || SameBoundaryLaw(*boundary_condition, *segment_condition),
+            "A two-dimensional metal edge cannot mix distinct metal boundary conditions!");
+        boundary_condition = *segment_condition;
       }
     }
     MFEM_VERIFY(Norm(inward) > 0.0,
@@ -1296,20 +2095,24 @@ std::vector<EdgeSite2D> ExtractEdgeSites(const mfem::ParMesh &mesh,
                 "Interface EdgeFrameNormal is parallel to a detected metal edge!");
     site.axis_v = Normalize(normal);
     site.conductor = *conductors.begin();
+    site.boundary_condition = boundary_condition.value_or(MetalBoundaryLaw{});
     sites.push_back(site);
   }
   return sites;
 }
 
-std::optional<LibrarySelection>
-FindLibraryModel(const ProcessLibrary &library, LibraryTopology topology, double separation)
+std::optional<LibrarySelection> FindLibraryModel(const ProcessLibrary &library,
+                                                 LibraryTopology topology,
+                                                 double separation,
+                                                 const MetalBoundaryLaw &boundary_condition)
 {
   std::optional<std::size_t> best;
   double best_distance = mfem::infinity();
   for (std::size_t i = 0; i < library.models.size(); i++)
   {
     const auto &model = library.models[i];
-    if (model.topology != topology)
+    if (model.topology != topology ||
+        !CompatibleBoundaryLaw(model.boundary_condition, boundary_condition))
     {
       continue;
     }
@@ -1322,9 +2125,10 @@ FindLibraryModel(const ProcessLibrary &library, LibraryTopology topology, double
     {
       continue;
     }
-    const bool prefer_conductor_state = best && distance == best_distance &&
-                                        model.secondary_reference &&
-                                        !library.models[*best].secondary_reference;
+    const bool prefer_conductor_state =
+        best && distance == best_distance &&
+        model.conductor_references.size() >
+            library.models[*best].conductor_references.size();
     if (distance < best_distance || prefer_conductor_state)
     {
       best = i;
@@ -1335,8 +2139,7 @@ FindLibraryModel(const ProcessLibrary &library, LibraryTopology topology, double
   {
     LibrarySelection selection;
     selection.models.push_back({*best, 1.0});
-    selection.reference = library.models[*best].reference;
-    selection.secondary_reference = library.models[*best].secondary_reference;
+    selection.conductor_references = library.models[*best].conductor_references;
     selection.normalized_distance = best_distance;
     return selection;
   }
@@ -1348,31 +2151,35 @@ FindLibraryModel(const ProcessLibrary &library, LibraryTopology topology, double
 
   std::optional<std::pair<std::size_t, std::size_t>> bracket;
   double best_span = mfem::infinity();
-  bool best_has_secondary_reference = false;
+  std::size_t best_reference_count = 0;
   for (std::size_t lower = 0; lower < library.models.size(); lower++)
   {
     const auto &lower_model = library.models[lower];
-    if (lower_model.topology != topology || lower_model.separation >= separation)
+    if (lower_model.topology != topology ||
+        !CompatibleBoundaryLaw(lower_model.boundary_condition, boundary_condition) ||
+        lower_model.separation >= separation)
     {
       continue;
     }
     for (std::size_t upper = 0; upper < library.models.size(); upper++)
     {
       const auto &upper_model = library.models[upper];
-      if (upper_model.topology != topology || upper_model.separation <= separation ||
-          lower_model.secondary_reference.has_value() !=
-              upper_model.secondary_reference.has_value())
+      if (upper_model.topology != topology ||
+          !CompatibleBoundaryLaw(upper_model.boundary_condition, boundary_condition) ||
+          upper_model.separation <= separation ||
+          lower_model.conductor_references.size() !=
+              upper_model.conductor_references.size())
       {
         continue;
       }
       const double span = upper_model.separation - lower_model.separation;
-      const bool has_secondary_reference = lower_model.secondary_reference.has_value();
       if (span < best_span ||
-          (span == best_span && has_secondary_reference && !best_has_secondary_reference))
+          (span == best_span &&
+           lower_model.conductor_references.size() > best_reference_count))
       {
         bracket = std::pair{lower, upper};
         best_span = span;
-        best_has_secondary_reference = has_secondary_reference;
+        best_reference_count = lower_model.conductor_references.size();
       }
     }
   }
@@ -1387,28 +2194,24 @@ FindLibraryModel(const ProcessLibrary &library, LibraryTopology topology, double
   const double lower_weight = 1.0 - upper_weight;
   LibrarySelection selection;
   selection.models = {{bracket->first, lower_weight}, {bracket->second, upper_weight}};
-  for (int d = 0; d < 3; d++)
+  selection.conductor_references.resize(lower_model.conductor_references.size());
+  for (std::size_t i = 0; i < selection.conductor_references.size(); i++)
   {
-    selection.reference[d] =
-        lower_weight * lower_model.reference[d] + upper_weight * upper_model.reference[d];
-  }
-  if (lower_model.secondary_reference)
-  {
-    selection.secondary_reference = std::array<double, 3>{};
     for (int d = 0; d < 3; d++)
     {
-      (*selection.secondary_reference)[d] =
-          lower_weight * (*lower_model.secondary_reference)[d] +
-          upper_weight * (*upper_model.secondary_reference)[d];
+      selection.conductor_references[i][d] =
+          lower_weight * lower_model.conductor_references[i][d] +
+          upper_weight * upper_model.conductor_references[i][d];
     }
   }
   selection.normalized_distance = best_span / library.matching_radius;
   return selection;
 }
 
-std::optional<LibrarySelection> FindCornerLibraryModel(const ProcessLibrary &library,
-                                                       LibraryTopology topology,
-                                                       double angle, double radius)
+std::optional<LibrarySelection>
+FindCornerLibraryModel(const ProcessLibrary &library, LibraryTopology topology,
+                       double angle, double radius,
+                       const MetalBoundaryLaw &boundary_condition)
 {
   struct Candidate
   {
@@ -1422,7 +2225,8 @@ std::optional<LibrarySelection> FindCornerLibraryModel(const ProcessLibrary &lib
   for (std::size_t i = 0; i < library.models.size(); i++)
   {
     const auto &model = library.models[i];
-    if (model.topology != topology)
+    if (model.topology != topology ||
+        !CompatibleBoundaryLaw(model.boundary_condition, boundary_condition))
     {
       continue;
     }
@@ -1453,7 +2257,7 @@ std::optional<LibrarySelection> FindCornerLibraryModel(const ProcessLibrary &lib
   {
     LibrarySelection selection;
     selection.models.push_back({best->index, 1.0});
-    selection.reference = library.models[best->index].reference;
+    selection.conductor_references = library.models[best->index].conductor_references;
     selection.normalized_distance = best_error;
     return selection;
   }
@@ -1502,14 +2306,530 @@ std::optional<LibrarySelection> FindCornerLibraryModel(const ProcessLibrary &lib
   const double lower_weight = 1.0 - upper_weight;
   LibrarySelection selection;
   selection.models = {{lower->index, lower_weight}, {upper->index, upper_weight}};
-  for (int d = 0; d < 3; d++)
+  MFEM_VERIFY(lower_model.conductor_references.size() ==
+                  upper_model.conductor_references.size(),
+              "Corner-radius interpolation requires compatible conductor references!");
+  selection.conductor_references.resize(lower_model.conductor_references.size());
+  for (std::size_t i = 0; i < selection.conductor_references.size(); i++)
   {
-    selection.reference[d] =
-        lower_weight * lower_model.reference[d] + upper_weight * upper_model.reference[d];
+    for (int d = 0; d < 3; d++)
+    {
+      selection.conductor_references[i][d] =
+          lower_weight * lower_model.conductor_references[i][d] +
+          upper_weight * upper_model.conductor_references[i][d];
+    }
   }
   selection.normalized_distance = std::max(
       {lower->angle_distance, upper->angle_distance, span / library.matching_radius});
   return selection;
+}
+
+std::optional<ParallelClusterSelection>
+FindParallelClusterLibraryModel(const ProcessLibrary &library,
+                                const std::vector<EdgeSite2D> &sites,
+                                const std::vector<std::size_t> &cluster)
+{
+  if (cluster.size() < 3)
+  {
+    return std::nullopt;
+  }
+
+  Point2D process_normal{};
+  for (const std::size_t index : cluster)
+  {
+    process_normal[0] += sites[index].axis_v[0];
+    process_normal[1] += sites[index].axis_v[1];
+  }
+  if (Norm(process_normal) == 0.0)
+  {
+    return std::nullopt;
+  }
+  process_normal = Normalize(process_normal);
+  if (std::any_of(cluster.begin(), cluster.end(), [&](std::size_t index)
+                  { return Dot(process_normal, sites[index].axis_v) <= 0.95; }))
+  {
+    return std::nullopt;
+  }
+  const auto boundary_condition = sites[cluster.front()].boundary_condition;
+  if (std::any_of(cluster.begin(), cluster.end(),
+                  [&](std::size_t index)
+                  {
+                    return !SameBoundaryLaw(sites[index].boundary_condition,
+                                            boundary_condition);
+                  }))
+  {
+    return std::nullopt;
+  }
+
+  std::optional<ParallelClusterSelection> best;
+  double best_distance = mfem::infinity();
+  for (const double orientation : {-1.0, 1.0})
+  {
+    const Point2D axis_u = {orientation * process_normal[1],
+                            -orientation * process_normal[0]};
+    std::vector<std::size_t> ordered(cluster);
+    std::sort(
+        ordered.begin(), ordered.end(), [&](std::size_t first, std::size_t second)
+        { return Dot(sites[first].point, axis_u) < Dot(sites[second].point, axis_u); });
+    const Point2D origin = sites[ordered.front()].point;
+    std::vector<double> offsets;
+    std::vector<int> gap_directions;
+    std::vector<int> conductors;
+    std::map<int, int> conductor_labels;
+    std::vector<std::size_t> reference_edges;
+    offsets.reserve(ordered.size());
+    gap_directions.reserve(ordered.size());
+    conductors.reserve(ordered.size());
+    for (const std::size_t index : ordered)
+    {
+      const Point2D delta = {sites[index].point[0] - origin[0],
+                             sites[index].point[1] - origin[1]};
+      const double offset = Dot(delta, axis_u);
+      if (std::abs(Dot(delta, process_normal)) > 1.0e-8 * library.matching_radius)
+      {
+        offsets.clear();
+        break;
+      }
+      const double gap_dot = Dot(sites[index].axis_u, axis_u);
+      if (std::abs(gap_dot) <= 0.95)
+      {
+        offsets.clear();
+        break;
+      }
+      offsets.push_back(offset);
+      gap_directions.push_back(gap_dot > 0.0 ? 1 : -1);
+      auto [label, inserted] = conductor_labels.emplace(
+          sites[index].conductor, static_cast<int>(conductor_labels.size()) + 1);
+      if (inserted)
+      {
+        reference_edges.push_back(index);
+      }
+      conductors.push_back(label->second);
+    }
+    if (offsets.size() != ordered.size())
+    {
+      continue;
+    }
+
+    for (std::size_t model_index = 0; model_index < library.models.size(); model_index++)
+    {
+      const auto &model = library.models[model_index];
+      if (model.topology != LibraryTopology::PARALLEL_EDGE_CLUSTER ||
+          !CompatibleBoundaryLaw(model.boundary_condition, boundary_condition) ||
+          model.cluster_edges.size() != ordered.size() ||
+          model.conductor_references.size() != reference_edges.size())
+      {
+        continue;
+      }
+      const double tolerance =
+          std::max(model.cluster_offset_tolerance, 1.0e-10 * library.matching_radius);
+      double normalized_distance = 0.0;
+      bool compatible = true;
+      for (std::size_t i = 0; i < ordered.size(); i++)
+      {
+        const auto &edge = model.cluster_edges[i];
+        const double error = std::abs(offsets[i] - edge.offset);
+        compatible = compatible && error <= tolerance &&
+                     gap_directions[i] == edge.gap_direction &&
+                     conductors[i] == edge.conductor;
+        normalized_distance = std::max(normalized_distance, error / tolerance);
+      }
+      if (!compatible || normalized_distance >= best_distance)
+      {
+        continue;
+      }
+      ParallelClusterSelection selection;
+      selection.response.models.push_back({model_index, 1.0});
+      selection.response.conductor_references = model.conductor_references;
+      selection.response.normalized_distance = normalized_distance;
+      selection.ordered_edges = ordered;
+      selection.reference_edges = reference_edges;
+      selection.axis_u = axis_u;
+      selection.axis_v = process_normal;
+      best = std::move(selection);
+      best_distance = normalized_distance;
+    }
+  }
+  return best;
+}
+
+Point3D InterpolateAtLongitudinalCoordinate(const EdgeSegment3D &segment,
+                                            const Point3D &tangent, double coordinate)
+{
+  const double orientation = Dot(segment.tangent, tangent);
+  MFEM_ASSERT(std::abs(orientation) > 1.0 - 1.0e-8,
+              "A parallel-edge cluster contains incompatible tangents!");
+  const double distance = (coordinate - Dot(segment.p0, tangent)) / orientation;
+  return Interpolate(segment, std::clamp(distance, 0.0, segment.length));
+}
+
+std::optional<ParallelClusterSelection3D>
+FindParallelClusterLibraryModel(const ProcessLibrary &library,
+                                const std::vector<EdgeSegment3D> &segments,
+                                const std::vector<std::size_t> &cluster,
+                                const Point3D &tangent, double longitudinal_coordinate)
+{
+  if (cluster.size() < 3)
+  {
+    return std::nullopt;
+  }
+
+  Point3D process_normal{};
+  for (const std::size_t index : cluster)
+  {
+    process_normal = Add(process_normal, segments[index].axis_v);
+  }
+  if (Norm(process_normal) == 0.0)
+  {
+    return std::nullopt;
+  }
+  process_normal = Normalize(process_normal);
+  if (std::any_of(cluster.begin(), cluster.end(), [&](std::size_t index)
+                  { return Dot(process_normal, segments[index].axis_v) <= 0.95; }))
+  {
+    return std::nullopt;
+  }
+  const auto boundary_condition = segments[cluster.front()].boundary_condition;
+  if (std::any_of(cluster.begin(), cluster.end(),
+                  [&](std::size_t index)
+                  {
+                    return !SameBoundaryLaw(segments[index].boundary_condition,
+                                            boundary_condition);
+                  }))
+  {
+    return std::nullopt;
+  }
+
+  const Point3D transverse = Normalize(Cross(process_normal, tangent));
+  std::optional<ParallelClusterSelection3D> best;
+  double best_distance = mfem::infinity();
+  for (const double orientation : {-1.0, 1.0})
+  {
+    const Point3D axis_u = Scale(orientation, transverse);
+    std::vector<std::size_t> ordered(cluster);
+    std::sort(ordered.begin(), ordered.end(),
+              [&](std::size_t first, std::size_t second)
+              {
+                const auto first_point = InterpolateAtLongitudinalCoordinate(
+                    segments[first], tangent, longitudinal_coordinate);
+                const auto second_point = InterpolateAtLongitudinalCoordinate(
+                    segments[second], tangent, longitudinal_coordinate);
+                return Dot(first_point, axis_u) < Dot(second_point, axis_u);
+              });
+    const Point3D origin = InterpolateAtLongitudinalCoordinate(
+        segments[ordered.front()], tangent, longitudinal_coordinate);
+    std::vector<double> offsets;
+    std::vector<int> gap_directions;
+    std::vector<int> conductors;
+    std::map<int, int> conductor_labels;
+    std::vector<std::size_t> reference_edges;
+    offsets.reserve(ordered.size());
+    gap_directions.reserve(ordered.size());
+    conductors.reserve(ordered.size());
+    for (const std::size_t index : ordered)
+    {
+      const Point3D point = InterpolateAtLongitudinalCoordinate(segments[index], tangent,
+                                                                longitudinal_coordinate);
+      const Point3D delta = Subtract(point, origin);
+      if (std::abs(Dot(delta, process_normal)) > 1.0e-8 * library.matching_radius)
+      {
+        offsets.clear();
+        break;
+      }
+      const double gap_dot = Dot(segments[index].axis_u, axis_u);
+      if (std::abs(gap_dot) <= 0.95)
+      {
+        offsets.clear();
+        break;
+      }
+      offsets.push_back(Dot(delta, axis_u));
+      gap_directions.push_back(gap_dot > 0.0 ? 1 : -1);
+      auto [label, inserted] = conductor_labels.emplace(
+          segments[index].conductor, static_cast<int>(conductor_labels.size()) + 1);
+      if (inserted)
+      {
+        reference_edges.push_back(index);
+      }
+      conductors.push_back(label->second);
+    }
+    if (offsets.size() != ordered.size())
+    {
+      continue;
+    }
+
+    for (std::size_t model_index = 0; model_index < library.models.size(); model_index++)
+    {
+      const auto &model = library.models[model_index];
+      if (model.topology != LibraryTopology::PARALLEL_EDGE_CLUSTER ||
+          !CompatibleBoundaryLaw(model.boundary_condition, boundary_condition) ||
+          model.cluster_edges.size() != ordered.size() ||
+          model.conductor_references.size() != reference_edges.size())
+      {
+        continue;
+      }
+      const double tolerance =
+          std::max(model.cluster_offset_tolerance, 1.0e-10 * library.matching_radius);
+      double normalized_distance = 0.0;
+      bool compatible = true;
+      for (std::size_t i = 0; i < ordered.size(); i++)
+      {
+        const auto &edge = model.cluster_edges[i];
+        const double error = std::abs(offsets[i] - edge.offset);
+        compatible = compatible && error <= tolerance &&
+                     gap_directions[i] == edge.gap_direction &&
+                     conductors[i] == edge.conductor;
+        normalized_distance = std::max(normalized_distance, error / tolerance);
+      }
+      if (!compatible || normalized_distance >= best_distance)
+      {
+        continue;
+      }
+      ParallelClusterSelection3D selection;
+      selection.response.models.push_back({model_index, 1.0});
+      selection.response.conductor_references = model.conductor_references;
+      selection.response.normalized_distance = normalized_distance;
+      selection.ordered_edges = ordered;
+      selection.reference_edges = reference_edges;
+      selection.axis_u = axis_u;
+      selection.axis_v = process_normal;
+      best = std::move(selection);
+      best_distance = normalized_distance;
+    }
+  }
+  return best;
+}
+
+std::pair<std::vector<ParallelClusterSpan3D>, int>
+FindParallelClusterSpans(const ProcessLibrary &library,
+                         const std::vector<EdgeSegment3D> &segments,
+                         const std::vector<EdgePair3D> &pairs)
+{
+  std::vector<ParallelClusterSpan3D> spans;
+  int unmatched = 0;
+  std::vector<std::vector<std::size_t>> pairs_by_edge(segments.size());
+  for (std::size_t pair_index = 0; pair_index < pairs.size(); pair_index++)
+  {
+    pairs_by_edge[pairs[pair_index].first].push_back(pair_index);
+    pairs_by_edge[pairs[pair_index].second].push_back(pair_index);
+  }
+
+  std::vector<bool> visited_edge(segments.size(), false);
+  for (std::size_t seed = 0; seed < segments.size(); seed++)
+  {
+    if (visited_edge[seed] || pairs_by_edge[seed].empty())
+    {
+      continue;
+    }
+    std::vector<std::size_t> component_edges = {seed};
+    std::set<std::size_t> component_pairs;
+    visited_edge[seed] = true;
+    for (std::size_t cursor = 0; cursor < component_edges.size(); cursor++)
+    {
+      const std::size_t edge = component_edges[cursor];
+      for (const std::size_t pair_index : pairs_by_edge[edge])
+      {
+        component_pairs.insert(pair_index);
+        const auto &pair = pairs[pair_index];
+        const std::size_t neighbor = pair.first == edge ? pair.second : pair.first;
+        if (!visited_edge[neighbor])
+        {
+          visited_edge[neighbor] = true;
+          component_edges.push_back(neighbor);
+        }
+      }
+    }
+    if (component_edges.size() < 3)
+    {
+      continue;
+    }
+
+    Point3D tangent = segments[component_edges.front()].tangent;
+    for (double value : tangent)
+    {
+      if (std::abs(value) <= 1.0e-12)
+      {
+        continue;
+      }
+      if (value < 0.0)
+      {
+        tangent = Scale(-1.0, tangent);
+      }
+      break;
+    }
+    struct PairRange
+    {
+      std::size_t index;
+      double begin;
+      double end;
+    };
+    std::vector<PairRange> ranges;
+    std::vector<double> events;
+    ranges.reserve(component_pairs.size());
+    events.reserve(2 * component_pairs.size());
+    for (const std::size_t pair_index : component_pairs)
+    {
+      const auto &pair = pairs[pair_index];
+      const auto &first = segments[pair.first];
+      const auto &second = segments[pair.second];
+      const double first_begin = std::min(Dot(first.p0, tangent), Dot(first.p1, tangent));
+      const double first_end = std::max(Dot(first.p0, tangent), Dot(first.p1, tangent));
+      const double second_begin =
+          std::min(Dot(second.p0, tangent), Dot(second.p1, tangent));
+      const double second_end = std::max(Dot(second.p0, tangent), Dot(second.p1, tangent));
+      const double begin = std::max(first_begin, second_begin);
+      const double end = std::min(first_end, second_end);
+      if (end <= begin)
+      {
+        continue;
+      }
+      ranges.push_back({pair_index, begin, end});
+      events.push_back(begin);
+      events.push_back(end);
+    }
+    std::sort(events.begin(), events.end());
+    events.erase(
+        std::unique(
+            events.begin(), events.end(), [&](double first, double second)
+            { return std::abs(first - second) <= 1.0e-10 * library.matching_radius; }),
+        events.end());
+    for (std::size_t event = 1; event < events.size(); event++)
+    {
+      const double begin = events[event - 1];
+      const double end = events[event];
+      if (end <= begin)
+      {
+        continue;
+      }
+      const double midpoint = 0.5 * (begin + end);
+      std::map<std::size_t, std::vector<std::size_t>> adjacency;
+      for (const auto &range : ranges)
+      {
+        if (midpoint <= range.begin || midpoint >= range.end)
+        {
+          continue;
+        }
+        const auto &pair = pairs[range.index];
+        adjacency[pair.first].push_back(pair.second);
+        adjacency[pair.second].push_back(pair.first);
+      }
+      std::set<std::size_t> active_visited;
+      for (const auto &[active_seed, neighbors] : adjacency)
+      {
+        (void)neighbors;
+        if (!active_visited.insert(active_seed).second)
+        {
+          continue;
+        }
+        std::vector<std::size_t> active = {active_seed};
+        for (std::size_t cursor = 0; cursor < active.size(); cursor++)
+        {
+          for (const std::size_t neighbor : adjacency[active[cursor]])
+          {
+            if (active_visited.insert(neighbor).second)
+            {
+              active.push_back(neighbor);
+            }
+          }
+        }
+        if (active.size() < 3)
+        {
+          continue;
+        }
+        const auto selection =
+            FindParallelClusterLibraryModel(library, segments, active, tangent, midpoint);
+        if (!selection)
+        {
+          unmatched++;
+          continue;
+        }
+        spans.push_back({*selection, tangent, begin, end});
+      }
+    }
+  }
+  return {std::move(spans), unmatched};
+}
+
+struct VertexLibrarySelection
+{
+  LibrarySelection response;
+  std::size_t first_arm = 0;
+};
+
+std::optional<VertexLibrarySelection>
+FindVertexLibraryModel(const ProcessLibrary &library, LibraryTopology topology,
+                       const std::vector<Point3D> &directions,
+                       const Point3D &process_normal,
+                       const MetalBoundaryLaw &boundary_condition)
+{
+  MFEM_ASSERT(topology == LibraryTopology::ENDPOINT ||
+                  topology == LibraryTopology::JUNCTION,
+              "Invalid spatial-vertex response topology!");
+  if (topology == LibraryTopology::ENDPOINT && directions.size() != 1)
+  {
+    return std::nullopt;
+  }
+
+  std::optional<VertexLibrarySelection> best;
+  double best_error = mfem::infinity();
+  for (std::size_t model_index = 0; model_index < library.models.size(); model_index++)
+  {
+    const auto &model = library.models[model_index];
+    if (model.topology != topology ||
+        !CompatibleBoundaryLaw(model.boundary_condition, boundary_condition))
+    {
+      continue;
+    }
+    if (topology == LibraryTopology::ENDPOINT)
+    {
+      VertexLibrarySelection selection;
+      selection.response.models.push_back({model_index, 1.0});
+      selection.response.conductor_references = model.conductor_references;
+      selection.response.normalized_distance = 0.0;
+      return selection;
+    }
+    if (model.arm_angles.size() != directions.size())
+    {
+      continue;
+    }
+
+    const double tolerance = std::max(model.arm_angle_tolerance, 1.0e-10 * std::acos(-1.0));
+    for (std::size_t first = 0; first < directions.size(); first++)
+    {
+      const Point3D axis_u = directions[first];
+      const Point3D axis_v = Normalize(Cross(process_normal, axis_u));
+      std::vector<double> angles;
+      angles.reserve(directions.size());
+      for (const auto &direction : directions)
+      {
+        double angle = std::atan2(Dot(direction, axis_v), Dot(direction, axis_u));
+        if (angle < 0.0)
+        {
+          angle += 2.0 * std::acos(-1.0);
+        }
+        angles.push_back(angle);
+      }
+      std::sort(angles.begin(), angles.end());
+      double normalized_error = 0.0;
+      for (std::size_t i = 0; i < angles.size(); i++)
+      {
+        normalized_error = std::max(normalized_error,
+                                    std::abs(angles[i] - model.arm_angles[i]) / tolerance);
+      }
+      if (normalized_error > 1.0 || normalized_error >= best_error)
+      {
+        continue;
+      }
+
+      VertexLibrarySelection selection;
+      selection.response.models.push_back({model_index, 1.0});
+      selection.response.conductor_references = model.conductor_references;
+      selection.response.normalized_distance = normalized_error;
+      selection.first_arm = first;
+      best = std::move(selection);
+      best_error = normalized_error;
+    }
+  }
+  return best;
 }
 
 std::string TopologyName(LibraryTopology topology)
@@ -1524,10 +2844,18 @@ std::string TopologyName(LibraryTopology topology)
       return "different-conductor gap";
     case LibraryTopology::SAME_CONDUCTOR_STRIP:
       return "same-conductor strip";
+    case LibraryTopology::PARALLEL_EDGE_CLUSTER:
+      return "parallel-edge cluster";
+    case LibraryTopology::SPATIAL_EDGE_CLUSTER:
+      return "spatial edge cluster";
     case LibraryTopology::CONVEX_CORNER:
       return "convex corner";
     case LibraryTopology::CONCAVE_CORNER:
       return "concave corner";
+    case LibraryTopology::ENDPOINT:
+      return "endpoint";
+    case LibraryTopology::JUNCTION:
+      return "junction";
   }
   return "unknown";
 }
@@ -1541,7 +2869,8 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
               "Automatic two-dimensional fabrication-process response matching requires "
               "a two-dimensional mesh!");
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
-  const auto library = ReadProcessLibrary(request.library, coordinate_scale);
+  const auto library =
+      ReadProcessLibrary(request.library, iodata.units, iodata.InputsNondimensionalized());
   if (diagnostics)
   {
     diagnostics->matching_radius = library.matching_radius;
@@ -1715,12 +3044,34 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
       LibraryTopology topology = LibraryTopology::ISOLATED_EDGE;
       double separation = 0.0;
       ResponsePatchData patch;
+      std::optional<LibrarySelection> model_selection;
+      const auto boundary_condition = sites[cluster.front()].boundary_condition;
+      if (std::any_of(cluster.begin(), cluster.end(),
+                      [&](std::size_t index)
+                      {
+                        return !SameBoundaryLaw(sites[index].boundary_condition,
+                                                boundary_condition);
+                      }))
+      {
+        group_matched = false;
+        Mpi::Warning(
+            "Nearby two-dimensional metal edges use different boundary conditions; "
+            "correction is disabled for this interface group!\n");
+        unmatched_clusters++;
+        break;
+      }
       if (cluster.size() == 1)
       {
         const auto &edge = sites[cluster.front()];
         patch.origin = {edge.point[0], edge.point[1], 0.0};
         patch.axis_u = {edge.axis_u[0], edge.axis_u[1], 0.0};
         patch.axis_v = {edge.axis_v[0], edge.axis_v[1], 0.0};
+        patch.maxwell_reference_is_pec =
+            edge.boundary_condition.type == MetalBoundaryConditionType::PEC;
+        if (diagnostics && !patch.maxwell_reference_is_pec)
+        {
+          patch.maxwell_conductor_anchors = {patch.origin};
+        }
       }
       else if (cluster.size() == 2)
       {
@@ -1762,19 +3113,56 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
         const Point2D normal = Normalize(Point2D{first.axis_v[0] + second.axis_v[0],
                                                  first.axis_v[1] + second.axis_v[1]});
         patch.axis_v = {normal[0], normal[1], 0.0};
+        patch.maxwell_reference_is_pec =
+            boundary_condition.type == MetalBoundaryConditionType::PEC;
+        if (diagnostics && !patch.maxwell_reference_is_pec)
+        {
+          patch.maxwell_conductor_anchors = {
+              std::array<double, 3>{first.point[0], first.point[1], 0.0}};
+        }
       }
       else
       {
-        group_matched = false;
-        Mpi::Warning(
-            "No fabrication-process response model for a cluster of {} nearby metal "
-            "edges; correction is disabled for this interface group!\n",
-            cluster.size());
-        unmatched_clusters++;
-        break;
+        const auto cluster_selection =
+            FindParallelClusterLibraryModel(library, sites, cluster);
+        if (!cluster_selection)
+        {
+          group_matched = false;
+          Mpi::Warning("Fabrication-process response library \"{}\" has no matching "
+                       "ParallelEdgeCluster model for {} nearby metal edges; correction is "
+                       "disabled for this interface group!\n",
+                       library.name, cluster.size());
+          unmatched_clusters++;
+          break;
+        }
+        model_selection = cluster_selection->response;
+        const auto &first = sites[cluster_selection->ordered_edges.front()];
+        patch.origin = {first.point[0], first.point[1], 0.0};
+        patch.axis_u = {cluster_selection->axis_u[0], cluster_selection->axis_u[1], 0.0};
+        patch.axis_v = {cluster_selection->axis_v[0], cluster_selection->axis_v[1], 0.0};
+        patch.maxwell_reference_is_pec =
+            std::all_of(cluster.begin(), cluster.end(),
+                        [&](std::size_t index)
+                        {
+                          return sites[index].boundary_condition.type ==
+                                 MetalBoundaryConditionType::PEC;
+                        });
+        patch.conductor_references = model_selection->conductor_references;
+        if (diagnostics)
+        {
+          for (const std::size_t index : cluster_selection->reference_edges)
+          {
+            const auto &point = sites[index].point;
+            patch.maxwell_conductor_anchors.push_back({point[0], point[1], 0.0});
+          }
+        }
       }
 
-      const auto model_selection = FindLibraryModel(library, topology, separation);
+      if (!model_selection)
+      {
+        model_selection =
+            FindLibraryModel(library, topology, separation, boundary_condition);
+      }
       if (!model_selection)
       {
         group_matched = false;
@@ -1785,8 +3173,17 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
         unmatched_clusters++;
         break;
       }
-      patch.reference = model_selection->reference;
-      patch.secondary_reference = model_selection->secondary_reference;
+      if (patch.conductor_references.empty())
+      {
+        patch.conductor_references = model_selection->conductor_references;
+      }
+      if (diagnostics && !patch.maxwell_reference_is_pec &&
+          patch.conductor_references.size() == 2 && cluster.size() == 2)
+      {
+        const auto &second = sites[cluster[1]];
+        patch.maxwell_conductor_anchors.push_back(
+            std::array<double, 3>{second.point[0], second.point[1], 0.0});
+      }
       group_maximum_library_distance =
           std::max(group_maximum_library_distance, model_selection->normalized_distance);
       if (model_selection->IsInterpolated())
@@ -1816,6 +3213,14 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
       continue;
     }
 
+    if (diagnostics)
+    {
+      for (const auto &selection : pending)
+      {
+        diagnostics->boundary_law_verified &=
+            IsBoundaryLawVerified(library.models[selection.library_model]);
+      }
+    }
     std::map<std::size_t, int> runtime_models;
     for (auto &selection : pending)
     {
@@ -1826,22 +3231,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
         const auto &source = library.models[selection.library_model];
         auto model = source.response;
         model.idx = next_model_index++;
-        for (const auto &[type, target] : group.targets)
-        {
-          const auto interface_type = type;
-          auto interface = std::find_if(source.interfaces.begin(), source.interfaces.end(),
-                                        [interface_type](const auto &entry)
-                                        { return entry.type == interface_type; });
-          MFEM_VERIFY(interface != source.interfaces.end() ||
-                          source.response.fabricated_surface_matrix.empty(),
-                      "Fabrication-process response model \"" << source.name << "\" has no "
-                                                              << ToString(type)
-                                                              << " interface mapping!");
-          if (interface != source.interfaces.end())
-          {
-            model.interfaces.push_back({target, interface->coupon});
-          }
-        }
+        MapLibraryInterfaces(source, {{0, group.targets}}, model);
         result.models.push_back(std::move(model));
       }
       selection.patch.model = model_it->second;
@@ -1884,8 +3274,15 @@ bool SegmentsShareVertex(const MetalEdgeSegment &a, const MetalEdgeSegment &b)
          a.vertices[1] == b.vertices[0] || a.vertices[1] == b.vertices[1];
 }
 
-double SegmentDistanceSquared(const Point3D &p0, const Point3D &p1, const Point3D &q0,
-                              const Point3D &q1)
+struct SegmentClosestApproach
+{
+  double first = 0.0;
+  double second = 0.0;
+  double distance_squared = 0.0;
+};
+
+SegmentClosestApproach ClosestSegmentApproach(const Point3D &p0, const Point3D &p1,
+                                              const Point3D &q0, const Point3D &q1)
 {
   const Point3D u = Subtract(p1, p0);
   const Point3D v = Subtract(q1, q0);
@@ -1962,7 +3359,13 @@ double SegmentDistanceSquared(const Point3D &p0, const Point3D &p1, const Point3
   const double s = std::abs(s_numerator) <= 1.0e-30 ? 0.0 : s_numerator / s_denominator;
   const double t = std::abs(t_numerator) <= 1.0e-30 ? 0.0 : t_numerator / t_denominator;
   const Point3D delta = Add(w, Subtract(Scale(s, u), Scale(t, v)));
-  return Dot(delta, delta);
+  return {s, t, Dot(delta, delta)};
+}
+
+double SegmentDistanceSquared(const Point3D &p0, const Point3D &p1, const Point3D &q0,
+                              const Point3D &q1)
+{
+  return ClosestSegmentApproach(p0, p1, q0, q1).distance_squared;
 }
 
 double PointSegmentDistanceSquared(const Point3D &point, const EdgeSegment3D &segment)
@@ -1971,6 +3374,237 @@ double PointSegmentDistanceSquared(const Point3D &point, const EdgeSegment3D &se
       std::clamp(Dot(Subtract(point, segment.p0), segment.tangent), 0.0, segment.length);
   const Point3D delta = Subtract(point, Interpolate(segment, distance));
   return Dot(delta, delta);
+}
+
+Point3D TransformLocalVector(const std::array<Point3D, 3> &axes, const Point3D &local)
+{
+  Point3D result{};
+  for (int d = 0; d < 3; d++)
+  {
+    result = Add(result, Scale(local[d], axes[d]));
+  }
+  return result;
+}
+
+Point3D TransformLocalPoint(const Point3D &origin, const std::array<Point3D, 3> &axes,
+                            const Point3D &local)
+{
+  return Add(origin, TransformLocalVector(axes, local));
+}
+
+std::optional<SpatialClusterSelection3D>
+FindSpatialClusterLibraryModel(const ProcessLibrary &library,
+                               const std::vector<SpatialEdgeSite3D> &sites)
+{
+  if (sites.size() < 2)
+  {
+    return std::nullopt;
+  }
+
+  std::optional<SpatialClusterSelection3D> best;
+  double best_distance = mfem::infinity();
+  for (std::size_t model_index = 0; model_index < library.models.size(); model_index++)
+  {
+    const auto &model = library.models[model_index];
+    if (model.topology != LibraryTopology::SPATIAL_EDGE_CLUSTER ||
+        model.spatial_edges.size() != sites.size())
+    {
+      continue;
+    }
+    const double position_tolerance =
+        std::max(model.spatial_position_tolerance, 1.0e-10 * library.matching_radius);
+    const double angle_tolerance =
+        std::max(model.spatial_angle_tolerance, 1.0e-10 * std::acos(-1.0));
+    const auto &model_anchor = model.spatial_edges.front();
+    const Point3D model_tangent =
+        Normalize(Cross(model_anchor.gap_direction, model_anchor.process_normal));
+
+    for (std::size_t site_anchor_index = 0; site_anchor_index < sites.size();
+         site_anchor_index++)
+    {
+      const auto &site_anchor = sites[site_anchor_index];
+      if (!CompatibleBoundaryLaw(model_anchor.boundary_condition,
+                                 site_anchor.boundary_condition))
+      {
+        continue;
+      }
+      const Point3D site_tangent =
+          Normalize(Cross(site_anchor.gap_direction, site_anchor.process_normal));
+      std::array<Point3D, 3> axes{};
+      for (int d = 0; d < 3; d++)
+      {
+        Point3D local_axis{};
+        local_axis[d] = 1.0;
+        axes[d] = Add(
+            Scale(Dot(model_anchor.gap_direction, local_axis), site_anchor.gap_direction),
+            Add(Scale(Dot(model_anchor.process_normal, local_axis),
+                      site_anchor.process_normal),
+                Scale(Dot(model_tangent, local_axis), site_tangent)));
+      }
+      const Point3D origin =
+          Subtract(site_anchor.point, TransformLocalVector(axes, model_anchor.point));
+
+      struct Candidate
+      {
+        std::size_t site = 0;
+        double distance = 0.0;
+      };
+      std::vector<std::vector<Candidate>> candidates(model.spatial_edges.size());
+      for (std::size_t edge_index = 0; edge_index < model.spatial_edges.size();
+           edge_index++)
+      {
+        const auto &edge = model.spatial_edges[edge_index];
+        const Point3D point = TransformLocalPoint(origin, axes, edge.point);
+        const Point3D gap = TransformLocalVector(axes, edge.gap_direction);
+        const Point3D normal = TransformLocalVector(axes, edge.process_normal);
+        for (std::size_t site_index = 0; site_index < sites.size(); site_index++)
+        {
+          if (edge_index == 0 && site_index != site_anchor_index)
+          {
+            continue;
+          }
+          const auto &site = sites[site_index];
+          if (!CompatibleBoundaryLaw(edge.boundary_condition, site.boundary_condition))
+          {
+            continue;
+          }
+          const double position_error = Distance(point, site.point);
+          const double gap_error =
+              std::acos(std::clamp(Dot(gap, site.gap_direction), -1.0, 1.0));
+          const double normal_error =
+              std::acos(std::clamp(Dot(normal, site.process_normal), -1.0, 1.0));
+          const double normalized_error =
+              std::max({position_error / position_tolerance, gap_error / angle_tolerance,
+                        normal_error / angle_tolerance});
+          if (normalized_error <= 1.0)
+          {
+            candidates[edge_index].push_back({site_index, normalized_error});
+          }
+        }
+        if (candidates[edge_index].empty())
+        {
+          break;
+        }
+      }
+      if (std::any_of(candidates.begin(), candidates.end(),
+                      [](const auto &candidate) { return candidate.empty(); }))
+      {
+        continue;
+      }
+
+      std::vector<std::size_t> order(model.spatial_edges.size());
+      std::iota(order.begin(), order.end(), 0);
+      std::sort(order.begin(), order.end(), [&](std::size_t first, std::size_t second)
+                { return candidates[first].size() < candidates[second].size(); });
+      std::vector<std::size_t> assignment(model.spatial_edges.size(),
+                                          std::numeric_limits<std::size_t>::max());
+      std::vector<bool> used_site(sites.size(), false);
+      std::map<int, int> model_to_conductor;
+      std::map<int, int> conductor_to_model;
+      std::map<int, std::map<InterfaceDielectric, int>> targets_by_slot;
+      std::map<std::vector<std::pair<InterfaceDielectric, int>>, int> slot_by_targets;
+      std::function<void(std::size_t, double)> Match =
+          [&](std::size_t depth, double normalized_distance)
+      {
+        if (normalized_distance >= best_distance)
+        {
+          return;
+        }
+        if (depth == order.size())
+        {
+          if (!MatchLibraryInterfaces(model, targets_by_slot))
+          {
+            return;
+          }
+          SpatialClusterSelection3D selection;
+          selection.response.models.push_back({model_index, 1.0});
+          selection.response.conductor_references = model.conductor_references;
+          selection.response.normalized_distance = normalized_distance;
+          selection.sites = sites;
+          selection.model_to_site = assignment;
+          selection.targets_by_slot = targets_by_slot;
+          selection.origin = origin;
+          selection.axes = axes;
+          best = std::move(selection);
+          best_distance = normalized_distance;
+          return;
+        }
+
+        const std::size_t edge_index = order[depth];
+        const int model_conductor = model.spatial_edges[edge_index].conductor;
+        const int interface_slot = model.spatial_edges[edge_index].interface_slot;
+        for (const auto &candidate : candidates[edge_index])
+        {
+          if (used_site[candidate.site])
+          {
+            continue;
+          }
+          const int site_conductor = sites[candidate.site].conductor;
+          const auto &site_targets = sites[candidate.site].targets;
+          const std::vector<std::pair<InterfaceDielectric, int>> target_signature(
+              site_targets.begin(), site_targets.end());
+          const auto mapped_site = model_to_conductor.find(model_conductor);
+          const auto mapped_model = conductor_to_model.find(site_conductor);
+          const auto mapped_targets = targets_by_slot.find(interface_slot);
+          const auto mapped_slot = slot_by_targets.find(target_signature);
+          if ((mapped_site != model_to_conductor.end() &&
+               mapped_site->second != site_conductor) ||
+              (mapped_model != conductor_to_model.end() &&
+               mapped_model->second != model_conductor) ||
+              (mapped_targets != targets_by_slot.end() &&
+               mapped_targets->second != site_targets) ||
+              (mapped_slot != slot_by_targets.end() &&
+               mapped_slot->second != interface_slot))
+          {
+            continue;
+          }
+          const bool new_model = mapped_site == model_to_conductor.end();
+          const bool new_site = mapped_model == conductor_to_model.end();
+          const bool new_targets = mapped_targets == targets_by_slot.end();
+          const bool new_slot = mapped_slot == slot_by_targets.end();
+          if (new_model)
+          {
+            model_to_conductor.emplace(model_conductor, site_conductor);
+          }
+          if (new_site)
+          {
+            conductor_to_model.emplace(site_conductor, model_conductor);
+          }
+          if (new_targets)
+          {
+            targets_by_slot.emplace(interface_slot, site_targets);
+          }
+          if (new_slot)
+          {
+            slot_by_targets.emplace(target_signature, interface_slot);
+          }
+          assignment[edge_index] = candidate.site;
+          used_site[candidate.site] = true;
+          Match(depth + 1, std::max(normalized_distance, candidate.distance));
+          used_site[candidate.site] = false;
+          assignment[edge_index] = std::numeric_limits<std::size_t>::max();
+          if (new_model)
+          {
+            model_to_conductor.erase(model_conductor);
+          }
+          if (new_site)
+          {
+            conductor_to_model.erase(site_conductor);
+          }
+          if (new_targets)
+          {
+            targets_by_slot.erase(interface_slot);
+          }
+          if (new_slot)
+          {
+            slot_by_targets.erase(target_signature);
+          }
+        }
+      };
+      Match(0, 0.0);
+    }
+  }
+  return best;
 }
 
 ResponseCorrectionData
@@ -1983,7 +3617,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
               "Automatic three-dimensional fabrication-process response matching "
               "requires a three-dimensional mesh!");
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
-  const auto library = ReadProcessLibrary(request.library, coordinate_scale);
+  const auto library =
+      ReadProcessLibrary(request.library, iodata.units, iodata.InputsNondimensionalized());
   if (diagnostics)
   {
     diagnostics->matching_radius = library.matching_radius;
@@ -2033,11 +3668,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         GetInterfaceMetalEdgeSegmentIndices(geometry, index, dielectric.type);
     ExcludeMetalEdgeSegmentIndices(mesh, geometry, dielectric.edge_exclude_attributes,
                                    segment_indices);
-    selections.push_back(
-        {dielectric.type, index, std::move(segment_indices),
-         dielectric.edge_frame_normal
-             ? std::optional<Point3D>(Normalize(*dielectric.edge_frame_normal))
-             : std::nullopt});
+    selections.push_back({dielectric.type, index, std::move(segment_indices),
+                          dielectric.edge_frame_normal ? std::optional<Point3D>(Normalize(
+                                                             *dielectric.edge_frame_normal))
+                                                       : std::nullopt});
   }
   MFEM_VERIFY(!selections.empty(),
               "Fabrication-process response matching found no target interfaces!");
@@ -2061,8 +3695,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   // interface may therefore span several groups, but every physical segment belongs to
   // exactly one group and receives at most one target of each interface type.
   std::map<std::size_t, std::map<InterfaceDielectric, int>> targets_by_segment;
-  std::map<std::pair<InterfaceDielectric, int>, std::optional<Point3D>>
-      normals_by_target;
+  std::map<std::pair<InterfaceDielectric, int>, std::optional<Point3D>> normals_by_target;
   for (const auto &selection : selections)
   {
     normals_by_target.emplace(std::make_pair(selection.type, selection.index),
@@ -2119,16 +3752,342 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   int interpolated_rounded_corners = 0;
   int nonregular_vertices = 0;
   int matched_corner_patches = 0;
-  int matched_sharp_corner_vertices = 0;
-  std::optional<Point3D> layer_normal;
-  double layer_offset = 0.0;
-  mfem::Vector mesh_bbmin, mesh_bbmax;
-  mesh::GetAxisAlignedBoundingBox(mesh, mesh_bbmin, mesh_bbmax);
-  double mesh_extent = 0.0;
-  for (int d = 0; d < 3; d++)
+  int matched_endpoint_patches = 0;
+  int matched_junction_patches = 0;
+  int matched_spatial_cluster_patches = 0;
+  int matched_nonregular_vertices = 0;
+
+  auto BuildSegments =
+      [&](const EdgeGroup3D &group, const std::vector<std::size_t> &geometry_indices)
   {
-    mesh_extent = std::max(mesh_extent, mesh_bbmax[d] - mesh_bbmin[d]);
+    const auto process_normals = BuildMetalEdgeProcessNormals(
+        mesh, geometry, geometry_indices, [&](int attribute)
+        { return mat_op.GetLightSpeedMax(attribute); }, group.process_normal);
+    const auto gap_directions =
+        BuildMetalEdgeGapDirections(mesh, geometry, geometry_indices, process_normals);
+    std::vector<EdgeSegment3D> segments;
+    segments.reserve(geometry_indices.size());
+    for (std::size_t i = 0; i < geometry_indices.size(); i++)
+    {
+      const std::size_t geometry_index = geometry_indices[i];
+      const auto &source = geometry.segments[geometry_index];
+      EdgeSegment3D segment;
+      segment.geometry_index = geometry_index;
+      segment.p0 = geometry.vertices[source.vertices[0]].coordinate;
+      segment.p1 = geometry.vertices[source.vertices[1]].coordinate;
+      segment.length = Distance(segment.p0, segment.p1);
+      segment.tangent = Normalize(Subtract(segment.p1, segment.p0));
+      segment.axis_u = gap_directions[i];
+      segment.axis_v = process_normals[i];
+      segment.targets = group.targets;
+      if (maxwell)
+      {
+        MFEM_VERIFY(!source.conditions.empty(),
+                    "Unable to determine the Maxwell metal boundary condition for an "
+                    "automatically detected edge!");
+        const auto boundary_condition =
+            GetBoundaryConditionLaw(iodata.boundaries, source.conditions.front());
+        MFEM_VERIFY(std::all_of(source.conditions.begin(), source.conditions.end(),
+                                [&](const auto &condition)
+                                {
+                                  return SameBoundaryLaw(
+                                      GetBoundaryConditionLaw(iodata.boundaries, condition),
+                                      boundary_condition);
+                                }),
+                    "A Maxwell target edge cannot mix distinct metal boundary conditions!");
+        MFEM_VERIFY(source.component >= 0,
+                    "Unable to determine connected metal ownership for a Maxwell edge!");
+        segment.conductor = source.component;
+        segment.boundary_condition = boundary_condition;
+      }
+      else
+      {
+        std::set<int> conductors;
+        for (const int attribute : source.metal_attributes)
+        {
+          if (auto conductor = GetConductor(iodata.boundaries, attribute))
+          {
+            conductors.insert(*conductor);
+          }
+        }
+        MFEM_VERIFY(conductors.size() == 1,
+                    "Unable to assign an automatically detected three-dimensional metal "
+                    "edge to exactly one electrostatic conductor!");
+        segment.conductor = *conductors.begin();
+        segment.boundary_condition = MetalBoundaryLaw{};
+      }
+      segments.push_back(std::move(segment));
+    }
+    return segments;
+  };
+
+  std::vector<EdgeSegment3D> global_segments;
+  const bool has_cross_interface_spatial_model =
+      std::any_of(library.models.begin(), library.models.end(),
+                  [](const auto &model)
+                  {
+                    if (model.topology != LibraryTopology::SPATIAL_EDGE_CLUSTER)
+                    {
+                      return false;
+                    }
+                    std::set<int> slots;
+                    for (const auto &edge : model.spatial_edges)
+                    {
+                      slots.insert(edge.interface_slot);
+                    }
+                    return slots.size() > 1;
+                  });
+  if (has_cross_interface_spatial_model)
+  {
+    for (const auto &[signature, group] : groups_by_targets)
+    {
+      (void)signature;
+      auto segments = BuildSegments(group, group.segments);
+      global_segments.insert(global_segments.end(),
+                             std::make_move_iterator(segments.begin()),
+                             std::make_move_iterator(segments.end()));
+    }
   }
+
+  const double global_interaction_distance =
+      2.0 * library.matching_radius * (1.0 - 16.0 * std::numeric_limits<double>::epsilon());
+  const double global_interaction_distance_squared =
+      global_interaction_distance * global_interaction_distance;
+  struct GlobalSpatialInteractionEvent
+  {
+    std::size_t first = 0;
+    std::size_t second = 0;
+    double first_distance = 0.0;
+    double second_distance = 0.0;
+    double distance_squared = 0.0;
+    Point3D center{};
+  };
+  std::map<std::pair<int, int>, GlobalSpatialInteractionEvent> global_chain_events;
+  for (std::size_t i = 0; i < global_segments.size(); i++)
+  {
+    const auto &first_source = geometry.segments[global_segments[i].geometry_index];
+    for (std::size_t j = i + 1; j < global_segments.size(); j++)
+    {
+      const auto &second_source = geometry.segments[global_segments[j].geometry_index];
+      if (global_segments[i].targets == global_segments[j].targets ||
+          first_source.physical_chain == second_source.physical_chain ||
+          SegmentsShareVertex(first_source, second_source))
+      {
+        continue;
+      }
+      const auto closest =
+          ClosestSegmentApproach(global_segments[i].p0, global_segments[i].p1,
+                                 global_segments[j].p0, global_segments[j].p1);
+      if (closest.distance_squared >= global_interaction_distance_squared)
+      {
+        continue;
+      }
+      int first_chain = first_source.physical_chain;
+      int second_chain = second_source.physical_chain;
+      if (first_chain > second_chain)
+      {
+        std::swap(first_chain, second_chain);
+      }
+      const auto key = std::make_pair(first_chain, second_chain);
+      auto event = global_chain_events.find(key);
+      if (event == global_chain_events.end() ||
+          closest.distance_squared < event->second.distance_squared)
+      {
+        const double first_distance = closest.first * global_segments[i].length;
+        const double second_distance = closest.second * global_segments[j].length;
+        global_chain_events[key] = {
+            i,
+            j,
+            first_distance,
+            second_distance,
+            closest.distance_squared,
+            Scale(0.5, Add(Interpolate(global_segments[i], first_distance),
+                           Interpolate(global_segments[j], second_distance)))};
+      }
+    }
+  }
+
+  std::vector<GlobalSpatialInteractionEvent> global_spatial_events;
+  global_spatial_events.reserve(global_chain_events.size());
+  for (auto &[chains, event] : global_chain_events)
+  {
+    (void)chains;
+    global_spatial_events.push_back(std::move(event));
+  }
+  std::vector<SpatialClusterSelection3D> cross_interface_selections;
+  std::vector<bool> visited_global_event(global_spatial_events.size(), false);
+  for (std::size_t seed = 0; seed < global_spatial_events.size(); seed++)
+  {
+    if (visited_global_event[seed])
+    {
+      continue;
+    }
+    std::vector<std::size_t> event_component = {seed};
+    visited_global_event[seed] = true;
+    for (std::size_t cursor = 0; cursor < event_component.size(); cursor++)
+    {
+      const std::size_t event_index = event_component[cursor];
+      for (std::size_t candidate = 0; candidate < global_spatial_events.size(); candidate++)
+      {
+        if (!visited_global_event[candidate] &&
+            Distance(global_spatial_events[event_index].center,
+                     global_spatial_events[candidate].center) < global_interaction_distance)
+        {
+          visited_global_event[candidate] = true;
+          event_component.push_back(candidate);
+        }
+      }
+    }
+
+    std::map<int, std::vector<Point3D>> points_by_chain;
+    for (const std::size_t event_index : event_component)
+    {
+      const auto &event = global_spatial_events[event_index];
+      const int first_chain =
+          geometry.segments[global_segments[event.first].geometry_index].physical_chain;
+      const int second_chain =
+          geometry.segments[global_segments[event.second].geometry_index].physical_chain;
+      points_by_chain[first_chain].push_back(
+          Interpolate(global_segments[event.first], event.first_distance));
+      points_by_chain[second_chain].push_back(
+          Interpolate(global_segments[event.second], event.second_distance));
+    }
+
+    std::vector<SpatialEdgeSite3D> sites;
+    sites.reserve(points_by_chain.size());
+    for (const auto &[chain, points] : points_by_chain)
+    {
+      Point3D average{};
+      for (const auto &point : points)
+      {
+        average = Add(average, point);
+      }
+      average = Scale(1.0 / points.size(), average);
+
+      std::optional<std::size_t> best_segment;
+      double best_segment_distance = 0.0;
+      double best_distance_squared = mfem::infinity();
+      for (std::size_t segment_index = 0; segment_index < global_segments.size();
+           segment_index++)
+      {
+        const auto &source =
+            geometry.segments[global_segments[segment_index].geometry_index];
+        if (source.physical_chain != chain)
+        {
+          continue;
+        }
+        const double distance =
+            std::clamp(Dot(Subtract(average, global_segments[segment_index].p0),
+                           global_segments[segment_index].tangent),
+                       0.0, global_segments[segment_index].length);
+        const Point3D point = Interpolate(global_segments[segment_index], distance);
+        const double distance_squared =
+            Dot(Subtract(average, point), Subtract(average, point));
+        if (distance_squared < best_distance_squared)
+        {
+          best_segment = segment_index;
+          best_segment_distance = distance;
+          best_distance_squared = distance_squared;
+        }
+      }
+      MFEM_ASSERT(best_segment, "Missing segment for a cross-interface spatial chain!");
+      const auto &segment = global_segments[*best_segment];
+      sites.push_back({chain, segment.geometry_index, *best_segment, best_segment_distance,
+                       Interpolate(segment, best_segment_distance), segment.axis_u,
+                       segment.axis_v, segment.conductor, segment.targets,
+                       segment.boundary_condition});
+    }
+
+    auto selection = FindSpatialClusterLibraryModel(library, sites);
+    if (!selection || selection->targets_by_slot.size() < 2)
+    {
+      continue;
+    }
+    for (const std::size_t event_index : event_component)
+    {
+      const auto &event = global_spatial_events[event_index];
+      int first_chain =
+          geometry.segments[global_segments[event.first].geometry_index].physical_chain;
+      int second_chain =
+          geometry.segments[global_segments[event.second].geometry_index].physical_chain;
+      if (first_chain > second_chain)
+      {
+        std::swap(first_chain, second_chain);
+      }
+      selection->interactions.push_back({first_chain, second_chain, event.center});
+    }
+    cross_interface_selections.push_back(std::move(*selection));
+  }
+
+  for (const auto &selection : cross_interface_selections)
+  {
+    const auto &weighted_model = selection.response.models.front();
+    const auto &source = library.models[weighted_model.index];
+    auto model = source.response;
+    model.idx = next_model_index++;
+    MapLibraryInterfaces(source, selection.targets_by_slot, model);
+    result.models.push_back(std::move(model));
+
+    ResponsePatchData patch;
+    patch.model = result.models.back().idx;
+    patch.origin = selection.origin;
+    patch.axis_u = selection.axes[0];
+    patch.axis_v = selection.axes[1];
+    patch.axis_w = selection.axes[2];
+    patch.conductor_references = selection.response.conductor_references;
+    patch.weight = 1.0;
+    patch.maxwell_reference_is_pec = std::all_of(
+        selection.sites.begin(), selection.sites.end(), [](const auto &site)
+        { return site.boundary_condition.type == MetalBoundaryConditionType::PEC; });
+    for (const auto &reference : patch.conductor_references)
+    {
+      patch.maxwell_conductor_anchors.push_back(
+          TransformLocalPoint(patch.origin, selection.axes, reference));
+    }
+    result.patches.push_back(std::move(patch));
+  }
+  matched_spatial_cluster_patches += static_cast<int>(cross_interface_selections.size());
+  if (diagnostics)
+  {
+    for (const auto &selection : cross_interface_selections)
+    {
+      diagnostics->boundary_law_verified &=
+          IsBoundaryLawVerified(library.models[selection.response.models.front().index]);
+      diagnostics->maximum_library_distance = std::max(
+          diagnostics->maximum_library_distance, selection.response.normalized_distance);
+    }
+  }
+
+  auto IsCrossInterfaceSpatiallyMatched =
+      [&](const MetalEdgeSegment &first, const Point3D &first_p0, const Point3D &first_p1,
+          const MetalEdgeSegment &second, const Point3D &second_p0,
+          const Point3D &second_p1)
+  {
+    int first_chain = first.physical_chain;
+    int second_chain = second.physical_chain;
+    if (first_chain > second_chain)
+    {
+      std::swap(first_chain, second_chain);
+    }
+    const auto closest = ClosestSegmentApproach(first_p0, first_p1, second_p0, second_p1);
+    const Point3D center = Scale(
+        0.5, Add(Add(first_p0, Scale(closest.first, Subtract(first_p1, first_p0))),
+                 Add(second_p0, Scale(closest.second, Subtract(second_p1, second_p0)))));
+    return std::any_of(cross_interface_selections.begin(), cross_interface_selections.end(),
+                       [&](const auto &selection)
+                       {
+                         return std::any_of(
+                             selection.interactions.begin(), selection.interactions.end(),
+                             [&](const auto &interaction)
+                             {
+                               return interaction.first_chain == first_chain &&
+                                      interaction.second_chain == second_chain &&
+                                      Distance(interaction.center, center) <
+                                          global_interaction_distance;
+                             });
+                       });
+  };
+
   for (const auto &segment_group : groups_by_targets)
   {
     const auto &segment_key = segment_group.first;
@@ -2170,7 +4129,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         }
         const auto &q0 = geometry.vertices[other.vertices[0]].coordinate;
         const auto &q1 = geometry.vertices[other.vertices[1]].coordinate;
-        if (SegmentDistanceSquared(p0, p1, q0, q1) < interaction_distance_squared)
+        if (SegmentDistanceSquared(p0, p1, q0, q1) < interaction_distance_squared &&
+            !IsCrossInterfaceSpatiallyMatched(source, p0, p1, other, q0, q1))
         {
           conflicted = true;
           break;
@@ -2211,57 +4171,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       unmatched_groups++;
       continue;
     }
-    const auto process_normals = BuildMetalEdgeProcessNormals(
-        mesh, geometry, usable_segment_indices, [&](int attribute)
-        { return mat_op.GetLightSpeedMax(attribute); }, group.process_normal);
-    const auto gap_directions =
-        BuildMetalEdgeGapDirections(mesh, geometry, usable_segment_indices, process_normals);
-
-    std::vector<EdgeSegment3D> segments;
-    segments.reserve(usable_segment_indices.size());
+    auto segments = BuildSegments(group, usable_segment_indices);
     std::map<std::size_t, std::size_t> local_indices;
-    for (std::size_t i = 0; i < usable_segment_indices.size(); i++)
+    for (std::size_t i = 0; i < segments.size(); i++)
     {
-      const std::size_t geometry_index = usable_segment_indices[i];
-      const auto &source = geometry.segments[geometry_index];
-      EdgeSegment3D segment;
-      segment.geometry_index = geometry_index;
-      segment.p0 = geometry.vertices[source.vertices[0]].coordinate;
-      segment.p1 = geometry.vertices[source.vertices[1]].coordinate;
-      segment.length = Distance(segment.p0, segment.p1);
-      segment.tangent = Normalize(Subtract(segment.p1, segment.p0));
-      segment.axis_u = gap_directions[i];
-      segment.axis_v = process_normals[i];
-      if (maxwell)
-      {
-        MFEM_VERIFY(
-            !source.conditions.empty() &&
-                std::all_of(source.conditions.begin(), source.conditions.end(),
-                            [](const auto &condition)
-                            { return condition.type == MetalBoundaryConditionType::PEC; }),
-            "Maxwell surface-response correction currently supports PEC target metal "
-            "boundaries only!");
-        MFEM_VERIFY(source.component >= 0,
-                    "Unable to determine connected PEC ownership for a Maxwell edge!");
-        segment.conductor = source.component;
-      }
-      else
-      {
-        std::set<int> conductors;
-        for (const int attribute : source.metal_attributes)
-        {
-          if (auto conductor = GetConductor(iodata.boundaries, attribute))
-          {
-            conductors.insert(*conductor);
-          }
-        }
-        MFEM_VERIFY(conductors.size() == 1,
-                    "Unable to assign an automatically detected three-dimensional metal "
-                    "edge to exactly one electrostatic conductor!");
-        segment.conductor = *conductors.begin();
-      }
-      local_indices.emplace(geometry_index, segments.size());
-      segments.push_back(segment);
+      local_indices.emplace(segments[i].geometry_index, i);
     }
 
     struct ConnectedVertexNeighborhood
@@ -2301,7 +4215,230 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     // interaction from leaving behind corner patches on the same mesh segments.
     const auto candidate_connected_vertex_neighborhoods =
         BuildConnectedVertexNeighborhoods();
+    auto ConnectedNearVertex = [&](std::size_t first, std::size_t second)
+    {
+      const auto &first_source = geometry.segments[segments[first].geometry_index];
+      const auto &second_source = geometry.segments[segments[second].geometry_index];
+      return std::any_of(
+          candidate_connected_vertex_neighborhoods.begin(),
+          candidate_connected_vertex_neighborhoods.end(),
+          [&](const auto &neighborhood)
+          {
+            return neighborhood.physical_chains.find(first_source.physical_chain) !=
+                       neighborhood.physical_chains.end() &&
+                   neighborhood.physical_chains.find(second_source.physical_chain) !=
+                       neighborhood.physical_chains.end() &&
+                   PointSegmentDistanceSquared(neighborhood.point, segments[first]) <
+                       interaction_distance_squared &&
+                   PointSegmentDistanceSquared(neighborhood.point, segments[second]) <
+                       interaction_distance_squared;
+          });
+    };
+
+    struct SpatialInteractionEvent
+    {
+      std::size_t first = 0;
+      std::size_t second = 0;
+      double first_distance = 0.0;
+      double second_distance = 0.0;
+      double distance_squared = 0.0;
+      Point3D center{};
+    };
+    std::map<std::pair<int, int>, SpatialInteractionEvent> closest_chain_events;
+    for (std::size_t i = 0; i < segments.size(); i++)
+    {
+      const auto &first_source = geometry.segments[segments[i].geometry_index];
+      for (std::size_t j = i + 1; j < segments.size(); j++)
+      {
+        const auto &second_source = geometry.segments[segments[j].geometry_index];
+        if (first_source.physical_chain == second_source.physical_chain ||
+            SegmentsShareVertex(first_source, second_source) || ConnectedNearVertex(i, j))
+        {
+          continue;
+        }
+        const auto closest = ClosestSegmentApproach(segments[i].p0, segments[i].p1,
+                                                    segments[j].p0, segments[j].p1);
+        if (closest.distance_squared >= interaction_distance_squared)
+        {
+          continue;
+        }
+        const double first_distance = closest.first * segments[i].length;
+        const double second_distance = closest.second * segments[j].length;
+        int first_chain = first_source.physical_chain;
+        int second_chain = second_source.physical_chain;
+        if (first_chain > second_chain)
+        {
+          std::swap(first_chain, second_chain);
+        }
+        const auto key = std::make_pair(first_chain, second_chain);
+        auto event = closest_chain_events.find(key);
+        if (event == closest_chain_events.end() ||
+            closest.distance_squared < event->second.distance_squared)
+        {
+          closest_chain_events[key] = {
+              i,
+              j,
+              first_distance,
+              second_distance,
+              closest.distance_squared,
+              Scale(0.5, Add(Interpolate(segments[i], first_distance),
+                             Interpolate(segments[j], second_distance)))};
+        }
+      }
+    }
+    std::vector<SpatialInteractionEvent> spatial_events;
+    spatial_events.reserve(closest_chain_events.size());
+    for (auto &[chains, event] : closest_chain_events)
+    {
+      (void)chains;
+      spatial_events.push_back(std::move(event));
+    }
+
+    std::vector<SpatialClusterSelection3D> spatial_cluster_selections;
+    std::vector<bool> visited_spatial_event(spatial_events.size(), false);
+    for (std::size_t seed = 0; seed < spatial_events.size(); seed++)
+    {
+      if (visited_spatial_event[seed])
+      {
+        continue;
+      }
+      std::vector<std::size_t> event_component = {seed};
+      visited_spatial_event[seed] = true;
+      for (std::size_t cursor = 0; cursor < event_component.size(); cursor++)
+      {
+        const std::size_t event_index = event_component[cursor];
+        for (std::size_t candidate = 0; candidate < spatial_events.size(); candidate++)
+        {
+          if (!visited_spatial_event[candidate] &&
+              Distance(spatial_events[event_index].center,
+                       spatial_events[candidate].center) < interaction_distance)
+          {
+            visited_spatial_event[candidate] = true;
+            event_component.push_back(candidate);
+          }
+        }
+      }
+
+      std::map<int, std::vector<Point3D>> points_by_chain;
+      for (const std::size_t event_index : event_component)
+      {
+        const auto &event = spatial_events[event_index];
+        const int first_chain =
+            geometry.segments[segments[event.first].geometry_index].physical_chain;
+        const int second_chain =
+            geometry.segments[segments[event.second].geometry_index].physical_chain;
+        points_by_chain[first_chain].push_back(
+            Interpolate(segments[event.first], event.first_distance));
+        points_by_chain[second_chain].push_back(
+            Interpolate(segments[event.second], event.second_distance));
+      }
+      if (points_by_chain.size() < 2)
+      {
+        continue;
+      }
+      std::vector<SpatialEdgeSite3D> sites;
+      sites.reserve(points_by_chain.size());
+      for (const auto &[chain, points] : points_by_chain)
+      {
+        Point3D average{};
+        for (const auto &point : points)
+        {
+          average = Add(average, point);
+        }
+        average = Scale(1.0 / points.size(), average);
+
+        std::optional<std::size_t> best_segment;
+        double best_segment_distance = 0.0;
+        double best_distance_squared = mfem::infinity();
+        for (std::size_t segment_index = 0; segment_index < segments.size();
+             segment_index++)
+        {
+          const auto &source = geometry.segments[segments[segment_index].geometry_index];
+          if (source.physical_chain != chain)
+          {
+            continue;
+          }
+          const double distance =
+              std::clamp(Dot(Subtract(average, segments[segment_index].p0),
+                             segments[segment_index].tangent),
+                         0.0, segments[segment_index].length);
+          const double distance_squared =
+              Dot(Subtract(average, Interpolate(segments[segment_index], distance)),
+                  Subtract(average, Interpolate(segments[segment_index], distance)));
+          if (distance_squared < best_distance_squared)
+          {
+            best_segment = segment_index;
+            best_segment_distance = distance;
+            best_distance_squared = distance_squared;
+          }
+        }
+        MFEM_ASSERT(best_segment, "Missing segment for a spatial edge chain!");
+        const auto &segment = segments[*best_segment];
+        sites.push_back({chain, segment.geometry_index, *best_segment,
+                         best_segment_distance, Interpolate(segment, best_segment_distance),
+                         segment.axis_u, segment.axis_v, segment.conductor, segment.targets,
+                         segment.boundary_condition});
+      }
+
+      auto selection = FindSpatialClusterLibraryModel(library, sites);
+      if (!selection)
+      {
+        continue;
+      }
+      group_maximum_library_distance =
+          std::max(group_maximum_library_distance, selection->response.normalized_distance);
+      for (const std::size_t event_index : event_component)
+      {
+        const auto &event = spatial_events[event_index];
+        int first_chain =
+            geometry.segments[segments[event.first].geometry_index].physical_chain;
+        int second_chain =
+            geometry.segments[segments[event.second].geometry_index].physical_chain;
+        if (first_chain > second_chain)
+        {
+          std::swap(first_chain, second_chain);
+        }
+        selection->interactions.push_back({first_chain, second_chain, event.center});
+      }
+      spatial_cluster_selections.push_back(std::move(*selection));
+    }
+    auto IsSpatiallyMatched =
+        [&](std::size_t first, std::size_t second,
+            const std::vector<SpatialClusterSelection3D::InteractionNeighborhood>
+                &interactions)
+    {
+      int first_chain = geometry.segments[segments[first].geometry_index].physical_chain;
+      int second_chain = geometry.segments[segments[second].geometry_index].physical_chain;
+      if (first_chain > second_chain)
+      {
+        std::swap(first_chain, second_chain);
+      }
+      const auto closest = ClosestSegmentApproach(segments[first].p0, segments[first].p1,
+                                                  segments[second].p0, segments[second].p1);
+      const Point3D center = Scale(
+          0.5,
+          Add(Interpolate(segments[first], closest.first * segments[first].length),
+              Interpolate(segments[second], closest.second * segments[second].length)));
+      return std::any_of(interactions.begin(), interactions.end(),
+                         [&](const auto &interaction)
+                         {
+                           return interaction.first_chain == first_chain &&
+                                  interaction.second_chain == second_chain &&
+                                  Distance(interaction.center, center) <
+                                      interaction_distance;
+                         });
+    };
+    std::vector<SpatialClusterSelection3D::InteractionNeighborhood>
+        candidate_spatial_interactions;
+    for (const auto &selection : spatial_cluster_selections)
+    {
+      candidate_spatial_interactions.insert(candidate_spatial_interactions.end(),
+                                            selection.interactions.begin(),
+                                            selection.interactions.end());
+    }
+
     std::vector<EdgePair3D> candidate_pairs;
+    std::vector<bool> candidate_pair_has_model;
     std::set<std::size_t> unsupported_segments;
     int nonparallel_interactions = 0;
     int incompatible_process_interactions = 0;
@@ -2311,8 +4448,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     int unclassified_different_conductor_interactions = 0;
     int missing_library_interactions = 0;
     int multiedge_interactions = 0;
-    auto RejectInteraction = [&](std::size_t first, std::size_t second, int &counter,
-                                 const char *message)
+    auto RejectInteraction =
+        [&](std::size_t first, std::size_t second, int &counter, const char *message)
     {
       counter++;
       if (request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
@@ -2335,21 +4472,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         {
           continue;
         }
-        const bool connected_near_vertex = std::any_of(
-            candidate_connected_vertex_neighborhoods.begin(),
-            candidate_connected_vertex_neighborhoods.end(),
-            [&](const auto &neighborhood)
-            {
-              return neighborhood.physical_chains.find(first_source.physical_chain) !=
-                         neighborhood.physical_chains.end() &&
-                     neighborhood.physical_chains.find(second_source.physical_chain) !=
-                         neighborhood.physical_chains.end() &&
-                     PointSegmentDistanceSquared(neighborhood.point, segments[i]) <
-                         interaction_distance_squared &&
-                     PointSegmentDistanceSquared(neighborhood.point, segments[j]) <
-                         interaction_distance_squared;
-            });
-        if (connected_near_vertex)
+        if (ConnectedNearVertex(i, j) ||
+            IsSpatiallyMatched(i, j, candidate_spatial_interactions))
         {
           continue;
         }
@@ -2368,17 +4492,14 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         const double first_begin = std::max(0.0, std::min(second_s0, second_s1));
         const double first_end =
             std::min(segments[i].length, std::max(second_s0, second_s1));
-        const double tolerance = 1.0e-10 * std::max({segments[i].length,
-                                                     segments[j].length,
+        const double tolerance = 1.0e-10 * std::max({segments[i].length, segments[j].length,
                                                      group.matching_radius});
         if (first_end - first_begin <= tolerance)
         {
           continue;
         }
-        const Point3D first_mid =
-            Interpolate(segments[i], 0.5 * (first_begin + first_end));
-        double second_mid =
-            Dot(Subtract(first_mid, segments[j].p0), segments[j].tangent);
+        const Point3D first_mid = Interpolate(segments[i], 0.5 * (first_begin + first_end));
+        double second_mid = Dot(Subtract(first_mid, segments[j].p0), segments[j].tangent);
         second_mid = std::clamp(second_mid, 0.0, segments[j].length);
         const double half_length = 0.5 * (first_end - first_begin);
         const double second_begin = second_mid - half_length;
@@ -2386,7 +4507,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         MFEM_VERIFY(second_begin >= -tolerance &&
                         second_end <= segments[j].length + tolerance,
                     "Inconsistent overlap between nearby parallel metal edges!");
-        EdgePair3D pair{i, j, first_begin, first_end, std::max(0.0, second_begin),
+        EdgePair3D pair{i,
+                        j,
+                        first_begin,
+                        first_end,
+                        std::max(0.0, second_begin),
                         std::min(segments[j].length, second_end)};
 
         const Point3D second_point = Interpolate(segments[j], second_mid);
@@ -2440,16 +4565,73 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                             "three-dimensional metal edges!");
           continue;
         }
-        const double separation = Distance(first_mid, second_point);
-        if (!FindLibraryModel(library, *topology, separation))
+        if (!SameBoundaryLaw(segments[i].boundary_condition,
+                             segments[j].boundary_condition))
         {
-          RejectInteraction(
-              i, j, missing_library_interactions,
-              "The fabrication-process response library has no model for a nearby "
-              "three-dimensional edge pair!");
+          RejectInteraction(i, j, unclassified_interactions,
+                            "Nearby three-dimensional edges use distinct metal boundary "
+                            "conditions!");
           continue;
         }
         candidate_pairs.push_back(pair);
+        candidate_pair_has_model.push_back(
+            FindLibraryModel(library, *topology, Distance(first_mid, second_point),
+                             segments[i].boundary_condition)
+                .has_value());
+      }
+    }
+
+    const auto candidate_parallel_clusters =
+        FindParallelClusterSpans(library, segments, candidate_pairs);
+    const auto &candidate_parallel_cluster_spans = candidate_parallel_clusters.first;
+    auto PairCoveredByParallelCluster = [&](const EdgePair3D &pair)
+    {
+      std::vector<std::pair<double, double>> covered;
+      const auto &first = segments[pair.first];
+      for (const auto &span : candidate_parallel_cluster_spans)
+      {
+        const auto &cluster = span.selection.ordered_edges;
+        if (std::find(cluster.begin(), cluster.end(), pair.first) == cluster.end() ||
+            std::find(cluster.begin(), cluster.end(), pair.second) == cluster.end())
+        {
+          continue;
+        }
+        const double orientation = Dot(first.tangent, span.tangent);
+        if (std::abs(orientation) <= 1.0 - 1.0e-8)
+        {
+          continue;
+        }
+        double begin = (span.begin - Dot(first.p0, span.tangent)) / orientation;
+        double end = (span.end - Dot(first.p0, span.tangent)) / orientation;
+        if (begin > end)
+        {
+          std::swap(begin, end);
+        }
+        covered.emplace_back(std::max(pair.first_begin, begin),
+                             std::min(pair.first_end, end));
+      }
+      std::sort(covered.begin(), covered.end());
+      const double tolerance = 1.0e-10 * std::max(group.matching_radius, pair.first_end);
+      double end = pair.first_begin;
+      for (const auto &[begin, interval_end] : covered)
+      {
+        if (begin > end + tolerance)
+        {
+          return false;
+        }
+        end = std::max(end, interval_end);
+      }
+      return end >= pair.first_end - tolerance;
+    };
+    for (std::size_t pair_index = 0; pair_index < candidate_pairs.size(); pair_index++)
+    {
+      const auto &pair = candidate_pairs[pair_index];
+      if (!candidate_pair_has_model[pair_index] && !PairCoveredByParallelCluster(pair))
+      {
+        RejectInteraction(
+            pair.first, pair.second, missing_library_interactions,
+            "The fabrication-process response library has no model for a nearby "
+            "three-dimensional edge pair outside an exact parallel-edge cluster!");
       }
     }
 
@@ -2475,17 +4657,6 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           continue;
         }
         multiedge_interactions++;
-        if (request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
-        {
-          MFEM_ABORT("More than two three-dimensional metal edges interact within one "
-                     "2R neighborhood!");
-        }
-        for (const std::size_t pair_index :
-             {intervals[i - 1].second, intervals[i].second})
-        {
-          unsupported_segments.insert(candidate_pairs[pair_index].first);
-          unsupported_segments.insert(candidate_pairs[pair_index].second);
-        }
       }
     }
     if (!unsupported_segments.empty())
@@ -2530,24 +4701,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
 
     if (diagnostics)
     {
-      const double layer_tolerance = 1.0e-8 * std::max(mesh_extent, group.matching_radius);
       for (std::size_t i = 0; i < segments.size(); i++)
       {
         const auto &segment = segments[i];
-        if (!layer_normal)
-        {
-          layer_normal = segment.axis_v;
-          layer_offset = Dot(*layer_normal, segment.p0);
-        }
-        MFEM_VERIFY(Dot(*layer_normal, segment.axis_v) > 1.0 - 1.0e-6,
-                    "Maxwell surface-response correction currently requires one planar "
-                    "fabrication layer with a common process normal!");
-        MFEM_VERIFY(
-            std::abs(Dot(*layer_normal, segment.p0) - layer_offset) <= layer_tolerance &&
-                std::abs(Dot(*layer_normal, segment.p1) - layer_offset) <= layer_tolerance,
-            "Maxwell surface-response correction currently requires all target PEC edges "
-            "to lie in one fabrication plane!");
-
         const auto &source = geometry.segments[segment.geometry_index];
         double corner_length = 0.0;
         for (const std::size_t vertex : source.vertices)
@@ -2576,7 +4732,161 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     std::vector<PendingPatch> pending;
     std::vector<std::vector<std::pair<double, double>>> vertex_excluded_intervals(
         segments.size());
-    auto ExcludeCornerArm =
+    std::set<std::size_t> spatially_excluded_vertices;
+    std::vector<SpatialClusterSelection3D::InteractionNeighborhood>
+        active_spatial_interactions;
+    auto ExcludeBeyondVertex =
+        [&](std::size_t vertex, std::size_t previous_segment, double distance)
+    {
+      const double tolerance = 1.0e-10 * group.matching_radius;
+      const int physical_chain =
+          geometry.segments[segments[previous_segment].geometry_index].physical_chain;
+      std::set<std::size_t> visited = {previous_segment};
+      double remaining = distance;
+      while (remaining > tolerance)
+      {
+        spatially_excluded_vertices.insert(vertex);
+        std::optional<std::size_t> next_segment;
+        for (const std::size_t geometry_segment : geometry.vertices[vertex].segments)
+        {
+          auto local = local_indices.find(geometry_segment);
+          if (local == local_indices.end() || !visited.insert(local->second).second ||
+              geometry.segments[geometry_segment].physical_chain != physical_chain)
+          {
+            continue;
+          }
+          MFEM_VERIFY(!next_segment,
+                      "Metal physical chain branches within a spatial coupon interval!");
+          next_segment = local->second;
+        }
+        if (!next_segment)
+        {
+          break;
+        }
+
+        const auto &segment = segments[*next_segment];
+        const auto &source = geometry.segments[segment.geometry_index];
+        MFEM_VERIFY(source.vertices[0] == vertex || source.vertices[1] == vertex,
+                    "Inconsistent spatial coupon chain connectivity!");
+        const double trim = std::min(remaining, segment.length);
+        if (source.vertices[0] == vertex)
+        {
+          vertex_excluded_intervals[*next_segment].emplace_back(0.0, trim);
+        }
+        else
+        {
+          vertex_excluded_intervals[*next_segment].emplace_back(segment.length - trim,
+                                                                segment.length);
+        }
+        remaining -= trim;
+        if (trim < segment.length - tolerance)
+        {
+          break;
+        }
+        vertex = source.vertices[0] == vertex ? source.vertices[1] : source.vertices[0];
+        previous_segment = *next_segment;
+      }
+    };
+    auto ExcludeSpatialInterval =
+        [&](const SpatialClusterSelection3D &selection, std::size_t model_edge_index)
+    {
+      const auto &model = library.models[selection.response.models.front().index];
+      const auto &edge = model.spatial_edges[model_edge_index];
+      const auto &site = selection.sites[selection.model_to_site[model_edge_index]];
+      const auto local = local_indices.find(site.geometry_index);
+      if (local == local_indices.end())
+      {
+        return;
+      }
+      const std::size_t segment_index = local->second;
+      const auto &segment = segments[segment_index];
+      const auto &source = geometry.segments[segment.geometry_index];
+      const Point3D tangent = TransformLocalVector(
+          selection.axes, Normalize(Cross(edge.gap_direction, edge.process_normal)));
+      const double orientation = Dot(tangent, segment.tangent);
+      MFEM_VERIFY(std::abs(orientation) > 1.0 - 1.0e-8,
+                  "Matched spatial edge tangent is incompatible with the target edge!");
+      const double center = std::clamp(
+          Dot(Subtract(site.point, segment.p0), segment.tangent), 0.0, segment.length);
+      double begin = center + orientation * edge.interval[0];
+      double end = center + orientation * edge.interval[1];
+      if (begin > end)
+      {
+        std::swap(begin, end);
+      }
+      vertex_excluded_intervals[segment_index].emplace_back(std::max(0.0, begin),
+                                                            std::min(segment.length, end));
+      const double tolerance = 1.0e-10 * group.matching_radius;
+      if (begin <= tolerance)
+      {
+        spatially_excluded_vertices.insert(source.vertices[0]);
+      }
+      if (end >= segment.length - tolerance)
+      {
+        spatially_excluded_vertices.insert(source.vertices[1]);
+      }
+      if (begin < 0.0)
+      {
+        ExcludeBeyondVertex(source.vertices[0], segment_index, -begin);
+      }
+      if (end > segment.length)
+      {
+        ExcludeBeyondVertex(source.vertices[1], segment_index, end - segment.length);
+      }
+    };
+
+    for (const auto &selection : cross_interface_selections)
+    {
+      const auto &model = library.models[selection.response.models.front().index];
+      for (std::size_t edge = 0; edge < model.spatial_edges.size(); edge++)
+      {
+        ExcludeSpatialInterval(selection, edge);
+      }
+    }
+
+    int matched_spatial_clusters = 0;
+    for (auto &selection : spatial_cluster_selections)
+    {
+      const bool retained = std::all_of(
+          selection.sites.begin(), selection.sites.end(), [&](const auto &site)
+          { return local_indices.find(site.geometry_index) != local_indices.end(); });
+      if (!retained)
+      {
+        continue;
+      }
+      for (auto &site : selection.sites)
+      {
+        site.segment = local_indices.at(site.geometry_index);
+      }
+
+      const auto &weighted_model = selection.response.models.front();
+      ResponsePatchData patch;
+      patch.origin = selection.origin;
+      patch.axis_u = selection.axes[0];
+      patch.axis_v = selection.axes[1];
+      patch.axis_w = selection.axes[2];
+      patch.conductor_references = selection.response.conductor_references;
+      patch.weight = 1.0;
+      patch.maxwell_reference_is_pec = std::all_of(
+          selection.sites.begin(), selection.sites.end(), [](const auto &site)
+          { return site.boundary_condition.type == MetalBoundaryConditionType::PEC; });
+      for (const auto &reference : patch.conductor_references)
+      {
+        patch.maxwell_conductor_anchors.push_back(
+            TransformLocalPoint(patch.origin, selection.axes, reference));
+      }
+      pending.push_back({weighted_model.index, std::move(patch)});
+      for (std::size_t edge = 0;
+           edge < library.models[weighted_model.index].spatial_edges.size(); edge++)
+      {
+        ExcludeSpatialInterval(selection, edge);
+      }
+      active_spatial_interactions.insert(active_spatial_interactions.end(),
+                                         selection.interactions.begin(),
+                                         selection.interactions.end());
+      matched_spatial_clusters++;
+    }
+    auto ExcludeVertexArm =
         [&](std::size_t vertex, std::size_t segment_index, double distance)
     {
       const int physical_chain =
@@ -2587,7 +4897,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       while (remaining > tolerance)
       {
         MFEM_VERIFY(visited.insert(segment_index).second,
-                    "Metal physical chain contains a cycle within a corner neighborhood!");
+                    "Metal physical chain contains a cycle within a vertex neighborhood!");
         const auto &segment = segments[segment_index];
         const auto &source = geometry.segments[segment.geometry_index];
         MFEM_VERIFY(source.physical_chain == physical_chain &&
@@ -2622,7 +4932,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
             continue;
           }
           MFEM_VERIFY(!next_segment,
-                      "Metal physical chain branches within a corner neighborhood!");
+                      "Metal physical chain branches within a vertex neighborhood!");
           next_segment = local->second;
         }
         if (!next_segment)
@@ -2635,6 +4945,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     };
     int matched_corners = 0;
     int matched_sharp_corners = 0;
+    int matched_endpoints = 0;
+    int matched_junctions = 0;
     std::set<std::size_t> modeled_curved_vertices;
     std::map<int, std::vector<std::size_t>> physical_chains;
     for (std::size_t i = 0; i < segments.size(); i++)
@@ -2745,6 +5057,16 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         {
           return;
         }
+        if (std::any_of(run.begin(), run.end(),
+                        [&](std::size_t index)
+                        {
+                          return spatially_excluded_vertices.find(
+                                     ordered_vertices[index]) !=
+                                 spatially_excluded_vertices.end();
+                        }))
+        {
+          return;
+        }
         const std::size_t first_vertex_index = run.front();
         const std::size_t last_vertex_index = run.back();
         if (!cycle && (first_vertex_index == 0 || last_vertex_index + 1 >= vertex_count))
@@ -2808,6 +5130,13 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         std::size_t second_segment_index = ordered_segments[outgoing_segment_index];
         const auto &first_segment = segments[first_segment_index];
         const auto &second_segment = segments[second_segment_index];
+        if (maxwell && !SameBoundaryLaw(first_segment.boundary_condition,
+                                        second_segment.boundary_condition))
+        {
+          return;
+        }
+        const auto boundary_condition =
+            maxwell ? first_segment.boundary_condition : MetalBoundaryLaw{};
         const double corner_score = Dot(first_segment.axis_u, second_direction) +
                                     Dot(second_segment.axis_u, first_direction);
         if (std::abs(corner_score) <= 1.0e-8)
@@ -2862,8 +5191,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         {
           return;
         }
-        const auto model_selection =
-            FindCornerLibraryModel(library, topology, angle, corner_radius);
+        const auto model_selection = FindCornerLibraryModel(
+            library, topology, angle, corner_radius, boundary_condition);
         if (!model_selection)
         {
           unmatched_rounded_corners++;
@@ -2880,14 +5209,19 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         patch.axis_u = first_direction;
         patch.axis_v = Normalize(Cross(process_normal, first_direction));
         patch.axis_w = process_normal;
-        patch.reference = model_selection->reference;
+        patch.conductor_references = model_selection->conductor_references;
         patch.weight = 1.0;
-        patch.maxwell_anchor = patch.origin;
-        for (int d = 0; d < 3; d++)
+        patch.maxwell_reference_is_pec =
+            boundary_condition.type == MetalBoundaryConditionType::PEC;
+        for (const auto &reference : patch.conductor_references)
         {
-          (*patch.maxwell_anchor)[d] += model_selection->reference[0] * patch.axis_u[d] +
-                                        model_selection->reference[1] * patch.axis_v[d] +
-                                        model_selection->reference[2] * patch.axis_w[d];
+          auto anchor = patch.origin;
+          for (int d = 0; d < 3; d++)
+          {
+            anchor[d] += reference[0] * patch.axis_u[d] + reference[1] * patch.axis_v[d] +
+                         reference[2] * patch.axis_w[d];
+          }
+          patch.maxwell_conductor_anchors.push_back(anchor);
         }
         for (const auto &weighted_model : model_selection->models)
         {
@@ -2901,9 +5235,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           vertex_excluded_intervals[segment_index].emplace_back(
               0.0, segments[segment_index].length);
         }
-        ExcludeCornerArm(start_vertex_index, ordered_segments[incoming_segment_index],
+        ExcludeVertexArm(start_vertex_index, ordered_segments[incoming_segment_index],
                          std::max(0.0, group.matching_radius - first_tangent_distance));
-        ExcludeCornerArm(end_vertex_index, ordered_segments[outgoing_segment_index],
+        ExcludeVertexArm(end_vertex_index, ordered_segments[outgoing_segment_index],
                          std::max(0.0, group.matching_radius - second_tangent_distance));
         for (const std::size_t vertex_index : run)
         {
@@ -2960,7 +5294,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     }
     for (const std::size_t vertex : vertices)
     {
-      if (geometry.vertices[vertex].physical_type != MetalEdgeVertexType::CORNER)
+      if (geometry.vertices[vertex].physical_type != MetalEdgeVertexType::CORNER ||
+          spatially_excluded_vertices.find(vertex) != spatially_excluded_vertices.end())
       {
         continue;
       }
@@ -2987,6 +5322,13 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       Point3D second_direction = DirectionAway(incident[1]);
       const auto &first_segment = segments[incident[0]];
       const auto &second_segment = segments[incident[1]];
+      if (maxwell && !SameBoundaryLaw(first_segment.boundary_condition,
+                                      second_segment.boundary_condition))
+      {
+        continue;
+      }
+      const auto boundary_condition =
+          maxwell ? first_segment.boundary_condition : MetalBoundaryLaw{};
       const double corner_score = Dot(first_segment.axis_u, second_direction) +
                                   Dot(second_segment.axis_u, first_direction);
       if (std::abs(corner_score) <= 1.0e-8)
@@ -2997,7 +5339,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                                                           : LibraryTopology::CONCAVE_CORNER;
       const double angle =
           std::acos(std::clamp(Dot(first_direction, second_direction), -1.0, 1.0));
-      const auto model_selection = FindCornerLibraryModel(library, topology, angle, 0.0);
+      const auto model_selection =
+          FindCornerLibraryModel(library, topology, angle, 0.0, boundary_condition);
       if (!model_selection)
       {
         continue;
@@ -3020,25 +5363,152 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       patch.axis_v = Normalize(Cross(process_normal, first_direction));
       patch.axis_w = process_normal;
       const auto &weighted_model = model_selection->models.front();
-      patch.reference = model_selection->reference;
+      patch.conductor_references = model_selection->conductor_references;
       patch.weight = 1.0;
-      patch.maxwell_anchor = patch.origin;
-      for (int d = 0; d < 3; d++)
+      patch.maxwell_reference_is_pec =
+          boundary_condition.type == MetalBoundaryConditionType::PEC;
+      for (const auto &reference : patch.conductor_references)
       {
-        (*patch.maxwell_anchor)[d] += model_selection->reference[0] * patch.axis_u[d] +
-                                      model_selection->reference[1] * patch.axis_v[d] +
-                                      model_selection->reference[2] * patch.axis_w[d];
+        auto anchor = patch.origin;
+        for (int d = 0; d < 3; d++)
+        {
+          anchor[d] += reference[0] * patch.axis_u[d] + reference[1] * patch.axis_v[d] +
+                       reference[2] * patch.axis_w[d];
+        }
+        patch.maxwell_conductor_anchors.push_back(anchor);
       }
       pending.push_back({weighted_model.index, patch});
 
       for (const std::size_t segment_index : incident)
       {
-        ExcludeCornerArm(vertex, segment_index, group.matching_radius);
+        ExcludeVertexArm(vertex, segment_index, group.matching_radius);
       }
       group_maximum_library_distance =
           std::max(group_maximum_library_distance, model_selection->normalized_distance);
       matched_corners++;
       matched_sharp_corners++;
+    }
+    for (const std::size_t vertex : vertices)
+    {
+      const auto vertex_type = geometry.vertices[vertex].physical_type;
+      if (!vertex_type ||
+          (*vertex_type != MetalEdgeVertexType::ENDPOINT &&
+           *vertex_type != MetalEdgeVertexType::JUNCTION) ||
+          spatially_excluded_vertices.find(vertex) != spatially_excluded_vertices.end())
+      {
+        continue;
+      }
+
+      std::vector<std::size_t> incident;
+      for (const std::size_t geometry_segment : geometry.vertices[vertex].segments)
+      {
+        auto local = local_indices.find(geometry_segment);
+        if (local != local_indices.end())
+        {
+          incident.push_back(local->second);
+        }
+      }
+      const bool endpoint = *vertex_type == MetalEdgeVertexType::ENDPOINT;
+      if ((endpoint && incident.size() != 1) || (!endpoint && incident.size() < 3))
+      {
+        continue;
+      }
+
+      auto DirectionAway = [&](std::size_t segment_index)
+      {
+        const auto &source = geometry.segments[segments[segment_index].geometry_index];
+        return source.vertices[0] == vertex ? segments[segment_index].tangent
+                                            : Scale(-1.0, segments[segment_index].tangent);
+      };
+      std::vector<Point3D> directions;
+      directions.reserve(incident.size());
+      Point3D process_normal{};
+      bool compatible = true;
+      const int conductor = segments[incident.front()].conductor;
+      const auto boundary_condition = segments[incident.front()].boundary_condition;
+      for (const std::size_t segment_index : incident)
+      {
+        const auto &segment = segments[segment_index];
+        directions.push_back(DirectionAway(segment_index));
+        compatible = compatible && segment.conductor == conductor &&
+                     SameBoundaryLaw(segment.boundary_condition, boundary_condition);
+        if (Norm(process_normal) == 0.0)
+        {
+          process_normal = segment.axis_v;
+        }
+        else
+        {
+          if (Dot(Normalize(process_normal), segment.axis_v) <= 0.95)
+          {
+            compatible = false;
+          }
+          process_normal = Add(process_normal, segment.axis_v);
+        }
+      }
+      if (!compatible || Norm(process_normal) == 0.0)
+      {
+        continue;
+      }
+      process_normal = Normalize(process_normal);
+      if (std::any_of(directions.begin(), directions.end(), [&](const auto &direction)
+                      { return std::abs(Dot(direction, process_normal)) > 1.0e-8; }))
+      {
+        continue;
+      }
+
+      const LibraryTopology topology =
+          endpoint ? LibraryTopology::ENDPOINT : LibraryTopology::JUNCTION;
+      const auto model_selection = FindVertexLibraryModel(
+          library, topology, directions, process_normal, boundary_condition);
+      if (!model_selection)
+      {
+        continue;
+      }
+
+      const std::size_t first_arm = model_selection->first_arm;
+      ResponsePatchData patch;
+      patch.origin = geometry.vertices[vertex].coordinate;
+      patch.axis_u = directions[first_arm];
+      patch.axis_v = Normalize(Cross(process_normal, patch.axis_u));
+      if (endpoint && Dot(patch.axis_v, segments[incident[first_arm]].axis_u) < 0.0)
+      {
+        patch.axis_v = Scale(-1.0, patch.axis_v);
+      }
+      patch.axis_w = process_normal;
+      patch.conductor_references = model_selection->response.conductor_references;
+      patch.weight = 1.0;
+      patch.maxwell_reference_is_pec =
+          boundary_condition.type == MetalBoundaryConditionType::PEC;
+      for (const auto &reference : patch.conductor_references)
+      {
+        auto anchor = patch.origin;
+        if (patch.maxwell_reference_is_pec)
+        {
+          for (int d = 0; d < 3; d++)
+          {
+            anchor[d] += reference[0] * patch.axis_u[d] + reference[1] * patch.axis_v[d] +
+                         reference[2] * patch.axis_w[d];
+          }
+        }
+        patch.maxwell_conductor_anchors.push_back(anchor);
+      }
+      const auto &weighted_model = model_selection->response.models.front();
+      pending.push_back({weighted_model.index, patch});
+
+      for (const std::size_t segment_index : incident)
+      {
+        ExcludeVertexArm(vertex, segment_index, group.matching_radius);
+      }
+      group_maximum_library_distance = std::max(
+          group_maximum_library_distance, model_selection->response.normalized_distance);
+      if (endpoint)
+      {
+        matched_endpoints++;
+      }
+      else
+      {
+        matched_junctions++;
+      }
     }
     if (diagnostics)
     {
@@ -3108,21 +5578,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         {
           continue;
         }
-        const bool connected_near_vertex = std::any_of(
-            candidate_connected_vertex_neighborhoods.begin(),
-            candidate_connected_vertex_neighborhoods.end(),
-            [&](const auto &neighborhood)
-            {
-              return neighborhood.physical_chains.find(first_source.physical_chain) !=
-                         neighborhood.physical_chains.end() &&
-                     neighborhood.physical_chains.find(second_source.physical_chain) !=
-                         neighborhood.physical_chains.end() &&
-                     PointSegmentDistanceSquared(neighborhood.point, segments[i]) <
-                         interaction_distance_squared &&
-                     PointSegmentDistanceSquared(neighborhood.point, segments[j]) <
-                         interaction_distance_squared;
-            });
-        if (connected_near_vertex)
+        if (ConnectedNearVertex(i, j) ||
+            IsSpatiallyMatched(i, j, active_spatial_interactions))
         {
           continue;
         }
@@ -3169,23 +5626,46 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     for (auto &intervals : paired_intervals)
     {
       std::sort(intervals.begin(), intervals.end());
-      for (std::size_t i = 1; i < intervals.size(); i++)
+    }
+    auto [parallel_cluster_spans, unmatched_parallel_clusters] =
+        FindParallelClusterSpans(library, segments, pairs);
+    if (unmatched_parallel_clusters > 0)
+    {
+      Mpi::Warning(
+          "Fabrication-process response library \"{}\" has no matching "
+          "ParallelEdgeCluster model for {} three-dimensional longitudinal span(s); "
+          "correction is disabled for this interface group!\n",
+          library.name, unmatched_parallel_clusters);
+      group_matched = false;
+    }
+    for (const auto &span : parallel_cluster_spans)
+    {
+      group_maximum_library_distance = std::max(
+          group_maximum_library_distance, span.selection.response.normalized_distance);
+    }
+
+    auto SubtractInterval = [](std::vector<std::pair<double, double>> &intervals,
+                               double excluded_begin, double excluded_end)
+    {
+      std::vector<std::pair<double, double>> remainder;
+      for (const auto &[begin, end] : intervals)
       {
-        const double tolerance =
-            1.0e-10 * std::max(group.matching_radius, intervals[i - 1].second);
-        if (intervals[i].first < intervals[i - 1].second - tolerance)
+        if (excluded_end <= begin || excluded_begin >= end)
         {
-          Mpi::Warning("More than two three-dimensional metal edges interact within one 2R "
-                       "neighborhood; correction is disabled for this interface group!\n");
-          group_matched = false;
-          break;
+          remainder.emplace_back(begin, end);
+          continue;
+        }
+        if (excluded_begin > begin)
+        {
+          remainder.emplace_back(begin, std::min(excluded_begin, end));
+        }
+        if (excluded_end < end)
+        {
+          remainder.emplace_back(std::max(excluded_end, begin), end);
         }
       }
-      if (!group_matched)
-      {
-        break;
-      }
-    }
+      intervals = std::move(remainder);
+    };
 
     auto AppendQuadrature = [&](const LibrarySelection &model_selection,
                                 std::size_t first_index, double begin, double end,
@@ -3268,27 +5748,34 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
             patch.axis_u = first.axis_u;
             patch.axis_v = first.axis_v;
           }
-          if (representative.topology == LibraryTopology::SAME_CONDUCTOR_STRIP)
+          patch.maxwell_reference_is_pec =
+              first.boundary_condition.type == MetalBoundaryConditionType::PEC &&
+              (!second ||
+               second->boundary_condition.type == MetalBoundaryConditionType::PEC);
+          patch.conductor_references = model_selection.conductor_references;
+          if (!patch.maxwell_reference_is_pec)
           {
-            patch.maxwell_anchor = patch.origin;
+            patch.maxwell_conductor_anchors = {first_point};
+          }
+          else if (representative.topology == LibraryTopology::SAME_CONDUCTOR_STRIP)
+          {
+            patch.maxwell_conductor_anchors = {patch.origin};
           }
           else
           {
-            patch.maxwell_anchor =
-                Add(first_point, Scale(-group.matching_radius, first.axis_u));
+            patch.maxwell_conductor_anchors = {
+                Add(first_point, Scale(-group.matching_radius, first.axis_u))};
           }
-          patch.reference = model_selection.reference;
-          patch.secondary_reference = model_selection.secondary_reference;
-          if (model_selection.secondary_reference)
+          if (patch.conductor_references.size() > 1)
           {
-            MFEM_VERIFY(paired_point,
-                        "A two-conductor response model requires a paired metal edge!");
-            // The coupon references lie inside each PEC, but a single line between
-            // them crosses two metal-gap discontinuities. Use the physical edge
-            // points as equivalent equipotential anchors so Maxwell quadrature spans
-            // only the dielectric gap.
-            patch.maxwell_anchor = first_point;
-            patch.maxwell_secondary_anchor = *paired_point;
+            MFEM_VERIFY(paired_point && patch.conductor_references.size() == 2,
+                        "A paired-edge response model requires exactly two conductor "
+                        "references!");
+            // The coupon references lie inside each metal, but a single line between
+            // them crosses two metal-gap discontinuities. Use the physical edge points
+            // as local conductor anchors so Maxwell quadrature spans only the dielectric
+            // gap. For finite impedance this is a local quasi-electrostatic reference.
+            patch.maxwell_conductor_anchors = {first_point, *paired_point};
           }
           const double quadrature_weight = (interval_end - interval_begin) * ip.weight;
           for (const auto &weighted_model : model_selection.models)
@@ -3307,103 +5794,245 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       }
     };
 
-    for (const auto &pair : pairs)
+    auto AppendParallelClusterQuadrature = [&](const ParallelClusterSpan3D &span)
     {
-      const auto &first = segments[pair.first];
-      const auto &second = segments[pair.second];
-      const Point3D first_mid =
-          Interpolate(first, 0.5 * (pair.first_begin + pair.first_end));
-      double second_distance = Dot(Subtract(first_mid, second.p0), second.tangent);
-      second_distance = std::clamp(second_distance, 0.0, second.length);
-      const Point3D second_mid = Interpolate(second, second_distance);
-      const Point3D direction = Normalize(Subtract(second_mid, first_mid));
-      if (Dot(first.axis_v, second.axis_v) <= 0.95)
+      const auto &selection = span.selection;
+      MFEM_ASSERT(!selection.response.models.empty() && !selection.ordered_edges.empty(),
+                  "Missing parallel-cluster response-model selection!");
+      const std::size_t first_index = selection.ordered_edges.front();
+      const auto &first = segments[first_index];
+      const double orientation = Dot(first.tangent, span.tangent);
+      MFEM_ASSERT(std::abs(orientation) > 1.0 - 1.0e-8,
+                  "A parallel-edge cluster contains incompatible tangents!");
+      double begin = (span.begin - Dot(first.p0, span.tangent)) / orientation;
+      double end = (span.end - Dot(first.p0, span.tangent)) / orientation;
+      if (begin > end)
       {
-        Mpi::Warning(
-            "Nearby three-dimensional edges have incompatible process normals; a "
-            "dedicated cross-layer coupon is required and correction is disabled for "
-            "this interface group!\n");
-        group_matched = false;
+        std::swap(begin, end);
+      }
+      std::vector<std::pair<double, double>> intervals = {
+          {std::clamp(begin, 0.0, first.length), std::clamp(end, 0.0, first.length)}};
+      for (const std::size_t edge_index : selection.ordered_edges)
+      {
+        const auto &edge = segments[edge_index];
+        for (const auto &[excluded_begin, excluded_end] :
+             vertex_excluded_intervals[edge_index])
+        {
+          const Point3D excluded_p0 = Interpolate(edge, excluded_begin);
+          const Point3D excluded_p1 = Interpolate(edge, excluded_end);
+          const double first_begin = Dot(Subtract(excluded_p0, first.p0), first.tangent);
+          const double first_end = Dot(Subtract(excluded_p1, first.p0), first.tangent);
+          SubtractInterval(intervals, std::min(first_begin, first_end),
+                           std::max(first_begin, first_end));
+        }
+      }
+      for (const auto &[interval_begin, interval_end] : intervals)
+      {
+        if (interval_end <= interval_begin)
+        {
+          continue;
+        }
+        for (int q = 0; q < quadrature.GetNPoints(); q++)
+        {
+          const auto &ip = quadrature.IntPoint(q);
+          const double first_distance =
+              interval_begin + (interval_end - interval_begin) * ip.x;
+          const Point3D first_point = Interpolate(first, first_distance);
+          const double longitudinal_coordinate = Dot(first_point, span.tangent);
+
+          ResponsePatchData patch;
+          patch.origin = first_point;
+          patch.axis_u = selection.axis_u;
+          patch.axis_v = selection.axis_v;
+          patch.conductor_references = selection.response.conductor_references;
+          patch.maxwell_reference_is_pec =
+              std::all_of(selection.ordered_edges.begin(), selection.ordered_edges.end(),
+                          [&](std::size_t index)
+                          {
+                            return segments[index].boundary_condition.type ==
+                                   MetalBoundaryConditionType::PEC;
+                          });
+          for (const std::size_t reference_edge : selection.reference_edges)
+          {
+            patch.maxwell_conductor_anchors.push_back(InterpolateAtLongitudinalCoordinate(
+                segments[reference_edge], span.tangent, longitudinal_coordinate));
+          }
+          const double quadrature_weight = (interval_end - interval_begin) * ip.weight;
+          for (const auto &weighted_model : selection.response.models)
+          {
+            const auto &source = library.models[weighted_model.index];
+            MFEM_VERIFY(
+                source.coupon_depth > 0.0,
+                "Three-dimensional response correction requires CouponDepth for every "
+                "selected fabrication-process response model!");
+            auto weighted_patch = patch;
+            weighted_patch.weight =
+                weighted_model.weight * quadrature_weight / source.coupon_depth;
+            pending.push_back({weighted_model.index, std::move(weighted_patch)});
+          }
+        }
+      }
+    };
+
+    for (const auto &span : parallel_cluster_spans)
+    {
+      if (!group_matched)
+      {
         break;
       }
-      const Point3D process_normal = Normalize(Add(first.axis_v, second.axis_v));
-      if (std::abs(Dot(direction, process_normal)) > 1.0e-8)
-      {
-        Mpi::Warning(
-            "Nearby three-dimensional edges are offset along the process normal; a "
-            "dedicated cross-layer coupon is required and correction is disabled for "
-            "this interface group!\n");
-        group_matched = false;
-        break;
-      }
-      const bool facing =
-          Dot(first.axis_u, direction) > 0.95 && Dot(second.axis_u, direction) < -0.95;
-      const bool outward =
-          Dot(first.axis_u, direction) < -0.95 && Dot(second.axis_u, direction) > 0.95;
-      const bool same_conductor = first.conductor == second.conductor;
-      LibraryTopology topology;
-      if (facing)
-      {
-        topology = same_conductor ? LibraryTopology::SAME_CONDUCTOR_GAP
-                                  : LibraryTopology::DIFFERENT_CONDUCTOR_GAP;
-      }
-      else if (outward)
-      {
-        // Local outward-facing edges bound a physical strip even when its two perimeter
-        // loops have different graph-component labels.
-        topology = LibraryTopology::SAME_CONDUCTOR_STRIP;
-      }
-      else
-      {
-        Mpi::Warning("No canonical paired-edge topology for nearby three-dimensional metal "
-                     "edges; correction is disabled for this interface group!\n");
-        group_matched = false;
-        break;
-      }
-      const double separation = Distance(first_mid, second_mid);
-      const auto model_selection = FindLibraryModel(library, topology, separation);
-      if (!model_selection)
-      {
-        Mpi::Warning(
-            "Fabrication-process response library \"{}\" has no {} model at separation "
-            "{:.6e} mesh units; correction is disabled for this interface group!\n",
-            library.name, TopologyName(topology), separation * coordinate_scale);
-        group_matched = false;
-        break;
-      }
-      group_maximum_library_distance =
-          std::max(group_maximum_library_distance, model_selection->normalized_distance);
-      AppendQuadrature(*model_selection, pair.first, pair.first_begin, pair.first_end,
-                       pair.second);
+      AppendParallelClusterQuadrature(span);
       group_matched_intervals++;
-      group_interpolated_paired_intervals += model_selection->IsInterpolated();
     }
 
-    const auto isolated_model =
-        FindLibraryModel(library, LibraryTopology::ISOLATED_EDGE, 0.0);
-    if (group_matched && !isolated_model)
+    for (const auto &pair : pairs)
     {
-      Mpi::Warning(
-          "Fabrication-process response library \"{}\" has no isolated-edge model; "
-          "correction is disabled for this interface group!\n",
-          library.name);
-      group_matched = false;
+      if (!group_matched)
+      {
+        break;
+      }
+      const auto &first = segments[pair.first];
+      const auto &second = segments[pair.second];
+      std::vector<std::pair<double, double>> pair_intervals = {
+          {pair.first_begin, pair.first_end}};
+      for (const auto &span : parallel_cluster_spans)
+      {
+        const auto &cluster = span.selection.ordered_edges;
+        if (std::find(cluster.begin(), cluster.end(), pair.first) == cluster.end() ||
+            std::find(cluster.begin(), cluster.end(), pair.second) == cluster.end())
+        {
+          continue;
+        }
+        const double orientation = Dot(first.tangent, span.tangent);
+        MFEM_ASSERT(std::abs(orientation) > 1.0 - 1.0e-8,
+                    "A parallel-edge cluster contains incompatible tangents!");
+        double excluded_begin = (span.begin - Dot(first.p0, span.tangent)) / orientation;
+        double excluded_end = (span.end - Dot(first.p0, span.tangent)) / orientation;
+        if (excluded_begin > excluded_end)
+        {
+          std::swap(excluded_begin, excluded_end);
+        }
+        SubtractInterval(pair_intervals, excluded_begin, excluded_end);
+      }
+      for (const auto &[pair_begin, pair_end] : pair_intervals)
+      {
+        if (pair_end <= pair_begin)
+        {
+          continue;
+        }
+        const Point3D first_mid = Interpolate(first, 0.5 * (pair_begin + pair_end));
+        double second_distance = Dot(Subtract(first_mid, second.p0), second.tangent);
+        second_distance = std::clamp(second_distance, 0.0, second.length);
+        const Point3D second_mid = Interpolate(second, second_distance);
+        const Point3D direction = Normalize(Subtract(second_mid, first_mid));
+        if (!SameBoundaryLaw(first.boundary_condition, second.boundary_condition))
+        {
+          Mpi::Warning(
+              "Nearby three-dimensional edges use distinct metal boundary conditions; "
+              "a dedicated spatial coupon is required and correction is disabled for "
+              "this interface group!\n");
+          group_matched = false;
+          break;
+        }
+        if (Dot(first.axis_v, second.axis_v) <= 0.95)
+        {
+          Mpi::Warning(
+              "Nearby three-dimensional edges have incompatible process normals; a "
+              "dedicated cross-layer coupon is required and correction is disabled for "
+              "this interface group!\n");
+          group_matched = false;
+          break;
+        }
+        const Point3D process_normal = Normalize(Add(first.axis_v, second.axis_v));
+        if (std::abs(Dot(direction, process_normal)) > 1.0e-8)
+        {
+          Mpi::Warning(
+              "Nearby three-dimensional edges are offset along the process normal; a "
+              "dedicated cross-layer coupon is required and correction is disabled for "
+              "this interface group!\n");
+          group_matched = false;
+          break;
+        }
+        const bool facing =
+            Dot(first.axis_u, direction) > 0.95 && Dot(second.axis_u, direction) < -0.95;
+        const bool outward =
+            Dot(first.axis_u, direction) < -0.95 && Dot(second.axis_u, direction) > 0.95;
+        const bool same_conductor = first.conductor == second.conductor;
+        LibraryTopology topology;
+        if (facing)
+        {
+          topology = same_conductor ? LibraryTopology::SAME_CONDUCTOR_GAP
+                                    : LibraryTopology::DIFFERENT_CONDUCTOR_GAP;
+        }
+        else if (outward)
+        {
+          // Local outward-facing edges bound a physical strip even when its two perimeter
+          // loops have different graph-component labels.
+          topology = LibraryTopology::SAME_CONDUCTOR_STRIP;
+        }
+        else
+        {
+          Mpi::Warning(
+              "No canonical paired-edge topology for nearby three-dimensional metal "
+              "edges; correction is disabled for this interface group!\n");
+          group_matched = false;
+          break;
+        }
+        const double separation = Distance(first_mid, second_mid);
+        const auto model_selection =
+            FindLibraryModel(library, topology, separation, first.boundary_condition);
+        if (!model_selection)
+        {
+          Mpi::Warning(
+              "Fabrication-process response library \"{}\" has no {} model at separation "
+              "{:.6e} mesh units; correction is disabled for this interface group!\n",
+              library.name, TopologyName(topology), separation * coordinate_scale);
+          group_matched = false;
+          break;
+        }
+        group_maximum_library_distance =
+            std::max(group_maximum_library_distance, model_selection->normalized_distance);
+        AppendQuadrature(*model_selection, pair.first, pair_begin, pair_end, pair.second);
+        group_matched_intervals++;
+        group_interpolated_paired_intervals += model_selection->IsInterpolated();
+      }
     }
+
     for (std::size_t i = 0; group_matched && i < segments.size(); i++)
     {
+      std::vector<std::pair<double, double>> isolated_intervals;
       double begin = 0.0;
       for (const auto &[paired_begin, paired_end] : paired_intervals[i])
       {
         if (paired_begin > begin)
         {
-          AppendQuadrature(*isolated_model, i, begin, paired_begin, std::nullopt);
-          group_matched_intervals++;
+          isolated_intervals.emplace_back(begin, paired_begin);
         }
         begin = std::max(begin, paired_end);
       }
       if (begin < segments[i].length)
       {
-        AppendQuadrature(*isolated_model, i, begin, segments[i].length, std::nullopt);
+        isolated_intervals.emplace_back(begin, segments[i].length);
+      }
+      if (isolated_intervals.empty())
+      {
+        continue;
+      }
+
+      const auto isolated_model = FindLibraryModel(library, LibraryTopology::ISOLATED_EDGE,
+                                                   0.0, segments[i].boundary_condition);
+      if (!isolated_model)
+      {
+        Mpi::Warning(
+            "Fabrication-process response library \"{}\" has no isolated-edge model for "
+            "an unmatched longitudinal span using the selected metal boundary condition; "
+            "correction is disabled for this interface group!\n",
+            library.name);
+        group_matched = false;
+        break;
+      }
+      for (const auto &[isolated_begin, isolated_end] : isolated_intervals)
+      {
+        AppendQuadrature(*isolated_model, i, isolated_begin, isolated_end, std::nullopt);
         group_matched_intervals++;
       }
     }
@@ -3418,6 +6047,14 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       continue;
     }
 
+    if (diagnostics)
+    {
+      for (const auto &selection : pending)
+      {
+        diagnostics->boundary_law_verified &=
+            IsBoundaryLawVerified(library.models[selection.library_model]);
+      }
+    }
     std::map<std::size_t, int> runtime_models;
     for (auto &selection : pending)
     {
@@ -3428,22 +6065,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         const auto &source = library.models[selection.library_model];
         auto model = source.response;
         model.idx = next_model_index++;
-        for (const auto &[type, target] : group.targets)
-        {
-          const auto interface_type = type;
-          auto interface = std::find_if(source.interfaces.begin(), source.interfaces.end(),
-                                        [interface_type](const auto &entry)
-                                        { return entry.type == interface_type; });
-          MFEM_VERIFY(interface != source.interfaces.end() ||
-                          source.response.fabricated_surface_matrix.empty(),
-                      "Fabrication-process response model \"" << source.name << "\" has no "
-                                                              << ToString(type)
-                                                              << " interface mapping!");
-          if (interface != source.interfaces.end())
-          {
-            model.interfaces.push_back({target, interface->coupon});
-          }
-        }
+        MapLibraryInterfaces(source, {{0, group.targets}}, model);
         result.models.push_back(std::move(model));
       }
       selection.patch.model = model_it->second;
@@ -3453,12 +6075,22 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     interpolated_paired_intervals += group_interpolated_paired_intervals;
     matched_segments += static_cast<int>(segments.size());
     matched_corner_patches += matched_corners;
-    matched_sharp_corner_vertices += matched_sharp_corners;
+    matched_endpoint_patches += matched_endpoints;
+    matched_junction_patches += matched_junctions;
+    matched_spatial_cluster_patches += matched_spatial_clusters;
+    const int spatial_nonregular_vertices = static_cast<int>(std::count_if(
+        spatially_excluded_vertices.begin(), spatially_excluded_vertices.end(),
+        [&](std::size_t vertex)
+        {
+          return geometry.vertices[vertex].physical_type &&
+                 *geometry.vertices[vertex].physical_type != MetalEdgeVertexType::REGULAR;
+        }));
+    matched_nonregular_vertices += matched_sharp_corners + matched_endpoints +
+                                   matched_junctions + spatial_nonregular_vertices;
     if (diagnostics)
     {
-      const double unmatched_corner_neighborhood_length =
-          std::max(0.0, group_corner_neighborhood_length -
-                            group_modeled_corner_neighborhood_length);
+      const double unmatched_corner_neighborhood_length = std::max(
+          0.0, group_corner_neighborhood_length - group_modeled_corner_neighborhood_length);
       diagnostics->matched_length += group_selected_length;
       diagnostics->matched_corner_neighborhood_length +=
           unmatched_corner_neighborhood_length;
@@ -3485,12 +6117,17 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
              " Matched longitudinal intervals: {:d}\n"
              " Longitudinal quadrature patches: {:d}\n"
              " Matched corner patches: {:d}\n"
+             " Matched endpoint patches: {:d}\n"
+             " Matched junction patches: {:d}\n"
+             " Matched spatial edge-cluster patches: {:d}\n"
              " Interpolated paired intervals: {:d}\n"
              " Interpolated rounded corners: {:d}\n"
              " Unmatched interface groups: {:d}\n",
              library.name, matched_segments, matched_intervals,
              static_cast<int>(result.patches.size()), matched_corner_patches,
-             interpolated_paired_intervals, interpolated_rounded_corners, unmatched_groups);
+             matched_endpoint_patches, matched_junction_patches,
+             matched_spatial_cluster_patches, interpolated_paired_intervals,
+             interpolated_rounded_corners, unmatched_groups);
   if (unmatched_rounded_corners > 0)
   {
     Mpi::Warning(
@@ -3501,15 +6138,14 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         "significant.\n",
         unmatched_rounded_corners);
   }
-  const int unmatched_vertices = nonregular_vertices - matched_sharp_corner_vertices;
+  const int unmatched_vertices = nonregular_vertices - matched_nonregular_vertices;
   if (unmatched_vertices > 0)
   {
     Mpi::Warning(
         "The selected three-dimensional metal perimeter has {} unmatched corner, endpoint, "
-        "or "
-        "junction vertices. Straight-edge coupon response is integrated through these "
-        "neighborhoods; validate or add a corner-response model when their contribution "
-        "is significant.\n",
+        "or junction vertices. Straight-edge coupon response is integrated through these "
+        "neighborhoods; validate or add a matching spatial-vertex response model when "
+        "their contribution is significant.\n",
         unmatched_vertices);
   }
   return result;
@@ -3656,9 +6292,10 @@ struct DomainResponseMatrices
   mfem::DenseMatrix fixed_flux_transform;
 };
 
-DomainResponseMatrices BuildDomainResponseMatrices(const std::string &fabricated_path,
-                                                   const std::string &thin_path,
-                                                   int expected_size, const Units &units)
+DomainResponseMatrices
+BuildDomainResponseMatrices(const std::string &fabricated_path,
+                            const std::string &thin_path, int expected_size,
+                            const std::vector<int> &zero_trace_indices, const Units &units)
 {
   auto [fabricated_size, fabricated_entries] = ReadDomainResponseMatrix(fabricated_path);
   auto [thin_size, thin_entries] = ReadDomainResponseMatrix(thin_path);
@@ -3679,8 +6316,53 @@ DomainResponseMatrices BuildDomainResponseMatrices(const std::string &fabricated
 
   mfem::DenseMatrix defect(fabricated);
   defect.Add(-1.0, thin);
-  mfem::DenseMatrix fixed_flux_transform;
-  mfem::DenseMatrixInverse(fabricated, true).Mult(thin, fixed_flux_transform);
+  mfem::DenseMatrix fixed_flux_transform(expected_size);
+  fixed_flux_transform = 0.0;
+  if (zero_trace_indices.empty())
+  {
+    mfem::DenseMatrixInverse(fabricated, true).Mult(thin, fixed_flux_transform);
+  }
+  else
+  {
+    std::vector<bool> constrained(expected_size, false);
+    for (const int index : zero_trace_indices)
+    {
+      MFEM_VERIFY(index >= 0 && index < expected_size && !constrained[index],
+                  "Invalid or duplicate zero-trace response basis index!");
+      constrained[index] = true;
+    }
+    std::vector<int> free_indices;
+    free_indices.reserve(expected_size - zero_trace_indices.size());
+    for (int i = 0; i < expected_size; i++)
+    {
+      if (!constrained[i])
+      {
+        free_indices.push_back(i);
+      }
+    }
+    MFEM_VERIFY(!free_indices.empty(),
+                "Fixed-flux response requires at least one free trace basis function!");
+
+    const int free_size = static_cast<int>(free_indices.size());
+    mfem::DenseMatrix fabricated_free(free_size), thin_free(free_size);
+    for (int i = 0; i < free_size; i++)
+    {
+      for (int j = 0; j < free_size; j++)
+      {
+        fabricated_free(i, j) = fabricated(free_indices[i], free_indices[j]);
+        thin_free(i, j) = thin(free_indices[i], free_indices[j]);
+      }
+    }
+    mfem::DenseMatrix fixed_flux_free;
+    mfem::DenseMatrixInverse(fabricated_free, true).Mult(thin_free, fixed_flux_free);
+    for (int i = 0; i < free_size; i++)
+    {
+      for (int j = 0; j < free_size; j++)
+      {
+        fixed_flux_transform(free_indices[i], free_indices[j]) = fixed_flux_free(i, j);
+      }
+    }
+  }
   return {std::move(fabricated), std::move(thin), std::move(defect),
           std::move(fixed_flux_transform)};
 }
@@ -4011,9 +6693,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     model.idx = model_config.idx;
     model.contour_size = static_cast<int>(points.size());
     model.conductor_state_count = model_config.conductor_state_count;
-    MFEM_VERIFY(model.conductor_state_count == 0 || model.conductor_state_count == 1,
-                "Response correction supports at most one independent conductor-voltage "
-                "coefficient per coupon!");
+    MFEM_VERIFY(model.conductor_state_count >= 0,
+                "Response correction requires a nonnegative conductor-state count!");
     model.basis_size = model.contour_size + model.conductor_state_count;
     model.spatial_basis = model_config.spatial_basis;
     model.contour_groups = model_config.contour_groups;
@@ -4061,9 +6742,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           std::all_of(assigned.begin(), assigned.end(), [](bool value) { return value; }),
           "Response-correction OpenContourPaths do not partition BasisPoints!");
     }
-    auto domain_response = BuildDomainResponseMatrices(model_config.fabricated_matrix,
-                                                       model_config.thin_matrix,
-                                                       model.basis_size, iodata.units);
+    auto domain_response = BuildDomainResponseMatrices(
+        model_config.fabricated_matrix, model_config.thin_matrix, model.basis_size,
+        model.zero_trace_indices, iodata.units);
     model.fabricated_domain = std::move(domain_response.fabricated);
     model.thin_domain = std::move(domain_response.thin);
     model.domain_defect = std::move(domain_response.defect);
@@ -4091,8 +6772,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     const auto &model = models[model_it->second];
     MFEM_VERIFY(std::isfinite(patch_config.weight) && patch_config.weight > 0.0,
                 "Response-correction patch weights must be positive!");
-    MFEM_VERIFY(static_cast<int>(patch_config.secondary_reference.has_value()) ==
-                    model.conductor_state_count,
+    MFEM_VERIFY(static_cast<int>(patch_config.conductor_references.size()) ==
+                    model.conductor_state_count + 1,
                 "Response-correction patch conductor references do not match its model!");
     if (static_cast<int>(patch_idx % size) != rank)
     {
@@ -4183,25 +6864,13 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       }
       point++;
     }
-    for (int d = 0; d < dimension; d++)
+    for (const auto &reference : patch_config.conductor_references)
     {
-      xyz(d * point_count + point) = patch_config.origin[d] +
-                                     patch_config.reference[0] * patch_config.axis_u[d] +
-                                     patch_config.reference[1] * patch_config.axis_v[d] +
-                                     patch_config.reference[2] * patch_config.axis_w[d];
-    }
-    point++;
-    if (model.conductor_state_count == 1)
-    {
-      MFEM_ASSERT(patch_config.secondary_reference,
-                  "Missing second-conductor response reference!");
       for (int d = 0; d < dimension; d++)
       {
         xyz(d * point_count + point) =
-            patch_config.origin[d] +
-            (*patch_config.secondary_reference)[0] * patch_config.axis_u[d] +
-            (*patch_config.secondary_reference)[1] * patch_config.axis_v[d] +
-            (*patch_config.secondary_reference)[2] * patch_config.axis_w[d];
+            patch_config.origin[d] + reference[0] * patch_config.axis_u[d] +
+            reference[1] * patch_config.axis_v[d] + reference[2] * patch_config.axis_w[d];
       }
       point++;
     }
@@ -4332,8 +7001,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
               "Missing interface-resolved Maxwell surface-response diagnostics!");
   matched_length_fraction = 1.0;
   corner_neighborhood_fraction = 0.0;
-  for (const auto &[interface, selected_length] :
-       diagnostics.selected_length_by_interface)
+  for (const auto &[interface, selected_length] : diagnostics.selected_length_by_interface)
   {
     const double matched_length =
         diagnostics.matched_length_by_interface.count(interface)
@@ -4341,8 +7009,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
             : 0.0;
     const double interface_matched_fraction =
         selected_length > 0.0 ? matched_length / selected_length : 0.0;
-    matched_length_fraction =
-        std::min(matched_length_fraction, interface_matched_fraction);
+    matched_length_fraction = std::min(matched_length_fraction, interface_matched_fraction);
     matched_length_fraction_by_interface.emplace(interface, interface_matched_fraction);
     const double corner_length =
         diagnostics.matched_corner_neighborhood_length_by_interface.count(interface)
@@ -4352,11 +7019,11 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
         matched_length > 0.0 ? corner_length / matched_length : 0.0;
     corner_neighborhood_fraction =
         std::max(corner_neighborhood_fraction, interface_corner_fraction);
-    corner_neighborhood_fraction_by_interface.emplace(interface,
-                                                      interface_corner_fraction);
+    corner_neighborhood_fraction_by_interface.emplace(interface, interface_corner_fraction);
   }
   maximum_curvature_ratio = diagnostics.maximum_curvature_ratio;
   maximum_library_distance = diagnostics.maximum_library_distance;
+  boundary_law_verified = diagnostics.boundary_law_verified;
 
   std::unordered_map<int, int> model_indices;
   std::vector<std::vector<std::array<double, 3>>> basis_points;
@@ -4374,9 +7041,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     model.idx = model_config.idx;
     model.contour_size = static_cast<int>(points.size());
     model.conductor_state_count = model_config.conductor_state_count;
-    MFEM_VERIFY(model.conductor_state_count == 0 || model.conductor_state_count == 1,
-                "Maxwell response correction supports at most one independent "
-                "conductor-voltage coefficient per coupon!");
+    MFEM_VERIFY(model.conductor_state_count >= 0,
+                "Maxwell response correction requires a nonnegative conductor-state "
+                "count!");
     model.basis_size = model.contour_size + model.conductor_state_count;
     model.spatial_basis = model_config.spatial_basis;
     MFEM_VERIFY(dimension == 3 || !model.spatial_basis,
@@ -4386,6 +7053,12 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     model.zero_trace_indices = model_config.zero_trace_indices;
     for (const auto &path : model_config.open_contour_paths)
     {
+      MFEM_VERIFY(path.start_conductor >= 0 &&
+                      path.start_conductor <= model.conductor_state_count &&
+                      path.end_conductor >= 0 &&
+                      path.end_conductor <= model.conductor_state_count &&
+                      path.start_conductor != path.end_conductor,
+                  "Maxwell OpenContourPaths refer to invalid conductor indices!");
       model.open_contour_paths.push_back(
           {path.indices, path.start_conductor, path.end_conductor});
     }
@@ -4430,9 +7103,9 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
           std::all_of(assigned.begin(), assigned.end(), [](bool value) { return value; }),
           "Response-correction OpenContourPaths do not partition BasisPoints!");
     }
-    auto domain_response = BuildDomainResponseMatrices(model_config.fabricated_matrix,
-                                                       model_config.thin_matrix,
-                                                       model.basis_size, iodata.units);
+    auto domain_response = BuildDomainResponseMatrices(
+        model_config.fabricated_matrix, model_config.thin_matrix, model.basis_size,
+        model.zero_trace_indices, iodata.units);
     model.fabricated_domain = std::move(domain_response.fabricated);
     model.thin_domain = std::move(domain_response.thin);
     model.domain_defect = std::move(domain_response.defect);
@@ -4459,8 +7132,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   const std::size_t local_patch_capacity =
       (config.patches.size() + static_cast<std::size_t>(size) - 1) / size;
   maxwell_contours.reserve(local_patch_capacity);
-  maxwell_anchors.reserve(local_patch_capacity);
-  maxwell_secondary_anchors.reserve(local_patch_capacity);
+  maxwell_conductor_anchors.reserve(local_patch_capacity);
   maxwell_paths.reserve(local_patch_capacity);
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
   for (std::size_t patch_index = 0; patch_index < config.patches.size(); patch_index++)
@@ -4472,12 +7144,15 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     const auto &model = models[model_it->second];
     MFEM_VERIFY(std::isfinite(patch_config.weight) && patch_config.weight > 0.0,
                 "Response-correction patch weights must be positive!");
-    const bool has_secondary_anchor =
-        dimension == 3 ? patch_config.maxwell_secondary_anchor.has_value()
-                       : patch_config.secondary_reference.has_value();
-    MFEM_VERIFY(static_cast<int>(has_secondary_anchor) == model.conductor_state_count,
+    const std::size_t anchor_count = patch_config.maxwell_conductor_anchors.empty()
+                                         ? patch_config.conductor_references.size()
+                                         : patch_config.maxwell_conductor_anchors.size();
+    MFEM_VERIFY(static_cast<int>(anchor_count) == model.conductor_state_count + 1,
                 "Maxwell response-correction patch conductor anchors do not match its "
                 "model!");
+    MFEM_VERIFY(patch_config.maxwell_reference_is_pec || model.zero_trace_indices.empty(),
+                "Finite-impedance Maxwell response patches cannot use PEC-constrained "
+                "ZeroTraceIndices!");
     if (static_cast<int>(patch_index % size) != rank)
     {
       continue;
@@ -4527,49 +7202,28 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       }
       contour.push_back(std::move(point));
     }
-    mfem::Vector anchor(3);
-    anchor = 0.0;
-    if (patch_config.maxwell_anchor)
+    auto &anchors = maxwell_conductor_anchors.emplace_back();
+    anchors.reserve(anchor_count);
+    for (std::size_t i = 0; i < anchor_count; i++)
     {
-      std::copy(patch_config.maxwell_anchor->begin(), patch_config.maxwell_anchor->end(),
-                anchor.GetData());
-    }
-    else
-    {
-      MFEM_VERIFY(dimension == 2,
-                  "Automatic Maxwell response patch is missing its PEC voltage anchor!");
-      for (int d = 0; d < dimension; d++)
+      mfem::Vector anchor(3);
+      anchor = 0.0;
+      if (!patch_config.maxwell_conductor_anchors.empty())
       {
-        anchor[d] = patch_config.origin[d] +
-                    patch_config.reference[0] * patch_config.axis_u[d] +
-                    patch_config.reference[1] * patch_config.axis_v[d];
-      }
-    }
-    maxwell_anchors.push_back(std::move(anchor));
-    mfem::Vector secondary_anchor;
-    if (has_secondary_anchor)
-    {
-      secondary_anchor.SetSize(3);
-      secondary_anchor = 0.0;
-      if (patch_config.maxwell_secondary_anchor)
-      {
-        std::copy(patch_config.maxwell_secondary_anchor->begin(),
-                  patch_config.maxwell_secondary_anchor->end(), secondary_anchor.GetData());
+        std::copy(patch_config.maxwell_conductor_anchors[i].begin(),
+                  patch_config.maxwell_conductor_anchors[i].end(), anchor.GetData());
       }
       else
       {
-        MFEM_ASSERT(patch_config.secondary_reference,
-                    "Missing second-conductor response reference!");
         for (int d = 0; d < dimension; d++)
         {
-          secondary_anchor[d] =
-              patch_config.origin[d] +
-              (*patch_config.secondary_reference)[0] * patch_config.axis_u[d] +
-              (*patch_config.secondary_reference)[1] * patch_config.axis_v[d];
+          anchor[d] = patch_config.origin[d] +
+                      patch_config.conductor_references[i][0] * patch_config.axis_u[d] +
+                      patch_config.conductor_references[i][1] * patch_config.axis_v[d];
         }
       }
+      anchors.push_back(std::move(anchor));
     }
-    maxwell_secondary_anchors.push_back(std::move(secondary_anchor));
 
     patches.push_back(Patch{model_it->second, 0, basis_size, patch_config.weight});
     basis_size += model.basis_size;
@@ -4599,21 +7253,14 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     const auto &patch = patches[patch_index];
     const auto &model = models[patch.model];
     const auto &contour = maxwell_contours[patch_index];
-    const auto &anchor = maxwell_anchors[patch_index];
+    const auto &anchors = maxwell_conductor_anchors[patch_index];
+    const auto &anchor = anchors.front();
     MFEM_ASSERT(static_cast<int>(contour.size()) == model.contour_size,
                 "Inconsistent Maxwell response contour size!");
+    MFEM_ASSERT(static_cast<int>(anchors.size()) == model.conductor_state_count + 1,
+                "Inconsistent Maxwell conductor-anchor count!");
 
     const int path_begin = static_cast<int>(maxwell_paths.size());
-    int conductor_line = -1;
-    if (model.conductor_state_count == 1)
-    {
-      const auto &secondary_anchor = maxwell_secondary_anchors[patch_index];
-      MFEM_ASSERT(secondary_anchor.Size() == 3,
-                  "Missing Maxwell second-conductor response anchor!");
-      conductor_line = AppendLine(anchor, secondary_anchor);
-      maxwell_conductor_paths.push_back(
-          {conductor_line, patch.trace_offset + model.contour_size});
-    }
 
     int group_offset = 0;
     for (const int group_size : model.contour_groups)
@@ -4700,19 +7347,24 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
     MFEM_ASSERT(group_offset == model.contour_size,
                 "Inconsistent Maxwell contour-group partition!");
+    std::vector<int> open_path_indices;
+    open_path_indices.reserve(model.open_contour_paths.size());
     for (const auto &path_config : model.open_contour_paths)
     {
-      MFEM_ASSERT(conductor_line >= 0,
-                  "An open Maxwell response contour requires two conductor anchors!");
-      const auto &secondary_anchor = maxwell_secondary_anchors[patch_index];
-      const auto &start_anchor =
-          path_config.start_conductor == 0 ? anchor : secondary_anchor;
-      const auto &end_anchor = path_config.end_conductor == 0 ? anchor : secondary_anchor;
+      const auto &start_anchor = anchors[path_config.start_conductor];
+      const auto &end_anchor = anchors[path_config.end_conductor];
       MaxwellContourPath path;
       path.closed = false;
-      path.conductor_line = conductor_line;
-      path.closure_sign =
-          path_config.start_conductor == 0 && path_config.end_conductor == 1 ? 1 : -1;
+      if (path_config.start_conductor > 0)
+      {
+        path.start_conductor_trace =
+            patch.trace_offset + model.contour_size + path_config.start_conductor - 1;
+      }
+      if (path_config.end_conductor > 0)
+      {
+        path.end_conductor_trace =
+            patch.trace_offset + model.contour_size + path_config.end_conductor - 1;
+      }
       path.trace_indices.reserve(path_config.indices.size());
       for (const int index : path_config.indices)
       {
@@ -4738,8 +7390,39 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       {
         path.end_line = AppendLine(last, end_anchor);
       }
+      open_path_indices.push_back(static_cast<int>(maxwell_paths.size()));
       maxwell_paths.push_back(std::move(path));
     }
+    std::vector<bool> connected(anchors.size(), false);
+    connected.front() = true;
+    bool changed = true;
+    while (changed)
+    {
+      changed = false;
+      for (std::size_t i = 0; i < model.open_contour_paths.size(); i++)
+      {
+        const auto &path = model.open_contour_paths[i];
+        if (connected[path.start_conductor] == connected[path.end_conductor])
+        {
+          continue;
+        }
+        const int parent =
+            connected[path.start_conductor] ? path.start_conductor : path.end_conductor;
+        const int conductor =
+            connected[path.start_conductor] ? path.end_conductor : path.start_conductor;
+        const int parent_trace_offset =
+            parent > 0 ? patch.trace_offset + model.contour_size + parent - 1 : -1;
+        const int trace_offset = patch.trace_offset + model.contour_size + conductor - 1;
+        const int integral_sign = parent == path.start_conductor ? -1 : 1;
+        maxwell_conductor_paths.push_back(
+            {open_path_indices[i], parent_trace_offset, trace_offset, integral_sign});
+        connected[conductor] = true;
+        changed = true;
+      }
+    }
+    MFEM_VERIFY(
+        std::all_of(connected.begin(), connected.end(), [](bool value) { return value; }),
+        "Maxwell OpenContourPaths must connect every conductor reference!");
     maxwell_patch_paths.emplace_back(path_begin,
                                      static_cast<int>(maxwell_paths.size()) - path_begin);
   }
@@ -4752,7 +7435,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   int global_line_count = static_cast<int>(maxwell_lines.size());
   Mpi::GlobalSum(1, &global_line_count, fespace.GetComm());
 
-  Mpi::Print("\nConfigured PEC Maxwell surface response correction:\n"
+  Mpi::Print("\nConfigured Maxwell surface response correction:\n"
              " Coupon models: {:d}\n"
              " Response patches: {:d}\n"
              " Total contour coefficients: {:d}\n"
@@ -4765,8 +7448,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
              global_line_count, matched_length_fraction, corner_neighborhood_fraction,
              maximum_curvature_ratio, maximum_library_distance);
   Mpi::Print(" Interface-resolved geometric coverage:\n");
-  for (const auto &[interface, matched_fraction] :
-       matched_length_fraction_by_interface)
+  for (const auto &[interface, matched_fraction] : matched_length_fraction_by_interface)
   {
     Mpi::Print("  {:d}: matched = {:.6f}, unmodeled corner = {:.6f}\n", interface,
                matched_fraction, corner_neighborhood_fraction_by_interface.at(interface));
@@ -5627,17 +8309,39 @@ void SurfaceResponseOperator::BuildMaxwellTrace(const Vector &line_values,
               "Inconsistent Maxwell contour-path data!");
   values.SetSize(basis_size);
   values = 0.0;
-  for (const auto &path : maxwell_conductor_paths)
+  auto PathIntegral = [&](const MaxwellContourPath &path)
   {
-    values[path.trace_offset] = -line_values[path.line];
+    double value = 0.0;
+    if (path.anchor_line >= 0)
+    {
+      value += line_values[path.anchor_line];
+    }
+    for (int i = 0; i < path.contour_line_count; i++)
+    {
+      value += line_values[path.contour_line_offset + i];
+    }
+    if (path.end_line >= 0)
+    {
+      value += line_values[path.end_line];
+    }
+    return value;
+  };
+  for (const auto &conductor_path : maxwell_conductor_paths)
+  {
+    const double parent = conductor_path.parent_trace_offset >= 0
+                              ? values[conductor_path.parent_trace_offset]
+                              : 0.0;
+    values[conductor_path.trace_offset] =
+        parent + conductor_path.integral_sign *
+                     PathIntegral(maxwell_paths[conductor_path.contour_path]);
   }
   for (const auto &path : maxwell_paths)
   {
     MFEM_ASSERT(!path.trace_indices.empty(), "Empty Maxwell contour path!");
     double value = 0.0;
-    if (!path.closed && path.closure_sign < 0)
+    if (!path.closed && path.start_conductor_trace >= 0)
     {
-      value = -line_values[path.conductor_line];
+      value = values[path.start_conductor_trace];
     }
     if (path.anchor_line >= 0)
     {
@@ -5658,6 +8362,12 @@ void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
   MFEM_ASSERT(values.Size() == basis_size, "Inconsistent Maxwell contour-path data!");
   line_values.SetSize(static_cast<int>(maxwell_lines.size()));
   line_values = 0.0;
+  Vector conductor_adjoint(basis_size);
+  conductor_adjoint = 0.0;
+  for (const auto &path : maxwell_conductor_paths)
+  {
+    conductor_adjoint[path.trace_offset] = values[path.trace_offset];
+  }
   Vector adjoint;
   for (const auto &path : maxwell_paths)
   {
@@ -5677,14 +8387,36 @@ void SurfaceResponseOperator::BuildMaxwellTraceTranspose(const Vector &values,
     {
       line_values[path.anchor_line] -= adjoint[0];
     }
-    if (!path.closed && path.closure_sign < 0)
+    if (!path.closed && path.start_conductor_trace >= 0)
     {
-      line_values[path.conductor_line] -= adjoint[0];
+      conductor_adjoint[path.start_conductor_trace] += adjoint[0];
     }
   }
-  for (const auto &path : maxwell_conductor_paths)
+  auto AddPathIntegralTranspose = [&](const MaxwellContourPath &path, double value)
   {
-    line_values[path.line] -= values[path.trace_offset];
+    if (path.anchor_line >= 0)
+    {
+      line_values[path.anchor_line] += value;
+    }
+    for (int i = 0; i < path.contour_line_count; i++)
+    {
+      line_values[path.contour_line_offset + i] += value;
+    }
+    if (path.end_line >= 0)
+    {
+      line_values[path.end_line] += value;
+    }
+  };
+  for (auto path = maxwell_conductor_paths.rbegin(); path != maxwell_conductor_paths.rend();
+       path++)
+  {
+    const double value = conductor_adjoint[path->trace_offset];
+    AddPathIntegralTranspose(maxwell_paths[path->contour_path],
+                             path->integral_sign * value);
+    if (path->parent_trace_offset >= 0)
+    {
+      conductor_adjoint[path->parent_trace_offset] += value;
+    }
   }
 }
 
@@ -5706,10 +8438,10 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
     {
       values(patch.trace_offset + i) = correction(patch.point_offset + i) - reference;
     }
-    if (model.conductor_state_count == 1)
+    for (int state = 0; state < model.conductor_state_count; state++)
     {
-      values(patch.trace_offset + model.contour_size) =
-          correction(patch.point_offset + model.contour_size + 1) - reference;
+      values(patch.trace_offset + model.contour_size + state) =
+          correction(patch.point_offset + model.contour_size + 1 + state) - reference;
     }
   }
 }
@@ -5734,10 +8466,10 @@ void SurfaceResponseOperator::ApplyTraceTranspose(const Vector &values, Vector &
       correction[patch.point_offset + i] = value;
       reference -= value;
     }
-    if (model.conductor_state_count == 1)
+    for (int state = 0; state < model.conductor_state_count; state++)
     {
-      const double value = values(patch.trace_offset + model.contour_size);
-      correction[patch.point_offset + model.contour_size + 1] = value;
+      const double value = values(patch.trace_offset + model.contour_size + state);
+      correction[patch.point_offset + model.contour_size + 1 + state] = value;
       reference -= value;
     }
     correction[patch.point_offset + model.contour_size] = reference;
@@ -5867,6 +8599,9 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
 {
   ApplyTrace(x, trace);
   ElectrostaticResponse result;
+  double weighted_trace_closure_spread_squared = 0.0;
+  double trace_closure_response_weight = 0.0;
+  double failed_trace_closure_response_weight = 0.0;
   Vector fixed_flux;
   for (const auto &model : models)
   {
@@ -5897,23 +8632,38 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
     }
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
-      result.fabricated_surface_energy[interface] +=
+      const double fixed_trace_energy =
           patch.weight * QuadraticForm(matrix, patch_trace, response);
+      result.fabricated_surface_energy[interface] += fixed_trace_energy;
       if (include_fixed_flux)
       {
-        result.fabricated_surface_energy_fixed_flux[interface] +=
+        const double fixed_flux_energy =
             patch.weight * QuadraticForm(matrix, fixed_flux, response);
+        result.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
+        const double weight =
+            std::max(std::abs(fixed_trace_energy), std::abs(fixed_flux_energy));
+        if (weight > 0.0)
+        {
+          const double spread = std::abs(fixed_trace_energy - fixed_flux_energy) / weight;
+          weighted_trace_closure_spread_squared += weight * spread * spread;
+          failed_trace_closure_response_weight +=
+              spread > maximum_trace_closure_spread ? weight : 0.0;
+          trace_closure_response_weight += weight;
+        }
       }
     }
   }
   const std::size_t values_per_interface = include_fixed_flux ? 2 : 1;
   std::vector<double> reduction;
-  reduction.reserve(1 + (include_fixed_flux ? 1 : 0) +
+  reduction.reserve(1 + (include_fixed_flux ? 4 : 0) +
                     values_per_interface * result.fabricated_surface_energy.size());
   reduction.push_back(result.domain_correction);
   if (include_fixed_flux)
   {
     reduction.push_back(result.domain_correction_fixed_flux);
+    reduction.push_back(weighted_trace_closure_spread_squared);
+    reduction.push_back(trace_closure_response_weight);
+    reduction.push_back(failed_trace_closure_response_weight);
   }
   for (const auto &[interface, fixed_trace] : result.fabricated_surface_energy)
   {
@@ -5929,6 +8679,16 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
   if (include_fixed_flux)
   {
     result.domain_correction_fixed_flux = reduction[i++];
+    weighted_trace_closure_spread_squared = reduction[i++];
+    trace_closure_response_weight = reduction[i++];
+    failed_trace_closure_response_weight = reduction[i++];
+    if (trace_closure_response_weight > 0.0)
+    {
+      result.response_weighted_trace_closure_spread =
+          std::sqrt(weighted_trace_closure_spread_squared / trace_closure_response_weight);
+      result.trace_closure_response_failure_fraction =
+          failed_trace_closure_response_weight / trace_closure_response_weight;
+    }
   }
   for (auto &[interface, fixed_trace] : result.fabricated_surface_energy)
   {
@@ -5957,6 +8717,11 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
     result.maximum_trace_closure_spread =
         std::max(result.maximum_trace_closure_spread, spread);
   }
+  result.confident =
+      result.maximum_trace_closure_spread <= maximum_trace_closure_spread &&
+      result.response_weighted_trace_closure_spread <= maximum_trace_closure_spread &&
+      result.trace_closure_response_failure_fraction <=
+          maximum_trace_closure_response_failure_fraction;
   return result;
 }
 
@@ -5966,7 +8731,7 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
 {
   MFEM_VERIFY(maxwell && maxwell_contours.size() == patches.size(),
               "Maxwell surface response was not configured!");
-  MFEM_ASSERT(maxwell_anchors.size() == patches.size(),
+  MFEM_ASSERT(maxwell_conductor_anchors.size() == patches.size(),
               "Inconsistent Maxwell response anchor count!");
   MFEM_VERIFY(E.HasImag(), "Maxwell surface response requires a complex electric field!");
 
@@ -5974,12 +8739,12 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   result.kR = std::abs(omega) * matching_radius / minimum_wave_speed;
   result.matched_length_fraction = matched_length_fraction;
   result.corner_neighborhood_fraction = corner_neighborhood_fraction;
-  result.matched_length_fraction_by_interface =
-      matched_length_fraction_by_interface;
+  result.matched_length_fraction_by_interface = matched_length_fraction_by_interface;
   result.corner_neighborhood_fraction_by_interface =
       corner_neighborhood_fraction_by_interface;
   result.maximum_curvature_ratio = maximum_curvature_ratio;
   result.maximum_library_distance = maximum_library_distance;
+  result.boundary_law_verified = boundary_law_verified;
   for (const auto &model : models)
   {
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
@@ -6002,6 +8767,9 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   double weighted_loop_residual_squared = 0.0;
   double loop_response_weight = 0.0;
   double failed_loop_response_weight = 0.0;
+  double weighted_trace_closure_spread_squared = 0.0;
+  double trace_closure_response_weight = 0.0;
+  double failed_trace_closure_response_weight = 0.0;
   Vector fixed_flux_real, fixed_flux_imag, workspace;
   for (std::size_t patch_index = 0; patch_index < patches.size(); patch_index++)
   {
@@ -6030,6 +8798,17 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
         loop_integral += scale * integral;
         loop_scale += std::abs(integral);
       };
+      auto AddTrace = [&](int trace_index, double scale)
+      {
+        if (trace_index < 0)
+        {
+          return;
+        }
+        const std::complex<double> value = {trace_real[trace_index],
+                                            trace_imag[trace_index]};
+        loop_integral += scale * value;
+        loop_scale += std::abs(value);
+      };
       if (!path.closed)
       {
         AddLine(path.anchor_line);
@@ -6041,7 +8820,8 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
       if (!path.closed)
       {
         AddLine(path.end_line);
-        AddLine(path.conductor_line, -path.closure_sign);
+        AddTrace(path.start_conductor_trace, -1.0);
+        AddTrace(path.end_conductor_trace, 1.0);
       }
       if (loop_scale > 0.0)
       {
@@ -6075,8 +8855,19 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
           patch.weight * HermitianForm(matrix, fixed_flux_real, fixed_flux_imag);
       result.fabricated_surface_energy[interface] += fixed_trace_energy;
       result.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
-      patch_response_energy +=
+      const double weight =
           std::max(std::abs(fixed_trace_energy), std::abs(fixed_flux_energy));
+      patch_response_energy += weight;
+      if (weight > 0.0)
+      {
+        const double spread = std::abs(fixed_trace_energy - fixed_flux_energy) / weight;
+        weighted_trace_closure_spread_squared += weight * spread * spread;
+        trace_closure_response_weight += weight;
+        if (spread > maximum_trace_closure_spread)
+        {
+          failed_trace_closure_response_weight += weight;
+        }
+      }
     }
     double path_scale_squared = 0.0;
     for (const auto &[residual, scale_squared] : path_diagnostics)
@@ -6099,12 +8890,15 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
     }
   }
   std::vector<double> reduction;
-  reduction.reserve(5 + 2 * result.fabricated_surface_energy.size());
+  reduction.reserve(8 + 2 * result.fabricated_surface_energy.size());
   reduction.push_back(result.domain_correction);
   reduction.push_back(result.domain_correction_fixed_flux);
   reduction.push_back(weighted_loop_residual_squared);
   reduction.push_back(loop_response_weight);
   reduction.push_back(failed_loop_response_weight);
+  reduction.push_back(weighted_trace_closure_spread_squared);
+  reduction.push_back(trace_closure_response_weight);
+  reduction.push_back(failed_trace_closure_response_weight);
   for (const auto &[interface, fixed_trace] : result.fabricated_surface_energy)
   {
     reduction.push_back(fixed_trace);
@@ -6117,12 +8911,22 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   weighted_loop_residual_squared = reduction[i++];
   loop_response_weight = reduction[i++];
   failed_loop_response_weight = reduction[i++];
+  weighted_trace_closure_spread_squared = reduction[i++];
+  trace_closure_response_weight = reduction[i++];
+  failed_trace_closure_response_weight = reduction[i++];
   if (loop_response_weight > 0.0)
   {
     result.response_weighted_loop_residual =
         std::sqrt(weighted_loop_residual_squared / loop_response_weight);
     result.loop_response_failure_fraction =
         failed_loop_response_weight / loop_response_weight;
+  }
+  if (trace_closure_response_weight > 0.0)
+  {
+    result.response_weighted_trace_closure_spread =
+        std::sqrt(weighted_trace_closure_spread_squared / trace_closure_response_weight);
+    result.trace_closure_response_failure_fraction =
+        failed_trace_closure_response_weight / trace_closure_response_weight;
   }
   Mpi::GlobalMax(1, &result.loop_residual, fespace.GetComm());
   for (auto &[interface, fixed_trace] : result.fabricated_surface_energy)
@@ -6142,7 +8946,6 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
   // Fixed-trace and fixed-flux closures are both admissible in postprocessing-only
   // correction. A material difference between them means that the unresolved
   // fabricated field is not determined accurately enough by the thin-model trace.
-  constexpr double maximum_trace_closure_spread = 0.05;
   for (const auto &[interface, fixed_trace] : result.fabricated_surface_energy)
   {
     const auto fixed_flux = result.fabricated_surface_energy_fixed_flux.find(interface);
@@ -6156,16 +8959,21 @@ SurfaceResponseOperator::GetMaxwellResponse(const GridFunction &E,
                    std::abs(fixed_trace - fixed_flux->second) / scale);
     }
   }
-  result.confident = result.kR <= maximum_kR &&
-                     result.response_weighted_loop_residual <=
-                         maximum_weighted_loop_residual &&
-                     result.loop_response_failure_fraction <=
-                         maximum_loop_response_failure_fraction &&
-                     result.matched_length_fraction >= minimum_coverage &&
-                     result.corner_neighborhood_fraction <= maximum_corner_fraction &&
-                     result.maximum_curvature_ratio <= maximum_curvature &&
-                     result.maximum_library_distance <= maximum_library_match_distance &&
-                     result.maximum_trace_closure_spread <= maximum_trace_closure_spread;
+  result.closure_independent_confident =
+      result.kR <= maximum_kR &&
+      result.response_weighted_loop_residual <= maximum_weighted_loop_residual &&
+      result.loop_response_failure_fraction <= maximum_loop_response_failure_fraction &&
+      result.matched_length_fraction >= minimum_coverage &&
+      result.corner_neighborhood_fraction <= maximum_corner_fraction &&
+      result.maximum_curvature_ratio <= maximum_curvature &&
+      result.maximum_library_distance <= maximum_library_match_distance &&
+      result.boundary_law_verified;
+  result.confident =
+      result.closure_independent_confident &&
+      result.maximum_trace_closure_spread <= maximum_trace_closure_spread &&
+      result.response_weighted_trace_closure_spread <= maximum_trace_closure_spread &&
+      result.trace_closure_response_failure_fraction <=
+          maximum_trace_closure_response_failure_fraction;
   return result;
 }
 

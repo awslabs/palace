@@ -1504,7 +1504,8 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       patch_data.origin = patch.at("Origin");
       patch_data.axis_u = patch.at("AxisU");
       patch_data.axis_v = patch.at("AxisV");
-      patch_data.reference = patch.value("Reference", std::array<double, 3>{0.0, 0.0, 0.0});
+      patch_data.conductor_references = {
+          patch.value("Reference", std::array<double, 3>{0.0, 0.0, 0.0})};
       return patch_data;
     };
 

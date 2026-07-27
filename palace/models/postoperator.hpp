@@ -252,11 +252,13 @@ protected:
 
   mutable Measurement measurement_cache;
 
-  // Optional PEC Maxwell surface response correction. The ordinary measurement cache and
+  // Optional Maxwell surface response correction. The ordinary measurement cache and
   // surface-Q.csv remain the raw thin-metal result.
   std::unique_ptr<SurfaceResponseOperator> surface_response_op;
   const ComplexVector *surface_response_corrected_field = nullptr;
   const ComplexVector *surface_response_corrected_flux = nullptr;
+  std::optional<std::complex<double>> surface_response_corrected_frequency;
+  std::optional<double> surface_response_corrected_mode_overlap;
   struct MaxwellSurfaceResponseMeasurement
   {
     struct Interface
@@ -273,9 +275,12 @@ protected:
     double corrected_normalization_energy = 0.0;
     double corrected_normalization_energy_fixed_flux = 0.0;
     double self_consistent_normalization_energy = 0.0;
+    std::complex<double> self_consistent_frequency = 0.0;
+    double self_consistent_mode_overlap = 0.0;
     bool has_self_consistent = false;
     std::map<int, Interface> interfaces;
     SurfaceResponseOperator::MaxwellResponse confidence;
+    SurfaceResponseOperator::MaxwellResponse self_consistent_confidence;
   };
   mutable std::optional<MaxwellSurfaceResponseMeasurement> surface_response_measurement;
   mutable std::unique_ptr<TableWithCSVFile> surface_Q_corrected;
@@ -444,12 +449,16 @@ public:
   // Supply a response-corrected Maxwell field for participation postprocessing while the
   // ordinary MeasureAndPrintAll field and CSV output remain the raw thin-metal result.
   template <ProblemType U = solver_t>
-  auto SetSurfaceResponseCorrectedField(const ComplexVector &e,
-                                        const ComplexVector *d = nullptr)
+  auto SetSurfaceResponseCorrectedField(
+      const ComplexVector &e, const ComplexVector *d = nullptr,
+      std::optional<std::complex<double>> frequency = std::nullopt,
+      std::optional<double> mode_overlap = std::nullopt)
       -> std::enable_if_t<U == ProblemType::DRIVEN || U == ProblemType::EIGENMODE, void>
   {
     surface_response_corrected_field = &e;
     surface_response_corrected_flux = d;
+    surface_response_corrected_frequency = frequency;
+    surface_response_corrected_mode_overlap = mode_overlap;
   }
 
   template <ProblemType U = solver_t>
