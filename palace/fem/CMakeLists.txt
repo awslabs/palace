@@ -16,6 +16,12 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/interpolator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/lumpedelement.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/mesh.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/singularassembly.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/singulardofs.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/singularelements.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/singularfield.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/singularfeatures.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/singularsystem.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/curlcurl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/curlcurlmass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/diffusion.cpp

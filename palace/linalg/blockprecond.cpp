@@ -131,4 +131,173 @@ void BlockDiagonalPreconditioner<OperType>::Mult(const VecType &x, VecType &y) c
 template class BlockDiagonalPreconditioner<Operator>;
 template class BlockDiagonalPreconditioner<ComplexOperator>;
 
+AdditivePatchSolver::AdditivePatchSolver(
+    int size, std::vector<mfem::Array<int>> &&patch_dofs,
+    std::vector<std::unique_ptr<mfem::Solver>> &&patch_solvers)
+  : mfem::Solver(size)
+{
+  MFEM_VERIFY(size > 0 && !patch_dofs.empty() && patch_dofs.size() == patch_solvers.size(),
+              "Additive patch correction requires compatible nonempty patches!");
+  patches.reserve(patch_dofs.size());
+  for (std::size_t i = 0; i < patch_dofs.size(); i++)
+  {
+    int previous = -1;
+    bool valid = patch_solvers[i] != nullptr;
+    for (const int dof : patch_dofs[i])
+    {
+      valid = valid && dof > previous && dof < size;
+      previous = dof;
+    }
+    MFEM_VERIFY(valid, "Additive patch correction received invalid true DOFs!");
+    patches.push_back({std::move(patch_dofs[i]), std::move(patch_solvers[i]), {}, {}});
+  }
+}
+
+void AdditivePatchSolver::Restrict(const Vector &source, Vector &destination,
+                                   const mfem::Array<int> &indices)
+{
+  destination.SetSize(indices.Size());
+  const auto *source_data = source.HostRead();
+  auto *destination_data = destination.HostWrite();
+  for (int i = 0; i < indices.Size(); i++)
+  {
+    destination_data[i] = source_data[indices[i]];
+  }
+}
+
+void AdditivePatchSolver::AddProlongation(const Vector &source, Vector &destination,
+                                          const mfem::Array<int> &indices)
+{
+  MFEM_VERIFY(source.Size() == indices.Size(),
+              "Additive patch correction has an inconsistent local size!");
+  const auto *source_data = source.HostRead();
+  auto *destination_data = destination.HostReadWrite();
+  for (int i = 0; i < indices.Size(); i++)
+  {
+    destination_data[indices[i]] += source_data[i];
+  }
+}
+
+void AdditivePatchSolver::SetPatchOperators(
+    const std::vector<const Operator *> &patch_operators)
+{
+  MFEM_VERIFY(patch_operators.size() == patches.size(),
+              "Additive patch correction received inconsistent operators!");
+  for (std::size_t i = 0; i < patches.size(); i++)
+  {
+    MFEM_VERIFY(patch_operators[i] &&
+                    patch_operators[i]->Height() == patches[i].dofs.Size() &&
+                    patch_operators[i]->Width() == patches[i].dofs.Size(),
+                "Additive patch correction received an invalid principal operator!");
+    patches[i].solver->SetOperator(*patch_operators[i]);
+  }
+}
+
+void AdditivePatchSolver::SetOperator(const Operator &full_operator)
+{
+  MFEM_VERIFY(full_operator.Height() == height && full_operator.Width() == width,
+              "Additive patch correction requires a compatible square operator!");
+}
+
+void AdditivePatchSolver::Mult(const Vector &x, Vector &y) const
+{
+  MFEM_VERIFY(x.Size() == width,
+              "Additive patch correction received an inconsistent vector!");
+  y.SetSize(height);
+  y = 0.0;
+  for (auto &patch : patches)
+  {
+    Restrict(x, patch.rhs, patch.dofs);
+    patch.correction.SetSize(patch.rhs.Size());
+    patch.solver->Mult(patch.rhs, patch.correction);
+    AddProlongation(patch.correction, y, patch.dofs);
+  }
+}
+
+SymmetricPatchSubspacePreconditioner::SymmetricPatchSubspacePreconditioner(
+    int standard_size, std::unique_ptr<mfem::Solver> &&standard_pc,
+    std::unique_ptr<mfem::Solver> &&patch_pc)
+  : Solver<Operator>(), standard_size(standard_size), standard_pc(std::move(standard_pc)),
+    patch_pc(std::move(patch_pc))
+{
+  MFEM_VERIFY(this->standard_pc && this->patch_pc,
+              "Symmetric patch correction requires two subspace solvers!");
+}
+
+void SymmetricPatchSubspacePreconditioner::SetSubspaceOperators(
+    const Operator &full_operator, const Operator &standard_operator)
+{
+  bool valid = full_operator.Height() == full_operator.Width() &&
+               standard_operator.Height() == standard_operator.Width() &&
+               standard_operator.Height() == standard_size && standard_size >= 0 &&
+               standard_size <= full_operator.Height();
+  MFEM_VERIFY(valid, "Invalid operators or true DOFs for symmetric patch correction!");
+
+  standard_pc->SetOperator(standard_operator);
+  patch_pc->SetOperator(full_operator);
+  SetOperator(full_operator);
+}
+
+void SymmetricPatchSubspacePreconditioner::SetOperator(const Operator &full_operator)
+{
+  MFEM_VERIFY(full_operator.Height() == full_operator.Width() &&
+                  standard_size <= full_operator.Height(),
+              "Symmetric patch correction requires a compatible square operator!");
+  op = &full_operator;
+  height = full_operator.Height();
+  width = full_operator.Width();
+}
+
+void SymmetricPatchSubspacePreconditioner::AddStandardCorrection(const Vector &source,
+                                                                 Vector &destination,
+                                                                 double coefficient) const
+{
+  MFEM_VERIFY(source.Size() == width && destination.Size() == height,
+              "Standard correction received an inconsistent vector size!");
+  standard_rhs.SetSize(standard_size);
+  const auto *source_data = source.HostRead();
+  auto *rhs_data = standard_rhs.HostWrite();
+  for (int i = 0; i < standard_size; i++)
+  {
+    rhs_data[i] = source_data[i];
+  }
+  standard_correction.SetSize(standard_size);
+  standard_pc->Mult(standard_rhs, standard_correction);
+  const auto *correction_data = standard_correction.HostRead();
+  auto *destination_data = destination.HostReadWrite();
+  for (int i = 0; i < standard_size; i++)
+  {
+    destination_data[i] += coefficient * correction_data[i];
+  }
+}
+
+void SymmetricPatchSubspacePreconditioner::UpdateResidual(const Vector &rhs,
+                                                          const Vector &solution) const
+{
+  action.SetSize(height);
+  residual.SetSize(height);
+  op->Mult(solution, action);
+  linalg::AXPBY(1.0, rhs, -1.0, action);
+  residual = action;
+}
+
+void SymmetricPatchSubspacePreconditioner::Mult(const Vector &x, Vector &y) const
+{
+  MFEM_VERIFY(op && x.Size() == width,
+              "Symmetric patch correction is not configured for this vector!");
+  y.SetSize(height);
+  y = 0.0;
+
+  AddStandardCorrection(x, y);
+  UpdateResidual(x, y);
+
+  patch_correction.SetSize(residual.Size());
+  patch_pc->Mult(residual, patch_correction);
+  linalg::AXPBY(1.0, patch_correction, 1.0, y);
+
+  action.SetSize(height);
+  op->Mult(patch_correction, action);
+  AddStandardCorrection(action, y, -1.0);
+}
+
 }  // namespace palace

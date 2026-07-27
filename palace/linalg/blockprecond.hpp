@@ -5,6 +5,8 @@
 #define PALACE_LINALG_BLOCK_PRECOND_HPP
 
 #include <memory>
+#include <vector>
+#include <mfem.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
@@ -62,6 +64,78 @@ public:
 
 using BlockDiagonalPreconditionerReal = BlockDiagonalPreconditioner<Operator>;
 using BlockDiagonalPreconditionerComplex = BlockDiagonalPreconditioner<ComplexOperator>;
+
+//
+// Additive correction on overlapping principal patches:
+//
+//   B_p = sum_i R_i^T B_i R_i.
+//
+// Every B_i must be symmetric positive definite for B_p to be symmetric
+// positive semidefinite. Positive definiteness on a target subspace requires
+// the caller to verify that the patches cover that subspace.
+//
+class AdditivePatchSolver : public mfem::Solver
+{
+private:
+  struct Patch
+  {
+    mfem::Array<int> dofs;
+    std::unique_ptr<mfem::Solver> solver;
+    mutable Vector rhs, correction;
+  };
+
+  std::vector<Patch> patches;
+
+  static void Restrict(const Vector &source, Vector &destination,
+                       const mfem::Array<int> &indices);
+  static void AddProlongation(const Vector &source, Vector &destination,
+                              const mfem::Array<int> &indices);
+
+public:
+  AdditivePatchSolver(int size, std::vector<mfem::Array<int>> &&patch_dofs,
+                      std::vector<std::unique_ptr<mfem::Solver>> &&patch_solvers);
+
+  void SetPatchOperators(const std::vector<const Operator *> &patch_operators);
+  void SetOperator(const Operator &full_operator) override;
+  void Mult(const Vector &x, Vector &y) const override;
+};
+
+//
+// Symmetric multiplicative subspace correction for an enriched SPD system.
+// The first subspace is the complete standard block, while the second is a
+// symmetric patch correction which is positive definite on the enrichment
+// complement. One application is
+//
+//   y = B_s r + (I - B_s A) B_p (I - A B_s) r.
+//
+// If B_s is SPD on the standard subspace and B_p is symmetric positive
+// semidefinite with positive action on every enrichment coordinate, this
+// composition is SPD on the full space. The left factor is the exact adjoint
+// of the right residual correction; no projection identity is assumed for the
+// approximate standard solver.
+//
+class SymmetricPatchSubspacePreconditioner : public Solver<Operator>
+{
+private:
+  int standard_size;
+  std::unique_ptr<mfem::Solver> standard_pc, patch_pc;
+  const Operator *op = nullptr;
+  mutable Vector residual, action, standard_rhs, standard_correction, patch_correction;
+
+  void AddStandardCorrection(const Vector &source, Vector &destination,
+                             double coefficient = 1.0) const;
+  void UpdateResidual(const Vector &rhs, const Vector &solution) const;
+
+public:
+  SymmetricPatchSubspacePreconditioner(int standard_size,
+                                       std::unique_ptr<mfem::Solver> &&standard_pc,
+                                       std::unique_ptr<mfem::Solver> &&patch_pc);
+
+  void SetSubspaceOperators(const Operator &full_operator,
+                            const Operator &standard_operator);
+  void SetOperator(const Operator &full_operator) override;
+  void Mult(const Vector &x, Vector &y) const override;
+};
 
 }  // namespace palace
 
