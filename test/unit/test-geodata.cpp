@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <array>
+#include <chrono>
+#include <fstream>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <utility>
@@ -15,8 +18,10 @@
 
 #include "utils/geodata.hpp"
 #include "utils/geodata_impl.hpp"
+#include "utils/iodata.hpp"
 
 #include "fem/interpolator.hpp"
+#include "fem/singularfeatures.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
@@ -54,6 +59,26 @@ std::unique_ptr<mfem::Mesh> TwoEdgeFanTetMesh()
   return mesh;
 }
 
+mfem::Mesh RectangleInternalSheetMesh()
+{
+  mfem::Mesh mesh(3, 6, 4, 2, 3);
+  mesh.AddVertex(0.0, 0.0, 0.0);
+  mesh.AddVertex(1.0, 0.0, 0.0);
+  mesh.AddVertex(0.0, 1.0, 0.0);
+  mesh.AddVertex(1.0, 1.0, 0.0);
+  mesh.AddVertex(0.5, 0.5, 1.0);
+  mesh.AddVertex(0.5, 0.5, -1.0);
+  mesh.AddTet(0, 1, 2, 4, 1);
+  mesh.AddTet(0, 2, 1, 5, 1);
+  mesh.AddTet(1, 3, 2, 4, 1);
+  mesh.AddTet(1, 2, 3, 5, 1);
+  mesh.AddBdrTriangle(0, 1, 2, 7);
+  mesh.AddBdrTriangle(1, 3, 2, 7);
+  mesh.FinalizeTopology();
+  mesh.Finalize(true, false);
+  return mesh;
+}
+
 bool ElementContainsEdge(const mfem::Element &el, int v0, int v1)
 {
   bool has_v0 = false, has_v1 = false;
@@ -77,6 +102,56 @@ void CheckVertex(const mfem::Mesh &mesh, int v, const std::array<double, 3> &coo
 }
 
 }  // namespace
+
+TEST_CASE("Singular internal sheets remain conforming during mesh loading",
+          "[geodata][singularfeatures][Serial]")
+{
+  const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+  const fs::path mesh_path =
+      fs::temp_directory_path() / fmt::format("palace-singular-sheet-{}.mesh", nonce);
+  {
+    auto mesh = RectangleInternalSheetMesh();
+    std::ofstream output(mesh_path);
+    REQUIRE(output.good());
+    output.precision(std::numeric_limits<double>::max_digits10);
+    mesh.Print(output);
+  }
+
+  auto MakeConfig = [&mesh_path](bool singular)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", mesh_path.string()}, {"AddInterfaceBoundaryElements", false}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries", {{"PEC", {{"Attributes", {7}}}}}},
+        {"Solver", json::object()}};
+    if (singular)
+    {
+      config["Solver"]["SingularElements"] = {{"Attributes", {7}}};
+    }
+    return config;
+  };
+
+  {
+    IoData iodata(MakeConfig(true), false);
+    auto mesh = mesh::Load(iodata, Mpi::World());
+    REQUIRE(mesh);
+    CHECK(mesh->GetNV() == 6);
+    CHECK(mesh->GetNBE() == 2);
+    CHECK(iodata.boundaries.cracked_attributes.count(7) == 0);
+    const auto features = fem::singular::ExtractSerialSheetFeatures(*mesh, {7});
+    CHECK_FALSE(features.Empty());
+  }
+  {
+    IoData iodata(MakeConfig(false), false);
+    auto mesh = mesh::Load(iodata, Mpi::World());
+    REQUIRE(mesh);
+    CHECK(mesh->GetNV() > 6);
+    CHECK(mesh->GetNBE() == 4);
+    CHECK(iodata.boundaries.cracked_attributes.count(7) == 1);
+  }
+  CHECK(fs::remove(mesh_path));
+}
 
 // TODO: Add this test when we can access MFEM_DATA_PATH from Spack
 // This requires MFEM to move to a CMake-based build system for spack.
@@ -463,6 +538,75 @@ TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
   REQUIRE(mesh::DeterminePeriodicVertexMapping(
               mesh, boundary_torus.periodic.boundary_pairs.front())
               .empty());
+}
+
+TEST_CASE("Mesh partition transports exact source serial entity IDs", "[geodata][Parallel]")
+{
+  if (Mpi::Size(Mpi::World()) == 1)
+  {
+    SUCCEED("Source-entity transport is exercised by the [Parallel] test run.");
+    return;
+  }
+  REQUIRE(Mpi::Size(Mpi::World()) == 2);
+
+  std::unique_ptr<mfem::Mesh> serial_mesh;
+  if (Mpi::Root(Mpi::World()))
+  {
+    serial_mesh = std::make_unique<mfem::Mesh>(3, 6, 4, 0, 3);
+    serial_mesh->AddVertex(0.0, 0.0, 0.0);
+    serial_mesh->AddVertex(1.0, 0.0, 0.0);
+    serial_mesh->AddVertex(0.0, 1.0, 0.0);
+    serial_mesh->AddVertex(1.0, 1.0, 0.0);
+    serial_mesh->AddVertex(0.5, 0.5, 1.0);
+    serial_mesh->AddVertex(0.5, 0.5, -1.0);
+    serial_mesh->AddTet(0, 1, 2, 4, 1);
+    serial_mesh->AddTet(0, 2, 1, 5, 1);
+    serial_mesh->AddTet(1, 3, 2, 4, 1);
+    serial_mesh->AddTet(1, 2, 3, 5, 1);
+    serial_mesh->FinalizeTopology();
+    serial_mesh->Finalize(true, false);
+  }
+
+  IoData iodata(Units(1.0, 1.0));
+  mesh::PartitionMetadata metadata;
+  auto parallel_mesh =
+      mesh::Partition(iodata, std::move(serial_mesh), Mpi::World(), &metadata);
+
+  REQUIRE(metadata.source_element_ids.size() ==
+          static_cast<std::size_t>(parallel_mesh->GetNE()));
+  REQUIRE(metadata.source_vertex_ids.size() ==
+          static_cast<std::size_t>(parallel_mesh->GetNV()));
+  CHECK(std::is_sorted(metadata.source_element_ids.begin(),
+                       metadata.source_element_ids.end()));
+  CHECK(
+      std::is_sorted(metadata.source_vertex_ids.begin(), metadata.source_vertex_ids.end()));
+
+  const std::array<std::array<std::int64_t, 4>, 4> source_vertices{
+      std::array<std::int64_t, 4>{0, 1, 2, 4}, std::array<std::int64_t, 4>{0, 1, 2, 5},
+      std::array<std::int64_t, 4>{1, 2, 3, 4}, std::array<std::int64_t, 4>{1, 2, 3, 5}};
+  std::array<int, 4> source_element_owners{};
+  for (int local_element = 0; local_element < parallel_mesh->GetNE(); local_element++)
+  {
+    const auto source_element = metadata.source_element_ids[local_element];
+    REQUIRE(source_element >= 0);
+    REQUIRE(source_element < static_cast<std::int64_t>(source_vertices.size()));
+    source_element_owners[source_element]++;
+
+    const auto &element = *parallel_mesh->GetElement(local_element);
+    std::array<std::int64_t, 4> mapped_vertices;
+    for (int i = 0; i < 4; i++)
+    {
+      mapped_vertices[i] = metadata.source_vertex_ids[element.GetVertices()[i]];
+    }
+    std::sort(mapped_vertices.begin(), mapped_vertices.end());
+    CHECK(mapped_vertices == source_vertices[source_element]);
+  }
+  Mpi::GlobalSum(static_cast<int>(source_element_owners.size()),
+                 source_element_owners.data(), Mpi::World());
+  for (int owners : source_element_owners)
+  {
+    CHECK(owners == 1);
+  }
 }
 
 TEST_CASE("Default IOData", "[iodata][Serial]")

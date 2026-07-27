@@ -3,10 +3,13 @@
 
 #include "ksp.hpp"
 
+#include <stdexcept>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
+#include "fem/singularsystem.hpp"
 #include "linalg/amg.hpp"
 #include "linalg/ams.hpp"
+#include "linalg/blockprecond.hpp"
 #include "linalg/cudss.hpp"
 #include "linalg/gmg.hpp"
 #include "linalg/jacobi.hpp"
@@ -257,6 +260,69 @@ MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata)
   return MatrixSymmetry::UNSYMMETRIC;
 }
 
+std::unique_ptr<KspSolver>
+MakeSingularPatchKspSolver(const IoData &iodata, FiniteElementSpaceHierarchy &fespaces,
+                           const Operator &full_operator, const Operator &standard_operator,
+                           const fem::singular::ParallelFeaturePatches &feature_patches)
+{
+  const auto &linear = iodata.solver.linear;
+  const MPI_Comm comm = fespaces.GetFinestFESpace().GetComm();
+  if (!UsesSingularPatchKspSolver(iodata))
+  {
+#if !defined(MFEM_USE_SUPERLU)
+    if (linear.type == LinearSolver::BOOMER_AMG)
+    {
+      Mpi::Warning(comm, "Singular feature-patch preconditioning requires SuperLU. "
+                         "Falling back to the "
+                         "configured monolithic preconditioner!\n");
+    }
+#endif
+    return std::make_unique<KspSolver>(iodata, fespaces);
+  }
+
+#if defined(MFEM_USE_SUPERLU)
+  auto standard_pc =
+      std::make_unique<BoomerAmgSolver>(linear.mg_cycle_it, linear.mg_smooth_it,
+                                        linear.amg_agg_coarsen, iodata.problem.verbose - 1);
+  std::vector<mfem::Array<int>> patch_dofs;
+  std::vector<std::unique_ptr<mfem::Solver>> patch_solvers;
+  std::vector<const Operator *> patch_operators;
+  patch_dofs.reserve(feature_patches.patches.size());
+  patch_solvers.reserve(feature_patches.patches.size());
+  patch_operators.reserve(feature_patches.patches.size());
+  for (const auto &patch : feature_patches.patches)
+  {
+    patch_dofs.push_back(patch.true_dofs);
+    patch_solvers.push_back(
+        std::make_unique<SuperLUSolver>(comm, linear.sym_factorization, linear.superlu_3d,
+                                        linear.reorder_reuse, iodata.problem.verbose - 1));
+    patch_operators.push_back(patch.matrix.get());
+  }
+  auto patch_pc = std::make_unique<AdditivePatchSolver>(
+      full_operator.Height(), std::move(patch_dofs), std::move(patch_solvers));
+  patch_pc->SetPatchOperators(patch_operators);
+  auto pc = std::make_unique<SymmetricPatchSubspacePreconditioner>(
+      standard_operator.Height(), std::move(standard_pc), std::move(patch_pc));
+  pc->SetSubspaceOperators(full_operator, standard_operator);
+
+  auto result = std::make_unique<KspSolver>(
+      ConfigureKrylovSolver<Operator>(linear, iodata.problem.verbose, comm), std::move(pc));
+  result->EnableTimer();
+  return result;
+#else
+  throw std::logic_error("Unreachable singular feature-patch solver configuration!");
+#endif
+}
+
+bool UsesSingularPatchKspSolver(const IoData &iodata)
+{
+#if defined(MFEM_USE_SUPERLU)
+  return iodata.solver.linear.type == LinearSolver::BOOMER_AMG;
+#else
+  return false;
+#endif
+}
+
 template <typename OperType>
 BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear,
                                        MatrixSymmetry pc_mat_sym, int verbose,
@@ -283,7 +349,8 @@ BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
 template <typename OperType>
 BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
                                        std::unique_ptr<Solver<OperType>> &&pc)
-  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false)
+  : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0),
+    ksp_mult_failures(0), use_timer(false)
 {
   if (this->pc)
   {
@@ -318,6 +385,7 @@ void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
   ksp->Mult(x, y);
   if (!ksp->GetConverged())
   {
+    ksp_mult_failures++;
     Mpi::Warning(
         ksp->GetComm(),
         "Linear solver did not converge, norm(Ax-b)/norm(b) = {:.3e} (norm(b) = {:.3e})!\n",

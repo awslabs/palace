@@ -271,6 +271,50 @@ IoData::IoData(const char *filename, bool print) : IoData(ParseAndValidate(filen
 
 void IoData::CheckConfiguration()
 {
+  if (solver.singular_elements.Enabled())
+  {
+    MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC,
+                "Singular elements are initially supported only for electrostatic "
+                "simulations!");
+    MFEM_VERIFY(solver.device == Device::CPU,
+                "Singular elements are initially supported only with Solver.Device = "
+                "\"CPU\"!");
+    std::vector<int> conductor_attributes = boundaries.pec.attributes;
+    for (const auto &[idx, terminal] : boundaries.terminal)
+    {
+      conductor_attributes.insert(conductor_attributes.end(), terminal.attributes.begin(),
+                                  terminal.attributes.end());
+    }
+    std::sort(conductor_attributes.begin(), conductor_attributes.end());
+    conductor_attributes.erase(
+        std::unique(conductor_attributes.begin(), conductor_attributes.end()),
+        conductor_attributes.end());
+    std::vector<int> unconstrained_attributes;
+    std::set_difference(solver.singular_elements.attributes.begin(),
+                        solver.singular_elements.attributes.end(),
+                        conductor_attributes.begin(), conductor_attributes.end(),
+                        std::back_inserter(unconstrained_attributes));
+    MFEM_VERIFY(
+        unconstrained_attributes.empty(),
+        "Singular-element attributes must also be electrostatic PEC/ground or terminal "
+        "boundary attributes! Missing conductor attributes: "
+            << fmt::format("{}", fmt::join(unconstrained_attributes, " ")));
+    const auto &refinement = model.refinement;
+    bool has_region_refinement = false;
+    for (const auto &box : refinement.GetBoxes())
+    {
+      has_region_refinement |= box.ref_levels > 0;
+    }
+    for (const auto &sphere : refinement.GetSpheres())
+    {
+      has_region_refinement |= sphere.ref_levels > 0;
+    }
+    MFEM_VERIFY(refinement.max_it == 0 && refinement.uniform_ref_levels == 0 &&
+                    !has_region_refinement,
+                "Singular elements do not yet support parallel uniform, region-based, "
+                "or adaptive mesh refinement!");
+  }
+
   // Check that the provided domain and boundary objects are all supported by the requested
   // problem type.
   if (problem.type == ProblemType::DRIVEN)
@@ -486,9 +530,10 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.mg_max_levels < 0)
   {
-    if (problem.type == ProblemType::BOUNDARYMODE)
+    if (problem.type == ProblemType::BOUNDARYMODE || solver.singular_elements.Enabled())
     {
-      // Default off for 2D boundary mode analysis (user can enable with MGMaxLevels > 1).
+      // Default off for 2D boundary mode analysis and singular enrichment. The latter
+      // has no prolongation operators for enrichment DOFs.
       solver.linear.mg_max_levels = 1;
     }
     else
@@ -496,6 +541,9 @@ void IoData::CheckConfiguration()
       solver.linear.mg_max_levels = 100;
     }
   }
+  MFEM_VERIFY(!solver.singular_elements.Enabled() || solver.linear.mg_max_levels == 1,
+              "Singular elements do not yet support geometric multigrid; set "
+              "Solver.Linear.MGMaxLevels = 1!");
   if (solver.linear.pc_mat_shifted < 0)
   {
     if (problem.type == ProblemType::DRIVEN && solver.linear.type == LinearSolver::AMS)

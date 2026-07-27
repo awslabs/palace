@@ -450,6 +450,17 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
   }
 }
 
+void ConcretizeSingularElements(const config::SingularElementsData &singular,
+                                json &j_singular)
+{
+  ApplyEntries(j_singular, {{"Attributes", singular.attributes},
+                            {"Order", singular.order},
+                            {"QuadratureOrder", singular.quadrature_order},
+                            {"AbsTol", singular.abs_tol},
+                            {"RelTol", singular.rel_tol},
+                            {"MaxSubdivisions", singular.max_subdivisions}});
+}
+
 }  // namespace
 
 json IoData::ConcretizeDefaults(const IoData &iodata, json config)
@@ -487,6 +498,15 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
     j_solver["Linear"] = json::object();
   }
   ConcretizeLinear(iodata.solver.linear, j_solver["Linear"]);
+  if (iodata.solver.singular_elements.Enabled())
+  {
+    if (!j_solver.contains("SingularElements"))
+    {
+      j_solver["SingularElements"] = json::object();
+    }
+    ConcretizeSingularElements(iodata.solver.singular_elements,
+                               j_solver["SingularElements"]);
+  }
 
   switch (iodata.problem.type)
   {

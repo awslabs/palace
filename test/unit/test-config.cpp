@@ -924,6 +924,68 @@ TEST_CASE("ParseStringAsDirection", "[config][Serial]")
 
 TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 {
+  SECTION("Singular elements parse and concretize explicit numerical controls")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", {{"PEC", {{"Attributes", {7, 8}}}}}},
+                   {"Solver",
+                    {{"SingularElements",
+                      {{"Attributes", {7, 8}},
+                       {"Order", 3},
+                       {"QuadratureOrder", 10},
+                       {"AbsTol", 1.0e-8},
+                       {"RelTol", 2.0e-8},
+                       {"MaxSubdivisions", 11}}}}}};
+
+    IoData iodata(config, false);
+    const auto &singular = iodata.solver.singular_elements;
+    CHECK(singular.Enabled());
+    CHECK(singular.attributes == std::vector<int>{7, 8});
+    CHECK(singular.order == 3);
+    CHECK(singular.quadrature_order == 10);
+    CHECK(singular.abs_tol == 1.0e-8);
+    CHECK(singular.rel_tol == 2.0e-8);
+    CHECK(singular.max_subdivisions == 11);
+    CHECK(iodata.solver.device == Device::CPU);
+    CHECK(iodata.solver.linear.mg_max_levels == 1);
+
+    config = IoData::ConcretizeDefaults(iodata, config);
+    const auto &j_singular = config["Solver"]["SingularElements"];
+    CHECK(j_singular["Attributes"] == json::array({7, 8}));
+    CHECK(j_singular["Order"].get<int>() == 3);
+    CHECK(j_singular["QuadratureOrder"].get<int>() == 10);
+    CHECK(j_singular["AbsTol"].get<double>() == 1.0e-8);
+    CHECK(j_singular["RelTol"].get<double>() == 2.0e-8);
+    CHECK(j_singular["MaxSubdivisions"].get<int>() == 11);
+    CHECK(ValidateConfig(config).empty());
+
+    auto gaps =
+        SchemaCoverageGaps("/properties/Solver/properties/SingularElements", j_singular);
+    INFO("Solver.SingularElements missing keys: " << json(gaps).dump());
+    CHECK(gaps.empty());
+  }
+
+  SECTION("Singular elements defaults remain reproducible")
+  {
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", {{"PEC", {{"Attributes", {7}}}}}},
+                   {"Solver", {{"SingularElements", {{"Attributes", {7}}}}}}};
+
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+    const auto &j_singular = config["Solver"]["SingularElements"];
+    CHECK(j_singular["Order"].get<int>() == 1);
+    CHECK(j_singular["QuadratureOrder"].get<int>() == 8);
+    CHECK(j_singular["AbsTol"].get<double>() == 2.0e-6);
+    CHECK(j_singular["RelTol"].get<double>() == 2.0e-6);
+    CHECK(j_singular["MaxSubdivisions"].get<int>() == 9);
+    CHECK(ValidateConfig(config).empty());
+  }
+
   SECTION("Electrostatic resolves linear solver sentinels")
   {
     json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -1646,6 +1708,94 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                                        /*skip=*/{"MaterialAxes"});
     INFO("Domains.Materials[] missing keys: " << json(mat_gaps).dump());
     CHECK(mat_gaps.empty());
+  }
+}
+
+TEST_CASE("Singular elements configuration rejects unsupported inputs", "[config][Serial]")
+{
+  auto MakeConfig = []()
+  {
+    return json{{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                {"Model", {{"Mesh", "test.msh"}}},
+                {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                {"Boundaries", {{"PEC", {{"Attributes", {7}}}}}},
+                {"Solver", {{"SingularElements", {{"Attributes", {7}}}}}}};
+  };
+
+  SECTION("Schema constraints")
+  {
+    auto config = MakeConfig();
+    config["Solver"]["SingularElements"]["Attributes"] = json::array({7, 7});
+    CHECK_FALSE(ValidateConfig(config).empty());
+
+    config = MakeConfig();
+    config["Solver"]["SingularElements"]["Attributes"] = json::array({0});
+    CHECK_FALSE(ValidateConfig(config).empty());
+
+    config = MakeConfig();
+    config["Solver"]["SingularElements"]["Order"] = 5;
+    CHECK_FALSE(ValidateConfig(config).empty());
+
+    config = MakeConfig();
+    config["Solver"]["SingularElements"]["MaxSubdivisions"] = 13;
+    CHECK_FALSE(ValidateConfig(config).empty());
+  }
+
+  SECTION("At least one quadrature tolerance is positive")
+  {
+    auto config = MakeConfig();
+    config["Solver"]["SingularElements"]["AbsTol"] = 0.0;
+    config["Solver"]["SingularElements"]["RelTol"] = 0.0;
+    CHECK_THROWS(IoData(config, false));
+  }
+
+  SECTION("Only electrostatic simulations are supported")
+  {
+    auto config = MakeConfig();
+    config["Problem"]["Type"] = "Driven";
+    config["Solver"]["Driven"] = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}};
+    CHECK_THROWS(IoData(config, false));
+  }
+
+  SECTION("Selected sheets must be electrostatic conductors")
+  {
+    auto config = MakeConfig();
+    config["Boundaries"] = json::object();
+    CHECK_THROWS(IoData(config, false));
+
+    config = MakeConfig();
+    config["Boundaries"] = {{"Terminal", {{{"Index", 1}, {"Attributes", {7}}}}}};
+    CHECK_NOTHROW(IoData(config, false));
+  }
+
+  SECTION("Parallel and adaptive refinement are rejected")
+  {
+    auto config = MakeConfig();
+    config["Model"]["Refinement"] = {{"UniformLevels", 1}};
+    CHECK_THROWS(IoData(config, false));
+
+    config = MakeConfig();
+    config["Model"]["Refinement"] = {{"MaxIts", 1}};
+    CHECK_THROWS(IoData(config, false));
+
+    config = MakeConfig();
+    config["Model"]["Refinement"] = {
+        {"Boxes",
+         {{{"Levels", 1},
+           {"Limits",
+            json::array({json::array({0.0, 0.0, 0.0}), json::array({1.0, 1.0, 1.0})})}}}}};
+    CHECK_THROWS(IoData(config, false));
+  }
+
+  SECTION("GPU execution and geometric multigrid are rejected")
+  {
+    auto config = MakeConfig();
+    config["Solver"]["Device"] = "GPU";
+    CHECK_THROWS(IoData(config, false));
+
+    config = MakeConfig();
+    config["Solver"]["Linear"] = {{"MGMaxLevels", 2}};
+    CHECK_THROWS(IoData(config, false));
   }
 }
 

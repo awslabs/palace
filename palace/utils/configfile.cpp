@@ -1412,6 +1412,18 @@ LinearSolverData::LinearSolverData(const json &linear)
   gs_orthog = linear.value("GSOrthogonalization", gs_orthog);
 }
 
+SingularElementsData::SingularElementsData(const json &singular_elements)
+{
+  attributes = singular_elements.at("Attributes").get<std::vector<int>>();
+  order = singular_elements.value("Order", order);
+  quadrature_order = singular_elements.value("QuadratureOrder", quadrature_order);
+  abs_tol = singular_elements.value("AbsTol", abs_tol);
+  rel_tol = singular_elements.value("RelTol", rel_tol);
+  max_subdivisions = singular_elements.value("MaxSubdivisions", max_subdivisions);
+  MFEM_VERIFY(abs_tol > 0.0 || rel_tol > 0.0,
+              "Singular-element quadrature requires AbsTol or RelTol to be positive!");
+}
+
 SolverData::SolverData(const json &solver)
 {
   order = solver.value("Order", order);
@@ -1428,6 +1440,7 @@ SolverData::SolverData(const json &solver)
   transient = ParseOptional<TransientSolverData>(solver, "Transient");
   boundary_mode = ParseOptional<BoundaryModeSolverData>(solver, "BoundaryMode");
   linear = ParseOptional<LinearSolverData>(solver, "Linear");
+  singular_elements = ParseOptional<SingularElementsData>(solver, "SingularElements");
 }
 
 int GetNumSteps(double start, double end, double delta)

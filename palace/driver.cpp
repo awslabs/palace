@@ -66,7 +66,14 @@ void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)
     auto smesh = mesh::Load(iodata, comm);
     solver->Preprocess(iodata, smesh, comm);
     std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
-    mfem_mesh.push_back(mesh::Partition(iodata, std::move(smesh), comm));
+    mesh::PartitionMetadata partition_metadata;
+    auto *metadata =
+        solver->RequiresSourceSerialMeshMetadata() ? &partition_metadata : nullptr;
+    mfem_mesh.push_back(mesh::Partition(iodata, std::move(smesh), comm, metadata));
+    if (metadata)
+    {
+      solver->ProcessPartitionedMesh(*mfem_mesh.back(), *metadata);
+    }
     mesh::RefineMesh(iodata, mfem_mesh);
     Mpi::Print(comm, "\n");
     memory_reporting::PrintMemoryUsage(comm, memory_reporting::GetCurrentMemoryStats(comm));

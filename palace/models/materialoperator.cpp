@@ -169,6 +169,7 @@ void MaterialOperator::SetUpMaterialProperties(
   attr_mat = -1;
 
   attr_is_isotropic.SetSize(nmats);
+  attr_epsilon_is_isotropic.SetSize(nmats);
 
   const int sdim = mesh.SpaceDimension();
   mat_muinv.SetSize(sdim, sdim, nmats);
@@ -263,6 +264,7 @@ void MaterialOperator::SetUpMaterialProperties(
                                internal::mat::IsIsotropic(data.epsilon_r) &&
                                internal::mat::IsIsotropic(data.tandelta) &&
                                internal::mat::IsIsotropic(data.sigma);
+    attr_epsilon_is_isotropic[count] = internal::mat::IsIsotropic(data.epsilon_r);
 
     // Map all attributes to this material property index.
     for (auto attr : data.attributes)

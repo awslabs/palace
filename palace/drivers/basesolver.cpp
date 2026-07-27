@@ -164,6 +164,11 @@ void BaseSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
   iodata.NondimensionalizeInputs(smesh);
 }
 
+void BaseSolver::ProcessPartitionedMesh(const mfem::ParMesh &,
+                                        const mesh::PartitionMetadata &) const
+{
+}
+
 void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   const auto &refinement = iodata.model.refinement;
@@ -321,6 +326,8 @@ void BaseSolver::SaveMetadata(const SolverType &ksp) const
     json meta = LoadMetadata(post_dir);
     meta["LinearSolver"]["TotalSolves"] = ksp.NumTotalMult();
     meta["LinearSolver"]["TotalIts"] = ksp.NumTotalMultIterations();
+    meta["LinearSolver"]["FailedSolves"] = ksp.NumFailedMult();
+    meta["LinearSolver"]["Converged"] = (ksp.NumFailedMult() == 0);
     WriteMetadata(post_dir, meta);
   }
 }
@@ -376,6 +383,17 @@ void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
   {
     nlohmann::json meta = LoadMetadata(post_dir);
     meta["Excitations"] = excitation_helper;
+    WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::SaveMetadata(std::string_view section, const nlohmann::json &data) const
+{
+  if (root)
+  {
+    MFEM_VERIFY(!section.empty(), "Metadata section name must not be empty!");
+    json meta = LoadMetadata(post_dir);
+    meta[section] = data;
     WriteMetadata(post_dir, meta);
   }
 }

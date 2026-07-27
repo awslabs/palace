@@ -184,6 +184,18 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol)
 // 3D cases. Order follows the retired Julia regression harness.
 // ===========================================================================
 
+TEST_CASE("singular_sheet_electrostatic", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  // Combined-field coefficients and near-edge samples retain small
+  // partition-dependent Krylov/reduction differences.
+  opts.rtol = 5.0e-9;
+  opts.atol = 1.0e-20;
+  opts.excluded_columns = {"true_dof"};
+  opts.linear_solver_policy = kForceDefaultSolver;
+  palace::test::RunRegressionCase("singular_sheet", "singular_sheet.json", "", opts);
+}
+
 TEST_CASE("spheres", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

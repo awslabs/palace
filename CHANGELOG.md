@@ -19,6 +19,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added an experimental `config["Solver"]["SingularElements"]` interface for additive
+    singular-element enrichment of selected internal zero-thickness PEC sheets in
+    electrostatic simulations. SchemaVer 1-4-0.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

@@ -73,7 +73,8 @@ std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
 // Given a serial mesh on the root processor and element partitioning, create a parallel
 // mesh over the given communicator. The serial mesh is destroyed when no longer needed.
 std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm, std::unique_ptr<mfem::Mesh> &,
-                                              const int *, const std::string & = "");
+                                              const int *, const std::string & = "",
+                                              mesh::PartitionMetadata * = nullptr);
 
 // Rebalance a conformal mesh across processor ranks, using the MeshPartitioner. Gathers the
 // mesh onto the root rank before scattering the partitioned mesh.
@@ -264,7 +265,7 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
 }
 
 std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::Mesh> smesh,
-                                         MPI_Comm comm)
+                                         MPI_Comm comm, PartitionMetadata *metadata)
 {
   BlockTimer bt0(Timer::MESH_PREPROCESS);
   const auto &refinement = iodata.model.refinement;
@@ -320,10 +321,14 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
   std::unique_ptr<mfem::ParMesh> pmesh;
   if (use_mesh_partitioner)
   {
-    pmesh = DistributeMesh(comm, smesh, partitioning.get(), iodata.problem.output);
+    pmesh =
+        DistributeMesh(comm, smesh, partitioning.get(), iodata.problem.output, metadata);
   }
   else
   {
+    MFEM_VERIFY(!metadata,
+                "Source-serial partition metadata is not supported for nonconforming "
+                "mesh distribution!");
     // Send the preprocessed serial mesh and partitioning as a byte string. The
     // serialized mesh can exceed INT_MAX bytes for large meshes, so use a 64-bit
     // length and a chunked broadcast.
@@ -2817,7 +2822,10 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
   const auto crack_boundary_attributes = [&iodata]()
   {
     auto cba = iodata.boundaries.attributes;
-    // Remove lumped port attributes.
+    // Remove lumped port attributes and singular-element PEC sheets. The latter must
+    // remain conforming: their two-sided tetrahedral incidence defines the sheet-edge
+    // enrichment, while the internal Dirichlet trace already imposes the conductor
+    // potential without duplicating mesh vertices.
     for (const auto &[idx, data] : iodata.boundaries.lumpedport)
     {
       for (const auto &e : data.elements)
@@ -2830,6 +2838,14 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
         cba.erase(std::remove_if(cba.begin(), cba.end(), attr_in_elem), cba.end());
       }
     }
+    const auto &singular_attributes = iodata.solver.singular_elements.attributes;
+    cba.erase(std::remove_if(cba.begin(), cba.end(),
+                             [&singular_attributes](int attr)
+                             {
+                               return std::binary_search(singular_attributes.begin(),
+                                                         singular_attributes.end(), attr);
+                             }),
+              cba.end());
     return cba;
   }();
 
@@ -3635,10 +3651,9 @@ std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &mesh, int size,
   return partitioning;
 }
 
-std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
-                                              std::unique_ptr<mfem::Mesh> &smesh,
-                                              const int *partitioning,
-                                              const std::string &output_dir)
+std::unique_ptr<mfem::ParMesh>
+DistributeMesh(MPI_Comm comm, std::unique_ptr<mfem::Mesh> &smesh, const int *partitioning,
+               const std::string &output_dir, mesh::PartitionMetadata *metadata)
 {
   // Take a serial mesh and partitioning on the root process and construct the global
   // parallel mesh. For now, prefer the MPI-based version to the file IO one. When
@@ -3651,13 +3666,47 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
   {
     mfem::MeshPartitioner partitioner(*smesh, Mpi::Size(comm),
                                       const_cast<int *>(partitioning));
-    std::vector<MPI_Request> send_requests(Mpi::Size(comm) - 1, MPI_REQUEST_NULL);
+    const int requests_per_rank = metadata ? 2 : 1;
+    std::vector<MPI_Request> send_requests(requests_per_rank * (Mpi::Size(comm) - 1),
+                                           MPI_REQUEST_NULL);
     std::vector<std::string> so;
     so.reserve(Mpi::Size(comm));
+    std::vector<std::vector<std::int64_t>> source_ids;
+    if (metadata)
+    {
+      source_ids.resize(Mpi::Size(comm));
+    }
     for (int i = 0; i < Mpi::Size(comm); i++)
     {
       mfem::MeshPart part;
       partitioner.ExtractPart(i, part);
+      if (metadata)
+      {
+        auto &ids = source_ids[i];
+        std::vector<std::int64_t> elements;
+        std::set<std::int64_t> vertices;
+        for (int element = 0; element < smesh->GetNE(); element++)
+        {
+          MFEM_VERIFY(partitioning[element] >= 0 && partitioning[element] < Mpi::Size(comm),
+                      "Mesh partition contains an invalid rank!");
+          if (partitioning[element] != i)
+          {
+            continue;
+          }
+          elements.push_back(element);
+          const auto &source = *smesh->GetElement(element);
+          vertices.insert(source.GetVertices(),
+                          source.GetVertices() + source.GetNVertices());
+        }
+        MFEM_VERIFY(vertices.size() == static_cast<std::size_t>(part.num_vertices) &&
+                        elements.size() == static_cast<std::size_t>(part.num_elements),
+                    "Mesh partition source-entity metadata is inconsistent!");
+        ids.reserve(2 + vertices.size() + elements.size());
+        ids.push_back(static_cast<std::int64_t>(vertices.size()));
+        ids.push_back(static_cast<std::int64_t>(elements.size()));
+        ids.insert(ids.end(), vertices.begin(), vertices.end());
+        ids.insert(ids.end(), elements.begin(), elements.end());
+      }
       std::ostringstream fo(std::stringstream::out);
       // fo << std::fixed;
       fo << std::scientific;
@@ -3670,8 +3719,27 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
         int slen = static_cast<int>(so[i].length());
         MFEM_VERIFY(so[i].length() == (std::size_t)slen,
                     "Overflow error distributing parallel mesh!");
-        MPI_Isend(so[i].data(), slen, MPI_CHAR, i, i, comm, &send_requests[i - 1]);
+        int request = requests_per_rank * (i - 1);
+        MPI_Isend(so[i].data(), slen, MPI_CHAR, i, i, comm, &send_requests[request]);
+        if (metadata)
+        {
+          const int nids = static_cast<int>(source_ids[i].size());
+          MFEM_VERIFY(source_ids[i].size() == static_cast<std::size_t>(nids),
+                      "Overflow error distributing mesh source-entity IDs!");
+          MPI_Isend(source_ids[i].data(), nids, MPI_INT64_T, i, Mpi::Size(comm) + i, comm,
+                    &send_requests[request + 1]);
+        }
       }
+    }
+    if (metadata)
+    {
+      const auto &ids = source_ids[0];
+      const auto num_vertices = static_cast<std::size_t>(ids[0]);
+      const auto num_elements = static_cast<std::size_t>(ids[1]);
+      metadata->source_vertex_ids.assign(ids.begin() + 2, ids.begin() + 2 + num_vertices);
+      metadata->source_element_ids.assign(ids.begin() + 2 + num_vertices, ids.end());
+      MFEM_VERIFY(metadata->source_element_ids.size() == num_elements,
+                  "Root mesh source-entity metadata is inconsistent!");
     }
     smesh.reset();
     std::istringstream fi(so[0]);  // This is never compressed
@@ -3689,10 +3757,33 @@ std::unique_ptr<mfem::ParMesh> DistributeMesh(MPI_Comm comm,
     MPI_Get_count(&status, MPI_CHAR, &rlen);
     si.resize(rlen);
     MPI_Recv(si.data(), rlen, MPI_CHAR, 0, Mpi::Rank(comm), comm, MPI_STATUS_IGNORE);
+    if (metadata)
+    {
+      MPI_Probe(0, Mpi::Size(comm) + Mpi::Rank(comm), comm, &status);
+      int nids;
+      MPI_Get_count(&status, MPI_INT64_T, &nids);
+      MFEM_VERIFY(nids >= 2, "Invalid mesh source-entity metadata message!");
+      std::vector<std::int64_t> ids(nids);
+      MPI_Recv(ids.data(), nids, MPI_INT64_T, 0, Mpi::Size(comm) + Mpi::Rank(comm), comm,
+               MPI_STATUS_IGNORE);
+      MFEM_VERIFY(ids[0] >= 0 && ids[1] >= 0 &&
+                      ids[0] + ids[1] == static_cast<std::int64_t>(nids - 2),
+                  "Invalid mesh source-entity metadata sizes!");
+      const auto num_vertices = static_cast<std::size_t>(ids[0]);
+      metadata->source_vertex_ids.assign(ids.begin() + 2, ids.begin() + 2 + num_vertices);
+      metadata->source_element_ids.assign(ids.begin() + 2 + num_vertices, ids.end());
+    }
     std::istringstream fi(si);
     // std::istringstream fi(zlib::DecompressString(si));
     pmesh =
         std::make_unique<mfem::ParMesh>(comm, fi, refine, generate_edges, fix_orientation);
+  }
+  if (metadata)
+  {
+    MFEM_VERIFY(
+        metadata->source_vertex_ids.size() == static_cast<std::size_t>(pmesh->GetNV()) &&
+            metadata->source_element_ids.size() == static_cast<std::size_t>(pmesh->GetNE()),
+        "Partitioned mesh and source-entity metadata are inconsistent!");
   }
   return pmesh;
 }

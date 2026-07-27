@@ -17,6 +17,13 @@ namespace palace
 class FiniteElementSpaceHierarchy;
 class IoData;
 
+namespace fem::singular
+{
+
+struct ParallelFeaturePatches;
+
+}  // namespace fem::singular
+
 namespace config
 {
 
@@ -48,9 +55,9 @@ protected:
   std::unique_ptr<IterativeSolver<OperType>> ksp;
   std::unique_ptr<Solver<OperType>> pc;
 
-  // Counters for number of calls to Mult method for linear solves, and cumulative number
-  // of iterations.
-  mutable int ksp_mult, ksp_mult_it;
+  // Counters for number of calls to Mult method for linear solves, cumulative number of
+  // iterations, and failed solves.
+  mutable int ksp_mult, ksp_mult_it, ksp_mult_failures;
 
   // Enable timer contribution for Timer::KSP_PRECONDITIONER.
   bool use_timer;
@@ -66,12 +73,15 @@ public:
 
   int NumTotalMult() const { return ksp_mult; }
   int NumTotalMultIterations() const { return ksp_mult_it; }
+  int NumFailedMult() const { return ksp_mult_failures; }
 
   // Forward tolerance access to the underlying iterative solver.
   double GetRelTol() const { return ksp->GetRelTol(); }
   double GetAbsTol() const { return ksp->GetAbsTol(); }
   void SetRelTol(double tol) { ksp->SetRelTol(tol); }
   void SetAbsTol(double tol) { ksp->SetAbsTol(tol); }
+
+  void EnableTimer() { use_timer = true; }
 
   void SetOperators(const OperType &op, const OperType &pc_op);
 
@@ -80,6 +90,16 @@ public:
 
 using KspSolver = BaseKspSolver<Operator>;
 using ComplexKspSolver = BaseKspSolver<ComplexOperator>;
+
+// Configure the correctness-first electrostatic singular-element
+// preconditioner: symmetric standard-space AMG correction and an additive sum
+// of exact overlapping straight-feature corrections. The full system remains
+// in its original physical coefficient coordinates.
+std::unique_ptr<KspSolver>
+MakeSingularPatchKspSolver(const IoData &iodata, FiniteElementSpaceHierarchy &fespaces,
+                           const Operator &full_operator, const Operator &standard_operator,
+                           const fem::singular::ParallelFeaturePatches &feature_patches);
+bool UsesSingularPatchKspSolver(const IoData &iodata);
 
 }  // namespace palace
 

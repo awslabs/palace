@@ -399,6 +399,11 @@
         "BoundaryMode": {
           "$ref": "#/$defs/BoundaryMode"
         },
+        "SingularElements": {
+          "$ref": "#/$defs/SingularElements",
+          "title": "Singular Elements",
+          "description": "Experimental additive singular-element enrichment for selected internal zero-thickness PEC sheets. Initially supported only for three-dimensional electrostatic simulations on conforming affine tetrahedral meshes with isotropic materials."
+        },
         "Linear": {
           "$ref": "#/$defs/Linear",
           "title": "Linear Solver",
@@ -2772,6 +2777,64 @@
           "description": "Number of computed electric field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the entries in the computed capacitance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
           "minimum": 0,
           "default": 0
+        }
+      }
+    },
+    "SingularElements": {
+      "type": "object",
+      "title": "Singular Elements",
+      "description": "Configures additive singular tetrahedral basis functions for explicitly selected internal zero-thickness PEC sheets.",
+      "additionalProperties": false,
+      "required": [
+        "Attributes"
+      ],
+      "properties": {
+        "Attributes": {
+          "type": "array",
+          "description": "Nonempty set of internal PEC sheet boundary attributes whose topological perimeter is enriched with the zero-thickness sheet exponent `nu = 1/2`.",
+          "additionalItems": false,
+          "uniqueItems": true,
+          "minItems": 1,
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "Order": {
+          "type": "integer",
+          "description": "Interpolation order of the additive singular basis. This is independent of [`/Solver/Order`](@ref config-solver-order).",
+          "minimum": 1,
+          "maximum": 4,
+          "default": 1
+        },
+        "QuadratureOrder": {
+          "type": "integer",
+          "description": "Base tetrahedral quadrature order used by adaptive singular-element matrix integration.",
+          "minimum": 1,
+          "default": 8,
+          "x-palace-advanced": true
+        },
+        "AbsTol": {
+          "type": "number",
+          "description": "Entrywise absolute tolerance for adaptive singular-element matrix integration. At least one of `AbsTol` and `RelTol` must be positive.",
+          "minimum": 0.0,
+          "default": 2e-06,
+          "x-palace-advanced": true
+        },
+        "RelTol": {
+          "type": "number",
+          "description": "Entrywise relative tolerance for adaptive singular-element matrix integration. At least one of `AbsTol` and `RelTol` must be positive.",
+          "minimum": 0.0,
+          "default": 2e-06,
+          "x-palace-advanced": true
+        },
+        "MaxSubdivisions": {
+          "type": "integer",
+          "description": "Maximum recursive one-to-eight tetrahedral subdivision depth for adaptive singular-element matrix integration.",
+          "minimum": 1,
+          "maximum": 12,
+          "default": 9,
+          "x-palace-advanced": true
         }
       }
     },

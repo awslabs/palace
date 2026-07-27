@@ -5,8 +5,10 @@
 #define PALACE_DRIVERS_BASE_SOLVER_HPP
 
 #include <memory>
+#include <string_view>
 #include <vector>
 #include <fmt/os.h>
+#include <nlohmann/json_fwd.hpp>
 #include "fem/errorindicator.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/memoryreporting.hpp"
@@ -14,6 +16,7 @@
 namespace mfem
 {
 class Mesh;
+class ParMesh;
 }  // namespace mfem
 
 namespace palace
@@ -24,6 +27,11 @@ class IoData;
 class Mesh;
 class Timer;
 class PortExcitations;
+
+namespace mesh
+{
+struct PartitionMetadata;
+}  // namespace mesh
 
 //
 // Base driver class for all simulation types.
@@ -54,6 +62,12 @@ public:
   virtual void Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
                           MPI_Comm comm) const;
 
+  // Driver-specific access to exact source-serial entity IDs transported through mesh
+  // partitioning. Most solvers do not require this metadata.
+  virtual bool RequiresSourceSerialMeshMetadata() const { return false; }
+  virtual void ProcessPartitionedMesh(const mfem::ParMesh &mesh,
+                                      const mesh::PartitionMetadata &metadata) const;
+
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine paradigm.
   // Dispatches to the Solve method for the driver specific calculations.
   void SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const;
@@ -65,6 +79,7 @@ public:
   void SaveMetadata(const Timer &timer) const;
   void SaveMetadata(const memory_reporting::MemoryStats &peak_memory) const;
   void SaveMetadata(const PortExcitations &excitation_helper) const;
+  void SaveMetadata(std::string_view section, const nlohmann::json &data) const;
 };
 
 // Archive the current postprocessing output for an AMR iteration. Creates a subfolder

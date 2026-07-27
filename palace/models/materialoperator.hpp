@@ -41,7 +41,7 @@ private:
   // Are materials isotropic? True when all the material properties are effectively
   // scalar-valued (ie, true scalars or vectors with identical entries). Also true when a
   // material is isotropic, the intersection is true when all are isotropic.
-  mfem::Array<bool> attr_is_isotropic;
+  mfem::Array<bool> attr_is_isotropic, attr_epsilon_is_isotropic;
 
   // Flag for global domain attributes with nonzero loss tangent, electrical conductivity,
   // London penetration depth, or Floquet wave vector.
@@ -111,6 +111,10 @@ public:
   auto GetLightSpeedMax(int attr) const { return mat_c0_max[AttrToMat(attr)]; }
 
   bool IsIsotropic(int attr) const { return attr_is_isotropic[AttrToMat(attr)]; }
+  bool IsPermittivityIsotropic(int attr) const
+  {
+    return attr_epsilon_is_isotropic[AttrToMat(attr)];
+  }
 
   // Returns scalar (1x1) inverse permeability for 2D curl-curl (curl is scalar in 2D),
   // or the full matrix for 3D.

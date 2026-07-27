@@ -1121,6 +1121,27 @@ public:
   LinearSolverData(const json &linear);
 };
 
+struct SingularElementsData
+{
+public:
+  // Internal zero-thickness PEC sheet boundary attributes to enrich.
+  std::vector<int> attributes = {};
+
+  // Polynomial interpolation order of the additive singular basis.
+  int order = 1;
+
+  // Entrywise adaptive quadrature controls for singular element matrices.
+  int quadrature_order = 8;
+  double abs_tol = 2.0e-6;
+  double rel_tol = 2.0e-6;
+  int max_subdivisions = 9;
+
+  bool Enabled() const { return !attributes.empty(); }
+
+  SingularElementsData() = default;
+  SingularElementsData(const json &singular_elements);
+};
+
 struct SolverData
 {
 public:
@@ -1151,6 +1172,7 @@ public:
   TransientSolverData transient = {};
   BoundaryModeSolverData boundary_mode = {};
   LinearSolverData linear = {};
+  SingularElementsData singular_elements = {};
 
   SolverData() = default;
   SolverData(const json &solver);

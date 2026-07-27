@@ -3,6 +3,9 @@
 
 #include "laplaceoperator.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <set>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
@@ -18,11 +21,12 @@
 namespace palace
 {
 
-LaplaceOperator::LaplaceOperator(const config::BoundaryData &boundaries,
-                                 const config::SolverData &solver,
-                                 const std::vector<config::MaterialData> &materials,
-                                 ProblemType problem_type,
-                                 const std::vector<std::unique_ptr<Mesh>> &mesh)
+LaplaceOperator::LaplaceOperator(
+    const config::BoundaryData &boundaries, const config::SolverData &solver,
+    const std::vector<config::MaterialData> &materials, ProblemType problem_type,
+    const std::vector<std::unique_ptr<Mesh>> &mesh,
+    const fem::singular::FeatureTopology *singular_features,
+    const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids)
   : print_hdr(true),
     dbc_attr(SetUpBoundaryProperties(boundaries.pec, boundaries.terminal, *mesh.back())),
     h1_fecs(fem::ConstructFECollections<mfem::H1_FECollection>(
@@ -39,8 +43,23 @@ LaplaceOperator::LaplaceOperator(const config::BoundaryData &boundaries,
     rt_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
         solver.linear.estimator_mg ? solver.linear.mg_max_levels : 1, mesh, rt_fecs)),
     mat_op(materials, boundaries.periodic, problem_type, *mesh.back()),
-    source_attr_lists(ConstructSources(boundaries.terminal))
+    source_attr_lists(ConstructSources(boundaries.terminal)),
+    singular_features(singular_features), source_vertex_ids(source_vertex_ids),
+    standard_order(solver.order), singular_order(solver.singular_elements.order),
+    singular_assembly_options{
+        solver.singular_elements.quadrature_order, solver.singular_elements.abs_tol,
+        solver.singular_elements.rel_tol, solver.singular_elements.max_subdivisions}
 {
+  MFEM_VERIFY((singular_features == nullptr) == (source_vertex_ids == nullptr),
+              "Singular feature topology and source vertex IDs must be supplied together!");
+  MFEM_VERIFY(!singular_features ||
+                  (solver.singular_elements.Enabled() &&
+                   singular_features->elements.size() ==
+                       static_cast<std::size_t>(mesh.back()->GetNE()) &&
+                   source_vertex_ids->size() ==
+                       static_cast<std::size_t>(mesh.back()->Get().GetNV())),
+              "Singular feature topology does not match the electrostatic solve mesh!");
+
   // Print essential BC information.
   if (dbc_attr.Size())
   {
@@ -49,10 +68,12 @@ LaplaceOperator::LaplaceOperator(const config::BoundaryData &boundaries,
   }
 }
 
-LaplaceOperator::LaplaceOperator(const IoData &iodata,
-                                 const std::vector<std::unique_ptr<Mesh>> &mesh)
+LaplaceOperator::LaplaceOperator(
+    const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh,
+    const fem::singular::FeatureTopology *singular_features,
+    const std::vector<fem::singular::GlobalVertexId> *source_vertex_ids)
   : LaplaceOperator(iodata.boundaries, iodata.solver, iodata.domains.materials,
-                    iodata.problem.type, mesh)
+                    iodata.problem.type, mesh, singular_features, source_vertex_ids)
 {
 }
 
@@ -179,6 +200,97 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
   }
 }
 
+SingularOperatorDiagnostics BuildSingularOperatorDiagnostics(
+    const mfem::HypreParMatrix &matrix, int standard_local_size,
+    const fem::singular::ParallelDofNumbering &numbering,
+    const fem::singular::AdaptiveAssemblyOptions &options, int standard_order,
+    int singular_order, std::size_t local_quadrature_leaf_count,
+    int local_quadrature_maximum_depth, std::size_t local_duffy_table_entries,
+    std::size_t local_duffy_cache_hits)
+{
+  const auto hypre_max = static_cast<std::size_t>(std::numeric_limits<HYPRE_BigInt>::max());
+  if (local_quadrature_leaf_count > hypre_max || local_duffy_table_entries > hypre_max ||
+      local_duffy_cache_hits > hypre_max)
+  {
+    throw std::overflow_error("Singular quadrature diagnostics overflow!");
+  }
+  HYPRE_BigInt quadrature_leaf_count =
+      static_cast<HYPRE_BigInt>(local_quadrature_leaf_count);
+  HYPRE_BigInt duffy_table_entries = static_cast<HYPRE_BigInt>(local_duffy_table_entries);
+  HYPRE_BigInt duffy_cache_hits = static_cast<HYPRE_BigInt>(local_duffy_cache_hits);
+  int quadrature_maximum_depth = local_quadrature_maximum_depth;
+  Mpi::GlobalSum(1, &quadrature_leaf_count, matrix.GetComm());
+  Mpi::GlobalMax(1, &quadrature_maximum_depth, matrix.GetComm());
+  Mpi::GlobalMax(1, &duffy_table_entries, matrix.GetComm());
+  Mpi::GlobalSum(1, &duffy_cache_hits, matrix.GetComm());
+
+  mfem::Vector diagonal;
+  matrix.GetDiag(diagonal);
+  bool valid =
+      standard_local_size >= 0 &&
+      numbering.h1.owned_size <= std::numeric_limits<int>::max() &&
+      diagonal.Size() == standard_local_size + static_cast<int>(numbering.h1.owned_size);
+  std::array<double, 2> diagonal_minimum{std::numeric_limits<double>::infinity(),
+                                         std::numeric_limits<double>::infinity()};
+  std::array<double, 2> diagonal_maximum{0.0, 0.0};
+  std::array<HYPRE_BigInt, 2> diagonal_count{0, 0};
+  if (valid)
+  {
+    for (int i = 0; i < diagonal.Size(); i++)
+    {
+      const double value = diagonal[i];
+      if (!std::isfinite(value) || !(value > 0.0))
+      {
+        valid = false;
+        break;
+      }
+      const int block = (i < standard_local_size) ? 0 : 1;
+      diagonal_minimum[block] = std::min(diagonal_minimum[block], value);
+      diagonal_maximum[block] = std::max(diagonal_maximum[block], value);
+      diagonal_count[block]++;
+    }
+  }
+  Mpi::GlobalAnd(1, &valid, matrix.GetComm());
+  if (!valid)
+  {
+    throw std::runtime_error(
+        "Singular stiffness matrix has invalid local dimensions or diagonal entries!");
+  }
+  Mpi::GlobalMin(2, diagonal_minimum.data(), matrix.GetComm());
+  Mpi::GlobalMax(2, diagonal_maximum.data(), matrix.GetComm());
+  Mpi::GlobalSum(2, diagonal_count.data(), matrix.GetComm());
+  if (diagonal_count[0] != matrix.GetGlobalNumRows() - numbering.h1.global_size ||
+      diagonal_count[1] != numbering.h1.global_size ||
+      !std::all_of(diagonal_minimum.begin(), diagonal_minimum.end(),
+                   [](double value) { return std::isfinite(value) && value > 0.0; }))
+  {
+    throw std::runtime_error(
+        "Singular stiffness diagonal diagnostics have inconsistent global sizes!");
+  }
+
+  return {fem::singular::ReferenceIntegral::ConventionVersion,
+          standard_order,
+          singular_order,
+          options.quadrature_order,
+          options.absolute_tolerance,
+          options.relative_tolerance,
+          options.maximum_subdivisions,
+          quadrature_leaf_count,
+          quadrature_maximum_depth,
+          duffy_table_entries,
+          duffy_cache_hits,
+          numbering.h1.global_size,
+          numbering.nd.global_size,
+          diagonal_minimum[0],
+          diagonal_maximum[0],
+          diagonal_maximum[0] / diagonal_minimum[0],
+          diagonal_minimum[1],
+          diagonal_maximum[1],
+          diagonal_maximum[1] / diagonal_minimum[1],
+          std::max(diagonal_maximum[0], diagonal_maximum[1]) /
+              std::min(diagonal_minimum[0], diagonal_minimum[1])};
+}
+
 }  // namespace
 
 std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
@@ -192,6 +304,124 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
                                            mat_op.GetPermittivityReal());
   BilinearForm k(GetH1Space());
   k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
+  if (HasSingularEnrichment())
+  {
+    singular_dofs =
+        std::make_unique<fem::singular::DofTopology>(fem::singular::BuildLocalDofTopology(
+            GetMesh(), *singular_features, *source_vertex_ids, singular_order));
+    singular_numbering = std::make_unique<fem::singular::ParallelDofNumbering>(
+        fem::singular::BuildParallelDofNumbering(GetComm(), *singular_dofs));
+
+    std::vector<fem::singular::IsotropicMaterialCoefficients> materials(GetMesh().GetNE(),
+                                                                        {1.0, 1.0});
+    for (int element = 0; element < GetMesh().GetNE(); element++)
+    {
+      const auto &incidence = singular_features->elements[element];
+      if (incidence.nodes.empty() && incidence.edges.empty())
+      {
+        continue;
+      }
+      const int attribute = GetMesh().Get().GetAttribute(element);
+      MFEM_VERIFY(mat_op.IsPermittivityIsotropic(attribute),
+                  "Singular electrostatic enrichment initially requires isotropic "
+                  "permittivity in every enriched tetrahedron! Domain attribute: "
+                      << attribute);
+      materials[element].electric = mat_op.GetPermittivityReal(attribute)(0, 0);
+    }
+
+    auto local_enrichment = fem::singular::AssembleLocalSparseH1EnrichmentMatrices(
+        *singular_dofs, GetH1Space().Get(), materials, singular_assembly_options);
+    auto parallel_enrichment = fem::singular::AssembleParallelSparseH1EnrichmentMatrices(
+        local_enrichment, *singular_numbering, GetH1Space().Get());
+
+    auto standard_stiffness =
+        ParOperator(k.FullAssemble(skip_zeros), GetH1Space()).StealParallelAssemble();
+    auto unconstrained = fem::singular::BuildParallelEnrichedOperator(*standard_stiffness,
+                                                                      parallel_enrichment);
+    singular_unconstrained_stiffness =
+        std::make_unique<mfem::HypreParMatrix>(*unconstrained);
+    singular_stiffness_enrichment_error =
+        std::move(parallel_enrichment.enrichment_enrichment_estimated_absolute_error);
+    singular_stiffness_coupling_error =
+        std::move(parallel_enrichment.standard_enrichment_estimated_absolute_error);
+    singular_diagnostics =
+        std::make_unique<SingularOperatorDiagnostics>(BuildSingularOperatorDiagnostics(
+            *singular_unconstrained_stiffness, GetH1Space().GetTrueVSize(),
+            *singular_numbering, singular_assembly_options, standard_order, singular_order,
+            local_enrichment.total_quadrature_leaf_count,
+            local_enrichment.maximum_subdivision_depth,
+            local_enrichment.duffy_reference_table_entries,
+            local_enrichment.duffy_reference_cache_hits));
+
+    auto enrichment_gradient =
+        fem::singular::BuildParallelEnrichmentGradient(GetComm(), *singular_numbering);
+    const auto &standard_gradient_operator =
+        GetNDSpace().GetDiscreteInterpolator(GetH1Space());
+    const auto *standard_gradient =
+        dynamic_cast<const ParOperator *>(&standard_gradient_operator);
+    MFEM_VERIFY(standard_gradient,
+                "Singular electrostatics requires an assembled standard gradient!");
+    singular_gradient = fem::singular::BuildParallelEnrichedGradient(
+        standard_gradient->ParallelAssemble(), *enrichment_gradient);
+
+    auto enrichment_essential = fem::singular::GetEssentialH1TrueDofs(
+        GetComm(), *singular_features, *singular_dofs, *singular_numbering);
+    auto constrained_blocks = fem::singular::BuildParallelConstrainedOperatorBlocks(
+        *standard_stiffness, parallel_enrichment, dbc_tdof_lists.back(),
+        enrichment_essential);
+    auto dirichlet = fem::singular::BuildParallelDirichletSystem(
+        std::move(unconstrained), GetH1Space().GetTrueVSize(), dbc_tdof_lists.back(),
+        enrichment_essential);
+    const auto feature_membership =
+        fem::singular::BuildH1DofFeatureMembership(*singular_features, *singular_dofs);
+    auto feature_patches = fem::singular::BuildParallelFeaturePatches(
+        *dirichlet.constrained, *constrained_blocks.standard_enrichment,
+        GetH1Space().GetTrueVSize(), feature_membership, singular_numbering->h1,
+        singular_features->features.size());
+    singular_constrained_standard_stiffness =
+        std::move(constrained_blocks.standard_standard);
+    singular_diagnostics->feature_patch_count = feature_patches.patches.size();
+    singular_diagnostics->feature_patch_sum_standard_dofs =
+        feature_patches.sum_global_standard_dofs;
+    singular_diagnostics->feature_patch_sum_enrichment_dofs =
+        feature_patches.sum_global_enrichment_dofs;
+    singular_diagnostics->feature_patch_maximum_standard_dofs =
+        feature_patches.maximum_global_standard_dofs;
+    singular_diagnostics->feature_patch_maximum_enrichment_dofs =
+        feature_patches.maximum_global_enrichment_dofs;
+    singular_diagnostics->feature_patch_minimum_enrichment_multiplicity =
+        feature_patches.minimum_enrichment_multiplicity;
+    singular_diagnostics->feature_patch_maximum_enrichment_multiplicity =
+        feature_patches.maximum_enrichment_multiplicity;
+    singular_feature_patches = std::move(feature_patches);
+    singular_eliminated_stiffness = std::move(dirichlet.eliminated);
+    singular_essential_true_dofs = std::move(dirichlet.essential_true_dofs);
+
+    Mpi::Print(" Singular H1 enrichment: {:d} global true DOFs, {:d} adaptive "
+               "quadrature leaves (maximum depth = {:d}), {:d} cached Duffy tables "
+               "per rank maximum ({:d} cache hits)\n",
+               singular_numbering->h1.global_size,
+               singular_diagnostics->quadrature_leaf_count,
+               singular_diagnostics->quadrature_maximum_depth,
+               singular_diagnostics->duffy_reference_table_maximum_entries,
+               singular_diagnostics->duffy_reference_cache_hits);
+    Mpi::Print(" Singular stiffness diagonal spread: standard = {:.3e}, enrichment = "
+               "{:.3e}, combined = {:.3e}\n",
+               singular_diagnostics->standard_diagonal_spread,
+               singular_diagnostics->enrichment_diagonal_spread,
+               singular_diagnostics->combined_diagonal_spread);
+    Mpi::Print(
+        " Singular feature patches: {:d} patches, maximum {:d} global standard + "
+        "{:d} global enrichment true DOFs, enrichment overlap multiplicity {:d}-{:d}\n",
+        singular_diagnostics->feature_patch_count,
+        singular_diagnostics->feature_patch_maximum_standard_dofs,
+        singular_diagnostics->feature_patch_maximum_enrichment_dofs,
+        singular_diagnostics->feature_patch_minimum_enrichment_multiplicity,
+        singular_diagnostics->feature_patch_maximum_enrichment_multiplicity);
+    print_hdr = false;
+    return std::move(dirichlet.constrained);
+  }
+
   // k.AssembleQuadratureData();
   auto k_vec = k.Assemble(GetH1Spaces(), skip_zeros);
   auto K = std::make_unique<MultigridOperator>(GetH1Spaces().GetNumLevels());
@@ -222,6 +452,98 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
   return K;
 }
 
+const Operator &LaplaceOperator::GetGradMatrix() const
+{
+  if (HasSingularEnrichment())
+  {
+    MFEM_VERIFY(singular_gradient,
+                "Singular gradient requested before stiffness assembly!");
+    return *singular_gradient;
+  }
+  return GetNDSpace().GetDiscreteInterpolator(GetH1Space());
+}
+
+const mfem::HypreParMatrix &LaplaceOperator::GetUnconstrainedStiffnessMatrix() const
+{
+  MFEM_VERIFY(singular_unconstrained_stiffness,
+              "Unconstrained stiffness is available only after singular assembly!");
+  return *singular_unconstrained_stiffness;
+}
+
+const mfem::HypreParMatrix &LaplaceOperator::GetSingularStandardStiffnessMatrix() const
+{
+  MFEM_VERIFY(singular_constrained_standard_stiffness,
+              "Constrained standard stiffness is available only after singular "
+              "assembly!");
+  return *singular_constrained_standard_stiffness;
+}
+
+const fem::singular::ParallelFeaturePatches &
+LaplaceOperator::GetSingularFeaturePatches() const
+{
+  MFEM_VERIFY(!singular_feature_patches.patches.empty(),
+              "Feature patches are available only after singular assembly!");
+  return singular_feature_patches;
+}
+
+const SingularOperatorDiagnostics &LaplaceOperator::GetSingularDiagnostics() const
+{
+  MFEM_VERIFY(singular_diagnostics,
+              "Singular diagnostics are available only after singular assembly!");
+  return *singular_diagnostics;
+}
+
+double LaplaceOperator::GetSingularStiffnessEnergyErrorBound(
+    const mfem::Vector &combined_true_dofs) const
+{
+  const int standard_size = GetH1Space().GetTrueVSize();
+  const int enrichment_size =
+      singular_numbering ? static_cast<int>(singular_numbering->h1.owned_size) : 0;
+  bool valid = singular_stiffness_enrichment_error && singular_stiffness_coupling_error &&
+               combined_true_dofs.Size() == standard_size + enrichment_size &&
+               singular_stiffness_enrichment_error->Height() == enrichment_size &&
+               singular_stiffness_enrichment_error->Width() == enrichment_size &&
+               singular_stiffness_coupling_error->Height() == standard_size &&
+               singular_stiffness_coupling_error->Width() == enrichment_size;
+  Mpi::GlobalAnd(1, &valid, GetComm());
+  if (!valid)
+  {
+    throw std::invalid_argument(
+        "Singular stiffness error bound received inconsistent assembly data!");
+  }
+
+  Vector standard(standard_size), enrichment(enrichment_size);
+  for (int i = 0; i < standard_size; i++)
+  {
+    standard[i] = std::abs(combined_true_dofs[i]);
+  }
+  for (int i = 0; i < enrichment_size; i++)
+  {
+    enrichment[i] = std::abs(combined_true_dofs[standard_size + i]);
+  }
+
+  Vector enrichment_error(enrichment_size), coupling_error(standard_size);
+  singular_stiffness_enrichment_error->Mult(enrichment, enrichment_error);
+  singular_stiffness_coupling_error->Mult(enrichment, coupling_error);
+  const double bound = linalg::Dot(GetComm(), enrichment, enrichment_error) +
+                       2.0 * linalg::Dot(GetComm(), standard, coupling_error);
+  if (!std::isfinite(bound) || bound < 0.0)
+  {
+    throw std::runtime_error(
+        "Singular stiffness energy error bound is nonfinite or negative!");
+  }
+  return bound;
+}
+
+std::unique_ptr<fem::singular::EnrichedH1FieldEvaluator>
+LaplaceOperator::GetSingularFieldEvaluator()
+{
+  MFEM_VERIFY(HasSingularEnrichment() && singular_dofs && singular_numbering,
+              "Singular field evaluation is available only after singular assembly!");
+  return std::make_unique<fem::singular::EnrichedH1FieldEvaluator>(
+      *singular_dofs, *singular_numbering, GetH1Space().Get());
+}
+
 void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
                                           Vector &RHS)
 {
@@ -238,12 +560,30 @@ void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,
   x.ProjectBdrCoefficient(one, source_marker);  // Values are only correct on master
 
   // Eliminate the essential BC to get the RHS vector.
-  X.SetSize(GetH1Space().GetTrueVSize());
-  RHS.SetSize(GetH1Space().GetTrueVSize());
+  X.SetSize(K.Width());
+  RHS.SetSize(K.Height());
   X.UseDevice(true);
   RHS.UseDevice(true);
   X = 0.0;
   RHS = 0.0;
+  if (HasSingularEnrichment())
+  {
+    MFEM_VERIFY(singular_eliminated_stiffness && singular_essential_true_dofs.Size() > 0 &&
+                    K.Width() >= GetH1Space().GetTrueVSize(),
+                "Singular Dirichlet system was not assembled!");
+    Vector standard_x(GetH1Space().GetTrueVSize());
+    x.ParallelProject(standard_x);
+    for (int i = 0; i < standard_x.Size(); i++)
+    {
+      X[i] = standard_x[i];
+    }
+    const auto *hypre_K = dynamic_cast<const mfem::HypreParMatrix *>(&K);
+    MFEM_VERIFY(hypre_K, "Singular LaplaceOperator requires an assembled Hypre matrix!");
+    hypre_K->EliminateBC(*singular_eliminated_stiffness, singular_essential_true_dofs, X,
+                         RHS);
+    return;
+  }
+
   x.ParallelProject(X);  // Restrict to the true dofs
   const auto *mg_K = dynamic_cast<const MultigridOperator *>(&K);
   const auto *PtAP_K = mg_K ? dynamic_cast<const ParOperator *>(&mg_K->GetFinestOperator())

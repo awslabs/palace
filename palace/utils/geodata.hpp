@@ -5,6 +5,7 @@
 #define PALACE_UTILS_GEODATA_HPP
 
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
@@ -24,6 +25,15 @@ namespace mesh
 // Functions for mesh related functionality.
 //
 
+// Exact source-serial entity IDs for one rank-local partition. These maps are
+// valid only for the ParMesh returned by the same Partition call and are
+// invalidated by refinement or rebalancing.
+struct PartitionMetadata
+{
+  std::vector<std::int64_t> source_vertex_ids;
+  std::vector<std::int64_t> source_element_ids;
+};
+
 // Load a serial mesh from disk and perform all serial-stage preparation: AMR compat
 // checks, cleanup, simplex/hex conversion, element reordering, serial uniform refinement,
 // region-based (box/sphere) refinement, boundary cracking, and finalization. Returns a
@@ -35,7 +45,8 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm);
 // Partition and distribute a serial mesh prepared by Load, producing a parallel mesh.
 // `smesh` is non-null only on loading ranks (see Load's contract).
 std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::Mesh> smesh,
-                                         MPI_Comm comm);
+                                         MPI_Comm comm,
+                                         PartitionMetadata *metadata = nullptr);
 
 // Convenience wrapper: Load followed by Partition with no Preprocess hook.
 std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);
