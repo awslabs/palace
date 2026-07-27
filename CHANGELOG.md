@@ -19,6 +19,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added libCEED-based GPU evaluation for domain and boundary visualization fields in
+    ParaView and grid function output, preserving native primary-field spaces and
+    discontinuous element-local derived fields
+    [PR 825](https://github.com/awslabs/palace/pull/825).
   - Added libCEED-based GPU evaluation for domain and boundary postprocessing
     functionals, avoiding host coefficient projection for energy, flux, current, port, and
     far-field reductions [PR 824](https://github.com/awslabs/palace/pull/824).
