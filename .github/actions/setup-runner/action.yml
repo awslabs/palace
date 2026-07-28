@@ -55,30 +55,39 @@ runs:
         }
         EOF
 
-    # This can sometimes interfere with sudo apt operations below. We don't
-    # really care about these updates anyway, as we spin up new instances all
-    # the time.
+    # A freshly booted runner races us: systemd's apt-daily / unattended-upgrade
+    # units kick off their own apt-get on boot and hold the dpkg lock, which
+    # makes the `apt-get install` steps below die with exit code 100.
+    #
+    # We prevent that by:
+    #   1. `systemctl stop` on the *services* blocks until the unit's whole
+    #      cgroup (children included) has drained, so nothing is left orphaned.
+    #   2. `DPkg::Lock::Timeout` tells apt to *wait* for the lock rather than
+    #      failing. It uses the same lock apt/dpkg do, so it is reliable where
+    #      `flock`/`rm` are not, and it covers every apt call in the job -- here
+    #      and in downstream actions (e.g. build-container installing podman).
     - name: Disable unattended upgrades
       shell: bash
       run: |
-        # Kill any running unattended upgrade processes
-        sudo pkill -9 -f unattended-upgr || true
-        sudo pkill -9 -f apt.systemd.daily || true
-        
-        # Stop and disable systemd services
-        sudo systemctl stop apt-daily.timer || true
-        sudo systemctl disable apt-daily.timer || true
-        sudo systemctl stop apt-daily-upgrade.timer || true
-        sudo systemctl disable apt-daily-upgrade.timer || true
-        sudo systemctl stop apt-daily.service || true
-        sudo systemctl stop apt-daily-upgrade.service || true
-        
-        # Remove lock files if they exist
-        sudo rm -f /var/lib/dpkg/lock-frontend
-        sudo rm -f /var/lib/dpkg/lock
+        # Stop the periodic apt units and unattended-upgrades. `systemctl stop`
+        # waits for the cgroup to drain, so any in-flight apt-get is gone (not
+        # merely orphaned) by the time this returns.
+        sudo systemctl stop apt-daily.timer apt-daily-upgrade.timer || true
+        sudo systemctl stop apt-daily.service apt-daily-upgrade.service || true
+        sudo systemctl stop unattended-upgrades.service || true
+
+        # Keep them from restarting for the life of the job.
+        sudo systemctl disable apt-daily.timer apt-daily-upgrade.timer || true
+
+        # Make every apt/apt-get call in this job wait (up to 10 min) for the
+        # dpkg lock instead of erroring out immediately with exit code 100.
+        echo 'DPkg::Lock::Timeout "600";' | sudo tee /etc/apt/apt.conf.d/99-lock-timeout
+
+        # Recover the dpkg database if a killed/interrupted upgrade left it
+        # half-configured. Safe now that the units above are stopped.
         sudo dpkg --configure -a || true
-        
-        # Disable in config
+
+        # Turn off the periodic download/upgrade config too.
         echo 'APT::Periodic::Update-Package-Lists "0";' | sudo tee /etc/apt/apt.conf.d/20auto-upgrades
         echo 'APT::Periodic::Unattended-Upgrade "0";' | sudo tee -a /etc/apt/apt.conf.d/20auto-upgrades
 
