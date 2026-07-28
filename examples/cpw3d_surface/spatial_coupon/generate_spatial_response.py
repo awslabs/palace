@@ -958,7 +958,50 @@ def write_plan_view_mask(path, facets):
     path.write_text("\n".join(lines) + "\n")
 
 
-def plan_view_boundary_loops(facets, radius, lower, upper):
+def classified_continuation_segments(geometry, frame, radius):
+    boundary = geometry.get("PlanViewBoundary")
+    if not boundary or not all(
+        "ContinuationSegments" in component for component in boundary
+    ):
+        return None
+
+    tolerance = 1.0e-9 * radius
+    result = []
+    for component in boundary:
+        conductor = int(component.get("Conductor", 0))
+        if conductor <= 0:
+            raise ValueError("Plan-view boundary has an invalid conductor")
+        for index, segment in enumerate(
+            component["ContinuationSegments"], start=1
+        ):
+            points = np.asarray(segment, dtype=float)
+            if (
+                points.shape != (2, 3)
+                or not np.all(np.isfinite(points))
+                or not np.all(points == np.rint(points))
+            ):
+                raise ValueError(
+                    "Plan-view continuation segment "
+                    f"{index} for conductor {conductor} is invalid"
+                )
+            local = (frame @ (tolerance * points).T).T
+            if abs(local[0, 2] - local[1, 2]) > tolerance:
+                raise ValueError(
+                    "Plan-view continuation segment is not on one process plane"
+                )
+            result.append(
+                {
+                    "Conductor": conductor,
+                    "Plane": float(np.mean(local[:, 2])),
+                    "Points": local[:, :2],
+                }
+            )
+    return result
+
+
+def plan_view_boundary_loops(
+    facets, radius, lower, upper, continuation_segments=None
+):
     tolerance = 1.0e-9 * radius
 
     def quantize(value):
@@ -1087,13 +1130,46 @@ def plan_view_boundary_loops(facets, radius, lower, upper):
                 ring.reverse()
                 points = np.asarray(ring, dtype=float) * tolerance
 
+            def on_segment(point, segment):
+                begin, end = segment
+                direction = end - begin
+                length = np.linalg.norm(direction)
+                if length <= tolerance:
+                    return False
+                offset = point - begin
+                distance = abs(
+                    direction[0] * offset[1]
+                    - direction[1] * offset[0]
+                ) / length
+                coordinate = np.dot(offset, direction) / length
+                return (
+                    distance <= 4.0 * tolerance
+                    and -4.0 * tolerance
+                    <= coordinate
+                    <= length + 4.0 * tolerance
+                )
+
             classes = []
             for begin, end in zip(ring, ring[1:] + ring[:1]):
-                continuation = (
-                    begin[0] == end[0] and begin[0] in (bounds[0], bounds[2])
-                ) or (
-                    begin[1] == end[1] and begin[1] in (bounds[1], bounds[3])
-                )
+                if continuation_segments is None:
+                    continuation = (
+                        begin[0] == end[0]
+                        and begin[0] in (bounds[0], bounds[2])
+                    ) or (
+                        begin[1] == end[1]
+                        and begin[1] in (bounds[1], bounds[3])
+                    )
+                else:
+                    local_begin = tolerance * np.asarray(begin, dtype=float)
+                    local_end = tolerance * np.asarray(end, dtype=float)
+                    continuation = any(
+                        segment["Conductor"] == conductor
+                        and abs(segment["Plane"] - plane_key * tolerance)
+                        <= tolerance
+                        and on_segment(local_begin, segment["Points"])
+                        and on_segment(local_end, segment["Points"])
+                        for segment in continuation_segments
+                    )
                 classes.append("Continuation" if continuation else "Physical")
             changed = True
             while changed and len(ring) > 3:
@@ -1230,7 +1306,13 @@ def main():
         write_plan_view_boundary(
             boundary_path,
             plan_view_boundary_loops(
-                facets, args.radius, lower, upper
+                facets,
+                args.radius,
+                lower,
+                upper,
+                classified_continuation_segments(
+                    coupon.get("Geometry", {}), frame, args.radius
+                ),
             ),
         )
     else:

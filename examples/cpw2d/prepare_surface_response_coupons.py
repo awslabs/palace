@@ -67,6 +67,18 @@ def slug(value):
     )
 
 
+def coupon_signature(requirement):
+    geometry = copy.deepcopy(requirement.get("Geometry", {}))
+    if "PlanViewBoundary" in geometry:
+        geometry.pop("PlanViewFacets", None)
+    return {
+        "Topology": requirement["Topology"],
+        "Geometry": geometry,
+        "BoundaryCondition": requirement.get("BoundaryCondition", {}),
+        "Interfaces": requirement.get("Interfaces", []),
+    }
+
+
 def coupon_id(requirement):
     topology = requirement["Topology"]
     geometry = requirement.get("Geometry", {})
@@ -82,12 +94,7 @@ def coupon_id(requirement):
             parts.append(f"{key.lower()}-{slug(geometry[key])}")
     digest = hashlib.sha256(
         json.dumps(
-            {
-                "Topology": topology,
-                "Geometry": geometry,
-                "BoundaryCondition": requirement.get("BoundaryCondition", {}),
-                "Interfaces": requirement.get("Interfaces", []),
-            },
+            coupon_signature(requirement),
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
@@ -162,12 +169,30 @@ def preparation(requirement):
 
 
 def plan_from_manifest(manifest_path, manifest, library_path, library, include_matched):
-    coupons = []
+    coupons = {}
+    signatures = {}
+    matching_radius = float(manifest["Library"]["MatchingRadius"])
     for requirement in manifest["Requirements"]:
         if not include_matched and requirement.get("Status") != "Missing":
             continue
+        geometry = requirement.get("Geometry", {})
+        facets = geometry.get("PlanViewFacets")
+        boundary = geometry.get("PlanViewBoundary")
+        if facets and boundary:
+            process_axis = (
+                1 if requirement["Topology"] == "SpatialEdgeCluster" else 2
+            )
+            if unclassified_plan_view_boundary(boundary) != (
+                canonical_plan_view_boundary(
+                    facets, matching_radius, process_axis
+                )
+            ):
+                raise ValueError(
+                    "Palace PlanViewBoundary does not match its exported facets"
+                )
+        identifier = coupon_id(requirement)
         coupon = {
-            "Id": coupon_id(requirement),
+            "Id": identifier,
             "Topology": requirement["Topology"],
             "Geometry": requirement.get("Geometry", {}),
             "Interfaces": requirement.get("Interfaces", []),
@@ -181,8 +206,30 @@ def plan_from_manifest(manifest_path, manifest, library_path, library, include_m
             coupon["SelectedModels"] = requirement["SelectedModels"]
         if "Reason" in requirement:
             coupon["CoverageReason"] = requirement["Reason"]
-        coupons.append(coupon)
-    coupons.sort(key=lambda coupon: coupon["Id"])
+        signature = coupon_signature(requirement)
+        if identifier in coupons:
+            if signatures[identifier] != signature:
+                raise ValueError(f"Coupon identifier collision for {identifier}")
+            existing = coupons[identifier]
+            for field in (
+                "Topology",
+                "Interfaces",
+                "BoundaryCondition",
+                "CoverageStatus",
+                "Preparation",
+                "SelectedModels",
+                "CoverageReason",
+            ):
+                if existing.get(field) != coupon.get(field):
+                    raise ValueError(
+                        f"Inconsistent repeated coupon {identifier}: {field}"
+                    )
+            existing["DeviceOccurrences"] += coupon["DeviceOccurrences"]
+            existing["DeviceEdgeLength"] += coupon["DeviceEdgeLength"]
+        else:
+            coupons[identifier] = coupon
+            signatures[identifier] = signature
+    coupons = sorted(coupons.values(), key=lambda coupon: coupon["Id"])
     return {
         "Version": 2,
         "SourceManifest": str(manifest_path),
@@ -1551,6 +1598,7 @@ def execute(plan, library_path, args):
             destination,
             "--name",
             args.name,
+            *(["--allow-empty"] if len(libraries) == 1 else []),
             *libraries,
         ]
     )

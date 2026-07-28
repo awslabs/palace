@@ -158,6 +158,32 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             self.assertEqual(path, seed.resolve())
             self.assertEqual(library["Models"], [])
 
+    def test_combiner_can_preserve_metadata_when_every_coupon_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed = root / "seed.json"
+            seed.write_text(
+                '{"Version": 3, "MatchingRadius": 2.0, '
+                '"Fabrication": {"InterfaceLayers": {}}, "Models": []}\n'
+            )
+            output = root / "combined"
+            with mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "combine_process_libraries.py",
+                    "--output",
+                    str(output),
+                    "--allow-empty",
+                    str(seed),
+                ],
+            ):
+                COMBINER.main()
+            combined = PREPARE.load_json(output / "process-library.json")
+            self.assertEqual(combined["Version"], 3)
+            self.assertEqual(combined["Models"], [])
+            self.assertEqual(combined["Fabrication"], {"InterfaceLayers": {}})
+
     def test_material_options_emit_one_value_per_flag(self):
         options = PREPARE.material_options(process_parameters())
         self.assertEqual(
@@ -629,6 +655,49 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             "PlanViewFacets", coarse_spec["Coupon"]["Geometry"]
         )
 
+    def test_spatial_plan_aggregates_equivalent_mask_triangulations(self):
+        corners = [
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [2.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+        center = [1.0, 0.5, 0.0]
+        coarse = endpoint_coupon()
+        coarse["Geometry"]["PlanViewFacets"] = [
+            {"Conductor": 1, "Points": [corners[0], corners[1], corners[2]]},
+            {"Conductor": 1, "Points": [corners[0], corners[2], corners[3]]},
+        ]
+        refined = endpoint_coupon()
+        refined["Geometry"]["PlanViewFacets"] = [
+            {
+                "Conductor": 1,
+                "Points": [center, corners[index], corners[(index + 1) % 4]],
+            }
+            for index in range(4)
+        ]
+        boundary = PREPARE.canonical_plan_view_boundary(
+            coarse["Geometry"]["PlanViewFacets"], 2.0, 2
+        )
+        coarse["Geometry"]["PlanViewBoundary"] = boundary
+        refined["Geometry"]["PlanViewBoundary"] = boundary
+        coarse.update({"Status": "Missing", "Count": 2, "TotalEdgeLength": 3.0})
+        refined.update({"Status": "Missing", "Count": 5, "TotalEdgeLength": 7.0})
+
+        plan = PREPARE.plan_from_manifest(
+            Path("requirements.json"),
+            {
+                "Library": {"MatchingRadius": 2.0},
+                "Requirements": [coarse, refined],
+            },
+            Path("library.json"),
+            {"Fabrication": {}},
+            False,
+        )
+        self.assertEqual(plan["Summary"]["CouponCount"], 1)
+        self.assertEqual(plan["Coupons"][0]["DeviceOccurrences"], 7)
+        self.assertEqual(plan["Coupons"][0]["DeviceEdgeLength"], 10.0)
+
     def test_spatial_cache_boundary_rejects_malformed_facets(self):
         with self.assertRaisesRegex(ValueError, "not on one process plane"):
             PREPARE.canonical_plan_view_boundary(
@@ -737,6 +806,66 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         second = loops[0]["Points"][(continuation + 1) % len(loops[0]["Points"])]
         self.assertEqual(first[0], 0.0)
         self.assertEqual(second[0], 0.0)
+
+    def test_spatial_boundary_loops_preserve_exported_classification(self):
+        facets = [
+            {
+                "Conductor": 1,
+                "Plane": 0.0,
+                "Points": [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0]],
+            },
+            {
+                "Conductor": 1,
+                "Plane": 0.0,
+                "Points": [[0.0, 0.0], [2.0, 1.0], [0.0, 1.0]],
+            },
+        ]
+        segments = [
+            {
+                "Conductor": 1,
+                "Plane": 0.0,
+                "Points": np.asarray([[2.0, 0.0], [2.0, 1.0]]),
+            }
+        ]
+        loops = SPATIAL.plan_view_boundary_loops(
+            facets,
+            1.0,
+            np.asarray([0.0, -1.0, -1.0]),
+            np.asarray([3.0, 2.0, 1.0]),
+            segments,
+        )
+        self.assertEqual(loops[0]["Classes"].count("Continuation"), 1)
+        continuation = loops[0]["Classes"].index("Continuation")
+        first = loops[0]["Points"][continuation]
+        second = loops[0]["Points"][
+            (continuation + 1) % len(loops[0]["Points"])
+        ]
+        self.assertEqual(first[0], 2.0)
+        self.assertEqual(second[0], 2.0)
+
+    def test_spatial_classified_boundary_transforms_to_mesher_frame(self):
+        geometry = endpoint_coupon()["Geometry"]
+        geometry["PlanViewBoundary"] = [
+            {
+                "Conductor": 1,
+                "Segments": [
+                    [[0, 0, 0], [1000000000, 0, 0]],
+                ],
+                "ContinuationSegments": [
+                    [[0, 0, 0], [1000000000, 0, 0]],
+                ],
+            }
+        ]
+        frame = SPATIAL.frame_from_geometry("Endpoint", geometry)
+        segments = SPATIAL.classified_continuation_segments(
+            geometry, frame, 1.0
+        )
+        self.assertEqual(len(segments), 1)
+        np.testing.assert_allclose(
+            segments[0]["Points"],
+            [[0.0, 0.0], [0.0, -1.0]],
+            atol=1.0e-15,
+        )
 
     def test_spatial_probe_failure_prevents_full_response_solves(self):
         args = SimpleNamespace(

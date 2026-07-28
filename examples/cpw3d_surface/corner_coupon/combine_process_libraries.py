@@ -82,6 +82,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--name", default="combined-fabrication-process")
+    parser.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help="Write a metadata-only version-3 library when no model qualified",
+    )
     parser.add_argument("libraries", type=Path, nargs="+")
     args = parser.parse_args()
 
@@ -158,7 +163,9 @@ def main():
                 model[field] = str(relative_directory / target.name)
             result["Models"].append(model)
 
-    if not result["Models"]:
+    if not result["Models"] and not (
+        args.allow_empty and version >= 3 and merged_fabrication is not None
+    ):
         raise ValueError("Combined library contains no response models")
 
     output = destination / "process-library.json"

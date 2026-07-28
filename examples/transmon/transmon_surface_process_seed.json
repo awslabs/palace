@@ -1,0 +1,29 @@
+{
+  "Version": 3,
+  "Name": "transmon-surface-preflight",
+  "MatchingRadius": 2.0,
+  "Fabrication": {
+    "LengthUnit": "um",
+    "MetalThickness": 0.1,
+    "OveretchDepth": 0.05,
+    "SidewallAngleDegrees": 80.0,
+    "TopRoundingRadius": 0.01,
+    "BottomRoundingRadius": 0.01,
+    "SubstratePermittivity": 11.47,
+    "InterfaceLayers": {
+      "SA": {
+        "Thickness": 0.002,
+        "Permittivity": 4.0
+      },
+      "MS": {
+        "Thickness": 0.002,
+        "Permittivity": 11.47
+      },
+      "MA": {
+        "Thickness": 0.002,
+        "Permittivity": 10.0
+      }
+    }
+  },
+  "Models": []
+}

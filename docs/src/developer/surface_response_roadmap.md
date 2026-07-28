@@ -42,10 +42,10 @@ The feature is complete for production when all of the following hold:
      unsupported signature and exits according to `UnmatchedPolicy`.
   3. The supported solver and boundary-condition matrix below is complete. Raw fields,
      raw participation, and the raw AMR sequence remain unchanged and available.
-  4. Isolated edges, close parallel edges, corners, smooth bends, endpoints, junctions,
-     and nonparallel or cross-layer interactions are either corrected by a qualified
-     local model or explicitly rejected. No geometric fallback silently invents a
-     fabricated conductor.
+  4. Isolated edges, close parallel edges, corners, smooth bends, trace caps and branch
+     intersections, and nonparallel or cross-layer interactions are either corrected by
+     a qualified local model or explicitly rejected. No geometric fallback silently
+     invents a fabricated conductor.
   5. Every reported corrected value carries coverage, trace/flux closure, electrical-size,
      boundary-law, curvature, library-distance, and solver-specific confidence data.
   6. Held-out coupon and independently fabricated device references satisfy the accuracy,
@@ -95,8 +95,9 @@ boundary-law parameters.
 | Rounded 90 degree convex/concave corner | Implemented | Implemented | Partial |
 | Arbitrary corner angle | Implemented matching | Missing | Missing |
 | Smooth curved edge | Piecewise linear | Reuses edge/corner models | Missing |
-| Endpoint | Implemented | Exact manifold mask | Incomplete |
-| Junction | Implemented | Exact manifold mask | Incomplete |
+| Manifold trace cap or T/cross mask | Corners, bends, and spatial clusters | Exact manifold mask | Incomplete |
+| Open-graph endpoint | Implemented matching | Requires an exact closed mask | Incomplete |
+| Nonmanifold junction | Implemented matching | Requires process regularization | Unsupported automatically |
 | Nonparallel local cluster | Exact signature | Implemented | Incomplete |
 | Cross-layer local cluster | Exact multi-slot signature | Implemented | Incomplete |
 | Exact plan-view conductor mask | Implemented | Classified manifold mask | Incomplete |
@@ -113,6 +114,8 @@ The following infrastructure is present:
     neighborhood classification.
   - Exact clipped plan-view masks for ambiguous spatial neighborhoods, canonicalized
     independently of surface triangulation.
+  - Coupon-plan aggregation by canonical plan-view boundary, so equivalent source-facet
+    triangulations retain one generated coupon and accumulate their occurrence count.
   - Classified physical and artificial continuation boundaries for exact endpoint,
     junction, and spatial masks. Fabricated coupons loft the complete manifold footprint,
     taper and round physical boundaries, and apply overetch only along those boundaries.
@@ -135,32 +138,38 @@ The following infrastructure is present:
 **Goal:** A generated spatial coupon must represent the fabrication of every physical
 plan-view boundary in its exact mask.
 
-**Implementation status:** Complete for classified manifold masks. Endpoint, junction,
-and spatial-cluster preflight exports exact facets and classified boundaries; generation
-applies one explicit regularization policy and rejects open or nonmanifold masks.
-Physical qualification of these coupon families remains part of P1.
+**Implementation status:** Complete for classified manifold masks. Spatial-cluster
+preflight exports exact facets and classified boundaries; generation applies one
+explicit regularization policy and rejects open or nonmanifold masks. A planar trace
+cap or T/cross branch is represented by its manifold perimeter and therefore appears as
+corners, smooth chains, and possibly an exact spatial cluster, not as a degree-one or
+degree-three perimeter vertex. Physical qualification of these coupon families remains
+part of P1.
 
   1. Represent mask boundaries as classified physical edges rather than vertical clipping
      planes.
   2. Apply process taper and top/bottom rounding to every exterior mask boundary.
-  3. Give endpoints an explicit cap model derived from the device mask and process rules.
-  4. Give junctions the exact local mask and apply the same fabrication transform to all
-     branches and reentrant boundaries.
+  3. Derive trace caps from the exact device mask rather than inventing a closure from an
+     open edge arm.
+  4. Apply the same fabrication transform to every branch and reentrant boundary of a
+     manifold T/cross mask.
   5. Reject nonmanifold masks, unresolved features, and incompatible cross-layer masks
      before meshing.
   6. Include the regularization policy in the coupon cache key and process-library model.
 
-**Exit gate:** Endpoint, T-junction, cross-junction, and overlapping nonparallel-cluster
-coupons generate thin and fabricated meshes without invented boundaries. Probe and
-held-out qualification either pass or produce a stable, signature-specific failure.
-Masks whose components touch only at a point are intentionally unsupported: they fail
-closed until a process-specific nonmanifold regularization policy is defined.
+**Exit gate:** Trace-cap, T/cross-mask, and overlapping nonparallel-cluster coupons
+generate thin and fabricated meshes without invented boundaries. Probe and held-out
+qualification either pass or produce a stable, signature-specific failure. A graph
+endpoint must carry an exact closed mask. Masks whose components touch only at a point
+remain unsupported until a process-specific nonmanifold regularization policy is
+defined.
 
 ### P1: Complete local coupon families
 
   1. Add arbitrary convex and concave corner angles.
   2. Add radius interpolation studies for rounded corners and smooth bends.
-  3. Qualify endpoints and junctions over cap radius, branch angle, and branch width.
+  3. Qualify manifold trace caps and T/cross masks over cap radius, branch angle, and
+     branch width using corner, curved-edge, and exact spatial-cluster models.
   4. Qualify parallel clusters with three or more edges over separation and conductor
      ownership.
   5. Qualify nonparallel and cross-layer clusters over angle, offset, and layer spacing.

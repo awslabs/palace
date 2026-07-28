@@ -254,10 +254,24 @@ The input process library may be a metadata-only version-3 seed with an empty
 coupon. Palace accepts an empty library only for geometry preflight; an ordinary
 correction run still requires at least one qualified model.
 
+For a practical 3D classification fixture, prepare the checked-in coarse transmon
+without changing its solve configuration:
+
+```text
+python3 ../transmon/prepare_surface_response_preflight.py \
+  --output /tmp/transmon-surface-preflight.json
+palace --surface-response-preflight /tmp/transmon-surface-preflight.json
+```
+
+The helper resolves the existing mesh path and attaches
+`transmon_surface_process_seed.json`, but does not run an eigenmode solve or create
+fabrication-resolved device geometry.
+
 The plan routes isolated and paired edges, parallel multi-edge clusters, 90
-degree convex and concave corners, endpoints, junctions, and exact spatial edge
-clusters to candidate canonical coupon builders. Unsupported corner angles
-remain explicitly identified in `coupon-plan.json`.
+degree convex and concave corners, and exact spatial edge clusters to candidate
+canonical coupon builders. It retains an explicit endpoint or junction requirement
+only when the manifest provides the required classified closed mask. Unsupported
+corner angles remain explicitly identified in `coupon-plan.json`.
 
 For a PEC process library, generate, qualify, cache, and merge all missing
 coupons with:
@@ -287,14 +301,15 @@ merged into `library/process-library.json`; `qualification-manifest.json`
 records every source report. `--force` invalidates completed solves as well as
 the qualification result.
 
-Candidate spatial coupons are deliberately fail-closed. A degree-one endpoint
-or higher-degree junction specifies the incident edge arms, but not an
-independent fabricated plan-view cap or junction-rounding model. If that sharp
-geometry leaves the interface response unconverged, the p-order probe fails and
-the entry is not merged. A process library must not promote such a canonical
-coupon merely because its response matrix and held-out trace are algebraically
-consistent. Exact spatial-cluster requirements currently describe local edge
-segments and their inward metal sides. If those half-strip descriptions overlap
+Candidate spatial coupons are deliberately fail-closed. For a manifold planar
+metal sheet, the perimeter has degree two everywhere: a trace cap or T/cross
+branch is represented by corners, smooth chains, and possibly an exact spatial
+cluster, not by a graph `Endpoint` or `Junction`. Degree-one and degree-three
+perimeter vertices do not arise from an ordinary manifold sheet. Automatic
+generation never invents their closure: it requires an exact closed mask and
+rejects point-touch or otherwise nonmanifold masks. Exact spatial-cluster
+requirements describe local edge segments and their inward metal sides. If
+those half-strip descriptions overlap
 for different conductors, they do not uniquely reconstruct the device's local
 plan-view mask. Palace preflight therefore extracts the connected metal sheets,
 clips their surface facets to the interaction neighborhood, and attaches them to
@@ -302,17 +317,18 @@ the spatial signature automatically. The mesher uses those facets as an exact
 plan-view mask; an older edge-only signature still fails closed when its inferred
 conductors overlap. The cache hashes a canonical boundary of the facet union, not
 the source triangulation, so equivalent mesh refinement does not create a new
-coupon family. The generated spatial model stores this `PlanViewBoundary`.
+coupon family. The planner also aggregates requirements with the same canonical
+boundary before execution. The generated spatial model stores this `PlanViewBoundary`.
 During correction, Palace clips rank-local metal facets and exchanges only the
 small neighborhood polygons. A masked model must match the same canonical
 boundary; legacy edge-only models remain available only for unambiguous
 nonoverlapping conductor strips.
 
-The fabricated spatial mesher first applies the configured edge-strip taper and
-rounding and then intersects that result with vertical mask prisms. Boundaries
-introduced only by the mask do not yet receive an independent sidewall taper or
-corner-rounding construction. Probe convergence and held-out qualification must
-reject a coupon when that local approximation affects its response materially.
+The fabricated spatial mesher lofts the complete classified mask. Every physical
+boundary receives the configured sidewall taper, top rounding, and substrate
+overetch; artificial `ContinuationSegments` remain vertical and receive no
+overetch. Probe convergence and held-out qualification still reject a coupon
+when the resolved fabricated response is not stable.
 
 Execution continues across independent requirements after a candidate fails.
 Qualified entries are cached and merged into a partial process library, while

@@ -1452,13 +1452,15 @@ metadata, discretization settings, and generator sources. Cheap thin/fabricated 
 convergence is required before a full response matrix is assembled; matrix and held-out
 trace qualification is required before an entry is merged. The current automatic
 builders can construct candidate isolated and paired edges, parallel edge clusters,
-90 degree convex and concave corners, endpoints, junctions, and exact spatial edge
-clusters. An entry is merged only after its generated geometry passes the configured
-probe-convergence and held-out gates. In particular, a sharp endpoint or junction does
-not encode a fabricated plan-view regularization and can remain nonconvergent; the
-planner preserves that failed qualification instead of treating the canonical coupon as
-universal. An edge-only spatial-cluster signature can also leave the local conductor
-footprints underdetermined. The candidate generator rejects reconstructed half-strip
+90 degree convex and concave corners, and exact spatial edge clusters. A manifold trace
+cap or T/cross branch has a degree-two perimeter and is represented by corners, smooth
+chains, and exact spatial clusters rather than a graph endpoint or junction. Such graph
+vertices do not arise from an ordinary manifold sheet. Automatic generation never
+invents their closure: an endpoint requires an exact closed mask, while point-touch or
+otherwise nonmanifold junction masks fail closed. An entry is merged only after its
+generated geometry passes the configured probe-convergence and held-out gates. An
+edge-only spatial-cluster signature can also leave the local conductor footprints
+underdetermined. The candidate generator rejects reconstructed half-strip
 geometry when two different conductors overlap instead of inventing a plan-view closure.
 For bootstrapping a new process, the configured version-3 library may contain complete
 `Fabrication` metadata, a positive `MatchingRadius`, and an empty `Models` array.
@@ -1469,8 +1471,9 @@ connected metal sheet in such a neighborhood. The spatial mesher intersects its 
 edge strips with this exact mask. Surface facets remain rank-local. During ordinary
 correction Palace exchanges compact canonical vertex keys to classify connected
 conductors and, for an exact-mask model, only the facets clipped to that interaction
-neighborhood. Cache keys use the canonical boundary of the facet union, so equivalent
-surface-mesh triangulations reuse the same qualified coupon. The generated
+neighborhood. Cache keys and coupon plans use the canonical boundary of the facet union,
+so equivalent surface-mesh triangulations are aggregated and reuse the same qualified
+coupon. The generated
 `SpatialEdgeCluster`, `Endpoint`, or `Junction` stores this `PlanViewBoundary` and
 matches only the same boundary.
 Older edge-only models remain valid for unambiguous neighborhoods, but are rejected when
@@ -1480,7 +1483,7 @@ Every physical mask boundary receives the configured taper, corner rounding, and
 substrate overetch; only `ContinuationSegments` remain vertical and receive no overetch.
 Open or nonmanifold masks, including components which touch only at a point, fail closed
 because their fabricated topology is ambiguous. The qualification gates remain
-mandatory for endpoint, junction, and spatial-neighborhood response models.
+mandatory for spatial-neighborhood response models.
 
 Automatic generation also rejects finite-impedance coupons and unsupported corner angles
 while preserving them as explicit coverage failures in the work plan. Coupon families
