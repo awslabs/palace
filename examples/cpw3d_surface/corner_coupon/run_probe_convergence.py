@@ -23,11 +23,11 @@ def run(command):
     subprocess.run([str(value) for value in command], check=True)
 
 
-def prepare_case(calibration, output, order):
-    case = output / f"p{order}"
+def prepare_case(calibration, output, name, order):
+    case = output / name
     case.mkdir(parents=True, exist_ok=True)
-    for name in ("probe-manifest.json", "process-library.json"):
-        shutil.copy2(calibration / name, case / name)
+    for filename in ("probe-manifest.json", "process-library.json"):
+        shutil.copy2(calibration / filename, case / filename)
 
     configs = []
     for kind in KINDS:
@@ -47,6 +47,20 @@ def complete(case):
         for kind in KINDS
         for filename in OUTPUT_FILES
     )
+
+
+def configured_order(calibration):
+    orders = {
+        int(
+            json.loads(
+                (calibration / f"probe-{kind}.json").read_text()
+            )["Solver"]["Order"]
+        )
+        for kind in KINDS
+    }
+    if len(orders) != 1:
+        raise ValueError(f"{calibration} probe configs use inconsistent FEM orders")
+    return orders.pop()
 
 
 def metric(current, previous):
@@ -103,10 +117,19 @@ def compare_cases(previous, current, args, enforce):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("calibration", type=Path)
+    parser.add_argument("calibration", type=Path, nargs="?")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--palace", type=Path)
     parser.add_argument("--orders", type=int, nargs="+", default=[1, 2, 3])
+    parser.add_argument(
+        "--case",
+        action="append",
+        help=(
+            "Ordered mesh-resolution case as NAME=CALIBRATION. Completed source "
+            "cases are reused directly."
+        ),
+    )
+    parser.add_argument("--fixed-order", type=int)
     parser.add_argument("--ranks", type=int, default=1)
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--force", action="store_true")
@@ -123,37 +146,90 @@ def main():
     )
     args = parser.parse_args()
 
+    if args.case and args.calibration is not None:
+        parser.error("CALIBRATION and --case cannot be used together")
+    if not args.case and args.calibration is None:
+        parser.error("CALIBRATION is required without --case")
+    if args.case and args.fixed_order is None:
+        parser.error("--fixed-order is required with --case")
+    if not args.case and args.fixed_order is not None:
+        parser.error("--fixed-order requires --case")
+
     orders = sorted(set(args.orders))
-    if len(orders) < 2 or any(order < 1 for order in orders):
+    if not args.case and (len(orders) < 2 or any(order < 1 for order in orders)):
         parser.error("--orders requires at least two positive FEM orders")
+    if args.fixed_order is not None and args.fixed_order < 1:
+        parser.error("--fixed-order must be positive")
     if args.ranks < 1:
         parser.error("--ranks must be positive")
-    if not args.prepare_only and args.palace is None:
-        parser.error("--palace is required unless --prepare-only is used")
 
-    calibration = args.calibration.expanduser().resolve()
     required = (
         "probe-thin.json",
         "probe-fabricated.json",
         "probe-manifest.json",
         "process-library.json",
     )
-    missing = [name for name in required if not (calibration / name).is_file()]
-    if missing:
-        raise FileNotFoundError(
-            f"{calibration} is missing probe input: {', '.join(missing)}"
+    if args.case:
+        levels = []
+        for specification in args.case:
+            if "=" not in specification:
+                parser.error(f'--case "{specification}" must use NAME=CALIBRATION')
+            name, value = specification.split("=", 1)
+            if not name:
+                parser.error("--case name cannot be empty")
+            levels.append(
+                (name, Path(value).expanduser().resolve(), args.fixed_order)
+            )
+        if len(levels) < 2:
+            parser.error("--case requires at least two mesh-resolution levels")
+        if len({name for name, _, _ in levels}) != len(levels):
+            parser.error("--case names must be unique")
+        study = "MeshResolution"
+    else:
+        calibration = args.calibration.expanduser().resolve()
+        levels = [
+            (f"p{order}", calibration, order)
+            for order in orders
+        ]
+        study = "FEMOrder"
+
+    for _, calibration, _ in levels:
+        missing = [
+            name for name in required if not (calibration / name).is_file()
+        ]
+        if missing:
+            raise FileNotFoundError(
+                f"{calibration} is missing probe input: {', '.join(missing)}"
+            )
+    if (
+        not args.prepare_only
+        and args.palace is None
+        and not (args.case and all(complete(level[1]) for level in levels))
+    ):
+        parser.error(
+            "--palace is required unless --prepare-only is used or every "
+            "--case is complete"
         )
 
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     cases = []
-    for order in orders:
-        case, configs = prepare_case(calibration, output, order)
+    for name, calibration, order in levels:
+        if args.case and complete(calibration):
+            actual_order = configured_order(calibration)
+            if actual_order != order:
+                raise ValueError(
+                    f"{calibration} is complete at p={actual_order}, expected p={order}"
+                )
+            print(f"Reusing completed {name} probe responses in {calibration}")
+            cases.append(calibration)
+            continue
+        case, configs = prepare_case(calibration, output, name, order)
         cases.append(case)
         if args.prepare_only:
             continue
         if complete(case) and not args.force:
-            print(f"Reusing completed p{order} probe responses")
+            print(f"Reusing completed {name} probe responses")
             continue
         for config in configs:
             command = [args.palace]
@@ -164,13 +240,19 @@ def main():
             raise RuntimeError(f"Palace did not complete probe responses in {case}")
 
     if args.prepare_only:
-        print(f"Prepared {len(cases)} FEM-order cases under {output}")
+        print(f"Prepared {len(cases)} {study} cases under {output}")
         return
 
     loaded = [
-        comparison.load_case(f"p{order}={case}")
-        for order, case in zip(orders, cases)
+        comparison.load_case(f"{name}={case}")
+        for (name, _, _), case in zip(levels, cases)
     ]
+    reference_metadata = loaded[0]["metadata"]
+    for case in loaded[1:]:
+        if case["metadata"] != reference_metadata:
+            raise ValueError(
+                f"{case['root']} uses incompatible probe or coupon metadata"
+            )
     comparisons = []
     passed = True
     for index, (previous, current) in enumerate(zip(loaded, loaded[1:])):
@@ -191,8 +273,23 @@ def main():
 
     report = {
         "Version": 1,
-        "Calibration": str(calibration),
-        "Orders": orders,
+        "Study": study,
+        "Calibration": (
+            str(levels[0][1]) if study == "FEMOrder" else None
+        ),
+        "Orders": orders if study == "FEMOrder" else None,
+        "Cases": (
+            [
+                {
+                    "Name": name,
+                    "Calibration": str(calibration),
+                    "Order": order,
+                }
+                for name, calibration, order in levels
+            ]
+            if study == "MeshResolution"
+            else None
+        ),
         "ThresholdsPercent": {
             "FabricatedMatrixChange": args.max_fabricated_matrix_change,
             "FabricatedWorstEnergyChange": args.max_fabricated_energy_change,

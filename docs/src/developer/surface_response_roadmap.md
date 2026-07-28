@@ -120,6 +120,12 @@ The following infrastructure is present:
     junction, and spatial masks. Fabricated coupons loft the complete manifold footprint,
     taper and round physical boundaries, and apply overetch only along those boundaries.
     Open and nonmanifold masks fail closed.
+  - Circular chains in classified masks are reconstructed as smooth OCC arcs. Spatial
+    trench geometry uses continuous offset-mask shells, automatic preparation requires
+    at least quadratic geometry, and nonpositive curved-element Jacobians fail closed.
+  - Spatial qualification separately gates FEM-order and local h-convergence. The h-study
+    refines both thin and fabricated meshes at the final FEM order and reuses the finest
+    completed p-study response.
   - Radius and separation interpolation where the model family supports it, without
     extrapolation.
   - Geometry-only preflight and a metadata-only version-3 process-library seed.
@@ -165,6 +171,13 @@ remain unsupported until a process-specific nonmanifold regularization policy is
 defined.
 
 ### P1: Complete local coupon families
+
+**Implementation status:** Geometry generation is available for the listed exact
+manifold-mask families, but physical qualification is incomplete. A rounded endpoint
+has valid quadratic geometry, yet its p=3 response from `lc_fine=0.025 um` to
+`0.0125 um` still changes by `13.14%` for MA, `2.39%` for MS (`16.01%` worst probe
+energy), and `8.23%` for SA. Automatic qualification now records this as an h-convergence
+failure instead of accepting the coupon on p-convergence alone.
 
   1. Add arbitrary convex and concave corner angles.
   2. Add radius interpolation studies for rounded corners and smooth bends.

@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -879,6 +880,44 @@ def run_probe_convergence(calibration, output, args):
     return code, report, result
 
 
+def run_mesh_convergence(calibrations, output, args):
+    command = [
+        sys.executable,
+        CORNER_CONVERGENCE,
+        "--output",
+        output,
+        "--palace",
+        args.palace,
+        "--fixed-order",
+        max(args.orders),
+        "--ranks",
+        args.ranks,
+        "--max-fabricated-matrix-change",
+        args.max_fabricated_matrix_change,
+        "--max-fabricated-energy-change",
+        args.max_fabricated_energy_change,
+        "--max-domain-defect-change",
+        args.max_domain_defect_change,
+    ]
+    for name, calibration in calibrations:
+        command.extend(("--case", f"{name}={calibration}"))
+    if args.force:
+        command.append("--force")
+    code = run(command, check=False)
+    report = output / "probe-convergence.json"
+    result = (
+        load_json(report)
+        if report.is_file()
+        else {
+            "Version": 1,
+            "Study": "MeshResolution",
+            "Passed": False,
+            "Failure": "Probe runner did not write a mesh-convergence report",
+        }
+    )
+    return code, report, result
+
+
 def build_parallel_cluster(coupon, args, parameters, cache):
     require_pec(coupon)
     resolution = process_resolution(
@@ -1305,7 +1344,11 @@ def spatial_spec(coupon, args, parameters):
         "Mesh": {
             "FineSize": args.spatial_lc_fine,
             "FarSize": args.spatial_lc_far,
-            "Order": args.mesh_order,
+            "Order": max(2, args.mesh_order),
+            "HRefinementFactors": sorted(
+                set(getattr(args, "spatial_h_factors", (2.0, 1.0))),
+                reverse=True,
+            ),
         },
         "ProcessResolution": resolution,
         "Response": {"RingSize": args.spatial_ring_size},
@@ -1320,6 +1363,74 @@ def spatial_spec(coupon, args, parameters):
             )
         ),
     }
+
+
+def generate_spatial_meshes(
+    root,
+    signature,
+    mask,
+    boundary,
+    args,
+    parameters,
+    spec,
+    factor,
+):
+    mesh_root = (
+        root
+        if math.isclose(factor, 1.0)
+        else root / "mesh-calibrations" / f"h-{slug(factor)}"
+    )
+    mesh_root.mkdir(parents=True, exist_ok=True)
+    meshes = {}
+    for kind in ("thin", "fabricated"):
+        mesh = mesh_root / f"spatial_{kind}.msh"
+        meshes[kind] = mesh
+        if mesh.is_file() and not args.force:
+            continue
+        run(
+            [
+                *julia_command(args),
+                SPATIAL_MESH,
+                signature,
+                kind,
+                mesh,
+                *(["--mask", mask] if mask.is_file() else []),
+                *(["--boundary", boundary] if boundary.is_file() else []),
+                "--radius",
+                args.matching_radius,
+                "--metal-thickness",
+                parameters["metal_thickness"],
+                "--overetch",
+                parameters["overetch"],
+                "--sidewall-angle",
+                parameters["sidewall_angle"],
+                "--top-radius",
+                parameters["top_radius"],
+                "--bottom-radius",
+                parameters["bottom_radius"],
+                "--lc-fine",
+                factor * args.spatial_lc_fine,
+                "--lc-far",
+                args.spatial_lc_far,
+                "--mesh-order",
+                spec["Mesh"]["Order"],
+            ]
+        )
+    return mesh_root, meshes
+
+
+def prepare_spatial_mesh_calibration(source, destination, meshes):
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in ("probe-manifest.json", "process-library.json"):
+        shutil.copy2(source / name, destination / name)
+    for kind in ("thin", "fabricated"):
+        config = load_json(source / f"probe-{kind}.json")
+        config["Model"]["Mesh"] = str(meshes[kind])
+        config["Problem"]["Output"] = str(
+            destination / "postpro" / f"probe-{kind}"
+        )
+        write_json(destination / f"probe-{kind}.json", config)
+    return destination
 
 
 def build_spatial(coupon, args, parameters, cache):
@@ -1392,41 +1503,16 @@ def build_spatial(coupon, args, parameters, cache):
     signature = root / "mesh-signature.csv"
     mask = root / "plan-view-mask.csv"
     boundary = root / "plan-view-boundary.csv"
-    meshes = {}
-    for kind in ("thin", "fabricated"):
-        mesh = root / f"spatial_{kind}.msh"
-        meshes[kind] = mesh
-        if mesh.is_file() and not args.force:
-            continue
-        run(
-            [
-                *julia_command(args),
-                SPATIAL_MESH,
-                signature,
-                kind,
-                mesh,
-                *(["--mask", mask] if mask.is_file() else []),
-                *(["--boundary", boundary] if boundary.is_file() else []),
-                "--radius",
-                args.matching_radius,
-                "--metal-thickness",
-                parameters["metal_thickness"],
-                "--overetch",
-                parameters["overetch"],
-                "--sidewall-angle",
-                parameters["sidewall_angle"],
-                "--top-radius",
-                parameters["top_radius"],
-                "--bottom-radius",
-                parameters["bottom_radius"],
-                "--lc-fine",
-                args.spatial_lc_fine,
-                "--lc-far",
-                args.spatial_lc_far,
-                "--mesh-order",
-                args.mesh_order,
-            ]
-        )
+    _, meshes = generate_spatial_meshes(
+        root,
+        signature,
+        mask,
+        boundary,
+        args,
+        parameters,
+        spec,
+        1.0,
+    )
     run(
         [
             *common_generator,
@@ -1453,6 +1539,51 @@ def build_spatial(coupon, args, parameters, cache):
         }
         write_json(qualification_path, qualification)
         raise RuntimeError(f"Spatial probe convergence failed: {qualification_path}")
+
+    mesh_calibrations = []
+    for factor in spec["Mesh"]["HRefinementFactors"]:
+        if math.isclose(factor, 1.0):
+            calibration = convergence_root / f"p{max(args.orders)}"
+        else:
+            mesh_root, factor_meshes = generate_spatial_meshes(
+                root,
+                signature,
+                mask,
+                boundary,
+                args,
+                parameters,
+                spec,
+                factor,
+            )
+            calibration = prepare_spatial_mesh_calibration(
+                root, mesh_root / "calibration", factor_meshes
+            )
+        mesh_calibrations.append((f"h-{slug(factor)}", calibration))
+    mesh_convergence_root = root / "mesh-convergence"
+    (
+        mesh_convergence_code,
+        mesh_convergence_report,
+        mesh_convergence,
+    ) = run_mesh_convergence(mesh_calibrations, mesh_convergence_root, args)
+    if (
+        mesh_convergence_code != 0
+        or not mesh_convergence.get("Passed", False)
+    ):
+        qualification = {
+            "Version": 1,
+            "Fingerprint": key,
+            "Family": "spatial",
+            "Topology": coupon["Topology"],
+            "Library": str(library_path),
+            "HeldoutReport": None,
+            "ConvergenceReport": str(convergence_report),
+            "MeshConvergenceReport": str(mesh_convergence_report),
+            "Passed": False,
+        }
+        write_json(qualification_path, qualification)
+        raise RuntimeError(
+            f"Spatial mesh convergence failed: {qualification_path}"
+        )
 
     if spatial_complete(root) and not args.force:
         print(f"Reusing completed spatial responses in {root}")
@@ -1490,6 +1621,7 @@ def build_spatial(coupon, args, parameters, cache):
         "Library": str(library_path),
         "HeldoutReport": str(heldout_report),
         "ConvergenceReport": str(convergence_report),
+        "MeshConvergenceReport": str(mesh_convergence_report),
         "Passed": passed,
     }
     write_json(qualification_path, qualification)
@@ -1648,6 +1780,16 @@ def parse_args():
     parser.add_argument("--corner-lc-far", type=float, default=0.3)
     parser.add_argument("--spatial-lc-fine", type=float, default=0.02)
     parser.add_argument("--spatial-lc-far", type=float, default=0.3)
+    parser.add_argument(
+        "--spatial-h-factors",
+        type=float,
+        nargs="+",
+        default=[2.0, 1.0],
+        help=(
+            "Coarse-to-fine multipliers on --spatial-lc-fine used for the "
+            "mesh-resolution convergence gate"
+        ),
+    )
     parser.add_argument("--min-process-feature-elements", type=float, default=2.0)
     parser.add_argument("--basis-size", type=int, default=96)
     parser.add_argument("--samples", type=int, default=1200)
@@ -1688,6 +1830,17 @@ def parse_args():
         parser.error("--edge-offset-tolerance must be nonnegative")
     if args.min_process_feature_elements <= 0.0:
         parser.error("--min-process-feature-elements must be positive")
+    args.spatial_h_factors = sorted(
+        set(args.spatial_h_factors), reverse=True
+    )
+    if (
+        len(args.spatial_h_factors) < 2
+        or any(factor < 1.0 for factor in args.spatial_h_factors)
+        or not math.isclose(args.spatial_h_factors[-1], 1.0)
+    ):
+        parser.error(
+            "--spatial-h-factors requires at least two values >= 1 ending at 1"
+        )
     return args
 
 

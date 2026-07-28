@@ -265,12 +265,184 @@ function point_in_mask(facets, point, conductor, plane, tolerance)
     )
 end
 
-function polygon_wire(occ, points, z)
-    tags = [occ.addPoint(point[1], point[2], z) for point in points]
-    curves = [
-        occ.addLine(tags[index], tags[mod1(index + 1, length(tags))]) for
-        index in eachindex(tags)
+function circle_through(first, second, third, tolerance)
+    ax = second[1] - first[1]
+    ay = second[2] - first[2]
+    bx = third[1] - first[1]
+    by = third[2] - first[2]
+    determinant = 2.0 * (ax * by - ay * bx)
+    scale = max(hypot(ax, ay), hypot(bx, by), 1.0)
+    abs(determinant) > tolerance * scale || return nothing
+    a2 = ax^2 + ay^2
+    b2 = bx^2 + by^2
+    center = (
+        first[1] + (by * a2 - ay * b2) / determinant,
+        first[2] + (ax * b2 - bx * a2) / determinant
+    )
+    radius = hypot(first[1] - center[1], first[2] - center[2])
+    radius > tolerance || return nothing
+    return (center=center, radius=radius)
+end
+
+function fitted_arc_run(points, point_indices, edge_indices, circle, tolerance)
+    circle === nothing && return nothing
+    radial = [
+        (
+            points[index][1] - circle.center[1],
+            points[index][2] - circle.center[2]
+        ) for index in point_indices
     ]
+    angle_steps = [
+        atan(
+            cross2d(radial[index], radial[index + 1]),
+            radial[index][1] * radial[index + 1][1] +
+            radial[index][2] * radial[index + 1][2]
+        ) for index = 1:(length(radial) - 1)
+    ]
+    orientation = sign(sum(angle_steps))
+    orientation != 0.0 &&
+    all(sign(angle) == orientation for angle in angle_steps if angle != 0.0) ||
+        return nothing
+    residual = maximum(
+        abs(hypot(points[index][1] - circle.center[1],
+                  points[index][2] - circle.center[2]) - circle.radius) for
+        index in point_indices
+    )
+    residual <= max(64tolerance, 2.0e-7 * circle.radius) || return nothing
+    return (
+        center=circle.center,
+        radius=circle.radius,
+        point_indices=point_indices,
+        edge_indices=edge_indices,
+        orientation=orientation,
+        angle=sum(abs, angle_steps)
+    )
+end
+
+function circular_arc_runs(points, tolerance)
+    length(points) >= 4 || return NamedTuple[]
+    circles = [
+        circle_through(
+            points[index],
+            points[mod1(index + 1, length(points))],
+            points[mod1(index + 2, length(points))],
+            tolerance
+        ) for index in eachindex(points)
+    ]
+    compatible(first, second) =
+        first !== nothing &&
+        second !== nothing &&
+        hypot(
+            first.center[1] - second.center[1],
+            first.center[2] - second.center[2]
+        ) <= max(32tolerance, 1.0e-7 * max(first.radius, second.radius)) &&
+        abs(first.radius - second.radius) <=
+        max(32tolerance, 1.0e-7 * max(first.radius, second.radius))
+
+    compatible_pairs = [
+        compatible(circles[index], circles[mod1(index + 1, length(points))]) for
+        index in eachindex(points)
+    ]
+    any(compatible_pairs) || return NamedTuple[]
+    if all(compatible_pairs)
+        # Four rectangle vertices are also co-circular. A process-generated smooth
+        # closed curve has many more samples, so reconstruct only sufficiently dense
+        # loops and retain ordinary low-sided polygons exactly.
+        length(points) >= 8 || return NamedTuple[]
+        point_indices = vcat(collect(eachindex(points)), firstindex(points))
+        run = fitted_arc_run(
+            points,
+            point_indices,
+            collect(eachindex(points)),
+            circles[firstindex(points)],
+            tolerance
+        )
+        return run === nothing ? NamedTuple[] : [run]
+    end
+
+    runs = NamedTuple[]
+    for seed in eachindex(points)
+        compatible_pairs[seed] || continue
+        compatible_pairs[mod1(seed - 1, length(points))] && continue
+        pair_count = 1
+        while pair_count < length(points) &&
+              compatible_pairs[mod1(seed + pair_count, length(points))]
+            pair_count += 1
+        end
+        triple_count = pair_count + 1
+        edge_count = triple_count + 1
+        # Four edges is the smallest useful smooth reconstruction. Requiring this
+        # rejects accidental co-circular closure vertices without affecting the
+        # process-rounded chains, which are exported at substantially higher resolution.
+        edge_count >= 4 || continue
+        point_indices = [
+            mod1(seed + step, length(points)) for step = 0:(triple_count + 1)
+        ]
+        edge_indices = [
+            mod1(seed + step, length(points)) for step = 0:triple_count
+        ]
+        circle = circle_through(
+            points[first(point_indices)],
+            points[point_indices[cld(length(point_indices), 2)]],
+            points[last(point_indices)],
+            tolerance
+        )
+        run = fitted_arc_run(points, point_indices, edge_indices, circle, tolerance)
+        run === nothing || push!(runs, run)
+    end
+    return runs
+end
+
+function polygon_wire(occ, points, z)
+    tolerance = 1.0e-9 * max(
+        maximum(point[1] for point in points) - minimum(point[1] for point in points),
+        maximum(point[2] for point in points) - minimum(point[2] for point in points),
+        1.0
+    )
+    runs = circular_arc_runs(points, tolerance)
+    projected = collect(points)
+    for run in runs, index in run.point_indices[2:(end - 1)]
+        radial = (
+            points[index][1] - run.center[1],
+            points[index][2] - run.center[2]
+        )
+        scale = run.radius / hypot(radial...)
+        projected[index] = (
+            run.center[1] + scale * radial[1],
+            run.center[2] + scale * radial[2]
+        )
+    end
+    tags = [occ.addPoint(point[1], point[2], z) for point in projected]
+    curve_for_edge = Dict{Int, Int32}()
+    covered = falses(length(points))
+    for run in runs
+        any(covered[run.edge_indices]) && continue
+        parts = max(1, ceil(Int, run.angle / (0.5 * pi)))
+        split = unique(
+            round.(
+                Int,
+                range(1, length(run.point_indices), length=parts + 1)
+            )
+        )
+        center = occ.addPoint(run.center[1], run.center[2], z)
+        for (first, second) in zip(split, split[2:end])
+            curve_for_edge[run.edge_indices[first]] =
+                occ.addCircleArc(
+                    tags[run.point_indices[first]],
+                    center,
+                    tags[run.point_indices[second]]
+                )
+        end
+        covered[run.edge_indices] .= true
+    end
+    curves = Int32[]
+    for index in eachindex(tags)
+        if haskey(curve_for_edge, index)
+            push!(curves, curve_for_edge[index])
+        elseif !covered[index]
+            push!(curves, occ.addLine(tags[index], tags[mod1(index + 1, length(tags))]))
+        end
+    end
     return occ.addWire(curves)
 end
 
@@ -329,7 +501,15 @@ function loft_polygon(occ, bottom_points, top_points, z0, z1)
     return volumes
 end
 
-function loft_mask(occ, loops, z0, z1, pullback, tolerance)
+function loft_mask_offsets(
+    occ,
+    loops,
+    z0,
+    z1,
+    bottom_offset,
+    top_offset,
+    tolerance
+)
     outers = [loop for loop in loops if !loop.hole]
     holes = [loop for loop in loops if loop.hole]
     isempty(outers) && error("Plan-view mask has no exterior loop")
@@ -337,8 +517,8 @@ function loft_mask(occ, loops, z0, z1, pullback, tolerance)
     for outer in outers
         volume = loft_polygon(
             occ,
-            outer.points,
-            offset_loop_points(outer, pullback, tolerance),
+            offset_loop_points(outer, bottom_offset, tolerance),
+            offset_loop_points(outer, top_offset, tolerance),
             z0,
             z1
         )
@@ -349,8 +529,8 @@ function loft_mask(occ, loops, z0, z1, pullback, tolerance)
                 cutters,
                 loft_polygon(
                     occ,
-                    hole.points,
-                    offset_loop_points(hole, pullback, tolerance),
+                    offset_loop_points(hole, bottom_offset, tolerance),
+                    offset_loop_points(hole, top_offset, tolerance),
                     z0,
                     z1
                 )
@@ -365,40 +545,37 @@ function loft_mask(occ, loops, z0, z1, pullback, tolerance)
     return fuse_all(occ, result)
 end
 
+function loft_mask(occ, loops, z0, z1, pullback, tolerance)
+    return loft_mask_offsets(occ, loops, z0, z1, 0.0, pullback, tolerance)
+end
+
 function boundary_strips(occ, loops, radius, z0, z1, pullback, tolerance)
     volumes = Tuple{Int32, Int32}[]
     width = 3radius
-    for loop in loops, index in eachindex(loop.points)
-        loop.classes[index] == "Physical" || continue
-        first = loop.points[index]
-        second = loop.points[mod1(index + 1, length(loop.points))]
-        direction = (second[1] - first[1], second[2] - first[2])
-        segment_length = hypot(direction...)
-        segment_length > tolerance ||
-            error("Plan-view boundary contains a zero-length segment")
-        outward = (direction[2] / segment_length, -direction[1] / segment_length)
-        bottom = (
-            first,
-            second,
-            (
-                second[1] + width * outward[1],
-                second[2] + width * outward[2]
-            ),
-            (first[1] + width * outward[1], first[2] + width * outward[2])
+    for conductor in sort!(unique(loop.conductor for loop in loops))
+        conductor_loops = [loop for loop in loops if loop.conductor == conductor]
+        expanded = loft_mask_offsets(
+            occ,
+            conductor_loops,
+            z0,
+            z1,
+            -width,
+            -width,
+            tolerance
         )
-        top = (
-            (
-                first[1] + pullback * outward[1],
-                first[2] + pullback * outward[2]
-            ),
-            (
-                second[1] + pullback * outward[1],
-                second[2] + pullback * outward[2]
-            ),
-            bottom[3],
-            bottom[4]
+        retained = loft_mask_offsets(
+            occ,
+            conductor_loops,
+            z0,
+            z1,
+            0.0,
+            -pullback,
+            tolerance
         )
-        append!(volumes, loft_polygon(occ, bottom, top, z0, z1))
+        strip, _ = occ.cut(expanded, retained)
+        strip = [(dim, tag) for (dim, tag) in strip if dim == 3]
+        isempty(strip) && error("Classified boundary strip produced no volume")
+        append!(volumes, strip)
     end
     return fuse_all(occ, volumes)
 end
@@ -498,29 +675,89 @@ function point_segment_distance(point, first, second)
 end
 
 function physical_segments(loops, offset, tolerance)
-    segments = Tuple{NTuple{2, Float64}, NTuple{2, Float64}}[]
+    primitives = NamedTuple[]
     for loop in loops
         points = offset_loop_points(loop, offset, tolerance)
+        covered = falses(length(points))
+        for run in circular_arc_runs(points, tolerance)
+            all(loop.classes[index] == "Physical" for index in run.edge_indices) ||
+                continue
+            push!(
+                primitives,
+                (
+                    kind=:arc,
+                    center=run.center,
+                    radius=run.radius,
+                    first=points[first(run.point_indices)],
+                    last=points[last(run.point_indices)],
+                    orientation=run.orientation,
+                    angle=run.angle
+                )
+            )
+            covered[run.edge_indices] .= true
+        end
         for index in eachindex(points)
-            loop.classes[index] == "Physical" || continue
-            push!(segments, (points[index], points[mod1(index + 1, length(points))]))
+            loop.classes[index] == "Physical" && !covered[index] || continue
+            push!(
+                primitives,
+                (
+                    kind=:line,
+                    first=points[index],
+                    last=points[mod1(index + 1, length(points))]
+                )
+            )
         end
     end
-    return segments
+    return primitives
 end
 
-function fillet_physical_edges(occ, volumes, radius, z, segments, tolerance)
+function directed_angle(first, second, orientation)
+    angle = orientation * atan(cross2d(first, second), first[1] * second[1] +
+                                                       first[2] * second[2])
+    return mod(angle, 2pi)
+end
+
+function point_primitive_distance(point, primitive, tolerance)
+    primitive.kind == :line &&
+        return point_segment_distance(point, primitive.first, primitive.last)
+    radial = (
+        point[1] - primitive.center[1],
+        point[2] - primitive.center[2]
+    )
+    start = (
+        primitive.first[1] - primitive.center[1],
+        primitive.first[2] - primitive.center[2]
+    )
+    angle = directed_angle(start, radial, primitive.orientation)
+    angle_tolerance = tolerance / max(primitive.radius, tolerance)
+    if angle <= primitive.angle + angle_tolerance
+        return abs(hypot(radial...) - primitive.radius)
+    end
+    return min(
+        hypot(point[1] - primitive.first[1], point[2] - primitive.first[2]),
+        hypot(point[1] - primitive.last[1], point[2] - primitive.last[2])
+    )
+end
+
+function point_on_curve(curve)
+    lower, upper = gmsh.model.getParametrizationBounds(1, curve)
+    length(lower) == 1 && length(upper) == 1 ||
+        error("Unexpected curve parametrization for curve $curve")
+    value = gmsh.model.getValue(1, curve, [(lower[1] + upper[1]) / 2])
+    return (value[1], value[2])
+end
+
+function fillet_physical_edges(occ, volumes, radius, z, primitives, tolerance)
     radius <= 0.0 && return volumes
     gmsh.model.occ.synchronize()
     curves = Int32[]
     for curve in boundary_curves(volumes)
         _, _, zmin, _, _, zmax = gmsh.model.getBoundingBox(1, curve)
         abs(zmin - z) < tolerance && abs(zmax - z) < tolerance || continue
-        center = occ.getCenterOfMass(1, curve)
-        point = (center[1], center[2])
+        point = point_on_curve(curve)
         any(
-            point_segment_distance(point, first, second) <= 10tolerance for
-            (first, second) in segments
+            point_primitive_distance(point, primitive, tolerance) <= 10tolerance for
+            primitive in primitives
         ) && push!(curves, curve)
     end
     isempty(curves) && return volumes
@@ -778,7 +1015,11 @@ function generate_spatial_coupon(;
                     trenches,
                     trench_rounding,
                     layer.plane - layer.sign * overetch,
-                    physical_segments(layer_loops, -pullback_trench, tolerance),
+                    physical_segments(
+                        layer_loops,
+                        -pullback_trench,
+                        tolerance
+                    ),
                     tolerance
                 )
             end
@@ -1010,7 +1251,17 @@ function generate_spatial_coupon(;
     gmsh.model.mesh.generate(3)
     gmsh.model.mesh.optimize("Netgen")
     gmsh.model.mesh.setOrder(mesh_order)
-    mesh_order > 1 && gmsh.model.mesh.optimize("HighOrderElastic")
+    if mesh_order > 1
+        gmsh.model.mesh.optimize("HighOrderElastic", true, 20)
+        gmsh.model.mesh.optimize("HighOrder", true, 20)
+        _, element_tags, _ = gmsh.model.mesh.getElements(3)
+        tags = reduce(vcat, element_tags; init=UInt64[])
+        scaled_jacobians = gmsh.model.mesh.getElementQualities(tags, "minSJ")
+        minimum_jacobian = minimum(scaled_jacobians)
+        minimum_jacobian > 0.0 ||
+            error("High-order spatial coupon contains a nonpositive Jacobian")
+        println("High-order mesh minimum scaled Jacobian: $minimum_jacobian")
+    end
     gmsh.write(filename)
     println(
         "Spatial coupon: fabricated=$fabricated, edges=$(length(edges)), " *

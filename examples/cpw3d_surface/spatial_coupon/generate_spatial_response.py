@@ -678,26 +678,66 @@ def dielectric(
     }
 
 
-def conductor_attributes(edges, fabricated, conductor):
-    if fabricated:
-        return [5000 + conductor, 6000 + conductor]
-    return [4000 + conductor]
+def mesh_boundary_attributes(mesh):
+    attributes = set()
+    with mesh.open("rb") as stream:
+        for line in stream:
+            if line.strip() != b"$PhysicalNames":
+                continue
+            count = int(next(stream))
+            for _ in range(count):
+                dimension, attribute, _ = next(stream).decode().split(maxsplit=2)
+                if int(dimension) == 2:
+                    attributes.add(int(attribute))
+            break
+    if not attributes:
+        raise ValueError(f"{mesh} defines no named boundary attributes")
+    return attributes
 
 
-def interface_attributes(edges, fabricated, slot, interface_type):
-    conductors = sorted(
-        {edge["Conductor"] for edge in edges}
+def existing_attributes(candidates, available, description):
+    result = (
+        candidates
+        if available is None
+        else [attribute for attribute in candidates if attribute in available]
     )
+    if not result:
+        raise ValueError(f"The mesh has no boundary attributes for {description}")
+    return result
+
+
+def conductor_attributes(edges, fabricated, conductor, available=None):
+    candidates = (
+        [5000 + conductor, 6000 + conductor]
+        if fabricated
+        else [4000 + conductor]
+    )
+    return existing_attributes(candidates, available, f"conductor {conductor}")
+
+
+def interface_attributes(edges, fabricated, slot, interface_type, available=None):
+    conductors = sorted({edge["Conductor"] for edge in edges})
     if interface_type == "SA":
-        return [3000 + slot, 3100 + slot] if fabricated else [3000 + slot]
-    if fabricated:
+        candidates = (
+            [3000 + slot, 3100 + slot] if fabricated else [3000 + slot]
+        )
+    elif fabricated:
         base = 5000 if interface_type == "MS" else 6000
-        return [base + conductor for conductor in conductors]
-    return [4000 + conductor for conductor in conductors]
+        candidates = [base + conductor for conductor in conductors]
+    else:
+        candidates = [4000 + conductor for conductor in conductors]
+    return existing_attributes(
+        candidates, available, f"{interface_type} interface slot {slot}"
+    )
 
 
-def edge_attributes(edges, fabricated, slot):
-    return [3000 + slot, 3100 + slot] if fabricated else [3000 + slot]
+def edge_attributes(edges, fabricated, slot, available=None):
+    candidates = (
+        [3000 + slot, 3100 + slot] if fabricated else [3000 + slot]
+    )
+    return existing_attributes(
+        candidates, available, f"edge interface slot {slot}"
+    )
 
 
 def make_config(
@@ -715,6 +755,7 @@ def make_config(
     interfaces,
     edges,
     response_matrix=True,
+    available_attributes=None,
 ):
     potentials = [
         {"Index": index, "Attributes": [1], "DataFile": str(trace)}
@@ -726,7 +767,7 @@ def make_config(
                 "Index": len(potentials) + 1,
                 "Attributes": [1],
                 "TerminalAttributes": conductor_attributes(
-                    edges, fabricated, conductor
+                    edges, fabricated, conductor, available_attributes
                 ),
                 "DataFile": str(zero_trace),
             }
@@ -747,20 +788,31 @@ def make_config(
             dielectric(
                 index,
                 interface_attributes(
-                    edges, fabricated, interface["Slot"], interface_type
+                    edges,
+                    fabricated,
+                    interface["Slot"],
+                    interface_type,
+                    available_attributes,
                 ),
                 interface_type,
                 radius,
                 *interface_layers[interface_type],
                 list(next(iter(slot_normals))),
-                edge_attributes(edges, fabricated, interface["Slot"]),
+                edge_attributes(
+                    edges,
+                    fabricated,
+                    interface["Slot"],
+                    available_attributes,
+                ),
             )
         )
     conductor_count = max(edge["Conductor"] for edge in edges)
     ground = [
         attribute
         for conductor in range(1, conductor_count + 1)
-        for attribute in conductor_attributes(edges, fabricated, conductor)
+        for attribute in conductor_attributes(
+            edges, fabricated, conductor, available_attributes
+        )
     ]
     return {
         "Problem": {
@@ -1452,6 +1504,7 @@ def main():
             raise FileNotFoundError(mesh)
     for kind, mesh in meshes.items():
         fabricated = kind == "fabricated"
+        available_attributes = mesh_boundary_attributes(mesh)
         name = f"spatial_{kind}"
         config = make_config(
             output,
@@ -1467,6 +1520,7 @@ def main():
             interface_layers,
             interfaces,
             edges,
+            available_attributes=available_attributes,
         )
         (output / f"{name}.json").write_text(json.dumps(config, indent=2) + "\n")
         heldout_name = f"heldout_{name}"
@@ -1485,11 +1539,14 @@ def main():
             interfaces,
             edges,
             False,
+            available_attributes,
         )
         heldout_terminals = [
             attribute
             for conductor in terminal_conductors
-            for attribute in conductor_attributes(edges, fabricated, conductor)
+            for attribute in conductor_attributes(
+                edges, fabricated, conductor, available_attributes
+            )
         ]
         if heldout_terminals:
             heldout["Boundaries"]["PrescribedPotential"][0][
@@ -1513,6 +1570,7 @@ def main():
             interface_layers,
             interfaces,
             edges,
+            available_attributes=available_attributes,
         )
         (output / f"{probe_name}.json").write_text(
             json.dumps(probe, indent=2) + "\n"

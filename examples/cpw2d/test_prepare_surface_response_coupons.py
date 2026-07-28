@@ -445,6 +445,10 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                     )
             self.assertEqual(len(meshing_commands), 1)
             self.assertIn("--mask", meshing_commands[0])
+            self.assertEqual(
+                meshing_commands[0][meshing_commands[0].index("--mesh-order") + 1],
+                "2",
+            )
             mask = Path(meshing_commands[0][meshing_commands[0].index("--mask") + 1])
             self.assertTrue(mask.is_file())
             generated_coupon = PREPARE.load_json(mask.parent / "coupon.json")
@@ -533,6 +537,9 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         self.assertEqual(SPATIAL.edge_attributes(edges, False, 0), [3000])
         self.assertEqual(SPATIAL.edge_attributes(edges, True, 0), [3000, 3100])
         self.assertEqual(SPATIAL.edge_attributes(edges, True, 1), [3001, 3101])
+        self.assertEqual(
+            SPATIAL.edge_attributes(edges, True, 0, {3100}), [3100]
+        )
         self.assertEqual(SPATIAL.conductor_attributes(edges, False, 2), [4002])
         self.assertEqual(
             SPATIAL.conductor_attributes(edges, True, 2), [5002, 6002]
@@ -545,6 +552,29 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             SPATIAL.interface_attributes(edges, True, 1, "MA"),
             [6001, 6002],
         )
+        self.assertEqual(
+            SPATIAL.interface_attributes(
+                edges, True, 0, "SA", {3100, 5001, 6001}
+            ),
+            [3100],
+        )
+        with self.assertRaisesRegex(ValueError, "SA interface slot 1"):
+            SPATIAL.interface_attributes(edges, True, 1, "SA", {3100})
+
+    def test_spatial_mesh_boundary_attributes_reads_named_surface_groups(self):
+        contents = (
+            b"$MeshFormat\n2.2 1 8\n"
+            b"$EndMeshFormat\n$PhysicalNames\n"
+            b"4\n3 1 \"substrate\"\n2 1 \"matching_surface\"\n"
+            b"2 3100 \"surface_3100\"\n2 5001 \"surface_5001\"\n"
+            b"$EndPhysicalNames\n$Nodes\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            mesh = Path(directory) / "coupon.msh"
+            mesh.write_bytes(contents)
+            self.assertEqual(
+                SPATIAL.mesh_boundary_attributes(mesh), {1, 3100, 5001}
+            )
 
     def test_spatial_cache_key_reuses_exact_coupon_and_invalidates_geometry(self):
         coupon = endpoint_coupon()
@@ -560,6 +590,8 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             force=False,
         )
         exact = PREPARE.spatial_spec(coupon, args, parameters)
+        self.assertEqual(exact["Mesh"]["Order"], 2)
+        self.assertEqual(exact["Mesh"]["HRefinementFactors"], [2.0, 1.0])
         changed = endpoint_coupon()
         changed["Geometry"]["Arms"][0]["Interval"] = [0.0, 1.5]
         self.assertNotEqual(
@@ -994,6 +1026,35 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             self.assertEqual(report, output / "probe-convergence.json")
             self.assertFalse(result["Passed"])
             self.assertIn("did not write", result["Failure"])
+
+    def test_missing_mesh_probe_report_is_a_failed_result(self):
+        args = SimpleNamespace(
+            palace=Path("palace"),
+            orders=[2, 3],
+            ranks=1,
+            max_fabricated_matrix_change=5.0,
+            max_fabricated_energy_change=10.0,
+            max_domain_defect_change=5.0,
+            force=False,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "mesh-convergence"
+            calibrations = [
+                ("h-2", root / "coarse"),
+                ("h-1", root / "fine"),
+            ]
+            with mock.patch.object(PREPARE, "run", return_value=1) as runner:
+                code, report, result = PREPARE.run_mesh_convergence(
+                    calibrations, output, args
+                )
+            command = runner.call_args.args[0]
+            self.assertIn("--fixed-order", command)
+            self.assertEqual(command[command.index("--fixed-order") + 1], 3)
+            self.assertEqual(code, 1)
+            self.assertEqual(report, output / "probe-convergence.json")
+            self.assertFalse(result["Passed"])
+            self.assertEqual(result["Study"], "MeshResolution")
 
     def test_process_resolution_rejects_underresolved_fabrication(self):
         parameters = {

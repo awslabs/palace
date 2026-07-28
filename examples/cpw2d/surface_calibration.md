@@ -327,8 +327,26 @@ nonoverlapping conductor strips.
 The fabricated spatial mesher lofts the complete classified mask. Every physical
 boundary receives the configured sidewall taper, top rounding, and substrate
 overetch; artificial `ContinuationSegments` remain vertical and receive no
-overetch. Probe convergence and held-out qualification still reject a coupon
-when the resolved fabricated response is not stable.
+overetch. Polygonal samples of a circular mask chain are reconstructed as exact
+OCC arcs, and trench generation uses a continuous offset-mask shell rather than
+independent edge strips. Spatial coupon preparation promotes geometric mesh
+order to at least two, optimizes the curved elements, and rejects a mesh with any
+nonpositive scaled Jacobian. It independently gates FEM-order convergence and local
+mesh-size convergence. `--spatial-h-factors` gives coarse-to-fine multipliers on
+`--spatial-lc-fine`; its default `2 1` compares both thin and fabricated probes at
+the maximum requested FEM order and reuses the finest completed FEM-order solve.
+Probe and held-out qualification reject a coupon when either resolved response is
+not stable.
+
+For the rounded-endpoint development coupon at p=3, reducing `lc_fine` from
+`0.025 um` to `0.0125 um` changed the fabricated domain matrix by `0.067%`, MA
+by `13.14%`, MS by `2.39%` in Frobenius norm (`16.01%` for the worst probe
+energy), and SA by `8.23%`. The geometry is valid, but this coupon does not pass
+the production convergence limits and needs another h-refinement level. Fresh
+quadratic meshes for the rounded endpoint, a transmon-derived L mask, and a
+two-component mask had final minimum scaled Jacobians `0.1013`, `0.1007`, and
+`0.1002`, respectively. These mesh checks do not substitute for response
+convergence.
 
 Execution continues across independent requirements after a candidate fails.
 Qualified entries are cached and merged into a partial process library, while
