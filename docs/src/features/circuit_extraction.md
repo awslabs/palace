@@ -11,7 +11,7 @@ In this tutorial we discuss *Palace*'s circuit synthesis feature, which extracts
 model of a device directly from the full-wave FEM. The synthesis feature is based on the rational
 interpolation of the adaptive driven solver, which is discussed in [Adaptive Frequency Sweeps for
 Driven Simulations](adaptive_driven_solver.md). We assume familiarity with the details therein.
-We will continue to use the transmon model as our reference example, which features in the
+We will continue to use the transmon model as our reference example; it also appears in the
 [eigenmode](../examples/transmon.md) and [driven](adaptive_driven_solver.md) tutorials.
 
 !!! warning "Warning: More Algorithmic Details Ahead!"
@@ -24,7 +24,7 @@ We will continue to use the transmon model as our reference example, which featu
 
     There are a few cases where variables can cause naming confusion. *Palace* uses the notation ``\bm{A}(\omega) = \bm{K} + i\omega \bm{C} - \omega^2 \bm{M}`` for the matrix at a given ``\omega``. Here ``\bm{C}`` is the loss matrix in the finite element space, which is not the same as the capacitance matrix. The ``R`` matrix of ``QR`` orthogonalization is not the circuit resistance matrix.
 
-    For this tutorial we will consistently label circuit matrices with a hat: the inverse inductance ``\widehat{\bm{L}}^{-1}``, inverse resistance ``\widehat{\bm{R}}^{-1}``, capacitance ``\widehat{\bm{C}}``, etc. Similarly, we will label the voltage vector ``\widehat{\bm{V}}`` and current ``\widehat{\bm{I}}``. When referring to to scalar quantities, like voltage $V$, we will drop the hat when there is no risk of confusion.
+    For this tutorial we will consistently label circuit matrices with a hat: the inverse inductance $\widehat{\bm{L}}^{-1}$, inverse resistance $\widehat{\bm{R}}^{-1}$, capacitance $\widehat{\bm{C}}$, etc. Similarly, we will label the voltage vector $\widehat{\bm{V}}$ and current $\widehat{\bm{I}}$. When referring to scalar quantities, like voltage $V$, we will drop the hat when there is no risk of confusion.
 
 ## Circuit Synthesis Quick-Start
 
@@ -54,7 +54,7 @@ of the driven solver as well as the following additional files:
     wave-port, surface-conductivity, or rational-impedance dispersion realization (together with any
     auxiliary-state damping). A
     wave-port-only system, with no `LumpedPort` at all, is permitted and can still produce a
-    non-zero ``\widehat{\bm{R}}^{-1}``. The csv header describes the type of the node (port or
+    non-zero ``\widehat{\bm{R}}^{-1}``. The CSV header describes the type of the node (port or
     synthesized). The matrices are in SI units.
   - (Optional): `rom-Linv-im.csv`, `rom-Rinv-im.csv`, `rom-C-im.csv`. The imaginary component of the
     synthesized matrices ``\mathrm{Im}~\widehat{\bm{L}}^{-1}``, ``\mathrm{Im}~\widehat{\bm{R}}^{-1}``,
@@ -69,15 +69,14 @@ of the driven solver as well as the following additional files:
     ``\widehat{\bm{L}}``, ``\widehat{\bm{R}}``, ``\widehat{\bm{C}}`` are real.
   - `rom-orthogonalization-matrix-R.csv`. The Gram–Schmidt ``R`` factor of the synthesized circuit
     modes. This is very useful in advanced circuit postprocessing, but can be ignored by most users.
-  - `rom-port-reference.csv`. The matched reference admittance
-    ``Y_{\mathrm{ref}}`` and impedance ``Z_{\mathrm{ref}} = Y_{\mathrm{ref}}^{-1}`` tabulated against
-    frequency for every included port; written whenever at least one included port is present. The header is `f (GHz)` followed, for each port label, by
-    `Re{Y_ref[label]} (S)`, `Im{Y_ref[label]} (S)`, `Re{Z_ref[label]} (Ohm)`, and
-    `Im{Z_ref[label]} (Ohm)`. The labels are `port_<idx>_re` for lumped ports and `waveport_<idx>_re`
-    for wave ports. For a lumped port ``Y_{\mathrm{ref}} = 1/Z(\omega)`` is the port's circuit
-    admittance; for a wave port it is derived from the fitted propagation constant ``k_n(\omega)`` and
-    is therefore genuinely frequency dependent. This table is used to re-reference the synthesized
-    port admittances to a physical characteristic impedance when computing scattering parameters.
+  - `rom-port-reference.csv`. The matched reference admittance $Y_{\mathrm{ref}}$ and impedance
+    $Z_{\mathrm{ref}} = Y_{\mathrm{ref}}^{-1}$ for every included port. It is written whenever at
+    least one port is included. For a lumped port, $Y_{\mathrm{ref}} = 1/R_{\mathrm{ref}}$, where
+    $R_{\mathrm{ref}}$ is the configured `R` when it is non-zero and $Z_0$ otherwise. The full RLC
+    load remains in the synthesized matrices and `rom-portload-*` files. For a wave port,
+    $Y_{\mathrm{ref}}$ comes from the fitted propagation constant $k_n(\omega)$ and may vary with
+    frequency. The columns give frequency followed by the real and imaginary parts of
+    $Y_{\mathrm{ref}}$ and $Z_{\mathrm{ref}}$ for each circuit port label.
   - (Optional, for cascading): `rom-portload-<label>-{Linv,Rinv,C}-{re,im}.csv`. One set of files per
     included port, with the same node labels and dimensions as the total `rom-*` matrices. The label
     is `port_<idx>_re` (lumped) or `waveport_<idx>_re` (wave). Each set isolates that single port's
@@ -101,7 +100,7 @@ There are several constraints and considerations for using this feature:
     residual and warns if it cannot be met.
   - All `LumpedPort` attributes must be orthogonal to each other, since these are separated out as
     individual rows and columns in the circuit matrix. For *Palace*'s Nédélec meshes, this means
-    that that lumped ports cannot share parallel edges, since the degree of freedom on the edge
+    that lumped ports cannot share parallel edges, since the degree of freedom on the edge
     contributes to both ports.
   - A port can be removed from the synthesized circuit matrices with the per-port
     `"IncludeInSynthesis"` flag (default `true`), available on both `LumpedPort` and `WavePort`.
@@ -123,7 +122,7 @@ There are several constraints and considerations for using this feature:
 
 ## Circuit Theory and Conventions
 
-The general question of "What exactly is a circuit?" and how to connect Maxwell's equation to
+The general question of "What exactly is a circuit?" and how to connect Maxwell's equations to a
 circuit representation is covered in many electrical engineering textbooks. In particular, there are
 subtleties and choices of convention in defining circuits when going from DC (electro- and
 magnetostatic) to AC simulations. We will discuss our approach below, but refer to references [1-5]
@@ -131,8 +130,8 @@ for in-depth discussions.
 
 The circuit synthesis of *Palace* is currently based on the adaptive driven solver — [see the driven
 solver tutorial](adaptive_driven_solver.md) — so is AC *only*. The result will be an
-effective (synthesized) circuit that will only accurately reproduce the response in the domain it
-was trained on.
+effective (synthesized) circuit that will only accurately reproduce the response in the frequency
+interval on which it was trained.
 
 ### Projective Construction
 
@@ -146,7 +145,8 @@ linear equation that Palace solves when evaluating a driven simulation is
 where ``\bm{K}``, ``\bm{C}``, and ``\bm{M}`` give the purely quadratic part of the system matrix, and
 ``\bm{A}_2(\omega)`` and ``\bm{b}_2(\omega)`` collect the terms that are non-quadratic in ``\omega``,
 arising from frequency-dependent boundary conditions (wave ports, second-order farfield absorbing,
-and surface conductivity). *Palace* synthesizes these ``\bm{A}_2(\omega)`` contributions by
+surface conductivity, and rational surface impedance). *Palace* synthesizes these
+``\bm{A}_2(\omega)`` contributions by
 fitting their dispersion — see [Synthesizing Frequency-Dependent Boundary
 Conditions](#Synthesizing-Frequency-Dependent-Boundary-Conditions) below — so that the quadratic
 part of each fit maps onto ``\bm{K}``/``\bm{C}``/``\bm{M}`` and any residual is realized as
@@ -156,7 +156,7 @@ adaptive solver creates a ROM by projecting this large system onto a set of
 orthogonal vectors ``\bm{Q}``. This forms projected matrices ``\bm{K}_r = \bm{Q}^T\bm{K}\bm{Q}``,
 ``\bm{C}_r = \bm{Q}^T\bm{C}\bm{Q}``, ``\bm{M}_r = \bm{Q}^T\bm{M}\bm{Q}``, and projected vector
 ``\bm{b}_r = \bm{Q}^T\bm{b}``. The projection onto a smaller basis accurately reproduces the
-response of the system in the user specified frequency interval ``[f_{\mathrm{min}}, f_{\mathrm{max}}]``.
+response of the system in the user-specified frequency interval ``[f_{\mathrm{min}}, f_{\mathrm{max}}]``.
 
 The linear equation ``[\bm{A}_r(\omega) / i \omega] \bm{x}_r = \bm{b}_r``, looks like a circuit
 admittance equation ``\widehat{\bm{Y}}(\omega)\widehat{\bm{V}} = \widehat{\bm{I}}``, suggesting that
@@ -164,64 +164,60 @@ we can just identify $\bm{K}_r$ with the inverse inductance $\widehat{\bm{L}}^{-
 the inverse resistance $\widehat{\bm{R}}^{-1}$, and $\bm{M}_r$ with the capacitance
 $\widehat{\bm{C}}$. We could have said the exact same thing about the non-projected system.
 
-This identification is “morally speaking“ correct [1-5]. The matrix ``\bm{K}`` arises from
-discretizing the magnetic energy term ``\tfrac{1}{2}\int dV\, (\nabla\times\bm{E}^*)\mu^{-1}(\nabla\times\bm{E})/{\omega^2}`` which we identify as
-``\tfrac{1}{2}\widehat{\bm{I}}^{*} \widehat{\bm{L}}^{-1} \widehat{\bm{I}}`` in a circuit. The matrix
-``\bm{M}`` come from discretizing the electric energy ``\tfrac{1}{2}\int dV \, \bm{E}^* \varepsilon \bm{E}`` which we identify as ``\tfrac{1}{2}\widehat{\bm{V}}^{*} \widehat{\bm{C}} \widehat{\bm{V}}``
-. And the matrix ``\bm{C}`` from discretizing the Rayleigh dissipation term.
+This identification is “morally speaking” correct [1-5]. The matrix ``\bm{K}`` arises from
+discretizing the magnetic energy term
+``\tfrac{1}{2}\int dV\, (\nabla\times\bm{E}^*)\mu^{-1}(\nabla\times\bm{E})/{\omega^2}``, which we
+identify as ``\tfrac{1}{2}\widehat{\bm{I}}^{*} \widehat{\bm{L}}^{-1} \widehat{\bm{I}}`` in a circuit.
+The matrix ``\bm{M}`` comes from discretizing the electric energy
+``\tfrac{1}{2}\int dV \, \bm{E}^* \varepsilon \bm{E}``, which we identify as
+``\tfrac{1}{2}\widehat{\bm{V}}^{*} \widehat{\bm{C}} \widehat{\bm{V}}``. The matrix ``\bm{C}``
+arises from discretizing the Rayleigh dissipation term.
 
 However, just printing ``\bm{K}_r``, ``\bm{C}_r``, and ``\bm{M}_r`` matrices is neither a precise
-nor a useful circuit identification, for two related reasons :
+nor a useful circuit identification, for two related reasons:
 
  1. The basis $\bm{Q}$ used to construct these matrices has lost the notion of system ports. There
     is no way to calculate the scattering matrix of this circuit or to cascade it with other
     circuits.
  2. The ``\bm{K}_r``, ``\bm{C}_r``, ``\bm{M}_r`` matrices have no consistent definition of voltage
     ``V`` and current ``I``. This is certainly true because these matrices are interpolation
-    coefficients of a finite element basis that discretize Maxwell's equations. For example, if you
-    change the polynomial `Order` of the FEM basis, the basis changes so do the matrix entries. Even
+    coefficients of a finite element basis that discretizes Maxwell's equations. For example, if
+    you change the polynomial `Order` of the FEM basis, the basis changes, as do the matrix entries. Even
     without the finite element interpolation, however, ``V`` and ``I`` at AC are only generically
-    defined by convention at ports [1,3-5]. There is no a priori notion of ``V`` and ``I`` for a 3D
-    electric field solution $\bm{x}$ that make up $\bm{Q}$.
+    defined by convention at ports [1,3-5]. There is no a priori notion of ``V`` and ``I`` for 3D
+    electric field solutions $\bm{x}$ that make up $\bm{Q}$.
 
 In order to make the connection to circuits, we will change both the content of the basis $\bm{Q}$
-as well as its orthogonalisation rule. This means that running *Palace* with
-`"AdaptiveCircuitSynthesis"` with `true` and `false` use different ROMs.
+and its orthogonalization rule. Thus, running *Palace* with `"AdaptiveCircuitSynthesis"` set to
+`true` or `false` produces different ROMs.
 
 ### Adding Ports to the ROM Basis
 
-The circuit-synthesis ROM adds the port modes as the first ``N_p`` columns of the basis matrix
-``\bm{Q}``. Here ``N_p`` counts the *included* ports — lumped ports and wave ports that have
-`"IncludeInSynthesis": true`. Before orthogonalization, the vectors added to the ROM basis look
-like:
+The circuit-synthesis ROM adds the port modes as the first $N_p$ columns of the basis matrix
+$\bm{Q}$. Here $N_p$ counts real port basis vectors, not physical ports: each included lumped port
+contributes one, while each included wave port contributes one or two. Before orthogonalization, the
+vectors added to the ROM basis look like:
 
 ```math
 \bm{W} = \big[
 \underbrace{\bm{e}_1 \;\; \cdots \;\; \bm{e}_{N_l}}_{\text{lumped ports}} \;\;
 \underbrace{\mathrm{Re}\,\bm{w}_1 \;\; \mathrm{Im}\,\bm{w}_1 \;\; \cdots}_{\text{wave ports}} \;\;
-\underbrace{\mathrm{Re}\,\bm{x}(\omega^*_1) \;\; \mathrm{Im}\,\bm{x}(\omega^*_1) \;\; \cdots}_{\text{synthesised interior nodes}}\big].
+\underbrace{\mathrm{Re}\,\bm{x}(\omega^*_1) \;\; \mathrm{Im}\,\bm{x}(\omega^*_1) \;\; \cdots}_{\text{synthesized interior nodes}}\big].
 ```
 
-Here ``\bm{e}_j`` are the lumped port mode fields, ``\bm{w}_p`` are the wave-port modal fields, and
-``\bm{x}(\omega^*_k)`` are high-dimensional model (HDM) solutions at the sample frequencies. Lumped
-ports come first, followed by wave ports. Each wave-port mode ``\bm{w}_p`` is seeded from the
-cross-section eigenproblem at a reference frequency — the centre of the sweep band — and, because it
-is generally complex, contributes up to two real basis vectors (its real and imaginary parts, each
-kept only if it survives the orthogonalization tolerance). The power-orthogonalization described
-below extends to the wave-port boundaries, with the differences discussed in the [Wave port
-boundary](#Wave-port-boundary) subsection. Because we add ports first and demand that the
-lumped ports do not overlap, the orthogonalization does does not alter the port structure. We can
-sensibly interpret the top left ``N_p \times N_p`` block of the synthesized matrices as the physical
-port block. Driving the circuit with an external excitation at a port thus corresponds to exciting
-the appropriate row ``j``. The adaptive solver appends HDM samples one frequency at a time until the
-ROM meets the prescribed `"AdaptiveTol"`. The orthogonalization routine will now change these
-vectors and, most notably, always remove the port mode contribution since these appear earlier in
-the basis.
+Here $\bm{e}_j$ are the lumped port mode fields, $\bm{w}_p$ are the wave-port modal fields, and
+$\bm{x}(\omega^*_k)$ are high-dimensional model (HDM) solutions at the sample frequencies. Lumped
+ports come first, followed by wave ports. Each wave-port mode $\bm{w}_p$ is evaluated at the center
+of the sweep band and can contribute both a real and an imaginary basis vector. The
+power-orthogonalization described below extends to the wave-port boundaries. Because the ports are
+added first, the top-left $N_p \times N_p$ block is the port block. For a complex wave port, the
+`_re` and `_im` rows are two coordinates of the same physical terminal. The adaptive solver then
+appends HDM samples and orthogonalizes them against these port modes.
 
 !!! note "Ports in the output CSV files"
 
-    The header of every `rom-*.csv` file lists the node names in the order they appear in
-    ``\bm{Q}``. The included ports appear first. Lumped ports come first as `port_<idx>_re`, where
+    The synthesized matrix, orthogonalization, port-load, and eigenvector CSV files list the node
+    names in the order they appear in ``\bm{Q}``. The included ports appear first. Lumped ports come first as `port_<idx>_re`, where
     `<idx>` is the `"Index"` in the `"LumpedPort"` configuration; lumped ports are always real
     fields, so each occupies a single column with the `_re` suffix. Wave ports follow as
     `waveport_<idx>_re` and, when the wave-port modal field has a non-zero imaginary part, an
@@ -239,29 +235,28 @@ the basis.
 ### Orthogonalization
 
 The vectors in ``\bm{W}`` above are coefficients in the finite element basis that discretize
-Maxwell's equations. To interpret them as sensible microwave circuits, where the ``N_p \times N_p``
-port block recovers our expected circuit formulae, we have to proceed a little carefully, in
-defining how to orthogonalize these fields.
+Maxwell's equations. To interpret them as sensible microwave circuits, where the leading
+$N_p \times N_p$ block recovers the port behavior, we have to proceed carefully when defining how
+to orthogonalize these fields.
 
 #### Lumped port boundary
 
 *Palace*'s implementation of lumped ports, voltage convention choices, and definition of the
 scattering matrix are all defined in the [Reference Documentation](../reference.md). We assume
-familiarity with that section. Here will also assume that ports are made of a single element ``e``,
-although all formulae generalize.
+familiarity with that section. Here we will also assume that ports are made of a single element ``e``,
+although all formulas generalize.
 
-On the lumped port ``\Gamma_j``, the correct orthogonalization of an electric field ``E_1``  against
-the port ``\bm{e}_j`` is via the inner product defined by the power flow:
+On a lumped port $\Gamma_j$, *Palace* uses the weighted overlap
 
 ```math
-\langle \bm{E}_1, \bm{e}_j \rangle_{\Gamma_j} = \int_{\Gamma_j} dS \, \bm{n} \cdot (\bm{E}_1 \times \frac{[\bm{e}_j]^*}{Z_s})
+\langle \bm{E}_1, \bm{e}_j \rangle_{\Gamma_j}
+  = \sum_e \frac{L_e}{N_j W_e}
+    \int_{\Gamma_{j,e}} dS\, \bm{E}_1 \cdot \bm{e}_j^* ,
 ```
 
-This is the time-averaged power flowing across the port (a Poynting flux), and using it as the
-inner product is what makes the orthogonalization consistent with Lorentz reciprocity. Intuitively,
-it means that each boundary mode ``\bm{e}_j`` carries power independently of the others — the port
-modes are *power-orthogonal* — which is essential to recover the correct port excitation and
-scattering behaviour. Setting ``\bm{E}_1 = \bm{e}_j`` then fixes the normalization of the port mode:
+where $N_j$ is the number of parallel elements in the port. This frequency-independent reference
+weighting enforces power orthogonality; the physical termination $Z_s(\omega)$ is not used here.
+Setting $\bm{E}_1 = \bm{e}_j$ fixes the port-mode normalization:
 *Palace* scales ``\bm{e}_j`` so that ``\int_{\Gamma_j} |\bm{e}_j|^2 \, dS = |Z_R| \sum_e W_e / L_e``,
 summed over the port's lumped elements with widths ``W_e`` and lengths ``L_e``. For a single
 rectangular element this corresponds to a port voltage ``V_j = \sqrt{|Z_R|}``, i.e. a mode carrying
@@ -269,12 +264,12 @@ unit power referenced to ``Z_R``.
 
 The [reference](../reference.md) discusses the relationship between physical surface impedance on a
 port ``Z_s`` and the circuit characteristic impedance ``Z``. For ports that are not purely resistive
-(such as junctions or lossy waveguide ports), it is generally more helpful to normalize port field
-with respect to a different reference impedance ``Z_R`` which is pure resistive. For the port mode
-added to the basis ``\bm{W}``, this is essential to have a frequency independent voltage
-normalization and we pick the impedance of free space ``Z_R = Z_0 \approx 376.73~\mathrm{\Omega}``.
+(such as junctions or lossy waveguide ports), it is generally more helpful to normalize the port field
+with respect to a different reference impedance ``Z_R`` which is purely resistive. For the port mode
+added to the basis ``\bm{W}``, this is essential for a frequency-independent voltage
+normalization, and we pick the impedance of free space ``Z_R = Z_0 \approx 376.73~\mathrm{\Omega}``.
 However, this will also mean that we will have to post-process the *Palace* synthesized circuit
-matrices matrices carefully to recover the values (voltage, current, scattering parameters) with
+matrices carefully to recover the values (voltage, current, scattering parameters) with
 respect to the conventional circuit characteristic impedance ``Z``.
 
 #### Wave port boundary
@@ -286,7 +281,7 @@ Two practical differences are worth noting.
 
 First, the mode itself is not a prescribed analytic field. The wave-port modal field ``\bm{w}_p`` is
 the solution of the two-dimensional cross-section eigenproblem on the port boundary, evaluated at a
-reference frequency taken as the centre of the sweep band. This field is generally complex, so —
+reference frequency taken as the center of the sweep band. This field is generally complex, so —
 unlike a lumped port — it contributes up to two columns to the basis (its real and imaginary parts,
 each retained only if it survives the orthogonalization tolerance).
 
@@ -313,13 +308,13 @@ in the synthesized space, which cancel out once we calculate physical quantities
 scattering parameters, or eigenmode frequencies.
 
 By default, *Palace* normalizes the field according to the system mass matrix ``\bm{M}``. For two
-bulk modes this corresponds to a orthogonalization according to the inner product
+bulk modes this corresponds to an orthogonalization according to the inner product
 
 ```math
 \langle \bm{E}_1, \bm{E}_2 \rangle_\Omega = \int_\Omega dV \bm{E}_1 \varepsilon \bm{E}_2,
 ```
 
-which is the electric domain energy, up to a factor 2. An appealing aspect of this inner product is
+which is the electric domain energy, up to a factor of 2. An appealing aspect of this inner product is
 that it corresponds to a sensible physical quantity and converges to stable values with changing
 finite element order or mesh refinement. We refer to this orthogonalization rule as `"Energy"`.
 
@@ -334,7 +329,7 @@ operator and ``f(\omega)`` is a scalar *dispersion* that may not be quadratic in
 dispersion differs per boundary type:
 
   - **Wave port.** The boundary term is ``i\,k_n(\omega)\,\bm{M}_b``, where ``k_n(\omega)`` is the
-    modal propagation constant; the port admittance is ``Y_p(\omega) = k_n(\omega) / (\omega\mu)``.
+    modal propagation constant; the port admittance is $Y_p(\omega) = k_n(\omega) / (\omega\mu)$.
     The fitted scalar is ``k_n(\omega)``, obtained by re-solving the small cross-section eigenproblem
     at a set of fit frequencies. For the synthesis (and the underlying driven sweep) only the real,
     propagating part of ``k_n`` is used; the imaginary part (line attenuation) is dropped, so a
@@ -348,17 +343,17 @@ dispersion differs per boundary type:
     leading ``i`` is carried by the (purely imaginary) projected boundary mass, so the scalar that is
     actually fit is ``f(\omega) = \omega / Z(\omega)``, in general complex.
   - **Rational surface impedance.** For an impedance ``Z(s) = N(s)/D(s)``, the Robin coefficient is
-    ``g(s) = sD(s)/N(s)``. *Palace* separates the polynomial part of ``g(i\omega)/i`` by exact long
-    division and realizes its strictly proper remainder using the same rational auxiliary-state
-    construction described below.
+    ``g(s) = sD(s)/N(s)``. *Palace* separates ``g(i\omega)/i`` by exact long division. When the
+    polynomial quotient has degree at most two, it is folded exactly into the circuit pencil and the
+    strictly proper remainder is sent directly to AAA. Higher-degree inputs use the generic
+    quadratic-plus-AAA fallback described below.
 
-Except for the analytically injected farfield pole and the exact polynomial part of a rational
-surface impedance, *Palace* fits ``f(\omega)`` on the sweep band and chooses one of two regimes
-automatically, by comparing the residual of an order-2 polynomial fit against `"AdaptiveTol"`:
+For wave ports and surface conductivity, *Palace* fits $f(\omega)$ on the sweep band and compares a
+quadratic fit against `"AdaptiveTol"`:
 
-**Polynomial regime.** When a quadratic ``f(\omega) \approx \alpha_0 + \alpha_1\omega + \alpha_2\omega^2`` already meets the tolerance, the fit is folded directly into the synthesized
-matrices and *no rows or columns are added*. With the projected boundary mass ``\bm{M}_b^r`` carried
-in the imaginary slot (``\bm{M}_b^r = i\,\bm{M}_{\mathrm{proj}}``), the three coefficients map as
+**Polynomial regime.** If $f(\omega) \approx \alpha_0 + \alpha_1\omega + \alpha_2\omega^2$ meets the
+tolerance, no rows or columns are added. With $\bm{M}_b^r = i\,\bm{M}_{\mathrm{proj}}$, real
+coefficients, as in the wave-port fit, map as
 
 ```math
 \alpha_0 \;\to\; \mathrm{Im}~\widehat{\bm{L}}^{-1}, \qquad
@@ -366,23 +361,25 @@ in the imaginary slot (``\bm{M}_b^r = i\,\bm{M}_{\mathrm{proj}}``), the three co
 -\alpha_2 \;\to\; \mathrm{Im}~\widehat{\bm{C}} .
 ```
 
-This is why a wave port or surface-conductivity boundary can populate ``\widehat{\bm{R}}^{-1}`` (via
-``\alpha_1``) and the imaginary matrices (via ``\alpha_0`` and ``\alpha_2``) even when there is no
-material loss tangent.
+Surface-conductivity and rational-impedance fits can have complex coefficients. In that case, their
+real and imaginary parts contribute to both components of the corresponding circuit matrices.
 
-**Augmented regime.** When the quadratic residual exceeds `"AdaptiveTol"`, *Palace* fits the leftover
-residual with an AAA rational approximation [8],
+**Augmented regime.** When the generic quadratic residual exceeds `"AdaptiveTol"`, *Palace* fits the
+leftover residual with an AAA rational approximation [7],
 
 ```math
 f(\omega) - \big(\alpha_0 + \alpha_1\omega + \alpha_2\omega^2\big) \;\approx\;
-d + \sum_{k} \frac{r_k}{\omega - p_k} ,
+q(\omega) + \sum_{k} \frac{r_k}{\omega - p_k} ,
 ```
 
-with poles ``p_k`` and residues ``r_k``. The constant ``d`` is folded back into ``\alpha_0``, and
-each pole becomes a small set of *auxiliary states* appended to the synthesized matrices. Writing the
-projected boundary mass as a rank factorization ``\bm{M}_{\mathrm{proj}} = \sum_j \sigma_{j}\, \bm{u}_{j}\bm{u}_{j}^{\top}`` (a truncated SVD, keeping the directions ``j`` with
-significant singular value ``\sigma_{j}``), each pair of pole ``k`` and kept direction ``j`` adds one
-auxiliary node. For that node the augmented pencil is populated as
+where polynomial quotient terms in ``q`` through quadratic order are folded back into the
+``\alpha_j``. The rational-impedance exact-split path uses the same auxiliary construction but
+obtains its poles directly from the strictly proper remainder. Each pole becomes a small set of
+*auxiliary states* appended to the synthesized matrices. Writing the projected boundary mass as a
+rank factorization $\bm{M}_{\mathrm{proj}} = \sum_j \sigma_{j}\, \bm{u}_{j}\bm{u}_{j}^{\top}$ (a
+truncated SVD, keeping the directions $j$ with significant singular value $\sigma_{j}$), each pair
+of pole $k$ and kept direction $j$ adds one auxiliary node. For that node the augmented pencil is
+populated as
 
 ```math
 \widehat{\bm{K}}_{\mathrm{aux},\mathrm{aux}} = -p_k, \qquad
@@ -394,8 +391,8 @@ auxiliary node. For that node the augmented pencil is populated as
 
 where both couplings are the same unconjugated vector, so the augmented pencil stays
 complex-symmetric rather than Hermitian. Eliminating the auxiliary node by Schur complement
-contributes ``-\widehat{\bm{K}}_{\mathrm{node},\mathrm{aux}} \big(\widehat{\bm{K}}_{\mathrm{aux},\mathrm{aux}} + i\omega\, \widehat{\bm{C}}_{\mathrm{aux},\mathrm{aux}}\big)^{-1} \widehat{\bm{K}}_{\mathrm{aux},\mathrm{node}} = i\,\dfrac{r_k\,\sigma_{j}\, \bm{u}_{j}\bm{u}_{j}^{\top}}{\,\omega - p_k\,}`` to the node block, and summing over the kept
-directions ``j`` recovers the rational term ``i\,r_k/(\omega - p_k)\,\bm{M}_{\mathrm{proj}} = r_k/(\omega - p_k)\,\bm{M}_b^r``
+contributes $-\widehat{\bm{K}}_{\mathrm{node},\mathrm{aux}} \big(\widehat{\bm{K}}_{\mathrm{aux},\mathrm{aux}} + i\omega\, \widehat{\bm{C}}_{\mathrm{aux},\mathrm{aux}}\big)^{-1} \widehat{\bm{K}}_{\mathrm{aux},\mathrm{node}} = i\,\dfrac{r_k\,\sigma_{j}\, \bm{u}_{j}\bm{u}_{j}^{\top}}{\,\omega - p_k\,}$ to the node block, and summing over the kept
+directions $j$ recovers the rational term $i\,r_k/(\omega - p_k)\,\bm{M}_{\mathrm{proj}} = r_k/(\omega - p_k)\,\bm{M}_b^r$
 exactly. These nodes carry the `<prefix>_p<k>d<j>` labels described above, and the
 orthogonalization-``R`` matrix is identity-padded over them. The net effect is that the synthesized
 ``\widehat{\bm{L}}^{-1}``, ``\widehat{\bm{R}}^{-1}``, ``\widehat{\bm{C}}`` stay quadratic in
@@ -403,13 +400,9 @@ orthogonalization-``R`` matrix is identity-padded over them. The net effect is t
 
 !!! note "What is and is not user-tunable"
 
-    The only knob controlling the fit is `"AdaptiveTol"`, which sets both the regime threshold and the
-    target accuracy of the AAA fit. The maximum number of AAA poles is a fixed internal cap, and the
-    SVD rank cutoff is an internal tolerance (``\min(\texttt{AdaptiveTol}, 10^{-6})``); neither is
-    exposed as a separate option. *Palace* prints the per-boundary fit residual and, for the Augmented
-    regime, the pole, rank, and auxiliary-state counts. It warns when the augmented-fit residual still
-    exceeds `"AdaptiveTol"`, in which case the synthesized ``\widehat{\bm{L}}^{-1}``,
-    ``\widehat{\bm{R}}^{-1}``, ``\widehat{\bm{C}}`` may be less accurate over the band.
+    The only fit-accuracy knob is `"AdaptiveTol"`. It sets the regime threshold and the target
+    accuracy of AAA. The maximum number of poles and the SVD rank cutoff are internal. *Palace*
+    prints fit residuals so users can check the accuracy of the synthesized matrices.
 
 ## Running the Transmon Model with Circuit Synthesis
 
@@ -511,7 +504,7 @@ plot has a similar interpretation to the `domain-E.csv` plot above.
 ```
 
 Let us now look at the `rom-*.csv` output. For this model, five matrix files describe the
-``19 \times 19`` synthesized circuit pencil and its orthogonalization:
+$19 \times 19$ synthesized circuit pencil and its orthogonalization:
 `rom-Linv-re.csv`, `rom-Rinv-re.csv`, `rom-C-re.csv`, `rom-C-im.csv`, and
 `rom-orthogonalization-matrix-R.csv`. *Palace* also writes the port-reference table, the non-zero
 per-port load matrices, and, when estimates are found, the synthesized-system eigenvalue and
@@ -570,19 +563,19 @@ the full $1 / (50~\Omega)$ dissipative term.
 Now consider `rom-C-re.csv`:
 
 ```csv
- port_1_re  port_2_re  port_3_re  sample_e1_s0_re  sample_e1_s0_im, ...
- 4.689e-16  0.000e+00  0.000e+00       -5.844e-17       -9.542e-17,
- 0.000e+00  4.282e-16  0.000e+00       -4.632e-17        8.473e-17,
- 0.000e+00  0.000e+00  5.529e-15       -6.781e-22       -2.415e-20,
--5.844e-17 -4.632e-17 -6.781e-22        3.542e-14       -2.962e-20,
--9.542e-17  8.473e-17 -2.415e-20       -2.962e-20        3.542e-14,
+ port_1_re, port_2_re,  port_3_re,  sample_e1_s0_re,  sample_e1_s0_im,  ...
+ 4.689e-16, 0.000e+00,  0.000e+00,       -5.844e-17,       -9.542e-17,
+ 0.000e+00, 4.282e-16,  0.000e+00,       -4.632e-17,        8.473e-17,
+ 0.000e+00, 0.000e+00,  5.529e-15,       -6.781e-22,       -2.415e-20,
+-5.844e-17,-4.632e-17, -6.781e-22,        3.542e-14,       -2.962e-20,
+-9.542e-17, 8.473e-17, -2.415e-20,       -2.962e-20,        3.542e-14,
 ...
 ```
 
 The diagonal value of port 3 is `5.529e-15`, which is larger than the `5.5e-15` term we added to `C`
 in the `LumpedPort` configuration. Additionally, ports 1 and 2 have small diagonal contributions. In
 all these cases, this is because the boundary port term will still pick up some of the capacitive
-contribution from the volume term of the mesh elements neighbouring the port surface. If we were to
+contribution from the volume term of the mesh elements neighboring the port surface. If we were to
 refine the mesh elements close to the port, the size of this term would decrease.
 
 Finally, *Palace* outputs a `rom-C-im.csv` for this model. This is because of the presence of the
@@ -603,6 +596,4 @@ reference](../reference.md#Mathematical-background)).
 
 [6] N. J. Higham, Accuracy and stability of numerical algorithms, 2nd ed. in Other titles in applied mathematics, no. 80. Philadelphia, Pa: Society for Industrial and Applied Mathematics (SIAM, 3600 Market Street, Floor 6, Philadelphia, PA 19104), 2002. doi: 10.1137/1.9780898718027.
 
-[7] Z. K. Minev et al., "Energy-participation quantization of Josephson circuits," *npj Quantum Information*, vol. 7, p. 131, 2021. doi: 10.1038/s41534-021-00461-8.
-
-[8] Y. Nakatsukasa, O. Sète, and L. N. Trefethen, "The AAA algorithm for rational approximation," *SIAM J. Sci. Comput.*, vol. 40, no. 3, pp. A1494–A1522, 2018. doi: 10.1137/16M1106122.
+[7] Y. Nakatsukasa, O. Sète, and L. N. Trefethen, "The AAA algorithm for rational approximation," *SIAM J. Sci. Comput.*, vol. 40, no. 3, pp. A1494–A1522, 2018. doi: 10.1137/16M1106122.
