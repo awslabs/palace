@@ -20,10 +20,6 @@ We will continue to use the transmon model as our reference example, which featu
 
     The internal algorithmic choices may change if better numerical algorithms become available. Furthermore, the interpretation of the output results requires some care to get right. Please proceed with caution.
 
-!!! note
-
-    The data can be generated with the script `examples/transmon/transmon_tutorial_circuit.jl` and the result plots generated with `examples/transmon/transmon_tutorial_circuit_plots.py`.
-
 !!! note "Naming Convention"
 
     There are a few cases where variables can cause naming confusion. *Palace* uses the notation ``\bm{A}(\omega) = \bm{K} + i\omega \bm{C} - \omega^2 \bm{M}`` for the matrix at a given ``\omega``. Here ``\bm{C}`` is the loss matrix in the finite element space, which is not the same as the capacitance matrix. The ``R`` matrix of ``QR`` orthogonalization is not the circuit resistance matrix.
@@ -462,10 +458,10 @@ Let us look at the difference in the standard output `domain-E.csv` between the 
 
 The left column above shows the domain electric energy ``E_\mathrm{elec}`` from the uniform driven
 solver, which we use as our reference baseline. This is exactly the same data shown previously in
-the [driven solver tutorial](adaptive_driven_solver.md#transmon-example). The
+the [driven solver tutorial](adaptive_driven_solver.md#Transmon-example). The
 middle column shows the RMS normalized absolute error between the electric energy calculated via the
 adaptive solver with circuit synthesis turned on and the uniform reference. The meaning of this plot
-was described [previously](adaptive_driven_solver.md#transmon-example). The
+was described [previously](adaptive_driven_solver.md#Transmon-example). The
 dashed lines indicate the adaptive tolerance `"AdaptiveTol"`; however, these are *not* bounds on
 the error of the domain energy. As discussed in the driven solver tutorial, the adaptive tolerance
 controls the error in the electric field coefficients and not the error in a derived quantity such
@@ -573,7 +569,7 @@ refine the mesh elements close to the port, the size of this term would decrease
 
 Finally, *Palace* outputs a `rom-C-im.csv` for this model. This is because of the presence of the
 `"LossTan"` in our model configuration (see [theory
-reference](../reference.md#mathematical-background)).
+reference](../reference.md#Mathematical-background)).
 
 ## Literature & References
 
