@@ -965,6 +965,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(config["Solver"]["Linear"]["AMSSingularOperator"].get<int>() == 1);
     CHECK(config["Solver"]["Linear"]["AMSMaxIts"].get<int>() == 1);
     CHECK(config["Solver"]["Linear"]["MGCycleIts"].get<int>() == 1);
+    CHECK(config["Solver"]["Magnetostatic"]["InactivePorts"] == "Open");
   }
 
   SECTION("User-specified values survive concretization")

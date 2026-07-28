@@ -264,8 +264,10 @@ void MagnetostaticSolver::PostprocessTerminals(
     for (const auto &[idx, data] : surf_j_op)
     {
       const auto &port_cfg = iodata.boundaries.current.at(idx);
-      reciprocal[col++] =
-          port_cfg.inactive_port_mode.value_or(global_mode) == InactivePortMode::OPEN;
+      // A single current port is never inactive during its own (only) solve, so its
+      // self-inductance is reciprocal regardless of the chosen mode.
+      reciprocal[col++] = n_current == 1 || port_cfg.inactive_port_mode.value_or(
+                                                global_mode) == InactivePortMode::OPEN;
     }
     // Remaining columns are flux loops (reciprocal), already initialized to true.
   }

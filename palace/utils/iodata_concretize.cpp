@@ -169,7 +169,9 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
 void ConcretizeMagnetostatic(const config::MagnetostaticSolverData &magnetostatic,
                              json &j_magnetostatic)
 {
-  Concretize(j_magnetostatic, "Save", magnetostatic.n_post);
+  ApplyEntries(j_magnetostatic,
+               {{"Save", magnetostatic.n_post},
+                {"InactivePorts", ToString(magnetostatic.inactive_port_mode)}});
 }
 
 void ConcretizeBoundaryMode(const config::BoundaryModeSolverData &bm, json &j_bm)
