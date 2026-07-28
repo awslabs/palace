@@ -53,6 +53,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-singularassembly.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-singulardofs.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-singularelements.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-singulartensorcertification.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-singularfield.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-singularsurfacepostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-singularfeatures.cpp
