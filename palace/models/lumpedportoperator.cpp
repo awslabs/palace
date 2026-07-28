@@ -37,15 +37,15 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
   {
     if (has_circ)
     {
-      MFEM_VERIFY(data.R > 0.0, "Excited lumped port must have nonzero resistance!");
-      MFEM_VERIFY(data.C == 0.0 && data.L == 0.0,
-                  "Lumped port excitations do not support nonzero reactance!");
+      MFEM_VERIFY(data.R >= 0.0, "Excited lumped port must have non-negative resistance!");
+      MFEM_VERIFY(data.L >= 0.0 && data.C >= 0.0,
+                  "Excited lumped port must have non-negative inductance and capacitance!");
     }
     else
     {
-      MFEM_VERIFY(data.Rs > 0.0, "Excited lumped port must have nonzero resistance!");
-      MFEM_VERIFY(data.Cs == 0.0 && data.Ls == 0.0,
-                  "Lumped port excitations do not support nonzero reactance!");
+      MFEM_VERIFY(data.Rs >= 0.0, "Excited lumped port must have non-negative resistance!");
+      MFEM_VERIFY(data.Ls >= 0.0 && data.Cs >= 0.0,
+                  "Excited lumped port must have non-negative inductance and capacitance!");
     }
   }
 
@@ -142,12 +142,16 @@ double LumpedPortData::GetExcitationPower() const
 double LumpedPortData::GetExcitationVoltage() const
 {
   // Incident voltage should be the same across all elements of an excited lumped port.
+  // Reference the same real resistance used to normalize the incident drive
+  // (GetExcitationRefResistance: R for a resistive port, the unit reference for a purely
+  // reactive R == 0 port), so the reported V_inc is consistent with the assembled drive
+  // and nonzero for a reactive excitation.
   if (HasExcitation())
   {
     double V_inc = 0.0;
     for (const auto &elem : elems)
     {
-      const double Rs = R * GetToSquare(*elem);
+      const double Rs = GetExcitationRefResistance() * GetToSquare(*elem);
       const double E_inc = std::sqrt(
           Rs / (elem->GetGeometryWidth() * elem->GetGeometryLength() * elems.size()));
       V_inc += E_inc * elem->GetGeometryLength() / elems.size();
@@ -182,7 +186,13 @@ void LumpedPortData::InitializeLinearForms(mfem::ParFiniteElementSpace &nd_fespa
     SumVectorCoefficient fb(mesh.SpaceDimension());
     for (const auto &elem : elems)
     {
-      const double Rs = R * GetToSquare(*elem);
+      // Reference the S-parameter projection to the same real resistance used to normalize
+      // the incident drive (R for a resistive port; the unit reference for a purely
+      // reactive R == 0 port, so this does not divide by zero). The reactance is already
+      // present in the system matrix, so the projected field is the physical response; a
+      // purely reactive port's own S is not a meaningful traveling-wave quantity
+      // regardless.
+      const double Rs = GetExcitationRefResistance() * GetToSquare(*elem);
       const double Hinc = (std::abs(Rs) > 0.0)
                               ? 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
                                                 elem->GetGeometryLength() * elems.size())
@@ -619,9 +629,13 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
                                                       SumVectorCoefficient &fb)
 {
   // Construct the RHS source term for lumped port boundaries, which looks like -U_inc =
-  // +2 iω/Z_s E_inc for a port boundary with an incident field E_inc. The chosen incident
-  // field magnitude corresponds to a unit incident power over the full port boundary. See
-  // p. 49 and p. 82 of the COMSOL RF Module manual for more detail.
+  // +2 iω/R_ref E_inc for a port boundary with an incident field E_inc, where R_ref is the
+  // real reference resistance from GetExcitationRefResistance() (the port R, or the unit
+  // internal reference for a purely reactive R == 0 port; any port reactance acts through
+  // the system-matrix termination iω/Z_s, not through this drive coefficient). The chosen
+  // incident field magnitude corresponds to a unit incident power over the full port
+  // boundary, referenced to R_ref. See p. 49 and p. 82 of the COMSOL RF Module manual for
+  // more detail.
   // Note: The real RHS returned here does not yet have the factor of (iω) included, so
   // works for time domain simulations requiring RHS -U_inc(t).
   for (const auto &[idx, data] : ports)
@@ -630,11 +644,16 @@ void LumpedPortOperator::AddExcitationBdrCoefficients(int excitation_idx,
     {
       continue;
     }
-    MFEM_VERIFY(std::abs(data.R) > 0.0,
-                "Unexpected zero resistance in excited lumped port!");
+    // Normalize the incident field to a real reference resistance. For a resistive port
+    // this is the port resistance R (legacy behaviour, unchanged). For a purely reactive
+    // excited port (R == 0) there is no real port resistance to reference the incident
+    // power to, so we use the unit reference |Z_R| = 1 in internal units purely to define a
+    // finite drive amplitude; the reactance itself acts through the system-matrix
+    // termination, not through this normalization.
+    const double R_ref = data.GetExcitationRefResistance();
     for (const auto &elem : data.elems)
     {
-      const double Rs = data.R * data.GetToSquare(*elem);
+      const double Rs = R_ref * data.GetToSquare(*elem);
       const double Hinc = 1.0 / std::sqrt(Rs * elem->GetGeometryWidth() *
                                           elem->GetGeometryLength() * data.elems.size());
       fb.AddCoefficient(elem->GetModeCoefficient(2.0 * Hinc));

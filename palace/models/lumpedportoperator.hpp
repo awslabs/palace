@@ -91,6 +91,15 @@ public:
 
   constexpr bool HasExcitation() const { return excitation != 0; }
 
+  // Real reference resistance used to normalize the incident-field amplitude of an excited
+  // port. For a resistive port this is R, so the incident/reflected-wave normalization and
+  // the port's own termination impedance coincide and behaviour is unchanged. For a purely
+  // reactive excited port (R == 0) there is no real port resistance, so we fall back to the
+  // unit reference impedance |Z_R| = 1 in internal units (= Z_freespace) purely to define a
+  // finite drive amplitude; the reactance acts physically through the system-matrix
+  // termination, and that port's own S column is referenced to this unit impedance.
+  double GetExcitationRefResistance() const { return (std::abs(R) > 0.0) ? R : 1.0; }
+
   enum class Branch
   {
     TOTAL,
