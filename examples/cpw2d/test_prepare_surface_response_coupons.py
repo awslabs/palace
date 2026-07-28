@@ -574,8 +574,8 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         corners = [
             [0.0, 0.0, 0.0],
             [2.0, 0.0, 0.0],
-            [2.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0],
+            [2.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
         ]
         coarse = endpoint_coupon()
         coarse["Geometry"]["PlanViewFacets"] = [
@@ -583,12 +583,12 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             {"Conductor": 1, "Points": [corners[0], corners[2], corners[3]]},
         ]
         refined = endpoint_coupon()
-        center = [1.0, 0.0, 0.5]
+        center = [1.0, 0.5, 0.0]
         midpoints = [
             [1.0, 0.0, 0.0],
-            [2.0, 0.0, 0.5],
-            [1.0, 0.0, 1.0],
-            [0.0, 0.0, 0.5],
+            [2.0, 0.5, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 0.5, 0.0],
         ]
         refined["Geometry"]["PlanViewFacets"] = [
             {
@@ -706,6 +706,37 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 }
             ],
         )
+
+    def test_spatial_boundary_loops_classify_only_coupon_clipping_edges(self):
+        facets = [
+            {
+                "Conductor": 1,
+                "Plane": 0.0,
+                "Points": [[0.0, 0.0], [2.0, 0.0], [2.0, 1.0]],
+            },
+            {
+                "Conductor": 1,
+                "Plane": 0.0,
+                "Points": [[0.0, 0.0], [2.0, 1.0], [0.0, 1.0]],
+            },
+        ]
+        loops = SPATIAL.plan_view_boundary_loops(
+            facets,
+            1.0,
+            np.asarray([0.0, -1.0, -1.0]),
+            np.asarray([3.0, 2.0, 1.0]),
+        )
+        self.assertEqual(len(loops), 1)
+        self.assertFalse(loops[0]["Hole"])
+        self.assertEqual(
+            loops[0]["Classes"].count("Continuation"),
+            1,
+        )
+        continuation = loops[0]["Classes"].index("Continuation")
+        first = loops[0]["Points"][continuation]
+        second = loops[0]["Points"][(continuation + 1) % len(loops[0]["Points"])]
+        self.assertEqual(first[0], 0.0)
+        self.assertEqual(second[0], 0.0)
 
     def test_spatial_probe_failure_prevents_full_response_solves(self):
         args = SimpleNamespace(

@@ -111,7 +111,8 @@ makedocs(
             "developer/testing.md",
             "developer/spack.md",
             "developer/tutorial_add_new_unit_test.md",
-            "developer/tutorial_gpu_profiling.md"
+            "developer/tutorial_gpu_profiling.md",
+            "developer/surface_response_roadmap.md"
         ],
         "reference.md"
     ]

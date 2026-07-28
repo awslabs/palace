@@ -344,9 +344,11 @@ def process_resolution(parameters, fine_size, minimum_elements):
     return report
 
 
-def canonical_plan_view_boundary(facets, matching_radius):
+def canonical_plan_view_boundary(facets, matching_radius, process_axis=1):
     if not facets:
         return []
+    if process_axis not in (0, 1, 2):
+        raise ValueError("Plan-view process axis is invalid")
     tolerance = 1.0e-9 * matching_radius
 
     def subtract(first, second):
@@ -392,8 +394,8 @@ def canonical_plan_view_boundary(facets, matching_radius):
             ring.pop()
         if len(ring) < 3:
             continue
-        plane = ring[0][1]
-        if any(point[1] != plane for point in ring):
+        plane = ring[0][process_axis]
+        if any(point[process_axis] != plane for point in ring):
             raise ValueError("Plan-view facet is not on one process plane")
         groups.setdefault((conductor, plane), []).append(ring)
 
@@ -489,6 +491,16 @@ def canonical_plan_view_boundary(facets, matching_radius):
         )
     )
     return result
+
+
+def unclassified_plan_view_boundary(boundary):
+    return [
+        {
+            "Conductor": component["Conductor"],
+            "Segments": component["Segments"],
+        }
+        for component in boundary
+    ]
 
 
 def require_pec(coupon):
@@ -1211,19 +1223,28 @@ def spatial_spec(coupon, args, parameters):
     geometry = copy.deepcopy(coupon["Geometry"])
     facets = geometry.pop("PlanViewFacets", [])
     if facets:
+        process_axis = 1 if coupon["Topology"] == "SpatialEdgeCluster" else 2
         canonical_boundary = canonical_plan_view_boundary(
-            facets, args.matching_radius
+            facets, args.matching_radius, process_axis
         )
-        if (
-            "PlanViewBoundary" in geometry
-            and geometry["PlanViewBoundary"] != canonical_boundary
-        ):
-            raise ValueError(
-                "Palace PlanViewBoundary does not match its exported facets"
-            )
-        geometry["PlanViewBoundary"] = canonical_boundary
+        if "PlanViewBoundary" in geometry:
+            exported_boundary = geometry["PlanViewBoundary"]
+            if (
+                unclassified_plan_view_boundary(exported_boundary)
+                != canonical_boundary
+            ):
+                raise ValueError(
+                    "Palace PlanViewBoundary does not match its exported facets"
+                )
+        else:
+            geometry["PlanViewBoundary"] = canonical_boundary
+        geometry["MaskRegularization"] = {
+            "Version": 1,
+            "PhysicalBoundary": "TaperAndRound",
+            "ContinuationBoundary": "Vertical",
+        }
     return {
-        "Version": 1,
+        "Version": 2,
         "Family": "spatial",
         "Coupon": {
             "Topology": coupon["Topology"],
@@ -1241,6 +1262,7 @@ def spatial_spec(coupon, args, parameters):
         },
         "ProcessResolution": resolution,
         "Response": {"RingSize": args.spatial_ring_size},
+        "RegularizationPolicy": geometry.get("MaskRegularization"),
         "ToolFingerprint": tool_fingerprint(
             (
                 SPATIAL_MESH,
@@ -1281,6 +1303,9 @@ def build_spatial(coupon, args, parameters, cache):
         generated_coupon["Geometry"]["PlanViewBoundary"] = canonical_geometry[
             "PlanViewBoundary"
         ]
+        generated_coupon["Geometry"]["MaskRegularization"] = canonical_geometry[
+            "MaskRegularization"
+        ]
     write_json(coupon_path, generated_coupon)
     write_json(root / "coupon-spec.json", spec)
     common_generator = [
@@ -1319,6 +1344,7 @@ def build_spatial(coupon, args, parameters, cache):
         raise
     signature = root / "mesh-signature.csv"
     mask = root / "plan-view-mask.csv"
+    boundary = root / "plan-view-boundary.csv"
     meshes = {}
     for kind in ("thin", "fabricated"):
         mesh = root / f"spatial_{kind}.msh"
@@ -1333,6 +1359,7 @@ def build_spatial(coupon, args, parameters, cache):
                 kind,
                 mesh,
                 *(["--mask", mask] if mask.is_file() else []),
+                *(["--boundary", boundary] if boundary.is_file() else []),
                 "--radius",
                 args.matching_radius,
                 "--metal-thickness",

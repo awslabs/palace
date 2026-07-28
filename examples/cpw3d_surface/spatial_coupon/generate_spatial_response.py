@@ -873,13 +873,21 @@ def write_library(
             edge = dict(source)
             edge["BoundaryCondition"] = "PEC"
             model["Edges"].append(edge)
-        if "PlanViewBoundary" in geometry:
-            model["PlanViewBoundary"] = geometry["PlanViewBoundary"]
         model["EdgePositionTolerance"] = 1.0e-6 * radius
         model["EdgeAngleTolerance"] = 1.0e-6
         model["ConductorReferences"] = references
     else:
         raise ValueError(f"Unsupported spatial topology {topology}")
+    if "PlanViewBoundary" in geometry:
+        model["PlanViewBoundary"] = geometry["PlanViewBoundary"]
+        model["MaskRegularization"] = geometry.get(
+            "MaskRegularization",
+            {
+                "Version": 1,
+                "PhysicalBoundary": "TaperAndRound",
+                "ContinuationBoundary": "Vertical",
+            },
+        )
     if paths:
         model["OpenContourPaths"] = paths
     else:
@@ -950,6 +958,204 @@ def write_plan_view_mask(path, facets):
     path.write_text("\n".join(lines) + "\n")
 
 
+def plan_view_boundary_loops(facets, radius, lower, upper):
+    tolerance = 1.0e-9 * radius
+
+    def quantize(value):
+        scaled = value / tolerance
+        return (
+            math.floor(scaled + 0.5)
+            if scaled >= 0.0
+            else math.ceil(scaled - 0.5)
+        )
+
+    groups = {}
+    for facet in facets:
+        key = (facet["Conductor"], quantize(facet["Plane"]))
+        ring = []
+        for point in facet["Points"]:
+            vertex = (quantize(point[0]), quantize(point[1]))
+            if not ring or ring[-1] != vertex:
+                ring.append(vertex)
+        if len(ring) > 1 and ring[0] == ring[-1]:
+            ring.pop()
+        if len(ring) >= 3:
+            groups.setdefault(key, []).append(ring)
+
+    loops = []
+    bounds = tuple(quantize(value) for value in (*lower[:2], *upper[:2]))
+    for (conductor, plane_key), polygons in sorted(groups.items()):
+        unique = {}
+        for polygon in polygons:
+            candidates = []
+            for reverse in (False, True):
+                ordered = list(reversed(polygon)) if reverse else polygon
+                candidates.extend(
+                    tuple(ordered[index:] + ordered[:index])
+                    for index in range(len(ordered))
+                )
+            unique.setdefault(min(candidates), polygon)
+        polygons = list(unique.values())
+        vertices = sorted({point for polygon in polygons for point in polygon})
+        counts = {}
+        for polygon in polygons:
+            for begin, end in zip(polygon, polygon[1:] + polygon[:1]):
+                direction = (end[0] - begin[0], end[1] - begin[1])
+                length_squared = direction[0] ** 2 + direction[1] ** 2
+                if not length_squared:
+                    continue
+                split = [begin, end]
+                for point in vertices:
+                    offset = (point[0] - begin[0], point[1] - begin[1])
+                    if (
+                        direction[0] * offset[1]
+                        - direction[1] * offset[0]
+                    ):
+                        continue
+                    coordinate = (
+                        offset[0] * direction[0]
+                        + offset[1] * direction[1]
+                    )
+                    if 0 < coordinate < length_squared:
+                        split.append(point)
+                split = sorted(
+                    set(split),
+                    key=lambda point: (
+                        (point[0] - begin[0]) * direction[0]
+                        + (point[1] - begin[1]) * direction[1]
+                    ),
+                )
+                for first, second in zip(split, split[1:]):
+                    edge = tuple(sorted((first, second)))
+                    counts[edge] = counts.get(edge, 0) + 1
+        if any(count > 2 for count in counts.values()):
+            raise ValueError("Plan-view facets form a nonmanifold surface")
+        boundary = {edge for edge, count in counts.items() if count % 2}
+        adjacency = {}
+        for first, second in boundary:
+            adjacency.setdefault(first, set()).add(second)
+            adjacency.setdefault(second, set()).add(first)
+        if any(len(neighbors) != 2 for neighbors in adjacency.values()):
+            raise ValueError("Plan-view mask boundary is open or nonmanifold")
+
+        remaining = set(boundary)
+        while remaining:
+            first_edge = min(remaining)
+            start, current = first_edge
+            remaining.remove(first_edge)
+            ring = [start, current]
+            previous = start
+            while current != start:
+                neighbors = adjacency[current]
+                following = next(point for point in neighbors if point != previous)
+                if following == start:
+                    break
+                edge = tuple(sorted((current, following)))
+                if edge not in remaining:
+                    raise ValueError("Plan-view mask boundary is not a simple loop")
+                remaining.remove(edge)
+                ring.append(following)
+                previous, current = current, following
+            closing = tuple(sorted((ring[-1], start)))
+            if closing not in remaining:
+                raise ValueError("Plan-view mask boundary is not a closed loop")
+            remaining.remove(closing)
+
+            points = np.asarray(ring, dtype=float) * tolerance
+            delta = points[1] - points[0]
+            normal = np.asarray((-delta[1], delta[0]))
+            normal /= np.linalg.norm(normal)
+            midpoint = 0.5 * (points[0] + points[1])
+            probe = max(32.0 * tolerance, 1.0e-7 * radius)
+            left_inside = points_in_plan_view_mask(
+                np.asarray([midpoint + probe * normal]),
+                facets,
+                conductor,
+                plane_key * tolerance,
+                tolerance,
+            )[0]
+            right_inside = points_in_plan_view_mask(
+                np.asarray([midpoint - probe * normal]),
+                facets,
+                conductor,
+                plane_key * tolerance,
+                tolerance,
+            )[0]
+            if left_inside == right_inside:
+                raise ValueError("Unable to orient a plan-view mask boundary")
+            if not left_inside:
+                ring.reverse()
+                points = np.asarray(ring, dtype=float) * tolerance
+
+            classes = []
+            for begin, end in zip(ring, ring[1:] + ring[:1]):
+                continuation = (
+                    begin[0] == end[0] and begin[0] in (bounds[0], bounds[2])
+                ) or (
+                    begin[1] == end[1] and begin[1] in (bounds[1], bounds[3])
+                )
+                classes.append("Continuation" if continuation else "Physical")
+            changed = True
+            while changed and len(ring) > 3:
+                changed = False
+                for index in range(len(ring)):
+                    previous = ring[index - 1]
+                    current = ring[index]
+                    following = ring[(index + 1) % len(ring)]
+                    first = (
+                        current[0] - previous[0],
+                        current[1] - previous[1],
+                    )
+                    second = (
+                        following[0] - current[0],
+                        following[1] - current[1],
+                    )
+                    if (
+                        classes[index - 1] == classes[index]
+                        and first[0] * second[1] - first[1] * second[0] == 0
+                    ):
+                        ring.pop(index)
+                        classes.pop(index)
+                        changed = True
+                        break
+            points = np.asarray(ring, dtype=float) * tolerance
+            signed_area = 0.5 * sum(
+                first[0] * second[1] - first[1] * second[0]
+                for first, second in zip(points, np.roll(points, -1, axis=0))
+            )
+            loops.append(
+                {
+                    "Conductor": conductor,
+                    "Plane": plane_key * tolerance,
+                    "Hole": signed_area < 0.0,
+                    "Points": points.tolist(),
+                    "Classes": classes,
+                }
+            )
+    if facets and not loops:
+        raise ValueError("Plan-view mask has no boundary loops")
+    return loops
+
+
+def write_plan_view_boundary(path, loops):
+    lines = ["Loop,Vertex,Conductor,Plane,Hole,Class,X,Y"]
+    for loop_index, loop in enumerate(loops, start=1):
+        for vertex, (point, boundary_class) in enumerate(
+            zip(loop["Points"], loop["Classes"]), start=1
+        ):
+            values = (
+                loop_index,
+                vertex,
+                loop["Conductor"],
+                loop["Plane"],
+                int(loop["Hole"]),
+                boundary_class,
+                *point,
+            )
+            lines.append(",".join(str(value) for value in values))
+    path.write_text("\n".join(lines) + "\n")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("coupon", type=Path)
@@ -1015,10 +1221,21 @@ def main():
     failure_path.unlink(missing_ok=True)
     write_mesh_signature(output / "mesh-signature.csv", edges)
     mask_path = output / "plan-view-mask.csv"
+    boundary_path = output / "plan-view-boundary.csv"
     if facets:
         write_plan_view_mask(mask_path, facets)
+        lower, upper = coupon_bounds(
+            edges, args.radius, args.metal_thickness, args.overetch_depth
+        )
+        write_plan_view_boundary(
+            boundary_path,
+            plan_view_boundary_loops(
+                facets, args.radius, lower, upper
+            ),
+        )
     else:
         mask_path.unlink(missing_ok=True)
+        boundary_path.unlink(missing_ok=True)
     if args.signature_only:
         print(output / "mesh-signature.csv")
         return

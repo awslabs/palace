@@ -1129,7 +1129,12 @@ of the physical edge, along
 spatial coupon. Automatically generated entries can also contain `PlanViewBoundary`, a
 canonical integer segment representation of the local conductor mask at resolution
 ``10^{-9} R``. Palace compares that descriptor after rigidly aligning the edge frames;
-it is process-library metadata and is not a user-authored device-mesh input.
+it is process-library metadata and is not a user-authored device-mesh input. Each
+component's `Segments` describe its complete clipped boundary. The optional
+`ContinuationSegments` subset marks artificial coupon-window cuts; all other segments
+are physical fabrication boundaries. `MaskRegularization` records the fabrication
+policy applied to those classes. The supported version-1 policy tapers and rounds
+physical boundaries while keeping continuation cuts vertical.
 `BoundaryCondition` uses the same string or object form described below.
 `EdgeAngleTolerance` is in degrees. `InterfaceSlot` is an optional nonnegative integer
 and defaults to zero. Edges belonging to one physical fabrication layer use the same
@@ -1466,13 +1471,16 @@ correction Palace exchanges compact canonical vertex keys to classify connected
 conductors and, for an exact-mask model, only the facets clipped to that interaction
 neighborhood. Cache keys use the canonical boundary of the facet union, so equivalent
 surface-mesh triangulations reuse the same qualified coupon. The generated
-`SpatialEdgeCluster` stores this `PlanViewBoundary` and matches only the same boundary.
+`SpatialEdgeCluster`, `Endpoint`, or `Junction` stores this `PlanViewBoundary` and
+matches only the same boundary.
 Older edge-only models remain valid for unambiguous neighborhoods, but are rejected when
 reconstructed half-strips from different conductors overlap. In the fabricated coupon,
-an active-edge strip receives the configured taper and rounding before it is clipped by
-the mask prism; a boundary supplied only by the mask is therefore a vertical clipping
-boundary rather than a separately tapered and rounded fabrication edge. The qualification
-gates remain mandatory for neighborhoods where that distinction is material.
+the full manifold conductor footprint is lofted through the configured metal thickness.
+Every physical mask boundary receives the configured taper, corner rounding, and
+substrate overetch; only `ContinuationSegments` remain vertical and receive no overetch.
+Open or nonmanifold masks, including components which touch only at a point, fail closed
+because their fabricated topology is ambiguous. The qualification gates remain
+mandatory for endpoint, junction, and spatial-neighborhood response models.
 
 Automatic generation also rejects finite-impedance coupons and unsupported corner angles
 while preserving them as explicit coverage failures in the work plan. Coupon families
@@ -1589,6 +1597,9 @@ local closure failure cannot be hidden by cancellation. Electrostatic
 for each source. Corrected values are still written when a limit fails, but Palace warns
 that they are not validated. The unmodeled corner fraction is a geometric length
 fraction, not a statistical confidence interval.
+
+The implementation and validation work required for production use is tracked in the
+[thin-metal surface-response roadmap](developer/surface_response_roadmap.md).
 
 ## Lumped parameter extraction
 

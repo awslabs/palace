@@ -594,6 +594,7 @@ struct LibraryModel
   double spatial_position_tolerance = 0.0;
   double spatial_angle_tolerance = 0.0;
   std::optional<std::string> plan_view_boundary;
+  std::optional<std::string> mask_regularization;
   std::vector<LibraryInterface> interfaces;
 };
 
@@ -1221,37 +1222,6 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
           }
           model.spatial_edges.push_back(spatial_edge);
         }
-        if (auto boundary = entry.find("PlanViewBoundary"); boundary != entry.end())
-        {
-          MFEM_VERIFY(boundary->is_array() && !boundary->empty(),
-                      "SpatialEdgeCluster PlanViewBoundary must be a nonempty array!");
-          for (const auto &component : *boundary)
-          {
-            MFEM_VERIFY(component.is_object() && component.contains("Conductor") &&
-                            component["Conductor"].is_number_integer() &&
-                            component["Conductor"].get<int>() > 0 &&
-                            component.contains("Segments") &&
-                            component["Segments"].is_array() &&
-                            !component["Segments"].empty(),
-                        "Invalid SpatialEdgeCluster PlanViewBoundary component!");
-            for (const auto &segment : component["Segments"])
-            {
-              MFEM_VERIFY(
-                  segment.is_array() && segment.size() == 2 &&
-                      std::all_of(segment.begin(), segment.end(),
-                                  [](const auto &point)
-                                  {
-                                    return point.is_array() && point.size() == 3 &&
-                                           std::all_of(
-                                               point.begin(), point.end(),
-                                               [](const auto &coordinate)
-                                               { return coordinate.is_number_integer(); });
-                                  }),
-                  "Invalid SpatialEdgeCluster PlanViewBoundary segment!");
-            }
-          }
-          model.plan_view_boundary = boundary->dump();
-        }
       }
     }
     const bool corner = model.topology == LibraryTopology::CONVEX_CORNER ||
@@ -1260,6 +1230,68 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     const bool junction = model.topology == LibraryTopology::JUNCTION;
     const bool spatial_vertex = corner || endpoint || junction;
     const bool spatial_response = spatial_vertex || spatial_cluster;
+    if (auto boundary = entry.find("PlanViewBoundary"); boundary != entry.end())
+    {
+      MFEM_VERIFY((spatial_cluster || endpoint || junction) && boundary->is_array() &&
+                      !boundary->empty(),
+                  "PlanViewBoundary requires a SpatialEdgeCluster, Endpoint, or Junction "
+                  "model and must be a nonempty array!");
+      for (const auto &component : *boundary)
+      {
+        MFEM_VERIFY(component.is_object() && component.contains("Conductor") &&
+                        component["Conductor"].is_number_integer() &&
+                        component["Conductor"].get<int>() > 0 &&
+                        component.contains("Segments") &&
+                        component["Segments"].is_array() && !component["Segments"].empty(),
+                    "Invalid PlanViewBoundary component!");
+        auto ValidSegment = [](const auto &segment)
+        {
+          return segment.is_array() && segment.size() == 2 &&
+                 std::all_of(segment.begin(), segment.end(),
+                             [](const auto &point)
+                             {
+                               return point.is_array() && point.size() == 3 &&
+                                      std::all_of(
+                                          point.begin(), point.end(),
+                                          [](const auto &coordinate)
+                                          { return coordinate.is_number_integer(); });
+                             });
+        };
+        MFEM_VERIFY(std::all_of(component["Segments"].begin(), component["Segments"].end(),
+                                ValidSegment),
+                    "Invalid PlanViewBoundary segment!");
+        if (auto continuation = component.find("ContinuationSegments");
+            continuation != component.end())
+        {
+          MFEM_VERIFY(
+              continuation->is_array() &&
+                  std::all_of(continuation->begin(), continuation->end(), ValidSegment),
+              "Invalid PlanViewBoundary continuation segment!");
+          const std::set<nlohmann::json> segments(component["Segments"].begin(),
+                                                  component["Segments"].end());
+          MFEM_VERIFY(std::all_of(continuation->begin(), continuation->end(),
+                                  [&](const auto &segment)
+                                  { return segments.find(segment) != segments.end(); }),
+                      "Every PlanViewBoundary continuation segment must also appear in "
+                      "Segments!");
+        }
+      }
+      model.plan_view_boundary = boundary->dump();
+      if (auto regularization = entry.find("MaskRegularization");
+          regularization != entry.end())
+      {
+        MFEM_VERIFY(
+            regularization->is_object() && regularization->value("Version", 0) == 1 &&
+                regularization->value("PhysicalBoundary", std::string{}) ==
+                    "TaperAndRound" &&
+                regularization->value("ContinuationBoundary", std::string{}) == "Vertical",
+            "MaskRegularization must select the supported version-1 tapered physical "
+            "boundary and vertical continuation policy!");
+        model.mask_regularization = regularization->dump();
+      }
+    }
+    MFEM_VERIFY(!entry.contains("MaskRegularization") || model.plan_view_boundary,
+                "MaskRegularization requires PlanViewBoundary!");
     if (spatial_cluster)
     {
       MFEM_VERIFY(!entry.contains("BoundaryCondition"),
@@ -1341,8 +1373,9 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     MFEM_VERIFY(spatial_cluster == !model.spatial_edges.empty(),
                 "SpatialEdgeCluster response models require spatial Edges, and other "
                 "topologies cannot specify them!");
-    MFEM_VERIFY(spatial_cluster || !model.plan_view_boundary,
-                "PlanViewBoundary is supported only by SpatialEdgeCluster models!");
+    MFEM_VERIFY(spatial_cluster || endpoint || junction || !model.plan_view_boundary,
+                "PlanViewBoundary is supported only by SpatialEdgeCluster, Endpoint, or "
+                "Junction models!");
     if (spatial_response)
     {
       model.response.spatial_basis = true;
@@ -1761,6 +1794,14 @@ struct PlanViewFacet
   std::vector<Point3D> points;
 };
 
+struct PlanViewGeometry
+{
+  std::vector<PlanViewFacet> facets;
+  std::array<double, 2> lower{};
+  std::array<double, 2> upper{};
+  int process_axis = 1;
+};
+
 using QuantizedPoint3D = std::array<long long int, 3>;
 using QuantizedSegment3D = std::pair<QuantizedPoint3D, QuantizedPoint3D>;
 
@@ -1774,11 +1815,18 @@ bool IntegerCrossIsZero(const QuantizedPoint3D &a, const QuantizedPoint3D &b)
          static_cast<WideInteger>(a[0]) * b[1] - static_cast<WideInteger>(a[1]) * b[0] == 0;
 }
 
-std::string CanonicalPlanViewBoundary(const std::vector<PlanViewFacet> &facets,
-                                      double matching_radius)
+std::string CanonicalPlanViewBoundary(
+    const std::vector<PlanViewFacet> &facets, double matching_radius, int process_axis = 1,
+    const std::optional<std::pair<std::array<double, 2>, std::array<double, 2>>>
+        &clip_bounds = std::nullopt)
 {
   MFEM_VERIFY(matching_radius > 0.0,
               "Plan-view canonicalization requires a positive matching radius!");
+  MFEM_VERIFY(process_axis >= 0 && process_axis < 3,
+              "Plan-view canonicalization requires a valid process axis!");
+  const std::array<int, 2> plan_axes = process_axis == 0   ? std::array<int, 2>{1, 2}
+                                       : process_axis == 1 ? std::array<int, 2>{0, 2}
+                                                           : std::array<int, 2>{0, 1};
   const double tolerance = 1.0e-9 * matching_radius;
   auto Quantize = [&](const Point3D &point)
   {
@@ -1824,9 +1872,9 @@ std::string CanonicalPlanViewBoundary(const std::vector<PlanViewFacet> &facets,
     {
       continue;
     }
-    const long long int plane = ring.front()[1];
-    MFEM_VERIFY(std::all_of(ring.begin(), ring.end(),
-                            [=](const auto &point) { return point[1] == plane; }),
+    const long long int plane = ring.front()[process_axis];
+    MFEM_VERIFY(std::all_of(ring.begin(), ring.end(), [=](const auto &point)
+                            { return point[process_axis] == plane; }),
                 "Plan-view facet is not on one process plane!");
     polygons_by_group[{facet.conductor, plane}].push_back(std::move(ring));
   }
@@ -1990,15 +2038,49 @@ std::string CanonicalPlanViewBoundary(const std::vector<PlanViewFacet> &facets,
     MFEM_VERIFY(!boundary.empty(), "Plan-view facets have no union boundary!");
 
     nlohmann::json segments = nlohmann::json::array();
+    nlohmann::json continuation_segments = nlohmann::json::array();
+    std::array<QuantizedPoint3D, 2> quantized_bounds{};
+    if (clip_bounds)
+    {
+      for (int side = 0; side < 2; side++)
+      {
+        Point3D point{};
+        point[plan_axes[0]] = side == 0 ? clip_bounds->first[0] : clip_bounds->second[0];
+        point[plan_axes[1]] = side == 0 ? clip_bounds->first[1] : clip_bounds->second[1];
+        quantized_bounds[side] = Quantize(point);
+      }
+    }
     for (const auto &[first, second] : boundary)
     {
       segments.push_back({first, second});
+      if (clip_bounds && ((first[plan_axes[0]] == second[plan_axes[0]] &&
+                           (first[plan_axes[0]] == quantized_bounds[0][plan_axes[0]] ||
+                            first[plan_axes[0]] == quantized_bounds[1][plan_axes[0]])) ||
+                          (first[plan_axes[1]] == second[plan_axes[1]] &&
+                           (first[plan_axes[1]] == quantized_bounds[0][plan_axes[1]] ||
+                            first[plan_axes[1]] == quantized_bounds[1][plan_axes[1]]))))
+      {
+        continuation_segments.push_back({first, second});
+      }
     }
-    result.push_back({{"Conductor", group.first}, {"Segments", std::move(segments)}});
+    nlohmann::json component = {{"Conductor", group.first},
+                                {"Segments", std::move(segments)}};
+    if (clip_bounds)
+    {
+      component["ContinuationSegments"] = std::move(continuation_segments);
+    }
+    result.push_back(std::move(component));
   }
   std::sort(result.begin(), result.end(), [](const auto &first, const auto &second)
             { return first.dump() < second.dump(); });
   return result.dump();
+}
+
+bool HasClassifiedPlanViewBoundary(const std::string &boundary)
+{
+  const auto components = nlohmann::json::parse(boundary);
+  return std::all_of(components.begin(), components.end(), [](const auto &component)
+                     { return component.contains("ContinuationSegments"); });
 }
 
 bool PointOnSegment(const Point2D &point, const Point2D &a, const Point2D &b, double tol)
@@ -3054,11 +3136,11 @@ struct VertexLibrarySelection
   std::size_t first_arm = 0;
 };
 
-std::optional<VertexLibrarySelection>
-FindVertexLibraryModel(const ProcessLibrary &library, LibraryTopology topology,
-                       const std::vector<Point3D> &directions,
-                       const Point3D &process_normal,
-                       const MetalBoundaryLaw &boundary_condition)
+std::optional<VertexLibrarySelection> FindVertexLibraryModel(
+    const ProcessLibrary &library, LibraryTopology topology,
+    const std::vector<Point3D> &directions, const Point3D &process_normal,
+    const MetalBoundaryLaw &boundary_condition,
+    const std::function<bool(const LibraryModel &, std::size_t)> &matches_plan_view = {})
 {
   MFEM_ASSERT(topology == LibraryTopology::ENDPOINT ||
                   topology == LibraryTopology::JUNCTION,
@@ -3070,7 +3152,15 @@ FindVertexLibraryModel(const ProcessLibrary &library, LibraryTopology topology,
 
   std::optional<VertexLibrarySelection> best;
   double best_error = mfem::infinity();
-  for (std::size_t model_index = 0; model_index < library.models.size(); model_index++)
+  std::vector<std::size_t> model_indices(library.models.size());
+  std::iota(model_indices.begin(), model_indices.end(), 0);
+  std::stable_sort(model_indices.begin(), model_indices.end(),
+                   [&](std::size_t first, std::size_t second)
+                   {
+                     return library.models[first].plan_view_boundary.has_value() >
+                            library.models[second].plan_view_boundary.has_value();
+                   });
+  for (const std::size_t model_index : model_indices)
   {
     const auto &model = library.models[model_index];
     if (model.topology != topology ||
@@ -3080,6 +3170,10 @@ FindVertexLibraryModel(const ProcessLibrary &library, LibraryTopology topology,
     }
     if (topology == LibraryTopology::ENDPOINT)
     {
+      if (matches_plan_view && !matches_plan_view(model, 0))
+      {
+        continue;
+      }
       VertexLibrarySelection selection;
       selection.response.models.push_back({model_index, 1.0});
       selection.response.conductor_references = model.conductor_references;
@@ -3115,6 +3209,10 @@ FindVertexLibraryModel(const ProcessLibrary &library, LibraryTopology topology,
                                     std::abs(angles[i] - model.arm_angles[i]) / tolerance);
       }
       if (normalized_error > 1.0 || normalized_error >= best_error)
+      {
+        continue;
+      }
+      if (matches_plan_view && !matches_plan_view(model, first))
       {
         continue;
       }
@@ -3976,10 +4074,11 @@ Point3D TransformLocalPoint(const Point3D &origin, const std::array<Point3D, 3> 
   return Add(origin, TransformLocalVector(axes, local));
 }
 
-std::optional<SpatialClusterSelection3D>
-FindSpatialClusterLibraryModel(const ProcessLibrary &library,
-                               const std::vector<SpatialEdgeSite3D> &sites,
-                               const std::set<std::size_t> &excluded_models = {})
+std::optional<SpatialClusterSelection3D> FindSpatialClusterLibraryModel(
+    const ProcessLibrary &library, const std::vector<SpatialEdgeSite3D> &sites,
+    const std::set<std::size_t> &excluded_models = {},
+    const std::function<bool(const SpatialClusterSelection3D &, const LibraryModel &)>
+        &matches_plan_view = {})
 {
   if (sites.size() < 2)
   {
@@ -4114,6 +4213,10 @@ FindSpatialClusterLibraryModel(const ProcessLibrary &library,
           selection.targets_by_slot = targets_by_slot;
           selection.origin = origin;
           selection.axes = axes;
+          if (matches_plan_view && !matches_plan_view(selection, model))
+          {
+            return;
+          }
           best = std::move(selection);
           best_distance = normalized_distance;
           return;
@@ -4538,8 +4641,14 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   };
   auto GatherPlanViewFacets = [&](const std::vector<SpatialEdgeSite3D> &sites,
                                   const Point3D &origin, const std::array<Point3D, 3> &axes,
-                                  const std::map<int, int> &conductor_by_metal_component)
+                                  const std::map<int, int> &conductor_by_metal_component,
+                                  int process_axis = 1)
   {
+    MFEM_ASSERT(process_axis >= 0 && process_axis < 3,
+                "Plan-view facet extraction requires a valid process axis!");
+    const std::array<int, 2> plan_axes = process_axis == 0   ? std::array<int, 2>{1, 2}
+                                         : process_axis == 1 ? std::array<int, 2>{0, 2}
+                                                             : std::array<int, 2>{0, 1};
     std::array<double, 2> lower = {mfem::infinity(), mfem::infinity()};
     std::array<double, 2> upper = {-mfem::infinity(), -mfem::infinity()};
     std::map<int, std::vector<double>> planes_by_metal_component;
@@ -4571,20 +4680,24 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         for (const double side : {-1.0, 1.0})
         {
           const Point3D sample = Add(boundary, Scale(side * library.matching_radius, gap));
-          lower[0] = std::min(lower[0], sample[0]);
-          lower[1] = std::min(lower[1], sample[2]);
-          upper[0] = std::max(upper[0], sample[0]);
-          upper[1] = std::max(upper[1], sample[2]);
+          for (int d = 0; d < 2; d++)
+          {
+            lower[d] = std::min(lower[d], sample[plan_axes[d]]);
+            upper[d] = std::max(upper[d], sample[plan_axes[d]]);
+          }
         }
       }
       if (site.metal_component >= 0)
       {
         auto &planes = planes_by_metal_component[site.metal_component];
-        if (std::none_of(
-                planes.begin(), planes.end(), [&](double plane)
-                { return std::abs(plane - point[1]) <= 1.0e-8 * library.matching_radius; }))
+        if (std::none_of(planes.begin(), planes.end(),
+                         [&](double plane)
+                         {
+                           return std::abs(plane - point[process_axis]) <=
+                                  1.0e-8 * library.matching_radius;
+                         }))
         {
-          planes.push_back(point[1]);
+          planes.push_back(point[process_axis]);
         }
       }
     }
@@ -4616,17 +4729,18 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           planes.begin(), planes.end(),
           [&](double candidate)
           {
-            return std::all_of(polygon.begin(), polygon.end(), [&](const auto &point)
-                               { return std::abs(point[1] - candidate) <= tolerance; });
+            return std::all_of(
+                polygon.begin(), polygon.end(), [&](const auto &point)
+                { return std::abs(point[process_axis] - candidate) <= tolerance; });
           });
       if (plane == planes.end())
       {
         continue;
       }
-      polygon = ClipPlanViewPolygon(std::move(polygon), 0, lower[0], true);
-      polygon = ClipPlanViewPolygon(std::move(polygon), 0, upper[0], false);
-      polygon = ClipPlanViewPolygon(std::move(polygon), 2, lower[1], true);
-      polygon = ClipPlanViewPolygon(std::move(polygon), 2, upper[1], false);
+      polygon = ClipPlanViewPolygon(std::move(polygon), plan_axes[0], lower[0], true);
+      polygon = ClipPlanViewPolygon(std::move(polygon), plan_axes[0], upper[0], false);
+      polygon = ClipPlanViewPolygon(std::move(polygon), plan_axes[1], lower[1], true);
+      polygon = ClipPlanViewPolygon(std::move(polygon), plan_axes[1], upper[1], false);
       if (polygon.size() < 3)
       {
         continue;
@@ -4689,8 +4803,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                     records.data(), value_counts.data(), value_offsets.data(),
                     mesh.GetComm());
 
-    std::vector<PlanViewFacet> facets;
-    facets.reserve(total);
+    PlanViewGeometry result;
+    result.lower = lower;
+    result.upper = upper;
+    result.process_axis = process_axis;
+    result.facets.reserve(total);
     for (int i = 0; i < total; i++)
     {
       const double *record = records.data() + record_size * i;
@@ -4704,9 +4821,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       {
         std::copy_n(record + 2 + 3 * point, 3, facet.points[point].begin());
       }
-      facets.push_back(std::move(facet));
+      result.facets.push_back(std::move(facet));
     }
-    return facets;
+    return result;
   };
   auto HasOverlappingConductorStrips = [&](const std::vector<SpatialEdgeSite3D> &sites)
   {
@@ -4800,29 +4917,22 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   auto FindMatchingSpatialModel = [&](const std::vector<SpatialEdgeSite3D> &sites)
       -> std::optional<SpatialClusterSelection3D>
   {
-    std::set<std::size_t> rejected;
-    while (true)
+    std::set<std::size_t> excluded;
+    for (std::size_t i = 0; i < library.models.size(); i++)
     {
-      std::set<std::size_t> excluded = rejected;
-      for (std::size_t i = 0; i < library.models.size(); i++)
+      if (!library.models[i].plan_view_boundary)
       {
-        if (!library.models[i].plan_view_boundary)
-        {
-          excluded.insert(i);
-        }
+        excluded.insert(i);
       }
-      auto selection = FindSpatialClusterLibraryModel(library, sites, excluded);
-      if (!selection)
-      {
-        break;
-      }
-      const std::size_t model_index = selection->response.models.front().index;
-      const auto &model = library.models[model_index];
+    }
+    auto MatchesPlanView =
+        [&](const SpatialClusterSelection3D &selection, const LibraryModel &model)
+    {
       std::map<int, int> conductor_by_metal_component;
       for (std::size_t model_edge = 0; model_edge < model.spatial_edges.size();
            model_edge++)
       {
-        const auto &site = sites[selection->model_to_site[model_edge]];
+        const auto &site = sites[selection.model_to_site[model_edge]];
         if (site.metal_component < 0)
         {
           continue;
@@ -4838,34 +4948,42 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       {
         expected_conductors.insert(edge.conductor);
       }
-      const auto facets = GatherPlanViewFacets(sites, selection->origin, selection->axes,
-                                               conductor_by_metal_component);
+      const auto plan_view = GatherPlanViewFacets(sites, selection.origin, selection.axes,
+                                                  conductor_by_metal_component);
       std::set<int> found_conductors;
-      for (const auto &facet : facets)
+      for (const auto &facet : plan_view.facets)
       {
         found_conductors.insert(facet.conductor);
       }
-      if (found_conductors == expected_conductors &&
-          CanonicalPlanViewBoundary(facets, library.matching_radius) ==
-              *model.plan_view_boundary)
-      {
-        return selection;
-      }
-      rejected.insert(model_index);
+      const auto clip_bounds = std::make_pair(plan_view.lower, plan_view.upper);
+      const std::optional<decltype(clip_bounds)> classified_bounds =
+          HasClassifiedPlanViewBoundary(*model.plan_view_boundary)
+              ? std::optional<decltype(clip_bounds)>(clip_bounds)
+              : std::nullopt;
+      return found_conductors == expected_conductors &&
+             CanonicalPlanViewBoundary(plan_view.facets, library.matching_radius,
+                                       plan_view.process_axis,
+                                       classified_bounds) == *model.plan_view_boundary;
+    };
+    if (auto selection =
+            FindSpatialClusterLibraryModel(library, sites, excluded, MatchesPlanView))
+    {
+      return selection;
     }
 
     if (HasOverlappingConductorStrips(sites))
     {
       return std::nullopt;
     }
+    excluded.clear();
     for (std::size_t i = 0; i < library.models.size(); i++)
     {
       if (library.models[i].plan_view_boundary)
       {
-        rejected.insert(i);
+        excluded.insert(i);
       }
     }
-    return FindSpatialClusterLibraryModel(library, sites, rejected);
+    return FindSpatialClusterLibraryModel(library, sites, excluded);
   };
   auto DescribeMissingSpatialGeometry = [&](const std::vector<SpatialEdgeSite3D> &sites)
       -> std::pair<nlohmann::json, std::map<int, std::map<InterfaceDielectric, int>>>
@@ -4960,11 +5078,11 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                                          {"Edges", std::move(edges)}};
       if (surface.retain_faces && !conductor_by_metal_component.empty())
       {
-        const auto plan_view_facets =
+        const auto plan_view =
             GatherPlanViewFacets(sites, anchor.point, axes, conductor_by_metal_component);
         std::vector<nlohmann::json> facets;
         std::set<int> found_conductors;
-        for (const auto &facet : plan_view_facets)
+        for (const auto &facet : plan_view.facets)
         {
           std::vector<Point3D> scaled(facet.points.size());
           for (std::size_t i = 0; i < facet.points.size(); i++)
@@ -5020,8 +5138,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                                    { return first == second; }),
                        facets.end());
           spatial_geometry["PlanViewFacets"] = std::move(facets);
-          spatial_geometry["PlanViewBoundary"] = nlohmann::json::parse(
-              CanonicalPlanViewBoundary(plan_view_facets, library.matching_radius));
+          spatial_geometry["PlanViewBoundary"] =
+              nlohmann::json::parse(CanonicalPlanViewBoundary(
+                  plan_view.facets, library.matching_radius, plan_view.process_axis,
+                  std::make_pair(plan_view.lower, plan_view.upper)));
         }
       }
       const std::string key = spatial_geometry.dump();
@@ -6881,10 +7001,86 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         continue;
       }
 
+      auto VertexAxes = [&](std::size_t first)
+      {
+        const Point3D axis_u = directions[first];
+        Point3D axis_v = Normalize(Cross(process_normal, axis_u));
+        if (endpoint && Dot(axis_v, segments[incident[first]].axis_u) < 0.0)
+        {
+          axis_v = Scale(-1.0, axis_v);
+        }
+        return std::array<Point3D, 3>{axis_u, axis_v, process_normal};
+      };
+      std::vector<std::optional<PlanViewGeometry>> vertex_plan_views(directions.size());
+      if (surface.retain_faces)
+      {
+        std::vector<SpatialEdgeSite3D> vertex_sites;
+        std::map<int, int> conductor_by_metal_component;
+        for (std::size_t arm = 0; arm < incident.size(); arm++)
+        {
+          const auto &segment = segments[incident[arm]];
+          const auto &source = geometry.segments[segment.geometry_index];
+          const Point3D tangent = Normalize(Cross(segment.axis_u, segment.axis_v));
+          const double orientation = Dot(directions[arm], tangent);
+          MFEM_VERIFY(std::abs(std::abs(orientation) - 1.0) <= 1.0e-8,
+                      "A vertex arm is inconsistent with its extracted edge frame!");
+          vertex_sites.push_back(
+              {source.physical_chain, segment.geometry_index, incident[arm], 0.0,
+               orientation > 0.0 ? std::array<double, 2>{0.0, group.matching_radius}
+                                 : std::array<double, 2>{-group.matching_radius, 0.0},
+               geometry.vertices[vertex].coordinate, segment.axis_u, segment.axis_v,
+               segment.conductor, segment.metal_component, segment.targets,
+               segment.boundary_condition});
+          if (segment.metal_component >= 0)
+          {
+            conductor_by_metal_component.emplace(segment.metal_component, 1);
+          }
+        }
+        if (!conductor_by_metal_component.empty())
+        {
+          for (std::size_t first = 0; first < directions.size(); first++)
+          {
+            vertex_plan_views[first] =
+                GatherPlanViewFacets(vertex_sites, geometry.vertices[vertex].coordinate,
+                                     VertexAxes(first), conductor_by_metal_component, 2);
+          }
+        }
+      }
+      auto MatchesVertexPlanView = [&](const LibraryModel &model, std::size_t first)
+      {
+        if (!model.plan_view_boundary)
+        {
+          const bool exact_plan_view_available =
+              first < vertex_plan_views.size() && vertex_plan_views[first] &&
+              std::any_of(
+                  vertex_plan_views[first]->facets.begin(),
+                  vertex_plan_views[first]->facets.end(),
+                  [](const auto &facet) { return facet.conductor == 1; });
+          return !requirements || !exact_plan_view_available;
+        }
+        if (first >= vertex_plan_views.size() || !vertex_plan_views[first])
+        {
+          return false;
+        }
+        const auto &plan_view = *vertex_plan_views[first];
+        const bool found_conductor =
+            std::any_of(plan_view.facets.begin(), plan_view.facets.end(),
+                        [](const auto &facet) { return facet.conductor == 1; });
+        const auto clip_bounds = std::make_pair(plan_view.lower, plan_view.upper);
+        const std::optional<decltype(clip_bounds)> classified_bounds =
+            HasClassifiedPlanViewBoundary(*model.plan_view_boundary)
+                ? std::optional<decltype(clip_bounds)>(clip_bounds)
+                : std::nullopt;
+        return found_conductor &&
+               CanonicalPlanViewBoundary(plan_view.facets, library.matching_radius,
+                                         plan_view.process_axis,
+                                         classified_bounds) == *model.plan_view_boundary;
+      };
       const LibraryTopology topology =
           endpoint ? LibraryTopology::ENDPOINT : LibraryTopology::JUNCTION;
-      const auto model_selection = FindVertexLibraryModel(
-          library, topology, directions, process_normal, boundary_condition);
+      const auto model_selection =
+          FindVertexLibraryModel(library, topology, directions, process_normal,
+                                 boundary_condition, MatchesVertexPlanView);
       auto ArmAngles = [&](std::size_t first)
       {
         if (endpoint)
@@ -6908,12 +7104,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       };
       auto VertexGeometry = [&](std::size_t first)
       {
-        const Point3D axis_u = directions[first];
-        Point3D axis_v = Normalize(Cross(process_normal, axis_u));
-        if (endpoint && Dot(axis_v, segments[incident[first]].axis_u) < 0.0)
-        {
-          axis_v = Scale(-1.0, axis_v);
-        }
+        const auto axes = VertexAxes(first);
+        const auto &axis_u = axes[0];
+        const auto &axis_v = axes[1];
         struct ArmDescription
         {
           double angle = 0.0;
@@ -6957,10 +7150,70 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         {
           arms.push_back(std::move(arm.data));
         }
-        return nlohmann::json{{"SignatureVersion", 1},
-                              {"ArmCount", directions.size()},
-                              {"ArmAnglesDegrees", ArmAngles(first)},
-                              {"Arms", std::move(arms)}};
+        nlohmann::json result = {{"SignatureVersion", 2},
+                                 {"ArmCount", directions.size()},
+                                 {"ArmAnglesDegrees", ArmAngles(first)},
+                                 {"Arms", std::move(arms)}};
+        if (first < vertex_plan_views.size() && vertex_plan_views[first])
+        {
+          const auto &plan_view = *vertex_plan_views[first];
+          nlohmann::json facets = nlohmann::json::array();
+          for (const auto &facet : plan_view.facets)
+          {
+            std::vector<Point3D> scaled(facet.points.size());
+            for (std::size_t i = 0; i < facet.points.size(); i++)
+            {
+              for (int d = 0; d < 3; d++)
+              {
+                scaled[i][d] = requirements->ScaleLength(facet.points[i][d]);
+              }
+            }
+            auto Sequence = [&](std::size_t start, bool reverse)
+            {
+              nlohmann::json points = nlohmann::json::array();
+              for (std::size_t step = 0; step < scaled.size(); step++)
+              {
+                const std::size_t index =
+                    reverse ? (start + scaled.size() - step) % scaled.size()
+                            : (start + step) % scaled.size();
+                points.push_back(scaled[index]);
+              }
+              return points;
+            };
+            nlohmann::json canonical;
+            std::string canonical_key;
+            for (std::size_t start = 0; start < scaled.size(); start++)
+            {
+              for (const bool reverse : {false, true})
+              {
+                auto candidate = Sequence(start, reverse);
+                const std::string key = candidate.dump();
+                if (canonical.is_null() || key < canonical_key)
+                {
+                  canonical = std::move(candidate);
+                  canonical_key = key;
+                }
+              }
+            }
+            facets.push_back(
+                {{"Conductor", facet.conductor}, {"Points", std::move(canonical)}});
+          }
+          std::sort(facets.begin(), facets.end(),
+                    [](const auto &first_facet, const auto &second_facet)
+                    { return first_facet.dump() < second_facet.dump(); });
+          facets.erase(std::unique(facets.begin(), facets.end(),
+                                   [](const auto &first_facet, const auto &second_facet)
+                                   { return first_facet == second_facet; }),
+                       facets.end());
+          if (!facets.empty())
+          {
+            result["PlanViewFacets"] = std::move(facets);
+            result["PlanViewBoundary"] = nlohmann::json::parse(CanonicalPlanViewBoundary(
+                plan_view.facets, library.matching_radius, plan_view.process_axis,
+                std::make_pair(plan_view.lower, plan_view.upper)));
+          }
+        }
+        return result;
       };
       if (!model_selection)
       {

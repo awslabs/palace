@@ -3025,7 +3025,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
                    { return requirement["Topology"] == "Junction"; });
   REQUIRE(junction_requirement != junction_requirements["Requirements"].end());
   const auto &junction_geometry = (*junction_requirement)["Geometry"];
-  CHECK(junction_geometry["SignatureVersion"] == 1);
+  CHECK((*junction_requirement)["Status"] == "Missing");
+  CHECK(junction_geometry["SignatureVersion"] == 2);
   CHECK(junction_geometry["ArmCount"].get<int>() >= 3);
   CHECK(junction_geometry["Arms"].size() ==
         junction_geometry["ArmCount"].get<std::size_t>());
@@ -3038,6 +3039,52 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
     CHECK(arm["GapDirection"].size() == 3);
     CHECK(arm["ProcessNormal"].size() == 3);
   }
+  REQUIRE(junction_geometry.contains("PlanViewFacets"));
+  REQUIRE(!junction_geometry["PlanViewFacets"].empty());
+  REQUIRE(junction_geometry.contains("PlanViewBoundary"));
+  for (const auto &component : junction_geometry["PlanViewBoundary"])
+  {
+    REQUIRE(component.contains("ContinuationSegments"));
+  }
+  std::ifstream exact_junction_library_input(junction_library_3d_path);
+  REQUIRE(exact_junction_library_input);
+  auto exact_junction_library = json::parse(exact_junction_library_input);
+  auto exact_junction_model = *std::find_if(
+      exact_junction_library["Models"].begin(), exact_junction_library["Models"].end(),
+      [](const auto &model)
+      {
+        return model["Topology"] == "Junction" &&
+               model.value("BoundaryCondition", json("PEC")) == "PEC";
+      });
+  exact_junction_model["Name"] = "junction-4x90-exact-mask";
+  exact_junction_model["PlanViewBoundary"] = junction_geometry["PlanViewBoundary"];
+  exact_junction_library["Models"].push_back(std::move(exact_junction_model));
+  const auto exact_junction_library_path =
+      temp.temp_dir / "surface-process-junction-exact-mask-3d.json";
+  std::ofstream exact_junction_library_output(exact_junction_library_path);
+  exact_junction_library_output << exact_junction_library.dump(2) << "\n";
+  exact_junction_library_output.close();
+  auto exact_junction_config = junction_maxwell_config;
+  exact_junction_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      exact_junction_library_path.string();
+  IoData exact_junction_iodata(exact_junction_config, false);
+  exact_junction_iodata.boundaries.cracked_attributes.insert(9);
+  const auto exact_junction_requirements_path =
+      temp.temp_dir / "surface-response-requirements-junction-exact-mask.json";
+  WriteSurfaceResponseRequirements(exact_junction_iodata, *junction_maxwell_meshes.back(),
+                                   exact_junction_requirements_path.string());
+  std::ifstream exact_junction_requirements_input(exact_junction_requirements_path);
+  REQUIRE(exact_junction_requirements_input);
+  const auto exact_junction_requirements = json::parse(exact_junction_requirements_input);
+  const auto matched_exact_junction = std::find_if(
+      exact_junction_requirements["Requirements"].begin(),
+      exact_junction_requirements["Requirements"].end(),
+      [](const auto &requirement)
+      {
+        return requirement["Topology"] == "Junction" &&
+               requirement["SelectedModels"][0]["Name"] == "junction-4x90-exact-mask";
+      });
+  CHECK(matched_exact_junction != exact_junction_requirements["Requirements"].end());
 
   auto impedance_junction_config = junction_maxwell_config;
   impedance_junction_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6};

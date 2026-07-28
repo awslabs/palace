@@ -108,6 +108,58 @@ function read_mask(path)
     return facets
 end
 
+function read_boundary(path)
+    path === nothing && return NamedTuple[]
+    data, header = readdlm(path, ',', header=true)
+    data = ndims(data) == 1 ? reshape(data, 1, :) : data
+    names = vec(String.(header))
+    columns = Dict(name => index for (index, name) in enumerate(names))
+    required = ("Loop", "Vertex", "Conductor", "Plane", "Hole", "Class", "X", "Y")
+    all(haskey(columns, name) for name in required) ||
+        error("Plan-view boundary is missing required columns")
+    loops = NamedTuple[]
+    for loop_index in
+        sort!(unique(Int(round(data[row, columns["Loop"]])) for row in axes(data, 1)))
+        rows = sort!(
+            [
+                row for row in axes(data, 1) if
+                Int(round(data[row, columns["Loop"]])) == loop_index
+            ];
+            by=row -> Int(round(data[row, columns["Vertex"]]))
+        )
+        conductor = Int(round(data[first(rows), columns["Conductor"]]))
+        plane = Float64(data[first(rows), columns["Plane"]])
+        hole = Bool(round(Int, data[first(rows), columns["Hole"]]))
+        points = [
+            (Float64(data[row, columns["X"]]), Float64(data[row, columns["Y"]])) for
+            row in rows
+        ]
+        classes = [String(data[row, columns["Class"]]) for row in rows]
+        all(Int(round(data[row, columns["Conductor"]])) == conductor for row in rows) &&
+        all(Float64(data[row, columns["Plane"]]) == plane for row in rows) &&
+        all(Bool(round(Int, data[row, columns["Hole"]])) == hole for row in rows) ||
+            error("Inconsistent plan-view boundary loop $loop_index")
+        conductor > 0 &&
+        isfinite(plane) &&
+        length(points) >= 3 &&
+        all(all(isfinite, point) for point in points) &&
+        all(value in ("Physical", "Continuation") for value in classes) ||
+            error("Invalid plan-view boundary loop $loop_index")
+        push!(
+            loops,
+            (
+                conductor=conductor,
+                plane=plane,
+                hole=hole,
+                points=points,
+                classes=classes
+            )
+        )
+    end
+    isempty(loops) && error("Plan-view boundary contains no loops")
+    return loops
+end
+
 add(a, b) = ntuple(i -> a[i] + b[i], 3)
 scale(value, vector) = ntuple(i -> value * vector[i], 3)
 
@@ -222,6 +274,135 @@ function polygon_wire(occ, points, z)
     return occ.addWire(curves)
 end
 
+cross2d(first, second) = first[1] * second[2] - first[2] * second[1]
+
+function offset_loop_points(loop, distance, tolerance)
+    distance == 0.0 && return loop.points
+    shifted = Tuple{NTuple{2, Float64}, NTuple{2, Float64}}[]
+    for index in eachindex(loop.points)
+        first = loop.points[index]
+        second = loop.points[mod1(index + 1, length(loop.points))]
+        direction = (second[1] - first[1], second[2] - first[2])
+        segment_length = hypot(direction...)
+        segment_length > tolerance ||
+            error("Plan-view boundary contains a zero-length segment")
+        shift = loop.classes[index] == "Physical" ? distance : 0.0
+        normal = (-direction[2] / segment_length, direction[1] / segment_length)
+        push!(
+            shifted,
+            (
+                (first[1] + shift * normal[1], first[2] + shift * normal[2]),
+                direction
+            )
+        )
+    end
+    points = NTuple{2, Float64}[]
+    for index in eachindex(shifted)
+        previous = shifted[mod1(index - 1, length(shifted))]
+        current = shifted[index]
+        denominator = cross2d(previous[2], current[2])
+        abs(denominator) > tolerance ||
+            error("Plan-view taper has a singular boundary vertex")
+        offset = (
+            current[1][1] - previous[1][1],
+            current[1][2] - previous[1][2]
+        )
+        coordinate = cross2d(offset, current[2]) / denominator
+        point = (
+            previous[1][1] + coordinate * previous[2][1],
+            previous[1][2] + coordinate * previous[2][2]
+        )
+        hypot(point[1] - loop.points[index][1], point[2] - loop.points[index][2]) <=
+            8.0 * max(abs(distance), tolerance) ||
+            error("Plan-view taper produces an unresolved miter")
+        push!(points, point)
+    end
+    return points
+end
+
+function loft_polygon(occ, bottom_points, top_points, z0, z1)
+    bottom = polygon_wire(occ, bottom_points, z0)
+    top = polygon_wire(occ, top_points, z1)
+    entities = occ.addThruSections([bottom, top], -1, true, false, -1, "C0")
+    volumes = [(dim, tag) for (dim, tag) in entities if dim == 3]
+    isempty(volumes) && error("Plan-view mask loft produced no volume")
+    return volumes
+end
+
+function loft_mask(occ, loops, z0, z1, pullback, tolerance)
+    outers = [loop for loop in loops if !loop.hole]
+    holes = [loop for loop in loops if loop.hole]
+    isempty(outers) && error("Plan-view mask has no exterior loop")
+    result = Tuple{Int32, Int32}[]
+    for outer in outers
+        volume = loft_polygon(
+            occ,
+            outer.points,
+            offset_loop_points(outer, pullback, tolerance),
+            z0,
+            z1
+        )
+        cutters = Tuple{Int32, Int32}[]
+        for hole in holes
+            point_in_polygon(hole.points[1], outer.points, tolerance) || continue
+            append!(
+                cutters,
+                loft_polygon(
+                    occ,
+                    hole.points,
+                    offset_loop_points(hole, pullback, tolerance),
+                    z0,
+                    z1
+                )
+            )
+        end
+        if !isempty(cutters)
+            volume, _ = occ.cut(volume, cutters)
+            volume = [(dim, tag) for (dim, tag) in volume if dim == 3]
+        end
+        append!(result, volume)
+    end
+    return fuse_all(occ, result)
+end
+
+function boundary_strips(occ, loops, radius, z0, z1, pullback, tolerance)
+    volumes = Tuple{Int32, Int32}[]
+    width = 3radius
+    for loop in loops, index in eachindex(loop.points)
+        loop.classes[index] == "Physical" || continue
+        first = loop.points[index]
+        second = loop.points[mod1(index + 1, length(loop.points))]
+        direction = (second[1] - first[1], second[2] - first[2])
+        segment_length = hypot(direction...)
+        segment_length > tolerance ||
+            error("Plan-view boundary contains a zero-length segment")
+        outward = (direction[2] / segment_length, -direction[1] / segment_length)
+        bottom = (
+            first,
+            second,
+            (
+                second[1] + width * outward[1],
+                second[2] + width * outward[2]
+            ),
+            (first[1] + width * outward[1], first[2] + width * outward[2])
+        )
+        top = (
+            (
+                first[1] + pullback * outward[1],
+                first[2] + pullback * outward[2]
+            ),
+            (
+                second[1] + pullback * outward[1],
+                second[2] + pullback * outward[2]
+            ),
+            bottom[3],
+            bottom[4]
+        )
+        append!(volumes, loft_polygon(occ, bottom, top, z0, z1))
+    end
+    return fuse_all(occ, volumes)
+end
+
 function loft_strip(occ, edge, radius, side, z0, z1, pullback)
     bottom = polygon_wire(occ, strip_points(edge, radius, side), z0)
     top = polygon_wire(occ, strip_points(edge, radius, side, pullback), z1)
@@ -292,6 +473,55 @@ function fillet_plane_edges(occ, volumes, radius, z, tolerance)
         if abs(zmin - z) < tolerance && abs(zmax - z) < tolerance
             push!(curves, curve)
         end
+    end
+    isempty(curves) && return volumes
+    rounded = occ.fillet(Int32[tag for (dim, tag) in volumes if dim == 3], curves, [radius])
+    result = [(dim, tag) for (dim, tag) in rounded if dim == 3]
+    return isempty(result) ? volumes : result
+end
+
+function point_segment_distance(point, first, second)
+    direction = (second[1] - first[1], second[2] - first[2])
+    length_squared = direction[1]^2 + direction[2]^2
+    length_squared > 0.0 || return hypot(point[1] - first[1], point[2] - first[2])
+    coordinate = clamp(
+        ((point[1] - first[1]) * direction[1] +
+         (point[2] - first[2]) * direction[2]) / length_squared,
+        0.0,
+        1.0
+    )
+    closest = (
+        first[1] + coordinate * direction[1],
+        first[2] + coordinate * direction[2]
+    )
+    return hypot(point[1] - closest[1], point[2] - closest[2])
+end
+
+function physical_segments(loops, offset, tolerance)
+    segments = Tuple{NTuple{2, Float64}, NTuple{2, Float64}}[]
+    for loop in loops
+        points = offset_loop_points(loop, offset, tolerance)
+        for index in eachindex(points)
+            loop.classes[index] == "Physical" || continue
+            push!(segments, (points[index], points[mod1(index + 1, length(points))]))
+        end
+    end
+    return segments
+end
+
+function fillet_physical_edges(occ, volumes, radius, z, segments, tolerance)
+    radius <= 0.0 && return volumes
+    gmsh.model.occ.synchronize()
+    curves = Int32[]
+    for curve in boundary_curves(volumes)
+        _, _, zmin, _, _, zmax = gmsh.model.getBoundingBox(1, curve)
+        abs(zmin - z) < tolerance && abs(zmax - z) < tolerance || continue
+        center = occ.getCenterOfMass(1, curve)
+        point = (center[1], center[2])
+        any(
+            point_segment_distance(point, first, second) <= 10tolerance for
+            (first, second) in segments
+        ) && push!(curves, curve)
     end
     isempty(curves) && return volumes
     rounded = occ.fillet(Int32[tag for (dim, tag) in volumes if dim == 3], curves, [radius])
@@ -421,6 +651,7 @@ end
 function generate_spatial_coupon(;
     signature::String,
     mask::Union{Nothing, String}=nothing,
+    boundary::Union{Nothing, String}=nothing,
     fabricated::Bool,
     radius::Float64          = 2.0,
     metal_thickness::Float64 = 0.1,
@@ -443,6 +674,9 @@ function generate_spatial_coupon(;
 
     edges = read_edges(signature)
     facets = read_mask(mask)
+    boundary_loops = read_boundary(boundary)
+    isempty(boundary_loops) || !isempty(facets) ||
+        error("A classified plan-view boundary requires the corresponding mask facets")
     lower, upper = coupon_bounds(edges, radius, metal_thickness, overetch)
     tolerance = 1.0e-7 * radius
     outer_tolerance = 1.0e-4 * radius
@@ -496,29 +730,58 @@ function generate_spatial_coupon(;
             )]
         end
         if fabricated && overetch > 0.0
-            trenches = Tuple{Int32, Int32}[]
-            for edge in layer.edges
-                append!(
-                    trenches,
-                    loft_strip(
-                        occ,
-                        edge,
-                        radius,
-                        1.0,
-                        layer.plane,
-                        layer.plane - layer.sign * overetch,
-                        pullback_trench
+            layer_loops = [
+                loop for loop in boundary_loops if
+                abs(loop.plane - layer.plane) <= tolerance
+            ]
+            trenches = if isempty(boundary_loops)
+                result = Tuple{Int32, Int32}[]
+                for edge in layer.edges
+                    append!(
+                        result,
+                        loft_strip(
+                            occ,
+                            edge,
+                            radius,
+                            1.0,
+                            layer.plane,
+                            layer.plane - layer.sign * overetch,
+                            pullback_trench
+                        )
                     )
+                end
+                fuse_all(occ, result)
+            else
+                isempty(layer_loops) &&
+                    error("Plan-view boundary is missing fabrication layer $(layer.plane)")
+                boundary_strips(
+                    occ,
+                    layer_loops,
+                    radius,
+                    layer.plane,
+                    layer.plane - layer.sign * overetch,
+                    pullback_trench,
+                    tolerance
                 )
             end
-            trench = fuse_all(occ, trenches)
-            trench = fillet_plane_edges(
-                occ,
-                trench,
-                trench_rounding,
-                layer.plane - layer.sign * overetch,
-                tolerance
-            )
+            trench = if isempty(boundary_loops)
+                fillet_plane_edges(
+                    occ,
+                    trenches,
+                    trench_rounding,
+                    layer.plane - layer.sign * overetch,
+                    tolerance
+                )
+            else
+                fillet_physical_edges(
+                    occ,
+                    trenches,
+                    trench_rounding,
+                    layer.plane - layer.sign * overetch,
+                    physical_segments(layer_loops, -pullback_trench, tolerance),
+                    tolerance
+                )
+            end
             slab, _ = occ.cut(slab, trench)
         end
         push!(layer_substrates, slab)
@@ -541,36 +804,65 @@ function generate_spatial_coupon(;
                 !isempty(facets) &&
                     isempty(conductor_facets) &&
                     error("Plan-view mask is missing conductor $conductor")
-                conductor_metal = Tuple{Int32, Int32}[]
-                for edge in conductor_edges
-                    append!(
-                        conductor_metal,
-                        loft_strip(
-                            occ,
-                            edge,
-                            radius,
-                            -1.0,
-                            layer.plane,
-                            layer.plane + layer.sign * metal_thickness,
-                            pullback_metal
+                conductor_loops = [
+                    loop for loop in boundary_loops if
+                    loop.conductor == conductor &&
+                    abs(loop.plane - layer.plane) <= tolerance
+                ]
+                conductor_metal = if isempty(boundary_loops)
+                    result = Tuple{Int32, Int32}[]
+                    for edge in conductor_edges
+                        append!(
+                            result,
+                            loft_strip(
+                                occ,
+                                edge,
+                                radius,
+                                -1.0,
+                                layer.plane,
+                                layer.plane + layer.sign * metal_thickness,
+                                pullback_metal
+                            )
                         )
+                    end
+                    result = fuse_all(occ, result)
+                    apply_plan_view_mask(
+                        occ,
+                        result,
+                        conductor_facets,
+                        lower,
+                        upper
+                    )
+                else
+                    isempty(conductor_loops) &&
+                        error("Plan-view boundary is missing conductor $conductor")
+                    loft_mask(
+                        occ,
+                        conductor_loops,
+                        layer.plane,
+                        layer.plane + layer.sign * metal_thickness,
+                        pullback_metal,
+                        tolerance
                     )
                 end
-                conductor_metal = fuse_all(occ, conductor_metal)
-                conductor_metal = apply_plan_view_mask(
-                    occ,
-                    conductor_metal,
-                    conductor_facets,
-                    lower,
-                    upper
-                )
-                conductor_metal = fillet_plane_edges(
-                    occ,
-                    conductor_metal,
-                    top_rounding,
-                    layer.plane + layer.sign * metal_thickness,
-                    tolerance
-                )
+                conductor_metal = if isempty(boundary_loops)
+                    fillet_plane_edges(
+                        occ,
+                        conductor_metal,
+                        top_rounding,
+                        layer.plane + layer.sign * metal_thickness,
+                        tolerance
+                    )
+                else
+                    fillet_physical_edges(
+                        occ,
+                        conductor_metal,
+                        top_rounding,
+                        layer.plane + layer.sign * metal_thickness,
+                        physical_segments(conductor_loops, pullback_metal, tolerance),
+                        tolerance
+                    )
+                end
                 append!(metal, conductor_metal)
             end
         end
@@ -740,6 +1032,7 @@ function parse_options(args)
     )
     names = Dict(
         "--mask" => ("mask", String),
+        "--boundary" => ("boundary", String),
         "--radius" => ("radius", Float64),
         "--metal-thickness" => ("metal_thickness", Float64),
         "--overetch" => ("overetch", Float64),
@@ -768,6 +1061,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
     generate_spatial_coupon(;
         signature       = options["signature"],
         mask            = get(options, "mask", nothing),
+        boundary        = get(options, "boundary", nothing),
         fabricated      = options["fabricated"],
         filename        = options["filename"],
         radius          = get(options, "radius", 2.0),
