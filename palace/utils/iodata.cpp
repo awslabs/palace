@@ -324,10 +324,11 @@ void IoData::CheckConfiguration()
       for (const auto &material : domains.materials)
       {
         MFEM_VERIFY(is_isotropic(material.mu_r) && is_isotropic(material.epsilon_r) &&
-                        is_zero(material.tandelta) && is_zero(material.sigma) &&
+                        is_isotropic(material.tandelta) && is_zero(material.sigma) &&
                         material.lambda_L == 0.0,
                     "Singular BoundaryMode simulations currently require isotropic, "
-                    "lossless bulk materials without London penetration depth!");
+                    "permittivity, permeability, and loss tangent without bulk "
+                    "conductivity or London penetration depth!");
       }
     }
     if (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE)
@@ -349,10 +350,11 @@ void IoData::CheckConfiguration()
       for (const auto &material : domains.materials)
       {
         MFEM_VERIFY(is_isotropic(material.mu_r) && is_isotropic(material.epsilon_r) &&
-                        is_zero(material.tandelta) && is_zero(material.sigma) &&
+                        is_isotropic(material.tandelta) && is_zero(material.sigma) &&
                         material.lambda_L == 0.0,
-                    "Full-wave singular simulations currently require isotropic, lossless "
-                    "bulk materials without London penetration depth!");
+                    "Full-wave singular simulations currently require isotropic "
+                    "permittivity, permeability, and loss tangent without bulk "
+                    "conductivity or London penetration depth!");
       }
       MFEM_VERIFY(
           domains.postpro.energy.empty() && domains.postpro.probe.empty() &&

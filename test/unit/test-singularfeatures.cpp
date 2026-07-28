@@ -858,6 +858,8 @@ TEST_CASE("Finite-metal wedge features infer homogeneous and transmission expone
   REQUIRE(homogeneous.features.size() == 1);
   REQUIRE(homogeneous.vertices.size() == 2);
   CHECK(homogeneous.segments[0].mesh_vertices == std::array<int, 2>{0, 1});
+  CHECK(homogeneous.segments[0].type ==
+        fem::singular::FeatureSegmentType::TRANSMISSION_WEDGE);
   CHECK(homogeneous.features[0].nu == Catch::Approx(2.0 / 3.0).margin(2.0e-13));
   CHECK(homogeneous.features[0].segments == std::vector<std::size_t>{0});
   CHECK_FALSE(homogeneous.features[0].closed);
@@ -1042,6 +1044,16 @@ TEST_CASE("Serial singular feature blueprints broadcast sparsely",
   CHECK(broadcast.sheet_faces.size() == expected.sheet_faces.size());
   CHECK(broadcast.elements.size() == expected.elements.size());
   CHECK(GlobalElementIncidence(mesh, broadcast) == GlobalElementIncidence(mesh, expected));
+  for (std::size_t i = 0; i < expected.segments.size(); i++)
+  {
+    CHECK(broadcast.segments[i].mesh_edge == expected.segments[i].mesh_edge);
+    CHECK(broadcast.segments[i].mesh_vertices == expected.segments[i].mesh_vertices);
+    CHECK(broadcast.segments[i].feature == expected.segments[i].feature);
+    CHECK(broadcast.segments[i].boundary_attributes ==
+          expected.segments[i].boundary_attributes);
+    CHECK(broadcast.segments[i].type == expected.segments[i].type);
+    CHECK(broadcast.segments[i].type == fem::singular::FeatureSegmentType::SHEET_EDGE);
+  }
   for (std::size_t i = 0; i < expected.vertices.size(); i++)
   {
     CHECK(broadcast.vertices[i].id == expected.vertices[i].id);

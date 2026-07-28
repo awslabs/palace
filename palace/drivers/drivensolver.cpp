@@ -270,9 +270,9 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M_energy = space_op.GetMassMatrix<Operator>(Operator::DIAG_ZERO);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  MFEM_VERIFY(!C && K->Real() && !K->Imag() && M->Real() && !M->Imag(),
-              "Driven singular simulations require real lossless stiffness and mass "
-              "operators without damping!");
+  MFEM_VERIFY(!C && K->Real() && !K->Imag() && M->Real(),
+              "Driven singular simulations require real stiffness, complex electric "
+              "mass, and no damping operator!");
 
   auto ksp = MakeSingularComplexKspSolver(iodata, space_op.GetComm());
   ComplexVector rhs(space_op.GetNDTrueVSize()), electric_field(space_op.GetNDTrueVSize()),
@@ -466,6 +466,7 @@ ErrorIndicator DrivenSolver::SweepUniformSingular(SpaceOperator &space_op) const
           {"Output", "singular-driven.csv"},
           {"ElectricEnergy", "0.5 E^H M_epsilon E"},
           {"MagneticEnergy", "0.5 E^H K_mu^-1 E / |omega|^2"},
+          {"BulkDielectricLoss", space_op.GetMaterialOp().HasLossTangent()},
           {"FieldGridOutput", false},
           {"ErrorEstimator", false},
           {"SurfaceIntegrability", space_op.GetMesh().Dimension() == 3

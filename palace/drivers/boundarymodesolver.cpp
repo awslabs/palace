@@ -1166,6 +1166,7 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
     serial_singular_features = fem::singular::ExtractSerialLineFeatures(
         *smesh, iodata.solver.singular_elements.attributes,
         GetSingularTriangleMaterials(iodata));
+    ValidateSingularLossTangents(iodata, serial_singular_features);
   }
   fem::singular::BroadcastSerialLineTipFeatures(serial_singular_features, comm);
   MFEM_VERIFY(!serial_singular_features.Empty(),

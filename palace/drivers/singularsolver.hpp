@@ -28,6 +28,14 @@ struct PartitionMetadata;
 std::vector<fem::singular::TriangleMaterial>
 GetSingularTriangleMaterials(const IoData &iodata);
 
+// A real singular exponent remains exact for complex permittivities only when
+// every material sector of a finite transmission wedge has the same loss
+// tangent. Thin-sheet endpoints and edges are geometry-driven and are exempt.
+void ValidateSingularLossTangents(const IoData &iodata, const mfem::Mesh &mesh,
+                                  const fem::singular::FeatureTopology &features);
+void ValidateSingularLossTangents(const IoData &iodata,
+                                  const fem::singular::TriangleFeatureTopology &features);
+
 nlohmann::json GetSingularSurfaceParticipationMetadata(const IoData &iodata);
 nlohmann::json
 GetSingularSurfaceIntegrabilityMetadata(const fem::singular::FeatureTopology &features);

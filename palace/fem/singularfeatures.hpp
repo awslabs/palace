@@ -28,12 +28,19 @@ enum class FeatureVertexType
   ENDPOINT
 };
 
+enum class FeatureSegmentType
+{
+  SHEET_EDGE,
+  TRANSMISSION_WEDGE
+};
+
 struct FeatureSegment
 {
   int mesh_edge;
   std::array<int, 2> mesh_vertices;
   std::size_t feature;
   std::vector<int> boundary_attributes;
+  FeatureSegmentType type = FeatureSegmentType::SHEET_EDGE;
 };
 
 struct FeatureVertex

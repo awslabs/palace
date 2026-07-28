@@ -55,6 +55,117 @@ GetSingularTriangleMaterials(const IoData &iodata)
   return result;
 }
 
+namespace
+{
+
+std::map<int, double> GetIsotropicLossTangents(const IoData &iodata)
+{
+  std::map<int, double> result;
+  for (const auto &material : iodata.domains.materials)
+  {
+    const double loss_tangent = material.tandelta.s[0];
+    const double tolerance = 128.0 * std::numeric_limits<double>::epsilon() *
+                             std::max(1.0, std::abs(loss_tangent));
+    MFEM_VERIFY(std::isfinite(loss_tangent) &&
+                    std::all_of(material.tandelta.s.begin() + 1, material.tandelta.s.end(),
+                                [loss_tangent, tolerance](double value)
+                                {
+                                  return std::isfinite(value) &&
+                                         std::abs(value - loss_tangent) <= tolerance;
+                                }),
+                "Singular bulk dielectric loss requires isotropic loss tangent!");
+    for (int attribute : material.attributes)
+    {
+      MFEM_VERIFY(attribute > 0 && result.emplace(attribute, loss_tangent).second,
+                  "Singular bulk dielectric loss found an invalid or duplicate material "
+                  "domain attribute "
+                      << attribute << "!");
+    }
+  }
+  return result;
+}
+
+void VerifyCommonWedgeLossTangent(const std::map<int, double> &loss_tangents,
+                                  const std::vector<int> &attributes,
+                                  const char *description)
+{
+  MFEM_VERIFY(!attributes.empty(), description << " has no material sectors!");
+  const auto first = loss_tangents.find(attributes.front());
+  MFEM_VERIFY(first != loss_tangents.end(),
+              description << " references an unknown material domain attribute "
+                          << attributes.front() << "!");
+  const double reference = first->second;
+  const double tolerance =
+      128.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, std::abs(reference));
+  for (int attribute : attributes)
+  {
+    const auto current = loss_tangents.find(attribute);
+    MFEM_VERIFY(current != loss_tangents.end(),
+                description << " references an unknown material domain attribute "
+                            << attribute << "!");
+    MFEM_VERIFY(
+        std::abs(current->second - reference) <= tolerance,
+        description
+            << " has unequal material loss tangents. The exact transmission-wedge "
+               "exponent is then complex, but the current singular basis supports only "
+               "real exponents. Use a common loss tangent in all sectors or disable "
+               "enrichment at this finite-metal feature!");
+  }
+}
+
+}  // namespace
+
+void ValidateSingularLossTangents(const IoData &iodata, const mfem::Mesh &mesh,
+                                  const fem::singular::FeatureTopology &features)
+{
+  const auto loss_tangents = GetIsotropicLossTangents(iodata);
+  for (std::size_t segment = 0; segment < features.segments.size(); segment++)
+  {
+    if (features.segments[segment].type !=
+        fem::singular::FeatureSegmentType::TRANSMISSION_WEDGE)
+    {
+      continue;
+    }
+    std::vector<int> attributes;
+    for (int element = 0; element < mesh.GetNE(); element++)
+    {
+      const auto &incidence = features.elements.at(element);
+      if (std::any_of(incidence.edges.begin(), incidence.edges.end(),
+                      [segment](const auto &edge) { return edge.segment == segment; }))
+      {
+        attributes.push_back(mesh.GetAttribute(element));
+      }
+    }
+    std::sort(attributes.begin(), attributes.end());
+    attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
+    VerifyCommonWedgeLossTangent(loss_tangents, attributes,
+                                 "A three-dimensional singular transmission wedge");
+  }
+}
+
+void ValidateSingularLossTangents(const IoData &iodata,
+                                  const fem::singular::TriangleFeatureTopology &features)
+{
+  const auto loss_tangents = GetIsotropicLossTangents(iodata);
+  for (const auto &vertex : features.vertices)
+  {
+    if (vertex.type != fem::singular::FeatureVertexType::CORNER)
+    {
+      continue;
+    }
+    std::vector<int> attributes;
+    attributes.reserve(vertex.sectors.size());
+    for (const auto &sector : vertex.sectors)
+    {
+      attributes.push_back(sector.domain_attribute);
+    }
+    std::sort(attributes.begin(), attributes.end());
+    attributes.erase(std::unique(attributes.begin(), attributes.end()), attributes.end());
+    VerifyCommonWedgeLossTangent(loss_tangents, attributes,
+                                 "A two-dimensional singular transmission wedge");
+  }
+}
+
 nlohmann::json GetSingularSurfaceParticipationMetadata(const IoData &iodata)
 {
   auto interfaces = nlohmann::json::array();
@@ -154,6 +265,7 @@ void FullWaveSingularFeatures::Preprocess(const IoData &iodata,
       serial_sheet_features = fem::singular::ExtractSerialSheetFeatures(
           *serial_mesh, iodata.solver.singular_elements.attributes,
           GetSingularTriangleMaterials(iodata));
+      ValidateSingularLossTangents(iodata, *serial_mesh, serial_sheet_features);
     }
     else
     {
@@ -166,6 +278,7 @@ void FullWaveSingularFeatures::Preprocess(const IoData &iodata,
       serial_line_features = fem::singular::ExtractSerialLineFeatures(
           *serial_mesh, iodata.solver.singular_elements.attributes,
           GetSingularTriangleMaterials(iodata));
+      ValidateSingularLossTangents(iodata, serial_line_features);
     }
   }
   Mpi::Broadcast(1, &dimension, 0, comm);

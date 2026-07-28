@@ -168,7 +168,7 @@ void CheckSymmetricPositive(const mfem::HypreParMatrix &matrix)
   CHECK(linalg::Dot(Mpi::World(), x, Ax) > 0.0);
 }
 
-void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved)
+void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved, double loss_tangent = 0.0)
 {
   REQUIRE(Mpi::Size(Mpi::World()) == 1);
   const int dimension = serial_mesh.Dimension();
@@ -200,6 +200,7 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved)
   std::vector<std::unique_ptr<Mesh>> meshes;
   meshes.push_back(std::make_unique<Mesh>(std::move(parallel_mesh)));
   auto iodata = SingularSpaceData(dimension);
+  iodata.domains.materials[0].tandelta.s = {loss_tangent, loss_tangent, loss_tangent};
   SpaceOperator space_op(iodata, meshes, tetrahedral ? &local_sheet_features : nullptr,
                          tetrahedral ? nullptr : &local_line_features, &source_vertex_ids);
   REQUIRE(space_op.HasSingularEnrichment());
@@ -229,6 +230,45 @@ void CheckSpaceOperator(mfem::Mesh serial_mesh, bool curved)
   CHECK(space_op.GlobalTrueVSize() == hypre_K->GetGlobalNumRows());
   CheckSymmetricPositive(*hypre_K);
   CheckSymmetricPositive(*hypre_M);
+
+  auto complex_mass =
+      space_op.GetMassMatrix<ComplexOperator>(Operator::DiagonalPolicy::DIAG_ZERO);
+  const auto *complex_mass_real =
+      dynamic_cast<const mfem::HypreParMatrix *>(complex_mass->Real());
+  const auto *complex_mass_imag =
+      dynamic_cast<const mfem::HypreParMatrix *>(complex_mass->Imag());
+  REQUIRE(complex_mass_real);
+  CHECK((complex_mass_imag != nullptr) == (loss_tangent > 0.0));
+  if (complex_mass_imag)
+  {
+    Vector probe(complex_mass->Width()), real_action(complex_mass->Height()),
+        imaginary_action(complex_mass->Height());
+    FillVector(probe, 0.61);
+    complex_mass_real->Mult(probe, real_action);
+    complex_mass_imag->Mult(probe, imaginary_action);
+    imaginary_action.Add(loss_tangent, real_action);
+    CHECK(RelativeNorm(imaginary_action, real_action) < 2.0e-11);
+
+    constexpr std::complex<double> coefficient(1.3, -0.4);
+    auto system = space_op.GetSystemMatrix(
+        std::complex<double>(0.0), std::complex<double>(0.0), coefficient,
+        static_cast<const ComplexOperator *>(nullptr),
+        static_cast<const ComplexOperator *>(nullptr), complex_mass.get());
+    const auto *system_real = dynamic_cast<const mfem::HypreParMatrix *>(system->Real());
+    const auto *system_imag = dynamic_cast<const mfem::HypreParMatrix *>(system->Imag());
+    REQUIRE(system_real);
+    REQUIRE(system_imag);
+    Vector system_real_action(system->Height()), system_imaginary_action(system->Height()),
+        expected_real(real_action), expected_imag(real_action);
+    system_real->Mult(probe, system_real_action);
+    system_imag->Mult(probe, system_imaginary_action);
+    expected_real *= coefficient.real() + coefficient.imag() * loss_tangent;
+    expected_imag *= coefficient.imag() - coefficient.real() * loss_tangent;
+    system_real_action -= expected_real;
+    system_imaginary_action -= expected_imag;
+    CHECK(RelativeNorm(system_real_action, expected_real) < 2.0e-11);
+    CHECK(RelativeNorm(system_imaginary_action, expected_imag) < 2.0e-11);
+  }
 
   Vector h1(hypre_G->Width()), gradient(hypre_G->Height()),
       curl_gradient(hypre_K_zero->Height());
@@ -293,6 +333,14 @@ TEST_CASE("Full-wave singular SpaceOperator preserves Maxwell algebra on high-or
   SECTION("3D genuinely curved")
   {
     CheckSpaceOperator(InternalSheetMesh(), true);
+  }
+  SECTION("2D isotropic dielectric loss")
+  {
+    CheckSpaceOperator(InternalLineTipMesh(), false, 0.017);
+  }
+  SECTION("3D isotropic dielectric loss")
+  {
+    CheckSpaceOperator(InternalSheetMesh(), false, 0.017);
   }
 }
 

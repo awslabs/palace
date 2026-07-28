@@ -753,19 +753,23 @@ void ApplyStandardRowTransformation(const mfem::DofTransformation &dof_transform
 
 void ValidateMaterialCoefficients(const IsotropicMaterialCoefficients &coefficients)
 {
-  if (!std::isfinite(coefficients.electric) || !(coefficients.electric > 0.0) ||
+  if (!std::isfinite(coefficients.electric) ||
       !std::isfinite(coefficients.inverse_magnetic) ||
       !(coefficients.inverse_magnetic > 0.0))
   {
     throw std::invalid_argument(
-        "Singular element material coefficients must be finite and positive!");
+        "Singular element electric coefficient must be finite and its "
+        "inverse-magnetic coefficient must be finite and positive!");
   }
 }
 
 void ValidateMatrixForScaling(const mfem::DenseMatrix &matrix, double coefficient,
                               bool estimated_absolute_error)
 {
-  const double maximum_unscaled = std::numeric_limits<double>::max() / coefficient;
+  const double magnitude = std::abs(coefficient);
+  const double maximum_unscaled = magnitude > 0.0
+                                      ? std::numeric_limits<double>::max() / magnitude
+                                      : std::numeric_limits<double>::infinity();
   for (int i = 0; i < matrix.Height(); i++)
   {
     for (int j = 0; j < matrix.Width(); j++)
@@ -855,7 +859,7 @@ void ScaleSymmetricMatrices(mfem::DenseMatrix &matrix,
                             mfem::DenseMatrix &estimated_absolute_error, double coefficient)
 {
   ScaleMatrix(matrix, coefficient);
-  ScaleMatrix(estimated_absolute_error, coefficient);
+  ScaleMatrix(estimated_absolute_error, std::abs(coefficient));
 }
 
 void ScaleCouplingMatrices(mfem::DenseMatrix &standard_enrichment,
@@ -864,7 +868,7 @@ void ScaleCouplingMatrices(mfem::DenseMatrix &standard_enrichment,
 {
   ScaleMatrix(standard_enrichment, coefficient);
   enrichment_standard.Transpose(standard_enrichment);
-  ScaleMatrix(estimated_absolute_error, coefficient);
+  ScaleMatrix(estimated_absolute_error, std::abs(coefficient));
 }
 
 template <typename ElementDofType>

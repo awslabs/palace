@@ -133,15 +133,28 @@ BoundaryModeOperator::AssembleAtt(std::complex<double> omega, double sigma) cons
   {
     return {std::move(standard_real), std::move(standard_imag)};
   }
-  MFEM_VERIFY(omega.imag() == 0.0 && !standard_imag,
+  MFEM_VERIFY(omega.imag() == 0.0,
               "Triangular BoundaryMode singular enrichment currently supports only "
-              "lossless materials at real frequency!");
+              "real excitation frequencies!");
   const double omega_squared = omega.real() * omega.real();
-  auto enrichment = CombineOperatorBlocks(1.0, singular_mu_matrices.nd_curl_curl,
-                                          -omega_squared, singular_epsilon_matrices.nd_mass,
-                                          -sigma, singular_mu_matrices.nd_mass);
-  auto combined = fem::singular::BuildParallelEnrichedOperator(*standard_real, enrichment);
-  return {std::move(combined), nullptr};
+  auto enrichment_real = CombineOperatorBlocks(
+      1.0, singular_mu_matrices.nd_curl_curl, -omega_squared,
+      singular_epsilon_matrices.nd_mass, -sigma, singular_mu_matrices.nd_mass);
+  auto combined_real =
+      fem::singular::BuildParallelEnrichedOperator(*standard_real, enrichment_real);
+  std::unique_ptr<mfem::HypreParMatrix> combined_imaginary;
+  if (standard_imag)
+  {
+    MFEM_VERIFY(singular_epsilon_imag_matrices.nd_mass.enrichment_enrichment,
+                "Triangular BoundaryMode imaginary permittivity blocks were not "
+                "assembled!");
+    auto enrichment_imaginary =
+        CombineOperatorBlocks(-omega_squared, singular_epsilon_imag_matrices.nd_mass, 0.0,
+                              singular_epsilon_imag_matrices.nd_mass);
+    combined_imaginary =
+        fem::singular::BuildParallelEnrichedOperator(*standard_imag, enrichment_imaginary);
+  }
+  return {std::move(combined_real), std::move(combined_imaginary)};
 }
 
 BoundaryModeOperator::ComplexHypreParMatrix
@@ -154,14 +167,28 @@ BoundaryModeOperator::AssembleAnn(std::complex<double> omega) const
   {
     return {std::move(standard_real), std::move(standard_imag)};
   }
-  MFEM_VERIFY(omega.imag() == 0.0 && !standard_imag,
+  MFEM_VERIFY(omega.imag() == 0.0,
               "Triangular BoundaryMode singular enrichment currently supports only "
-              "lossless materials at real frequency!");
+              "real excitation frequencies!");
   const double omega_squared = omega.real() * omega.real();
-  auto enrichment = CombineOperatorBlocks(-1.0, singular_mu_matrices.h1_diffusion,
-                                          omega_squared, singular_epsilon_matrices.h1_mass);
-  auto combined = fem::singular::BuildParallelEnrichedOperator(*standard_real, enrichment);
-  return {std::move(combined), nullptr};
+  auto enrichment_real =
+      CombineOperatorBlocks(-1.0, singular_mu_matrices.h1_diffusion, omega_squared,
+                            singular_epsilon_matrices.h1_mass);
+  auto combined_real =
+      fem::singular::BuildParallelEnrichedOperator(*standard_real, enrichment_real);
+  std::unique_ptr<mfem::HypreParMatrix> combined_imaginary;
+  if (standard_imag)
+  {
+    MFEM_VERIFY(singular_epsilon_imag_matrices.h1_mass.enrichment_enrichment,
+                "Triangular BoundaryMode imaginary permittivity blocks were not "
+                "assembled!");
+    auto enrichment_imaginary =
+        CombineOperatorBlocks(omega_squared, singular_epsilon_imag_matrices.h1_mass, 0.0,
+                              singular_epsilon_imag_matrices.h1_mass);
+    combined_imaginary =
+        fem::singular::BuildParallelEnrichedOperator(*standard_imag, enrichment_imaginary);
+  }
+  return {std::move(combined_real), std::move(combined_imaginary)};
 }
 
 void BoundaryModeOperator::ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn,
@@ -370,10 +397,9 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
                   iodata.solver.linear.mg_max_levels == 1,
               "BoundaryMode singular enrichment requires complete source topology, "
               "singular order one, and one finite-element level!");
-  MFEM_VERIFY(!mat_op.HasLossTangent() && !mat_op.HasConductivity() &&
-                  !mat_op.HasLondonDepth(),
-              "BoundaryMode singular enrichment requires lossless bulk materials "
-              "without London penetration depth!");
+  MFEM_VERIFY(!mat_op.HasConductivity() && !mat_op.HasLondonDepth(),
+              "BoundaryMode singular enrichment does not support bulk conductivity or "
+              "London penetration depth!");
 
   singular_dofs = std::make_unique<fem::singular::TriangleDofTopology>(
       fem::singular::BuildLocalTriangleDofTopology(solve_mesh->Get(), *singular_features,
@@ -389,6 +415,8 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
       solve_mesh->GetNE(), {1.0, 1.0});
   std::vector<fem::singular::IsotropicMaterialCoefficients> epsilon_materials(
       solve_mesh->GetNE(), {1.0, 1.0});
+  std::vector<fem::singular::IsotropicMaterialCoefficients> epsilon_imag_materials(
+      solve_mesh->GetNE(), {0.0, 1.0});
   for (int element = 0; element < solve_mesh->GetNE(); element++)
   {
     const int attribute = solve_mesh->Get().GetAttribute(element);
@@ -404,6 +432,7 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
     const double permittivity = mat_op.GetPermittivityReal(attribute)(0, 0);
     mu_materials[element] = {inverse_permeability, inverse_permeability};
     epsilon_materials[element] = {permittivity, 1.0};
+    epsilon_imag_materials[element] = {mat_op.GetPermittivityImag(attribute)(0, 0), 1.0};
   }
   const fem::singular::AdaptiveAssemblyOptions options{
       iodata.solver.singular_elements.quadrature_order,
@@ -417,6 +446,16 @@ void BoundaryModeOperator::SetUpSingularEnrichment()
       local_mu, *singular_numbering, GetH1Space().Get(), GetNDSpace().Get());
   singular_epsilon_matrices = fem::singular::AssembleParallelSparseEnrichmentMatrices(
       local_epsilon, *singular_numbering, GetH1Space().Get(), GetNDSpace().Get());
+  if (mat_op.HasLossTangent())
+  {
+    const auto local_epsilon_imag = fem::singular::AssembleLocalSparseEnrichmentMatrices(
+        *singular_dofs, GetH1Space().Get(), GetNDSpace().Get(), epsilon_imag_materials,
+        options);
+    singular_epsilon_imag_matrices =
+        fem::singular::AssembleParallelSparseEnrichmentMatrices(
+            local_epsilon_imag, *singular_numbering, GetH1Space().Get(),
+            GetNDSpace().Get());
+  }
 
   {
     MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),

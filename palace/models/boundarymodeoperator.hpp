@@ -204,6 +204,7 @@ private:
   std::unique_ptr<fem::singular::ParallelDofNumbering> singular_numbering;
   fem::singular::ParallelSparseEnrichmentMatrices singular_mu_matrices;
   fem::singular::ParallelSparseEnrichmentMatrices singular_epsilon_matrices;
+  fem::singular::ParallelSparseEnrichmentMatrices singular_epsilon_imag_matrices;
   std::unique_ptr<mfem::HypreParMatrix> singular_gradient;
   std::unique_ptr<mfem::HypreParMatrix> singular_epsilon_nd_mass;
   std::unique_ptr<mfem::HypreParMatrix> singular_epsilon_h1_mass;

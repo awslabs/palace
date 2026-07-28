@@ -365,6 +365,8 @@ void ValidateSerialFeatureBlueprint(const mfem::Mesh &mesh, const FeatureTopolog
     const auto &segment = features.segments[i];
     if (segment.mesh_edge < 0 || segment.mesh_edge >= mesh.GetNEdges() ||
         segment.feature >= features.features.size() ||
+        (segment.type != FeatureSegmentType::SHEET_EDGE &&
+         segment.type != FeatureSegmentType::TRANSMISSION_WEDGE) ||
         GetEdgeKey(mesh, segment.mesh_edge) != segment.mesh_vertices)
     {
       throw std::invalid_argument(
@@ -494,6 +496,8 @@ void ValidateFeatureBlueprintStructure(const FeatureTopology &features)
     if (segment.mesh_edge < 0 || segment.mesh_vertices[0] < 0 ||
         segment.mesh_vertices[0] >= segment.mesh_vertices[1] ||
         segment.feature >= features.features.size() ||
+        (segment.type != FeatureSegmentType::SHEET_EDGE &&
+         segment.type != FeatureSegmentType::TRANSMISSION_WEDGE) ||
         std::find(features.features[segment.feature].segments.begin(),
                   features.features[segment.feature].segments.end(),
                   i) == features.features[segment.feature].segments.end())
@@ -558,7 +562,8 @@ json PackFeatureTopology(const FeatureTopology &features)
   for (const auto &segment : features.segments)
   {
     packed["segments"].push_back({segment.mesh_edge, segment.mesh_vertices, segment.feature,
-                                  segment.boundary_attributes});
+                                  segment.boundary_attributes,
+                                  static_cast<int>(segment.type)});
   }
   for (const auto &feature : features.features)
   {
@@ -607,7 +612,8 @@ FeatureTopology UnpackFeatureTopology(const json &packed)
   {
     features.segments.push_back(
         {entry.at(0).get<int>(), entry.at(1).get<std::array<int, 2>>(),
-         entry.at(2).get<std::size_t>(), entry.at(3).get<std::vector<int>>()});
+         entry.at(2).get<std::size_t>(), entry.at(3).get<std::vector<int>>(),
+         static_cast<FeatureSegmentType>(entry.at(4).get<int>())});
   }
   for (const auto &entry : packed.at("features"))
   {
@@ -2161,8 +2167,9 @@ FeatureTopology ExtractSerialSheetFeatures(const mfem::Mesh &mesh,
       throw std::invalid_argument(
           "Selected PEC sheet or wedge edges must be geometrically straight!");
     }
-    result.segments.push_back(
-        {edge.mesh_edge, key, 0, std::move(edge.boundary_attributes)});
+    result.segments.push_back({edge.mesh_edge, key, 0, std::move(edge.boundary_attributes),
+                               has_internal_face ? FeatureSegmentType::SHEET_EDGE
+                                                 : FeatureSegmentType::TRANSMISSION_WEDGE});
     segment_exponents.push_back(edge_nu);
   }
 

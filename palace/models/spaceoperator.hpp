@@ -95,6 +95,7 @@ private:
   std::unique_ptr<fem::singular::TriangleDofTopology> triangle_singular_dofs;
   std::unique_ptr<fem::singular::ParallelDofNumbering> singular_numbering;
   fem::singular::ParallelSparseEnrichmentMatrices singular_domain_matrices;
+  fem::singular::ParallelSparseEnrichmentMatrices singular_domain_imag_matrices;
   std::unique_ptr<mfem::HypreParMatrix> singular_gradient;
   mfem::Array<int> singular_nd_essential_true_dofs;
   mfem::Array<int> singular_h1_essential_true_dofs;

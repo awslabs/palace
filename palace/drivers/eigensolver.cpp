@@ -537,9 +537,9 @@ std::pair<ErrorIndicator, long long int>
 EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOperator> K,
                            std::unique_ptr<ComplexOperator> M) const
 {
-  MFEM_VERIFY(K && M && K->Real() && !K->Imag() && M->Real() && !M->Imag(),
-              "Eigenmode singular simulations require real lossless stiffness and mass "
-              "operators!");
+  MFEM_VERIFY(K && M && K->Real() && !K->Imag() && M->Real(),
+              "Eigenmode singular simulations require real stiffness and a complex "
+              "electric mass operator!");
   auto K_energy = space_op.GetStiffnessMatrix<Operator>(Operator::DIAG_ZERO);
   auto M_energy = space_op.GetMassMatrix<Operator>(Operator::DIAG_ZERO);
   const double target = iodata.solver.eigenmode.target;
@@ -564,7 +564,9 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
     auto slepc =
         std::make_unique<slepc::SlepcEPSSolver>(space_op.GetComm(), iodata.problem.verbose);
     slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
-    slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_HERMITIAN);
+    slepc->SetProblemType(M->Imag()
+                              ? slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN
+                              : slepc::SlepcEigenvalueSolver::ProblemType::GEN_HERMITIAN);
     slepc->SetOrthogonalization(iodata.solver.linear.gs_orthog == Orthogonalization::MGS,
                                 iodata.solver.linear.gs_orthog == Orthogonalization::CGS2);
     eigen = std::move(slepc);
@@ -832,6 +834,7 @@ EigenSolver::SolveSingular(SpaceOperator &space_op, std::unique_ptr<ComplexOpera
           {"EnergyOutput", "singular-eigenmode.csv"},
           {"ElectricEnergy", "0.5 E^H M_epsilon E"},
           {"MagneticEnergy", "0.5 E^H K_mu^-1 E / |omega|^2"},
+          {"BulkDielectricLoss", space_op.GetMaterialOp().HasLossTangent()},
           {"DivergenceProjection", divfree != nullptr},
           {"FieldGridOutput", false},
           {"ErrorEstimator", false},

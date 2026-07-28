@@ -204,10 +204,16 @@ TEST_CASE("Singular BoundaryMode rejects unsupported material and boundary physi
     iodata.domains.materials[0].epsilon_r.s = {1.0, 1.0, 2.0};
     CHECK_THROWS(iodata.CheckConfiguration());
   }
-  SECTION("Lossy or London material")
+  SECTION("Isotropic loss tangent is supported")
   {
     auto iodata = make_input();
     iodata.domains.materials[0].tandelta.s = {1.0e-4, 1.0e-4, 1.0e-4};
+    CHECK_NOTHROW(iodata.CheckConfiguration());
+  }
+  SECTION("Anisotropic loss tangent or London material")
+  {
+    auto iodata = make_input();
+    iodata.domains.materials[0].tandelta.s = {1.0e-4, 2.0e-4, 1.0e-4};
     CHECK_THROWS(iodata.CheckConfiguration());
 
     iodata = make_input();
@@ -238,11 +244,15 @@ TEST_CASE("Singular BoundaryMode blocks preserve the complete exact sequence",
   material.attributes = {1};
   material.epsilon_r.s = {2.3, 2.3, 2.3};
   material.mu_r.s = {1.7, 1.7, 1.7};
+  constexpr double loss_tangent = 1.0e-4;
+  material.tandelta.s = {loss_tangent, loss_tangent, loss_tangent};
   iodata.boundaries.pec.attributes = {1, 7};
   iodata.solver.order = 1;
   iodata.solver.boundary_mode.freq = 10.0;
   iodata.solver.boundary_mode.n = 1;
   iodata.solver.linear.mg_max_levels = 1;
+  iodata.solver.linear.tol = 1.0e-12;
+  iodata.solver.linear.max_it = 200;
   iodata.solver.singular_elements.attributes = {7};
   iodata.solver.singular_elements.order = 1;
   iodata.solver.singular_elements.abs_tol = 2.0e-10;
@@ -310,14 +320,19 @@ TEST_CASE("Singular BoundaryMode blocks preserve the complete exact sequence",
   auto [ann, ann_imag] = mode_op.AssembleAnn(0.0);
   REQUIRE(att);
   REQUIRE(ann);
-  CHECK_FALSE(att_imag);
-  CHECK_FALSE(ann_imag);
+  REQUIRE(att_imag);
+  REQUIRE(ann_imag);
   REQUIRE(att->Height() == nd.Size());
   REQUIRE(ann->Height() == h1.Size());
 
   mfem::Vector curl_gradient(nd.Size());
   att->Mult(gradient_h1, curl_gradient);
   CHECK(RelativeNorm(curl_gradient, gradient_h1) < 2.0e-10);
+  mfem::Vector zero_imaginary_action_nd(nd.Size()), zero_imaginary_action_h1(h1.Size());
+  att_imag->Mult(nd, zero_imaginary_action_nd);
+  ann_imag->Mult(h1, zero_imaginary_action_h1);
+  CHECK(zero_imaginary_action_nd.Norml2() == 0.0);
+  CHECK(zero_imaginary_action_h1.Norml2() == 0.0);
 
   mfem::Vector ann_h1(h1.Size()), gradient_transpose_btt_gradient(h1.Size());
   ann->Mult(h1, ann_h1);
@@ -330,6 +345,28 @@ TEST_CASE("Singular BoundaryMode blocks preserve the complete exact sequence",
   const double omega = 2.0 * M_PI *
                        iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(
                            iodata.solver.boundary_mode.freq);
+  auto [att_loss_real, att_loss_imag] = mode_op.AssembleAtt(omega, 0.0);
+  auto [ann_loss_real, ann_loss_imag] = mode_op.AssembleAnn(omega);
+  REQUIRE(att_loss_real);
+  REQUIRE(att_loss_imag);
+  REQUIRE(ann_loss_real);
+  REQUIRE(ann_loss_imag);
+  mfem::Vector att_zero_action(nd.Size()), att_loss_action(nd.Size()),
+      att_imag_action(nd.Size()), ann_zero_action(h1.Size()), ann_loss_action(h1.Size()),
+      ann_imag_action(h1.Size());
+  att->Mult(nd, att_zero_action);
+  att_loss_real->Mult(nd, att_loss_action);
+  att_loss_imag->Mult(nd, att_imag_action);
+  att_loss_action -= att_zero_action;
+  att_imag_action.Add(loss_tangent, att_loss_action);
+  CHECK(RelativeNorm(att_imag_action, att_loss_action) < 2.0e-10);
+  ann->Mult(h1, ann_zero_action);
+  ann_loss_real->Mult(h1, ann_loss_action);
+  ann_loss_imag->Mult(h1, ann_imag_action);
+  ann_loss_action -= ann_zero_action;
+  ann_imag_action.Add(loss_tangent, ann_loss_action);
+  CHECK(RelativeNorm(ann_imag_action, ann_loss_action) < 2.0e-10);
+
   const double kn_target =
       omega * std::sqrt(1.1 * mode_op.GetMaterialOp().GetMaxMuEpsilon());
   ModeEigenSolver eig(mode_op, mode_op.GetCombinedDbcTDofList(), num_modes, num_vectors,

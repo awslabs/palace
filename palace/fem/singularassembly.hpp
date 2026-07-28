@@ -36,10 +36,11 @@ struct AdaptiveAssemblyOptions
   int maximum_subdivisions;
 };
 
-// Positive, real, piecewise-constant isotropic material coefficients for one
-// element. The electric coefficient is shared by H1 diffusion and ND mass so
-// material weighting preserves the enriched H1-to-ND exact sequence. Operator
-// signs, frequency factors, and complex loss terms are applied separately.
+// Real, piecewise-constant isotropic operator coefficients for one element.
+// The electric coefficient is shared by H1 diffusion and ND mass so material
+// weighting preserves the enriched H1-to-ND exact sequence. It may be signed or
+// zero to assemble one Cartesian component of a complex permittivity. The
+// inverse-magnetic coefficient remains positive.
 struct IsotropicMaterialCoefficients
 {
   double electric;

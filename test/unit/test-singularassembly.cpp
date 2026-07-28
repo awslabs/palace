@@ -2389,12 +2389,29 @@ TEST_CASE("Isotropic materials and affine dilation scale singular element blocks
     }
   }
 
-  for (const auto invalid : {fem::singular::IsotropicMaterialCoefficients{0.0, 1.0},
-                             fem::singular::IsotropicMaterialCoefficients{-1.0, 1.0},
-                             fem::singular::IsotropicMaterialCoefficients{
+  for (const double electric : {0.0, -0.025})
+  {
+    auto signed_enrichment = enrichment;
+    auto signed_coupling = coupling;
+    fem::singular::ApplyIsotropicMaterialCoefficients({electric, 1.0}, signed_enrichment);
+    fem::singular::ApplyIsotropicMaterialCoefficients({electric, 1.0}, signed_coupling);
+    CheckScaledMatrix(signed_enrichment.nd_mass, enrichment.nd_mass, electric);
+    CheckScaledMatrix(signed_enrichment.nd_mass_estimated_absolute_error,
+                      enrichment.nd_mass_estimated_absolute_error, std::abs(electric));
+    CheckScaledMatrix(signed_coupling.nd_mass_standard_enrichment,
+                      coupling.nd_mass_standard_enrichment, electric);
+    CheckScaledMatrix(signed_coupling.nd_mass_estimated_absolute_error,
+                      coupling.nd_mass_estimated_absolute_error, std::abs(electric));
+    CheckExactTranspose(signed_coupling.nd_mass_standard_enrichment,
+                        signed_coupling.nd_mass_enrichment_standard);
+  }
+
+  for (const auto invalid : {fem::singular::IsotropicMaterialCoefficients{
                                  std::numeric_limits<double>::quiet_NaN(), 1.0},
                              fem::singular::IsotropicMaterialCoefficients{
-                                 1.0, std::numeric_limits<double>::infinity()}})
+                                 1.0, std::numeric_limits<double>::infinity()},
+                             fem::singular::IsotropicMaterialCoefficients{1.0, 0.0},
+                             fem::singular::IsotropicMaterialCoefficients{1.0, -1.0}})
   {
     auto rejected = enrichment;
     CHECK_THROWS_AS(fem::singular::ApplyIsotropicMaterialCoefficients(invalid, rejected),
