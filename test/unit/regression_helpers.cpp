@@ -422,6 +422,17 @@ std::filesystem::path GetRegressionRunDir()
   return std::filesystem::temp_directory_path() / "palace-regression";
 }
 
+std::filesystem::path GetRegressionOutputPath(std::string_view case_dir,
+                                              std::string_view postpro_subdir)
+{
+  auto stage = GetRegressionRunDir() / std::string{case_dir};
+  if (!postpro_subdir.empty())
+  {
+    stage /= std::string{postpro_subdir};
+  }
+  return stage / "postpro" / std::string{postpro_subdir};
+}
+
 namespace
 {
 

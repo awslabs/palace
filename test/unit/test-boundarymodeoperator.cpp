@@ -4,6 +4,7 @@
 #include <cmath>
 #include <complex>
 #include <functional>
+#include <limits>
 #include <numeric>
 #include <vector>
 #include <mfem.hpp>
@@ -91,6 +92,46 @@ void SetQuadraticCurvedGeometry(mfem::Mesh &mesh)
 double RelativeNorm(const mfem::Vector &residual, const mfem::Vector &reference)
 {
   return residual.Norml2() / std::max(1.0, reference.Norml2());
+}
+
+std::complex<double> SolveFundamentalMode(const IoData &iodata,
+                                          BoundaryModeOperator &mode_op)
+{
+  constexpr int num_modes = 4;
+  constexpr int num_vectors = 19;
+  const double omega = 2.0 * M_PI *
+                       iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(
+                           iodata.solver.boundary_mode.freq);
+  const double kn_target =
+      iodata.solver.boundary_mode.target > 0.0
+          ? iodata.solver.boundary_mode.target * omega
+          : omega * std::sqrt(1.1 * mode_op.GetMaterialOp().GetMaxMuEpsilon());
+  const auto which = iodata.solver.boundary_mode.target > 0.0
+                         ? EigenvalueSolver::WhichType::LARGEST_MAGNITUDE
+                         : EigenvalueSolver::WhichType::LARGEST_REAL;
+  ModeEigenSolver eig(mode_op, mode_op.GetCombinedDbcTDofList(), num_modes, num_vectors,
+                      1.0e-9, which, iodata.solver.linear, iodata.solver.boundary_mode.type,
+                      0);
+  const auto result = eig.Solve(omega, -kn_target * kn_target);
+  REQUIRE(result.num_converged >= 1);
+  int selected = -1;
+  double selected_distance = std::numeric_limits<double>::infinity();
+  for (int mode = 0; mode < result.num_converged; mode++)
+  {
+    const auto kn = eig.GetPropagationConstant(mode);
+    if (ModeEigenSolver::IsPropagating(kn))
+    {
+      const double distance = std::abs(kn - kn_target);
+      if (distance < selected_distance)
+      {
+        selected = mode;
+        selected_distance = distance;
+      }
+    }
+  }
+  REQUIRE(selected >= 0);
+  CHECK(eig.GetError(selected, EigenvalueSolver::ErrorType::BACKWARD) < 1.0e-7);
+  return eig.GetPropagationConstant(selected);
 }
 
 ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
@@ -181,6 +222,87 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
 }
 
 }  // namespace
+
+TEST_CASE("Singular BoundaryMode preserves resolved propagation constants",
+          "[boundarymodeoperator][singularelements][Serial]")
+{
+  MPI_Comm comm = Mpi::World();
+  REQUIRE(Mpi::Size(comm) == 1);
+
+  Units units(1.0, 1.0);
+  const auto make_input = [&]()
+  {
+    IoData iodata(units);
+    iodata.model.L0 = 1.0;
+    iodata.model.Lc = 2.0;
+    iodata.problem.type = ProblemType::BOUNDARYMODE;
+    auto &material = iodata.domains.materials.emplace_back();
+    material.attributes = {1};
+    material.epsilon_r.s = {2.3, 2.3, 2.3};
+    material.mu_r.s = {1.7, 1.7, 1.7};
+    iodata.boundaries.pec.attributes = {1, 7};
+    iodata.solver.order = 1;
+    iodata.solver.boundary_mode.freq = 10.0;
+    iodata.solver.boundary_mode.n = 1;
+    iodata.solver.boundary_mode.target = 1.0;
+    iodata.solver.boundary_mode.tol = 1.0e-9;
+    iodata.solver.linear.mg_max_levels = 1;
+    iodata.solver.linear.tol = 1.0e-11;
+    iodata.solver.linear.max_it = 300;
+    return iodata;
+  };
+
+  auto singular_iodata = make_input();
+  singular_iodata.solver.singular_elements.attributes = {7};
+  singular_iodata.solver.singular_elements.order = 1;
+  singular_iodata.solver.singular_elements.abs_tol = 2.0e-8;
+  singular_iodata.solver.singular_elements.rel_tol = 2.0e-8;
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(InternalPecLineMesh());
+  auto standard_serial_mesh = std::make_unique<mfem::Mesh>(*serial_mesh);
+  singular_iodata.NondimensionalizeInputs(serial_mesh);
+  singular_iodata.CheckConfiguration();
+  const auto serial_features =
+      fem::singular::ExtractSerialLineTipFeatures(*serial_mesh, {7});
+  std::vector<fem::singular::GlobalVertexId> source_vertex_ids(serial_mesh->GetNV());
+  std::iota(source_vertex_ids.begin(), source_vertex_ids.end(), 0);
+  std::vector<fem::singular::GlobalVertexId> source_element_ids(serial_mesh->GetNE());
+  std::iota(source_element_ids.begin(), source_element_ids.end(), 0);
+
+  auto singular_par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  const auto local_features = fem::singular::DistributeSerialLineTipFeatures(
+      serial_features, *singular_par_mesh, source_vertex_ids, source_element_ids);
+  std::vector<std::unique_ptr<Mesh>> singular_meshes;
+  singular_meshes.push_back(std::make_unique<Mesh>(std::move(singular_par_mesh)));
+  MaterialOperator singular_material(singular_iodata, *singular_meshes.back());
+  BoundaryModeOperator singular_op(singular_iodata, singular_meshes, singular_material,
+                                   &local_features, &source_vertex_ids);
+
+  auto standard_iodata = make_input();
+  standard_iodata.NondimensionalizeInputs(standard_serial_mesh);
+  standard_iodata.CheckConfiguration();
+  auto standard_par_mesh = std::make_unique<mfem::ParMesh>(comm, *standard_serial_mesh);
+  std::vector<std::unique_ptr<Mesh>> standard_meshes;
+  standard_meshes.push_back(std::make_unique<Mesh>(std::move(standard_par_mesh)));
+  MaterialOperator standard_material(standard_iodata, *standard_meshes.back());
+  BoundaryModeOperator standard_op(standard_iodata, standard_meshes, standard_material);
+
+  const auto singular_kn = SolveFundamentalMode(singular_iodata, singular_op);
+  const auto standard_kn = SolveFundamentalMode(standard_iodata, standard_op);
+  const double omega = 2.0 * M_PI *
+                       singular_iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(
+                           singular_iodata.solver.boundary_mode.freq);
+  const auto singular_neff = singular_kn / omega;
+  const auto standard_neff = standard_kn / omega;
+  const double kn_relative_difference =
+      std::abs(singular_kn - standard_kn) / std::abs(singular_kn);
+  const double neff_relative_difference =
+      std::abs(singular_neff - standard_neff) / std::abs(singular_neff);
+  CAPTURE(singular_kn, standard_kn, singular_neff, standard_neff, kn_relative_difference,
+          neff_relative_difference);
+  CHECK(kn_relative_difference < 5.0e-4);
+  CHECK(neff_relative_difference < 5.0e-4);
+}
 
 TEST_CASE("Singular BoundaryMode rejects unsupported material and boundary physics",
           "[boundarymodeoperator][singularelements][Serial]")

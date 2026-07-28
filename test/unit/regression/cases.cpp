@@ -18,6 +18,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "regression_helpers.hpp"
+#include "utils/communication.hpp"
 #include "utils/tablecsv.hpp"
 
 namespace
@@ -211,6 +212,35 @@ const std::vector<std::string> kEigenExcluded = {"Maximum", "Minimum", "Mean",
                                                  "Error (Bkwd.)", "Error (Abs.)"};
 constexpr auto kForceDefaultSolver = palace::test::SolverOverridePolicy::ForceDefault;
 
+palace::Table LoadRegressionOutputTable(std::string_view case_dir,
+                                        std::string_view postpro_subdir,
+                                        std::string_view filename)
+{
+  const auto path =
+      palace::test::GetRegressionOutputPath(case_dir, postpro_subdir) / filename;
+  palace::TableWithCSVFile wrapped(path.string(), /*load_existing_file=*/true);
+  return std::move(wrapped.table);
+}
+
+double GetTableValue(palace::Table &table, std::string_view header, std::size_t row = 0)
+{
+  for (auto &column : table)
+  {
+    if (column.header_text == header)
+    {
+      REQUIRE(row < column.data.size());
+      return column.data[row];
+    }
+  }
+  FAIL("Missing CSV column '" << header << "'");
+  return std::numeric_limits<double>::quiet_NaN();
+}
+
+double RelativeDifference(double first, double second)
+{
+  return std::abs(first - second) / std::max(std::abs(first), std::abs(second));
+}
+
 // Floquet-port S-parameters: compare only the |S[...]| (dB) magnitude columns
 // (phase isn't reproducible). NaN entries (evanescent modes) and signals below
 // -200 dB (negligible) count as matches. Ports the Julia test_floquet_sparams.
@@ -328,6 +358,35 @@ TEST_CASE("singular_wedge_driven", "[Serial][Parallel][Regression]")
   opts.linear_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("singular_wedge", "singular_wedge_driven.json", "driven",
                                   opts);
+  palace::test::RunRegressionCase("singular_wedge", "singular_wedge_standard_driven.json",
+                                  "standard_driven", opts);
+
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    auto singular =
+        LoadRegressionOutputTable("singular_wedge", "driven", "singular-driven.csv");
+    auto standard =
+        LoadRegressionOutputTable("singular_wedge", "standard_driven", "domain-E.csv");
+    auto singular_surface =
+        LoadRegressionOutputTable("singular_wedge", "driven", "surface-Q.csv");
+    auto standard_surface =
+        LoadRegressionOutputTable("singular_wedge", "standard_driven", "surface-Q.csv");
+
+    const double singular_electric = GetTableValue(singular, "Electric field energy (J)");
+    const double standard_electric = GetTableValue(standard, "E_elec (J)");
+    const double singular_magnetic = GetTableValue(singular, "Magnetic field energy (J)");
+    const double standard_magnetic = GetTableValue(standard, "E_mag (J)");
+    CAPTURE(singular_electric, standard_electric, singular_magnetic, standard_magnetic);
+    CHECK(RelativeDifference(singular_electric, standard_electric) < 5.0e-3);
+    CHECK(RelativeDifference(singular_magnetic, standard_magnetic) < 1.5e-2);
+    CHECK(RelativeDifference(singular_electric + singular_magnetic,
+                             standard_electric + standard_magnetic) < 5.0e-3);
+
+    const double singular_participation = GetTableValue(singular_surface, "p_surf[1]");
+    const double standard_participation = GetTableValue(standard_surface, "p_surf[1]");
+    CAPTURE(singular_participation, standard_participation);
+    CHECK(singular_participation / standard_participation > 1.5);
+  }
 }
 
 TEST_CASE("singular_wedge_loss_driven", "[Serial][Parallel][Regression]")
@@ -804,6 +863,39 @@ TEST_CASE("singular_line_eigenmode", "[Serial][Parallel][Regression]")
   opts.eigen_solver_policy = kForceDefaultSolver;
   palace::test::RunRegressionCase("singular_line_fullwave", "singular_line_eigenmode.json",
                                   "eigenmode", opts);
+  auto standard_opts = opts;
+  standard_opts.excluded_columns.insert(standard_opts.excluded_columns.end(),
+                                        {"Q", "Norm", "Minimum", "Maximum", "Mean"});
+  palace::test::RunRegressionCase("singular_line_fullwave",
+                                  "singular_line_standard_eigenmode.json",
+                                  "standard_eigenmode", standard_opts);
+
+  if (palace::Mpi::Root(palace::Mpi::World()))
+  {
+    auto singular =
+        LoadRegressionOutputTable("singular_line_fullwave", "eigenmode", "eig.csv");
+    auto standard = LoadRegressionOutputTable("singular_line_fullwave",
+                                              "standard_eigenmode", "eig.csv");
+    auto singular_energy = LoadRegressionOutputTable("singular_line_fullwave", "eigenmode",
+                                                     "singular-eigenmode.csv");
+    auto standard_energy = LoadRegressionOutputTable("singular_line_fullwave",
+                                                     "standard_eigenmode", "domain-E.csv");
+
+    const double singular_frequency = GetTableValue(singular, "Re{f} (GHz)");
+    const double standard_frequency = GetTableValue(standard, "Re{f} (GHz)");
+    const double singular_damping = GetTableValue(singular, "Im{f} (GHz)");
+    const double standard_damping = GetTableValue(standard, "Im{f} (GHz)");
+    CAPTURE(singular_frequency, standard_frequency, singular_damping, standard_damping);
+    CHECK(RelativeDifference(singular_frequency, standard_frequency) < 1.0e-2);
+    CHECK(std::abs(singular_damping) / singular_frequency < 1.0e-10);
+    CHECK(std::abs(standard_damping) / standard_frequency < 1.0e-10);
+
+    const double singular_electric =
+        GetTableValue(singular_energy, "Electric field energy (J)");
+    const double standard_electric = GetTableValue(standard_energy, "E_elec (J)");
+    CAPTURE(singular_electric, standard_electric);
+    CHECK(RelativeDifference(singular_electric, standard_electric) < 1.0e-10);
+  }
 }
 
 // cavity2d eigenmode uses the tight 1e-4 / 1e-16 tolerance.

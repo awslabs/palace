@@ -80,6 +80,9 @@ struct RegressionOptions
 void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
                        std::string_view postpro_subdir, const RegressionOptions &opts = {});
 
+std::filesystem::path GetRegressionOutputPath(std::string_view case_dir,
+                                              std::string_view postpro_subdir);
+
 // Regression input fixtures and reference CSVs live under
 // PALACE_TEST_DATA_DIR/regression. The run-dir override controls only where the
 // live solve writes staged outputs; empty falls back to
