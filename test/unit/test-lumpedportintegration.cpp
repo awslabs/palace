@@ -785,3 +785,137 @@ TEST_CASE("LumpedPort_BasicTests_3ElementPort_Cube321", "[lumped_port][Serial][P
                          1e-12));
   }
 }
+
+TEST_CASE("LumpedPort_ReactiveExcitation_Cube321", "[lumped_port][Serial][Parallel]")
+{
+  // Exercise a reactive EXCITED lumped port — a port driven through a lumped inductor /
+  // capacitor (e.g. a Josephson-junction port). Historically an excited port had to be
+  // purely resistive; it may now carry reactance (including a purely reactive R = 0 port).
+  // The reactance enters the system matrix as a physical termination; the incident-drive
+  // normalization references a real resistance (the port R, or the unit internal reference
+  // when R = 0) so a purely reactive drive does not divide by zero. This test verifies:
+  //   (1) a reactive excited port constructs without tripping the guardrail,
+  //   (2) GetExcitationRefResistance() returns R when R > 0, else the unit reference,
+  //   (3) GetCharacteristicImpedance() returns the correct complex Z_ref(w) =
+  //   R||iwL||1/iwC, (4) the excitation RHS is finite (no NaN/Inf) for a purely reactive R
+  //   = 0 drive.
+  using VT = palace::Units::ValueType;
+  MPI_Comm world_comm = Mpi::World();
+
+  const auto &[case_R, case_L, case_C] =
+      GENERATE(std::make_tuple(50.0, 1.0e-9, 0.0),   // R + L (well-defined S)
+               std::make_tuple(0.0, 1.0e-9, 0.0),    // pure inductor (R = 0)
+               std::make_tuple(0.0, 0.0, 1.0e-12));  // pure capacitor (R = 0)
+
+  double L0 = 1.0e-6;
+  double Lc = 7.0;
+  IoData iodata{Units(L0, Lc)};
+  iodata.model.mesh =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_hex.msh";
+  iodata.model.L0 = L0;
+  iodata.model.Lc = Lc;
+  iodata.model.crack_bdr_elements = false;
+  iodata.solver.order = 2;
+
+  json domains_json = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  iodata.domains = config::DomainData(domains_json);
+
+  // Build the excited reactive port. Only include nonzero circuit elements.
+  json port = {{"Index", 1},
+               {"Excitation", uint(1)},
+               {"Attributes", json::array({1})},
+               {"Direction", "+Y"}};
+  if (case_R > 0.0)
+  {
+    port["R"] = case_R;
+  }
+  if (case_L > 0.0)
+  {
+    port["L"] = case_L;
+  }
+  if (case_C > 0.0)
+  {
+    port["C"] = case_C;
+  }
+  json boundary_json = {{"LumpedPort", json::array({port})}};
+  // (1) Construction must succeed — the R >= 0 guardrail admits reactance.
+  iodata.boundaries = config::BoundaryData(boundary_json);
+  iodata.CheckConfiguration();
+
+  auto mesh_io = LoadScaleParMesh(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  const auto &port_1 = space_op.GetLumpedPortOp().GetPort(1);
+
+  CHECK(port_1.HasExcitation());
+
+  // (2) Reference resistance: R when R > 0, else the unit internal reference (= 1 in
+  // internal units, i.e. Z_freespace dimensionally).
+  const double R_nondim = iodata.units.Nondimensionalize<VT::IMPEDANCE>(case_R);
+  if (case_R > 0.0)
+  {
+    CHECK_THAT(port_1.GetExcitationRefResistance(), WithinRel(R_nondim));
+  }
+  else
+  {
+    CHECK_THAT(port_1.GetExcitationRefResistance(), WithinRel(1.0));
+  }
+
+  // (3) Characteristic impedance Z_ref(w) = 1 / (1/R + 1/(iwL) + iwC). Check against a
+  // direct evaluation at a representative (nondimensional) frequency.
+  const double f_GHz = 10.0;
+  const double omega = 2.0 * M_PI * iodata.units.Nondimensionalize<VT::FREQUENCY>(f_GHz);
+  const std::complex<double> imag_unit{0.0, 1.0};
+  std::complex<double> Y = 0.0;
+  if (case_R > 0.0)
+  {
+    Y += 1.0 / R_nondim;
+  }
+  if (case_L > 0.0)
+  {
+    Y += 1.0 / (imag_unit * omega * iodata.units.Nondimensionalize<VT::INDUCTANCE>(case_L));
+  }
+  if (case_C > 0.0)
+  {
+    Y += imag_unit * omega * iodata.units.Nondimensionalize<VT::CAPACITANCE>(case_C);
+  }
+  const std::complex<double> Z_expect = 1.0 / Y;
+  const std::complex<double> Z_ref =
+      port_1.GetCharacteristicImpedance(omega, LumpedPortData::Branch::TOTAL);
+  CHECK_THAT(std::abs(Z_ref - Z_expect), WithinAbs(0.0, 1e-9 * std::abs(Z_expect)));
+
+  // (4) The excitation RHS must be finite even for a purely reactive R = 0 drive (the key
+  // fix: the incident-field normalization references GetExcitationRefResistance(), not R,
+  // so it does not divide by zero).
+  ComplexVector RHS;
+  space_op.GetExcitationVector1(1, RHS);
+  double max_abs = 0.0;
+  for (int i = 0; i < RHS.Real().Size(); i++)
+  {
+    CHECK(std::isfinite(RHS.Real()[i]));
+    max_abs = std::max(max_abs, std::abs(RHS.Real()[i]));
+  }
+  Mpi::GlobalMax(1, &max_abs, world_comm);
+  // The drive is nonzero (a genuine incident field was assembled).
+  CHECK(max_abs > 0.0);
+
+  // (5) Output paths reference the same real resistance. GetExcitationVoltage() must be
+  // finite and nonzero for R = 0 (it references GetExcitationRefResistance(), not R), and
+  // the S-parameter projection linear form must produce a finite, nonzero projection for
+  // a nonzero field (its normalization also references the real reference resistance).
+  const double V_inc = port_1.GetExcitationVoltage();
+  CHECK(std::isfinite(V_inc));
+  CHECK(V_inc > 0.0);
+
+  GridFunction E_test(space_op.GetNDSpace(), true);
+  E_test.Real() = 1.0;  // Uniform nonzero field: projection onto the port mode is nonzero
+  E_test.Imag() = 0.0;
+  const std::complex<double> S_proj = port_1.GetSParameter(E_test);
+  CHECK(std::isfinite(S_proj.real()));
+  CHECK(std::isfinite(S_proj.imag()));
+  CHECK(std::abs(S_proj) > 0.0);
+}

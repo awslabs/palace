@@ -1305,12 +1305,15 @@ void PostOperator<solver_t>::MeasureSParameter() const
     // S-parameter computation with per-port reference impedances (Kurokawa power-wave
     // generalized S-parameters).
     //
-    // Each port type uses its natural reference impedance: lumped ports use the user-
-    // specified R; wave ports implicitly use the line's characteristic impedance encoded
-    // in the unit-power normalization of the boundary mode (∫|E_mode×H_mode⋆|·n dS = 1).
+    // Each port type uses its natural real reference impedance: lumped ports use
+    // GetExcitationRefResistance() (the user-specified R, or the unit internal reference
+    // for a purely reactive R == 0 port — any port reactance acts through the
+    // system-matrix termination, not this normalization); wave ports implicitly use the
+    // line's characteristic impedance encoded in the unit-power normalization of the
+    // boundary mode (∫|E_mode×H_mode⋆|·n dS = 1).
     //
     // GetSParameter() returns the b-amplitude in Kurokawa convention for both port types:
-    //   - Lumped: ∫E·(E_inc/Z_s) dS = V/V_inc, where V_inc encodes the port's R
+    //   - Lumped: ∫E·(E_inc/R_ref) dS = V/V_inc, where V_inc encodes R_ref
     //   - Wave:   ∫(E×H_mode⋆)·n dS, the modal power-overlap with unit-power normalization
     // Both are directly the Kurokawa b/a ratio, so no impedance scaling is needed.
 

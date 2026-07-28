@@ -53,9 +53,26 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Enabled the `RationalImpedance` boundary condition in eigenmode simulations, handled
     by the nonlinear eigenvalue solver and evaluated at the complex eigenfrequency.
     SchemaVer 1-3-1 [PR 778](https://github.com/awslabs/palace/pull/778).
+  - Excited lumped ports may now carry reactance (`"L"` and/or `"C"`, or the
+    surface-parameter equivalents `"Ls"`/`"Cs"`, including purely reactive ports with
+    `"R": 0` / `"Rs": 0`). The reactance enters the system matrix as a physical
+    termination; the incident drive is normalized to the port `"R"` when positive, or to
+    an internal unit reference impedance for a purely reactive port. Previously, excited
+    lumped ports were required to be purely resistive. As part of this change, *passive*
+    purely reactive lumped ports (`R = 0` with `L` and/or `C`) now report a finite
+    S-parameter row referenced to the internal unit impedance, where previously their
+    `port-S.csv` row was identically zero; similarly, the incident columns `inc<idx>` of
+    `port-V.csv` and `port-I.csv` at a purely reactive excited port now report finite
+    unit-reference values, where previously both were zero. These are bookkeeping
+    quantities referenced to the internal unit impedance, not physical incident waves.
+    [PR 841](https://github.com/awslabs/palace/pull/841).
 
 #### Bug Fixes
 
+  - Fixed validation of domain material coverage so postprocessing and retained mesh
+    attributes without a corresponding `config["Domains"]["Materials"]` entry are rejected
+    instead of silently assigning zero material coefficients to retained volumes. [PR
+    840](https://github.com/awslabs/palace/pull/840).
   - Fixed saving output to non-shared filesystems [PR 813](https://github.com/awslabs/palace/pull/813).
   - Fixed S-parameter post-processing for mixed Floquet + lumped/wave port configurations.
     Previously, `MeasureSParameter()` skipped processing when Floquet ports coexisted with

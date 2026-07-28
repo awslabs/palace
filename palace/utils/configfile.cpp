@@ -351,10 +351,11 @@ DomainData::DomainData(const json &domains)
   attributes.shrink_to_fit();
   for (const auto &attr : postpro.attributes)
   {
-    MFEM_VERIFY(std::lower_bound(attributes.begin(), attributes.end(), attr) !=
-                    attributes.end(),
-                "Domain postprocessing can only be enabled on domains which have a "
-                "corresponding \"Materials\" entry!");
+    MFEM_VERIFY(
+        std::binary_search(attributes.begin(), attributes.end(), attr),
+        fmt::format("Domain postprocessing attribute {:d} has no corresponding entry in "
+                    "config[\"Domains\"][\"Materials\"]!",
+                    attr));
   }
 }
 

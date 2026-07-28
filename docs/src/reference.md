@@ -206,12 +206,18 @@ The source term ``\bm{U}^{inc}`` in a driven frequency-response problem is relat
 incident field at an excited port boundary by
 
 ```math
-\bm{U}^{inc} = -2\gamma(\bm{n}\times\bm{E}^{inc})\times\bm{n}
+\bm{U}^{inc} = -2\gamma_{exc}(\bm{n}\times\bm{E}^{inc})\times\bm{n} \,, \qquad
+\gamma_{exc} = \frac{i\omega}{R_{ref}}
 ```
 
 where ``(\bm{n}\times\bm{E}^{inc})\times\bm{n}`` is just the projection of the excitation
-field onto the port surface. The incident fields for lumped ports depend on the port
-shape:
+field onto the port surface, and ``R_{ref}`` is the real reference resistance of the
+excited port: the port resistance ``R`` when ``R > 0``, or the impedance of free space
+``Z_0`` for a purely reactive port with ``R = 0`` (see the discussion of reactive port
+excitation below). The excitation coefficient ``\gamma_{exc}`` is in general distinct from
+the termination coefficient ``\gamma = i\omega/Z_s`` appearing in the Robin boundary
+condition, and the two coincide for a purely resistive port. The incident fields for lumped
+ports depend on the port shape:
 
  1. *Rectangular ports*: ``\bm{E}^{inc} = E_0 \, \hat{\bm{l}}``, where ``E_0`` is a uniform
     constant field strength and ``\hat{\bm{l}}`` a unit vector defining the direction of
@@ -225,7 +231,7 @@ shape:
 In the time domain formulation, the source term ``\bm{U}^{inc}`` appears as
 
 ```math
-\bm{U}^{inc} = -2 Z_s^{-1}\left(\bm{n}\times\frac{\partial\bm{E}^{inc}}{\partial t}\right)
+\bm{U}^{inc} = -2 R_{ref}^{-1}\left(\bm{n}\times\frac{\partial\bm{E}^{inc}}{\partial t}\right)
     \times\bm{n} \,.
 ```
 
@@ -246,6 +252,43 @@ electric field for each lumped port with boundary ``\Gamma_i`` as
 S_{ij} = \frac{\displaystyle\int_{\Gamma_i}\bm{E}\cdot\bm{E}^{inc}_i\,dS}
     {\displaystyle\int_{\Gamma_i}\bm{E}^{inc}_i\cdot\bm{E}^{inc}_i\,dS} - \delta_{ij} \,.
 ```
+
+For a resistive excited port, the incident field ``\bm{E}^{inc}`` is normalized so that the
+power integrated over the port boundary is unity, referenced to the port resistance
+``R = R_{ref}``, and the excitation and termination coefficients coincide. A lumped port
+with nonzero inductance and/or capacitance may also be excited. In that case the port's
+full ``R``, ``L``, and ``C`` still enter the system matrix as a physical parallel
+termination through ``\gamma = i\omega/Z_s`` with the complex ``Z_s(\omega)``, while the
+source term is assembled with the real ``\gamma_{exc} = i\omega/R_{ref}`` defined above
+(``R_{ref} = Z_0 \approx 376.7~\Omega`` for a purely reactive port with ``R = 0``); the
+port reactance therefore acts on the solution through the termination, not through the
+drive normalization. The
+scattering parameters at resistive ports (observation or drive) retain their standard power-wave
+interpretation. For a purely reactive drive port (``R = 0``), the reported ``S_{ii}`` is related
+to the loaded port impedance by
+
+```math
+S_{ii} + 1 = \frac{2\,Z_{\text{loaded}}}{Z_0}
+```
+
+where ``Z_{\text{loaded}} = Z_p \parallel Z_{\text{struct}}`` is the parallel combination of
+the port impedance ``Z_p = (1/R + 1/(i\omega L) + i\omega C)^{-1}`` (zero-valued branches
+are omitted from the sum: the ``1/R`` term is dropped when ``R = 0``, and likewise for
+``L`` and ``C``) and the structure's input impedance at the port plane. This is a
+reciprocal, frequency-dependent quantity — but it is not bounded by unity and should not
+be interpreted as a power reflection coefficient. Transmission parameters ``S_{ji}``
+(``j \ne i``) between a reactive drive and a resistive observation port are
+real-reference-normalized transmission amplitudes: each side is normalized to its own real
+reference (``Z_0`` at the reactive drive, ``R_j`` at the resistive observation port), so a
+fixed ``\sqrt{R_j/Z_0}`` conversion factor separates them from a voltage-transfer ratio.
+They satisfy reciprocity (``S_{ji} = S_{ij}``). The same unit-reference projection applies
+to *passive* purely reactive lumped ports (``R = 0`` with ``L`` and/or ``C``) appearing as
+observation ports: their S-parameter rows are finite and referenced to ``Z_0``, rather
+than identically zero. Likewise, the incident voltage and current columns of the port
+postprocessing output (``V^{inc}``, ``I^{inc}``) at a purely reactive excited port are
+finite and referenced to ``Z_0`` — like the S-parameter row, they are bookkeeping
+quantities consistent with the assembled drive normalization, not physical incident
+waves (an ``R = 0`` port supports no incident traveling wave).
 
 In the time domain, the time histories of the port voltages can be Fourier-transformed to
 get their frequency domain representation for scattering parameter calculation.

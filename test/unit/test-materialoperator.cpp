@@ -1,8 +1,10 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <vector>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
@@ -80,6 +82,62 @@ TEST_CASE("MaterialOperator IsIsotropic", "[materialoperator][Serial]")
                               palace_mesh);
       REQUIRE(mat_op.IsIsotropic(1) == false);
     }
+  }
+}
+
+TEST_CASE("MaterialOperator requires materials for retained mesh domains",
+          "[materialoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const int size = Mpi::Size(comm);
+
+  // Give every rank two contiguous x-directed coarse cells. Attribute 2 is confined to
+  // the first cell on rank 0, with an attribute-1 cell separating it from the partition
+  // interface. Thus no other rank sees attribute 2, even through a shared-face neighbor.
+  auto serial_mesh = std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
+      2 * size, 1, 1, mfem::Element::TETRAHEDRON, 2.0 * size, 1.0, 1.0));
+  std::vector<int> partitioning(serial_mesh->GetNE());
+  for (int i = 0; i < serial_mesh->GetNE(); i++)
+  {
+    const auto *element = serial_mesh->GetElement(i);
+    const auto *vertices = element->GetVertices();
+    double center_x = 0.0;
+    for (int j = 0; j < element->GetNVertices(); j++)
+    {
+      center_x += serial_mesh->GetVertex(vertices[j])[0];
+    }
+    center_x /= element->GetNVertices();
+    serial_mesh->SetAttribute(i, center_x < 1.0 ? 2 : 1);
+    partitioning[i] = static_cast<int>(center_x / 2.0);
+  }
+  serial_mesh->SetAttributes();
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh, partitioning.data());
+  Mesh palace_mesh(std::move(par_mesh));
+
+  const auto &local_attributes = palace_mesh.GetCeedAttributes();
+  const bool has_attr2 = local_attributes.find(2) != local_attributes.end();
+  CHECK(has_attr2 == (Mpi::Rank(comm) == 0));
+  CHECK(palace_mesh.GetNE() > 0);
+
+  config::MaterialData material1;
+  material1.attributes = {1};
+  config::MaterialData material2;
+  material2.attributes = {2};
+  config::PeriodicBoundaryData periodic;
+
+  SECTION("All retained attributes have materials")
+  {
+    CHECK_NOTHROW(MaterialOperator({material1, material2}, periodic,
+                                   ProblemType::ELECTROSTATIC, palace_mesh));
+  }
+
+  SECTION("Missing material is rejected collectively")
+  {
+    CHECK_THROWS_WITH(
+        MaterialOperator({material1}, periodic, ProblemType::ELECTROSTATIC, palace_mesh),
+        Catch::Matchers::ContainsSubstring(
+            "Mesh domain attribute 2 has no corresponding entry in "
+            "config[\"Domains\"][\"Materials\"]!"));
   }
 }
 
