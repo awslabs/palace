@@ -17,6 +17,8 @@
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
+#include <limits>
+
 namespace palace
 {
 
@@ -104,6 +106,15 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // terminal.
     Mpi::Print("\n");
     laplace_op.GetExcitationVector(idx, *K, V[step], RHS);
+    const double rhs_norm = linalg::Norml2(laplace_op.GetComm(), RHS);
+    const bool zero_response = iodata.solver.electrostatic.response_matrix &&
+                               rhs_norm <= 100.0 * std::numeric_limits<double>::epsilon();
+    if (zero_response)
+    {
+      Mpi::Print(" Prescribed trace has no active boundary degrees of freedom; "
+                 "storing a zero response field\n");
+      V[step] = 0.0;
+    }
     Vector corrected_rhs;
     if (response_correction)
     {
@@ -111,13 +122,15 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       corrected_rhs = RHS;
       response_correction->EliminateRHS(V_corrected[step], corrected_rhs);
     }
-    ksp.Mult(RHS, V[step]);
+    if (!zero_response)
+    {
+      ksp.Mult(RHS, V[step]);
+    }
 
     // Start Post-processing.
     BlockTimer bt2(Timer::POSTPRO);
     Mpi::Print(" Sol. ||V|| = {:.6e} (||RHS|| = {:.6e})\n",
-               linalg::Norml2(laplace_op.GetComm(), V[step]),
-               linalg::Norml2(laplace_op.GetComm(), RHS));
+               linalg::Norml2(laplace_op.GetComm(), V[step]), rhs_norm);
 
     // Compute E = -∇V on the true dofs.
     E = 0.0;
@@ -427,6 +440,42 @@ void ElectrostaticSolver::PostprocessResponseMatrix(
     D_sum.UseDevice(true);
   }
 
+  auto Aggregate = [](EnergyMap energies)
+  {
+    for (auto &[interface, local] : energies)
+    {
+      (void)interface;
+      std::map<double, LocalEnergy> by_distance;
+      for (const auto &energy : local)
+      {
+        auto [it, inserted] = by_distance.emplace(energy.distance, energy);
+        auto &aggregate = it->second;
+        if (inserted)
+        {
+          aggregate.edge = 1;
+          continue;
+        }
+        aggregate.energy_inside += energy.energy_inside;
+        aggregate.energy_total += energy.energy_total;
+        for (int component = 0; component < 2; component++)
+        {
+          aggregate.energy_inside_polarized[component] +=
+              energy.energy_inside_polarized[component];
+          aggregate.energy_total_polarized[component] +=
+              energy.energy_total_polarized[component];
+        }
+      }
+      local.clear();
+      local.reserve(by_distance.size());
+      for (auto &[distance, energy] : by_distance)
+      {
+        (void)distance;
+        local.push_back(std::move(energy));
+      }
+    }
+    return energies;
+  };
+
   auto Evaluate = [&](std::size_t i, std::optional<std::size_t> j = std::nullopt)
   {
     E_sum = 0.0;
@@ -446,10 +495,17 @@ void ElectrostaticSolver::PostprocessResponseMatrix(
       }
       D_ptr = &D_sum;
     }
-    return post_op.GetInterfaceLocalEdgeElectricFieldEnergies(E_sum, D_ptr);
+    auto energies = post_op.GetInterfaceLocalEdgeElectricFieldEnergies(E_sum, D_ptr);
+    if (iodata.solver.electrostatic.aggregate_response_matrix)
+    {
+      return Aggregate(std::move(energies));
+    }
+    return energies;
   };
 
-  Mpi::Print("\nAssembling localized interface response matrix for {:d} basis fields\n",
+  Mpi::Print("\nAssembling {} interface response matrix for {:d} basis fields\n",
+             iodata.solver.electrostatic.aggregate_response_matrix ? "aggregated"
+                                                                   : "localized",
              static_cast<int>(V.size()));
   std::vector<EnergyMap> diagonal;
   diagonal.reserve(V.size());
@@ -500,6 +556,9 @@ void ElectrostaticSolver::PostprocessResponseMatrix(
         << iodata.units.Dimensionalize<VT::ENERGY>(q_total_tangential);
   };
 
+  const std::size_t pair_count = V.size() * (V.size() + 1) / 2;
+  const std::size_t progress_interval = std::max<std::size_t>(pair_count / 20, 1);
+  std::size_t completed_pairs = 0;
   for (std::size_t i = 0; i < V.size(); i++)
   {
     for (std::size_t j = i; j < V.size(); j++)
@@ -557,6 +616,13 @@ void ElectrostaticSolver::PostprocessResponseMatrix(
                           ej.energy_total_polarized[1]));
           }
         }
+      }
+      completed_pairs++;
+      if (completed_pairs % progress_interval == 0 || completed_pairs == pair_count)
+      {
+        Mpi::Print(" Interface response matrix: {:d}/{:d} basis pairs ({:.0f}%)\n",
+                   static_cast<int>(completed_pairs), static_cast<int>(pair_count),
+                   100.0 * completed_pairs / pair_count);
       }
     }
   }

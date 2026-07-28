@@ -5,6 +5,7 @@
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -111,7 +112,25 @@ def read_interface_rows(path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("calibration", type=Path)
+    parser.add_argument(
+        "--report",
+        type=Path,
+        help="Write a machine-readable qualification report",
+    )
+    parser.add_argument(
+        "--max-heldout-error",
+        type=float,
+        default=10.0,
+        help="Maximum absolute direct-versus-matrix held-out error in percent",
+    )
+    parser.add_argument(
+        "--require-heldout",
+        action="store_true",
+        help="Fail qualification unless both thin and fabricated held-out solves exist",
+    )
     args = parser.parse_args()
+    if args.max_heldout_error <= 0.0:
+        parser.error("--max-heldout-error must be positive")
     root = args.calibration.expanduser().resolve()
 
     basis = np.loadtxt(root / "basis-points.csv", delimiter=",", skiprows=1)
@@ -127,6 +146,7 @@ def main():
     if not len(active_indices):
         raise ValueError("Corner response basis has no free trace coefficients")
     results = {}
+    matrix_checks = []
     for kind in ("thin", "fabricated"):
         postpro = root / "postpro" / kind
         domain_path = postpro / "domain-response-matrix.csv"
@@ -145,6 +165,16 @@ def main():
         minimum, maximum, condition = check_positive(
             f"{kind} free-trace domain response", reduced_domain, True
         )
+        matrix_checks.append(
+            {
+                "Kind": kind,
+                "Quantity": "domain",
+                "MinimumEigenvalue": minimum,
+                "MaximumEigenvalue": maximum,
+                "ConditionNumber": condition,
+                "Passed": True,
+            }
+        )
         print(
             f"{kind}: basis={size}, free={len(active_indices)}, "
             "free-trace domain eigenvalue range "
@@ -156,6 +186,15 @@ def main():
                 f"{kind} free-trace interface {interface} response",
                 reduced_surface,
                 False,
+            )
+            matrix_checks.append(
+                {
+                    "Kind": kind,
+                    "Quantity": f"interface-{interface}",
+                    "MinimumEigenvalue": minimum,
+                    "MaximumEigenvalue": maximum,
+                    "Passed": True,
+                }
             )
             print(
                 f"  free-trace interface {interface}: eigenvalue range "
@@ -171,17 +210,26 @@ def main():
     ) / np.linalg.norm(
         thin_domain[active]
     )
+    defect_checks = [{"Quantity": "domain", "RelativeNorm": domain_defect}]
     print(f"relative free-trace domain defect norm: {domain_defect:.6e}")
     for interface in sorted(thin_surfaces):
         defect = np.linalg.norm(
             fabricated_surfaces[interface][active] - thin_surfaces[interface][active]
         ) / np.linalg.norm(thin_surfaces[interface][active])
+        defect_checks.append(
+            {
+                "Quantity": f"interface-{interface}",
+                "RelativeNorm": defect,
+            }
+        )
         print(
             f"relative free-trace interface {interface} defect norm: "
             f"{defect:.6e}"
         )
 
     coefficients_path = root / "heldout-coefficients.csv"
+    heldout_checks = []
+    complete_heldout = True
     if coefficients_path.is_file():
         coefficients = np.atleast_1d(
             np.loadtxt(coefficients_path, delimiter=",", skiprows=1)
@@ -201,6 +249,7 @@ def main():
             surface_path = postpro / "surface-Q.csv"
             if not domain_path.is_file() or not surface_path.is_file():
                 print(f"held-out {kind}: not run")
+                complete_heldout = False
                 continue
             edge_path = postpro / "surface-Q-edge.csv"
             if not edge_path.is_file():
@@ -208,21 +257,73 @@ def main():
                     f"held-out {kind}: missing {edge_path.name}; "
                     "localized surface errors unavailable"
                 )
+                complete_heldout = False
                 continue
             direct_domain = read_single_row(domain_path)["E_elec (J)"]
             surface_row = read_single_row(surface_path)
             edge_rows = read_interface_rows(edge_path)
             predicted_domain = coefficients @ results[kind][0] @ coefficients
             domain_error = predicted_domain / direct_domain - 1.0
+            heldout_checks.append(
+                {
+                    "Kind": kind,
+                    "Quantity": "domain",
+                    "DirectEnergy": direct_domain,
+                    "PredictedEnergy": predicted_domain,
+                    "RelativeErrorPercent": 100.0 * domain_error,
+                }
+            )
             print(f"held-out {kind} domain error: {domain_error:+.6e}")
             for interface, matrix in sorted(results[kind][1].items()):
                 direct_surface = surface_row[f"p_surf[{interface}]"] * direct_domain
                 direct_surface -= edge_rows[interface]["E_out (J)"]
                 predicted_surface = coefficients @ matrix @ coefficients
                 error = predicted_surface / direct_surface - 1.0
+                heldout_checks.append(
+                    {
+                        "Kind": kind,
+                        "Quantity": f"interface-{interface}",
+                        "DirectEnergy": direct_surface,
+                        "PredictedEnergy": predicted_surface,
+                        "RelativeErrorPercent": 100.0 * error,
+                    }
+                )
                 print(
                     f"  interface {interface} held-out error: {error:+.6e}"
                 )
+    else:
+        complete_heldout = False
+
+    heldout_passed = complete_heldout and all(
+        math.isfinite(check["RelativeErrorPercent"])
+        and abs(check["RelativeErrorPercent"]) <= args.max_heldout_error
+        for check in heldout_checks
+    )
+    passed = (not args.require_heldout or heldout_passed)
+    report = {
+        "Version": 1,
+        "Calibration": str(root),
+        "Library": library.get("Name"),
+        "Topology": library["Models"][0].get("Topology"),
+        "CornerRadius": library["Models"][0].get("CornerRadius", 0.0),
+        "MatrixChecks": matrix_checks,
+        "ResponseDefects": defect_checks,
+        "Heldout": {
+            "Required": args.require_heldout,
+            "Complete": complete_heldout,
+            "MaximumAbsoluteErrorPercent": args.max_heldout_error,
+            "Passed": heldout_passed,
+            "Checks": heldout_checks,
+        },
+        "Passed": passed,
+    }
+    if args.report:
+        destination = args.report.expanduser().resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(report, indent=2) + "\n")
+        print(destination)
+    if not passed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

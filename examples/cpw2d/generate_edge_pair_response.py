@@ -204,6 +204,89 @@ def write_bases(
     return paths, conductor_trace, open_contour_paths
 
 
+def write_heldout(
+    output,
+    traces,
+    conductor_trace,
+    separation,
+    radius,
+    metal_thickness,
+    strip,
+):
+    basis_points = np.atleast_2d(
+        np.loadtxt(output / "basis_points.csv", delimiter=",", skiprows=1)
+    )
+    paths = list(traces)
+    if conductor_trace is not None:
+        paths.append(conductor_trace)
+    samples = [
+        np.atleast_2d(np.loadtxt(path, delimiter=",", skiprows=1))
+        for path in paths
+    ]
+    coordinates = samples[0][:, :3]
+    if any(
+        sample.shape != samples[0].shape
+        or not np.allclose(sample[:, :3], coordinates, rtol=0.0, atol=1.0e-14)
+        for sample in samples[1:]
+    ):
+        raise ValueError("Contour basis traces do not share one sampling grid")
+
+    half_width = 0.5 * separation + radius
+
+    def free_potential(points):
+        x = points[:, 0] / radius
+        y = points[:, 1] / radius
+        if strip:
+            cutoff = np.ones(len(points))
+        else:
+            vertical_distance = np.maximum.reduce(
+                (
+                    -points[:, 1],
+                    points[:, 1] - metal_thickness,
+                    np.zeros(len(points)),
+                )
+            )
+            left = np.hypot(points[:, 0] + half_width, vertical_distance)
+            right = np.hypot(points[:, 0] - half_width, vertical_distance)
+            coordinate = np.clip(
+                np.minimum(left, right) / (radius / 3.0), 0.0, 1.0
+            )
+            cutoff = coordinate * coordinate * (3.0 - 2.0 * coordinate)
+        return cutoff * (
+            0.35
+            + 0.20 * x
+            - 0.15 * y
+            + 0.08 * x * y
+            + 0.06 * y * y
+        )
+
+    coefficients = list(free_potential(basis_points))
+    values = free_potential(coordinates)
+    if conductor_trace is not None:
+        conductor_coefficient = 0.17
+        coefficients.append(conductor_coefficient)
+        values += conductor_coefficient * samples[-1][:, 3]
+    coefficients = np.asarray(coefficients)
+    trace = output / "heldout_trace.csv"
+    np.savetxt(
+        trace,
+        np.column_stack((coordinates, values)),
+        delimiter=",",
+        header="x,y,z,V",
+        comments="",
+        fmt="%.16e",
+    )
+    np.savetxt(
+        output / "heldout_coefficients.csv",
+        coefficients,
+        delimiter=",",
+        header="coefficient_V",
+        comments="",
+        fmt="%.16e",
+    )
+    return trace
+
+
 def dielectric(
     index, attributes, interface_type, edge_attributes, thickness, permittivity
 ):
@@ -322,7 +405,11 @@ def make_config(
         "Solver": {
             "Order": order,
             "Device": "CPU",
-            "Electrostatic": {"Save": 0, "ResponseMatrix": True},
+            "Electrostatic": {
+                "Save": 0,
+                "ResponseMatrix": True,
+                "AggregateResponseMatrix": True,
+            },
             "Linear": {
                 "Type": "BoomerAMG",
                 "KSPType": "CG",
@@ -486,6 +573,15 @@ def main():
         args.different_conductors,
         args.strip,
     )
+    heldout_trace = write_heldout(
+        output,
+        traces,
+        conductor_trace,
+        args.separation,
+        args.radius,
+        args.metal_thickness,
+        args.strip,
+    )
     for name, mesh, fabricated in (
         ("edge_pair_thin", thin_mesh, False),
         ("edge_pair_fabricated", fabricated_mesh, True),
@@ -506,6 +602,34 @@ def main():
         path = output / f"{name}.json"
         path.write_text(json.dumps(config, indent=2) + "\n")
         print(path)
+        heldout_name = f"heldout_{name}"
+        heldout = make_config(
+            output,
+            heldout_name,
+            mesh,
+            [heldout_trace],
+            conductor_trace,
+            fabricated,
+            args.different_conductors,
+            args.order,
+            args.coupon_depth,
+            args.substrate_permittivity,
+            interface_layers,
+        )
+        potential = {
+            "Index": 1,
+            "Attributes": [1],
+            "DataFile": str(heldout_trace),
+        }
+        if args.different_conductors:
+            potential["TerminalAttributes"] = (
+                [7, 8, 9] if fabricated else [7]
+            )
+        heldout["Boundaries"]["PrescribedPotential"] = [potential]
+        heldout["Solver"]["Electrostatic"]["ResponseMatrix"] = False
+        heldout_path = output / f"{heldout_name}.json"
+        heldout_path.write_text(json.dumps(heldout, indent=2) + "\n")
+        print(heldout_path)
     print(output / "basis_points.csv")
     print(
         write_library(

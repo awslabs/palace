@@ -727,6 +727,7 @@ struct SpatialEdgeSite3D
   std::size_t geometry_index = 0;
   std::size_t segment = 0;
   double distance = 0.0;
+  std::array<double, 2> interval{};
   Point3D point{};
   Point3D gap_direction{};
   Point3D process_normal{};
@@ -2952,6 +2953,11 @@ private:
   }
 
 public:
+  nlohmann::json DescribeBoundaryCondition(const MetalBoundaryLaw &law) const
+  {
+    return BoundaryCondition(law);
+  }
+
   void SetLibrary(const std::string &path, const ProcessLibrary &library, double scale)
   {
     library_path = std::filesystem::absolute(path).lexically_normal().string();
@@ -3284,7 +3290,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
             const Point2D offset = {site.point[0] - reference.point[0],
                                     site.point[1] - reference.point[1]};
             auto [conductor, inserted] =
-                conductor_ids.emplace(site.conductor, conductor_ids.size());
+                conductor_ids.emplace(site.conductor, conductor_ids.size() + 1);
             (void)inserted;
             edges.push_back(
                 {{"Offset",
@@ -3757,9 +3763,12 @@ FindSpatialClusterLibraryModel(const ProcessLibrary &library,
               std::acos(std::clamp(Dot(gap, site.gap_direction), -1.0, 1.0));
           const double normal_error =
               std::acos(std::clamp(Dot(normal, site.process_normal), -1.0, 1.0));
-          const double normalized_error =
-              std::max({position_error / position_tolerance, gap_error / angle_tolerance,
-                        normal_error / angle_tolerance});
+          const double interval_error =
+              std::max(std::abs(edge.interval[0] - site.interval[0]),
+                       std::abs(edge.interval[1] - site.interval[1]));
+          const double normalized_error = std::max(
+              {position_error / position_tolerance, gap_error / angle_tolerance,
+               normal_error / angle_tolerance, interval_error / position_tolerance});
           if (normalized_error <= 1.0)
           {
             candidates[edge_index].push_back({site_index, normalized_error});
@@ -4109,6 +4118,29 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     }
     return segments;
   };
+  auto SpatialInterval = [&](const std::vector<EdgeSegment3D> &segments,
+                             std::size_t segment_index, double segment_distance,
+                             double radius)
+  {
+    const auto &segment = segments[segment_index];
+    const int physical_chain = geometry.segments[segment.geometry_index].physical_chain;
+    const Point3D point = Interpolate(segment, segment_distance);
+    const Point3D tangent = Normalize(Cross(segment.axis_u, segment.axis_v));
+    double begin = 0.0;
+    double end = 0.0;
+    for (const auto &candidate : segments)
+    {
+      if (geometry.segments[candidate.geometry_index].physical_chain != physical_chain)
+      {
+        continue;
+      }
+      begin = std::min({begin, Dot(Subtract(candidate.p0, point), tangent),
+                        Dot(Subtract(candidate.p1, point), tangent)});
+      end = std::max({end, Dot(Subtract(candidate.p0, point), tangent),
+                      Dot(Subtract(candidate.p1, point), tangent)});
+    }
+    return std::array<double, 2>{std::max(-radius, begin), std::min(radius, end)};
+  };
 
   auto SpatialGeometry = [&](const SpatialClusterSelection3D &selection)
   {
@@ -4122,7 +4154,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     {
       const auto &site = selection.sites[selection.model_to_site[model_edge]];
       auto [conductor, inserted] =
-          conductor_ids.emplace(site.conductor, conductor_ids.size());
+          conductor_ids.emplace(site.conductor, conductor_ids.size() + 1);
       (void)inserted;
       const auto relative = Subtract(site.point, selection.origin);
       nlohmann::json edge = {
@@ -4139,7 +4171,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
             requirements->SnapDirection(Dot(site.process_normal, selection.axes[1])),
             requirements->SnapDirection(Dot(site.process_normal, selection.axes[2]))}},
           {"Conductor", conductor->second},
-          {"BoundaryCondition", BoundaryConditionName(site.boundary_condition.type)}};
+          {"BoundaryCondition",
+           requirements->DescribeBoundaryCondition(site.boundary_condition)}};
       if (!selection.response.models.empty() && model_edge < model.spatial_edges.size())
       {
         edge["Interval"] = {
@@ -4162,6 +4195,97 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                            [](double length, const auto &edge)
                            { return length + edge.interval[1] - edge.interval[0]; });
   };
+  auto DescribeMissingSpatialGeometry = [&](const std::vector<SpatialEdgeSite3D> &sites)
+      -> std::pair<nlohmann::json, std::map<int, std::map<InterfaceDielectric, int>>>
+  {
+    MFEM_ASSERT(requirements && sites.size() >= 2,
+                "Missing spatial geometry requires at least two edge sites!");
+    std::optional<
+        std::pair<nlohmann::json, std::map<int, std::map<InterfaceDielectric, int>>>>
+        best;
+    std::string best_key;
+    for (const auto &anchor : sites)
+    {
+      const Point3D tangent = Normalize(Cross(anchor.gap_direction, anchor.process_normal));
+      const std::array<Point3D, 3> axes = {anchor.gap_direction, anchor.process_normal,
+                                           tangent};
+      struct Description
+      {
+        const SpatialEdgeSite3D *site = nullptr;
+        Point3D point{};
+        Point3D gap{};
+        Point3D normal{};
+        std::string key;
+      };
+      std::vector<Description> descriptions;
+      descriptions.reserve(sites.size());
+      for (const auto &site : sites)
+      {
+        const Point3D relative = Subtract(site.point, anchor.point);
+        Description description;
+        description.site = &site;
+        for (int d = 0; d < 3; d++)
+        {
+          description.point[d] = requirements->ScaleLength(Dot(relative, axes[d]));
+          description.gap[d] =
+              requirements->SnapDirection(Dot(site.gap_direction, axes[d]));
+          description.normal[d] =
+              requirements->SnapDirection(Dot(site.process_normal, axes[d]));
+        }
+        description.key = nlohmann::json{{"Point", description.point},
+                                         {"GapDirection", description.gap},
+                                         {"ProcessNormal", description.normal}}
+                              .dump();
+        descriptions.push_back(std::move(description));
+      }
+      std::sort(descriptions.begin(), descriptions.end(),
+                [](const auto &first, const auto &second)
+                {
+                  if (first.key != second.key)
+                  {
+                    return first.key < second.key;
+                  }
+                  return first.site->conductor < second.site->conductor;
+                });
+
+      std::map<int, int> conductor_ids;
+      std::map<TargetSignature, int> slots;
+      std::map<int, std::map<InterfaceDielectric, int>> targets_by_slot;
+      nlohmann::json edges = nlohmann::json::array();
+      for (const auto &description : descriptions)
+      {
+        const auto &site = *description.site;
+        auto [conductor, conductor_inserted] =
+            conductor_ids.emplace(site.conductor, conductor_ids.size() + 1);
+        (void)conductor_inserted;
+        const TargetSignature signature(site.targets.begin(), site.targets.end());
+        auto [slot, slot_inserted] = slots.emplace(signature, slots.size());
+        if (slot_inserted)
+        {
+          targets_by_slot.emplace(slot->second, site.targets);
+        }
+        edges.push_back({{"Point", description.point},
+                         {"GapDirection", description.gap},
+                         {"ProcessNormal", description.normal},
+                         {"Interval",
+                          {requirements->ScaleLength(site.interval[0]),
+                           requirements->ScaleLength(site.interval[1])}},
+                         {"Conductor", conductor->second},
+                         {"InterfaceSlot", slot->second},
+                         {"BoundaryCondition", requirements->DescribeBoundaryCondition(
+                                                   site.boundary_condition)}});
+      }
+      nlohmann::json geometry = {{"EdgeCount", edges.size()}, {"Edges", std::move(edges)}};
+      const std::string key = geometry.dump();
+      if (!best || key < best_key)
+      {
+        best = std::make_pair(std::move(geometry), std::move(targets_by_slot));
+        best_key = key;
+      }
+    }
+    MFEM_ASSERT(best, "Unable to describe a missing spatial edge cluster!");
+    return std::move(*best);
+  };
 
   std::vector<EdgeSegment3D> global_segments;
   const bool has_cross_interface_spatial_model =
@@ -4179,7 +4303,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                     }
                     return slots.size() > 1;
                   });
-  if (has_cross_interface_spatial_model)
+  if (has_cross_interface_spatial_model || requirements)
   {
     for (const auto &[signature, group] : groups_by_targets)
     {
@@ -4257,6 +4381,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     global_spatial_events.push_back(std::move(event));
   }
   std::vector<SpatialClusterSelection3D> cross_interface_selections;
+  std::set<std::pair<int, int>> described_cross_interface_pairs;
   std::vector<bool> visited_global_event(global_spatial_events.size(), false);
   for (std::size_t seed = 0; seed < global_spatial_events.size(); seed++)
   {
@@ -4334,15 +4459,38 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       }
       MFEM_ASSERT(best_segment, "Missing segment for a cross-interface spatial chain!");
       const auto &segment = global_segments[*best_segment];
+      const auto interval = SpatialInterval(global_segments, *best_segment,
+                                            best_segment_distance, library.matching_radius);
       sites.push_back({chain, segment.geometry_index, *best_segment, best_segment_distance,
-                       Interpolate(segment, best_segment_distance), segment.axis_u,
-                       segment.axis_v, segment.conductor, segment.targets,
+                       interval, Interpolate(segment, best_segment_distance),
+                       segment.axis_u, segment.axis_v, segment.conductor, segment.targets,
                        segment.boundary_condition});
     }
 
     auto selection = FindSpatialClusterLibraryModel(library, sites);
     if (!selection || selection->targets_by_slot.size() < 2)
     {
+      if (requirements)
+      {
+        auto [spatial_geometry, targets_by_slot] = DescribeMissingSpatialGeometry(sites);
+        requirements->Add(3, LibraryTopology::SPATIAL_EDGE_CLUSTER, targets_by_slot,
+                          sites.front().boundary_condition, spatial_geometry, library,
+                          nullptr, 2.0 * library.matching_radius * sites.size(),
+                          "No compatible cross-interface spatial-edge cluster model");
+      }
+      for (const std::size_t event_index : event_component)
+      {
+        const auto &event = global_spatial_events[event_index];
+        int first_chain =
+            geometry.segments[global_segments[event.first].geometry_index].physical_chain;
+        int second_chain =
+            geometry.segments[global_segments[event.second].geometry_index].physical_chain;
+        if (first_chain > second_chain)
+        {
+          std::swap(first_chain, second_chain);
+        }
+        described_cross_interface_pairs.emplace(first_chain, second_chain);
+      }
       continue;
     }
     for (const std::size_t event_index : event_component)
@@ -4356,6 +4504,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       {
         std::swap(first_chain, second_chain);
       }
+      described_cross_interface_pairs.emplace(first_chain, second_chain);
       selection->interactions.push_back({first_chain, second_chain, event.center});
     }
     cross_interface_selections.push_back(std::move(*selection));
@@ -4494,11 +4643,26 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         externally_conflicted_segments++;
         if (requirements)
         {
+          std::map<int, std::pair<std::size_t, double>> undescribed_conflicts;
+          for (const auto &[physical_chain, conflict] : conflicts)
+          {
+            const auto ordered = std::minmax(source.physical_chain, physical_chain);
+            const std::pair<int, int> chains = {ordered.first, ordered.second};
+            if (described_cross_interface_pairs.find(chains) ==
+                described_cross_interface_pairs.end())
+            {
+              undescribed_conflicts.emplace(physical_chain, conflict);
+            }
+          }
+          if (undescribed_conflicts.empty())
+          {
+            continue;
+          }
           std::map<int, std::map<InterfaceDielectric, int>> targets_by_slot = {
               {0, group.targets}};
           nlohmann::json interactions = nlohmann::json::array();
           int slot = 1;
-          for (const auto &[physical_chain, conflict] : conflicts)
+          for (const auto &[physical_chain, conflict] : undescribed_conflicts)
           {
             (void)physical_chain;
             const auto other_index = conflict.first;
@@ -4533,7 +4697,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                   : MetalBoundaryLaw{};
           requirements->Add(3, LibraryTopology::SPATIAL_EDGE_CLUSTER, targets_by_slot,
                             boundary_condition,
-                            {{"EdgeCount", conflicts.size() + 1},
+                            {{"EdgeCount", undescribed_conflicts.size() + 1},
                              {"Interactions", std::move(interactions)}},
                             library, nullptr, Distance(p0, p1),
                             "Nearby physical edges use a different interface mapping");
@@ -4694,6 +4858,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     }
 
     std::vector<SpatialClusterSelection3D> spatial_cluster_selections;
+    std::set<std::pair<int, int>> described_spatial_pairs;
     std::vector<bool> visited_spatial_event(spatial_events.size(), false);
     for (std::size_t seed = 0; seed < spatial_events.size(); seed++)
     {
@@ -4773,15 +4938,38 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         }
         MFEM_ASSERT(best_segment, "Missing segment for a spatial edge chain!");
         const auto &segment = segments[*best_segment];
-        sites.push_back({chain, segment.geometry_index, *best_segment,
-                         best_segment_distance, Interpolate(segment, best_segment_distance),
-                         segment.axis_u, segment.axis_v, segment.conductor, segment.targets,
-                         segment.boundary_condition});
+        const auto interval = SpatialInterval(segments, *best_segment,
+                                              best_segment_distance, group.matching_radius);
+        sites.push_back(
+            {chain, segment.geometry_index, *best_segment, best_segment_distance, interval,
+             Interpolate(segment, best_segment_distance), segment.axis_u, segment.axis_v,
+             segment.conductor, segment.targets, segment.boundary_condition});
       }
 
       auto selection = FindSpatialClusterLibraryModel(library, sites);
       if (!selection)
       {
+        if (requirements)
+        {
+          auto [spatial_geometry, targets_by_slot] = DescribeMissingSpatialGeometry(sites);
+          requirements->Add(3, LibraryTopology::SPATIAL_EDGE_CLUSTER, targets_by_slot,
+                            sites.front().boundary_condition, spatial_geometry, library,
+                            nullptr, 2.0 * group.matching_radius * sites.size(),
+                            "No compatible spatial-edge cluster model");
+        }
+        for (const std::size_t event_index : event_component)
+        {
+          const auto &event = spatial_events[event_index];
+          int first_chain =
+              geometry.segments[segments[event.first].geometry_index].physical_chain;
+          int second_chain =
+              geometry.segments[segments[event.second].geometry_index].physical_chain;
+          if (first_chain > second_chain)
+          {
+            std::swap(first_chain, second_chain);
+          }
+          described_spatial_pairs.emplace(first_chain, second_chain);
+        }
         continue;
       }
       group_maximum_library_distance =
@@ -4797,6 +4985,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         {
           std::swap(first_chain, second_chain);
         }
+        described_spatial_pairs.emplace(first_chain, second_chain);
         selection->interactions.push_back({first_chain, second_chain, event.center});
       }
       spatial_cluster_selections.push_back(std::move(*selection));
@@ -4855,25 +5044,39 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       counter++;
       if (requirements)
       {
-        const auto closest =
-            ClosestSegmentApproach(segments[first].p0, segments[first].p1,
-                                   segments[second].p0, segments[second].p1);
-        const double angle = std::acos(std::clamp(
-            std::abs(Dot(segments[first].tangent, segments[second].tangent)), 0.0, 1.0));
-        nlohmann::json geometry = {
-            {"EdgeCount", 2},
-            {"Separation", requirements->ScaleLength(std::sqrt(closest.distance_squared))}};
         const auto topology =
             requirement_topology.value_or(LibraryTopology::SPATIAL_EDGE_CLUSTER);
-        if (topology == LibraryTopology::SPATIAL_EDGE_CLUSTER)
+        int first_chain = geometry.segments[segments[first].geometry_index].physical_chain;
+        int second_chain =
+            geometry.segments[segments[second].geometry_index].physical_chain;
+        if (first_chain > second_chain)
         {
-          geometry["AngleDegrees"] =
-              requirements->SnapAngleDegrees(angle * 180.0 / std::acos(-1.0));
+          std::swap(first_chain, second_chain);
         }
-        requirements->Add(3, topology, group.targets, segments[first].boundary_condition,
-                          geometry, library, nullptr,
-                          std::min(segments[first].length, segments[second].length),
-                          message);
+        const bool already_described =
+            topology == LibraryTopology::SPATIAL_EDGE_CLUSTER &&
+            described_spatial_pairs.find({first_chain, second_chain}) !=
+                described_spatial_pairs.end();
+        if (!already_described)
+        {
+          const auto closest =
+              ClosestSegmentApproach(segments[first].p0, segments[first].p1,
+                                     segments[second].p0, segments[second].p1);
+          const double angle = std::acos(std::clamp(
+              std::abs(Dot(segments[first].tangent, segments[second].tangent)), 0.0, 1.0));
+          nlohmann::json geometry = {{"EdgeCount", 2},
+                                     {"Separation", requirements->ScaleLength(std::sqrt(
+                                                        closest.distance_squared))}};
+          if (topology == LibraryTopology::SPATIAL_EDGE_CLUSTER)
+          {
+            geometry["AngleDegrees"] =
+                requirements->SnapAngleDegrees(angle * 180.0 / std::acos(-1.0));
+          }
+          requirements->Add(3, topology, group.targets, segments[first].boundary_condition,
+                            geometry, library, nullptr,
+                            std::min(segments[first].length, segments[second].length),
+                            message);
+        }
       }
       if (request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
       {
@@ -5134,7 +5337,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         for (const std::size_t vertex : source.vertices)
         {
           if (geometry.vertices[vertex].physical_type &&
-              *geometry.vertices[vertex].physical_type != MetalEdgeVertexType::REGULAR)
+              *geometry.vertices[vertex].physical_type != MetalEdgeVertexType::REGULAR &&
+              !geometry.vertices[vertex].on_truncation_boundary)
           {
             corner_length += std::min(group.matching_radius, segment.length);
           }
@@ -5152,7 +5356,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     for (const std::size_t vertex : vertices)
     {
       const auto type = geometry.vertices[vertex].physical_type;
-      nonregular_vertices += type && *type != MetalEdgeVertexType::REGULAR;
+      nonregular_vertices += type && *type != MetalEdgeVertexType::REGULAR &&
+                             !geometry.vertices[vertex].on_truncation_boundary;
     }
     std::vector<PendingPatch> pending;
     std::vector<std::vector<std::pair<double, double>>> vertex_excluded_intervals(
@@ -5492,9 +5697,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         if (std::any_of(run.begin(), run.end(),
                         [&](std::size_t index)
                         {
-                          return spatially_excluded_vertices.find(
-                                     ordered_vertices[index]) !=
-                                 spatially_excluded_vertices.end();
+                          const std::size_t vertex = ordered_vertices[index];
+                          return geometry.vertices[vertex].on_truncation_boundary ||
+                                 spatially_excluded_vertices.find(vertex) !=
+                                     spatially_excluded_vertices.end();
                         }))
         {
           return;
@@ -5745,6 +5951,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     for (const std::size_t vertex : vertices)
     {
       if (geometry.vertices[vertex].physical_type != MetalEdgeVertexType::CORNER ||
+          geometry.vertices[vertex].on_truncation_boundary ||
           spatially_excluded_vertices.find(vertex) != spatially_excluded_vertices.end())
       {
         continue;
@@ -5861,6 +6068,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       if (!vertex_type ||
           (*vertex_type != MetalEdgeVertexType::ENDPOINT &&
            *vertex_type != MetalEdgeVertexType::JUNCTION) ||
+          geometry.vertices[vertex].on_truncation_boundary ||
           spatially_excluded_vertices.find(vertex) != spatially_excluded_vertices.end())
       {
         continue;
@@ -5948,24 +6156,90 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         std::sort(angles.begin(), angles.end());
         return angles;
       };
+      auto VertexGeometry = [&](std::size_t first)
+      {
+        const Point3D axis_u = directions[first];
+        Point3D axis_v = Normalize(Cross(process_normal, axis_u));
+        if (endpoint && Dot(axis_v, segments[incident[first]].axis_u) < 0.0)
+        {
+          axis_v = Scale(-1.0, axis_v);
+        }
+        struct ArmDescription
+        {
+          double angle = 0.0;
+          nlohmann::json data;
+        };
+        std::vector<ArmDescription> arm_descriptions;
+        arm_descriptions.reserve(directions.size());
+        for (std::size_t arm = 0; arm < directions.size(); arm++)
+        {
+          double angle =
+              std::atan2(Dot(directions[arm], axis_v), Dot(directions[arm], axis_u));
+          if (angle < 0.0)
+          {
+            angle += 2.0 * std::acos(-1.0);
+          }
+          const auto &segment = segments[incident[arm]];
+          nlohmann::json arm_data = {
+              {"Direction",
+               {requirements->SnapDirection(Dot(directions[arm], axis_u)),
+                requirements->SnapDirection(Dot(directions[arm], axis_v)), 0.0}},
+              {"GapDirection",
+               {requirements->SnapDirection(Dot(segment.axis_u, axis_u)),
+                requirements->SnapDirection(Dot(segment.axis_u, axis_v)),
+                requirements->SnapDirection(Dot(segment.axis_u, process_normal))}},
+              {"ProcessNormal",
+               {requirements->SnapDirection(Dot(segment.axis_v, axis_u)),
+                requirements->SnapDirection(Dot(segment.axis_v, axis_v)),
+                requirements->SnapDirection(Dot(segment.axis_v, process_normal))}},
+              {"Interval", {0.0, requirements->ScaleLength(group.matching_radius)}},
+              {"Conductor", 1},
+              {"InterfaceSlot", 0},
+              {"BoundaryCondition",
+               requirements->DescribeBoundaryCondition(segment.boundary_condition)}};
+          arm_descriptions.push_back({angle, std::move(arm_data)});
+        }
+        std::sort(arm_descriptions.begin(), arm_descriptions.end(),
+                  [](const auto &first_arm, const auto &second_arm)
+                  { return first_arm.angle < second_arm.angle; });
+        nlohmann::json arms = nlohmann::json::array();
+        for (auto &arm : arm_descriptions)
+        {
+          arms.push_back(std::move(arm.data));
+        }
+        return nlohmann::json{{"SignatureVersion", 1},
+                              {"ArmCount", directions.size()},
+                              {"ArmAnglesDegrees", ArmAngles(first)},
+                              {"Arms", std::move(arms)}};
+      };
       if (!model_selection)
       {
         if (requirements)
         {
-          requirements->Add(
-              3, topology, group.targets, boundary_condition,
-              {{"ArmCount", directions.size()}, {"ArmAnglesDegrees", ArmAngles(0)}},
-              library, nullptr, directions.size() * group.matching_radius,
-              endpoint ? "No compatible endpoint model" : "No compatible junction model");
+          std::size_t canonical_first = 0;
+          std::string canonical_key;
+          for (std::size_t first = 0; first < directions.size(); first++)
+          {
+            const std::string key = VertexGeometry(first).dump();
+            if (first == 0 || key < canonical_key)
+            {
+              canonical_first = first;
+              canonical_key = key;
+            }
+          }
+          requirements->Add(3, topology, group.targets, boundary_condition,
+                            VertexGeometry(canonical_first), library, nullptr,
+                            directions.size() * group.matching_radius,
+                            endpoint ? "No compatible endpoint model"
+                                     : "No compatible junction model");
         }
         continue;
       }
       if (requirements)
       {
         requirements->Add(3, topology, group.targets, boundary_condition,
-                          {{"ArmCount", directions.size()},
-                           {"ArmAnglesDegrees", ArmAngles(model_selection->first_arm)}},
-                          library, &model_selection->response,
+                          VertexGeometry(model_selection->first_arm), library,
+                          &model_selection->response,
                           directions.size() * group.matching_radius);
       }
 
@@ -6167,7 +6441,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           const Point3D point =
               InterpolateAtLongitudinalCoordinate(edge, tangent, coordinate);
           auto [conductor, inserted] =
-              conductor_ids.emplace(edge.conductor, conductor_ids.size());
+              conductor_ids.emplace(edge.conductor, conductor_ids.size() + 1);
           (void)inserted;
           const Point3D offset = Subtract(point, origin);
           edges.push_back(
@@ -6705,7 +6979,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         [&](std::size_t vertex)
         {
           return geometry.vertices[vertex].physical_type &&
-                 *geometry.vertices[vertex].physical_type != MetalEdgeVertexType::REGULAR;
+                 *geometry.vertices[vertex].physical_type != MetalEdgeVertexType::REGULAR &&
+                 !geometry.vertices[vertex].on_truncation_boundary;
         }));
     matched_nonregular_vertices += matched_sharp_corners + matched_endpoints +
                                    matched_junctions + spatial_nonregular_vertices;

@@ -1095,6 +1095,9 @@ public:
   // prescribed-potential basis excitations.
   bool response_matrix = false;
 
+  // Whether to sum response-matrix entries over physical edges before writing them.
+  bool aggregate_response_matrix = false;
+
   // Optional global Schur-complement correction assembled from a matched pair of local
   // fabricated- and thin-metal coupon response matrices.
   std::optional<ResponseCorrectionData> response_correction = std::nullopt;

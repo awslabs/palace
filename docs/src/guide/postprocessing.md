@@ -143,14 +143,18 @@ file. These include:
     [`ResponseMatrix`](../config/reference.md#config-solver-electrostatic-responsematrix).
     Palace then writes `surface-response-matrix.csv`, the upper triangles of the localized
     quadratic core- and full-patch surface-energy operators for every interface, edge, and
-    matching radius. It also writes `domain-response-matrix.csv`, the domain-energy
-    response over the same prescribed-potential basis. Driven, eigenmode, and
+    matching radius. Coupon generation enables `AggregateResponseMatrix` to sum physical
+    edges by interface and matching radius before writing. It also writes
+    `domain-response-matrix.csv`, the domain-energy response over the same prescribed
+    potential basis. Driven, eigenmode, and
     two-dimensional boundary-mode simulations can apply a compatible
     fabrication-process library with
     [`Solver.SurfaceResponseCorrection`](../config/reference.md#config-solver-surfaceresponsecorrection).
-    This postprocessing-only PEC correction writes `surface-Q-corrected.csv` and
+    This postprocessing-only correction writes `surface-Q-corrected.csv` and
     `surface-response-confidence.csv`; the solved field, AMR sequence, and standard
-    `surface-Q.csv` remain the uncorrected thin-metal result. See
+    `surface-Q.csv` remain the uncorrected thin-metal result. PEC, conductivity,
+    impedance, and rational-impedance boundaries require coupons with matching
+    boundary-law metadata. See
     [Postprocessing-only Maxwell response correction](../reference.md#postprocessing-only-maxwell-response-correction)
     for the supported geometry and confidence limits.
 

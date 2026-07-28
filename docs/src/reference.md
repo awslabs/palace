@@ -742,6 +742,10 @@ nearest-segment patch, without the matching-radius cutoff, and its normal and ta
 components. These full-patch operators can be differenced between matched fabricated and
 thin coupons to obtain a process-local surface-energy defect operator.
 The basis indices are the `Index` values of the `PrescribedPotential` entries.
+Setting `Solver.Electrostatic.AggregateResponseMatrix` sums the physical-edge entries
+for each interface and matching radius before writing, using one synthetic edge index in
+the output. This preserves both the core- and full-patch interface response operators
+while substantially reducing output size for three-dimensional coupon libraries.
 For a coupled coupon containing two independent conductors, the final excitation combines
 a conforming conductor-state trace on `Attributes` with `TerminalAttributes` held at one
 volt. This adds the conductor-voltage basis field while all other essential boundaries
@@ -1420,6 +1424,32 @@ boundary law, count, total edge length, geometric signature, and exact, interpol
 missing library selection. Its `Complete` field is true only when no requirement is
 missing. During preflight only, `UnmatchedPolicy: "Error"` is treated as `"Warn"` so all
 missing requirements can be reported in one pass.
+
+The example coupon planner can turn this manifest into a deterministic work plan and,
+for PEC libraries, generate and qualify missing coupons:
+
+```text
+python3 examples/cpw2d/prepare_surface_response_coupons.py \
+  postpro/device/surface-response-requirements.json \
+  --output /tmp/device-process-coupons \
+  --execute \
+  --palace build/bin/palace \
+  --orders 2 3
+```
+
+The generated library is written under `library/process-library.json`.
+Content-addressed cache entries include the complete local geometry, fabrication
+metadata, discretization settings, and generator sources. Cheap thin/fabricated probe
+convergence is required before a full response matrix is assembled; matrix and held-out
+trace qualification is required before an entry is merged. The current automatic
+builders can construct candidate isolated and paired edges, parallel edge clusters,
+90 degree convex and concave corners, endpoints, junctions, and exact spatial edge
+clusters. An entry is merged only after its generated geometry passes the configured
+probe-convergence and held-out gates. In particular, a sharp endpoint or junction does
+not encode a fabricated plan-view regularization and can remain nonconvergent; the
+planner preserves that failed qualification instead of treating the canonical coupon as
+universal. Automatic generation also rejects finite-impedance coupons and unsupported
+corner angles while preserving them as explicit coverage failures in the work plan.
 
 A multi-conductor coupon appends one ``V_i-V_1`` coefficient for every conductor after
 the first. Electrostatics uses H1 point values. Maxwell integrates the declared open

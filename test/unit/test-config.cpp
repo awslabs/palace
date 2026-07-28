@@ -591,6 +591,11 @@ TEST_CASE("Config electrostatic response matrix", "[config][Serial]")
        {"EdgeFrameNormal", {0.0, 1.0, 0.0}}}};
   CHECK_NOTHROW(IoData(config, false));
 
+  config["Solver"]["Electrostatic"]["ResponseMatrix"] = false;
+  config["Solver"]["Electrostatic"]["AggregateResponseMatrix"] = true;
+  CHECK_THROWS(IoData(config, false));
+  config["Solver"]["Electrostatic"]["ResponseMatrix"] = true;
+
   config["Boundaries"]["PrescribedPotential"][0]["TerminalAttributes"] = {3};
   const IoData conductor_basis(config, false);
   CHECK(conductor_basis.boundaries.prescribed_potential.at(1).terminal_attributes ==
@@ -1228,10 +1233,13 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
   {
     const config::ElectrostaticSolverData defaults(json::object());
     CHECK_FALSE(defaults.response_matrix);
+    CHECK_FALSE(defaults.aggregate_response_matrix);
 
-    const json electrostatic = {{"ResponseMatrix", true}};
+    const json electrostatic = {{"ResponseMatrix", true},
+                                {"AggregateResponseMatrix", true}};
     const config::ElectrostaticSolverData enabled(electrostatic);
     CHECK(enabled.response_matrix);
+    CHECK(enabled.aggregate_response_matrix);
   }
 
   SECTION("Omitted Output resolves to default and concretizes (issue #745)")

@@ -383,7 +383,11 @@ def make_config(
         },
         "Solver": {
             "Order": order,
-            "Electrostatic": {"Save": 0, "ResponseMatrix": True},
+            "Electrostatic": {
+                "Save": 0,
+                "ResponseMatrix": True,
+                "AggregateResponseMatrix": True,
+            },
             "Linear": {
                 "Type": "BoomerAMG",
                 "KSPType": "CG",

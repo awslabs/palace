@@ -117,6 +117,67 @@ def write_bases(output, radius, metal_thickness, basis_size, samples):
     return paths
 
 
+def write_heldout(output, traces, radius, metal_thickness):
+    basis_points = np.atleast_2d(
+        np.loadtxt(output / "basis_points.csv", delimiter=",", skiprows=1)
+    )
+    samples = [
+        np.atleast_2d(np.loadtxt(path, delimiter=",", skiprows=1))
+        for path in traces
+    ]
+    coordinates = samples[0][:, :3]
+    if any(
+        sample.shape != samples[0].shape
+        or not np.allclose(sample[:, :3], coordinates, rtol=0.0, atol=1.0e-14)
+        for sample in samples[1:]
+    ):
+        raise ValueError("Contour basis traces do not share one sampling grid")
+
+    def potential(points):
+        x = points[:, 0] / radius
+        y = points[:, 1] / radius
+        distance_to_cut = np.hypot(
+            points[:, 0] + radius,
+            np.maximum.reduce(
+                (
+                    -points[:, 1],
+                    points[:, 1] - metal_thickness,
+                    np.zeros(len(points)),
+                )
+            ),
+        )
+        coordinate = np.clip(distance_to_cut / (radius / 3.0), 0.0, 1.0)
+        cutoff = coordinate * coordinate * (3.0 - 2.0 * coordinate)
+        return cutoff * (
+            0.35
+            + 0.20 * x
+            - 0.15 * y
+            + 0.08 * x * y
+            + 0.06 * y * y
+        )
+
+    coefficients = potential(basis_points)
+    values = potential(coordinates)
+    trace = output / "heldout_trace.csv"
+    np.savetxt(
+        trace,
+        np.column_stack((coordinates, values)),
+        delimiter=",",
+        header="x,y,z,V",
+        comments="",
+        fmt="%.16e",
+    )
+    np.savetxt(
+        output / "heldout_coefficients.csv",
+        coefficients,
+        delimiter=",",
+        header="coefficient_V",
+        comments="",
+        fmt="%.16e",
+    )
+    return trace
+
+
 def dielectric(index, attributes, interface_type, thickness, permittivity):
     _, loss_tangent = INTERFACE_PROPERTIES[interface_type]
     return {
@@ -193,7 +254,11 @@ def make_config(
         "Solver": {
             "Order": order,
             "Device": "CPU",
-            "Electrostatic": {"Save": 0, "ResponseMatrix": True},
+            "Electrostatic": {
+                "Save": 0,
+                "ResponseMatrix": True,
+                "AggregateResponseMatrix": True,
+            },
             "Linear": {
                 "Type": "BoomerAMG",
                 "KSPType": "CG",
@@ -314,6 +379,9 @@ def main():
         args.basis_size,
         args.samples,
     )
+    heldout_trace = write_heldout(
+        output, traces, args.radius, args.metal_thickness
+    )
     for name, mesh, fabricated in (
         ("edge_thin", thin_mesh, False),
         ("edge_fabricated", fabricated_mesh, True),
@@ -332,6 +400,22 @@ def main():
         path = output / f"{name}.json"
         path.write_text(json.dumps(config, indent=2) + "\n")
         print(path)
+        heldout_name = f"heldout_{name}"
+        heldout = make_config(
+            output,
+            heldout_name,
+            mesh,
+            [heldout_trace],
+            fabricated,
+            args.order,
+            args.coupon_depth,
+            args.substrate_permittivity,
+            interface_layers,
+        )
+        heldout["Solver"]["Electrostatic"]["ResponseMatrix"] = False
+        heldout_path = output / f"{heldout_name}.json"
+        heldout_path.write_text(json.dumps(heldout, indent=2) + "\n")
+        print(heldout_path)
     print(output / "basis_points.csv")
     print(
         write_library(

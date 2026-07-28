@@ -71,6 +71,11 @@ compatible with both the thin and fabricated conductor cuts and does not
 introduce an artificial, order-dependent Dirichlet singularity where the
 matching surface meets the grounded metal.
 
+Generated response configs enable `AggregateResponseMatrix`, so Palace performs the
+physical-edge sum before storing `surface-response-matrix.csv`. The finalizer still maps
+the radius-`R` core columns into the compact library format, but no longer needs a
+hundreds-of-megabytes intermediate per-edge CSV.
+
 For a rounded convex corner, the generated library uses `(rho, rho, 0)` as the
 local PEC reference. The virtual sharp corner at the origin is outside the
 rounded conductor and must not be used to gauge the coupon trace. For a rounded
@@ -358,20 +363,57 @@ These values drive the coupon solves and are recorded in the version-3
 `Fabrication.InterfaceLayers` metadata. They must match the straight-edge
 coupons and the runtime dielectric postprocessing configuration.
 
+### Rounded-corner probe convergence
+
+For 100 nm metal, 50 nm overetch, and a `0.5 um` plan-view corner radius,
+six-field p1/p2/p3 probe studies gave the following p2-to-p3 changes:
+
+| Topology | Quantity | Matrix change | Worst energy change |
+|----------|----------|--------------:|--------------------:|
+| Convex | Fabricated domain | 0.09% | 0.24% |
+| Convex | Fabricated SA | 0.53% | 1.03% |
+| Convex | Fabricated MS | 0.27% | 2.32% |
+| Convex | Fabricated MA | 2.72% | 4.92% |
+| Concave | Fabricated domain | 0.05% | 0.16% |
+| Concave | Fabricated SA | 0.55% | 1.14% |
+| Concave | Fabricated MS | 0.15% | 1.24% |
+| Concave | Fabricated MA | 1.39% | 4.99% |
+
+The fabricated-minus-thin domain defect changed by 1.59% for the convex
+coupon and 2.39% for the concave coupon. Both probe studies therefore pass
+the default 5% matrix and 10% worst-energy convergence gates.
+
+Full p2 matrices regenerated after adding all metal-interior trace knots to
+`ZeroTraceIndices` pass the default 10% held-out reconstruction gate. The
+errors below compare direct held-out solves against the quadratic forms
+evaluated from the response matrices:
+
+| Topology | Coupon | Domain | SA | MS | MA |
+|----------|--------|-------:|---:|---:|---:|
+| Convex | Thin | `+1.88%` | `-0.10%` | `+4.45%` | `-2.56%` |
+| Convex | Fabricated | `+2.02%` | `+0.09%` | `+5.16%` | `-4.06%` |
+| Concave | Thin | `+0.47%` | `+5.40%` | `-0.24%` | `+1.14%` |
+| Concave | Fabricated | `+0.40%` | `+8.37%` | `-0.44%` | `+1.21%` |
+
+The free-trace domain matrices are positive definite, with condition numbers
+of 83 or less, and all interface matrices are positive semidefinite to the
+numerical tolerance used by the qualifier. These tests qualify the rounded
+90 degree, `0.5 um`-radius p2 coupon matrices for this trace basis and process
+description; they do not replace the radius, angle, and nearby-edge coverage
+still listed below.
+
 ## Remaining validation
 
 Before adding these matrices to a production process library:
 
 1. Add any missing cross-sectional process rounding and fabrication details.
-2. Generate the final response matrices at p2 or higher on the converged
-   fabricated meshes.
-3. Check matching-radius and trace-basis convergence.
-4. Generate at least two positive-radius entries, sweep held-out plan-view
+2. Check matching-radius and trace-basis convergence.
+3. Generate at least two positive-radius entries, sweep held-out plan-view
    radii, and validate the interpolated response against fabricated references.
-5. Converge the fabrication-resolved concave-corner device reference.
-6. Combine the convex- and concave-corner entries with the process's isolated-
+4. Converge the fabrication-resolved concave-corner device reference.
+5. Combine the convex- and concave-corner entries with the process's isolated-
    and paired-edge entries.
-7. Validate additional corner angles and nearby-edge configurations.
+6. Validate additional corner angles and nearby-edge configurations.
 
 Each generated `process-library.json` contains only the selected corner
 topology and radius. Combine the required entries before using the result as a

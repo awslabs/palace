@@ -167,6 +167,8 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
 {
   Concretize(j_electrostatic, "Save", electrostatic.n_post);
   Concretize(j_electrostatic, "ResponseMatrix", electrostatic.response_matrix);
+  Concretize(j_electrostatic, "AggregateResponseMatrix",
+             electrostatic.aggregate_response_matrix);
   if (electrostatic.response_correction)
   {
     const auto &response = *electrostatic.response_correction;

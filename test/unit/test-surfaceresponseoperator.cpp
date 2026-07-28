@@ -45,6 +45,9 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   const auto thin_path = temp.temp_dir / "thin.csv";
   const auto fabricated_surface_path = temp.temp_dir / "fabricated-surface.csv";
   const auto thin_surface_path = temp.temp_dir / "thin-surface.csv";
+  const auto compact_fabricated_surface_path =
+      temp.temp_dir / "fabricated-surface-compact.csv";
+  const auto compact_thin_surface_path = temp.temp_dir / "thin-surface-compact.csv";
   const auto library_path = temp.temp_dir / "fabrication-process.json";
   const auto legacy_library_path = temp.temp_dir / "fabrication-process-legacy.json";
   const auto missing_layer_library_path =
@@ -138,6 +141,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
       temp.temp_dir / "fabrication-process-spatial-cluster-position-mismatch-3d.json";
   const auto spatial_cluster_orientation_mismatch_library_3d_path =
       temp.temp_dir / "fabrication-process-spatial-cluster-orientation-mismatch-3d.json";
+  const auto spatial_cluster_interval_mismatch_library_3d_path =
+      temp.temp_dir / "fabrication-process-spatial-cluster-interval-mismatch-3d.json";
   const auto spatial_cluster_extra_edge_library_3d_path =
       temp.temp_dir / "fabrication-process-spatial-cluster-extra-edge-3d.json";
   const auto spatial_cluster_impedance_mismatch_library_3d_path =
@@ -209,10 +214,24 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
         }
       }
     };
+    auto write_compact_surface_matrix = [](const auto &path, const auto &matrix)
+    {
+      std::ofstream output(path);
+      output << "interface,edge,basis_i,basis_j,Q_total_ij (J)\n";
+      for (std::size_t i = 0; i < matrix.size(); i++)
+      {
+        for (std::size_t j = i; j < matrix.size(); j++)
+        {
+          output << "1,1," << i + 1 << "," << j + 1 << "," << matrix[i][j] << "\n";
+        }
+      }
+    };
     write_domain_matrix(fabricated_path, fabricated);
     write_domain_matrix(thin_path, thin);
     write_surface_matrix(fabricated_surface_path, fabricated);
     write_surface_matrix(thin_surface_path, thin);
+    write_compact_surface_matrix(compact_fabricated_surface_path, fabricated);
+    write_compact_surface_matrix(compact_thin_surface_path, thin);
     const json library = {{"Version", 3},
                           {"Name", "unit-test-process"},
                           {"MatchingRadius", 0.1},
@@ -719,6 +738,15 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
         spatial_cluster_orientation_mismatch_library_3d_path);
     orientation_mismatch_output_3d << orientation_mismatch_library.dump(2) << "\n";
 
+    auto interval_mismatch_library = spatial_cluster_library_3d;
+    interval_mismatch_library["Name"] =
+        "unit-test-process-spatial-cluster-interval-mismatch-3d";
+    interval_mismatch_library["Models"].back()["Edges"][3]["Interval"] =
+        std::array<double, 2>{0.0, 0.15};
+    std::ofstream interval_mismatch_output_3d(
+        spatial_cluster_interval_mismatch_library_3d_path);
+    interval_mismatch_output_3d << interval_mismatch_library.dump(2) << "\n";
+
     auto extra_edge_library = spatial_cluster_library_3d;
     extra_edge_library["Name"] = "unit-test-process-spatial-cluster-extra-edge-3d";
     extra_edge_library["Models"].back()["Edges"].erase(3);
@@ -946,9 +974,17 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   REQUIRE(response.GetBasisSize() == 4);
   REQUIRE(response.GetPatchCount() == 1);
   REQUIRE(response.HasSurfaceResponse());
+  auto compact_config = config;
+  auto &compact_model =
+      compact_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Models"][0];
+  compact_model["FabricatedSurfaceMatrix"] = compact_fabricated_surface_path.string();
+  compact_model["ThinSurfaceMatrix"] = compact_thin_surface_path.string();
+  IoData compact_iodata(compact_config, false);
+  LaplaceOperator compact_laplace_op(compact_iodata, meshes);
+  SurfaceResponseOperator compact_response(compact_iodata, compact_laplace_op);
 
   const int size = laplace_op.GetH1Space().GetTrueVSize();
-  Vector x(size), y(size), Cx, Cy, Ctx;
+  Vector x(size), y(size), Cx, Cy, Ctx, compact_Cx;
   for (int i = 0; i < size; i++)
   {
     x(i) = 0.17 + 0.03 * (i + 1) * (Mpi::Rank(Mpi::World()) + 1);
@@ -957,6 +993,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   response.Mult(x, Cx);
   response.Mult(y, Cy);
   response.MultTranspose(x, Ctx);
+  compact_response.Mult(x, compact_Cx);
 
   double lhs = x * Cy;
   double rhs = Cx * y;
@@ -971,6 +1008,10 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   double transpose_error = Ctx * Ctx;
   Mpi::GlobalSum(1, &transpose_error, Mpi::World());
   CHECK(transpose_error == 0.0);
+  compact_Cx -= Cx;
+  double compact_error = compact_Cx * compact_Cx;
+  Mpi::GlobalSum(1, &compact_error, Mpi::World());
+  CHECK(compact_error == 0.0);
 
   Vector essential_values;
   Cx.GetSubVector(laplace_op.GetDbcTDofList(), essential_values);
@@ -997,6 +1038,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   const auto fabricated_energy = response.GetFabricatedSurfaceEnergy(x);
   REQUIRE(fabricated_energy.size() == 1);
   CHECK(fabricated_energy.at(4) > energy.interfaces.at(4));
+  const auto compact_fabricated_energy = compact_response.GetFabricatedSurfaceEnergy(x);
+  CHECK_THAT(compact_fabricated_energy.at(4), WithinRel(fabricated_energy.at(4), 1.0e-12));
   const auto local_electrostatic_response = response.GetElectrostaticResponse(x);
   CHECK_THAT(local_electrostatic_response.domain_correction,
              WithinRel(energy.domain, 1.0e-12));
@@ -1705,6 +1748,14 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
         return geometry_3d.vertices[vertex].physical_type == MetalEdgeVertexType::ENDPOINT;
       }));
   REQUIRE(physical_endpoint_count > 0);
+  CHECK(static_cast<int>(
+            std::count_if(physical_edge_vertices.begin(), physical_edge_vertices.end(),
+                          [&](std::size_t vertex)
+                          {
+                            return geometry_3d.vertices[vertex].physical_type ==
+                                       MetalEdgeVertexType::ENDPOINT &&
+                                   geometry_3d.vertices[vertex].on_truncation_boundary;
+                          })) == physical_endpoint_count);
   std::vector<std::unique_ptr<Mesh>> meshes_3d;
   meshes_3d.push_back(std::make_unique<Mesh>(std::move(mesh_3d)));
   LaplaceOperator laplace_3d(iodata_3d, meshes_3d);
@@ -1717,6 +1768,22 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK_THAT(response_3d.GetPatchWeight(), WithinRel(0.5 * physical_edge_length, 1.0e-12));
   CHECK(response_3d.HasSurfaceResponse());
 
+  const auto endpoint_requirements_path =
+      temp.temp_dir / "surface-response-requirements-endpoint.json";
+  WriteSurfaceResponseRequirements(iodata_3d, *meshes_3d.back(),
+                                   endpoint_requirements_path.string());
+  std::ifstream endpoint_requirements_input(endpoint_requirements_path);
+  REQUIRE(endpoint_requirements_input);
+  const json endpoint_requirements = json::parse(endpoint_requirements_input);
+  const auto endpoint_requirement = std::find_if(
+      endpoint_requirements["Requirements"].begin(),
+      endpoint_requirements["Requirements"].end(),
+      [](const auto &requirement)
+      {
+        return requirement["Topology"] == "Endpoint" && requirement["Status"] == "Missing";
+      });
+  CHECK(endpoint_requirement == endpoint_requirements["Requirements"].end());
+
   auto endpoint_config_3d = config_3d;
   endpoint_config_3d["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
       endpoint_library_3d_path.string();
@@ -1726,10 +1793,8 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   endpoint_meshes_3d.push_back(std::make_unique<Mesh>(std::move(endpoint_mesh_3d)));
   LaplaceOperator endpoint_laplace_3d(endpoint_iodata_3d, endpoint_meshes_3d);
   SurfaceResponseOperator endpoint_response_3d(endpoint_iodata_3d, endpoint_laplace_3d);
-  CHECK(endpoint_response_3d.GetPatchCount() ==
-        response_3d.GetPatchCount() + physical_endpoint_count);
-  CHECK(endpoint_response_3d.GetBasisSize() ==
-        response_3d.GetBasisSize() + 12 * physical_endpoint_count);
+  CHECK(endpoint_response_3d.GetPatchCount() == response_3d.GetPatchCount());
+  CHECK(endpoint_response_3d.GetBasisSize() == response_3d.GetBasisSize());
   CHECK_THAT(endpoint_response_3d.GetPatchWeight(),
              WithinRel(response_3d.GetPatchWeight(), 1.0e-12));
 
@@ -1766,7 +1831,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   SurfaceResponseOperator endpoint_maxwell_response_3d(endpoint_maxwell_iodata_3d,
                                                        endpoint_maxwell_space_3d);
   CHECK(endpoint_maxwell_response_3d.GetPatchCount() ==
-        maxwell_response_3d.GetPatchCount() + physical_endpoint_count);
+        maxwell_response_3d.GetPatchCount());
 
   // A finite-impedance metal does not provide an interior equipotential anchor. The
   // automatic Maxwell trace instead references the local metal edge point and must still
@@ -2227,6 +2292,14 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
           parallel_cluster_requirements["Requirements"].end());
   CHECK((*parallel_cluster_requirement)["Geometry"]["EdgeCount"] == 4);
   CHECK((*parallel_cluster_requirement)["Geometry"]["Edges"].size() == 4);
+  std::set<int> parallel_cluster_conductors;
+  for (const auto &edge : (*parallel_cluster_requirement)["Geometry"]["Edges"])
+  {
+    const int conductor = edge["Conductor"];
+    CHECK(conductor > 0);
+    parallel_cluster_conductors.insert(conductor);
+  }
+  CHECK(parallel_cluster_conductors == std::set<int>{1, 2});
   CHECK((*parallel_cluster_requirement)["TotalEdgeLength"].get<double>() > 0.0);
 
   // An exact multi-edge coupon is self-contained. It must not require redundant
@@ -2907,6 +2980,33 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(junction_maxwell_result.loop_residual < 1.0e-10);
   CHECK(junction_maxwell_result.corner_neighborhood_fraction == 0.0);
 
+  const auto junction_requirements_path =
+      temp.temp_dir / "surface-response-requirements-junction.json";
+  WriteSurfaceResponseRequirements(junction_maxwell_iodata, *junction_maxwell_meshes.back(),
+                                   junction_requirements_path.string());
+  std::ifstream junction_requirements_input(junction_requirements_path);
+  REQUIRE(junction_requirements_input);
+  const json junction_requirements = json::parse(junction_requirements_input);
+  const auto junction_requirement =
+      std::find_if(junction_requirements["Requirements"].begin(),
+                   junction_requirements["Requirements"].end(), [](const auto &requirement)
+                   { return requirement["Topology"] == "Junction"; });
+  REQUIRE(junction_requirement != junction_requirements["Requirements"].end());
+  const auto &junction_geometry = (*junction_requirement)["Geometry"];
+  CHECK(junction_geometry["SignatureVersion"] == 1);
+  CHECK(junction_geometry["ArmCount"].get<int>() >= 3);
+  CHECK(junction_geometry["Arms"].size() ==
+        junction_geometry["ArmCount"].get<std::size_t>());
+  for (const auto &arm : junction_geometry["Arms"])
+  {
+    CHECK(arm["Conductor"] == 1);
+    CHECK(arm["InterfaceSlot"] == 0);
+    CHECK(arm["BoundaryCondition"]["Type"] == "PEC");
+    CHECK(arm["Direction"].size() == 3);
+    CHECK(arm["GapDirection"].size() == 3);
+    CHECK(arm["ProcessNormal"].size() == 3);
+  }
+
   auto impedance_junction_config = junction_maxwell_config;
   impedance_junction_config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6};
   impedance_junction_config["Boundaries"]["Impedance"] = {
@@ -2963,6 +3063,54 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(spatial_cluster_result.loop_residual < 1.0e-10);
   CHECK_THAT(spatial_cluster_result.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
   CHECK(spatial_cluster_result.corner_neighborhood_fraction == 0.0);
+
+  auto missing_spatial_cluster_config = spatial_cluster_config;
+  missing_spatial_cluster_config["Solver"]["SurfaceResponseCorrection"]["Library"] =
+      convex_library_3d_path.string();
+  missing_spatial_cluster_config["Solver"]["SurfaceResponseCorrection"]["UnmatchedPolicy"] =
+      "Warn";
+  IoData missing_spatial_cluster_iodata(missing_spatial_cluster_config, false);
+  missing_spatial_cluster_iodata.boundaries.cracked_attributes.insert(9);
+  missing_spatial_cluster_iodata.boundaries.cracked_attributes.insert(10);
+  const auto spatial_requirements_path =
+      temp.temp_dir / "surface-response-requirements-spatial.json";
+  WriteSurfaceResponseRequirements(missing_spatial_cluster_iodata,
+                                   *spatial_cluster_meshes.back(),
+                                   spatial_requirements_path.string());
+  std::ifstream spatial_requirements_input(spatial_requirements_path);
+  REQUIRE(spatial_requirements_input);
+  const json spatial_requirements = json::parse(spatial_requirements_input);
+  const auto spatial_requirement =
+      std::find_if(spatial_requirements["Requirements"].begin(),
+                   spatial_requirements["Requirements"].end(),
+                   [](const auto &requirement)
+                   {
+                     return requirement["Topology"] == "SpatialEdgeCluster" &&
+                            requirement["Status"] == "Missing" &&
+                            requirement["Geometry"].contains("Edges");
+                   });
+  REQUIRE(spatial_requirement != spatial_requirements["Requirements"].end());
+  const auto &spatial_edges = (*spatial_requirement)["Geometry"]["Edges"];
+  REQUIRE(spatial_edges.size() >= 2);
+  std::set<int> spatial_conductors;
+  for (const auto &edge : spatial_edges)
+  {
+    const int conductor = edge["Conductor"];
+    CHECK(conductor > 0);
+    spatial_conductors.insert(conductor);
+    CHECK(edge["Point"].size() == 3);
+    CHECK(edge["GapDirection"].size() == 3);
+    CHECK(edge["ProcessNormal"].size() == 3);
+    REQUIRE(edge["Interval"].size() == 2);
+    CHECK(std::isfinite(edge["Interval"][0].get<double>()));
+    CHECK(std::isfinite(edge["Interval"][1].get<double>()));
+    CHECK(edge["Interval"][0].get<double>() <= 0.0);
+    CHECK(edge["Interval"][1].get<double>() >= 0.0);
+    CHECK(edge["Interval"][1].get<double>() > edge["Interval"][0].get<double>());
+    CHECK(edge["InterfaceSlot"].get<int>() >= 0);
+    CHECK(edge["BoundaryCondition"]["Type"] == "PEC");
+  }
+  CHECK(*spatial_conductors.begin() == 1);
 
   // Spatial clusters match each physical edge's complete boundary law. The second
   // island is finite impedance while the first remains PEC; its straight edges,
@@ -3067,6 +3215,41 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   CHECK(cross_layer_spatial_cluster_result.fabricated_surface_energy.count(4) == 1);
   CHECK(cross_layer_spatial_cluster_result.fabricated_surface_energy.count(5) == 1);
 
+  const auto cross_layer_requirements_path =
+      temp.temp_dir / "surface-response-requirements-cross-layer.json";
+  WriteSurfaceResponseRequirements(cross_layer_spatial_cluster_iodata,
+                                   *cross_layer_spatial_cluster_meshes.back(),
+                                   cross_layer_requirements_path.string());
+  std::ifstream cross_layer_requirements_input(cross_layer_requirements_path);
+  REQUIRE(cross_layer_requirements_input);
+  const json cross_layer_requirements = json::parse(cross_layer_requirements_input);
+  const auto cross_layer_requirement =
+      std::find_if(cross_layer_requirements["Requirements"].begin(),
+                   cross_layer_requirements["Requirements"].end(),
+                   [](const auto &requirement)
+                   {
+                     if (requirement["Topology"] != "SpatialEdgeCluster" ||
+                         !requirement["Geometry"].contains("Edges"))
+                     {
+                       return false;
+                     }
+                     std::set<int> slots;
+                     for (const auto &edge : requirement["Geometry"]["Edges"])
+                     {
+                       slots.insert(edge["InterfaceSlot"].template get<int>());
+                     }
+                     return slots.size() == 2;
+                   });
+  REQUIRE(cross_layer_requirement != cross_layer_requirements["Requirements"].end());
+  std::set<int> cross_layer_slots;
+  for (const auto &edge : (*cross_layer_requirement)["Geometry"]["Edges"])
+  {
+    cross_layer_slots.insert(edge["InterfaceSlot"].get<int>());
+    CHECK(edge["Conductor"].get<int>() > 0);
+    CHECK(edge["BoundaryCondition"]["Type"] == "PEC");
+  }
+  CHECK(cross_layer_slots.size() == 2);
+
   // Cross-layer replacement is all-or-nothing. A library with no multi-slot model, or
   // with a multi-slot model that omits one physical target type, must leave the
   // interaction neighborhood unmatched instead of applying independent local coupons.
@@ -3114,6 +3297,7 @@ TEST_CASE("SurfaceResponseOperator", "[surfaceresponseoperator][Serial][Parallel
   };
   CheckSpatialClusterMismatch(spatial_cluster_position_mismatch_library_3d_path);
   CheckSpatialClusterMismatch(spatial_cluster_orientation_mismatch_library_3d_path);
+  CheckSpatialClusterMismatch(spatial_cluster_interval_mismatch_library_3d_path);
   CheckSpatialClusterMismatch(spatial_cluster_extra_edge_library_3d_path);
   CheckSpatialClusterMismatch(spatial_cluster_impedance_mismatch_library_3d_path);
 

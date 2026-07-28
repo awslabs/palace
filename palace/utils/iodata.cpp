@@ -279,6 +279,9 @@ void IoData::CheckConfiguration()
                   !boundaries.prescribed_potential.empty(),
               "Electrostatic \"ResponseMatrix\" requires \"PrescribedPotential\" basis "
               "excitations!");
+  MFEM_VERIFY(!solver.electrostatic.aggregate_response_matrix ||
+                  solver.electrostatic.response_matrix,
+              "Electrostatic \"AggregateResponseMatrix\" requires \"ResponseMatrix\"!");
   MFEM_VERIFY(
       !solver.electrostatic.response_matrix ||
           std::any_of(boundaries.postpro.dielectric.begin(),

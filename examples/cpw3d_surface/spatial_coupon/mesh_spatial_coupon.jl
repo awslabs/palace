@@ -1,0 +1,595 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Fabrication-resolved local coupon for endpoint, junction, and exact spatial clusters.
+
+import Gmsh: gmsh
+using DelimitedFiles
+
+function read_edges(path)
+    data, header = readdlm(path, ',', header = true)
+    data = ndims(data) == 1 ? reshape(data, 1, :) : data
+    names = vec(String.(header))
+    columns = Dict(name => index for (index, name) in enumerate(names))
+    required = (
+        "Slot", "Conductor", "Px", "Py", "Pz", "Gx", "Gy", "Gz",
+        "Tx", "Ty", "Tz", "Nz", "S0", "S1", "VertexArm",
+    )
+    all(haskey(columns, name) for name in required) ||
+        error("Spatial signature is missing required columns")
+    edges = NamedTuple[]
+    for row in axes(data, 1)
+        push!(edges, (
+            slot = Int(round(data[row, columns["Slot"]])),
+            conductor = Int(round(data[row, columns["Conductor"]])),
+            point = (
+                Float64(data[row, columns["Px"]]),
+                Float64(data[row, columns["Py"]]),
+                Float64(data[row, columns["Pz"]]),
+            ),
+            gap = (
+                Float64(data[row, columns["Gx"]]),
+                Float64(data[row, columns["Gy"]]),
+                Float64(data[row, columns["Gz"]]),
+            ),
+            tangent = (
+                Float64(data[row, columns["Tx"]]),
+                Float64(data[row, columns["Ty"]]),
+                Float64(data[row, columns["Tz"]]),
+            ),
+            normal_sign = sign(Float64(data[row, columns["Nz"]])),
+            interval = (
+                Float64(data[row, columns["S0"]]),
+                Float64(data[row, columns["S1"]]),
+            ),
+            vertex_arm = Bool(round(Int, data[row, columns["VertexArm"]])),
+        ))
+    end
+    isempty(edges) && error("Spatial signature contains no edges")
+    all(edge.slot >= 0 && edge.conductor > 0 for edge in edges) ||
+        error("Spatial signature has invalid slot or conductor labels")
+    all(abs(edge.gap[3]) < 1.0e-8 &&
+        abs(edge.tangent[3]) < 1.0e-8 &&
+        abs(edge.normal_sign) == 1 for edge in edges) ||
+        error("Spatial coupon requires parallel or antiparallel process planes")
+    return edges
+end
+
+add(a, b) = ntuple(i -> a[i] + b[i], 3)
+scale(value, vector) = ntuple(i -> value * vector[i], 3)
+
+function extended_interval(edge, radius)
+    first, second = edge.interval
+    extension = 2radius
+    if edge.vertex_arm
+        if abs(first) <= 1.0e-10radius
+            second += extension
+        elseif abs(second) <= 1.0e-10radius
+            first -= extension
+        end
+    else
+        tolerance = 1.0e-10radius
+        first <= -radius + tolerance && (first -= extension)
+        second >= radius - tolerance && (second += extension)
+    end
+    return first, second
+end
+
+function strip_points(edge, radius, side, shift = 0.0)
+    first, second = extended_interval(edge, radius)
+    width = 3radius
+    p0 = add(edge.point, scale(first, edge.tangent))
+    p1 = add(edge.point, scale(second, edge.tangent))
+    q0 = add(p0, scale(side * shift, edge.gap))
+    q1 = add(p1, scale(side * shift, edge.gap))
+    r1 = add(p1, scale(side * width, edge.gap))
+    r0 = add(p0, scale(side * width, edge.gap))
+    return (q0, q1, r1, r0)
+end
+
+function polygon_wire(occ, points, z)
+    tags = [occ.addPoint(point[1], point[2], z) for point in points]
+    curves = [
+        occ.addLine(tags[index], tags[mod1(index + 1, length(tags))])
+        for index in eachindex(tags)
+    ]
+    return occ.addWire(curves)
+end
+
+function loft_strip(occ, edge, radius, side, z0, z1, pullback)
+    bottom = polygon_wire(occ, strip_points(edge, radius, side), z0)
+    top = polygon_wire(occ, strip_points(edge, radius, side, pullback), z1)
+    entities = occ.addThruSections([bottom, top], -1, true, false, -1, "C0")
+    volumes = [(dim, tag) for (dim, tag) in entities if dim == 3]
+    isempty(volumes) && error("Spatial strip loft produced no volume")
+    return volumes
+end
+
+function extruded_strip(occ, edge, radius, side, z0, dz)
+    surface = occ.addPlaneSurface([
+        polygon_wire(occ, strip_points(edge, radius, side), z0),
+    ])
+    return [
+        (dim, tag) for (dim, tag) in occ.extrude([(2, surface)], 0.0, 0.0, dz)
+        if dim == 3
+    ]
+end
+
+function fuse_all(occ, volumes)
+    isempty(volumes) && return Tuple{Int32,Int32}[]
+    result = [volumes[1]]
+    for volume in volumes[2:end]
+        result, _ = occ.fuse(result, [volume])
+    end
+    return result
+end
+
+function boundary_curves(volumes)
+    gmsh.model.occ.synchronize()
+    surfaces = [
+        entity for entity in gmsh.model.getBoundary(volumes, false, false, false)
+        if entity[1] == 2
+    ]
+    return unique(
+        tag for (dim, tag) in
+        gmsh.model.getBoundary(surfaces, false, false, false) if dim == 1
+    )
+end
+
+function fillet_plane_edges(occ, volumes, radius, z, tolerance)
+    radius <= 0.0 && return volumes
+    curves = Int32[]
+    for curve in boundary_curves(volumes)
+        _, _, zmin, _, _, zmax = gmsh.model.getBoundingBox(1, curve)
+        if abs(zmin - z) < tolerance && abs(zmax - z) < tolerance
+            push!(curves, curve)
+        end
+    end
+    isempty(curves) && return volumes
+    rounded = occ.fillet(
+        Int32[tag for (dim, tag) in volumes if dim == 3],
+        curves,
+        [radius],
+    )
+    result = [(dim, tag) for (dim, tag) in rounded if dim == 3]
+    return isempty(result) ? volumes : result
+end
+
+function coupon_bounds(edges, radius, metal_thickness, overetch)
+    points = NTuple{3,Float64}[]
+    for edge in edges
+        first, second = extended_interval(edge, radius)
+        for coordinate in (first, second)
+            boundary = add(edge.point, scale(coordinate, edge.tangent))
+            for side in (-1.0, 1.0)
+                # The final radius of box padding places the transverse matching
+                # boundary 2R from the physical edge. The metal strip extends 3R
+                # inward, so it is truncated without an artificial back edge.
+                push!(points, add(boundary, scale(side * radius, edge.gap)))
+            end
+        end
+    end
+    lower = ntuple(
+        index -> minimum(point[index] for point in points) - radius,
+        3,
+    )
+    upper = ntuple(
+        index -> maximum(point[index] for point in points) + radius,
+        3,
+    )
+    lower = (
+        lower[1],
+        lower[2],
+        min(lower[3], minimum(edge.point[3] for edge in edges) - radius - overetch),
+    )
+    upper = (
+        upper[1],
+        upper[2],
+        max(
+            upper[3],
+            maximum(edge.point[3] for edge in edges) + radius + metal_thickness,
+        ),
+    )
+    return lower, upper
+end
+
+function layer_groups(edges, tolerance)
+    groups = Dict{Tuple{Int,Int},Vector{eltype(edges)}}()
+    for edge in edges
+        plane = round(Int, edge.point[3] / tolerance)
+        key = (plane, Int(edge.normal_sign))
+        push!(get!(groups, key, eltype(edges)[]), edge)
+    end
+    layers = [
+        (
+            plane = sum(edge.point[3] for edge in group) / length(group),
+            sign = key[2],
+            edges = group,
+        )
+        for (key, group) in groups
+    ]
+    sort!(layers, by = layer -> layer.plane)
+    for first in eachindex(layers), second in first+1:length(layers)
+        a = layers[first]
+        b = layers[second]
+        overlap =
+            (a.sign > 0 && b.plane < a.plane) ||
+            (a.sign < 0 && b.plane > a.plane) ||
+            (b.sign > 0 && a.plane < b.plane) ||
+            (b.sign < 0 && a.plane > b.plane)
+        overlap && error("Spatial coupon substrate half-spaces overlap")
+    end
+    return layers
+end
+
+function on_outer_box(bounds, lower, upper, tolerance)
+    xmin, ymin, zmin, xmax, ymax, zmax = bounds
+    return (
+        (abs(xmin - lower[1]) < tolerance && abs(xmax - lower[1]) < tolerance) ||
+        (abs(xmin - upper[1]) < tolerance && abs(xmax - upper[1]) < tolerance) ||
+        (abs(ymin - lower[2]) < tolerance && abs(ymax - lower[2]) < tolerance) ||
+        (abs(ymin - upper[2]) < tolerance && abs(ymax - upper[2]) < tolerance) ||
+        (abs(zmin - lower[3]) < tolerance && abs(zmax - lower[3]) < tolerance) ||
+        (abs(zmin - upper[3]) < tolerance && abs(zmax - upper[3]) < tolerance)
+    )
+end
+
+function segment_distance(edge, point, radius)
+    first, second = extended_interval(edge, radius)
+    delta = (
+        point[1] - edge.point[1],
+        point[2] - edge.point[2],
+        point[3] - edge.point[3],
+    )
+    coordinate = clamp(
+        delta[1] * edge.tangent[1] + delta[2] * edge.tangent[2],
+        first,
+        second,
+    )
+    closest = add(edge.point, scale(coordinate, edge.tangent))
+    return sqrt(sum((point[index] - closest[index])^2 for index in 1:3))
+end
+
+function nearest_edge(edges, point, radius)
+    return edges[argmin(segment_distance(edge, point, radius) for edge in edges)]
+end
+
+function point_in_metal(edge, point, radius, tolerance)
+    abs(point[3] - edge.point[3]) <= tolerance || return false
+    delta = (
+        point[1] - edge.point[1],
+        point[2] - edge.point[2],
+        point[3] - edge.point[3],
+    )
+    longitudinal =
+        delta[1] * edge.tangent[1] + delta[2] * edge.tangent[2]
+    transverse = delta[1] * edge.gap[1] + delta[2] * edge.gap[2]
+    first, second = extended_interval(edge, radius)
+    return first - tolerance <= longitudinal <= second + tolerance &&
+           -3radius - tolerance <= transverse <= tolerance
+end
+
+function generate_spatial_coupon(;
+    signature::String,
+    fabricated::Bool,
+    radius::Float64 = 2.0,
+    metal_thickness::Float64 = 0.1,
+    overetch::Float64 = 0.05,
+    sidewall_angle::Float64 = 80.0,
+    top_rounding::Float64 = 0.01,
+    trench_rounding::Float64 = 0.01,
+    lc_fine::Float64 = 0.02,
+    lc_far::Float64 = 0.3,
+    mesh_order::Int = 1,
+    filename::String,
+)
+    radius > 0.0 || error("radius must be positive")
+    metal_thickness > 0.0 || error("metal thickness must be positive")
+    0.0 <= overetch < radius || error("overetch must lie in [0, radius)")
+    0.0 < sidewall_angle <= 90.0 ||
+        error("sidewall angle must lie in (0, 90]")
+    0.0 <= top_rounding < metal_thickness ||
+        error("top rounding must be smaller than metal thickness")
+    0.0 <= trench_rounding <= overetch ||
+        error("trench rounding must not exceed overetch")
+
+    edges = read_edges(signature)
+    lower, upper = coupon_bounds(edges, radius, metal_thickness, overetch)
+    tolerance = 1.0e-7 * radius
+    outer_tolerance = 1.0e-4 * radius
+    layers = layer_groups(edges, tolerance)
+    pullback_metal = metal_thickness / tan(deg2rad(sidewall_angle))
+    pullback_trench =
+        overetch > 0.0 ? overetch / tan(deg2rad(sidewall_angle)) : 0.0
+
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Verbosity", 2)
+    gmsh.model.add("spatial_coupon_$(fabricated ? "fabricated" : "thin")")
+    occ = gmsh.model.occ
+    outer = (
+        3,
+        occ.addBox(
+            lower[1], lower[2], lower[3],
+            upper[1] - lower[1], upper[2] - lower[2], upper[3] - lower[3],
+        ),
+    )
+
+    substrates = Tuple{Int32,Int32}[]
+    layer_substrates = Vector{Vector{Tuple{Int32,Int32}}}()
+    for layer in layers
+        slab = if layer.sign > 0
+            [(
+                3,
+                occ.addBox(
+                    lower[1], lower[2], lower[3],
+                    upper[1] - lower[1], upper[2] - lower[2],
+                    layer.plane - lower[3],
+                ),
+            )]
+        else
+            [(
+                3,
+                occ.addBox(
+                    lower[1], lower[2], layer.plane,
+                    upper[1] - lower[1], upper[2] - lower[2],
+                    upper[3] - layer.plane,
+                ),
+            )]
+        end
+        if fabricated && overetch > 0.0
+            trenches = Tuple{Int32,Int32}[]
+            for edge in layer.edges
+                append!(
+                    trenches,
+                    loft_strip(
+                        occ,
+                        edge,
+                        radius,
+                        1.0,
+                        layer.plane,
+                        layer.plane - layer.sign * overetch,
+                        pullback_trench,
+                    ),
+                )
+            end
+            trench = fuse_all(occ, trenches)
+            trench = fillet_plane_edges(
+                occ,
+                trench,
+                trench_rounding,
+                layer.plane - layer.sign * overetch,
+                tolerance,
+            )
+            slab, _ = occ.cut(slab, trench)
+        end
+        push!(layer_substrates, slab)
+        append!(substrates, slab)
+    end
+
+    substrate_seed = Tuple{Int32,Int32}[]
+    vacuum_seed = Tuple{Int32,Int32}[]
+    domains = Tuple{Int32,Int32}[]
+    if fabricated
+        metal = Tuple{Int32,Int32}[]
+        for layer in layers
+            layer_metal = Tuple{Int32,Int32}[]
+            for edge in layer.edges
+                append!(
+                    layer_metal,
+                    loft_strip(
+                        occ,
+                        edge,
+                        radius,
+                        -1.0,
+                        layer.plane,
+                        layer.plane + layer.sign * metal_thickness,
+                        pullback_metal,
+                    ),
+                )
+            end
+            layer_metal = fuse_all(occ, layer_metal)
+            layer_metal = fillet_plane_edges(
+                occ,
+                layer_metal,
+                top_rounding,
+                layer.plane + layer.sign * metal_thickness,
+                tolerance,
+            )
+            append!(metal, layer_metal)
+        end
+        field, _ = occ.cut([outer], metal, -1, true, true)
+        vacuum, _ = occ.cut(field, substrates, -1, true, false)
+        domains, domain_map = occ.fragment(vcat(substrates, vacuum), [])
+        substrate_seed =
+            domain_map[1:length(substrates)] |> Iterators.flatten |> collect
+        vacuum_seed =
+            domain_map[length(substrates)+1:end] |> Iterators.flatten |> collect
+    else
+        vacuum, _ = occ.cut([outer], substrates, -1, true, false)
+        tools = Tuple{Int32,Int32}[]
+        depth = upper[3] - lower[3]
+        for edge in edges
+            append!(
+                tools,
+                extruded_strip(occ, edge, radius, -1.0, lower[3], depth),
+            )
+        end
+        domains, domain_map = occ.fragment(vcat(substrates, vacuum), tools)
+        substrate_seed =
+            domain_map[1:length(substrates)] |> Iterators.flatten |> collect
+        vacuum_seed =
+            domain_map[length(substrates)+1:length(substrates)+length(vacuum)] |>
+            Iterators.flatten |> collect
+    end
+    occ.synchronize()
+
+    domain_tags = Set(tag for (dim, tag) in domains if dim == 3)
+    substrate_tags = sort!(unique(
+        tag for (dim, tag) in substrate_seed if dim == 3 && tag in domain_tags
+    ))
+    vacuum_tags = sort!(unique(
+        tag for (dim, tag) in vacuum_seed if dim == 3 && tag in domain_tags
+    ))
+    isempty(substrate_tags) && error("No substrate volumes were generated")
+    isempty(vacuum_tags) && error("No vacuum volumes were generated")
+    substrate_set = Set(substrate_tags)
+    vacuum_set = Set(vacuum_tags)
+
+    matching = Int32[]
+    boundary_groups = Dict{Int,Vector{Int32}}()
+    for (dim, tag) in gmsh.model.getEntities(2)
+        up, _ = gmsh.model.getAdjacencies(dim, tag)
+        adjacent_substrate = [volume for volume in up if volume in substrate_set]
+        adjacent_vacuum = [volume for volume in up if volume in vacuum_set]
+        isempty(adjacent_substrate) && isempty(adjacent_vacuum) && continue
+        bounds = gmsh.model.getBoundingBox(dim, tag)
+        if on_outer_box(bounds, lower, upper, outer_tolerance)
+            push!(matching, tag)
+            continue
+        end
+
+        center = gmsh.model.occ.getCenterOfMass(dim, tag)
+        point = (center[1], center[2], center[3])
+        edge = nearest_edge(edges, point, radius)
+        attribute = 0
+        if fabricated
+            if !isempty(adjacent_substrate) && !isempty(adjacent_vacuum)
+                _, _, zmin, _, _, zmax = bounds
+                attribute =
+                    abs(zmin - edge.point[3]) < tolerance &&
+                    abs(zmax - edge.point[3]) < tolerance ?
+                    3000 + edge.slot : 3100 + edge.slot
+            elseif !isempty(adjacent_substrate)
+                attribute = 5000 + 100edge.slot + edge.conductor
+            elseif !isempty(adjacent_vacuum)
+                attribute = 6000 + 100edge.slot + edge.conductor
+            end
+        else
+            metal_edge = findfirst(
+                candidate -> point_in_metal(candidate, point, radius, tolerance),
+                edges,
+            )
+            if metal_edge !== nothing
+                owner = edges[metal_edge]
+                attribute = 4000 + 100owner.slot + owner.conductor
+            elseif !isempty(adjacent_substrate) && !isempty(adjacent_vacuum)
+                attribute = 3000 + edge.slot
+            end
+        end
+        attribute > 0 && push!(get!(boundary_groups, attribute, Int32[]), tag)
+    end
+    isempty(matching) && error("No matching surface was generated")
+
+    gmsh.model.addPhysicalGroup(3, substrate_tags, 1, "substrate")
+    gmsh.model.addPhysicalGroup(3, vacuum_tags, 2, "vacuum")
+    gmsh.model.addPhysicalGroup(2, unique(matching), 1, "matching_surface")
+    for (attribute, surfaces) in sort(collect(boundary_groups))
+        unique!(surfaces)
+        gmsh.model.addPhysicalGroup(2, surfaces, attribute, "surface_$attribute")
+    end
+
+    feature_surfaces = collect(Iterators.flatten(values(boundary_groups)))
+    feature_curves = Int32[]
+    for surface in feature_surfaces
+        for (curve_dim, curve) in gmsh.model.getBoundary(
+            [(2, surface)], false, false, false)
+            if curve_dim == 1 &&
+               !on_outer_box(
+                   gmsh.model.getBoundingBox(curve_dim, curve),
+                   lower,
+                   upper,
+                   outer_tolerance,
+               )
+                push!(feature_curves, curve)
+            end
+        end
+    end
+    unique!(feature_curves)
+    isempty(feature_curves) && error("No process-feature curves were generated")
+    gmsh.model.mesh.field.add("Distance", 1)
+    gmsh.model.mesh.field.setNumbers(1, "CurvesList", Float64.(feature_curves))
+    gmsh.model.mesh.field.add("Threshold", 2)
+    gmsh.model.mesh.field.setNumber(2, "InField", 1)
+    gmsh.model.mesh.field.setNumber(2, "SizeMin", lc_fine)
+    gmsh.model.mesh.field.setNumber(2, "SizeMax", lc_far)
+    gmsh.model.mesh.field.setNumber(2, "DistMin", 2lc_fine)
+    gmsh.model.mesh.field.setNumber(2, "DistMax", 0.5radius)
+    gmsh.model.mesh.field.setAsBackgroundMesh(2)
+    for (name, value) in [
+        ("Mesh.MeshSizeMin", lc_fine),
+        ("Mesh.MeshSizeMax", lc_far),
+        ("Mesh.MeshSizeExtendFromBoundary", 0),
+        ("Mesh.MeshSizeFromPoints", 0),
+        ("Mesh.MeshSizeFromCurvature", 0),
+        ("Mesh.MinimumCirclePoints", 24),
+        ("Mesh.MinimumCurvePoints", 3),
+        ("Mesh.MshFileVersion", 2.2),
+        ("Mesh.Binary", 1),
+    ]
+        gmsh.option.setNumber(name, value)
+    end
+    gmsh.model.mesh.generate(3)
+    gmsh.model.mesh.optimize("Netgen")
+    gmsh.model.mesh.setOrder(mesh_order)
+    mesh_order > 1 && gmsh.model.mesh.optimize("HighOrderElastic")
+    gmsh.write(filename)
+    println(
+        "Spatial coupon: fabricated=$fabricated, edges=$(length(edges)), " *
+        "layers=$(length(layers)), file=$filename",
+    )
+    gmsh.finalize()
+end
+
+function parse_options(args)
+    length(args) >= 3 ||
+        error(
+            "Usage: mesh_spatial_coupon.jl SIGNATURE.csv thin|fabricated " *
+            "OUTPUT.msh [options]",
+        )
+    args[2] in ("thin", "fabricated") ||
+        error("Coupon kind must be thin or fabricated")
+    options = Dict{String,Any}(
+        "signature" => abspath(args[1]),
+        "fabricated" => args[2] == "fabricated",
+        "filename" => abspath(args[3]),
+    )
+    names = Dict(
+        "--radius" => ("radius", Float64),
+        "--metal-thickness" => ("metal_thickness", Float64),
+        "--overetch" => ("overetch", Float64),
+        "--sidewall-angle" => ("sidewall_angle", Float64),
+        "--top-radius" => ("top_rounding", Float64),
+        "--bottom-radius" => ("trench_rounding", Float64),
+        "--lc-fine" => ("lc_fine", Float64),
+        "--lc-far" => ("lc_far", Float64),
+        "--mesh-order" => ("mesh_order", Int),
+    )
+    index = 4
+    while index <= length(args)
+        flag = args[index]
+        haskey(names, flag) || error("Unknown option: $flag")
+        index < length(args) || error("Missing value for option: $flag")
+        name, type = names[flag]
+        options[name] = parse(type, args[index + 1])
+        index += 2
+    end
+    return options
+end
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    options = parse_options(ARGS)
+    generate_spatial_coupon(;
+        signature = options["signature"],
+        fabricated = options["fabricated"],
+        filename = options["filename"],
+        radius = get(options, "radius", 2.0),
+        metal_thickness = get(options, "metal_thickness", 0.1),
+        overetch = get(options, "overetch", 0.05),
+        sidewall_angle = get(options, "sidewall_angle", 80.0),
+        top_rounding = get(options, "top_rounding", 0.01),
+        trench_rounding = get(options, "trench_rounding", 0.01),
+        lc_fine = get(options, "lc_fine", 0.02),
+        lc_far = get(options, "lc_far", 0.3),
+        mesh_order = get(options, "mesh_order", 1),
+    )
+end

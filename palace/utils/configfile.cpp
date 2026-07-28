@@ -1443,6 +1443,8 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
 {
   n_post = electrostatic.value("Save", n_post);
   response_matrix = electrostatic.value("ResponseMatrix", response_matrix);
+  aggregate_response_matrix =
+      electrostatic.value("AggregateResponseMatrix", aggregate_response_matrix);
   if (auto it = electrostatic.find("ResponseCorrection"); it != electrostatic.end())
   {
     const auto &correction = *it;

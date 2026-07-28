@@ -648,11 +648,15 @@ SurfacePostOperator::GetInterfaceLocalEdgeElectricFieldEnergies(int idx,
   const auto &mesh = *h1_fespace.GetParMesh();
   const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
-  auto coefficient = data.GetCoefficient(E, D, mat_op);
+  const bool polarized = data.type != InterfaceDielectric::DEFAULT;
+  auto coefficient = polarized ? nullptr : data.GetCoefficient(E, D, mat_op);
   auto normal_coefficient =
-      data.GetCoefficient(E, D, mat_op, InterfaceDielectricComponent::NORMAL);
+      polarized ? data.GetCoefficient(E, D, mat_op, InterfaceDielectricComponent::NORMAL)
+                : nullptr;
   auto tangential_coefficient =
-      data.GetCoefficient(E, D, mat_op, InterfaceDielectricComponent::TANGENTIAL);
+      polarized
+          ? data.GetCoefficient(E, D, mat_op, InterfaceDielectricComponent::TANGENTIAL)
+          : nullptr;
   const std::size_t edge_count = data.edge_distance_tree->Size();
   const std::size_t radius_count = data.edge_distances.size();
   std::vector<double> local_total_energy(edge_count, 0.0);
@@ -685,11 +689,13 @@ SurfacePostOperator::GetInterfaceLocalEdgeElectricFieldEnergies(int idx,
       const double vertex_distance =
           data.edge_distance_tree->DistanceAlongEdgeToNonregularVertex(point,
                                                                        nearest.segment);
-      const double energy = ip.weight * T->Weight() * coefficient->Eval(*T, ip);
+      const double integration_weight = ip.weight * T->Weight();
       const double normal_energy =
-          ip.weight * T->Weight() * normal_coefficient->Eval(*T, ip);
+          polarized ? integration_weight * normal_coefficient->Eval(*T, ip) : 0.0;
       const double tangential_energy =
-          ip.weight * T->Weight() * tangential_coefficient->Eval(*T, ip);
+          polarized ? integration_weight * tangential_coefficient->Eval(*T, ip) : 0.0;
+      const double energy = polarized ? normal_energy + tangential_energy
+                                      : integration_weight * coefficient->Eval(*T, ip);
       local_total_energy[nearest.segment] += energy;
       local_total_polarized_energy[2 * nearest.segment] += normal_energy;
       local_total_polarized_energy[2 * nearest.segment + 1] += tangential_energy;

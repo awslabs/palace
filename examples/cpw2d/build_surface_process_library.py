@@ -3,6 +3,7 @@
 """Build and package local surface responses for one fabrication process."""
 
 import argparse
+import hashlib
 import json
 import math
 import shlex
@@ -70,6 +71,14 @@ def response_complete(directory, solves):
     )
 
 
+def heldout_complete(directory, solves):
+    return all(
+        (directory / "postpro" / solve / filename).is_file()
+        for solve in solves
+        for filename in ("domain-E.csv", "surface-Q.csv", "surface-Q-edge.csv")
+    )
+
+
 def load_json(path):
     try:
         return json.loads(path.read_text())
@@ -79,6 +88,14 @@ def load_json(path):
 
 def write_json(path, data):
     path.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def generator_fingerprint(paths):
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(path.name.encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
 
 
 def julia_command(args):
@@ -252,6 +269,9 @@ def coupon_spec(args, topology, width):
             "CouponDepth": args.coupon_depth,
             "SeparationTolerance": args.separation_tolerance,
         },
+        "GeneratorFingerprint": generator_fingerprint(
+            (PAIR_MESH_GENERATOR, PAIR_RESPONSE_GENERATOR, Path(__file__))
+        ),
     }
 
 
@@ -259,6 +279,9 @@ def isolated_spec(args):
     spec = coupon_spec(args, "isolated-edge", 0.0)
     del spec["Separation"]
     del spec["Response"]["SeparationTolerance"]
+    spec["GeneratorFingerprint"] = generator_fingerprint(
+        (EDGE_MESH_GENERATOR, EDGE_RESPONSE_GENERATOR, Path(__file__))
+    )
     return spec
 
 
@@ -278,18 +301,30 @@ def build_isolated(args, work):
 
     run(edge_response_command(args, directory))
     write_json(spec_path, spec)
-    configs = [directory / "edge_thin.json", directory / "edge_fabricated.json"]
+    configs = [
+        directory / "edge_thin.json",
+        directory / "edge_fabricated.json",
+        directory / "heldout_edge_thin.json",
+        directory / "heldout_edge_fabricated.json",
+    ]
     if args.prepare_only:
         return directory / "process-library.json", configs, False
 
     solves = ("edge_thin", "edge_fabricated")
-    if reusable and response_complete(directory, solves):
+    heldout_solves = ("heldout_edge_thin", "heldout_edge_fabricated")
+    if (
+        reusable
+        and response_complete(directory, solves)
+        and heldout_complete(directory, heldout_solves)
+    ):
         print("Reusing completed isolated-edge response")
     else:
         for config in configs:
             run(palace_command(args, config))
         if not response_complete(directory, solves):
             raise RuntimeError("Palace did not write all isolated-edge response matrices")
+        if not heldout_complete(directory, heldout_solves):
+            raise RuntimeError("Palace did not complete isolated-edge held-out solves")
     return directory / "process-library.json", configs, True
 
 
@@ -312,12 +347,22 @@ def build_coupon(args, topology, mode, topology_flag, width, work):
     configs = [
         directory / "edge_pair_thin.json",
         directory / "edge_pair_fabricated.json",
+        directory / "heldout_edge_pair_thin.json",
+        directory / "heldout_edge_pair_fabricated.json",
     ]
     if args.prepare_only:
         return directory / "process-library.json", configs, False
 
     solves = ("edge_pair_thin", "edge_pair_fabricated")
-    if reusable and response_complete(directory, solves):
+    heldout_solves = (
+        "heldout_edge_pair_thin",
+        "heldout_edge_pair_fabricated",
+    )
+    if (
+        reusable
+        and response_complete(directory, solves)
+        and heldout_complete(directory, heldout_solves)
+    ):
         print(f"Reusing completed {topology} response at w={width:g} um")
     else:
         for config in configs:
@@ -326,6 +371,10 @@ def build_coupon(args, topology, mode, topology_flag, width, work):
             raise RuntimeError(
                 f"Palace did not write all response matrices for {topology} "
                 f"at w={width:g} um"
+            )
+        if not heldout_complete(directory, heldout_solves):
+            raise RuntimeError(
+                f"Palace did not complete held-out {topology} solve at w={width:g} um"
             )
     return directory / "process-library.json", configs, True
 

@@ -633,6 +633,8 @@ function generate_corner_coupon(;
         ("Mesh.MeshSizeExtendFromBoundary", 0),
         ("Mesh.MeshSizeFromPoints", 0),
         ("Mesh.MeshSizeFromCurvature", 0),
+        ("Mesh.MinimumCirclePoints", 24),
+        ("Mesh.MinimumCurvePoints", 3),
         ("Mesh.MshFileVersion", 2.2),
         ("Mesh.Binary", 1),
     ]
@@ -656,11 +658,12 @@ function generate_corner_coupon(;
     gmsh.finalize()
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
-    length(ARGS) in (2, 3) ||
+function parse_command_line(args)
+    length(args) >= 2 ||
         error("Usage: mesh_corner_coupon.jl " *
-              "[convex-|concave-]thin|fabricated OUTPUT.msh [CORNER_RADIUS_UM]")
-    kind = ARGS[1]
+              "[convex-|concave-]thin|fabricated OUTPUT.msh [CORNER_RADIUS_UM] " *
+              "[--radius VALUE ...]")
+    kind = args[1]
     aliases = Dict(
         "thin" => (:convex, false),
         "fabricated" => (:convex, true),
@@ -671,11 +674,55 @@ if abspath(PROGRAM_FILE) == @__FILE__
     )
     haskey(aliases, kind) || error("Unknown coupon kind: $kind")
     topology, fabricated = aliases[kind]
-    corner_radius = length(ARGS) == 3 ? parse(Float64, ARGS[3]) : 0.0
-    generate_corner_coupon(
-        topology = topology,
-        fabricated = fabricated,
-        corner_radius = corner_radius,
-        filename = abspath(ARGS[2]),
+    options = Dict{String,Any}(
+        "topology" => topology,
+        "fabricated" => fabricated,
+        "filename" => abspath(args[2]),
+        "corner_radius" => 0.0,
+    )
+    names = Dict(
+        "--radius" => ("radius", Float64),
+        "--corner-radius" => ("corner_radius", Float64),
+        "--metal-thickness" => ("metal_thickness", Float64),
+        "--overetch" => ("overetch_depth", Float64),
+        "--sidewall-angle" => ("sidewall_angle", Float64),
+        "--top-radius" => ("top_rounding", Float64),
+        "--bottom-radius" => ("trench_rounding", Float64),
+        "--lc-fine" => ("lc_fine", Float64),
+        "--lc-far" => ("lc_far", Float64),
+        "--mesh-order" => ("mesh_order", Int),
+    )
+    index = 3
+    if index <= length(args) && !startswith(args[index], "--")
+        options["corner_radius"] = parse(Float64, args[index])
+        index += 1
+    end
+    while index <= length(args)
+        flag = args[index]
+        haskey(names, flag) || error("Unknown option: $flag")
+        index < length(args) || error("Missing value for option: $flag")
+        name, type = names[flag]
+        options[name] = parse(type, args[index + 1])
+        index += 2
+    end
+    return options
+end
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    options = parse_command_line(ARGS)
+    generate_corner_coupon(;
+        topology = options["topology"],
+        fabricated = options["fabricated"],
+        filename = options["filename"],
+        radius = get(options, "radius", 2.0),
+        corner_radius = options["corner_radius"],
+        metal_thickness = get(options, "metal_thickness", 0.1),
+        overetch_depth = get(options, "overetch_depth", 0.05),
+        sidewall_angle = get(options, "sidewall_angle", 80.0),
+        top_rounding = get(options, "top_rounding", 0.01),
+        trench_rounding = get(options, "trench_rounding", 0.01),
+        lc_fine = get(options, "lc_fine", 0.02),
+        lc_far = get(options, "lc_far", 0.3),
+        mesh_order = get(options, "mesh_order", 1),
     )
 end

@@ -249,11 +249,51 @@ python3 prepare_surface_response_coupons.py \
   --output /tmp/process-coupon-plan
 ```
 
-The plan points isolated and paired requirements to
-`build_surface_process_library.py` and 90 degree corners to the existing corner
-prototype. Endpoint, junction, parallel multi-edge, and exact spatial-cluster
-signatures remain explicitly marked as manual until corresponding canonical 3D
-mesh generators are available.
+The plan routes isolated and paired edges, parallel multi-edge clusters, 90
+degree convex and concave corners, endpoints, junctions, and exact spatial edge
+clusters to candidate canonical coupon builders. Unsupported corner angles
+remain explicitly identified in `coupon-plan.json`.
+
+For a PEC process library, generate, qualify, cache, and merge all missing
+coupons with:
+
+```text
+python3 prepare_surface_response_coupons.py \
+  /path/to/surface-response-requirements.json \
+  --output /tmp/process-coupon-plan \
+  --execute \
+  --palace ../../build/bin/palace \
+  --orders 2 3
+```
+
+Automatic execution requires version-3 fabrication metadata in microns,
+including metal thickness, overetch, sidewall angle, top and bottom rounding,
+substrate permittivity, and SA/MS/MA layer properties. The selected fine mesh
+size must place at least two elements across the metal thickness and overetch.
+Rounded curves instead use a minimum geometric sampling requirement, so a
+small rounding radius does not force that size throughout the volume.
+
+Each cache key includes the complete coupon geometry, fabrication process,
+mesh and FEM settings, and generator source fingerprints. A six-field
+thin/fabricated probe must pass the p-order convergence limits before the full
+trace response matrices are computed. The full matrices must then pass
+definiteness and independent held-out trace tests. Only qualified entries are
+merged into `library/process-library.json`; `qualification-manifest.json`
+records every source report. `--force` invalidates completed solves as well as
+the qualification result.
+
+Candidate spatial coupons are deliberately fail-closed. A degree-one endpoint
+or higher-degree junction specifies the incident edge arms, but not an
+independent fabricated plan-view cap or junction-rounding model. If that sharp
+geometry leaves the interface response unconverged, the p-order probe fails and
+the entry is not merged. A process library must not promote such a canonical
+coupon merely because its response matrix and held-out trace are algebraically
+consistent.
+
+Automatic finite-impedance coupon generation is not yet qualified. The planner
+preserves the complete boundary-law signature, but `--execute` currently
+rejects generated non-PEC coupons instead of silently substituting a PEC
+calibration.
 
 Palace never extrapolates a paired response. Each requested topology should
 therefore include the smallest separation supported by the fabrication design

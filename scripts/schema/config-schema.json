@@ -3015,6 +3015,11 @@
           "description": "Assemble `surface-response-matrix.csv` from prescribed-potential basis excitations. For every localized dielectric interface, physical edge, and matching radius, the output stores the upper triangle of the quadratic core-energy response operator, including normal and tangential polarization components.",
           "default": false
         },
+        "AggregateResponseMatrix": {
+          "type": "boolean",
+          "description": "Sum `surface-response-matrix.csv` entries over physical edges before writing. The output retains one synthetic edge per interface and matching radius, reducing coupon output size while preserving the interface-aggregated core- and full-patch response operators.",
+          "default": false
+        },
         "ResponseCorrection": {
           "type": "object",
           "description": "Apply a global thin-metal Schur-complement correction using matched fabricated- and thin-coupon response matrices. The legacy one-model syntax remains supported for explicit 2D placement. A fabrication-process `Library` automatically selects one-edge or coupled multi-edge coupons in 2D and integrates them along extracted physical metal edges in 3D. Standard output remains the raw thin-metal result, while surface response matrices enable `surface-Q-corrected.csv`.",
