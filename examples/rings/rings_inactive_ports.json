@@ -3,7 +3,7 @@
   {
     "Type": "Magnetostatic",
     "Verbose": 2,
-    "Output": "postpro"
+    "Output": "postpro_inactive_ports"
   },
   "Model":
   {
@@ -18,24 +18,7 @@
         "Attributes": [1],
         "Permeability": 1.0
       }
-    ],
-    "Postprocessing":
-    {
-      "Probe":
-      [
-        {
-          "Index": 1,  // Center of rings
-          "Center": [0.0, 0.0, 0.0]
-        }
-      ],
-      "Energy":
-      [
-        {
-          "Index": 1,
-          "Attributes": [1]
-        }
-      ]
-    }
+    ]
   },
   "Boundaries":
   {
@@ -53,27 +36,12 @@
       {
         "Index": 2,
         "Attributes": [5],  // Outer ring
-        "Direction": [-0.5, 0.8660254037844386, 0.0]  // "+Y" rotated π/6 around (0,0,1)
+        "Direction": [-0.5, 0.8660254037844386, 0.0],  // "+Y" rotated π/6 around (0,0,1)
+        // Per-port override: this port is shorted (PEC) when inactive, even though the
+        // global default below leaves inactive ports open.
+        "InactiveMode": "Short"
       }
-    ],
-    "Postprocessing":  // Inductance from flux instead of energy
-    {
-      "SurfaceFlux":
-      [
-        {
-          "Index": 1,
-          "Attributes": [6],    // Inner hole
-          "Type": "Magnetic",
-	  "Center": [0, 0, -1]  // Positive in +Z
-        },
-        {
-          "Index": 2,
-          "Attributes": [6, 7],  // Outer (total) hole
-	  "Type": "Magnetic",
-          "Center": [0, 0, -1]   // Positive in +Z
-        }
-      ]
-    }
+    ]
   },
   "Solver":
   {
@@ -82,6 +50,8 @@
     "Magnetostatic":
     {
       "Save": 2,
+      // Global default applied to inactive ports that do not set their own "InactiveMode".
+      // Here port 1 uses this ("Open") while port 2 overrides it to "Short".
       "InactivePorts": "Open"
     },
     "Linear":
@@ -93,4 +63,3 @@
     }
   }
 }
-

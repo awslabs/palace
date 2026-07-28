@@ -232,6 +232,56 @@ std::unique_ptr<Operator> CurlCurlOperator::GetStiffnessMatrix()
   return K;
 }
 
+std::unique_ptr<Operator>
+CurlCurlOperator::GetStiffnessMatrix(const mfem::Array<int> &extra_dbc_attr)
+{
+  // Reassemble the stiffness matrix with the base plus extra essential attributes. Size the
+  // marker from the global max attribute (BdrAttrToMarker) so a rank whose partition lacks
+  // the shorted-port boundary does not build an undersized, corrupt marker.
+  mfem::Array<int> merged_attr(dbc_attr);
+  merged_attr.Append(extra_dbc_attr);
+
+  const auto &pmesh = static_cast<const mfem::ParMesh &>(GetMesh());
+  auto merged_marker = mesh::BdrAttrToMarker(pmesh, merged_attr, true);
+
+  constexpr bool skip_zeros = false;
+  MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                         mat_op.GetCurlCurlInvPermeability());
+  BilinearForm k(GetNDSpace());
+  k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
+  auto k_vec = k.Assemble(GetNDSpaces(), skip_zeros);
+  auto K = std::make_unique<MultigridOperator>(GetNDSpaces().GetNumLevels());
+  // SetEssentialTrueDofs stores a shallow reference, so hold the per-level lists in a
+  // member that outlives the returned operator rather than in loop-local arrays.
+  extra_dbc_tdof_lists.assign(GetNDSpaces().GetNumLevels(), mfem::Array<int>());
+  for (std::size_t l = 0; l < GetNDSpaces().GetNumLevels(); l++)
+  {
+    const auto &nd_fespace_l = GetNDSpaces().GetFESpaceAtLevel(l);
+    nd_fespace_l.Get().GetEssentialTrueDofs(merged_marker, extra_dbc_tdof_lists[l]);
+    auto K_l = std::make_unique<ParOperator>(std::move(k_vec[l]), nd_fespace_l);
+    K_l->SetEssentialTrueDofs(extra_dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);
+    K->AddOperator(std::move(K_l));
+  }
+  return K;
+}
+
+void CurlCurlOperator::ZeroEssentialTrueDofs(const mfem::Array<int> &extra_dbc_attr,
+                                             Vector &v) const
+{
+  // Zero the excitation on the merged essential set (base Dirichlet plus shorted-port
+  // attributes) so DIAG_ONE elimination sees a zero RHS on every constrained true DOF,
+  // including edges an active port shares with a shorted one.
+  mfem::Array<int> merged_attr(dbc_attr);
+  merged_attr.Append(extra_dbc_attr);
+
+  const auto &pmesh = static_cast<const mfem::ParMesh &>(GetMesh());
+  auto merged_marker = mesh::BdrAttrToMarker(pmesh, merged_attr, true);
+
+  mfem::Array<int> tdof_list;
+  GetNDSpace().Get().GetEssentialTrueDofs(merged_marker, tdof_list);
+  linalg::SetSubVector(v, tdof_list, 0.0);
+}
+
 void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)
 {
   // Assemble the surface current excitation +J. The SurfaceCurrentOperator assembles -J

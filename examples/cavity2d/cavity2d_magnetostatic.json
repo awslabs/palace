@@ -51,7 +51,8 @@
     "Device": "CPU",
     "Magnetostatic":
     {
-      "Save": 1
+      "Save": 1,
+      "InactivePorts": "Short"
     },
     "Linear":
     {

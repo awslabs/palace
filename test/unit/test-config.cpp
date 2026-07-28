@@ -479,6 +479,29 @@ TEST_CASE("Config Boundary Ports", "[config][Serial]")
     CHECK(err->find("SurfaceCurrent") != std::string::npos);
     CHECK(err->find("FluxLoop") != std::string::npos);
   }
+
+  SECTION("SurfaceCurrent InactiveMode is optional and parses per port")
+  {
+    json boundaries = {{"SurfaceCurrent",
+                        {{{"Attributes", {4}}, {"Index", 1}, {"Direction", "+X"}},
+                         {{"Attributes", {5}},
+                          {"Index", 2},
+                          {"Direction", "+X"},
+                          {"InactiveMode", "Open"}},
+                         {{"Attributes", {6}},
+                          {"Index", 3},
+                          {"Direction", "+X"},
+                          {"InactiveMode", "Short"}}}}};
+    config::BoundaryData boundary_data(boundaries);
+    CHECK(!config::Validate(boundary_data).has_value());
+    // Unset when not specified so the global default applies for that port.
+    CHECK(!boundary_data.current.at(1).inactive_port_mode.has_value());
+    REQUIRE(boundary_data.current.at(2).inactive_port_mode.has_value());
+    CHECK(boundary_data.current.at(2).inactive_port_mode.value() == InactivePortMode::OPEN);
+    REQUIRE(boundary_data.current.at(3).inactive_port_mode.has_value());
+    CHECK(boundary_data.current.at(3).inactive_port_mode.value() ==
+          InactivePortMode::SHORT);
+  }
 }
 
 TEST_CASE("Config Driven Solver", "[config][Serial]")
@@ -647,6 +670,44 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
         {"Save", {0.05}},
         {"AdaptiveTol", 1e-3}};
     CHECK_THROWS(config::DrivenSolverData(invalid_save));
+  }
+}
+
+TEST_CASE("Config Magnetostatic InactivePorts", "[config][Serial]")
+{
+  SECTION("Defaults to Open when unspecified")
+  {
+    config::MagnetostaticSolverData magnetostatic(json::object());
+    CHECK(magnetostatic.inactive_port_mode == InactivePortMode::OPEN);
+  }
+
+  SECTION("Global InactivePorts parses Open and Short")
+  {
+    config::MagnetostaticSolverData open(json{{"InactivePorts", "Open"}});
+    CHECK(open.inactive_port_mode == InactivePortMode::OPEN);
+    config::MagnetostaticSolverData shorted(json{{"InactivePorts", "Short"}});
+    CHECK(shorted.inactive_port_mode == InactivePortMode::SHORT);
+  }
+
+  SECTION("Per-port InactiveMode overrides the global default")
+  {
+    // Global default is Short; port 1 has no override (inherits Short), port 2 overrides
+    // to Open. This mirrors the value_or(global) resolution done in the solver.
+    config::MagnetostaticSolverData magnetostatic(json{{"InactivePorts", "Short"}});
+    const InactivePortMode global_mode = magnetostatic.inactive_port_mode;
+
+    json boundaries = {{"SurfaceCurrent",
+                        {{{"Attributes", {4}}, {"Index", 1}, {"Direction", "+X"}},
+                         {{"Attributes", {5}},
+                          {"Index", 2},
+                          {"Direction", "+X"},
+                          {"InactiveMode", "Open"}}}}};
+    config::BoundaryData boundary_data(boundaries);
+
+    auto resolve = [&](int idx)
+    { return boundary_data.current.at(idx).inactive_port_mode.value_or(global_mode); };
+    CHECK(resolve(1) == InactivePortMode::SHORT);  // inherits global
+    CHECK(resolve(2) == InactivePortMode::OPEN);   // per-port override wins
   }
 }
 
@@ -904,6 +965,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(config["Solver"]["Linear"]["AMSSingularOperator"].get<int>() == 1);
     CHECK(config["Solver"]["Linear"]["AMSMaxIts"].get<int>() == 1);
     CHECK(config["Solver"]["Linear"]["MGCycleIts"].get<int>() == 1);
+    CHECK(config["Solver"]["Magnetostatic"]["InactivePorts"] == "Open");
   }
 
   SECTION("User-specified values survive concretization")

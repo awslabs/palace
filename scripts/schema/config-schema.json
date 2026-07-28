@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:1-4-0",
+  "$id": "urn:palace:schema:1-5-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1445,6 +1445,10 @@
           "$ref": "#/$defs/CoordinateSystem",
           "description": "Coordinate system for the `\"Direction\"` vector. Same options as [`/LumpedPort/CoordinateSystem`](@ref config-boundaries-lumpedport-coordinatesystem).",
           "default": "Cartesian"
+        },
+        "InactiveMode": {
+          "$ref": "#/$defs/InactivePortMode",
+          "description": "Overrides [`/Solver/Magnetostatic/InactivePorts`](@ref config-solver-magnetostatic) for this port, controlling how it is treated when inactive during a magnetostatic inductance sweep. If unset, the global value is used."
         }
       }
     },
@@ -1484,6 +1488,10 @@
           "$ref": "#/$defs/CoordinateSystem",
           "description": "Coordinate system for the `\"Direction\"` vector. Same options as [`/LumpedPort/CoordinateSystem`](@ref config-boundaries-lumpedport-coordinatesystem).",
           "default": "Cartesian"
+        },
+        "InactiveMode": {
+          "$ref": "#/$defs/InactivePortMode",
+          "description": "Overrides [`/Solver/Magnetostatic/InactivePorts`](@ref config-solver-magnetostatic) for this port, controlling how it is treated when inactive during a magnetostatic inductance sweep. If unset, the global value is used."
         }
       }
     },
@@ -1838,6 +1846,20 @@
         {
           "description": "Cylindrical coordinates (enables `+R`/`-R` directions).",
           "const": "Cylindrical"
+        }
+      ]
+    },
+    "InactivePortMode": {
+      "type": "string",
+      "description": "Boundary condition applied to an inactive surface current port during the magnetostatic inductance matrix sweep.",
+      "oneOf": [
+        {
+          "const": "Open",
+          "description": "Apply a natural (zero surface current) boundary condition, so no induced current flows across the port when inactive."
+        },
+        {
+          "const": "Short",
+          "description": "Treat the port as a perfect conductor (PEC, zero tangential vector potential), allowing induced screening currents to flow across it when inactive."
         }
       ]
     },
@@ -2765,6 +2787,11 @@
           "description": "Number of computed magnetic field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the entries in the computed inductance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
           "minimum": 0,
           "default": 0
+        },
+        "InactivePorts": {
+          "$ref": "#/$defs/InactivePortMode",
+          "description": "Global default boundary condition applied to inactive surface current ports during the inductance matrix sweep. During the sweep each surface current port is excited one at a time; this option controls how the remaining (inactive) ports are treated. Individual ports can override this via [`/Boundaries/SurfaceCurrent`](@ref config-boundaries-surfacecurrent) `\"InactiveMode\"`.",
+          "default": "Open"
         }
       }
     },

@@ -147,11 +147,37 @@ boundaries.
 
 **Surface current boundaries**: Specify a number of source current boundaries to apply unit
 currents to specified surfaces. For each current source, a magnetostatic field is computed by
-applying a unit current to the source of interest, leaving all other sources open. Surfaces
+applying a unit current to the source of interest. Surfaces
 which are expected to carry current should be labeled as perfectly conducting (PEC), which
 prescribes a zero magnetic flux, or
 [magnetic insulation](https://doc.comsol.com/5.5/doc/com.comsol.help.comsol/comsol_ref_acdc.17.74.html),
 boundary condition.
+
+The treatment of the *inactive* current ports during each step of the sweep is controlled
+by [`config["Solver"]["Magnetostatic"]["InactivePorts"]`](../config/reference.md#config-solver-magnetostatic).
+The default, `"Open"`, applies a natural (zero surface current) boundary condition so that
+no current flows across an inactive port. Setting `"Short"` instead treats inactive ports as
+perfect conductors (PEC), allowing induced screening currents to flow across them. The mode
+can be overridden on a per-port basis using
+[`config["Boundaries"]["SurfaceCurrent"]["InactiveMode"]`](../config/reference.md#config-boundaries-surfacecurrent),
+which takes precedence over the global default for that port.
+
+The inactive-port treatment affects which inductance entries are well-defined. A port that is
+`"Open"` when inactive is never an essential (Dirichlet) boundary, so every excitation of an
+`"Open"` port is solved with the *same* operator (any `"Short"` ports acting as fixed
+screening conductors) and only the right-hand side changes. The resulting mutual entries are
+reciprocal and represent the mutual inductance in the presence of the shorted screens. A port
+that is `"Short"` when inactive, by contrast, is added to the essential set on every step
+*except* the one that excites it, so exciting a `"Short"` port uses a different operator than
+the other excitations; its cross-energy with another column mixes two different
+boundary-value problems and does not correspond to a reciprocal mutual inductance.
+
+Palace therefore reports the self-inductance (diagonal) for every port, but writes a mutual
+inductance ``M_{ij}`` only between ports that are both `"Open"` when inactive. Off-diagonal
+entries involving a `"Short"` port are written as `NaN`, and `terminal-Minv.csv` and
+`terminal-Mm.csv` are computed over the reciprocal `"Open"`-`"Open"` sub-block only (their
+`"Short"`-port rows and columns are likewise `NaN`). With all ports `"Open"` (the default)
+this reduces to the usual full, symmetric inductance matrix (no screening boundaries).
 
 **Flux loop boundaries** ([`config["Boundaries"]["FluxLoop"]`](../config/reference.md#config-boundaries-fluxloop)):
 Prescribe magnetic flux through specified holes in conducting surfaces. For each flux loop, a

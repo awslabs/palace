@@ -604,6 +604,11 @@ public:
   // making up a single element of a potentially multielement current source.
   std::vector<internal::ElementData> elements = {};
 
+  // Per-port override for how this port is treated when inactive during a magnetostatic
+  // inductance sweep. If unset, the global `/Solver/Magnetostatic/InactivePorts` value is
+  // used.
+  std::optional<InactivePortMode> inactive_port_mode = std::nullopt;
+
   SurfaceCurrentData() = default;
   SurfaceCurrentData(const json &source);
 };
@@ -907,6 +912,9 @@ struct MagnetostaticSolverData
 public:
   // Number of fields to write to disk.
   int n_post = 0;
+
+  // Boundary condition applied to inactive surface current ports during sweeps.
+  InactivePortMode inactive_port_mode = InactivePortMode::DEFAULT;
 
   MagnetostaticSolverData() = default;
   MagnetostaticSolverData(const json &magnetostatic);

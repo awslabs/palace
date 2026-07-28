@@ -30,6 +30,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `config["Solver"]["Linear"]["Type"] = "cuDSS"` for the KSP and wave port solvers.
     Enable at build time with `PALACE_WITH_CUDSS=ON` (requires `PALACE_WITH_CUDA=ON`).
     SchemaVer 1-3-0 [PR 717](https://github.com/awslabs/palace/pull/717).
+  - Added control over how *inactive* surface current ports are treated during a
+    magnetostatic inductance sweep, via `config["Solver"]["Magnetostatic"]["InactivePorts"]`
+    (`"Open"`, the default, or `"Short"`). `"Open"` applies a natural (zero surface current)
+    boundary condition so no induced current flows across an inactive port, while `"Short"`
+    treats it as a perfect conductor (PEC) allowing induced screening currents. The mode can
+    be overridden per port with `config["Boundaries"]["SurfaceCurrent"][...]["InactiveMode"]`.
+    SchemaVer 1-5-0 [PR 831](https://github.com/awslabs/palace/pull/831).
   - Improve hybrid nonlinear eigensolver convergence when using 2nd-order absorbing and
     rational impedance boundary conditions. [PR 792](https://github.com/awslabs/palace/pull/792).
   - Enable circuit synthesis with frequency-dependent boundary conditions, including

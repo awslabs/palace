@@ -191,6 +191,14 @@ enum class Device : char
   DEBUG
 };
 
+// Inactive port boundary condition mode for magnetostatic sweeps.
+enum class InactivePortMode : char
+{
+  OPEN,
+  SHORT,
+  DEFAULT = OPEN
+};
+
 }  // namespace palace
 
 #endif  // PALACE_UTILS_LABELS_HPP
