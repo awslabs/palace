@@ -1,6 +1,16 @@
 name: Build Palace Containers
 description: Build a Palace container image from the stored Spack environment
 
+inputs:
+  target:
+    description: >-
+      Spack microarchitecture to build for (e.g. x86_64_v3, neoverse_v2).
+      Empty means build for the runner's native microarchitecture
+      (spack arch -t). Must be at or below the runner's native ISA so
+      build-time binaries remain executable on the host.
+    required: false
+    default: ''
+
 runs:
   using: composite
   steps:
@@ -40,8 +50,13 @@ runs:
         # resolve head.repo to the fork, so this stays false for them — they must
         # never reach the instance-role push credentials on the public repo.
         LABEL_PUSH: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'push-containers') && github.event.pull_request.head.repo.full_name == github.repository }}
+        # Requested Spack microarchitecture; empty means build native.
+        TARGET: ${{ inputs.target }}
       run: |
-        ARCH_LABEL=$(spack arch -t)
+        # Build for the requested target if given, else the runner's native
+        # microarchitecture. A target must be <= the host's native ISA (the
+        # workflow matrix guarantees this) so build-time binaries can run here.
+        ARCH_LABEL="${TARGET:-$(spack arch -t)}"
 
         # Sanitize the branch into an ECR-tag/S3-prefix-safe slug: ECR tags allow
         # only [A-Za-z0-9_.-], and '/' is illegal, so collapse everything else
@@ -88,6 +103,29 @@ runs:
         IMAGE_NAME="palace-${ARCH_LABEL}-${SHORT_HASH}"
         echo "image_name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
         echo "Image name: ${IMAGE_NAME}"
+
+    - name: Pin build target
+      # Steer concretization to a specific microarchitecture for release matrix
+      # builds. Skipped when target is empty (native builds concretize for the
+      # runner's own microarch, unchanged).
+      # 
+      # Uses a target PREFERENCE (packages:all:target), not a `require`: a hard
+      # require applies to host-detected externals too (glibc, the gcc compiler,
+      # system curl), which are fixed at the runner's own microarch. Forcing them
+      # to a different target is unsatisfiable ("Cannot select a single
+      # node_target for package glibc/gcc").
+      shell: bash
+      env:
+        TARGET: ${{ inputs.target }}
+      run: |
+        if [ -n "$TARGET" ]; then
+          cd .github/actions/build-container/spack_env
+          spack -e . config add "packages:all:target:[${TARGET}]"
+          echo "Set preferred concretization target to ${TARGET}:"
+          spack -e . config get packages
+        else
+          echo "No target pin requested; building for native microarchitecture."
+        fi
 
     - name: Generate Dockerfile
       shell: bash

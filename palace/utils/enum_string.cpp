@@ -149,6 +149,9 @@ PALACE_ENUM_STRING_DEFINE(Device, {{Device::CPU, "CPU"},
                                    {Device::GPU, "GPU"},
                                    {Device::DEBUG, "Debug"}})
 
+PALACE_ENUM_STRING_DEFINE(InactivePortMode, {{InactivePortMode::OPEN, "Open"},
+                                             {InactivePortMode::SHORT, "Short"}})
+
 #undef PALACE_ENUM_STRING_DEFINE
 
 }  // namespace palace

@@ -273,6 +273,24 @@ TEST_CASE("Schema Validation - Sub-schema by Key", "[schema][Serial]")
     }
   }
 
+  SECTION("SurfaceCurrent InactiveMode enum")
+  {
+    // Valid values are the enumerated modes; anything else is rejected by the schema.
+    json open = {{"Index", 1}, {"Attributes", {1}}, {"InactiveMode", "Open"}};
+    CHECK(ValidateConfig(open, "SurfaceCurrent").empty());
+    json shorted = {{"Index", 1}, {"Attributes", {1}}, {"InactiveMode", "Short"}};
+    CHECK(ValidateConfig(shorted, "SurfaceCurrent").empty());
+    json invalid = {{"Index", 1}, {"Attributes", {1}}, {"InactiveMode", "Floating"}};
+    CHECK(!ValidateConfig(invalid, "SurfaceCurrent").empty());
+  }
+
+  SECTION("Magnetostatic InactivePorts enum")
+  {
+    CHECK(ValidateConfig(json{{"InactivePorts", "Open"}}, "Magnetostatic").empty());
+    CHECK(ValidateConfig(json{{"InactivePorts", "Short"}}, "Magnetostatic").empty());
+    CHECK(!ValidateConfig(json{{"InactivePorts", "Floating"}}, "Magnetostatic").empty());
+  }
+
   SECTION("CurrentDipole rejects cylindrical R direction")
   {
     // CurrentDipole only allows Cartesian directions (X/Y/Z), not cylindrical R.

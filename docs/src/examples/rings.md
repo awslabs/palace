@@ -143,6 +143,20 @@ the inner and outer rings. The files for this visualization are again saved to t
 </p>
 ```
 
+### Controlling inactive ports
+
+By default, when one ring is excited the other (inactive) ring is left *open*, carrying no
+net current. Alternatively, an inactive port can be *shorted* by treating it as a perfect
+conductor (PEC), which allows induced screening currents to flow across it and modifies the
+extracted inductances. This behavior is set globally with
+[`config["Solver"]["Magnetostatic"]["InactivePorts"]`](../config/reference.md#config-solver-magnetostatic)
+(`"Open"` or `"Short"`) and can be overridden for individual ports using the
+[`"InactiveMode"`](../config/reference.md#config-boundaries-surfacecurrent) key on a surface
+current boundary. The companion configuration file
+[`rings_inactive_ports.json`](https://github.com/awslabs/palace/blob/main/examples/rings/rings_inactive_ports.json)
+demonstrates this by leaving the global default as `"Open"` while shorting the outer ring
+when it is inactive.
+
 ## References
 
 [1] M. R. Alizadeh Pahlavani and H. A. Mohammadpour, Inductance comparison of the solenoidal
